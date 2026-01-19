@@ -1,0 +1,14 @@
+# Archivos de configuración con credenciales
+config.ps1
+*.secret
+*.key
+*.pem
+
+# Logs
+*.log
+deploy-*.log
+
+# Archivos temporales
+*.tmp
+*.temp
+~$*

@@ -1,0 +1,282 @@
+using System.Net;
+using System.Security.Claims;
+using System.Text;
+using System.Text.Json;
+using FluentAssertions;
+using Microsoft.Azure.Functions.Worker;
+using Microsoft.Azure.Functions.Worker.Http;
+using Microsoft.Extensions.Logging;
+using Moq;
+using MimosBabySpa.API.Functions;
+using MimosBabySpa.Application.DTOs;
+using MimosBabySpa.Application.Services;
+using DomainMessage = MimosBabySpa.Domain.Entities.Message;
+using DtoMessage = MimosBabySpa.Application.DTOs.Message;
+using MimosBabySpa.Tests.Helpers;
+using Xunit;
+
+namespace MimosBabySpa.Tests.Functions;
+
+public class WhatsAppWebhookFunctionTests
+{
+    private readonly Mock<IWhatsAppMessageProcessorService> _mockMessageProcessorService;
+    private readonly Mock<IWhatsAppWebhookParserService> _mockWebhookParserService;
+    private readonly Mock<IBusinessIdentificationService> _mockBusinessIdentificationService;
+    private readonly Mock<ILogger<WhatsAppWebhookFunction>> _mockLogger;
+    private readonly WhatsAppWebhookFunction _function;
+
+    public WhatsAppWebhookFunctionTests()
+    {
+        _mockMessageProcessorService = new Mock<IWhatsAppMessageProcessorService>();
+        _mockWebhookParserService = new Mock<IWhatsAppWebhookParserService>();
+        _mockBusinessIdentificationService = new Mock<IBusinessIdentificationService>();
+        _mockLogger = new Mock<ILogger<WhatsAppWebhookFunction>>();
+
+        _function = new WhatsAppWebhookFunction(
+            _mockMessageProcessorService.Object,
+            _mockWebhookParserService.Object,
+            _mockBusinessIdentificationService.Object,
+            _mockLogger.Object
+        );
+    }
+
+    [Fact]
+    public async Task Run_GetRequest_WithValidWebhookVerification_ShouldReturnChallenge()
+    {
+        // Arrange
+        var challenge = "test_challenge_123";
+        var request = CreateMockHttpRequestData("GET", $"?hub.mode=subscribe&hub.verify_token=test_token&hub.challenge={challenge}");
+        
+        _mockMessageProcessorService
+            .Setup(x => x.VerifyWebhookAsync("subscribe", "test_token", challenge))
+            .ReturnsAsync(challenge);
+
+        // Act
+        var response = await _function.Run(request);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        _mockMessageProcessorService.Verify(x => x.VerifyWebhookAsync("subscribe", "test_token", challenge), Times.Once);
+    }
+
+    [Fact]
+    public async Task Run_GetRequest_WithInvalidWebhookVerification_ShouldReturnForbidden()
+    {
+        // Arrange
+        var request = CreateMockHttpRequestData("GET", "?hub.mode=subscribe&hub.verify_token=wrong_token&hub.challenge=test");
+        
+        _mockMessageProcessorService
+            .Setup(x => x.VerifyWebhookAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()))
+            .ReturnsAsync((string?)null);
+
+        // Act
+        var response = await _function.Run(request);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
+    [Fact]
+    public async Task Run_PostRequest_WithValidMessage_ShouldProcessMessage()
+    {
+        // Arrange
+        var userNumber = "1234567890";
+        var messageText = "Hola, quiero información";
+        var customerName = "Juan Pérez";
+        var businessId = Guid.NewGuid();
+        
+        var webhookDto = new WhatsAppWebhookDto
+        {
+            Object = "whatsapp_business_account",
+            Entry = new List<Entry>
+            {
+                new Entry
+                {
+                    Id = "entry_id",
+                    Changes = new List<Change>
+                    {
+                        new Change
+                        {
+                            Field = "messages",
+                            Value = new Value
+                            {
+                                Messages = new List<DtoMessage>
+                                {
+                                    new DtoMessage
+                                    {
+                                        From = userNumber,
+                                        Type = "text",
+                                        Text = new TextMessage { Body = messageText }
+                                    }
+                                },
+                                Contacts = new List<Contact>
+                                {
+                                    new Contact
+                                    {
+                                        Profile = new Profile { Name = customerName }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        };
+
+        var businessContext = new BusinessContext
+        {
+            BusinessId = businessId,
+            BusinessName = "Test Business"
+        };
+
+        var incomingMessage = new IncomingMessage
+        {
+            UserNumber = userNumber,
+            MessageText = messageText,
+            CustomerName = customerName
+        };
+
+        var request = CreateMockHttpRequestData("POST", "", JsonSerializer.Serialize(webhookDto));
+
+        _mockBusinessIdentificationService
+            .Setup(x => x.IdentifyBusinessAsync("entry_id"))
+            .ReturnsAsync(businessContext);
+
+        _mockWebhookParserService
+            .Setup(x => x.ExtractAllMessagesFromEntryAsync(It.IsAny<Entry>()))
+            .ReturnsAsync(new[] { incomingMessage });
+
+        _mockMessageProcessorService
+            .Setup(x => x.ProcessIncomingMessageAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()))
+            .Returns(Task.CompletedTask);
+
+        // Act
+        var response = await _function.Run(request);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        
+        _mockBusinessIdentificationService.Verify(x => x.IdentifyBusinessAsync("entry_id"), Times.Once);
+        _mockWebhookParserService.Verify(x => x.ExtractAllMessagesFromEntryAsync(It.IsAny<Entry>()), Times.Once);
+        _mockMessageProcessorService.Verify(x => x.ProcessIncomingMessageAsync(
+            businessId, 
+            userNumber, 
+            messageText, 
+            customerName), Times.Once);
+    }
+
+    [Fact]
+    public async Task Run_PostRequest_WithTalkToHumanIntent_ShouldTransferToHuman()
+    {
+        // Arrange
+        var userNumber = "1234567890";
+        var messageText = "Quiero hablar con un humano";
+        var businessId = Guid.NewGuid();
+        
+        var webhookDto = new WhatsAppWebhookDto
+        {
+            Entry = new List<Entry>
+            {
+                new Entry
+                {
+                    Id = "entry_id",
+                    Changes = new List<Change>
+                    {
+                        new Change
+                        {
+                            Field = "messages",
+                            Value = new Value
+                            {
+                                Messages = new List<DtoMessage>
+                                {
+                                    new DtoMessage
+                                    {
+                                        From = userNumber,
+                                        Type = "text",
+                                        Text = new TextMessage { Body = messageText }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        };
+
+        var businessContext = new BusinessContext
+        {
+            BusinessId = businessId,
+            BusinessName = "Test Business"
+        };
+
+        var incomingMessage = new IncomingMessage
+        {
+            UserNumber = userNumber,
+            MessageText = messageText
+        };
+
+        var request = CreateMockHttpRequestData("POST", "", JsonSerializer.Serialize(webhookDto));
+
+        _mockBusinessIdentificationService
+            .Setup(x => x.IdentifyBusinessAsync("entry_id"))
+            .ReturnsAsync(businessContext);
+
+        _mockWebhookParserService
+            .Setup(x => x.ExtractAllMessagesFromEntryAsync(It.IsAny<Entry>()))
+            .ReturnsAsync(new[] { incomingMessage });
+
+        _mockMessageProcessorService
+            .Setup(x => x.ProcessIncomingMessageAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()))
+            .Returns(Task.CompletedTask);
+
+        // Act
+        var response = await _function.Run(request);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        
+        _mockMessageProcessorService.Verify(x => x.ProcessIncomingMessageAsync(
+            businessId, 
+            userNumber, 
+            messageText, 
+            null), Times.Once);
+    }
+
+    [Fact]
+    public async Task Run_PostRequest_WithEmptyEntry_ShouldReturnOk()
+    {
+        // Arrange
+        var webhookDto = new WhatsAppWebhookDto
+        {
+            Entry = new List<Entry>()
+        };
+
+        var request = CreateMockHttpRequestData("POST", "", JsonSerializer.Serialize(webhookDto));
+
+        // Act
+        var response = await _function.Run(request);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        _mockMessageProcessorService.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task Run_PostRequest_WithException_ShouldReturnInternalServerError()
+    {
+        // Arrange
+        var request = CreateMockHttpRequestData("POST", "", "invalid json");
+
+        // Act
+        var response = await _function.Run(request);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.InternalServerError);
+    }
+
+    private HttpRequestData CreateMockHttpRequestData(string method, string queryString, string? body = null)
+    {
+        var context = new Mock<FunctionContext>();
+        return new MockHttpRequestData(context.Object, method, queryString, body);
+    }
+}

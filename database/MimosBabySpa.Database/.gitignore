@@ -1,0 +1,30 @@
+# Build results
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Bb]uild/
+[Bb]in/
+[Oo]bj/
+*.dacpac
+*.bacpac
+
+# Visual Studio files
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.userprefs
+
+# SQL Server files
+*.dbmdl
+*.dbproj.user
+*.dbproj.scc
+
+# Publish profiles
+*.publish.xml
+*.pubxml
+
+# Backup files
+*.bak
+*.backup

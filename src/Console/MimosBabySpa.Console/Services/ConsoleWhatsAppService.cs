@@ -1,0 +1,54 @@
+using Microsoft.Extensions.Logging;
+using MimosBabySpa.Application.Services;
+
+namespace MimosBabySpa.Console.Services;
+
+/// <summary>
+/// Implementación mock de IWhatsAppService para la aplicación de consola.
+/// En lugar de enviar mensajes por WhatsApp, los muestra en la consola.
+/// </summary>
+public class ConsoleWhatsAppService : IWhatsAppService
+{
+    private readonly ILogger<ConsoleWhatsAppService> _logger;
+
+    public ConsoleWhatsAppService(ILogger<ConsoleWhatsAppService> logger)
+    {
+        _logger = logger;
+    }
+
+    public Task SendTextMessageAsync(string to, string message)
+    {
+        System.Console.WriteLine();
+        System.Console.WriteLine("🤖 Bot:");
+        System.Console.WriteLine(message);
+        System.Console.WriteLine();
+        return Task.CompletedTask;
+    }
+
+    public Task SendImageMessageAsync(string to, string imageUrl, string? caption = null)
+    {
+        System.Console.WriteLine();
+        System.Console.WriteLine("🤖 Bot (imagen):");
+        if (!string.IsNullOrEmpty(caption))
+        {
+            System.Console.WriteLine(caption);
+        }
+        System.Console.WriteLine($"📷 URL de imagen: {imageUrl}");
+        System.Console.WriteLine();
+        return Task.CompletedTask;
+    }
+
+    public Task<Stream> DownloadMediaAsync(string mediaId)
+    {
+        // En la aplicación de consola, no podemos descargar media real de WhatsApp
+        // Retornamos un stream vacío o lanzamos excepción según el caso de uso
+        System.Console.WriteLine($"⚠️  Intento de descargar media {mediaId} - No soportado en modo consola");
+        return Task.FromResult<Stream>(new MemoryStream());
+    }
+
+    public Task<bool> VerifyWebhookAsync(string mode, string token, string challenge)
+    {
+        // Para la consola, siempre retornamos true
+        return Task.FromResult(true);
+    }
+}
