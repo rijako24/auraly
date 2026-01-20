@@ -1,14 +1,15 @@
 namespace MimosBabySpa.Domain.Entities;
 
 /// <summary>
-/// Almacena contexto dinámico de una conversación como strings simples.
-/// Cada registro contiene un string de contexto extraído por la IA.
+/// Almacena contexto importante de una conversación extraído por la IA.
+/// Se llena cuando la IA detecta información importante usando la tool update_conversation_state.
 /// </summary>
 public class ConversationContext
 {
     public Guid ConversationContextId { get; set; }
     public Guid ConversationId { get; set; }
-    public string Context { get; set; } = string.Empty; // String de contexto extraído por la IA
+    public string Field { get; set; } = string.Empty; // Campo de información (ej: "customerName", "phone", "babyAgeMonths", etc.)
+    public string Value { get; set; } = string.Empty; // Valor del campo
     public DateTime CreatedAt { get; set; }
     public DateTime? UpdatedAt { get; set; }
     

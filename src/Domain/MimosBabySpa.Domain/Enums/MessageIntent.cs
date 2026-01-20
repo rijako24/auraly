@@ -8,6 +8,7 @@ public enum MessageIntent
     AskPrice,
     Objecion,
     ReservationRequest,
+    AvailabilityRequest,
     TalkToHuman,
     FollowUp
 }

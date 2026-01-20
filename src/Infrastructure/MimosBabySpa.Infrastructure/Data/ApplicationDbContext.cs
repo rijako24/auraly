@@ -19,6 +19,7 @@ public class ApplicationDbContext : DbContext
     public DbSet<BusinessConfiguration> BusinessConfigurations { get; set; }
     public DbSet<SystemConfiguration> SystemConfigurations { get; set; }
     public DbSet<ConversationContext> ConversationContexts { get; set; }
+    public DbSet<Reservation> Reservations { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -107,6 +108,20 @@ public class ApplicationDbContext : DbContext
                   .OnDelete(DeleteBehavior.Cascade);
         });
 
+        // ConversationContext configuration
+        modelBuilder.Entity<ConversationContext>(entity =>
+        {
+            entity.HasKey(e => e.ConversationContextId);
+            entity.Property(e => e.Field).IsRequired().HasMaxLength(100);
+            entity.Property(e => e.Value).IsRequired().HasMaxLength(500);
+            entity.HasOne(e => e.Conversation)
+                  .WithMany(c => c.Contexts)
+                  .HasForeignKey(e => e.ConversationId)
+                  .OnDelete(DeleteBehavior.Cascade);
+            entity.HasIndex(e => e.ConversationId);
+            entity.HasIndex(e => new { e.ConversationId, e.Field }); // Índice compuesto para búsquedas rápidas
+        });
+
         // Message configuration
         modelBuilder.Entity<Message>(entity =>
         {
@@ -136,16 +151,27 @@ public class ApplicationDbContext : DbContext
             entity.HasIndex(e => new { e.BusinessId, e.UserNumber }); // Índice compuesto
         });
 
-        // ConversationContext configuration
-        modelBuilder.Entity<ConversationContext>(entity =>
+        // Reservation configuration
+        modelBuilder.Entity<Reservation>(entity =>
         {
-            entity.HasKey(e => e.ConversationContextId);
-            entity.Property(e => e.Context).IsRequired().HasColumnType("NVARCHAR(MAX)");
-            entity.HasOne(e => e.Conversation)
-                  .WithMany(c => c.Contexts)
-                  .HasForeignKey(e => e.ConversationId)
-                  .OnDelete(DeleteBehavior.Cascade);
-            entity.HasIndex(e => e.ConversationId);
+            entity.HasKey(e => e.ReservationId);
+            entity.Property(e => e.CustomerName).IsRequired().HasMaxLength(100);
+            entity.Property(e => e.PhoneNumber).IsRequired().HasMaxLength(50);
+            entity.Property(e => e.ServiceName).IsRequired().HasMaxLength(200);
+            entity.Property(e => e.ReservationDate).IsRequired();
+            entity.Property(e => e.ReservationTime).IsRequired();
+            entity.Property(e => e.DurationMinutes).IsRequired();
+            entity.Property(e => e.Status)
+                  .HasConversion<int>(); // Convertir enum a int
+            entity.Property(e => e.CalendarEventId).HasMaxLength(500);
+            entity.Property(e => e.Notes).HasMaxLength(1000);
+            entity.HasOne(e => e.Business)
+                  .WithMany(b => b.Reservations)
+                  .HasForeignKey(e => e.BusinessId)
+                  .OnDelete(DeleteBehavior.Restrict);
+            entity.HasIndex(e => e.BusinessId);
+            entity.HasIndex(e => new { e.BusinessId, e.ReservationDate, e.ReservationTime });
+            entity.HasIndex(e => e.PhoneNumber);
         });
     }
 }

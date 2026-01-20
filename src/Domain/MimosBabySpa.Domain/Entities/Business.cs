@@ -15,4 +15,5 @@ public class Business
     public virtual ICollection<BusinessConfiguration> Configurations { get; set; } = new List<BusinessConfiguration>();
     public virtual ICollection<Conversation> Conversations { get; set; } = new List<Conversation>();
     public virtual ICollection<Lead> Leads { get; set; } = new List<Lead>();
+    public virtual ICollection<Reservation> Reservations { get; set; } = new List<Reservation>();
 }

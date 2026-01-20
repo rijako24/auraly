@@ -1,5 +1,4 @@
 using Microsoft.Extensions.Logging;
-using MimosBabySpa.Application.DTOs;
 using MimosBabySpa.Domain.Entities;
 
 namespace MimosBabySpa.Application.Services;
@@ -10,9 +9,8 @@ public class WhatsAppMessageProcessorService : IWhatsAppMessageProcessorService
     private readonly IMessageService _messageService;
     private readonly ILeadService _leadService;
     private readonly IWhatsAppService _whatsAppService;
-    private readonly IAIService _aiService;
+    private readonly IConversationAgent _conversationAgent;
     private readonly IBlobStorageService _blobStorageService;
-    private readonly IConversationContextService _contextService;
     private readonly ILogger<WhatsAppMessageProcessorService> _logger;
 
     public WhatsAppMessageProcessorService(
@@ -20,18 +18,16 @@ public class WhatsAppMessageProcessorService : IWhatsAppMessageProcessorService
         IMessageService messageService,
         ILeadService leadService,
         IWhatsAppService whatsAppService,
-        IAIService aiService,
+        IConversationAgent conversationAgent,
         IBlobStorageService blobStorageService,
-        IConversationContextService contextService,
         ILogger<WhatsAppMessageProcessorService> logger)
     {
         _conversationService = conversationService;
         _messageService = messageService;
         _leadService = leadService;
         _whatsAppService = whatsAppService;
-        _aiService = aiService;
+        _conversationAgent = conversationAgent;
         _blobStorageService = blobStorageService;
-        _contextService = contextService;
         _logger = logger;
     }
 
@@ -53,37 +49,28 @@ public class WhatsAppMessageProcessorService : IWhatsAppMessageProcessorService
             // 2. Obtener o crear lead
             var lead = await _leadService.GetOrCreateLeadAsync(businessId, userNumber, customerName);
 
-            // 3. Clasificar intención y extraer contexto en una sola llamada a la IA
-            var intentAndContext = await _messageService.ClassifyIntentAndExtractContextAsync(businessId, messageText, conversation);
-            var intent = intentAndContext.Intent;
+            // 3. Guardar mensaje del usuario (sin clasificar intención manualmente)
+            await _messageService.SaveMessageAsync(conversation.ConversationId, "User", messageText, "FollowUp");
 
-            // 3.1. Guardar contexto extraído por la IA
-            await SaveContextBatchAsync(conversation.ConversationId, intentAndContext.Context, customerName);
+            // 4. Procesar mensaje con el agente conversacional autónomo
+            // El agente decide cuándo usar tools (check_availability, create_reservation)
+            var agentResponse = await _conversationAgent.ProcessMessageAsync(
+                businessId,
+                messageText,
+                conversation,
+                lead);
 
-            // 4. Guardar mensaje del usuario
-            await _messageService.SaveMessageAsync(conversation.ConversationId, "User", messageText, intent);
+            // 5. Guardar respuesta del bot
+            await _messageService.SaveMessageAsync(conversation.ConversationId, "Bot", agentResponse, "FollowUp");
 
-            // 5. Manejar transferencia a humano
-            if (intent.Equals("TalkToHuman", StringComparison.OrdinalIgnoreCase))
-            {
-                await HandleHumanTransferAsync(userNumber, conversation);
-                return;
-            }
+            // 6. Actualizar contexto de conversación (para compatibilidad)
+            await UpdateConversationContextAsync(conversation, messageText, "FollowUp", lead);
 
-            // 6. Generar respuesta con IA
-            var aiResponse = await _aiService.GenerateResponseAsync(businessId, messageText, conversation, intent, lead);
+            // 7. Enviar respuesta (con soporte para imágenes si aplica)
+            await SendResponseAsync(userNumber, agentResponse, conversation);
 
-            // 7. Guardar respuesta del bot
-            await _messageService.SaveMessageAsync(conversation.ConversationId, "Bot", aiResponse, intent);
-
-            // 8. Actualizar contexto de conversación
-            await UpdateConversationContextAsync(conversation, messageText, intent, lead);
-
-            // 9. Enviar respuesta
-            await SendResponseAsync(userNumber, aiResponse, intent, conversation);
-
-            // 10. Actualizar estado del lead
-            await UpdateLeadStatusAsync(lead, intent);
+            // 8. Actualizar estado del lead si es necesario
+            await UpdateLeadStatusAsync(lead, agentResponse);
         }
         catch (Exception ex)
         {
@@ -93,21 +80,10 @@ public class WhatsAppMessageProcessorService : IWhatsAppMessageProcessorService
         }
     }
 
-    private async Task HandleHumanTransferAsync(string userNumber, Conversation conversation)
-    {
-        var transferMessage = "Perfecto, voy a transferirte con uno de nuestros asesores. " +
-                              "Te contactarán en breve. ¡Gracias por confiar en Mimos Baby Spa! 👶✨";
-        
-        await _whatsAppService.SendTextMessageAsync(userNumber, transferMessage);
-        
-        // Aquí podrías integrar con un sistema de tickets o notificaciones
-        _logger.LogInformation("Transferencia a humano solicitada por {UserNumber}", userNumber);
-    }
 
     private async Task UpdateConversationContextAsync(Conversation conversation, string messageText, string intent, Lead lead)
     {
-        // El contexto ya fue actualizado cuando se clasificó la intención
-        // Solo actualizar LastMessage y LastIntent en Conversation (para compatibilidad)
+        // Actualizar LastMessage y LastIntent en Conversation (para compatibilidad)
         await _conversationService.UpdateConversationContextAsync(
             conversation.ConversationId,
             messageText,
@@ -115,35 +91,22 @@ public class WhatsAppMessageProcessorService : IWhatsAppMessageProcessorService
         );
     }
 
-    private async Task SendResponseAsync(string userNumber, string response, string intent, Conversation conversation)
+    private async Task SendResponseAsync(string userNumber, string response, Conversation conversation)
     {
-        // Si es AskPrice o ReservationRequest, intentar obtener el plan del contexto
-        if (intent.Equals("AskPrice", StringComparison.OrdinalIgnoreCase) ||
-            intent.Equals("ReservationRequest", StringComparison.OrdinalIgnoreCase))
+        // Intentar detectar si hay un plan mencionado en la respuesta para enviar imagen
+        // Buscar directamente en la respuesta del agente
+        var planName = ExtractPlanNameFromResponse(response);
+        
+        if (!string.IsNullOrEmpty(planName))
         {
-            // Buscar el plan recomendado en los contextos (buscar string que contenga "plan recomendado")
-            var allContext = await _contextService.GetAllContextAsync(conversation.ConversationId);
-            var planContext = allContext.FirstOrDefault(c => 
-                c.Contains("plan recomendado", StringComparison.OrdinalIgnoreCase) || 
-                c.Contains("plan", StringComparison.OrdinalIgnoreCase));
-            
-            if (!string.IsNullOrEmpty(planContext))
+            var imageFileName = await GetPlanImageFileNameAsync(planName, conversation.BusinessId);
+            if (!string.IsNullOrEmpty(imageFileName))
             {
-                // Extraer el nombre del plan del string (ej: "El plan recomendado es Plan Marineritos")
-                var planName = ExtractPlanNameFromContext(planContext);
-                
-                if (!string.IsNullOrEmpty(planName))
+                var imageUrl = await _blobStorageService.GetImageUrlAsync(imageFileName);
+                if (!string.IsNullOrEmpty(imageUrl))
                 {
-                    var imageFileName = await GetPlanImageFileNameAsync(planName, conversation.BusinessId);
-                    if (!string.IsNullOrEmpty(imageFileName))
-                    {
-                        var imageUrl = await _blobStorageService.GetImageUrlAsync(imageFileName);
-                        if (!string.IsNullOrEmpty(imageUrl))
-                        {
-                            await _whatsAppService.SendImageMessageAsync(userNumber, imageUrl, response);
-                            return;
-                        }
-                    }
+                    await _whatsAppService.SendImageMessageAsync(userNumber, imageUrl, response);
+                    return;
                 }
             }
         }
@@ -152,21 +115,22 @@ public class WhatsAppMessageProcessorService : IWhatsAppMessageProcessorService
         await _whatsAppService.SendTextMessageAsync(userNumber, response);
     }
 
-    private string? ExtractPlanNameFromContext(string contextString)
+    private string? ExtractPlanNameFromResponse(string response)
     {
-        // Buscar patrones como "Plan Marineritos", "Plan Aventuras Marinas", etc.
+        // Buscar patrones como "Plan Marineritos", "Plan Aventuras Marinas", etc. en la respuesta
         var planMatch = System.Text.RegularExpressions.Regex.Match(
-            contextString, 
+            response, 
             @"Plan\s+([A-Za-záéíóúñÁÉÍÓÚÑ\s]+)", 
             System.Text.RegularExpressions.RegexOptions.IgnoreCase);
         
-        if (planMatch.Success && planMatch.Groups.Count > 1)
+        if (planMatch.Success && planMatch.Groups.Count > 0)
         {
             return planMatch.Groups[0].Value.Trim(); // Retornar "Plan Marineritos" completo
         }
         
         return null;
     }
+
 
     private Task<string> GetPlanImageFileNameAsync(string planName, Guid businessId)
     {
@@ -181,14 +145,14 @@ public class WhatsAppMessageProcessorService : IWhatsAppMessageProcessorService
         return Task.FromResult($"plan-{normalizedPlanName}.jpg");
     }
 
-    private async Task UpdateLeadStatusAsync(Lead lead, string intent)
+    private async Task UpdateLeadStatusAsync(Lead lead, string agentResponse)
     {
-        var newStatus = intent switch
-        {
-            "ReservationRequest" => "Closed",
-            "AskPrice" or "FollowUp" => "Contacted",
-            _ => lead.Status
-        };
+        // Detectar si la respuesta indica una reserva exitosa
+        var reservationKeywords = new[] { "reserva confirmada", "reserva creada", "reservación exitosa", "confirmada" };
+        var isReservationConfirmed = reservationKeywords.Any(keyword => 
+            agentResponse.Contains(keyword, StringComparison.OrdinalIgnoreCase));
+
+        var newStatus = isReservationConfirmed ? "Closed" : "Contacted";
 
         if (newStatus != lead.Status)
         {
@@ -196,32 +160,5 @@ public class WhatsAppMessageProcessorService : IWhatsAppMessageProcessorService
         }
     }
 
-    private async Task SaveContextBatchAsync(Guid conversationId, List<string> aiContexts, string? customerName)
-    {
-        var contextsToSave = new List<string>();
 
-        // Agregar todos los contextos de la IA (filtrando vacíos)
-        if (aiContexts.Any())
-        {
-            contextsToSave.AddRange(aiContexts.Where(c => !string.IsNullOrWhiteSpace(c)));
-        }
-
-        // Agregar CustomerName si está disponible
-        if (!string.IsNullOrEmpty(customerName))
-        {
-            var customerNameContext = $"El cliente se llama {customerName}";
-            // Verificar que no esté ya en la lista antes de agregar
-            if (!contextsToSave.Any(c => 
-                c.Equals(customerNameContext, StringComparison.OrdinalIgnoreCase)))
-            {
-                contextsToSave.Add(customerNameContext);
-            }
-        }
-
-        // Guardar todos los contextos en batch (validación de duplicados incluida)
-        if (contextsToSave.Any())
-        {
-            await _contextService.AddContextBatchAsync(conversationId, contextsToSave);
-        }
-    }
 }

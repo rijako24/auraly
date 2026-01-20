@@ -4,10 +4,8 @@ namespace MimosBabySpa.Domain.Repositories;
 
 public interface IConversationContextRepository
 {
+    Task<ConversationContext?> GetByConversationIdAndFieldAsync(Guid conversationId, string field);
+    Task<ConversationContext> CreateOrUpdateAsync(Guid conversationId, string field, string value);
     Task<IEnumerable<ConversationContext>> GetByConversationIdAsync(Guid conversationId);
-    Task<ConversationContext> CreateAsync(Guid conversationId, string context);
-    Task<int> CreateBatchAsync(Guid conversationId, IEnumerable<string> contexts);
-    Task DeleteAsync(Guid conversationContextId);
     Task DeleteByConversationIdAsync(Guid conversationId);
-    Task<bool> ExistsAsync(Guid conversationId, string context);
 }

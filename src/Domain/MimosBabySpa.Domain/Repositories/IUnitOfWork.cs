@@ -10,6 +10,7 @@ public interface IUnitOfWork : IDisposable
     IBusinessConfigurationRepository BusinessConfigurations { get; }
     ISystemConfigurationRepository SystemConfigurations { get; }
     IConversationContextRepository ConversationContexts { get; }
+    IReservationRepository Reservations { get; }
     
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

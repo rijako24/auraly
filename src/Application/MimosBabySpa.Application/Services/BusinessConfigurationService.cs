@@ -71,31 +71,28 @@ public class BusinessConfigurationService : IBusinessConfigurationService
     public async Task<string> BuildSystemPromptAsync(Guid businessId)
     {
         var businessConfig = await GetConfigurationAsync(businessId);
-        // Solo necesitamos una configuración del sistema
         var toneAndStyle = await GetSystemConfigurationAsync(SystemConfigurationKey.ToneAndStyle);
 
         var promptBuilder = new StringBuilder();
         
-        // PERSONA/IDENTIDAD (primera configuración del negocio, debe ir primero)
-        if (businessConfig.HasKey(BusinessConfigurationKey.Persona))
-        {
-            promptBuilder.AppendLine(businessConfig.GetValue(BusinessConfigurationKey.Persona));
-            promptBuilder.AppendLine();
-        }
-
-        // TONO Y ESTILO (genérico del sistema, después de la persona)
+        // FECHA ACTUAL (siempre primero para que la IA sepa qué día es hoy)
+        var today = DateTime.UtcNow;
+        // Colombia está en UTC-5
+        var colombiaOffset = TimeSpan.FromHours(-5);
+        var todayColombia = today.Add(colombiaOffset);
+        promptBuilder.AppendLine($"FECHA Y HORA ACTUAL: Hoy es {todayColombia:dddd, dd 'de' MMMM 'de' yyyy} (formato: {todayColombia:yyyy-MM-dd}). La hora actual es {todayColombia:HH:mm} (hora de Colombia, UTC-5).");
+        promptBuilder.AppendLine();
+        
+        // TONO Y ESTILO (genérico del sistema)
         if (!string.IsNullOrEmpty(toneAndStyle))
         {
             promptBuilder.AppendLine(toneAndStyle);
             promptBuilder.AppendLine();
         }
 
-        // Agregar todas las demás configuraciones del negocio dinámicamente (excluyendo Persona que ya se agregó)
-        foreach (var kvp in businessConfig.Configurations.Where(c => c.Key != BusinessConfigurationKey.Persona))
+        if (businessConfig.HasKey(BusinessConfigurationKey.BusinessInformation))
         {
-            promptBuilder.AppendLine($"{kvp.Key}:");
-            promptBuilder.AppendLine(kvp.Value);
-            promptBuilder.AppendLine();
+            promptBuilder.AppendLine(businessConfig.GetValue(BusinessConfigurationKey.BusinessInformation));
         }
 
         return promptBuilder.ToString();

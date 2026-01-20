@@ -14,6 +14,7 @@ public class UnitOfWork : IUnitOfWork
     private IBusinessConfigurationRepository? _businessConfigurations;
     private ISystemConfigurationRepository? _systemConfigurations;
     private IConversationContextRepository? _conversationContexts;
+    private IReservationRepository? _reservations;
 
     public UnitOfWork(ApplicationDbContext context)
     {
@@ -43,6 +44,9 @@ public class UnitOfWork : IUnitOfWork
 
     public IConversationContextRepository ConversationContexts =>
         _conversationContexts ??= new ConversationContextRepository(_context);
+
+    public IReservationRepository Reservations =>
+        _reservations ??= new ReservationRepository(_context);
 
     public async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {

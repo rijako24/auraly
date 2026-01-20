@@ -1,4 +1,4 @@
-﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -8,6 +8,7 @@ using MimosBabySpa.Domain.Repositories;
 using MimosBabySpa.Infrastructure.Data;
 using MimosBabySpa.Infrastructure.Repositories;
 using MimosBabySpa.Infrastructure.Services;
+using MimosBabySpa.Infrastructure.Configuration;
 using MimosBabySpa.Console.Services;
 using Azure.Storage.Blobs;
 using Azure.AI.OpenAI;
@@ -49,16 +50,35 @@ services.AddScoped<IUnitOfWork, UnitOfWork>();
 services.AddScoped<IConversationRepository, ConversationRepository>();
 services.AddScoped<IMessageRepository, MessageRepository>();
 services.AddScoped<ILeadRepository, LeadRepository>();
+services.AddScoped<IReservationRepository, ReservationRepository>();
 
 // Application Services
 services.AddScoped<IConversationService, ConversationService>();
 services.AddScoped<IMessageService, MessageService>();
 services.AddScoped<ILeadService, LeadService>();
+services.AddScoped<IReservationService, ReservationService>();
 services.AddScoped<IBusinessIdentificationService, BusinessIdentificationService>();
 services.AddScoped<IBusinessConfigurationService, BusinessConfigurationService>();
-services.AddScoped<IConversationContextService, ConversationContextService>();
 services.AddScoped<IWhatsAppMessageProcessorService, WhatsAppMessageProcessorService>();
 services.AddScoped<IWhatsAppWebhookParserService, WhatsAppWebhookParserService>();
+
+// New Agent Services
+services.AddScoped<IToolDispatcher, ToolDispatcher>();
+services.AddScoped<IConversationAgent>(sp =>
+{
+    var client = sp.GetRequiredService<OpenAIClient>();
+    var config = sp.GetRequiredService<IConfiguration>();
+    var textDeploymentName = config["OpenAI:TextDeploymentName"] ?? "gpt-4o-mini";
+    var toolDispatcher = sp.GetRequiredService<IToolDispatcher>();
+    var businessConfigService = sp.GetRequiredService<IBusinessConfigurationService>();
+    
+    return new ConversationAgent(
+        client,
+        textDeploymentName,
+        toolDispatcher,
+        businessConfigService,
+        sp.GetRequiredService<ILogger<ConversationAgent>>());
+});
 
 // Infrastructure Services - WhatsApp (Mock para consola)
 // Usamos ConsoleWhatsAppService que muestra las respuestas en consola en lugar de enviarlas por WhatsApp
@@ -82,12 +102,11 @@ services.AddScoped<IAIService>(sp =>
 {
     var client = sp.GetRequiredService<OpenAIClient>();
     var config = sp.GetRequiredService<IConfiguration>();
-    var textDeploymentName = config["OpenAI:TextDeploymentName"] ?? "gpt-4o-mini";
-    var audioDeploymentName = config["OpenAI:AudioDeploymentName"] ?? "whisper-1";
-    var businessConfigService = sp.GetRequiredService<IBusinessConfigurationService>();
-    var contextService = sp.GetRequiredService<IConversationContextService>();
-    
-    return new AIService(client, textDeploymentName, audioDeploymentName, businessConfigService, contextService, sp.GetRequiredService<ILogger<AIService>>());
+            var textDeploymentName = config["OpenAI:TextDeploymentName"] ?? "gpt-4o-mini";
+            var audioDeploymentName = config["OpenAI:AudioDeploymentName"] ?? "whisper-1";
+            var businessConfigService = sp.GetRequiredService<IBusinessConfigurationService>();
+            
+            return new AIService(client, textDeploymentName, audioDeploymentName, businessConfigService, sp.GetRequiredService<ILogger<AIService>>());
 });
 
 // Infrastructure Services - Blob Storage (Mock para consola)
@@ -97,6 +116,18 @@ services.AddScoped<IBlobStorageService>(sp =>
     var logger = sp.GetRequiredService<ILogger<ConsoleBlobStorageService>>();
     return new ConsoleBlobStorageService(logger);
 });
+
+// Calendar Configuration (Options Pattern)
+services.Configure<CalendarSettings>(
+    configuration.GetSection(CalendarSettings.SectionName));
+
+// Infrastructure Services - Calendar
+services.AddHttpClient();
+services.AddHttpClient<GoogleCalendarService>(client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(30);
+});
+services.AddScoped<ICalendarService, GoogleCalendarService>();
 
 // Construir el service provider
 var serviceProvider = services.BuildServiceProvider();
