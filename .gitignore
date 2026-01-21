@@ -50,5 +50,7 @@ local.settings.json
 .DS_Store
 
 # App settings (contiene credenciales)
+**/appsettings.json
 **/appsettings.Development.json
 **/appsettings.Production.json
+!**/appsettings.json.example
