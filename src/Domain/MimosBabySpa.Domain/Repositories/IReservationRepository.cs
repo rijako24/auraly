@@ -15,7 +15,8 @@ public interface IReservationRepository
     Task<Reservation> UpdateAsync(Reservation reservation);
     Task<bool> ExistsOverlappingReservationAsync(
         Guid businessId, 
-        DateTime startDateTime, 
-        DateTime endDateTime, 
+        DateTime reservationDate, 
+        TimeSpan reservationTime, 
+        int durationMinutes, 
         Guid? excludeReservationId = null);
 }

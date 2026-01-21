@@ -11,17 +11,20 @@ public class ReservationService : IReservationService
     private readonly IUnitOfWork _unitOfWork;
     private readonly ICalendarService _calendarService;
     private readonly IBusinessConfigurationService _businessConfigService;
+    private readonly INotesFormatterService _notesFormatterService;
     private readonly ILogger<ReservationService> _logger;
 
     public ReservationService(
         IUnitOfWork unitOfWork,
         ICalendarService calendarService,
         IBusinessConfigurationService businessConfigService,
+        INotesFormatterService notesFormatterService,
         ILogger<ReservationService> logger)
     {
         _unitOfWork = unitOfWork;
         _calendarService = calendarService;
         _businessConfigService = businessConfigService;
+        _notesFormatterService = notesFormatterService;
         _logger = logger;
     }
 
@@ -38,16 +41,17 @@ public class ReservationService : IReservationService
                 throw new InvalidOperationException($"El negocio con ID {reservation.BusinessId} no existe.");
             }
 
-            // Template por defecto para eventos de calendario
-            // El template puede estar en BusinessInformation o usar uno por defecto
-            var reservationTemplate = $@"Reserva confirmada para {reservation.CustomerName}
-Servicio: {reservation.ServiceName}
-Fecha: {reservation.ReservationDate:dd/MM/yyyy}
-Hora: {reservation.ReservationTime:hh\:mm}
-Duración: {reservation.DurationMinutes} minutos
-Teléfono: {reservation.PhoneNumber}
+            // Template genérico para eventos de calendario
+            // Solo usa campos genéricos: service, date, time, durationMinutes
+            // Toda la información adicional viene en Notes y se formatea de forma legible
+            var notesInfo = _notesFormatterService.FormatNotes(reservation.Notes);
+            
+            var reservationTemplate = $@"Reserva confirmada
 
-¡Esperamos verte pronto!";
+                                        Servicio: {reservation.ServiceName}
+                                        Fecha: {reservation.ReservationDate:dd/MM/yyyy}
+                                        Hora: {reservation.ReservationTime:hh\:mm}
+                                        Duración: {reservation.DurationMinutes} minutos{notesInfo}";
 
             // Asegurar que ReservationId esté asignado
             if (reservation.ReservationId == Guid.Empty)
@@ -72,9 +76,9 @@ Teléfono: {reservation.PhoneNumber}
             await _unitOfWork.SaveChangesAsync(cancellationToken);
 
             _logger.LogInformation(
-                "Reserva creada exitosamente: {ReservationId} para {CustomerName} el {Date} a las {Time}",
+                "Reserva creada exitosamente: {ReservationId} para servicio {ServiceName} el {Date} a las {Time}",
                 createdReservation.ReservationId,
-                createdReservation.CustomerName,
+                createdReservation.ServiceName,
                 createdReservation.ReservationDate,
                 createdReservation.ReservationTime);
 
@@ -84,8 +88,8 @@ Teléfono: {reservation.PhoneNumber}
                 // Usar el template (ya tiene los valores reemplazados o es el template por defecto)
                 var description = reservationTemplate;
 
-                // Título del evento
-                var title = $"[{reservation.ServiceName}] {reservation.CustomerName}";
+                // Título genérico del evento - solo usa el servicio
+                var title = $"[{reservation.ServiceName}] Reserva";
 
                 var calendarEvent = new CalendarEvent
                 {
@@ -96,8 +100,7 @@ Teléfono: {reservation.PhoneNumber}
                     ExtendedProperties = new Dictionary<string, string>
                     {
                         { "ReservationId", reservation.ReservationId.ToString() },
-                        { "BusinessId", reservation.BusinessId.ToString() },
-                        { "PhoneNumber", reservation.PhoneNumber }
+                        { "BusinessId", reservation.BusinessId.ToString() }
                     }
                 };
 
@@ -134,7 +137,7 @@ Teléfono: {reservation.PhoneNumber}
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error al crear reserva para {CustomerName}", reservation.CustomerName);
+            _logger.LogError(ex, "Error al crear reserva para servicio {ServiceName}", reservation.ServiceName);
             throw;
         }
     }

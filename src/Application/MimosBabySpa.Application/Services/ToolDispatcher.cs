@@ -92,7 +92,7 @@ public class ToolDispatcher : IToolDispatcher
 
             var args = toolCall.Arguments.Value;
             
-            // Extraer parámetros
+            // Extraer parámetros requeridos: service, date
             if (!args.TryGetProperty("service", out var serviceProp) || 
                 !args.TryGetProperty("date", out var dateProp))
             {
@@ -119,7 +119,7 @@ public class ToolDispatcher : IToolDispatcher
                 };
             }
 
-            // La IA debe proporcionar la hora específica a verificar (opcional)
+            // La hora y duración son opcionales para verificar disponibilidad
             // Si se proporciona time, también debe proporcionar durationMinutes
             TimeSpan? timeToCheck = null;
             int? durationMinutes = null;
@@ -150,14 +150,11 @@ public class ToolDispatcher : IToolDispatcher
             // Si se proporciona hora específica, verificar solo ese horario
             if (timeToCheck.HasValue && durationMinutes.HasValue)
             {
-                var startDateTime = date.Date.Add(timeToCheck.Value);
-                var endDateTime = startDateTime.AddMinutes(durationMinutes.Value);
-
-                var isAvailable = await _calendarService.IsAvailableAsync(startDateTime, endDateTime, cancellationToken);
                 var hasConflict = await _unitOfWork.Reservations.ExistsOverlappingReservationAsync(
                     businessId,
-                    startDateTime,
-                    endDateTime);
+                    date.Date,
+                    timeToCheck.Value,
+                    durationMinutes.Value);
 
                 var result = new
                 {
@@ -165,7 +162,7 @@ public class ToolDispatcher : IToolDispatcher
                     date = date.ToString("yyyy-MM-dd"),
                     time = timeToCheck.Value.ToString(@"hh\:mm"),
                     durationMinutes = durationMinutes.Value,
-                    available = isAvailable && !hasConflict
+                    available = !hasConflict
                 };
 
                 return new ToolCallResult
@@ -199,7 +196,10 @@ public class ToolDispatcher : IToolDispatcher
                     service = service,
                     date = date.ToString("yyyy-MM-dd"),
                     bookedSlots = bookedSlots,
-                    message = "Consulta los horarios disponibles en la información del negocio. Los horarios ocupados son:"
+                    totalBookedSlots = bookedSlots.Count,
+                    message = bookedSlots.Count == 0 
+                        ? "No hay reservas para esta fecha. Todos los horarios de atención están disponibles según los horarios del negocio."
+                        : $"Hay {bookedSlots.Count} reserva(s) confirmada(s) para esta fecha. Los demás horarios dentro del horario de atención del negocio están disponibles."
                 };
 
                 return new ToolCallResult
@@ -244,8 +244,8 @@ public class ToolDispatcher : IToolDispatcher
 
             var args = toolCall.Arguments.Value;
 
-            // Validar y extraer parámetros requeridos
-            var requiredParams = new[] { "customerName", "phone", "babyAgeMonths", "service", "date", "time", "durationMinutes" };
+            // Validar y extraer parámetros requeridos (solo los genéricos)
+            var requiredParams = new[] { "service", "date", "time", "durationMinutes" };
             var missingParams = requiredParams.Where(p => !args.TryGetProperty(p, out _)).ToList();
             
             if (missingParams.Any())
@@ -259,9 +259,6 @@ public class ToolDispatcher : IToolDispatcher
                 };
             }
 
-            var customerName = args.GetProperty("customerName").GetString() ?? string.Empty;
-            var phone = args.GetProperty("phone").GetString() ?? string.Empty;
-            var babyAgeMonths = args.GetProperty("babyAgeMonths").GetInt32();
             var service = args.GetProperty("service").GetString() ?? string.Empty;
             var dateStr = args.GetProperty("date").GetString() ?? string.Empty;
             var timeStr = args.GetProperty("time").GetString() ?? string.Empty;
@@ -305,27 +302,27 @@ public class ToolDispatcher : IToolDispatcher
             }
             durationMinutes = durationProp.GetInt32();
 
+            // Extraer información adicional opcional para Notes
+            // La IA debe enviar toda la información adicional en el campo "notes" como string
+            string? notes = null;
+            if (args.TryGetProperty("notes", out var notesProp) && notesProp.ValueKind == JsonValueKind.String)
+            {
+                var notesValue = notesProp.GetString();
+                if (!string.IsNullOrWhiteSpace(notesValue))
+                {
+                    notes = notesValue;
+                }
+            }
+
             var startDateTime = date.Date.Add(time);
             var endDateTime = startDateTime.AddMinutes(durationMinutes);
-
-            // Verificar disponibilidad antes de crear
-            var isAvailable = await _calendarService.IsAvailableAsync(startDateTime, endDateTime, cancellationToken);
-            if (!isAvailable)
-            {
-                return new ToolCallResult
-                {
-                    ToolCallId = toolCall.Id,
-                    ToolName = toolCall.Name,
-                    IsError = true,
-                    ErrorMessage = $"El horario {dateStr} {timeStr} no está disponible"
-                };
-            }
 
             // Verificar también en base de datos
             var hasConflict = await _unitOfWork.Reservations.ExistsOverlappingReservationAsync(
                 businessId,
-                startDateTime,
-                endDateTime);
+                date.Date,
+                time,
+                durationMinutes);
 
             if (hasConflict)
             {
@@ -338,17 +335,19 @@ public class ToolDispatcher : IToolDispatcher
                 };
             }
 
-            // Crear la reserva
+            // Crear la reserva con solo los campos genéricos
+            // CustomerName y PhoneNumber se dejan vacíos o se pueden obtener de Notes si es necesario
             var reservation = new Reservation
             {
                 ReservationId = Guid.NewGuid(),
                 BusinessId = businessId,
-                CustomerName = customerName,
-                PhoneNumber = phone,
+                CustomerName = string.Empty, // Genérico - no aplica a todos los negocios
+                PhoneNumber = string.Empty, // Genérico - no aplica a todos los negocios
                 ServiceName = service,
                 ReservationDate = date.Date,
                 ReservationTime = time,
                 DurationMinutes = durationMinutes,
+                Notes = notes, // Cualquier información adicional específica del negocio va aquí
                 Status = Domain.Enums.ReservationStatus.Pending,
                 CreatedAt = DateTime.UtcNow
             };
@@ -359,10 +358,10 @@ public class ToolDispatcher : IToolDispatcher
             {
                 success = true,
                 reservationId = reservationDto.ReservationId.ToString(),
-                customerName = reservationDto.CustomerName,
                 service = reservationDto.ServiceName,
                 date = reservationDto.ReservationDate.ToString("yyyy-MM-dd"),
                 time = reservationDto.ReservationTime.ToString(@"hh\:mm"),
+                durationMinutes = reservationDto.DurationMinutes,
                 status = reservationDto.Status.ToString()
             };
 
@@ -525,7 +524,11 @@ public class ToolDispatcher : IToolDispatcher
                 ""time"": {
                     ""type"": ""string"",
                     ""pattern"": ""^\\d{2}:\\d{2}$"",
-                    ""description"": ""Hora específica a verificar (opcional, formato: HH:mm). Si no se proporciona, devuelve todas las reservas del día""
+                    ""description"": ""Hora específica a verificar (opcional, formato: HH:mm). Si se proporciona, también se requiere durationMinutes. Si no se proporciona, devuelve todas las reservas del día""
+                },
+                ""durationMinutes"": {
+                    ""type"": ""integer"",
+                    ""description"": ""Duración del servicio en minutos (requerido si se proporciona 'time', debe obtenerse de BusinessInformation en el prompt)""
                 }
             },
             ""required"": [""service"", ""date""]
@@ -534,7 +537,7 @@ public class ToolDispatcher : IToolDispatcher
         _availableTools.Add(new ToolDefinition
         {
             Name = "check_availability",
-            Description = "Verifica disponibilidad de horarios para un servicio y una fecha determinada. Si se proporciona 'time', verifica ese horario específico. Si no, devuelve todas las reservas del día. La información de horarios de atención y duraciones de servicios está en el prompt del sistema.",
+            Description = "Verifica disponibilidad de horarios para un servicio y una fecha determinada. Si se proporciona 'time', también se debe proporcionar 'durationMinutes' para verificar ese horario específico (devuelve 'available: true/false'). Si NO se proporciona 'time', devuelve todas las reservas confirmadas del día en 'bookedSlots' y un mensaje explicativo. IMPORTANTE: Los 'bookedSlots' son SOLO las reservas confirmadas del día. Los demás horarios dentro del horario de atención del negocio están DISPONIBLES. Una reserva en un horario específico NO significa que todo el día esté ocupado. Siempre consulta los horarios de atención del negocio en la información proporcionada para determinar qué horarios están disponibles.",
             ParametersSchema = checkAvailabilitySchema
         });
 
@@ -542,18 +545,6 @@ public class ToolDispatcher : IToolDispatcher
         var createReservationSchema = JsonDocument.Parse(@"{
             ""type"": ""object"",
             ""properties"": {
-                ""customerName"": {
-                    ""type"": ""string"",
-                    ""description"": ""Nombre completo del cliente""
-                },
-                ""phone"": {
-                    ""type"": ""string"",
-                    ""description"": ""Número de teléfono del cliente (formato WhatsApp)""
-                },
-                ""babyAgeMonths"": {
-                    ""type"": ""integer"",
-                    ""description"": ""Edad del bebé en meses""
-                },
                 ""service"": {
                     ""type"": ""string"",
                     ""description"": ""Nombre del servicio o plan a reservar""
@@ -571,15 +562,19 @@ public class ToolDispatcher : IToolDispatcher
                 ""durationMinutes"": {
                     ""type"": ""integer"",
                     ""description"": ""Duración del servicio en minutos (debe obtenerse de BusinessInformation en el prompt)""
+                },
+                ""notes"": {
+                    ""type"": ""string"",
+                    ""description"": ""Información adicional opcional sobre la reserva. Formato: JSON string con pares clave-valor. Ejemplo: '{\""customerName\"":\""Juan Pérez\"",\""phone\"":\""+1234567890\"",\""age\"":\""6 meses\""}'. Incluye cualquier información relevante para el tipo de negocio (nombre del cliente, teléfono, edad, preferencias, etc.) en formato JSON string.""
                 }
             },
-            ""required"": [""customerName"", ""phone"", ""babyAgeMonths"", ""service"", ""date"", ""time"", ""durationMinutes""]
+            ""required"": [""service"", ""date"", ""time"", ""durationMinutes""]
         }");
 
         _availableTools.Add(new ToolDefinition
         {
             Name = "create_reservation",
-            Description = "Crea una reserva en el sistema y genera un evento real en el calendario del negocio.",
+            Description = "Crea una reserva en el sistema y genera un evento real en el calendario del negocio. Solo requiere campos genéricos: servicio, fecha, hora y duración. Para información adicional específica del negocio (nombre del cliente, teléfono, edad, preferencias, etc.), envía todo en el campo opcional 'notes' como un JSON string con formato: '{\"clave\":\"valor\",\"otraClave\":\"otroValor\"}'. Ejemplo: '{\"customerName\":\"Juan Pérez\",\"phone\":\"+1234567890\",\"age\":\"6 meses\"}'.",
             ParametersSchema = createReservationSchema
         });
 

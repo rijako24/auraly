@@ -67,20 +67,41 @@ public class ReservationRepository : IReservationRepository
 
     public async Task<bool> ExistsOverlappingReservationAsync(
         Guid businessId, 
-        DateTime startDateTime, 
-        DateTime endDateTime, 
+        DateTime reservationDate, 
+        TimeSpan reservationTime, 
+        int durationMinutes, 
         Guid? excludeReservationId = null)
     {
-        var query = _context.Reservations
+        // Traer todas las reservas del día y validar solapamiento en memoria
+        // Dos intervalos se solapan si: start1 < end2 && end1 > start2
+        
+        // Calcular DateTime de inicio y fin para la nueva reserva
+        var newStartDateTime = reservationDate.Date.Add(reservationTime);
+        var newEndDateTime = newStartDateTime.AddMinutes(durationMinutes);
+        
+        // Traer todas las reservas del día desde la base de datos
+        var reservations = await _context.Reservations
             .Where(r => r.BusinessId == businessId &&
                        r.Status != Domain.Enums.ReservationStatus.Cancelled &&
-                       ((r.ReservationDateTime < endDateTime && r.EndDateTime > startDateTime)));
+                       r.ReservationDate == reservationDate.Date)
+            .Select(r => new
+            {
+                r.ReservationId,
+                r.ReservationDate,
+                r.ReservationTime,
+                r.DurationMinutes
+            })
+            .ToListAsync();
 
-        if (excludeReservationId.HasValue)
-        {
-            query = query.Where(r => r.ReservationId != excludeReservationId.Value);
-        }
-
-        return await query.AnyAsync();
+        // Validar solapamiento en memoria usando LINQ
+        // Dos intervalos se solapan si: start1 < end2 && end1 > start2
+        return reservations
+            .Where(r => !excludeReservationId.HasValue || r.ReservationId != excludeReservationId.Value)
+            .Any(r =>
+            {
+                var reservationStartDateTime = r.ReservationDate.Date.Add(r.ReservationTime);
+                var reservationEndDateTime = reservationStartDateTime.AddMinutes(r.DurationMinutes);
+                return reservationStartDateTime < newEndDateTime && reservationEndDateTime > newStartDateTime;
+            });
     }
 }

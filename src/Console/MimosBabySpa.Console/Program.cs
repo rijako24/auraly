@@ -56,6 +56,7 @@ services.AddScoped<IReservationRepository, ReservationRepository>();
 services.AddScoped<IConversationService, ConversationService>();
 services.AddScoped<IMessageService, MessageService>();
 services.AddScoped<ILeadService, LeadService>();
+services.AddScoped<INotesFormatterService, NotesFormatterService>();
 services.AddScoped<IReservationService, ReservationService>();
 services.AddScoped<IBusinessIdentificationService, BusinessIdentificationService>();
 services.AddScoped<IBusinessConfigurationService, BusinessConfigurationService>();
@@ -144,8 +145,8 @@ Console.WriteLine("Escribe 'exit' o 'quit' para salir.");
 Console.WriteLine();
 
 // Número de teléfono simulado (puedes cambiarlo)
-var userNumber = "+1234567890";
-var customerName = "Usuario de Prueba";
+var userNumber = "+1234567891";
+var customerName = "Bill";
 
 while (true)
 {
