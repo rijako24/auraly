@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using MimosBabySpa.Infrastructure.Data;
 
@@ -11,9 +12,11 @@ using MimosBabySpa.Infrastructure.Data;
 namespace MimosBabySpa.Infrastructure.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260122235811_AddResourceManagementAndConversationState")]
+    partial class AddResourceManagementAndConversationState
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -248,67 +251,6 @@ namespace MimosBabySpa.Infrastructure.Migrations
                     b.ToTable("ConversationContexts");
                 });
 
-            modelBuilder.Entity("MimosBabySpa.Domain.Entities.Employee", b =>
-                {
-                    b.Property<Guid>("EmployeeId")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<Guid>("BusinessId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("datetime2");
-
-                    b.Property<bool>("IsActive")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("bit")
-                        .HasDefaultValue(true);
-
-                    b.Property<string>("Name")
-                        .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("nvarchar(200)");
-
-                    b.Property<DateTime?>("UpdatedAt")
-                        .HasColumnType("datetime2");
-
-                    b.HasKey("EmployeeId");
-
-                    b.HasIndex("BusinessId");
-
-                    b.HasIndex("BusinessId", "Name");
-
-                    b.ToTable("Employees");
-                });
-
-            modelBuilder.Entity("MimosBabySpa.Domain.Entities.EmployeeService", b =>
-                {
-                    b.Property<Guid>("EmployeeServiceId")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("datetime2");
-
-                    b.Property<Guid>("EmployeeId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<Guid>("ServiceId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.HasKey("EmployeeServiceId");
-
-                    b.HasIndex("EmployeeId");
-
-                    b.HasIndex("ServiceId");
-
-                    b.HasIndex("EmployeeId", "ServiceId")
-                        .IsUnique();
-
-                    b.ToTable("EmployeeServices");
-                });
-
             modelBuilder.Entity("MimosBabySpa.Domain.Entities.Lead", b =>
                 {
                     b.Property<Guid>("LeadId")
@@ -404,9 +346,6 @@ namespace MimosBabySpa.Infrastructure.Migrations
                     b.Property<int>("DurationMinutes")
                         .HasColumnType("int");
 
-                    b.Property<Guid>("EmployeeId")
-                        .HasColumnType("uniqueidentifier");
-
                     b.Property<string>("Notes")
                         .HasMaxLength(1000)
                         .HasColumnType("nvarchar(1000)");
@@ -419,8 +358,10 @@ namespace MimosBabySpa.Infrastructure.Migrations
                     b.Property<DateTime>("ReservationDateTime")
                         .HasColumnType("datetime2");
 
-                    b.Property<Guid>("ServiceId")
-                        .HasColumnType("uniqueidentifier");
+                    b.Property<string>("ServiceName")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
 
                     b.Property<int>("Status")
                         .HasColumnType("int");
@@ -432,15 +373,9 @@ namespace MimosBabySpa.Infrastructure.Migrations
 
                     b.HasIndex("BusinessId");
 
-                    b.HasIndex("EmployeeId");
-
                     b.HasIndex("PhoneNumber");
 
-                    b.HasIndex("ServiceId");
-
                     b.HasIndex("BusinessId", "ReservationDateTime");
-
-                    b.HasIndex("EmployeeId", "ReservationDateTime");
 
                     b.ToTable("Reservations");
                 });
@@ -671,36 +606,6 @@ namespace MimosBabySpa.Infrastructure.Migrations
                     b.Navigation("Conversation");
                 });
 
-            modelBuilder.Entity("MimosBabySpa.Domain.Entities.Employee", b =>
-                {
-                    b.HasOne("MimosBabySpa.Domain.Entities.Business", "Business")
-                        .WithMany()
-                        .HasForeignKey("BusinessId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.Navigation("Business");
-                });
-
-            modelBuilder.Entity("MimosBabySpa.Domain.Entities.EmployeeService", b =>
-                {
-                    b.HasOne("MimosBabySpa.Domain.Entities.Employee", "Employee")
-                        .WithMany("EmployeeServices")
-                        .HasForeignKey("EmployeeId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.HasOne("MimosBabySpa.Domain.Entities.Service", "Service")
-                        .WithMany()
-                        .HasForeignKey("ServiceId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.Navigation("Employee");
-
-                    b.Navigation("Service");
-                });
-
             modelBuilder.Entity("MimosBabySpa.Domain.Entities.Lead", b =>
                 {
                     b.HasOne("MimosBabySpa.Domain.Entities.Business", "Business")
@@ -731,23 +636,7 @@ namespace MimosBabySpa.Infrastructure.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
-                    b.HasOne("MimosBabySpa.Domain.Entities.Employee", "Employee")
-                        .WithMany("Reservations")
-                        .HasForeignKey("EmployeeId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.HasOne("MimosBabySpa.Domain.Entities.Service", "Service")
-                        .WithMany()
-                        .HasForeignKey("ServiceId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
                     b.Navigation("Business");
-
-                    b.Navigation("Employee");
-
-                    b.Navigation("Service");
                 });
 
             modelBuilder.Entity("MimosBabySpa.Domain.Entities.Service", b =>
@@ -825,13 +714,6 @@ namespace MimosBabySpa.Infrastructure.Migrations
                     b.Navigation("Contexts");
 
                     b.Navigation("Messages");
-                });
-
-            modelBuilder.Entity("MimosBabySpa.Domain.Entities.Employee", b =>
-                {
-                    b.Navigation("EmployeeServices");
-
-                    b.Navigation("Reservations");
                 });
 
             modelBuilder.Entity("MimosBabySpa.Domain.Entities.Service", b =>

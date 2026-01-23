@@ -1,3 +1,5 @@
+using MimosBabySpa.Domain.Enums;
+
 namespace MimosBabySpa.Domain.Entities;
 
 public class Conversation
@@ -11,6 +13,11 @@ public class Conversation
     public string? CustomerName { get; set; }
     public int? BabyAge { get; set; }
     public string? RecommendedPlan { get; set; }
+    
+    /// <summary>
+    /// Estado explícito de la conversación para flujo determinístico
+    /// </summary>
+    public ConversationState State { get; set; } = ConversationState.Idle;
     
     // Navigation properties
     public virtual Business Business { get; set; } = null!;

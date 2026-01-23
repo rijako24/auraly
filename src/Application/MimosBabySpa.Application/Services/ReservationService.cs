@@ -41,6 +41,19 @@ public class ReservationService : IReservationService
                 throw new InvalidOperationException($"El negocio con ID {reservation.BusinessId} no existe.");
             }
 
+            // Cargar Service si no está cargado para obtener el nombre
+            if (reservation.Service == null)
+            {
+                var service = await _unitOfWork.Services.GetByIdAsync(reservation.ServiceId);
+                if (service == null)
+                {
+                    throw new InvalidOperationException($"El servicio con ID {reservation.ServiceId} no existe.");
+                }
+                reservation.Service = service;
+            }
+
+            var serviceName = reservation.Service.ServiceName;
+            
             // Template genérico para eventos de calendario
             // Solo usa campos genéricos: service, date, time, durationMinutes
             // Toda la información adicional viene en Notes y se formatea de forma legible
@@ -48,9 +61,9 @@ public class ReservationService : IReservationService
             
             var reservationTemplate = $@"Reserva confirmada
 
-                                        Servicio: {reservation.ServiceName}
-                                        Fecha: {reservation.ReservationDate:dd/MM/yyyy}
-                                        Hora: {reservation.ReservationTime:hh\:mm}
+                                        Servicio: {serviceName}
+                                        Fecha: {reservation.ReservationDateTime:dd/MM/yyyy}
+                                        Hora: {reservation.ReservationDateTime:hh\:mm}
                                         Duración: {reservation.DurationMinutes} minutos{notesInfo}";
 
             // Asegurar que ReservationId esté asignado
@@ -75,12 +88,22 @@ public class ReservationService : IReservationService
             var createdReservation = await _unitOfWork.Reservations.CreateAsync(reservation);
             await _unitOfWork.SaveChangesAsync(cancellationToken);
 
+            // Asegurar que Service esté cargado para logging y operaciones posteriores
+            if (createdReservation.Service == null)
+            {
+                var loadedService = await _unitOfWork.Services.GetByIdAsync(createdReservation.ServiceId);
+                if (loadedService == null)
+                {
+                    throw new InvalidOperationException($"El servicio con ID {createdReservation.ServiceId} no existe.");
+                }
+                createdReservation.Service = loadedService;
+            }
+
             _logger.LogInformation(
-                "Reserva creada exitosamente: {ReservationId} para servicio {ServiceName} el {Date} a las {Time}",
+                "Reserva creada exitosamente: {ReservationId} para servicio {ServiceName} el {DateTime}",
                 createdReservation.ReservationId,
-                createdReservation.ServiceName,
-                createdReservation.ReservationDate,
-                createdReservation.ReservationTime);
+                createdReservation.Service?.ServiceName ?? "N/A",
+                createdReservation.ReservationDateTime);
 
             // Intentar crear el evento en el calendario
             try
@@ -89,7 +112,7 @@ public class ReservationService : IReservationService
                 var description = reservationTemplate;
 
                 // Título genérico del evento - solo usa el servicio
-                var title = $"[{reservation.ServiceName}] Reserva";
+                var title = $"[{serviceName}] Reserva";
 
                 var calendarEvent = new CalendarEvent
                 {
@@ -137,7 +160,8 @@ public class ReservationService : IReservationService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error al crear reserva para servicio {ServiceName}", reservation.ServiceName);
+            var serviceName = reservation.Service?.ServiceName ?? reservation.ServiceId.ToString();
+            _logger.LogError(ex, "Error al crear reserva para servicio {ServiceName}", serviceName);
             throw;
         }
     }
@@ -168,23 +192,37 @@ public class ReservationService : IReservationService
 
     private static ReservationDto MapToDto(Reservation reservation)
     {
+        if (reservation.Service == null)
+        {
+            throw new InvalidOperationException(
+                $"Service navigation property debe estar cargado para Reservation {reservation.ReservationId}. " +
+                "Use Include(r => r.Service) al obtener la reserva.");
+        }
+
+        if (reservation.Employee == null)
+        {
+            throw new InvalidOperationException(
+                $"Employee navigation property debe estar cargado para Reservation {reservation.ReservationId}. " +
+                "Use Include(r => r.Employee) al obtener la reserva.");
+        }
+
         return new ReservationDto
         {
             ReservationId = reservation.ReservationId,
             BusinessId = reservation.BusinessId,
+            ServiceId = reservation.ServiceId,
+            EmployeeId = reservation.EmployeeId,
             CustomerName = reservation.CustomerName,
             PhoneNumber = reservation.PhoneNumber,
-            ServiceName = reservation.ServiceName,
-            ReservationDate = reservation.ReservationDate,
-            ReservationTime = reservation.ReservationTime,
+            ServiceName = reservation.Service.ServiceName,
+            EmployeeName = reservation.Employee.Name,
+            ReservationDateTime = reservation.ReservationDateTime,
             DurationMinutes = reservation.DurationMinutes,
             Status = reservation.Status,
             CalendarEventId = reservation.CalendarEventId,
             Notes = reservation.Notes,
             CreatedAt = reservation.CreatedAt,
-            UpdatedAt = reservation.UpdatedAt,
-            ReservationDateTime = reservation.ReservationDateTime,
-            EndDateTime = reservation.EndDateTime
+            UpdatedAt = reservation.UpdatedAt
         };
     }
 }

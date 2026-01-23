@@ -63,6 +63,13 @@ services.AddScoped<IBusinessConfigurationService, BusinessConfigurationService>(
 services.AddScoped<IWhatsAppMessageProcessorService, WhatsAppMessageProcessorService>();
 services.AddScoped<IWhatsAppWebhookParserService, WhatsAppWebhookParserService>();
 
+// New Refactored Services
+services.AddScoped<IDateTimeExtractorService, DateTimeExtractorService>();
+services.AddScoped<IResourceConfigurationService, ResourceConfigurationService>();
+services.AddScoped<IEmployeeAssignmentService, EmployeeAssignmentService>();
+services.AddScoped<IAvailabilityService, AvailabilityService>();
+services.AddScoped<IConversationStateService, ConversationStateService>();
+
 // New Agent Services
 services.AddScoped<IToolDispatcher, ToolDispatcher>();
 services.AddScoped<IConversationAgent>(sp =>
@@ -72,12 +79,20 @@ services.AddScoped<IConversationAgent>(sp =>
     var textDeploymentName = config["OpenAI:TextDeploymentName"] ?? "gpt-4o-mini";
     var toolDispatcher = sp.GetRequiredService<IToolDispatcher>();
     var businessConfigService = sp.GetRequiredService<IBusinessConfigurationService>();
+    var dateTimeExtractor = sp.GetRequiredService<IDateTimeExtractorService>();
+    var availabilityService = sp.GetRequiredService<IAvailabilityService>();
+    var stateService = sp.GetRequiredService<IConversationStateService>();
+    var unitOfWork = sp.GetRequiredService<IUnitOfWork>();
     
     return new ConversationAgent(
         client,
         textDeploymentName,
         toolDispatcher,
         businessConfigService,
+        dateTimeExtractor,
+        availabilityService,
+        stateService,
+        unitOfWork,
         sp.GetRequiredService<ILogger<ConversationAgent>>());
 });
 
@@ -145,7 +160,7 @@ Console.WriteLine("Escribe 'exit' o 'quit' para salir.");
 Console.WriteLine();
 
 // Número de teléfono simulado (puedes cambiarlo)
-var userNumber = "+1234567891";
+var userNumber = "+1234567895";
 var customerName = "Bill";
 
 while (true)

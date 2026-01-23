@@ -11,6 +11,8 @@ public class ToolDispatcher : IToolDispatcher
     private readonly ICalendarService _calendarService;
     private readonly IReservationService _reservationService;
     private readonly IUnitOfWork _unitOfWork;
+    private readonly IAvailabilityService _availabilityService;
+    private readonly IEmployeeAssignmentService _employeeAssignmentService;
     private readonly ILogger<ToolDispatcher> _logger;
     private static readonly List<ToolDefinition> _availableTools = new();
 
@@ -23,11 +25,15 @@ public class ToolDispatcher : IToolDispatcher
         ICalendarService calendarService,
         IReservationService reservationService,
         IUnitOfWork unitOfWork,
+        IAvailabilityService availabilityService,
+        IEmployeeAssignmentService employeeAssignmentService,
         ILogger<ToolDispatcher> logger)
     {
         _calendarService = calendarService;
         _reservationService = reservationService;
         _unitOfWork = unitOfWork;
+        _availabilityService = availabilityService;
+        _employeeAssignmentService = employeeAssignmentService;
         _logger = logger;
     }
 
@@ -39,17 +45,20 @@ public class ToolDispatcher : IToolDispatcher
     public async Task<ToolCallResult> ExecuteToolAsync(
         Guid businessId,
         ToolCallRequest toolCall,
+        Guid? conversationId = null,
         CancellationToken cancellationToken = default)
     {
         try
         {
-            _logger.LogInformation("Ejecutando tool: {ToolName} con ID: {ToolCallId}", toolCall.Name, toolCall.Id);
+            _logger.LogInformation(
+                "Ejecutando tool: {ToolName} con ID: {ToolCallId}, ConversationId: {ConversationId}",
+                toolCall.Name, toolCall.Id, conversationId);
 
             return toolCall.Name switch
             {
                 "check_availability" => await ExecuteCheckAvailabilityAsync(businessId, toolCall, cancellationToken),
-                "create_reservation" => await ExecuteCreateReservationAsync(businessId, toolCall, cancellationToken),
-                "update_conversation_state" => await ExecuteUpdateConversationStateAsync(businessId, toolCall, cancellationToken),
+                "create_reservation" => await ExecuteCreateReservationAsync(businessId, toolCall, conversationId, cancellationToken),
+                "update_conversation_state" => await ExecuteUpdateConversationStateAsync(businessId, toolCall, conversationId, cancellationToken),
                 _ => new ToolCallResult
                 {
                     ToolCallId = toolCall.Id,
@@ -147,69 +156,71 @@ public class ToolDispatcher : IToolDispatcher
                 }
             }
 
-            // Si se proporciona hora específica, verificar solo ese horario
+            // REFACTORIZADO: Usar AvailabilityService para cálculo determinístico
+            // Toda la lógica de negocio (validación de empleados y recursos físicos) está encapsulada en AvailabilityService
+            // AvailabilityService valida empleados ANTES de recursos físicos internamente
+            var availabilityResult = await _availabilityService.CheckAvailabilityAsync(
+                businessId,
+                service,
+                date,
+                timeToCheck,
+                durationMinutes,
+                cancellationToken);
+
+            _logger.LogInformation(
+                "check_availability ejecutado: Service={Service}, Date={Date}, IsAvailable={IsAvailable}, CurrentReservations={CurrentReservations}",
+                service, date.ToString("yyyy-MM-dd"), availabilityResult.IsAvailable, availabilityResult.CurrentReservations);
+
+            // Construir resultado EXPLÍCITO que el modelo debe usar sin inferir
+            var bookedSlotsData = availabilityResult.BookedSlots.Select(slot => new
+            {
+                time = slot.Time,
+                endTime = slot.EndTime,
+                duration = slot.Duration,
+                service = slot.Service
+            }).ToList();
+
+            var overlappingSlotsData = availabilityResult.OverlappingSlots.Select(slot => new
+            {
+                time = slot.Time,
+                endTime = slot.EndTime,
+                duration = slot.Duration,
+                service = slot.Service
+            }).ToList();
+
+            var result = new Dictionary<string, object>
+            {
+                { "service", service },
+                { "date", date.ToString("yyyy-MM-dd") },
+                { "is_available", availabilityResult.IsAvailable }, // VALOR EXPLÍCITO - el modelo NO debe inferir
+                { "max_capacity", availabilityResult.MaxCapacity },
+                { "current_reservations", availabilityResult.CurrentReservations },
+                { "bookedSlots", bookedSlotsData },
+                { "totalBookedSlots", availabilityResult.CurrentReservations }
+            };
+
+            // Si se proporciona hora específica, agregar información adicional
             if (timeToCheck.HasValue && durationMinutes.HasValue)
             {
-                var hasConflict = await _unitOfWork.Reservations.ExistsOverlappingReservationAsync(
-                    businessId,
-                    date.Date,
-                    timeToCheck.Value,
-                    durationMinutes.Value);
-
-                var result = new
-                {
-                    service = service,
-                    date = date.ToString("yyyy-MM-dd"),
-                    time = timeToCheck.Value.ToString(@"hh\:mm"),
-                    durationMinutes = durationMinutes.Value,
-                    available = !hasConflict
-                };
-
-                return new ToolCallResult
-                {
-                    ToolCallId = toolCall.Id,
-                    ToolName = toolCall.Name,
-                    Content = JsonSerializer.Serialize(result),
-                    IsError = false
-                };
+                var requestedTimeStr = $"{timeToCheck.Value.Hours:D2}:{timeToCheck.Value.Minutes:D2}";
+                var requestedEndTime = timeToCheck.Value.Add(TimeSpan.FromMinutes(durationMinutes.Value));
+                var requestedEndTimeStr = $"{requestedEndTime.Hours:D2}:{requestedEndTime.Minutes:D2}";
+                
+                result.Add("requestedTime", requestedTimeStr);
+                result.Add("requestedDurationMinutes", durationMinutes.Value);
+                result.Add("requestedEndTime", requestedEndTimeStr);
+                result.Add("overlappingSlots", overlappingSlotsData);
             }
-            else
+            
+            result.Add("message", availabilityResult.Message);
+
+            return new ToolCallResult
             {
-                // Si no se proporciona hora, consultar todas las reservas del día
-                var startOfDay = date.Date;
-                var endOfDay = startOfDay.AddDays(1);
-
-                var reservations = await _unitOfWork.Reservations.GetByBusinessIdAndDateRangeAsync(
-                    businessId,
-                    startOfDay,
-                    endOfDay);
-
-                var bookedSlots = reservations.Select(r => new
-                {
-                    time = r.ReservationTime.ToString(@"hh\:mm"),
-                    duration = r.DurationMinutes,
-                    service = r.ServiceName
-                }).ToList();
-
-                var result = new
-                {
-                    service = service,
-                    date = date.ToString("yyyy-MM-dd"),
-                    bookedSlots = bookedSlots,
-                    totalBookedSlots = bookedSlots.Count,
-                    message = bookedSlots.Count == 0 
-                        ? "No hay reservas para esta fecha. Todos los horarios de atención están disponibles según los horarios del negocio."
-                        : $"Hay {bookedSlots.Count} reserva(s) confirmada(s) para esta fecha. Los demás horarios dentro del horario de atención del negocio están disponibles."
-                };
-
-                return new ToolCallResult
-                {
-                    ToolCallId = toolCall.Id,
-                    ToolName = toolCall.Name,
-                    Content = JsonSerializer.Serialize(result),
-                    IsError = false
-                };
-            }
+                ToolCallId = toolCall.Id,
+                ToolName = toolCall.Name,
+                Content = JsonSerializer.Serialize(result),
+                IsError = false
+            };
         }
         catch (Exception ex)
         {
@@ -227,6 +238,7 @@ public class ToolDispatcher : IToolDispatcher
     private async Task<ToolCallResult> ExecuteCreateReservationAsync(
         Guid businessId,
         ToolCallRequest toolCall,
+        Guid? conversationId,
         CancellationToken cancellationToken)
     {
         try
@@ -243,6 +255,10 @@ public class ToolDispatcher : IToolDispatcher
             }
 
             var args = toolCall.Arguments.Value;
+
+            // Completar parámetros faltantes desde el contexto de la conversación si está disponible
+            var enrichedArgs = await EnrichReservationParametersFromContextAsync(args, conversationId, cancellationToken);
+            args = enrichedArgs; // Usar los argumentos enriquecidos
 
             // Validar y extraer parámetros requeridos (solo los genéricos)
             var requiredParams = new[] { "service", "date", "time", "durationMinutes" };
@@ -303,7 +319,7 @@ public class ToolDispatcher : IToolDispatcher
             durationMinutes = durationProp.GetInt32();
 
             // Extraer información adicional opcional para Notes
-            // La IA debe enviar toda la información adicional en el campo "notes" como string
+            // Si no se proporciona notes, construir desde el contexto de la conversación
             string? notes = null;
             if (args.TryGetProperty("notes", out var notesProp) && notesProp.ValueKind == JsonValueKind.String)
             {
@@ -314,55 +330,120 @@ public class ToolDispatcher : IToolDispatcher
                 }
             }
 
-            var startDateTime = date.Date.Add(time);
-            var endDateTime = startDateTime.AddMinutes(durationMinutes);
-
-            // Verificar también en base de datos
-            var hasConflict = await _unitOfWork.Reservations.ExistsOverlappingReservationAsync(
-                businessId,
-                date.Date,
-                time,
-                durationMinutes);
-
-            if (hasConflict)
+            // Si notes está vacío y tenemos conversationId, construir desde el contexto
+            if (string.IsNullOrWhiteSpace(notes) && conversationId.HasValue)
             {
+                notes = await BuildNotesFromContextAsync(conversationId.Value, cancellationToken);
+            }
+
+            // REFACTORIZADO: Validar disponibilidad ATÓMICAMENTE antes de crear la reserva
+            // Esto previene sobre-reservas y garantiza consistencia bajo concurrencia
+            var reservationDateTime = date.Date.Add(time);
+            
+            _logger.LogInformation(
+                "Validando disponibilidad antes de crear reserva: BusinessId={BusinessId}, Service={Service}, DateTime={DateTime}",
+                businessId, service, reservationDateTime);
+
+            // Verificar disponibilidad dentro de la transacción
+            var availabilityCheck = await _availabilityService.CheckAvailabilityAsync(
+                businessId,
+                service,
+                date,
+                time,
+                durationMinutes,
+                cancellationToken);
+
+            if (!availabilityCheck.IsAvailable)
+            {
+                _logger.LogWarning(
+                    "Intento de crear reserva en horario no disponible: BusinessId={BusinessId}, Service={Service}, DateTime={DateTime}, OverlappingSlots={OverlappingCount}",
+                    businessId, service, reservationDateTime, availabilityCheck.OverlappingSlots.Count);
+
                 return new ToolCallResult
                 {
                     ToolCallId = toolCall.Id,
                     ToolName = toolCall.Name,
                     IsError = true,
-                    ErrorMessage = $"El horario {dateStr} {timeStr} no está disponible (conflicto en base de datos)"
+                    ErrorMessage = $"El horario {time:HH\\:mm} no está disponible. {availabilityCheck.Message}"
                 };
             }
 
-            // Crear la reserva con solo los campos genéricos
-            // CustomerName y PhoneNumber se dejan vacíos o se pueden obtener de Notes si es necesario
+            // Obtener el ServiceId desde el nombre del servicio
+            var serviceEntity = await _unitOfWork.Services.GetByBusinessIdAndNameAsync(businessId, service);
+            if (serviceEntity == null)
+            {
+                _logger.LogWarning("Servicio '{Service}' no encontrado para negocio {BusinessId}", service, businessId);
+                return new ToolCallResult
+                {
+                    ToolCallId = toolCall.Id,
+                    ToolName = toolCall.Name,
+                    IsError = true,
+                    ErrorMessage = $"El servicio '{service}' no existe o no está activo."
+                };
+            }
+
+            // Asignar empleado automáticamente usando la lógica de prioridad por polivalencia
+            var reservationEndTime = reservationDateTime.AddMinutes(durationMinutes);
+            var assignedEmployee = await _employeeAssignmentService.FindBestAvailableEmployeeAsync(
+                businessId,
+                serviceEntity.ServiceId,
+                reservationDateTime,
+                reservationEndTime,
+                cancellationToken);
+
+            if (assignedEmployee == null)
+            {
+                _logger.LogWarning(
+                    "No hay personal disponible para servicio {Service} en horario {DateTime}",
+                    service, reservationDateTime);
+                return new ToolCallResult
+                {
+                    ToolCallId = toolCall.Id,
+                    ToolName = toolCall.Name,
+                    IsError = true,
+                    ErrorMessage = $"No hay personal disponible para este servicio en el horario {time:HH\\:mm}. Por favor, intenta con otro horario."
+                };
+            }
+
+            _logger.LogInformation(
+                "Empleado asignado automáticamente: {EmployeeId} ({EmployeeName}) para servicio {Service}",
+                assignedEmployee.EmployeeId, assignedEmployee.Name, service);
+
+            // Crear la reserva con ServiceId y EmployeeId asignados
             var reservation = new Reservation
             {
                 ReservationId = Guid.NewGuid(),
                 BusinessId = businessId,
+                ServiceId = serviceEntity.ServiceId,
+                Service = serviceEntity, // Asignar Service para que esté disponible
+                EmployeeId = assignedEmployee.EmployeeId,
+                Employee = assignedEmployee, // Asignar Employee para que esté disponible
                 CustomerName = string.Empty, // Genérico - no aplica a todos los negocios
                 PhoneNumber = string.Empty, // Genérico - no aplica a todos los negocios
-                ServiceName = service,
-                ReservationDate = date.Date,
-                ReservationTime = time,
+                ReservationDateTime = reservationDateTime,
                 DurationMinutes = durationMinutes,
                 Notes = notes, // Cualquier información adicional específica del negocio va aquí
                 Status = Domain.Enums.ReservationStatus.Pending,
                 CreatedAt = DateTime.UtcNow
             };
 
+            // Crear reserva - la validación de capacidad ya se hizo arriba
             var reservationDto = await _reservationService.CreateReservationAsync(reservation, cancellationToken);
+
+            _logger.LogInformation(
+                "Reserva creada exitosamente: ReservationId={ReservationId}, Service={Service}, DateTime={DateTime}",
+                reservationDto.ReservationId, reservationDto.ServiceName, reservationDto.ReservationDateTime);
 
             var result = new
             {
-                success = true,
+                success = true, // SOLO true si la reserva fue creada exitosamente
                 reservationId = reservationDto.ReservationId.ToString(),
                 service = reservationDto.ServiceName,
-                date = reservationDto.ReservationDate.ToString("yyyy-MM-dd"),
-                time = reservationDto.ReservationTime.ToString(@"hh\:mm"),
+                date = reservationDto.ReservationDateTime.ToString("yyyy-MM-dd"),
+                time = reservationDto.ReservationDateTime.ToString(@"HH\:mm"),
                 durationMinutes = reservationDto.DurationMinutes,
-                status = reservationDto.Status.ToString()
+                status = reservationDto.Status.ToString(),
+                message = "Reserva creada exitosamente. El modelo DEBE informar al usuario basándose en este resultado."
             };
 
             return new ToolCallResult
@@ -389,6 +470,7 @@ public class ToolDispatcher : IToolDispatcher
     private async Task<ToolCallResult> ExecuteUpdateConversationStateAsync(
         Guid businessId,
         ToolCallRequest toolCall,
+        Guid? conversationIdFromCaller,
         CancellationToken cancellationToken)
     {
         try
@@ -406,9 +488,22 @@ public class ToolDispatcher : IToolDispatcher
 
             var args = toolCall.Arguments.Value;
 
-            // Validar parámetros requeridos
-            if (!args.TryGetProperty("conversationId", out var conversationIdProp) ||
-                !args.TryGetProperty("field", out var fieldProp) ||
+            // conversationId siempre viene como parámetro del método
+            if (!conversationIdFromCaller.HasValue)
+            {
+                return new ToolCallResult
+                {
+                    ToolCallId = toolCall.Id,
+                    ToolName = toolCall.Name,
+                    IsError = true,
+                    ErrorMessage = "conversationId es requerido y no se proporcionó en el contexto"
+                };
+            }
+
+            var conversationId = conversationIdFromCaller.Value;
+
+            // Validar parámetros requeridos restantes
+            if (!args.TryGetProperty("field", out var fieldProp) ||
                 !args.TryGetProperty("value", out var valueProp))
             {
                 return new ToolCallResult
@@ -416,18 +511,7 @@ public class ToolDispatcher : IToolDispatcher
                     ToolCallId = toolCall.Id,
                     ToolName = toolCall.Name,
                     IsError = true,
-                    ErrorMessage = "Parámetros requeridos faltantes: conversationId, field, value"
-                };
-            }
-
-            if (!Guid.TryParse(conversationIdProp.GetString(), out var conversationId))
-            {
-                return new ToolCallResult
-                {
-                    ToolCallId = toolCall.Id,
-                    ToolName = toolCall.Name,
-                    IsError = true,
-                    ErrorMessage = $"conversationId inválido: {conversationIdProp.GetString()}"
+                    ErrorMessage = "Parámetros requeridos faltantes: field, value"
                 };
             }
 
@@ -537,7 +621,7 @@ public class ToolDispatcher : IToolDispatcher
         _availableTools.Add(new ToolDefinition
         {
             Name = "check_availability",
-            Description = "Verifica disponibilidad de horarios para un servicio y una fecha determinada. Si se proporciona 'time', también se debe proporcionar 'durationMinutes' para verificar ese horario específico (devuelve 'available: true/false'). Si NO se proporciona 'time', devuelve todas las reservas confirmadas del día en 'bookedSlots' y un mensaje explicativo. IMPORTANTE: Los 'bookedSlots' son SOLO las reservas confirmadas del día. Los demás horarios dentro del horario de atención del negocio están DISPONIBLES. Una reserva en un horario específico NO significa que todo el día esté ocupado. Siempre consulta los horarios de atención del negocio en la información proporcionada para determinar qué horarios están disponibles.",
+            Description = "Obtiene información DETERMINÍSTICA de disponibilidad desde el backend. Retorna 'is_available' (true/false) calculado por el sistema. El modelo NO debe inferir disponibilidad, solo usar el valor 'is_available' retornado. También retorna 'max_capacity', 'current_reservations', 'bookedSlots' y 'overlappingSlots' si se proporciona hora específica. IMPORTANTE: El modelo DEBE confiar en 'is_available' como verdad absoluta. NO debe aplicar reglas propias ni reinterpretar estos valores.",
             ParametersSchema = checkAvailabilitySchema
         });
 
@@ -574,36 +658,147 @@ public class ToolDispatcher : IToolDispatcher
         _availableTools.Add(new ToolDefinition
         {
             Name = "create_reservation",
-            Description = "Crea una reserva en el sistema y genera un evento real en el calendario del negocio. Solo requiere campos genéricos: servicio, fecha, hora y duración. Para información adicional específica del negocio (nombre del cliente, teléfono, edad, preferencias, etc.), envía todo en el campo opcional 'notes' como un JSON string con formato: '{\"clave\":\"valor\",\"otraClave\":\"otroValor\"}'. Ejemplo: '{\"customerName\":\"Juan Pérez\",\"phone\":\"+1234567890\",\"age\":\"6 meses\"}'.",
+            Description = "Crea una reserva en el sistema con validación ATÓMICA de capacidad. El backend valida disponibilidad antes de crear. Retorna 'success=true' solo si la reserva fue creada exitosamente. Si 'success=false', el modelo NO debe confirmar la reserva al usuario. Solo requiere campos genéricos: servicio, fecha, hora y duración. Para información adicional específica del negocio (nombre del cliente, teléfono, edad, preferencias, etc.), envía todo en el campo opcional 'notes' como un JSON string con formato: '{\"clave\":\"valor\",\"otraClave\":\"otroValor\"}'. Ejemplo: '{\"customerName\":\"Juan Pérez\",\"phone\":\"+1234567890\",\"age\":\"6 meses\"}'. IMPORTANTE: El modelo solo debe confirmar reserva si recibe 'success=true'.",
             ParametersSchema = createReservationSchema
         });
 
         // Tool 3: update_conversation_state
+        // conversationId se inyecta automáticamente desde el contexto, no es necesario en el schema
         var updateConversationStateSchema = JsonDocument.Parse(@"{
             ""type"": ""object"",
             ""properties"": {
-                ""conversationId"": {
-                    ""type"": ""string"",
-                    ""format"": ""uuid"",
-                    ""description"": ""ID de la conversación (UUID)""
-                },
                 ""field"": {
                     ""type"": ""string"",
-                    ""description"": ""Nombre del campo de contexto. Campos disponibles: customerName (nombre del cliente), phone (teléfono), babyAgeMonths (edad del bebé en meses - MUY IMPORTANTE), service (servicio o plan elegido), desiredDate (fecha deseada), desiredTime (hora deseada), reservationConfirmed (confirmación de reserva)""
+                    ""description"": ""Nombre del campo de contexto. Campos disponibles: customerName (nombre del cliente), phone (teléfono), babyAgeMonths (edad del bebé en meses - MUY IMPORTANTE), service (servicio o plan elegido), desiredDate (fecha deseada), desiredTime (hora deseada), reservationConfirmed (confirmación de reserva). IMPORTANTE: Cuando uses campos en las notes de create_reservation, traduce los nombres al español: customerName→nombreCliente, phone→telefono, babyAgeMonths→edadBebeMeses. Los campos service, desiredDate, desiredTime y reservationConfirmed NO se incluyen en notes porque se usan directamente en la reserva.""
                 },
                 ""value"": {
                     ""type"": ""string"",
                     ""description"": ""Valor del campo de contexto""
                 }
             },
-            ""required"": [""conversationId"", ""field"", ""value""]
+            ""required"": [""field"", ""value""]
         }");
 
         _availableTools.Add(new ToolDefinition
         {
             Name = "update_conversation_state",
-            Description = "OBLIGATORIO: Guarda información importante del cliente en el contexto de la conversación. DEBES usar esta herramienta INMEDIATAMENTE cuando el cliente mencione: (1) Su nombre → field='customerName', (2) Su teléfono → field='phone', (3) La edad del bebé (ej: 'tiene 4 meses', 'mi bebé tiene 6 meses', 'tiene 1 año') → field='babyAgeMonths' (convierte años a meses: 1 año = 12 meses), (4) Un servicio o plan → field='service', (5) Una fecha deseada → field='desiredDate', (6) Una hora deseada → field='desiredTime', (7) Confirmación explícita de reserva → field='reservationConfirmed'. IMPORTANTE: Si el cliente dice 'mi bebé tiene X meses' o 'tiene X meses' o 'X meses', DEBES llamar esta herramienta con field='babyAgeMonths' y value='X' (solo el número) IMPORTANTE No inventar valores aunque sea requerido",
+            Description = "OBLIGATORIO: Guarda información importante del cliente en el contexto de la conversación. DEBES usar esta herramienta INMEDIATAMENTE cuando el cliente mencione: (1) Su nombre → field='customerName', (2) Su teléfono → field='phone', (3) La edad del bebé (ej: 'tiene 4 meses', 'mi bebé tiene 6 meses', 'tiene 1 año') → field='babyAgeMonths' (convierte años a meses: 1 año = 12 meses), (4) Un servicio o plan → field='service', (5) Una fecha deseada → field='desiredDate', (6) Una hora deseada → field='desiredTime', (7) Confirmación explícita de reserva → field='reservationConfirmed'. IMPORTANTE: Si el cliente dice 'mi bebé tiene X meses' o 'tiene X meses' o 'X meses', DEBES llamar esta herramienta con field='babyAgeMonths' y value='X' (solo el número). IMPORTANTE: No inventar valores aunque sea requerido. TRADUCCIÓN EN NOTES: Cuando uses campos del contexto en las notes de create_reservation, DEBES traducir los nombres al español manualmente: customerName→nombreCliente, phone→telefono, babyAgeMonths→edadBebeMeses. Los campos service, desiredDate, desiredTime y reservationConfirmed NO se incluyen en notes porque se usan directamente en la reserva.",
             ParametersSchema = updateConversationStateSchema
         });
+    }
+
+    /// <summary>
+    /// Enriquece los parámetros de reserva desde el contexto de la conversación si están faltantes.
+    /// Encapsula la lógica de completado de parámetros dentro de la herramienta.
+    /// Retorna un nuevo JsonElement con los parámetros completados.
+    /// </summary>
+    private async Task<JsonElement> EnrichReservationParametersFromContextAsync(
+        JsonElement args,
+        Guid? conversationId,
+        CancellationToken cancellationToken)
+    {
+        if (!conversationId.HasValue)
+        {
+            return args; // No hay contexto disponible, retornar argumentos originales
+        }
+
+        // Deserializar a diccionario mutable para poder modificarlo
+        var argsDict = JsonSerializer.Deserialize<Dictionary<string, object>>(args.GetRawText())
+            ?? new Dictionary<string, object>();
+
+        // Completar service desde el contexto si falta
+        if (!argsDict.ContainsKey("service") || 
+            string.IsNullOrWhiteSpace(argsDict["service"]?.ToString()))
+        {
+            var serviceFromContext = await GetContextValueAsync(conversationId.Value, "service");
+            if (!string.IsNullOrWhiteSpace(serviceFromContext))
+            {
+                argsDict["service"] = serviceFromContext;
+                _logger.LogDebug("Parámetro 'service' completado desde contexto: {Service}", serviceFromContext);
+            }
+        }
+
+        // Completar date desde el contexto si falta
+        if (!argsDict.ContainsKey("date") || 
+            string.IsNullOrWhiteSpace(argsDict["date"]?.ToString()))
+        {
+            var dateFromContext = await GetContextValueAsync(conversationId.Value, "desiredDate");
+            if (!string.IsNullOrWhiteSpace(dateFromContext))
+            {
+                argsDict["date"] = dateFromContext;
+                _logger.LogDebug("Parámetro 'date' completado desde contexto: {Date}", dateFromContext);
+            }
+        }
+
+        // Completar time desde el contexto si falta
+        if (!argsDict.ContainsKey("time") || 
+            string.IsNullOrWhiteSpace(argsDict["time"]?.ToString()))
+        {
+            var timeFromContext = await GetContextValueAsync(conversationId.Value, "desiredTime");
+            if (!string.IsNullOrWhiteSpace(timeFromContext))
+            {
+                argsDict["time"] = timeFromContext;
+                _logger.LogDebug("Parámetro 'time' completado desde contexto: {Time}", timeFromContext);
+            }
+        }
+
+        // Reconstruir JsonElement desde el diccionario modificado
+        var enrichedJson = JsonSerializer.Serialize(argsDict);
+        return JsonSerializer.Deserialize<JsonElement>(enrichedJson);
+    }
+
+    /// <summary>
+    /// Construye el campo notes desde el contexto de la conversación.
+    /// Excluye campos que ya se usan directamente en la reserva.
+    /// Los nombres de campos se mantienen en su formato original (genérico, sin traducción hardcodeada).
+    /// La traducción debe ser manejada por el modelo basándose en la documentación proporcionada.
+    /// </summary>
+    private async Task<string?> BuildNotesFromContextAsync(
+        Guid conversationId,
+        CancellationToken cancellationToken)
+    {
+        var allContexts = await _unitOfWork.ConversationContexts.GetByConversationIdAsync(conversationId);
+        
+        // Campos que ya se usan directamente en la reserva, no incluirlos en notes
+        var reservedFields = new HashSet<string> 
+        { 
+            "service", 
+            "desiredDate", 
+            "desiredTime", 
+            "reservationConfirmed" 
+        };
+        
+        var notesDict = new Dictionary<string, string>();
+        
+        foreach (var context in allContexts)
+        {
+            // Solo incluir campos que no están reservados y tienen valor
+            if (!reservedFields.Contains(context.Field) && !string.IsNullOrWhiteSpace(context.Value))
+            {
+                // Mantener el nombre original del campo (genérico, sin traducción hardcodeada)
+                // El modelo debe traducir basándose en la documentación cuando construya notes manualmente
+                notesDict[context.Field] = context.Value;
+            }
+        }
+
+        if (notesDict.Any())
+        {
+            var notesJson = JsonSerializer.Serialize(notesDict);
+            _logger.LogDebug("Notes construido desde contexto: {Notes}", notesJson);
+            return notesJson;
+        }
+
+        return null;
+    }
+
+
+    /// <summary>
+    /// Obtiene un valor del contexto de la conversación por nombre de campo.
+    /// </summary>
+    private async Task<string?> GetContextValueAsync(Guid conversationId, string fieldName)
+    {
+        var contexts = await _unitOfWork.ConversationContexts.GetByConversationIdAsync(conversationId);
+        var context = contexts.FirstOrDefault(c => c.Field.Equals(fieldName, StringComparison.OrdinalIgnoreCase));
+        return context?.Value;
     }
 }

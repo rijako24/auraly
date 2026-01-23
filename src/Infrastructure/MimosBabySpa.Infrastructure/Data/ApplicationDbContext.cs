@@ -20,6 +20,12 @@ public class ApplicationDbContext : DbContext
     public DbSet<SystemConfiguration> SystemConfigurations { get; set; }
     public DbSet<ConversationContext> ConversationContexts { get; set; }
     public DbSet<Reservation> Reservations { get; set; }
+    public DbSet<Service> Services { get; set; }
+    public DbSet<BusinessResource> BusinessResources { get; set; }
+    public DbSet<ServiceResourceUsage> ServiceResourceUsages { get; set; }
+    public DbSet<ServiceCoexistenceRule> ServiceCoexistenceRules { get; set; }
+    public DbSet<Employee> Employees { get; set; }
+    public DbSet<EmployeeService> EmployeeServices { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -96,11 +102,15 @@ public class ApplicationDbContext : DbContext
             entity.Property(e => e.LastIntent).HasMaxLength(50);
             entity.Property(e => e.CustomerName).HasMaxLength(100);
             entity.Property(e => e.RecommendedPlan).HasMaxLength(100);
+            entity.Property(e => e.State)
+                  .HasConversion<int>() // Convertir enum ConversationState a int
+                  .HasDefaultValue(ConversationState.Idle); // Valor por defecto
             entity.HasOne(e => e.Business)
                   .WithMany(b => b.Conversations)
                   .HasForeignKey(e => e.BusinessId)
                   .OnDelete(DeleteBehavior.Restrict);
             entity.HasIndex(e => new { e.BusinessId, e.UserNumber }); // Índice compuesto
+            entity.HasIndex(e => e.State); // Índice para búsquedas por estado
             // Relación con ConversationContext
             entity.HasMany(e => e.Contexts)
                   .WithOne(c => c.Conversation)
@@ -155,11 +165,11 @@ public class ApplicationDbContext : DbContext
         modelBuilder.Entity<Reservation>(entity =>
         {
             entity.HasKey(e => e.ReservationId);
+            entity.Property(e => e.ServiceId).IsRequired();
+            entity.Property(e => e.EmployeeId).IsRequired();
             entity.Property(e => e.CustomerName).IsRequired().HasMaxLength(100);
             entity.Property(e => e.PhoneNumber).IsRequired().HasMaxLength(50);
-            entity.Property(e => e.ServiceName).IsRequired().HasMaxLength(200);
-            entity.Property(e => e.ReservationDate).IsRequired();
-            entity.Property(e => e.ReservationTime).IsRequired();
+            entity.Property(e => e.ReservationDateTime).IsRequired();
             entity.Property(e => e.DurationMinutes).IsRequired();
             entity.Property(e => e.Status)
                   .HasConversion<int>(); // Convertir enum a int
@@ -169,9 +179,122 @@ public class ApplicationDbContext : DbContext
                   .WithMany(b => b.Reservations)
                   .HasForeignKey(e => e.BusinessId)
                   .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.Service)
+                  .WithMany()
+                  .HasForeignKey(e => e.ServiceId)
+                  .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.Employee)
+                  .WithMany(emp => emp.Reservations)
+                  .HasForeignKey(e => e.EmployeeId)
+                  .OnDelete(DeleteBehavior.Restrict);
             entity.HasIndex(e => e.BusinessId);
-            entity.HasIndex(e => new { e.BusinessId, e.ReservationDate, e.ReservationTime });
+            entity.HasIndex(e => e.ServiceId);
+            entity.HasIndex(e => e.EmployeeId);
+            entity.HasIndex(e => new { e.BusinessId, e.ReservationDateTime });
+            entity.HasIndex(e => new { e.EmployeeId, e.ReservationDateTime }); // Índice compuesto para búsquedas de disponibilidad
             entity.HasIndex(e => e.PhoneNumber);
+        });
+
+        // BusinessResource configuration
+        modelBuilder.Entity<BusinessResource>(entity =>
+        {
+            entity.HasKey(e => e.BusinessResourceId);
+            entity.Property(e => e.ResourceName).IsRequired().HasMaxLength(100);
+            entity.Property(e => e.Quantity).IsRequired();
+            entity.HasOne(e => e.Business)
+                  .WithMany()
+                  .HasForeignKey(e => e.BusinessId)
+                  .OnDelete(DeleteBehavior.Restrict);
+            entity.HasIndex(e => e.BusinessId);
+            entity.HasIndex(e => new { e.BusinessId, e.ResourceName }).IsUnique(); // Un recurso único por nombre por negocio
+        });
+
+        // Service configuration
+        modelBuilder.Entity<Service>(entity =>
+        {
+            entity.HasKey(e => e.ServiceId);
+            entity.Property(e => e.ServiceName).IsRequired().HasMaxLength(200);
+            entity.Property(e => e.DurationMinutes).IsRequired();
+            entity.Property(e => e.IsActive).IsRequired().HasDefaultValue(true);
+            entity.HasOne(e => e.Business)
+                  .WithMany()
+                  .HasForeignKey(e => e.BusinessId)
+                  .OnDelete(DeleteBehavior.Restrict);
+            entity.HasIndex(e => e.BusinessId);
+            entity.HasIndex(e => new { e.BusinessId, e.ServiceName }).IsUnique(); // Un servicio único por nombre por negocio
+        });
+
+        // ServiceResourceUsage configuration
+        modelBuilder.Entity<ServiceResourceUsage>(entity =>
+        {
+            entity.HasKey(e => e.ServiceResourceUsageId);
+            entity.Property(e => e.Quantity).IsRequired();
+            entity.HasOne(e => e.Service)
+                  .WithMany(s => s.ResourceUsages)
+                  .HasForeignKey(e => e.ServiceId)
+                  .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(e => e.BusinessResource)
+                  .WithMany()
+                  .HasForeignKey(e => e.BusinessResourceId)
+                  .OnDelete(DeleteBehavior.Restrict);
+            entity.HasIndex(e => new { e.ServiceId, e.BusinessResourceId }).IsUnique(); // Un uso único por servicio-recurso
+        });
+
+        // ServiceCoexistenceRule configuration
+        modelBuilder.Entity<ServiceCoexistenceRule>(entity =>
+        {
+            entity.HasKey(e => e.ServiceCoexistenceRuleId);
+            entity.Property(e => e.CanCoexist).IsRequired().HasDefaultValue(true);
+            entity.HasOne(e => e.Business)
+                  .WithMany()
+                  .HasForeignKey(e => e.BusinessId)
+                  .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.Service1)
+                  .WithMany(s => s.CoexistenceRulesAsService1)
+                  .HasForeignKey(e => e.ServiceId1)
+                  .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.Service2)
+                  .WithMany(s => s.CoexistenceRulesAsService2)
+                  .HasForeignKey(e => e.ServiceId2)
+                  .OnDelete(DeleteBehavior.Restrict);
+            entity.HasIndex(e => e.BusinessId);
+            entity.HasIndex(e => new { e.BusinessId, e.ServiceId1, e.ServiceId2 }).IsUnique(); // Una regla única por par de servicios
+        });
+
+        // Employee configuration
+        modelBuilder.Entity<Employee>(entity =>
+        {
+            entity.HasKey(e => e.EmployeeId);
+            entity.Property(e => e.BusinessId).IsRequired();
+            entity.Property(e => e.Name).IsRequired().HasMaxLength(200);
+            entity.Property(e => e.IsActive).IsRequired().HasDefaultValue(true);
+            entity.Property(e => e.CreatedAt).IsRequired();
+            entity.HasOne(e => e.Business)
+                  .WithMany()
+                  .HasForeignKey(e => e.BusinessId)
+                  .OnDelete(DeleteBehavior.Restrict);
+            entity.HasIndex(e => e.BusinessId);
+            entity.HasIndex(e => new { e.BusinessId, e.Name }); // Índice para búsquedas por nombre
+        });
+
+        // EmployeeService configuration (many-to-many)
+        modelBuilder.Entity<EmployeeService>(entity =>
+        {
+            entity.HasKey(e => e.EmployeeServiceId);
+            entity.Property(e => e.EmployeeId).IsRequired();
+            entity.Property(e => e.ServiceId).IsRequired();
+            entity.Property(e => e.CreatedAt).IsRequired();
+            entity.HasOne(e => e.Employee)
+                  .WithMany(emp => emp.EmployeeServices)
+                  .HasForeignKey(e => e.EmployeeId)
+                  .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.Service)
+                  .WithMany()
+                  .HasForeignKey(e => e.ServiceId)
+                  .OnDelete(DeleteBehavior.Restrict);
+            entity.HasIndex(e => e.EmployeeId);
+            entity.HasIndex(e => e.ServiceId);
+            entity.HasIndex(e => new { e.EmployeeId, e.ServiceId }).IsUnique(); // Una relación única por par empleado-servicio
         });
     }
 }

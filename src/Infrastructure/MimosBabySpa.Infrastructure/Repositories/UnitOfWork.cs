@@ -15,6 +15,11 @@ public class UnitOfWork : IUnitOfWork
     private ISystemConfigurationRepository? _systemConfigurations;
     private IConversationContextRepository? _conversationContexts;
     private IReservationRepository? _reservations;
+    private IServiceRepository? _services;
+    private IBusinessResourceRepository? _businessResources;
+    private IServiceCoexistenceRuleRepository? _serviceCoexistenceRules;
+    private IEmployeeRepository? _employees;
+    private IEmployeeServiceRepository? _employeeServices;
 
     public UnitOfWork(ApplicationDbContext context)
     {
@@ -47,6 +52,21 @@ public class UnitOfWork : IUnitOfWork
 
     public IReservationRepository Reservations =>
         _reservations ??= new ReservationRepository(_context);
+
+    public IServiceRepository Services =>
+        _services ??= new ServiceRepository(_context);
+
+    public IBusinessResourceRepository BusinessResources =>
+        _businessResources ??= new BusinessResourceRepository(_context);
+
+    public IServiceCoexistenceRuleRepository ServiceCoexistenceRules =>
+        _serviceCoexistenceRules ??= new ServiceCoexistenceRuleRepository(_context);
+
+    public IEmployeeRepository Employees =>
+        _employees ??= new EmployeeRepository(_context);
+
+    public IEmployeeServiceRepository EmployeeServices =>
+        _employeeServices ??= new EmployeeServiceRepository(_context);
 
     public async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {
