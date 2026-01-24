@@ -78,9 +78,6 @@ public class ConversationAgent : IConversationAgent
                 "Intención detectada: {Intent}, ShouldCheckAvailability={ShouldCheck}, ShouldAllowReservation={ShouldAllow}",
                 intentResult.Intent, intentResult.ShouldCheckAvailability, intentResult.ShouldAllowReservation);
 
-            // Obtener estado actualizado después de posibles cambios
-            conversationState = await _contextService.GetAsync(conversation.ConversationId);
-
             // Construir mensajes iniciales con contexto de intención inyectado
             var chatMessages = await BuildInitialMessagesAsync(
                 businessId, 
