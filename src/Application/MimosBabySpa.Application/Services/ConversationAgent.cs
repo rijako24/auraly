@@ -161,42 +161,54 @@ public class ConversationAgent : IConversationAgent
                                 : null
                         };
 
-                        // BLOQUEO CRÍTICO: Si el backend dice que NO se permite reserva, bloquear create_reservation
-                        // Recalcular intentResult con el estado actualizado y el mensaje original para detectar confirmación explícita
-                        if (functionToolCall.Name == "create_reservation")
+                        // BLOQUEO CRÍTICO: Validar si el backend permite ejecutar la tool
+                        // Recalcular intentResult con el estado actualizado y el mensaje original
+                        var (shouldBlock, updatedIntentResult) = await ShouldBlockToolExecutionAsync(
+                            functionToolCall.Name,
+                            conversation?.ConversationId,
+                            userMessage,
+                            intentResult);
+
+                        if (shouldBlock.HasValue && shouldBlock.Value)
                         {
-                            if (conversation != null)
-                            {
-                                var currentState = await _contextService.GetAsync(conversation.ConversationId);
-  
-                                intentResult = _intentDetector.Detect(userMessage, currentState);
-                            }
+                            intentResult = updatedIntentResult;
+                            var (errorMessage, logMessage, logPropertyName, logPropertyValue) = GetBlockingDetails(functionToolCall.Name, intentResult);
                             
-                            if (intentResult != null && !intentResult.ShouldAllowReservation)
+                            if (functionToolCall.Name == "check_availability")
                             {
                                 _logger.LogWarning(
-                                    "La IA intentó llamar create_reservation pero el backend lo bloqueó. " +
-                                    "Intent={Intent}, ShouldAllowReservation={ShouldAllow}",
-                                    intentResult.Intent, intentResult.ShouldAllowReservation);
-
-                                // Crear resultado de error para la tool
-                                var blockedResult = new ToolCallResult
-                                {
-                                    ToolCallId = functionToolCall.Id,
-                                    ToolName = functionToolCall.Name ?? string.Empty,
-                                    Content = JsonSerializer.Serialize(new
-                                    {
-                                        success = false,
-                                        error = "No se puede crear la reserva. Faltan datos necesarios o no hay disponibilidad confirmada."
-                                    }),
-                                    IsError = true,
-                                    ErrorMessage = "Reserva bloqueada por el backend: condiciones no cumplidas"
-                                };
-
-                                var blockedToolResponseMessage = new ChatRequestToolMessage(blockedResult.Content, functionToolCall.Id);
-                                chatMessages.Add(blockedToolResponseMessage);
-                                continue;
+                                    "La IA intentó llamar {ToolName} pero el backend lo bloqueó. Intent={Intent}, ShouldCheckAvailability={ShouldCheck}",
+                                    functionToolCall.Name, intentResult?.Intent, intentResult?.ShouldCheckAvailability ?? false);
                             }
+                            else if (functionToolCall.Name == "create_reservation")
+                            {
+                                _logger.LogWarning(
+                                    "La IA intentó llamar {ToolName} pero el backend lo bloqueó. Intent={Intent}, ShouldAllowReservation={ShouldAllow}",
+                                    functionToolCall.Name, intentResult?.Intent, intentResult?.ShouldAllowReservation ?? false);
+                            }
+                            else
+                            {
+                                _logger.LogWarning(
+                                    "La IA intentó llamar {ToolName} pero el backend lo bloqueó. Intent={Intent}",
+                                    functionToolCall.Name, intentResult?.Intent);
+                            }
+
+                            var blockedResult = new ToolCallResult
+                            {
+                                ToolCallId = functionToolCall.Id,
+                                ToolName = functionToolCall.Name ?? string.Empty,
+                                Content = JsonSerializer.Serialize(new
+                                {
+                                    success = false,
+                                    error = errorMessage
+                                }),
+                                IsError = true,
+                                ErrorMessage = $"Tool {functionToolCall.Name} bloqueada por el backend: condiciones no cumplidas"
+                            };
+
+                            var blockedToolResponseMessage = new ChatRequestToolMessage(blockedResult.Content, functionToolCall.Id);
+                            chatMessages.Add(blockedToolResponseMessage);
+                            continue;
                         }
 
                         // Pasar conversationId a las herramientas para que ellas completen sus propios parámetros
@@ -384,6 +396,87 @@ public class ConversationAgent : IConversationAgent
         return sb.ToString();
     }
 
+
+    /// <summary>
+    /// Determina si una tool debe ser bloqueada basándose en la validación del backend.
+    /// </summary>
+    /// <param name="toolName">Nombre de la tool a validar</param>
+    /// <param name="conversationId">ID de la conversación (opcional)</param>
+    /// <param name="userMessage">Mensaje original del usuario</param>
+    /// <param name="currentIntentResult">Resultado de intención actual (puede ser null)</param>
+    /// <returns>Tupla con (bool? shouldBlock, IntentDetectionResult? updatedIntentResult)</returns>
+    private async Task<(bool? shouldBlock, IntentDetectionResult? updatedIntentResult)> ShouldBlockToolExecutionAsync(
+        string? toolName,
+        Guid? conversationId,
+        string userMessage,
+        IntentDetectionResult? currentIntentResult)
+    {
+        var updatedIntentResult = currentIntentResult;
+
+        // Solo validar check_availability y create_reservation
+        if (toolName != "check_availability" && toolName != "create_reservation")
+        {
+            return (null, updatedIntentResult);
+        }
+
+        // Recalcular intentResult con el estado actualizado y el mensaje original
+        if (conversationId.HasValue)
+        {
+            var currentState = await _contextService.GetAsync(conversationId.Value);
+            updatedIntentResult = _intentDetector.Detect(userMessage, currentState);
+        }
+
+        if (updatedIntentResult == null)
+        {
+            return (null, updatedIntentResult);
+        }
+
+        // Validar según el tipo de tool
+        if (toolName == "check_availability")
+        {
+            return (!updatedIntentResult.ShouldCheckAvailability, updatedIntentResult);
+        }
+        else if (toolName == "create_reservation")
+        {
+            return (!updatedIntentResult.ShouldAllowReservation, updatedIntentResult);
+        }
+
+        return (null, updatedIntentResult);
+    }
+
+    /// <summary>
+    /// Obtiene los detalles del bloqueo (mensaje de error, log, etc.) para una tool específica.
+    /// </summary>
+    private (string errorMessage, string logMessage, string logPropertyName, object logPropertyValue) GetBlockingDetails(
+        string? toolName,
+        IntentDetectionResult? intentResult)
+    {
+        if (toolName == "check_availability")
+        {
+            return (
+                "No se puede verificar disponibilidad. Faltan datos necesarios o la solicitud no es válida.",
+                "Intent={Intent}, ShouldCheckAvailability={ShouldCheck}",
+                "ShouldCheck",
+                intentResult?.ShouldCheckAvailability ?? false
+            );
+        }
+        else if (toolName == "create_reservation")
+        {
+            return (
+                "No se puede crear la reserva. Faltan datos necesarios o no hay disponibilidad confirmada.",
+                "Intent={Intent}, ShouldAllowReservation={ShouldAllow}",
+                "ShouldAllow",
+                intentResult?.ShouldAllowReservation ?? false
+            );
+        }
+
+        return (
+            "La tool no puede ser ejecutada. Condiciones no cumplidas.",
+            "Intent={Intent}",
+            "Intent",
+            intentResult?.Intent.ToString() ?? "Unknown"
+        );
+    }
 
     /// <summary>
     /// Construye el contexto de intención detectada usando template desde SystemConfiguration.
