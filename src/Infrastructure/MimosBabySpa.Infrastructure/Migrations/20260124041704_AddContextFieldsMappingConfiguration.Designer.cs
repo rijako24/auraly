@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using MimosBabySpa.Infrastructure.Data;
 
@@ -11,9 +12,11 @@ using MimosBabySpa.Infrastructure.Data;
 namespace MimosBabySpa.Infrastructure.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260124041704_AddContextFieldsMappingConfiguration")]
+    partial class AddContextFieldsMappingConfiguration
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -426,9 +429,6 @@ namespace MimosBabySpa.Infrastructure.Migrations
                         .HasMaxLength(500)
                         .HasColumnType("nvarchar(500)");
 
-                    b.Property<Guid?>("ConversationId")
-                        .HasColumnType("uniqueidentifier");
-
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("datetime2");
 
@@ -442,6 +442,10 @@ namespace MimosBabySpa.Infrastructure.Migrations
 
                     b.Property<Guid>("EmployeeId")
                         .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Notes")
+                        .HasMaxLength(1000)
+                        .HasColumnType("nvarchar(1000)");
 
                     b.Property<string>("PhoneNumber")
                         .IsRequired()
@@ -463,8 +467,6 @@ namespace MimosBabySpa.Infrastructure.Migrations
                     b.HasKey("ReservationId");
 
                     b.HasIndex("BusinessId");
-
-                    b.HasIndex("ConversationId");
 
                     b.HasIndex("EmployeeId");
 
@@ -784,11 +786,6 @@ namespace MimosBabySpa.Infrastructure.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
-                    b.HasOne("MimosBabySpa.Domain.Entities.Conversation", "Conversation")
-                        .WithMany()
-                        .HasForeignKey("ConversationId")
-                        .OnDelete(DeleteBehavior.SetNull);
-
                     b.HasOne("MimosBabySpa.Domain.Entities.Employee", "Employee")
                         .WithMany("Reservations")
                         .HasForeignKey("EmployeeId")
@@ -802,8 +799,6 @@ namespace MimosBabySpa.Infrastructure.Migrations
                         .IsRequired();
 
                     b.Navigation("Business");
-
-                    b.Navigation("Conversation");
 
                     b.Navigation("Employee");
 

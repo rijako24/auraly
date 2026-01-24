@@ -26,6 +26,7 @@ public class ApplicationDbContext : DbContext
     public DbSet<ServiceCoexistenceRule> ServiceCoexistenceRules { get; set; }
     public DbSet<Employee> Employees { get; set; }
     public DbSet<EmployeeService> EmployeeServices { get; set; }
+    public DbSet<ConversationStateEntity> ConversationStates { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -174,7 +175,6 @@ public class ApplicationDbContext : DbContext
             entity.Property(e => e.Status)
                   .HasConversion<int>(); // Convertir enum a int
             entity.Property(e => e.CalendarEventId).HasMaxLength(500);
-            entity.Property(e => e.Notes).HasMaxLength(1000);
             entity.HasOne(e => e.Business)
                   .WithMany(b => b.Reservations)
                   .HasForeignKey(e => e.BusinessId)
@@ -187,12 +187,17 @@ public class ApplicationDbContext : DbContext
                   .WithMany(emp => emp.Reservations)
                   .HasForeignKey(e => e.EmployeeId)
                   .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.Conversation)
+                  .WithMany()
+                  .HasForeignKey(e => e.ConversationId)
+                  .OnDelete(DeleteBehavior.SetNull); // Si se elimina la conversación, el ConversationId se pone en null
             entity.HasIndex(e => e.BusinessId);
             entity.HasIndex(e => e.ServiceId);
             entity.HasIndex(e => e.EmployeeId);
             entity.HasIndex(e => new { e.BusinessId, e.ReservationDateTime });
             entity.HasIndex(e => new { e.EmployeeId, e.ReservationDateTime }); // Índice compuesto para búsquedas de disponibilidad
             entity.HasIndex(e => e.PhoneNumber);
+            entity.HasIndex(e => e.ConversationId); // Índice para búsquedas por conversación
         });
 
         // BusinessResource configuration
@@ -295,6 +300,26 @@ public class ApplicationDbContext : DbContext
             entity.HasIndex(e => e.EmployeeId);
             entity.HasIndex(e => e.ServiceId);
             entity.HasIndex(e => new { e.EmployeeId, e.ServiceId }).IsUnique(); // Una relación única por par empleado-servicio
+        });
+
+        // ConversationState configuration
+        modelBuilder.Entity<ConversationStateEntity>(entity =>
+        {
+            entity.HasKey(e => e.ConversationId);
+            entity.Property(e => e.StateJson).IsRequired().HasColumnType("NVARCHAR(MAX)");
+            entity.Property(e => e.Version).IsRequired().HasDefaultValue(1);
+            entity.Property(e => e.UpdatedAt).IsRequired();
+            entity.Property(e => e.CreatedAt).IsRequired();
+            entity.HasOne(e => e.Conversation)
+                  .WithOne()
+                  .HasForeignKey<ConversationStateEntity>(e => e.ConversationId)
+                  .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(e => e.Business)
+                  .WithMany()
+                  .HasForeignKey(e => e.BusinessId)
+                  .OnDelete(DeleteBehavior.Restrict);
+            entity.HasIndex(e => e.BusinessId);
+            entity.HasIndex(e => e.ConversationId).IsUnique();
         });
     }
 }

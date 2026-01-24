@@ -16,6 +16,7 @@ public interface IUnitOfWork : IDisposable
     IServiceCoexistenceRuleRepository ServiceCoexistenceRules { get; }
     IEmployeeRepository Employees { get; }
     IEmployeeServiceRepository EmployeeServices { get; }
+    IConversationStateRepository ConversationStates { get; }
     
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using MimosBabySpa.Application.Models;
+using MimosBabySpa.Application.Services;
 using MimosBabySpa.Domain.Entities;
 using MimosBabySpa.Domain.Repositories;
 
@@ -13,6 +14,7 @@ public class ToolDispatcher : IToolDispatcher
     private readonly IUnitOfWork _unitOfWork;
     private readonly IAvailabilityService _availabilityService;
     private readonly IEmployeeAssignmentService _employeeAssignmentService;
+    private readonly IConversationContextService _contextService;
     private readonly ILogger<ToolDispatcher> _logger;
     private static readonly List<ToolDefinition> _availableTools = new();
 
@@ -27,6 +29,7 @@ public class ToolDispatcher : IToolDispatcher
         IUnitOfWork unitOfWork,
         IAvailabilityService availabilityService,
         IEmployeeAssignmentService employeeAssignmentService,
+        IConversationContextService contextService,
         ILogger<ToolDispatcher> logger)
     {
         _calendarService = calendarService;
@@ -34,6 +37,7 @@ public class ToolDispatcher : IToolDispatcher
         _unitOfWork = unitOfWork;
         _availabilityService = availabilityService;
         _employeeAssignmentService = employeeAssignmentService;
+        _contextService = contextService;
         _logger = logger;
     }
 
@@ -193,7 +197,6 @@ public class ToolDispatcher : IToolDispatcher
                 { "service", service },
                 { "date", date.ToString("yyyy-MM-dd") },
                 { "is_available", availabilityResult.IsAvailable }, // VALOR EXPLÍCITO - el modelo NO debe inferir
-                { "max_capacity", availabilityResult.MaxCapacity },
                 { "current_reservations", availabilityResult.CurrentReservations },
                 { "bookedSlots", bookedSlotsData },
                 { "totalBookedSlots", availabilityResult.CurrentReservations }
@@ -318,24 +321,6 @@ public class ToolDispatcher : IToolDispatcher
             }
             durationMinutes = durationProp.GetInt32();
 
-            // Extraer información adicional opcional para Notes
-            // Si no se proporciona notes, construir desde el contexto de la conversación
-            string? notes = null;
-            if (args.TryGetProperty("notes", out var notesProp) && notesProp.ValueKind == JsonValueKind.String)
-            {
-                var notesValue = notesProp.GetString();
-                if (!string.IsNullOrWhiteSpace(notesValue))
-                {
-                    notes = notesValue;
-                }
-            }
-
-            // Si notes está vacío y tenemos conversationId, construir desde el contexto
-            if (string.IsNullOrWhiteSpace(notes) && conversationId.HasValue)
-            {
-                notes = await BuildNotesFromContextAsync(conversationId.Value, cancellationToken);
-            }
-
             // REFACTORIZADO: Validar disponibilidad ATÓMICAMENTE antes de crear la reserva
             // Esto previene sobre-reservas y garantiza consistencia bajo concurrencia
             var reservationDateTime = date.Date.Add(time);
@@ -422,7 +407,7 @@ public class ToolDispatcher : IToolDispatcher
                 PhoneNumber = string.Empty, // Genérico - no aplica a todos los negocios
                 ReservationDateTime = reservationDateTime,
                 DurationMinutes = durationMinutes,
-                Notes = notes, // Cualquier información adicional específica del negocio va aquí
+                ConversationId = conversationId,
                 Status = Domain.Enums.ReservationStatus.Pending,
                 CreatedAt = DateTime.UtcNow
             };
@@ -433,6 +418,14 @@ public class ToolDispatcher : IToolDispatcher
             _logger.LogInformation(
                 "Reserva creada exitosamente: ReservationId={ReservationId}, Service={Service}, DateTime={DateTime}",
                 reservationDto.ReservationId, reservationDto.ServiceName, reservationDto.ReservationDateTime);
+
+            // Guardar reserva confirmada en el estado de conversación
+            if (conversationId.HasValue)
+            {
+                await _contextService.MarkReservationConfirmedAsync(
+                    conversationId.Value, 
+                    reservationDto.ReservationId.ToString());
+            }
 
             var result = new
             {
@@ -556,9 +549,8 @@ public class ToolDispatcher : IToolDispatcher
                 };
             }
 
-            // Crear o actualizar el contexto
-            await _unitOfWork.ConversationContexts.CreateOrUpdateAsync(conversationId, field, value);
-            await _unitOfWork.SaveChangesAsync(cancellationToken);
+            // Usar método genérico que maneja el mapeo automáticamente
+            await _contextService.SetFieldAsync(conversationId, field, value);
 
             var result = new
             {
@@ -621,7 +613,7 @@ public class ToolDispatcher : IToolDispatcher
         _availableTools.Add(new ToolDefinition
         {
             Name = "check_availability",
-            Description = "Obtiene información DETERMINÍSTICA de disponibilidad desde el backend. Retorna 'is_available' (true/false) calculado por el sistema. El modelo NO debe inferir disponibilidad, solo usar el valor 'is_available' retornado. También retorna 'max_capacity', 'current_reservations', 'bookedSlots' y 'overlappingSlots' si se proporciona hora específica. IMPORTANTE: El modelo DEBE confiar en 'is_available' como verdad absoluta. NO debe aplicar reglas propias ni reinterpretar estos valores.",
+            Description = "Obtiene información DETERMINÍSTICA de disponibilidad desde el backend. Retorna 'is_available' (true/false) calculado por el sistema. El modelo NO debe inferir disponibilidad, solo usar el valor 'is_available' retornado. También retorna 'current_reservations', 'bookedSlots' y 'overlappingSlots' si se proporciona hora específica. IMPORTANTE: El modelo DEBE confiar en 'is_available' como verdad absoluta. NO debe aplicar reglas propias ni reinterpretar estos valores.",
             ParametersSchema = checkAvailabilitySchema
         });
 
@@ -646,10 +638,6 @@ public class ToolDispatcher : IToolDispatcher
                 ""durationMinutes"": {
                     ""type"": ""integer"",
                     ""description"": ""Duración del servicio en minutos (debe obtenerse de BusinessInformation en el prompt)""
-                },
-                ""notes"": {
-                    ""type"": ""string"",
-                    ""description"": ""Información adicional opcional sobre la reserva. Formato: JSON string con pares clave-valor. Ejemplo: '{\""customerName\"":\""Juan Pérez\"",\""phone\"":\""+1234567890\"",\""age\"":\""6 meses\""}'. Incluye cualquier información relevante para el tipo de negocio (nombre del cliente, teléfono, edad, preferencias, etc.) en formato JSON string.""
                 }
             },
             ""required"": [""service"", ""date"", ""time"", ""durationMinutes""]
@@ -658,7 +646,7 @@ public class ToolDispatcher : IToolDispatcher
         _availableTools.Add(new ToolDefinition
         {
             Name = "create_reservation",
-            Description = "Crea una reserva en el sistema con validación ATÓMICA de capacidad. El backend valida disponibilidad antes de crear. Retorna 'success=true' solo si la reserva fue creada exitosamente. Si 'success=false', el modelo NO debe confirmar la reserva al usuario. Solo requiere campos genéricos: servicio, fecha, hora y duración. Para información adicional específica del negocio (nombre del cliente, teléfono, edad, preferencias, etc.), envía todo en el campo opcional 'notes' como un JSON string con formato: '{\"clave\":\"valor\",\"otraClave\":\"otroValor\"}'. Ejemplo: '{\"customerName\":\"Juan Pérez\",\"phone\":\"+1234567890\",\"age\":\"6 meses\"}'. IMPORTANTE: El modelo solo debe confirmar reserva si recibe 'success=true'.",
+            Description = "Crea una reserva en el sistema con validación ATÓMICA de capacidad. El backend valida disponibilidad antes de crear. Retorna 'success=true' solo si la reserva fue creada exitosamente. Si 'success=false', el modelo NO debe confirmar la reserva al usuario. Solo requiere campos genéricos: servicio, fecha, hora y duración. IMPORTANTE: El modelo solo debe confirmar reserva si recibe 'success=true'.",
             ParametersSchema = createReservationSchema
         });
 
@@ -669,11 +657,11 @@ public class ToolDispatcher : IToolDispatcher
             ""properties"": {
                 ""field"": {
                     ""type"": ""string"",
-                    ""description"": ""Nombre del campo de contexto. Campos disponibles: customerName (nombre del cliente), phone (teléfono), babyAgeMonths (edad del bebé en meses - MUY IMPORTANTE), service (servicio o plan elegido), desiredDate (fecha deseada), desiredTime (hora deseada), reservationConfirmed (confirmación de reserva). IMPORTANTE: Cuando uses campos en las notes de create_reservation, traduce los nombres al español: customerName→nombreCliente, phone→telefono, babyAgeMonths→edadBebeMeses. Los campos service, desiredDate, desiredTime y reservationConfirmed NO se incluyen en notes porque se usan directamente en la reserva.""
+                    ""description"": ""Nombre del campo de contexto.""
                 },
                 ""value"": {
                     ""type"": ""string"",
-                    ""description"": ""Valor del campo de contexto""
+                    ""description"": ""Valor del campo de contexto. Para fechas usa formato YYYY-MM-DD, para horas usa formato HH:mm, para números solo el valor numérico.""
                 }
             },
             ""required"": [""field"", ""value""]
@@ -682,7 +670,7 @@ public class ToolDispatcher : IToolDispatcher
         _availableTools.Add(new ToolDefinition
         {
             Name = "update_conversation_state",
-            Description = "OBLIGATORIO: Guarda información importante del cliente en el contexto de la conversación. DEBES usar esta herramienta INMEDIATAMENTE cuando el cliente mencione: (1) Su nombre → field='customerName', (2) Su teléfono → field='phone', (3) La edad del bebé (ej: 'tiene 4 meses', 'mi bebé tiene 6 meses', 'tiene 1 año') → field='babyAgeMonths' (convierte años a meses: 1 año = 12 meses), (4) Un servicio o plan → field='service', (5) Una fecha deseada → field='desiredDate', (6) Una hora deseada → field='desiredTime', (7) Confirmación explícita de reserva → field='reservationConfirmed'. IMPORTANTE: Si el cliente dice 'mi bebé tiene X meses' o 'tiene X meses' o 'X meses', DEBES llamar esta herramienta con field='babyAgeMonths' y value='X' (solo el número). IMPORTANTE: No inventar valores aunque sea requerido. TRADUCCIÓN EN NOTES: Cuando uses campos del contexto en las notes de create_reservation, DEBES traducir los nombres al español manualmente: customerName→nombreCliente, phone→telefono, babyAgeMonths→edadBebeMeses. Los campos service, desiredDate, desiredTime y reservationConfirmed NO se incluyen en notes porque se usan directamente en la reserva.",
+            Description = "OBLIGATORIO: Guarda información importante del cliente en el contexto de la conversación. DEBES usar esta herramienta INMEDIATAMENTE cuando el cliente mencione información relevante. Consulta el system prompt para conocer los campos específicos que debes detectar según el tipo de negocio. Campos genéricos siempre disponibles: customerName (nombre), phone (teléfono), email (correo), service (servicio/entidad principal), desiredDate (fecha deseada), desiredTime (hora deseada), durationMinutes (duración). IMPORTANTE: No inventar valores aunque sea requerido. El sistema mapeará automáticamente los campos a las propiedades correspondientes del estado de conversación.",
             ParametersSchema = updateConversationStateSchema
         });
     }
@@ -706,39 +694,50 @@ public class ToolDispatcher : IToolDispatcher
         var argsDict = JsonSerializer.Deserialize<Dictionary<string, object>>(args.GetRawText())
             ?? new Dictionary<string, object>();
 
-        // Completar service desde el contexto si falta
+        // Obtener estado de conversación
+        var state = await _contextService.GetAsync(conversationId.Value);
+
+        // Completar service desde el estado si falta
         if (!argsDict.ContainsKey("service") || 
             string.IsNullOrWhiteSpace(argsDict["service"]?.ToString()))
         {
-            var serviceFromContext = await GetContextValueAsync(conversationId.Value, "service");
-            if (!string.IsNullOrWhiteSpace(serviceFromContext))
+            if (!string.IsNullOrWhiteSpace(state.PrimaryEntity))
             {
-                argsDict["service"] = serviceFromContext;
-                _logger.LogDebug("Parámetro 'service' completado desde contexto: {Service}", serviceFromContext);
+                argsDict["service"] = state.PrimaryEntity;
+                _logger.LogDebug("Parámetro 'service' completado desde estado: {Service}", state.PrimaryEntity);
             }
         }
 
-        // Completar date desde el contexto si falta
+        // Completar date desde el estado si falta
         if (!argsDict.ContainsKey("date") || 
             string.IsNullOrWhiteSpace(argsDict["date"]?.ToString()))
         {
-            var dateFromContext = await GetContextValueAsync(conversationId.Value, "desiredDate");
-            if (!string.IsNullOrWhiteSpace(dateFromContext))
+            if (state.DesiredDate.HasValue)
             {
-                argsDict["date"] = dateFromContext;
-                _logger.LogDebug("Parámetro 'date' completado desde contexto: {Date}", dateFromContext);
+                argsDict["date"] = state.DesiredDate.Value.ToString("yyyy-MM-dd");
+                _logger.LogDebug("Parámetro 'date' completado desde estado: {Date}", state.DesiredDate.Value);
             }
         }
 
-        // Completar time desde el contexto si falta
+        // Completar time desde el estado si falta
         if (!argsDict.ContainsKey("time") || 
             string.IsNullOrWhiteSpace(argsDict["time"]?.ToString()))
         {
-            var timeFromContext = await GetContextValueAsync(conversationId.Value, "desiredTime");
-            if (!string.IsNullOrWhiteSpace(timeFromContext))
+            if (state.DesiredTime.HasValue)
             {
-                argsDict["time"] = timeFromContext;
-                _logger.LogDebug("Parámetro 'time' completado desde contexto: {Time}", timeFromContext);
+                argsDict["time"] = state.DesiredTime.Value.ToString("HH:mm");
+                _logger.LogDebug("Parámetro 'time' completado desde estado: {Time}", state.DesiredTime.Value);
+            }
+        }
+
+        // Completar durationMinutes desde el estado si falta
+        if (!argsDict.ContainsKey("durationMinutes") || 
+            argsDict["durationMinutes"] == null)
+        {
+            if (state.DurationMinutes.HasValue)
+            {
+                argsDict["durationMinutes"] = state.DurationMinutes.Value;
+                _logger.LogDebug("Parámetro 'durationMinutes' completado desde estado: {Duration}", state.DurationMinutes.Value);
             }
         }
 
@@ -747,58 +746,4 @@ public class ToolDispatcher : IToolDispatcher
         return JsonSerializer.Deserialize<JsonElement>(enrichedJson);
     }
 
-    /// <summary>
-    /// Construye el campo notes desde el contexto de la conversación.
-    /// Excluye campos que ya se usan directamente en la reserva.
-    /// Los nombres de campos se mantienen en su formato original (genérico, sin traducción hardcodeada).
-    /// La traducción debe ser manejada por el modelo basándose en la documentación proporcionada.
-    /// </summary>
-    private async Task<string?> BuildNotesFromContextAsync(
-        Guid conversationId,
-        CancellationToken cancellationToken)
-    {
-        var allContexts = await _unitOfWork.ConversationContexts.GetByConversationIdAsync(conversationId);
-        
-        // Campos que ya se usan directamente en la reserva, no incluirlos en notes
-        var reservedFields = new HashSet<string> 
-        { 
-            "service", 
-            "desiredDate", 
-            "desiredTime", 
-            "reservationConfirmed" 
-        };
-        
-        var notesDict = new Dictionary<string, string>();
-        
-        foreach (var context in allContexts)
-        {
-            // Solo incluir campos que no están reservados y tienen valor
-            if (!reservedFields.Contains(context.Field) && !string.IsNullOrWhiteSpace(context.Value))
-            {
-                // Mantener el nombre original del campo (genérico, sin traducción hardcodeada)
-                // El modelo debe traducir basándose en la documentación cuando construya notes manualmente
-                notesDict[context.Field] = context.Value;
-            }
-        }
-
-        if (notesDict.Any())
-        {
-            var notesJson = JsonSerializer.Serialize(notesDict);
-            _logger.LogDebug("Notes construido desde contexto: {Notes}", notesJson);
-            return notesJson;
-        }
-
-        return null;
-    }
-
-
-    /// <summary>
-    /// Obtiene un valor del contexto de la conversación por nombre de campo.
-    /// </summary>
-    private async Task<string?> GetContextValueAsync(Guid conversationId, string fieldName)
-    {
-        var contexts = await _unitOfWork.ConversationContexts.GetByConversationIdAsync(conversationId);
-        var context = contexts.FirstOrDefault(c => c.Field.Equals(fieldName, StringComparison.OrdinalIgnoreCase));
-        return context?.Value;
-    }
 }

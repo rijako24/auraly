@@ -11,20 +11,17 @@ public class ReservationService : IReservationService
     private readonly IUnitOfWork _unitOfWork;
     private readonly ICalendarService _calendarService;
     private readonly IBusinessConfigurationService _businessConfigService;
-    private readonly INotesFormatterService _notesFormatterService;
     private readonly ILogger<ReservationService> _logger;
 
     public ReservationService(
         IUnitOfWork unitOfWork,
         ICalendarService calendarService,
         IBusinessConfigurationService businessConfigService,
-        INotesFormatterService notesFormatterService,
         ILogger<ReservationService> logger)
     {
         _unitOfWork = unitOfWork;
         _calendarService = calendarService;
         _businessConfigService = businessConfigService;
-        _notesFormatterService = notesFormatterService;
         _logger = logger;
     }
 
@@ -56,15 +53,12 @@ public class ReservationService : IReservationService
             
             // Template genérico para eventos de calendario
             // Solo usa campos genéricos: service, date, time, durationMinutes
-            // Toda la información adicional viene en Notes y se formatea de forma legible
-            var notesInfo = _notesFormatterService.FormatNotes(reservation.Notes);
-            
             var reservationTemplate = $@"Reserva confirmada
 
                                         Servicio: {serviceName}
                                         Fecha: {reservation.ReservationDateTime:dd/MM/yyyy}
                                         Hora: {reservation.ReservationDateTime:hh\:mm}
-                                        Duración: {reservation.DurationMinutes} minutos{notesInfo}";
+                                        Duración: {reservation.DurationMinutes} minutos";
 
             // Asegurar que ReservationId esté asignado
             if (reservation.ReservationId == Guid.Empty)
@@ -220,7 +214,7 @@ public class ReservationService : IReservationService
             DurationMinutes = reservation.DurationMinutes,
             Status = reservation.Status,
             CalendarEventId = reservation.CalendarEventId,
-            Notes = reservation.Notes,
+            ConversationId = reservation.ConversationId,
             CreatedAt = reservation.CreatedAt,
             UpdatedAt = reservation.UpdatedAt
         };

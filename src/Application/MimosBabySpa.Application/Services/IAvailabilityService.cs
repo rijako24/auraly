@@ -8,7 +8,7 @@ public interface IAvailabilityService
 {
     /// <summary>
     /// Verifica disponibilidad para un servicio en una fecha y hora específica.
-    /// Retorna información explícita: is_available, max_capacity, current_reservations, etc.
+    /// Retorna información explícita: is_available, current_reservations, etc.
     /// </summary>
     Task<AvailabilityResult> CheckAvailabilityAsync(
         Guid businessId,
@@ -26,7 +26,6 @@ public interface IAvailabilityService
 public class AvailabilityResult
 {
     public bool IsAvailable { get; set; }
-    public int MaxCapacity { get; set; } = 1; // Por defecto 1 servicio por horario
     public int CurrentReservations { get; set; }
     public List<BookedSlot> BookedSlots { get; set; } = new();
     public List<BookedSlot> OverlappingSlots { get; set; } = new();

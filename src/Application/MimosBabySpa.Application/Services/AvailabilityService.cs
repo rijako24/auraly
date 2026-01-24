@@ -38,7 +38,6 @@ public class AvailabilityService : IAvailabilityService
 
         var result = new AvailabilityResult
         {
-            MaxCapacity = 1,
             BookedSlots = new List<BookedSlot>()
         };
 

@@ -36,7 +36,6 @@ var host = new HostBuilder()
         services.AddScoped<IConversationService, ConversationService>();
         services.AddScoped<IMessageService, MessageService>();
         services.AddScoped<ILeadService, LeadService>();
-        services.AddScoped<INotesFormatterService, NotesFormatterService>();
         services.AddScoped<IReservationService, ReservationService>();
         services.AddScoped<IBusinessIdentificationService, BusinessIdentificationService>();
         services.AddScoped<IBusinessConfigurationService, BusinessConfigurationService>();
@@ -45,10 +44,15 @@ var host = new HostBuilder()
         
         // New Refactored Services
         services.AddScoped<IDateTimeExtractorService, DateTimeExtractorService>();
+        services.AddScoped<IReservationIntentDetector, ReservationIntentDetector>();
+        services.AddScoped<IIntentDetectorService, IntentDetectorService>();
         services.AddScoped<IResourceConfigurationService, ResourceConfigurationService>();
         services.AddScoped<IEmployeeAssignmentService, EmployeeAssignmentService>();
         services.AddScoped<IAvailabilityService, AvailabilityService>();
-        services.AddScoped<IConversationStateService, ConversationStateService>();
+        
+        // Conversation Context Services (New)
+        services.AddScoped<IConversationStateRepository, ConversationStateRepository>();
+        services.AddScoped<IConversationContextService, ConversationContextService>();
         
         // New Agent Services
         services.AddScoped<IToolDispatcher, ToolDispatcher>();
@@ -61,7 +65,9 @@ var host = new HostBuilder()
             var businessConfigService = sp.GetRequiredService<IBusinessConfigurationService>();
             var dateTimeExtractor = sp.GetRequiredService<IDateTimeExtractorService>();
             var availabilityService = sp.GetRequiredService<IAvailabilityService>();
-            var stateService = sp.GetRequiredService<IConversationStateService>();
+            var reservationIntentDetector = sp.GetRequiredService<IReservationIntentDetector>();
+            var intentDetector = sp.GetRequiredService<IIntentDetectorService>();
+            var contextService = sp.GetRequiredService<IConversationContextService>();
             var unitOfWork = sp.GetRequiredService<IUnitOfWork>();
             
             return new ConversationAgent(
@@ -71,7 +77,9 @@ var host = new HostBuilder()
                 businessConfigService,
                 dateTimeExtractor,
                 availabilityService,
-                stateService,
+                reservationIntentDetector,
+                intentDetector,
+                contextService,
                 unitOfWork,
                 sp.GetRequiredService<ILogger<ConversationAgent>>());
         });

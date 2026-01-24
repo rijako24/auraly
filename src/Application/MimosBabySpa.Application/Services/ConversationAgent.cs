@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using Azure.AI.OpenAI;
 using Microsoft.Extensions.Logging;
@@ -5,6 +6,8 @@ using MimosBabySpa.Application.Models;
 using MimosBabySpa.Application.Services;
 using MimosBabySpa.Domain.Entities;
 using MimosBabySpa.Domain.Enums;
+using ConversationStateModel = MimosBabySpa.Domain.Models.ConversationState;
+using MimosBabySpa.Domain.Models;
 using MimosBabySpa.Domain.Repositories;
 
 namespace MimosBabySpa.Application.Services;
@@ -17,7 +20,9 @@ public class ConversationAgent : IConversationAgent
     private readonly IBusinessConfigurationService _businessConfigService;
     private readonly IDateTimeExtractorService _dateTimeExtractor;
     private readonly IAvailabilityService _availabilityService;
-    private readonly IConversationStateService _stateService;
+    private readonly IReservationIntentDetector _reservationIntentDetector;
+    private readonly IIntentDetectorService _intentDetector;
+    private readonly IConversationContextService _contextService;
     private readonly IUnitOfWork _unitOfWork;
     private readonly ILogger<ConversationAgent> _logger;
     private const int MaxIterations = 10; // Límite de seguridad para evitar loops infinitos
@@ -29,7 +34,9 @@ public class ConversationAgent : IConversationAgent
         IBusinessConfigurationService businessConfigService,
         IDateTimeExtractorService dateTimeExtractor,
         IAvailabilityService availabilityService,
-        IConversationStateService stateService,
+        IReservationIntentDetector reservationIntentDetector,
+        IIntentDetectorService intentDetector,
+        IConversationContextService contextService,
         IUnitOfWork unitOfWork,
         ILogger<ConversationAgent> logger)
     {
@@ -39,7 +46,9 @@ public class ConversationAgent : IConversationAgent
         _businessConfigService = businessConfigService;
         _dateTimeExtractor = dateTimeExtractor;
         _availabilityService = availabilityService;
-        _stateService = stateService;
+        _reservationIntentDetector = reservationIntentDetector;
+        _intentDetector = intentDetector;
+        _contextService = contextService;
         _unitOfWork = unitOfWork;
         _logger = logger;
     }
@@ -53,58 +62,80 @@ public class ConversationAgent : IConversationAgent
     {
         try
         {
-            // REFACTORIZADO: Detectar fecha/hora manualmente desde backend
-            var extractedDate = _dateTimeExtractor.ExtractDate(userMessage);
-            var extractedTime = _dateTimeExtractor.ExtractTime(userMessage);
-            string? availabilityContext = null;
+            // PASO 1: Obtener estado de conversación
+            var conversationState = await _contextService.GetAsync(conversation.ConversationId);
 
-            // Si se detecta fecha/hora, verificar disponibilidad AUTOMÁTICAMENTE desde backend
-            if (extractedDate.HasValue)
+            // PASO 2: Detectar intención usando el detector híbrido (reglas + heurísticas + IA controlada)
+            var intentResult = _intentDetector.Detect(userMessage, conversationState);
+            
+            // Actualizar intención en el estado
+            if (intentResult.Intent != IntentType.Unknown)
             {
-                _logger.LogInformation(
-                    "Fecha detectada en mensaje: {Date}. Verificando disponibilidad automáticamente.",
-                    extractedDate.Value.ToString("yyyy-MM-dd"));
+                await _contextService.SetIntentAsync(conversation.ConversationId, intentResult.Intent);
+            }
 
-                // Obtener servicio del contexto si está disponible
-                var serviceContext = await GetContextValueAsync(conversation.ConversationId, "service");
-                var service = serviceContext ?? "Servicio"; // Valor por defecto si no hay contexto
+            _logger.LogInformation(
+                "Intención detectada: {Intent}, ShouldCheckAvailability={ShouldCheck}, ShouldAllowReservation={ShouldAllow}",
+                intentResult.Intent, intentResult.ShouldCheckAvailability, intentResult.ShouldAllowReservation);
 
-                // Obtener duración del servicio (podría venir del contexto o ser un valor por defecto)
-                // Por ahora usamos un valor por defecto, pero esto debería venir de la configuración del negocio
-                int? durationMinutes = 60; // Valor por defecto
+            string? availabilityContext = null;
+            bool? lastAvailabilityResult = null;
+
+            // PASO 3: Verificar disponibilidad SOLO si el detector lo indica
+            if (intentResult.ShouldCheckAvailability && intentResult.HasDate)
+            {
+                var extractedDate = DateTime.Parse(intentResult.DetectedDateRaw!);
+                TimeSpan? extractedTime = null;
+                
+                if (intentResult.HasTime && !string.IsNullOrWhiteSpace(intentResult.DetectedTimeRaw))
+                {
+                    extractedTime = TimeSpan.Parse(intentResult.DetectedTimeRaw);
+                }
+
+                // Obtener servicio del estado
+                var service = conversationState.PrimaryEntity ?? "Servicio";
+                int? durationMinutes = conversationState.DurationMinutes ?? 60;
 
                 var availabilityResult = await _availabilityService.CheckAvailabilityAsync(
                     businessId,
                     service,
-                    extractedDate.Value,
+                    extractedDate,
                     extractedTime,
                     durationMinutes,
                     cancellationToken);
 
-                // Construir contexto de disponibilidad para inyectar en el prompt
-                availabilityContext = $@"
-INFORMACIÓN DE DISPONIBILIDAD (CALCULADA POR EL SISTEMA - NO INFERIR):
-- Fecha consultada: {extractedDate.Value:yyyy-MM-dd}
-- Hora consultada: {(extractedTime.HasValue ? extractedTime.Value.ToString(@"hh\:mm") : "No especificada")}
-- ¿Está disponible? {availabilityResult.IsAvailable}
-- Capacidad máxima: {availabilityResult.MaxCapacity}
-- Reservas actuales: {availabilityResult.CurrentReservations}
-- Mensaje del sistema: {availabilityResult.Message}
+                lastAvailabilityResult = availabilityResult.IsAvailable;
 
-IMPORTANTE: Usa estos valores EXACTOS. NO infieras disponibilidad. NO apliques reglas propias.
-Si '¿Está disponible?' es 'False', el horario NO está disponible. Si es 'True', está disponible.";
+                // Guardar disponibilidad en el estado
+                await _contextService.SetAvailabilityAsync(conversation.ConversationId, availabilityResult.IsAvailable);
+                
+                // Guardar fecha y hora en el estado
+                var dateOnly = DateOnly.FromDateTime(extractedDate);
+                TimeOnly? timeOnly = extractedTime.HasValue ? TimeOnly.FromTimeSpan(extractedTime.Value) : null;
+                await _contextService.SetScheduleAsync(conversation.ConversationId, dateOnly, timeOnly, durationMinutes);
+
+                // Construir contexto de disponibilidad usando template desde SystemConfiguration
+                availabilityContext = await BuildAvailabilityContextAsync(
+                    extractedDate,
+                    extractedTime,
+                    availabilityResult);
 
                 _logger.LogInformation(
                     "Disponibilidad verificada automáticamente: IsAvailable={IsAvailable}",
                     availabilityResult.IsAvailable);
             }
 
-            // Construir mensajes iniciales con contexto de disponibilidad inyectado
+            // Obtener estado actualizado después de posibles cambios
+            conversationState = await _contextService.GetAsync(conversation.ConversationId);
+
+            // Construir mensajes iniciales con contexto de disponibilidad e intención inyectados
             var chatMessages = await BuildInitialMessagesAsync(
                 businessId, 
                 conversation, 
                 userMessage, 
-                availabilityContext);
+                availabilityContext,
+                intentResult,
+                conversationState);
 
             // Obtener todas las herramientas disponibles sin limitaciones
             var tools = _toolDispatcher.GetAvailableTools();
@@ -178,6 +209,33 @@ Si '¿Está disponible?' es 'False', el horario NO está disponible. Si es 'True
                                 : null
                         };
 
+                        // BLOQUEO CRÍTICO: Si el backend dice que NO se permite reserva, bloquear create_reservation
+                        if (functionToolCall.Name == "create_reservation" && !intentResult.ShouldAllowReservation)
+                        {
+                            _logger.LogWarning(
+                                "La IA intentó llamar create_reservation pero el backend lo bloqueó. " +
+                                "Intent={Intent}, ShouldAllowReservation={ShouldAllow}",
+                                intentResult.Intent, intentResult.ShouldAllowReservation);
+
+                            // Crear resultado de error para la tool
+                            var blockedResult = new ToolCallResult
+                            {
+                                ToolCallId = functionToolCall.Id,
+                                ToolName = functionToolCall.Name ?? string.Empty,
+                                Content = JsonSerializer.Serialize(new
+                                {
+                                    success = false,
+                                    error = "No se puede crear la reserva. Faltan datos necesarios o no hay disponibilidad confirmada."
+                                }),
+                                IsError = true,
+                                ErrorMessage = "Reserva bloqueada por el backend: condiciones no cumplidas"
+                            };
+
+                            var blockedToolResponseMessage = new ChatRequestToolMessage(blockedResult.Content, functionToolCall.Id);
+                            chatMessages.Add(blockedToolResponseMessage);
+                            continue;
+                        }
+
                         // Pasar conversationId a las herramientas para que ellas completen sus propios parámetros
                         // Cada herramienta es responsable de validar y completar sus parámetros desde el contexto
                         var toolResult = await _toolDispatcher.ExecuteToolAsync(
@@ -209,96 +267,35 @@ Si '¿Está disponible?' es 'False', el horario NO está disponible. Si es 'True
         }
     }
 
-    private async Task<string?> GetContextValueAsync(Guid conversationId, string field)
-    {
-        try
-        {
-            var context = await _unitOfWork.ConversationContexts.GetByConversationIdAndFieldAsync(conversationId, field);
-            return context?.Value;
-        }
-        catch
-        {
-            return null;
-        }
-    }
-
     private async Task<List<ChatRequestMessage>> BuildInitialMessagesAsync(
         Guid businessId,
         Conversation conversation,
         string userMessage,
-        string? availabilityContext = null)
+        string? availabilityContext = null,
+        IntentDetectionResult? intentResult = null,
+        ConversationStateModel? conversationState = null)
     {
         var messages = new List<ChatRequestMessage>();
 
         // 1. System Prompt principal (desde BD) + reglas estrictas
         var systemPrompt = await _businessConfigService.BuildSystemPromptAsync(businessId);
         
-        // Agregar reglas estrictas sobre disponibilidad y reservas
-        var strictRules = @"
-
-=== REGLAS CRÍTICAS DE DISPONIBILIDAD Y RESERVAS ===
-
-1. DISPONIBILIDAD (CALCULADA POR EL BACKEND):
-   - NUNCA infieras disponibilidad. Solo usa el valor 'is_available' proporcionado por el sistema.
-   - Si el sistema dice 'is_available=false', el horario NO está disponible. Punto.
-   - Si el sistema dice 'is_available=true', el horario está disponible. Punto.
-   - El backend ya calculó conflictos de recursos y reglas de coexistencia.
-   - NO cuentes reservas manualmente. NO compares cupos. NO apliques reglas propias.
-   - NO expliques coexistencia ni conflictos de recursos al cliente.
-
-2. DETECCIÓN DE INTENCIÓN DE RESERVA:
-   - Cuando el cliente exprese claramente que quiere reservar, confirmar, agendar o hacer una cita, DEBES llamar inmediatamente la herramienta 'create_reservation'.
-   - Señales de intención de reserva incluyen:
-     * ""Quiero reservar"", ""Quiero agendar"", ""Quiero hacer una cita""
-     * ""Confirmo"", ""Sí, confirma"", ""Perfecto, reserva""
-     * ""Sí, quiero ese horario"", ""Me parece bien"", ""Perfecto""
-     * ""Reserva para [fecha/hora]"", ""Agenda para [fecha/hora]""
-     * Cualquier confirmación explícita después de mostrar disponibilidad
-   - ANTES de llamar 'create_reservation', asegúrate de tener:
-     * Servicio (del contexto o del mensaje)
-     * Fecha (del contexto o del mensaje)
-     * Hora (del contexto o del mensaje)
-     * Duración (de BusinessInformation en el prompt)
-   - Si falta información, pregunta amablemente antes de crear la reserva.
-
-3. CREACIÓN DE RESERVAS:
-   - Cuando llames 'create_reservation', incluye TODA la información adicional del cliente en el campo 'notes' como JSON string.
-   - Ejemplo de notes: '{\""customerName\"":\""Juan Pérez\"",\""phone\"":\""+1234567890\"",\""age\"":\""6 meses\""}'
-   - NUNCA confirmes una reserva sin haber recibido 'success=true' del backend.
-   - Si recibes 'success=false', informa al usuario que el horario no está disponible.
-   - NO asumas que una reserva fue creada. Solo confirma si el backend lo confirma.
-   - Si recibes 'success=true', confirma la reserva al cliente con todos los detalles.
-
-4. HERRAMIENTAS DISPONIBLES:
-   - 'update_conversation_state': Úsala para guardar información del cliente (nombre, teléfono, edad del bebé, servicio, fecha, hora). Cuando uses estos campos en las notes de create_reservation, traduce los nombres al español: customerName→nombreCliente, phone→telefono, babyAgeMonths→edadBebeMeses.
-   - 'create_reservation': Úsala cuando el cliente exprese claramente que quiere reservar o confirmar una cita. Si incluyes información del contexto en notes, traduce los nombres de campos al español.
-   - 'check_availability': El sistema la llama automáticamente cuando detecta fecha/hora. NO la llames manualmente.
-
-5. TU ROL:
-   - Eres un asistente conversacional amigable y natural.
-   - Presentas información de disponibilidad que el sistema calcula.
-   - Ayudas a recolectar información del cliente.
-   - Detectas cuando el cliente quiere reservar y llamas 'create_reservation' inmediatamente.
-   - NO tomas decisiones de negocio. El backend lo hace.
-   - NO uses frases negativas como ""lamentablemente"" o ""no puedo"".
-   - Ofrece continuar con la reserva de manera natural cuando está disponible.
-
-6. RESPUESTA AL CLIENTE:
-   - Solo indica si el horario está disponible o no.
-   - Nunca expliques conflictos ni coexistencia.
-   - Nunca uses frases negativas.
-   - Cuando el cliente confirme, llama inmediatamente 'create_reservation'.
-   - Después de crear la reserva exitosamente, confirma con todos los detalles.
-
-";
-
-        var fullSystemPrompt = (systemPrompt ?? "") + strictRules;
-        if (!string.IsNullOrEmpty(fullSystemPrompt))
+        if (!string.IsNullOrEmpty(systemPrompt))
         {
-            messages.Add(new ChatRequestSystemMessage(fullSystemPrompt));
+            messages.Add(new ChatRequestSystemMessage(systemPrompt));
         }
 
-        // 2. Inyectar contexto de disponibilidad si existe
+        // 2. Inyectar información de intención detectada por el backend usando template desde SystemConfiguration
+        if (intentResult != null)
+        {
+            var intentContext = await BuildIntentDetectionContextAsync(intentResult);
+            if (!string.IsNullOrEmpty(intentContext))
+            {
+                messages.Add(new ChatRequestSystemMessage(intentContext));
+            }
+        }
+
+        // 3. Inyectar contexto de disponibilidad si existe
         if (!string.IsNullOrEmpty(availabilityContext))
         {
             messages.Add(new ChatRequestSystemMessage(availabilityContext));
@@ -326,9 +323,76 @@ Si '¿Está disponible?' es 'False', el horario NO está disponible. Si es 'True
             }
         }
 
-        // 4. Mensaje actual del usuario
+        // 6. Mensaje actual del usuario
         messages.Add(new ChatRequestUserMessage(userMessage));
 
         return messages;
+    }
+
+    /// <summary>
+    /// Construye el contexto de disponibilidad usando template desde SystemConfiguration.
+    /// </summary>
+    private async Task<string> BuildAvailabilityContextAsync(
+        DateTime extractedDate,
+        TimeSpan? extractedTime,
+        AvailabilityResult availabilityResult)
+    {
+        try
+        {
+            var template = await _businessConfigService.GetSystemConfigurationAsync(
+                Domain.Enums.SystemConfigurationKey.AvailabilityContextTemplate);
+
+            // Si no hay template configurado, retornar string vacío
+            if (string.IsNullOrWhiteSpace(template))
+            {
+                _logger.LogWarning("Template de contexto de disponibilidad no encontrado en SystemConfiguration");
+                return string.Empty;
+            }
+
+            // Reemplazar placeholders con valores reales
+            return template
+                .Replace("{Date}", extractedDate.ToString("yyyy-MM-dd"))
+                .Replace("{Time}", extractedTime.HasValue ? extractedTime.Value.ToString(@"hh\:mm") : "No especificada")
+                .Replace("{IsAvailable}", availabilityResult.IsAvailable.ToString())
+                .Replace("{CurrentReservations}", availabilityResult.CurrentReservations.ToString())
+                .Replace("{Message}", availabilityResult.Message ?? string.Empty);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error al construir contexto de disponibilidad");
+            return string.Empty;
+        }
+    }
+
+    /// <summary>
+    /// Construye el contexto de intención detectada usando template desde SystemConfiguration.
+    /// </summary>
+    private async Task<string> BuildIntentDetectionContextAsync(IntentDetectionResult intentResult)
+    {
+        try
+        {
+            var template = await _businessConfigService.GetSystemConfigurationAsync(
+                Domain.Enums.SystemConfigurationKey.IntentDetectionContextTemplate);
+
+            // Si no hay template configurado, retornar string vacío
+            if (string.IsNullOrWhiteSpace(template))
+            {
+                _logger.LogWarning("Template de contexto de intención detectada no encontrado en SystemConfiguration");
+                return string.Empty;
+            }
+
+            // Reemplazar placeholders con valores reales
+            return template
+                .Replace("{Intent}", intentResult.Intent.ToString())
+                .Replace("{ShouldAllowReservation}", intentResult.ShouldAllowReservation.ToString())
+                .Replace("{HasDate}", intentResult.HasDate.ToString())
+                .Replace("{IsExplicitConfirmation}", intentResult.IsExplicitConfirmation.ToString())
+                .Replace("{IsNarrativeDate}", intentResult.IsNarrativeDate.ToString());
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error al construir contexto de intención detectada");
+            return string.Empty;
+        }
     }
 }

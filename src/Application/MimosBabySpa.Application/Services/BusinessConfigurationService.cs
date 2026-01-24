@@ -93,6 +93,14 @@ public class BusinessConfigurationService : IBusinessConfigurationService
         if (businessConfig.HasKey(BusinessConfigurationKey.BusinessInformation))
         {
             promptBuilder.AppendLine(businessConfig.GetValue(BusinessConfigurationKey.BusinessInformation));
+            promptBuilder.AppendLine();
+        }
+
+        // MAPEO DE CAMPOS DEL CONTEXTO (información específica del negocio sobre qué campos guardar)
+        if (businessConfig.HasKey(BusinessConfigurationKey.ContextFieldsMapping))
+        {
+            promptBuilder.AppendLine(businessConfig.GetValue(BusinessConfigurationKey.ContextFieldsMapping));
+            promptBuilder.AppendLine();
         }
 
         return promptBuilder.ToString();

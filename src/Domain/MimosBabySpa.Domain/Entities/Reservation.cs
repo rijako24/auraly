@@ -14,7 +14,7 @@ public class Reservation
     public int DurationMinutes { get; set; } // Duración del servicio en minutos
     public ReservationStatus Status { get; set; } = ReservationStatus.Pending;
     public string? CalendarEventId { get; set; } // ID del evento en el calendario externo
-    public string? Notes { get; set; }
+    public Guid? ConversationId { get; set; } // FK a Conversation (nullable)
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? UpdatedAt { get; set; }
     
@@ -22,6 +22,7 @@ public class Reservation
     public virtual Business Business { get; set; } = null!;
     public virtual Service Service { get; set; } = null!;
     public virtual Employee Employee { get; set; } = null!;
+    public virtual Conversation? Conversation { get; set; } // Navigation property a Conversation
     
     // Helper properties
     public DateTime ReservationDate => ReservationDateTime.Date;
