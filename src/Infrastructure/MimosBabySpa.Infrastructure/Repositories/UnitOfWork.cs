@@ -23,6 +23,7 @@ public class UnitOfWork : IUnitOfWork
     private IEmployeeRepository? _employees;
     private IEmployeeServiceRepository? _employeeServices;
     private IConversationStateRepository? _conversationStates;
+    private IReservationMetadataRepository? _reservationMetadata;
 
     public UnitOfWork(ApplicationDbContext context)
     {
@@ -75,6 +76,9 @@ public class UnitOfWork : IUnitOfWork
         _conversationStates ??= new ConversationStateRepository(
             _context, 
             Microsoft.Extensions.Logging.Abstractions.NullLogger<ConversationStateRepository>.Instance);
+
+    public IReservationMetadataRepository ReservationMetadata =>
+        _reservationMetadata ??= new ReservationMetadataRepository(_context);
 
     public async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {

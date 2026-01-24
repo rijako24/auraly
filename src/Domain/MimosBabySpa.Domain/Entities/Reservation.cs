@@ -8,8 +8,6 @@ public class Reservation
     public Guid BusinessId { get; set; }
     public Guid ServiceId { get; set; } // ID del servicio (referencia a Services)
     public Guid EmployeeId { get; set; } // ID del empleado asignado (obligatorio)
-    public string CustomerName { get; set; } = string.Empty;
-    public string PhoneNumber { get; set; } = string.Empty; // WhatsApp number
     public DateTime ReservationDateTime { get; set; } // Fecha y hora de la reserva
     public int DurationMinutes { get; set; } // Duración del servicio en minutos
     public ReservationStatus Status { get; set; } = ReservationStatus.Pending;

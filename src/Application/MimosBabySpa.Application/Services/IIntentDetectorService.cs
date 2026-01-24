@@ -16,4 +16,12 @@ public interface IIntentDetectorService
     /// <param name="state">Estado actual de la conversación</param>
     /// <returns>Resultado de la detección con todas las decisiones de control de flujo</returns>
     IntentDetectionResult Detect(string userMessage, ConversationState state);
+
+    /// <summary>
+    /// Evalúa si se permite crear una reserva basándose únicamente en el estado actual.
+    /// Útil cuando se recalcula la intención después de actualizar el contexto.
+    /// </summary>
+    /// <param name="state">Estado actual de la conversación</param>
+    /// <returns>Resultado de la evaluación con todas las decisiones de control de flujo</returns>
+    IntentDetectionResult EvaluateFromState(ConversationState state);
 }

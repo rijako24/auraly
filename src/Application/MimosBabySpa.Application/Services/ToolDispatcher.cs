@@ -15,6 +15,7 @@ public class ToolDispatcher : IToolDispatcher
     private readonly IAvailabilityService _availabilityService;
     private readonly IEmployeeAssignmentService _employeeAssignmentService;
     private readonly IConversationContextService _contextService;
+    private readonly IIntentDetectorService _intentDetector;
     private readonly ILogger<ToolDispatcher> _logger;
     private static readonly List<ToolDefinition> _availableTools = new();
 
@@ -30,6 +31,7 @@ public class ToolDispatcher : IToolDispatcher
         IAvailabilityService availabilityService,
         IEmployeeAssignmentService employeeAssignmentService,
         IConversationContextService contextService,
+        IIntentDetectorService intentDetector,
         ILogger<ToolDispatcher> logger)
     {
         _calendarService = calendarService;
@@ -38,6 +40,7 @@ public class ToolDispatcher : IToolDispatcher
         _availabilityService = availabilityService;
         _employeeAssignmentService = employeeAssignmentService;
         _contextService = contextService;
+        _intentDetector = intentDetector;
         _logger = logger;
     }
 
@@ -60,7 +63,7 @@ public class ToolDispatcher : IToolDispatcher
 
             return toolCall.Name switch
             {
-                "check_availability" => await ExecuteCheckAvailabilityAsync(businessId, toolCall, cancellationToken),
+                "check_availability" => await ExecuteCheckAvailabilityAsync(businessId, toolCall, conversationId, cancellationToken),
                 "create_reservation" => await ExecuteCreateReservationAsync(businessId, toolCall, conversationId, cancellationToken),
                 "update_conversation_state" => await ExecuteUpdateConversationStateAsync(businessId, toolCall, conversationId, cancellationToken),
                 _ => new ToolCallResult
@@ -88,6 +91,7 @@ public class ToolDispatcher : IToolDispatcher
     private async Task<ToolCallResult> ExecuteCheckAvailabilityAsync(
         Guid businessId,
         ToolCallRequest toolCall,
+        Guid? conversationId,
         CancellationToken cancellationToken)
     {
         try
@@ -119,6 +123,12 @@ public class ToolDispatcher : IToolDispatcher
             }
 
             var service = serviceProp.GetString() ?? string.Empty;
+
+            // Asignar el servicio al estado de la conversación
+            if (conversationId.HasValue && !string.IsNullOrWhiteSpace(service))
+            {
+                await _contextService.SetServiceAsync(conversationId.Value, service);
+            }
             var dateStr = dateProp.GetString() ?? string.Empty;
 
             if (!DateTime.TryParse(dateStr, out var date))
@@ -260,10 +270,10 @@ public class ToolDispatcher : IToolDispatcher
             var args = toolCall.Arguments.Value;
 
             // Completar parámetros faltantes desde el contexto de la conversación si está disponible
-            var enrichedArgs = await EnrichReservationParametersFromContextAsync(args, conversationId, cancellationToken);
-            args = enrichedArgs; // Usar los argumentos enriquecidos
+            // Solo completa los que faltan, deja los que ya están
+            args = await EnrichReservationParametersFromContextAsync(args, conversationId, cancellationToken);
 
-            // Validar y extraer parámetros requeridos (solo los genéricos)
+            // Validar y extraer parámetros requeridos (service, date, time, durationMinutes)
             var requiredParams = new[] { "service", "date", "time", "durationMinutes" };
             var missingParams = requiredParams.Where(p => !args.TryGetProperty(p, out _)).ToList();
             
@@ -320,6 +330,40 @@ public class ToolDispatcher : IToolDispatcher
                 };
             }
             durationMinutes = durationProp.GetInt32();
+
+            // Extraer metadata opcional de notes
+            Dictionary<string, string>? metadata = null;
+            if (args.TryGetProperty("notes", out var notesProp) && notesProp.ValueKind == JsonValueKind.String)
+            {
+                var notesValue = notesProp.GetString();
+                if (!string.IsNullOrWhiteSpace(notesValue))
+                {
+                    try
+                    {
+                        var notesJson = JsonDocument.Parse(notesValue);
+                        metadata = new Dictionary<string, string>();
+                        
+                        foreach (var property in notesJson.RootElement.EnumerateObject())
+                        {
+                            var value = property.Value.ValueKind == JsonValueKind.String 
+                                ? property.Value.GetString() ?? string.Empty
+                                : property.Value.GetRawText();
+                            
+                            if (!string.IsNullOrWhiteSpace(value))
+                            {
+                                metadata[property.Name] = value;
+                            }
+                        }
+                        
+                        _logger.LogDebug("Metadata parseada desde notes: {MetadataCount} campos", metadata.Count);
+                    }
+                    catch (JsonException ex)
+                    {
+                        _logger.LogWarning(ex, "Error al parsear notes como JSON: {Notes}", notesValue);
+                        // Continuar sin metadata si el JSON es inválido
+                    }
+                }
+            }
 
             // REFACTORIZADO: Validar disponibilidad ATÓMICAMENTE antes de crear la reserva
             // Esto previene sobre-reservas y garantiza consistencia bajo concurrencia
@@ -403,8 +447,6 @@ public class ToolDispatcher : IToolDispatcher
                 Service = serviceEntity, // Asignar Service para que esté disponible
                 EmployeeId = assignedEmployee.EmployeeId,
                 Employee = assignedEmployee, // Asignar Employee para que esté disponible
-                CustomerName = string.Empty, // Genérico - no aplica a todos los negocios
-                PhoneNumber = string.Empty, // Genérico - no aplica a todos los negocios
                 ReservationDateTime = reservationDateTime,
                 DurationMinutes = durationMinutes,
                 ConversationId = conversationId,
@@ -413,7 +455,7 @@ public class ToolDispatcher : IToolDispatcher
             };
 
             // Crear reserva - la validación de capacidad ya se hizo arriba
-            var reservationDto = await _reservationService.CreateReservationAsync(reservation, cancellationToken);
+            var reservationDto = await _reservationService.CreateReservationAsync(reservation, metadata, cancellationToken);
 
             _logger.LogInformation(
                 "Reserva creada exitosamente: ReservationId={ReservationId}, Service={Service}, DateTime={DateTime}",
@@ -464,7 +506,7 @@ public class ToolDispatcher : IToolDispatcher
         Guid businessId,
         ToolCallRequest toolCall,
         Guid? conversationIdFromCaller,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken = default)
     {
         try
         {
@@ -561,6 +603,10 @@ public class ToolDispatcher : IToolDispatcher
                 message = $"Contexto actualizado: {field} = {value}"
             };
 
+            _logger.LogInformation(
+                "Estado actualizado después de update_conversation_state: {Field} = {Value}",
+                field, value);
+
             return new ToolCallResult
             {
                 ToolCallId = toolCall.Id,
@@ -638,6 +684,10 @@ public class ToolDispatcher : IToolDispatcher
                 ""durationMinutes"": {
                     ""type"": ""integer"",
                     ""description"": ""Duración del servicio en minutos (debe obtenerse de BusinessInformation en el prompt)""
+                },
+                ""notes"": {
+                    ""type"": ""string"",
+                    ""description"": ""Información adicional opcional sobre la reserva. Formato: JSON string con pares clave-valor. Ejemplo: '{\""customerName\"":\""Juan Pérez\"",\""babyName\"":\""Mateo\"",\""babyAgeMonths\"":\""6\"",\""authorizePhotos\"":\""true\""}'. Usa SIEMPRE las claves técnicas del negocio. No incluyas campos vacíos. No inventes valores.""
                 }
             },
             ""required"": [""service"", ""date"", ""time"", ""durationMinutes""]
@@ -646,7 +696,7 @@ public class ToolDispatcher : IToolDispatcher
         _availableTools.Add(new ToolDefinition
         {
             Name = "create_reservation",
-            Description = "Crea una reserva en el sistema con validación ATÓMICA de capacidad. El backend valida disponibilidad antes de crear. Retorna 'success=true' solo si la reserva fue creada exitosamente. Si 'success=false', el modelo NO debe confirmar la reserva al usuario. Solo requiere campos genéricos: servicio, fecha, hora y duración. IMPORTANTE: El modelo solo debe confirmar reserva si recibe 'success=true'.",
+            Description = "Crea una reserva en el sistema con validación ATÓMICA de capacidad. El backend valida disponibilidad antes de crear. Retorna 'success=true' solo si la reserva fue creada exitosamente. Si 'success=false', el modelo NO debe confirmar la reserva al usuario. Solo requiere campos genéricos: servicio, fecha, hora y duración. Para información adicional específica del negocio (nombre del cliente, teléfono, edad, preferencias, etc.), envía todo en el campo opcional 'notes' como un JSON string con formato: '{\"clave\":\"valor\",\"otraClave\":\"otroValor\"}'. Ejemplo: '{\"customerName\":\"Juan Pérez\",\"babyName\":\"Mateo\",\"babyAgeMonths\":\"6\"}'. IMPORTANTE: El modelo solo debe confirmar reserva si recibe 'success=true'.",
             ParametersSchema = createReservationSchema
         });
 
@@ -677,8 +727,7 @@ public class ToolDispatcher : IToolDispatcher
 
     /// <summary>
     /// Enriquece los parámetros de reserva desde el contexto de la conversación si están faltantes.
-    /// Encapsula la lógica de completado de parámetros dentro de la herramienta.
-    /// Retorna un nuevo JsonElement con los parámetros completados.
+    /// Modifica el JsonElement completando solo los parámetros que faltan, dejando los que ya están.
     /// </summary>
     private async Task<JsonElement> EnrichReservationParametersFromContextAsync(
         JsonElement args,
@@ -701,10 +750,10 @@ public class ToolDispatcher : IToolDispatcher
         if (!argsDict.ContainsKey("service") || 
             string.IsNullOrWhiteSpace(argsDict["service"]?.ToString()))
         {
-            if (!string.IsNullOrWhiteSpace(state.PrimaryEntity))
+            if (!string.IsNullOrWhiteSpace(state.Service))
             {
-                argsDict["service"] = state.PrimaryEntity;
-                _logger.LogDebug("Parámetro 'service' completado desde estado: {Service}", state.PrimaryEntity);
+                argsDict["service"] = state.Service;
+                _logger.LogDebug("Parámetro 'service' completado desde estado: {Service}", state.Service);
             }
         }
 

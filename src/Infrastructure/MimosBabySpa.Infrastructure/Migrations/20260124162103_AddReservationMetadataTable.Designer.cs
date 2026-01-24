@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using MimosBabySpa.Infrastructure.Data;
 
@@ -11,9 +12,11 @@ using MimosBabySpa.Infrastructure.Data;
 namespace MimosBabySpa.Infrastructure.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260124162103_AddReservationMetadataTable")]
+    partial class AddReservationMetadataTable
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -432,11 +435,21 @@ namespace MimosBabySpa.Infrastructure.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("datetime2");
 
+                    b.Property<string>("CustomerName")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
                     b.Property<int>("DurationMinutes")
                         .HasColumnType("int");
 
                     b.Property<Guid>("EmployeeId")
                         .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("PhoneNumber")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
 
                     b.Property<DateTime>("ReservationDateTime")
                         .HasColumnType("datetime2");
@@ -457,6 +470,8 @@ namespace MimosBabySpa.Infrastructure.Migrations
                     b.HasIndex("ConversationId");
 
                     b.HasIndex("EmployeeId");
+
+                    b.HasIndex("PhoneNumber");
 
                     b.HasIndex("ServiceId");
 

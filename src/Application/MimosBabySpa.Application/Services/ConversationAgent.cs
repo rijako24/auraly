@@ -78,62 +78,14 @@ public class ConversationAgent : IConversationAgent
                 "Intención detectada: {Intent}, ShouldCheckAvailability={ShouldCheck}, ShouldAllowReservation={ShouldAllow}",
                 intentResult.Intent, intentResult.ShouldCheckAvailability, intentResult.ShouldAllowReservation);
 
-            string? availabilityContext = null;
-            bool? lastAvailabilityResult = null;
-
-            // PASO 3: Verificar disponibilidad SOLO si el detector lo indica
-            if (intentResult.ShouldCheckAvailability && intentResult.HasDate)
-            {
-                var extractedDate = DateTime.Parse(intentResult.DetectedDateRaw!);
-                TimeSpan? extractedTime = null;
-                
-                if (intentResult.HasTime && !string.IsNullOrWhiteSpace(intentResult.DetectedTimeRaw))
-                {
-                    extractedTime = TimeSpan.Parse(intentResult.DetectedTimeRaw);
-                }
-
-                // Obtener servicio del estado
-                var service = conversationState.PrimaryEntity ?? "Servicio";
-                int? durationMinutes = conversationState.DurationMinutes ?? 60;
-
-                var availabilityResult = await _availabilityService.CheckAvailabilityAsync(
-                    businessId,
-                    service,
-                    extractedDate,
-                    extractedTime,
-                    durationMinutes,
-                    cancellationToken);
-
-                lastAvailabilityResult = availabilityResult.IsAvailable;
-
-                // Guardar disponibilidad en el estado
-                await _contextService.SetAvailabilityAsync(conversation.ConversationId, availabilityResult.IsAvailable);
-                
-                // Guardar fecha y hora en el estado
-                var dateOnly = DateOnly.FromDateTime(extractedDate);
-                TimeOnly? timeOnly = extractedTime.HasValue ? TimeOnly.FromTimeSpan(extractedTime.Value) : null;
-                await _contextService.SetScheduleAsync(conversation.ConversationId, dateOnly, timeOnly, durationMinutes);
-
-                // Construir contexto de disponibilidad usando template desde SystemConfiguration
-                availabilityContext = await BuildAvailabilityContextAsync(
-                    extractedDate,
-                    extractedTime,
-                    availabilityResult);
-
-                _logger.LogInformation(
-                    "Disponibilidad verificada automáticamente: IsAvailable={IsAvailable}",
-                    availabilityResult.IsAvailable);
-            }
-
             // Obtener estado actualizado después de posibles cambios
             conversationState = await _contextService.GetAsync(conversation.ConversationId);
 
-            // Construir mensajes iniciales con contexto de disponibilidad e intención inyectados
+            // Construir mensajes iniciales con contexto de intención inyectado
             var chatMessages = await BuildInitialMessagesAsync(
                 businessId, 
                 conversation, 
                 userMessage, 
-                availabilityContext,
                 intentResult,
                 conversationState);
 
@@ -210,30 +162,41 @@ public class ConversationAgent : IConversationAgent
                         };
 
                         // BLOQUEO CRÍTICO: Si el backend dice que NO se permite reserva, bloquear create_reservation
-                        if (functionToolCall.Name == "create_reservation" && !intentResult.ShouldAllowReservation)
+                        // Recalcular intentResult con el estado actualizado y el mensaje original para detectar confirmación explícita
+                        if (functionToolCall.Name == "create_reservation")
                         {
-                            _logger.LogWarning(
-                                "La IA intentó llamar create_reservation pero el backend lo bloqueó. " +
-                                "Intent={Intent}, ShouldAllowReservation={ShouldAllow}",
-                                intentResult.Intent, intentResult.ShouldAllowReservation);
-
-                            // Crear resultado de error para la tool
-                            var blockedResult = new ToolCallResult
+                            if (conversation != null)
                             {
-                                ToolCallId = functionToolCall.Id,
-                                ToolName = functionToolCall.Name ?? string.Empty,
-                                Content = JsonSerializer.Serialize(new
-                                {
-                                    success = false,
-                                    error = "No se puede crear la reserva. Faltan datos necesarios o no hay disponibilidad confirmada."
-                                }),
-                                IsError = true,
-                                ErrorMessage = "Reserva bloqueada por el backend: condiciones no cumplidas"
-                            };
+                                var currentState = await _contextService.GetAsync(conversation.ConversationId);
+  
+                                intentResult = _intentDetector.Detect(userMessage, currentState);
+                            }
+                            
+                            if (intentResult != null && !intentResult.ShouldAllowReservation)
+                            {
+                                _logger.LogWarning(
+                                    "La IA intentó llamar create_reservation pero el backend lo bloqueó. " +
+                                    "Intent={Intent}, ShouldAllowReservation={ShouldAllow}",
+                                    intentResult.Intent, intentResult.ShouldAllowReservation);
 
-                            var blockedToolResponseMessage = new ChatRequestToolMessage(blockedResult.Content, functionToolCall.Id);
-                            chatMessages.Add(blockedToolResponseMessage);
-                            continue;
+                                // Crear resultado de error para la tool
+                                var blockedResult = new ToolCallResult
+                                {
+                                    ToolCallId = functionToolCall.Id,
+                                    ToolName = functionToolCall.Name ?? string.Empty,
+                                    Content = JsonSerializer.Serialize(new
+                                    {
+                                        success = false,
+                                        error = "No se puede crear la reserva. Faltan datos necesarios o no hay disponibilidad confirmada."
+                                    }),
+                                    IsError = true,
+                                    ErrorMessage = "Reserva bloqueada por el backend: condiciones no cumplidas"
+                                };
+
+                                var blockedToolResponseMessage = new ChatRequestToolMessage(blockedResult.Content, functionToolCall.Id);
+                                chatMessages.Add(blockedToolResponseMessage);
+                                continue;
+                            }
                         }
 
                         // Pasar conversationId a las herramientas para que ellas completen sus propios parámetros
@@ -271,7 +234,6 @@ public class ConversationAgent : IConversationAgent
         Guid businessId,
         Conversation conversation,
         string userMessage,
-        string? availabilityContext = null,
         IntentDetectionResult? intentResult = null,
         ConversationStateModel? conversationState = null)
     {
@@ -295,13 +257,17 @@ public class ConversationAgent : IConversationAgent
             }
         }
 
-        // 3. Inyectar contexto de disponibilidad si existe
-        if (!string.IsNullOrEmpty(availabilityContext))
+        // 3. Inyectar estado de conversación (memoria del contexto)
+        if (conversationState != null)
         {
-            messages.Add(new ChatRequestSystemMessage(availabilityContext));
+            var memoryBlock = BuildMemoryBlock(conversationState);
+            if (!string.IsNullOrEmpty(memoryBlock))
+            {
+                messages.Add(new ChatRequestSystemMessage(memoryBlock));
+            }
         }
 
-        // 2. Historial de mensajes recientes (últimos 10 para mantener contexto)
+        // 5. Historial de mensajes recientes (últimos 10 para mantener contexto)
         if (conversation?.Messages != null && conversation.Messages.Any())
         {
             var recentMessages = conversation.Messages
@@ -330,39 +296,94 @@ public class ConversationAgent : IConversationAgent
     }
 
     /// <summary>
-    /// Construye el contexto de disponibilidad usando template desde SystemConfiguration.
+    /// Construye un bloque de memoria legible desde el estado de conversación.
+    /// Formatea el ConversationState en un texto estructurado para el LLM.
     /// </summary>
-    private async Task<string> BuildAvailabilityContextAsync(
-        DateTime extractedDate,
-        TimeSpan? extractedTime,
-        AvailabilityResult availabilityResult)
+    private string BuildMemoryBlock(ConversationStateModel state)
     {
-        try
-        {
-            var template = await _businessConfigService.GetSystemConfigurationAsync(
-                Domain.Enums.SystemConfigurationKey.AvailabilityContextTemplate);
+        var sb = new StringBuilder();
+        sb.AppendLine("=== ESTADO ACTUAL DE LA CONVERSACIÓN ===");
+        sb.AppendLine();
 
-            // Si no hay template configurado, retornar string vacío
-            if (string.IsNullOrWhiteSpace(template))
+        // Identidad del cliente
+        if (!string.IsNullOrWhiteSpace(state.CustomerName) || 
+            !string.IsNullOrWhiteSpace(state.Phone) || 
+            !string.IsNullOrWhiteSpace(state.Email))
+        {
+            sb.AppendLine("IDENTIDAD DEL CLIENTE:");
+            if (!string.IsNullOrWhiteSpace(state.CustomerName))
+                sb.AppendLine($"- Nombre: {state.CustomerName}");
+            if (!string.IsNullOrWhiteSpace(state.Phone))
+                sb.AppendLine($"- Teléfono: {state.Phone}");
+            if (!string.IsNullOrWhiteSpace(state.Email))
+                sb.AppendLine($"- Email: {state.Email}");
+            sb.AppendLine();
+        }
+
+        // Intenciones
+        if (state.CurrentIntent != IntentType.Unknown || state.LastIntent != IntentType.Unknown)
+        {
+            sb.AppendLine("INTENCIONES:");
+            if (state.CurrentIntent != IntentType.Unknown)
+                sb.AppendLine($"- Intención actual: {state.CurrentIntent}");
+            if (state.LastIntent != IntentType.Unknown && state.LastIntent != state.CurrentIntent)
+                sb.AppendLine($"- Intención anterior: {state.LastIntent}");
+            sb.AppendLine();
+        }
+
+
+        // Programación deseada
+        if (state.DesiredDate.HasValue || state.DesiredTime.HasValue || state.DurationMinutes.HasValue || !string.IsNullOrWhiteSpace(state.Service))
+        {
+            sb.AppendLine("PROGRAMACIÓN DESEADA:");
+            if (!string.IsNullOrWhiteSpace(state.Service))
+                sb.AppendLine($"- Servicio: {state.Service}");
+            if (state.DesiredDate.HasValue)
+                sb.AppendLine($"- Fecha: {state.DesiredDate.Value:yyyy-MM-dd}");
+            if (state.DesiredTime.HasValue)
+                sb.AppendLine($"- Hora: {state.DesiredTime.Value:HH\\:mm}");
+            if (state.DurationMinutes.HasValue)
+                sb.AppendLine($"- Duración: {state.DurationMinutes} minutos");
+            sb.AppendLine();
+        }
+
+        // Atributos dinámicos (campos personalizados del negocio)
+        if (state.Attributes != null && state.Attributes.Any())
+        {
+            sb.AppendLine("INFORMACIÓN ADICIONAL:");
+            foreach (var attr in state.Attributes)
             {
-                _logger.LogWarning("Template de contexto de disponibilidad no encontrado en SystemConfiguration");
-                return string.Empty;
+                sb.AppendLine($"- {attr.Key}: {attr.Value}");
             }
+            sb.AppendLine();
+        }
 
-            // Reemplazar placeholders con valores reales
-            return template
-                .Replace("{Date}", extractedDate.ToString("yyyy-MM-dd"))
-                .Replace("{Time}", extractedTime.HasValue ? extractedTime.Value.ToString(@"hh\:mm") : "No especificada")
-                .Replace("{IsAvailable}", availabilityResult.IsAvailable.ToString())
-                .Replace("{CurrentReservations}", availabilityResult.CurrentReservations.ToString())
-                .Replace("{Message}", availabilityResult.Message ?? string.Empty);
-        }
-        catch (Exception ex)
+        // Estado de disponibilidad
+        if (state.AvailabilityChecked)
         {
-            _logger.LogError(ex, "Error al construir contexto de disponibilidad");
-            return string.Empty;
+            sb.AppendLine("DISPONIBILIDAD:");
+            sb.AppendLine($"- Verificada: Sí");
+            if (state.LastAvailabilityResult.HasValue)
+                sb.AppendLine($"- Resultado: {(state.LastAvailabilityResult.Value ? "Disponible" : "No disponible")}");
+            if (state.LastAvailabilityCheckAt.HasValue)
+                sb.AppendLine($"- Última verificación: {state.LastAvailabilityCheckAt.Value:yyyy-MM-dd HH:mm}");
+            sb.AppendLine();
         }
+
+        // Estado de reserva
+        if (state.ReservationConfirmed)
+        {
+            sb.AppendLine("RESERVA:");
+            sb.AppendLine("- Estado: Confirmada");
+            if (!string.IsNullOrWhiteSpace(state.ReservationId))
+                sb.AppendLine($"- ID de reserva: {state.ReservationId}");
+            sb.AppendLine();
+        }
+
+        sb.AppendLine("=== FIN DEL ESTADO ===");
+        return sb.ToString();
     }
+
 
     /// <summary>
     /// Construye el contexto de intención detectada usando template desde SystemConfiguration.
@@ -386,8 +407,7 @@ public class ConversationAgent : IConversationAgent
                 .Replace("{Intent}", intentResult.Intent.ToString())
                 .Replace("{ShouldAllowReservation}", intentResult.ShouldAllowReservation.ToString())
                 .Replace("{HasDate}", intentResult.HasDate.ToString())
-                .Replace("{IsExplicitConfirmation}", intentResult.IsExplicitConfirmation.ToString())
-                .Replace("{IsNarrativeDate}", intentResult.IsNarrativeDate.ToString());
+                .Replace("{IsExplicitConfirmation}", intentResult.IsExplicitConfirmation.ToString());
         }
         catch (Exception ex)
         {

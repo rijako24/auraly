@@ -168,7 +168,7 @@ Console.WriteLine("Escribe 'exit' o 'quit' para salir.");
 Console.WriteLine();
 
 // Número de teléfono simulado (puedes cambiarlo)
-var userNumber = "+1234567895";
+var userNumber = "+1234567898";
 var customerName = "Bill";
 
 while (true)

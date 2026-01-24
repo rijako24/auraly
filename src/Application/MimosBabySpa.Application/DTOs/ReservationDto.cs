@@ -8,8 +8,6 @@ public class ReservationDto
     public Guid BusinessId { get; set; }
     public Guid ServiceId { get; set; }
     public Guid EmployeeId { get; set; }
-    public string CustomerName { get; set; } = string.Empty;
-    public string PhoneNumber { get; set; } = string.Empty;
     public string ServiceName { get; set; } = string.Empty; // Obtenido desde Service.ServiceName
     public string EmployeeName { get; set; } = string.Empty; // Obtenido desde Employee.Name
     public DateTime ReservationDateTime { get; set; }

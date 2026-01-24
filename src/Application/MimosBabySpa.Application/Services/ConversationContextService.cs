@@ -71,39 +71,6 @@ public class ConversationContextService : IConversationContextService
         _logger.LogDebug("Intención actualizada para conversación {ConversationId}: {Intent}", conversationId, intent);
     }
 
-    public async Task SetPrimaryEntityAsync(Guid conversationId, string entity)
-    {
-        var conversation = await _conversationRepository.GetByIdAsync(conversationId);
-        if (conversation == null)
-        {
-            _logger.LogWarning("Conversación {ConversationId} no encontrada", conversationId);
-            return;
-        }
-
-        var state = await _stateRepository.GetAsync(conversationId);
-        state.PrimaryEntity = entity;
-
-        await _stateRepository.SaveAsync(conversationId, conversation.BusinessId, state);
-        
-        _logger.LogDebug("Entidad principal establecida para conversación {ConversationId}: {Entity}", conversationId, entity);
-    }
-
-    public async Task SetSecondaryEntityAsync(Guid conversationId, string entity)
-    {
-        var conversation = await _conversationRepository.GetByIdAsync(conversationId);
-        if (conversation == null)
-        {
-            _logger.LogWarning("Conversación {ConversationId} no encontrada", conversationId);
-            return;
-        }
-
-        var state = await _stateRepository.GetAsync(conversationId);
-        state.SecondaryEntity = entity;
-
-        await _stateRepository.SaveAsync(conversationId, conversation.BusinessId, state);
-        
-        _logger.LogDebug("Entidad secundaria establecida para conversación {ConversationId}: {Entity}", conversationId, entity);
-    }
 
     public async Task SetAttributeAsync(Guid conversationId, string key, string value)
     {
@@ -161,6 +128,26 @@ public class ConversationContextService : IConversationContextService
         
         _logger.LogDebug("Programación actualizada para conversación {ConversationId}: {Date} {Time} ({Duration} min)", 
             conversationId, date, time, durationMinutes);
+    }
+
+    public async Task SetServiceAsync(Guid conversationId, string? service = null)
+    {
+        var conversation = await _conversationRepository.GetByIdAsync(conversationId);
+        if (conversation == null)
+        {
+            _logger.LogWarning("Conversación {ConversationId} no encontrada", conversationId);
+            return;
+        }
+
+        var state = await _stateRepository.GetAsync(conversationId);
+        
+        if (!string.IsNullOrWhiteSpace(service))
+            state.Service = service;
+
+        await _stateRepository.SaveAsync(conversationId, conversation.BusinessId, state);
+        
+        _logger.LogDebug("Servicio actualizado para conversación {ConversationId}: {Service}", 
+            conversationId, service);
     }
 
     public async Task SetAvailabilityAsync(Guid conversationId, bool result)

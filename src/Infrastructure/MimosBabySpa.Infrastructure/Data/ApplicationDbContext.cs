@@ -27,6 +27,7 @@ public class ApplicationDbContext : DbContext
     public DbSet<Employee> Employees { get; set; }
     public DbSet<EmployeeService> EmployeeServices { get; set; }
     public DbSet<ConversationStateEntity> ConversationStates { get; set; }
+    public DbSet<ReservationMetadata> ReservationMetadata { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -168,8 +169,6 @@ public class ApplicationDbContext : DbContext
             entity.HasKey(e => e.ReservationId);
             entity.Property(e => e.ServiceId).IsRequired();
             entity.Property(e => e.EmployeeId).IsRequired();
-            entity.Property(e => e.CustomerName).IsRequired().HasMaxLength(100);
-            entity.Property(e => e.PhoneNumber).IsRequired().HasMaxLength(50);
             entity.Property(e => e.ReservationDateTime).IsRequired();
             entity.Property(e => e.DurationMinutes).IsRequired();
             entity.Property(e => e.Status)
@@ -196,8 +195,21 @@ public class ApplicationDbContext : DbContext
             entity.HasIndex(e => e.EmployeeId);
             entity.HasIndex(e => new { e.BusinessId, e.ReservationDateTime });
             entity.HasIndex(e => new { e.EmployeeId, e.ReservationDateTime }); // Índice compuesto para búsquedas de disponibilidad
-            entity.HasIndex(e => e.PhoneNumber);
             entity.HasIndex(e => e.ConversationId); // Índice para búsquedas por conversación
+        });
+
+        // ReservationMetadata configuration
+        modelBuilder.Entity<ReservationMetadata>(entity =>
+        {
+            entity.HasKey(e => e.ReservationMetadataId);
+            entity.Property(e => e.Field).IsRequired().HasMaxLength(100);
+            entity.Property(e => e.Value).IsRequired().HasMaxLength(500);
+            entity.HasOne(e => e.Reservation)
+                  .WithMany()
+                  .HasForeignKey(e => e.ReservationId)
+                  .OnDelete(DeleteBehavior.Cascade); // Si se elimina la reserva, se eliminan sus metadatos
+            entity.HasIndex(e => e.ReservationId);
+            entity.HasIndex(e => new { e.ReservationId, e.Field }); // Índice compuesto para búsquedas rápidas
         });
 
         // BusinessResource configuration

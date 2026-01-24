@@ -17,6 +17,7 @@ public interface IUnitOfWork : IDisposable
     IEmployeeRepository Employees { get; }
     IEmployeeServiceRepository EmployeeServices { get; }
     IConversationStateRepository ConversationStates { get; }
+    IReservationMetadataRepository ReservationMetadata { get; }
     
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

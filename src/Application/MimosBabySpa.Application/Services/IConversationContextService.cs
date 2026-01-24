@@ -33,20 +33,6 @@ public interface IConversationContextService
     Task SetIntentAsync(Guid conversationId, IntentType intent);
 
     // ============================================
-    // ENTIDADES DE NEGOCIO
-    // ============================================
-
-    /// <summary>
-    /// Establece la entidad principal seleccionada (ej: servicio, producto, plan).
-    /// </summary>
-    Task SetPrimaryEntityAsync(Guid conversationId, string entity);
-
-    /// <summary>
-    /// Establece la entidad secundaria seleccionada (ej: variante, opción adicional).
-    /// </summary>
-    Task SetSecondaryEntityAsync(Guid conversationId, string entity);
-
-    // ============================================
     // ATRIBUTOS DINÁMICOS
     // ============================================
 
@@ -69,6 +55,11 @@ public interface IConversationContextService
     /// Establece los parámetros de programación (fecha, hora, duración).
     /// </summary>
     Task SetScheduleAsync(Guid conversationId, DateOnly? date = null, TimeOnly? time = null, int? durationMinutes = null);
+
+    /// <summary>
+    /// Establece el servicio/plan deseado para la reserva/cita.
+    /// </summary>
+    Task SetServiceAsync(Guid conversationId, string? service = null);
 
     // ============================================
     // DISPONIBILIDAD

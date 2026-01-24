@@ -29,11 +29,6 @@ public class IntentDetectionResult
     public bool HasService { get; set; }
 
     /// <summary>
-    /// Indica si la fecha detectada es narrativa (ej: "el sábado viajo") y no debe usarse para reservas.
-    /// </summary>
-    public bool IsNarrativeDate { get; set; }
-
-    /// <summary>
     /// Indica si el usuario hizo una confirmación explícita de reserva.
     /// </summary>
     public bool IsExplicitConfirmation { get; set; }

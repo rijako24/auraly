@@ -136,7 +136,7 @@ public class AvailabilityService : IAvailabilityService
             if (availableEmployee == null)
             {
                 result.IsAvailable = false;
-                result.Message = $"El horario {requestedStartTime.ToString(@"hh\:mm")} NO está disponible. No hay personal disponible para este servicio en ese horario.";
+                result.Message = $"El horario {requestedStartTime.ToString(@"hh\:mm")} NO está disponible.";
                 _logger.LogInformation("Disponibilidad rechazada por falta de personal disponible");
                 return result;
             }
@@ -178,7 +178,7 @@ public class AvailabilityService : IAvailabilityService
         if (!hasEnoughResources)
         {
             result.IsAvailable = false;
-            result.Message = $"El horario {requestedStartTime.ToString(@"hh\:mm")} NO está disponible. No hay suficientes recursos físicos disponibles.";
+            result.Message = $"El horario {requestedStartTime.ToString(@"hh\:mm")} NO está disponible.";
             _logger.LogInformation("Disponibilidad rechazada por recursos físicos insuficientes");
             return result;
         }
@@ -186,8 +186,7 @@ public class AvailabilityService : IAvailabilityService
         // Los empleados ya se validaron arriba antes de recursos físicos
         // Si llegamos aquí, tanto recursos físicos como personal están disponibles
         result.IsAvailable = true;
-        result.Message = $"El horario {requestedStartTime.ToString(@"hh\:mm")} está disponible. " +
-                       $"Hay {temporallyOverlappingSlots.Count} reserva(s) en el mismo horario pero hay recursos y personal suficientes.";
+        result.Message = $"El horario {requestedStartTime.ToString(@"hh\:mm")} está disponible.";
 
         _logger.LogInformation(
             "Disponibilidad verificada: IsAvailable={IsAvailable}, TemporallyOverlapping={OverlappingCount}, TotalReservations={TotalReservations}",

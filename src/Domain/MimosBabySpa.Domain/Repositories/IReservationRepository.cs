@@ -10,7 +10,6 @@ public interface IReservationRepository
         Guid businessId, 
         DateTime startDate, 
         DateTime endDate);
-    Task<IEnumerable<Reservation>> GetByPhoneNumberAsync(string phoneNumber);
     Task<Reservation> CreateAsync(Reservation reservation);
     Task<Reservation> UpdateAsync(Reservation reservation);
     Task<bool> ExistsOverlappingReservationAsync(

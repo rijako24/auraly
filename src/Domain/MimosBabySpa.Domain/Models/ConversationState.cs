@@ -40,22 +40,6 @@ public class ConversationState
     public IntentType? LastIntent { get; set; }
 
     // ============================================
-    // ENTIDADES DE NEGOCIO SELECCIONADAS
-    // ============================================
-    
-    /// <summary>
-    /// Entidad principal seleccionada (ej: servicio, producto, plan).
-    /// Genérico: puede ser cualquier entidad del negocio.
-    /// </summary>
-    public string? PrimaryEntity { get; set; }
-
-    /// <summary>
-    /// Entidad secundaria seleccionada (ej: variante, opción adicional).
-    /// Genérico: puede ser cualquier entidad del negocio.
-    /// </summary>
-    public string? SecondaryEntity { get; set; }
-
-    // ============================================
     // ATRIBUTOS DINÁMICOS POR NEGOCIO
     // ============================================
     
@@ -88,6 +72,11 @@ public class ConversationState
     /// Duración en minutos del servicio/cita.
     /// </summary>
     public int? DurationMinutes { get; set; }
+
+    /// <summary>
+    /// Servicio/plan deseado para la reserva/cita.
+    /// </summary>
+    public string? Service { get; set; }
 
     // ============================================
     // DISPONIBILIDAD

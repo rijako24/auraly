@@ -52,14 +52,6 @@ public class ReservationRepository : IReservationRepository
             .ToListAsync();
     }
 
-    public async Task<IEnumerable<Reservation>> GetByPhoneNumberAsync(string phoneNumber)
-    {
-        return await _context.Reservations
-            .Where(r => r.PhoneNumber == phoneNumber)
-            .OrderByDescending(r => r.ReservationDateTime)
-            .ToListAsync();
-    }
-
     public Task<Reservation> CreateAsync(Reservation reservation)
     {
         _context.Reservations.Add(reservation);
