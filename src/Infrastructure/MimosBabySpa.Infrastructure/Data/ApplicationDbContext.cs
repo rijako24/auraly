@@ -47,7 +47,36 @@ public class ApplicationDbContext : DbContext
         {
             entity.HasKey(e => e.BusinessId);
             entity.Property(e => e.Name).IsRequired().HasMaxLength(200);
-            entity.HasOne(e => e.Tenant)
+            
+            // Información de contacto y descripción
+            entity.Property(e => e.Description).HasMaxLength(2000);
+            entity.Property(e => e.Address).HasMaxLength(500);
+            entity.Property(e => e.Phone).HasMaxLength(50);
+            entity.Property(e => e.Email).HasMaxLength(200);
+            entity.Property(e => e.Website).HasMaxLength(500);
+            
+                // Horarios y métodos de pago (JSON)
+                entity.Property(e => e.OperatingHoursJson)
+                      .HasColumnType("NVARCHAR(MAX)")
+                      .HasDefaultValue("{}");
+                entity.Property(e => e.PaymentMethodsJson)
+                      .HasColumnType("NVARCHAR(MAX)")
+                      .HasDefaultValue("[]");
+
+                // Logo del negocio
+                entity.Property(e => e.LogoUrl).HasMaxLength(500);
+
+                // Personalidad del asistente (JSON)
+                entity.Property(e => e.PersonalityJson)
+                      .HasColumnType("NVARCHAR(MAX)")
+                      .HasDefaultValue("{}");
+
+                // Personalidad del asistente (JSON)
+                entity.Property(e => e.PersonalityJson)
+                      .HasColumnType("NVARCHAR(MAX)")
+                      .HasDefaultValue("{}");
+
+                entity.HasOne(e => e.Tenant)
                   .WithMany(t => t.Businesses)
                   .HasForeignKey(e => e.TenantId)
                   .OnDelete(DeleteBehavior.Restrict);
@@ -231,7 +260,9 @@ public class ApplicationDbContext : DbContext
         {
             entity.HasKey(e => e.ServiceId);
             entity.Property(e => e.ServiceName).IsRequired().HasMaxLength(200);
+            entity.Property(e => e.Description).HasColumnType("NVARCHAR(MAX)"); // Descripción sin límite para contenido detallado
             entity.Property(e => e.DurationMinutes).IsRequired();
+            entity.Property(e => e.Price).IsRequired().HasPrecision(18, 2); // Precisión para valores monetarios
             entity.Property(e => e.IsActive).IsRequired().HasDefaultValue(true);
             entity.HasOne(e => e.Business)
                   .WithMany()
@@ -333,5 +364,6 @@ public class ApplicationDbContext : DbContext
             entity.HasIndex(e => e.BusinessId);
             entity.HasIndex(e => e.ConversationId).IsUnique();
         });
+
     }
 }

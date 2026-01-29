@@ -1,29 +1,19 @@
-using MimosBabySpa.Domain.Models;
+using MimosBabySpa.Domain.Entities;
 
 namespace MimosBabySpa.Domain.Repositories;
 
 /// <summary>
-/// Repositorio para gestionar el estado de conversación almacenado como JSON.
+/// Repositorio para persistir el estado de conversación
 /// </summary>
 public interface IConversationStateRepository
 {
     /// <summary>
-    /// Obtiene el estado de conversación. Si no existe, retorna un estado vacío.
+    /// Obtiene el estado de conversación por ConversationId
     /// </summary>
-    Task<ConversationState> GetAsync(Guid conversationId);
+    Task<ConversationStateEntity?> GetByConversationIdAsync(Guid conversationId, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Guarda el estado de conversación. Si no existe, lo crea. Si existe, lo actualiza.
+    /// Guarda o actualiza el estado de conversación
     /// </summary>
-    Task SaveAsync(Guid conversationId, Guid businessId, ConversationState state);
-
-    /// <summary>
-    /// Elimina el estado de conversación (útil para reset).
-    /// </summary>
-    Task DeleteAsync(Guid conversationId);
-
-    /// <summary>
-    /// Verifica si existe un estado para la conversación.
-    /// </summary>
-    Task<bool> ExistsAsync(Guid conversationId);
+    Task SaveAsync(ConversationStateEntity entity, CancellationToken cancellationToken = default);
 }

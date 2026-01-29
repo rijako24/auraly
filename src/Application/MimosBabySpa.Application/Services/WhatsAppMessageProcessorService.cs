@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using MimosBabySpa.Application.Orchestration;
 using MimosBabySpa.Domain.Entities;
 
 namespace MimosBabySpa.Application.Services;
@@ -9,7 +10,7 @@ public class WhatsAppMessageProcessorService : IWhatsAppMessageProcessorService
     private readonly IMessageService _messageService;
     private readonly ILeadService _leadService;
     private readonly IWhatsAppService _whatsAppService;
-    private readonly IConversationAgent _conversationAgent;
+    private readonly HybridTransactionalOrchestrator _orchestrator;
     private readonly IBlobStorageService _blobStorageService;
     private readonly ILogger<WhatsAppMessageProcessorService> _logger;
 
@@ -18,7 +19,7 @@ public class WhatsAppMessageProcessorService : IWhatsAppMessageProcessorService
         IMessageService messageService,
         ILeadService leadService,
         IWhatsAppService whatsAppService,
-        IConversationAgent conversationAgent,
+        HybridTransactionalOrchestrator orchestrator,
         IBlobStorageService blobStorageService,
         ILogger<WhatsAppMessageProcessorService> logger)
     {
@@ -26,7 +27,7 @@ public class WhatsAppMessageProcessorService : IWhatsAppMessageProcessorService
         _messageService = messageService;
         _leadService = leadService;
         _whatsAppService = whatsAppService;
-        _conversationAgent = conversationAgent;
+        _orchestrator = orchestrator;
         _blobStorageService = blobStorageService;
         _logger = logger;
     }
@@ -39,45 +40,37 @@ public class WhatsAppMessageProcessorService : IWhatsAppMessageProcessorService
 
     public async Task ProcessIncomingMessageAsync(Guid businessId, string userNumber, string messageText, string? customerName = null)
     {
-        try
-        {
-            _logger.LogDebug("Procesando mensaje de {UserNumber} en negocio {BusinessId}: {Message}", userNumber, businessId, messageText);
+        _logger.LogDebug("Procesando mensaje de {UserNumber} en negocio {BusinessId}: {Message}", userNumber, businessId, messageText);
 
-            // 1. Obtener o crear conversación
-            var conversation = await _conversationService.GetOrCreateConversationAsync(businessId, userNumber, customerName);
+        // 1. Obtener o crear conversación
+        var conversation = await _conversationService.GetOrCreateConversationAsync(businessId, userNumber, customerName);
 
-            // 2. Obtener o crear lead
-            var lead = await _leadService.GetOrCreateLeadAsync(businessId, userNumber, customerName);
+        // 2. Obtener o crear lead
+        var lead = await _leadService.GetOrCreateLeadAsync(businessId, userNumber, customerName);
 
-            // 3. Guardar mensaje del usuario (sin clasificar intención manualmente)
-            await _messageService.SaveMessageAsync(conversation.ConversationId, "User", messageText, "FollowUp");
+        // 3. Guardar mensaje del usuario
+        await _messageService.SaveMessageAsync(conversation.ConversationId, "User", messageText, "FollowUp");
 
-            // 4. Procesar mensaje con el agente conversacional autónomo
-            // El agente decide cuándo usar tools (check_availability, create_reservation)
-            var agentResponse = await _conversationAgent.ProcessMessageAsync(
-                businessId,
-                messageText,
-                conversation,
-                lead);
+        // 4. Procesar mensaje con IA Vendedor (Orquestador)
+        // El orquestador tiene manejo de errores interno y retorna respuesta segura
+        // Pasar ConversationId como parámetro único para todo el flujo
+        var agentResponse = await _orchestrator.ProcessMessageAsync(
+            conversation.ConversationId,
+            businessId,
+            userNumber,
+            messageText);
 
-            // 5. Guardar respuesta del bot
-            await _messageService.SaveMessageAsync(conversation.ConversationId, "Bot", agentResponse, "FollowUp");
+        // 5. Guardar respuesta del bot
+        await _messageService.SaveMessageAsync(conversation.ConversationId, "Bot", agentResponse, "FollowUp");
 
-            // 6. Actualizar contexto de conversación (para compatibilidad)
-            await UpdateConversationContextAsync(conversation, messageText, "FollowUp", lead);
+        // 6. Actualizar contexto de conversación (para compatibilidad)
+        await UpdateConversationContextAsync(conversation, messageText, "FollowUp", lead);
 
-            // 7. Enviar respuesta (con soporte para imágenes si aplica)
-            await SendResponseAsync(userNumber, agentResponse, conversation);
+        // 7. Enviar respuesta (con soporte para imágenes si aplica)
+        await SendResponseAsync(userNumber, agentResponse, conversation);
 
-            // 8. Actualizar estado del lead si es necesario
-            await UpdateLeadStatusAsync(lead, agentResponse);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error procesando mensaje de {UserNumber}", userNumber);
-            await _whatsAppService.SendTextMessageAsync(userNumber, 
-                "Disculpa, estoy teniendo dificultades técnicas. Por favor intenta de nuevo en un momento.");
-        }
+        // 8. Actualizar estado del lead si es necesario
+        await UpdateLeadStatusAsync(lead, agentResponse);
     }
 
 

@@ -16,8 +16,10 @@ public interface IUnitOfWork : IDisposable
     IServiceCoexistenceRuleRepository ServiceCoexistenceRules { get; }
     IEmployeeRepository Employees { get; }
     IEmployeeServiceRepository EmployeeServices { get; }
-    IConversationStateRepository ConversationStates { get; }
     IReservationMetadataRepository ReservationMetadata { get; }
+    IConversationStateRepository ConversationStates { get; }
+    
+    // Repositorios de IA Vendedor
     
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

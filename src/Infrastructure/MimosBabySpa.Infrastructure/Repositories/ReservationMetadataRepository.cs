@@ -21,10 +21,10 @@ public class ReservationMetadataRepository : IReservationMetadataRepository
             .ToListAsync();
     }
 
-    public async Task<ReservationMetadata> CreateAsync(ReservationMetadata metadata)
+    public Task<ReservationMetadata> CreateAsync(ReservationMetadata metadata)
     {
         _context.Set<ReservationMetadata>().Add(metadata);
-        return metadata;
+        return Task.FromResult(metadata);
     }
 
     public async Task CreateBatchAsync(IEnumerable<ReservationMetadata> metadata)

@@ -68,6 +68,11 @@ public class BusinessConfigurationService : IBusinessConfigurationService
         return config.Value;
     }
 
+    /// <summary>
+    /// [OBSOLETO] Este método ya no se usa. Usar SystemPromptProvider + LoadedBusinessContext en su lugar.
+    /// La información del negocio ahora viene de campos estructurados en la tabla Businesses.
+    /// </summary>
+    [Obsolete("Este método es obsoleto. Usar SystemPromptProvider + LoadedBusinessContext para generar prompts dinámicos.", false)]
     public async Task<string> BuildSystemPromptAsync(Guid businessId)
     {
         var businessConfig = await GetConfigurationAsync(businessId);
@@ -90,18 +95,9 @@ public class BusinessConfigurationService : IBusinessConfigurationService
             promptBuilder.AppendLine();
         }
 
-        if (businessConfig.HasKey(BusinessConfigurationKey.BusinessInformation))
-        {
-            promptBuilder.AppendLine(businessConfig.GetValue(BusinessConfigurationKey.BusinessInformation));
-            promptBuilder.AppendLine();
-        }
-
-        // MAPEO DE CAMPOS DEL CONTEXTO (información específica del negocio sobre qué campos guardar)
-        if (businessConfig.HasKey(BusinessConfigurationKey.ContextFieldsMapping))
-        {
-            promptBuilder.AppendLine(businessConfig.GetValue(BusinessConfigurationKey.ContextFieldsMapping));
-            promptBuilder.AppendLine();
-        }
+        // INFORMACIÓN DEL NEGOCIO (rol, servicios, estilo de conversación)
+        // NOTA: BusinessInformation fue eliminado. Este código ya no retorna información del negocio.
+        // Usar SystemPromptProvider + LoadedBusinessContext en su lugar.
 
         return promptBuilder.ToString();
     }

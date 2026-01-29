@@ -51,14 +51,14 @@ public class AvailabilityService : IAvailabilityService
             return result;
         }
 
-        // Obtener todas las reservas del día completo
+        // Obtener todas las reservas del día completo (con manejo de errores)
         var startOfDay = date.Date;
         var endOfDay = date.Date.AddDays(1).AddMinutes(-1);
 
-        var reservations = await _unitOfWork.Reservations.GetByBusinessIdAndDateRangeAsync(
-            businessId,
-            startOfDay,
-            endOfDay);
+        IEnumerable<Domain.Entities.Reservation> reservations = await _unitOfWork.Reservations.GetByBusinessIdAndDateRangeAsync(
+                businessId,
+                startOfDay,
+                endOfDay);
 
         // Filtrar solo reservas activas (no canceladas)
         var activeReservations = reservations
@@ -91,9 +91,7 @@ public class AvailabilityService : IAvailabilityService
         if (!time.HasValue || !durationMinutes.HasValue)
         {
             result.IsAvailable = true;
-            result.Message = result.CurrentReservations == 0
-                ? "No hay reservas para esta fecha."
-                : $"Hay {result.CurrentReservations} reserva(s) confirmada(s) para esta fecha.";
+            result.Message = "✅ DISPONIBLE: Hay disponibilidad para esta fecha. Pregunta al cliente qué hora prefiere.";      
             
             _logger.LogInformation(
                 "Disponibilidad verificada (sin hora específica): {IsAvailable}, Reservas={CurrentReservations}",
@@ -150,10 +148,7 @@ public class AvailabilityService : IAvailabilityService
         if (temporallyOverlappingSlots.Count == 0)
         {
             result.IsAvailable = true;
-            result.Message = $"El horario {requestedStartTime.ToString(@"hh\:mm")} está disponible. " +
-                           (result.CurrentReservations > 0
-                               ? $"Hay {result.CurrentReservations} reserva(s) en otros horarios del día."
-                               : "No hay otras reservas para esta fecha.");
+            result.Message = $"✅ DISPONIBLE: El horario {requestedStartTime.ToString(@"hh\:mm")} está libre.";
             
             _logger.LogInformation(
                 "Disponibilidad verificada (sin solapamiento temporal): IsAvailable={IsAvailable}",
@@ -163,22 +158,22 @@ public class AvailabilityService : IAvailabilityService
         }
 
         // Paso 1: Verificar recursos físicos (solo si hay solapamiento temporal)
-        var hasEnoughResources = await CheckResourceAvailabilityAsync(
-            businessId,
-            requestedService.ServiceId,
-            temporallyOverlappingSlots,
-            activeReservations.Where(r =>
-            {
-                var rStart = r.ReservationDateTime.TimeOfDay;
-                var rEnd = rStart.Add(TimeSpan.FromMinutes(r.DurationMinutes));
-                return rStart < requestedEndTime && rEnd > requestedStartTime;
-            }).ToList(),
-            cancellationToken);
+        bool hasEnoughResources = await CheckResourceAvailabilityAsync(
+                                                                businessId,
+                                                                requestedService.ServiceId,
+                                                                temporallyOverlappingSlots,
+                                                                activeReservations.Where(r =>
+                                                                {
+                                                                    var rStart = r.ReservationDateTime.TimeOfDay;
+                                                                    var rEnd = rStart.Add(TimeSpan.FromMinutes(r.DurationMinutes));
+                                                                    return rStart < requestedEndTime && rEnd > requestedStartTime;
+                                                                }).ToList(),
+                                                                cancellationToken);
 
         if (!hasEnoughResources)
         {
             result.IsAvailable = false;
-            result.Message = $"El horario {requestedStartTime.ToString(@"hh\:mm")} NO está disponible.";
+            result.Message = $"❌ NO DISPONIBLE: El horario {requestedStartTime.ToString(@"hh\:mm")} está ocupado. Sugiere otros horarios al cliente.";
             _logger.LogInformation("Disponibilidad rechazada por recursos físicos insuficientes");
             return result;
         }
@@ -186,7 +181,7 @@ public class AvailabilityService : IAvailabilityService
         // Los empleados ya se validaron arriba antes de recursos físicos
         // Si llegamos aquí, tanto recursos físicos como personal están disponibles
         result.IsAvailable = true;
-        result.Message = $"El horario {requestedStartTime.ToString(@"hh\:mm")} está disponible.";
+        result.Message = $"✅ DISPONIBLE: El horario {requestedStartTime.ToString(@"hh\:mm")} está libre.";
 
         _logger.LogInformation(
             "Disponibilidad verificada: IsAvailable={IsAvailable}, TemporallyOverlapping={OverlappingCount}, TotalReservations={TotalReservations}",

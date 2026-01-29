@@ -13,6 +13,7 @@ Project rules:
 - Use clear naming in English
 - Avoid generating demo or fake code unless explicitly requested
 - Prefer production-ready code
+- Never create parches, make propousal about refactor the existing code
 
 When interacting with Azure AI:
 - Always create a service abstraction (IAiClient, IChatService, etc.)

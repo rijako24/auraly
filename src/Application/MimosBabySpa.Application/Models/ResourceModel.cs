@@ -21,22 +21,3 @@ public class ResourceModel
     /// </summary>
     public List<CoexistenceRule> CoexistenceRules { get; set; } = new();
 }
-
-/// <summary>
-/// Uso de recursos por un servicio específico
-/// </summary>
-public class ResourceUsage
-{
-    public Dictionary<string, int> Resources { get; set; } = new();
-}
-
-/// <summary>
-/// Regla de coexistencia entre servicios
-/// </summary>
-public class CoexistenceRule
-{
-    /// <summary>
-    /// Servicios que pueden coexistir (si uno está en la lista, puede coexistir con el otro)
-    /// </summary>
-    public List<string> Services { get; set; } = new();
-}

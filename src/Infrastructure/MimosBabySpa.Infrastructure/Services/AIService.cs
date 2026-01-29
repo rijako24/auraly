@@ -4,6 +4,8 @@ using Azure.AI.OpenAI;
 using Microsoft.Extensions.Logging;
 using MimosBabySpa.Application.DTOs;
 using MimosBabySpa.Application.Services;
+using MimosBabySpa.Application.Configuration;
+using MimosBabySpa.Application.Prompts;
 using MimosBabySpa.Domain.Entities;
 using MimosBabySpa.Domain.Enums;
 
@@ -14,20 +16,23 @@ public class AIService : IAIService
     private readonly OpenAIClient _openAIClient;
     private readonly string _textDeploymentName; // Para GPT (texto)
     private readonly string _audioDeploymentName; // Para Whisper (audio)
-    private readonly IBusinessConfigurationService _businessConfigService;
+    private readonly IPromptProvider _systemPromptProvider;
+    private readonly CachedBusinessContextProvider _cachedContextProvider;
     private readonly ILogger<AIService> _logger;
 
     public AIService(
         OpenAIClient openAIClient,
         string textDeploymentName,
         string audioDeploymentName,
-        IBusinessConfigurationService businessConfigService,
+        IPromptProvider systemPromptProvider,
+        CachedBusinessContextProvider cachedContextProvider,
         ILogger<AIService> logger)
     {
         _openAIClient = openAIClient;
         _textDeploymentName = textDeploymentName;
         _audioDeploymentName = audioDeploymentName;
-        _businessConfigService = businessConfigService;
+        _systemPromptProvider = systemPromptProvider;
+        _cachedContextProvider = cachedContextProvider;
         _logger = logger;
     }
 
@@ -37,8 +42,10 @@ public class AIService : IAIService
         {
             var chatMessages = new List<ChatRequestMessage>();
 
-            // Construir system prompt dinámicamente desde la configuración del negocio
-            var systemPrompt = await _businessConfigService.BuildSystemPromptAsync(businessId);
+            // Construir system prompt usando el nuevo sistema (SystemPromptProvider + LoadedBusinessContext)
+            var businessContext = await _cachedContextProvider.GetOrLoadAsync(businessId);
+            var systemPrompt = await _systemPromptProvider.BuildAsync(businessContext);
+            
             if (!string.IsNullOrEmpty(systemPrompt))
             {
                 chatMessages.Add(new ChatRequestSystemMessage(systemPrompt));

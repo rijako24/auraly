@@ -4,6 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using MimosBabySpa.Application.Services;
+using MimosBabySpa.Application.Orchestration;
 using MimosBabySpa.Domain.Repositories;
 using MimosBabySpa.Infrastructure.Data;
 using MimosBabySpa.Infrastructure.Repositories;
@@ -13,6 +14,16 @@ using MimosBabySpa.Console.Services;
 using Azure.Storage.Blobs;
 using Azure.AI.OpenAI;
 using System.Net.Http;
+
+// HYBRID TRANSACTIONAL BRAIN - New Architecture
+using MimosBabySpa.Application.FlowEngine;
+using MimosBabySpa.Application.Tools;
+using MimosBabySpa.Application.BusinessRules;
+using MimosBabySpa.Application.Configuration;
+using MimosBabySpa.Application.Prompts;
+using MimosBabySpa.Application.StateManagement;
+using MimosBabySpa.Application.LLM;
+using MimosBabySpa.Application.LLM.Extraction;
 
 // Configurar servicios
 var configuration = new ConfigurationBuilder()
@@ -48,6 +59,7 @@ services.AddDbContext<ApplicationDbContext>(options =>
 // Repositories
 services.AddScoped<IUnitOfWork, UnitOfWork>();
 services.AddScoped<IConversationRepository, ConversationRepository>();
+services.AddScoped<IConversationStateRepository, ConversationStateRepository>();
 services.AddScoped<IMessageRepository, MessageRepository>();
 services.AddScoped<ILeadRepository, LeadRepository>();
 services.AddScoped<IReservationRepository, ReservationRepository>();
@@ -59,60 +71,17 @@ services.AddScoped<ILeadService, LeadService>();
 services.AddScoped<IReservationService, ReservationService>();
 services.AddScoped<IBusinessIdentificationService, BusinessIdentificationService>();
 services.AddScoped<IBusinessConfigurationService, BusinessConfigurationService>();
-services.AddScoped<IWhatsAppMessageProcessorService, WhatsAppMessageProcessorService>();
 services.AddScoped<IWhatsAppWebhookParserService, WhatsAppWebhookParserService>();
 
-// New Refactored Services
-services.AddScoped<IDateTimeExtractorService, DateTimeExtractorService>();
-services.AddScoped<IReservationIntentDetector, ReservationIntentDetector>();
-services.AddScoped<IIntentDetectorService, IntentDetectorService>();
-services.AddScoped<IResourceConfigurationService, ResourceConfigurationService>();
+// Services necesarios para Tools
 services.AddScoped<IEmployeeAssignmentService, EmployeeAssignmentService>();
 services.AddScoped<IAvailabilityService, AvailabilityService>();
 
-// Conversation Context Services (New)
-services.AddScoped<IConversationStateRepository, ConversationStateRepository>();
-services.AddScoped<IConversationContextService, ConversationContextService>();
+// ========================================
+// HYBRID TRANSACTIONAL BRAIN ARCHITECTURE
+// ========================================
 
-// New Agent Services
-services.AddScoped<IToolDispatcher, ToolDispatcher>();
-services.AddScoped<IConversationAgent>(sp =>
-{
-    var client = sp.GetRequiredService<OpenAIClient>();
-    var config = sp.GetRequiredService<IConfiguration>();
-    var textDeploymentName = config["OpenAI:TextDeploymentName"] ?? "gpt-4o-mini";
-    var toolDispatcher = sp.GetRequiredService<IToolDispatcher>();
-    var businessConfigService = sp.GetRequiredService<IBusinessConfigurationService>();
-    var dateTimeExtractor = sp.GetRequiredService<IDateTimeExtractorService>();
-    var availabilityService = sp.GetRequiredService<IAvailabilityService>();
-    var reservationIntentDetector = sp.GetRequiredService<IReservationIntentDetector>();
-    var intentDetector = sp.GetRequiredService<IIntentDetectorService>();
-    var contextService = sp.GetRequiredService<IConversationContextService>();
-    var unitOfWork = sp.GetRequiredService<IUnitOfWork>();
-    
-    return new ConversationAgent(
-        client,
-        textDeploymentName,
-        toolDispatcher,
-        businessConfigService,
-        dateTimeExtractor,
-        availabilityService,
-        reservationIntentDetector,
-        intentDetector,
-        contextService,
-        unitOfWork,
-        sp.GetRequiredService<ILogger<ConversationAgent>>());
-});
-
-// Infrastructure Services - WhatsApp (Mock para consola)
-// Usamos ConsoleWhatsAppService que muestra las respuestas en consola en lugar de enviarlas por WhatsApp
-services.AddScoped<IWhatsAppService>(sp =>
-{
-    var logger = sp.GetRequiredService<ILogger<ConsoleWhatsAppService>>();
-    return new ConsoleWhatsAppService(logger);
-});
-
-// Infrastructure Services - OpenAI
+// Infrastructure Services - OpenAI (debe estar antes del LLM Adapter)
 services.AddSingleton(sp =>
 {
     var config = sp.GetRequiredService<IConfiguration>();
@@ -122,16 +91,82 @@ services.AddSingleton(sp =>
     return new OpenAIClient(new Uri(endpoint), new Azure.AzureKeyCredential(apiKey));
 });
 
+// AI Service (para transcripción de audio)
 services.AddScoped<IAIService>(sp =>
 {
-    var client = sp.GetRequiredService<OpenAIClient>();
+    var openAIClient = sp.GetRequiredService<OpenAIClient>();
     var config = sp.GetRequiredService<IConfiguration>();
-            var textDeploymentName = config["OpenAI:TextDeploymentName"] ?? "gpt-4o-mini";
-            var audioDeploymentName = config["OpenAI:AudioDeploymentName"] ?? "whisper-1";
-            var businessConfigService = sp.GetRequiredService<IBusinessConfigurationService>();
-            
-            return new AIService(client, textDeploymentName, audioDeploymentName, businessConfigService, sp.GetRequiredService<ILogger<AIService>>());
+    var textDeploymentName = config["OpenAI:TextDeploymentName"] ?? "gpt-4o-mini";
+    var audioDeploymentName = config["OpenAI:AudioDeploymentName"] ?? "whisper";
+    var systemPromptProvider = sp.GetRequiredService<IPromptProvider>();
+    var cachedContextProvider = sp.GetRequiredService<CachedBusinessContextProvider>();
+    var logger = sp.GetRequiredService<ILogger<AIService>>();
+    
+    return new AIService(openAIClient, textDeploymentName, audioDeploymentName, systemPromptProvider, cachedContextProvider, logger);
 });
+
+// Flow Engine (Cerebro Determinístico)
+services.AddSingleton<IFlowEngine, FlowEngine>();
+
+// State Management (debe ser Scoped para usar IConversationStateRepository)
+services.AddScoped<IConversationStateManager, ConversationStateManager>();
+
+// Business Rules Engine
+services.AddScoped<IBusinessRuleEngine, BusinessRuleEngine>();
+
+// Business Configuration Provider
+services.AddScoped<IBusinessConfigurationProvider, BusinessConfigurationProvider>();
+
+// ✅ NEW: Cached Business Context Provider (elimina cargas redundantes + caché)
+services.AddMemoryCache();
+services.AddScoped<CachedBusinessContextProvider>();
+
+// ✅ NEW: Prompt Providers (prompts organizados y modulares)
+services.AddScoped<IPromptProvider, SystemPromptProvider>();
+
+// ✅ NEW: Localization Service (i18n básico)
+services.AddSingleton<ILocalizationService, LocalizationService>();
+
+// LLM Adapter Layer
+services.AddScoped<ILLMAdapter>(sp =>
+{
+    var openAIClient = sp.GetRequiredService<OpenAIClient>();
+    var config = sp.GetRequiredService<IConfiguration>();
+    var deploymentName = config["OpenAI:TextDeploymentName"] ?? "gpt-4o-mini";
+    var logger = sp.GetRequiredService<ILogger<AzureOpenAIAdapter>>();
+    
+    return new AzureOpenAIAdapter(openAIClient, deploymentName, logger);
+});
+
+// Tool Handlers (Domain-Agnostic)
+services.AddScoped<UpdateConversationStateToolHandler>();
+services.AddScoped<CheckAvailabilityToolHandler>();
+services.AddScoped<CreateReservationToolHandler>();
+
+// Tool Factory & Dispatcher
+services.AddScoped<IToolFactory, ToolFactory>();
+services.AddScoped<GenericToolDispatcher>();
+
+// Extraction Services
+services.AddScoped<JsonSchemaPromptBuilder>();
+services.AddScoped<IExtractionValidator, ExtractionValidator>();
+services.AddScoped<IFallbackExtractor, FallbackExtractor>();
+services.AddScoped<ISmartExtractionService, SmartExtractionService>();
+
+// Hybrid Transactional Orchestrator
+services.AddScoped<HybridTransactionalOrchestrator>();
+
+// Infrastructure Services - WhatsApp (Mock para consola)
+// Usamos ConsoleWhatsAppService que muestra las respuestas en consola en lugar de enviarlas por WhatsApp
+services.AddScoped<IWhatsAppService>(sp =>
+{
+    var logger = sp.GetRequiredService<ILogger<ConsoleWhatsAppService>>();
+    return new ConsoleWhatsAppService(logger);
+});
+
+
+// WhatsAppMessageProcessorService (usa HybridTransactionalOrchestrator)
+services.AddScoped<IWhatsAppMessageProcessorService, WhatsAppMessageProcessorService>();
 
 // Infrastructure Services - Blob Storage (Mock para consola)
 // Usamos ConsoleBlobStorageService que retorna valores vacíos ya que no es necesario para probar OpenAI
@@ -168,7 +203,7 @@ Console.WriteLine("Escribe 'exit' o 'quit' para salir.");
 Console.WriteLine();
 
 // Número de teléfono simulado (puedes cambiarlo)
-var userNumber = "+1234567898";
+var userNumber = "+1234567920";
 var customerName = "Bill";
 
 while (true)

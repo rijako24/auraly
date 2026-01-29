@@ -8,7 +8,9 @@ public class Service
     public Guid ServiceId { get; set; }
     public Guid BusinessId { get; set; }
     public string ServiceName { get; set; } = string.Empty; // Ej: "Marineritos", "Aventuras Marinas"
+    public string Description { get; set; } = string.Empty; // Descripción detallada del servicio
     public int DurationMinutes { get; set; } // Duración del servicio en minutos
+    public decimal Price { get; set; } // Precio del servicio
     public bool IsActive { get; set; } = true;
     public DateTime CreatedAt { get; set; }
     public DateTime? UpdatedAt { get; set; }

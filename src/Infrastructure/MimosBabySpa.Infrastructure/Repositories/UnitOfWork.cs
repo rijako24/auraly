@@ -7,7 +7,6 @@ namespace MimosBabySpa.Infrastructure.Repositories;
 public class UnitOfWork : IUnitOfWork
 {
     private readonly ApplicationDbContext _context;
-    private readonly ILoggerFactory? _loggerFactory;
     private IConversationRepository? _conversations;
     private IMessageRepository? _messages;
     private ILeadRepository? _leads;
@@ -22,8 +21,8 @@ public class UnitOfWork : IUnitOfWork
     private IServiceCoexistenceRuleRepository? _serviceCoexistenceRules;
     private IEmployeeRepository? _employees;
     private IEmployeeServiceRepository? _employeeServices;
-    private IConversationStateRepository? _conversationStates;
     private IReservationMetadataRepository? _reservationMetadata;
+    private IConversationStateRepository? _conversationStates;
 
     public UnitOfWork(ApplicationDbContext context)
     {
@@ -72,13 +71,12 @@ public class UnitOfWork : IUnitOfWork
     public IEmployeeServiceRepository EmployeeServices =>
         _employeeServices ??= new EmployeeServiceRepository(_context);
 
-    public IConversationStateRepository ConversationStates =>
-        _conversationStates ??= new ConversationStateRepository(
-            _context, 
-            Microsoft.Extensions.Logging.Abstractions.NullLogger<ConversationStateRepository>.Instance);
-
     public IReservationMetadataRepository ReservationMetadata =>
         _reservationMetadata ??= new ReservationMetadataRepository(_context);
+
+    public IConversationStateRepository ConversationStates =>
+        _conversationStates ??= new ConversationStateRepository(_context);
+
 
     public async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {

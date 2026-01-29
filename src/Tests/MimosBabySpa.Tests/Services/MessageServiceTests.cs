@@ -12,7 +12,6 @@ public class MessageServiceTests
 {
     private readonly Mock<IUnitOfWork> _mockUnitOfWork;
     private readonly Mock<IMessageRepository> _mockMessageRepository;
-    private readonly Mock<IAIService> _mockAIService;
     private readonly Mock<ILogger<MessageService>> _mockLogger;
     private readonly MessageService _service;
 
@@ -20,12 +19,11 @@ public class MessageServiceTests
     {
         _mockUnitOfWork = new Mock<IUnitOfWork>();
         _mockMessageRepository = new Mock<IMessageRepository>();
-        _mockAIService = new Mock<IAIService>();
         _mockLogger = new Mock<ILogger<MessageService>>();
 
         _mockUnitOfWork.Setup(u => u.Messages).Returns(_mockMessageRepository.Object);
 
-        _service = new MessageService(_mockUnitOfWork.Object, _mockAIService.Object, _mockLogger.Object);
+        _service = new MessageService(_mockUnitOfWork.Object, _mockLogger.Object);
     }
 
     [Fact]
@@ -72,26 +70,6 @@ public class MessageServiceTests
             m.Intent == intent)), Times.Once);
 
         _mockUnitOfWork.Verify(x => x.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Once);
-    }
-
-    [Fact]
-    public async Task ClassifyIntentAsync_ShouldCallAIService()
-    {
-        // Arrange
-        var messageText = "¿Cuánto cuesta?";
-        var conversation = new Conversation { ConversationId = Guid.NewGuid() };
-        var expectedIntent = "AskPrice";
-
-        _mockAIService
-            .Setup(x => x.ClassifyIntentAsync(messageText, conversation))
-            .ReturnsAsync(expectedIntent);
-
-        // Act
-        var result = await _service.ClassifyIntentAsync(messageText, conversation);
-
-        // Assert
-        result.Should().Be(expectedIntent);
-        _mockAIService.Verify(x => x.ClassifyIntentAsync(messageText, conversation), Times.Once);
     }
 
     [Fact]

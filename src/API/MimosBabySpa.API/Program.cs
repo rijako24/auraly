@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using MimosBabySpa.Application.Services;
+using MimosBabySpa.Application.Orchestration;
 using MimosBabySpa.Domain.Repositories;
 using MimosBabySpa.Infrastructure.Data;
 using MimosBabySpa.Infrastructure.Repositories;
@@ -14,6 +15,16 @@ using Azure.Storage.Blobs;
 using Azure.AI.OpenAI;
 using System.Net.Http;
 using Microsoft.Extensions.Options;
+
+// HYBRID TRANSACTIONAL BRAIN - New Architecture
+using MimosBabySpa.Application.FlowEngine;
+using MimosBabySpa.Application.Tools;
+using MimosBabySpa.Application.BusinessRules;
+using MimosBabySpa.Application.Configuration;
+using MimosBabySpa.Application.StateManagement;
+using MimosBabySpa.Application.LLM;
+using MimosBabySpa.Application.LLM.Extraction;
+using MimosBabySpa.Application.Prompts;
 
 var host = new HostBuilder()
     .ConfigureFunctionsWorkerDefaults()
@@ -25,12 +36,16 @@ var host = new HostBuilder()
         services.AddDbContext<ApplicationDbContext>(options =>
             options.UseSqlServer(configuration.GetConnectionString("DefaultConnection")));
 
+        // ✅ Memory Cache (para CachedBusinessContextProvider)
+        services.AddMemoryCache();
+
         // Repositories
         services.AddScoped<IUnitOfWork, UnitOfWork>();
         services.AddScoped<IConversationRepository, ConversationRepository>();
         services.AddScoped<IMessageRepository, MessageRepository>();
         services.AddScoped<ILeadRepository, LeadRepository>();
         services.AddScoped<IReservationRepository, ReservationRepository>();
+        services.AddScoped<IConversationStateRepository, ConversationStateRepository>();
 
         // Application Services
         services.AddScoped<IConversationService, ConversationService>();
@@ -39,50 +54,92 @@ var host = new HostBuilder()
         services.AddScoped<IReservationService, ReservationService>();
         services.AddScoped<IBusinessIdentificationService, BusinessIdentificationService>();
         services.AddScoped<IBusinessConfigurationService, BusinessConfigurationService>();
-        services.AddScoped<IWhatsAppMessageProcessorService, WhatsAppMessageProcessorService>();
         services.AddScoped<IWhatsAppWebhookParserService, WhatsAppWebhookParserService>();
         
-        // New Refactored Services
-        services.AddScoped<IDateTimeExtractorService, DateTimeExtractorService>();
-        services.AddScoped<IReservationIntentDetector, ReservationIntentDetector>();
-        services.AddScoped<IIntentDetectorService, IntentDetectorService>();
-        services.AddScoped<IResourceConfigurationService, ResourceConfigurationService>();
+        // Services necesarios para Tools
         services.AddScoped<IEmployeeAssignmentService, EmployeeAssignmentService>();
         services.AddScoped<IAvailabilityService, AvailabilityService>();
         
-        // Conversation Context Services (New)
-        services.AddScoped<IConversationStateRepository, ConversationStateRepository>();
-        services.AddScoped<IConversationContextService, ConversationContextService>();
+        // ========================================
+        // HYBRID TRANSACTIONAL BRAIN ARCHITECTURE
+        // ========================================
         
-        // New Agent Services
-        services.AddScoped<IToolDispatcher, ToolDispatcher>();
-        services.AddScoped<IConversationAgent>(sp =>
+        // Infrastructure Services - OpenAI (debe estar antes del LLM Adapter)
+        services.AddSingleton(sp =>
         {
-            var client = sp.GetRequiredService<OpenAIClient>();
+            var config = sp.GetRequiredService<IConfiguration>();
+            var endpoint = config["OpenAI:Endpoint"] ?? throw new InvalidOperationException("OpenAI:Endpoint no configurado");
+            var apiKey = config["OpenAI:ApiKey"] ?? throw new InvalidOperationException("OpenAI:ApiKey no configurado");
+            
+            return new OpenAIClient(new Uri(endpoint), new Azure.AzureKeyCredential(apiKey));
+        });
+        
+        // AI Service (para transcripción de audio)
+        services.AddScoped<IAIService>(sp =>
+        {
+            var openAIClient = sp.GetRequiredService<OpenAIClient>();
             var config = sp.GetRequiredService<IConfiguration>();
             var textDeploymentName = config["OpenAI:TextDeploymentName"] ?? "gpt-4o-mini";
-            var toolDispatcher = sp.GetRequiredService<IToolDispatcher>();
-            var businessConfigService = sp.GetRequiredService<IBusinessConfigurationService>();
-            var dateTimeExtractor = sp.GetRequiredService<IDateTimeExtractorService>();
-            var availabilityService = sp.GetRequiredService<IAvailabilityService>();
-            var reservationIntentDetector = sp.GetRequiredService<IReservationIntentDetector>();
-            var intentDetector = sp.GetRequiredService<IIntentDetectorService>();
-            var contextService = sp.GetRequiredService<IConversationContextService>();
-            var unitOfWork = sp.GetRequiredService<IUnitOfWork>();
+            var audioDeploymentName = config["OpenAI:AudioDeploymentName"] ?? "whisper";
+            var systemPromptProvider = sp.GetRequiredService<IPromptProvider>();
+            var cachedContextProvider = sp.GetRequiredService<CachedBusinessContextProvider>();
+            var logger = sp.GetRequiredService<ILogger<AIService>>();
             
-            return new ConversationAgent(
-                client,
-                textDeploymentName,
-                toolDispatcher,
-                businessConfigService,
-                dateTimeExtractor,
-                availabilityService,
-                reservationIntentDetector,
-                intentDetector,
-                contextService,
-                unitOfWork,
-                sp.GetRequiredService<ILogger<ConversationAgent>>());
+            return new AIService(openAIClient, textDeploymentName, audioDeploymentName, systemPromptProvider, cachedContextProvider, logger);
         });
+        
+        // Flow Engine (Cerebro Determinístico)
+        services.AddSingleton<IFlowEngine, FlowEngine>();
+        
+        // State Management (necesita IConversationStateRepository e IConversationService)
+        services.AddScoped<IConversationStateManager, ConversationStateManager>();
+        
+        // Business Rules Engine
+        services.AddScoped<IBusinessRuleEngine, BusinessRuleEngine>();
+        
+        // Business Configuration Provider (Legacy - mantener por compatibilidad)
+        services.AddScoped<IBusinessConfigurationProvider, BusinessConfigurationProvider>();
+        
+        // ✅ NEW: Cached Business Context Provider (elimina cargas redundantes + caché)
+        services.AddScoped<CachedBusinessContextProvider>();
+        
+        // ✅ NEW: Prompt Providers (prompts organizados y modulares)
+        services.AddScoped<IPromptProvider, SystemPromptProvider>();
+        
+        // ✅ NEW: Localization Service (i18n básico)
+        services.AddSingleton<ILocalizationService, LocalizationService>();
+        
+        // LLM Adapter Layer
+        services.AddScoped<ILLMAdapter>(sp =>
+        {
+            var openAIClient = sp.GetRequiredService<OpenAIClient>();
+            var config = sp.GetRequiredService<IConfiguration>();
+            var deploymentName = config["OpenAI:TextDeploymentName"] ?? "gpt-4o-mini";
+            var logger = sp.GetRequiredService<ILogger<AzureOpenAIAdapter>>();
+            
+            return new AzureOpenAIAdapter(openAIClient, deploymentName, logger);
+        });
+        
+        // Tool Handlers (Domain-Agnostic)
+        services.AddScoped<UpdateConversationStateToolHandler>();
+        services.AddScoped<CheckAvailabilityToolHandler>();
+        services.AddScoped<CreateReservationToolHandler>();
+        
+        // Tool Factory & Dispatcher
+        services.AddScoped<IToolFactory, ToolFactory>();
+        services.AddScoped<GenericToolDispatcher>();
+        
+        // Extraction Services
+        services.AddScoped<JsonSchemaPromptBuilder>(); // ✅ Refactorizado para usar LoadedBusinessContext
+        services.AddScoped<IExtractionValidator, ExtractionValidator>();
+        services.AddScoped<IFallbackExtractor, FallbackExtractor>();
+        services.AddScoped<ISmartExtractionService, SmartExtractionService>(); // ✅ Refactorizado
+        
+        // Hybrid Transactional Orchestrator
+        services.AddScoped<HybridTransactionalOrchestrator>();
+        
+        // WhatsAppMessageProcessorService (usa HybridTransactionalOrchestrator)
+        services.AddScoped<IWhatsAppMessageProcessorService, WhatsAppMessageProcessorService>();
 
         // Infrastructure Services - WhatsApp
         services.AddHttpClient();
@@ -98,26 +155,7 @@ var host = new HostBuilder()
             return new WhatsAppService(httpClient, phoneNumberId, accessToken, logger);
         });
 
-        // Infrastructure Services - OpenAI
-        services.AddSingleton(sp =>
-        {
-            var config = sp.GetRequiredService<IConfiguration>();
-            var endpoint = config["OpenAI:Endpoint"] ?? throw new InvalidOperationException("OpenAI:Endpoint no configurado");
-            var apiKey = config["OpenAI:ApiKey"] ?? throw new InvalidOperationException("OpenAI:ApiKey no configurado");
-            
-            return new OpenAIClient(new Uri(endpoint), new Azure.AzureKeyCredential(apiKey));
-        });
 
-        services.AddScoped<IAIService>(sp =>
-        {
-            var client = sp.GetRequiredService<OpenAIClient>();
-            var config = sp.GetRequiredService<IConfiguration>();
-            var textDeploymentName = config["OpenAI:TextDeploymentName"] ?? "gpt-4o-mini";
-            var audioDeploymentName = config["OpenAI:AudioDeploymentName"] ?? "whisper-1";
-            var businessConfigService = sp.GetRequiredService<IBusinessConfigurationService>();
-            
-            return new AIService(client, textDeploymentName, audioDeploymentName, businessConfigService, sp.GetRequiredService<ILogger<AIService>>());
-        });
 
         // Infrastructure Services - Blob Storage
         services.AddSingleton(sp =>
