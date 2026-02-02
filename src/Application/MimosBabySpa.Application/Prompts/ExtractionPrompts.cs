@@ -123,6 +123,58 @@ Usuario: 'que horarios tienes libres mañana'
 - Dice: 'cancela', 'mejor no', 'cambié de opinión', 'no quiero'";
 
     /// <summary>
+    /// Reglas de inferencia de referencias implícitas para servicios y otros campos.
+    /// Basado en principios genéricos, no en ejemplos hardcodeados.
+    /// </summary>
+    public const string ImplicitReferenceInference = @"⚠️ INFERENCIA DE REFERENCIAS IMPLÍCITAS (CRÍTICO):
+
+**PRINCIPIO:** El usuario puede hacer referencia implícita a información mencionada previamente usando pronombres demostrativos, referencias contextuales o comparativos ordinales.
+
+**PATRONES DE REFERENCIA IMPLÍCITA:**
+
+1. **Pronombres demostrativos:** ""ese"", ""esa"", ""ese [tipo]"", ""esa [categoría]""
+2. **Referencias contextuales:** ""el que me recomendaste"", ""el que mencionaste"", ""el que dijiste""
+3. **Comparativos ordinales:** ""el primero"", ""el segundo"", ""el último""
+4. **Referencias relativas:** ""ese mismo"", ""ese que dijiste"", ""el de antes""
+
+**REGLAS DE INFERENCIA (GENÉRICAS):**
+
+### Para cualquier campo (Service, DesiredDate, DesiredTime, etc.):
+
+1. **Mención explícita:** Usuario menciona el valor directamente
+   → Extraer con confidence: 1.0
+
+2. **Referencia implícita detectada:**
+   → ⚠️ **CRÍTICO:** Revisar el estado actual (state) para el campo correspondiente
+   → Si el estado YA tiene valor para ese campo → NO inferir (ya está establecido)
+   → Si el estado NO tiene valor → Revisar contexto conversacional previo
+   → Si hay contexto claro (ej: bot recomendó un servicio, mencionó una fecha), INFERIR
+   → Extraer con confidence: 0.85-0.9
+   → Reasoning: ""Usuario hace referencia implícita a [campo] mencionado previamente""
+
+3. **Sin contexto claro:**
+   → Marcar como ambigüedad (tipo: referential, severidad: high)
+   → NO extraer el campo
+
+**ALGORITMO DE INFERENCIA:**
+
+```
+SI (usuario usa patrón de referencia implícita):
+  SI (estado.campo ya tiene valor):
+    → NO hacer nada (ya está establecido)
+  SINO SI (hay contexto conversacional previo claro):
+    → Extraer: campo = valor_del_contexto_previo
+    → Confidence: 0.85-0.9
+  SINO:
+    → Marcar ambigüedad (referential, high)
+```
+
+**⚠️ IMPORTANTE:**
+- SIEMPRE revisa el estado actual ANTES de inferir
+- La inferencia SOLO aplica cuando el campo NO está establecido en el estado
+- Si no hay contexto previo claro, marca como ambigüedad en vez de inventar valores";
+
+    /// <summary>
     /// Verificaciones finales que el LLM debe hacer antes de retornar la extracción.
     /// </summary>
     public const string FinalVerification = @"⚠️ VERIFICACIÓN FINAL (CHECKLIST OBLIGATORIO):
@@ -140,9 +192,16 @@ Usuario: 'que horarios tienes libres mañana'
    
 4. ¿Mencionó servicio/fecha/hora?
    → Verificar coincidencia exacta con catálogo
+   → Si hay referencia implícita (pronombres demostrativos, referencias al contexto), INFERIR del estado previo
 
 5. ¿Preguntó por disponibilidad?
-   → user_requested_availability=true";
+   → user_requested_availability=true
+
+6. ❗ ¿Usuario hizo referencia implícita a información previa (pronombres demostrativos, referencias contextuales)?
+   → ✅ OBLIGATORIO: Revisar estado actual y contexto conversacional previo
+   → ✅ INFERIR el campo correspondiente con confidence 0.85-0.9
+   → ❌ NO OMITIR aunque no haya mencionado el valor explícitamente
+   → Si no hay contexto claro, marcar como ambigüedad (tipo: referential)";
 
     /// <summary>
     /// Ejemplo completo de extracción de nombre del cliente.

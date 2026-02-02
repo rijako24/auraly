@@ -265,7 +265,7 @@ RESPUESTA:
 
     /// <summary>
     /// Genera horarios sugeridos basados en el horario del negocio.
-    /// Retorna slots cada 90 minutos dentro del horario de operación.
+    /// Retorna slots cada hora completa (60 minutos) dentro del horario de operación.
     /// </summary>
     private async Task<List<string>> GenerateSuggestedTimeSlotsAsync(
         Guid businessId,
@@ -298,7 +298,7 @@ RESPUESTA:
             }
 
             var suggestedSlots = new List<string>();
-            const int slotIntervalMinutes = 90; // Generar slots cada 90 minutos
+            const int slotIntervalMinutes = 60; // Generar slots cada hora completa (60 minutos)
 
             // Para cada bloque horario del día (ej: mañana y tarde)
             foreach (var block in timeBlocks.Where(b => b.IsValid()))

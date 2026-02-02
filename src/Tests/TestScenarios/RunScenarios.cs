@@ -20,6 +20,7 @@ using MimosBabySpa.Application.Configuration;
 using MimosBabySpa.Application.StateManagement;
 using MimosBabySpa.Application.LLM;
 using MimosBabySpa.Application.LLM.Extraction;
+using MimosBabySpa.Application.Prompts;
 
 namespace MimosBabySpa.Tests.TestScenarios;
 
@@ -64,6 +65,7 @@ class RunScenarios
         services.AddScoped<IEmployeeAssignmentService, EmployeeAssignmentService>();
         services.AddScoped<IAvailabilityService, AvailabilityService>();
         services.AddScoped<IReservationService, ReservationService>();
+        services.AddScoped<IMessageService, MessageService>(); // ✅ Nuevo: Para historial conversacional
         
         // Calendar Configuration (Options Pattern)
         services.Configure<MimosBabySpa.Infrastructure.Configuration.CalendarSettings>(
@@ -107,6 +109,15 @@ class RunScenarios
         // Business Configuration Provider
         services.AddScoped<IBusinessConfigurationProvider, BusinessConfigurationProvider>();
 
+        // ✅ Memory Cache (para CachedBusinessContextProvider)
+        services.AddMemoryCache();
+
+        // ✅ Cached Business Context Provider
+        services.AddScoped<CachedBusinessContextProvider>();
+
+        // ✅ Prompt Provider
+        services.AddScoped<IPromptProvider, SystemPromptProvider>();
+
         // LLM Adapter Layer
         services.AddScoped<ILLMAdapter>(sp =>
         {
@@ -143,9 +154,85 @@ class RunScenarios
         var orchestrator = serviceProvider.GetRequiredService<HybridTransactionalOrchestrator>();
         var stateManager = serviceProvider.GetRequiredService<IConversationStateManager>();
         var conversationService = serviceProvider.GetRequiredService<IConversationService>();
-        var logger = serviceProvider.GetRequiredService<ILogger<AutomatedConversationTests>>();
         
-        var automatedTests = new AutomatedConversationTests(orchestrator, stateManager, conversationService, logger);
-        await automatedTests.RunAllTestsAsync();
+        // Determinar qué pruebas ejecutar según argumentos
+        var testToRun = args.Length > 0 ? args[0].ToLower() : "all";
+        
+        if (testToRun == "all" || testToRun == "automated")
+        {
+            // Pruebas automatizadas existentes
+            var logger1 = serviceProvider.GetRequiredService<ILogger<AutomatedConversationTests>>();
+            var automatedTests = new AutomatedConversationTests(orchestrator, stateManager, conversationService, logger1);
+            await automatedTests.RunAllTestsAsync();
+            
+            if (testToRun == "all")
+            {
+                Console.WriteLine("\n\n");
+            }
+        }
+        
+        if (testToRun == "all" || testToRun.StartsWith("behavior"))
+        {
+            // Pruebas de comportamiento conversacional
+            var logger2 = serviceProvider.GetRequiredService<ILogger<ConversationalBehaviorTests>>();
+            var behaviorTests = new ConversationalBehaviorTests(orchestrator, stateManager, conversationService, logger2);
+            
+            // Si se especifica un número de prueba específico (ej: "behavior:1" o "behavior1")
+            var testNumber = ExtractTestNumber(testToRun);
+            if (testNumber.HasValue)
+            {
+                await RunSingleBehaviorTestAsync(behaviorTests, testNumber.Value);
+            }
+            else
+            {
+            await behaviorTests.RunAllTestsAsync();
+        }
     }
+    
+    /// <summary>
+    /// Ejecuta una prueba de comportamiento específica
+    /// </summary>
+    static async Task RunSingleBehaviorTestAsync(ConversationalBehaviorTests tests, int testNumber)
+    {
+        Console.WriteLine("================================================");
+        Console.WriteLine($"  EJECUTANDO PRUEBA {testNumber}");
+        Console.WriteLine("================================================");
+        Console.WriteLine();
+        
+        var result = testNumber switch
+        {
+            1 => await tests.Test1_GreetingBehaviorAsync(),
+            2 => await tests.Test2_AutomaticAvailabilityCheckAsync(),
+            3 => await tests.Test3_NoFalsePromisesAsync(),
+            4 => await tests.Test4_RealBackendTimeSlotsAsync(),
+            5 => await tests.Test5_ImplicitReferenceInferenceAsync(),
+            _ => throw new ArgumentException($"Número de prueba inválido: {testNumber}. Debe ser 1-5")
+        };
+        
+        Console.WriteLine();
+        Console.WriteLine("================================================");
+        Console.WriteLine("  RESULTADO");
+        Console.WriteLine("================================================");
+        var icon = result.Success ? "✅" : "❌";
+        Console.WriteLine($"{icon} {result.TestName}");
+        if (!result.Success && !string.IsNullOrEmpty(result.Error))
+        {
+            Console.WriteLine($"   Error: {result.Error}");
+        }
+    }
+    
+    /// <summary>
+    /// Extrae el número de prueba de un argumento como "behavior:1" o "behavior1"
+    /// </summary>
+    static int? ExtractTestNumber(string arg)
+    {
+        // Buscar patrones como "behavior:1", "behavior1", "1"
+        var match = System.Text.RegularExpressions.Regex.Match(arg, @"(?:behavior:?|test)?(\d+)");
+        if (match.Success && int.TryParse(match.Groups[1].Value, out var number))
+        {
+            return number;
+        }
+        return null;
+    }
+}
 }

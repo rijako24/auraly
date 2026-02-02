@@ -5,6 +5,7 @@ using MimosBabySpa.Application.FlowEngine;
 using MimosBabySpa.Application.LLM;
 using MimosBabySpa.Application.LLM.Extraction;
 using MimosBabySpa.Application.Prompts;
+using MimosBabySpa.Application.Services;
 using MimosBabySpa.Application.StateManagement;
 using MimosBabySpa.Application.Tools;
 
@@ -45,22 +46,24 @@ public class HybridTransactionalOrchestrator
     private readonly IConversationStateManager _stateManager;
     private readonly IFlowEngine _flowEngine;
     private readonly IBusinessRuleEngine _businessRuleEngine;
-    private readonly CachedBusinessContextProvider _cachedContextProvider; // ✅ Nuevo
-    private readonly IPromptProvider _systemPromptProvider; // ✅ Nuevo
+    private readonly CachedBusinessContextProvider _cachedContextProvider;
+    private readonly IPromptProvider _systemPromptProvider;
     private readonly ILLMAdapter _llmAdapter;
     private readonly GenericToolDispatcher _toolDispatcher;
     private readonly ISmartExtractionService _extractionService;
+    private readonly IMessageService _messageService; // ✅ Nuevo: Para historial conversacional
     private readonly ILogger<HybridTransactionalOrchestrator> _logger;
 
     public HybridTransactionalOrchestrator(
         IConversationStateManager stateManager,
         IFlowEngine flowEngine,
         IBusinessRuleEngine businessRuleEngine,
-        CachedBusinessContextProvider cachedContextProvider, // ✅ Nuevo
-        IPromptProvider systemPromptProvider, // ✅ Nuevo
+        CachedBusinessContextProvider cachedContextProvider,
+        IPromptProvider systemPromptProvider,
         ILLMAdapter llmAdapter,
         GenericToolDispatcher toolDispatcher,
         ISmartExtractionService extractionService,
+        IMessageService messageService, // ✅ Nuevo
         ILogger<HybridTransactionalOrchestrator> logger)
     {
         _stateManager = stateManager;
@@ -71,6 +74,7 @@ public class HybridTransactionalOrchestrator
         _llmAdapter = llmAdapter;
         _toolDispatcher = toolDispatcher;
         _extractionService = extractionService;
+        _messageService = messageService; // ✅ Nuevo
         _logger = logger;
     }
 
@@ -355,6 +359,7 @@ public class HybridTransactionalOrchestrator
                 userMessage,
                 context.ExtractionResult!,
                 new List<(string, ToolExecutionResult)>(), // Simplificado: no se usa realmente
+                context.ToolContext.ConversationId, // ✅ Nuevo: Para cargar historial
                 context.ToolContext.BusinessId,
                 cancellationToken);
         }
@@ -368,6 +373,8 @@ public class HybridTransactionalOrchestrator
 
     /// <summary>
     /// FASE 6: Guarda los metadatos finales (una sola vez).
+    /// ✅ NOTA: Los mensajes se guardan por el llamador (webhook, tests, console).
+    /// El orquestador solo lee el historial, no lo persiste (separación de responsabilidades).
     /// </summary>
     private async Task SaveFinalMetadataAsync(
         ProcessingContext context,
@@ -380,10 +387,10 @@ public class HybridTransactionalOrchestrator
         // Recargar estado fresco por si tools lo modificaron
         await context.ReloadAndEvaluateAsync(cancellationToken);
         
-        // Actualizar metadatos
+        // Actualizar metadatos (LastUserMessage, LastBotMessage en el estado)
         context.UpdateMessageMetadata(userMessage, botResponse);
         
-        // Guardar una sola vez
+        // Guardar estado
         await context.SaveStateAsync(cancellationToken);
         
         _logger.LogDebug("Metadatos guardados");
@@ -396,6 +403,7 @@ public class HybridTransactionalOrchestrator
     /// <summary>
     /// Genera una respuesta conversacional usando el system prompt.
     /// Este método SIEMPRE se usa para generar respuestas finales al usuario.
+    /// ✅ MEJORADO: Incluye historial conversacional para mantener coherencia natural.
     /// </summary>
     private async Task<string> GenerateConversationalResponseAsync(
         string systemPrompt,
@@ -404,12 +412,16 @@ public class HybridTransactionalOrchestrator
         string userMessage,
         ExtractionResult extractionResult,
         List<(string FunctionName, ToolExecutionResult Result)> toolResults,
+        Guid conversationId, // ✅ Nuevo: Para cargar historial
         Guid businessId,
         CancellationToken cancellationToken)
     {
         var stateContext = BuildStateContext(state, flowEvaluation);
         var extractionContext = BuildExtractionContext(extractionResult);
         var toolResultsContext = BuildToolResultsContext(toolResults);
+
+        // ✅ CARGAR HISTORIAL CONVERSACIONAL (últimos 5 mensajes)
+        var conversationHistory = await LoadConversationHistoryAsync(conversationId, cancellationToken);
 
         var request = new LLMRequest
         {
@@ -427,19 +439,34 @@ public class HybridTransactionalOrchestrator
                 // Resultados de herramientas ejecutadas (si aplica)
                 new LLMMessage { Role = LLMRole.System, Content = toolResultsContext },
                 
-                // Instrucciones para generar respuesta
+                // Instrucciones para generar respuesta (simplificadas, sin reglas hardcodeadas)
                 new LLMMessage
                 {
                     Role = LLMRole.System,
-                    Content = await BuildResponseInstructionsAsync(flowEvaluation, extractionResult, toolResults, businessId, cancellationToken)
-                },
-                
-                // Mensaje del usuario
-                new LLMMessage { Role = LLMRole.User, Content = userMessage }
+                    Content = await BuildResponseInstructionsAsync(state, flowEvaluation, extractionResult, toolResults, businessId, cancellationToken)
+                }
             },
             Temperature = 0.7f,
             MaxTokens = 400
         };
+
+        // ✅ AGREGAR HISTORIAL CONVERSACIONAL antes del mensaje actual
+        // Esto permite que el LLM mantenga coherencia naturalmente
+        foreach (var historyMessage in conversationHistory)
+        {
+            var role = historyMessage.Sender.Equals("User", StringComparison.OrdinalIgnoreCase) 
+                ? LLMRole.User 
+                : LLMRole.Assistant;
+            
+            request.Messages.Add(new LLMMessage 
+            { 
+                Role = role, 
+                Content = historyMessage.MessageText 
+            });
+        }
+
+        // Mensaje actual del usuario (al final)
+        request.Messages.Add(new LLMMessage { Role = LLMRole.User, Content = userMessage });
 
         var response = await _llmAdapter.SendMessageAsync(request, cancellationToken);
 
@@ -450,6 +477,37 @@ public class HybridTransactionalOrchestrator
 
         // Fallback si el LLM falla
         return BuildFallbackResponse(flowEvaluation, extractionResult, toolResults);
+    }
+
+    /// <summary>
+    /// Carga el historial conversacional reciente (últimos 10 mensajes).
+    /// Esto permite que el LLM mantenga coherencia conversacional naturalmente.
+    /// </summary>
+    private async Task<List<Domain.Entities.Message>> LoadConversationHistoryAsync(
+        Guid conversationId,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var allMessages = await _messageService.GetConversationHistoryAsync(conversationId);
+            
+            // Obtener últimos 10 mensajes ordenados por timestamp
+            var recentMessages = allMessages
+                .OrderBy(m => m.Timestamp)
+                .TakeLast(10)
+                .ToList();
+
+            _logger.LogDebug(
+                "Cargados {Count} mensajes del historial para conversación {ConversationId}",
+                recentMessages.Count, conversationId);
+
+            return recentMessages;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Error cargando historial conversacional, continuando sin historial");
+            return new List<Domain.Entities.Message>();
+        }
     }
 
     /// <summary>
@@ -469,6 +527,14 @@ public class HybridTransactionalOrchestrator
         // HEADER
         // ═══════════════════════════════════════════════════════
         context.AppendLine(Prompts.Templates.StateContextTemplate.Header);
+        
+        // ═══════════════════════════════════════════════════════
+        // CONTEXTO CONVERSACIONAL
+        // ═══════════════════════════════════════════════════════
+        // ✅ SIMPLIFICADO: El historial conversacional se pasa directamente al LLM
+        // No necesitamos reglas hardcodeadas sobre "primera interacción"
+        context.AppendLine($"**Etapa actual**: {state.CurrentStage}");
+        context.AppendLine();
         
         // ═══════════════════════════════════════════════════════
         // COMPLETENESS
@@ -493,15 +559,26 @@ public class HybridTransactionalOrchestrator
                 .Replace("{reservation_created}", state.ReservationCreated ? "SÍ" : "NO"));
 
         // ═══════════════════════════════════════════════════════
-        // AVAILABLE TIME SLOTS (si aplica)
+        // AVAILABLE TIME SLOTS (si aplica) - REFORZADO
         // ═══════════════════════════════════════════════════════
         if (state.AvailabilityConfirmed && !string.IsNullOrEmpty(state.AvailableTimeSlots))
         {
             var slots = state.AvailableTimeSlots.Split(',', StringSplitOptions.RemoveEmptyEntries);
+            
+            // ✅ REFORZAR: Hacer MÁS visible
+            context.AppendLine();
+            context.AppendLine("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+            context.AppendLine("🚨 HORARIOS DISPONIBLES CONFIRMADOS 🚨");
+            context.AppendLine("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+            context.AppendLine();
             context.AppendLine(
                 Prompts.Templates.AvailableTimeSlotsTemplate.Build(
                     state.CustomerName ?? string.Empty,
                     slots));
+            context.AppendLine();
+            context.AppendLine("⚠️ DEBES MOSTRAR ESTOS HORARIOS AL CLIENTE EN TU RESPUESTA");
+            context.AppendLine("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+            context.AppendLine();
         }
 
         // ═══════════════════════════════════════════════════════
@@ -622,6 +699,7 @@ public class HybridTransactionalOrchestrator
     /// El backend SOLO carga y popula, NO construye contenido.
     /// </summary>
     private async Task<string> BuildResponseInstructionsAsync(
+        Domain.Models.ConversationState state,
         FlowEvaluationResult flowEvaluation,
         ExtractionResult extractionResult,
         List<(string FunctionName, ToolExecutionResult Result)> toolResults,
@@ -637,6 +715,21 @@ public class HybridTransactionalOrchestrator
         instructions.AppendLine(Prompts.Templates.ResponseInstructionsTemplate.BaseInstructions);
         instructions.AppendLine();
 
+        // ✅ SIMPLIFICADO: El historial conversacional se pasa directamente al LLM
+        // El LLM puede ver si ya saludó o no, manteniendo coherencia naturalmente
+        // No necesitamos reglas hardcodeadas sobre "primera interacción" o "cuándo saludar"
+
+        // ═══════════════════════════════════════════════════════
+        // TIME SELECTED (si usuario seleccionó horario)
+        // ═══════════════════════════════════════════════════════
+        bool timeSelected = extractionResult.StructuredResponse.ExtractedFields
+            .Any(f => f.FieldName == "DesiredTime" && f.Confidence >= 0.8);
+        if (timeSelected && !state.ReservationConfirmed)
+        {
+            instructions.AppendLine(Prompts.Templates.ResponseInstructionsTemplate.TimeSelectedInstructions);
+            instructions.AppendLine();
+        }
+
         // ═══════════════════════════════════════════════════════
         // INFORMATION QUERY (si aplica)
         // ═══════════════════════════════════════════════════════
@@ -644,6 +737,8 @@ public class HybridTransactionalOrchestrator
         {
             instructions.AppendLine(Prompts.Templates.ResponseInstructionsTemplate.InformationQueryInstructions);
             instructions.AppendLine();
+            // ✅ El historial conversacional también ayuda: si el usuario pregunta por servicios
+            // después de que ya le mostramos opciones, el LLM puede inferir que está explorando
         }
 
         // ═══════════════════════════════════════════════════════
@@ -665,13 +760,22 @@ public class HybridTransactionalOrchestrator
         }
 
         // ═══════════════════════════════════════════════════════
-        // MISSING FIELDS (si hay)
+        // MISSING FIELDS (si hay) - SOLO si NO es consulta informativa
         // ═══════════════════════════════════════════════════════
-        if (flowEvaluation.MissingFields.Any())
+        // ✅ Si el usuario está explorando (IsInformationQuery), NO pedir datos de reserva
+        if (flowEvaluation.MissingFields.Any() && 
+            !extractionResult.StructuredResponse.FlowAnalysis.IsInformationQuery)
         {
             instructions.AppendLine(
                 Prompts.Templates.ResponseInstructionsTemplate.MissingFieldsInstructions
                     .Replace("{missing_fields}", string.Join(", ", flowEvaluation.MissingFields)));
+            instructions.AppendLine();
+        }
+        else if (flowEvaluation.MissingFields.Any() && 
+                 extractionResult.StructuredResponse.FlowAnalysis.IsInformationQuery)
+        {
+            // Si es consulta informativa pero hay campos faltantes, solo mencionar suavemente
+            instructions.AppendLine("**Nota**: Cuando estés listo para reservar, necesitaré algunos datos. Por ahora, solo estoy compartiendo información. 😊");
             instructions.AppendLine();
         }
 

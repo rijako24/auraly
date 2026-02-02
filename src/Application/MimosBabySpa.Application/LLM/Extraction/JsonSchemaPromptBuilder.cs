@@ -59,6 +59,10 @@ public class JsonSchemaPromptBuilder
         sb.AppendLine(ExtractionPrompts.FlowAnalysisRules);
         sb.AppendLine();
 
+        // 6b. Inferencia de referencias implícitas (NUEVO)
+        sb.AppendLine(ExtractionPrompts.ImplicitReferenceInference);
+        sb.AppendLine();
+
         // 7. Manejo de respuestas negativas
         sb.AppendLine(ExtractionPrompts.NegativeResponseHandling);
         sb.AppendLine();
