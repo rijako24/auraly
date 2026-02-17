@@ -1,6 +1,5 @@
 using Azure.AI.OpenAI;
 using Microsoft.Extensions.Logging;
-using MimosBabySpa.Application.Configuration;
 using MimosBabySpa.Application.FlowEngine;
 using MimosBabySpa.Application.Services;
 using MimosBabySpa.Application.StateManagement;
@@ -23,7 +22,6 @@ public class CheckAvailabilityToolHandler : BaseToolHandler
 {
     private readonly IAvailabilityService _availabilityService;
     private readonly IFlowEngine _flowEngine;
-    private readonly CachedBusinessContextProvider _businessContextProvider;
 
     public override string FunctionName => "check_availability";
 
@@ -31,13 +29,11 @@ public class CheckAvailabilityToolHandler : BaseToolHandler
         IConversationStateManager stateManager,
         ILogger<CheckAvailabilityToolHandler> logger,
         IAvailabilityService availabilityService,
-        IFlowEngine flowEngine,
-        CachedBusinessContextProvider businessContextProvider)
+        IFlowEngine flowEngine)
         : base(stateManager, logger)
     {
         _availabilityService = availabilityService;
         _flowEngine = flowEngine;
-        _businessContextProvider = businessContextProvider;
     }
 
     public override FunctionDefinition GetDefinition()
@@ -190,7 +186,6 @@ RESPUESTA:
                 "Verificando disponibilidad: Service={Service}, Date={Date}, Time={Time}",
                 service, dateStr, timeStr ?? "not specified");
 
-            // Consultar al backend (ÚNICA FUENTE DE VERDAD)
             var availability = await _availabilityService.CheckAvailabilityAsync(
                 context.BusinessId,
                 service,
@@ -199,55 +194,27 @@ RESPUESTA:
                 context.State.DurationMinutes,
                 cancellationToken);
 
-            // Actualizar el estado con el resultado del backend
+            var suggestedSlotsStr = availability.AvailableTimeSlots.Count > 0 ? string.Join(",", availability.AvailableTimeSlots) : string.Empty;
             context.State.AvailabilityConfirmed = availability.IsAvailable;
+            context.State.AvailableTimeSlots = suggestedSlotsStr;
             context.State.UpdatedAt = DateTime.UtcNow;
             context.State.Version++;
 
-            // Si no se proporcionó hora específica, generar slots de horarios sugeridos
-            if (availability.IsAvailable && string.IsNullOrWhiteSpace(timeStr))
-            {
-                var suggestedSlots = await GenerateSuggestedTimeSlotsAsync(
-                    context.BusinessId,
-                    date,
-                    context.State.DurationMinutes ?? 60,
-                    cancellationToken);
-                
-                if (suggestedSlots.Any())
-                {
-                    context.State.AvailableTimeSlots = string.Join(",", suggestedSlots);
-                    _logger.LogInformation(
-                        "Horarios sugeridos generados: {Slots}",
-                        context.State.AvailableTimeSlots);
-                }
-            }
-
-            // Construir mensaje de respuesta
-            var responseMessage = availability.IsAvailable
-                ? $"✓ Disponibilidad confirmada para {service} el {dateStr}" +
-                  (timeStr != null ? $" a las {timeStr}" : "") +
-                  ". " + availability.Message
-                : $"✗ No hay disponibilidad para {service} el {dateStr}" +
-                  (timeStr != null ? $" a las {timeStr}" : "") +
-                  ". " + availability.Message;
-
-            _logger.LogInformation(
-                "Disponibilidad verificada: IsAvailable={IsAvailable}",
-                availability.IsAvailable);
+            _logger.LogInformation("Disponibilidad verificada: IsAvailable={IsAvailable}", availability.IsAvailable);
 
             return new ToolExecutionResult
             {
                 Success = true,
-                Message = responseMessage,
+                Message = availability.ResponseMessage,
                 StateModified = true,
                 Data = new Dictionary<string, object>
                 {
                     { "is_available", availability.IsAvailable },
-                    { "service", service },
-                    { "date", dateStr },
-                    { "time", timeStr ?? "any" },
-                    { "backend_message", availability.Message ?? string.Empty },
-                    { "suggested_slots", context.State.AvailableTimeSlots ?? string.Empty }
+                    { "service", availability.RequestServiceName },
+                    { "date", availability.RequestDateString },
+                    { "time", availability.RequestTimeString ?? "any" },
+                    { "backend_message", availability.ResponseMessage },
+                    { "suggested_slots", suggestedSlotsStr }
                 }
             };
         }
@@ -263,67 +230,4 @@ RESPUESTA:
         }
     }
 
-    /// <summary>
-    /// Genera horarios sugeridos basados en el horario del negocio.
-    /// Retorna slots cada hora completa (60 minutos) dentro del horario de operación.
-    /// </summary>
-    private async Task<List<string>> GenerateSuggestedTimeSlotsAsync(
-        Guid businessId,
-        DateOnly date,
-        int durationMinutes,
-        CancellationToken cancellationToken)
-    {
-        try
-        {
-            // Obtener contexto del negocio
-            var businessContext = await _businessContextProvider.GetOrLoadAsync(businessId, cancellationToken);
-            
-            if (businessContext?.Info?.Schedule == null || 
-                !businessContext.Info.Schedule.Any())
-            {
-                _logger.LogWarning("No hay horario configurado para el negocio {BusinessId}", businessId);
-                return new List<string>();
-            }
-
-            // Obtener el día de la semana en inglés lowercase
-            var dayOfWeek = date.DayOfWeek.ToString().ToLower();
-            
-            if (!businessContext.Info.Schedule.TryGetValue(dayOfWeek, out var timeBlocks) || 
-                !timeBlocks.Any())
-            {
-                _logger.LogInformation(
-                    "El negocio está cerrado el {DayOfWeek} ({Date})",
-                    dayOfWeek, date.ToString("yyyy-MM-dd"));
-                return new List<string>();
-            }
-
-            var suggestedSlots = new List<string>();
-            const int slotIntervalMinutes = 60; // Generar slots cada hora completa (60 minutos)
-
-            // Para cada bloque horario del día (ej: mañana y tarde)
-            foreach (var block in timeBlocks.Where(b => b.IsValid()))
-            {
-                var currentTime = block.OpenTime;
-                var closeTime = block.CloseTime;
-
-                // Generar slots hasta que ya no quepan en el horario
-                while (currentTime.Add(TimeSpan.FromMinutes(durationMinutes)) <= closeTime)
-                {
-                    suggestedSlots.Add(currentTime.ToString(@"hh\:mm"));
-                    currentTime = currentTime.Add(TimeSpan.FromMinutes(slotIntervalMinutes));
-                }
-            }
-
-            _logger.LogDebug(
-                "Generados {Count} slots sugeridos para {Date} ({DayOfWeek})",
-                suggestedSlots.Count, date.ToString("yyyy-MM-dd"), dayOfWeek);
-
-            return suggestedSlots;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error al generar horarios sugeridos");
-            return new List<string>();
-        }
-    }
 }

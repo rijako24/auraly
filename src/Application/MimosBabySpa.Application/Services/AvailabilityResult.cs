@@ -2,13 +2,22 @@ namespace MimosBabySpa.Application.Services;
 
 /// <summary>
 /// Resultado determinístico de verificación de disponibilidad.
-/// El modelo NO debe inferir esto, solo usar estos valores.
+/// Un solo mensaje (ResponseMessage) listo para el usuario; el handler solo lo asigna.
+/// No se expone OverlappingSlots/BookedSlots a la IA para no confundirla.
 /// </summary>
 public class AvailabilityResult
 {
     public bool IsAvailable { get; set; }
     public int CurrentReservations { get; set; }
-    public List<BookedSlot> BookedSlots { get; set; } = new();
-    public List<BookedSlot> OverlappingSlots { get; set; } = new();
-    public string Message { get; set; } = string.Empty;
+    /// <summary>Horarios realmente disponibles cuando se consulta sin hora (empleado + recursos verificados).</summary>
+    public List<string> AvailableTimeSlots { get; set; } = new();
+
+    /// <summary>Único mensaje listo para mostrar al usuario. El handler lo asigna sin modificar.</summary>
+    public string ResponseMessage { get; set; } = string.Empty;
+    /// <summary>Nombre del servicio consultado (contexto de la petición).</summary>
+    public string RequestServiceName { get; set; } = string.Empty;
+    /// <summary>Fecha consultada en formato YYYY-MM-DD.</summary>
+    public string RequestDateString { get; set; } = string.Empty;
+    /// <summary>Hora consultada (HH:mm) o null si no se indicó.</summary>
+    public string? RequestTimeString { get; set; }
 }

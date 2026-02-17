@@ -1,12 +1,14 @@
+using System.Text.Json;
 using Microsoft.Extensions.Logging;
+using MimosBabySpa.Application.Configuration;
 using MimosBabySpa.Domain.Enums;
 using MimosBabySpa.Domain.Repositories;
 
 namespace MimosBabySpa.Application.Services;
 
 /// <summary>
-/// Servicio para verificar disponibilidad basándose únicamente en recursos disponibles y recursos usados por servicios.
-/// Lógica simplificada: verifica si hay suficientes recursos físicos para el servicio solicitado.
+/// Servicio para verificar disponibilidad: empleado asignable + recursos suficientes.
+/// Dos comportamientos: con hora revisa ese slot; sin hora consulta el horario del negocio y revisa cada hora abierta.
 /// </summary>
 public class AvailabilityService : IAvailabilityService
 {
@@ -36,158 +38,202 @@ public class AvailabilityService : IAvailabilityService
             "Verificando disponibilidad: BusinessId={BusinessId}, Service={Service}, Date={Date}, Time={Time}, Duration={Duration}",
             businessId, service, date.ToString("yyyy-MM-dd"), time?.ToString(@"hh\:mm"), durationMinutes);
 
+        var dateStr = date.ToString("yyyy-MM-dd");
+        var timeStr = time.HasValue ? time.Value.ToString(@"hh\:mm") : null;
+
         var result = new AvailabilityResult
         {
-            BookedSlots = new List<BookedSlot>()
+            RequestServiceName = service,
+            RequestDateString = dateStr,
+            RequestTimeString = timeStr
         };
 
-        // Obtener el servicio desde la base de datos
         var requestedService = await _unitOfWork.Services.GetByBusinessIdAndNameAsync(businessId, service);
         if (requestedService == null)
         {
             result.IsAvailable = false;
-            result.Message = $"El servicio '{service}' no existe o no está activo.";
+            result.ResponseMessage = $"✗ No hay disponibilidad para {service} el {dateStr}. El servicio no existe o no está activo.";
             _logger.LogWarning("Servicio '{Service}' no encontrado para negocio {BusinessId}", service, businessId);
             return result;
         }
 
-        // Obtener todas las reservas del día completo (con manejo de errores)
+        var activeReservations = await LoadDayReservationsAsync(businessId, date, cancellationToken);
+        result.CurrentReservations = activeReservations.Count;
+
+        if (!time.HasValue)
+        {
+            result.AvailableTimeSlots = await GetAvailableSlotsForDayAsync(businessId, requestedService, date, activeReservations, cancellationToken);
+            result.IsAvailable = result.AvailableTimeSlots.Count > 0;
+            result.ResponseMessage = result.IsAvailable
+                ? $"✓ Disponibilidad confirmada para {service} el {dateStr}. Horarios disponibles: {string.Join(",", result.AvailableTimeSlots)}."
+                : $"✗ No hay disponibilidad para {service} el {dateStr}. No hay horarios disponibles para ese día.";
+            _logger.LogInformation(
+                "Disponibilidad por día: {Date}, disponibles={Count}",
+                dateStr, result.AvailableTimeSlots.Count);
+            return result;
+        }
+
+        var requestedStartTime = time.Value;
+        var isAvailable = await IsSlotAvailableAsync(
+            businessId,
+            requestedService,
+            date,
+            requestedStartTime,
+            activeReservations,
+            cancellationToken);
+
+        result.IsAvailable = isAvailable;
+        result.ResponseMessage = isAvailable
+            ? $"✓ Disponibilidad confirmada para {service} el {dateStr} a las {timeStr}. El horario está libre."
+            : $"✗ No hay disponibilidad para {service} el {dateStr} a las {timeStr}. Sugiere otros horarios al cliente.";
+
+        _logger.LogInformation("Disponibilidad verificada: IsAvailable={IsAvailable}", result.IsAvailable);
+        return result;
+    }
+
+    /// <summary>
+    /// Obtiene los horarios realmente disponibles en el día: consulta horario del negocio e itera hora por hora (empleado + recursos).
+    /// La duración del slot se obtiene del servicio.
+    /// </summary>
+    private async Task<List<string>> GetAvailableSlotsForDayAsync(
+        Guid businessId,
+        Domain.Entities.Service requestedService,
+        DateTime date,
+        List<Domain.Entities.Reservation> activeReservations,
+        CancellationToken cancellationToken)
+    {
+        var duration = requestedService.DurationMinutes;
+        var candidateTimes = await GetCandidateTimesFromBusinessScheduleAsync(businessId, date, duration, cancellationToken);
+        var available = new List<string>();
+        foreach (var startTime in candidateTimes)
+        {
+            if (cancellationToken.IsCancellationRequested) break;
+            if (await IsSlotAvailableAsync(businessId, requestedService, date, startTime, activeReservations, cancellationToken))
+                available.Add(startTime.ToString(@"hh\:mm"));
+        }
+        return available;
+    }
+
+    private async Task<List<TimeSpan>> GetCandidateTimesFromBusinessScheduleAsync(
+        Guid businessId,
+        DateTime date,
+        int durationMinutes,
+        CancellationToken cancellationToken)
+    {
+        var business = await _unitOfWork.Businesses.GetByIdAsync(businessId);
+        if (business == null || string.IsNullOrWhiteSpace(business.OperatingHoursJson) || business.OperatingHoursJson == "{}")
+        {
+            _logger.LogWarning("Negocio {BusinessId} sin horario configurado", businessId);
+            return new List<TimeSpan>();
+        }
+
+        var schedule = DeserializeSchedule(business.OperatingHoursJson);
+        var dayOfWeek = date.DayOfWeek.ToString().ToLower();
+        if (!schedule.TryGetValue(dayOfWeek, out var timeBlocks) || timeBlocks == null || !timeBlocks.Any())
+        {
+            _logger.LogInformation("Negocio cerrado el {DayOfWeek} ({Date})", dayOfWeek, date.ToString("yyyy-MM-dd"));
+            return new List<TimeSpan>();
+        }
+
+        var candidates = new List<TimeSpan>();
+        const int slotIntervalMinutes = 60;
+        foreach (var block in timeBlocks.Where(b => b.IsValid()))
+        {
+            var currentTime = block.OpenTime;
+            var closeTime = block.CloseTime;
+            while (currentTime.Add(TimeSpan.FromMinutes(durationMinutes)) <= closeTime)
+            {
+                candidates.Add(currentTime);
+                currentTime = currentTime.Add(TimeSpan.FromMinutes(slotIntervalMinutes));
+            }
+        }
+        _logger.LogDebug("Candidatos de horario para {Date}: {Count}", date.ToString("yyyy-MM-dd"), candidates.Count);
+        return candidates;
+    }
+
+    private static Dictionary<string, List<TimeBlock>> DeserializeSchedule(string json)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(json) || json == "{}") return new Dictionary<string, List<TimeBlock>>();
+            var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+            return JsonSerializer.Deserialize<Dictionary<string, List<TimeBlock>>>(json, options) ?? new Dictionary<string, List<TimeBlock>>();
+        }
+        catch { return new Dictionary<string, List<TimeBlock>>(); }
+    }
+
+    /// <summary>
+    /// Comprueba si un slot está disponible: empleado asignable + recursos suficientes (si hay solapamiento).
+    /// La duración se obtiene del servicio solicitado.
+    /// </summary>
+    private async Task<bool> IsSlotAvailableAsync(
+        Guid businessId,
+        Domain.Entities.Service requestedService,
+        DateTime date,
+        TimeSpan startTime,
+        List<Domain.Entities.Reservation> activeReservations,
+        CancellationToken cancellationToken)
+    {
+        var durationMinutes = requestedService.DurationMinutes;
+        var endTime = startTime.Add(TimeSpan.FromMinutes(durationMinutes));
+        var reservationStart = date.Date.Add(startTime);
+        var reservationEnd = reservationStart.Add(TimeSpan.FromMinutes(durationMinutes));
+
+        var availableEmployee = await _employeeAssignmentService.FindBestAvailableEmployeeAsync(
+            businessId,
+            requestedService.ServiceId,
+            reservationStart,
+            reservationEnd,
+            cancellationToken);
+
+        if (availableEmployee == null)
+        {
+            _logger.LogDebug("Slot {StartTime} no disponible: sin empleado", startTime.ToString(@"hh\:mm"));
+            return false;
+        }
+
+        var overlappingReservations = GetOverlappingReservations(activeReservations, startTime, endTime);
+        if (overlappingReservations.Count == 0)
+            return true;
+
+        return await CheckResourceAvailabilityAsync(
+            businessId,
+            requestedService.ServiceId,
+            overlappingReservations,
+            cancellationToken);
+    }
+
+    private static List<Domain.Entities.Reservation> GetOverlappingReservations(
+        List<Domain.Entities.Reservation> activeReservations,
+        TimeSpan startTime,
+        TimeSpan endTime)
+    {
+        return activeReservations
+            .Where(r =>
+            {
+                var rStart = r.ReservationDateTime.TimeOfDay;
+                var rEnd = rStart.Add(TimeSpan.FromMinutes(r.DurationMinutes));
+                return rStart < endTime && rEnd > startTime;
+            })
+            .ToList();
+    }
+
+    private async Task<List<Domain.Entities.Reservation>> LoadDayReservationsAsync(
+        Guid businessId,
+        DateTime date,
+        CancellationToken cancellationToken)
+    {
         var startOfDay = date.Date;
         var endOfDay = date.Date.AddDays(1).AddMinutes(-1);
 
-        IEnumerable<Domain.Entities.Reservation> reservations = await _unitOfWork.Reservations.GetByBusinessIdAndDateRangeAsync(
-                businessId,
-                startOfDay,
-                endOfDay);
+        var reservations = await _unitOfWork.Reservations.GetByBusinessIdAndDateRangeAsync(
+            businessId,
+            startOfDay,
+            endOfDay);
 
-        // Filtrar solo reservas activas (no canceladas)
-        var activeReservations = reservations
+        return reservations
             .Where(r => r.Status != ReservationStatus.Cancelled)
             .ToList();
-
-        // Construir lista de slots ocupados
-        // Service debe estar cargado desde el repositorio
-        result.BookedSlots = activeReservations
-            .Select(r =>
-            {
-                var serviceName = r.Service?.ServiceName 
-                    ?? throw new InvalidOperationException(
-                        $"Service navigation property no está cargado para Reservation {r.ReservationId}. " +
-                        "Asegúrate de usar Include(r => r.Service) al obtener las reservas.");
-                
-                return new BookedSlot
-                {
-                    Time = r.ReservationDateTime.ToString(@"HH\:mm"),
-                    EndTime = r.ReservationDateTime.AddMinutes(r.DurationMinutes).ToString(@"HH\:mm"),
-                    Duration = r.DurationMinutes,
-                    Service = serviceName
-                };
-            })
-            .ToList();
-
-        result.CurrentReservations = result.BookedSlots.Count;
-
-        // Si no se proporciona hora específica, solo retornar información del día
-        if (!time.HasValue || !durationMinutes.HasValue)
-        {
-            result.IsAvailable = true;
-            result.Message = "✅ DISPONIBLE: Hay disponibilidad para esta fecha. Pregunta al cliente qué hora prefiere.";      
-            
-            _logger.LogInformation(
-                "Disponibilidad verificada (sin hora específica): {IsAvailable}, Reservas={CurrentReservations}",
-                result.IsAvailable, result.CurrentReservations);
-            
-            return result;
-        }
-
-        // Verificar solapamiento temporal con hora específica
-        var requestedStartTime = time.Value;
-        var requestedEndTime = requestedStartTime.Add(TimeSpan.FromMinutes(durationMinutes.Value));
-
-        // Calcular slots que se solapan temporalmente
-        var temporallyOverlappingSlots = result.BookedSlots
-            .Where(slot =>
-            {
-                var slotStart = TimeSpan.Parse(slot.Time);
-                var slotEnd = TimeSpan.Parse(slot.EndTime);
-                bool overlaps = slotStart < requestedEndTime && slotEnd > requestedStartTime;
-                return overlaps;
-            })
-            .ToList();
-
-        result.OverlappingSlots = temporallyOverlappingSlots;
-
-        // VALIDACIÓN PRIORITARIA: Verificar disponibilidad de empleados ANTES de recursos físicos
-        // Si no hay personal disponible, no tiene sentido validar recursos físicos
-        if (time.HasValue && durationMinutes.HasValue)
-        {
-            var reservationStartTime = date.Date.Add(requestedStartTime);
-            var reservationEndTime = reservationStartTime.Add(TimeSpan.FromMinutes(durationMinutes.Value));
-            
-            var availableEmployee = await _employeeAssignmentService.FindBestAvailableEmployeeAsync(
-                businessId,
-                requestedService.ServiceId,
-                reservationStartTime,
-                reservationEndTime,
-                cancellationToken);
-
-            if (availableEmployee == null)
-            {
-                result.IsAvailable = false;
-                result.Message = $"El horario {requestedStartTime.ToString(@"hh\:mm")} NO está disponible.";
-                _logger.LogInformation("Disponibilidad rechazada por falta de personal disponible");
-                return result;
-            }
-
-            _logger.LogDebug(
-                "Empleado disponible encontrado: {EmployeeId} ({EmployeeName})",
-                availableEmployee.EmployeeId, availableEmployee.Name);
-        }
-
-        // Si no hay solapamiento temporal y ya validamos empleados, está disponible
-        if (temporallyOverlappingSlots.Count == 0)
-        {
-            result.IsAvailable = true;
-            result.Message = $"✅ DISPONIBLE: El horario {requestedStartTime.ToString(@"hh\:mm")} está libre.";
-            
-            _logger.LogInformation(
-                "Disponibilidad verificada (sin solapamiento temporal): IsAvailable={IsAvailable}",
-                result.IsAvailable);
-            
-            return result;
-        }
-
-        // Paso 1: Verificar recursos físicos (solo si hay solapamiento temporal)
-        bool hasEnoughResources = await CheckResourceAvailabilityAsync(
-                                                                businessId,
-                                                                requestedService.ServiceId,
-                                                                temporallyOverlappingSlots,
-                                                                activeReservations.Where(r =>
-                                                                {
-                                                                    var rStart = r.ReservationDateTime.TimeOfDay;
-                                                                    var rEnd = rStart.Add(TimeSpan.FromMinutes(r.DurationMinutes));
-                                                                    return rStart < requestedEndTime && rEnd > requestedStartTime;
-                                                                }).ToList(),
-                                                                cancellationToken);
-
-        if (!hasEnoughResources)
-        {
-            result.IsAvailable = false;
-            result.Message = $"❌ NO DISPONIBLE: El horario {requestedStartTime.ToString(@"hh\:mm")} está ocupado. Sugiere otros horarios al cliente.";
-            _logger.LogInformation("Disponibilidad rechazada por recursos físicos insuficientes");
-            return result;
-        }
-
-        // Los empleados ya se validaron arriba antes de recursos físicos
-        // Si llegamos aquí, tanto recursos físicos como personal están disponibles
-        result.IsAvailable = true;
-        result.Message = $"✅ DISPONIBLE: El horario {requestedStartTime.ToString(@"hh\:mm")} está libre.";
-
-        _logger.LogInformation(
-            "Disponibilidad verificada: IsAvailable={IsAvailable}, TemporallyOverlapping={OverlappingCount}, TotalReservations={TotalReservations}",
-            result.IsAvailable, result.OverlappingSlots.Count, result.CurrentReservations);
-
-        return result;
     }
 
     /// <summary>
@@ -196,7 +242,6 @@ public class AvailabilityService : IAvailabilityService
     private async Task<bool> CheckResourceAvailabilityAsync(
         Guid businessId,
         Guid requestedServiceId,
-        List<BookedSlot> overlappingSlots,
         List<Domain.Entities.Reservation> overlappingReservations,
         CancellationToken cancellationToken)
     {

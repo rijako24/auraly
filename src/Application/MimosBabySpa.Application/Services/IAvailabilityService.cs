@@ -7,8 +7,7 @@ namespace MimosBabySpa.Application.Services;
 public interface IAvailabilityService
 {
     /// <summary>
-    /// Verifica disponibilidad para un servicio en una fecha y hora específica.
-    /// Retorna información explícita: is_available, current_reservations, etc.
+    /// Verifica disponibilidad. Con hora: revisa ese slot. Sin hora: consulta el horario del negocio y revisa cada hora abierta (empleado + recursos).
     /// </summary>
     Task<AvailabilityResult> CheckAvailabilityAsync(
         Guid businessId,
