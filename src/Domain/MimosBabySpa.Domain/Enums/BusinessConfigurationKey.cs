@@ -1,11 +1,11 @@
 namespace MimosBabySpa.Domain.Enums;
 
 /// <summary>
-/// Claves de configuración específicas del negocio.
-/// Nota: BusinessInformation y ContextFieldsMapping fueron eliminados en favor de campos estructurados en Business.
+/// Claves de configuración específicas del negocio almacenadas en BusinessConfigurations.
+/// El valor del enum coincide con el valor entero almacenado en la columna Key de la tabla.
 /// </summary>
 public enum BusinessConfigurationKey
 {
-    EntityExtractionConfig = 0,  // CONFIGURACIÓN DE EXTRACCIÓN DE ENTIDADES: Campos relevantes, descripciones y keywords para extracción genérica multi-tenant
-    SalesGuidance = 3            // CONFIGURACIÓN DE GUÍA DE VENTAS: Atributos críticos y reglas antes de recomendar servicios
+    Personality = 0,            // Texto libre: identidad, tono y persona del asistente virtual
+    EntityExtractionConfig = 1  // JSON: campos de extracción de entidades, descripciones y keywords
 }

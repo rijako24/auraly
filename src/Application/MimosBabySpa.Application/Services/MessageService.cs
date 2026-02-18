@@ -11,32 +11,34 @@ public class MessageService : IMessageService
     public MessageService(IUnitOfWork unitOfWork, ILogger<MessageService> logger)
     {
         _unitOfWork = unitOfWork;
-        _logger = logger;
+        _logger     = logger;
     }
 
-    public async Task<Domain.Entities.Message> SaveMessageAsync(Guid conversationId, string sender, string messageText, string intent)
+    public async Task<Domain.Entities.Message> SaveMessageAsync(
+        Guid conversationId,
+        string sender,
+        string messageText)
     {
         try
         {
             var message = new Domain.Entities.Message
             {
-                MessageId = Guid.NewGuid(),
+                MessageId      = Guid.NewGuid(),
                 ConversationId = conversationId,
-                Sender = sender,
-                MessageText = messageText,
-                Intent = intent,
-                Timestamp = DateTime.UtcNow
+                Sender         = sender,
+                MessageText    = messageText,
+                Timestamp      = DateTime.UtcNow
             };
 
             var created = await _unitOfWork.Messages.CreateAsync(message);
             await _unitOfWork.SaveChangesAsync();
-            
-            _logger.LogDebug("Mensaje guardado: {Intent} de {Sender}", intent, sender);
+
+            _logger.LogDebug("Mensaje guardado: sender={Sender}, conv={ConversationId}", sender, conversationId);
             return created;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error al guardar mensaje");
+            _logger.LogError(ex, "Error al guardar mensaje para conv={ConversationId}", conversationId);
             throw;
         }
     }

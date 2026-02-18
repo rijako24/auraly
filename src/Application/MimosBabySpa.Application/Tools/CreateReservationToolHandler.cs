@@ -116,10 +116,9 @@ FLUJO:
             var serviceName = context.State.Service!;
             var date = context.State.DesiredDate!.Value;
             var time = context.State.DesiredTime!.Value;
-            var duration = context.State.DurationMinutes ?? 60; // Default 1 hora
             var reservationDateTime = date.ToDateTime(time);
 
-            // Obtener ServiceId desde el nombre del servicio
+            // Obtener servicio desde BD para DurationMinutes (fuente de verdad: catálogo)
             var service = await _unitOfWork.Services.GetByBusinessIdAndNameAsync(
                 context.BusinessId, serviceName);
             
@@ -132,6 +131,8 @@ FLUJO:
                     Message = $"Error: El servicio '{serviceName}' no existe en el sistema."
                 };
             }
+
+            var duration = service.DurationMinutes > 0 ? service.DurationMinutes : 60;
 
             var serviceId = service.ServiceId;
 

@@ -31,12 +31,11 @@ public class AvailabilityService : IAvailabilityService
         string service,
         DateTime date,
         TimeSpan? time,
-        int? durationMinutes,
         CancellationToken cancellationToken = default)
     {
         _logger.LogInformation(
-            "Verificando disponibilidad: BusinessId={BusinessId}, Service={Service}, Date={Date}, Time={Time}, Duration={Duration}",
-            businessId, service, date.ToString("yyyy-MM-dd"), time?.ToString(@"hh\:mm"), durationMinutes);
+            "Verificando disponibilidad: BusinessId={BusinessId}, Service={Service}, Date={Date}, Time={Time}",
+            businessId, service, date.ToString("yyyy-MM-dd"), time?.ToString(@"hh\:mm"));
 
         var dateStr = date.ToString("yyyy-MM-dd");
         var timeStr = time.HasValue ? time.Value.ToString(@"hh\:mm") : null;

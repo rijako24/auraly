@@ -23,11 +23,9 @@ public class ApplicationDbContext : DbContext
     public DbSet<Service> Services { get; set; }
     public DbSet<BusinessResource> BusinessResources { get; set; }
     public DbSet<ServiceResourceUsage> ServiceResourceUsages { get; set; }
-    public DbSet<ServiceCoexistenceRule> ServiceCoexistenceRules { get; set; }
     public DbSet<Employee> Employees { get; set; }
     public DbSet<EmployeeService> EmployeeServices { get; set; }
     public DbSet<ConversationStateEntity> ConversationStates { get; set; }
-    public DbSet<ReservationMetadata> ReservationMetadata { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -66,12 +64,7 @@ public class ApplicationDbContext : DbContext
                 // Logo del negocio
                 entity.Property(e => e.LogoUrl).HasMaxLength(500);
 
-                // Personalidad del asistente (JSON)
-                entity.Property(e => e.PersonalityJson)
-                      .HasColumnType("NVARCHAR(MAX)")
-                      .HasDefaultValue("{}");
-
-                // Personalidad del asistente (JSON)
+                // Personalidad del asistente (JSON) — columna legada; la carga activa usa BusinessConfiguration key=Personality
                 entity.Property(e => e.PersonalityJson)
                       .HasColumnType("NVARCHAR(MAX)")
                       .HasDefaultValue("{}");
@@ -169,7 +162,6 @@ public class ApplicationDbContext : DbContext
             entity.HasKey(e => e.MessageId);
             entity.Property(e => e.Sender).IsRequired().HasMaxLength(20);
             entity.Property(e => e.MessageText).IsRequired().HasMaxLength(2000);
-            entity.Property(e => e.Intent).IsRequired().HasMaxLength(50);
             entity.HasOne(e => e.Conversation)
                   .WithMany(c => c.Messages)
                   .HasForeignKey(e => e.ConversationId)
@@ -227,20 +219,6 @@ public class ApplicationDbContext : DbContext
             entity.HasIndex(e => e.ConversationId); // Índice para búsquedas por conversación
         });
 
-        // ReservationMetadata configuration
-        modelBuilder.Entity<ReservationMetadata>(entity =>
-        {
-            entity.HasKey(e => e.ReservationMetadataId);
-            entity.Property(e => e.Field).IsRequired().HasMaxLength(100);
-            entity.Property(e => e.Value).IsRequired().HasMaxLength(500);
-            entity.HasOne(e => e.Reservation)
-                  .WithMany()
-                  .HasForeignKey(e => e.ReservationId)
-                  .OnDelete(DeleteBehavior.Cascade); // Si se elimina la reserva, se eliminan sus metadatos
-            entity.HasIndex(e => e.ReservationId);
-            entity.HasIndex(e => new { e.ReservationId, e.Field }); // Índice compuesto para búsquedas rápidas
-        });
-
         // BusinessResource configuration
         modelBuilder.Entity<BusinessResource>(entity =>
         {
@@ -286,27 +264,6 @@ public class ApplicationDbContext : DbContext
                   .HasForeignKey(e => e.BusinessResourceId)
                   .OnDelete(DeleteBehavior.Restrict);
             entity.HasIndex(e => new { e.ServiceId, e.BusinessResourceId }).IsUnique(); // Un uso único por servicio-recurso
-        });
-
-        // ServiceCoexistenceRule configuration
-        modelBuilder.Entity<ServiceCoexistenceRule>(entity =>
-        {
-            entity.HasKey(e => e.ServiceCoexistenceRuleId);
-            entity.Property(e => e.CanCoexist).IsRequired().HasDefaultValue(true);
-            entity.HasOne(e => e.Business)
-                  .WithMany()
-                  .HasForeignKey(e => e.BusinessId)
-                  .OnDelete(DeleteBehavior.Restrict);
-            entity.HasOne(e => e.Service1)
-                  .WithMany(s => s.CoexistenceRulesAsService1)
-                  .HasForeignKey(e => e.ServiceId1)
-                  .OnDelete(DeleteBehavior.Restrict);
-            entity.HasOne(e => e.Service2)
-                  .WithMany(s => s.CoexistenceRulesAsService2)
-                  .HasForeignKey(e => e.ServiceId2)
-                  .OnDelete(DeleteBehavior.Restrict);
-            entity.HasIndex(e => e.BusinessId);
-            entity.HasIndex(e => new { e.BusinessId, e.ServiceId1, e.ServiceId2 }).IsUnique(); // Una regla única por par de servicios
         });
 
         // Employee configuration

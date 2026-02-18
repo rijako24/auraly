@@ -114,9 +114,6 @@ services.AddScoped<IConversationStateManager, ConversationStateManager>();
 // Business Rules Engine
 services.AddScoped<IBusinessRuleEngine, BusinessRuleEngine>();
 
-// Business Configuration Provider
-services.AddScoped<IBusinessConfigurationProvider, BusinessConfigurationProvider>();
-
 // ✅ NEW: Cached Business Context Provider (elimina cargas redundantes + caché)
 services.AddMemoryCache();
 services.AddScoped<CachedBusinessContextProvider>();
@@ -139,6 +136,7 @@ services.AddScoped<ILLMAdapter>(sp =>
 });
 
 // Tool Handlers (Domain-Agnostic)
+services.AddScoped<IConversationStateUpdater, ConversationStateUpdater>();
 services.AddScoped<UpdateConversationStateToolHandler>();
 services.AddScoped<CheckAvailabilityToolHandler>();
 services.AddScoped<CreateReservationToolHandler>();

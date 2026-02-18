@@ -18,10 +18,8 @@ public class UnitOfWork : IUnitOfWork
     private IReservationRepository? _reservations;
     private IServiceRepository? _services;
     private IBusinessResourceRepository? _businessResources;
-    private IServiceCoexistenceRuleRepository? _serviceCoexistenceRules;
     private IEmployeeRepository? _employees;
     private IEmployeeServiceRepository? _employeeServices;
-    private IReservationMetadataRepository? _reservationMetadata;
     private IConversationStateRepository? _conversationStates;
 
     public UnitOfWork(ApplicationDbContext context)
@@ -62,17 +60,11 @@ public class UnitOfWork : IUnitOfWork
     public IBusinessResourceRepository BusinessResources =>
         _businessResources ??= new BusinessResourceRepository(_context);
 
-    public IServiceCoexistenceRuleRepository ServiceCoexistenceRules =>
-        _serviceCoexistenceRules ??= new ServiceCoexistenceRuleRepository(_context);
-
     public IEmployeeRepository Employees =>
         _employees ??= new EmployeeRepository(_context);
 
     public IEmployeeServiceRepository EmployeeServices =>
         _employeeServices ??= new EmployeeServiceRepository(_context);
-
-    public IReservationMetadataRepository ReservationMetadata =>
-        _reservationMetadata ??= new ReservationMetadataRepository(_context);
 
     public IConversationStateRepository ConversationStates =>
         _conversationStates ??= new ConversationStateRepository(_context);

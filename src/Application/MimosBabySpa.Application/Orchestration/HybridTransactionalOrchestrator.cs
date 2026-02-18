@@ -5,6 +5,7 @@ using MimosBabySpa.Application.FlowEngine;
 using MimosBabySpa.Application.LLM;
 using MimosBabySpa.Application.LLM.Extraction;
 using MimosBabySpa.Application.Prompts;
+using MimosBabySpa.Application.Prompts.Templates;
 using MimosBabySpa.Application.Services;
 using MimosBabySpa.Application.StateManagement;
 using MimosBabySpa.Application.Tools;
@@ -12,34 +13,23 @@ using MimosBabySpa.Application.Tools;
 namespace MimosBabySpa.Application.Orchestration;
 
 /// <summary>
-/// Orquestador Híbrido Transaccional - Implementación del "Hybrid Transactional Brain"
-/// 
-/// Este orquestador implementa la arquitectura con separación estricta de responsabilidades:
-/// 
-/// LLM LAYER:
-/// - Comprensión de lenguaje natural
-/// - Detección de intención
-/// - Extracción de entidades
-/// - Llamada a herramientas con (field, value)
-/// 
-/// FLOW ENGINE (BRAIN):
-/// - Determina qué datos faltan
-/// - Decide qué herramientas pueden ejecutarse
-/// - Valida si se puede avanzar
-/// - NO analiza texto del usuario
-/// 
-/// BACKEND:
-/// - Única autoridad para disponibilidad
-/// - Única autoridad para crear reservas
-/// - Validación de reglas de negocio
-/// - Asignación de recursos
-/// 
-/// PRINCIPIOS:
-/// - El LLM NUNCA decide disponibilidad
-/// - El LLM NUNCA confirma reservas
-/// - El LLM NUNCA aplica reglas de negocio
-/// - El LLM NUNCA inventa datos
-/// - Todas las decisiones son determinísticas y auditables
+/// Orquestador Híbrido Transaccional — 6 fases bien definidas.
+///
+/// FASES:
+///   1. CONTEXTO  — Una sola carga de BD por request (negocio + estado + historial).
+///   2. EXTRACCIÓN — LLM extrae campos e intenciones del mensaje (JSON Mode, temperatura 0.1).
+///   3. ESTADO    — Aplica campos en batch (in-memory); un solo Save al final.
+///   4. FLUJO     — FlowEngine decide acciones; tools persisten si corresponde.
+///   5. RESPUESTA — LLM genera respuesta conversacional (temperatura 0.7).
+///   6. METADATOS — Actualiza LastUserMessage/LastBotMessage y Save final.
+///
+/// GARANTÍAS:
+///   - Mínimos round-trips a BD: 1 read inicial + 1-2 reads post-tool + 1 write final.
+///   - Sin mutaciones directas al estado: todo pasa por IConversationStateUpdater.
+///   - FlowEngine es la única fuente de verdad para CanCheck/CanCreate.
+///   - UserWantsToCancel reseteado limpiamente.
+///   - CurrentStage actualizado en cada evaluación.
+///   - Multitenant: businessId en cada operación de estado.
 /// </summary>
 public class HybridTransactionalOrchestrator
 {
@@ -51,7 +41,8 @@ public class HybridTransactionalOrchestrator
     private readonly ILLMAdapter _llmAdapter;
     private readonly GenericToolDispatcher _toolDispatcher;
     private readonly ISmartExtractionService _extractionService;
-    private readonly IMessageService _messageService; // ✅ Nuevo: Para historial conversacional
+    private readonly IMessageService _messageService;
+    private readonly IConversationStateUpdater _stateUpdater;
     private readonly ILogger<HybridTransactionalOrchestrator> _logger;
 
     public HybridTransactionalOrchestrator(
@@ -63,26 +54,28 @@ public class HybridTransactionalOrchestrator
         ILLMAdapter llmAdapter,
         GenericToolDispatcher toolDispatcher,
         ISmartExtractionService extractionService,
-        IMessageService messageService, // ✅ Nuevo
+        IMessageService messageService,
+        IConversationStateUpdater stateUpdater,
         ILogger<HybridTransactionalOrchestrator> logger)
     {
-        _stateManager = stateManager;
-        _flowEngine = flowEngine;
-        _businessRuleEngine = businessRuleEngine;
+        _stateManager         = stateManager;
+        _flowEngine           = flowEngine;
+        _businessRuleEngine   = businessRuleEngine;
         _cachedContextProvider = cachedContextProvider;
         _systemPromptProvider = systemPromptProvider;
-        _llmAdapter = llmAdapter;
-        _toolDispatcher = toolDispatcher;
-        _extractionService = extractionService;
-        _messageService = messageService; // ✅ Nuevo
-        _logger = logger;
+        _llmAdapter           = llmAdapter;
+        _toolDispatcher       = toolDispatcher;
+        _extractionService    = extractionService;
+        _messageService       = messageService;
+        _stateUpdater         = stateUpdater;
+        _logger               = logger;
     }
 
-    /// <summary>
-    /// Procesa un mensaje del usuario siguiendo el flujo Hybrid Transactional Brain.
-    /// Refactorizado para ser más limpio y mantenible.
-    /// </summary>
-    public async Task<string> ProcessMessageAsync(
+    // ═════════════════════════════════════════════════════════════════
+    // PUNTO DE ENTRADA
+    // ═════════════════════════════════════════════════════════════════
+
+    public async Task<OrchestratorResult> ProcessMessageAsync(
         Guid conversationId,
         Guid businessId,
         string customerPhone,
@@ -92,58 +85,54 @@ public class HybridTransactionalOrchestrator
         try
         {
             _logger.LogInformation(
-                "=== INICIO === ConversationId={ConversationId}, BusinessId={BusinessId}",
+                "=== INICIO === Conv={ConversationId} Biz={BusinessId}",
                 conversationId, businessId);
 
-            // FASE 1: Cargar contexto unificado
-            var context = await LoadContextAsync(
+            // ── FASE 1: Contexto ──────────────────────────────────
+            var ctx = await LoadContextAsync(
                 conversationId, businessId, customerPhone, userMessage, cancellationToken);
 
-            // FASE 2: Extraer información del mensaje
-            var extraction = await ExtractInformationAsync(userMessage, context, cancellationToken);
-            if (!extraction.Success)
+            // ── FASE 2: Extracción ────────────────────────────────
+            var extraction = await ExtractInformationAsync(userMessage, ctx, cancellationToken);
+            ctx.ExtractionOutput = extraction;
+
+            if (!extraction.WasSuccessful)
             {
-                _logger.LogWarning("Extracción falló, retornando respuesta de emergencia");
-                return extraction.StructuredResponse.ConversationalResponse;
+                _logger.LogWarning("Extracción falló — retornando respuesta de emergencia");
+                return new OrchestratorResult(extraction.ConversationalResponseSuggestion, ReservationCreated: false);
             }
 
-            context.ExtractionResult = extraction;
+            // ── FASE 3: Actualizar estado ─────────────────────────
+            ApplyExtractionToState(extraction, ctx);
 
-            // FASE 3: Actualizar estado con datos extraídos
-            await UpdateStateFromExtractionAsync(extraction, context, cancellationToken);
+            // ── FASE 4: Acciones de flujo ─────────────────────────
+            await ExecuteFlowActionsAsync(ctx, cancellationToken);
 
-            // FASE 4: Ejecutar acciones de flujo (tools)
-            await ExecuteFlowActionsAsync(context, cancellationToken);
+            // ── FASE 5: Generar respuesta ─────────────────────────
+            var response = await GenerateResponseAsync(userMessage, ctx, cancellationToken);
 
-            // FASE 5: Generar respuesta conversacional
-            var response = await GenerateResponseAsync(
-                userMessage, context, cancellationToken);
-
-            // FASE 6: Guardar metadatos finales
-            await SaveFinalMetadataAsync(
-                context, userMessage, response, cancellationToken);
+            // ── FASE 6: Guardar metadatos finales (LastUserMessage, LastBotMessage en ConversationState)
+            await SaveFinalMetadataAsync(ctx, userMessage, response, cancellationToken);
 
             _logger.LogInformation(
-                "=== FIN === Respuesta: {Length} caracteres, Completitud: {Completeness}%",
-                response.Length, context.FlowEvaluation.CompletenessPercentage);
+                "=== FIN === {Chars} chars | Completitud={Pct}% | ReservationCreated={Created}",
+                response.Length, ctx.FlowEvaluation.CompletenessPercentage, ctx.State.ReservationCreated);
 
-            return response;
+            return new OrchestratorResult(response, ctx.State.ReservationCreated);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error crítico en orquestador");
-            return "Disculpa, ha ocurrido un error. Por favor intenta nuevamente.";
+            _logger.LogError(ex, "Error crítico en orquestador Conv={ConversationId}", conversationId);
+            return new OrchestratorResult(
+                "Disculpa, ha ocurrido un error. Por favor intenta nuevamente.",
+                ReservationCreated: false);
         }
     }
 
-    // ========================================
-    // MÉTODOS PRIVADOS - FASES DEL PROCESAMIENTO
-    // ========================================
+    // ═════════════════════════════════════════════════════════════════
+    // FASE 1 — CONTEXTO
+    // ═════════════════════════════════════════════════════════════════
 
-    /// <summary>
-    /// FASE 1: Carga el contexto unificado para el procesamiento.
-    /// ✅ REFACTORIZADO: Una sola carga de configuración usando BusinessContext.
-    /// </summary>
     private async Task<ProcessingContext> LoadContextAsync(
         Guid conversationId,
         Guid businessId,
@@ -153,25 +142,21 @@ public class HybridTransactionalOrchestrator
     {
         _logger.LogDebug("FASE 1: Cargando contexto...");
 
-        var startTime = DateTime.UtcNow;
+        // Una sola carga de configuración de negocio (con caché por businessId)
+        var businessContext = await _cachedContextProvider.GetOrLoadAsync(businessId, cancellationToken);
 
-        // ✅ UNA SOLA CARGA de toda la configuración del negocio (con caché)
-        var businessContext = await _cachedContextProvider.GetOrLoadAsync(
-            businessId, cancellationToken);
-
-        // Cargar estado de conversación
+        // Estado de conversación (por conversationId + businessId)
         var state = await _stateManager.GetOrCreateStateAsync(
             conversationId, businessId, customerPhone, cancellationToken);
 
-        // Construir prompt del sistema usando el provider
-        var systemPrompt = await _systemPromptProvider.BuildAsync(
-            businessContext, cancellationToken);
+        // System prompt del LLM de respuesta (dinámico por negocio)
+        var systemPrompt = await _systemPromptProvider.BuildAsync(businessContext, cancellationToken);
 
         var context = new ProcessingContext(
             state,
-            businessContext.RequiredFields, // ✅ Ya calculado en BusinessContext
+            businessContext.RequiredFields,
             systemPrompt,
-            businessContext, // ✅ Pasar contexto completo
+            businessContext,
             _flowEngine,
             _stateManager,
             conversationId,
@@ -179,657 +164,405 @@ public class HybridTransactionalOrchestrator
             customerPhone,
             userMessage);
 
-        var elapsed = DateTime.UtcNow - startTime;
-        
         _logger.LogInformation(
-            "✅ Contexto cargado en {Elapsed}ms: Version={Version}, Completitud={Completeness}%",
-            elapsed.TotalMilliseconds, state.Version, context.FlowEvaluation.CompletenessPercentage);
+            "✅ Contexto: Version={Version}, Completitud={Pct}%",
+            state.Version, context.FlowEvaluation.CompletenessPercentage);
 
         return context;
     }
 
-    /// <summary>
-    /// FASE 2: Extrae información del mensaje del usuario.
-    /// ✅ REFACTORIZADO: Pasa BusinessContext precargado al servicio de extracción.
-    /// </summary>
-    private async Task<ExtractionResult> ExtractInformationAsync(
+    // ═════════════════════════════════════════════════════════════════
+    // FASE 2 — EXTRACCIÓN
+    // ═════════════════════════════════════════════════════════════════
+
+    private async Task<ExtractionOutput> ExtractInformationAsync(
         string userMessage,
-        ProcessingContext context,
+        ProcessingContext ctx,
         CancellationToken cancellationToken)
     {
         _logger.LogDebug("FASE 2: Extrayendo información...");
 
-        // ✅ Pasar BusinessContext precargado (sin cargas adicionales)
-        var extraction = await _extractionService.ExtractWithValidationAsync(
-            userMessage, context.State, context.BusinessContext, cancellationToken);
+        var output = await _extractionService.ExtractWithValidationAsync(
+            userMessage, ctx.State, ctx.BusinessContext, cancellationToken);
 
-        if (extraction.Success)
-        {
-            _logger.LogInformation(
-                "Extracción exitosa: Campos={FieldCount}, Confidence={Confidence:F2}",
-                extraction.StructuredResponse.ExtractedFields.Count,
-                extraction.ValidationResult.Confidence);
-        }
+        _logger.LogInformation(
+            "Extracción: {Count} campos, método={Method}, exitoso={Ok}",
+            output.ExtractedFields.Count, output.Method, output.WasSuccessful);
 
-        return extraction;
+        return output;
     }
 
-    /// <summary>
-    /// FASE 3: Actualiza el estado con los datos extraídos.
-    /// </summary>
-    private async Task UpdateStateFromExtractionAsync(
-        ExtractionResult extraction,
-        ProcessingContext context,
-        CancellationToken cancellationToken)
-    {
-        _logger.LogDebug("FASE 3: Actualizando estado con {Count} campos extraídos...",
-            extraction.StructuredResponse.ExtractedFields.Count);
+    // ═════════════════════════════════════════════════════════════════
+    // FASE 3 — ACTUALIZAR ESTADO (in-memory, sin save ni reload)
+    // ═════════════════════════════════════════════════════════════════
 
-        foreach (var field in extraction.StructuredResponse.ExtractedFields)
+    private void ApplyExtractionToState(ExtractionOutput extraction, ProcessingContext ctx)
+    {
+        _logger.LogDebug("FASE 3: Aplicando {Count} campos...", extraction.ExtractedFields.Count);
+
+        foreach (var field in extraction.ExtractedFields)
         {
-            if (field.Confidence < 0.5)
+            if (field.Confidence < ExtractionConstants.MinConfidence)
             {
-                _logger.LogDebug("Campo '{Field}' ignorado por baja confidence: {Confidence:F2}",
+                _logger.LogDebug("Ignorado por baja confidence [{Field}={Confidence:F2}]",
                     field.FieldName, field.Confidence);
                 continue;
             }
 
-            var result = await _toolDispatcher.ExecuteAsync(
-                ToolType.UpdateConversationState,
-                context.ToolContext,
-                new Dictionary<string, object>
-                {
-                    { "field", field.FieldName },
-                    { "value", field.Value }
-                },
-                cancellationToken);
+            var result = _stateUpdater.ApplyField(ctx.State, field.FieldName, field.Value);
 
             if (result.Success)
-            {
-                _logger.LogInformation(
-                    "✓ {Field} = {Value} (confidence: {Confidence:F2})",
+                _logger.LogInformation("✓ {Field}='{Value}' (conf={Conf:F2})",
                     field.FieldName, field.Value, field.Confidence);
-            }
+            else
+                _logger.LogWarning("✗ {Field} no aplicado: {Msg}", field.FieldName, result.Message);
         }
 
-        // Recargar estado después de actualizaciones
-        await context.ReloadAndEvaluateAsync(cancellationToken);
+        // Re-evaluar flujo in-memory (sin BD) para que FASE 4 tenga datos frescos
+        ctx.ReEvaluate();
     }
 
-    /// <summary>
-    /// FASE 4: Ejecuta acciones de flujo (tools) basándose en la evaluación.
-    /// ✅ REFACTORIZADO: Usa helper para eliminar duplicación del patrón Execute → Reload.
-    /// </summary>
-    private async Task ExecuteFlowActionsAsync(
-        ProcessingContext context,
-        CancellationToken cancellationToken)
+    // ═════════════════════════════════════════════════════════════════
+    // FASE 4 — ACCIONES DE FLUJO
+    // ═════════════════════════════════════════════════════════════════
+
+    private async Task ExecuteFlowActionsAsync(ProcessingContext ctx, CancellationToken ct)
     {
         _logger.LogDebug("FASE 4: Ejecutando acciones de flujo...");
 
-        // Verificar disponibilidad (decisión simple basada en FlowEngine)
-        if (context.FlowEvaluation.CanCheckAvailability)
+        var turnActions = new TurnActions();
+        var intentions  = ctx.ExtractionOutput?.Intentions ?? new ExtractionIntentions();
+
+        // ── 4a. Cancelación (prioridad más alta) ─────────────────
+        if (intentions.UserWantsToCancel)
         {
-            _logger.LogInformation("Verificando disponibilidad...");
-            
-            await ExecuteToolAndReloadAsync(
-                ToolType.CheckAvailability,
-                context,
-                cancellationToken);
-            
-            _logger.LogInformation(
-                "Disponibilidad verificada: {Confirmed}",
-                context.State.AvailabilityConfirmed);
+            _logger.LogInformation("Usuario canceló — reseteando flags transaccionales");
+            _stateUpdater.ResetTransactionalFlags(ctx.State);
+            ctx.ReEvaluate();
+            turnActions.CancellationExecuted = true;
+            ctx.TurnActions = turnActions;
+            return; // No continuar con otras acciones
         }
 
-        // Confirmar reserva si el usuario lo indicó
-        if (context.ExtractionResult?.StructuredResponse.FlowAnalysis.UserConfirmedBooking == true)
+        // ── 4b. Verificación de disponibilidad ───────────────────
+        //   - CanCheckAvailability: primera verificación (AvailabilityConfirmed=false)
+        //   - ShouldRecheckAvailability + UserRequestedAvailability: re-verificación explícita
+        var shouldCheck = ctx.FlowEvaluation.CanCheckAvailability
+            || (intentions.UserRequestedAvailability && _flowEngine.ShouldRecheckAvailability(ctx.State));
+
+        if (shouldCheck)
+        {
+            // Si es re-verificación, primero resetear el flag para que el tool pueda ejecutar
+            if (!ctx.FlowEvaluation.CanCheckAvailability && intentions.UserRequestedAvailability)
+            {
+                _stateUpdater.ApplyConfirmationFlag(ctx.State, "AvailabilityConfirmed", false);
+                ctx.ReEvaluate();
+            }
+
+            _logger.LogInformation("Verificando disponibilidad...");
+            var checkResult = await ExecuteToolAndReloadAsync(ToolType.CheckAvailability, ctx, ct);
+            turnActions.CheckAvailabilityExecuted = true;
+            turnActions.AvailabilityResultMessage = checkResult.Message;
+
+            _logger.LogInformation(
+                "Disponibilidad: Confirmada={Confirmed}, Slots={Slots}",
+                ctx.State.AvailabilityConfirmed, ctx.State.AvailableTimeSlots);
+        }
+
+        // ── 4c. Confirmación de reserva por el usuario ───────────
+        if (intentions.UserConfirmedBooking && !ctx.State.ReservationConfirmed)
         {
             _logger.LogInformation("Usuario confirmó reserva");
-            
-            // Marcar confirmación en el estado
-            context.State.ReservationConfirmed = true;
-            context.State.UpdatedAt = DateTime.UtcNow;
-            context.State.Version++;
-            
-            // Re-evaluar con confirmación
-            context.ReEvaluate();
+            _stateUpdater.ApplyConfirmationFlag(ctx.State, "ReservationConfirmed", true);
+            ctx.ReEvaluate(); // in-memory, no BD
         }
 
-        // Crear reserva (decisión simple basada en FlowEngine)
-        if (context.FlowEvaluation.CanCreateReservation)
+        // ── 4d. Crear reserva ─────────────────────────────────────
+        if (ctx.FlowEvaluation.CanCreateReservation)
         {
             _logger.LogInformation("Creando reserva...");
-            
-            var result = await ExecuteToolAndReloadAsync(
-                ToolType.CreateReservation,
-                context,
-                cancellationToken);
+            var createResult = await ExecuteToolAndReloadAsync(ToolType.CreateReservation, ctx, ct);
+            turnActions.CreateReservationExecuted = createResult.Success;
+            turnActions.ReservationResultMessage  = createResult.Message;
 
-            if (result.Success)
-            {
-                _logger.LogInformation("Reserva creada exitosamente");
-            }
+            if (createResult.Success)
+                _logger.LogInformation("✅ Reserva creada exitosamente");
+            else
+                _logger.LogWarning("❌ Creación de reserva falló: {Msg}", createResult.Message);
         }
-        else if (context.State.ReservationConfirmed)
+        else if (ctx.State.ReservationConfirmed && !ctx.FlowEvaluation.CanCreateReservation)
         {
             _logger.LogWarning(
-                "Usuario confirmó pero faltan requisitos. Missing: {Fields}",
-                string.Join(", ", context.FlowEvaluation.MissingFields));
+                "Usuario confirmó pero faltan requisitos. Missing: [{Missing}]",
+                string.Join(", ", ctx.FlowEvaluation.MissingFields));
         }
+
+        ctx.TurnActions = turnActions;
     }
 
     /// <summary>
-    /// Helper para ejecutar un tool y recargar el estado automáticamente.
-    /// Elimina la duplicación del patrón "Execute → ReloadAndEvaluate".
+    /// Ejecuta un tool y recarga el estado desde BD (necesario porque el tool puede persistir).
+    /// Solo se hace reload cuando el tool realmente modifica estado en BD.
     /// </summary>
     private async Task<ToolExecutionResult> ExecuteToolAndReloadAsync(
         ToolType toolType,
-        ProcessingContext context,
-        CancellationToken cancellationToken,
+        ProcessingContext ctx,
+        CancellationToken ct,
         Dictionary<string, object>? parameters = null)
     {
-        var result = await _toolDispatcher.ExecuteAsync(
-            toolType,
-            context.ToolContext,
-            parameters,
-            cancellationToken);
+        var result = await _toolDispatcher.ExecuteAsync(toolType, ctx.ToolContext, parameters, ct);
 
-        // Siempre recargar y re-evaluar después de ejecutar un tool
-        await context.ReloadAndEvaluateAsync(cancellationToken);
+        // El tool puede haber persistido cambios en BD → recargar estado fresco
+        if (result.StateModified)
+            await ctx.ReloadAndEvaluateAsync(ct);
+        else
+            ctx.ReEvaluate(); // Solo re-evalúa in-memory si no hubo cambios en BD
 
         return result;
     }
 
-    /// <summary>
-    /// FASE 5: Genera la respuesta conversacional final.
-    /// </summary>
+    // ═════════════════════════════════════════════════════════════════
+    // FASE 5 — GENERAR RESPUESTA
+    // ═════════════════════════════════════════════════════════════════
+
     private async Task<string> GenerateResponseAsync(
         string userMessage,
-        ProcessingContext context,
+        ProcessingContext ctx,
         CancellationToken cancellationToken)
     {
         _logger.LogDebug("FASE 5: Generando respuesta...");
 
+        var input = new ResponseGenerationInput
+        {
+            State          = ctx.State,
+            FlowSnapshot   = ctx.FlowEvaluation,
+            TurnActions    = ctx.TurnActions,
+            ExtractionOutput = ctx.ExtractionOutput ?? new ExtractionOutput(),
+            UserMessage    = userMessage,
+            SystemPrompt   = ctx.SystemPrompt,
+            ConversationId = ctx.ToolContext.ConversationId,
+            BusinessId     = ctx.ToolContext.BusinessId
+        };
+
         try
         {
-            return await GenerateConversationalResponseAsync(
-                context.SystemPrompt,
-                context.State,
-                context.FlowEvaluation,
-                userMessage,
-                context.ExtractionResult!,
-                new List<(string, ToolExecutionResult)>(), // Simplificado: no se usa realmente
-                context.ToolContext.ConversationId, // ✅ Nuevo: Para cargar historial
-                context.ToolContext.BusinessId,
-                cancellationToken);
+            return await GenerateConversationalResponseAsync(input, cancellationToken);
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Error generando respuesta, usando fallback");
-            return context.ExtractionResult?.StructuredResponse.ConversationalResponse 
-                ?? "Disculpa, no pude procesar tu mensaje correctamente.";
+            _logger.LogWarning(ex, "Error generando respuesta — usando fallback");
+            return BuildFallbackResponse(input.TurnActions, input.ExtractionOutput);
         }
     }
 
-    /// <summary>
-    /// FASE 6: Guarda los metadatos finales (una sola vez).
-    /// ✅ NOTA: Los mensajes se guardan por el llamador (webhook, tests, console).
-    /// El orquestador solo lee el historial, no lo persiste (separación de responsabilidades).
-    /// </summary>
-    private async Task SaveFinalMetadataAsync(
-        ProcessingContext context,
-        string userMessage,
-        string botResponse,
-        CancellationToken cancellationToken)
-    {
-        _logger.LogDebug("FASE 6: Guardando metadatos finales...");
-
-        // Recargar estado fresco por si tools lo modificaron
-        await context.ReloadAndEvaluateAsync(cancellationToken);
-        
-        // Actualizar metadatos (LastUserMessage, LastBotMessage en el estado)
-        context.UpdateMessageMetadata(userMessage, botResponse);
-        
-        // Guardar estado
-        await context.SaveStateAsync(cancellationToken);
-        
-        _logger.LogDebug("Metadatos guardados");
-    }
-
-    // ========================================
-    // MÉTODOS PRIVADOS - GENERACIÓN DE RESPUESTAS
-    // ========================================
-
-    /// <summary>
-    /// Genera una respuesta conversacional usando el system prompt.
-    /// Este método SIEMPRE se usa para generar respuestas finales al usuario.
-    /// ✅ MEJORADO: Incluye historial conversacional para mantener coherencia natural.
-    /// </summary>
     private async Task<string> GenerateConversationalResponseAsync(
-        string systemPrompt,
-        Domain.Models.ConversationState state,
-        FlowEvaluationResult flowEvaluation,
-        string userMessage,
-        ExtractionResult extractionResult,
-        List<(string FunctionName, ToolExecutionResult Result)> toolResults,
-        Guid conversationId, // ✅ Nuevo: Para cargar historial
-        Guid businessId,
+        ResponseGenerationInput input,
         CancellationToken cancellationToken)
     {
-        var stateContext = BuildStateContext(state, flowEvaluation);
-        var extractionContext = BuildExtractionContext(extractionResult);
-        var toolResultsContext = BuildToolResultsContext(toolResults);
+        var turnContext  = BuildTurnContext(input.State, input.FlowSnapshot, input.TurnActions, input.ExtractionOutput);
+        var instructions = BuildResponseInstructions(input.FlowSnapshot, input.TurnActions, input.ExtractionOutput);
+        var history      = await LoadConversationHistoryAsync(input.ConversationId, cancellationToken);
 
-        // ✅ CARGAR HISTORIAL CONVERSACIONAL (últimos 5 mensajes)
-        var conversationHistory = await LoadConversationHistoryAsync(conversationId, cancellationToken);
+        var messages = new List<LLMMessage>
+        {
+            new() { Role = LLMRole.System, Content = input.SystemPrompt },
+            new() { Role = LLMRole.System, Content = turnContext },
+            new() { Role = LLMRole.System, Content = instructions }
+        };
+
+        foreach (var msg in history)
+        {
+            var role = msg.Sender.Equals("User", StringComparison.OrdinalIgnoreCase)
+                ? LLMRole.User : LLMRole.Assistant;
+            messages.Add(new() { Role = role, Content = msg.MessageText });
+        }
+        messages.Add(new() { Role = LLMRole.User, Content = input.UserMessage });
 
         var request = new LLMRequest
         {
-            Messages = new List<LLMMessage>
-            {
-                // System prompt con personalidad y reglas de negocio
-                new LLMMessage { Role = LLMRole.System, Content = systemPrompt },
-                
-                // Contexto del estado actual de la conversación
-                new LLMMessage { Role = LLMRole.System, Content = stateContext },
-                
-                // Información extraída del mensaje actual (si aplica)
-                new LLMMessage { Role = LLMRole.System, Content = extractionContext },
-                
-                // Resultados de herramientas ejecutadas (si aplica)
-                new LLMMessage { Role = LLMRole.System, Content = toolResultsContext },
-                
-                // Instrucciones para generar respuesta (simplificadas, sin reglas hardcodeadas)
-                new LLMMessage
-                {
-                    Role = LLMRole.System,
-                    Content = await BuildResponseInstructionsAsync(state, flowEvaluation, extractionResult, toolResults, businessId, cancellationToken)
-                }
-            },
+            Messages    = messages,
             Temperature = 0.7f,
-            MaxTokens = 400
+            MaxTokens   = 400
         };
 
-        // ✅ AGREGAR HISTORIAL CONVERSACIONAL antes del mensaje actual
-        // Esto permite que el LLM mantenga coherencia naturalmente
-        foreach (var historyMessage in conversationHistory)
-        {
-            var role = historyMessage.Sender.Equals("User", StringComparison.OrdinalIgnoreCase) 
-                ? LLMRole.User 
-                : LLMRole.Assistant;
-            
-            request.Messages.Add(new LLMMessage 
-            { 
-                Role = role, 
-                Content = historyMessage.MessageText 
-            });
-        }
-
-        // Mensaje actual del usuario (al final)
-        request.Messages.Add(new LLMMessage { Role = LLMRole.User, Content = userMessage });
-
         var response = await _llmAdapter.SendMessageAsync(request, cancellationToken);
-
         if (response.Success && !string.IsNullOrWhiteSpace(response.Content))
-        {
             return response.Content.Trim();
-        }
 
-        // Fallback si el LLM falla
-        return BuildFallbackResponse(flowEvaluation, extractionResult, toolResults);
+        return BuildFallbackResponse(input.TurnActions, input.ExtractionOutput);
     }
 
-    /// <summary>
-    /// Carga el historial conversacional reciente (últimos 10 mensajes).
-    /// Esto permite que el LLM mantenga coherencia conversacional naturalmente.
-    /// </summary>
+    // ─────────────────────────────────────────────────────────────────
+    // Contexto del turno — bloque dinámico enviado al LLM de respuesta
+    // ─────────────────────────────────────────────────────────────────
+
+    private static string BuildTurnContext(
+        Domain.Models.ConversationState state,
+        FlowEvaluationResult flowSnapshot,
+        TurnActions turnActions,
+        ExtractionOutput extraction)
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine("# CONTEXTO DEL TURNO");
+        sb.AppendLine($"Etapa: {state.CurrentStage} | Completitud: {flowSnapshot.CompletenessPercentage}%");
+        sb.AppendLine();
+
+        // Estado compacto
+        sb.AppendLine("**Datos actuales:**");
+        sb.AppendLine($"- Cliente: {state.CustomerName ?? "—"} | Tel: {state.Phone ?? "—"} | Email: {state.Email ?? "—"}");
+        sb.AppendLine($"- Servicio: {state.Service ?? "—"} | Fecha: {state.DesiredDate?.ToString("yyyy-MM-dd") ?? "—"} | Hora: {state.DesiredTime?.ToString("HH:mm") ?? "—"}");
+        sb.AppendLine($"- Disponibilidad: {(state.AvailabilityConfirmed ? "✓ Confirmada" : "Pendiente")} | Reserva: {(state.ReservationConfirmed ? "✓ Confirmada" : "Pendiente")}");
+
+        if (state.Attributes.Any())
+        {
+            var attrs = string.Join(" | ", state.Attributes.Select(a => $"{a.Key}={a.Value}"));
+            sb.AppendLine($"- Atributos: {attrs}");
+        }
+
+        if (flowSnapshot.MissingFields.Any())
+            sb.AppendLine($"- **Faltan:** {string.Join(", ", flowSnapshot.MissingFields)}");
+
+        sb.AppendLine();
+
+        // Qué pasó en este turno
+        if (turnActions.CancellationExecuted)
+        {
+            sb.AppendLine("**Este turno: el usuario canceló/cambió de intención. Acepta y ofrece ayuda.**");
+        }
+        else
+        {
+            if (turnActions.CheckAvailabilityExecuted)
+            {
+                sb.AppendLine("**Este turno: se verificó disponibilidad.**");
+                if (state.AvailabilityConfirmed && !string.IsNullOrEmpty(state.AvailableTimeSlots))
+                {
+                    var slots = state.AvailableTimeSlots.Split(',', StringSplitOptions.RemoveEmptyEntries);
+                    sb.AppendLine($"**Horarios disponibles:** {string.Join(" | ", slots)}");
+                    sb.AppendLine("→ Muestra TODOS estos horarios al cliente.");
+                }
+                else if (!state.AvailabilityConfirmed)
+                {
+                    sb.AppendLine("→ No hay disponibilidad. Sugiere alternativas.");
+                }
+            }
+
+            if (turnActions.CreateReservationExecuted)
+                sb.AppendLine("**Este turno: reserva creada exitosamente.** Confirma detalles y celebra.");
+
+            if (extraction.ExtractedFields.Any() && !turnActions.CheckAvailabilityExecuted && !turnActions.CreateReservationExecuted)
+                sb.AppendLine("**Este turno: el usuario proporcionó datos nuevos.**");
+
+            if (extraction.Intentions.IsInformationQuery)
+                sb.AppendLine("**El usuario pide información sobre servicios/planes.** Muéstralos sin presionar a reservar.");
+        }
+
+        sb.AppendLine();
+        sb.AppendLine($"**Diagnóstico:** {flowSnapshot.DiagnosticMessage}");
+        return sb.ToString();
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Instrucciones para la respuesta — condicionales y lean
+    // ─────────────────────────────────────────────────────────────────
+
+    private static string BuildResponseInstructions(
+        FlowEvaluationResult flowSnapshot,
+        TurnActions turnActions,
+        ExtractionOutput extraction)
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine(ResponseInstructionsTemplate.Header);
+        sb.AppendLine(ResponseInstructionsTemplate.BaseInstructions);
+
+        if (turnActions.CancellationExecuted)
+        {
+            sb.AppendLine(ResponseInstructionsTemplate.CancellationInstructions);
+            return sb.ToString(); // No agregar otras instrucciones si hubo cancelación
+        }
+
+        if (turnActions.CheckAvailabilityExecuted)
+            sb.AppendLine(ResponseInstructionsTemplate.CheckAvailabilityInstructions);
+
+        if (turnActions.CreateReservationExecuted)
+            sb.AppendLine(ResponseInstructionsTemplate.CreateReservationInstructions);
+
+        // Tiempo seleccionado pero sin confirmación aún
+        var timeSelected = extraction.ExtractedFields
+            .Any(f => f.FieldName == "DesiredTime" && f.Confidence >= ExtractionConstants.MinConfidence);
+        if (timeSelected && !extraction.Intentions.UserConfirmedBooking && !turnActions.CreateReservationExecuted)
+            sb.AppendLine(ResponseInstructionsTemplate.TimeSelectedInstructions);
+
+        if (extraction.Intentions.IsInformationQuery)
+            sb.AppendLine(ResponseInstructionsTemplate.InformationQueryInstructions);
+
+        if (flowSnapshot.MissingFields.Any() && !extraction.Intentions.IsInformationQuery)
+            sb.AppendLine(ResponseInstructionsTemplate.MissingFieldsInstructions
+                .Replace("{missing_fields}", string.Join(", ", flowSnapshot.MissingFields)));
+
+        if (extraction.Ambiguities.Any())
+            sb.AppendLine(ResponseInstructionsTemplate.AmbiguitiesInstructions);
+
+        return sb.ToString();
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Historial conversacional
+    // ─────────────────────────────────────────────────────────────────
+
     private async Task<List<Domain.Entities.Message>> LoadConversationHistoryAsync(
         Guid conversationId,
         CancellationToken cancellationToken)
     {
         try
         {
-            var allMessages = await _messageService.GetConversationHistoryAsync(conversationId);
-            
-            // Obtener últimos 10 mensajes ordenados por timestamp
-            var recentMessages = allMessages
-                .OrderBy(m => m.Timestamp)
-                .TakeLast(10)
-                .ToList();
+            var all = await _messageService.GetConversationHistoryAsync(conversationId);
+            var recent = all.OrderBy(m => m.Timestamp).TakeLast(10).ToList();
 
-            _logger.LogDebug(
-                "Cargados {Count} mensajes del historial para conversación {ConversationId}",
-                recentMessages.Count, conversationId);
-
-            return recentMessages;
+            _logger.LogDebug("Historial: {Count} mensajes", recent.Count);
+            return recent;
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Error cargando historial conversacional, continuando sin historial");
+            _logger.LogWarning(ex, "Error cargando historial — continuando sin historial");
             return new List<Domain.Entities.Message>();
         }
     }
 
-    /// <summary>
-    /// Construye el contexto del estado actual de la conversación
-    /// </summary>
-    /// <summary>
-    /// Construye el contexto de estado cargando templates y poblando datos dinámicos.
-    /// El backend SOLO carga y popula, NO construye contenido.
-    /// </summary>
-    private string BuildStateContext(
-        Domain.Models.ConversationState state,
-        FlowEvaluationResult flowEvaluation)
+    // ─────────────────────────────────────────────────────────────────
+    // Fallback de respuesta (cuando el LLM de respuesta falla)
+    // ─────────────────────────────────────────────────────────────────
+
+    private static string BuildFallbackResponse(TurnActions turnActions, ExtractionOutput extraction)
     {
-        var context = new System.Text.StringBuilder();
-        
-        // ═══════════════════════════════════════════════════════
-        // HEADER
-        // ═══════════════════════════════════════════════════════
-        context.AppendLine(Prompts.Templates.StateContextTemplate.Header);
-        
-        // ═══════════════════════════════════════════════════════
-        // CONTEXTO CONVERSACIONAL
-        // ═══════════════════════════════════════════════════════
-        // ✅ SIMPLIFICADO: El historial conversacional se pasa directamente al LLM
-        // No necesitamos reglas hardcodeadas sobre "primera interacción"
-        context.AppendLine($"**Etapa actual**: {state.CurrentStage}");
-        context.AppendLine();
-        
-        // ═══════════════════════════════════════════════════════
-        // COMPLETENESS
-        // ═══════════════════════════════════════════════════════
-        context.AppendLine(
-            Prompts.Templates.StateContextTemplate.CompletenessSection
-                .Replace("{completeness_percentage}", flowEvaluation.CompletenessPercentage.ToString()));
-        
-        // ═══════════════════════════════════════════════════════
-        // INFORMATION COLLECTED
-        // ═══════════════════════════════════════════════════════
-        context.AppendLine(
-            Prompts.Templates.StateContextTemplate.InformationSection
-                .Replace("{customer_name}", state.CustomerName ?? "NO RECOLECTADO")
-                .Replace("{phone}", state.Phone ?? "NO RECOLECTADO")
-                .Replace("{email}", state.Email ?? "NO RECOLECTADO")
-                .Replace("{service}", state.Service ?? "NO SELECCIONADO")
-                .Replace("{desired_date}", state.DesiredDate?.ToString("yyyy-MM-dd") ?? "NO ESTABLECIDA")
-                .Replace("{desired_time}", state.DesiredTime?.ToString("HH:mm") ?? "NO ESTABLECIDA")
-                .Replace("{availability_confirmed}", state.AvailabilityConfirmed ? "SÍ" : "NO")
-                .Replace("{reservation_confirmed}", state.ReservationConfirmed ? "SÍ" : "NO")
-                .Replace("{reservation_created}", state.ReservationCreated ? "SÍ" : "NO"));
-
-        // ═══════════════════════════════════════════════════════
-        // AVAILABLE TIME SLOTS (si aplica) - REFORZADO
-        // ═══════════════════════════════════════════════════════
-        if (state.AvailabilityConfirmed && !string.IsNullOrEmpty(state.AvailableTimeSlots))
-        {
-            var slots = state.AvailableTimeSlots.Split(',', StringSplitOptions.RemoveEmptyEntries);
-            
-            // ✅ REFORZAR: Hacer MÁS visible
-            context.AppendLine();
-            context.AppendLine("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-            context.AppendLine("🚨 HORARIOS DISPONIBLES CONFIRMADOS 🚨");
-            context.AppendLine("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-            context.AppendLine();
-            context.AppendLine(
-                Prompts.Templates.AvailableTimeSlotsTemplate.Build(
-                    state.CustomerName ?? string.Empty,
-                    slots));
-            context.AppendLine();
-            context.AppendLine("⚠️ DEBES MOSTRAR ESTOS HORARIOS AL CLIENTE EN TU RESPUESTA");
-            context.AppendLine("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-            context.AppendLine();
-        }
-
-        // ═══════════════════════════════════════════════════════
-        // BUSINESS-SPECIFIC ATTRIBUTES
-        // ═══════════════════════════════════════════════════════
-        if (state.Attributes.Any())
-        {
-            var attributesList = new System.Text.StringBuilder();
-            foreach (var attr in state.Attributes)
-            {
-                // Remover el prefijo "Attribute:" si existe para mostrar el nombre limpio
-                var displayName = attr.Key.StartsWith("Attribute:") 
-                    ? attr.Key.Substring("Attribute:".Length) 
-                    : attr.Key;
-                attributesList.AppendLine($"- {displayName}: {attr.Value}");
-            }
-            
-            context.AppendLine(
-                Prompts.Templates.StateContextTemplate.AttributesSection
-                    .Replace("{attributes_list}", attributesList.ToString().TrimEnd()));
-        }
-
-        // ═══════════════════════════════════════════════════════
-        // MISSING FIELDS
-        // ═══════════════════════════════════════════════════════
-        if (flowEvaluation.MissingFields.Any())
-        {
-            var missingFieldsList = string.Join("\n", 
-                flowEvaluation.MissingFields.Select(f => $"- {f}"));
-            
-            context.AppendLine(
-                Prompts.Templates.StateContextTemplate.MissingFieldsSection
-                    .Replace("{missing_fields_list}", missingFieldsList));
-        }
-
-        // ═══════════════════════════════════════════════════════
-        // FLOW STATE / DIAGNOSTIC
-        // ═══════════════════════════════════════════════════════
-        context.AppendLine(
-            Prompts.Templates.StateContextTemplate.FlowStateSection
-                .Replace("{diagnostic_message}", flowEvaluation.DiagnosticMessage));
-
-        return context.ToString();
+        if (turnActions.CancellationExecuted)
+            return "Entendido. Si en algún momento quieres retomar, aquí estaré. ¿Hay algo más en lo que pueda ayudarte?";
+        if (turnActions.CreateReservationExecuted)
+            return "¡Tu reserva fue creada exitosamente! Te enviaré los detalles. ¿Hay algo más en lo que pueda ayudarte?";
+        if (turnActions.CheckAvailabilityExecuted)
+            return "He verificado la disponibilidad. ¿Te gustaría reservar alguno de esos horarios?";
+        if (extraction.ExtractedFields.Any())
+            return "Perfecto, he registrado esa información. ¿Continuamos?";
+        return "Entendido. ¿En qué más puedo ayudarte?";
     }
 
-    /// <summary>
-    /// Construye el contexto de información extraída del mensaje actual
-    /// </summary>
-    private string BuildExtractionContext(ExtractionResult extractionResult)
-    {
-        if (extractionResult == null || !extractionResult.StructuredResponse.ExtractedFields.Any())
-        {
-            return "# INFORMACIÓN EXTRAÍDA DEL MENSAJE ACTUAL\n\n*(No se extrajo información nueva en este mensaje)*";
-        }
+    // ═════════════════════════════════════════════════════════════════
+    // FASE 6 — GUARDAR METADATOS FINALES
+    // ═════════════════════════════════════════════════════════════════
 
-        var context = new System.Text.StringBuilder();
-        context.AppendLine("# INFORMACIÓN EXTRAÍDA DEL MENSAJE ACTUAL");
-        context.AppendLine();
-        context.AppendLine("## Campos extraídos:");
-        
-        foreach (var field in extractionResult.StructuredResponse.ExtractedFields)
-        {
-            context.AppendLine($"- **{field.FieldName}**: {field.Value} (confianza: {field.Confidence:F2})");
-        }
-
-        // Mostrar ambigüedades si las hay
-        if (extractionResult.StructuredResponse.Ambiguities.Any())
-        {
-            context.AppendLine();
-            context.AppendLine("## Ambigüedades detectadas:");
-            foreach (var ambiguity in extractionResult.StructuredResponse.Ambiguities)
-            {
-                context.AppendLine($"- {ambiguity.FieldName}: {ambiguity.AmbiguousText} (tipo: {ambiguity.Type})");
-            }
-        }
-
-        return context.ToString();
-    }
-
-    /// <summary>
-    /// Construye el contexto de resultados de herramientas ejecutadas
-    /// </summary>
-    private string BuildToolResultsContext(List<(string FunctionName, ToolExecutionResult Result)> toolResults)
-    {
-        if (!toolResults.Any())
-        {
-            return "# RESULTADOS DE HERRAMIENTAS\n\n*(No se ejecutaron herramientas en este mensaje)*";
-        }
-
-        var context = new System.Text.StringBuilder();
-        context.AppendLine("# RESULTADOS DE HERRAMIENTAS EJECUTADAS");
-        context.AppendLine();
-
-        foreach (var (functionName, result) in toolResults.Where(r => r.Result.Success))
-        {
-            context.AppendLine($"## {functionName}:");
-            context.AppendLine($"- Resultado: {result.Message}");
-            
-            if (result.Data != null && result.Data.Any())
-            {
-                context.AppendLine("- Datos:");
-                foreach (var kvp in result.Data)
-                {
-                    context.AppendLine($"  • {kvp.Key}: {kvp.Value}");
-                }
-            }
-            context.AppendLine();
-        }
-
-        return context.ToString();
-    }
-
-    /// <summary>
-    /// Construye las instrucciones para generar la respuesta basadas en el contexto
-    /// </summary>
-    /// <summary>
-    /// Construye las instrucciones para generar respuesta CARGANDO templates.
-    /// El backend SOLO carga y popula, NO construye contenido.
-    /// </summary>
-    private async Task<string> BuildResponseInstructionsAsync(
-        Domain.Models.ConversationState state,
-        FlowEvaluationResult flowEvaluation,
-        ExtractionResult extractionResult,
-        List<(string FunctionName, ToolExecutionResult Result)> toolResults,
-        Guid businessId,
+    private async Task SaveFinalMetadataAsync(
+        ProcessingContext ctx,
+        string userMessage,
+        string botResponse,
         CancellationToken cancellationToken)
     {
-        var instructions = new System.Text.StringBuilder();
-        
-        // ═══════════════════════════════════════════════════════
-        // HEADER + BASE INSTRUCTIONS
-        // ═══════════════════════════════════════════════════════
-        instructions.AppendLine(Prompts.Templates.ResponseInstructionsTemplate.Header);
-        instructions.AppendLine(Prompts.Templates.ResponseInstructionsTemplate.BaseInstructions);
-        instructions.AppendLine();
+        _logger.LogDebug("FASE 6: Guardando metadatos finales...");
 
-        // ✅ SIMPLIFICADO: El historial conversacional se pasa directamente al LLM
-        // El LLM puede ver si ya saludó o no, manteniendo coherencia naturalmente
-        // No necesitamos reglas hardcodeadas sobre "primera interacción" o "cuándo saludar"
+        // Actualizar LastUserMessage y LastBotMessage (para contexto de inferencia en el próximo turno)
+        ctx.UpdateMessageMetadata(userMessage, botResponse);
 
-        // ═══════════════════════════════════════════════════════
-        // TIME SELECTED (si usuario seleccionó horario)
-        // ═══════════════════════════════════════════════════════
-        bool timeSelected = extractionResult.StructuredResponse.ExtractedFields
-            .Any(f => f.FieldName == "DesiredTime" && f.Confidence >= 0.8);
-        if (timeSelected && !state.ReservationConfirmed)
-        {
-            instructions.AppendLine(Prompts.Templates.ResponseInstructionsTemplate.TimeSelectedInstructions);
-            instructions.AppendLine();
-        }
+        // Un solo Save al final de todo el flujo
+        await ctx.SaveStateAsync(cancellationToken);
 
-        // ═══════════════════════════════════════════════════════
-        // INFORMATION QUERY (si aplica)
-        // ═══════════════════════════════════════════════════════
-        if (extractionResult.StructuredResponse.FlowAnalysis.IsInformationQuery)
-        {
-            instructions.AppendLine(Prompts.Templates.ResponseInstructionsTemplate.InformationQueryInstructions);
-            instructions.AppendLine();
-            // ✅ El historial conversacional también ayuda: si el usuario pregunta por servicios
-            // después de que ya le mostramos opciones, el LLM puede inferir que está explorando
-        }
-
-        // ═══════════════════════════════════════════════════════
-        // CHECK AVAILABILITY (si se ejecutó)
-        // ═══════════════════════════════════════════════════════
-        if (toolResults.Any(r => r.FunctionName == "check_availability"))
-        {
-            instructions.AppendLine(Prompts.Templates.ResponseInstructionsTemplate.CheckAvailabilityInstructions);
-            instructions.AppendLine();
-        }
-
-        // ═══════════════════════════════════════════════════════
-        // CREATE RESERVATION (si se ejecutó)
-        // ═══════════════════════════════════════════════════════
-        if (toolResults.Any(r => r.FunctionName == "create_reservation"))
-        {
-            instructions.AppendLine(Prompts.Templates.ResponseInstructionsTemplate.CreateReservationInstructions);
-            instructions.AppendLine();
-        }
-
-        // ═══════════════════════════════════════════════════════
-        // MISSING FIELDS (si hay) - SOLO si NO es consulta informativa
-        // ═══════════════════════════════════════════════════════
-        // ✅ Si el usuario está explorando (IsInformationQuery), NO pedir datos de reserva
-        if (flowEvaluation.MissingFields.Any() && 
-            !extractionResult.StructuredResponse.FlowAnalysis.IsInformationQuery)
-        {
-            instructions.AppendLine(
-                Prompts.Templates.ResponseInstructionsTemplate.MissingFieldsInstructions
-                    .Replace("{missing_fields}", string.Join(", ", flowEvaluation.MissingFields)));
-            instructions.AppendLine();
-        }
-        else if (flowEvaluation.MissingFields.Any() && 
-                 extractionResult.StructuredResponse.FlowAnalysis.IsInformationQuery)
-        {
-            // Si es consulta informativa pero hay campos faltantes, solo mencionar suavemente
-            instructions.AppendLine("**Nota**: Cuando estés listo para reservar, necesitaré algunos datos. Por ahora, solo estoy compartiendo información. 😊");
-            instructions.AppendLine();
-        }
-
-        // ═══════════════════════════════════════════════════════
-        // AMBIGUITIES (si hay)
-        // ═══════════════════════════════════════════════════════
-        if (extractionResult.StructuredResponse.Ambiguities.Any())
-        {
-            instructions.AppendLine(Prompts.Templates.ResponseInstructionsTemplate.AmbiguitiesInstructions);
-            instructions.AppendLine();
-        }
-
-        // ═══════════════════════════════════════════════════════
-        // FINAL REMINDER
-        // ═══════════════════════════════════════════════════════
-        instructions.AppendLine(Prompts.Templates.ResponseInstructionsTemplate.FinalReminder);
-
-        return instructions.ToString();
-    }
-
-    /// <summary>
-    /// Construye una respuesta de fallback si el LLM falla
-    /// </summary>
-    private string BuildFallbackResponse(
-        FlowEvaluationResult flowEvaluation,
-        ExtractionResult extractionResult,
-        List<(string FunctionName, ToolExecutionResult Result)> toolResults)
-    {
-        // Si se ejecutaron herramientas exitosamente, confirmar
-        if (toolResults.Any(r => r.FunctionName == "create_reservation" && r.Result.Success))
-        {
-            return "¡Perfecto! He creado tu reserva. Te enviaré los detalles en breve. ¿Hay algo más en lo que pueda ayudarte? 😊";
-        }
-
-        if (toolResults.Any(r => r.FunctionName == "check_availability" && r.Result.Success))
-        {
-            return "He verificado la disponibilidad. ¿Te gustaría que reserve alguno de estos horarios? 😊";
-        }
-
-        // Si se extrajo información nueva, confirmar brevemente
-        if (extractionResult.StructuredResponse.ExtractedFields.Any())
-        {
-            return "Perfecto, he guardado esa información. ¿En qué más puedo ayudarte? 😊";
-        }
-
-        // Respuesta genérica
-        return "Entendido. ¿En qué más puedo ayudarte? 😊";
-    }
-
-    private int CalculateCompleteness(
-        Domain.Models.ConversationState state,
-        RequiredFieldsConfiguration requiredFields)
-    {
-        var evaluation = _flowEngine.Evaluate(state, requiredFields);
-        return evaluation.CompletenessPercentage;
+        _logger.LogDebug("✅ Estado guardado (Version={Version})", ctx.State.Version);
     }
 }

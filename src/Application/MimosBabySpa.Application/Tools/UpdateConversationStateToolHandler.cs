@@ -21,16 +21,19 @@ namespace MimosBabySpa.Application.Tools;
 public class UpdateConversationStateToolHandler : BaseToolHandler
 {
     private readonly IFlowEngine _flowEngine;
+    private readonly IConversationStateUpdater _updater;
 
     public override string FunctionName => "update_conversation_state";
 
     public UpdateConversationStateToolHandler(
         IConversationStateManager stateManager,
         ILogger<UpdateConversationStateToolHandler> logger,
-        IFlowEngine flowEngine)
+        IFlowEngine flowEngine,
+        IConversationStateUpdater updater)
         : base(stateManager, logger)
     {
         _flowEngine = flowEngine;
+        _updater = updater;
     }
 
     public override FunctionDefinition GetDefinition()
@@ -129,39 +132,16 @@ EJEMPLOS:
 
             _logger.LogInformation("Actualizando campo: {Field} = {Value}", field, value);
 
-            // Validar que el valor no sea una frase (heurística simple)
-            if (IsPhrase(value))
-            {
-                _logger.LogWarning("Valor rechazado por ser una frase: {Value}", value);
-                return Task.FromResult(new ToolExecutionResult
-                {
-                    Success = false,
-                    Message = $"Error: el valor '{value}' parece ser una frase. Solo se aceptan valores estructurados"
-                });
-            }
+            var applyResult = _updater.ApplyField(context.State, field, value);
+            if (!applyResult.Success)
+                return Task.FromResult(new ToolExecutionResult { Success = false, Message = applyResult.Message });
 
-            // Actualizar el estado según el campo
-            var result = UpdateStateField(context.State, field, value);
-
-            if (!result.Success)
-            {
-                return Task.FromResult(result);
-            }
-
-            // Evaluar el estado después de la actualización
             var evaluation = _flowEngine.Evaluate(context.State, context.RequiredFields);
-
-            // Construir mensaje de respuesta
             var responseMessage = $"✓ Campo '{field}' actualizado a '{value}'";
-            
             if (evaluation.MissingFields.Any())
-            {
                 responseMessage += $". Aún faltan: {string.Join(", ", evaluation.MissingFields)}";
-            }
             else
-            {
                 responseMessage += ". Todos los campos requeridos están completos";
-            }
 
             return Task.FromResult(new ToolExecutionResult
             {
@@ -189,178 +169,4 @@ EJEMPLOS:
         }
     }
 
-    private ToolExecutionResult UpdateStateField(
-        Domain.Models.ConversationState state,
-        string field,
-        string value)
-    {
-        try
-        {
-            // Detectar si es un atributo de negocio
-            if (field.StartsWith("Attribute:", StringComparison.OrdinalIgnoreCase))
-            {
-                var attributeName = field.Substring("Attribute:".Length);
-                state.SetAttribute(attributeName, value);
-                return new ToolExecutionResult
-                {
-                    Success = true,
-                    Message = $"Atributo '{attributeName}' actualizado"
-                };
-            }
-
-            // Actualizar campos core según el nombre
-            switch (field)
-            {
-                case "CustomerName":
-                    state.CustomerName = value;
-                    break;
-
-                case "Phone":
-                    // Phone ya está en el estado desde la creación, no necesita actualizarse
-                    // Pero lo aceptamos para no generar error
-                    _logger.LogDebug("Campo 'Phone' ya está establecido en el estado, ignorando actualización");
-                    break;
-
-                case "Email":
-                    if (!IsValidEmail(value))
-                    {
-                        return new ToolExecutionResult
-                        {
-                            Success = false,
-                            Message = $"Error: '{value}' no es un email válido"
-                        };
-                    }
-                    state.Email = value;
-                    break;
-
-                case "Service":
-                    state.Service = value;
-                    // Reset availability si cambia el servicio
-                    state.AvailabilityConfirmed = false;
-                    break;
-
-                case "DesiredDate":
-                    if (!DateOnly.TryParse(value, out var date))
-                    {
-                        return new ToolExecutionResult
-                        {
-                            Success = false,
-                            Message = $"Error: '{value}' no es una fecha válida (formato: YYYY-MM-DD)"
-                        };
-                    }
-                    if (state.DesiredDate.HasValue && state.DesiredDate.Value != date)
-                    {
-                        // Reset availability si cambia la fecha
-                        state.AvailabilityConfirmed = false;
-                    }
-                    state.DesiredDate = date;
-                    break;
-
-                case "DesiredTime":
-                    if (!TimeOnly.TryParse(value, out var time))
-                    {
-                        return new ToolExecutionResult
-                        {
-                            Success = false,
-                            Message = $"Error: '{value}' no es una hora válida (formato: HH:MM)"
-                        };
-                    }
-                    if (state.DesiredTime.HasValue && state.DesiredTime.Value != time)
-                    {
-                        // Reset availability si cambia la hora
-                        state.AvailabilityConfirmed = false;
-                    }
-                    state.DesiredTime = time;
-                    break;
-
-                default:
-                    return new ToolExecutionResult
-                    {
-                        Success = false,
-                        Message = $"Error: campo '{field}' no reconocido. " +
-                                 "Use 'Attribute:' como prefijo para atributos de negocio"
-                    };
-            }
-
-            state.UpdatedAt = DateTime.UtcNow;
-            state.Version++;
-
-            return new ToolExecutionResult
-            {
-                Success = true,
-                Message = $"Campo '{field}' actualizado exitosamente"
-            };
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error al actualizar campo {Field}", field);
-            return new ToolExecutionResult
-            {
-                Success = false,
-                Message = $"Error al actualizar campo: {ex.Message}",
-                Exception = ex
-            };
-        }
-    }
-
-    /// <summary>
-    /// Valida si un valor parece ser una frase en lugar de un valor estructurado
-    /// </summary>
-    private bool IsPhrase(string value)
-    {
-        // REGLA: Los nombres de servicios son TÍTULOS PROPIOS y NO son frases
-        // Ejemplos válidos: "Plan Suaves Mimos", "Masaje Relajante Premium", "Spa Bebé VIP"
-        // Ejemplos de frases: "tengo un bebé de 5 meses", "quiero reservar para mañana"
-        
-        var valueLower = value.ToLower();
-        var words = value.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        
-        // Si tiene más de 8 palabras, probablemente es una frase
-        if (words.Length > 8)
-        {
-            return true;
-        }
-
-        // Buscar patrones de frase (palabras completas, no substrings)
-        var phrasePatterns = new[] { 
-            "tengo", "tiene", "está", "son", "están",
-            "me llamo", "mi bebé", "el bebé", 
-            "quiero", "deseo", "necesito",
-            "muy", "mucho", "poco", "algo", "nada"
-        };
-        
-        foreach (var pattern in phrasePatterns)
-        {
-            // Buscar el patrón como palabra independiente
-            if (System.Text.RegularExpressions.Regex.IsMatch(valueLower, $@"\b{pattern}\b"))
-            {
-                return true;
-            }
-        }
-
-        // Buscar artículos seguidos de sustantivos comunes (patrón de frase)
-        if (System.Text.RegularExpressions.Regex.IsMatch(valueLower, @"\b(el|la|los|las)\s+(bebé|niño|niña|hijo|hija)\b"))
-        {
-            return true;
-        }
-
-        // Si pasa las validaciones, es un valor estructurado (nombre, título, etc.)
-        return false;
-    }
-
-    /// <summary>
-    /// Valida si un string es un email válido
-    /// </summary>
-    private bool IsValidEmail(string email)
-    {
-        try
-        {
-            var addr = new System.Net.Mail.MailAddress(email);
-            return addr.Address == email;
-        }
-        catch
-        {
-            return false;
-        }
-    }
 }

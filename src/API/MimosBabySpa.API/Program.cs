@@ -97,9 +97,6 @@ var host = new HostBuilder()
         // Business Rules Engine
         services.AddScoped<IBusinessRuleEngine, BusinessRuleEngine>();
         
-        // Business Configuration Provider (Legacy - mantener por compatibilidad)
-        services.AddScoped<IBusinessConfigurationProvider, BusinessConfigurationProvider>();
-        
         // ✅ NEW: Cached Business Context Provider (elimina cargas redundantes + caché)
         services.AddScoped<CachedBusinessContextProvider>();
         
@@ -121,6 +118,7 @@ var host = new HostBuilder()
         });
         
         // Tool Handlers (Domain-Agnostic)
+        services.AddScoped<IConversationStateUpdater, ConversationStateUpdater>();
         services.AddScoped<UpdateConversationStateToolHandler>();
         services.AddScoped<CheckAvailabilityToolHandler>();
         services.AddScoped<CreateReservationToolHandler>();

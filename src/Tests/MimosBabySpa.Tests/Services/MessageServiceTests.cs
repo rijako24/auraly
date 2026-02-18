@@ -17,9 +17,9 @@ public class MessageServiceTests
 
     public MessageServiceTests()
     {
-        _mockUnitOfWork = new Mock<IUnitOfWork>();
+        _mockUnitOfWork        = new Mock<IUnitOfWork>();
         _mockMessageRepository = new Mock<IMessageRepository>();
-        _mockLogger = new Mock<ILogger<MessageService>>();
+        _mockLogger            = new Mock<ILogger<MessageService>>();
 
         _mockUnitOfWork.Setup(u => u.Messages).Returns(_mockMessageRepository.Object);
 
@@ -31,18 +31,16 @@ public class MessageServiceTests
     {
         // Arrange
         var conversationId = Guid.NewGuid();
-        var sender = "User";
+        var sender      = "User";
         var messageText = "Hola, quiero información";
-        var intent = "Greeting";
 
         var expectedMessage = new Message
         {
-            MessageId = Guid.NewGuid(),
+            MessageId      = Guid.NewGuid(),
             ConversationId = conversationId,
-            Sender = sender,
-            MessageText = messageText,
-            Intent = intent,
-            Timestamp = DateTime.UtcNow
+            Sender         = sender,
+            MessageText    = messageText,
+            Timestamp      = DateTime.UtcNow
         };
 
         _mockMessageRepository
@@ -54,20 +52,18 @@ public class MessageServiceTests
             .ReturnsAsync(1);
 
         // Act
-        var result = await _service.SaveMessageAsync(conversationId, sender, messageText, intent);
+        var result = await _service.SaveMessageAsync(conversationId, sender, messageText);
 
         // Assert
         result.Should().NotBeNull();
         result.ConversationId.Should().Be(conversationId);
         result.Sender.Should().Be(sender);
         result.MessageText.Should().Be(messageText);
-        result.Intent.Should().Be(intent);
 
         _mockMessageRepository.Verify(x => x.CreateAsync(It.Is<Message>(m =>
             m.ConversationId == conversationId &&
-            m.Sender == sender &&
-            m.MessageText == messageText &&
-            m.Intent == intent)), Times.Once);
+            m.Sender         == sender         &&
+            m.MessageText    == messageText)), Times.Once);
 
         _mockUnitOfWork.Verify(x => x.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Once);
     }
@@ -76,11 +72,11 @@ public class MessageServiceTests
     public async Task GetConversationHistoryAsync_ShouldReturnMessages()
     {
         // Arrange
-        var conversationId = Guid.NewGuid();
+        var conversationId   = Guid.NewGuid();
         var expectedMessages = new List<Message>
         {
-            new Message { MessageId = Guid.NewGuid(), ConversationId = conversationId, Sender = "User", MessageText = "Hola" },
-            new Message { MessageId = Guid.NewGuid(), ConversationId = conversationId, Sender = "Bot", MessageText = "Hola, ¿en qué puedo ayudarte?" }
+            new() { MessageId = Guid.NewGuid(), ConversationId = conversationId, Sender = "User", MessageText = "Hola" },
+            new() { MessageId = Guid.NewGuid(), ConversationId = conversationId, Sender = "Bot",  MessageText = "Hola, ¿en qué puedo ayudarte?" }
         };
 
         _mockMessageRepository

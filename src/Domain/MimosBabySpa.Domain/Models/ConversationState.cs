@@ -60,11 +60,6 @@ public class ConversationState
     /// </summary>
     public TimeOnly? DesiredTime { get; set; }
 
-    /// <summary>
-    /// Duración del servicio en minutos (obtenida del backend)
-    /// </summary>
-    public int? DurationMinutes { get; set; }
-
     // ========================================
     // FLAGS DE CONFIRMACIÓN
     // ========================================
@@ -209,7 +204,6 @@ public class ConversationState
             Service = Service,
             DesiredDate = DesiredDate,
             DesiredTime = DesiredTime,
-            DurationMinutes = DurationMinutes,
             AvailabilityConfirmed = AvailabilityConfirmed,
             AvailableTimeSlots = AvailableTimeSlots,
             ReservationConfirmed = ReservationConfirmed,

@@ -53,11 +53,7 @@ public class BusinessRuleEngine : IBusinessRuleEngine
                     return result;
                 }
 
-                // Agregar duración al contexto si no está establecida
-                if (!state.DurationMinutes.HasValue && service.DurationMinutes > 0)
-                {
-                    result.Context["suggested_duration"] = service.DurationMinutes;
-                }
+                // La duración vive en el catálogo de servicios (tabla Services), no en el estado.
             }
 
             // 2. Validar que la fecha no sea en el pasado

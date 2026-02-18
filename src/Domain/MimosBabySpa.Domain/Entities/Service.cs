@@ -18,6 +18,4 @@ public class Service
     // Navigation properties
     public virtual Business Business { get; set; } = null!;
     public virtual ICollection<ServiceResourceUsage> ResourceUsages { get; set; } = new List<ServiceResourceUsage>();
-    public virtual ICollection<ServiceCoexistenceRule> CoexistenceRulesAsService1 { get; set; } = new List<ServiceCoexistenceRule>();
-    public virtual ICollection<ServiceCoexistenceRule> CoexistenceRulesAsService2 { get; set; } = new List<ServiceCoexistenceRule>();
 }

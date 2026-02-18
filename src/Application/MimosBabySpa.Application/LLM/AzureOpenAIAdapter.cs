@@ -152,6 +152,19 @@ public class AzureOpenAIAdapter : ILLMAdapter
 
             return llmResponse;
         }
+        catch (RequestFailedException ex) when (
+            ex.Message.Contains("API version not supported") ||
+            ex.Status == 400 && ex.ErrorCode == "BadRequest" && ex.Message.Contains("API version"))
+        {
+            // El endpoint no soporta JSON mode con esta versión de API — fallback a modo estándar.
+            // El prompt del sistema ya instruye al modelo a devolver JSON, por lo que el resultado
+            // sigue siendo JSON válido en la gran mayoría de los casos.
+            _logger.LogWarning(
+                "JSON Mode no soportado por el endpoint (versión de API incompatible). " +
+                "Reintentando en modo estándar. El prompt ya instruye salida JSON.");
+
+            return await SendMessageAsync(request, cancellationToken);
+        }
         catch (RequestFailedException ex)
         {
             _logger.LogError(ex, "Error en Azure OpenAI JSON Mode: {Message}", ex.Message);

@@ -106,9 +106,6 @@ class RunScenarios
         // Business Rules Engine
         services.AddScoped<IBusinessRuleEngine, BusinessRuleEngine>();
 
-        // Business Configuration Provider
-        services.AddScoped<IBusinessConfigurationProvider, BusinessConfigurationProvider>();
-
         // ✅ Memory Cache (para CachedBusinessContextProvider)
         services.AddMemoryCache();
 
@@ -130,6 +127,7 @@ class RunScenarios
         });
 
         // Tool Handlers (Domain-Agnostic)
+        services.AddScoped<IConversationStateUpdater, ConversationStateUpdater>();
         services.AddScoped<UpdateConversationStateToolHandler>();
         services.AddScoped<CheckAvailabilityToolHandler>();
         services.AddScoped<CreateReservationToolHandler>();

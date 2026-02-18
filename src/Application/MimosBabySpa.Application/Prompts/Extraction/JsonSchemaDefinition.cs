@@ -1,55 +1,30 @@
 namespace MimosBabySpa.Application.Prompts.Extraction;
 
 /// <summary>
-/// Definición del JSON schema esperado en la respuesta del LLM.
+/// Definición del JSON schema esperado en la respuesta del LLM de extracción.
+///
+/// Diseño minimalista: solo los campos que el sistema realmente necesita.
+/// El backend infiere field_type, calcula metadata, y genera la respuesta conversacional.
+/// Menos tokens → más velocidad y menos ruido en la respuesta del LLM.
 /// </summary>
 public static class JsonSchemaDefinition
 {
     /// <summary>
-    /// Schema completo de la respuesta esperada.
+    /// Schema compacto. ~60 tokens vs ~200 del anterior.
     /// </summary>
-    public const string Schema = @"## JSON SCHEMA DE SALIDA:
-
-```json
+    public const string Schema = @"## OUTPUT JSON (solo este formato, sin texto adicional):
 {
   ""extracted_fields"": [
-    {
-      ""field_name"": ""string (ej: Service, Attribute:BabyAge, DesiredDate, Attribute:BabyName)"",
-      ""value"": ""string (valor extraído)"",
-      ""field_type"": ""string (Text|Number|Date|Time|Email|Phone|Service)"",
-      ""confidence"": 0.0-1.0,
-      ""reasoning"": ""string (explicación breve de por qué extrajiste este valor)"",
-      ""source_text"": ""string (fragmento exacto del mensaje del usuario)"",
-      ""is_update"": false
-    }
+    { ""field_name"": ""string"", ""value"": ""string"", ""confidence"": 0.0 }
   ],
-  ""conversational_response"": ""string (respuesta BREVE y natural al usuario - máximo 2-3 líneas)"",
-  ""flow_analysis"": {
+  ""intentions"": {
     ""user_requested_availability"": false,
-    ""can_check_availability"": false,
     ""user_confirmed_booking"": false,
-    ""confirmation_confidence"": 0.0,
-    ""confirmation_indicators"": [],
-    ""user_wants_to_cancel"": false,
-    ""is_information_query"": false
+    ""is_information_query"": false,
+    ""user_wants_to_cancel"": false
   },
   ""ambiguities"": [
-    {
-      ""field_name"": ""string"",
-      ""ambiguity_type"": ""temporal|referential|multiple_values|incomplete"",
-      ""possible_values"": [""valor1"", ""valor2""],
-      ""ambiguous_text"": ""string (texto ambiguo del usuario)"",
-      ""clarification_question"": ""string (pregunta para aclarar)"",
-      ""severity"": ""low|medium|high""
-    }
-  ],
-  ""metadata"": {
-    ""fields_extracted"": 0,
-    ""average_confidence"": 0.0,
-    ""is_complete"": false,
-    ""needs_clarification"": false,
-    ""detected_language"": ""es""
-  }
-}
-```";
+    { ""field_name"": ""string"", ""type"": ""temporal|referential|multiple_values|incomplete"", ""text"": ""string"" }
+  ]
+}";
 }

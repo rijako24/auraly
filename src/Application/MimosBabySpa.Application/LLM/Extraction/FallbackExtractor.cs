@@ -5,172 +5,205 @@ using MimosBabySpa.Domain.Models;
 
 namespace MimosBabySpa.Application.LLM.Extraction;
 
+/// <summary>
+/// Extractor de fallback con reglas determinísticas mínimas.
+///
+/// Se activa cuando el LLM falla validación. Usa el LoadedBusinessContext ya cargado
+/// (sin queries adicionales a BD). Extrae fechas/horas básicas con regex y aplica
+/// los patrones de validación configurados por el negocio para sus atributos.
+/// Multitenant y genérico.
+/// </summary>
 public class FallbackExtractor : IFallbackExtractor
 {
     private readonly ILogger<FallbackExtractor> _logger;
-    private readonly IBusinessConfigurationProvider _configProvider;
 
-    public FallbackExtractor(
-        ILogger<FallbackExtractor> logger,
-        IBusinessConfigurationProvider configProvider)
+    public FallbackExtractor(ILogger<FallbackExtractor> logger)
     {
         _logger = logger;
-        _configProvider = configProvider;
     }
 
-    public async Task<StructuredExtractionResponse> ExtractAsync(
+    public Task<StructuredExtractionResponse> ExtractAsync(
         string userMessage,
         ConversationState currentState,
-        Guid businessId,
+        LoadedBusinessContext businessContext,
         StructuredExtractionResponse? llmAttempt,
         CancellationToken cancellationToken = default)
     {
         var response = new StructuredExtractionResponse
         {
             ExtractedFields = new List<ExtractedField>(),
-            Ambiguities = llmAttempt?.Ambiguities ?? new List<AmbiguityDetection>(),
-            Metadata = new ExtractionMetadata()
+            Ambiguities     = new List<CompactAmbiguity>(),
+            Intentions      = llmAttempt?.Intentions ?? new ExtractionIntentions()
         };
 
         var messageLower = userMessage.ToLowerInvariant();
 
-        // Cargar atributos del negocio para extracción genérica
-        var attributes = await _configProvider.GetBusinessAttributesAsync(businessId, cancellationToken);
-
-        // REGLA 1: Extraer atributos del negocio usando patrones de validación configurados
-        foreach (var attribute in attributes)
+        // 1. Atributos del negocio vía patrones configurados (sin query a BD)
+        foreach (var (key, def) in businessContext.Attributes)
         {
-            if (!string.IsNullOrEmpty(attribute.Value.ValidationPattern))
+            if (string.IsNullOrEmpty(def.ValidationPattern)) continue;
+
+            var match = Regex.Match(userMessage, def.ValidationPattern, RegexOptions.IgnoreCase);
+            if (!match.Success) continue;
+
+            var value = match.Groups.Count > 1 ? match.Groups[1].Value : match.Value;
+            response.ExtractedFields.Add(new ExtractedField
             {
-                var match = Regex.Match(userMessage, attribute.Value.ValidationPattern, RegexOptions.IgnoreCase);
-                if (match.Success)
-                {
-                    var value = match.Groups.Count > 1 ? match.Groups[1].Value : match.Value;
-                    response.ExtractedFields.Add(new ExtractedField
-                    {
-                        FieldName = $"Attribute:{attribute.Key}",
-                        Value = value,
-                        FieldType = MapAttributeTypeToFieldType(attribute.Value.Type),
-                        Confidence = 0.8,
-                        Reasoning = $"Extracción regex: patrón configurado para {attribute.Key}",
-                        SourceText = match.Value
-                    });
-                }
-            }
+                FieldName  = $"Attribute:{key}",
+                Value      = value.Trim(),
+                FieldType  = MapAttributeType(def.Type),
+                Confidence = 0.8
+            });
         }
 
-        // REGLA 2: Detectar confirmaciones explícitas (genérico para cualquier negocio)
-        var confirmationPatterns = new[] { @"\b(sí|si|confirmo|adelante|ok|vale|perfecto|de acuerdo|está bien)\b" };
-        foreach (var pattern in confirmationPatterns)
-        {
-            if (Regex.IsMatch(messageLower, pattern))
-            {
-                response.FlowAnalysis.UserConfirmedBooking = true;
-                response.FlowAnalysis.ConfirmationConfidence = 0.8;
-                response.FlowAnalysis.ConfirmationIndicators.Add(pattern);
-                break;
-            }
-        }
+        // 2. Confirmación explícita (genérica)
+        if (Regex.IsMatch(messageLower, @"\b(sí|si|confirmo|adelante|ok|vale|perfecto|de acuerdo|está bien)\b"))
+            response.Intentions.UserConfirmedBooking = true;
 
-        // REGLA 3: Campos core genéricos - Fechas temporales
+        // 3. Cancelación explícita (genérica)
+        if (Regex.IsMatch(messageLower, @"\b(cancel|mejor no|cambié de opinión|no quiero)\b"))
+            response.Intentions.UserWantsToCancel = true;
+
+        // 4. Fechas temporales básicas
         ExtractTemporalDates(messageLower, response);
 
-        // REGLA 4: Campos core genéricos - Horas
+        // 5. Horas (formato 12h y 24h)
         ExtractTimes(userMessage, response);
 
-        // Usar respuesta del LLM si existe, sino generar una genérica
-        response.ConversationalResponse = !string.IsNullOrEmpty(llmAttempt?.ConversationalResponse)
-            ? llmAttempt.ConversationalResponse
-            : "Entiendo. ¿Podrías darme más detalles para ayudarte mejor?";
-
-        response.Metadata.FieldsExtracted = response.ExtractedFields.Count;
-        response.Metadata.AverageConfidence = response.ExtractedFields.Any()
-            ? response.ExtractedFields.Average(f => f.Confidence)
-            : 0.0;
-
         _logger.LogInformation(
-            "Fallback extraction completada: {FieldCount} campos con confidence {Confidence:F2}",
+            "Fallback: {FieldCount} campos extraídos, confidence avg {Conf:F2}",
             response.ExtractedFields.Count,
-            response.Metadata.AverageConfidence);
+            response.ExtractedFields.Any() ? response.ExtractedFields.Average(f => f.Confidence) : 0.0);
 
-        return response;
+        return Task.FromResult(response);
     }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Helpers privados
+    // ─────────────────────────────────────────────────────────────────
 
     private static void ExtractTemporalDates(string messageLower, StructuredExtractionResponse response)
     {
-        if (messageLower.Contains("mañana"))
-        {
-            response.ExtractedFields.Add(new ExtractedField
-            {
-                FieldName = "DesiredDate",
-                Value = DateOnly.FromDateTime(DateTime.Now.AddDays(1)).ToString("yyyy-MM-dd"),
-                FieldType = FieldType.Date,
-                Confidence = 0.9,
-                Reasoning = "Interpretación de 'mañana'",
-                SourceText = "mañana"
-            });
-        }
+        // Evitar duplicar si el LLM ya extrajo fecha
+        if (response.ExtractedFields.Any(f => f.FieldName == "DesiredDate")) return;
+
+        var today = DateOnly.FromDateTime(DateTime.Now);
+
+        if (messageLower.Contains("pasado mañana") || messageLower.Contains("pasado manana"))
+            AddDate(response, today.AddDays(2), "pasado mañana");
+        else if (messageLower.Contains("mañana") || messageLower.Contains("manana"))
+            AddDate(response, today.AddDays(1), "mañana");
         else if (messageLower.Contains("hoy"))
+            AddDate(response, today, "hoy");
+        else
+            TryExtractWeekday(messageLower, response);
+    }
+
+    private static void AddDate(StructuredExtractionResponse response, DateOnly date, string source)
+    {
+        response.ExtractedFields.Add(new ExtractedField
         {
+            FieldName  = "DesiredDate",
+            Value      = date.ToString("yyyy-MM-dd"),
+            FieldType  = FieldType.Date,
+            Confidence = 0.9
+        });
+    }
+
+    private static void TryExtractWeekday(string messageLower, StructuredExtractionResponse response)
+    {
+        var days = new Dictionary<string, DayOfWeek>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["lunes"]     = DayOfWeek.Monday,
+            ["martes"]    = DayOfWeek.Tuesday,
+            ["miércoles"] = DayOfWeek.Wednesday,
+            ["miercoles"] = DayOfWeek.Wednesday,
+            ["jueves"]    = DayOfWeek.Thursday,
+            ["viernes"]   = DayOfWeek.Friday,
+            ["sábado"]    = DayOfWeek.Saturday,
+            ["sabado"]    = DayOfWeek.Saturday,
+            ["domingo"]   = DayOfWeek.Sunday
+        };
+
+        foreach (var (name, dow) in days)
+        {
+            if (!messageLower.Contains(name)) continue;
+
+            var next = NextWeekday(DateTime.Now, dow);
             response.ExtractedFields.Add(new ExtractedField
             {
-                FieldName = "DesiredDate",
-                Value = DateOnly.FromDateTime(DateTime.Now).ToString("yyyy-MM-dd"),
-                FieldType = FieldType.Date,
-                Confidence = 0.9,
-                Reasoning = "Interpretación de 'hoy'",
-                SourceText = "hoy"
+                FieldName  = "DesiredDate",
+                Value      = DateOnly.FromDateTime(next).ToString("yyyy-MM-dd"),
+                FieldType  = FieldType.Date,
+                Confidence = 0.8
             });
+            break;
         }
+    }
+
+    private static DateTime NextWeekday(DateTime from, DayOfWeek target)
+    {
+        var daysUntil = ((int)target - (int)from.DayOfWeek + 7) % 7;
+        return from.AddDays(daysUntil == 0 ? 7 : daysUntil);
     }
 
     private static void ExtractTimes(string userMessage, StructuredExtractionResponse response)
     {
-        // Patrón para horas PM (3pm, 3 de la tarde, etc.)
-        var timeMatch = Regex.Match(userMessage, @"\b(\d{1,2})\s*(?:pm|de la tarde|de la noche)\b", RegexOptions.IgnoreCase);
-        if (timeMatch.Success && int.TryParse(timeMatch.Groups[1].Value, out var hour))
+        if (response.ExtractedFields.Any(f => f.FieldName == "DesiredTime")) return;
+
+        // Hora PM: "3pm", "3 de la tarde"
+        var pmMatch = Regex.Match(userMessage, @"\b(\d{1,2})\s*(?:pm|de la tarde|de la noche)\b", RegexOptions.IgnoreCase);
+        if (pmMatch.Success && int.TryParse(pmMatch.Groups[1].Value, out var hour))
         {
-            var hour24 = hour == 12 ? 12 : hour + 12;
+            var h24 = hour == 12 ? 12 : (hour < 12 ? hour + 12 : hour);
             response.ExtractedFields.Add(new ExtractedField
             {
-                FieldName = "DesiredTime",
-                Value = $"{hour24:D2}:00",
-                FieldType = FieldType.Time,
-                Confidence = 0.85,
-                Reasoning = "Extracción regex: hora PM",
-                SourceText = timeMatch.Value
+                FieldName  = "DesiredTime",
+                Value      = $"{h24:D2}:00",
+                FieldType  = FieldType.Time,
+                Confidence = 0.85
             });
+            return;
         }
 
-        // Patrón para formato 24h (15:00, 15:30, etc.)
-        var time24Match = Regex.Match(userMessage, @"\b(\d{1,2}):(\d{2})\b");
-        if (time24Match.Success && 
-            int.TryParse(time24Match.Groups[1].Value, out var h24) && 
-            int.TryParse(time24Match.Groups[2].Value, out var m24) &&
-            h24 >= 0 && h24 < 24 && m24 >= 0 && m24 < 60)
+        // Hora AM: "9am", "9 de la mañana"
+        var amMatch = Regex.Match(userMessage, @"\b(\d{1,2})\s*(?:am|de la mañana|de la manana)\b", RegexOptions.IgnoreCase);
+        if (amMatch.Success && int.TryParse(amMatch.Groups[1].Value, out var hourAm))
+        {
+            var h24 = hourAm == 12 ? 0 : hourAm;
+            response.ExtractedFields.Add(new ExtractedField
+            {
+                FieldName  = "DesiredTime",
+                Value      = $"{h24:D2}:00",
+                FieldType  = FieldType.Time,
+                Confidence = 0.85
+            });
+            return;
+        }
+
+        // Formato 24h: "15:00", "9:30"
+        var h24Match = Regex.Match(userMessage, @"\b(\d{1,2}):(\d{2})\b");
+        if (h24Match.Success
+            && int.TryParse(h24Match.Groups[1].Value, out var hh)
+            && int.TryParse(h24Match.Groups[2].Value, out var mm)
+            && hh is >= 0 and < 24 && mm is >= 0 and < 60)
         {
             response.ExtractedFields.Add(new ExtractedField
             {
-                FieldName = "DesiredTime",
-                Value = $"{h24:D2}:{m24:D2}",
-                FieldType = FieldType.Time,
-                Confidence = 0.9,
-                Reasoning = "Extracción regex: formato 24h",
-                SourceText = time24Match.Value
+                FieldName  = "DesiredTime",
+                Value      = $"{hh:D2}:{mm:D2}",
+                FieldType  = FieldType.Time,
+                Confidence = 0.9
             });
         }
     }
 
-    private static FieldType MapAttributeTypeToFieldType(AttributeType attributeType)
+    private static FieldType MapAttributeType(AttributeType t) => t switch
     {
-        return attributeType switch
-        {
-            AttributeType.Text => FieldType.Text,
-            AttributeType.Number => FieldType.Number,
-            AttributeType.Date => FieldType.Date,
-            AttributeType.Time => FieldType.Time,
-            AttributeType.Email => FieldType.Email,
-            _ => FieldType.Text
-        };
-    }
+        AttributeType.Number => FieldType.Number,
+        AttributeType.Date   => FieldType.Date,
+        AttributeType.Time   => FieldType.Time,
+        AttributeType.Email  => FieldType.Email,
+        _                    => FieldType.Text
+    };
 }

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
@@ -260,7 +260,7 @@ Responde SOLO con el nombre de la intención, sin explicaciones.",
                         true
                     },
                     {
-                        7, // ContextExtractionPrompt
+                        8, // ContextExtractionPrompt
                         @"Analiza el siguiente mensaje del cliente y realiza DOS tareas:
 
 TAREA 1 - CLASIFICAR INTENCIÓN:

@@ -2,18 +2,19 @@ namespace MimosBabySpa.Application.Services;
 
 /// <summary>
 /// Servicio para calcular disponibilidad de forma determinística.
-/// Toda la lógica de negocio sobre capacidad y conflictos está aquí, NO en el modelo.
+/// La duración del servicio se obtiene directamente del catálogo (tabla Services),
+/// no se recibe como parámetro — el llamador no tiene por qué conocerla.
 /// </summary>
 public interface IAvailabilityService
 {
     /// <summary>
-    /// Verifica disponibilidad. Con hora: revisa ese slot. Sin hora: consulta el horario del negocio y revisa cada hora abierta (empleado + recursos).
+    /// Verifica disponibilidad. Con hora: revisa ese slot. Sin hora: consulta el horario del
+    /// negocio y devuelve todos los slots disponibles (empleado + recursos verificados).
     /// </summary>
     Task<AvailabilityResult> CheckAvailabilityAsync(
         Guid businessId,
         string service,
         DateTime date,
         TimeSpan? time,
-        int? durationMinutes,
         CancellationToken cancellationToken = default);
 }

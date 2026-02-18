@@ -13,10 +13,8 @@ public interface IUnitOfWork : IDisposable
     IReservationRepository Reservations { get; }
     IServiceRepository Services { get; }
     IBusinessResourceRepository BusinessResources { get; }
-    IServiceCoexistenceRuleRepository ServiceCoexistenceRules { get; }
     IEmployeeRepository Employees { get; }
     IEmployeeServiceRepository EmployeeServices { get; }
-    IReservationMetadataRepository ReservationMetadata { get; }
     IConversationStateRepository ConversationStates { get; }
     
     // Repositorios de IA Vendedor

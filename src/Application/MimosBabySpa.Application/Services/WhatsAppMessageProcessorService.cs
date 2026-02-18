@@ -24,134 +24,126 @@ public class WhatsAppMessageProcessorService : IWhatsAppMessageProcessorService
         ILogger<WhatsAppMessageProcessorService> logger)
     {
         _conversationService = conversationService;
-        _messageService = messageService;
-        _leadService = leadService;
-        _whatsAppService = whatsAppService;
-        _orchestrator = orchestrator;
-        _blobStorageService = blobStorageService;
-        _logger = logger;
+        _messageService      = messageService;
+        _leadService         = leadService;
+        _whatsAppService     = whatsAppService;
+        _orchestrator        = orchestrator;
+        _blobStorageService  = blobStorageService;
+        _logger              = logger;
     }
 
-    public async Task<string?> VerifyWebhookAsync(string mode, string token, string challenge)
+    public Task<string?> VerifyWebhookAsync(string mode, string token, string challenge)
     {
-        var isValid = await _whatsAppService.VerifyWebhookAsync(mode, token, challenge);
-        return isValid ? challenge : null;
+        return _whatsAppService.VerifyWebhookAsync(mode, token, challenge)
+            .ContinueWith(t => t.Result ? challenge : (string?)null);
     }
 
-    public async Task ProcessIncomingMessageAsync(Guid businessId, string userNumber, string messageText, string? customerName = null)
+    /// <summary>
+    /// Procesa un mensaje entrante de WhatsApp.
+    ///
+    /// ORDEN deliberado:
+    ///   1. Obtener/crear conversación y lead.
+    ///   2. Procesar con el orquestador (historial NO incluye el mensaje actual porque aún no se guardó).
+    ///   3. Guardar mensaje del usuario y respuesta del bot — UNA SOLA VEZ cada uno.
+    ///   4. Actualizar lead basado en ReservationCreated (dato determinístico, no parseo de texto).
+    ///   5. Enviar respuesta al usuario.
+    ///
+    /// Con este orden el LLM nunca ve el mensaje actual duplicado en el historial.
+    /// </summary>
+    public async Task ProcessIncomingMessageAsync(
+        Guid businessId,
+        string userNumber,
+        string messageText,
+        string? customerName = null)
     {
-        _logger.LogDebug("Procesando mensaje de {UserNumber} en negocio {BusinessId}: {Message}", userNumber, businessId, messageText);
+        _logger.LogDebug(
+            "Procesando mensaje de {UserNumber} en negocio {BusinessId}: {Message}",
+            userNumber, businessId, messageText);
 
-        // 1. Obtener o crear conversación
+        // 1. Obtener/crear conversación y lead
         var conversation = await _conversationService.GetOrCreateConversationAsync(businessId, userNumber, customerName);
+        var lead         = await _leadService.GetOrCreateLeadAsync(businessId, userNumber, customerName);
 
-        // 2. Obtener o crear lead
-        var lead = await _leadService.GetOrCreateLeadAsync(businessId, userNumber, customerName);
-
-        // 3. Guardar mensaje del usuario
-        await _messageService.SaveMessageAsync(conversation.ConversationId, "User", messageText, "FollowUp");
-
-        // 4. Procesar mensaje con IA Vendedor (Orquestador)
-        // El orquestador tiene manejo de errores interno y retorna respuesta segura
-        // Pasar ConversationId como parámetro único para todo el flujo
-        var agentResponse = await _orchestrator.ProcessMessageAsync(
+        // 2. Procesar con el orquestador
+        //    El historial que carga el orquestador NO incluye el mensaje actual (no se guardó aún).
+        //    El mensaje se añade explícitamente como último rol "user" dentro del orquestador.
+        var result = await _orchestrator.ProcessMessageAsync(
             conversation.ConversationId,
             businessId,
             userNumber,
             messageText);
 
-        // 5. Guardar respuesta del bot
-        await _messageService.SaveMessageAsync(conversation.ConversationId, "Bot", agentResponse, "FollowUp");
+        // 3. Guardar mensajes — UNA VEZ cada uno, DESPUÉS del orquestador
+        await _messageService.SaveMessageAsync(conversation.ConversationId, "User", messageText);
+        await _messageService.SaveMessageAsync(conversation.ConversationId, "Bot", result.Response);
 
-        // 6. Actualizar contexto de conversación (para compatibilidad)
-        await UpdateConversationContextAsync(conversation, messageText, "FollowUp", lead);
+        // 4. Actualizar lead con dato determinístico (no parseo de texto)
+        await UpdateLeadStatusAsync(lead, result.ReservationCreated);
 
-        // 7. Enviar respuesta (con soporte para imágenes si aplica)
-        await SendResponseAsync(userNumber, agentResponse, conversation);
-
-        // 8. Actualizar estado del lead si es necesario
-        await UpdateLeadStatusAsync(lead, agentResponse);
+        // 5. Enviar respuesta (con imagen si aplica)
+        await SendResponseAsync(userNumber, result.Response, conversation);
     }
 
-
-    private async Task UpdateConversationContextAsync(Conversation conversation, string messageText, string intent, Lead lead)
-    {
-        // Actualizar LastMessage y LastIntent en Conversation (para compatibilidad)
-        await _conversationService.UpdateConversationContextAsync(
-            conversation.ConversationId,
-            messageText,
-            intent
-        );
-    }
+    // ─────────────────────────────────────────────────────────────────
+    // Envío de respuesta (texto o imagen según contexto)
+    // ─────────────────────────────────────────────────────────────────
 
     private async Task SendResponseAsync(string userNumber, string response, Conversation conversation)
     {
-        // Intentar detectar si hay un plan mencionado en la respuesta para enviar imagen
-        // Buscar directamente en la respuesta del agente
         var planName = ExtractPlanNameFromResponse(response);
-        
+
         if (!string.IsNullOrEmpty(planName))
         {
-            var imageFileName = await GetPlanImageFileNameAsync(planName, conversation.BusinessId);
-            if (!string.IsNullOrEmpty(imageFileName))
+            var imageFileName = BuildPlanImageFileName(planName);
+            var imageUrl      = await _blobStorageService.GetImageUrlAsync(imageFileName);
+
+            if (!string.IsNullOrEmpty(imageUrl))
             {
-                var imageUrl = await _blobStorageService.GetImageUrlAsync(imageFileName);
-                if (!string.IsNullOrEmpty(imageUrl))
-                {
-                    await _whatsAppService.SendImageMessageAsync(userNumber, imageUrl, response);
-                    return;
-                }
+                await _whatsAppService.SendImageMessageAsync(userNumber, imageUrl, response);
+                return;
             }
         }
 
-        // Enviar solo texto
         await _whatsAppService.SendTextMessageAsync(userNumber, response);
     }
 
+    /// <summary>
+    /// Extrae el nombre de un plan de la respuesta del bot para acompañarlo con imagen.
+    /// Multitenant: busca el patrón genérico "Plan X" sin depender de nombres específicos.
+    /// </summary>
     private string? ExtractPlanNameFromResponse(string response)
     {
-        // Buscar patrones como "Plan Marineritos", "Plan Aventuras Marinas", etc. en la respuesta
-        var planMatch = System.Text.RegularExpressions.Regex.Match(
-            response, 
-            @"Plan\s+([A-Za-záéíóúñÁÉÍÓÚÑ\s]+)", 
+        var match = System.Text.RegularExpressions.Regex.Match(
+            response,
+            @"\bPlan\s+([A-Za-záéíóúñÁÉÍÓÚÑ\s]+)",
             System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-        
-        if (planMatch.Success && planMatch.Groups.Count > 0)
-        {
-            return planMatch.Groups[0].Value.Trim(); // Retornar "Plan Marineritos" completo
-        }
-        
-        return null;
+
+        return match.Success ? match.Groups[0].Value.Trim() : null;
     }
 
-
-    private Task<string> GetPlanImageFileNameAsync(string planName, Guid businessId)
+    private static string BuildPlanImageFileName(string planName)
     {
-        if (string.IsNullOrEmpty(planName))
-        {
-            return Task.FromResult("plan-default.jpg");
-        }
+        var normalized = System.Text.RegularExpressions.Regex
+            .Replace(planName, @"[^a-zA-Z0-9-]", "")
+            .ToLowerInvariant();
 
-        // Convertir nombre del plan a nombre de archivo de forma genérica
-        // Ejemplo: "Plan Marineritos" -> "plan-marineritos.jpg"
-        var normalizedPlanName = System.Text.RegularExpressions.Regex.Replace(planName, @"[^a-zA-Z0-9-]", "").ToLower();
-        return Task.FromResult($"plan-{normalizedPlanName}.jpg");
+        return $"plan-{normalized}.jpg";
     }
 
-    private async Task UpdateLeadStatusAsync(Lead lead, string agentResponse)
-    {
-        // Detectar si la respuesta indica una reserva exitosa
-        var reservationKeywords = new[] { "reserva confirmada", "reserva creada", "reservación exitosa", "confirmada" };
-        var isReservationConfirmed = reservationKeywords.Any(keyword => 
-            agentResponse.Contains(keyword, StringComparison.OrdinalIgnoreCase));
+    // ─────────────────────────────────────────────────────────────────
+    // Actualización del lead — basada en dato determinístico
+    // ─────────────────────────────────────────────────────────────────
 
-        var newStatus = isReservationConfirmed ? "Closed" : "Contacted";
+    private async Task UpdateLeadStatusAsync(Lead lead, bool reservationCreated)
+    {
+        var newStatus = reservationCreated ? "Closed" : "Contacted";
 
         if (newStatus != lead.Status)
         {
+            _logger.LogInformation(
+                "Actualizando Lead {LeadId}: {OldStatus} → {NewStatus}",
+                lead.LeadId, lead.Status, newStatus);
             await _leadService.UpdateLeadAsync(lead.LeadId, status: newStatus);
         }
     }
-
-
 }

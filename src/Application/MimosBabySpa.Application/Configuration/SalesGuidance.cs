@@ -49,19 +49,4 @@ public class SalesGuidance
         };
     }
 
-    /// <summary>
-    /// Crea una configuración típica para negocios orientados a bebés (como MimosBabySpa).
-    /// </summary>
-    public static SalesGuidance ForBabySpa()
-    {
-        return new SalesGuidance
-        {
-            CriticalAttributes = new List<string> { "BabyAge" },
-            GuidanceText = @"Antes de recomendar un plan, valida que conoces la edad del bebé.
-La edad es clave para elegir el servicio correcto y garantizar la seguridad del bebé.",
-            ExampleQuestion = "Para poder recomendarte el plan ideal, ¿me cuentas cuántos meses tiene tu bebé? 😊",
-            AttributeUnit = "meses",
-            IsEnabled = true
-        };
-    }
 }

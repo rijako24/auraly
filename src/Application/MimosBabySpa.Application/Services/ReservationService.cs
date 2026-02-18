@@ -143,26 +143,6 @@ public class ReservationService : IReservationService
             var createdReservation = await _unitOfWork.Reservations.CreateAsync(reservation);
             await _unitOfWork.SaveChangesAsync(cancellationToken);
 
-            // PASO 3: Guardar metadata en ReservationMetadata si existe
-            if (metadata != null && metadata.Any())
-            {
-                var metadataEntities = metadata.Select(kvp => new ReservationMetadata
-                {
-                    ReservationMetadataId = Guid.NewGuid(),
-                    ReservationId = createdReservation.ReservationId,
-                    Field = kvp.Key,
-                    Value = kvp.Value
-                }).ToList();
-
-                await _unitOfWork.ReservationMetadata.CreateBatchAsync(metadataEntities);
-                await _unitOfWork.SaveChangesAsync(cancellationToken);
-
-                _logger.LogInformation(
-                    "Metadata guardada para la reserva {ReservationId}: {MetadataCount} campos",
-                    createdReservation.ReservationId,
-                    metadataEntities.Count);
-            }
-
             // Asegurar que Service esté cargado para logging y operaciones posteriores
             if (createdReservation.Service == null)
             {

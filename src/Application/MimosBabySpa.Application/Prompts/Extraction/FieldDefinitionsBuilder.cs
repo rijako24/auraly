@@ -4,79 +4,52 @@ using System.Text;
 namespace MimosBabySpa.Application.Prompts.Extraction;
 
 /// <summary>
-/// Constructor de definiciones de campos disponibles para extracción.
-/// Incluye campos core y atributos de negocio.
+/// Genera la tabla compacta de campos disponibles para el prompt de extracción.
+///
+/// Multitenant: los servicios y atributos vienen del LoadedBusinessContext, nunca hardcodeados.
+/// Formato tabla → menos tokens que prosa, más fácil de procesar por el LLM.
 /// </summary>
 public class FieldDefinitionsBuilder
 {
-    /// <summary>
-    /// Construye la sección de campos disponibles.
-    /// </summary>
     public string Build(LoadedBusinessContext context)
     {
         var now = DateTime.Now;
         var tomorrow = now.AddDays(1);
-
         var sb = new StringBuilder();
-        sb.AppendLine("## CAMPOS DISPONIBLES:");
-        sb.AppendLine();
-        sb.AppendLine("### 1️⃣ CAMPOS CORE (siempre disponibles):");
-        sb.AppendLine();
-        sb.AppendLine("### 🚨 CAMPO CRÍTICO #1: CustomerName");
-        sb.AppendLine("- **CustomerName**: Nombre completo del cliente (quien hace la reserva)");
-        sb.AppendLine("  **PATRONES EXACTOS A DETECTAR:**");
-        sb.AppendLine("  • 'Me llamo X' → CustomerName");
-        sb.AppendLine("  • 'Mi nombre es X' → CustomerName");
-        sb.AppendLine("  • 'Soy X' → CustomerName");
-        sb.AppendLine("  ⚠️ NO confundir con 'Mi bebé se llama X' (eso es Attribute:BabyName)");
-        sb.AppendLine("  ✅ **SIEMPRE extraer CustomerName cuando el usuario se identifica**");
-        sb.AppendLine();
-        sb.AppendLine();
-        sb.AppendLine("- **Phone**: Número de teléfono del cliente");
-        sb.AppendLine("  Formatos: \"555-1234\", \"5551234567\", \"+52 555 123 4567\"");
-        sb.AppendLine();
-        sb.AppendLine("- **Email**: Correo electrónico del cliente");
-        sb.AppendLine("  Formato: \"usuario@dominio.com\"");
-        sb.AppendLine();
-        sb.AppendLine($"- **Service**: Nombre EXACTO del servicio (debe coincidir con uno disponible)");
-        sb.AppendLine($"  ⚠️ CRÍTICO: SOLO usa servicios de esta lista, NO inventes otros");
-        sb.AppendLine($"  Válidos: {string.Join(", ", context.Services.Select(s => $"\"{s.Name}\""))}");
-        sb.AppendLine();
-        sb.AppendLine($"- **DesiredDate**: Fecha en formato YYYY-MM-DD");
-        sb.AppendLine($"  Hoy: {now:yyyy-MM-dd} | Mañana: {tomorrow:yyyy-MM-dd}");
-        sb.AppendLine($"  ⚠️ IMPORTANTE: Si el usuario pregunta por disponibilidad/horarios CON una fecha,");
-        sb.AppendLine($"  EXTRAE la fecha incluso si está en la misma pregunta");
-        sb.AppendLine($"  Ejemplos:");
-        sb.AppendLine($"  • 'qué horarios tienes mañana' → DesiredDate = '{tomorrow:yyyy-MM-dd}'");
-        sb.AppendLine($"  • 'hay cupo para hoy' → DesiredDate = '{now:yyyy-MM-dd}'");
-        sb.AppendLine();
-        sb.AppendLine("- **DesiredTime**: Hora en formato HH:MM (24h)");
-        sb.AppendLine("  Ejemplos: \"10:00\", \"15:30\", \"09:00\"");
-        sb.AppendLine();
-        sb.AppendLine("### 2️⃣ ATRIBUTOS DEL NEGOCIO (configurados):");
-        sb.AppendLine("**IMPORTANTE:** Para atributos de negocio, SIEMPRE usa el prefijo \"Attribute:\" en el field_name.");
-        sb.AppendLine();
-        sb.AppendLine(BuildAttributesSchema(context.Attributes));
 
-        return sb.ToString();
-    }
+        sb.AppendLine("## Campos disponibles:");
+        sb.AppendLine();
+        sb.AppendLine("### Campos core:");
+        sb.AppendLine("| Campo | Tipo | Formato / Valores válidos |");
+        sb.AppendLine("|-------|------|--------------------------|");
+        sb.AppendLine("| CustomerName | Text | Nombre de quien reserva (no del bebé/mascota/etc.) |");
+        sb.AppendLine("| Phone | Phone | Solo lectura — provisto por el canal |");
+        sb.AppendLine("| Email | Email | usuario@dominio.com |");
 
-    private string BuildAttributesSchema(Dictionary<string, AttributeDefinition> attributes)
-    {
-        if (!attributes.Any())
-            return "*(No hay atributos personalizados configurados para este negocio)*";
+        // Servicios — dinámicos por tenant
+        var serviceNames = string.Join(", ", context.Services.Select(s => $"\"{s.Name}\""));
+        sb.AppendLine($"| Service | Service | Exacto: {serviceNames} |");
 
-        var sb = new StringBuilder();
-        foreach (var attr in attributes)
+        sb.AppendLine($"| DesiredDate | Date | YYYY-MM-DD · hoy={now:yyyy-MM-dd} · mañana={tomorrow:yyyy-MM-dd} |");
+        sb.AppendLine("| DesiredTime | Time | HH:MM (24h) · ejemplos: 09:00, 14:30 |");
+
+        // Atributos de negocio — dinámicos por tenant
+        if (context.Attributes.Any())
         {
-            var required = attr.Value.IsRequired ? "**REQUERIDO**" : "Opcional";
-            var fieldName = $"Attribute:{attr.Key}";
-            sb.AppendLine($"- **{fieldName}** ({attr.Value.Type}) - {required}");
-            sb.AppendLine($"  Nombre interno: {attr.Key}");
-            sb.AppendLine($"  Descripción: {attr.Value.Description ?? "N/A"}");
-            if (!string.IsNullOrEmpty(attr.Value.ValidationPattern))
-                sb.AppendLine($"  Patrón: `{attr.Value.ValidationPattern}`");
             sb.AppendLine();
+            sb.AppendLine("### Atributos del negocio (prefijo \"Attribute:\"):");
+            sb.AppendLine("| Campo | Tipo | Requerido | Descripción |");
+            sb.AppendLine("|-------|------|-----------|-------------|");
+
+            foreach (var (key, def) in context.Attributes)
+            {
+                var required = def.IsRequired ? "Sí" : "No";
+                var desc = def.Description ?? key;
+                var pattern = !string.IsNullOrEmpty(def.ValidationPattern)
+                    ? $" · patrón: `{def.ValidationPattern}`"
+                    : string.Empty;
+                sb.AppendLine($"| Attribute:{key} | {def.Type} | {required} | {desc}{pattern} |");
+            }
         }
 
         return sb.ToString().TrimEnd();

@@ -3,6 +3,16 @@ using MimosBabySpa.Domain.Models;
 
 namespace MimosBabySpa.Application.LLM.Extraction;
 
+/// <summary>
+/// Valida la respuesta estructurada del LLM.
+///
+/// Diseño binario (valid/invalid) + confidence promediado:
+/// - Invalida si hay errores de FORMATO (fecha no parseable, hora no parseable, valor demasiado largo).
+/// - Invalida si confidence está fuera de rango [0,1].
+/// - ConversationalResponse vacía NO invalida la extracción (la respuesta la genera FASE 5).
+/// - Confidence = promedio de campos extraídos (no multiplicación cascada).
+/// - Sin campos extraídos = válido con confidence 1.0 (puede ser mensaje conversacional sin datos).
+/// </summary>
 public class ExtractionValidator : IExtractionValidator
 {
     private readonly ILogger<ExtractionValidator> _logger;
@@ -19,80 +29,74 @@ public class ExtractionValidator : IExtractionValidator
     {
         var result = new ValidationResult
         {
-            IsValid = true,
+            IsValid    = true,
             Confidence = 1.0,
-            Issues = new List<string>()
+            Issues     = new List<string>()
         };
 
-        // Validar respuesta conversacional no vacía
-        if (string.IsNullOrWhiteSpace(extraction.ConversationalResponse))
-        {
-            result.Issues.Add("ConversationalResponse está vacía");
-            result.Confidence *= 0.5;
-        }
-
-        // Validar confidence scores
         foreach (var field in extraction.ExtractedFields)
         {
+            // 1. Confidence en rango válido
             if (field.Confidence < 0.0 || field.Confidence > 1.0)
             {
-                result.Issues.Add($"Confidence score inválido para {field.FieldName}: {field.Confidence}");
                 result.IsValid = false;
+                result.Issues.Add($"Confidence fuera de rango [{field.FieldName}={field.Confidence:F2}]");
+                continue;
             }
 
-            if (field.Confidence < 0.5)
+            // 2. Formato correcto según field_type inferido del nombre
+            var inferredType = InferFieldType(field.FieldName, field.Value);
+            if (inferredType == FieldType.Date && !DateOnly.TryParse(field.Value, out _))
             {
-                result.Issues.Add($"Confidence muy bajo para {field.FieldName}: {field.Confidence:F2}");
-                result.Confidence *= 0.8;
-            }
-        }
-
-        // Validar valores estructurados (no frases largas)
-        foreach (var field in extraction.ExtractedFields)
-        {
-            if (field.Value.Split(' ').Length > 5)
-            {
-                result.Issues.Add($"Valor parece ser frase en vez de dato estructurado: {field.FieldName} = '{field.Value}'");
-                result.Confidence *= 0.7;
-            }
-        }
-
-        // Validar fechas
-        var dateFields = extraction.ExtractedFields.Where(f => f.FieldType == FieldType.Date);
-        foreach (var field in dateFields)
-        {
-            if (!DateOnly.TryParse(field.Value, out _))
-            {
-                result.Issues.Add($"Fecha inválida en {field.FieldName}: {field.Value}");
                 result.IsValid = false;
+                result.Issues.Add($"Fecha inválida [{field.FieldName}='{field.Value}']");
+                continue;
             }
-        }
-
-        // Validar horas
-        var timeFields = extraction.ExtractedFields.Where(f => f.FieldType == FieldType.Time);
-        foreach (var field in timeFields)
-        {
-            if (!TimeOnly.TryParse(field.Value, out _))
+            if (inferredType == FieldType.Time && !TimeOnly.TryParse(field.Value, out _))
             {
-                result.Issues.Add($"Hora inválida en {field.FieldName}: {field.Value}");
                 result.IsValid = false;
+                result.Issues.Add($"Hora inválida [{field.FieldName}='{field.Value}']");
+                continue;
+            }
+
+            // 3. Valor estructurado (no frase larga)
+            if (field.Value.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length > ExtractionConstants.MaxValueWordCount)
+            {
+                result.IsValid = false;
+                result.Issues.Add($"Valor parece frase, no dato estructurado [{field.FieldName}='{field.Value}']");
             }
         }
 
-        // Calcular confianza final
-        if (extraction.ExtractedFields.Any())
-        {
-            result.Confidence = Math.Max(0.0, result.Confidence * extraction.Metadata.AverageConfidence);
-        }
+        // Confidence = promedio simple de campos (si hay). Sin campos → 1.0 (válido por defecto).
+        result.Confidence = extraction.ExtractedFields.Any()
+            ? extraction.ExtractedFields.Average(f => f.Confidence)
+            : 1.0;
 
         if (result.Issues.Any())
-        {
-            _logger.LogWarning(
-                "Validación encontró {IssueCount} problema(s): {Issues}",
-                result.Issues.Count,
-                string.Join("; ", result.Issues));
-        }
+            _logger.LogWarning("Validación: {Count} problema(s): {Issues}",
+                result.Issues.Count, string.Join("; ", result.Issues));
 
         return Task.FromResult(result);
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // InferFieldType (duplicado del SmartExtractionService para desacoplar)
+    // ─────────────────────────────────────────────────────────────────
+
+    private static FieldType InferFieldType(string fieldName, string value)
+    {
+        var lower = fieldName.ToLowerInvariant();
+
+        if (lower.Contains("date") || lower.Contains("fecha")) return FieldType.Date;
+        if (lower.Contains("time") || lower.Contains("hora"))  return FieldType.Time;
+        if (lower.Contains("email") || lower.Contains("correo")) return FieldType.Email;
+        if (lower.Contains("phone") || lower.Contains("telefono") || lower.Contains("celular")) return FieldType.Phone;
+        if (lower.Contains("service") || lower.Contains("servicio")) return FieldType.Service;
+
+        // Infiere por valor
+        if (System.Text.RegularExpressions.Regex.IsMatch(value, @"^\d{4}-\d{2}-\d{2}$")) return FieldType.Date;
+        if (System.Text.RegularExpressions.Regex.IsMatch(value, @"^\d{2}:\d{2}$"))        return FieldType.Time;
+
+        return FieldType.Text;
     }
 }

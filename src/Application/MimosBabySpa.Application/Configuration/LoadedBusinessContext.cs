@@ -18,7 +18,6 @@ public class LoadedBusinessContext
     public List<ServiceInfo> Services { get; private set; } = null!;
     public Dictionary<string, AttributeDefinition> Attributes { get; private set; } = null!;
     public RequiredFieldsConfiguration RequiredFields { get; private set; } = null!;
-    public SalesGuidance SalesGuidance { get; private set; } = null!;
     public BusinessPersonality Personality { get; private set; } = null!;
 
     private readonly IUnitOfWork _unitOfWork;
@@ -71,11 +70,8 @@ public class LoadedBusinessContext
             _logger.LogDebug("Cargando Attributes...");
             Attributes = await LoadAttributesAsync(cancellationToken);
 
-            _logger.LogDebug("Cargando SalesGuidance...");
-            SalesGuidance = await LoadSalesGuidanceAsync(cancellationToken);
-
             _logger.LogDebug("Cargando Personality...");
-            Personality = LoadPersonalityFromBusiness();
+            Personality = await LoadPersonalityAsync(cancellationToken);
 
             // Construir RequiredFields basado en Attributes cargados
             RequiredFields = BuildRequiredFields();
@@ -330,86 +326,55 @@ public class LoadedBusinessContext
     }
 
     /// <summary>
-    /// Carga la configuración de guía de ventas desde BusinessConfiguration.
+    /// Carga la personalidad del asistente desde BusinessConfiguration key=Personality (0).
+    /// El valor almacenado puede ser:
+    /// - Texto libre → se asigna a SystemIdentityText para inyección directa en el system prompt.
+    /// - JSON estructurado → se deserializa en los campos tipados de BusinessPersonality.
     /// </summary>
-    private async Task<SalesGuidance> LoadSalesGuidanceAsync(CancellationToken cancellationToken)
+    private async Task<BusinessPersonality> LoadPersonalityAsync(CancellationToken cancellationToken)
     {
         try
         {
-            var config = await _unitOfWork.BusinessConfigurations.GetByBusinessIdAndKeyAsync(
-                BusinessId,
-                BusinessConfigurationKey.SalesGuidance);
+            var config = await _unitOfWork.BusinessConfigurations
+                .GetByBusinessIdAndKeyAsync(BusinessId, BusinessConfigurationKey.Personality);
 
             if (config == null || string.IsNullOrWhiteSpace(config.Value))
             {
-                _logger.LogDebug("No se encontró configuración de SalesGuidance, usando valor por defecto");
-                return SalesGuidance.Default();
-            }
-
-            var options = new JsonSerializerOptions
-            {
-                PropertyNameCaseInsensitive = true
-            };
-
-            var guidance = JsonSerializer.Deserialize<SalesGuidance>(config.Value, options);
-
-            if (guidance == null)
-            {
-                _logger.LogWarning("Deserialización de SalesGuidance retornó null");
-                return SalesGuidance.Default();
-            }
-
-            _logger.LogDebug(
-                "SalesGuidance cargada correctamente: {CriticalAttributesCount} atributos críticos, IsEnabled={IsEnabled}",
-                guidance.CriticalAttributes.Count,
-                guidance.IsEnabled);
-
-            return guidance;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error cargando SalesGuidance, usando valor por defecto");
-            return SalesGuidance.Default();
-        }
-    }
-
-    /// <summary>
-    /// Carga la personalidad del asistente desde Business.PersonalityJson.
-    /// Usa la entidad Business ya cargada en LoadBusinessInfoAsync.
-    /// </summary>
-    private BusinessPersonality LoadPersonalityFromBusiness()
-    {
-        try
-        {
-            if (_cachedBusiness == null || string.IsNullOrWhiteSpace(_cachedBusiness.PersonalityJson) || _cachedBusiness.PersonalityJson == "{}")
-            {
-                _logger.LogDebug("No se encontró configuración de personalidad, usando valor por defecto");
+                _logger.LogWarning(
+                    "No se encontró configuración de Personality (key=0) para BusinessId={BusinessId}. " +
+                    "El asistente usará identidad genérica.",
+                    BusinessId);
                 return BusinessPersonality.Default();
             }
 
-            var options = new JsonSerializerOptions
-            {
-                PropertyNameCaseInsensitive = true
-            };
+            var trimmed = config.Value.TrimStart();
 
-            var personality = JsonSerializer.Deserialize<BusinessPersonality>(_cachedBusiness.PersonalityJson, options);
+            // Texto libre → inyección directa en el system prompt sin parsear
+            if (!trimmed.StartsWith("{"))
+            {
+                _logger.LogDebug("Personality cargada como texto libre para BusinessId={BusinessId}", BusinessId);
+                return new BusinessPersonality { SystemIdentityText = config.Value };
+            }
+
+            // JSON estructurado → deserializar en campos tipados
+            var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+            var personality = JsonSerializer.Deserialize<BusinessPersonality>(config.Value, options);
 
             if (personality == null)
             {
-                _logger.LogWarning("Deserialización de Personality retornó null");
+                _logger.LogWarning("Deserialización de Personality retornó null para BusinessId={BusinessId}", BusinessId);
                 return BusinessPersonality.Default();
             }
 
             _logger.LogDebug(
-                "Personality cargada correctamente: AssistantName={AssistantName}, UseEmojis={UseEmojis}",
-                personality.AssistantName,
-                personality.UseEmojis);
+                "Personality cargada desde JSON estructurado: AssistantName={AssistantName} para BusinessId={BusinessId}",
+                personality.AssistantName, BusinessId);
 
             return personality;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error deserializando Personality, usando valor por defecto");
+            _logger.LogError(ex, "Error cargando Personality para BusinessId={BusinessId}", BusinessId);
             return BusinessPersonality.Default();
         }
     }
