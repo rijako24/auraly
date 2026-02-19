@@ -16,6 +16,8 @@ public interface IUnitOfWork : IDisposable
     IEmployeeRepository Employees { get; }
     IEmployeeServiceRepository EmployeeServices { get; }
     IConversationStateRepository ConversationStates { get; }
+    IServiceAddOnRuleRepository ServiceAddOnRules { get; }
+    IReservationAddOnRepository ReservationAddOns { get; }
     
     // Repositorios de IA Vendedor
     

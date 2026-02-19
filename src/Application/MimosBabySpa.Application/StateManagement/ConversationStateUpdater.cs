@@ -91,10 +91,16 @@ public class ConversationStateUpdater : IConversationStateUpdater
 
             case "AvailabilityConfirmed":
                 state.AvailabilityConfirmed = value;
-                if (!value)
-                    state.AvailableTimeSlots = null;
-                if (value && extraData != null)
+                // Siempre almacenar slots cuando extraData está presente: horarios del día (value=true)
+                // o alternativas cuando el solicitado no está disponible (value=false)
+                if (!string.IsNullOrEmpty(extraData))
                     state.AvailableTimeSlots = extraData;
+                else if (!value)
+                    state.AvailableTimeSlots = null;
+                break;
+
+            case "AddOnsOffered":
+                state.AddOnsOffered = value;
                 break;
 
             default:
@@ -114,6 +120,7 @@ public class ConversationStateUpdater : IConversationStateUpdater
     {
         state.AvailabilityConfirmed = false;
         state.ReservationConfirmed = false;
+        state.AddOnsOffered = false;
         state.AvailableTimeSlots = null;
         state.UpdatedAt = DateTime.UtcNow;
         state.Version++;
@@ -146,9 +153,10 @@ public class ConversationStateUpdater : IConversationStateUpdater
         {
             state.AvailabilityConfirmed = false;
             state.ReservationConfirmed = false;
+            state.AddOnsOffered = false;
             state.AvailableTimeSlots = null;
         }
-        return Ok($"Service = '{value}'" + (changed ? " (disponibilidad reseteada)" : ""));
+        return Ok($"Service = '{value}'" + (changed ? " (disponibilidad y add-ons reseteados)" : ""));
     }
 
     private static ApplyFieldResult ApplyDesiredDate(ConversationState state, string value)

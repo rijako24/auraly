@@ -46,4 +46,11 @@ public class FlowEvaluationResult
     /// Porcentaje de completitud (0-100)
     /// </summary>
     public int CompletenessPercentage { get; set; }
+
+    /// <summary>
+    /// Verdadero cuando el stage es ConfirmingBooking.
+    /// Por invariante del FlowEngine, ConfirmingBooking solo existe cuando todos los campos están completos.
+    /// </summary>
+    public bool IsReadyForConfirmation =>
+        CurrentStage == TransactionStage.ConfirmingBooking;
 }

@@ -21,6 +21,8 @@ public class UnitOfWork : IUnitOfWork
     private IEmployeeRepository? _employees;
     private IEmployeeServiceRepository? _employeeServices;
     private IConversationStateRepository? _conversationStates;
+    private IServiceAddOnRuleRepository? _serviceAddOnRules;
+    private IReservationAddOnRepository? _reservationAddOns;
 
     public UnitOfWork(ApplicationDbContext context)
     {
@@ -69,6 +71,11 @@ public class UnitOfWork : IUnitOfWork
     public IConversationStateRepository ConversationStates =>
         _conversationStates ??= new ConversationStateRepository(_context);
 
+    public IServiceAddOnRuleRepository ServiceAddOnRules =>
+        _serviceAddOnRules ??= new ServiceAddOnRuleRepository(_context);
+
+    public IReservationAddOnRepository ReservationAddOns =>
+        _reservationAddOns ??= new ReservationAddOnRepository(_context);
 
     public async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {

@@ -34,17 +34,6 @@ public static class ResponseInstructionsTemplate
         """;
 
     /// <summary>
-    /// Se incluye cuando el usuario seleccionó un horario pero aún no confirmó la reserva.
-    /// </summary>
-    public const string TimeSelectedInstructions = """
-
-        **El usuario seleccionó un horario:**
-        - Confirma el horario elegido.
-        - Pregunta EXPLÍCITAMENTE si desea confirmar la reserva.
-        - NO digas que "vas a confirmar" hasta que el usuario diga "sí".
-        """;
-
-    /// <summary>
     /// Se incluye cuando se creó la reserva exitosamente en este turno.
     /// </summary>
     public const string CreateReservationInstructions = """
@@ -59,10 +48,16 @@ public static class ResponseInstructionsTemplate
     /// </summary>
     public const string InformationQueryInstructions = """
 
-        **El usuario está explorando opciones/servicios:**
-        - Muestra los servicios disponibles de forma atractiva y contextualizada.
-        - NO presiones para reservar inmediatamente.
-        - Al finalizar, pregunta si hay algo más en lo que puedas ayudar o si le gustaría reservar.
+        **El usuario está explorando opciones/servicios — modo vendedor activo:**
+        - Si el servicio preguntado tiene variante de mayor tier (marcada con ⭐ "RECOMIENDA ESTA PRIMERO"):
+          → Presenta PRIMERO esa variante como "la experiencia más completa".
+          → Destaca qué incluye de más y enmarca la diferencia de precio como una inversión, no un gasto.
+          → Menciona la alternativa base al final: "También tenemos [alternativa] a $X, una opción más accesible."
+        - Si el usuario pregunta por planes en general o por la edad del bebé:
+          → Recorre los grupos de mayor a menor tier, presentando primero el recomendado de cada grupo.
+        - Usa la descripción del servicio para construir argumentos de venta concretos y emocionales.
+        - NO menciones precios de forma abrupta — primero el valor, luego el precio.
+        - NO presiones para reservar inmediatamente; termina con una pregunta abierta que invite a continuar.
         """;
 
     /// <summary>
@@ -92,5 +87,17 @@ public static class ResponseInstructionsTemplate
 
         **Hay información ambigua que necesita clarificación:**
         Haz UNA pregunta concreta para resolver la ambigüedad antes de continuar.
+        """;
+
+    /// <summary>
+    /// Se incluye cuando el cliente ya eligió un servicio principal y hay add-ons compatibles con su categoría.
+    /// Solo para servicios de categoría Plan (u otras con add-ons configurados).
+    /// </summary>
+    public const string ServiceSelectedOfferAddOnsInstructions = """
+
+        **El cliente ya eligió un servicio principal con add-ons disponibles:**
+        Ofrece los add-ons listados en el catálogo (compatibles con este servicio) de forma natural.
+        Pregunta si desea agregar alguno antes de continuar con fecha/hora.
+        No presiones; los add-ons son opcionales.
         """;
 }

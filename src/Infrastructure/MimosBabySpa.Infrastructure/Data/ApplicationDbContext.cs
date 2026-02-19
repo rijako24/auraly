@@ -21,6 +21,9 @@ public class ApplicationDbContext : DbContext
     public DbSet<ConversationContext> ConversationContexts { get; set; }
     public DbSet<Reservation> Reservations { get; set; }
     public DbSet<Service> Services { get; set; }
+    public DbSet<ServiceBundleItem> ServiceBundleItems { get; set; }
+    public DbSet<ServiceAddOnRule> ServiceAddOnRules { get; set; }
+    public DbSet<ReservationAddOn> ReservationAddOns { get; set; }
     public DbSet<BusinessResource> BusinessResources { get; set; }
     public DbSet<ServiceResourceUsage> ServiceResourceUsages { get; set; }
     public DbSet<Employee> Employees { get; set; }
@@ -242,12 +245,73 @@ public class ApplicationDbContext : DbContext
             entity.Property(e => e.DurationMinutes).IsRequired();
             entity.Property(e => e.Price).IsRequired().HasPrecision(18, 2); // Precisión para valores monetarios
             entity.Property(e => e.IsActive).IsRequired().HasDefaultValue(true);
+            entity.Property(e => e.Category).IsRequired()
+                  .HasDefaultValue(Domain.Enums.ServiceCategory.Otro).HasConversion<int>();
+            entity.Property(e => e.Tier).IsRequired().HasDefaultValue(Domain.Enums.ServiceTier.Base)
+                  .HasConversion<int>();
+            entity.Property(e => e.ServiceType).IsRequired()
+                  .HasDefaultValue(Domain.Enums.ServiceType.Standard).HasConversion<int>();
             entity.HasOne(e => e.Business)
                   .WithMany()
                   .HasForeignKey(e => e.BusinessId)
                   .OnDelete(DeleteBehavior.Restrict);
             entity.HasIndex(e => e.BusinessId);
-            entity.HasIndex(e => new { e.BusinessId, e.ServiceName }).IsUnique(); // Un servicio único por nombre por negocio
+            entity.HasIndex(e => new { e.BusinessId, e.Category });
+            entity.HasIndex(e => new { e.BusinessId, e.ServiceName }).IsUnique();
+        });
+
+        // ServiceAddOnRule configuration
+        modelBuilder.Entity<ServiceAddOnRule>(entity =>
+        {
+            entity.HasKey(e => e.ServiceAddOnRuleId);
+            entity.Property(e => e.DisplayOrder).IsRequired().HasDefaultValue(1);
+            entity.HasOne(e => e.Business)
+                  .WithMany()
+                  .HasForeignKey(e => e.BusinessId)
+                  .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.AddOnService)
+                  .WithMany()
+                  .HasForeignKey(e => e.AddOnServiceId)
+                  .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.CompatibleService)
+                  .WithMany()
+                  .HasForeignKey(e => e.CompatibleServiceId)
+                  .OnDelete(DeleteBehavior.Restrict);
+            entity.HasIndex(e => e.BusinessId);
+            entity.HasIndex(e => new { e.BusinessId, e.AddOnServiceId, e.CompatibleServiceId }).IsUnique();
+        });
+
+        // ReservationAddOn configuration
+        modelBuilder.Entity<ReservationAddOn>(entity =>
+        {
+            entity.HasKey(e => e.ReservationAddOnId);
+            entity.Property(e => e.PriceSnapshot).IsRequired().HasPrecision(18, 2);
+            entity.HasOne(e => e.Reservation)
+                  .WithMany(r => r.AddOns)
+                  .HasForeignKey(e => e.ReservationId)
+                  .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(e => e.AddOnService)
+                  .WithMany()
+                  .HasForeignKey(e => e.AddOnServiceId)
+                  .OnDelete(DeleteBehavior.Restrict);
+            entity.HasIndex(e => e.ReservationId);
+            entity.HasIndex(e => new { e.ReservationId, e.AddOnServiceId }).IsUnique();
+        });
+
+        // ServiceBundleItem configuration
+        modelBuilder.Entity<ServiceBundleItem>(entity =>
+        {
+            entity.HasKey(e => e.ServiceBundleItemId);
+            entity.Property(e => e.DisplayOrder).IsRequired().HasDefaultValue(1);
+            entity.HasOne(e => e.BundleService)
+                  .WithMany(s => s.BundleItems)
+                  .HasForeignKey(e => e.BundleServiceId)
+                  .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(e => e.IncludedService)
+                  .WithMany()
+                  .HasForeignKey(e => e.IncludedServiceId)
+                  .OnDelete(DeleteBehavior.Restrict);
+            entity.HasIndex(e => new { e.BundleServiceId, e.IncludedServiceId }).IsUnique();
         });
 
         // ServiceResourceUsage configuration

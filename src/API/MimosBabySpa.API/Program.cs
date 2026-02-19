@@ -129,7 +129,7 @@ var host = new HostBuilder()
         
         // Extraction Services
         services.AddScoped<JsonSchemaPromptBuilder>(); // ✅ Refactorizado para usar LoadedBusinessContext
-        services.AddScoped<IExtractionValidator, ExtractionValidator>();
+services.AddScoped<IExtractionValidator, ExtractionValidator>();
         services.AddScoped<IFallbackExtractor, FallbackExtractor>();
         services.AddScoped<ISmartExtractionService, SmartExtractionService>(); // ✅ Refactorizado
         

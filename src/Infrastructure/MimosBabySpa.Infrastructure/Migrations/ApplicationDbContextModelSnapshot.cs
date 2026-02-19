@@ -528,6 +528,11 @@ namespace MimosBabySpa.Infrastructure.Migrations
                     b.Property<int>("DurationMinutes")
                         .HasColumnType("int");
 
+                    b.Property<int>("Category")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasDefaultValue(99);
+
                     b.Property<bool>("IsActive")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("bit")
@@ -542,6 +547,16 @@ namespace MimosBabySpa.Infrastructure.Migrations
                         .HasMaxLength(200)
                         .HasColumnType("nvarchar(200)");
 
+                    b.Property<int>("ServiceType")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasDefaultValue(0);
+
+                    b.Property<int>("Tier")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasDefaultValue(0);
+
                     b.Property<DateTime?>("UpdatedAt")
                         .HasColumnType("datetime2");
 
@@ -549,10 +564,71 @@ namespace MimosBabySpa.Infrastructure.Migrations
 
                     b.HasIndex("BusinessId");
 
+                    b.HasIndex("BusinessId", "Category");
+
                     b.HasIndex("BusinessId", "ServiceName")
                         .IsUnique();
 
                     b.ToTable("Services");
+                });
+
+            modelBuilder.Entity("MimosBabySpa.Domain.Entities.ServiceAddOnRule", b =>
+                {
+                    b.Property<Guid>("ServiceAddOnRuleId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("AddOnServiceId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("BusinessId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid?>("CompatibleServiceId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("DisplayOrder")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasDefaultValue(1);
+
+                    b.HasKey("ServiceAddOnRuleId");
+
+                    b.HasIndex("BusinessId");
+
+                    b.HasIndex("AddOnServiceId");
+
+                    b.HasIndex("CompatibleServiceId");
+
+                    b.HasIndex("BusinessId", "AddOnServiceId", "CompatibleServiceId")
+                        .IsUnique();
+
+                    b.ToTable("ServiceAddOnRules");
+                });
+
+            modelBuilder.Entity("MimosBabySpa.Domain.Entities.ServiceBundleItem", b =>
+                {
+                    b.Property<Guid>("ServiceBundleItemId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("BundleServiceId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("DisplayOrder")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasDefaultValue(1);
+
+                    b.Property<Guid>("IncludedServiceId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("ServiceBundleItemId");
+
+                    b.HasIndex("BundleServiceId", "IncludedServiceId")
+                        .IsUnique();
+
+                    b.ToTable("ServiceBundleItems");
                 });
 
             modelBuilder.Entity("MimosBabySpa.Domain.Entities.ServiceResourceUsage", b =>
@@ -819,7 +895,54 @@ namespace MimosBabySpa.Infrastructure.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
+                    b.Navigation("BundleItems");
+
                     b.Navigation("Business");
+                });
+
+            modelBuilder.Entity("MimosBabySpa.Domain.Entities.ServiceAddOnRule", b =>
+                {
+                    b.HasOne("MimosBabySpa.Domain.Entities.Service", "AddOnService")
+                        .WithMany()
+                        .HasForeignKey("AddOnServiceId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("MimosBabySpa.Domain.Entities.Business", "Business")
+                        .WithMany()
+                        .HasForeignKey("BusinessId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("MimosBabySpa.Domain.Entities.Service", "CompatibleService")
+                        .WithMany()
+                        .HasForeignKey("CompatibleServiceId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.Navigation("AddOnService");
+
+                    b.Navigation("Business");
+
+                    b.Navigation("CompatibleService");
+                });
+
+            modelBuilder.Entity("MimosBabySpa.Domain.Entities.ServiceBundleItem", b =>
+                {
+                    b.HasOne("MimosBabySpa.Domain.Entities.Service", "BundleService")
+                        .WithMany("BundleItems")
+                        .HasForeignKey("BundleServiceId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("MimosBabySpa.Domain.Entities.Service", "IncludedService")
+                        .WithMany()
+                        .HasForeignKey("IncludedServiceId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("BundleService");
+
+                    b.Navigation("IncludedService");
                 });
 
             modelBuilder.Entity("MimosBabySpa.Domain.Entities.ServiceResourceUsage", b =>

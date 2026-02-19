@@ -7,5 +7,6 @@ namespace MimosBabySpa.Domain.Enums;
 public enum BusinessConfigurationKey
 {
     Personality = 0,            // Texto libre: identidad, tono y persona del asistente virtual
-    EntityExtractionConfig = 1  // JSON: campos de extracción de entidades, descripciones y keywords
+    EntityExtractionConfig = 1, // JSON: campos de extracción de entidades, descripciones y keywords
+    SalesStrategy = 2           // Texto libre: instrucciones de recomendación y venta para el LLM
 }

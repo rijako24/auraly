@@ -84,6 +84,12 @@ public class ConversationState
     public bool ReservationConfirmed { get; set; }
 
     /// <summary>
+    /// TRUE cuando el bot ya ofreció add-ons al cliente (una vez por servicio elegido).
+    /// Se resetea si el cliente cambia de servicio. Permite garantizar oferta 100% sin repetir.
+    /// </summary>
+    public bool AddOnsOffered { get; set; }
+
+    /// <summary>
     /// TRUE solo si el backend creó la reserva exitosamente
     /// El LLM NUNCA puede establecer esto en true, solo el backend
     /// </summary>
@@ -207,6 +213,7 @@ public class ConversationState
             AvailabilityConfirmed = AvailabilityConfirmed,
             AvailableTimeSlots = AvailableTimeSlots,
             ReservationConfirmed = ReservationConfirmed,
+            AddOnsOffered = AddOnsOffered,
             ReservationCreated = ReservationCreated,
             ReservationId = ReservationId,
             CurrentIntent = CurrentIntent,
@@ -244,14 +251,19 @@ public enum TransactionStage
     CheckingAvailability = 3,
 
     /// <summary>
-    /// Confirmando reserva
+    /// Completando datos de identidad/negocio (disponibilidad ya confirmada, faltan campos)
     /// </summary>
-    ConfirmingBooking = 4,
+    CompletingProfile = 4,
+
+    /// <summary>
+    /// Confirmando reserva — todos los datos completos, solo falta el "sí" del usuario
+    /// </summary>
+    ConfirmingBooking = 5,
 
     /// <summary>
     /// Reserva completada
     /// </summary>
-    BookingCompleted = 5,
+    BookingCompleted = 6,
 
     /// <summary>
     /// Conversación abandonada o fallida

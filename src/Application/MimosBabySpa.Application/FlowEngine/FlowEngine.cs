@@ -29,7 +29,7 @@ public class FlowEngine : IFlowEngine
         var totalRequired = requiredFields.GetAllRequiredFields().Count;
         var collected = totalRequired - missingFields.Count;
 
-        var nextStage = DetermineNextStage(state);
+        var nextStage = DetermineNextStage(state, requiredFields);
 
         // ✅ Efecto secundario controlado: actualizar la etapa en el estado
         if (state.CurrentStage != nextStage)
@@ -43,7 +43,7 @@ public class FlowEngine : IFlowEngine
             IsComplete              = missingFields.Count == 0,
             CompletenessPercentage  = totalRequired > 0 ? (int)((double)collected / totalRequired * 100) : 0,
             CanCheckAvailability    = CanCheckAvailability(state),
-            CanCreateReservation    = CanCreateReservation(state),
+            CanCreateReservation    = CanCreateReservation(state, requiredFields),
             DiagnosticMessage       = BuildDiagnosticMessage(state, missingFields)
         };
 
@@ -94,10 +94,10 @@ public class FlowEngine : IFlowEngine
     }
 
     // ─────────────────────────────────────────────────────────────────
-    // CanCreateReservation
+    // CanCreateReservation — única puerta para crear reserva
     // ─────────────────────────────────────────────────────────────────
 
-    public bool CanCreateReservation(ConversationState state)
+    public bool CanCreateReservation(ConversationState state, RequiredFieldsConfiguration requiredFields)
     {
         if (state.ReservationCreated)
         {
@@ -130,6 +130,13 @@ public class FlowEngine : IFlowEngine
             return false;
         }
 
+        var missing = GetMissingFields(state, requiredFields);
+        if (missing.Count > 0)
+        {
+            _logger.LogDebug("CanCreateReservation=false: faltan campos [{Missing}]", string.Join(", ", missing));
+            return false;
+        }
+
         _logger.LogInformation(
             "CanCreateReservation=true: Service={Service}, Date={Date}, Time={Time}",
             state.Service, state.DesiredDate, state.DesiredTime);
@@ -159,18 +166,31 @@ public class FlowEngine : IFlowEngine
 
     // ─────────────────────────────────────────────────────────────────
     // DetermineNextStage — flujo lineal determinístico
+    //
+    // INVARIANTE: ConfirmingBooking solo cuando todos los campos están completos.
+    // CompletingProfile = disponibilidad confirmada pero faltan campos de identidad/negocio.
     // ─────────────────────────────────────────────────────────────────
 
-    public TransactionStage DetermineNextStage(ConversationState state)
+    public TransactionStage DetermineNextStage(
+        ConversationState state,
+        RequiredFieldsConfiguration requiredFields)
     {
+        var missingFields = GetMissingFields(state, requiredFields);
         if (state.ReservationCreated)
             return TransactionStage.BookingCompleted;
 
-        if (state.AvailabilityConfirmed
+        var hasCoreTransaction = state.AvailabilityConfirmed
             && !string.IsNullOrWhiteSpace(state.Service)
             && state.DesiredDate.HasValue
-            && state.DesiredTime.HasValue)
+            && state.DesiredTime.HasValue;
+
+        // ConfirmingBooking: todo completo — solo falta el "sí" del usuario
+        if (hasCoreTransaction && missingFields.Count == 0)
             return TransactionStage.ConfirmingBooking;
+
+        // CompletingProfile: disponibilidad OK, faltan campos de identidad/negocio
+        if (hasCoreTransaction)
+            return TransactionStage.CompletingProfile;
 
         if (!string.IsNullOrWhiteSpace(state.Service) && state.DesiredDate.HasValue)
             return TransactionStage.CheckingAvailability;

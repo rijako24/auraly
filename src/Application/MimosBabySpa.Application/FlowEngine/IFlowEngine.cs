@@ -33,9 +33,10 @@ public interface IFlowEngine
     bool ShouldRecheckAvailability(ConversationState state);
 
     /// <summary>
-    /// True si se pueden cumplir todos los requisitos para crear una reserva.
+    /// True si se pueden cumplir todos los requisitos para crear una reserva
+    /// (incluyendo confirmación, disponibilidad, datos core y campos requeridos).
     /// </summary>
-    bool CanCreateReservation(ConversationState state);
+    bool CanCreateReservation(ConversationState state, RequiredFieldsConfiguration requiredFields);
 
     /// <summary>
     /// Retorna los campos aún faltantes para completar la transacción.
@@ -43,7 +44,8 @@ public interface IFlowEngine
     List<string> GetMissingFields(ConversationState state, RequiredFieldsConfiguration requiredFields);
 
     /// <summary>
-    /// Determina la etapa transaccional basándose en el estado actual.
+    /// Determina la etapa transaccional basándose en el estado actual y los campos requeridos.
+    /// ConfirmingBooking solo se alcanza cuando todos los campos están completos (invariante).
     /// </summary>
-    TransactionStage DetermineNextStage(ConversationState state);
+    TransactionStage DetermineNextStage(ConversationState state, RequiredFieldsConfiguration requiredFields);
 }

@@ -21,6 +21,7 @@ public class Reservation
     public virtual Service Service { get; set; } = null!;
     public virtual Employee Employee { get; set; } = null!;
     public virtual Conversation? Conversation { get; set; } // Navigation property a Conversation
+    public virtual ICollection<ReservationAddOn> AddOns { get; set; } = new List<ReservationAddOn>();
     
     // Helper properties
     public DateTime ReservationDate => ReservationDateTime.Date;

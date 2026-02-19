@@ -44,7 +44,8 @@ public class AIService : IAIService
 
             // Construir system prompt usando el nuevo sistema (SystemPromptProvider + LoadedBusinessContext)
             var businessContext = await _cachedContextProvider.GetOrLoadAsync(businessId);
-            var systemPrompt = await _systemPromptProvider.BuildAsync(businessContext);
+            var promptInput = new SystemPromptInput(businessContext);
+            var systemPrompt = await _systemPromptProvider.BuildAsync(promptInput);
             
             if (!string.IsNullOrEmpty(systemPrompt))
             {

@@ -7,34 +7,27 @@ namespace MimosBabySpa.Application.Prompts.Extraction;
 /// Genera un snapshot compacto del estado de la conversación para el prompt de extracción.
 ///
 /// SOLO datos, cero reglas. Las reglas de inferencia van en el prompt de extracción.
-/// El LLM necesita saber qué ya tiene (para no re-extraer) y el último mensaje del bot
-/// (para inferir a qué campo responde un valor simple del usuario).
+/// El historial conversacional se pasa como mensajes user/assistant — no se embebe aquí.
 /// </summary>
 public class StateContextBuilder
 {
     /// <summary>
-    /// Snapshot de una línea por grupo de datos + último mensaje del bot si existe.
-    /// Formato diseñado para ser compacto y legible por el LLM en pocos tokens.
+    /// Snapshot de una línea por grupo de datos. Formato compacto para pocos tokens.
     /// </summary>
     public string Build(ConversationState state)
     {
         var sb = new StringBuilder();
         sb.AppendLine("## Estado actual:");
 
-        // Datos ya recolectados en una sola línea compacta
         var dataLine = BuildDataLine(state);
         sb.AppendLine(dataLine);
+        sb.AppendLine($"Stage={state.CurrentStage} | AvailabilityConfirmed={state.AvailabilityConfirmed} | ReservationConfirmed={state.ReservationConfirmed}");
 
-        // Atributos de negocio (dinámicos por tenant)
         if (state.Attributes.Any())
         {
             var attrs = string.Join(" | ", state.Attributes.Select(a => $"{a.Key}={a.Value}"));
             sb.AppendLine($"Atributos: {attrs}");
         }
-
-        // Último mensaje del bot — clave para inferencia contextual
-        if (!string.IsNullOrWhiteSpace(state.LastBotMessage))
-            sb.AppendLine($"Último mensaje del asistente: \"{state.LastBotMessage}\"");
 
         return sb.ToString().TrimEnd();
     }

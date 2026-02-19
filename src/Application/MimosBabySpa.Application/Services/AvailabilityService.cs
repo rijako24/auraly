@@ -82,9 +82,23 @@ public class AvailabilityService : IAvailabilityService
             cancellationToken);
 
         result.IsAvailable = isAvailable;
-        result.ResponseMessage = isAvailable
-            ? $"✓ Disponibilidad confirmada para {service} el {dateStr} a las {timeStr}. El horario está libre."
-            : $"✗ No hay disponibilidad para {service} el {dateStr} a las {timeStr}. Sugiere otros horarios al cliente.";
+
+        if (isAvailable)
+        {
+            result.ResponseMessage = $"✓ Disponibilidad confirmada para {service} el {dateStr} a las {timeStr}. El horario está libre.";
+        }
+        else
+        {
+            // El horario solicitado no está disponible: consultar alternativas del día
+            // para que el bot pueda mostrarlas en lugar de inventar horarios
+            result.AvailableTimeSlots = await GetAvailableSlotsForDayAsync(businessId, requestedService, date, activeReservations, cancellationToken);
+            result.ResponseMessage = result.AvailableTimeSlots.Count > 0
+                ? $"✗ No hay disponibilidad para {service} el {dateStr} a las {timeStr}. Horarios disponibles: {string.Join(", ", result.AvailableTimeSlots)}."
+                : $"✗ No hay disponibilidad para {service} el {dateStr} a las {timeStr}. No hay horarios disponibles para ese día.";
+            _logger.LogInformation(
+                "Horario {TimeStr} no disponible; alternativas del día: {Count}",
+                timeStr, result.AvailableTimeSlots.Count);
+        }
 
         _logger.LogInformation("Disponibilidad verificada: IsAvailable={IsAvailable}", result.IsAvailable);
         return result;

@@ -28,6 +28,7 @@ public class ReservationService : IReservationService
     public async Task<ReservationDto> CreateReservationAsync(
         Reservation reservation, 
         Dictionary<string, string>? metadata = null,
+        IEnumerable<Guid>? addOnServiceIds = null,
         CancellationToken cancellationToken = default)
     {
         try
@@ -142,6 +143,30 @@ public class ReservationService : IReservationService
 
             var createdReservation = await _unitOfWork.Reservations.CreateAsync(reservation);
             await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+            // Crear ReservationAddOn para cada add-on seleccionado
+            if (addOnServiceIds != null)
+            {
+                foreach (var addOnServiceId in addOnServiceIds)
+                {
+                    var addOnService = await _unitOfWork.Services.GetByIdAsync(addOnServiceId);
+                    if (addOnService == null)
+                    {
+                        _logger.LogWarning("Add-on service {AddOnServiceId} no encontrado, omitiendo", addOnServiceId);
+                        continue;
+                    }
+
+                    var reservationAddOn = new ReservationAddOn
+                    {
+                        ReservationAddOnId = Guid.NewGuid(),
+                        ReservationId = createdReservation.ReservationId,
+                        AddOnServiceId = addOnServiceId,
+                        PriceSnapshot = addOnService.Price
+                    };
+                    await _unitOfWork.ReservationAddOns.AddAsync(reservationAddOn);
+                }
+                await _unitOfWork.SaveChangesAsync(cancellationToken);
+            }
 
             // Asegurar que Service esté cargado para logging y operaciones posteriores
             if (createdReservation.Service == null)

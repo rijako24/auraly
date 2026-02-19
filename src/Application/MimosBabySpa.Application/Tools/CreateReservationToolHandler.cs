@@ -98,7 +98,7 @@ FLUJO:
         try
         {
             // Verificación crítica: ¿Se puede crear la reserva?
-            if (!_flowEngine.CanCreateReservation(context.State))
+            if (!_flowEngine.CanCreateReservation(context.State, context.RequiredFields))
             {
                 var missingFields = _flowEngine.GetMissingFields(context.State, context.RequiredFields);
                 var reason = BuildCannotCreateReason(context.State, missingFields);
@@ -156,6 +156,9 @@ FLUJO:
                 };
             }
 
+            // Resolver add-ons seleccionados (state.Attributes["SelectedAddOns"] = CSV de nombres)
+            var addOnServiceIds = await ResolveSelectedAddOnsAsync(context.BusinessId, context.State, cancellationToken);
+
             // Construir metadata con información del perfil (de forma genérica)
             var metadata = BuildReservationMetadata(context);
 
@@ -180,6 +183,7 @@ FLUJO:
             var reservationDto = await _reservationService.CreateReservationAsync(
                 reservation,
                 metadata,
+                addOnServiceIds.Any() ? addOnServiceIds : null,
                 cancellationToken);
 
             // Actualizar el estado con la reserva creada
@@ -195,6 +199,9 @@ FLUJO:
 
             var successMessage = $"✓ Reserva confirmada exitosamente" +
                                 $"\nServicio: {serviceName}" +
+                                (addOnServiceIds.Any()
+                                    ? $"\nAdd-ons: {string.Join(", ", await GetAddOnNamesAsync(context.BusinessId, addOnServiceIds))}"
+                                    : "") +
                                 $"\nFecha: {date:dd/MM/yyyy}" +
                                 $"\nHora: {time:HH:mm}" +
                                 $"\nEmpleado: {employee.Name}" +
@@ -268,6 +275,51 @@ FLUJO:
         return reasons.Any() 
             ? string.Join("; ", reasons) 
             : "condiciones no cumplidas";
+    }
+
+    /// <summary>
+    /// Parsea SelectedAddOns del estado (CSV de nombres) y resuelve a ServiceIds.
+    /// Ignora nombres que no existan en el catálogo.
+    /// </summary>
+    private async Task<List<Guid>> ResolveSelectedAddOnsAsync(
+        Guid businessId,
+        Domain.Models.ConversationState state,
+        CancellationToken cancellationToken)
+    {
+        var selectedAddOns = state.GetAttribute("SelectedAddOns");
+        if (string.IsNullOrWhiteSpace(selectedAddOns))
+            return [];
+
+        var names = selectedAddOns
+            .Split([',', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(n => !string.IsNullOrWhiteSpace(n))
+            .ToList();
+
+        var ids = new List<Guid>();
+        foreach (var name in names)
+        {
+            var service = await _unitOfWork.Services.GetByBusinessIdAndNameAsync(businessId, name.Trim());
+            if (service != null)
+                ids.Add(service.ServiceId);
+            else
+                _logger.LogWarning("Add-on '{AddOnName}' no encontrado en catálogo, omitiendo", name);
+        }
+        return ids;
+    }
+
+    /// <summary>
+    /// Obtiene los nombres de servicios para mostrar en el mensaje de éxito.
+    /// </summary>
+    private async Task<IReadOnlyList<string>> GetAddOnNamesAsync(Guid businessId, List<Guid> addOnServiceIds)
+    {
+        var names = new List<string>();
+        foreach (var id in addOnServiceIds)
+        {
+            var service = await _unitOfWork.Services.GetByIdAsync(id);
+            if (service != null)
+                names.Add(service.ServiceName);
+        }
+        return names;
     }
 
     /// <summary>

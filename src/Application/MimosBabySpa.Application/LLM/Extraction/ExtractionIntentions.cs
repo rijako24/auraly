@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Text.Json.Serialization;
 
 namespace MimosBabySpa.Application.LLM.Extraction;
@@ -10,9 +11,26 @@ namespace MimosBabySpa.Application.LLM.Extraction;
 ///
 /// Usado como campo "intentions" en el schema de extracción y como salida
 /// del pipeline hacia el orquestador.
+///
+/// JsonPropertyNames expone los nombres JSON de todas las propiedades de esta clase,
+/// calculados una sola vez por reflexión al cargar el tipo. Cualquier componente que
+/// necesite identificar si un nombre de campo pertenece a este contrato debe usar
+/// ese set — nunca duplicar los strings.
 /// </summary>
 public class ExtractionIntentions
 {
+    /// <summary>
+    /// Nombres JSON de todas las intenciones, derivados de los atributos [JsonPropertyName]
+    /// de esta clase. Computado una vez (estático) y expuesto para que los consumidores
+    /// puedan filtrar sin duplicar strings.
+    /// </summary>
+    public static readonly IReadOnlySet<string> JsonPropertyNames =
+        typeof(ExtractionIntentions)
+            .GetProperties(BindingFlags.Public | BindingFlags.Instance)
+            .Select(p => p.GetCustomAttribute<JsonPropertyNameAttribute>()?.Name)
+            .Where(name => name is not null)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase)!;
+
     [JsonPropertyName("user_requested_availability")]
     public bool UserRequestedAvailability { get; set; }
 

@@ -19,6 +19,8 @@ public class ServiceRepository : IServiceRepository
         return await _context.Services
             .Include(s => s.ResourceUsages)
                 .ThenInclude(ru => ru.BusinessResource)
+            .Include(s => s.BundleItems.OrderBy(b => b.DisplayOrder))
+                .ThenInclude(b => b.IncludedService)
             .FirstOrDefaultAsync(s => s.ServiceId == serviceId);
     }
 
@@ -27,8 +29,10 @@ public class ServiceRepository : IServiceRepository
         return await _context.Services
             .Include(s => s.ResourceUsages)
                 .ThenInclude(ru => ru.BusinessResource)
-            .FirstOrDefaultAsync(s => s.BusinessId == businessId && 
-                                     s.ServiceName == serviceName && 
+            .Include(s => s.BundleItems.OrderBy(b => b.DisplayOrder))
+                .ThenInclude(b => b.IncludedService)
+            .FirstOrDefaultAsync(s => s.BusinessId == businessId &&
+                                     s.ServiceName == serviceName &&
                                      s.IsActive);
     }
 
@@ -37,6 +41,8 @@ public class ServiceRepository : IServiceRepository
         return await _context.Services
             .Include(s => s.ResourceUsages)
                 .ThenInclude(ru => ru.BusinessResource)
+            .Include(s => s.BundleItems.OrderBy(b => b.DisplayOrder))
+                .ThenInclude(b => b.IncludedService)
             .Where(s => s.BusinessId == businessId)
             .OrderBy(s => s.ServiceName)
             .ToListAsync();
@@ -47,6 +53,8 @@ public class ServiceRepository : IServiceRepository
         return await _context.Services
             .Include(s => s.ResourceUsages)
                 .ThenInclude(ru => ru.BusinessResource)
+            .Include(s => s.BundleItems.OrderBy(b => b.DisplayOrder))
+                .ThenInclude(b => b.IncludedService)
             .Where(s => s.BusinessId == businessId && s.IsActive)
             .OrderBy(s => s.ServiceName)
             .ToListAsync();

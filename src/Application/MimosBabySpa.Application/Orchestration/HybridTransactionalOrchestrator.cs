@@ -1,14 +1,16 @@
-using Microsoft.Extensions.Logging;
 using MimosBabySpa.Application.BusinessRules;
 using MimosBabySpa.Application.Configuration;
+using MimosBabySpa.Application.LLM.Extraction;
+using MimosBabySpa.Domain.Enums;
 using MimosBabySpa.Application.FlowEngine;
 using MimosBabySpa.Application.LLM;
-using MimosBabySpa.Application.LLM.Extraction;
 using MimosBabySpa.Application.Prompts;
 using MimosBabySpa.Application.Prompts.Templates;
 using MimosBabySpa.Application.Services;
 using MimosBabySpa.Application.StateManagement;
 using MimosBabySpa.Application.Tools;
+using MimosBabySpa.Domain.Models;
+using Microsoft.Extensions.Logging;
 
 namespace MimosBabySpa.Application.Orchestration;
 
@@ -89,21 +91,19 @@ public class HybridTransactionalOrchestrator
                 conversationId, businessId);
 
             // ── FASE 1: Contexto ──────────────────────────────────
-            var ctx = await LoadContextAsync(
-                conversationId, businessId, customerPhone, userMessage, cancellationToken);
+            var ctx = await LoadContextAsync(conversationId, businessId, customerPhone, userMessage, cancellationToken);
 
             // ── FASE 2: Extracción ────────────────────────────────
-            var extraction = await ExtractInformationAsync(userMessage, ctx, cancellationToken);
-            ctx.ExtractionOutput = extraction;
+            ctx.ExtractionOutput = await ExtractInformationAsync(userMessage, ctx, cancellationToken);
 
-            if (!extraction.WasSuccessful)
+            if (!ctx.ExtractionOutput.WasSuccessful)
             {
                 _logger.LogWarning("Extracción falló — retornando respuesta de emergencia");
-                return new OrchestratorResult(extraction.ConversationalResponseSuggestion, ReservationCreated: false);
+                return new OrchestratorResult(ctx.ExtractionOutput.ConversationalResponseSuggestion, ReservationCreated: false);
             }
 
             // ── FASE 3: Actualizar estado ─────────────────────────
-            ApplyExtractionToState(extraction, ctx);
+            ApplyExtractionToState(ctx);
 
             // ── FASE 4: Acciones de flujo ─────────────────────────
             await ExecuteFlowActionsAsync(ctx, cancellationToken);
@@ -149,8 +149,10 @@ public class HybridTransactionalOrchestrator
         var state = await _stateManager.GetOrCreateStateAsync(
             conversationId, businessId, customerPhone, cancellationToken);
 
-        // System prompt del LLM de respuesta (dinámico por negocio)
-        var systemPrompt = await _systemPromptProvider.BuildAsync(businessContext, cancellationToken);
+        // System prompt del LLM de respuesta (dinámico por negocio y servicio elegido para filtrar add-ons)
+        var selectedCategory = ResolveSelectedCategory(businessContext.Services, state.Service);
+        var promptInput = new SystemPromptInput(businessContext, selectedCategory);
+        var systemPrompt = await _systemPromptProvider.BuildAsync(promptInput, cancellationToken);
 
         var context = new ProcessingContext(
             state,
@@ -182,8 +184,14 @@ public class HybridTransactionalOrchestrator
     {
         _logger.LogDebug("FASE 2: Extrayendo información...");
 
+        var history = await LoadConversationHistoryAsync(ctx.ToolContext.ConversationId, cancellationToken);
+
         var output = await _extractionService.ExtractWithValidationAsync(
-            userMessage, ctx.State, ctx.BusinessContext, cancellationToken);
+            userMessage,
+            ctx.State,
+            ctx.BusinessContext,
+            history,
+            cancellationToken);
 
         _logger.LogInformation(
             "Extracción: {Count} campos, método={Method}, exitoso={Ok}",
@@ -196,11 +204,11 @@ public class HybridTransactionalOrchestrator
     // FASE 3 — ACTUALIZAR ESTADO (in-memory, sin save ni reload)
     // ═════════════════════════════════════════════════════════════════
 
-    private void ApplyExtractionToState(ExtractionOutput extraction, ProcessingContext ctx)
+    private void ApplyExtractionToState(ProcessingContext ctx)
     {
-        _logger.LogDebug("FASE 3: Aplicando {Count} campos...", extraction.ExtractedFields.Count);
+        _logger.LogDebug("FASE 3: Aplicando {Count} campos...", ctx.ExtractionOutput?.ExtractedFields.Count);
 
-        foreach (var field in extraction.ExtractedFields)
+        foreach (var field in ctx.ExtractionOutput?.ExtractedFields!)
         {
             if (field.Confidence < ExtractionConstants.MinConfidence)
             {
@@ -270,11 +278,25 @@ public class HybridTransactionalOrchestrator
         }
 
         // ── 4c. Confirmación de reserva por el usuario ───────────
-        if (intentions.UserConfirmedBooking && !ctx.State.ReservationConfirmed)
+        // ConfirmingBooking solo se alcanza cuando todos los datos están completos (invariante del FlowEngine).
+        // El LLM ve el stage pre-acciones: si no era ConfirmingBooking, no puede haber extraído UserConfirmedBooking.
+        if (intentions.UserConfirmedBooking
+            && !ctx.State.ReservationConfirmed
+            && ctx.FlowEvaluation.CurrentStage == TransactionStage.ConfirmingBooking)
         {
             _logger.LogInformation("Usuario confirmó reserva");
             _stateUpdater.ApplyConfirmationFlag(ctx.State, "ReservationConfirmed", true);
             ctx.ReEvaluate(); // in-memory, no BD
+        }
+
+        // ── 4c.2. Diagnóstico: usuario pidió disponibilidad pero no se ejecutó check ──
+        // Ocurre cuando el LLM de extracción no detectó la nueva fecha en el mensaje.
+        if (intentions.UserRequestedAvailability && !turnActions.CheckAvailabilityExecuted)
+        {
+            _logger.LogWarning(
+                "⚠ Usuario solicitó disponibilidad pero el check no se ejecutó. " +
+                "Posible causa: DesiredDate no extraído del mensaje (Service={Service}, Date={Date}).",
+                ctx.State.Service ?? "—", ctx.State.DesiredDate?.ToString("yyyy-MM-dd") ?? "—");
         }
 
         // ── 4d. Crear reserva ─────────────────────────────────────
@@ -295,6 +317,18 @@ public class HybridTransactionalOrchestrator
             _logger.LogWarning(
                 "Usuario confirmó pero faltan requisitos. Missing: [{Missing}]",
                 string.Join(", ", ctx.FlowEvaluation.MissingFields));
+        }
+
+        // ── 4e. Add-ons: marcar como requerido si deben ofrecerse en este turno ──
+        if (!turnActions.CancellationExecuted
+            && !turnActions.CreateReservationExecuted
+            && !ctx.State.AddOnsOffered
+            && ShouldOfferAddOns(ctx.State, ctx.BusinessContext))
+        {
+            turnActions.AddOnOfferingRequired = true;
+            _stateUpdater.ApplyConfirmationFlag(ctx.State, "AddOnsOffered", true);
+            ctx.ReEvaluate();
+            _logger.LogInformation("Add-ons pendientes de ofrecer — marcado como requerido para este turno");
         }
 
         ctx.TurnActions = turnActions;
@@ -334,14 +368,15 @@ public class HybridTransactionalOrchestrator
 
         var input = new ResponseGenerationInput
         {
-            State          = ctx.State,
-            FlowSnapshot   = ctx.FlowEvaluation,
-            TurnActions    = ctx.TurnActions,
+            State            = ctx.State,
+            FlowSnapshot     = ctx.FlowEvaluation,
+            TurnActions      = ctx.TurnActions,
             ExtractionOutput = ctx.ExtractionOutput ?? new ExtractionOutput(),
-            UserMessage    = userMessage,
-            SystemPrompt   = ctx.SystemPrompt,
-            ConversationId = ctx.ToolContext.ConversationId,
-            BusinessId     = ctx.ToolContext.BusinessId
+            BusinessContext  = ctx.BusinessContext,
+            UserMessage      = userMessage,
+            SystemPrompt     = ctx.SystemPrompt,
+            ConversationId   = ctx.ToolContext.ConversationId,
+            BusinessId       = ctx.ToolContext.BusinessId
         };
 
         try
@@ -360,7 +395,7 @@ public class HybridTransactionalOrchestrator
         CancellationToken cancellationToken)
     {
         var turnContext  = BuildTurnContext(input.State, input.FlowSnapshot, input.TurnActions, input.ExtractionOutput);
-        var instructions = BuildResponseInstructions(input.FlowSnapshot, input.TurnActions, input.ExtractionOutput);
+        var instructions = BuildResponseInstructions(input.State, input.FlowSnapshot, input.TurnActions, input.ExtractionOutput, input.BusinessContext);
         var history      = await LoadConversationHistoryAsync(input.ConversationId, cancellationToken);
 
         var messages = new List<LLMMessage>
@@ -434,20 +469,51 @@ public class HybridTransactionalOrchestrator
             if (turnActions.CheckAvailabilityExecuted)
             {
                 sb.AppendLine("**Este turno: se verificó disponibilidad.**");
-                if (state.AvailabilityConfirmed && !string.IsNullOrEmpty(state.AvailableTimeSlots))
+                if (state.AvailabilityConfirmed)
                 {
-                    var slots = state.AvailableTimeSlots.Split(',', StringSplitOptions.RemoveEmptyEntries);
-                    sb.AppendLine($"**Horarios disponibles:** {string.Join(" | ", slots)}");
-                    sb.AppendLine("→ Muestra TODOS estos horarios al cliente.");
+                    if (state.DesiredTime.HasValue)
+                    {
+                        // Hora ya seleccionada — confirmar que ese slot está disponible.
+                        // Las instrucciones de stage manejarán el formulario de confirmación.
+                        sb.AppendLine($"→ El horario {state.DesiredTime.Value:HH:mm} está disponible.");
+                    }
+                    else if (!string.IsNullOrEmpty(state.AvailableTimeSlots))
+                    {
+                        // Sin hora seleccionada — mostrar todos los slots para que el cliente elija.
+                        var slots = state.AvailableTimeSlots.Split(',', StringSplitOptions.RemoveEmptyEntries);
+                        sb.AppendLine($"**Horarios disponibles:** {string.Join(" | ", slots)}");
+                        sb.AppendLine("→ Muestra TODOS estos horarios al cliente para que elija.");
+                    }
                 }
-                else if (!state.AvailabilityConfirmed)
+                else
                 {
-                    sb.AppendLine("→ No hay disponibilidad. Sugiere alternativas.");
+                    if (!string.IsNullOrEmpty(state.AvailableTimeSlots))
+                    {
+                        // Horario solicitado no disponible pero hay alternativas del día
+                        var slots = state.AvailableTimeSlots.Split(',', StringSplitOptions.RemoveEmptyEntries);
+                        sb.AppendLine($"**Horarios disponibles:** {string.Join(" | ", slots)}");
+                        sb.AppendLine("→ Muestra TODOS estos horarios al cliente para que elija uno.");
+                    }
+                    else
+                    {
+                        sb.AppendLine("→ No hay disponibilidad para esa fecha/hora. Sugiere alternativas (otra fecha).");
+                    }
                 }
             }
 
             if (turnActions.CreateReservationExecuted)
                 sb.AppendLine("**Este turno: reserva creada exitosamente.** Confirma detalles y celebra.");
+
+            // Guardia anti-alucinación: usuario preguntó disponibilidad pero el sistema
+            // NO ejecutó la verificación real (p.ej. el LLM no extrajo la nueva fecha).
+            // Instrucción explícita para que el LLM no invente horarios del historial.
+            if (extraction.Intentions.UserRequestedAvailability && !turnActions.CheckAvailabilityExecuted)
+            {
+                sb.AppendLine("⚠️ **ATENCIÓN — DISPONIBILIDAD NO VERIFICADA EN ESTE TURNO.**");
+                sb.AppendLine("El usuario preguntó por disponibilidad pero no tengo la información actualizada.");
+                sb.AppendLine("→ NO repitas ni inventes horarios de turnos anteriores.");
+                sb.AppendLine("→ Si falta la fecha, pregúntala. Si hay fecha en el estado, indica que verificarás.");
+            }
 
             if (extraction.ExtractedFields.Any() && !turnActions.CheckAvailabilityExecuted && !turnActions.CreateReservationExecuted)
                 sb.AppendLine("**Este turno: el usuario proporcionó datos nuevos.**");
@@ -462,47 +528,125 @@ public class HybridTransactionalOrchestrator
     }
 
     // ─────────────────────────────────────────────────────────────────
-    // Instrucciones para la respuesta — condicionales y lean
+    // Instrucciones para la respuesta — stage-based + eventos de turno
+    //
+    // DISEÑO:
+    //   - La instrucción principal viene del TransactionStage (fuente de verdad del FlowEngine).
+    //   - Los TurnActions añaden contexto adicional al stage, nunca lo reemplazan.
+    //   - En ConfirmingBooking, ConfirmationSummaryBuilder genera el formulario dinámico
+    //     (resumen completo + acción explícita) desde el estado y la configuración del tenant.
     // ─────────────────────────────────────────────────────────────────
 
     private static string BuildResponseInstructions(
+        Domain.Models.ConversationState state,
         FlowEvaluationResult flowSnapshot,
         TurnActions turnActions,
-        ExtractionOutput extraction)
+        ExtractionOutput extraction,
+        Configuration.LoadedBusinessContext businessContext)
     {
         var sb = new System.Text.StringBuilder();
         sb.AppendLine(ResponseInstructionsTemplate.Header);
         sb.AppendLine(ResponseInstructionsTemplate.BaseInstructions);
 
+        // 1. Cancelación: máxima prioridad — no agregar más instrucciones.
         if (turnActions.CancellationExecuted)
         {
             sb.AppendLine(ResponseInstructionsTemplate.CancellationInstructions);
-            return sb.ToString(); // No agregar otras instrucciones si hubo cancelación
+            return sb.ToString();
         }
 
-        if (turnActions.CheckAvailabilityExecuted)
-            sb.AppendLine(ResponseInstructionsTemplate.CheckAvailabilityInstructions);
-
+        // 2. Reserva creada: flujo terminado — no agregar instrucciones de stage.
         if (turnActions.CreateReservationExecuted)
+        {
             sb.AppendLine(ResponseInstructionsTemplate.CreateReservationInstructions);
+            return sb.ToString();
+        }
 
-        // Tiempo seleccionado pero sin confirmación aún
-        var timeSelected = extraction.ExtractedFields
-            .Any(f => f.FieldName == "DesiredTime" && f.Confidence >= ExtractionConstants.MinConfidence);
-        if (timeSelected && !extraction.Intentions.UserConfirmedBooking && !turnActions.CreateReservationExecuted)
-            sb.AppendLine(ResponseInstructionsTemplate.TimeSelectedInstructions);
+        // 3. Add-ons requeridos: directiva exclusiva — reemplaza instrucción de stage.
+        //    Garantiza oferta 100% sin conflicto con MissingFields/CheckAvailability.
+        if (turnActions.AddOnOfferingRequired)
+        {
+            if (turnActions.CheckAvailabilityExecuted)
+                sb.AppendLine(ResponseInstructionsTemplate.CheckAvailabilityInstructions);
+            sb.AppendLine(ResponseInstructionsTemplate.ServiceSelectedOfferAddOnsInstructions);
+            return sb.ToString();
+        }
+
+        // 4. Instrucciones de turno (complementan al stage).
+        if (turnActions.CheckAvailabilityExecuted
+            && flowSnapshot.CurrentStage != TransactionStage.ConfirmingBooking)
+        {
+            sb.AppendLine(ResponseInstructionsTemplate.CheckAvailabilityInstructions);
+        }
 
         if (extraction.Intentions.IsInformationQuery)
             sb.AppendLine(ResponseInstructionsTemplate.InformationQueryInstructions);
 
-        if (flowSnapshot.MissingFields.Any() && !extraction.Intentions.IsInformationQuery)
-            sb.AppendLine(ResponseInstructionsTemplate.MissingFieldsInstructions
-                .Replace("{missing_fields}", string.Join(", ", flowSnapshot.MissingFields)));
-
         if (extraction.Ambiguities.Any())
             sb.AppendLine(ResponseInstructionsTemplate.AmbiguitiesInstructions);
 
+        // 5. Instrucción principal basada en el stage del FlowEngine.
+        if (!extraction.Intentions.IsInformationQuery)
+        {
+            var stageInstruction = BuildStageInstruction(state, flowSnapshot, businessContext);
+            if (!string.IsNullOrEmpty(stageInstruction))
+                sb.AppendLine(stageInstruction);
+        }
+
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// Genera la instrucción principal según el stage del FlowEngine.
+    ///   - ConfirmingBooking → formulario dinámico (ConfirmationSummaryBuilder).
+    ///   - Otros stages con campos faltantes → solicitar el siguiente campo (simple).
+    ///   - Flujo completo sin acción pendiente → sin instrucción adicional.
+    /// </summary>
+    private static string BuildStageInstruction(
+        Domain.Models.ConversationState state,
+        FlowEvaluationResult flowSnapshot,
+        Configuration.LoadedBusinessContext businessContext)
+    {
+        if (flowSnapshot.CurrentStage == TransactionStage.ConfirmingBooking)
+            return ConfirmationSummaryBuilder.BuildInstruction(state, flowSnapshot, businessContext);
+
+        if (flowSnapshot.MissingFields.Any())
+            return ResponseInstructionsTemplate.MissingFieldsInstructions
+                .Replace("{missing_fields}", string.Join(", ", flowSnapshot.MissingFields));
+
+        return string.Empty;
+    }
+
+    private static bool ShouldOfferAddOns(
+        Domain.Models.ConversationState state,
+        Configuration.LoadedBusinessContext businessContext)
+    {
+        if (string.IsNullOrWhiteSpace(state.Service))
+            return false;
+
+        var service = businessContext.Services.FirstOrDefault(s =>
+            string.Equals(s.Name, state.Service, StringComparison.OrdinalIgnoreCase));
+
+        if (service == null)
+            return false;
+
+        var hasCompatibleAddOns = businessContext.AddOnRules.Any(r =>
+            !r.CompatibleServiceCategory.HasValue || r.CompatibleServiceCategory.Value == service.Category);
+
+        return hasCompatibleAddOns;
+    }
+
+    private static ServiceCategory? ResolveSelectedCategory(
+        List<ServiceInfo> services,
+        string? serviceName)
+    {
+        if (string.IsNullOrWhiteSpace(serviceName))
+            return null;
+
+        var service = services.FirstOrDefault(s =>
+            string.Equals(s.Name, serviceName, StringComparison.OrdinalIgnoreCase));
+
+        return service?.Category;
     }
 
     // ─────────────────────────────────────────────────────────────────
@@ -557,10 +701,8 @@ public class HybridTransactionalOrchestrator
     {
         _logger.LogDebug("FASE 6: Guardando metadatos finales...");
 
-        // Actualizar LastUserMessage y LastBotMessage (para contexto de inferencia en el próximo turno)
         ctx.UpdateMessageMetadata(userMessage, botResponse);
 
-        // Un solo Save al final de todo el flujo
         await ctx.SaveStateAsync(cancellationToken);
 
         _logger.LogDebug("✅ Estado guardado (Version={Version})", ctx.State.Version);

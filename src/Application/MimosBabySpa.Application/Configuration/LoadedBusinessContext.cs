@@ -20,6 +20,17 @@ public class LoadedBusinessContext
     public RequiredFieldsConfiguration RequiredFields { get; private set; } = null!;
     public BusinessPersonality Personality { get; private set; } = null!;
 
+    /// <summary>
+    /// Instrucciones de venta configuradas por el tenant (texto libre).
+    /// Null cuando el negocio no tiene estrategia definida — el LLM usará criterio propio.
+    /// </summary>
+    public string? SalesStrategy { get; private set; }
+
+    /// <summary>
+    /// Reglas de add-ons: qué extras se pueden ofrecer y con qué categoría de servicio son compatibles.
+    /// </summary>
+    public List<AddOnRuleInfo> AddOnRules { get; private set; } = null!;
+
     private readonly IUnitOfWork _unitOfWork;
     private readonly ILogger<LoadedBusinessContext> _logger;
 
@@ -66,6 +77,9 @@ public class LoadedBusinessContext
             
             _logger.LogDebug("Cargando Services...");
             Services = await LoadServicesAsync(cancellationToken);
+
+            _logger.LogDebug("Cargando AddOnRules...");
+            AddOnRules = await LoadAddOnRulesAsync(cancellationToken);
             
             _logger.LogDebug("Cargando Attributes...");
             Attributes = await LoadAttributesAsync(cancellationToken);
@@ -73,14 +87,17 @@ public class LoadedBusinessContext
             _logger.LogDebug("Cargando Personality...");
             Personality = await LoadPersonalityAsync(cancellationToken);
 
+            _logger.LogDebug("Cargando SalesStrategy...");
+            SalesStrategy = await LoadSalesStrategyAsync(cancellationToken);
+
             // Construir RequiredFields basado en Attributes cargados
             RequiredFields = BuildRequiredFields();
 
             var elapsed = DateTime.UtcNow - startTime;
             _logger.LogInformation(
                 "✅ Configuración cargada para BusinessId={BusinessId} en {Elapsed}ms: " +
-                "Services={ServiceCount}, Attributes={AttributeCount}",
-                BusinessId, elapsed.TotalMilliseconds, Services.Count, Attributes.Count);
+                "Services={ServiceCount}, AddOnRules={AddOnRuleCount}, Attributes={AttributeCount}",
+                BusinessId, elapsed.TotalMilliseconds, Services.Count, AddOnRules.Count, Attributes.Count);
         }
         catch (Exception ex)
         {
@@ -204,11 +221,24 @@ public class LoadedBusinessContext
                 .Where(s => s.IsActive)
                 .Select(s => new ServiceInfo
                 {
-                    Name = s.ServiceName,
-                    Description = s.Description,
+                    Name            = s.ServiceName,
+                    Description     = s.Description,
                     DurationMinutes = s.DurationMinutes,
-                    Price = s.Price,
-                    IsActive = s.IsActive
+                    Price           = s.Price,
+                    IsActive        = s.IsActive,
+                    Category        = s.Category,
+                    Tier            = s.Tier,
+                    ServiceType     = s.ServiceType,
+                    BundleItems     = s.BundleItems
+                        .OrderBy(b => b.DisplayOrder)
+                        .Select(b => new BundleItemInfo
+                        {
+                            Name         = b.IncludedService.ServiceName,
+                            Description  = b.IncludedService.Description,
+                            Price        = b.IncludedService.Price,
+                            DisplayOrder = b.DisplayOrder
+                        })
+                        .ToList()
                 })
                 .ToList();
         }
@@ -216,6 +246,32 @@ public class LoadedBusinessContext
         {
             _logger.LogError(ex, "Error cargando servicios");
             return new List<ServiceInfo>();
+        }
+    }
+
+    private async Task<List<AddOnRuleInfo>> LoadAddOnRulesAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            var rules = await _unitOfWork.ServiceAddOnRules.GetByBusinessIdAsync(BusinessId);
+            return rules
+                .Select(r => new AddOnRuleInfo
+                {
+                    AddOnName                = r.AddOnService.ServiceName,
+                    AddOnDescription         = r.AddOnService.Description,
+                    AddOnPrice               = r.AddOnService.Price,
+                    DisplayOrder             = r.DisplayOrder,
+                    CompatibleWithServiceName = r.CompatibleService?.ServiceName,
+                    CompatibleServiceCategory = r.AddOnService.Category
+                })
+                .OrderBy(r => r.DisplayOrder)
+                .ThenBy(r => r.AddOnName)
+                .ToList();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error cargando reglas de add-ons");
+            return new List<AddOnRuleInfo>();
         }
     }
 
@@ -376,6 +432,35 @@ public class LoadedBusinessContext
         {
             _logger.LogError(ex, "Error cargando Personality para BusinessId={BusinessId}", BusinessId);
             return BusinessPersonality.Default();
+        }
+    }
+
+    /// <summary>
+    /// Carga la estrategia de ventas desde BusinessConfiguration key=SalesStrategy (2).
+    /// El valor es texto libre que se inyecta directamente en el system prompt del LLM.
+    /// </summary>
+    private async Task<string?> LoadSalesStrategyAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            var config = await _unitOfWork.BusinessConfigurations
+                .GetByBusinessIdAndKeyAsync(BusinessId, BusinessConfigurationKey.SalesStrategy);
+
+            if (config == null || string.IsNullOrWhiteSpace(config.Value))
+            {
+                _logger.LogDebug(
+                    "No se encontró SalesStrategy (key=2) para BusinessId={BusinessId}. El LLM usará criterio propio.",
+                    BusinessId);
+                return null;
+            }
+
+            _logger.LogDebug("SalesStrategy cargada para BusinessId={BusinessId}", BusinessId);
+            return config.Value;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error cargando SalesStrategy para BusinessId={BusinessId}", BusinessId);
+            return null;
         }
     }
 

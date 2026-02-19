@@ -2,23 +2,27 @@ using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using MimosBabySpa.Application.Configuration;
 using MimosBabySpa.Application.Constants;
+using MimosBabySpa.Domain.Entities;
 using MimosBabySpa.Domain.Models;
 
 namespace MimosBabySpa.Application.LLM.Extraction;
 
 /// <summary>
 /// Pipeline de extracción con 3 niveles de resiliencia:
-///   1. LLM (JSON Mode, temperatura 0.1)
+///   1. LLM (JSON Mode, temperatura 0.1) con historial conversacional para contexto
 ///   2. Fallback determinístico (regex + patrones configurados por negocio)
 ///   3. Emergency (sin datos, solo mensaje de error)
 ///
 /// IMPORTANTE:
-/// - El LLM NO genera respuesta conversacional — la genera FASE 5 del orquestador.
+/// - El historial reciente se pasa como mensajes user/assistant — el LLM interpreta
+///   respuestas como "2" en contexto de "¿Para cuántos bebés?"
 /// - Multitenant: usa LoadedBusinessContext (precargado, sin queries adicionales).
 /// - ExtractionOutput es el contrato hacia el orquestador: no hay mapeo externo.
 /// </summary>
 public class SmartExtractionService : ISmartExtractionService
 {
+    private const int MaxHistoryMessagesForExtraction = 6;
+
     private readonly ILLMAdapter _llmAdapter;
     private readonly JsonSchemaPromptBuilder _promptBuilder;
     private readonly IExtractionValidator _validator;
@@ -42,11 +46,11 @@ public class SmartExtractionService : ISmartExtractionService
         IFallbackExtractor fallbackExtractor,
         ILogger<SmartExtractionService> logger)
     {
-        _llmAdapter       = llmAdapter;
-        _promptBuilder    = promptBuilder;
-        _validator        = validator;
+        _llmAdapter        = llmAdapter;
+        _promptBuilder     = promptBuilder;
+        _validator         = validator;
         _fallbackExtractor = fallbackExtractor;
-        _logger           = logger;
+        _logger            = logger;
     }
 
     // ─────────────────────────────────────────────────────────────────
@@ -57,17 +61,20 @@ public class SmartExtractionService : ISmartExtractionService
         string userMessage,
         ConversationState currentState,
         LoadedBusinessContext businessContext,
+        IReadOnlyList<Message> recentHistory,
         CancellationToken cancellationToken)
     {
         try
         {
-            var llmResult = await ExtractWithLLMAsync(userMessage, currentState, businessContext, cancellationToken);
+            var llmResult = await ExtractWithLLMAsync(
+                userMessage, currentState, businessContext, recentHistory, cancellationToken);
+
             var validation = await _validator.ValidateExtractionAsync(llmResult, userMessage, currentState);
 
             if (validation.IsValid && validation.Confidence >= ExtractionConstants.MinValidationConfidence)
             {
                 _logger.LogInformation(
-                    "✅ Extracción LLM: {Count} campos, avg confidence={Conf:F2}",
+                    "✅ Extracción: {Count} campos, avg confidence={Conf:F2}",
                     llmResult.ExtractedFields.Count, validation.Confidence);
 
                 return ToOutput(llmResult, ExtractionMethod.LLM, success: true);
@@ -94,21 +101,38 @@ public class SmartExtractionService : ISmartExtractionService
         string userMessage,
         ConversationState currentState,
         LoadedBusinessContext businessContext,
+        IReadOnlyList<Message> recentHistory,
         CancellationToken cancellationToken)
     {
         var prompt = await _promptBuilder.BuildExtractionPromptAsync(
             businessContext, userMessage, currentState, cancellationToken);
 
+        var messages = new List<LLMMessage>
+        {
+            new() { Role = LLMRole.System, Content = prompt }
+        };
+
+        var historySlice = recentHistory
+            .OrderBy(m => m.Timestamp)
+            .TakeLast(MaxHistoryMessagesForExtraction)
+            .ToList();
+
+        foreach (var msg in historySlice)
+        {
+            var role = msg.Sender.Equals("User", StringComparison.OrdinalIgnoreCase)
+                ? LLMRole.User
+                : LLMRole.Assistant;
+            messages.Add(new() { Role = role, Content = msg.MessageText });
+        }
+
+        const string msgDelimiter = "---MENSAJE A ANALIZAR---";
+        messages.Add(new() { Role = LLMRole.User, Content = $"{msgDelimiter}\n{userMessage}\n{msgDelimiter}" });
+
         var request = new LLMRequest
         {
-            Messages = new List<LLMMessage>
-            {
-                new() { Role = LLMRole.System, Content = prompt },
-                // El mensaje del usuario va como rol "user" — no en el system prompt
-                new() { Role = LLMRole.User, Content = userMessage }
-            },
-            Temperature = 0.1f,  // Máximo determinismo
-            MaxTokens   = 600    // Schema compacto → menos tokens de salida necesarios
+            Messages    = messages,
+            Temperature = 0.1f,
+            MaxTokens   = 600
         };
 
         var response = await _llmAdapter.SendWithJsonModeAsync(request, cancellationToken);
@@ -179,8 +203,15 @@ public class SmartExtractionService : ISmartExtractionService
         ExtractionMethod method,
         bool success)
     {
+        // Separar campos de datos de intenciones que el LLM pudo haber duplicado
+        // en extracted_fields. El criterio de filtrado viene de ExtractionIntentions.JsonPropertyNames
+        // (fuente de verdad única — derivada por reflexión del propio tipo).
+        var dataFields = r.ExtractedFields
+            .Where(f => !ExtractionIntentions.JsonPropertyNames.Contains(f.FieldName))
+            .ToList();
+
         // Inferir FieldType si no vino del LLM (schema nuevo no lo incluye)
-        foreach (var field in r.ExtractedFields)
+        foreach (var field in dataFields)
         {
             if (field.FieldType == default)
                 field.FieldType = InferFieldType(field.FieldName, field.Value);
@@ -191,7 +222,7 @@ public class SmartExtractionService : ISmartExtractionService
 
         return new ExtractionOutput
         {
-            ExtractedFields  = r.ExtractedFields,
+            ExtractedFields  = dataFields,
             Intentions       = intentions,
             Ambiguities      = r.Ambiguities,
             Method           = method,

@@ -1,5 +1,3 @@
-using MimosBabySpa.Application.Configuration;
-
 namespace MimosBabySpa.Application.Prompts;
 
 /// <summary>
@@ -9,9 +7,10 @@ namespace MimosBabySpa.Application.Prompts;
 public interface IPromptProvider
 {
     /// <summary>
-    /// Construye el prompt usando el contexto de negocio.
+    /// Construye el prompt usando el input unificado.
+    /// SelectedServiceCategory: cuando el cliente ya eligió servicio, filtra add-ons por categoría compatible.
     /// </summary>
     Task<string> BuildAsync(
-        LoadedBusinessContext context,
+        SystemPromptInput input,
         CancellationToken cancellationToken = default);
 }

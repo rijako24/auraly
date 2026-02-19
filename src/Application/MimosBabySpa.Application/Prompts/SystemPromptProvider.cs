@@ -1,5 +1,6 @@
 using MimosBabySpa.Application.Configuration;
 using MimosBabySpa.Application.Prompts.Templates;
+using MimosBabySpa.Domain.Enums;
 using System.Text;
 
 namespace MimosBabySpa.Application.Prompts;
@@ -18,9 +19,10 @@ namespace MimosBabySpa.Application.Prompts;
 public class SystemPromptProvider : IPromptProvider
 {
     public Task<string> BuildAsync(
-        LoadedBusinessContext context,
+        SystemPromptInput input,
         CancellationToken cancellationToken = default)
     {
+        var context = input.BusinessContext;
         var sb = new StringBuilder();
 
         // ── Identidad y rol (dinámico por tenant) ─────────────────
@@ -35,8 +37,8 @@ public class SystemPromptProvider : IPromptProvider
         sb.AppendLine(BuildBusinessSection(context));
         sb.AppendLine();
 
-        // ── Catálogo de servicios (dinámico) ─────────────────────
-        sb.AppendLine(BuildServicesSection(context));
+        // ── Catálogo de servicios (dinámico, agrupado por categoría y tier) ──────
+        sb.AppendLine(ServiceCatalogBuilder.Build(context.Services, context.AddOnRules, input.SelectedServiceCategory));
         sb.AppendLine();
 
         // ── Atributos específicos del negocio (dinámico) ────────
@@ -44,6 +46,13 @@ public class SystemPromptProvider : IPromptProvider
         if (!string.IsNullOrEmpty(attributesSection))
         {
             sb.AppendLine(attributesSection);
+            sb.AppendLine();
+        }
+
+        // ── Estrategia de ventas (opcional, por tenant) ───────────
+        if (!string.IsNullOrEmpty(context.SalesStrategy))
+        {
+            sb.AppendLine(BuildSalesStrategySection(context.SalesStrategy));
             sb.AppendLine();
         }
 
@@ -127,34 +136,11 @@ public class SystemPromptProvider : IPromptProvider
         return sb.ToString().TrimEnd();
     }
 
-    private static string BuildServicesSection(LoadedBusinessContext context)
+    private static string BuildSalesStrategySection(string strategy)
     {
-        var active = context.Services.Where(s => s.IsActive).ToList();
         var sb = new StringBuilder();
-        sb.AppendLine("## Catálogo de servicios disponibles:");
-
-        if (!active.Any())
-        {
-            sb.AppendLine("_(Sin servicios configurados actualmente)_");
-            return sb.ToString().TrimEnd();
-        }
-
-        foreach (var svc in active)
-        {
-            sb.AppendLine($"### {svc.Name}");
-            if (!string.IsNullOrEmpty(svc.Description))
-                sb.AppendLine(svc.Description);
-
-            var meta = new List<string>();
-            if (svc.DurationMinutes > 0) meta.Add($"Duración: {svc.DurationMinutes} min");
-            if (svc.Price > 0)           meta.Add($"Precio: ${svc.Price:N0}");
-            if (meta.Any())
-                sb.AppendLine($"_{string.Join(" | ", meta)}_");
-
-            sb.AppendLine();
-        }
-
-        sb.AppendLine("⚠️ Solo puedes ofrecer los servicios listados arriba. No inventes otros.");
+        sb.AppendLine("## Estrategia de recomendación y venta:");
+        sb.AppendLine(strategy);
         return sb.ToString().TrimEnd();
     }
 

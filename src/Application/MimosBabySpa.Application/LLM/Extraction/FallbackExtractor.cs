@@ -57,7 +57,9 @@ public class FallbackExtractor : IFallbackExtractor
         }
 
         // 2. Confirmación explícita (genérica)
-        if (Regex.IsMatch(messageLower, @"\b(sí|si|confirmo|adelante|ok|vale|perfecto|de acuerdo|está bien)\b"))
+        // Excluir "está bien": es ambiguo — "a las 11 está bien" = elección de horario, no confirmación.
+        // El FlowEngine solo alcanza ConfirmingBooking cuando todos los datos están completos.
+        if (Regex.IsMatch(messageLower, @"\b(sí|si|confirmo|adelante|ok|vale|perfecto|de acuerdo)\b"))
             response.Intentions.UserConfirmedBooking = true;
 
         // 3. Cancelación explícita (genérica)
