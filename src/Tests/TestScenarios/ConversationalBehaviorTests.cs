@@ -119,19 +119,19 @@ public class ConversationalBehaviorTests
             // PASO 1: PRIMER MENSAJE - Debe saludar y presentarse
             // ═══════════════════════════════════════════════════════
             Console.WriteLine("\n📤 Usuario: Hola tengo un bebé de 5 meses que planes me puedes ofrecer");
-            var response1 = await _orchestrator.ProcessMessageAsync(
+            var response1.Response = await _orchestrator.ProcessMessageAsync(
                 conversationId, _businessId, phone,
                 "Hola tengo un bebé de 5 meses que planes me puedes ofrecer",
                 CancellationToken.None);
-            Console.WriteLine($"📥 Bot: {response1}");
+            Console.WriteLine($"📥 Bot: {response1.Response}");
 
             // ASSERTIONS
-            if (!response1.Contains("Hola", StringComparison.OrdinalIgnoreCase))
+            if (!response1.Response.Contains("Hola", StringComparison.OrdinalIgnoreCase))
             {
                 throw new Exception("Primera respuesta debe contener saludo 'Hola'");
             }
 
-            if (!response1.Contains("María", StringComparison.OrdinalIgnoreCase))
+            if (!response1.Response.Contains("María", StringComparison.OrdinalIgnoreCase))
             {
                 throw new Exception("Primera respuesta debe presentarse como 'María'");
             }
@@ -144,22 +144,22 @@ public class ConversationalBehaviorTests
                 conversationId, _businessId, phone,
                 "me llamo richard, para mañana estaria bien",
                 CancellationToken.None);
-            Console.WriteLine($"📥 Bot: {response2}");
+            Console.WriteLine($"📥 Bot: {response2.Response}");
 
             // ASSERTIONS: NO debe contener saludos repetitivos
-            if (response2.Contains("¡Hola!", StringComparison.OrdinalIgnoreCase))
+            if (response2.Response.Contains("¡Hola!", StringComparison.OrdinalIgnoreCase))
             {
                 throw new Exception("Segunda respuesta NO debe contener '¡Hola!'");
             }
 
-            if (response2.Contains("¡Hola Richard!", StringComparison.OrdinalIgnoreCase))
+            if (response2.Response.Contains("¡Hola Richard!", StringComparison.OrdinalIgnoreCase))
             {
                 throw new Exception("Segunda respuesta NO debe contener '¡Hola Richard!'");
             }
 
             // Debe usar transiciones naturales
             var naturalTransitions = new[] { "Perfecto", "Genial", "Entendido", "Claro", "Excelente" };
-            var hasNaturalTransition = naturalTransitions.Any(t => response2.Contains(t, StringComparison.OrdinalIgnoreCase));
+            var hasNaturalTransition = naturalTransitions.Any(t => response2.Response.Contains(t, StringComparison.OrdinalIgnoreCase));
             if (!hasNaturalTransition)
             {
                 Console.WriteLine($"   ⚠️ Advertencia: No se detectó transición natural en respuesta");
@@ -173,16 +173,16 @@ public class ConversationalBehaviorTests
                 conversationId, _businessId, phone,
                 "el que me recomendaste",
                 CancellationToken.None);
-            Console.WriteLine($"📥 Bot: {response3}");
+            Console.WriteLine($"📥 Bot: {response3.Response}");
 
             // ASSERTIONS: NO debe saludar nuevamente
-            if (response3.Contains("¡Hola", StringComparison.OrdinalIgnoreCase))
+            if (response3.Response.Contains("¡Hola", StringComparison.OrdinalIgnoreCase))
             {
                 throw new Exception("Tercera respuesta NO debe contener '¡Hola'");
             }
 
             // Verificar que el nombre se usa ocasionalmente (no en cada mensaje)
-            var richardCount = CountOccurrences(response2 + response3, "Richard");
+            var richardCount = CountOccurrences(response2.Response + response3.Response, "Richard");
             if (richardCount > 2)
             {
                 Console.WriteLine($"   ⚠️ Advertencia: El nombre 'Richard' aparece {richardCount} veces (idealmente ≤ 2)");
@@ -218,11 +218,11 @@ public class ConversationalBehaviorTests
             // PASO 1: Usuario proporciona TODOS los datos necesarios
             // ═══════════════════════════════════════════════════════
             Console.WriteLine("\n📤 Usuario: Hola soy Juan, quiero el Plan Marineritos para mañana");
-            var response1 = await _orchestrator.ProcessMessageAsync(
+            var response1.Response = await _orchestrator.ProcessMessageAsync(
                 conversationId, _businessId, phone,
                 "Hola soy Juan, quiero el Plan Marineritos para mañana",
                 CancellationToken.None);
-            Console.WriteLine($"📥 Bot: {response1}");
+            Console.WriteLine($"📥 Bot: {response1.Response}");
             
             // Verificar que se extrajo la información básica
             var stateAfterFirst = await _stateManager.GetOrCreateStateAsync(
@@ -250,7 +250,7 @@ public class ConversationalBehaviorTests
                 conversationId, _businessId, phone,
                 "que horas tienes disponible",
                 CancellationToken.None);
-            Console.WriteLine($"📥 Bot: {response2}");
+            Console.WriteLine($"📥 Bot: {response2.Response}");
 
             // Verificar estado
             var state = await _stateManager.GetOrCreateStateAsync(
@@ -270,7 +270,7 @@ public class ConversationalBehaviorTests
             }
 
             // ASSERTIONS en la respuesta
-            if (!ContainsTimeSlots(response2))
+            if (!ContainsTimeSlots(response2.Response))
             {
                 throw new Exception(
                     "La respuesta debe MOSTRAR los horarios disponibles, no solo decir 'hay disponibilidad'. " +
@@ -285,8 +285,8 @@ public class ConversationalBehaviorTests
             }
 
             // NO debe decir solo "Sí hay disponibilidad" sin mostrar horarios
-            if (response2.Contains("disponibilidad", StringComparison.OrdinalIgnoreCase) &&
-                !ContainsTimeSlots(response2))
+            if (response2.Response.Contains("disponibilidad", StringComparison.OrdinalIgnoreCase) &&
+                !ContainsTimeSlots(response2.Response))
             {
                 throw new Exception(
                     "Si menciona disponibilidad, debe MOSTRAR los horarios específicos. " +
@@ -336,7 +336,7 @@ public class ConversationalBehaviorTests
                 conversationId, _businessId, phone,
                 "mi bebe se llama thomas, que horas tienes disponible",
                 CancellationToken.None);
-            Console.WriteLine($"📥 Bot: {response2}");
+            Console.WriteLine($"📥 Bot: {response2.Response}");
 
             // ═══════════════════════════════════════════════════════
             // PASO CRÍTICO: Usuario selecciona horario
@@ -346,7 +346,7 @@ public class ConversationalBehaviorTests
                 conversationId, _businessId, phone,
                 "a las 9 esta bien",
                 CancellationToken.None);
-            Console.WriteLine($"📥 Bot: {response3}");
+            Console.WriteLine($"📥 Bot: {response3.Response}");
 
             // Verificar estado ANTES de confirmación
             var stateBeforeConfirm = await _stateManager.GetOrCreateStateAsync(
@@ -372,7 +372,7 @@ public class ConversationalBehaviorTests
 
             foreach (var phrase in forbiddenPhrases)
             {
-                if (response3.Contains(phrase, StringComparison.OrdinalIgnoreCase))
+                if (response3.Response.Contains(phrase, StringComparison.OrdinalIgnoreCase))
                 {
                     throw new Exception(
                         $"La respuesta NO debe contener '{phrase}' sin ejecutar la acción. " +
@@ -391,7 +391,7 @@ public class ConversationalBehaviorTests
             };
 
             var hasConfirmationQuestion = confirmationQuestions.Any(q =>
-                response3.Contains(q, StringComparison.OrdinalIgnoreCase));
+                response3.Response.Contains(q, StringComparison.OrdinalIgnoreCase));
 
             if (!hasConfirmationQuestion)
             {
@@ -462,7 +462,7 @@ public class ConversationalBehaviorTests
                 conversationId, _businessId, phone,
                 "que horarios tienes libres",
                 CancellationToken.None);
-            Console.WriteLine($"📥 Bot: {response2}");
+            Console.WriteLine($"📥 Bot: {response2.Response}");
 
             // Obtener estado
             var state = await _stateManager.GetOrCreateStateAsync(
@@ -492,7 +492,7 @@ public class ConversationalBehaviorTests
             // VALIDAR que TODOS los horarios del estado están en la respuesta
             foreach (var slot in backendSlots)
             {
-                if (!response2.Contains(slot, StringComparison.OrdinalIgnoreCase))
+                if (!response2.Response.Contains(slot, StringComparison.OrdinalIgnoreCase))
                 {
                     throw new Exception(
                         $"El horario '{slot}' del backend debe aparecer en la respuesta. " +
@@ -503,7 +503,7 @@ public class ConversationalBehaviorTests
             // ═══════════════════════════════════════════════════════
             // VALIDAR: NO hay horarios inventados
             // ═══════════════════════════════════════════════════════
-            var responseTimeSlots = ExtractTimeSlots(response2);
+            var responseTimeSlots = ExtractTimeSlots(response2.Response);
 
             foreach (var responseSlot in responseTimeSlots)
             {
@@ -549,15 +549,15 @@ public class ConversationalBehaviorTests
             // PASO 1: Bot recomienda un servicio específico
             // ═══════════════════════════════════════════════════════
             Console.WriteLine("\n📤 Usuario: Hola tengo un bebé de 5 meses que planes me puedes ofrecer");
-            var response1 = await _orchestrator.ProcessMessageAsync(
+            var response1.Response = await _orchestrator.ProcessMessageAsync(
                 conversationId, _businessId, phone,
                 "Hola tengo un bebé de 5 meses que planes me puedes ofrecer",
                 CancellationToken.None);
-            Console.WriteLine($"📥 Bot: {response1}");
+            Console.WriteLine($"📥 Bot: {response1.Response}");
 
             // Verificar que recomendó Plan Marineritos
-            if (!response1.Contains("Plan Marineritos", StringComparison.OrdinalIgnoreCase) &&
-                !response1.Contains("Marineritos", StringComparison.OrdinalIgnoreCase))
+            if (!response1.Response.Contains("Plan Marineritos", StringComparison.OrdinalIgnoreCase) &&
+                !response1.Response.Contains("Marineritos", StringComparison.OrdinalIgnoreCase))
             {
                 Console.WriteLine($"   ⚠️ Advertencia: No se detectó recomendación de 'Plan Marineritos' en primera respuesta");
             }
@@ -576,7 +576,7 @@ public class ConversationalBehaviorTests
                 conversationId, _businessId, phone,
                 "el que me recomendaste",
                 CancellationToken.None);
-            Console.WriteLine($"📥 Bot: {response3}");
+            Console.WriteLine($"📥 Bot: {response3.Response}");
 
             // Verificar estado
             var state = await _stateManager.GetOrCreateStateAsync(
@@ -595,7 +595,7 @@ public class ConversationalBehaviorTests
                 Console.WriteLine($"   ⚠️ Advertencia: Service inferido es '{state.Service}', se esperaba 'Plan Marineritos'");
             }
 
-            if (!response3.Contains(state.Service, StringComparison.OrdinalIgnoreCase))
+            if (!response3.Response.Contains(state.Service, StringComparison.OrdinalIgnoreCase))
             {
                 Console.WriteLine($"   ⚠️ Advertencia: La respuesta debe mencionar el servicio inferido '{state.Service}'");
             }

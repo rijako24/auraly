@@ -20,21 +20,6 @@ namespace MimosBabySpa.Application.Prompts.Templates;
 /// </summary>
 public static class ConfirmationSummaryBuilder
 {
-    /// <summary>
-    /// Etiquetas de display para los campos tipados de ConversationState.
-    /// Los atributos de negocio usan AttributeDefinition.DisplayName (dinámico por tenant).
-    /// </summary>
-    private static readonly IReadOnlyDictionary<string, string> CoreFieldLabels =
-        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-        {
-            ["Service"]      = "Servicio",
-            ["DesiredDate"]  = "Fecha",
-            ["DesiredTime"]  = "Hora",
-            ["CustomerName"] = "Nombre del cliente",
-            ["Phone"]        = "Teléfono",
-            ["Email"]        = "Email"
-        };
-
     // ─────────────────────────────────────────────────────────────────
     // Punto de entrada — dispatcha según si todos los datos están listos
     // ─────────────────────────────────────────────────────────────────
@@ -94,7 +79,7 @@ public static class ConfirmationSummaryBuilder
 
         foreach (var field in requiredFields.CoreFields)
         {
-            var label = GetCoreFieldLabel(field);
+            var label = FieldLabelResolver.Resolve(field, attributeDefinitions);
             var value = GetCoreFieldValue(state, field);
             sb.AppendLine($"  - {label}: {ValueOrPending(value, field, missing)}");
         }
@@ -136,17 +121,14 @@ public static class ConfirmationSummaryBuilder
 
         foreach (var field in requiredFields.IdentityFields)
         {
-            var label = GetCoreFieldLabel(field);
+            var label = FieldLabelResolver.Resolve(field, attributeDefinitions);
             var value = GetIdentityFieldValue(state, field);
             sb.AppendLine($"  - {label}: {ValueOrPending(value, field, missing)}");
         }
 
         foreach (var attrKey in requiredFields.BusinessAttributes)
         {
-            var definition = attributeDefinitions.GetValueOrDefault(attrKey);
-            var label = !string.IsNullOrWhiteSpace(definition?.DisplayName)
-                ? definition.DisplayName
-                : attrKey;
+            var label = FieldLabelResolver.Resolve($"Attribute:{attrKey}", attributeDefinitions);
             var value = state.GetAttribute(attrKey);
             var fieldKey = $"Attribute:{attrKey}";
             sb.AppendLine($"  - {label}: {ValueOrPending(value, fieldKey, missing)}");
@@ -158,9 +140,6 @@ public static class ConfirmationSummaryBuilder
     // ─────────────────────────────────────────────────────────────────
     // Helpers privados
     // ─────────────────────────────────────────────────────────────────
-
-    private static string GetCoreFieldLabel(string fieldName) =>
-        CoreFieldLabels.TryGetValue(fieldName, out var label) ? label : fieldName;
 
     private static string? GetCoreFieldValue(ConversationState state, string fieldName) =>
         fieldName switch

@@ -100,35 +100,35 @@ public class FunctionCallingScenarios
     {
         var phone = _testPhoneNumber;
         var conv = await _conversationService.GetOrCreateConversationAsync(_testBusinessId, phone);
-        return await _orchestrator.ProcessMessageAsync(conv.ConversationId, _testBusinessId, phone, "hola tengo un bebe de 4 meses");
+        return (await _orchestrator.ProcessMessageAsync(conv.ConversationId, _testBusinessId, phone, "hola tengo un bebe de 4 meses")).Response;
     }
 
     private async Task<string> Scenario2_NameAndAge()
     {
         var phone = _testPhoneNumber + "1";
         var conv = await _conversationService.GetOrCreateConversationAsync(_testBusinessId, phone);
-        return await _orchestrator.ProcessMessageAsync(conv.ConversationId, _testBusinessId, phone, "Hola, soy María y mi bebé tiene 6 meses");
+        return (await _orchestrator.ProcessMessageAsync(conv.ConversationId, _testBusinessId, phone, "Hola, soy María y mi bebé tiene 6 meses")).Response;
     }
 
     private async Task<string> Scenario3_Concerns()
     {
         var phone = _testPhoneNumber + "2";
         var conv = await _conversationService.GetOrCreateConversationAsync(_testBusinessId, phone);
-        return await _orchestrator.ProcessMessageAsync(conv.ConversationId, _testBusinessId, phone, "Mi bebé tiene cólicos y problemas para dormir");
+        return (await _orchestrator.ProcessMessageAsync(conv.ConversationId, _testBusinessId, phone, "Mi bebé tiene cólicos y problemas para dormir")).Response;
     }
 
     private async Task<string> Scenario4_SocialMedia()
     {
         var phone = _testPhoneNumber + "3";
         var conv = await _conversationService.GetOrCreateConversationAsync(_testBusinessId, phone);
-        return await _orchestrator.ProcessMessageAsync(conv.ConversationId, _testBusinessId, phone, "Hola, mi bebé tiene 3 meses y sí permito que publiquen fotos en redes sociales");
+        return (await _orchestrator.ProcessMessageAsync(conv.ConversationId, _testBusinessId, phone, "Hola, mi bebé tiene 3 meses y sí permito que publiquen fotos en redes sociales")).Response;
     }
 
     private async Task<string> Scenario5_CompleteInfo()
     {
         var phone = _testPhoneNumber + "4";
         var conv = await _conversationService.GetOrCreateConversationAsync(_testBusinessId, phone);
-        return await _orchestrator.ProcessMessageAsync(conv.ConversationId, _testBusinessId, phone, "Soy Juan, mi bebé tiene 5 meses, tiene cólicos y sí permito redes sociales");
+        return (await _orchestrator.ProcessMessageAsync(conv.ConversationId, _testBusinessId, phone, "Soy Juan, mi bebé tiene 5 meses, tiene cólicos y sí permito redes sociales")).Response;
     }
 
     private async Task<string> Scenario6_MultipleMessages()
@@ -138,7 +138,7 @@ public class FunctionCallingScenarios
         var conversationId = conv.ConversationId;
         
         await _orchestrator.ProcessMessageAsync(conversationId, _testBusinessId, phone, "Hola");
-        return await _orchestrator.ProcessMessageAsync(conversationId, _testBusinessId, phone, "Mi bebé tiene 7 meses");
+        return (await _orchestrator.ProcessMessageAsync(conversationId, _testBusinessId, phone, "Mi bebé tiene 7 meses")).Response;
     }
 
     private async Task<string> Scenario7_CorrectInfo()
@@ -148,21 +148,21 @@ public class FunctionCallingScenarios
         var conversationId = conv.ConversationId;
         
         await _orchestrator.ProcessMessageAsync(conversationId, _testBusinessId, phone, "Mi bebé tiene 4 meses");
-        return await _orchestrator.ProcessMessageAsync(conversationId, _testBusinessId, phone, "Perdón, tiene 5 meses");
+        return (await _orchestrator.ProcessMessageAsync(conversationId, _testBusinessId, phone, "Perdón, tiene 5 meses")).Response;
     }
 
     private async Task<string> Scenario8_DifferentAgeFormats()
     {
         var phone = _testPhoneNumber + "7";
         var conv = await _conversationService.GetOrCreateConversationAsync(_testBusinessId, phone);
-        return await _orchestrator.ProcessMessageAsync(conv.ConversationId, _testBusinessId, phone, "Mi pequeñín acaba de cumplir 4 mesecitos");
+        return (await _orchestrator.ProcessMessageAsync(conv.ConversationId, _testBusinessId, phone, "Mi pequeñín acaba de cumplir 4 mesecitos")).Response;
     }
 
     private async Task<string> Scenario9_NaturalConversation()
     {
         var phone = _testPhoneNumber + "8";
         var conv = await _conversationService.GetOrCreateConversationAsync(_testBusinessId, phone);
-        return await _orchestrator.ProcessMessageAsync(conv.ConversationId, _testBusinessId, phone, "Hola, buenos días. Tengo un bebé de 8 meses y está muy inquieto últimamente");
+        return (await _orchestrator.ProcessMessageAsync(conv.ConversationId, _testBusinessId, phone, "Hola, buenos días. Tengo un bebé de 8 meses y está muy inquieto últimamente")).Response;
     }
 
     private async Task<string> Scenario10_AgeAfterGreeting()
@@ -172,63 +172,63 @@ public class FunctionCallingScenarios
         var conversationId = conv.ConversationId;
         
         await _orchestrator.ProcessMessageAsync(conversationId, _testBusinessId, phone, "Hola");
-        return await _orchestrator.ProcessMessageAsync(conversationId, _testBusinessId, phone, "Mi bebé tiene 9 meses");
+        return (await _orchestrator.ProcessMessageAsync(conversationId, _testBusinessId, phone, "Mi bebé tiene 9 meses")).Response;
     }
 
     private async Task<string> Scenario11_MultipleConcerns()
     {
         var phone = _testPhoneNumber + "10";
         var conv = await _conversationService.GetOrCreateConversationAsync(_testBusinessId, phone);
-        return await _orchestrator.ProcessMessageAsync(conv.ConversationId, _testBusinessId, phone, "Mi bebé tiene reflujo, cólicos y problemas para dormir");
+        return (await _orchestrator.ProcessMessageAsync(conv.ConversationId, _testBusinessId, phone, "Mi bebé tiene reflujo, cólicos y problemas para dormir")).Response;
     }
 
     private async Task<string> Scenario12_PartialInfo()
     {
         var phone = _testPhoneNumber + "11";
         var conv = await _conversationService.GetOrCreateConversationAsync(_testBusinessId, phone);
-        return await _orchestrator.ProcessMessageAsync(conv.ConversationId, _testBusinessId, phone, "Hola, mi nombre es Carlos");
+        return (await _orchestrator.ProcessMessageAsync(conv.ConversationId, _testBusinessId, phone, "Hola, mi nombre es Carlos")).Response;
     }
 
     private async Task<string> Scenario13_AgeAndConcern()
     {
         var phone = _testPhoneNumber + "12";
         var conv = await _conversationService.GetOrCreateConversationAsync(_testBusinessId, phone);
-        return await _orchestrator.ProcessMessageAsync(conv.ConversationId, _testBusinessId, phone, "Mi bebé de 10 meses tiene mucho estrés");
+        return (await _orchestrator.ProcessMessageAsync(conv.ConversationId, _testBusinessId, phone, "Mi bebé de 10 meses tiene mucho estrés")).Response;
     }
 
     private async Task<string> Scenario14_ParentName()
     {
         var phone = _testPhoneNumber + "13";
         var conv = await _conversationService.GetOrCreateConversationAsync(_testBusinessId, phone);
-        return await _orchestrator.ProcessMessageAsync(conv.ConversationId, _testBusinessId, phone, "Hola, soy Laura, la mamá de un bebé de 11 meses");
+        return (await _orchestrator.ProcessMessageAsync(conv.ConversationId, _testBusinessId, phone, "Hola, soy Laura, la mamá de un bebé de 11 meses")).Response;
     }
 
     private async Task<string> Scenario15_ImplicitInfo()
     {
         var phone = _testPhoneNumber + "14";
         var conv = await _conversationService.GetOrCreateConversationAsync(_testBusinessId, phone);
-        return await _orchestrator.ProcessMessageAsync(conv.ConversationId, _testBusinessId, phone, "Mi pequeñín tiene 12 meses y le encanta el agua");
+        return (await _orchestrator.ProcessMessageAsync(conv.ConversationId, _testBusinessId, phone, "Mi pequeñín tiene 12 meses y le encanta el agua")).Response;
     }
 
     private async Task<string> Scenario16_AgeInQuestion()
     {
         var phone = _testPhoneNumber + "15";
         var conv = await _conversationService.GetOrCreateConversationAsync(_testBusinessId, phone);
-        return await _orchestrator.ProcessMessageAsync(conv.ConversationId, _testBusinessId, phone, "¿Tienen servicios para bebés de 2 meses?");
+        return (await _orchestrator.ProcessMessageAsync(conv.ConversationId, _testBusinessId, phone, "¿Tienen servicios para bebés de 2 meses?")).Response;
     }
 
     private async Task<string> Scenario17_ReverseOrder()
     {
         var phone = _testPhoneNumber + "16";
         var conv = await _conversationService.GetOrCreateConversationAsync(_testBusinessId, phone);
-        return await _orchestrator.ProcessMessageAsync(conv.ConversationId, _testBusinessId, phone, "Tiene problemas de sueño, mi bebé de 13 meses");
+        return (await _orchestrator.ProcessMessageAsync(conv.ConversationId, _testBusinessId, phone, "Tiene problemas de sueño, mi bebé de 13 meses")).Response;
     }
 
     private async Task<string> Scenario18_WithNegation()
     {
         var phone = _testPhoneNumber + "17";
         var conv = await _conversationService.GetOrCreateConversationAsync(_testBusinessId, phone);
-        return await _orchestrator.ProcessMessageAsync(conv.ConversationId, _testBusinessId, phone, "Mi bebé tiene 14 meses y no tiene cólicos pero sí tiene problemas para dormir");
+        return (await _orchestrator.ProcessMessageAsync(conv.ConversationId, _testBusinessId, phone, "Mi bebé tiene 14 meses y no tiene cólicos pero sí tiene problemas para dormir")).Response;
     }
 
     private async Task<string> Scenario19_LongConversation()
@@ -240,13 +240,13 @@ public class FunctionCallingScenarios
         await _orchestrator.ProcessMessageAsync(conversationId, _testBusinessId, phone, "Hola");
         await _orchestrator.ProcessMessageAsync(conversationId, _testBusinessId, phone, "Soy Pedro");
         await _orchestrator.ProcessMessageAsync(conversationId, _testBusinessId, phone, "Mi bebé tiene 15 meses");
-        return await _orchestrator.ProcessMessageAsync(conversationId, _testBusinessId, phone, "Tiene cólicos");
+        return (await _orchestrator.ProcessMessageAsync(conversationId, _testBusinessId, phone, "Tiene cólicos")).Response;
     }
 
     private async Task<string> Scenario20_LinguisticVariations()
     {
         var phone = _testPhoneNumber + "19";
         var conv = await _conversationService.GetOrCreateConversationAsync(_testBusinessId, phone);
-        return await _orchestrator.ProcessMessageAsync(conv.ConversationId, _testBusinessId, phone, "Buenas, el peque tiene 16 mesecitos y está muy tenso últimamente");
+        return (await _orchestrator.ProcessMessageAsync(conv.ConversationId, _testBusinessId, phone, "Buenas, el peque tiene 16 mesecitos y está muy tenso últimamente")).Response;
     }
 }

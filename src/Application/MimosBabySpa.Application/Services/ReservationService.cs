@@ -71,73 +71,7 @@ public class ReservationService : IReservationService
                 reservation.Status = ReservationStatus.Pending;
             }
 
-            // PASO 1: Crear evento en el calendario PRIMERO (antes de guardar en BD)
-            string? eventId = null;
-            try
-            {
-                // Construir título del evento con metadata si existe (genérico)
-                var titleParts = new List<string> { $"[{serviceName}] Reserva" };
-                if (metadata != null && metadata.Any())
-                {
-                    // Agregar todos los valores de metadata al título (genérico, sin campos hardcodeados)
-                    foreach (var kvp in metadata)
-                    {
-                        if (!string.IsNullOrWhiteSpace(kvp.Value))
-                        {
-                            titleParts.Add(kvp.Value);
-                        }
-                    }
-                }
-                var title = string.Join(" - ", titleParts);
-
-                // Template genérico para eventos de calendario
-                var reservationTemplate = $@"Reserva confirmada
-
-                                        Servicio: {serviceName}
-                                        Fecha: {reservation.ReservationDateTime:dd/MM/yyyy}
-                                        Hora: {reservation.ReservationDateTime:hh\:mm}
-                                        Duración: {reservation.DurationMinutes} minutos";
-
-                // Agregar metadata al description si existe
-                if (metadata != null && metadata.Any())
-                {
-                    reservationTemplate += "\n\nInformación adicional:\n";
-                    foreach (var kvp in metadata)
-                    {
-                        reservationTemplate += $"{kvp.Key}: {kvp.Value}\n";
-                    }
-                }
-
-                var calendarEvent = new CalendarEvent
-                {
-                    Title = title,
-                    Description = reservationTemplate,
-                    StartDateTime = reservation.ReservationDateTime,
-                    EndDateTime = reservation.EndDateTime,
-                    ExtendedProperties = new Dictionary<string, string>
-                    {
-                        { "ReservationId", reservation.ReservationId.ToString() },
-                        { "BusinessId", reservation.BusinessId.ToString() }
-                    }
-                };
-
-                eventId = await _calendarService.CreateEventAsync(calendarEvent, cancellationToken);
-                
-                _logger.LogInformation(
-                    "Evento de calendario creado exitosamente para la reserva {ReservationId} con EventId {EventId}",
-                    reservation.ReservationId,
-                    eventId);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex,
-                    "Error al crear evento en calendario para la reserva {ReservationId}",
-                    reservation.ReservationId);
-                throw; // Si falla el calendario, no crear la reserva
-            }
-
-            // PASO 2: Persistir reserva en base de datos después del calendario
-            reservation.CalendarEventId = eventId;
+            // PASO 1: Persistir reserva en base de datos (fuente de verdad)
             reservation.Status = ReservationStatus.Confirmed;
             reservation.UpdatedAt = DateTime.UtcNow;
 
@@ -165,6 +99,19 @@ public class ReservationService : IReservationService
                     };
                     await _unitOfWork.ReservationAddOns.AddAsync(reservationAddOn);
                 }
+                await _unitOfWork.SaveChangesAsync(cancellationToken);
+            }
+
+            // PASO 2: Sincronizar con calendario (best-effort: si falla no impide la reserva)
+            var calendarEventId = await TrySyncReservationToCalendarAsync(
+                createdReservation,
+                serviceName,
+                metadata,
+                cancellationToken);
+            if (calendarEventId != null)
+            {
+                createdReservation.CalendarEventId = calendarEventId;
+                await _unitOfWork.Reservations.UpdateAsync(createdReservation);
                 await _unitOfWork.SaveChangesAsync(cancellationToken);
             }
 
@@ -217,6 +164,73 @@ public class ReservationService : IReservationService
             startDate, 
             endDate);
         return reservations.Select(MapToDto);
+    }
+
+    /// <summary>
+    /// Intenta sincronizar la reserva con el calendario externo.
+    /// Si falla, no propaga la excepción: la reserva ya está persistida y el calendario es best-effort.
+    /// </summary>
+    /// <returns>El ID del evento creado, o null si falló la sincronización.</returns>
+    private async Task<string?> TrySyncReservationToCalendarAsync(
+        Reservation reservation,
+        string serviceName,
+        Dictionary<string, string>? metadata,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var titleParts = new List<string> { $"[{serviceName}] Reserva" };
+            if (metadata != null && metadata.Count > 0)
+            {
+                foreach (var kvp in metadata)
+                {
+                    if (!string.IsNullOrWhiteSpace(kvp.Value))
+                        titleParts.Add(kvp.Value);
+                }
+            }
+            var title = string.Join(" - ", titleParts);
+
+            var description = $@"Reserva confirmada
+
+Servicio: {serviceName}
+Fecha: {reservation.ReservationDateTime:dd/MM/yyyy}
+Hora: {reservation.ReservationDateTime:hh\:mm}
+Duración: {reservation.DurationMinutes} minutos";
+
+            if (metadata != null && metadata.Count > 0)
+            {
+                description += "\n\nInformación adicional:\n";
+                foreach (var kvp in metadata)
+                    description += $"{kvp.Key}: {kvp.Value}\n";
+            }
+
+            var calendarEvent = new CalendarEvent
+            {
+                Title = title,
+                Description = description,
+                StartDateTime = reservation.ReservationDateTime,
+                EndDateTime = reservation.EndDateTime,
+                ExtendedProperties = new Dictionary<string, string>
+                {
+                    { "ReservationId", reservation.ReservationId.ToString() },
+                    { "BusinessId", reservation.BusinessId.ToString() }
+                }
+            };
+
+            var eventId = await _calendarService.CreateEventAsync(calendarEvent, cancellationToken);
+            _logger.LogInformation(
+                "Evento de calendario creado para la reserva {ReservationId} con EventId {EventId}",
+                reservation.ReservationId,
+                eventId);
+            return eventId;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex,
+                "No se pudo sincronizar la reserva {ReservationId} con el calendario. La reserva fue creada correctamente.",
+                reservation.ReservationId);
+            return null;
+        }
     }
 
     private static ReservationDto MapToDto(Reservation reservation)

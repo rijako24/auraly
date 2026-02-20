@@ -160,6 +160,14 @@ public class AvailabilityService : IAvailabilityService
                 currentTime = currentTime.Add(TimeSpan.FromMinutes(slotIntervalMinutes));
             }
         }
+
+        // Hoy: excluir horarios ya pasados — semántica de disponibilidad (no formato).
+        if (date.Date == DateTime.Now.Date)
+        {
+            var now = DateTime.Now.TimeOfDay;
+            candidates.RemoveAll(t => t < now);
+        }
+
         _logger.LogDebug("Candidatos de horario para {Date}: {Count}", date.ToString("yyyy-MM-dd"), candidates.Count);
         return candidates;
     }
@@ -178,6 +186,7 @@ public class AvailabilityService : IAvailabilityService
     /// <summary>
     /// Comprueba si un slot está disponible: empleado asignable + recursos suficientes (si hay solapamiento).
     /// La duración se obtiene del servicio solicitado.
+    /// Horas pasadas (para fecha de hoy) se consideran no disponibles — no se consulta empleado ni recursos.
     /// </summary>
     private async Task<bool> IsSlotAvailableAsync(
         Guid businessId,
@@ -187,6 +196,12 @@ public class AvailabilityService : IAvailabilityService
         List<Domain.Entities.Reservation> activeReservations,
         CancellationToken cancellationToken)
     {
+        if (date.Date == DateTime.Now.Date && startTime < DateTime.Now.TimeOfDay)
+        {
+            _logger.LogDebug("Slot {StartTime} no disponible: hora ya pasada", startTime.ToString(@"hh\:mm"));
+            return false;
+        }
+
         var durationMinutes = requestedService.DurationMinutes;
         var endTime = startTime.Add(TimeSpan.FromMinutes(durationMinutes));
         var reservationStart = date.Date.Add(startTime);

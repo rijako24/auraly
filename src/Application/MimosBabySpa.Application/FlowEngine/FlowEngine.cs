@@ -81,6 +81,13 @@ public class FlowEngine : IFlowEngine
             return false;
         }
 
+        // Ya verificamos y hay alternativas almacenadas — esperando que el usuario elija. No re-verificar hasta que cambie fecha/hora.
+        if (!string.IsNullOrEmpty(state.AvailableTimeSlots))
+        {
+            _logger.LogDebug("CanCheckAvailability=false: ya verificada con alternativas almacenadas");
+            return false;
+        }
+
         return true;
     }
 

@@ -127,6 +127,23 @@ public class ConversationStateUpdater : IConversationStateUpdater
         _logger.LogInformation("Flags transaccionales reseteados (cancelación o cambio de intención)");
     }
 
+    /// <inheritdoc />
+    public void ResetForResumption(ConversationState state)
+    {
+        state.Service = null;
+        state.DesiredDate = null;
+        state.DesiredTime = null;
+        state.AvailabilityConfirmed = false;
+        state.AvailableTimeSlots = null;
+        state.ReservationConfirmed = false;
+        state.AddOnsOffered = false;
+        state.CurrentStage = TransactionStage.CollectingInformation;
+        state.UpdatedAt = DateTime.UtcNow;
+        state.Version++;
+        _logger.LogInformation(
+            "Estado reseteado por retomo de conversación (preservados: CustomerName, Phone, Email, Attributes)");
+    }
+
     // ─────────────────────────────────────────────────────────────────
     // Aplicadores privados por campo
     // ─────────────────────────────────────────────────────────────────
@@ -168,11 +185,12 @@ public class ConversationStateUpdater : IConversationStateUpdater
         state.DesiredDate = date;
         if (changed)
         {
+            state.DesiredTime = null; // Hora depende de fecha; nueva fecha invalida hora anterior.
             state.AvailabilityConfirmed = false;
             state.ReservationConfirmed = false;
             state.AvailableTimeSlots = null;
         }
-        return Ok($"DesiredDate = '{date:yyyy-MM-dd}'" + (changed ? " (disponibilidad reseteada)" : ""));
+        return Ok($"DesiredDate = '{date:yyyy-MM-dd}'" + (changed ? " (hora y disponibilidad reseteadas)" : ""));
     }
 
     private static ApplyFieldResult ApplyDesiredTime(ConversationState state, string value)
@@ -186,8 +204,9 @@ public class ConversationStateUpdater : IConversationStateUpdater
         {
             state.AvailabilityConfirmed = false;
             state.ReservationConfirmed = false;
+            state.AvailableTimeSlots = null;
         }
-        return Ok($"DesiredTime = '{time:HH:mm}'" + (changed ? " (disponibilidad reseteada)" : ""));
+        return Ok($"DesiredTime = '{time:HH:mm}'" + (changed ? " (disponibilidad y alternativas reseteadas)" : ""));
     }
 
     // ─────────────────────────────────────────────────────────────────

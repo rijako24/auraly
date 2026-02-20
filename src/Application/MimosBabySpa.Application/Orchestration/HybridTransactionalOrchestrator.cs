@@ -1,5 +1,6 @@
 using MimosBabySpa.Application.BusinessRules;
 using MimosBabySpa.Application.Configuration;
+using MimosBabySpa.Application.Constants;
 using MimosBabySpa.Application.LLM.Extraction;
 using MimosBabySpa.Domain.Enums;
 using MimosBabySpa.Application.FlowEngine;
@@ -149,6 +150,19 @@ public class HybridTransactionalOrchestrator
         var state = await _stateManager.GetOrCreateStateAsync(
             conversationId, businessId, customerPhone, cancellationToken);
 
+        // Detección de retomo: inactividad prolongada con datos transaccionales → reset preservando identidad.
+        var inactivityPeriod = DateTime.UtcNow - state.UpdatedAt;
+        var hasTransactionalData = !string.IsNullOrWhiteSpace(state.Service)
+            || state.DesiredDate.HasValue
+            || state.DesiredTime.HasValue;
+        if (inactivityPeriod.TotalHours >= OrchestrationConstants.ResumptionThresholdHours && hasTransactionalData)
+        {
+            _logger.LogInformation(
+                "Retomo detectado: {Hours:F1}h de inactividad. Reseteando datos transaccionales.",
+                inactivityPeriod.TotalHours);
+            _stateUpdater.ResetForResumption(state);
+        }
+
         // System prompt del LLM de respuesta (dinámico por negocio y servicio elegido para filtrar add-ons)
         var selectedCategory = ResolveSelectedCategory(businessContext.Services, state.Service);
         var promptInput = new SystemPromptInput(businessContext, selectedCategory);
@@ -193,9 +207,7 @@ public class HybridTransactionalOrchestrator
             history,
             cancellationToken);
 
-        _logger.LogInformation(
-            "Extracción: {Count} campos, método={Method}, exitoso={Ok}",
-            output.ExtractedFields.Count, output.Method, output.WasSuccessful);
+        LogExtraction(output);
 
         return output;
     }
@@ -217,7 +229,15 @@ public class HybridTransactionalOrchestrator
                 continue;
             }
 
-            var result = _stateUpdater.ApplyField(ctx.State, field.FieldName, field.Value);
+            var fieldName = field.FieldName;
+            
+            // Si el campo coincide con un atributo configurado, agregar el prefijo requerido por StateUpdater
+            if (ctx.BusinessContext.Attributes.ContainsKey(fieldName))
+            {
+                fieldName = $"Attribute:{fieldName}";
+            }
+
+            var result = _stateUpdater.ApplyField(ctx.State, fieldName, field.Value);
 
             if (result.Success)
                 _logger.LogInformation("✓ {Field}='{Value}' (conf={Conf:F2})",
@@ -252,7 +272,41 @@ public class HybridTransactionalOrchestrator
             return; // No continuar con otras acciones
         }
 
-        // ── 4b. Verificación de disponibilidad ───────────────────
+        // ── 4b. Add-ons (INMEDIATO TRAS SERVICIO) ─────────────────
+        // Ofrecer add-ons apenas el usuario elige un servicio, ANTES de disponibilidad y datos.
+        // Excepción: si el usuario pidió explícitamente disponibilidad y tenemos Service + Date,
+        // priorizar CheckAvailability (honrar intención explícita). AddOnsOffered queda false.
+        var userAskedAvailability = intentions.UserRequestedAvailability
+            && ctx.State.DesiredDate.HasValue
+            && !string.IsNullOrWhiteSpace(ctx.State.Service);
+
+        if (!userAskedAvailability
+            && !string.IsNullOrWhiteSpace(ctx.State.Service)
+            && !ctx.State.AddOnsOffered
+            && ShouldOfferAddOns(ctx.State, ctx.BusinessContext))
+        {
+            var alreadySelectedAddOns = ctx.ExtractionOutput?.ExtractedFields?
+                .Any(f => string.Equals(f.FieldName, "SelectedAddOns", StringComparison.OrdinalIgnoreCase)
+                      || string.Equals(f.FieldName, "Attribute:SelectedAddOns", StringComparison.OrdinalIgnoreCase)) ?? false;
+
+            if (alreadySelectedAddOns)
+            {
+                _logger.LogInformation("Usuario ya proporcionó add-on(s) en este turno — marcando AddOnsOffered sin ofrecer.");
+                _stateUpdater.ApplyConfirmationFlag(ctx.State, "AddOnsOffered", true);
+                ctx.ReEvaluate();
+            }
+            else
+            {
+                _logger.LogInformation("Ofreciendo Add-ons compatibles para servicio {Service}", ctx.State.Service);
+                turnActions.AddOnOfferingRequired = true;
+                _stateUpdater.ApplyConfirmationFlag(ctx.State, "AddOnsOffered", true);
+                ctx.ReEvaluate();
+                ctx.TurnActions = turnActions;
+                return; // No ejecutar disponibilidad, confirmación ni creación
+            }
+        }
+
+        // ── 4c. Verificación de disponibilidad ───────────────────
         //   - CanCheckAvailability: primera verificación (AvailabilityConfirmed=false)
         //   - ShouldRecheckAvailability + UserRequestedAvailability: re-verificación explícita
         var shouldCheck = ctx.FlowEvaluation.CanCheckAvailability
@@ -277,9 +331,18 @@ public class HybridTransactionalOrchestrator
                 ctx.State.AvailabilityConfirmed, ctx.State.AvailableTimeSlots);
         }
 
-        // ── 4c. Confirmación de reserva por el usuario ───────────
-        // ConfirmingBooking solo se alcanza cuando todos los datos están completos (invariante del FlowEngine).
-        // El LLM ve el stage pre-acciones: si no era ConfirmingBooking, no puede haber extraído UserConfirmedBooking.
+        // ── 4c.2. Diagnóstico: usuario pidió disponibilidad pero no se ejecutó check ──
+        if (intentions.UserRequestedAvailability && !turnActions.CheckAvailabilityExecuted)
+        {
+            _logger.LogWarning(
+                "⚠ Usuario solicitó disponibilidad pero el check no se ejecutó. " +
+                "Posible causa: DesiredDate no extraído del mensaje (Service={Service}, Date={Date}).",
+                ctx.State.Service ?? "—", ctx.State.DesiredDate?.ToString("yyyy-MM-dd") ?? "—");
+        }
+
+        // ── 4d. Confirmación de reserva por el usuario ───────────
+        // ConfirmingBooking solo cuando todos los datos completos. El "sí" al add-on ocurre
+        // en ExploringServices (add-ons primeros), así que nunca se confunde con confirmación de reserva.
         if (intentions.UserConfirmedBooking
             && !ctx.State.ReservationConfirmed
             && ctx.FlowEvaluation.CurrentStage == TransactionStage.ConfirmingBooking)
@@ -289,17 +352,7 @@ public class HybridTransactionalOrchestrator
             ctx.ReEvaluate(); // in-memory, no BD
         }
 
-        // ── 4c.2. Diagnóstico: usuario pidió disponibilidad pero no se ejecutó check ──
-        // Ocurre cuando el LLM de extracción no detectó la nueva fecha en el mensaje.
-        if (intentions.UserRequestedAvailability && !turnActions.CheckAvailabilityExecuted)
-        {
-            _logger.LogWarning(
-                "⚠ Usuario solicitó disponibilidad pero el check no se ejecutó. " +
-                "Posible causa: DesiredDate no extraído del mensaje (Service={Service}, Date={Date}).",
-                ctx.State.Service ?? "—", ctx.State.DesiredDate?.ToString("yyyy-MM-dd") ?? "—");
-        }
-
-        // ── 4d. Crear reserva ─────────────────────────────────────
+        // ── 4e. Crear reserva ────────────────────────────────────
         if (ctx.FlowEvaluation.CanCreateReservation)
         {
             _logger.LogInformation("Creando reserva...");
@@ -308,27 +361,9 @@ public class HybridTransactionalOrchestrator
             turnActions.ReservationResultMessage  = createResult.Message;
 
             if (createResult.Success)
-                _logger.LogInformation("✅ Reserva creada exitosamente");
+                _logger.LogInformation("✅ Reserva creada exitosamente: {ReservationId}", ctx.State.ReservationId);
             else
                 _logger.LogWarning("❌ Creación de reserva falló: {Msg}", createResult.Message);
-        }
-        else if (ctx.State.ReservationConfirmed && !ctx.FlowEvaluation.CanCreateReservation)
-        {
-            _logger.LogWarning(
-                "Usuario confirmó pero faltan requisitos. Missing: [{Missing}]",
-                string.Join(", ", ctx.FlowEvaluation.MissingFields));
-        }
-
-        // ── 4e. Add-ons: marcar como requerido si deben ofrecerse en este turno ──
-        if (!turnActions.CancellationExecuted
-            && !turnActions.CreateReservationExecuted
-            && !ctx.State.AddOnsOffered
-            && ShouldOfferAddOns(ctx.State, ctx.BusinessContext))
-        {
-            turnActions.AddOnOfferingRequired = true;
-            _stateUpdater.ApplyConfirmationFlag(ctx.State, "AddOnsOffered", true);
-            ctx.ReEvaluate();
-            _logger.LogInformation("Add-ons pendientes de ofrecer — marcado como requerido para este turno");
         }
 
         ctx.TurnActions = turnActions;
@@ -394,9 +429,12 @@ public class HybridTransactionalOrchestrator
         ResponseGenerationInput input,
         CancellationToken cancellationToken)
     {
-        var turnContext  = BuildTurnContext(input.State, input.FlowSnapshot, input.TurnActions, input.ExtractionOutput);
-        var instructions = BuildResponseInstructions(input.State, input.FlowSnapshot, input.TurnActions, input.ExtractionOutput, input.BusinessContext);
-        var history      = await LoadConversationHistoryAsync(input.ConversationId, cancellationToken);
+        var history = await LoadConversationHistoryAsync(input.ConversationId, cancellationToken);
+
+        input.IsFirstMessage = !history.Any();
+
+        var turnContext   = BuildTurnContext(input.State, input.FlowSnapshot, input.TurnActions, input.ExtractionOutput, input.BusinessContext);
+        var instructions  = BuildResponseInstructions(input.State, input.FlowSnapshot, input.TurnActions, input.ExtractionOutput, input.BusinessContext, input.IsFirstMessage);
 
         var messages = new List<LLMMessage>
         {
@@ -411,6 +449,11 @@ public class HybridTransactionalOrchestrator
                 ? LLMRole.User : LLMRole.Assistant;
             messages.Add(new() { Role = role, Content = msg.MessageText });
         }
+
+        var guardrails = BuildStateGuardrails(input.State, input.TurnActions);
+        if (!string.IsNullOrWhiteSpace(guardrails))
+            messages.Add(new() { Role = LLMRole.System, Content = guardrails });
+
         messages.Add(new() { Role = LLMRole.User, Content = input.UserMessage });
 
         var request = new LLMRequest
@@ -428,6 +471,33 @@ public class HybridTransactionalOrchestrator
     }
 
     // ─────────────────────────────────────────────────────────────────
+    // Guardrails — restricciones críticas derivadas del estado, posicionadas
+    // después del historial para máximo peso de atención. Evitan alucinaciones
+    // sobre reservas y disponibilidad no verificadas.
+    // ─────────────────────────────────────────────────────────────────
+
+    private static string? BuildStateGuardrails(
+        Domain.Models.ConversationState state,
+        TurnActions turnActions)
+    {
+        var lines = new List<string>();
+
+        if (turnActions.AddOnOfferingRequired)
+            lines.Add("❌ ESTE TURNO: presentar add-ons disponibles. PROHIBIDO preguntar fecha, hora ni datos personales.");
+
+        if (!state.ReservationCreated && !turnActions.CreateReservationExecuted)
+            lines.Add("❌ La reserva NO ha sido creada. PROHIBIDO afirmar que está confirmada, agendada o lista.");
+
+        if (!state.AvailabilityConfirmed && !turnActions.CheckAvailabilityExecuted && string.IsNullOrEmpty(state.AvailableTimeSlots))
+            lines.Add("❌ La disponibilidad NO ha sido verificada. PROHIBIDO mostrar o inventar horarios. Los horarios de operación NO son disponibilidad real.");
+
+        if (lines.Count == 0)
+            return null;
+
+        return "## RESTRICCIONES DEL SISTEMA\n" + string.Join("\n", lines);
+    }
+
+    // ─────────────────────────────────────────────────────────────────
     // Contexto del turno — bloque dinámico enviado al LLM de respuesta
     // ─────────────────────────────────────────────────────────────────
 
@@ -435,7 +505,8 @@ public class HybridTransactionalOrchestrator
         Domain.Models.ConversationState state,
         FlowEvaluationResult flowSnapshot,
         TurnActions turnActions,
-        ExtractionOutput extraction)
+        ExtractionOutput extraction,
+        Configuration.LoadedBusinessContext businessContext)
     {
         var sb = new System.Text.StringBuilder();
         sb.AppendLine("# CONTEXTO DEL TURNO");
@@ -455,7 +526,7 @@ public class HybridTransactionalOrchestrator
         }
 
         if (flowSnapshot.MissingFields.Any())
-            sb.AppendLine($"- **Faltan:** {string.Join(", ", flowSnapshot.MissingFields)}");
+            sb.AppendLine($"- **Faltan:** {string.Join(", ", flowSnapshot.MissingFields.Select(f => FieldLabelResolver.Resolve(f, businessContext.Attributes)))}");
 
         sb.AppendLine();
 
@@ -468,7 +539,8 @@ public class HybridTransactionalOrchestrator
         {
             if (turnActions.CheckAvailabilityExecuted)
             {
-                sb.AppendLine("**Este turno: se verificó disponibilidad.**");
+                sb.AppendLine("**Este turno: se verificó disponibilidad. RESULTADO CONFIRMADO POR EL SISTEMA.**");
+                sb.AppendLine("⚠️ Este resultado es DEFINITIVO y tiene prioridad sobre cualquier información previa en el historial.");
                 if (state.AvailabilityConfirmed)
                 {
                     if (state.DesiredTime.HasValue)
@@ -479,26 +551,34 @@ public class HybridTransactionalOrchestrator
                     }
                     else if (!string.IsNullOrEmpty(state.AvailableTimeSlots))
                     {
-                        // Sin hora seleccionada — mostrar todos los slots para que el cliente elija.
                         var slots = state.AvailableTimeSlots.Split(',', StringSplitOptions.RemoveEmptyEntries);
-                        sb.AppendLine($"**Horarios disponibles:** {string.Join(" | ", slots)}");
-                        sb.AppendLine("→ Muestra TODOS estos horarios al cliente para que elija.");
+                        sb.AppendLine($"**Horarios disponibles confirmados por el sistema:** {string.Join(" | ", slots)}");
+                        sb.AppendLine("→ OBLIGATORIO: Muestra estos horarios al cliente. El sistema verificó que SÍ hay disponibilidad.");
                     }
                 }
                 else
                 {
+                    // Slot solicitado rechazado: AvailableTimeSlots = alternativas (NO el solicitado)
                     if (!string.IsNullOrEmpty(state.AvailableTimeSlots))
                     {
-                        // Horario solicitado no disponible pero hay alternativas del día
                         var slots = state.AvailableTimeSlots.Split(',', StringSplitOptions.RemoveEmptyEntries);
-                        sb.AppendLine($"**Horarios disponibles:** {string.Join(" | ", slots)}");
-                        sb.AppendLine("→ Muestra TODOS estos horarios al cliente para que elija uno.");
+                        sb.AppendLine("→ El horario solicitado NO está disponible.");
+                        sb.AppendLine($"**Alternativas confirmadas por el sistema:** {string.Join(" | ", slots)}");
+                        sb.AppendLine("→ OBLIGATORIO: Indica que el horario pedido no está disponible y presenta estas alternativas. Pregunta cuál prefiere el cliente.");
                     }
                     else
                     {
                         sb.AppendLine("→ No hay disponibilidad para esa fecha/hora. Sugiere alternativas (otra fecha).");
                     }
                 }
+            }
+            else if (!string.IsNullOrEmpty(state.AvailableTimeSlots) && !state.AvailabilityConfirmed)
+            {
+                // Check ejecutado en turno anterior; alternativas almacenadas — usuario insiste o proporciona datos sin re-check
+                var slots = state.AvailableTimeSlots.Split(',', StringSplitOptions.RemoveEmptyEntries);
+                sb.AppendLine("**Disponibilidad ya verificada (turno anterior):** El horario solicitado NO está disponible.");
+                sb.AppendLine($"**Alternativas confirmadas:** {string.Join(" | ", slots)}");
+                sb.AppendLine("→ Presenta estas alternativas y pregunta cuál prefiere el cliente.");
             }
 
             if (turnActions.CreateReservationExecuted)
@@ -512,14 +592,17 @@ public class HybridTransactionalOrchestrator
                 sb.AppendLine("⚠️ **ATENCIÓN — DISPONIBILIDAD NO VERIFICADA EN ESTE TURNO.**");
                 sb.AppendLine("El usuario preguntó por disponibilidad pero no tengo la información actualizada.");
                 sb.AppendLine("→ NO repitas ni inventes horarios de turnos anteriores.");
-                sb.AppendLine("→ Si falta la fecha, pregúntala. Si hay fecha en el estado, indica que verificarás.");
+                sb.AppendLine("→ Si falta la fecha, pregúntala. Si no verificaste por otra razón, NO prometas verificar.");
             }
 
             if (extraction.ExtractedFields.Any() && !turnActions.CheckAvailabilityExecuted && !turnActions.CreateReservationExecuted)
                 sb.AppendLine("**Este turno: el usuario proporcionó datos nuevos.**");
 
             if (extraction.Intentions.IsInformationQuery)
+            {
                 sb.AppendLine("**El usuario pide información sobre servicios/planes.** Muéstralos sin presionar a reservar.");
+                sb.AppendLine("→ Opcional: cierra con comentario cálido o invitación suave sin pregunta. El usuario solo explora.");
+            }
         }
 
         sb.AppendLine();
@@ -542,10 +625,19 @@ public class HybridTransactionalOrchestrator
         FlowEvaluationResult flowSnapshot,
         TurnActions turnActions,
         ExtractionOutput extraction,
-        Configuration.LoadedBusinessContext businessContext)
+        Configuration.LoadedBusinessContext businessContext,
+        bool isFirstMessage)
     {
         var sb = new System.Text.StringBuilder();
         sb.AppendLine(ResponseInstructionsTemplate.Header);
+
+        // 0. Primer mensaje — SIEMPRE presentación (prioridad máxima para este caso).
+        if (isFirstMessage)
+        {
+            sb.AppendLine(ResponseInstructionsTemplate.FirstMessageInstructions);
+            sb.AppendLine();
+        }
+
         sb.AppendLine(ResponseInstructionsTemplate.BaseInstructions);
 
         // 1. Cancelación: máxima prioridad — no agregar más instrucciones.
@@ -562,12 +654,9 @@ public class HybridTransactionalOrchestrator
             return sb.ToString();
         }
 
-        // 3. Add-ons requeridos: directiva exclusiva — reemplaza instrucción de stage.
-        //    Garantiza oferta 100% sin conflicto con MissingFields/CheckAvailability.
+        // 3. Add-ons requeridos: directiva exclusiva — early return en FASE 4, sin conflicto con otros pasos.
         if (turnActions.AddOnOfferingRequired)
         {
-            if (turnActions.CheckAvailabilityExecuted)
-                sb.AppendLine(ResponseInstructionsTemplate.CheckAvailabilityInstructions);
             sb.AppendLine(ResponseInstructionsTemplate.ServiceSelectedOfferAddOnsInstructions);
             return sb.ToString();
         }
@@ -598,23 +687,35 @@ public class HybridTransactionalOrchestrator
 
     /// <summary>
     /// Genera la instrucción principal según el stage del FlowEngine.
-    ///   - ConfirmingBooking → formulario dinámico (ConfirmationSummaryBuilder).
-    ///   - Otros stages con campos faltantes → solicitar el siguiente campo (simple).
-    ///   - Flujo completo sin acción pendiente → sin instrucción adicional.
+    /// Flujo: CollectingInformation → ExploringServices → CheckingAvailability → CompletingProfile → ConfirmingBooking.
+    /// Cada stage tiene instrucción específica; solo CompletingProfile y fallback usan MissingFields.
     /// </summary>
     private static string BuildStageInstruction(
         Domain.Models.ConversationState state,
         FlowEvaluationResult flowSnapshot,
         Configuration.LoadedBusinessContext businessContext)
     {
-        if (flowSnapshot.CurrentStage == TransactionStage.ConfirmingBooking)
-            return ConfirmationSummaryBuilder.BuildInstruction(state, flowSnapshot, businessContext);
+        return flowSnapshot.CurrentStage switch
+        {
+            TransactionStage.ConfirmingBooking =>
+                ConfirmationSummaryBuilder.BuildInstruction(state, flowSnapshot, businessContext),
 
-        if (flowSnapshot.MissingFields.Any())
-            return ResponseInstructionsTemplate.MissingFieldsInstructions
-                .Replace("{missing_fields}", string.Join(", ", flowSnapshot.MissingFields));
+            TransactionStage.CollectingInformation =>
+                ResponseInstructionsTemplate.CollectingInformationInstructions,
 
-        return string.Empty;
+            TransactionStage.ExploringServices =>
+                ResponseInstructionsTemplate.ExploringServicesInstructions,
+
+            TransactionStage.CompletingProfile when flowSnapshot.MissingFields.Any() =>
+                ResponseInstructionsTemplate.CompletingProfileInstructions
+                    .Replace("{missing_fields}", string.Join(", ", flowSnapshot.MissingFields.Select(f => FieldLabelResolver.Resolve(f, businessContext.Attributes)))),
+
+            _ when flowSnapshot.MissingFields.Any() =>
+                ResponseInstructionsTemplate.MissingFieldsInstructions
+                    .Replace("{missing_fields}", string.Join(", ", flowSnapshot.MissingFields.Select(f => FieldLabelResolver.Resolve(f, businessContext.Attributes)))),
+
+            _ => string.Empty
+        };
     }
 
     private static bool ShouldOfferAddOns(
@@ -631,7 +732,8 @@ public class HybridTransactionalOrchestrator
             return false;
 
         var hasCompatibleAddOns = businessContext.AddOnRules.Any(r =>
-            !r.CompatibleServiceCategory.HasValue || r.CompatibleServiceCategory.Value == service.Category);
+            (!r.CompatibleServiceCategory.HasValue || r.CompatibleServiceCategory.Value == service.Category) &&
+            (string.IsNullOrWhiteSpace(r.CompatibleWithServiceName) || string.Equals(r.CompatibleWithServiceName, service.Name, StringComparison.OrdinalIgnoreCase)));
 
         return hasCompatibleAddOns;
     }
@@ -670,6 +772,24 @@ public class HybridTransactionalOrchestrator
             _logger.LogWarning(ex, "Error cargando historial — continuando sin historial");
             return new List<Domain.Entities.Message>();
         }
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Logging de extracción (siempre visible para debug)
+    // ─────────────────────────────────────────────────────────────────
+
+    private void LogExtraction(ExtractionOutput output)
+    {
+        var i = output.Intentions;
+        var intentions = $"UserRequestedAvailability={i.UserRequestedAvailability}, UserConfirmedBooking={i.UserConfirmedBooking}, IsInformationQuery={i.IsInformationQuery}, UserWantsToCancel={i.UserWantsToCancel}";
+        var fields = output.ExtractedFields.Count == 0
+            ? "(ninguno)"
+            : string.Join(", ", output.ExtractedFields.Select(f => $"{f.FieldName}={f.Value}(conf:{f.Confidence:F2})"));
+        var ambiguities = output.Ambiguities.Count > 0 ? $" | Ambiguities: {string.Join(", ", output.Ambiguities.Select(a => $"{a.FieldName}:{a.Type}({a.Text})"))}" : "";
+
+        _logger.LogWarning(
+            "Extracción: Method={Method}, Ok={Ok} | Fields: {Fields} | Intentions: {Intentions}{Ambiguities}",
+            output.Method, output.WasSuccessful, fields, intentions, ambiguities);
     }
 
     // ─────────────────────────────────────────────────────────────────

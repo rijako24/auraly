@@ -29,6 +29,13 @@ public interface IConversationStateUpdater
     /// Usar cuando el usuario cancela o cambia de intención.
     /// </summary>
     void ResetTransactionalFlags(ConversationState state);
+
+    /// <summary>
+    /// Resetea datos transaccionales para retomo de conversación.
+    /// Preserva: CustomerName, Phone, Email, Attributes (identidad del cliente).
+    /// Limpia: Service, DesiredDate, DesiredTime, flags de confirmación.
+    /// </summary>
+    void ResetForResumption(ConversationState state);
 }
 
 /// <summary>

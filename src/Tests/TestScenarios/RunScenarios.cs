@@ -168,6 +168,19 @@ class RunScenarios
                 Console.WriteLine("\n\n");
             }
         }
+
+        if (testToRun == "all" || testToRun == "regression")
+        {
+            // Pruebas de regresión (conversaciones reales que expusieron bugs)
+            var loggerReg = serviceProvider.GetRequiredService<ILogger<RegressionConversationTests>>();
+            var regressionTests = new RegressionConversationTests(orchestrator, stateManager, conversationService, loggerReg);
+            await regressionTests.RunAllTestsAsync();
+            
+            if (testToRun == "all")
+            {
+                Console.WriteLine("\n\n");
+            }
+        }
         
         if (testToRun == "all" || testToRun.StartsWith("behavior"))
         {
@@ -183,7 +196,8 @@ class RunScenarios
             }
             else
             {
-            await behaviorTests.RunAllTestsAsync();
+                await behaviorTests.RunAllTestsAsync();
+            }
         }
     }
     
@@ -232,5 +246,4 @@ class RunScenarios
         }
         return null;
     }
-}
 }

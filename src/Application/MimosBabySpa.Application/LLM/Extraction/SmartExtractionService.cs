@@ -69,6 +69,11 @@ public class SmartExtractionService : ISmartExtractionService
             var llmResult = await ExtractWithLLMAsync(
                 userMessage, currentState, businessContext, recentHistory, cancellationToken);
 
+            // Normalización de frontera LLM: "N/A" significa "campo sin valor", no error.
+            // Evita que el validator rechace extracciones válidas (ej. DesiredTime cuando el usuario solo preguntó por fecha).
+            llmResult.ExtractedFields.RemoveAll(f =>
+                string.Equals(f.Value?.Trim(), "N/A", StringComparison.OrdinalIgnoreCase));
+
             var validation = await _validator.ValidateExtractionAsync(llmResult, userMessage, currentState);
 
             if (validation.IsValid && validation.Confidence >= ExtractionConstants.MinValidationConfidence)
@@ -279,7 +284,7 @@ public class SmartExtractionService : ISmartExtractionService
                 foreach (var el in fields.EnumerateArray())
                 {
                     var name  = el.TryGetProperty("field_name", out var fn) ? fn.GetString() : null;
-                    var value = el.TryGetProperty("value", out var v) ? v.GetString() : null;
+                    var value = el.TryGetProperty("value", out var v) ? FlexibleStringJsonConverter.FromJsonElement(v) : null;
                     var conf  = el.TryGetProperty("confidence", out var c) && c.TryGetDouble(out var d) ? d : 0.6;
 
                     if (!string.IsNullOrEmpty(name) && value != null)

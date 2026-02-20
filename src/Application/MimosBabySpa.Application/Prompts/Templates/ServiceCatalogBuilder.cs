@@ -60,8 +60,10 @@ public static class ServiceCatalogBuilder
 
             foreach (var svc in ordered)
             {
-                var recomendacion = svc == ordered.First() ? "  ← *RECOMIENDA ESTA PRIMERO*" : "";
-                sb.AppendLine($"#### ⭐ {svc.Name}{recomendacion}");
+                var header = svc == ordered.First()
+                    ? $"#### ⭐ {svc.Name}  ← *RECOMIENDA ESTA PRIMERO*"
+                    : $"#### {svc.Name}";
+                sb.AppendLine(header);
                 var composition = BuildCompositionLine(svc);
                 if (!string.IsNullOrEmpty(composition))
                     sb.AppendLine(composition);

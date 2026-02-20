@@ -8,7 +8,7 @@ namespace MimosBabySpa.Domain.Enums;
 public enum ServiceCategory
 {
     /// <summary>
-    /// Planes de hidroterapia/masaje: Marineritos, Aventuras, Suaves Mimos.
+    /// Planes de hidroterapia/masaje: Marineritos, Aventuras, Post Vacunas.
     /// Add-ons (Fotografía, Decoración) típicamente aplican solo a esta categoría.
     /// </summary>
     Plan = 0,

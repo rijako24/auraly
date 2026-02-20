@@ -1,0 +1,54 @@
+using MimosBabySpa.Domain.Entities;
+using MimosBabySpa.Domain.Repositories;
+
+namespace MimosBabySpa.IntegrationTests.Infrastructure;
+
+/// <summary>
+/// IUnitOfWork en memoria. Solo implementa los repositorios que usa el orquestador.
+/// El resto lanza NotImplementedException para detectar usos inesperados.
+/// </summary>
+public class InMemoryUnitOfWork : IUnitOfWork
+{
+    public IConversationRepository Conversations { get; }
+    public IMessageRepository Messages { get; }
+    public IConversationStateRepository ConversationStates { get; }
+    public IServiceRepository Services { get; }
+    public IBusinessRepository Businesses { get; }
+    public IBusinessWhatsAppNumberRepository BusinessWhatsAppNumbers => throw new NotImplementedException();
+    public IBusinessConfigurationRepository BusinessConfigurations { get; }
+    public ISystemConfigurationRepository SystemConfigurations { get; }
+    public IConversationContextRepository ConversationContexts => throw new NotImplementedException();
+    public IReservationRepository Reservations { get; }
+    public IBusinessResourceRepository BusinessResources { get; }
+    public IEmployeeRepository Employees { get; }
+    public IEmployeeServiceRepository EmployeeServices { get; }
+    public ILeadRepository Leads { get; }
+    public IServiceAddOnRuleRepository ServiceAddOnRules { get; }
+    public IReservationAddOnRepository ReservationAddOns { get; }
+
+    private readonly Guid _businessId;
+
+    public InMemoryUnitOfWork(Guid businessId)
+    {
+        _businessId = businessId;
+        Conversations        = new InMemoryConversationRepository();
+        Messages             = new InMemoryMessageRepository();
+        ConversationStates   = new InMemoryConversationStateRepository();
+        Services             = new InMemoryServiceRepository(businessId);
+        Businesses           = new InMemoryBusinessRepository(businessId);
+        BusinessConfigurations = new InMemoryBusinessConfigurationRepository(businessId);
+        SystemConfigurations = new InMemorySystemConfigurationRepository();
+        Reservations         = new InMemoryReservationRepository();
+        BusinessResources    = new InMemoryBusinessResourceRepository();
+        Employees            = new InMemoryEmployeeRepository(businessId);
+        EmployeeServices     = new InMemoryEmployeeServiceRepository();
+        Leads                = new InMemoryLeadRepository();
+        ServiceAddOnRules    = new InMemoryServiceAddOnRuleRepository(businessId);
+        ReservationAddOns    = new InMemoryReservationAddOnRepository();
+    }
+
+    public Task<int> SaveChangesAsync(CancellationToken cancellationToken = default) =>
+        Task.FromResult(0);
+
+    public void Dispose() { }
+}

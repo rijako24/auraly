@@ -25,4 +25,10 @@ public class ResponseGenerationInput
     public string SystemPrompt                  { get; init; } = string.Empty;
     public Guid ConversationId                  { get; init; }
     public Guid BusinessId                      { get; init; }
+
+    /// <summary>
+    /// Indica si es el primer mensaje del usuario (historial vacío).
+    /// Se asigna tras cargar el historial; usada para incluir instrucción de presentación.
+    /// </summary>
+    public bool IsFirstMessage                  { get; set; }
 }

@@ -30,25 +30,26 @@ public class CoreInstructionsBuilder
             1. Extraer solo si confidence >= {minConf}. Si confidence < {minConf} → agregar a `ambiguities`, NO a `extracted_fields`.
             2. Valores estructurados únicamente: "Ana" ✓ · "me llamo Ana" ✗ · fechas YYYY-MM-DD · horas HH:MM.
             3. Respuestas negativas ("ninguna", "no", "no tiene") → valor "N/A", confidence 0.95.
-            4. Inferencia contextual (el historial muestra la pregunta del asistente y la respuesta del usuario):
-               - Si el asistente preguntó por un dato y el usuario responde, extraer el VALOR LIMPIO de ese campo.
-               - Ejemplos: "se llama Thomas" → campo nombre: "Thomas" | "son 2 bebés" → campo cantidad: "2" | "tiene 6 meses" → campo edad: "6"
-               - Confidence: 0.90 si el valor es coherente con el tipo del campo.
-               - Si el usuario claramente NO responde a la pregunta (cambia de tema, pregunta otra cosa) → no forzar extracción.
-            5. Service: usar nombre EXACTO de la lista. NO inventar nombres.
-            6. DesiredDate con referencias temporales (mapeo obligatorio):
-               - "hoy" → {now:yyyy-MM-dd}
-               - "mañana" → {tomorrow:yyyy-MM-dd}
-               - "pasado mañana" → {now.AddDays(2):yyyy-MM-dd}
+            4. Resolución contextual (el historial es contexto para interpretar el mensaje actual):
+               a) Valor directo: el usuario proporciona el dato explícitamente.
+                  Ej: "se llama Thomas" → CustomerName: "Thomas" | "son 2 bebés" → cantidad: "2"
+               b) Aceptación por referencia: el asistente propuso o mostró opciones y el usuario la acepta
+                  ("sí", "ese", "esa", "está bien", "la primera", "la sencilla", etc.).
+                  Resolver la referencia al valor concreto usando el historial. El valor debe ser el nombre
+                  exacto del catálogo (servicio, add-on, horario, etc.). Aplica a CUALQUIER campo.
+                  Ej: Bot ofrece "Plan Marineritos" → usuario: "sí, ese plan" → Service: "Plan Marineritos"
+                  Ej: Bot muestra "Decoración Sencilla" y "Bouquet" → usuario: "la sencilla" → Attribute:SelectedAddOns: "Decoración Sencilla"
+                  Ej: Bot muestra horarios 09:00, 11:00 → usuario: "a las 9" → DesiredTime: "09:00"
+               c) Confidence: 0.92 si el referente es inequívoco en el historial. 0.70 si hay múltiples candidatos.
+               d) Si el usuario claramente NO responde (cambia de tema) → no forzar extracción.
+            5. Fechas temporales (mapeo obligatorio):
+               - "hoy" → {now:yyyy-MM-dd} | "mañana" → {tomorrow:yyyy-MM-dd} | "pasado mañana" → {now.AddDays(2):yyyy-MM-dd}
                - Días de semana → próxima ocurrencia futura.
-            7. Si el usuario pide disponibilidad/horarios Y menciona una fecha → SIEMPRE extraer DesiredDate + marcar user_requested_availability=true.
-            8. CAMBIO DE FECHA EN PREGUNTA DE SEGUIMIENTO: Frases como "¿y para [fecha]?", "¿y [fecha]?",
-               "¿qué hay [fecha]?", "¿para pasado mañana?" expresan una NUEVA fecha de consulta.
-               Aunque el estado ya tenga una fecha anterior, extraer DesiredDate con la nueva fecha (confidence 0.95)
-               Y marcar user_requested_availability=true. La nueva fecha reemplaza a la anterior.
-            9. SEPARACIÓN ESTRICTA campos / intenciones: Los nombres ({intentionNames})
+               - Si el usuario pide disponibilidad/horarios mencionando una fecha (incluso "¿y para mañana?")
+                 → extraer DesiredDate + marcar user_requested_availability=true.
+            6. SEPARACIÓN ESTRICTA campos / intenciones: Los nombres ({intentionNames})
                pertenecen EXCLUSIVAMENTE al bloque "intentions". NUNCA los incluyas en "extracted_fields".
-            10. ALCANCE: Extraer SOLO del último mensaje del usuario (delimitado con ---MENSAJE A ANALIZAR---).
+            7. ALCANCE: Extraer SOLO del último mensaje del usuario (delimitado con ---MENSAJE A ANALIZAR---).
                 El historial es CONTEXTO para entender referencias. NO re-extraer datos que ya figuran en "Estado actual".
                 NO inventar campos fuera de la tabla de campos disponibles (ej. TotalPrice).
 
@@ -61,7 +62,8 @@ public class CoreInstructionsBuilder
 
             ## Ambigüedades (tipos):
             - temporal: "pronto", "luego", "otro día" — sin fecha concreta.
-            - referential: "ese plan", "esa fecha" — sin contexto previo claro.
+            - referential: referencia que NO se puede resolver desde el historial (ej. "ese plan" sin que el asistente
+              haya mencionado ningún servicio). Si el historial provee un referente claro → resolver en extracted_fields, NO ambigüedad.
             - multiple_values: "Mateo o Lucas" — más de una opción.
             - incomplete: "el lunes" — incompleto sin saber cuál.
             """;

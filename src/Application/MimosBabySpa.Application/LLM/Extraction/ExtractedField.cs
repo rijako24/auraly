@@ -11,6 +11,7 @@ public class ExtractedField
     public string FieldName { get; set; } = string.Empty;
 
     [JsonPropertyName("value")]
+    [JsonConverter(typeof(FlexibleStringJsonConverter))]
     public string Value { get; set; } = string.Empty;
 
     [JsonPropertyName("field_type")]

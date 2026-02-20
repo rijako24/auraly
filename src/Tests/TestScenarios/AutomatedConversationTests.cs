@@ -110,49 +110,49 @@ public class AutomatedConversationTests
             // Paso 1: Saludo inicial
             Console.WriteLine("\n📤 Usuario: Hola");
             var response1 = await _orchestrator.ProcessMessageAsync(conversationId, _businessId, phone, "Hola", CancellationToken.None);
-            Console.WriteLine($"📥 Bot: {response1}");
+            Console.WriteLine($"📥 Bot: {response1.Response}");
 
             // Paso 2: Información del bebé
             Console.WriteLine("\n📤 Usuario: Tengo un bebé de 5 meses");
             var response2 = await _orchestrator.ProcessMessageAsync(conversationId, _businessId, phone, "Tengo un bebé de 5 meses", CancellationToken.None);
-            Console.WriteLine($"📥 Bot: {response2}");
+            Console.WriteLine($"📥 Bot: {response2.Response}");
             await VerifyStateContains(conversationId, "BabyAge", "5");
 
             // Paso 3: Nombre del bebé
             Console.WriteLine("\n📤 Usuario: Se llama Mateo");
             var response3 = await _orchestrator.ProcessMessageAsync(conversationId, _businessId, phone, "Se llama Mateo", CancellationToken.None);
-            Console.WriteLine($"📥 Bot: {response3}");
+            Console.WriteLine($"📥 Bot: {response3.Response}");
             await VerifyStateContains(conversationId, "BabyName", "Mateo");
 
             // Paso 4: Selección de servicio
             Console.WriteLine("\n📤 Usuario: Quiero el Plan Marineritos");
             var response4 = await _orchestrator.ProcessMessageAsync(conversationId, _businessId, phone, "Quiero el Plan Marineritos", CancellationToken.None);
-            Console.WriteLine($"📥 Bot: {response4}");
+            Console.WriteLine($"📥 Bot: {response4.Response}");
             await VerifyStateContains(conversationId, "Service", "Plan Marineritos");
 
             // Paso 5: Fecha deseada
             Console.WriteLine("\n📤 Usuario: Para mañana a las 3pm");
             var response5 = await _orchestrator.ProcessMessageAsync(conversationId, _businessId, phone, "Para mañana a las 3pm", CancellationToken.None);
-            Console.WriteLine($"📥 Bot: {response5}");
+            Console.WriteLine($"📥 Bot: {response5.Response}");
             await VerifyStateContains(conversationId, "DesiredDate");
             await VerifyStateContains(conversationId, "DesiredTime", "15:00");
 
             // Paso 6: Verificar disponibilidad
             Console.WriteLine("\n📤 Usuario: ¿Hay disponibilidad?");
             var response6 = await _orchestrator.ProcessMessageAsync(conversationId, _businessId, phone, "¿Hay disponibilidad?", CancellationToken.None);
-            Console.WriteLine($"📥 Bot: {response6}");
+            Console.WriteLine($"📥 Bot: {response6.Response}");
             await VerifyStateContains(conversationId, "AvailabilityConfirmed", "true");
 
             // Paso 7: Proporcionar nombre del cliente
             Console.WriteLine("\n📤 Usuario: Mi nombre es María González");
             var response7 = await _orchestrator.ProcessMessageAsync(conversationId, _businessId, phone, "Mi nombre es María González", CancellationToken.None);
-            Console.WriteLine($"📥 Bot: {response7}");
+            Console.WriteLine($"📥 Bot: {response7.Response}");
             await VerifyStateContains(conversationId, "CustomerName", "María González");
 
             // Paso 8: Confirmar reserva
             Console.WriteLine("\n📤 Usuario: Sí, confirma la reserva");
             var response8 = await _orchestrator.ProcessMessageAsync(conversationId, _businessId, phone, "Sí, confirma la reserva", CancellationToken.None);
-            Console.WriteLine($"📥 Bot: {response8}");
+            Console.WriteLine($"📥 Bot: {response8.Response}");
             await VerifyStateContains(conversationId, "ReservationCreated");
 
             Console.WriteLine("\n✅ Test 1 completado exitosamente");
@@ -185,15 +185,15 @@ public class AutomatedConversationTests
             // Paso 1: Información completa del bebé
             Console.WriteLine("\n📤 Usuario: Hola, tengo un bebé de 8 meses llamado Sofía");
             var response1 = await _orchestrator.ProcessMessageAsync(conversationId, _businessId, phone, "Hola, tengo un bebé de 8 meses llamado Sofía", CancellationToken.None);
-            Console.WriteLine($"📥 Bot: {response1}");
+            Console.WriteLine($"📥 Bot: {response1.Response}");
             await VerifyStateContains(conversationId, "BabyAge", "8");
             await VerifyStateContains(conversationId, "BabyName", "Sofía");
 
             // Paso 2: Servicio y fecha
-            Console.WriteLine("\n📤 Usuario: Quiero el Plan Suaves Mimos para el viernes a las 10am");
-            var response2 = await _orchestrator.ProcessMessageAsync(conversationId, _businessId, phone, "Quiero el Plan Suaves Mimos para el viernes a las 10am", CancellationToken.None);
-            Console.WriteLine($"📥 Bot: {response2}");
-            await VerifyStateContains(conversationId, "Service", "Plan Suaves Mimos");
+            Console.WriteLine("\n📤 Usuario: Quiero el Plan Post Vacunas para el viernes a las 10am");
+            var response2 = await _orchestrator.ProcessMessageAsync(conversationId, _businessId, phone, "Quiero el Plan Post Vacunas para el viernes a las 10am", CancellationToken.None);
+            Console.WriteLine($"📥 Bot: {response2.Response}");
+            await VerifyStateContains(conversationId, "Service", "Plan Post Vacunas");
             await VerifyStateContains(conversationId, "DesiredDate");
             await VerifyStateContains(conversationId, "DesiredTime", "10:00");
 
@@ -227,20 +227,20 @@ public class AutomatedConversationTests
             // Paso 1: Configurar datos básicos
             Console.WriteLine("\n📤 Usuario: Hola, quiero reservar el Plan Aventuras Marinas");
             var response1 = await _orchestrator.ProcessMessageAsync(conversationId, _businessId, phone, "Hola, quiero reservar el Plan Aventuras Marinas", CancellationToken.None);
-            Console.WriteLine($"📥 Bot: {response1}");
+            Console.WriteLine($"📥 Bot: {response1.Response}");
             await VerifyStateContains(conversationId, "Service", "Plan Aventuras Marinas");
 
             // Paso 2: Fecha y hora
             Console.WriteLine("\n📤 Usuario: Para mañana a las 2pm");
             var response2 = await _orchestrator.ProcessMessageAsync(conversationId, _businessId, phone, "Para mañana a las 2pm", CancellationToken.None);
-            Console.WriteLine($"📥 Bot: {response2}");
+            Console.WriteLine($"📥 Bot: {response2.Response}");
             await VerifyStateContains(conversationId, "DesiredDate");
             await VerifyStateContains(conversationId, "DesiredTime", "14:00");
 
             // Paso 3: Solicitar disponibilidad
             Console.WriteLine("\n📤 Usuario: Verifica si hay disponibilidad");
             var response3 = await _orchestrator.ProcessMessageAsync(conversationId, _businessId, phone, "Verifica si hay disponibilidad", CancellationToken.None);
-            Console.WriteLine($"📥 Bot: {response3}");
+            Console.WriteLine($"📥 Bot: {response3.Response}");
             await VerifyStateContains(conversationId, "AvailabilityConfirmed");
 
             Console.WriteLine("\n✅ Test 3 completado exitosamente");
@@ -273,26 +273,26 @@ public class AutomatedConversationTests
             // Paso 1: Información inicial incorrecta
             Console.WriteLine("\n📤 Usuario: Quiero el Plan Marineritos para hoy");
             var response1 = await _orchestrator.ProcessMessageAsync(conversationId, _businessId, phone, "Quiero el Plan Marineritos para hoy", CancellationToken.None);
-            Console.WriteLine($"📥 Bot: {response1}");
+            Console.WriteLine($"📥 Bot: {response1.Response}");
             await VerifyStateContains(conversationId, "Service", "Plan Marineritos");
 
             // Paso 2: Corrección de fecha
             Console.WriteLine("\n📤 Usuario: Mejor para mañana a las 11am");
             var response2 = await _orchestrator.ProcessMessageAsync(conversationId, _businessId, phone, "Mejor para mañana a las 11am", CancellationToken.None);
-            Console.WriteLine($"📥 Bot: {response2}");
+            Console.WriteLine($"📥 Bot: {response2.Response}");
             await VerifyStateContains(conversationId, "DesiredDate");
             await VerifyStateContains(conversationId, "DesiredTime", "11:00");
 
             // Paso 3: Agregar información del bebé
             Console.WriteLine("\n📤 Usuario: Mi bebé tiene 6 meses");
             var response3 = await _orchestrator.ProcessMessageAsync(conversationId, _businessId, phone, "Mi bebé tiene 6 meses", CancellationToken.None);
-            Console.WriteLine($"📥 Bot: {response3}");
+            Console.WriteLine($"📥 Bot: {response3.Response}");
             await VerifyStateContains(conversationId, "BabyAge", "6");
 
             // Paso 4: Confirmar
             Console.WriteLine("\n📤 Usuario: Sí, confirma");
             var response4 = await _orchestrator.ProcessMessageAsync(conversationId, _businessId, phone, "Sí, confirma", CancellationToken.None);
-            Console.WriteLine($"📥 Bot: {response4}");
+            Console.WriteLine($"📥 Bot: {response4.Response}");
 
             Console.WriteLine("\n✅ Test 4 completado exitosamente");
             return (testName, true, "");
@@ -322,10 +322,10 @@ public class AutomatedConversationTests
             var conversationId = conversation.ConversationId;
 
             // Paso 1: Mensaje con toda la información
-            Console.WriteLine("\n📤 Usuario: Hola, quiero reservar el Plan Suaves Mimos para mañana a las 4pm, mi bebé tiene 3 meses");
-            var response1 = await _orchestrator.ProcessMessageAsync(conversationId, _businessId, phone, "Hola, quiero reservar el Plan Suaves Mimos para mañana a las 4pm, mi bebé tiene 3 meses", CancellationToken.None);
-            Console.WriteLine($"📥 Bot: {response1}");
-            await VerifyStateContains(conversationId, "Service", "Plan Suaves Mimos");
+            Console.WriteLine("\n📤 Usuario: Hola, quiero reservar el Plan Post Vacunas para mañana a las 4pm, mi bebé tiene 3 meses");
+            var response1 = await _orchestrator.ProcessMessageAsync(conversationId, _businessId, phone, "Hola, quiero reservar el Plan Post Vacunas para mañana a las 4pm, mi bebé tiene 3 meses", CancellationToken.None);
+            Console.WriteLine($"📥 Bot: {response1.Response}");
+            await VerifyStateContains(conversationId, "Service", "Plan Post Vacunas");
             await VerifyStateContains(conversationId, "DesiredDate");
             await VerifyStateContains(conversationId, "DesiredTime", "16:00");
             await VerifyStateContains(conversationId, "BabyAge", "3");
@@ -333,7 +333,7 @@ public class AutomatedConversationTests
             // Paso 2: Confirmar
             Console.WriteLine("\n📤 Usuario: Perfecto, confirma");
             var response2 = await _orchestrator.ProcessMessageAsync(conversationId, _businessId, phone, "Perfecto, confirma", CancellationToken.None);
-            Console.WriteLine($"📥 Bot: {response2}");
+            Console.WriteLine($"📥 Bot: {response2.Response}");
 
             Console.WriteLine("\n✅ Test 5 completado exitosamente");
             return (testName, true, "");
@@ -364,18 +364,18 @@ public class AutomatedConversationTests
             // Paso 1: Consulta general
             Console.WriteLine("\n📤 Usuario: Hola, ¿qué servicios ofrecen para bebés?");
             var response1 = await _orchestrator.ProcessMessageAsync(conversationId, _businessId, phone, "Hola, ¿qué servicios ofrecen para bebés?", CancellationToken.None);
-            Console.WriteLine($"📥 Bot: {response1}");
+            Console.WriteLine($"📥 Bot: {response1.Response}");
 
             // Paso 2: Más información
             Console.WriteLine("\n📤 Usuario: Mi bebé tiene 7 meses, ¿cuál me recomiendas?");
             var response2 = await _orchestrator.ProcessMessageAsync(conversationId, _businessId, phone, "Mi bebé tiene 7 meses, ¿cuál me recomiendas?", CancellationToken.None);
-            Console.WriteLine($"📥 Bot: {response2}");
+            Console.WriteLine($"📥 Bot: {response2.Response}");
             await VerifyStateContains(conversationId, "BabyAge", "7");
 
             // Paso 3: Decidir reservar
             Console.WriteLine("\n📤 Usuario: Me gusta el Plan Marineritos, quiero reservar para mañana");
             var response3 = await _orchestrator.ProcessMessageAsync(conversationId, _businessId, phone, "Me gusta el Plan Marineritos, quiero reservar para mañana", CancellationToken.None);
-            Console.WriteLine($"📥 Bot: {response3}");
+            Console.WriteLine($"📥 Bot: {response3.Response}");
             await VerifyStateContains(conversationId, "Service", "Plan Marineritos");
 
             Console.WriteLine("\n✅ Test 6 completado exitosamente");
@@ -407,19 +407,19 @@ public class AutomatedConversationTests
             // Paso 1: Selección inicial
             Console.WriteLine("\n📤 Usuario: Quiero el Plan Aventuras Marinas");
             var response1 = await _orchestrator.ProcessMessageAsync(conversationId, _businessId, phone, "Quiero el Plan Aventuras Marinas", CancellationToken.None);
-            Console.WriteLine($"📥 Bot: {response1}");
+            Console.WriteLine($"📥 Bot: {response1.Response}");
             await VerifyStateContains(conversationId, "Service", "Plan Aventuras Marinas");
 
             // Paso 2: Cambio de opinión
-            Console.WriteLine("\n📤 Usuario: Mejor quiero el Plan Suaves Mimos");
-            var response2 = await _orchestrator.ProcessMessageAsync(conversationId, _businessId, phone, "Mejor quiero el Plan Suaves Mimos", CancellationToken.None);
-            Console.WriteLine($"📥 Bot: {response2}");
-            await VerifyStateContains(conversationId, "Service", "Plan Suaves Mimos");
+            Console.WriteLine("\n📤 Usuario: Mejor quiero el Plan Post Vacunas");
+            var response2 = await _orchestrator.ProcessMessageAsync(conversationId, _businessId, phone, "Mejor quiero el Plan Post Vacunas", CancellationToken.None);
+            Console.WriteLine($"📥 Bot: {response2.Response}");
+            await VerifyStateContains(conversationId, "Service", "Plan Post Vacunas");
 
             // Paso 3: Continuar con la reserva
             Console.WriteLine("\n📤 Usuario: Para mañana a las 9am");
             var response3 = await _orchestrator.ProcessMessageAsync(conversationId, _businessId, phone, "Para mañana a las 9am", CancellationToken.None);
-            Console.WriteLine($"📥 Bot: {response3}");
+            Console.WriteLine($"📥 Bot: {response3.Response}");
             await VerifyStateContains(conversationId, "DesiredTime", "09:00");
 
             Console.WriteLine("\n✅ Test 7 completado exitosamente");
@@ -449,22 +449,22 @@ public class AutomatedConversationTests
             var conversationId = conversation.ConversationId;
 
             // Paso 1: Pregunta sobre diferencias
-            Console.WriteLine("\n📤 Usuario: ¿Cuál es la diferencia entre Plan Marineritos y Plan Suaves Mimos?");
-            var response1 = await _orchestrator.ProcessMessageAsync(conversationId, _businessId, phone, "¿Cuál es la diferencia entre Plan Marineritos y Plan Suaves Mimos?", CancellationToken.None);
-            Console.WriteLine($"📥 Bot: {response1}");
+            Console.WriteLine("\n📤 Usuario: ¿Cuál es la diferencia entre Plan Marineritos y Plan Post Vacunas?");
+            var response1 = await _orchestrator.ProcessMessageAsync(conversationId, _businessId, phone, "¿Cuál es la diferencia entre Plan Marineritos y Plan Post Vacunas?", CancellationToken.None);
+            Console.WriteLine($"📥 Bot: {response1.Response}");
 
             // Paso 2: Proporcionar información del bebé
             Console.WriteLine("\n📤 Usuario: Mi bebé tiene 4 meses, se llama Lucas");
             var response2 = await _orchestrator.ProcessMessageAsync(conversationId, _businessId, phone, "Mi bebé tiene 4 meses, se llama Lucas", CancellationToken.None);
-            Console.WriteLine($"📥 Bot: {response2}");
+            Console.WriteLine($"📥 Bot: {response2.Response}");
             await VerifyStateContains(conversationId, "BabyAge", "4");
             await VerifyStateContains(conversationId, "BabyName", "Lucas");
 
             // Paso 3: Seleccionar servicio
-            Console.WriteLine("\n📤 Usuario: Entonces voy con el Plan Suaves Mimos");
-            var response3 = await _orchestrator.ProcessMessageAsync(conversationId, _businessId, phone, "Entonces voy con el Plan Suaves Mimos", CancellationToken.None);
-            Console.WriteLine($"📥 Bot: {response3}");
-            await VerifyStateContains(conversationId, "Service", "Plan Suaves Mimos");
+            Console.WriteLine("\n📤 Usuario: Entonces voy con el Plan Post Vacunas");
+            var response3 = await _orchestrator.ProcessMessageAsync(conversationId, _businessId, phone, "Entonces voy con el Plan Post Vacunas", CancellationToken.None);
+            Console.WriteLine($"📥 Bot: {response3.Response}");
+            await VerifyStateContains(conversationId, "Service", "Plan Post Vacunas");
 
             Console.WriteLine("\n✅ Test 8 completado exitosamente");
             return (testName, true, "");
@@ -495,13 +495,13 @@ public class AutomatedConversationTests
             // Paso 1: Presentación con nombre
             Console.WriteLine("\n📤 Usuario: Hola, soy Patricia Rodríguez");
             var response1 = await _orchestrator.ProcessMessageAsync(conversationId, _businessId, phone, "Hola, soy Patricia Rodríguez", CancellationToken.None);
-            Console.WriteLine($"📥 Bot: {response1}");
+            Console.WriteLine($"📥 Bot: {response1.Response}");
             await VerifyStateContains(conversationId, "CustomerName", "Patricia Rodríguez");
 
             // Paso 2: Información completa
             Console.WriteLine("\n📤 Usuario: Quiero reservar el Plan Marineritos para mi bebé de 6 meses llamado Diego, para mañana a las 3pm");
             var response2 = await _orchestrator.ProcessMessageAsync(conversationId, _businessId, phone, "Quiero reservar el Plan Marineritos para mi bebé de 6 meses llamado Diego, para mañana a las 3pm", CancellationToken.None);
-            Console.WriteLine($"📥 Bot: {response2}");
+            Console.WriteLine($"📥 Bot: {response2.Response}");
             await VerifyStateContains(conversationId, "Service", "Plan Marineritos");
             await VerifyStateContains(conversationId, "BabyAge", "6");
             await VerifyStateContains(conversationId, "BabyName", "Diego");
@@ -510,12 +510,12 @@ public class AutomatedConversationTests
             // Paso 3: Verificar disponibilidad
             Console.WriteLine("\n📤 Usuario: ¿Hay disponibilidad?");
             var response3 = await _orchestrator.ProcessMessageAsync(conversationId, _businessId, phone, "¿Hay disponibilidad?", CancellationToken.None);
-            Console.WriteLine($"📥 Bot: {response3}");
+            Console.WriteLine($"📥 Bot: {response3.Response}");
 
             // Paso 4: Confirmar
             Console.WriteLine("\n📤 Usuario: Perfecto, confirmo la reserva");
             var response4 = await _orchestrator.ProcessMessageAsync(conversationId, _businessId, phone, "Perfecto, confirmo la reserva", CancellationToken.None);
-            Console.WriteLine($"📥 Bot: {response4}");
+            Console.WriteLine($"📥 Bot: {response4.Response}");
 
             Console.WriteLine("\n✅ Test 9 completado exitosamente");
             return (testName, true, "");
@@ -546,26 +546,26 @@ public class AutomatedConversationTests
             // Paso 1: Información básica
             Console.WriteLine("\n📤 Usuario: Hola, quiero el Plan Aventuras Marinas para mañana a las 11am");
             var response1 = await _orchestrator.ProcessMessageAsync(conversationId, _businessId, phone, "Hola, quiero el Plan Aventuras Marinas para mañana a las 11am", CancellationToken.None);
-            Console.WriteLine($"📥 Bot: {response1}");
+            Console.WriteLine($"📥 Bot: {response1.Response}");
             await VerifyStateContains(conversationId, "Service", "Plan Aventuras Marinas");
             await VerifyStateContains(conversationId, "DesiredTime", "11:00");
 
             // Paso 2: Información del bebé
             Console.WriteLine("\n📤 Usuario: Mi bebé tiene 9 meses y se llama Isabella");
             var response2 = await _orchestrator.ProcessMessageAsync(conversationId, _businessId, phone, "Mi bebé tiene 9 meses y se llama Isabella", CancellationToken.None);
-            Console.WriteLine($"📥 Bot: {response2}");
+            Console.WriteLine($"📥 Bot: {response2.Response}");
             await VerifyStateContains(conversationId, "BabyAge", "9");
             await VerifyStateContains(conversationId, "BabyName", "Isabella");
 
             // Paso 3: Condiciones especiales
             Console.WriteLine("\n📤 Usuario: Tiene alergias leves");
             var response3 = await _orchestrator.ProcessMessageAsync(conversationId, _businessId, phone, "Tiene alergias leves", CancellationToken.None);
-            Console.WriteLine($"📥 Bot: {response3}");
+            Console.WriteLine($"📥 Bot: {response3.Response}");
 
             // Paso 4: Verificar y confirmar
             Console.WriteLine("\n📤 Usuario: Verifica disponibilidad y confirma");
             var response4 = await _orchestrator.ProcessMessageAsync(conversationId, _businessId, phone, "Verifica disponibilidad y confirma", CancellationToken.None);
-            Console.WriteLine($"📥 Bot: {response4}");
+            Console.WriteLine($"📥 Bot: {response4.Response}");
 
             Console.WriteLine("\n✅ Test 10 completado exitosamente");
             return (testName, true, "");
@@ -596,21 +596,21 @@ public class AutomatedConversationTests
             // Paso 1: Presentación completa
             Console.WriteLine("\n📤 Usuario: Hola, soy Ana López, mi email es ana.lopez@email.com");
             var response1 = await _orchestrator.ProcessMessageAsync(conversationId, _businessId, phone, "Hola, soy Ana López, mi email es ana.lopez@email.com", CancellationToken.None);
-            Console.WriteLine($"📥 Bot: {response1}");
+            Console.WriteLine($"📥 Bot: {response1.Response}");
             await VerifyStateContains(conversationId, "CustomerName", "Ana López");
 
             // Paso 2: Información de reserva
-            Console.WriteLine("\n📤 Usuario: Quiero el Plan Suaves Mimos para mi bebé de 5 meses, mañana a las 10am");
-            var response2 = await _orchestrator.ProcessMessageAsync(conversationId, _businessId, phone, "Quiero el Plan Suaves Mimos para mi bebé de 5 meses, mañana a las 10am", CancellationToken.None);
-            Console.WriteLine($"📥 Bot: {response2}");
-            await VerifyStateContains(conversationId, "Service", "Plan Suaves Mimos");
+            Console.WriteLine("\n📤 Usuario: Quiero el Plan Post Vacunas para mi bebé de 5 meses, mañana a las 10am");
+            var response2 = await _orchestrator.ProcessMessageAsync(conversationId, _businessId, phone, "Quiero el Plan Post Vacunas para mi bebé de 5 meses, mañana a las 10am", CancellationToken.None);
+            Console.WriteLine($"📥 Bot: {response2.Response}");
+            await VerifyStateContains(conversationId, "Service", "Plan Post Vacunas");
             await VerifyStateContains(conversationId, "BabyAge", "5");
             await VerifyStateContains(conversationId, "DesiredTime", "10:00");
 
             // Paso 3: Confirmar
             Console.WriteLine("\n📤 Usuario: Confirma la reserva");
             var response3 = await _orchestrator.ProcessMessageAsync(conversationId, _businessId, phone, "Confirma la reserva", CancellationToken.None);
-            Console.WriteLine($"📥 Bot: {response3}");
+            Console.WriteLine($"📥 Bot: {response3.Response}");
 
             Console.WriteLine("\n✅ Test 11 completado exitosamente");
             return (testName, true, "");
@@ -641,20 +641,20 @@ public class AutomatedConversationTests
             // Paso 1: Solicitud con fecha específica
             Console.WriteLine("\n📤 Usuario: Hola, quiero reservar para el próximo lunes a las 2pm");
             var response1 = await _orchestrator.ProcessMessageAsync(conversationId, _businessId, phone, "Hola, quiero reservar para el próximo lunes a las 2pm", CancellationToken.None);
-            Console.WriteLine($"📥 Bot: {response1}");
+            Console.WriteLine($"📥 Bot: {response1.Response}");
             await VerifyStateContains(conversationId, "DesiredDate");
             await VerifyStateContains(conversationId, "DesiredTime", "14:00");
 
             // Paso 2: Seleccionar servicio
             Console.WriteLine("\n📤 Usuario: El Plan Marineritos por favor");
             var response2 = await _orchestrator.ProcessMessageAsync(conversationId, _businessId, phone, "El Plan Marineritos por favor", CancellationToken.None);
-            Console.WriteLine($"📥 Bot: {response2}");
+            Console.WriteLine($"📥 Bot: {response2.Response}");
             await VerifyStateContains(conversationId, "Service", "Plan Marineritos");
 
             // Paso 3: Información del bebé
             Console.WriteLine("\n📤 Usuario: Para mi bebé de 8 meses llamado Miguel");
             var response3 = await _orchestrator.ProcessMessageAsync(conversationId, _businessId, phone, "Para mi bebé de 8 meses llamado Miguel", CancellationToken.None);
-            Console.WriteLine($"📥 Bot: {response3}");
+            Console.WriteLine($"📥 Bot: {response3.Response}");
             await VerifyStateContains(conversationId, "BabyAge", "8");
             await VerifyStateContains(conversationId, "BabyName", "Miguel");
 
@@ -687,19 +687,19 @@ public class AutomatedConversationTests
             // Paso 1: Inicio
             Console.WriteLine("\n📤 Usuario: Quiero el Plan Aventuras Marinas para mañana");
             var response1 = await _orchestrator.ProcessMessageAsync(conversationId, _businessId, phone, "Quiero el Plan Aventuras Marinas para mañana", CancellationToken.None);
-            Console.WriteLine($"📥 Bot: {response1}");
+            Console.WriteLine($"📥 Bot: {response1.Response}");
             await VerifyStateContains(conversationId, "Service", "Plan Aventuras Marinas");
 
             // Paso 2: Cambio de opinión total
             Console.WriteLine("\n📤 Usuario: Mejor déjalo, no estoy segura");
             var response2 = await _orchestrator.ProcessMessageAsync(conversationId, _businessId, phone, "Mejor déjalo, no estoy segura", CancellationToken.None);
-            Console.WriteLine($"📥 Bot: {response2}");
+            Console.WriteLine($"📥 Bot: {response2.Response}");
 
             // Paso 3: Reinicio (el estado debería mantener Service pero permitir cambios)
-            Console.WriteLine("\n📤 Usuario: Ahora sí, quiero el Plan Suaves Mimos para el miércoles a las 4pm");
-            var response3 = await _orchestrator.ProcessMessageAsync(conversationId, _businessId, phone, "Ahora sí, quiero el Plan Suaves Mimos para el miércoles a las 4pm", CancellationToken.None);
-            Console.WriteLine($"📥 Bot: {response3}");
-            await VerifyStateContains(conversationId, "Service", "Plan Suaves Mimos");
+            Console.WriteLine("\n📤 Usuario: Ahora sí, quiero el Plan Post Vacunas para el miércoles a las 4pm");
+            var response3 = await _orchestrator.ProcessMessageAsync(conversationId, _businessId, phone, "Ahora sí, quiero el Plan Post Vacunas para el miércoles a las 4pm", CancellationToken.None);
+            Console.WriteLine($"📥 Bot: {response3.Response}");
+            await VerifyStateContains(conversationId, "Service", "Plan Post Vacunas");
             await VerifyStateContains(conversationId, "DesiredTime", "16:00");
 
             Console.WriteLine("\n✅ Test 13 completado exitosamente");
@@ -731,25 +731,25 @@ public class AutomatedConversationTests
             // Paso 1: Pregunta por horarios
             Console.WriteLine("\n📤 Usuario: ¿Tienen disponibilidad mañana por la tarde?");
             var response1 = await _orchestrator.ProcessMessageAsync(conversationId, _businessId, phone, "¿Tienen disponibilidad mañana por la tarde?", CancellationToken.None);
-            Console.WriteLine($"📥 Bot: {response1}");
+            Console.WriteLine($"📥 Bot: {response1.Response}");
 
             // Paso 2: Especificar hora exacta
             Console.WriteLine("\n📤 Usuario: A las 3:30pm específicamente");
             var response2 = await _orchestrator.ProcessMessageAsync(conversationId, _businessId, phone, "A las 3:30pm específicamente", CancellationToken.None);
-            Console.WriteLine($"📥 Bot: {response2}");
+            Console.WriteLine($"📥 Bot: {response2.Response}");
             await VerifyStateContains(conversationId, "DesiredDate");
             await VerifyStateContains(conversationId, "DesiredTime", "15:30");
 
             // Paso 3: Seleccionar servicio
             Console.WriteLine("\n📤 Usuario: Para el Plan Marineritos");
             var response3 = await _orchestrator.ProcessMessageAsync(conversationId, _businessId, phone, "Para el Plan Marineritos", CancellationToken.None);
-            Console.WriteLine($"📥 Bot: {response3}");
+            Console.WriteLine($"📥 Bot: {response3.Response}");
             await VerifyStateContains(conversationId, "Service", "Plan Marineritos");
 
             // Paso 4: Información del bebé
             Console.WriteLine("\n📤 Usuario: Mi bebé tiene 7 meses");
             var response4 = await _orchestrator.ProcessMessageAsync(conversationId, _businessId, phone, "Mi bebé tiene 7 meses", CancellationToken.None);
-            Console.WriteLine($"📥 Bot: {response4}");
+            Console.WriteLine($"📥 Bot: {response4.Response}");
             await VerifyStateContains(conversationId, "BabyAge", "7");
 
             Console.WriteLine("\n✅ Test 14 completado exitosamente");
@@ -781,49 +781,49 @@ public class AutomatedConversationTests
             // Paso 1: Presentación completa
             Console.WriteLine("\n📤 Usuario: Hola, me llamo Roberto Sánchez");
             var response1 = await _orchestrator.ProcessMessageAsync(conversationId, _businessId, phone, "Hola, me llamo Roberto Sánchez", CancellationToken.None);
-            Console.WriteLine($"📥 Bot: {response1}");
+            Console.WriteLine($"📥 Bot: {response1.Response}");
             await VerifyStateContains(conversationId, "CustomerName", "Roberto Sánchez");
 
             // Paso 2: Información del bebé
             Console.WriteLine("\n📤 Usuario: Tengo un bebé de 10 meses llamado Alejandro");
             var response2 = await _orchestrator.ProcessMessageAsync(conversationId, _businessId, phone, "Tengo un bebé de 10 meses llamado Alejandro", CancellationToken.None);
-            Console.WriteLine($"📥 Bot: {response2}");
+            Console.WriteLine($"📥 Bot: {response2.Response}");
             await VerifyStateContains(conversationId, "BabyAge", "10");
             await VerifyStateContains(conversationId, "BabyName", "Alejandro");
 
             // Paso 3: Consulta de servicios
             Console.WriteLine("\n📤 Usuario: ¿Qué planes tienen para su edad?");
             var response3 = await _orchestrator.ProcessMessageAsync(conversationId, _businessId, phone, "¿Qué planes tienen para su edad?", CancellationToken.None);
-            Console.WriteLine($"📥 Bot: {response3}");
+            Console.WriteLine($"📥 Bot: {response3.Response}");
 
             // Paso 4: Selección de servicio
             Console.WriteLine("\n📤 Usuario: Me interesa el Plan Aventuras Marinas");
             var response4 = await _orchestrator.ProcessMessageAsync(conversationId, _businessId, phone, "Me interesa el Plan Aventuras Marinas", CancellationToken.None);
-            Console.WriteLine($"📥 Bot: {response4}");
+            Console.WriteLine($"📥 Bot: {response4.Response}");
             await VerifyStateContains(conversationId, "Service", "Plan Aventuras Marinas");
 
             // Paso 5: Fecha y hora
             Console.WriteLine("\n📤 Usuario: Quiero reservar para mañana a las 11:30am");
             var response5 = await _orchestrator.ProcessMessageAsync(conversationId, _businessId, phone, "Quiero reservar para mañana a las 11:30am", CancellationToken.None);
-            Console.WriteLine($"📥 Bot: {response5}");
+            Console.WriteLine($"📥 Bot: {response5.Response}");
             await VerifyStateContains(conversationId, "DesiredDate");
             await VerifyStateContains(conversationId, "DesiredTime", "11:30");
 
             // Paso 6: Verificar disponibilidad
             Console.WriteLine("\n📤 Usuario: ¿Está disponible ese horario?");
             var response6 = await _orchestrator.ProcessMessageAsync(conversationId, _businessId, phone, "¿Está disponible ese horario?", CancellationToken.None);
-            Console.WriteLine($"📥 Bot: {response6}");
+            Console.WriteLine($"📥 Bot: {response6.Response}");
             await VerifyStateContains(conversationId, "AvailabilityConfirmed");
 
             // Paso 7: Condiciones especiales
             Console.WriteLine("\n📤 Usuario: No tiene condiciones especiales");
             var response7 = await _orchestrator.ProcessMessageAsync(conversationId, _businessId, phone, "No tiene condiciones especiales", CancellationToken.None);
-            Console.WriteLine($"📥 Bot: {response7}");
+            Console.WriteLine($"📥 Bot: {response7.Response}");
 
             // Paso 8: Confirmar reserva
             Console.WriteLine("\n📤 Usuario: Perfecto, confirma la reserva por favor");
             var response8 = await _orchestrator.ProcessMessageAsync(conversationId, _businessId, phone, "Perfecto, confirma la reserva por favor", CancellationToken.None);
-            Console.WriteLine($"📥 Bot: {response8}");
+            Console.WriteLine($"📥 Bot: {response8.Response}");
             await VerifyStateContains(conversationId, "ReservationCreated");
 
             Console.WriteLine("\n✅ Test 15 completado exitosamente");

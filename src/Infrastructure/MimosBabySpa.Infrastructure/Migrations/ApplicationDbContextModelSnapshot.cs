@@ -509,6 +509,34 @@ namespace MimosBabySpa.Infrastructure.Migrations
                     b.ToTable("Reservations");
                 });
 
+            modelBuilder.Entity("MimosBabySpa.Domain.Entities.ReservationAddOn", b =>
+                {
+                    b.Property<Guid>("ReservationAddOnId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("AddOnServiceId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<decimal>("PriceSnapshot")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<Guid>("ReservationId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("ReservationAddOnId");
+
+                    b.HasIndex("AddOnServiceId");
+
+                    b.HasIndex("ReservationId");
+
+                    b.HasIndex("ReservationId", "AddOnServiceId")
+                        .IsUnique();
+
+                    b.ToTable("ReservationAddOns");
+                });
+
             modelBuilder.Entity("MimosBabySpa.Domain.Entities.Service", b =>
                 {
                     b.Property<Guid>("ServiceId")
@@ -878,6 +906,8 @@ namespace MimosBabySpa.Infrastructure.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
+                    b.Navigation("AddOns");
+
                     b.Navigation("Business");
 
                     b.Navigation("Conversation");
@@ -885,6 +915,25 @@ namespace MimosBabySpa.Infrastructure.Migrations
                     b.Navigation("Employee");
 
                     b.Navigation("Service");
+                });
+
+            modelBuilder.Entity("MimosBabySpa.Domain.Entities.ReservationAddOn", b =>
+                {
+                    b.HasOne("MimosBabySpa.Domain.Entities.Service", "AddOnService")
+                        .WithMany()
+                        .HasForeignKey("AddOnServiceId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("MimosBabySpa.Domain.Entities.Reservation", "Reservation")
+                        .WithMany("AddOns")
+                        .HasForeignKey("ReservationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("AddOnService");
+
+                    b.Navigation("Reservation");
                 });
 
             modelBuilder.Entity("MimosBabySpa.Domain.Entities.Service", b =>

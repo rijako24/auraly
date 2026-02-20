@@ -176,6 +176,7 @@ FLUJO:
                 ReservationDateTime = reservationDateTime,
                 DurationMinutes = duration,
                 Status = Domain.Enums.ReservationStatus.Pending,
+                ConversationId = context.ConversationId,
                 CreatedAt = DateTime.UtcNow
             };
 

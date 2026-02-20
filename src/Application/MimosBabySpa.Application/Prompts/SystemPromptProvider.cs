@@ -175,6 +175,10 @@ public class SystemPromptProvider : IPromptProvider
     private static string BuildGoldenRules(BusinessPersonality personality) => $"""
         ## Reglas críticas de respuesta:
         - Respuestas BREVES (3-4 líneas máximo). Una pregunta a la vez.
+        - **CIERRES VARIADOS** — NO siempre termines con pregunta. Eso atosiga. Varía:
+          → A veces: pregunta concreta (cuando necesites un dato para avanzar).
+          → Otras veces: comentario cálido ("Cuando quieras más detalles, aquí estoy") o dato útil sin pregunta.
+          En respuestas meramente informativas (exploración, saludos, más info), al menos 1 de cada 3 puede cerrar SIN pregunta.
         - NUNCA digas que vas a crear/confirmar algo que el sistema aún no ejecutó.
         - Si hay horarios disponibles confirmados → MUÉSTRALOS todos explícitamente.
         - Si el usuario eligió un horario → Confirma y pregunta "¿Confirmo tu reserva?".
