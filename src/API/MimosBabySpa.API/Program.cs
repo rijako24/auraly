@@ -46,6 +46,7 @@ var host = new HostBuilder()
         services.AddScoped<ILeadRepository, LeadRepository>();
         services.AddScoped<IReservationRepository, ReservationRepository>();
         services.AddScoped<IConversationStateRepository, ConversationStateRepository>();
+        services.AddScoped<IPaymentTransactionRepository, PaymentTransactionRepository>();
 
         // Application Services
         services.AddScoped<IConversationService, ConversationService>();
@@ -117,6 +118,15 @@ var host = new HostBuilder()
             return new AzureOpenAIAdapter(openAIClient, deploymentName, logger);
         });
         
+        // Payment Link Service (Wompi)
+        services.AddScoped<IPaymentLinkService, WompiPaymentLinkService>();
+
+        // Payment Confirmation Handler (Webhook)
+        services.AddScoped<IPaymentConfirmationHandler, PaymentConfirmationHandler>();
+
+        // Webhook signature validation (Wompi)
+        services.AddSingleton<IWompiWebhookSignatureValidator, WompiWebhookSignatureValidator>();
+
         // Tool Handlers (Domain-Agnostic)
         services.AddScoped<IConversationStateUpdater, ConversationStateUpdater>();
         services.AddScoped<UpdateConversationStateToolHandler>();
@@ -176,6 +186,10 @@ services.AddScoped<IExtractionValidator, ExtractionValidator>();
         // Calendar Configuration (Options Pattern)
         services.Configure<CalendarSettings>(
             configuration.GetSection(CalendarSettings.SectionName));
+
+        // Wompi Configuration (Payment Links)
+        services.Configure<WompiSettings>(
+            configuration.GetSection(WompiSettings.SectionName));
 
         // Infrastructure Services - Calendar
         services.AddHttpClient<GoogleCalendarService>(client =>

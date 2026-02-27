@@ -18,4 +18,20 @@ public class TurnActions
     public bool AddOnOfferingRequired { get; set; }
     public string? AvailabilityResultMessage { get; set; }
     public string? ReservationResultMessage { get; set; }
+
+    /// <summary>
+    /// True cuando se generó el link de pago en este turno.
+    /// </summary>
+    public bool PaymentLinkGenerated { get; set; }
+
+    /// <summary>
+    /// Mensaje de error si falló la generación del link.
+    /// </summary>
+    public string? PaymentLinkError { get; set; }
+
+    /// <summary>
+    /// True cuando el stage es AwaitingPayment.
+    /// Indica al LLM que debe informar que el pago está pendiente.
+    /// </summary>
+    public bool IsAwaitingPayment { get; set; }
 }

@@ -81,6 +81,27 @@ public class ConversationStateManager : IConversationStateManager
         return newState;
     }
 
+    public async Task<ConversationState?> GetStateByConversationIdAsync(Guid conversationId, CancellationToken ct = default)
+    {
+        var stateEntity = await _stateRepository.GetByConversationIdAsync(conversationId, ct);
+        if (stateEntity == null)
+            return null;
+
+        try
+        {
+            var state = DeserializeState(stateEntity.StateJson);
+            state.Version = stateEntity.Version;
+            state.UpdatedAt = stateEntity.UpdatedAt;
+            state.CreatedAt = stateEntity.CreatedAt;
+            return state;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error deserializando estado por ConversationId={ConvId}", conversationId);
+            return null;
+        }
+    }
+
     public async Task<ConversationState> SaveStateAsync(
         Guid conversationId,
         ConversationState state,

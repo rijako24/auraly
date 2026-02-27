@@ -111,11 +111,20 @@ public class FlowEngine : IFlowEngine
             _logger.LogDebug("CanCreateReservation=false: ya creada");
             return false;
         }
-        if (!state.ReservationConfirmed)
+
+        // Puerta de confirmación: pago O verbal, según contexto
+        var requiresPayment = !string.IsNullOrWhiteSpace(state.PaymentReferenceId);
+        if (requiresPayment && !state.PaymentConfirmed)
+        {
+            _logger.LogDebug("CanCreateReservation=false: falta confirmación de pago");
+            return false;
+        }
+        if (!requiresPayment && !state.ReservationConfirmed)
         {
             _logger.LogDebug("CanCreateReservation=false: falta confirmación del usuario");
             return false;
         }
+
         if (!state.AvailabilityConfirmed)
         {
             _logger.LogDebug("CanCreateReservation=false: disponibilidad no confirmada");
@@ -186,12 +195,16 @@ public class FlowEngine : IFlowEngine
         if (state.ReservationCreated)
             return TransactionStage.BookingCompleted;
 
+        // AwaitingPayment: link generado pero pago no confirmado por webhook
+        if (!string.IsNullOrWhiteSpace(state.PaymentReferenceId) && !state.PaymentConfirmed)
+            return TransactionStage.AwaitingPayment;
+
         var hasCoreTransaction = state.AvailabilityConfirmed
             && !string.IsNullOrWhiteSpace(state.Service)
             && state.DesiredDate.HasValue
             && state.DesiredTime.HasValue;
 
-        // ConfirmingBooking: todo completo — solo falta el "sí" del usuario
+        // ConfirmingBooking: todo completo — solo falta el "sí" del usuario o el pago
         if (hasCoreTransaction && missingFields.Count == 0)
             return TransactionStage.ConfirmingBooking;
 
@@ -237,6 +250,9 @@ public class FlowEngine : IFlowEngine
 
         if (state.ReservationConfirmed)
             parts.Add("✓ Usuario confirmó reserva");
+
+        if (state.PaymentConfirmed)
+            parts.Add("✓ Pago confirmado");
 
         if (state.ReservationCreated)
             parts.Add($"✓ Reserva creada: {state.ReservationId}");

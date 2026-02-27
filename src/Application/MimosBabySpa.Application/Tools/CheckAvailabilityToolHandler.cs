@@ -41,20 +41,16 @@ public class CheckAvailabilityToolHandler : BaseToolHandler
     {
         return new FunctionDefinition
         {
-            Name        = FunctionName,
-            Description = """
-                Verifica disponibilidad para un servicio en una fecha/hora específica.
-                Solo consulta — no crea ni reserva nada.
-                Requiere: Service (nombre exacto) + Date (YYYY-MM-DD). Time (HH:MM) es opcional.
-                """,
-            Parameters  = BinaryData.FromObjectAsJson(new
+            Name = FunctionName,
+            Description = "Verifica disponibilidad para un servicio en una fecha. Solo se invoca cuando CanCheckAvailability = true.",
+            Parameters = BinaryData.FromObjectAsJson(new
             {
-                type       = "object",
+                type = "object",
                 properties = new
                 {
-                    service = new { type = "string", description = "Nombre exacto del servicio del catálogo" },
-                    date    = new { type = "string", description = "Fecha en formato YYYY-MM-DD" },
-                    time    = new { type = "string", description = "Hora en formato HH:MM (opcional)" }
+                    service = new { type = "string" },
+                    date = new { type = "string" },
+                    time = new { type = "string" }
                 },
                 required = new[] { "service", "date" }
             })

@@ -52,7 +52,7 @@ public class ConversationStateUpdater : IConversationStateUpdater
         {
             var attributeName = field["Attribute:".Length..];
             state.SetAttribute(attributeName, value);
-            // SetAttribute ya hace Version++ y UpdatedAt — NO se repite aquí
+            state.ConfirmationSummaryPresented = false; // Atributos afectan el resumen
             return Ok($"Atributo '{attributeName}' = '{value}'");
         }
 
@@ -103,6 +103,14 @@ public class ConversationStateUpdater : IConversationStateUpdater
                 state.AddOnsOffered = value;
                 break;
 
+            case "ConfirmationSummaryPresented":
+                state.ConfirmationSummaryPresented = value;
+                break;
+
+            case "PaymentConfirmed":
+                state.PaymentConfirmed = value;
+                break;
+
             default:
                 return Fail($"Flag '{flag}' no reconocido.");
         }
@@ -121,7 +129,9 @@ public class ConversationStateUpdater : IConversationStateUpdater
         state.AvailabilityConfirmed = false;
         state.ReservationConfirmed = false;
         state.AddOnsOffered = false;
+        state.ConfirmationSummaryPresented = false;
         state.AvailableTimeSlots = null;
+        ResetPaymentFieldsStatic(state);
         state.UpdatedAt = DateTime.UtcNow;
         state.Version++;
         _logger.LogInformation("Flags transaccionales reseteados (cancelación o cambio de intención)");
@@ -137,6 +147,8 @@ public class ConversationStateUpdater : IConversationStateUpdater
         state.AvailableTimeSlots = null;
         state.ReservationConfirmed = false;
         state.AddOnsOffered = false;
+        state.ConfirmationSummaryPresented = false;
+        ResetPaymentFieldsStatic(state);
         state.CurrentStage = TransactionStage.CollectingInformation;
         state.UpdatedAt = DateTime.UtcNow;
         state.Version++;
@@ -151,6 +163,7 @@ public class ConversationStateUpdater : IConversationStateUpdater
     private static ApplyFieldResult ApplyCustomerName(ConversationState state, string value)
     {
         state.CustomerName = value;
+        state.ConfirmationSummaryPresented = false;
         return Ok($"CustomerName = '{value}'");
     }
 
@@ -159,6 +172,7 @@ public class ConversationStateUpdater : IConversationStateUpdater
         if (!IsValidEmail(value))
             return Fail($"'{value}' no es un email válido");
         state.Email = value;
+        state.ConfirmationSummaryPresented = false;
         return Ok($"Email = '{value}'");
     }
 
@@ -171,7 +185,9 @@ public class ConversationStateUpdater : IConversationStateUpdater
             state.AvailabilityConfirmed = false;
             state.ReservationConfirmed = false;
             state.AddOnsOffered = false;
+            state.ConfirmationSummaryPresented = false;
             state.AvailableTimeSlots = null;
+            ResetPaymentFieldsStatic(state);
         }
         return Ok($"Service = '{value}'" + (changed ? " (disponibilidad y add-ons reseteados)" : ""));
     }
@@ -188,7 +204,9 @@ public class ConversationStateUpdater : IConversationStateUpdater
             state.DesiredTime = null; // Hora depende de fecha; nueva fecha invalida hora anterior.
             state.AvailabilityConfirmed = false;
             state.ReservationConfirmed = false;
+            state.ConfirmationSummaryPresented = false;
             state.AvailableTimeSlots = null;
+            ResetPaymentFieldsStatic(state);
         }
         return Ok($"DesiredDate = '{date:yyyy-MM-dd}'" + (changed ? " (hora y disponibilidad reseteadas)" : ""));
     }
@@ -204,9 +222,32 @@ public class ConversationStateUpdater : IConversationStateUpdater
         {
             state.AvailabilityConfirmed = false;
             state.ReservationConfirmed = false;
+            state.ConfirmationSummaryPresented = false;
             state.AvailableTimeSlots = null;
+            ResetPaymentFieldsStatic(state);
         }
         return Ok($"DesiredTime = '{time:HH:mm}'" + (changed ? " (disponibilidad y alternativas reseteadas)" : ""));
+    }
+
+    /// <inheritdoc />
+    public void ResetPaymentFields(ConversationState state)
+    {
+        state.PaymentReferenceId = null;
+        state.PaymentLinkUrl = null;
+        state.AnticipoAmountInCents = null;
+        state.PaymentLinkExpiresAt = null;
+        state.PaymentConfirmed = false;
+        state.UpdatedAt = DateTime.UtcNow;
+        state.Version++;
+    }
+
+    private static void ResetPaymentFieldsStatic(ConversationState state)
+    {
+        state.PaymentReferenceId = null;
+        state.PaymentLinkUrl = null;
+        state.AnticipoAmountInCents = null;
+        state.PaymentLinkExpiresAt = null;
+        state.PaymentConfirmed = false;
     }
 
     // ─────────────────────────────────────────────────────────────────

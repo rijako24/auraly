@@ -41,51 +41,14 @@ public class UpdateConversationStateToolHandler : BaseToolHandler
         return new FunctionDefinition
         {
             Name = FunctionName,
-            Description = @"Actualiza el estado de la conversación con información estructurada extraída del mensaje del usuario.
-
-REGLAS CRÍTICAS:
-- Solo guardar valores ESTRUCTURADOS (nombres, fechas ISO, horas, emails validados)
-- NUNCA guardar frases del usuario directamente (""tengo un bebé de 6 meses"" ❌, ""6"" ✓)
-- NUNCA inventar o inferir información que el usuario no dio explícitamente
-- NUNCA sobrescribir un valor válido existente a menos que sea una corrección explícita
-- Para atributos de negocio, usar el nombre exacto del campo configurado
-
-CAMPOS CORE (usar 'field' parameter):
-- CustomerName: nombre del cliente
-- Email: email validado
-- Service: nombre EXACTO del servicio del catálogo
-- DesiredDate: fecha en formato YYYY-MM-DD
-- DesiredTime: hora en formato HH:MM (24h)
-
-ATRIBUTOS DE NEGOCIO (usar 'field' con prefijo 'Attribute:'):
-- Attribute:BabyAge: edad en meses (solo número)
-- Attribute:BabyName: nombre del bebé
-- Attribute:SpecialConditions: condiciones especiales
-- Etc. (según configuración del negocio)
-
-EJEMPLOS:
-✓ Usuario: ""Mi bebé tiene 6 meses"" → field=""Attribute:BabyAge"", value=""6""
-✓ Usuario: ""Se llama Lucas"" → field=""Attribute:BabyName"", value=""Lucas""
-✓ Usuario: ""Me gustaría el masaje relajante"" → field=""Service"", value=""Masaje Relajante""
-✓ Usuario: ""Para mañana a las 3pm"" → field=""DesiredDate"", value=""2026-01-27"" (+ DesiredTime=""15:00"")
-❌ Usuario: ""Tengo un bebé pequeño"" → NO llamar la función (no hay valor estructurado)
-❌ field=""Attribute:BabyAge"", value=""6 meses"" → ❌ Debe ser solo ""6""
-❌ field=""DesiredDate"", value=""mañana"" → ❌ Debe ser ""2026-01-27""",
+            Description = "Actualiza el estado de la conversación con campo y valor estructurados. Usado por la extracción.",
             Parameters = BinaryData.FromObjectAsJson(new
             {
                 type = "object",
                 properties = new
                 {
-                    field = new
-                    {
-                        type = "string",
-                        description = "Nombre del campo a actualizar. Usar 'Attribute:' como prefijo para atributos de negocio"
-                    },
-                    value = new
-                    {
-                        type = "string",
-                        description = "Valor ESTRUCTURADO a guardar (solo datos, nunca frases)"
-                    }
+                    field = new { type = "string" },
+                    value = new { type = "string" }
                 },
                 required = new[] { "field", "value" }
             })

@@ -13,18 +13,8 @@ public class Business
     public string Email { get; set; } = string.Empty;
     public string Website { get; set; } = string.Empty;
     
-    // Horarios y métodos de pago (JSON)
-    public string OperatingHoursJson { get; set; } = "{}";
-    public string PaymentMethodsJson { get; set; } = "[]";
-    
     // Logo del negocio
     public string? LogoUrl { get; set; }
-
-    /// <summary>
-    /// Configuración de personalidad del asistente virtual (JSON).
-    /// Define nombre, tono, estilo y frases del asistente.
-    /// </summary>
-    public string PersonalityJson { get; set; } = "{}";
 
     public bool IsActive { get; set; } = true;
     public DateTime CreatedAt { get; set; }

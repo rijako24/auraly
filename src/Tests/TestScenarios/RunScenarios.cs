@@ -8,6 +8,7 @@ using MimosBabySpa.Application.Services;
 using MimosBabySpa.Domain.Repositories;
 using MimosBabySpa.Infrastructure.Data;
 using MimosBabySpa.Infrastructure.Repositories;
+using MimosBabySpa.Infrastructure.Services;
 using Azure.AI.OpenAI;
 using MimosBabySpa.Tests.TestScenarios;
 using ConversationStateRepository = MimosBabySpa.Infrastructure.Repositories.ConversationStateRepository;
@@ -70,6 +71,10 @@ class RunScenarios
         // Calendar Configuration (Options Pattern)
         services.Configure<MimosBabySpa.Infrastructure.Configuration.CalendarSettings>(
             configuration.GetSection(MimosBabySpa.Infrastructure.Configuration.CalendarSettings.SectionName));
+
+        // Wompi Configuration (Payment Links)
+        services.Configure<MimosBabySpa.Infrastructure.Configuration.WompiSettings>(
+            configuration.GetSection(MimosBabySpa.Infrastructure.Configuration.WompiSettings.SectionName));
         
         // Infrastructure Services - Calendar (usar HttpClient simple para pruebas)
         services.AddHttpClient();
@@ -127,6 +132,7 @@ class RunScenarios
         });
 
         // Tool Handlers (Domain-Agnostic)
+        services.AddScoped<IPaymentLinkService, WompiPaymentLinkService>();
         services.AddScoped<IConversationStateUpdater, ConversationStateUpdater>();
         services.AddScoped<UpdateConversationStateToolHandler>();
         services.AddScoped<CheckAvailabilityToolHandler>();

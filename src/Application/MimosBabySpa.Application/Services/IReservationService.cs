@@ -5,10 +5,8 @@ namespace MimosBabySpa.Application.Services;
 
 public interface IReservationService
 {
-    Task<ReservationDto> CreateReservationAsync(
-        Reservation reservation,
-        Dictionary<string, string>? metadata = null,
-        IEnumerable<Guid>? addOnServiceIds = null,
+    Task<CreateReservationResponse> CreateReservationAsync(
+        CreateReservationRequest request,
         CancellationToken cancellationToken = default);
     Task<ReservationDto?> GetReservationByIdAsync(Guid reservationId);
     Task<IEnumerable<ReservationDto>> GetReservationsByBusinessIdAsync(Guid businessId);

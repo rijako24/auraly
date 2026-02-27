@@ -42,4 +42,10 @@ public class ExtractionIntentions
 
     [JsonPropertyName("user_wants_to_cancel")]
     public bool UserWantsToCancel { get; set; }
+
+    [JsonPropertyName("user_requests_new_payment_link")]
+    public bool UserRequestsNewPaymentLink { get; set; }
+
+    [JsonPropertyName("user_says_already_paid")]
+    public bool UserSaysAlreadyPaid { get; set; }
 }

@@ -240,10 +240,12 @@ public class SmartExtractionService : ISmartExtractionService
             ? new ExtractionIntentions()
             : new ExtractionIntentions
             {
-                UserRequestedAvailability = legacy.UserRequestedAvailability,
-                UserConfirmedBooking      = legacy.UserConfirmedBooking,
-                IsInformationQuery        = legacy.IsInformationQuery,
-                UserWantsToCancel         = legacy.UserWantsToCancel
+                UserRequestedAvailability     = legacy.UserRequestedAvailability,
+                UserConfirmedBooking          = legacy.UserConfirmedBooking,
+                IsInformationQuery            = legacy.IsInformationQuery,
+                UserWantsToCancel             = legacy.UserWantsToCancel,
+                UserRequestsNewPaymentLink    = legacy.UserRequestsNewPaymentLink,
+                UserSaysAlreadyPaid           = legacy.UserSaysAlreadyPaid
             };
 
     // ─────────────────────────────────────────────────────────────────
@@ -307,14 +309,19 @@ public class SmartExtractionService : ISmartExtractionService
                 var ip = intentProp.Value;
                 response.Intentions = new ExtractionIntentions
                 {
-                    UserRequestedAvailability = GetBool(ip, "user_requested_availability"),
-                    UserConfirmedBooking      = GetBool(ip, "user_confirmed_booking"),
-                    IsInformationQuery        = GetBool(ip, "is_information_query"),
-                    UserWantsToCancel         = GetBool(ip, "user_wants_to_cancel")
+                    UserRequestedAvailability   = GetBool(ip, "user_requested_availability"),
+                    UserConfirmedBooking       = GetBool(ip, "user_confirmed_booking"),
+                    IsInformationQuery         = GetBool(ip, "is_information_query"),
+                    UserWantsToCancel          = GetBool(ip, "user_wants_to_cancel"),
+                    UserRequestsNewPaymentLink  = GetBool(ip, "user_requests_new_payment_link"),
+                    UserSaysAlreadyPaid         = GetBool(ip, "user_says_already_paid")
                 };
             }
 
-            return response.ExtractedFields.Any() || response.Intentions.UserConfirmedBooking
+            return response.ExtractedFields.Any()
+                || response.Intentions.UserConfirmedBooking
+                || response.Intentions.UserRequestsNewPaymentLink
+                || response.Intentions.UserSaysAlreadyPaid
                 ? response
                 : null;
         }

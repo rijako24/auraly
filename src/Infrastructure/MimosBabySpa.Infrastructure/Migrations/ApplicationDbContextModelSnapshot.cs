@@ -58,24 +58,6 @@ namespace MimosBabySpa.Infrastructure.Migrations
                         .HasMaxLength(200)
                         .HasColumnType("nvarchar(200)");
 
-                    b.Property<string>("OperatingHoursJson")
-                        .IsRequired()
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("NVARCHAR(MAX)")
-                        .HasDefaultValue("{}");
-
-                    b.Property<string>("PaymentMethodsJson")
-                        .IsRequired()
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("NVARCHAR(MAX)")
-                        .HasDefaultValue("[]");
-
-                    b.Property<string>("PersonalityJson")
-                        .IsRequired()
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("NVARCHAR(MAX)")
-                        .HasDefaultValue("{}");
-
                     b.Property<string>("Phone")
                         .IsRequired()
                         .HasMaxLength(50)
@@ -537,6 +519,58 @@ namespace MimosBabySpa.Infrastructure.Migrations
                     b.ToTable("ReservationAddOns");
                 });
 
+            modelBuilder.Entity("MimosBabySpa.Domain.Entities.PaymentTransaction", b =>
+                {
+                    b.Property<Guid>("PaymentTransactionId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<long>("AmountInCents")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid>("BusinessId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime?>("ConfirmedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid>("ConversationId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("Currency")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("nvarchar(10)");
+
+                    b.Property<string>("PaymentReferenceId")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<string>("ProviderTransactionId")
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("int");
+
+                    b.Property<string>("WebhookPayloadJson")
+                        .HasColumnType("NVARCHAR(MAX)");
+
+                    b.HasKey("PaymentTransactionId");
+
+                    b.HasIndex("BusinessId");
+
+                    b.HasIndex("ConversationId");
+
+                    b.HasIndex("PaymentReferenceId")
+                        .IsUnique();
+
+                    b.ToTable("PaymentTransactions");
+                });
+
             modelBuilder.Entity("MimosBabySpa.Domain.Entities.Service", b =>
                 {
                     b.Property<Guid>("ServiceId")
@@ -877,6 +911,25 @@ namespace MimosBabySpa.Infrastructure.Migrations
                         .HasForeignKey("ConversationId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
+
+                    b.Navigation("Conversation");
+                });
+
+            modelBuilder.Entity("MimosBabySpa.Domain.Entities.PaymentTransaction", b =>
+                {
+                    b.HasOne("MimosBabySpa.Domain.Entities.Business", "Business")
+                        .WithMany()
+                        .HasForeignKey("BusinessId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("MimosBabySpa.Domain.Entities.Conversation", "Conversation")
+                        .WithMany()
+                        .HasForeignKey("ConversationId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Business");
 
                     b.Navigation("Conversation");
                 });

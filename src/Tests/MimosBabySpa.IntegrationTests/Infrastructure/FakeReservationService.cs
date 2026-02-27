@@ -1,8 +1,6 @@
 using MimosBabySpa.Application.DTOs;
 using MimosBabySpa.Application.Services;
-using MimosBabySpa.Domain.Entities;
 using MimosBabySpa.Domain.Enums;
-using MimosBabySpa.Domain.Models;
 
 namespace MimosBabySpa.IntegrationTests.Infrastructure;
 
@@ -25,42 +23,54 @@ public class FakeReservationService : IReservationService
 
     public IReadOnlyList<ReservationDto> ReservationsCreated => _reservationsCreated.AsReadOnly();
 
-    public Task<ReservationDto> CreateReservationAsync(
-        Reservation reservation,
-        Dictionary<string, string>? metadata = null,
-        IEnumerable<Guid>? addOnServiceIds = null,
+    public Task<CreateReservationResponse> CreateReservationAsync(
+        CreateReservationRequest request,
         CancellationToken cancellationToken = default)
     {
         if (_mode == ReservationMode.AlwaysFail)
             throw new Exception("Fallo al crear reserva en el backend");
 
+        var reservationDateTime = request.Date.ToDateTime(request.Time);
+
         if (_mode == ReservationMode.TrackDuplicates)
         {
-            var date = DateOnly.FromDateTime(reservation.ReservationDateTime);
-            var time = TimeOnly.FromDateTime(reservation.ReservationDateTime);
-
             var duplicate = _reservationsCreated.FirstOrDefault(r =>
-                DateOnly.FromDateTime(r.ReservationDateTime) == date &&
-                TimeOnly.FromDateTime(r.ReservationDateTime) == time);
+                DateOnly.FromDateTime(r.ReservationDateTime) == request.Date &&
+                TimeOnly.FromDateTime(r.ReservationDateTime) == request.Time);
 
             if (duplicate != null)
-                throw new Exception($"Horario duplicado: ya existe reserva para {date:yyyy-MM-dd} {time:HH:mm}");
+                throw new Exception($"Horario duplicado: ya existe reserva para {request.Date:yyyy-MM-dd} {request.Time:HH:mm}");
         }
+
+        var reservationId = Guid.NewGuid();
+        var addOnNames = ParseAddOnNames(request.SelectedAddOnsCsv);
 
         var dto = new ReservationDto
         {
-            ReservationId       = Guid.NewGuid(),
-            BusinessId          = reservation.BusinessId,
-            ServiceId           = reservation.ServiceId,
-            EmployeeId          = reservation.EmployeeId,
-            ReservationDateTime = reservation.ReservationDateTime,
-            DurationMinutes     = reservation.DurationMinutes,
-            Status              = ReservationStatus.Pending,
-            CreatedAt           = DateTime.UtcNow
+            ReservationId = reservationId,
+            BusinessId = request.BusinessId,
+            ServiceId = Guid.Empty,
+            EmployeeId = Guid.Empty,
+            ServiceName = request.ServiceName,
+            EmployeeName = "Fake Employee",
+            ReservationDateTime = reservationDateTime,
+            DurationMinutes = 60,
+            Status = ReservationStatus.Pending,
+            CreatedAt = DateTime.UtcNow
         };
 
         _reservationsCreated.Add(dto);
-        return Task.FromResult(dto);
+
+        var response = new CreateReservationResponse(
+            reservationId,
+            request.ServiceName,
+            "Fake Employee",
+            request.Date,
+            request.Time,
+            60,
+            addOnNames);
+
+        return Task.FromResult(response);
     }
 
     public Task<ReservationDto?> GetReservationByIdAsync(Guid reservationId) =>
@@ -75,4 +85,15 @@ public class FakeReservationService : IReservationService
             r.BusinessId == businessId &&
             r.ReservationDateTime >= startDate &&
             r.ReservationDateTime <= endDate));
+
+    private static IReadOnlyList<string> ParseAddOnNames(string? csv)
+    {
+        if (string.IsNullOrWhiteSpace(csv))
+            return [];
+
+        return csv
+            .Split([',', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(n => !string.IsNullOrWhiteSpace(n))
+            .ToList();
+    }
 }

@@ -1,4 +1,6 @@
+using System.Text.Json;
 using Microsoft.Extensions.Logging;
+using MimosBabySpa.Application.Configuration;
 using MimosBabySpa.Application.DTOs;
 using MimosBabySpa.Domain.Entities;
 using MimosBabySpa.Domain.Enums;
@@ -11,98 +13,106 @@ public class ReservationService : IReservationService
     private readonly IUnitOfWork _unitOfWork;
     private readonly ICalendarService _calendarService;
     private readonly IBusinessConfigurationService _businessConfigService;
+    private readonly IEmployeeAssignmentService _employeeAssignmentService;
     private readonly ILogger<ReservationService> _logger;
 
     public ReservationService(
         IUnitOfWork unitOfWork,
         ICalendarService calendarService,
         IBusinessConfigurationService businessConfigService,
+        IEmployeeAssignmentService employeeAssignmentService,
         ILogger<ReservationService> logger)
     {
         _unitOfWork = unitOfWork;
         _calendarService = calendarService;
         _businessConfigService = businessConfigService;
+        _employeeAssignmentService = employeeAssignmentService;
         _logger = logger;
     }
 
-    public async Task<ReservationDto> CreateReservationAsync(
-        Reservation reservation, 
-        Dictionary<string, string>? metadata = null,
-        IEnumerable<Guid>? addOnServiceIds = null,
+    public async Task<CreateReservationResponse> CreateReservationAsync(
+        CreateReservationRequest request,
         CancellationToken cancellationToken = default)
     {
-        try
+        // 1. Validar negocio
+        var business = await _unitOfWork.Businesses.GetByIdAsync(request.BusinessId);
+        if (business == null)
         {
-            // Validar que el negocio existe
-            var business = await _unitOfWork.Businesses.GetByIdAsync(reservation.BusinessId);
-            if (business == null)
+            throw new InvalidOperationException($"El negocio con ID {request.BusinessId} no existe.");
+        }
+
+        // 2. Resolver servicio por nombre
+        var service = await _unitOfWork.Services.GetByBusinessIdAndNameAsync(
+            request.BusinessId, request.ServiceName);
+        if (service == null)
+        {
+            throw new InvalidOperationException($"El servicio '{request.ServiceName}' no existe en el sistema.");
+        }
+
+        var duration = service.DurationMinutes > 0 ? service.DurationMinutes : 60;
+        var reservationDateTime = request.Date.ToDateTime(request.Time);
+
+        // 3. Obtener empleado disponible
+        var endTime = reservationDateTime.AddMinutes(duration);
+        var employee = await _employeeAssignmentService.FindBestAvailableEmployeeAsync(
+            request.BusinessId,
+            service.ServiceId,
+            reservationDateTime,
+            endTime,
+            cancellationToken);
+
+        if (employee == null)
+        {
+            throw new InvalidOperationException(
+                "No hay empleado disponible para este horario. Por favor intenta con otra fecha u hora.");
+        }
+
+        // 4. Resolver add-ons (nombres CSV → IDs + entidades para PriceSnapshot)
+        var (addOnServiceIds, addOnNames) = await ResolveAddOnsAsync(
+            request.BusinessId,
+            request.SelectedAddOnsCsv,
+            cancellationToken);
+
+        // 5. Construir metadata para calendario
+        var metadata = BuildMetadata(request);
+
+        // 6. Crear entidad Reservation (tracking, sin SaveChanges aún)
+        var reservation = new Reservation
+        {
+            ReservationId = Guid.NewGuid(),
+            BusinessId = request.BusinessId,
+            ServiceId = service.ServiceId,
+            EmployeeId = employee.EmployeeId,
+            ReservationDateTime = reservationDateTime,
+            DurationMinutes = duration,
+            Status = ReservationStatus.Confirmed,
+            ConversationId = request.ConversationId,
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        };
+
+        var createdReservation = await _unitOfWork.Reservations.CreateAsync(reservation);
+
+        // 7. Agregar ReservationAddOns (tracking, sin SaveChanges)
+        foreach (var (addOnServiceId, addOnService) in addOnServiceIds)
+        {
+            var reservationAddOn = new ReservationAddOn
             {
-                throw new InvalidOperationException($"El negocio con ID {reservation.BusinessId} no existe.");
-            }
+                ReservationAddOnId = Guid.NewGuid(),
+                ReservationId = createdReservation.ReservationId,
+                AddOnServiceId = addOnServiceId,
+                PriceSnapshot = addOnService.Price
+            };
+            await _unitOfWork.ReservationAddOns.AddAsync(reservationAddOn);
+        }
 
-            // Cargar Service si no está cargado para obtener el nombre
-            if (reservation.Service == null)
-            {
-                var service = await _unitOfWork.Services.GetByIdAsync(reservation.ServiceId);
-                if (service == null)
-                {
-                    throw new InvalidOperationException($"El servicio con ID {reservation.ServiceId} no existe.");
-                }
-                reservation.Service = service;
-            }
+        // 8. Un solo SaveChanges — atomicidad reserva + add-ons
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
 
-            var serviceName = reservation.Service.ServiceName;
-            
-            // Asegurar que ReservationId esté asignado
-            if (reservation.ReservationId == Guid.Empty)
-            {
-                reservation.ReservationId = Guid.NewGuid();
-            }
-
-            // Asegurar CreatedAt
-            if (reservation.CreatedAt == default)
-            {
-                reservation.CreatedAt = DateTime.UtcNow;
-            }
-
-            // Asegurar estado inicial
-            if (reservation.Status == default)
-            {
-                reservation.Status = ReservationStatus.Pending;
-            }
-
-            // PASO 1: Persistir reserva en base de datos (fuente de verdad)
-            reservation.Status = ReservationStatus.Confirmed;
-            reservation.UpdatedAt = DateTime.UtcNow;
-
-            var createdReservation = await _unitOfWork.Reservations.CreateAsync(reservation);
-            await _unitOfWork.SaveChangesAsync(cancellationToken);
-
-            // Crear ReservationAddOn para cada add-on seleccionado
-            if (addOnServiceIds != null)
-            {
-                foreach (var addOnServiceId in addOnServiceIds)
-                {
-                    var addOnService = await _unitOfWork.Services.GetByIdAsync(addOnServiceId);
-                    if (addOnService == null)
-                    {
-                        _logger.LogWarning("Add-on service {AddOnServiceId} no encontrado, omitiendo", addOnServiceId);
-                        continue;
-                    }
-
-                    var reservationAddOn = new ReservationAddOn
-                    {
-                        ReservationAddOnId = Guid.NewGuid(),
-                        ReservationId = createdReservation.ReservationId,
-                        AddOnServiceId = addOnServiceId,
-                        PriceSnapshot = addOnService.Price
-                    };
-                    await _unitOfWork.ReservationAddOns.AddAsync(reservationAddOn);
-                }
-                await _unitOfWork.SaveChangesAsync(cancellationToken);
-            }
-
-            // PASO 2: Sincronizar con calendario (best-effort: si falla no impide la reserva)
+        // 9. Sincronizar con calendario (best-effort, después de persistir)
+        if (await IsCalendarSyncEnabledAsync(request.BusinessId, cancellationToken))
+        {
+            var serviceName = service.ServiceName;
             var calendarEventId = await TrySyncReservationToCalendarAsync(
                 createdReservation,
                 serviceName,
@@ -114,32 +124,28 @@ public class ReservationService : IReservationService
                 await _unitOfWork.Reservations.UpdateAsync(createdReservation);
                 await _unitOfWork.SaveChangesAsync(cancellationToken);
             }
-
-            // Asegurar que Service esté cargado para logging y operaciones posteriores
-            if (createdReservation.Service == null)
-            {
-                var loadedService = await _unitOfWork.Services.GetByIdAsync(createdReservation.ServiceId);
-                if (loadedService == null)
-                {
-                    throw new InvalidOperationException($"El servicio con ID {createdReservation.ServiceId} no existe.");
-                }
-                createdReservation.Service = loadedService;
-            }
-
-            _logger.LogInformation(
-                "Reserva creada exitosamente: {ReservationId} para servicio {ServiceName} el {DateTime}",
-                createdReservation.ReservationId,
-                createdReservation.Service?.ServiceName ?? "N/A",
-                createdReservation.ReservationDateTime);
-
-            return MapToDto(createdReservation);
         }
-        catch (Exception ex)
+        else
         {
-            var serviceName = reservation.Service?.ServiceName ?? reservation.ServiceId.ToString();
-            _logger.LogError(ex, "Error al crear reserva para servicio {ServiceName}", serviceName);
-            throw;
+            _logger.LogDebug(
+                "Calendar sync deshabilitado para BusinessId={BusinessId}",
+                request.BusinessId);
         }
+
+        _logger.LogInformation(
+            "Reserva creada exitosamente: {ReservationId} para servicio {ServiceName} el {DateTime}",
+            createdReservation.ReservationId,
+            service.ServiceName,
+            createdReservation.ReservationDateTime);
+
+        return new CreateReservationResponse(
+            createdReservation.ReservationId,
+            service.ServiceName,
+            employee.Name,
+            request.Date,
+            request.Time,
+            duration,
+            addOnNames);
     }
 
     public async Task<ReservationDto?> GetReservationByIdAsync(Guid reservationId)
@@ -155,49 +161,119 @@ public class ReservationService : IReservationService
     }
 
     public async Task<IEnumerable<ReservationDto>> GetReservationsByBusinessIdAndDateRangeAsync(
-        Guid businessId, 
-        DateTime startDate, 
+        Guid businessId,
+        DateTime startDate,
         DateTime endDate)
     {
         var reservations = await _unitOfWork.Reservations.GetByBusinessIdAndDateRangeAsync(
-            businessId, 
-            startDate, 
+            businessId,
+            startDate,
             endDate);
         return reservations.Select(MapToDto);
     }
 
     /// <summary>
-    /// Intenta sincronizar la reserva con el calendario externo.
-    /// Si falla, no propaga la excepción: la reserva ya está persistida y el calendario es best-effort.
+    /// Resuelve SelectedAddOnsCsv a (ServiceId, Service) para crear ReservationAddOns
+    /// y retorna la lista de nombres para el mensaje de éxito.
     /// </summary>
-    /// <returns>El ID del evento creado, o null si falló la sincronización.</returns>
+    private async Task<(List<(Guid Id, Service Entity)>, IReadOnlyList<string>)> ResolveAddOnsAsync(
+        Guid businessId,
+        string? selectedAddOnsCsv,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(selectedAddOnsCsv))
+            return ([], []);
+
+        var names = selectedAddOnsCsv
+            .Split([',', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(n => !string.IsNullOrWhiteSpace(n))
+            .ToList();
+
+        var addOns = new List<(Guid Id, Service Entity)>();
+        var resolvedNames = new List<string>();
+
+        foreach (var name in names)
+        {
+            var addOnService = await _unitOfWork.Services.GetByBusinessIdAndNameAsync(
+                businessId, name.Trim());
+            if (addOnService != null)
+            {
+                addOns.Add((addOnService.ServiceId, addOnService));
+                resolvedNames.Add(addOnService.ServiceName);
+            }
+            else
+            {
+                _logger.LogWarning("Add-on '{AddOnName}' no encontrado en catálogo, omitiendo", name);
+            }
+        }
+
+        return (addOns, resolvedNames);
+    }
+
+    private static Dictionary<string, string> BuildMetadata(CreateReservationRequest request)
+    {
+        var metadata = new Dictionary<string, string>();
+
+        if (!string.IsNullOrWhiteSpace(request.CustomerName))
+            metadata["CustomerName"] = request.CustomerName;
+        if (!string.IsNullOrWhiteSpace(request.Email))
+            metadata["Email"] = request.Email;
+        if (!string.IsNullOrWhiteSpace(request.Phone))
+            metadata["Phone"] = request.Phone;
+
+        foreach (var kvp in request.BusinessAttributes)
+            metadata[kvp.Key] = kvp.Value;
+
+        return metadata;
+    }
+
+    private async Task<bool> IsCalendarSyncEnabledAsync(Guid businessId, CancellationToken cancellationToken)
+    {
+        var json = await _businessConfigService.GetBusinessConfigurationValueAsync(
+            businessId, BusinessConfigurationKey.Integrations);
+        if (string.IsNullOrWhiteSpace(json) || json == "{}")
+            return false;
+
+        try
+        {
+            var integrations = JsonSerializer.Deserialize<IntegrationsConfiguration>(
+                json,
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            return integrations?.GoogleCalendar?.Enabled ?? false;
+        }
+        catch (JsonException)
+        {
+            _logger.LogWarning(
+                "Integraciones de negocio {BusinessId} con JSON inválido, omitiendo calendar sync",
+                businessId);
+            return false;
+        }
+    }
+
     private async Task<string?> TrySyncReservationToCalendarAsync(
         Reservation reservation,
         string serviceName,
-        Dictionary<string, string>? metadata,
+        Dictionary<string, string> metadata,
         CancellationToken cancellationToken)
     {
         try
         {
             var titleParts = new List<string> { $"[{serviceName}] Reserva" };
-            if (metadata != null && metadata.Count > 0)
+            foreach (var kvp in metadata)
             {
-                foreach (var kvp in metadata)
-                {
-                    if (!string.IsNullOrWhiteSpace(kvp.Value))
-                        titleParts.Add(kvp.Value);
-                }
+                if (!string.IsNullOrWhiteSpace(kvp.Value))
+                    titleParts.Add(kvp.Value);
             }
             var title = string.Join(" - ", titleParts);
 
             var description = $@"Reserva confirmada
 
-Servicio: {serviceName}
-Fecha: {reservation.ReservationDateTime:dd/MM/yyyy}
-Hora: {reservation.ReservationDateTime:hh\:mm}
-Duración: {reservation.DurationMinutes} minutos";
+                                Servicio: {serviceName}
+                                Fecha: {reservation.ReservationDateTime:dd/MM/yyyy}
+                                Hora: {reservation.ReservationDateTime:hh\:mm}
+                                Duración: {reservation.DurationMinutes} minutos";
 
-            if (metadata != null && metadata.Count > 0)
+            if (metadata.Count > 0)
             {
                 description += "\n\nInformación adicional:\n";
                 foreach (var kvp in metadata)

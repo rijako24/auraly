@@ -29,6 +29,7 @@ public class ApplicationDbContext : DbContext
     public DbSet<Employee> Employees { get; set; }
     public DbSet<EmployeeService> EmployeeServices { get; set; }
     public DbSet<ConversationStateEntity> ConversationStates { get; set; }
+    public DbSet<PaymentTransaction> PaymentTransactions { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -55,22 +56,7 @@ public class ApplicationDbContext : DbContext
             entity.Property(e => e.Phone).HasMaxLength(50);
             entity.Property(e => e.Email).HasMaxLength(200);
             entity.Property(e => e.Website).HasMaxLength(500);
-            
-                // Horarios y métodos de pago (JSON)
-                entity.Property(e => e.OperatingHoursJson)
-                      .HasColumnType("NVARCHAR(MAX)")
-                      .HasDefaultValue("{}");
-                entity.Property(e => e.PaymentMethodsJson)
-                      .HasColumnType("NVARCHAR(MAX)")
-                      .HasDefaultValue("[]");
-
-                // Logo del negocio
-                entity.Property(e => e.LogoUrl).HasMaxLength(500);
-
-                // Personalidad del asistente (JSON) — columna legada; la carga activa usa BusinessConfiguration key=Personality
-                entity.Property(e => e.PersonalityJson)
-                      .HasColumnType("NVARCHAR(MAX)")
-                      .HasDefaultValue("{}");
+            entity.Property(e => e.LogoUrl).HasMaxLength(500);
 
                 entity.HasOne(e => e.Tenant)
                   .WithMany(t => t.Businesses)
@@ -386,5 +372,26 @@ public class ApplicationDbContext : DbContext
             entity.HasIndex(e => e.ConversationId).IsUnique();
         });
 
+        // PaymentTransaction configuration
+        modelBuilder.Entity<PaymentTransaction>(entity =>
+        {
+            entity.HasKey(e => e.PaymentTransactionId);
+            entity.Property(e => e.PaymentReferenceId).IsRequired().HasMaxLength(200);
+            entity.Property(e => e.ProviderTransactionId).HasMaxLength(200);
+            entity.Property(e => e.Currency).IsRequired().HasMaxLength(10);
+            entity.Property(e => e.Status).HasConversion<int>();
+            entity.Property(e => e.WebhookPayloadJson).HasColumnType("NVARCHAR(MAX)");
+            entity.HasOne(e => e.Business)
+                .WithMany()
+                .HasForeignKey(e => e.BusinessId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.Conversation)
+                .WithMany()
+                .HasForeignKey(e => e.ConversationId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasIndex(e => e.PaymentReferenceId).IsUnique();
+            entity.HasIndex(e => e.ConversationId);
+            entity.HasIndex(e => e.BusinessId);
+        });
     }
 }

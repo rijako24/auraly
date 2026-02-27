@@ -31,6 +31,11 @@ public class LoadedBusinessContext
     /// </summary>
     public List<AddOnRuleInfo> AddOnRules { get; private set; } = null!;
 
+    /// <summary>
+    /// Configuración de pago por anticipo. Null cuando el negocio no tiene anticipo configurado.
+    /// </summary>
+    public PaymentConfiguration? PaymentConfig { get; private set; }
+
     private readonly IUnitOfWork _unitOfWork;
     private readonly ILogger<LoadedBusinessContext> _logger;
 
@@ -90,6 +95,9 @@ public class LoadedBusinessContext
             _logger.LogDebug("Cargando SalesStrategy...");
             SalesStrategy = await LoadSalesStrategyAsync(cancellationToken);
 
+            _logger.LogDebug("Cargando PaymentConfig...");
+            PaymentConfig = await LoadPaymentConfigAsync(cancellationToken);
+
             // Construir RequiredFields basado en Attributes cargados
             RequiredFields = BuildRequiredFields();
 
@@ -120,9 +128,13 @@ public class LoadedBusinessContext
                 return new BusinessInfo { BusinessId = BusinessId, Name = "Negocio Desconocido" };
             }
 
-            // Deserializar horarios y métodos de pago desde JSON
-            var schedule = DeserializeSchedule(_cachedBusiness.OperatingHoursJson);
-            var paymentMethods = DeserializePaymentMethods(_cachedBusiness.PaymentMethodsJson);
+            var operatingHoursConfig = await _unitOfWork.BusinessConfigurations
+                .GetByBusinessIdAndKeyAsync(BusinessId, BusinessConfigurationKey.OperatingHours);
+            var paymentMethodsConfig = await _unitOfWork.BusinessConfigurations
+                .GetByBusinessIdAndKeyAsync(BusinessId, BusinessConfigurationKey.PaymentMethods);
+
+            var schedule = DeserializeSchedule(operatingHoursConfig?.Value ?? "{}");
+            var paymentMethods = DeserializePaymentMethods(paymentMethodsConfig?.Value ?? "[]");
 
             return new BusinessInfo
             {
@@ -432,6 +444,55 @@ public class LoadedBusinessContext
         {
             _logger.LogError(ex, "Error cargando Personality para BusinessId={BusinessId}", BusinessId);
             return BusinessPersonality.Default();
+        }
+    }
+
+    /// <summary>
+    /// Carga la configuración de pago desde BusinessConfiguration key=PaymentConfig (3).
+    /// JSON: RequiresAnticipo, AnticipoPorcentaje, Provider, LinkExpirationMinutes, Currency.
+    /// </summary>
+    private async Task<PaymentConfiguration?> LoadPaymentConfigAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            var config = await _unitOfWork.BusinessConfigurations
+                .GetByBusinessIdAndKeyAsync(BusinessId, BusinessConfigurationKey.PaymentConfig);
+
+            if (config == null || string.IsNullOrWhiteSpace(config.Value))
+            {
+                _logger.LogDebug(
+                    "No se encontró PaymentConfig (key=3) para BusinessId={BusinessId}. Sin anticipo.",
+                    BusinessId);
+                return null;
+            }
+
+            var trimmed = config.Value.TrimStart();
+            if (!trimmed.StartsWith("{"))
+            {
+                _logger.LogWarning(
+                    "PaymentConfig para BusinessId={BusinessId} no es JSON válido. Ignorando.",
+                    BusinessId);
+                return null;
+            }
+
+            var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+            var paymentConfig = JsonSerializer.Deserialize<PaymentConfiguration>(config.Value, options);
+
+            if (paymentConfig != null && paymentConfig.RequiresAnticipo)
+            {
+                _logger.LogInformation(
+                    "PaymentConfig cargada para BusinessId={BusinessId}: Anticipo {Pct:P0}, Provider={Provider}",
+                    BusinessId, paymentConfig.AnticipoPorcentaje, paymentConfig.Provider);
+            }
+
+            return paymentConfig;
+        }
+        catch (JsonException ex)
+        {
+            _logger.LogWarning(ex,
+                "Error deserializando PaymentConfig para BusinessId={BusinessId}. Sin anticipo.",
+                BusinessId);
+            return null;
         }
     }
 

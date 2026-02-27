@@ -21,7 +21,9 @@ public static class JsonSchemaDefinition
     ""user_requested_availability"": false,
     ""user_confirmed_booking"": false,
     ""is_information_query"": false,
-    ""user_wants_to_cancel"": false
+    ""user_wants_to_cancel"": false,
+    ""user_requests_new_payment_link"": false,
+    ""user_says_already_paid"": false
   },
   ""ambiguities"": [
     { ""field_name"": ""string"", ""type"": ""temporal|referential|multiple_values|incomplete"", ""text"": ""string"" }

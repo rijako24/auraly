@@ -27,4 +27,10 @@ public class FlowAnalysis
 
     [JsonPropertyName("is_information_query")]
     public bool IsInformationQuery { get; set; }
+
+    [JsonPropertyName("user_requests_new_payment_link")]
+    public bool UserRequestsNewPaymentLink { get; set; }
+
+    [JsonPropertyName("user_says_already_paid")]
+    public bool UserSaysAlreadyPaid { get; set; }
 }

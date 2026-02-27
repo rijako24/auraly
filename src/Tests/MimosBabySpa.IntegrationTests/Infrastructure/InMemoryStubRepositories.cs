@@ -65,9 +65,6 @@ public class InMemoryBusinessRepository : IBusinessRepository
             Phone               = "+1234567890",
             Email               = "info@mimosbabyspa.com",
             IsActive            = true,
-            OperatingHoursJson  = "{}",
-            PaymentMethodsJson  = "[]",
-            PersonalityJson     = "{}",
             CreatedAt           = DateTime.UtcNow
         };
     }
@@ -107,7 +104,10 @@ public class InMemoryBusinessConfigurationRepository : IBusinessConfigurationRep
                    }
                  }
                  """
-             }
+             },
+             new() { BusinessId = businessId, Key = BusinessConfigurationKey.OperatingHours, Value = "{}" },
+             new() { BusinessId = businessId, Key = BusinessConfigurationKey.PaymentMethods, Value = "[]" },
+             new() { BusinessId = businessId, Key = BusinessConfigurationKey.Integrations, Value = """{"googleCalendar":{"enabled":false,"calendarId":"primary"}}""" }
          };
          Console.WriteLine($"[DEBUG] Repo initialized with {_configs.Count} configs for {businessId}");
     }
@@ -117,7 +117,7 @@ public class InMemoryBusinessConfigurationRepository : IBusinessConfigurationRep
 
     public Task<BusinessConfiguration?> GetByBusinessIdAndKeyAsync(Guid businessId, BusinessConfigurationKey key)
     {
-        var config = _configs.FirstOrDefault(c => c.Key == key);
+        var config = _configs.FirstOrDefault(c => c.BusinessId == businessId && c.Key == key);
         
         if (config == null && key == BusinessConfigurationKey.EntityExtractionConfig)
         {

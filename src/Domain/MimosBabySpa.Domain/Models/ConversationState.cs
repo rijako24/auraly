@@ -90,6 +90,13 @@ public class ConversationState
     public bool AddOnsOffered { get; set; }
 
     /// <summary>
+    /// TRUE cuando el formulario de confirmación ya fue presentado al cliente (una vez por ciclo de datos).
+    /// Se resetea si cambian Service, DesiredDate, DesiredTime, datos de identidad o atributos del resumen.
+    /// Permite inyectar el resumen determinísticamente la primera vez y no bombardear en turnos subsiguientes.
+    /// </summary>
+    public bool ConfirmationSummaryPresented { get; set; }
+
+    /// <summary>
     /// TRUE solo si el backend creó la reserva exitosamente
     /// El LLM NUNCA puede establecer esto en true, solo el backend
     /// </summary>
@@ -99,6 +106,39 @@ public class ConversationState
     /// ID de la reserva creada (solo si ReservationCreated = true)
     /// </summary>
     public Guid? ReservationId { get; set; }
+
+    // ========================================
+    // PAGO (solo el backend puede modificar estos campos)
+    // ========================================
+
+    /// <summary>
+    /// Referencia única del link de pago generado (Wompi payment_link.id).
+    /// Permite correlacionar webhook → conversación.
+    /// Null si no se ha generado link.
+    /// </summary>
+    public string? PaymentReferenceId { get; set; }
+
+    /// <summary>
+    /// URL del link de pago para enviar al cliente.
+    /// Solo se genera una vez por ciclo transaccional.
+    /// </summary>
+    public string? PaymentLinkUrl { get; set; }
+
+    /// <summary>
+    /// Monto del anticipo en centavos (para trazabilidad).
+    /// </summary>
+    public long? AnticipoAmountInCents { get; set; }
+
+    /// <summary>
+    /// Fecha de expiración del link de pago.
+    /// </summary>
+    public DateTime? PaymentLinkExpiresAt { get; set; }
+
+    /// <summary>
+    /// TRUE solo cuando el webhook de Wompi confirma el pago.
+    /// El LLM y el usuario NUNCA pueden establecer esto en true.
+    /// </summary>
+    public bool PaymentConfirmed { get; set; }
 
     // ========================================
     // CONTEXTO DE INTENCIÓN (FLOW STATE)
@@ -214,8 +254,14 @@ public class ConversationState
             AvailableTimeSlots = AvailableTimeSlots,
             ReservationConfirmed = ReservationConfirmed,
             AddOnsOffered = AddOnsOffered,
+            ConfirmationSummaryPresented = ConfirmationSummaryPresented,
             ReservationCreated = ReservationCreated,
             ReservationId = ReservationId,
+            PaymentReferenceId = PaymentReferenceId,
+            PaymentLinkUrl = PaymentLinkUrl,
+            AnticipoAmountInCents = AnticipoAmountInCents,
+            PaymentLinkExpiresAt = PaymentLinkExpiresAt,
+            PaymentConfirmed = PaymentConfirmed,
             CurrentIntent = CurrentIntent,
             LastIntent = LastIntent,
             CurrentStage = CurrentStage,
@@ -264,6 +310,11 @@ public enum TransactionStage
     /// Reserva completada
     /// </summary>
     BookingCompleted = 6,
+
+    /// <summary>
+    /// Esperando confirmación de pago — link enviado, pendiente webhook
+    /// </summary>
+    AwaitingPayment = 7,
 
     /// <summary>
     /// Conversación abandonada o fallida

@@ -138,6 +138,26 @@ public static class ResponseInstructionsTemplate
         """;
 
     /// <summary>
+    /// Se incluye cuando el stage es AwaitingPayment.
+    /// El link ya fue enviado, esperando confirmación de la plataforma de pagos.
+    /// </summary>
+    public const string AwaitingPaymentInstructions = """
+
+        **ESTADO: ESPERANDO CONFIRMACIÓN DE PAGO**
+        El link de pago ya fue enviado. Esperando que la plataforma de pagos confirme.
+
+        REGLAS ABSOLUTAS:
+        - Si el usuario dice que ya pagó: El sistema verificará automáticamente con la plataforma. Si aún no se refleja: "Estamos verificando con la plataforma de pagos. En cuanto se confirme, te aviso la reserva."
+        - Si el usuario insiste en que pagó: "Entiendo, a veces puede tardar unos minutos en reflejarse. Tan pronto el sistema lo confirme, te notifico."
+        - Si pregunta cuánto demora: "Normalmente se refleja en pocos minutos."
+        - Si el link expiró o pide otro link: Indícale que puede escribir "envíame otro link" (o similar) y se generará uno nuevo.
+        - Si pregunta algo de su reserva: responde brevemente + recuerda que el pago está pendiente.
+        - Si quiere cambiar datos: acepta el cambio (se procesará vía extracción normal).
+        - PROHIBIDO afirmar que la reserva está confirmada, agendada o lista.
+        - PROHIBIDO enviar o inventar links de pago.
+        """;
+
+    /// <summary>
     /// Se incluye cuando el cliente ya eligió un servicio principal y hay add-ons compatibles con su categoría.
     /// Solo para servicios de categoría Plan (u otras con add-ons configurados).
     /// </summary>

@@ -133,14 +133,16 @@ public class AvailabilityService : IAvailabilityService
         int durationMinutes,
         CancellationToken cancellationToken)
     {
-        var business = await _unitOfWork.Businesses.GetByIdAsync(businessId);
-        if (business == null || string.IsNullOrWhiteSpace(business.OperatingHoursJson) || business.OperatingHoursJson == "{}")
+        var config = await _unitOfWork.BusinessConfigurations
+            .GetByBusinessIdAndKeyAsync(businessId, BusinessConfigurationKey.OperatingHours);
+        var json = config?.Value ?? "{}";
+        if (string.IsNullOrWhiteSpace(json) || json == "{}")
         {
             _logger.LogWarning("Negocio {BusinessId} sin horario configurado", businessId);
             return new List<TimeSpan>();
         }
 
-        var schedule = DeserializeSchedule(business.OperatingHoursJson);
+        var schedule = DeserializeSchedule(json);
         var dayOfWeek = date.DayOfWeek.ToString().ToLower();
         if (!schedule.TryGetValue(dayOfWeek, out var timeBlocks) || timeBlocks == null || !timeBlocks.Any())
         {

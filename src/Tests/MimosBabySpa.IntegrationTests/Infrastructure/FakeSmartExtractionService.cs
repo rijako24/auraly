@@ -75,10 +75,12 @@ public class FakeSmartExtractionService : ISmartExtractionService
             var intentions = new ExtractionIntentions();
             if (root.TryGetProperty("intentions", out var ip))
             {
-                intentions.UserRequestedAvailability = GetBool(ip, "user_requested_availability");
-                intentions.UserConfirmedBooking      = GetBool(ip, "user_confirmed_booking");
-                intentions.IsInformationQuery        = GetBool(ip, "is_information_query");
-                intentions.UserWantsToCancel         = GetBool(ip, "user_wants_to_cancel");
+                intentions.UserRequestedAvailability   = GetBool(ip, "user_requested_availability");
+                intentions.UserConfirmedBooking         = GetBool(ip, "user_confirmed_booking");
+                intentions.IsInformationQuery           = GetBool(ip, "is_information_query");
+                intentions.UserWantsToCancel            = GetBool(ip, "user_wants_to_cancel");
+                intentions.UserRequestsNewPaymentLink   = GetBool(ip, "user_requests_new_payment_link");
+                intentions.UserSaysAlreadyPaid          = GetBool(ip, "user_says_already_paid");
             }
 
             return new ExtractionOutput

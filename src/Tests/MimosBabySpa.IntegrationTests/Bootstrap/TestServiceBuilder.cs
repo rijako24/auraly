@@ -68,6 +68,8 @@ public static class TestServiceBuilder
 
         // ── State Management ──────────────────────────────────────────
         services.AddSingleton<IConversationStateRepository>(unitOfWork.ConversationStates);
+        services.AddSingleton<IPaymentTransactionRepository, InMemoryPaymentTransactionRepository>();
+        services.AddSingleton<IPaymentLinkService, FakePaymentLinkService>();
         services.AddSingleton<IConversationStateUpdater, ConversationStateUpdater>();
         services.AddSingleton<IConversationStateManager, ConversationStateManager>();
 

@@ -1,0 +1,403 @@
+using System.Net;
+using System.Text;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+using MimosBabySpa.Application.Services;
+using MimosBabySpa.Infrastructure.Configuration;
+
+namespace MimosBabySpa.Infrastructure.Services;
+
+/// <summary>
+/// Implementación de IPaymentLinkService usando Wompi API.
+/// Si PrivateKey no está configurado, no genera link (Success: false).
+/// </summary>
+public class WompiPaymentLinkService : IPaymentLinkService
+{
+    private readonly IHttpClientFactory _httpClientFactory;
+    private readonly WompiSettings _settings;
+    private readonly ILogger<WompiPaymentLinkService> _logger;
+
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+        PropertyNameCaseInsensitive = true
+    };
+
+    public WompiPaymentLinkService(
+        IHttpClientFactory httpClientFactory,
+        IOptions<WompiSettings> settings,
+        ILogger<WompiPaymentLinkService> logger)
+    {
+        _httpClientFactory = httpClientFactory;
+        _settings = settings.Value;
+        _logger = logger;
+    }
+
+    public async Task<PaymentLinkResult> GenerateAnticipoLinkAsync(
+        PaymentLinkRequest request,
+        CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
+
+        if (string.IsNullOrWhiteSpace(_settings.PrivateKey))
+        {
+            _logger.LogWarning("Link de pago solicitado pero Wompi no configurado (PrivateKey vacío)");
+            return new PaymentLinkResult(
+                Success: false,
+                PaymentLinkUrl: null,
+                PaymentReferenceId: null,
+                ExpiresAt: null,
+                ErrorMessage: "Pagos no configurados. Configure la integración con Wompi.");
+        }
+
+        var expiresAt = DateTime.UtcNow.AddMinutes(request.ExpirationMinutes);
+        return await CreatePaymentLinkAsync(request, expiresAt, ct).ConfigureAwait(false);
+    }
+
+    private async Task<PaymentLinkResult> CreatePaymentLinkAsync(
+        PaymentLinkRequest request,
+        DateTime expiresAt,
+        CancellationToken ct)
+    {
+        var baseUrl = _settings.GetBaseUrl();
+        var client = _httpClientFactory.CreateClient();
+        client.BaseAddress = new Uri(baseUrl + "/");
+        client.DefaultRequestHeaders.Add("Authorization", $"Bearer {_settings.PrivateKey}");
+        client.Timeout = TimeSpan.FromSeconds(_settings.RequestTimeoutSeconds);
+
+        var body = new WompiPaymentLinkRequest
+        {
+            Name = Truncate($"Anticipo reserva - {request.ServiceDescription}", 80),
+            Description = request.ServiceDescription,
+            SingleUse = true,
+            CollectShipping = false,
+            Currency = request.Currency,
+            AmountInCents = request.AmountInCents,
+            ExpiresAt = expiresAt.ToString("yyyy-MM-ddTHH:mm:ss.fffZ"),
+            Sku = request.ConversationId.ToString("N")
+        };
+
+        var json = JsonSerializer.Serialize(body, JsonOptions);
+        var content = new StringContent(json, Encoding.UTF8, "application/json");
+
+        try
+        {
+            var response = await client.PostAsync("payment_links", content, ct).ConfigureAwait(false);
+            var responseBody = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                _logger.LogWarning(
+                    "Wompi API error: Status={Status}, Response={Response}",
+                    response.StatusCode, responseBody);
+                return new PaymentLinkResult(
+                    Success: false,
+                    PaymentLinkUrl: null,
+                    PaymentReferenceId: null,
+                    ExpiresAt: null,
+                    ErrorMessage: $"Wompi API: {(int)response.StatusCode} - {Truncate(responseBody, 200)}");
+            }
+
+            using var doc = JsonDocument.Parse(responseBody);
+            var root = doc.RootElement;
+
+            if (!root.TryGetProperty("data", out var data) || !data.TryGetProperty("id", out var idEl))
+            {
+                _logger.LogError("Wompi API: respuesta sin data.id");
+                return new PaymentLinkResult(
+                    Success: false,
+                    PaymentLinkUrl: null,
+                    PaymentReferenceId: null,
+                    ExpiresAt: null,
+                    ErrorMessage: "Respuesta de Wompi inválida (falta data.id)");
+            }
+
+            var paymentLinkId = idEl.GetString();
+            if (string.IsNullOrWhiteSpace(paymentLinkId))
+            {
+                return new PaymentLinkResult(
+                    Success: false,
+                    PaymentLinkUrl: null,
+                    PaymentReferenceId: null,
+                    ExpiresAt: null,
+                    ErrorMessage: "Wompi devolvió id vacío");
+            }
+
+            var checkoutBase = _settings.CheckoutBaseUrl?.TrimEnd('/') ?? "https://checkout.wompi.co/l";
+            var paymentUrl = $"{checkoutBase}/{paymentLinkId}";
+
+            _logger.LogInformation(
+                "Link de pago generado: LinkId={LinkId}, BusinessId={BusinessId}, ConvId={ConvId}",
+                paymentLinkId, request.BusinessId, request.ConversationId);
+
+            return new PaymentLinkResult(
+                Success: true,
+                PaymentLinkUrl: paymentUrl,
+                PaymentReferenceId: paymentLinkId,
+                ExpiresAt: expiresAt,
+                ErrorMessage: null);
+        }
+        catch (HttpRequestException ex)
+        {
+            _logger.LogError(ex, "Error de red al llamar Wompi API");
+            return new PaymentLinkResult(
+                Success: false,
+                PaymentLinkUrl: null,
+                PaymentReferenceId: null,
+                ExpiresAt: null,
+                ErrorMessage: "Error de conexión con Wompi. Intenta más tarde.");
+        }
+        catch (TaskCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (TaskCanceledException ex)
+        {
+            _logger.LogError(ex, "Timeout al llamar Wompi API");
+            return new PaymentLinkResult(
+                Success: false,
+                PaymentLinkUrl: null,
+                PaymentReferenceId: null,
+                ExpiresAt: null,
+                ErrorMessage: "Tiempo de espera agotado. Intenta más tarde.");
+        }
+        catch (JsonException ex)
+        {
+            _logger.LogError(ex, "Respuesta JSON inválida de Wompi");
+            return new PaymentLinkResult(
+                Success: false,
+                PaymentLinkUrl: null,
+                PaymentReferenceId: null,
+                ExpiresAt: null,
+                ErrorMessage: "Error procesando respuesta de Wompi.");
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task<PaymentStatusResult> CheckPaymentStatusAsync(
+        string paymentReferenceId,
+        CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
+
+        if (string.IsNullOrWhiteSpace(paymentReferenceId))
+            return new PaymentStatusResult(false, null, null, "PaymentReferenceId vacío");
+
+        if (string.IsNullOrWhiteSpace(_settings.PrivateKey))
+        {
+            _logger.LogDebug("CheckPaymentStatus: Wompi no configurado");
+            return new PaymentStatusResult(false, null, null, "Pagos no configurados");
+        }
+
+        var baseUrl = _settings.GetBaseUrl();
+        var client = _httpClientFactory.CreateClient();
+        client.BaseAddress = new Uri(baseUrl + "/");
+        client.DefaultRequestHeaders.Add("Authorization", $"Bearer {_settings.PrivateKey}");
+        client.Timeout = TimeSpan.FromSeconds(_settings.RequestTimeoutSeconds);
+
+        try
+        {
+            var fromDate = DateTime.UtcNow.AddDays(-15).ToString("yyyy-MM-dd");
+            var untilDate = DateTime.UtcNow.ToString("yyyy-MM-dd");
+            var query = $"transactions?from_date={fromDate}&until_date={untilDate}&page=1&page_size=50";
+            var response = await client.GetAsync(query, ct).ConfigureAwait(false);
+            var responseBody = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                if (response.StatusCode == HttpStatusCode.NotFound)
+                {
+                    _logger.LogDebug("CheckPaymentStatus: link no encontrado Ref={Ref}", paymentReferenceId);
+                    return new PaymentStatusResult(false, null, null, null);
+                }
+                _logger.LogWarning(
+                    "CheckPaymentStatus: Wompi API error Status={Status} Ref={Ref}",
+                    response.StatusCode, paymentReferenceId);
+                return new PaymentStatusResult(false, null, null, $"Wompi: {(int)response.StatusCode}");
+            }
+
+            return ParseTransactionsListResponse(responseBody, paymentReferenceId);
+        }
+        catch (HttpRequestException ex)
+        {
+            _logger.LogError(ex, "CheckPaymentStatus: error de red Ref={Ref}", paymentReferenceId);
+            return new PaymentStatusResult(false, null, null, "Error de conexión");
+        }
+        catch (TaskCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (TaskCanceledException ex)
+        {
+            _logger.LogError(ex, "CheckPaymentStatus: timeout Ref={Ref}", paymentReferenceId);
+            return new PaymentStatusResult(false, null, null, "Timeout");
+        }
+        catch (JsonException ex)
+        {
+            _logger.LogError(ex, "CheckPaymentStatus: JSON inválido Ref={Ref}", paymentReferenceId);
+            return new PaymentStatusResult(false, null, null, "Respuesta inválida");
+        }
+    }
+
+    /// <summary>
+    /// Parsea respuesta de GET transactions y devuelve la primera transacción APPROVED
+    /// cuyo payment_link_id coincide con el link consultado.
+    /// </summary>
+    private PaymentStatusResult ParseTransactionsListResponse(string responseBody, string paymentReferenceId)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(responseBody);
+            var root = doc.RootElement;
+            var data = root.TryGetProperty("data", out var d) ? d : root;
+            if (data.ValueKind != JsonValueKind.Array)
+                return new PaymentStatusResult(false, null, null, null);
+
+            foreach (var tx in data.EnumerateArray())
+            {
+                var txLinkId = tx.TryGetProperty("payment_link_id", out var pl) ? pl.GetString() : null;
+                if (!string.Equals(txLinkId, paymentReferenceId, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                var (approved, txId, amount) = ParseTransactionStatus(tx);
+                if (approved)
+                {
+                    _logger.LogInformation(
+                        "CheckPaymentStatus: pago APPROVED (list) Ref={Ref} TxId={TxId}",
+                        paymentReferenceId, txId);
+                    return new PaymentStatusResult(true, txId, amount, null);
+                }
+            }
+        }
+        catch (JsonException)
+        {
+            // Ignorar — respuesta inesperada
+        }
+
+        return new PaymentStatusResult(false, null, null, null);
+    }
+
+    /// <inheritdoc />
+    public async Task<VerifiedTransactionResult> VerifyTransactionAsync(
+        string transactionId,
+        CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
+
+        if (string.IsNullOrWhiteSpace(transactionId))
+            return new VerifiedTransactionResult(false, null, null, null, "TransactionId vacío");
+
+        if (string.IsNullOrWhiteSpace(_settings.PrivateKey))
+        {
+            _logger.LogDebug("VerifyTransaction: Wompi no configurado");
+            return new VerifiedTransactionResult(false, null, null, null, "Pagos no configurados");
+        }
+
+        var baseUrl = _settings.GetBaseUrl();
+        var client = _httpClientFactory.CreateClient();
+        client.BaseAddress = new Uri(baseUrl + "/");
+        client.DefaultRequestHeaders.Add("Authorization", $"Bearer {_settings.PrivateKey}");
+        client.Timeout = TimeSpan.FromSeconds(_settings.RequestTimeoutSeconds);
+
+        try
+        {
+            var response = await client.GetAsync($"transactions/{Uri.EscapeDataString(transactionId)}", ct).ConfigureAwait(false);
+            var responseBody = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                if (response.StatusCode == HttpStatusCode.NotFound)
+                {
+                    _logger.LogDebug("VerifyTransaction: transacción no encontrada TxId={TxId}", transactionId);
+                    return new VerifiedTransactionResult(false, null, null, null, null);
+                }
+                _logger.LogWarning("VerifyTransaction: Wompi API error Status={Status} TxId={TxId}", response.StatusCode, transactionId);
+                return new VerifiedTransactionResult(false, null, null, null, $"Wompi: {(int)response.StatusCode}");
+            }
+
+            return ParseVerifiedTransactionResponse(responseBody, transactionId);
+        }
+        catch (HttpRequestException ex)
+        {
+            _logger.LogError(ex, "VerifyTransaction: error de red TxId={TxId}", transactionId);
+            return new VerifiedTransactionResult(false, null, null, null, "Error de conexión");
+        }
+        catch (TaskCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (TaskCanceledException ex)
+        {
+            _logger.LogError(ex, "VerifyTransaction: timeout TxId={TxId}", transactionId);
+            return new VerifiedTransactionResult(false, null, null, null, "Timeout");
+        }
+        catch (JsonException ex)
+        {
+            _logger.LogError(ex, "VerifyTransaction: JSON inválido TxId={TxId}", transactionId);
+            return new VerifiedTransactionResult(false, null, null, null, "Respuesta inválida");
+        }
+    }
+
+    private VerifiedTransactionResult ParseVerifiedTransactionResponse(string responseBody, string transactionId)
+    {
+        using var doc = JsonDocument.Parse(responseBody);
+        var root = doc.RootElement;
+        var data = root.TryGetProperty("data", out var d) ? d : root;
+
+        var status = data.TryGetProperty("status", out var s) ? s.GetString() : null;
+        var isApproved = string.Equals(status, "APPROVED", StringComparison.OrdinalIgnoreCase);
+
+        var txId = data.TryGetProperty("id", out var id) ? id.GetString() : transactionId;
+        var amount = data.TryGetProperty("amount_in_cents", out var amt) ? amt.GetInt64() : (long?)null;
+        var paymentLinkId = data.TryGetProperty("payment_link_id", out var pl) ? pl.GetString() : null;
+
+        if (isApproved)
+            _logger.LogInformation("VerifyTransaction: pago APPROVED TxId={TxId} PaymentLinkId={LinkId}", txId, paymentLinkId);
+
+        return new VerifiedTransactionResult(isApproved, txId, amount, paymentLinkId, null);
+    }
+
+    private static (bool Approved, string? TxId, long? Amount) ParseTransactionStatus(JsonElement tx)
+    {
+        var status = tx.TryGetProperty("status", out var s) ? s.GetString() : null;
+        if (!string.Equals(status, "APPROVED", StringComparison.OrdinalIgnoreCase))
+            return (false, null, null);
+
+        var txId = tx.TryGetProperty("id", out var id) ? id.GetString() : null;
+        var amount = tx.TryGetProperty("amount_in_cents", out var amt) ? amt.GetInt64() : (long?)null;
+        return (true, txId, amount);
+    }
+
+    private static string Truncate(string value, int maxLength) =>
+        value.Length <= maxLength ? value : value[..maxLength];
+
+    private sealed class WompiPaymentLinkRequest
+    {
+        [JsonPropertyName("name")]
+        public string Name { get; set; } = string.Empty;
+
+        [JsonPropertyName("description")]
+        public string Description { get; set; } = string.Empty;
+
+        [JsonPropertyName("single_use")]
+        public bool SingleUse { get; set; }
+
+        [JsonPropertyName("collect_shipping")]
+        public bool CollectShipping { get; set; }
+
+        [JsonPropertyName("currency")]
+        public string Currency { get; set; } = "COP";
+
+        [JsonPropertyName("amount_in_cents")]
+        public long AmountInCents { get; set; }
+
+        [JsonPropertyName("expires_at")]
+        public string? ExpiresAt { get; set; }
+
+        [JsonPropertyName("sku")]
+        public string? Sku { get; set; }
+    }
+}

@@ -36,6 +36,11 @@ public interface IConversationStateUpdater
     /// Limpia: Service, DesiredDate, DesiredTime, flags de confirmación.
     /// </summary>
     void ResetForResumption(ConversationState state);
+
+    /// <summary>
+    /// Resetea solo los campos de pago (link expirado, para regenerar).
+    /// </summary>
+    void ResetPaymentFields(ConversationState state);
 }
 
 /// <summary>

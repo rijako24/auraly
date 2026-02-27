@@ -59,6 +59,11 @@ public class CoreInstructionsBuilder
               respuestas afirmativas ("sí", "está bien", "ok", "dale") son aceptación del dato que se discute, NO confirmación de reserva.
             - is_information_query: pregunta por servicios/planes/precios/información general.
             - user_wants_to_cancel: "cancelar", "no quiero", "cambié de opinión", "mejor no".
+            - user_requests_new_payment_link: "envíame otro link", "el link expiró", "mandame el link de nuevo",
+              "pásame otro link", "necesito otro link de pago", "no me funciona el link" — solo cuando Stage=AwaitingPayment.
+              En otros stages NO aplicar.
+            - user_says_already_paid: "ya pagué", "ya hice el pago", "ya transferí", "listo ya pagué", "acabo de pagar",
+              "el pago ya está hecho" — solo cuando Stage=AwaitingPayment. Indica que verificaremos con la plataforma.
 
             ## Ambigüedades (tipos):
             - temporal: "pronto", "luego", "otro día" — sin fecha concreta.

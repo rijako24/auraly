@@ -1,7 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using MimosBabySpa.Application.Services;
 using MimosBabySpa.Application.Orchestration;
@@ -63,6 +62,7 @@ services.AddScoped<IConversationStateRepository, ConversationStateRepository>();
 services.AddScoped<IMessageRepository, MessageRepository>();
 services.AddScoped<ILeadRepository, LeadRepository>();
 services.AddScoped<IReservationRepository, ReservationRepository>();
+services.AddScoped<IPaymentTransactionRepository, PaymentTransactionRepository>();
 
 // Application Services
 services.AddScoped<IConversationService, ConversationService>();
@@ -178,6 +178,13 @@ services.AddScoped<IBlobStorageService>(sp =>
 services.Configure<CalendarSettings>(
     configuration.GetSection(CalendarSettings.SectionName));
 
+// Wompi Configuration (links de pago; si no está configurado, devuelve Success: false)
+services.Configure<WompiSettings>(
+    configuration.GetSection(WompiSettings.SectionName));
+
+// Payment Link Service (Wompi; sin config = no genera links)
+services.AddScoped<IPaymentLinkService, WompiPaymentLinkService>();
+
 // Infrastructure Services - Calendar
 services.AddHttpClient();
 services.AddHttpClient<GoogleCalendarService>(client =>
@@ -201,7 +208,7 @@ Console.WriteLine("Escribe 'exit' o 'quit' para salir.");
 Console.WriteLine();
 
 // Número de teléfono simulado (puedes cambiarlo)
-var userNumber = "+12345679494";
+var userNumber = "+12345679497";
 var customerName = "Bill";
 
 while (true)

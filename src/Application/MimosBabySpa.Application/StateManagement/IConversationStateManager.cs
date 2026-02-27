@@ -29,6 +29,12 @@ public interface IConversationStateManager
         CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Obtiene el estado por ConversationId (solo lectura, no crea).
+    /// Retorna null si no se encuentra. Usado por webhook/poller de pago.
+    /// </summary>
+    Task<ConversationState?> GetStateByConversationIdAsync(Guid conversationId, CancellationToken ct = default);
+
+    /// <summary>
     /// Guarda el estado de conversación con control de versiones
     /// </summary>
     /// <param name="conversationId">ID único de la conversación</param>
