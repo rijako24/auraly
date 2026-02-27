@@ -6,7 +6,6 @@ using MimosBabySpa.Domain.Models;
 using MimosBabySpa.Application.LLM.Extraction;
 using MimosBabySpa.Application.Tools;
 using MimosBabySpa.Application.Configuration;
-using MimosBabySpa.Application.StateManagement;
 
 namespace MimosBabySpa.Tests.Reliability;
 
@@ -31,7 +30,7 @@ public class EdgeCaseTests : ReliabilityTestBase
         // Ensure we simulate ApplyField updating the state
         _stateUpdaterMock.Setup(m => m.ApplyField(It.IsAny<MimosBabySpa.Domain.Models.ConversationState>(), "Service", "Hidroterapia"))
             .Callback<MimosBabySpa.Domain.Models.ConversationState, string, string>((s, f, v) => s.Service = v)
-            .Returns(new ApplyFieldResult(true, "Applied"));
+            .Returns(new Application.StateManagement.ApplyFieldResult(true, "Applied"));
 
 
         var result = await _orchestrator.ProcessMessageAsync(_conversationId, _businessId, _customerPhone, "Mejor quiero Hidroterapia");

@@ -151,6 +151,11 @@ public abstract class ReliabilityTestBase
         _unitOfWorkMock.Setup(u => u.BusinessConfigurations.GetByBusinessIdAndKeyAsync(_businessId, It.IsAny<BusinessConfigurationKey>()))
             .ReturnsAsync((Domain.Entities.BusinessConfiguration)null);
 
+        // Mock MemoryCache behavior properly to prevent NullReferenceException
+        _memoryCacheMock.Setup(m => m.CreateEntry(It.IsAny<object>())).Returns(new Mock<ICacheEntry>().Object);
+        object expectedValue = null;
+        _memoryCacheMock.Setup(m => m.TryGetValue(It.IsAny<object>(), out expectedValue)).Returns(false);
+
         // State Updater default behavior (just updates the state object directly)
         _stateUpdaterMock.Setup(m => m.ApplyField(It.IsAny<MimosBabySpa.Domain.Models.ConversationState>(), It.IsAny<string>(), It.IsAny<string>()))
             .Callback<MimosBabySpa.Domain.Models.ConversationState, string, string>((s, f, v) =>
@@ -178,6 +183,8 @@ public abstract class ReliabilityTestBase
                 if (f == "ReservationConfirmed") s.ReservationConfirmed = v;
                 if (f == "AvailabilityConfirmed") s.AvailabilityConfirmed = v;
                 if (f == "ReservationCreated") s.ReservationCreated = v;
+                if (f == "ConfirmationSummaryPresented") s.ConfirmationSummaryPresented = v;
+                if (f == "AddOnsOffered") s.AddOnsOffered = v;
             })
             .Returns(new ApplyFieldResult(true, "Applied"));
 
