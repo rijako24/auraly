@@ -49,7 +49,9 @@ local.settings.json
 # Mac
 .DS_Store
 
-# App settings (contiene credenciales)
+# App settings (contiene credenciales - NUNCA commitear)
+**/appsettings.json
+**/appSettings.json
 **/appsettings.Development.json
 **/appsettings.Production.json
-# appsettings.json se incluye con placeholders para referencia
+# Plantillas con placeholders sí se commitean: appsettings.Example.json, appSettings.Example.json
