@@ -51,7 +51,6 @@ public class CreateReservationToolHandler : BaseToolHandler
     }
 
     protected override async Task<ToolExecutionResult> ExecuteCoreAsync(
-        Dictionary<string, object> arguments,
         ToolExecutionContext context,
         CancellationToken cancellationToken = default)
     {

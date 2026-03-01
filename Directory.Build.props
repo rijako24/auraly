@@ -1,0 +1,5 @@
+﻿<Project>
+  <PropertyGroup>
+    <EnableWorkloadResolver>false</EnableWorkloadResolver>
+  </PropertyGroup>
+</Project>

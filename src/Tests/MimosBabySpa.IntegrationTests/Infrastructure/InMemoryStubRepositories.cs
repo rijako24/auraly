@@ -1,6 +1,7 @@
 using MimosBabySpa.Domain.Entities;
 using MimosBabySpa.Domain.Enums;
 using MimosBabySpa.Domain.Repositories;
+using MimosBabySpa.Application.Services;
 
 namespace MimosBabySpa.IntegrationTests.Infrastructure;
 
@@ -379,4 +380,16 @@ public class InMemoryServiceAddOnRuleRepository : IServiceAddOnRuleRepository
 public class InMemoryReservationAddOnRepository : IReservationAddOnRepository
 {
     public Task AddAsync(ReservationAddOn addOn) => Task.CompletedTask;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// NoOp WhatsApp Service — para tests que no envían mensajes reales
+// ─────────────────────────────────────────────────────────────────────────────
+
+public class NoOpWhatsAppService : IWhatsAppService
+{
+    public Task SendTextMessageAsync(Guid businessId, string to, string message) => Task.CompletedTask;
+    public Task SendImageMessageAsync(Guid businessId, string to, string imageUrl, string? caption = null) => Task.CompletedTask;
+    public Task<bool> VerifyWebhookAsync(string mode, string token, string challenge) => Task.FromResult(true);
+    public Task<Stream> DownloadMediaAsync(Guid businessId, string mediaId) => Task.FromResult<Stream>(Stream.Null);
 }

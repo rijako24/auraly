@@ -82,7 +82,7 @@ public class WhatsAppWebhookFunction
 
                 // Extraer todos los mensajes (texto y audio) de esta entrada específica.
                 // Los audios ya están transcritos dentro de ExtractAllMessagesFromEntryAsync
-                var allMessages = (await _webhookParserService.ExtractAllMessagesFromEntryAsync(entry)).ToList();
+                var allMessages = (await _webhookParserService.ExtractAllMessagesFromEntryAsync(entry, businessContext.BusinessId)).ToList();
 
                 if (!allMessages.Any())
                 {

@@ -146,14 +146,17 @@ public class ConversationStateUpdater : IConversationStateUpdater
         state.AvailabilityConfirmed = false;
         state.AvailableTimeSlots = null;
         state.ReservationConfirmed = false;
+        state.ReservationCreated = false;
+        state.ReservationId = null;
         state.AddOnsOffered = false;
         state.ConfirmationSummaryPresented = false;
         ResetPaymentFieldsStatic(state);
         state.CurrentStage = TransactionStage.CollectingInformation;
+        state.SessionStartedAt = DateTime.UtcNow;
         state.UpdatedAt = DateTime.UtcNow;
         state.Version++;
         _logger.LogInformation(
-            "Estado reseteado por retomo de conversación (preservados: CustomerName, Phone, Email, Attributes)");
+            "Estado reseteado para nuevo ciclo (preservados: CustomerName, Phone, Email, Attributes persistentes)");
     }
 
     // ─────────────────────────────────────────────────────────────────

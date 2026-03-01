@@ -106,7 +106,7 @@ public class FakeSmartExtractionService : ISmartExtractionService
         ExtractedFields = [],
         Intentions      = new ExtractionIntentions(),
         Ambiguities     = [],
-        Method          = ExtractionMethod.Emergency,
+        Method          = ExtractionMethod.Degraded,
         WasSuccessful   = false
     };
 }

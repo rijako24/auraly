@@ -19,5 +19,7 @@ public interface IWhatsAppWebhookParserService
     /// Si hay audios o notas de voz, los transcribe automáticamente.
     /// Devuelve todos los mensajes ya unificados como texto.
     /// </summary>
-    Task<IEnumerable<IncomingMessage>> ExtractAllMessagesFromEntryAsync(Entry entry);
+    /// <param name="entry">Entrada del webhook</param>
+    /// <param name="businessId">ID del negocio (para resolver credenciales en transcripción de audio)</param>
+    Task<IEnumerable<IncomingMessage>> ExtractAllMessagesFromEntryAsync(Entry entry, Guid businessId);
 }

@@ -129,7 +129,6 @@ var host = new HostBuilder()
 
         // Tool Handlers (Domain-Agnostic)
         services.AddScoped<IConversationStateUpdater, ConversationStateUpdater>();
-        services.AddScoped<UpdateConversationStateToolHandler>();
         services.AddScoped<CheckAvailabilityToolHandler>();
         services.AddScoped<CreateReservationToolHandler>();
         
@@ -139,28 +138,30 @@ var host = new HostBuilder()
         
         // Extraction Services
         services.AddScoped<JsonSchemaPromptBuilder>(); // ✅ Refactorizado para usar LoadedBusinessContext
-services.AddScoped<IExtractionValidator, ExtractionValidator>();
-        services.AddScoped<IFallbackExtractor, FallbackExtractor>();
-        services.AddScoped<ISmartExtractionService, SmartExtractionService>(); // ✅ Refactorizado
-        
+        services.AddScoped<IExtractionValidator, ExtractionValidator>();
+        services.AddScoped<ISmartExtractionService, SmartExtractionService>();
+
+        // Escalation y release (handover a humano)
+        services.AddScoped<IEscalationNotifier, EscalationNotifier>();
+        services.AddScoped<IEscalationConfigProvider, EscalationConfigProvider>();
+        services.AddScoped<IReleaseLinkService, ReleaseLinkService>();
+        services.AddScoped<IConversationReleaseService, ConversationReleaseService>();
+
         // Hybrid Transactional Orchestrator
         services.AddScoped<HybridTransactionalOrchestrator>();
         
         // WhatsAppMessageProcessorService (usa HybridTransactionalOrchestrator)
         services.AddScoped<IWhatsAppMessageProcessorService, WhatsAppMessageProcessorService>();
 
-        // Infrastructure Services - WhatsApp
+        // Infrastructure Services - WhatsApp (credenciales desde BusinessWhatsAppNumbers)
         services.AddHttpClient();
+        services.AddScoped<IWhatsAppCredentialResolver, WhatsAppCredentialResolver>();
         services.AddScoped<IWhatsAppService>(sp =>
         {
-            var httpClientFactory = sp.GetRequiredService<IHttpClientFactory>();
-            var httpClient = httpClientFactory.CreateClient();
-            var config = sp.GetRequiredService<IConfiguration>();
-            var phoneNumberId = config["WhatsApp:PhoneNumberId"] ?? throw new InvalidOperationException("WhatsApp:PhoneNumberId no configurado");
-            var accessToken = config["WhatsApp:AccessToken"] ?? throw new InvalidOperationException("WhatsApp:AccessToken no configurado");
+            var httpClient = sp.GetRequiredService<IHttpClientFactory>().CreateClient();
+            var resolver = sp.GetRequiredService<IWhatsAppCredentialResolver>();
             var logger = sp.GetRequiredService<ILogger<WhatsAppService>>();
-            
-            return new WhatsAppService(httpClient, phoneNumberId, accessToken, logger);
+            return new WhatsAppService(httpClient, resolver, logger);
         });
 
 
@@ -183,13 +184,12 @@ services.AddScoped<IExtractionValidator, ExtractionValidator>();
             return new BlobStorageService(client, containerName, sp.GetRequiredService<ILogger<BlobStorageService>>());
         });
 
-        // Calendar Configuration (Options Pattern)
-        services.Configure<CalendarSettings>(
-            configuration.GetSection(CalendarSettings.SectionName));
+        // Integrations Config Provider (Google Calendar, Wompi) — fuente única desde BusinessConfiguration
+        services.AddScoped<IIntegrationsConfigProvider, IntegrationsConfigProvider>();
 
-        // Wompi Configuration (Payment Links)
-        services.Configure<WompiSettings>(
-            configuration.GetSection(WompiSettings.SectionName));
+        // Release Link (URL firmada para devolver conversación al bot)
+        services.Configure<ReleaseLinkSettings>(
+            configuration.GetSection(ReleaseLinkSettings.SectionName));
 
         // Infrastructure Services - Calendar
         services.AddHttpClient<GoogleCalendarService>(client =>

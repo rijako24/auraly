@@ -1,4 +1,3 @@
-using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using MimosBabySpa.Application.Configuration;
 using MimosBabySpa.Application.DTOs;
@@ -12,20 +11,20 @@ public class ReservationService : IReservationService
 {
     private readonly IUnitOfWork _unitOfWork;
     private readonly ICalendarService _calendarService;
-    private readonly IBusinessConfigurationService _businessConfigService;
+    private readonly IIntegrationsConfigProvider _integrationsProvider;
     private readonly IEmployeeAssignmentService _employeeAssignmentService;
     private readonly ILogger<ReservationService> _logger;
 
     public ReservationService(
         IUnitOfWork unitOfWork,
         ICalendarService calendarService,
-        IBusinessConfigurationService businessConfigService,
+        IIntegrationsConfigProvider integrationsProvider,
         IEmployeeAssignmentService employeeAssignmentService,
         ILogger<ReservationService> logger)
     {
         _unitOfWork = unitOfWork;
         _calendarService = calendarService;
-        _businessConfigService = businessConfigService;
+        _integrationsProvider = integrationsProvider;
         _employeeAssignmentService = employeeAssignmentService;
         _logger = logger;
     }
@@ -229,25 +228,8 @@ public class ReservationService : IReservationService
 
     private async Task<bool> IsCalendarSyncEnabledAsync(Guid businessId, CancellationToken cancellationToken)
     {
-        var json = await _businessConfigService.GetBusinessConfigurationValueAsync(
-            businessId, BusinessConfigurationKey.Integrations);
-        if (string.IsNullOrWhiteSpace(json) || json == "{}")
-            return false;
-
-        try
-        {
-            var integrations = JsonSerializer.Deserialize<IntegrationsConfiguration>(
-                json,
-                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-            return integrations?.GoogleCalendar?.Enabled ?? false;
-        }
-        catch (JsonException)
-        {
-            _logger.LogWarning(
-                "Integraciones de negocio {BusinessId} con JSON inválido, omitiendo calendar sync",
-                businessId);
-            return false;
-        }
+        var integrations = await _integrationsProvider.GetAsync(businessId, cancellationToken);
+        return integrations?.GoogleCalendar?.Enabled ?? false;
     }
 
     private async Task<string?> TrySyncReservationToCalendarAsync(
@@ -293,7 +275,7 @@ public class ReservationService : IReservationService
                 }
             };
 
-            var eventId = await _calendarService.CreateEventAsync(calendarEvent, cancellationToken);
+            var eventId = await _calendarService.CreateEventAsync(reservation.BusinessId, calendarEvent, cancellationToken);
             _logger.LogInformation(
                 "Evento de calendario creado para la reserva {ReservationId} con EventId {EventId}",
                 reservation.ReservationId,

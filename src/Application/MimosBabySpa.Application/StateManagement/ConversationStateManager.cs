@@ -1,9 +1,10 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using Microsoft.Extensions.Logging;
 using MimosBabySpa.Domain.Entities;
 using MimosBabySpa.Domain.Models;
 using MimosBabySpa.Domain.Repositories;
 using MimosBabySpa.Application.Services;
-using System.Text.Json;
 
 namespace MimosBabySpa.Application.StateManagement;
 
@@ -189,13 +190,7 @@ public class ConversationStateManager : IConversationStateManager
     /// </summary>
     private string SerializeState(ConversationState state)
     {
-        var options = new JsonSerializerOptions
-        {
-            WriteIndented = false,
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-        };
-
-        return JsonSerializer.Serialize(state, options);
+        return JsonSerializer.Serialize(state, GetSerializerOptions());
     }
 
     /// <summary>
@@ -203,13 +198,7 @@ public class ConversationStateManager : IConversationStateManager
     /// </summary>
     private ConversationState DeserializeState(string json)
     {
-        var options = new JsonSerializerOptions
-        {
-            PropertyNameCaseInsensitive = true,
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-        };
-
-        var state = JsonSerializer.Deserialize<ConversationState>(json, options);
+        var state = JsonSerializer.Deserialize<ConversationState>(json, GetSerializerOptions());
         
         if (state == null)
         {
@@ -223,6 +212,17 @@ public class ConversationStateManager : IConversationStateManager
         }
 
         return state;
+    }
+
+    private static JsonSerializerOptions GetSerializerOptions()
+    {
+        return new JsonSerializerOptions
+        {
+            WriteIndented = false,
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+            PropertyNameCaseInsensitive = true,
+            Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase) }
+        };
     }
 
     // Método de auditoría removido - sin cache en memoria, no hay historial temporal

@@ -7,11 +7,6 @@ namespace MimosBabySpa.Application.Tools;
 public enum ToolType
 {
     /// <summary>
-    /// Actualiza el estado de la conversación con valores extraídos
-    /// </summary>
-    UpdateConversationState,
-    
-    /// <summary>
     /// Verifica disponibilidad consultando al backend
     /// </summary>
     CheckAvailability,

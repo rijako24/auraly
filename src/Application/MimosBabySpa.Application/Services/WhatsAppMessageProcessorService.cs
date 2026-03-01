@@ -1,12 +1,15 @@
 using Microsoft.Extensions.Logging;
 using MimosBabySpa.Application.Orchestration;
+using MimosBabySpa.Application.StateManagement;
 using MimosBabySpa.Domain.Entities;
+using MimosBabySpa.Domain.Models;
 
 namespace MimosBabySpa.Application.Services;
 
 public class WhatsAppMessageProcessorService : IWhatsAppMessageProcessorService
 {
     private readonly IConversationService _conversationService;
+    private readonly IConversationStateManager _stateManager;
     private readonly IMessageService _messageService;
     private readonly ILeadService _leadService;
     private readonly IWhatsAppService _whatsAppService;
@@ -16,6 +19,7 @@ public class WhatsAppMessageProcessorService : IWhatsAppMessageProcessorService
 
     public WhatsAppMessageProcessorService(
         IConversationService conversationService,
+        IConversationStateManager stateManager,
         IMessageService messageService,
         ILeadService leadService,
         IWhatsAppService whatsAppService,
@@ -24,12 +28,13 @@ public class WhatsAppMessageProcessorService : IWhatsAppMessageProcessorService
         ILogger<WhatsAppMessageProcessorService> logger)
     {
         _conversationService = conversationService;
-        _messageService      = messageService;
-        _leadService         = leadService;
-        _whatsAppService     = whatsAppService;
-        _orchestrator        = orchestrator;
-        _blobStorageService  = blobStorageService;
-        _logger              = logger;
+        _stateManager = stateManager;
+        _messageService = messageService;
+        _leadService = leadService;
+        _whatsAppService = whatsAppService;
+        _orchestrator = orchestrator;
+        _blobStorageService = blobStorageService;
+        _logger = logger;
     }
 
     public Task<string?> VerifyWebhookAsync(string mode, string token, string challenge)
@@ -62,9 +67,20 @@ public class WhatsAppMessageProcessorService : IWhatsAppMessageProcessorService
 
         // 1. Obtener/crear conversación y lead
         var conversation = await _conversationService.GetOrCreateConversationAsync(businessId, userNumber, customerName);
-        var lead         = await _leadService.GetOrCreateLeadAsync(businessId, userNumber, customerName);
+        var lead = await _leadService.GetOrCreateLeadAsync(businessId, userNumber, customerName);
 
-        // 2. Procesar con el orquestador
+        // 2. Routing: si está en manos del humano, solo guardar mensaje y retornar (bot inhibido)
+        var state = await _stateManager.GetStateByConversationIdAsync(conversation.ConversationId);
+        if (state?.Owner == ConversationOwner.Human)
+        {
+            await _messageService.SaveMessageAsync(conversation.ConversationId, "User", messageText);
+            _logger.LogInformation(
+                "Conv {ConvId} en manos de humano — mensaje guardado, bot inhibido",
+                conversation.ConversationId);
+            return;
+        }
+
+        // 3. Procesar con el orquestador
         //    El historial que carga el orquestador NO incluye el mensaje actual (no se guardó aún).
         //    El mensaje se añade explícitamente como último rol "user" dentro del orquestador.
         var result = await _orchestrator.ProcessMessageAsync(
@@ -73,14 +89,14 @@ public class WhatsAppMessageProcessorService : IWhatsAppMessageProcessorService
             userNumber,
             messageText);
 
-        // 3. Guardar mensajes — UNA VEZ cada uno, DESPUÉS del orquestador
+        // 4. Guardar mensajes — UNA VEZ cada uno, DESPUÉS del orquestador
         await _messageService.SaveMessageAsync(conversation.ConversationId, "User", messageText);
         await _messageService.SaveMessageAsync(conversation.ConversationId, "Bot", result.Response);
 
-        // 4. Actualizar lead con dato determinístico (no parseo de texto)
+        // 5. Actualizar lead con dato determinístico (no parseo de texto)
         await UpdateLeadStatusAsync(lead, result.ReservationCreated);
 
-        // 5. Enviar respuesta (con imagen si aplica)
+        // 6. Enviar respuesta (con imagen si aplica)
         await SendResponseAsync(userNumber, result.Response, conversation);
     }
 
@@ -99,12 +115,12 @@ public class WhatsAppMessageProcessorService : IWhatsAppMessageProcessorService
 
             if (!string.IsNullOrEmpty(imageUrl))
             {
-                await _whatsAppService.SendImageMessageAsync(userNumber, imageUrl, response);
+                await _whatsAppService.SendImageMessageAsync(conversation.BusinessId, userNumber, imageUrl, response);
                 return;
             }
         }
 
-        await _whatsAppService.SendTextMessageAsync(userNumber, response);
+        await _whatsAppService.SendTextMessageAsync(conversation.BusinessId, userNumber, response);
     }
 
     /// <summary>

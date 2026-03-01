@@ -16,7 +16,7 @@ public class ConsoleWhatsAppService : IWhatsAppService
         _logger = logger;
     }
 
-    public Task SendTextMessageAsync(string to, string message)
+    public Task SendTextMessageAsync(Guid businessId, string to, string message)
     {
         System.Console.WriteLine();
         System.Console.WriteLine("🤖 Bot:");
@@ -25,7 +25,7 @@ public class ConsoleWhatsAppService : IWhatsAppService
         return Task.CompletedTask;
     }
 
-    public Task SendImageMessageAsync(string to, string imageUrl, string? caption = null)
+    public Task SendImageMessageAsync(Guid businessId, string to, string imageUrl, string? caption = null)
     {
         System.Console.WriteLine();
         System.Console.WriteLine("🤖 Bot (imagen):");
@@ -38,7 +38,7 @@ public class ConsoleWhatsAppService : IWhatsAppService
         return Task.CompletedTask;
     }
 
-    public Task<Stream> DownloadMediaAsync(string mediaId)
+    public Task<Stream> DownloadMediaAsync(Guid businessId, string mediaId)
     {
         // En la aplicación de consola, no podemos descargar media real de WhatsApp
         // Retornamos un stream vacío o lanzamos excepción según el caso de uso

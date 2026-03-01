@@ -84,30 +84,30 @@ public static class TestServiceBuilder
             new FakeSmartExtractionService(sp.GetRequiredService<ILLMAdapter>()));
 
         // ── Tool Handlers (real implementations) ─────────────────────
-        services.AddSingleton<UpdateConversationStateToolHandler>();
         services.AddSingleton<CheckAvailabilityToolHandler>();
         services.AddSingleton<CreateReservationToolHandler>();
 
         // ── Tool Factory with Interceptors ────────────────────────────
         services.AddSingleton<IToolFactory>(sp =>
         {
-            var updateHandler  = (IToolHandler)sp.GetRequiredService<UpdateConversationStateToolHandler>();
-            var checkHandler   = (IToolHandler)sp.GetRequiredService<CheckAvailabilityToolHandler>();
-            var createHandler  = (IToolHandler)sp.GetRequiredService<CreateReservationToolHandler>();
-            var logger         = sp.GetRequiredService<ILogger<ToolFactory>>();
+            var checkHandler  = (IToolHandler)sp.GetRequiredService<CheckAvailabilityToolHandler>();
+            var createHandler = (IToolHandler)sp.GetRequiredService<CreateReservationToolHandler>();
 
             // Wrap with interceptors
-            var interceptedUpdate = new ToolCallInterceptor(updateHandler, ToolType.UpdateConversationState, toolCallLog);
             var interceptedCheck  = new ToolCallInterceptor(checkHandler,  ToolType.CheckAvailability, toolCallLog);
             var interceptedCreate = new ToolCallInterceptor(createHandler, ToolType.CreateReservation, toolCallLog);
 
-            return new InterceptedToolFactory(
-                interceptedUpdate,
-                interceptedCheck,
-                interceptedCreate);
+            return new InterceptedToolFactory(interceptedCheck, interceptedCreate);
         });
 
         services.AddSingleton<GenericToolDispatcher>();
+
+        // ── Escalation y release ──────────────────────────────────────
+        services.AddSingleton<IWhatsAppService, NoOpWhatsAppService>();
+        services.AddSingleton<IReleaseLinkService, FakeReleaseLinkService>();
+        services.AddSingleton<IConversationReleaseService, ConversationReleaseService>();
+        services.AddSingleton<IEscalationNotifier, EscalationNotifier>();
+        services.AddSingleton<IEscalationConfigProvider, EscalationConfigProvider>();
 
         // ── Orchestrator ──────────────────────────────────────────────
         services.AddSingleton<HybridTransactionalOrchestrator>();
@@ -119,22 +119,19 @@ public static class TestServiceBuilder
 /// </summary>
 internal class InterceptedToolFactory : IToolFactory
 {
-    private readonly IToolHandler _update;
     private readonly IToolHandler _check;
     private readonly IToolHandler _create;
 
-    public InterceptedToolFactory(IToolHandler update, IToolHandler check, IToolHandler create)
+    public InterceptedToolFactory(IToolHandler check, IToolHandler create)
     {
-        _update = update;
         _check  = check;
         _create = create;
     }
 
     public IToolHandler GetTool(ToolType toolType) => toolType switch
     {
-        ToolType.UpdateConversationState => _update,
-        ToolType.CheckAvailability       => _check,
-        ToolType.CreateReservation       => _create,
+        ToolType.CheckAvailability => _check,
+        ToolType.CreateReservation => _create,
         _ => throw new ArgumentException($"Unsupported tool: {toolType}")
     };
 }

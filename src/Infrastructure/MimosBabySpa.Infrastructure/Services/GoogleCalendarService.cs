@@ -1,8 +1,9 @@
+using System.Collections.Concurrent;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
+using MimosBabySpa.Application.Configuration;
 using MimosBabySpa.Domain.Repositories;
 using MimosBabySpa.Infrastructure.Configuration;
 
@@ -11,56 +12,65 @@ namespace MimosBabySpa.Infrastructure.Services;
 public class GoogleCalendarService : ICalendarService
 {
     private readonly HttpClient _httpClient;
-    private readonly CalendarSettings _settings;
+    private readonly IIntegrationsConfigProvider _integrationsProvider;
     private readonly ILogger<GoogleCalendarService> _logger;
-    private string? _accessToken;
-    private DateTime? _tokenExpiry;
+
+    private static readonly ConcurrentDictionary<string, CachedToken> TokenCache = new();
+
+    private sealed class CachedToken
+    {
+        public required string AccessToken { get; set; }
+        public DateTime Expiry { get; set; }
+    }
 
     public GoogleCalendarService(
         HttpClient httpClient,
-        IOptions<CalendarSettings> settings,
+        IIntegrationsConfigProvider integrationsProvider,
         ILogger<GoogleCalendarService> logger)
     {
         _httpClient = httpClient;
-        _settings = settings.Value;
+        _integrationsProvider = integrationsProvider;
         _logger = logger;
     }
 
-    public async Task<string> CreateEventAsync(CalendarEvent calendarEvent, CancellationToken cancellationToken = default)
+    public async Task<string> CreateEventAsync(Guid businessId, CalendarEvent calendarEvent, CancellationToken cancellationToken = default)
     {
+        var gc = await GetGoogleCalendarConfigAsync(businessId, cancellationToken);
+        if (gc == null)
+            throw new InvalidOperationException($"Google Calendar no configurado para BusinessId={businessId}");
+
+        var settings = gc;
+        await EnsureAccessTokenAsync(businessId, settings, cancellationToken);
+
+        var calendarId = string.IsNullOrEmpty(settings.CalendarId) ? "primary" : settings.CalendarId;
+        var url = $"https://www.googleapis.com/calendar/v3/calendars/{Uri.EscapeDataString(calendarId)}/events";
+
+        var requestBody = new
+        {
+            summary = calendarEvent.Title,
+            description = calendarEvent.Description,
+            start = new
+            {
+                dateTime = calendarEvent.StartDateTime.ToString("yyyy-MM-ddTHH:mm:ss"),
+                timeZone = settings.TimeZone
+            },
+            end = new
+            {
+                dateTime = calendarEvent.EndDateTime.ToString("yyyy-MM-ddTHH:mm:ss"),
+                timeZone = settings.TimeZone
+            },
+            location = calendarEvent.Location,
+            extendedProperties = calendarEvent.ExtendedProperties != null ? new { @private = calendarEvent.ExtendedProperties } : null
+        };
+
+        var json = JsonSerializer.Serialize(requestBody);
+        var content = new StringContent(json, Encoding.UTF8, "application/json");
+
+        var accessToken = GetCachedToken(businessId);
+        _httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+
         try
         {
-            await EnsureAccessTokenAsync(cancellationToken);
-
-            var calendarId = string.IsNullOrEmpty(_settings.CalendarId) ? "primary" : _settings.CalendarId;
-            var url = $"https://www.googleapis.com/calendar/v3/calendars/{Uri.EscapeDataString(calendarId)}/events";
-
-            var requestBody = new
-            {
-                summary = calendarEvent.Title,
-                description = calendarEvent.Description,
-                start = new
-                {
-                    dateTime = calendarEvent.StartDateTime.ToString("yyyy-MM-ddTHH:mm:ss"),
-                    timeZone = _settings.TimeZone
-                },
-                end = new
-                {
-                    dateTime = calendarEvent.EndDateTime.ToString("yyyy-MM-ddTHH:mm:ss"),
-                    timeZone = _settings.TimeZone
-                },
-                location = calendarEvent.Location,
-                extendedProperties = calendarEvent.ExtendedProperties != null ? new
-                {
-                    @private = calendarEvent.ExtendedProperties
-                } : null
-            };
-
-            var json = JsonSerializer.Serialize(requestBody);
-            var content = new StringContent(json, Encoding.UTF8, "application/json");
-
-            _httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _accessToken);
-
             var response = await _httpClient.PostAsync(url, content, cancellationToken);
             var responseContent = await response.Content.ReadAsStringAsync(cancellationToken);
 
@@ -68,65 +78,53 @@ public class GoogleCalendarService : ICalendarService
             {
                 _logger.LogError(
                     "Error al crear evento en Google Calendar. Status: {StatusCode}, Response: {Response}",
-                    response.StatusCode,
-                    responseContent);
+                    response.StatusCode, responseContent);
                 throw new InvalidOperationException(
                     $"Error al crear evento en Google Calendar: {response.StatusCode} - {responseContent}");
             }
 
             var result = JsonSerializer.Deserialize<JsonElement>(responseContent);
-            var eventId = result.GetProperty("id").GetString();
-
-            if (string.IsNullOrEmpty(eventId))
-            {
-                throw new InvalidOperationException("No se pudo obtener el ID del evento creado.");
-            }
+            var eventId = result.GetProperty("id").GetString()
+                ?? throw new InvalidOperationException("No se pudo obtener el ID del evento creado.");
 
             _logger.LogInformation("Evento creado en Google Calendar con ID: {EventId}", eventId);
             return eventId;
         }
-        catch (Exception ex)
+        finally
         {
-            _logger.LogError(ex, "Error al crear evento en Google Calendar");
-            throw;
+            _httpClient.DefaultRequestHeaders.Authorization = null;
         }
     }
 
-    public async Task UpdateEventAsync(string eventId, CalendarEvent calendarEvent, CancellationToken cancellationToken = default)
+    public async Task UpdateEventAsync(Guid businessId, string eventId, CalendarEvent calendarEvent, CancellationToken cancellationToken = default)
     {
+        var gc = await GetGoogleCalendarConfigAsync(businessId, cancellationToken);
+        if (gc == null)
+            throw new InvalidOperationException($"Google Calendar no configurado para BusinessId={businessId}");
+
+        await EnsureAccessTokenAsync(businessId, gc, cancellationToken);
+
+        var calendarId = string.IsNullOrEmpty(gc.CalendarId) ? "primary" : gc.CalendarId;
+        var url = $"https://www.googleapis.com/calendar/v3/calendars/{Uri.EscapeDataString(calendarId)}/events/{Uri.EscapeDataString(eventId)}";
+
+        var requestBody = new
+        {
+            summary = calendarEvent.Title,
+            description = calendarEvent.Description,
+            start = new { dateTime = calendarEvent.StartDateTime.ToString("yyyy-MM-ddTHH:mm:ss"), timeZone = gc.TimeZone },
+            end = new { dateTime = calendarEvent.EndDateTime.ToString("yyyy-MM-ddTHH:mm:ss"), timeZone = gc.TimeZone },
+            location = calendarEvent.Location,
+            extendedProperties = calendarEvent.ExtendedProperties != null ? new { @private = calendarEvent.ExtendedProperties } : null
+        };
+
+        var json = JsonSerializer.Serialize(requestBody);
+        var content = new StringContent(json, Encoding.UTF8, "application/json");
+
+        var accessToken = GetCachedToken(businessId);
+        _httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+
         try
         {
-            await EnsureAccessTokenAsync(cancellationToken);
-
-            var calendarId = string.IsNullOrEmpty(_settings.CalendarId) ? "primary" : _settings.CalendarId;
-            var url = $"https://www.googleapis.com/calendar/v3/calendars/{Uri.EscapeDataString(calendarId)}/events/{Uri.EscapeDataString(eventId)}";
-
-            var requestBody = new
-            {
-                summary = calendarEvent.Title,
-                description = calendarEvent.Description,
-                start = new
-                {
-                    dateTime = calendarEvent.StartDateTime.ToString("yyyy-MM-ddTHH:mm:ss"),
-                    timeZone = _settings.TimeZone
-                },
-                end = new
-                {
-                    dateTime = calendarEvent.EndDateTime.ToString("yyyy-MM-ddTHH:mm:ss"),
-                    timeZone = _settings.TimeZone
-                },
-                location = calendarEvent.Location,
-                extendedProperties = calendarEvent.ExtendedProperties != null ? new
-                {
-                    @private = calendarEvent.ExtendedProperties
-                } : null
-            };
-
-            var json = JsonSerializer.Serialize(requestBody);
-            var content = new StringContent(json, Encoding.UTF8, "application/json");
-
-            _httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _accessToken);
-
             var response = await _httpClient.PutAsync(url, content, cancellationToken);
             var responseContent = await response.Content.ReadAsStringAsync(cancellationToken);
 
@@ -134,32 +132,35 @@ public class GoogleCalendarService : ICalendarService
             {
                 _logger.LogError(
                     "Error al actualizar evento en Google Calendar. Status: {StatusCode}, Response: {Response}",
-                    response.StatusCode,
-                    responseContent);
+                    response.StatusCode, responseContent);
                 throw new InvalidOperationException(
                     $"Error al actualizar evento en Google Calendar: {response.StatusCode} - {responseContent}");
             }
 
             _logger.LogInformation("Evento actualizado en Google Calendar con ID: {EventId}", eventId);
         }
-        catch (Exception ex)
+        finally
         {
-            _logger.LogError(ex, "Error al actualizar evento en Google Calendar");
-            throw;
+            _httpClient.DefaultRequestHeaders.Authorization = null;
         }
     }
 
-    public async Task DeleteEventAsync(string eventId, CancellationToken cancellationToken = default)
+    public async Task DeleteEventAsync(Guid businessId, string eventId, CancellationToken cancellationToken = default)
     {
+        var gc = await GetGoogleCalendarConfigAsync(businessId, cancellationToken);
+        if (gc == null)
+            throw new InvalidOperationException($"Google Calendar no configurado para BusinessId={businessId}");
+
+        await EnsureAccessTokenAsync(businessId, gc, cancellationToken);
+
+        var calendarId = string.IsNullOrEmpty(gc.CalendarId) ? "primary" : gc.CalendarId;
+        var url = $"https://www.googleapis.com/calendar/v3/calendars/{Uri.EscapeDataString(calendarId)}/events/{Uri.EscapeDataString(eventId)}";
+
+        var accessToken = GetCachedToken(businessId);
+        _httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+
         try
         {
-            await EnsureAccessTokenAsync(cancellationToken);
-
-            var calendarId = string.IsNullOrEmpty(_settings.CalendarId) ? "primary" : _settings.CalendarId;
-            var url = $"https://www.googleapis.com/calendar/v3/calendars/{Uri.EscapeDataString(calendarId)}/events/{Uri.EscapeDataString(eventId)}";
-
-            _httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _accessToken);
-
             var response = await _httpClient.DeleteAsync(url, cancellationToken);
 
             if (!response.IsSuccessStatusCode && response.StatusCode != System.Net.HttpStatusCode.NotFound)
@@ -167,181 +168,164 @@ public class GoogleCalendarService : ICalendarService
                 var responseContent = await response.Content.ReadAsStringAsync(cancellationToken);
                 _logger.LogError(
                     "Error al eliminar evento en Google Calendar. Status: {StatusCode}, Response: {Response}",
-                    response.StatusCode,
-                    responseContent);
+                    response.StatusCode, responseContent);
                 throw new InvalidOperationException(
                     $"Error al eliminar evento en Google Calendar: {response.StatusCode} - {responseContent}");
             }
 
             _logger.LogInformation("Evento eliminado en Google Calendar con ID: {EventId}", eventId);
         }
-        catch (Exception ex)
+        finally
         {
-            _logger.LogError(ex, "Error al eliminar evento en Google Calendar");
-            throw;
+            _httpClient.DefaultRequestHeaders.Authorization = null;
         }
     }
 
-    public async Task<bool> IsAvailableAsync(DateTime startDateTime, DateTime endDateTime, CancellationToken cancellationToken = default)
+    public async Task<bool> IsAvailableAsync(Guid businessId, DateTime startDateTime, DateTime endDateTime, CancellationToken cancellationToken = default)
     {
+        var gc = await GetGoogleCalendarConfigAsync(businessId, cancellationToken);
+        if (gc == null)
+            return true;
+
         try
         {
-            await EnsureAccessTokenAsync(cancellationToken);
+            await EnsureAccessTokenAsync(businessId, gc, cancellationToken);
 
-            var calendarId = string.IsNullOrEmpty(_settings.CalendarId) ? "primary" : _settings.CalendarId;
-            
-            // Formatear fechas en formato RFC3339 para la API de Google Calendar
+            var calendarId = string.IsNullOrEmpty(gc.CalendarId) ? "primary" : gc.CalendarId;
             var timeMin = startDateTime.ToString("yyyy-MM-ddTHH:mm:ss");
             var timeMax = endDateTime.ToString("yyyy-MM-ddTHH:mm:ss");
-            
-            // Consultar eventos en el rango de tiempo especificado
             var url = $"https://www.googleapis.com/calendar/v3/calendars/{Uri.EscapeDataString(calendarId)}/events" +
-                     $"?timeMin={Uri.EscapeDataString(timeMin)}" +
-                     $"&timeMax={Uri.EscapeDataString(timeMax)}" +
-                     $"&singleEvents=true" +
-                     $"&orderBy=startTime";
+                     $"?timeMin={Uri.EscapeDataString(timeMin)}&timeMax={Uri.EscapeDataString(timeMax)}" +
+                     $"&singleEvents=true&orderBy=startTime";
 
-            _httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _accessToken);
+            var accessToken = GetCachedToken(businessId);
+            _httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
 
-            var response = await _httpClient.GetAsync(url, cancellationToken);
-            var responseContent = await response.Content.ReadAsStringAsync(cancellationToken);
-
-            if (!response.IsSuccessStatusCode)
+            try
             {
-                _logger.LogError(
-                    "Error al consultar disponibilidad en Google Calendar. Status: {StatusCode}, Response: {Response}",
-                    response.StatusCode,
-                    responseContent);
-                // Si hay error al consultar, asumimos que está disponible para no bloquear reservas
-                return true;
-            }
+                var response = await _httpClient.GetAsync(url, cancellationToken);
+                var responseContent = await response.Content.ReadAsStringAsync(cancellationToken);
 
-            var result = JsonSerializer.Deserialize<JsonElement>(responseContent);
-            
-            // Verificar si hay eventos en el rango de tiempo
-            if (result.TryGetProperty("items", out var items) && items.ValueKind == JsonValueKind.Array)
-            {
-                foreach (var item in items.EnumerateArray())
+                if (!response.IsSuccessStatusCode)
                 {
-                    // Verificar si el evento tiene fecha/hora de inicio y fin
-                    if (item.TryGetProperty("start", out var start) && 
-                        item.TryGetProperty("end", out var end))
+                    _logger.LogError(
+                        "Error al consultar disponibilidad en Google Calendar. Status: {StatusCode}, Response: {Response}",
+                        response.StatusCode, responseContent);
+                    return true;
+                }
+
+                var result = JsonSerializer.Deserialize<JsonElement>(responseContent);
+
+                if (result.TryGetProperty("items", out var items) && items.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var item in items.EnumerateArray())
                     {
-                        DateTime eventStart, eventEnd;
-
-                        // Manejar tanto dateTime como date (eventos de todo el día)
-                        if (start.TryGetProperty("dateTime", out var startDateTimeProp))
-                        {
-                            var startDateTimeStr = startDateTimeProp.GetString();
-                            if (string.IsNullOrEmpty(startDateTimeStr) || !DateTime.TryParse(startDateTimeStr, out eventStart))
-                                continue;
-                        }
-                        else if (start.TryGetProperty("date", out var startDateProp))
-                        {
-                            var startDateStr = startDateProp.GetString();
-                            if (string.IsNullOrEmpty(startDateStr) || !DateTime.TryParse(startDateStr, out eventStart))
-                                continue;
-                        }
-                        else
-                        {
+                        if (!item.TryGetProperty("start", out var start) || !item.TryGetProperty("end", out var end))
                             continue;
-                        }
 
-                        if (end.TryGetProperty("dateTime", out var endDateTimeProp))
-                        {
-                            var endDateTimeStr = endDateTimeProp.GetString();
-                            if (string.IsNullOrEmpty(endDateTimeStr) || !DateTime.TryParse(endDateTimeStr, out eventEnd))
-                                continue;
-                        }
-                        else if (end.TryGetProperty("date", out var endDateProp))
-                        {
-                            var endDateStr = endDateProp.GetString();
-                            if (string.IsNullOrEmpty(endDateStr) || !DateTime.TryParse(endDateStr, out eventEnd))
-                                continue;
-                        }
-                        else
-                        {
+                        if (!TryParseEventTime(start, out var eventStart) || !TryParseEventTime(end, out var eventEnd))
                             continue;
-                        }
 
-                        // Verificar si hay solapamiento
-                        // Un evento se solapa si: eventStart < endDateTime && eventEnd > startDateTime
                         if (eventStart < endDateTime && eventEnd > startDateTime)
                         {
                             _logger.LogDebug(
                                 "Horario no disponible: conflicto con evento existente del {EventStart} al {EventEnd}",
-                                eventStart,
-                                eventEnd);
+                                eventStart, eventEnd);
                             return false;
                         }
                     }
                 }
-            }
 
-            // No hay conflictos, el horario está disponible
-            _logger.LogDebug(
-                "Horario disponible del {StartDateTime} al {EndDateTime}",
-                startDateTime,
-                endDateTime);
-            return true;
+                return true;
+            }
+            finally
+            {
+                _httpClient.DefaultRequestHeaders.Authorization = null;
+            }
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error al verificar disponibilidad en Google Calendar");
-            // Si hay error, asumimos que está disponible para no bloquear reservas
             return true;
         }
     }
 
-    private async Task EnsureAccessTokenAsync(CancellationToken cancellationToken)
+    private static bool TryParseEventTime(JsonElement el, out DateTime dt)
     {
-        // Si el token aún es válido, no hacer nada
-        if (!string.IsNullOrEmpty(_accessToken) && _tokenExpiry.HasValue && _tokenExpiry.Value > DateTime.UtcNow.AddMinutes(5))
+        dt = default;
+        if (el.TryGetProperty("dateTime", out var dtProp))
         {
+            var s = dtProp.GetString();
+            return !string.IsNullOrEmpty(s) && DateTime.TryParse(s, out dt);
+        }
+        if (el.TryGetProperty("date", out var dProp))
+        {
+            var s = dProp.GetString();
+            return !string.IsNullOrEmpty(s) && DateTime.TryParse(s, out dt);
+        }
+        return false;
+    }
+
+    private async Task<GoogleCalendarIntegration?> GetGoogleCalendarConfigAsync(Guid businessId, CancellationToken ct)
+    {
+        var integrations = await _integrationsProvider.GetAsync(businessId, ct);
+        return integrations?.GoogleCalendar;
+    }
+
+    private string GetCachedToken(Guid businessId)
+    {
+        var key = $"calendar_token:{businessId:N}";
+        if (TokenCache.TryGetValue(key, out var cached) && cached.Expiry > DateTime.UtcNow.AddMinutes(5))
+            return cached.AccessToken;
+
+        throw new InvalidOperationException(
+            "Token de Google Calendar no disponible. Debe llamarse EnsureAccessTokenAsync antes.");
+    }
+
+    private void SetCachedToken(Guid businessId, string accessToken, DateTime expiry)
+    {
+        var key = $"calendar_token:{businessId:N}";
+        TokenCache[key] = new CachedToken { AccessToken = accessToken, Expiry = expiry };
+    }
+
+    private async Task EnsureAccessTokenAsync(
+        Guid businessId,
+        GoogleCalendarIntegration settings,
+        CancellationToken cancellationToken)
+    {
+        var key = $"calendar_token:{businessId:N}";
+        if (TokenCache.TryGetValue(key, out var cached) && cached.Expiry > DateTime.UtcNow.AddMinutes(5))
             return;
-        }
 
-        try
+        var tokenUrl = "https://oauth2.googleapis.com/token";
+        var requestBody = new Dictionary<string, string>
         {
-            // Obtener nuevo access token usando refresh token
-            var tokenUrl = "https://oauth2.googleapis.com/token";
-            var requestBody = new Dictionary<string, string>
-            {
-                { "client_id", _settings.ClientId },
-                { "client_secret", _settings.ClientSecret },
-                { "refresh_token", _settings.RefreshToken },
-                { "grant_type", "refresh_token" }
-            };
+            { "client_id", settings.ClientId },
+            { "client_secret", settings.ClientSecret },
+            { "refresh_token", settings.RefreshToken },
+            { "grant_type", "refresh_token" }
+        };
 
-            var content = new FormUrlEncodedContent(requestBody);
-            var response = await _httpClient.PostAsync(tokenUrl, content, cancellationToken);
-            var responseContent = await response.Content.ReadAsStringAsync(cancellationToken);
+        var content = new FormUrlEncodedContent(requestBody);
+        var response = await _httpClient.PostAsync(tokenUrl, content, cancellationToken);
+        var responseContent = await response.Content.ReadAsStringAsync(cancellationToken);
 
-            if (!response.IsSuccessStatusCode)
-            {
-                _logger.LogError(
-                    "Error al obtener access token de Google. Status: {StatusCode}, Response: {Response}",
-                    response.StatusCode,
-                    responseContent);
-                throw new InvalidOperationException(
-                    $"Error al obtener access token de Google: {response.StatusCode} - {responseContent}");
-            }
-
-            var tokenResponse = JsonSerializer.Deserialize<JsonElement>(responseContent);
-            _accessToken = tokenResponse.GetProperty("access_token").GetString();
-            
-            var expiresIn = tokenResponse.TryGetProperty("expires_in", out var expiresInProp) 
-                ? expiresInProp.GetInt32() 
-                : 3600; // Default 1 hour
-            
-            _tokenExpiry = DateTime.UtcNow.AddSeconds(expiresIn - 300); // Refresh 5 minutes before expiry
-
-            _logger.LogDebug("Access token de Google obtenido exitosamente. Expira en {ExpiresIn} segundos", expiresIn);
-        }
-        catch (Exception ex)
+        if (!response.IsSuccessStatusCode)
         {
-            _logger.LogError(ex, "Error al obtener access token de Google");
-            throw;
+            _logger.LogError(
+                "Error al obtener access token de Google. Status: {StatusCode}, Response: {Response}",
+                response.StatusCode, responseContent);
+            throw new InvalidOperationException(
+                $"Error al obtener access token de Google: {response.StatusCode} - {responseContent}");
         }
+
+        var tokenResponse = JsonSerializer.Deserialize<JsonElement>(responseContent);
+        var accessToken = tokenResponse.GetProperty("access_token").GetString()
+            ?? throw new InvalidOperationException("access_token no presente en respuesta de Google");
+        var expiresIn = tokenResponse.TryGetProperty("expires_in", out var exp) ? exp.GetInt32() : 3600;
+        var expiry = DateTime.UtcNow.AddSeconds(expiresIn - 300);
+
+        SetCachedToken(businessId, accessToken, expiry);
+        _logger.LogDebug("Access token de Google obtenido para BusinessId={BusinessId}. Expira en {ExpiresIn}s", businessId, expiresIn);
     }
 }

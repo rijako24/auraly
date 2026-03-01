@@ -7,15 +7,18 @@ public class WhatsAppWebhookParserService : IWhatsAppWebhookParserService
 {
     private readonly IWhatsAppService _whatsAppService;
     private readonly IAIService _aiService;
+    private readonly IBusinessIdentificationService _businessIdentificationService;
     private readonly ILogger<WhatsAppWebhookParserService> _logger;
 
     public WhatsAppWebhookParserService(
         IWhatsAppService whatsAppService,
         IAIService aiService,
+        IBusinessIdentificationService businessIdentificationService,
         ILogger<WhatsAppWebhookParserService> logger)
     {
         _whatsAppService = whatsAppService;
         _aiService = aiService;
+        _businessIdentificationService = businessIdentificationService;
         _logger = logger;
     }
 
@@ -24,95 +27,24 @@ public class WhatsAppWebhookParserService : IWhatsAppWebhookParserService
         var result = new List<IncomingMessage>();
 
         if (webhookData?.Entry == null || !webhookData.Entry.Any())
-        {
             return result;
-        }
 
         foreach (var entry in webhookData.Entry)
         {
-            foreach (var change in entry.Changes)
+            var businessContext = await _businessIdentificationService.IdentifyBusinessAsync(entry.Id);
+            if (businessContext == null)
             {
-                if (change.Field != "messages" || change.Value.Messages == null)
-                    continue;
-
-                var customerName = change.Value.Contacts?.FirstOrDefault()?.Profile?.Name;
-
-                foreach (var message in change.Value.Messages)
-                {
-                    // Mensaje de texto
-                    if (message.Type == "text" && message.Text != null)
-                    {
-                        result.Add(new IncomingMessage
-                        {
-                            UserNumber = message.From,
-                            MessageText = message.Text.Body,
-                            CustomerName = customerName
-                        });
-                    }
-                    // Mensaje de voz (voice) o audio - transcribir
-                    else if ((message.Type == "voice" && message.Voice != null) ||
-                             (message.Type == "audio" && message.Audio != null))
-                    {
-                        try
-                        {
-                            string mediaId;
-                            string mimeType;
-                            
-                            if (message.Type == "voice" && message.Voice != null)
-                            {
-                                mediaId = message.Voice.Id;
-                                mimeType = message.Voice.MimeType;
-                            }
-                            else if (message.Audio != null)
-                            {
-                                mediaId = message.Audio.Id;
-                                mimeType = message.Audio.MimeType;
-                            }
-                            else
-                            {
-                                continue; // No debería llegar aquí, pero por seguridad
-                            }
-
-                            _logger.LogInformation("Transcribiendo {Type} de {UserNumber}, MediaId: {MediaId}",
-                                message.Type, message.From, mediaId);
-
-                            // Descargar el audio
-                            using var audioStream = await _whatsAppService.DownloadMediaAsync(mediaId);
-
-                            // Transcribir el audio a texto
-                            var transcribedText = await _aiService.TranscribeAudioAsync(audioStream, mimeType);
-
-                            if (!string.IsNullOrWhiteSpace(transcribedText))
-                            {
-                                result.Add(new IncomingMessage
-                                {
-                                    UserNumber = message.From,
-                                    MessageText = transcribedText,
-                                    CustomerName = customerName
-                                });
-
-                                _logger.LogInformation("Audio transcrito para {UserNumber}: {Transcription}",
-                                    message.From, transcribedText);
-                            }
-                            else
-                            {
-                                _logger.LogWarning("No se pudo transcribir el audio del usuario {UserNumber}", message.From);
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.LogError(ex, "Error transcribiendo audio del usuario {UserNumber}", message.From);
-                            // Continuar con los demás mensajes
-                        }
-                    }
-                }
+                _logger.LogDebug("Entry {EntryId} sin negocio identificado, omitiendo", entry.Id);
+                continue;
             }
+            var messages = await ExtractAllMessagesFromEntryAsync(entry, businessContext.BusinessId);
+            result.AddRange(messages);
         }
 
         return result;
     }
 
-    public async Task<IEnumerable<IncomingMessage>> ExtractAllMessagesFromEntryAsync(Entry entry)
+    public async Task<IEnumerable<IncomingMessage>> ExtractAllMessagesFromEntryAsync(Entry entry, Guid businessId)
     {
         var result = new List<IncomingMessage>();
 
@@ -168,7 +100,7 @@ public class WhatsAppWebhookParserService : IWhatsAppWebhookParserService
                             message.Type, message.From, mediaId);
 
                         // Descargar el audio
-                        using var audioStream = await _whatsAppService.DownloadMediaAsync(mediaId);
+                        using var audioStream = await _whatsAppService.DownloadMediaAsync(businessId, mediaId);
 
                         // Transcribir el audio a texto
                         var transcribedText = await _aiService.TranscribeAudioAsync(audioStream, mimeType);

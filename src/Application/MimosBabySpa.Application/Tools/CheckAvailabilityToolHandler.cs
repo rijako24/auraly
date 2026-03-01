@@ -14,7 +14,7 @@ namespace MimosBabySpa.Application.Tools;
 /// - Usa IConversationStateUpdater para actualizar AvailabilityConfirmed y AvailableTimeSlots
 ///   (no mutación directa — respeta la fuente de verdad centralizada).
 /// - Domain-agnostic: funciona para cualquier negocio multitenant.
-/// - Lee Service/Date/Time del estado si no vienen como argumentos (resiliencia).
+/// - Lee Service/Date/Time del estado de la conversación.
 /// </summary>
 public class CheckAvailabilityToolHandler : BaseToolHandler
 {
@@ -58,29 +58,23 @@ public class CheckAvailabilityToolHandler : BaseToolHandler
     }
 
     protected override async Task<ToolExecutionResult> ExecuteCoreAsync(
-        Dictionary<string, object> arguments,
         ToolExecutionContext context,
         CancellationToken cancellationToken = default)
     {
         try
         {
-            // Resolver service
-            var service = ResolveString(arguments, "service", context.State.Service);
+            var service = context.State.Service;
             if (string.IsNullOrWhiteSpace(service))
                 return Fail("Falta 'service'. Asegúrate de que el servicio esté en el estado.");
 
-            // Resolver date
-            var dateStr = ResolveString(arguments, "date",
-                context.State.DesiredDate?.ToString("yyyy-MM-dd"));
+            var dateStr = context.State.DesiredDate?.ToString("yyyy-MM-dd");
             if (string.IsNullOrWhiteSpace(dateStr))
                 return Fail("Falta 'date'. Asegúrate de que la fecha esté en el estado.");
 
             if (!DateOnly.TryParse(dateStr, out var date))
                 return Fail($"Fecha inválida: '{dateStr}'. Usar formato YYYY-MM-DD.");
 
-            // Resolver time (opcional)
-            var timeStr = ResolveString(arguments, "time",
-                context.State.DesiredTime?.ToString("HH:mm"));
+            var timeStr = context.State.DesiredTime?.ToString("HH:mm");
             TimeSpan? time = null;
             if (!string.IsNullOrWhiteSpace(timeStr))
             {
@@ -137,23 +131,6 @@ public class CheckAvailabilityToolHandler : BaseToolHandler
             _logger.LogError(ex, "Error al verificar disponibilidad");
             return Fail($"Error al verificar disponibilidad: {ex.Message}", ex);
         }
-    }
-
-    // ─────────────────────────────────────────────────────────────────
-    // Helpers privados
-    // ─────────────────────────────────────────────────────────────────
-
-    private static string? ResolveString(
-        Dictionary<string, object> args,
-        string key,
-        string? fallback)
-    {
-        if (args.TryGetValue(key, out var v) && v != null)
-        {
-            var s = v.ToString();
-            if (!string.IsNullOrWhiteSpace(s)) return s;
-        }
-        return fallback;
     }
 
     private static ToolExecutionResult Fail(string message, Exception? ex = null) =>

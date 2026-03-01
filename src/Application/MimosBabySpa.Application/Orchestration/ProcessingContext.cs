@@ -3,6 +3,7 @@ using MimosBabySpa.Application.FlowEngine;
 using MimosBabySpa.Application.LLM.Extraction;
 using MimosBabySpa.Application.StateManagement;
 using MimosBabySpa.Application.Tools;
+using MimosBabySpa.Domain.Entities;
 using MimosBabySpa.Domain.Models;
 
 namespace MimosBabySpa.Application.Orchestration;
@@ -31,6 +32,9 @@ public class ProcessingContext
     public ExtractionOutput? ExtractionOutput { get; set; }
     /// <summary>Acciones ejecutadas en este turno (FASE 4).</summary>
     public TurnActions TurnActions { get; set; } = new();
+
+    /// <summary>Historial de conversación filtrado por sesión (cargado en FASE 2, reutilizado en FASE 5).</summary>
+    public List<Message> ConversationHistory { get; set; } = new();
 
     public ProcessingContext(
         ConversationState state,

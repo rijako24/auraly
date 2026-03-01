@@ -18,4 +18,11 @@ public class AttributeDefinition
     /// Metadatos adicionales para validaciones (min, max, minLength, maxLength, etc.)
     /// </summary>
     public Dictionary<string, string>? Metadata { get; set; }
+
+    /// <summary>
+    /// Si true, el valor sobrevive entre sesiones transaccionales (ej: BabyAge, BabyName).
+    /// Si false, se limpia al iniciar un nuevo ciclo (ej: SelectedAddOns).
+    /// Default: true — backward compatible.
+    /// </summary>
+    public bool PersistAcrossSessions { get; set; } = true;
 }

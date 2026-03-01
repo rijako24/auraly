@@ -1,135 +1,131 @@
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
+using MimosBabySpa.Application.DTOs;
 using MimosBabySpa.Application.Services;
 
 namespace MimosBabySpa.Infrastructure.Services;
 
 public class WhatsAppService : IWhatsAppService
 {
+    private const string ApiBaseUrl = "https://graph.facebook.com/v18.0/";
+
     private readonly HttpClient _httpClient;
-    private readonly string _phoneNumberId;
-    private readonly string _accessToken;
+    private readonly IWhatsAppCredentialResolver _credentialResolver;
     private readonly ILogger<WhatsAppService> _logger;
 
     public WhatsAppService(
         HttpClient httpClient,
-        string phoneNumberId,
-        string accessToken,
+        IWhatsAppCredentialResolver credentialResolver,
         ILogger<WhatsAppService> logger)
     {
         _httpClient = httpClient;
-        _phoneNumberId = phoneNumberId;
-        _accessToken = accessToken;
+        _credentialResolver = credentialResolver;
         _logger = logger;
-        
-        _httpClient.BaseAddress = new Uri("https://graph.facebook.com/v18.0/");
-        _httpClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {_accessToken}");
+        _httpClient.BaseAddress = new Uri(ApiBaseUrl);
     }
 
-    public async Task SendTextMessageAsync(string to, string message)
+    public async Task SendTextMessageAsync(Guid businessId, string to, string message)
     {
-        try
+        var credentials = await ResolveCredentialsAsync(businessId);
+
+        var payload = new
         {
-            var payload = new
-            {
-                messaging_product = "whatsapp",
-                to = to,
-                type = "text",
-                text = new { body = message }
-            };
+            messaging_product = "whatsapp",
+            to = to,
+            type = "text",
+            text = new { body = message }
+        };
 
-            var json = JsonSerializer.Serialize(payload);
-            var content = new StringContent(json, Encoding.UTF8, "application/json");
+        var json = JsonSerializer.Serialize(payload);
+        var content = new StringContent(json, Encoding.UTF8, "application/json");
 
-            var response = await _httpClient.PostAsync($"{_phoneNumberId}/messages", content);
-            response.EnsureSuccessStatusCode();
-
-            _logger.LogInformation("Mensaje enviado a {To}", to);
-        }
-        catch (Exception ex)
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"{credentials.PhoneNumberId}/messages")
         {
-            _logger.LogError(ex, "Error al enviar mensaje a {To}", to);
-            throw;
-        }
+            Content = content
+        };
+        request.Headers.Add("Authorization", $"Bearer {credentials.AccessToken}");
+
+        var response = await _httpClient.SendAsync(request);
+        response.EnsureSuccessStatusCode();
+
+        _logger.LogInformation("Mensaje enviado a {To}", to);
     }
 
-    public async Task SendImageMessageAsync(string to, string imageUrl, string? caption = null)
+    public async Task SendImageMessageAsync(Guid businessId, string to, string imageUrl, string? caption = null)
     {
-        try
+        var credentials = await ResolveCredentialsAsync(businessId);
+
+        var payload = new
         {
-            var payload = new
+            messaging_product = "whatsapp",
+            to = to,
+            type = "image",
+            image = new
             {
-                messaging_product = "whatsapp",
-                to = to,
-                type = "image",
-                image = new
-                {
-                    link = imageUrl,
-                    caption = caption ?? string.Empty
-                }
-            };
-
-            var json = JsonSerializer.Serialize(payload);
-            var content = new StringContent(json, Encoding.UTF8, "application/json");
-
-            var response = await _httpClient.PostAsync($"{_phoneNumberId}/messages", content);
-            response.EnsureSuccessStatusCode();
-
-            _logger.LogInformation("Imagen enviada a {To}", to);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error al enviar imagen a {To}", to);
-            throw;
-        }
-    }
-
-    public async Task<Stream> DownloadMediaAsync(string mediaId)
-    {
-        try
-        {
-            // Obtener la URL del media usando la API de WhatsApp
-            // La URL es: https://graph.facebook.com/v18.0/{media-id}
-            var response = await _httpClient.GetAsync(mediaId);
-            response.EnsureSuccessStatusCode();
-
-            var jsonResponse = await response.Content.ReadAsStringAsync();
-            using var doc = System.Text.Json.JsonDocument.Parse(jsonResponse);
-            
-            var url = doc.RootElement.GetProperty("url").GetString();
-            if (string.IsNullOrEmpty(url))
-            {
-                throw new InvalidOperationException("No se pudo obtener la URL del media");
+                link = imageUrl,
+                caption = caption ?? string.Empty
             }
+        };
 
-            // Descargar el archivo usando la URL obtenida
-            // Necesitamos usar un HttpClient sin el BaseAddress para la descarga
-            using var downloadClient = new HttpClient();
-            downloadClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {_accessToken}");
-            
-            var mediaResponse = await downloadClient.GetAsync(url);
-            mediaResponse.EnsureSuccessStatusCode();
+        var json = JsonSerializer.Serialize(payload);
+        var content = new StringContent(json, Encoding.UTF8, "application/json");
 
-            var stream = new MemoryStream();
-            await mediaResponse.Content.CopyToAsync(stream);
-            stream.Position = 0;
-
-            _logger.LogInformation("Media descargado: {MediaId}", mediaId);
-            return stream;
-        }
-        catch (Exception ex)
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"{credentials.PhoneNumberId}/messages")
         {
-            _logger.LogError(ex, "Error al descargar media {MediaId}", mediaId);
-            throw;
-        }
+            Content = content
+        };
+        request.Headers.Add("Authorization", $"Bearer {credentials.AccessToken}");
+
+        var response = await _httpClient.SendAsync(request);
+        response.EnsureSuccessStatusCode();
+
+        _logger.LogInformation("Imagen enviada a {To}", to);
+    }
+
+    public async Task<Stream> DownloadMediaAsync(Guid businessId, string mediaId)
+    {
+        var credentials = await ResolveCredentialsAsync(businessId);
+
+        using var metadataRequest = new HttpRequestMessage(HttpMethod.Get, mediaId);
+        metadataRequest.Headers.Add("Authorization", $"Bearer {credentials.AccessToken}");
+
+        var metadataResponse = await _httpClient.SendAsync(metadataRequest);
+        metadataResponse.EnsureSuccessStatusCode();
+
+        var jsonResponse = await metadataResponse.Content.ReadAsStringAsync();
+        using var doc = JsonDocument.Parse(jsonResponse);
+
+        var url = doc.RootElement.GetProperty("url").GetString();
+        if (string.IsNullOrEmpty(url))
+            throw new InvalidOperationException("No se pudo obtener la URL del media");
+
+        using var downloadRequest = new HttpRequestMessage(HttpMethod.Get, url);
+        downloadRequest.Headers.Add("Authorization", $"Bearer {credentials.AccessToken}");
+
+        var mediaResponse = await _httpClient.SendAsync(downloadRequest);
+        mediaResponse.EnsureSuccessStatusCode();
+
+        var stream = new MemoryStream();
+        await mediaResponse.Content.CopyToAsync(stream);
+        stream.Position = 0;
+
+        _logger.LogInformation("Media descargado: {MediaId}", mediaId);
+        return stream;
     }
 
     public Task<bool> VerifyWebhookAsync(string mode, string token, string challenge)
     {
-        // Implementar verificación del webhook según la configuración
-        // Por ahora, retornamos true si mode == "subscribe"
         var isValid = mode == "subscribe" && !string.IsNullOrEmpty(challenge);
         return Task.FromResult(isValid);
+    }
+
+    private async Task<WhatsAppCredentials> ResolveCredentialsAsync(Guid businessId)
+    {
+        var credentials = await _credentialResolver.ResolveAsync(businessId);
+        if (credentials == null)
+            throw new InvalidOperationException($"No hay credenciales WhatsApp configuradas para el negocio {businessId}");
+
+        return credentials;
     }
 }

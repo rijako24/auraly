@@ -24,11 +24,21 @@ using MimosBabySpa.Application.StateManagement;
 using MimosBabySpa.Application.LLM;
 using MimosBabySpa.Application.LLM.Extraction;
 
-// Configurar servicios
+// Configurar servicios (usa directorio del ejecutable para encontrar appsettings; migrate-integrations lee Calendar y Wompi)
 var configuration = new ConfigurationBuilder()
-    .SetBasePath(Directory.GetCurrentDirectory())
-    .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true)
+    .SetBasePath(AppContext.BaseDirectory)
+    .AddJsonFile("appsettings.json", optional: true, reloadOnChange: true)
+    .AddJsonFile("appSettings.json", optional: true, reloadOnChange: true)
     .Build();
+
+// Migración única: copiar Calendar y Wompi de appsettings a BusinessConfiguration.Integrations
+if (args is ["migrate-integrations"])
+{
+    var connectionString = configuration.GetConnectionString("DefaultConnection")
+        ?? throw new InvalidOperationException("DefaultConnection no configurado");
+    await MimosBabySpa.Console.IntegrationsDataMigration.RunAsync(configuration, connectionString);
+    return;
+}
 
 var services = new ServiceCollection();
 
@@ -137,7 +147,6 @@ services.AddScoped<ILLMAdapter>(sp =>
 
 // Tool Handlers (Domain-Agnostic)
 services.AddScoped<IConversationStateUpdater, ConversationStateUpdater>();
-services.AddScoped<UpdateConversationStateToolHandler>();
 services.AddScoped<CheckAvailabilityToolHandler>();
 services.AddScoped<CreateReservationToolHandler>();
 
@@ -148,8 +157,13 @@ services.AddScoped<GenericToolDispatcher>();
 // Extraction Services
 services.AddScoped<JsonSchemaPromptBuilder>();
 services.AddScoped<IExtractionValidator, ExtractionValidator>();
-services.AddScoped<IFallbackExtractor, FallbackExtractor>();
 services.AddScoped<ISmartExtractionService, SmartExtractionService>();
+
+// Escalation y release (handover a humano)
+services.AddScoped<IEscalationNotifier, EscalationNotifier>();
+services.AddScoped<IEscalationConfigProvider, EscalationConfigProvider>();
+services.AddScoped<IReleaseLinkService, ReleaseLinkService>();
+services.AddScoped<IConversationReleaseService, ConversationReleaseService>();
 
 // Hybrid Transactional Orchestrator
 services.AddScoped<HybridTransactionalOrchestrator>();
@@ -174,13 +188,12 @@ services.AddScoped<IBlobStorageService>(sp =>
     return new ConsoleBlobStorageService(logger);
 });
 
-// Calendar Configuration (Options Pattern)
-services.Configure<CalendarSettings>(
-    configuration.GetSection(CalendarSettings.SectionName));
+// Integrations Config Provider (Google Calendar, Wompi) — fuente única desde BusinessConfiguration
+services.AddScoped<IIntegrationsConfigProvider, IntegrationsConfigProvider>();
 
-// Wompi Configuration (links de pago; si no está configurado, devuelve Success: false)
-services.Configure<WompiSettings>(
-    configuration.GetSection(WompiSettings.SectionName));
+// Release Link (URL firmada; sin config = no se genera link en notificaciones)
+services.Configure<ReleaseLinkSettings>(
+    configuration.GetSection(ReleaseLinkSettings.SectionName));
 
 // Payment Link Service (Wompi; sin config = no genera links)
 services.AddScoped<IPaymentLinkService, WompiPaymentLinkService>();
@@ -208,7 +221,7 @@ Console.WriteLine("Escribe 'exit' o 'quit' para salir.");
 Console.WriteLine();
 
 // Número de teléfono simulado (puedes cambiarlo)
-var userNumber = "+12345679497";
+var userNumber = "+12345679499";
 var customerName = "Bill";
 
 while (true)

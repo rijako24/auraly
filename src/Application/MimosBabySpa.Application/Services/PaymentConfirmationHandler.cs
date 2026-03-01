@@ -104,7 +104,6 @@ public class PaymentConfirmationHandler : IPaymentConfirmationHandler
         var result = await _toolDispatcher.ExecuteAsync(
             ToolType.CreateReservation,
             context,
-            new Dictionary<string, object>(),
             ct);
 
         if (!result.Success)

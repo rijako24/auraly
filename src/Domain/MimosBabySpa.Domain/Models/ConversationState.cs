@@ -196,6 +196,18 @@ public class ConversationState
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 
     /// <summary>
+    /// Inicio de la sesión transaccional actual. Se actualiza al resetear el estado para un nuevo ciclo.
+    /// Usado para filtrar el historial de mensajes que ve el LLM.
+    /// </summary>
+    public DateTime SessionStartedAt { get; set; } = DateTime.UtcNow;
+
+    /// <summary>
+    /// Snapshot de la sesión anterior (preferencias transaccionales). Null si no hay sesión previa.
+    /// Permite sugerencias personalizadas (ej: "te había interesado X") sin contaminar el ciclo actual.
+    /// </summary>
+    public PreviousSessionSnapshot? PreviousSession { get; set; }
+
+    /// <summary>
     /// Último mensaje del usuario (para contexto)
     /// </summary>
     public string? LastUserMessage { get; set; }
@@ -204,6 +216,27 @@ public class ConversationState
     /// Último mensaje del bot (para contexto)
     /// </summary>
     public string? LastBotMessage { get; set; }
+
+    // ========================================
+    // SALUD DEL TURNO Y ESCALADO (HANDOVER)
+    // ========================================
+
+    /// <summary>
+    /// Contador de turnos degradados consecutivos (extracción falló, respuesta LLM falló, excepción).
+    /// Persistido en BD para soportar múltiples instancias. Se resetea en turno exitoso.
+    /// </summary>
+    public int ConsecutiveDegradedTurns { get; set; }
+
+    /// <summary>
+    /// Quién atiende actualmente la conversación. Bot procesa normalmente; Human inhibe el bot.
+    /// La transición Human→Bot es explícita vía endpoint de release (link en notificación).
+    /// </summary>
+    public ConversationOwner Owner { get; set; } = ConversationOwner.Bot;
+
+    /// <summary>
+    /// Timestamp de la última escalación (auditoría). El release es explícito, no por cooldown.
+    /// </summary>
+    public DateTime? LastEscalatedAt { get; set; }
 
     // ========================================
     // MÉTODOS HELPER
@@ -269,10 +302,24 @@ public class ConversationState
             Version = Version,
             CreatedAt = CreatedAt,
             UpdatedAt = UpdatedAt,
+            SessionStartedAt = SessionStartedAt,
+            PreviousSession = PreviousSession,
             LastUserMessage = LastUserMessage,
-            LastBotMessage = LastBotMessage
+            LastBotMessage = LastBotMessage,
+            ConsecutiveDegradedTurns = ConsecutiveDegradedTurns,
+            Owner = Owner,
+            LastEscalatedAt = LastEscalatedAt
         };
     }
+}
+
+/// <summary>
+/// Indica quién atiende la conversación. La transición Human→Bot requiere release explícito.
+/// </summary>
+public enum ConversationOwner
+{
+    Bot,
+    Human
 }
 
 /// <summary>

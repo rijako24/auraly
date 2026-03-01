@@ -56,7 +56,7 @@ public class PaymentLinkPollerFunction
         {
             try
             {
-                var status = await _paymentLinkService.CheckPaymentStatusAsync(tx.PaymentReferenceId, ct);
+                var status = await _paymentLinkService.CheckPaymentStatusAsync(tx.PaymentReferenceId, tx.BusinessId, ct);
                 if (!status.IsApproved)
                     continue;
 

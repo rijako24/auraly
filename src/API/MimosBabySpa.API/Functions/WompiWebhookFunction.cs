@@ -1,39 +1,39 @@
 using System.Net;
 using System.Text.Json;
+using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
+using MimosBabySpa.Application.Configuration;
 using MimosBabySpa.Application.Services;
-using MimosBabySpa.Infrastructure.Configuration;
 
 namespace MimosBabySpa.API.Functions;
 
 /// <summary>
 /// Webhook para recibir eventos de pago de Wompi.
-/// POST /api/WompiWebhook
+/// POST /api/WompiWebhook?b={businessId}
+/// La URL del webhook debe incluir el businessId para validar firma y verificar transacción por negocio.
 /// Valida la firma, extrae transaction_id y verifica en la API de Wompi antes de procesar.
-/// No confía en el payload: verificación independiente con GET /transactions/{id}.
 /// </summary>
 public class WompiWebhookFunction
 {
     private readonly IPaymentLinkService _paymentLinkService;
     private readonly IPaymentConfirmationHandler _paymentHandler;
     private readonly IWompiWebhookSignatureValidator _signatureValidator;
-    private readonly WompiSettings _wompiSettings;
+    private readonly IIntegrationsConfigProvider _integrationsProvider;
     private readonly ILogger<WompiWebhookFunction> _logger;
 
     public WompiWebhookFunction(
         IPaymentLinkService paymentLinkService,
         IPaymentConfirmationHandler paymentHandler,
         IWompiWebhookSignatureValidator signatureValidator,
-        IOptions<WompiSettings> wompiSettings,
+        IIntegrationsConfigProvider integrationsProvider,
         ILogger<WompiWebhookFunction> logger)
     {
         _paymentLinkService = paymentLinkService;
         _paymentHandler = paymentHandler;
         _signatureValidator = signatureValidator;
-        _wompiSettings = wompiSettings.Value;
+        _integrationsProvider = integrationsProvider;
         _logger = logger;
     }
 
@@ -43,12 +43,27 @@ public class WompiWebhookFunction
     {
         try
         {
+            var query = QueryHelpers.ParseQuery(req.Url.Query);
+            if (!query.TryGetValue("b", out var businessIdStr) || !Guid.TryParse(businessIdStr, out var businessId))
+            {
+                _logger.LogWarning("Webhook Wompi: falta parámetro b (businessId) en la URL. Use /api/WompiWebhook?b={{businessId}}");
+                return req.CreateResponse(HttpStatusCode.BadRequest);
+            }
+
+            var integrations = await _integrationsProvider.GetAsync(businessId);
+            var wompi = integrations?.Wompi;
+            if (wompi == null || string.IsNullOrWhiteSpace(wompi.EventsSecret))
+            {
+                _logger.LogWarning("Webhook Wompi: Wompi no configurado o EventsSecret vacío para BusinessId={BusinessId}", businessId);
+                return req.CreateResponse(HttpStatusCode.Unauthorized);
+            }
+
             var requestBody = await new StreamReader(req.Body).ReadToEndAsync();
 
             using var doc = JsonDocument.Parse(requestBody);
             var root = doc.RootElement;
 
-            if (!_signatureValidator.Validate(root, _wompiSettings.EventsSecret))
+            if (!_signatureValidator.Validate(root, wompi.EventsSecret))
             {
                 _logger.LogWarning("Webhook Wompi: firma inválida o checksum no coincide");
                 return req.CreateResponse(HttpStatusCode.Unauthorized);
@@ -81,7 +96,7 @@ public class WompiWebhookFunction
                 return req.CreateResponse(HttpStatusCode.BadRequest);
             }
 
-            var verified = await _paymentLinkService.VerifyTransactionAsync(transactionId, CancellationToken.None);
+            var verified = await _paymentLinkService.VerifyTransactionAsync(transactionId, businessId, CancellationToken.None);
             if (!verified.IsApproved)
             {
                 _logger.LogWarning("Webhook Wompi: verificación API falló TxId={TxId} Error={Error}", transactionId, verified.ErrorMessage);

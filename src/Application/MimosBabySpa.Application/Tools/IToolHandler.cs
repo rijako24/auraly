@@ -21,14 +21,12 @@ public interface IToolHandler
     FunctionDefinition GetDefinition();
 
     /// <summary>
-    /// Ejecuta la herramienta con los argumentos proporcionados
+    /// Ejecuta la herramienta con el contexto proporcionado
     /// </summary>
-    /// <param name="arguments">Argumentos parseados del LLM</param>
     /// <param name="context">Contexto de ejecución</param>
     /// <param name="cancellationToken">Token de cancelación</param>
     /// <returns>Resultado de la ejecución</returns>
     Task<ToolExecutionResult> ExecuteAsync(
-        Dictionary<string, object> arguments,
         ToolExecutionContext context,
         CancellationToken cancellationToken = default);
 }

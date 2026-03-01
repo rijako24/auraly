@@ -20,6 +20,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\Application\MimosBabySpa.Application\MimosBabySpa.Application.csproj" />
+    <ProjectReference Include="..\..\Console\MimosBabySpa.Console\MimosBabySpa.Console.csproj" />
     <ProjectReference Include="..\..\Infrastructure\MimosBabySpa.Infrastructure\MimosBabySpa.Infrastructure.csproj" />
     <ProjectReference Include="..\..\Domain\MimosBabySpa.Domain\MimosBabySpa.Domain.csproj" />
   </ItemGroup>

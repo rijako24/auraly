@@ -48,4 +48,7 @@ public class ExtractionIntentions
 
     [JsonPropertyName("user_says_already_paid")]
     public bool UserSaysAlreadyPaid { get; set; }
+
+    [JsonPropertyName("user_wants_human_assistance")]
+    public bool UserWantsHumanAssistance { get; set; }
 }

@@ -36,7 +36,6 @@ public abstract class BaseToolHandler : IToolHandler
     /// Las clases derivadas deben implementar este método.
     /// </summary>
     protected abstract Task<ToolExecutionResult> ExecuteCoreAsync(
-        Dictionary<string, object> arguments,
         ToolExecutionContext context,
         CancellationToken cancellationToken);
 
@@ -44,14 +43,13 @@ public abstract class BaseToolHandler : IToolHandler
     /// Ejecuta el tool y guarda automáticamente el estado si fue modificado.
     /// </summary>
     public async Task<ToolExecutionResult> ExecuteAsync(
-        Dictionary<string, object> arguments,
         ToolExecutionContext context,
         CancellationToken cancellationToken = default)
     {
         try
         {
             // Ejecutar la lógica específica del tool
-            var result = await ExecuteCoreAsync(arguments, context, cancellationToken);
+            var result = await ExecuteCoreAsync(context, cancellationToken);
 
             // CRÍTICO: Si el estado fue modificado, guardarlo automáticamente en BD
             if (result.Success && result.StateModified)

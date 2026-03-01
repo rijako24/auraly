@@ -16,6 +16,7 @@ public interface IPaymentLinkService
     /// </summary>
     Task<PaymentStatusResult> CheckPaymentStatusAsync(
         string paymentReferenceId,
+        Guid businessId,
         CancellationToken ct = default);
 
     /// <summary>
@@ -25,6 +26,7 @@ public interface IPaymentLinkService
     /// </summary>
     Task<VerifiedTransactionResult> VerifyTransactionAsync(
         string transactionId,
+        Guid businessId,
         CancellationToken ct = default);
 }
 

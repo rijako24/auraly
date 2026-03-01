@@ -22,6 +22,7 @@ using MimosBabySpa.Application.StateManagement;
 using MimosBabySpa.Application.LLM;
 using MimosBabySpa.Application.LLM.Extraction;
 using MimosBabySpa.Application.Prompts;
+using MimosBabySpa.Console.Services;
 
 namespace MimosBabySpa.Tests.TestScenarios;
 
@@ -68,25 +69,15 @@ class RunScenarios
         services.AddScoped<IReservationService, ReservationService>();
         services.AddScoped<IMessageService, MessageService>(); // ✅ Nuevo: Para historial conversacional
         
-        // Calendar Configuration (Options Pattern)
-        services.Configure<MimosBabySpa.Infrastructure.Configuration.CalendarSettings>(
-            configuration.GetSection(MimosBabySpa.Infrastructure.Configuration.CalendarSettings.SectionName));
-
-        // Wompi Configuration (Payment Links)
-        services.Configure<MimosBabySpa.Infrastructure.Configuration.WompiSettings>(
-            configuration.GetSection(MimosBabySpa.Infrastructure.Configuration.WompiSettings.SectionName));
+        // Integrations Config Provider + Release Link
+        services.AddOptions();
+        services.AddScoped<MimosBabySpa.Application.Configuration.IIntegrationsConfigProvider, MimosBabySpa.Infrastructure.Configuration.IntegrationsConfigProvider>();
+        services.Configure<MimosBabySpa.Infrastructure.Configuration.ReleaseLinkSettings>(
+            configuration.GetSection(MimosBabySpa.Infrastructure.Configuration.ReleaseLinkSettings.SectionName));
         
-        // Infrastructure Services - Calendar (usar HttpClient simple para pruebas)
+        // Infrastructure Services - Calendar (lee config desde BusinessConfiguration vía IIntegrationsConfigProvider)
         services.AddHttpClient();
-        services.AddScoped<ICalendarService>(sp =>
-        {
-            var httpClientFactory = sp.GetRequiredService<IHttpClientFactory>();
-            var httpClient = httpClientFactory.CreateClient();
-            httpClient.Timeout = TimeSpan.FromSeconds(30);
-            var options = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<MimosBabySpa.Infrastructure.Configuration.CalendarSettings>>();
-            var logger = sp.GetRequiredService<ILogger<MimosBabySpa.Infrastructure.Services.GoogleCalendarService>>();
-            return new MimosBabySpa.Infrastructure.Services.GoogleCalendarService(httpClient, options, logger);
-        });
+        services.AddScoped<ICalendarService, MimosBabySpa.Infrastructure.Services.GoogleCalendarService>();
 
         // ========================================
         // HYBRID TRANSACTIONAL BRAIN ARCHITECTURE
@@ -134,7 +125,6 @@ class RunScenarios
         // Tool Handlers (Domain-Agnostic)
         services.AddScoped<IPaymentLinkService, WompiPaymentLinkService>();
         services.AddScoped<IConversationStateUpdater, ConversationStateUpdater>();
-        services.AddScoped<UpdateConversationStateToolHandler>();
         services.AddScoped<CheckAvailabilityToolHandler>();
         services.AddScoped<CreateReservationToolHandler>();
         
@@ -145,8 +135,18 @@ class RunScenarios
         // Extraction Services
         services.AddScoped<JsonSchemaPromptBuilder>();
         services.AddScoped<IExtractionValidator, ExtractionValidator>();
-        services.AddScoped<IFallbackExtractor, FallbackExtractor>();
         services.AddScoped<ISmartExtractionService, SmartExtractionService>();
+
+        // Escalation y release
+        services.AddScoped<IWhatsAppService>(sp =>
+        {
+            var logger = sp.GetRequiredService<ILogger<ConsoleWhatsAppService>>();
+            return new ConsoleWhatsAppService(logger);
+        });
+        services.AddScoped<IEscalationNotifier, EscalationNotifier>();
+        services.AddScoped<IEscalationConfigProvider, EscalationConfigProvider>();
+        services.AddScoped<IReleaseLinkService, MimosBabySpa.Infrastructure.Services.ReleaseLinkService>();
+        services.AddScoped<IConversationReleaseService, ConversationReleaseService>();
 
         // Hybrid Transactional Orchestrator
         services.AddScoped<HybridTransactionalOrchestrator>();

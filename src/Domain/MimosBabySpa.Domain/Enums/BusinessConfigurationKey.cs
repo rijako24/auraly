@@ -12,5 +12,6 @@ public enum BusinessConfigurationKey
     PaymentConfig = 3,          // JSON: configuración de anticipo (RequiresAnticipo, porcentaje, proveedor, etc.)
     OperatingHours = 4,         // JSON: horarios de operación por día de la semana
     PaymentMethods = 5,         // JSON: métodos de pago aceptados
-    Integrations = 6            // JSON: integraciones externas (Google Calendar, etc.)
+    Integrations = 6,           // JSON: integraciones externas (Google Calendar, etc.)
+    EscalationContacts = 7      // JSON: contactos WhatsApp para notificación de escalado a humano
 }

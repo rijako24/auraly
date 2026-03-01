@@ -23,6 +23,19 @@ public static class ResponseInstructionsTemplate
         """;
 
     /// <summary>
+    /// Se incluye cuando el cliente recurre en nueva sesión (historial vacío pero existe visita anterior).
+    /// Saludo personalizado sin presentación genérica. Preferencias anteriores como sugerencia, no como datos confirmados.
+    /// </summary>
+    public const string ReturningCustomerInstructions = """
+
+        **Cliente recurrente — nueva sesión de reserva.**
+        - NO te presentes como si fuera la primera vez. Saluda con calidez reconociendo que regresa.
+        - Puedes mencionar brevemente preferencias de su visita anterior como sugerencia personalizada.
+        - NUEVA SESIÓN: todos los datos transaccionales se recopilan desde cero.
+        - Las preferencias anteriores son sugerencias, NO datos confirmados para esta sesión.
+        """;
+
+    /// <summary>
     /// Instrucciones base — siempre se incluyen.
     /// El nombre del asistente ya está en el system prompt dinámico; no se repite aquí.
     /// </summary>

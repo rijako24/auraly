@@ -2,7 +2,7 @@ namespace MimosBabySpa.Domain.Entities;
 
 /// <summary>
 /// Almacena contexto importante de una conversación extraído por la IA.
-/// Se llena cuando la IA detecta información importante usando la tool update_conversation_state.
+/// Se llena cuando SmartExtractionService extrae información del mensaje del usuario.
 /// </summary>
 public class ConversationContext
 {

@@ -64,6 +64,8 @@ public class CoreInstructionsBuilder
               En otros stages NO aplicar.
             - user_says_already_paid: "ya pagué", "ya hice el pago", "ya transferí", "listo ya pagué", "acabo de pagar",
               "el pago ya está hecho" — solo cuando Stage=AwaitingPayment. Indica que verificaremos con la plataforma.
+            - user_wants_human_assistance: "quiero hablar con una persona", "necesito un humano", "pásame con un agente",
+              "quiero hablar con alguien real", "necesito un asesor" — solicitud explícita de redirección a humano.
 
             ## Ambigüedades (tipos):
             - temporal: "pronto", "luego", "otro día" — sin fecha concreta.

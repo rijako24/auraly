@@ -25,7 +25,6 @@ public class GenericToolDispatcher
     public async Task<ToolExecutionResult> ExecuteAsync(
         ToolType toolType,
         ToolExecutionContext context,
-        Dictionary<string, object>? arguments = null,
         CancellationToken cancellationToken = default)
     {
         try
@@ -33,9 +32,7 @@ public class GenericToolDispatcher
             _logger.LogInformation("Ejecutando tool: {ToolType}", toolType);
 
             var handler = _toolFactory.GetTool(toolType);
-            var args = arguments ?? new Dictionary<string, object>();
-            
-            var result = await handler.ExecuteAsync(args, context, cancellationToken);
+            var result = await handler.ExecuteAsync(context, cancellationToken);
 
             if (result.Success)
             {

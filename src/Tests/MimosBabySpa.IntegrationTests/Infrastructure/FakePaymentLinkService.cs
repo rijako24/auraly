@@ -31,6 +31,7 @@ public class FakePaymentLinkService : IPaymentLinkService
 
     public Task<PaymentStatusResult> CheckPaymentStatusAsync(
         string paymentReferenceId,
+        Guid businessId,
         CancellationToken ct = default)
     {
         if (SimulatePaymentApproved)
@@ -44,7 +45,7 @@ public class FakePaymentLinkService : IPaymentLinkService
         return Task.FromResult(new PaymentStatusResult(false, null, null, null));
     }
 
-    public Task<VerifiedTransactionResult> VerifyTransactionAsync(string transactionId, CancellationToken ct = default)
+    public Task<VerifiedTransactionResult> VerifyTransactionAsync(string transactionId, Guid businessId, CancellationToken ct = default)
     {
         if (SimulatePaymentApproved)
         {

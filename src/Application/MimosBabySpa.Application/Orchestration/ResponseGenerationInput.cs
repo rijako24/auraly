@@ -30,5 +30,11 @@ public class ResponseGenerationInput
     /// Indica si es el primer mensaje del usuario (historial vacío).
     /// Se asigna tras cargar el historial; usada para incluir instrucción de presentación.
     /// </summary>
-    public bool IsFirstMessage                  { get; set; }
+    public bool IsFirstMessage { get; set; }
+
+    /// <summary>
+    /// Cliente recurrente en nueva sesión: historial vacío pero existe snapshot de sesión anterior.
+    /// Usada para saludo personalizado en lugar de presentación genérica.
+    /// </summary>
+    public bool IsReturningCustomer { get; set; }
 }

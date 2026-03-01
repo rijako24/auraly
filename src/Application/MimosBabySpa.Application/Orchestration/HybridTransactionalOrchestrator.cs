@@ -1,4 +1,3 @@
-using MimosBabySpa.Application.BusinessRules;
 using MimosBabySpa.Application.Configuration;
 using MimosBabySpa.Application.Constants;
 using MimosBabySpa.Application.LLM.Extraction;
@@ -30,7 +29,8 @@ namespace MimosBabySpa.Application.Orchestration;
 ///
 /// GARANTÍAS:
 ///   - Mínimos round-trips a BD: 1 read inicial + 1-2 reads post-tool + 1 write final.
-///   - Sin mutaciones directas al estado: todo pasa por IConversationStateUpdater.
+///   - Campos de extracción aplicados vía IConversationStateUpdater; campos de infraestructura
+///     (pago, escalación) se actualizan directamente por el orquestador.
 ///   - FlowEngine es la única fuente de verdad para CanCheck/CanCreate.
 ///   - UserWantsToCancel reseteado limpiamente.
 ///   - CurrentStage actualizado en cada evaluación.
@@ -40,7 +40,6 @@ public class HybridTransactionalOrchestrator
 {
     private readonly IConversationStateManager _stateManager;
     private readonly IFlowEngine _flowEngine;
-    private readonly IBusinessRuleEngine _businessRuleEngine;
     private readonly CachedBusinessContextProvider _cachedContextProvider;
     private readonly IPromptProvider _systemPromptProvider;
     private readonly ILLMAdapter _llmAdapter;
@@ -50,12 +49,13 @@ public class HybridTransactionalOrchestrator
     private readonly IConversationStateUpdater _stateUpdater;
     private readonly IPaymentLinkService _paymentLinkService;
     private readonly IPaymentTransactionRepository _paymentTransactionRepository;
+    private readonly IEscalationNotifier _escalationNotifier;
+    private readonly IEscalationConfigProvider _escalationConfig;
     private readonly ILogger<HybridTransactionalOrchestrator> _logger;
 
     public HybridTransactionalOrchestrator(
         IConversationStateManager stateManager,
         IFlowEngine flowEngine,
-        IBusinessRuleEngine businessRuleEngine,
         CachedBusinessContextProvider cachedContextProvider,
         IPromptProvider systemPromptProvider,
         ILLMAdapter llmAdapter,
@@ -65,11 +65,12 @@ public class HybridTransactionalOrchestrator
         IConversationStateUpdater stateUpdater,
         IPaymentLinkService paymentLinkService,
         IPaymentTransactionRepository paymentTransactionRepository,
+        IEscalationNotifier escalationNotifier,
+        IEscalationConfigProvider escalationConfig,
         ILogger<HybridTransactionalOrchestrator> logger)
     {
         _stateManager                  = stateManager;
         _flowEngine                    = flowEngine;
-        _businessRuleEngine           = businessRuleEngine;
         _cachedContextProvider         = cachedContextProvider;
         _systemPromptProvider          = systemPromptProvider;
         _llmAdapter                    = llmAdapter;
@@ -79,6 +80,8 @@ public class HybridTransactionalOrchestrator
         _stateUpdater                  = stateUpdater;
         _paymentLinkService            = paymentLinkService;
         _paymentTransactionRepository  = paymentTransactionRepository;
+        _escalationNotifier             = escalationNotifier;
+        _escalationConfig               = escalationConfig;
         _logger                        = logger;
     }
 
@@ -93,6 +96,8 @@ public class HybridTransactionalOrchestrator
         string userMessage,
         CancellationToken cancellationToken = default)
     {
+        ProcessingContext? ctx = null;
+
         try
         {
             _logger.LogInformation(
@@ -100,27 +105,33 @@ public class HybridTransactionalOrchestrator
                 conversationId, businessId);
 
             // ── FASE 1: Contexto ──────────────────────────────────
-            var ctx = await LoadContextAsync(conversationId, businessId, customerPhone, userMessage, cancellationToken);
+            ctx = await LoadContextAsync(conversationId, businessId, customerPhone, userMessage, cancellationToken);
 
             // ── FASE 2: Extracción ────────────────────────────────
             ctx.ExtractionOutput = await ExtractInformationAsync(userMessage, ctx, cancellationToken);
 
+            // Intención de humano: prioridad absoluta (funciona incluso si extracción falló)
+            if (ctx.ExtractionOutput.Intentions.UserWantsHumanAssistance)
+            {
+                return await EscalateAndRespondAsync(ctx, userMessage, LocalizationConstants.EscalationMessages.Redirect, "Solicitud explícita del cliente", cancellationToken);
+            }
+
+            // Extracción degradada: pedir repetición o escalar
             if (!ctx.ExtractionOutput.WasSuccessful)
             {
-                _logger.LogWarning("Extracción falló — retornando respuesta de emergencia");
-                return new OrchestratorResult(ctx.ExtractionOutput.ConversationalResponseSuggestion, ReservationCreated: false);
+                return await HandleDegradedExtractionAsync(ctx, userMessage, cancellationToken);
             }
 
             // ── FASE 3: Actualizar estado ─────────────────────────
             ApplyExtractionToState(ctx);
 
             // ── FASE 4: Acciones de flujo ─────────────────────────
-            await ExecuteFlowActionsAsync(ctx, cancellationToken);
+            await ExecuteFlowActionsAsync(ctx, customerPhone, cancellationToken);
 
             // ── FASE 5: Generar respuesta ─────────────────────────
-            var response = await GenerateResponseAsync(userMessage, ctx, cancellationToken);
+            var response = await GenerateResponseWithOutcomeAsync(userMessage, ctx, cancellationToken);
 
-            // ── FASE 6: Guardar metadatos finales (LastUserMessage, LastBotMessage en ConversationState)
+            // ── FASE 6: Guardar metadatos y estado (un solo save) ──
             await SaveFinalMetadataAsync(ctx, userMessage, response, cancellationToken);
 
             _logger.LogInformation(
@@ -132,10 +143,93 @@ public class HybridTransactionalOrchestrator
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error crítico en orquestador Conv={ConversationId}", conversationId);
-            return new OrchestratorResult(
-                "Disculpa, ha ocurrido un error. Por favor intenta nuevamente.",
-                ReservationCreated: false);
+            return await HandleFailedTurnAsync(ctx, businessId, conversationId, customerPhone, userMessage, cancellationToken);
         }
+    }
+
+    private async Task<OrchestratorResult> HandleDegradedExtractionAsync(
+        ProcessingContext ctx,
+        string userMessage,
+        CancellationToken ct)
+    {
+        var escalated = await TryEscalateForDegradedTurnAsync(ctx, userMessage, ct);
+        if (escalated != null)
+            return escalated;
+
+        var msg = LocalizationConstants.EscalationMessages.PleaseRepeat;
+        ctx.UpdateMessageMetadata(userMessage, msg);
+        await ctx.SaveStateAsync(ct);
+        return new OrchestratorResult(msg, ReservationCreated: false);
+    }
+
+    private async Task<OrchestratorResult?> TryEscalateForDegradedTurnAsync(
+        ProcessingContext ctx,
+        string userMessage,
+        CancellationToken ct)
+    {
+        ctx.State.ConsecutiveDegradedTurns++;
+        var threshold = await _escalationConfig.GetConsecutiveDegradedThresholdAsync(ct);
+
+        if (ctx.State.ConsecutiveDegradedTurns >= threshold)
+        {
+            return await EscalateAndRespondAsync(ctx, userMessage,
+                LocalizationConstants.EscalationMessages.TechnicalIssues,
+                $"Errores consecutivos ({ctx.State.ConsecutiveDegradedTurns})", ct);
+        }
+
+        return null;
+    }
+
+    private async Task<OrchestratorResult> EscalateAndRespondAsync(
+        ProcessingContext ctx,
+        string userMessage,
+        string messageToUser,
+        string reasonForAdmins,
+        CancellationToken ct)
+    {
+        ctx.State.Owner = Domain.Models.ConversationOwner.Human;
+        ctx.State.LastEscalatedAt = DateTime.UtcNow;
+        ctx.State.ConsecutiveDegradedTurns = 0;
+        ctx.UpdateMessageMetadata(userMessage, messageToUser);
+        await ctx.SaveStateAsync(ct);
+
+        await _escalationNotifier.NotifyAdminsAsync(
+            ctx.ToolContext.BusinessId,
+            new EscalationNotification(
+                ctx.ToolContext.ConversationId,
+                ctx.State.Phone ?? "",
+                reasonForAdmins,
+                userMessage),
+            ct);
+
+        return new OrchestratorResult(messageToUser, ReservationCreated: false);
+    }
+
+    private async Task<OrchestratorResult> HandleFailedTurnAsync(
+        ProcessingContext? ctx,
+        Guid businessId,
+        Guid conversationId,
+        string customerPhone,
+        string userMessage,
+        CancellationToken ct)
+    {
+        try
+        {
+            if (ctx != null)
+            {
+                var escalated = await TryEscalateForDegradedTurnAsync(ctx, userMessage, ct);
+                if (escalated != null)
+                    return escalated;
+
+                await ctx.SaveStateAsync(ct);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error en handler de turno fallido Conv={ConversationId}", conversationId);
+        }
+
+        return new OrchestratorResult(LocalizationConstants.EscalationMessages.ErrorRetry, ReservationCreated: false);
     }
 
     // ═════════════════════════════════════════════════════════════════
@@ -158,17 +252,26 @@ public class HybridTransactionalOrchestrator
         var state = await _stateManager.GetOrCreateStateAsync(
             conversationId, businessId, customerPhone, cancellationToken);
 
-        // Detección de retomo: inactividad prolongada con datos transaccionales → reset preservando identidad.
+        // Detección de nuevo ciclo: sesión completada O abandono prolongado.
+        var shouldResetForNewCycle = state.ReservationCreated;
         var inactivityPeriod = DateTime.UtcNow - state.UpdatedAt;
         var hasTransactionalData = !string.IsNullOrWhiteSpace(state.Service)
             || state.DesiredDate.HasValue
             || state.DesiredTime.HasValue;
-        if (inactivityPeriod.TotalHours >= OrchestrationConstants.ResumptionThresholdHours && hasTransactionalData)
+        var shouldResetForAbandonment = !shouldResetForNewCycle
+            && inactivityPeriod.TotalHours >= OrchestrationConstants.ResumptionThresholdHours
+            && hasTransactionalData;
+
+        if (shouldResetForNewCycle || shouldResetForAbandonment)
         {
+            var reason = shouldResetForNewCycle ? "sesión completada" : "inactividad prolongada";
             _logger.LogInformation(
-                "Retomo detectado: {Hours:F1}h de inactividad. Reseteando datos transaccionales.",
-                inactivityPeriod.TotalHours);
+                "Reset de estado: {Reason} (ReservationId={ReservationId}, Inactividad={Hours:F1}h)",
+                reason, state.ReservationId, inactivityPeriod.TotalHours);
+
+            state.PreviousSession = CaptureSnapshot(state, businessContext);
             _stateUpdater.ResetForResumption(state);
+            ClearTransactionalAttributes(state, businessContext);
         }
 
         // System prompt del LLM de respuesta (dinámico por negocio y servicio elegido para filtrar add-ons)
@@ -206,13 +309,14 @@ public class HybridTransactionalOrchestrator
     {
         _logger.LogDebug("FASE 2: Extrayendo información...");
 
-        var history = await LoadConversationHistoryAsync(ctx.ToolContext.ConversationId, cancellationToken);
+        ctx.ConversationHistory = await LoadConversationHistoryAsync(
+            ctx.ToolContext.ConversationId, ctx.State.SessionStartedAt, cancellationToken);
 
         var output = await _extractionService.ExtractWithValidationAsync(
             userMessage,
             ctx.State,
             ctx.BusinessContext,
-            history,
+            ctx.ConversationHistory,
             cancellationToken);
 
         LogExtraction(output);
@@ -262,14 +366,14 @@ public class HybridTransactionalOrchestrator
     // FASE 4 — ACCIONES DE FLUJO
     // ═════════════════════════════════════════════════════════════════
 
-    private async Task ExecuteFlowActionsAsync(ProcessingContext ctx, CancellationToken ct)
+    private async Task ExecuteFlowActionsAsync(ProcessingContext ctx, string customerPhone, CancellationToken ct)
     {
         _logger.LogDebug("FASE 4: Ejecutando acciones de flujo...");
 
         var turnActions = new TurnActions();
         var intentions  = ctx.ExtractionOutput?.Intentions ?? new ExtractionIntentions();
 
-        // ── 4a. Cancelación (prioridad más alta) ─────────────────
+        // ── 4a. Cancelación ─────────────────────────────────────
         if (intentions.UserWantsToCancel)
         {
             _logger.LogInformation("Usuario canceló — reseteando flags transaccionales");
@@ -293,7 +397,9 @@ public class HybridTransactionalOrchestrator
             else if (intentions.UserSaysAlreadyPaid && !string.IsNullOrWhiteSpace(ctx.State.PaymentReferenceId))
             {
                 var paymentStatus = await _paymentLinkService.CheckPaymentStatusAsync(
-                    ctx.State.PaymentReferenceId, ct);
+                    ctx.State.PaymentReferenceId,
+                    ctx.BusinessContext.BusinessId,
+                    ct);
 
                 if (paymentStatus.IsApproved)
                 {
@@ -491,10 +597,9 @@ public class HybridTransactionalOrchestrator
     private async Task<ToolExecutionResult> ExecuteToolAndReloadAsync(
         ToolType toolType,
         ProcessingContext ctx,
-        CancellationToken ct,
-        Dictionary<string, object>? parameters = null)
+        CancellationToken ct)
     {
-        var result = await _toolDispatcher.ExecuteAsync(toolType, ctx.ToolContext, parameters, ct);
+        var result = await _toolDispatcher.ExecuteAsync(toolType, ctx.ToolContext, ct);
 
         // El tool puede haber persistido cambios en BD → recargar estado fresco
         if (result.StateModified)
@@ -509,41 +614,51 @@ public class HybridTransactionalOrchestrator
     // FASE 5 — GENERAR RESPUESTA
     // ═════════════════════════════════════════════════════════════════
 
-    private async Task<string> GenerateResponseAsync(
+    private async Task<string> GenerateResponseWithOutcomeAsync(
         string userMessage,
         ProcessingContext ctx,
         CancellationToken cancellationToken)
     {
         _logger.LogDebug("FASE 5: Generando respuesta...");
 
-        var deterministic = TryBuildDeterministicResponse(ctx);
-        if (deterministic != null)
-        {
-            _logger.LogInformation("FASE 5: Respuesta determinística (sin LLM)");
-            return deterministic;
-        }
-
-        var input = new ResponseGenerationInput
-        {
-            State            = ctx.State,
-            FlowSnapshot     = ctx.FlowEvaluation,
-            TurnActions      = ctx.TurnActions,
-            ExtractionOutput = ctx.ExtractionOutput ?? new ExtractionOutput(),
-            BusinessContext  = ctx.BusinessContext,
-            UserMessage      = userMessage,
-            SystemPrompt     = ctx.SystemPrompt,
-            ConversationId   = ctx.ToolContext.ConversationId,
-            BusinessId       = ctx.ToolContext.BusinessId
-        };
+        var usedFallback = false;
 
         try
         {
-            return await GenerateConversationalResponseAsync(input, cancellationToken);
+            var deterministic = TryBuildDeterministicResponse(ctx);
+            if (deterministic != null)
+            {
+                _logger.LogInformation("FASE 5: Respuesta determinística (sin LLM)");
+                return deterministic;
+            }
+
+            var input = new ResponseGenerationInput
+            {
+                State            = ctx.State,
+                FlowSnapshot     = ctx.FlowEvaluation,
+                TurnActions      = ctx.TurnActions,
+                ExtractionOutput = ctx.ExtractionOutput ?? new ExtractionOutput(),
+                BusinessContext  = ctx.BusinessContext,
+                UserMessage      = userMessage,
+                SystemPrompt     = ctx.SystemPrompt,
+                ConversationId   = ctx.ToolContext.ConversationId,
+                BusinessId       = ctx.ToolContext.BusinessId
+            };
+
+            var response = await GenerateConversationalResponseAsync(input, ctx.ConversationHistory, cancellationToken);
+            return response;
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Error generando respuesta — usando fallback");
-            return BuildFallbackResponse(input.TurnActions, input.ExtractionOutput);
+            usedFallback = true;
+            return BuildFallbackResponse(ctx.TurnActions, ctx.ExtractionOutput ?? new ExtractionOutput());
+        }
+        finally
+        {
+            ctx.State.ConsecutiveDegradedTurns = usedFallback
+                ? ctx.State.ConsecutiveDegradedTurns + 1
+                : 0;
         }
     }
 
@@ -580,14 +695,14 @@ public class HybridTransactionalOrchestrator
 
     private async Task<string> GenerateConversationalResponseAsync(
         ResponseGenerationInput input,
+        IReadOnlyList<Message> history,
         CancellationToken cancellationToken)
     {
-        var history = await LoadConversationHistoryAsync(input.ConversationId, cancellationToken);
-
         input.IsFirstMessage = !history.Any();
+        input.IsReturningCustomer = input.IsFirstMessage && input.State.PreviousSession != null;
 
         var turnContext   = BuildTurnContext(input.State, input.FlowSnapshot, input.TurnActions, input.ExtractionOutput, input.BusinessContext);
-        var instructions  = BuildResponseInstructions(input.State, input.FlowSnapshot, input.TurnActions, input.ExtractionOutput, input.BusinessContext, input.IsFirstMessage);
+        var instructions  = BuildResponseInstructions(input.State, input.FlowSnapshot, input.TurnActions, input.ExtractionOutput, input.BusinessContext, input.IsFirstMessage, input.IsReturningCustomer);
 
         var messages = new List<LLMMessage>
         {
@@ -620,7 +735,7 @@ public class HybridTransactionalOrchestrator
         if (response.Success && !string.IsNullOrWhiteSpace(response.Content))
             return response.Content.Trim();
 
-        return BuildFallbackResponse(input.TurnActions, input.ExtractionOutput);
+        throw new InvalidOperationException("LLM retornó respuesta vacía o fallida");
     }
 
     // ─────────────────────────────────────────────────────────────────
@@ -686,6 +801,23 @@ public class HybridTransactionalOrchestrator
 
         if (flowSnapshot.MissingFields.Any())
             sb.AppendLine($"- **Faltan:** {string.Join(", ", flowSnapshot.MissingFields.Select(f => FieldLabelResolver.Resolve(f, businessContext.Attributes)))}");
+
+        if (state.PreviousSession != null)
+        {
+            sb.AppendLine();
+            sb.AppendLine("**Visita anterior (solo referencia, NO datos actuales):**");
+            var status = state.PreviousSession.WasCompleted && state.PreviousSession.Date.HasValue && state.PreviousSession.Time.HasValue
+                ? $"Reserva completada ({state.PreviousSession.Date:yyyy-MM-dd} a las {state.PreviousSession.Time:HH:mm})"
+                : "No completó la reserva";
+            sb.AppendLine($"- Servicio: {state.PreviousSession.Service ?? "—"} | Estado: {status}");
+            if (state.PreviousSession.TransactionalAttributes.Any())
+            {
+                var prefs = string.Join(", ", state.PreviousSession.TransactionalAttributes
+                    .Select(a => $"{FieldLabelResolver.Resolve($"Attribute:{a.Key}", businessContext.Attributes)}: {a.Value}"));
+                sb.AppendLine($"- Preferencias: {prefs}");
+            }
+            sb.AppendLine("→ NUEVA SESIÓN: recopilar todo de nuevo. Puedes referenciar preferencias anteriores como sugerencia.");
+        }
 
         sb.AppendLine();
 
@@ -813,13 +945,19 @@ public class HybridTransactionalOrchestrator
         TurnActions turnActions,
         ExtractionOutput extraction,
         Configuration.LoadedBusinessContext businessContext,
-        bool isFirstMessage)
+        bool isFirstMessage,
+        bool isReturningCustomer)
     {
         var sb = new System.Text.StringBuilder();
         sb.AppendLine(ResponseInstructionsTemplate.Header);
 
-        // 0. Primer mensaje — SIEMPRE presentación (prioridad máxima para este caso).
-        if (isFirstMessage)
+        // 0. Primer mensaje: cliente recurrente vs nuevo.
+        if (isFirstMessage && isReturningCustomer)
+        {
+            sb.AppendLine(ResponseInstructionsTemplate.ReturningCustomerInstructions);
+            sb.AppendLine();
+        }
+        else if (isFirstMessage)
         {
             sb.AppendLine(ResponseInstructionsTemplate.FirstMessageInstructions);
             sb.AppendLine();
@@ -942,26 +1080,70 @@ public class HybridTransactionalOrchestrator
     }
 
     // ─────────────────────────────────────────────────────────────────
-    // Historial conversacional
+    // Historial conversacional (filtrado por sesión actual)
     // ─────────────────────────────────────────────────────────────────
 
-    private async Task<List<Domain.Entities.Message>> LoadConversationHistoryAsync(
+    private async Task<List<Message>> LoadConversationHistoryAsync(
         Guid conversationId,
+        DateTime sessionStartedAt,
         CancellationToken cancellationToken)
     {
         try
         {
             var all = await _messageService.GetConversationHistoryAsync(conversationId);
-            var recent = all.OrderBy(m => m.Timestamp).TakeLast(10).ToList();
+            var recent = all
+                .Where(m => m.Timestamp >= sessionStartedAt)
+                .OrderBy(m => m.Timestamp)
+                .TakeLast(10)
+                .ToList();
 
-            _logger.LogDebug("Historial: {Count} mensajes", recent.Count);
+            _logger.LogDebug("Historial: {Count} mensajes (sesión desde {Since:u})", recent.Count, sessionStartedAt);
             return recent;
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Error cargando historial — continuando sin historial");
-            return new List<Domain.Entities.Message>();
+            return new List<Message>();
         }
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Snapshot y limpieza de atributos transaccionales (multi-tenant)
+    // ─────────────────────────────────────────────────────────────────
+
+    private static PreviousSessionSnapshot CaptureSnapshot(
+        Domain.Models.ConversationState state,
+        LoadedBusinessContext businessContext)
+    {
+        var transactional = businessContext.Attributes
+            .Where(kvp => !kvp.Value.PersistAcrossSessions)
+            .Where(kvp => state.Attributes.ContainsKey(kvp.Key)
+                && !string.IsNullOrWhiteSpace(state.Attributes[kvp.Key]))
+            .ToDictionary(kvp => kvp.Key, kvp => state.Attributes[kvp.Key]);
+
+        return new PreviousSessionSnapshot
+        {
+            Service = state.Service,
+            Date = state.DesiredDate,
+            Time = state.DesiredTime,
+            ReservationId = state.ReservationId,
+            WasCompleted = state.ReservationCreated,
+            TransactionalAttributes = transactional,
+            CapturedAt = DateTime.UtcNow
+        };
+    }
+
+    private static void ClearTransactionalAttributes(
+        Domain.Models.ConversationState state,
+        LoadedBusinessContext businessContext)
+    {
+        var transactionalKeys = businessContext.Attributes
+            .Where(kvp => !kvp.Value.PersistAcrossSessions)
+            .Select(kvp => kvp.Key)
+            .ToList();
+
+        foreach (var key in transactionalKeys)
+            state.Attributes.Remove(key);
     }
 
     // ─────────────────────────────────────────────────────────────────

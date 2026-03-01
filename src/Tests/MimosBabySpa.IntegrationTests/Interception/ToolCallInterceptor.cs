@@ -27,17 +27,16 @@ public class ToolCallInterceptor : IToolHandler
     public FunctionDefinition GetDefinition() => _inner.GetDefinition();
 
     public async Task<ToolExecutionResult> ExecuteAsync(
-        Dictionary<string, object> arguments,
         ToolExecutionContext context,
         CancellationToken cancellationToken = default)
     {
         var sw = Stopwatch.StartNew();
-        var result = await _inner.ExecuteAsync(arguments, context, cancellationToken);
+        var result = await _inner.ExecuteAsync(context, cancellationToken);
         sw.Stop();
 
         _log.Add(new ToolCallRecord(
             ToolType:    _toolType,
-            Arguments:   new Dictionary<string, object>(arguments),
+            Arguments:   new Dictionary<string, object>(),
             Result:      result,
             CalledAt:    DateTimeOffset.UtcNow,
             ElapsedMs:   sw.ElapsedMilliseconds));
