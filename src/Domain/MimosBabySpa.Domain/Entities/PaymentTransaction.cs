@@ -15,6 +15,7 @@ public class PaymentTransaction
     public long AmountInCents { get; set; }
     public string Currency { get; set; } = "COP";
     public PaymentTransactionStatus Status { get; set; }
+    public PaymentTransactionSource Source { get; set; } = PaymentTransactionSource.Automated;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? ConfirmedAt { get; set; }
     public string? WebhookPayloadJson { get; set; }

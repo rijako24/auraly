@@ -104,7 +104,9 @@ public static class TestServiceBuilder
 
         // ── Escalation y release ──────────────────────────────────────
         services.AddSingleton<IWhatsAppService, NoOpWhatsAppService>();
-        services.AddSingleton<IReleaseLinkService, FakeReleaseLinkService>();
+        services.AddSingleton<FakeAdminActionLinkService>();
+        services.AddSingleton<IAdminActionLinkService>(sp => sp.GetRequiredService<FakeAdminActionLinkService>());
+        services.AddSingleton<IReleaseLinkService>(sp => sp.GetRequiredService<FakeAdminActionLinkService>());
         services.AddSingleton<IConversationReleaseService, ConversationReleaseService>();
         services.AddSingleton<IEscalationNotifier, EscalationNotifier>();
         services.AddSingleton<IEscalationConfigProvider, EscalationConfigProvider>();

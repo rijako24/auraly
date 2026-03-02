@@ -347,7 +347,7 @@ public class InMemoryServiceAddOnRuleRepository : IServiceAddOnRuleRepository
              ServiceId = masajeExtraId,
              ServiceName = "Masaje Extra 15m",
              ServiceType = ServiceType.AddOn,
-             Category = ServiceCategory.Plan,
+             Category = ServiceCategory.Otro,
              Price = 15.00m,
              Description = "15 minutos de masaje relajante"
         };

@@ -274,7 +274,7 @@ public class LoadedBusinessContext
                     AddOnPrice               = r.AddOnService.Price,
                     DisplayOrder             = r.DisplayOrder,
                     CompatibleWithServiceName = r.CompatibleService?.ServiceName,
-                    CompatibleServiceCategory = r.AddOnService.Category
+                    CompatibleServiceCategory = r.CompatibleService?.Category
                 })
                 .OrderBy(r => r.DisplayOrder)
                 .ThenBy(r => r.AddOnName)

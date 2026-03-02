@@ -145,7 +145,9 @@ class RunScenarios
         });
         services.AddScoped<IEscalationNotifier, EscalationNotifier>();
         services.AddScoped<IEscalationConfigProvider, EscalationConfigProvider>();
-        services.AddScoped<IReleaseLinkService, MimosBabySpa.Infrastructure.Services.ReleaseLinkService>();
+        services.AddScoped<MimosBabySpa.Infrastructure.Services.AdminActionLinkService>();
+        services.AddScoped<IAdminActionLinkService>(sp => sp.GetRequiredService<MimosBabySpa.Infrastructure.Services.AdminActionLinkService>());
+        services.AddScoped<IReleaseLinkService>(sp => sp.GetRequiredService<MimosBabySpa.Infrastructure.Services.AdminActionLinkService>());
         services.AddScoped<IConversationReleaseService, ConversationReleaseService>();
 
         // Hybrid Transactional Orchestrator

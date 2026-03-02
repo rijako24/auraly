@@ -444,16 +444,8 @@ public class HybridTransactionalOrchestrator
             }
         }
 
-        // ── 4c. Add-ons (INMEDIATO TRAS SERVICIO) ─────────────────
-        // Ofrecer add-ons apenas el usuario elige un servicio, ANTES de disponibilidad y datos.
-        // Excepción: si el usuario pidió explícitamente disponibilidad y tenemos Service + Date,
-        // priorizar CheckAvailability (honrar intención explícita). AddOnsOffered queda false.
-        var userAskedAvailability = intentions.UserRequestedAvailability
-            && ctx.State.DesiredDate.HasValue
-            && !string.IsNullOrWhiteSpace(ctx.State.Service);
-
-        if (!userAskedAvailability
-            && !string.IsNullOrWhiteSpace(ctx.State.Service)
+        // ── 4c. Servicios extras (junto con la respuesta, sin turno dedicado) ────
+        if (!string.IsNullOrWhiteSpace(ctx.State.Service)
             && !ctx.State.AddOnsOffered
             && ShouldOfferAddOns(ctx.State, ctx.BusinessContext))
         {
@@ -463,18 +455,16 @@ public class HybridTransactionalOrchestrator
 
             if (alreadySelectedAddOns)
             {
-                _logger.LogInformation("Usuario ya proporcionó add-on(s) en este turno — marcando AddOnsOffered sin ofrecer.");
+                _logger.LogInformation("Usuario ya proporcionó servicio(s) extra(s) en este turno — marcando AddOnsOffered sin ofrecer.");
                 _stateUpdater.ApplyConfirmationFlag(ctx.State, "AddOnsOffered", true);
                 ctx.ReEvaluate();
             }
             else
             {
-                _logger.LogInformation("Ofreciendo Add-ons compatibles para servicio {Service}", ctx.State.Service);
+                _logger.LogInformation("Incluyendo servicios extras compatibles para servicio {Service}", ctx.State.Service);
                 turnActions.AddOnOfferingRequired = true;
                 _stateUpdater.ApplyConfirmationFlag(ctx.State, "AddOnsOffered", true);
                 ctx.ReEvaluate();
-                ctx.TurnActions = turnActions;
-                return; // No ejecutar disponibilidad, confirmación ni creación
             }
         }
 
@@ -524,7 +514,7 @@ public class HybridTransactionalOrchestrator
             ctx.ReEvaluate();
         }
 
-        // ── 4e. Generar link de pago (si aplica) ─────────────────
+        // ── 4e. Generar link de pago o crear transacción manual (si aplica) ─────────────────
         if (ctx.BusinessContext.PaymentConfig is { RequiresAnticipo: true } paymentConfig
             && ctx.FlowEvaluation.CurrentStage == TransactionStage.ConfirmingBooking
             && string.IsNullOrWhiteSpace(ctx.State.PaymentReferenceId))
@@ -560,7 +550,8 @@ public class HybridTransactionalOrchestrator
                     PaymentReferenceId = linkResult.PaymentReferenceId!,
                     AmountInCents = anticipoCents,
                     Currency = paymentConfig.Currency,
-                    Status = PaymentTransactionStatus.Created
+                    Status = PaymentTransactionStatus.Created,
+                    Source = PaymentTransactionSource.Automated
                 };
                 await _paymentTransactionRepository.SaveAsync(paymentTx, ct);
 
@@ -568,8 +559,29 @@ public class HybridTransactionalOrchestrator
             }
             else
             {
+                var manualTxId = Guid.NewGuid();
+                var manualRefId = manualTxId.ToString("N");
+                ctx.State.PaymentReferenceId = manualRefId;
+                ctx.State.AnticipoAmountInCents = anticipoCents;
                 turnActions.PaymentLinkError = linkResult.ErrorMessage;
-                _logger.LogError("Error generando link de pago: {Error}", linkResult.ErrorMessage);
+
+                var manualTx = new PaymentTransaction
+                {
+                    PaymentTransactionId = manualTxId,
+                    BusinessId = ctx.ToolContext.BusinessId,
+                    ConversationId = ctx.ToolContext.ConversationId,
+                    PaymentReferenceId = manualRefId,
+                    AmountInCents = anticipoCents,
+                    Currency = paymentConfig.Currency,
+                    Status = PaymentTransactionStatus.Created,
+                    Source = PaymentTransactionSource.Manual
+                };
+                await _paymentTransactionRepository.SaveAsync(manualTx, ct);
+
+                _logger.LogError("Error generando link de pago: {Error} — transacción manual creada Ref={Ref}",
+                    linkResult.ErrorMessage, manualRefId);
+
+                ctx.ReEvaluate();
             }
         }
 
@@ -663,31 +675,43 @@ public class HybridTransactionalOrchestrator
     }
 
     /// <summary>
-    /// Construye respuesta determinística si aplica (confirmación o reenvío de link).
-    /// Si no aplica ninguna condición, retorna null y el LLM genera la respuesta.
+    /// Construye respuesta determinística si aplica. Prioridad: post-creación > error pago > pre-confirmación > reenvío link.
     /// </summary>
     private string? TryBuildDeterministicResponse(ProcessingContext ctx)
     {
-        // 1. Primera presentación del resumen de confirmación (intro + resumen + pago si aplica)
+        // 1. RESERVA CREADA — resumen siempre (prioridad máxima)
+        if (ctx.TurnActions.CreateReservationExecuted)
+        {
+            return "✅ ¡Tu reserva ha sido creada exitosamente!" +
+                   ConfirmationSummaryBuilder.BuildPostCreationSummary(ctx.State, ctx.BusinessContext) +
+                   "\n\n¡Nos vemos pronto! Si tienes alguna pregunta, aquí estoy.";
+        }
+
+        // 2. ERROR DE PAGO — resumen + medios manuales + escalación en FASE 6
+        if (ctx.TurnActions.PaymentLinkError != null)
+        {
+            _stateUpdater.ApplyConfirmationFlag(ctx.State, "ConfirmationSummaryPresented", true);
+            return ConfirmationSummaryBuilder.BuildManualPaymentSummary(ctx.State, ctx.BusinessContext);
+        }
+
+        // 3. PRE-CONFIRMACIÓN — primera presentación del resumen
         if (ShouldInjectConfirmationSummary(ctx))
         {
             var name = ctx.State.CustomerName;
-            var intro = !string.IsNullOrWhiteSpace(name)
-                ? $"¡Gracias, {name}! Ya tengo todos los datos necesarios. Aquí está el resumen de tu reserva:"
-                : "¡Perfecto! Ya tengo todos los datos necesarios. Aquí está el resumen de tu reserva:";
-            var full = intro + ConfirmationSummaryBuilder.BuildInjectableSummary(ctx.State, ctx.BusinessContext);
+            var intro = !string.IsNullOrWhiteSpace(name) && name != "-"
+                ? $"¡Gracias, {name}! Ya tengo todos los datos necesarios:"
+                : "¡Perfecto! Ya tengo todos los datos necesarios:";
             _stateUpdater.ApplyConfirmationFlag(ctx.State, "ConfirmationSummaryPresented", true);
-            return full;
+            return intro + ConfirmationSummaryBuilder.BuildPreConfirmationSummary(ctx.State, ctx.BusinessContext);
         }
 
-        // 2. Reenvío de link de pago (resumen ya presentado, usuario solicitó nuevo link)
+        // 4. Reenvío de link de pago
         if (ctx.State.ConfirmationSummaryPresented
             && ctx.TurnActions.PaymentLinkGenerated
-            && !ctx.State.ReservationCreated
-            && ctx.TurnActions.PaymentLinkError == null)
+            && !ctx.State.ReservationCreated)
         {
-            var intro = "Aquí tienes el link actualizado para realizar el pago del anticipo:";
-            return intro + ConfirmationSummaryBuilder.BuildPaymentLinkBlock(ctx.State, ctx.BusinessContext);
+            return "Aquí tienes el link actualizado para realizar el pago del anticipo:" +
+                   ConfirmationSummaryBuilder.BuildPaymentLinkBlock(ctx.State, ctx.BusinessContext);
         }
 
         return null;
@@ -750,17 +774,11 @@ public class HybridTransactionalOrchestrator
     {
         var lines = new List<string>();
 
-        if (turnActions.AddOnOfferingRequired)
-            lines.Add("❌ ESTE TURNO: presentar add-ons disponibles. PROHIBIDO preguntar fecha, hora ni datos personales.");
-
         if (!state.ReservationCreated && !turnActions.CreateReservationExecuted)
             lines.Add("❌ La reserva NO ha sido creada. PROHIBIDO afirmar que está confirmada, agendada o lista.");
 
         if (turnActions.IsAwaitingPayment)
             lines.Add("❌ PAGO PENDIENTE. La reserva NO existe. PROHIBIDO confirmar, agendar o mostrar ID de reserva.");
-
-        if (turnActions.PaymentLinkError != null)
-            lines.Add("❌ Error generando link de pago. Informa al usuario que hubo un inconveniente técnico y que intente nuevamente.");
 
         if (!state.AvailabilityConfirmed && !turnActions.CheckAvailabilityExecuted && string.IsNullOrEmpty(state.AvailableTimeSlots))
             lines.Add("❌ La disponibilidad NO ha sido verificada. PROHIBIDO mostrar o inventar horarios. Los horarios de operación NO son disponibilidad real.");
@@ -979,12 +997,9 @@ public class HybridTransactionalOrchestrator
             return sb.ToString();
         }
 
-        // 3. Add-ons requeridos: directiva exclusiva — early return en FASE 4, sin conflicto con otros pasos.
+        // 3. Servicios extras — se agregan junto con la instrucción de stage (no exclusivo).
         if (turnActions.AddOnOfferingRequired)
-        {
             sb.AppendLine(ResponseInstructionsTemplate.ServiceSelectedOfferAddOnsInstructions);
-            return sb.ToString();
-        }
 
         // 4. Instrucciones de turno (complementan al stage).
         if (turnActions.CheckAvailabilityExecuted
@@ -995,9 +1010,6 @@ public class HybridTransactionalOrchestrator
 
         if (extraction.Intentions.IsInformationQuery)
             sb.AppendLine(ResponseInstructionsTemplate.InformationQueryInstructions);
-
-        if (extraction.Ambiguities.Any())
-            sb.AppendLine(ResponseInstructionsTemplate.AmbiguitiesInstructions);
 
         // 5. Instrucción principal basada en el stage del FlowEngine.
         if (!extraction.Intentions.IsInformationQuery)
@@ -1059,11 +1071,9 @@ public class HybridTransactionalOrchestrator
         if (service == null)
             return false;
 
-        var hasCompatibleAddOns = businessContext.AddOnRules.Any(r =>
-            (!r.CompatibleServiceCategory.HasValue || r.CompatibleServiceCategory.Value == service.Category) &&
-            (string.IsNullOrWhiteSpace(r.CompatibleWithServiceName) || string.Equals(r.CompatibleWithServiceName, service.Name, StringComparison.OrdinalIgnoreCase)));
-
-        return hasCompatibleAddOns;
+        return businessContext.AddOnRules.Any(r =>
+            string.IsNullOrWhiteSpace(r.CompatibleWithServiceName)
+            || string.Equals(r.CompatibleWithServiceName, service.Name, StringComparison.OrdinalIgnoreCase));
     }
 
     private static ServiceCategory? ResolveSelectedCategory(
@@ -1182,18 +1192,15 @@ public class HybridTransactionalOrchestrator
     }
 
     /// <summary>
-    /// Condición unificada para inyectar el resumen de confirmación.
-    /// Usa PaymentLinkGenerated como señal semántica para cubrir la transición
-    /// de stage (ConfirmingBooking → AwaitingPayment) que ocurre al generar el link.
-    /// Excluye turnos con error de pago (el LLM comunica el error).
+    /// Condición para inyectar el resumen pre-confirmación.
+    /// El error de pago tiene su propio camino (TryBuildDeterministicResponse caso 2).
     /// </summary>
     private static bool ShouldInjectConfirmationSummary(ProcessingContext ctx) =>
         (ctx.FlowEvaluation.CurrentStage == TransactionStage.ConfirmingBooking
             || ctx.TurnActions.PaymentLinkGenerated)
         && !ctx.State.ReservationCreated
         && !ctx.TurnActions.CreateReservationExecuted
-        && !ctx.State.ConfirmationSummaryPresented
-        && ctx.TurnActions.PaymentLinkError == null;
+        && !ctx.State.ConfirmationSummaryPresented;
 
     // ═════════════════════════════════════════════════════════════════
     // FASE 6 — GUARDAR METADATOS FINALES
@@ -1206,6 +1213,22 @@ public class HybridTransactionalOrchestrator
         CancellationToken cancellationToken)
     {
         _logger.LogDebug("FASE 6: Guardando metadatos finales...");
+
+        if (ctx.TurnActions.PaymentLinkError != null
+            && !string.IsNullOrWhiteSpace(ctx.State.PaymentReferenceId))
+        {
+            ctx.State.Owner = Domain.Models.ConversationOwner.Human;
+            ctx.State.LastEscalatedAt = DateTime.UtcNow;
+            await _escalationNotifier.NotifyAdminsAsync(
+                ctx.ToolContext.BusinessId,
+                new EscalationNotification(
+                    ctx.ToolContext.ConversationId,
+                    ctx.State.Phone ?? "",
+                    "Pago manual pendiente — link de pago no disponible. Un asesor debe verificar el pago.",
+                    userMessage,
+                    ctx.State.PaymentReferenceId),
+                cancellationToken);
+        }
 
         ctx.UpdateMessageMetadata(userMessage, botResponse);
 

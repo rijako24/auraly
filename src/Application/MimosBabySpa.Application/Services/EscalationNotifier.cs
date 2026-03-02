@@ -14,18 +14,18 @@ public class EscalationNotifier : IEscalationNotifier
 {
     private readonly IUnitOfWork _unitOfWork;
     private readonly IWhatsAppService _whatsAppService;
-    private readonly IReleaseLinkService _releaseLinkService;
+    private readonly IAdminActionLinkService _adminActionLinkService;
     private readonly ILogger<EscalationNotifier> _logger;
 
     public EscalationNotifier(
         IUnitOfWork unitOfWork,
         IWhatsAppService whatsAppService,
-        IReleaseLinkService releaseLinkService,
+        IAdminActionLinkService adminActionLinkService,
         ILogger<EscalationNotifier> logger)
     {
         _unitOfWork = unitOfWork;
         _whatsAppService = whatsAppService;
-        _releaseLinkService = releaseLinkService;
+        _adminActionLinkService = adminActionLinkService;
         _logger = logger;
     }
 
@@ -49,13 +49,23 @@ public class EscalationNotifier : IEscalationNotifier
                 ? notification.LastUserMessage[..80] + "..."
                 : notification.LastUserMessage;
 
-        var releaseUrl = _releaseLinkService.GenerateReleaseUrl(notification.ConversationId);
-        var message = $"⚠️ Conversación requiere asistencia humana\n" +
-            $"Motivo: {notification.Reason}\n" +
-            $"Cliente: {notification.CustomerPhone}\n" +
-            $"Conversación: {notification.ConversationId}\n\n" +
-            $"Último mensaje del cliente: {lastMsg}" +
-            (releaseUrl != null ? $"\n\n📎 Devolver al bot:\n{releaseUrl}" : "");
+        var releaseUrl = _adminActionLinkService.GenerateReleaseUrl(notification.ConversationId);
+        var confirmPaymentUrl = !string.IsNullOrWhiteSpace(notification.PaymentReferenceId)
+            ? _adminActionLinkService.GeneratePaymentConfirmationUrl(notification.PaymentReferenceId)
+            : null;
+
+        var sb = new System.Text.StringBuilder();
+        sb.Append("⚠️ Conversación requiere asistencia humana\n");
+        sb.Append($"Motivo: {notification.Reason}\n");
+        sb.Append($"Cliente: {notification.CustomerPhone}\n");
+        sb.Append($"Conversación: {notification.ConversationId}\n\n");
+        sb.Append($"Último mensaje del cliente: {lastMsg}");
+        if (confirmPaymentUrl != null)
+            sb.Append($"\n\n✅ Confirmar pago recibido:\n{confirmPaymentUrl}");
+        if (releaseUrl != null)
+            sb.Append($"\n\n📎 Devolver al bot:\n{releaseUrl}");
+
+        var message = sb.ToString();
 
         var notifiedCount = 0;
         foreach (var number in adminNumbers)

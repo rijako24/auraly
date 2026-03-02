@@ -380,6 +380,8 @@ public class ApplicationDbContext : DbContext
             entity.Property(e => e.ProviderTransactionId).HasMaxLength(200);
             entity.Property(e => e.Currency).IsRequired().HasMaxLength(10);
             entity.Property(e => e.Status).HasConversion<int>();
+            entity.Property(e => e.Source).HasConversion<int>();
+            entity.Property(e => e.Source).HasConversion<int>().HasDefaultValue(Domain.Enums.PaymentTransactionSource.Automated);
             entity.Property(e => e.WebhookPayloadJson).HasColumnType("NVARCHAR(MAX)");
             entity.HasOne(e => e.Business)
                 .WithMany()

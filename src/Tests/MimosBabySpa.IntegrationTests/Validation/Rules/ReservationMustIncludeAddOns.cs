@@ -26,14 +26,14 @@ public class ReservationMustIncludeAddOns : ITestRule
             return new TestRuleResult(true, "Reserva falló, reglas de contenido no aplican.", Name);
         }
 
-        // Check if the success message contains "Add-ons:"
-        // The handler format: "✓ Reserva confirmada exitosamente... Add-ons: Masaje Extra..."
-        if (createCall.Result.Message.Contains("Add-ons:", StringComparison.OrdinalIgnoreCase))
+        // Check if the success message contains "Extras:" (servicios extras incluidos en la reserva)
+        // The handler format: "✓ Reserva confirmada exitosamente... Extras: Masaje Extra..."
+        if (createCall.Result.Message.Contains("Extras:", StringComparison.OrdinalIgnoreCase))
         {
-            return new TestRuleResult(true, "La reserva incluye Add-ons.", Name);
+            return new TestRuleResult(true, "La reserva incluye servicios extras.", Name);
         }
 
         return new TestRuleResult(false, 
-            $"La reserva {createCall.Result.Data?["reservation_id"]} se creó SIN Add-ons (mensaje: {createCall.Result.Message}).", Name);
+            $"La reserva {createCall.Result.Data?["reservation_id"]} se creó SIN servicios extras (mensaje: {createCall.Result.Message}).", Name);
     }
 }

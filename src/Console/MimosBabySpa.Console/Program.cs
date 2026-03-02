@@ -162,7 +162,9 @@ services.AddScoped<ISmartExtractionService, SmartExtractionService>();
 // Escalation y release (handover a humano)
 services.AddScoped<IEscalationNotifier, EscalationNotifier>();
 services.AddScoped<IEscalationConfigProvider, EscalationConfigProvider>();
-services.AddScoped<IReleaseLinkService, ReleaseLinkService>();
+services.AddScoped<AdminActionLinkService>();
+services.AddScoped<IAdminActionLinkService>(sp => sp.GetRequiredService<AdminActionLinkService>());
+services.AddScoped<IReleaseLinkService>(sp => sp.GetRequiredService<AdminActionLinkService>());
 services.AddScoped<IConversationReleaseService, ConversationReleaseService>();
 
 // Hybrid Transactional Orchestrator
@@ -221,7 +223,7 @@ Console.WriteLine("Escribe 'exit' o 'quit' para salir.");
 Console.WriteLine();
 
 // Número de teléfono simulado (puedes cambiarlo)
-var userNumber = "+12345679499";
+var userNumber = "+12345679501";
 var customerName = "Bill";
 
 while (true)

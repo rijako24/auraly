@@ -36,15 +36,19 @@ public class CoreInstructionsBuilder
                b) Aceptación por referencia: el asistente propuso o mostró opciones y el usuario la acepta
                   ("sí", "ese", "esa", "está bien", "la primera", "la sencilla", etc.).
                   Resolver la referencia al valor concreto usando el historial. El valor debe ser el nombre
-                  exacto del catálogo (servicio, add-on, horario, etc.). Aplica a CUALQUIER campo.
+                  exacto del catálogo (servicio, servicio extra, horario, etc.). Aplica a CUALQUIER campo.
                   Ej: Bot ofrece "Plan Marineritos" → usuario: "sí, ese plan" → Service: "Plan Marineritos"
                   Ej: Bot muestra "Decoración Sencilla" y "Bouquet" → usuario: "la sencilla" → Attribute:SelectedAddOns: "Decoración Sencilla"
                   Ej: Bot muestra horarios 09:00, 11:00 → usuario: "a las 9" → DesiredTime: "09:00"
-               c) Confidence: 0.92 si el referente es inequívoco en el historial. 0.70 si hay múltiples candidatos.
-               d) Si el usuario claramente NO responde (cambia de tema) → no forzar extracción.
+               c) Resolución contra catálogo: el usuario menciona un servicio por nombre parcial, abreviación o variación
+                  ("post vacuna", "marineritos", "el plan de vacunas"). Resolver al nombre exacto del catálogo en la tabla
+                  de campos disponibles. Confidence: 0.90 si el match es inequívoco, 0.70 si hay múltiples candidatos.
+               d) Confidence: 0.92 si el referente es inequívoco en el historial. 0.70 si hay múltiples candidatos.
+               e) Si el usuario claramente NO responde (cambia de tema) → no forzar extracción.
             5. Fechas temporales (mapeo obligatorio):
                - "hoy" → {now:yyyy-MM-dd} | "mañana" → {tomorrow:yyyy-MM-dd} | "pasado mañana" → {now.AddDays(2):yyyy-MM-dd}
                - Días de semana → próxima ocurrencia futura.
+               - Número de día solo ("el 29", "para el 15") → próxima ocurrencia futura (mes actual si el día aún no pasó, mes siguiente si ya pasó).
                - Si el usuario pide disponibilidad/horarios mencionando una fecha (incluso "¿y para mañana?")
                  → extraer DesiredDate + marcar user_requested_availability=true.
             6. SEPARACIÓN ESTRICTA campos / intenciones: Los nombres ({intentionNames})
@@ -69,10 +73,11 @@ public class CoreInstructionsBuilder
 
             ## Ambigüedades (tipos):
             - temporal: "pronto", "luego", "otro día" — sin fecha concreta.
-            - referential: referencia que NO se puede resolver desde el historial (ej. "ese plan" sin que el asistente
-              haya mencionado ningún servicio). Si el historial provee un referente claro → resolver en extracted_fields, NO ambigüedad.
+            - referential: referencia que NO se puede resolver NI desde el historial NI desde el catálogo de servicios.
+              Si el historial o el catálogo provee un referente claro (ej. "post vacuna" → "Plan Post Vacunas")
+              → resolver en extracted_fields, NO ambigüedad.
             - multiple_values: "Mateo o Lucas" — más de una opción.
-            - incomplete: "el lunes" — incompleto sin saber cuál.
+            - incomplete: "a la tarde" — hora sin especificar.
             """;
     }
 }

@@ -111,22 +111,22 @@ public static class ResponseInstructionsTemplate
 
     /// <summary>
     /// Se incluye cuando el cliente aún no ha elegido servicio (CollectingInformation).
-    /// Flujo: servicio primero, luego add-ons, luego fecha. Usa nombres exactos del catálogo.
+    /// Flujo: servicio primero, luego fecha. Usa nombres exactos del catálogo.
     /// </summary>
     public const string CollectingInformationInstructions = """
 
         **PRIORIDAD: El cliente aún no ha elegido un servicio.**
         Presenta opciones del catálogo usando los NOMBRES EXACTOS y precios listados.
-        NO preguntes fecha, hora ni datos personales — eso viene después de elegir servicio y add-ons.
+        NO preguntes fecha, hora ni datos personales — eso viene después de elegir servicio.
         Puedes invitar a elegir o cerrar con comentario que deje espacio ("Cuéntame si alguna te llama la atención" o similar). No siempre con pregunta directa.
         """;
 
     /// <summary>
-    /// Se incluye cuando el cliente ya eligió servicio (y add-ons ya ofrecidos). Siguiente: fecha.
+    /// Se incluye cuando el cliente ya eligió servicio. Siguiente: fecha.
     /// </summary>
     public const string ExploringServicesInstructions = """
 
-        **El cliente ya eligió servicio (y los add-ons ya fueron ofrecidos). Siguiente: fecha.**
+        **El cliente ya eligió servicio. Siguiente: fecha.**
         Pregunta para qué fecha le gustaría agendar su sesión.
         NO preguntes datos personales todavía — eso viene después de confirmar disponibilidad.
         """;
@@ -139,15 +139,6 @@ public static class ResponseInstructionsTemplate
 
         **Disponibilidad confirmada. Para completar la reserva necesitamos algunos datos.**
         Solicita: {missing_fields} — UNO a la vez, de forma natural.
-        """;
-
-    /// <summary>
-    /// Se incluye cuando hay ambigüedades detectadas.
-    /// </summary>
-    public const string AmbiguitiesInstructions = """
-
-        **Hay información ambigua que necesita clarificación:**
-        Haz UNA pregunta concreta para resolver la ambigüedad antes de continuar.
         """;
 
     /// <summary>
@@ -171,14 +162,13 @@ public static class ResponseInstructionsTemplate
         """;
 
     /// <summary>
-    /// Se incluye cuando el cliente ya eligió un servicio principal y hay add-ons compatibles con su categoría.
-    /// Solo para servicios de categoría Plan (u otras con add-ons configurados).
+    /// Se incluye cuando el cliente eligió un servicio con servicios extras compatibles.
+    /// Se agrega junto con la instrucción de stage — no bloquea el siguiente paso.
     /// </summary>
     public const string ServiceSelectedOfferAddOnsInstructions = """
 
-        **El cliente ya eligió un servicio principal con add-ons disponibles:**
-        OBLIGATORIO: Presenta TODOS los add-ons del catálogo para este servicio (nombre y precio de cada uno).
-        PROHIBIDO: preguntar por fecha, hora ni datos personales en este turno.
-        Los add-ons son opcionales — preséntalos. Puedes preguntar cuál le interesa o cerrar con invitación suave ("Si quieres agregar algo, dímelo; si no, seguimos con la fecha").
+        **OBLIGATORIO — Servicios extras disponibles para este plan:**
+        Al responder, SIEMPRE incluye los servicios extras compatibles del catálogo (nombre y precio de cada uno).
+        Son opcionales — preséntalos de forma natural como parte de tu respuesta, junto con el siguiente paso.
         """;
 }

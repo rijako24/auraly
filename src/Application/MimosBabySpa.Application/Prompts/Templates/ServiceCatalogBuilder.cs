@@ -97,7 +97,7 @@ public static class ServiceCatalogBuilder
         // ── Add-ons compatibles con todos (solo cuando no hay categoría elegida) ─
         AppendUniversalAddOns(sb, addOnRules, selectedServiceCategory);
 
-        sb.AppendLine("Solo puedes ofrecer los servicios y add-ons listados arriba. No inventes ni combinas servicios distintos.");
+        sb.AppendLine("Solo puedes ofrecer los servicios y servicios extras listados arriba. No inventes ni combinas servicios distintos.");
         return sb.ToString().TrimEnd();
     }
 
@@ -111,7 +111,7 @@ public static class ServiceCatalogBuilder
         if (addOns.Count == 0)
             return;
 
-        sb.AppendLine("**Add-ons para esta categoría** (solo ofrecer después de que el cliente elija un servicio principal):");
+        sb.AppendLine("**Servicios extras para complementar tu plan** (opcionales):");
         sb.AppendLine();
         foreach (var rule in addOns.OrderBy(r => r.DisplayOrder).ThenBy(r => r.AddOnName))
         {
@@ -121,7 +121,7 @@ public static class ServiceCatalogBuilder
                 sb.AppendLine($"  _{rule.AddOnDescription}_");
         }
         sb.AppendLine();
-        sb.AppendLine("Los add-ons son OPCIONALES.");
+        sb.AppendLine("Los servicios extras son opcionales.");
         sb.AppendLine();
     }
 
@@ -142,7 +142,7 @@ public static class ServiceCatalogBuilder
         if (universal.Count == 0)
             return;
 
-        sb.AppendLine("**Add-ons disponibles para cualquier servicio** (solo ofrecer después de elegir servicio principal):");
+        sb.AppendLine("**Servicios extras disponibles para cualquier plan** (opcionales):");
         sb.AppendLine();
         foreach (var rule in universal)
         {
@@ -152,7 +152,7 @@ public static class ServiceCatalogBuilder
                 sb.AppendLine($"  _{rule.AddOnDescription}_");
         }
         sb.AppendLine();
-        sb.AppendLine("Los add-ons son OPCIONALES.");
+        sb.AppendLine("Los servicios extras son opcionales.");
         sb.AppendLine();
     }
 

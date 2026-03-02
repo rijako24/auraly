@@ -21,10 +21,12 @@ public class PaymentTransactionRepository : IPaymentTransactionRepository
             .FirstOrDefaultAsync(t => t.PaymentReferenceId == paymentReferenceId, ct);
     }
 
-    public async Task<List<PaymentTransaction>> GetPendingTransactionsAsync(DateTime createdAfter, CancellationToken ct = default)
+    public async Task<List<PaymentTransaction>> GetPendingAutomatedTransactionsAsync(DateTime createdAfter, CancellationToken ct = default)
     {
         return await _context.PaymentTransactions
-            .Where(t => t.Status == PaymentTransactionStatus.Created && t.CreatedAt >= createdAfter)
+            .Where(t => t.Source == PaymentTransactionSource.Automated
+                && t.Status == PaymentTransactionStatus.Created
+                && t.CreatedAt >= createdAfter)
             .ToListAsync(ct);
     }
 

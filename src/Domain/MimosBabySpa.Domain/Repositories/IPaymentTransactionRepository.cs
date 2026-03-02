@@ -14,10 +14,11 @@ public interface IPaymentTransactionRepository
     Task<PaymentTransaction?> GetByPaymentReferenceIdAsync(string paymentReferenceId, CancellationToken ct = default);
 
     /// <summary>
-    /// Obtiene transacciones pendientes de confirmación (Status=Created) creadas recientemente.
-    /// Usado por el poller para verificar pagos que no llegaron vía webhook.
+    /// Obtiene transacciones automáticas pendientes (Source=Automated, Status=Created).
+    /// Usado por el poller para verificar pagos Wompi que no llegaron vía webhook.
+    /// Excluye transacciones manuales (Source=Manual) que no deben pollearse contra Wompi.
     /// </summary>
-    Task<List<PaymentTransaction>> GetPendingTransactionsAsync(DateTime createdAfter, CancellationToken ct = default);
+    Task<List<PaymentTransaction>> GetPendingAutomatedTransactionsAsync(DateTime createdAfter, CancellationToken ct = default);
 
     /// <summary>
     /// Guarda o actualiza una transacción.

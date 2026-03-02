@@ -4,14 +4,15 @@ using MimosBabySpa.IntegrationTests.Infrastructure;
 namespace MimosBabySpa.IntegrationTests.Scenarios.Definitions;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ESCENARIO 7: Oferta de Add-Ons
-// El cliente confirma un servicio con add-ons configurados. El bot debe ofrecerlos.
+// ESCENARIO 7: Servicios extras integrados con disponibilidad
+// El bot muestra disponibilidad + servicios extras en la misma respuesta.
+// Usuario confirma con servicio extra en el siguiente mensaje.
 // ─────────────────────────────────────────────────────────────────────────────
 
 public class AddOnOfferingScenario : TestScenario
 {
     public override string Id          => "test_oferta_addons";
-    public override string Description => "El cliente confirma un servicio con add-ons. El bot debe ofrecerlos antes de crear la reserva.";
+    public override string Description => "Plan Deluxe: bot muestra disponibilidad y servicios extras juntos; usuario confirma con extra.";
     public override CalendarMode CalendarMode     => CalendarMode.Available;
     public override ReservationMode ReservationMode => ReservationMode.AlwaysSucceed;
     public override bool ExpectReservationCreated  => true;
@@ -47,31 +48,14 @@ public class AddOnOfferingScenario : TestScenario
               "ambiguities": []
             }
             """,
-            ExpectedBotResponseContains: "disponib"), // Step 1: Check availability
+            ExpectedBotResponseContains: "disponib"), // Step 1: Disponibilidad + servicios extras en misma respuesta
 
         new(
-            UserMessage:   "Sí, confirmo.",
-            ExtractionJson: """
-            {
-              "extracted_fields": [],
-              "intentions": {
-                "user_requested_availability": false,
-                "user_confirmed_booking":      true,
-                "is_information_query":        false,
-                "user_wants_to_cancel":        false
-              },
-              "ambiguities": []
-            }
-            """,
-            // Expect failure here initially: Bot will say "Reserva confirmada" instead of offering add-on
-            ExpectedBotResponseContains: "extra"), // Step 2: Should offer add-on ("extra", "adicional")
-
-        new(
-            UserMessage:   "Sí, agrega el masaje extra.",
+            UserMessage:   "Sí, agrega el Masaje Extra 15m y confirma.",
             ExtractionJson: """
             {
               "extracted_fields": [
-                 {"field": "SelectedAddOns", "value": "Masaje Extra 15m", "confidence": 0.95} 
+                {"field": "SelectedAddOns", "value": "Masaje Extra 15m", "confidence": 0.95}
               ],
               "intentions": {
                 "user_requested_availability": false,
@@ -82,6 +66,6 @@ public class AddOnOfferingScenario : TestScenario
               "ambiguities": []
             }
             """,
-            ExpectedBotResponseContains: "reserva") // Step 3: Now finalize reservation
+            ExpectedBotResponseContains: "reserva") // Step 2: Reserva creada con servicio extra
     ];
 }

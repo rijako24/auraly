@@ -81,7 +81,7 @@ public class CreateReservationToolHandler : BaseToolHandler
                 response.ReservationId);
 
             var addOnsLine = response.AddOnNames.Count > 0
-                ? $"\nAdd-ons: {string.Join(", ", response.AddOnNames)}"
+                ? $"\nExtras: {string.Join(", ", response.AddOnNames)}"
                 : "";
 
             var successMessage = $"✓ Reserva confirmada exitosamente" +

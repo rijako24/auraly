@@ -19,8 +19,8 @@ public class AddOnRuleInfo
     public string? CompatibleWithServiceName { get; set; }
 
     /// <summary>
-    /// Categoría con la que es compatible (viene de AddOnService.Category).
-    /// Null = compatible con todos los Standard.
+    /// Categoría del servicio compatible (derivada de CompatibleService.Category).
+    /// Null = compatible con todos los servicios. Usado para presentación en catálogo.
     /// </summary>
     public ServiceCategory? CompatibleServiceCategory { get; set; }
 }

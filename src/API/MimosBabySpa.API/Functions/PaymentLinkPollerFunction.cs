@@ -42,7 +42,7 @@ public class PaymentLinkPollerFunction
         _logger.LogInformation("PaymentLinkPoller: inicio ejecución");
 
         var createdAfter = DateTime.UtcNow - PollingWindow;
-        var pending = await _paymentTransactionRepository.GetPendingTransactionsAsync(createdAfter, ct);
+        var pending = await _paymentTransactionRepository.GetPendingAutomatedTransactionsAsync(createdAfter, ct);
 
         if (pending.Count == 0)
         {

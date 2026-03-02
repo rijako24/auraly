@@ -12,10 +12,12 @@ public class InMemoryPaymentTransactionRepository : IPaymentTransactionRepositor
         return Task.FromResult(_store.FirstOrDefault(t => t.PaymentReferenceId == paymentReferenceId));
     }
 
-    public Task<List<PaymentTransaction>> GetPendingTransactionsAsync(DateTime createdAfter, CancellationToken ct = default)
+    public Task<List<PaymentTransaction>> GetPendingAutomatedTransactionsAsync(DateTime createdAfter, CancellationToken ct = default)
     {
         return Task.FromResult(_store
-            .Where(t => t.Status == Domain.Enums.PaymentTransactionStatus.Created && t.CreatedAt >= createdAfter)
+            .Where(t => t.Source == Domain.Enums.PaymentTransactionSource.Automated
+                && t.Status == Domain.Enums.PaymentTransactionStatus.Created
+                && t.CreatedAt >= createdAfter)
             .ToList());
     }
 

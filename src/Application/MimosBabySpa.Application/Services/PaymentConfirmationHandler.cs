@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging;
 using MimosBabySpa.Application.Configuration;
+using MimosBabySpa.Application.Prompts.Templates;
 using MimosBabySpa.Application.StateManagement;
 using MimosBabySpa.Application.Tools;
 using MimosBabySpa.Domain.Entities;
@@ -10,9 +11,8 @@ using MimosBabySpa.Domain.Repositories;
 namespace MimosBabySpa.Application.Services;
 
 /// <summary>
-/// Implementación del manejador de confirmación de pago.
-/// Invocado por el webhook de Wompi o el poller cuando el pago es aprobado.
-/// Usa PaymentTransaction (lookup indexado) para correlacionar pago → conversación.
+/// Manejador de confirmación de pago (webhook Wompi, poller o confirmación manual).
+/// Crea la reserva y envía notificación proactiva al cliente.
 /// </summary>
 public class PaymentConfirmationHandler : IPaymentConfirmationHandler
 {
@@ -21,6 +21,7 @@ public class PaymentConfirmationHandler : IPaymentConfirmationHandler
     private readonly IConversationStateUpdater _stateUpdater;
     private readonly GenericToolDispatcher _toolDispatcher;
     private readonly CachedBusinessContextProvider _contextProvider;
+    private readonly IWhatsAppService _whatsAppService;
     private readonly ILogger<PaymentConfirmationHandler> _logger;
 
     public PaymentConfirmationHandler(
@@ -29,6 +30,7 @@ public class PaymentConfirmationHandler : IPaymentConfirmationHandler
         IConversationStateUpdater stateUpdater,
         GenericToolDispatcher toolDispatcher,
         CachedBusinessContextProvider contextProvider,
+        IWhatsAppService whatsAppService,
         ILogger<PaymentConfirmationHandler> logger)
     {
         _paymentTransactionRepository = paymentTransactionRepository;
@@ -36,6 +38,7 @@ public class PaymentConfirmationHandler : IPaymentConfirmationHandler
         _stateUpdater = stateUpdater;
         _toolDispatcher = toolDispatcher;
         _contextProvider = contextProvider;
+        _whatsAppService = whatsAppService;
         _logger = logger;
     }
 
@@ -115,6 +118,38 @@ public class PaymentConfirmationHandler : IPaymentConfirmationHandler
 
         _logger.LogInformation("Webhook: reserva creada exitosamente Ref={Ref} ReservationId={ResId}",
             paymentReferenceId, state.ReservationId);
+
+        state.Owner = ConversationOwner.Bot;
+        state.ConsecutiveDegradedTurns = 0;
+        await _stateManager.SaveStateAsync(conversationId, state, ct);
+
+        await SendProactiveConfirmationAsync(state, businessContext, ct);
         return new PaymentConfirmationResult(true, null);
+    }
+
+    private async Task SendProactiveConfirmationAsync(
+        Domain.Models.ConversationState state,
+        LoadedBusinessContext businessContext,
+        CancellationToken ct)
+    {
+        var phone = state.Phone?.Trim();
+        if (string.IsNullOrWhiteSpace(phone))
+        {
+            _logger.LogDebug("No se envía notificación proactiva: teléfono vacío");
+            return;
+        }
+
+        try
+        {
+            var summary = ConfirmationSummaryBuilder.BuildPostCreationSummary(state, businessContext);
+            var message = "✅ ¡Tu pago ha sido confirmado y tu reserva creada!" + summary;
+
+            await _whatsAppService.SendTextMessageAsync(state.BusinessId, phone, message);
+            _logger.LogInformation("Notificación proactiva enviada a {Phone}", phone);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error enviando notificación proactiva al cliente");
+        }
     }
 }

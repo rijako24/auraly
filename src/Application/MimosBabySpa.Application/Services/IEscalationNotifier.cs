@@ -18,10 +18,12 @@ public interface IEscalationNotifier
 
 /// <summary>
 /// Datos de la notificación de escalado.
+/// PaymentReferenceId: cuando se escala por error de link de pago, permite al admin confirmar el pago manualmente.
 /// </summary>
 public record EscalationNotification(
     Guid ConversationId,
     string CustomerPhone,
     string Reason,
-    string? LastUserMessage = null);
+    string? LastUserMessage = null,
+    string? PaymentReferenceId = null);
 
