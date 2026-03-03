@@ -444,28 +444,20 @@ public class HybridTransactionalOrchestrator
             }
         }
 
-        // ── 4c. Servicios extras (junto con la respuesta, sin turno dedicado) ────
-        if (!string.IsNullOrWhiteSpace(ctx.State.Service)
-            && !ctx.State.AddOnsOffered
-            && ShouldOfferAddOns(ctx.State, ctx.BusinessContext))
+        // ── 4c. Servicios extras ────
+        if (!ctx.State.AddOnsOffered && ShouldOfferAddOns(ctx.State, ctx.BusinessContext))
         {
-            var alreadySelectedAddOns = ctx.ExtractionOutput?.ExtractedFields?
-                .Any(f => string.Equals(f.FieldName, "SelectedAddOns", StringComparison.OrdinalIgnoreCase)
-                      || string.Equals(f.FieldName, "Attribute:SelectedAddOns", StringComparison.OrdinalIgnoreCase)) ?? false;
+            var alreadySelectedAddOns = HasSelectedAddOnsInExtraction(ctx.ExtractionOutput);
+            turnActions.AddOnOfferingRequired = !alreadySelectedAddOns;
 
-            if (alreadySelectedAddOns)
-            {
-                _logger.LogInformation("Usuario ya proporcionó servicio(s) extra(s) en este turno — marcando AddOnsOffered sin ofrecer.");
-                _stateUpdater.ApplyConfirmationFlag(ctx.State, "AddOnsOffered", true);
-                ctx.ReEvaluate();
-            }
-            else
-            {
-                _logger.LogInformation("Incluyendo servicios extras compatibles para servicio {Service}", ctx.State.Service);
-                turnActions.AddOnOfferingRequired = true;
-                _stateUpdater.ApplyConfirmationFlag(ctx.State, "AddOnsOffered", true);
-                ctx.ReEvaluate();
-            }
+            _logger.LogInformation(
+                alreadySelectedAddOns
+                    ? "Usuario ya proporcionó servicio(s) extra(s) en este turno — marcando AddOnsOffered sin ofrecer."
+                    : "Incluyendo servicios extras compatibles para servicio {Service}",
+                ctx.State.Service);
+
+            _stateUpdater.ApplyConfirmationFlag(ctx.State, "AddOnsOffered", true);
+            ctx.ReEvaluate();
         }
 
         // ── 4c. Verificación de disponibilidad ───────────────────
@@ -504,8 +496,11 @@ public class HybridTransactionalOrchestrator
 
         // ── 4d. Confirmación verbal (SOLO si no requiere anticipo) ──
         // Si RequiresAnticipo: la confirmación ES el pago, no el "sí" verbal.
+        // Invariante: el formulario SIEMPRE se muestra antes de confirmar. Solo aceptar "sí" verbal
+        // si el resumen de confirmación ya fue presentado al usuario (evita saltarse el formulario).
         if (intentions.UserConfirmedBooking
             && !ctx.State.ReservationConfirmed
+            && ctx.State.ConfirmationSummaryPresented
             && ctx.FlowEvaluation.CurrentStage == TransactionStage.ConfirmingBooking
             && ctx.BusinessContext.PaymentConfig is not { RequiresAnticipo: true })
         {
@@ -742,7 +737,7 @@ public class HybridTransactionalOrchestrator
             messages.Add(new() { Role = role, Content = msg.MessageText });
         }
 
-        var guardrails = BuildStateGuardrails(input.State, input.TurnActions);
+        var guardrails = BuildStateGuardrails(input.State, input.TurnActions, input.FlowSnapshot, input.BusinessContext);
         if (!string.IsNullOrWhiteSpace(guardrails))
             messages.Add(new() { Role = LLMRole.System, Content = guardrails });
 
@@ -770,7 +765,9 @@ public class HybridTransactionalOrchestrator
 
     private static string? BuildStateGuardrails(
         Domain.Models.ConversationState state,
-        TurnActions turnActions)
+        TurnActions turnActions,
+        FlowEvaluationResult flowSnapshot,
+        Configuration.LoadedBusinessContext businessContext)
     {
         var lines = new List<string>();
 
@@ -782,6 +779,18 @@ public class HybridTransactionalOrchestrator
 
         if (!state.AvailabilityConfirmed && !turnActions.CheckAvailabilityExecuted && string.IsNullOrEmpty(state.AvailableTimeSlots))
             lines.Add("❌ La disponibilidad NO ha sido verificada. PROHIBIDO mostrar o inventar horarios. Los horarios de operación NO son disponibilidad real.");
+
+        // Datos incompletos: PROHIBIDO presentar resumen de confirmación o pedir confirmación.
+        // Solo prohibitivo — la prescripción (qué solicitar, en qué orden) viene de las ResponseInstructions por stage.
+        // Excepción: si AddOnOfferingRequired, este turno es ofrecer extras — no emitir guardrail de campos.
+        if (flowSnapshot.MissingFields.Count > 0 && !turnActions.AddOnOfferingRequired)
+        {
+            var missingLabels = flowSnapshot.MissingFields
+                .Select(f => FieldLabelResolver.Resolve(f, businessContext.Attributes));
+            lines.Add(
+                $"❌ DATOS INCOMPLETOS — faltan: {string.Join(", ", missingLabels)}. " +
+                "PROHIBIDO presentar resumen de confirmación o pedir confirmación al cliente.");
+        }
 
         if (lines.Count == 0)
             return null;
@@ -997,7 +1006,7 @@ public class HybridTransactionalOrchestrator
             return sb.ToString();
         }
 
-        // 3. Servicios extras — se agregan junto con la instrucción de stage (no exclusivo).
+        // 3. Servicios extras — paso dedicado, reemplaza instrucción de stage.
         if (turnActions.AddOnOfferingRequired)
             sb.AppendLine(ResponseInstructionsTemplate.ServiceSelectedOfferAddOnsInstructions);
 
@@ -1012,7 +1021,8 @@ public class HybridTransactionalOrchestrator
             sb.AppendLine(ResponseInstructionsTemplate.InformationQueryInstructions);
 
         // 5. Instrucción principal basada en el stage del FlowEngine.
-        if (!extraction.Intentions.IsInformationQuery)
+        // No incluir stage instruction cuando add-on offering es el paso dedicado (evita mezclar con fecha).
+        if (!extraction.Intentions.IsInformationQuery && !turnActions.AddOnOfferingRequired)
         {
             var stageInstruction = BuildStageInstruction(state, flowSnapshot, businessContext);
             if (!string.IsNullOrEmpty(stageInstruction))
@@ -1057,6 +1067,11 @@ public class HybridTransactionalOrchestrator
             _ => string.Empty
         };
     }
+
+    private static bool HasSelectedAddOnsInExtraction(ExtractionOutput? output) =>
+        output?.ExtractedFields?.Any(f =>
+            string.Equals(f.FieldName, "SelectedAddOns", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(f.FieldName, "Attribute:SelectedAddOns", StringComparison.OrdinalIgnoreCase)) ?? false;
 
     private static bool ShouldOfferAddOns(
         Domain.Models.ConversationState state,

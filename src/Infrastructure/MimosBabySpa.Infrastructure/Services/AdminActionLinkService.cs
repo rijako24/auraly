@@ -28,7 +28,7 @@ public class AdminActionLinkService : IAdminActionLinkService, IReleaseLinkServi
         GenerateSignedUrl("/api/release", "conv", conversationId.ToString("N"), conversationId.ToString("N"));
 
     public string? GeneratePaymentConfirmationUrl(string paymentReferenceId) =>
-        GenerateSignedUrl("/api/admin/confirm-payment", "ptx", $"confirm:{paymentReferenceId}", paymentReferenceId);
+        GenerateSignedUrl("/api/confirm-payment", "ptx", $"confirm:{paymentReferenceId}", paymentReferenceId);
 
     public bool ValidateReleaseToken(Guid conversationId, string token) =>
         ValidateToken(conversationId.ToString("N"), token);

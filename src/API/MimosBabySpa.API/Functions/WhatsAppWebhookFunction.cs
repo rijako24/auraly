@@ -71,12 +71,16 @@ public class WhatsAppWebhookFunction
 
             foreach (var entry in webhookData.Entry)
             {
-                // Identificar el negocio usando el Entry.Id (Phone Number ID de WhatsApp)
-                var businessContext = await _businessIdentificationService.IdentifyBusinessAsync(entry.Id);
+                // phone_number_id: value.metadata.phone_number_id (WhatsApp Cloud API) o entry.Id (fallback)
+                var phoneNumberId = entry.Changes?
+                    .FirstOrDefault(c => c?.Value?.Metadata != null)?.Value?.Metadata?.PhoneNumberId
+                    ?? entry.Id;
+
+                var businessContext = await _businessIdentificationService.IdentifyBusinessAsync(phoneNumberId);
 
                 if (businessContext == null)
                 {
-                    _logger.LogWarning("No se pudo identificar el negocio para Entry.Id: {EntryId}", entry.Id);
+                    _logger.LogWarning("No se pudo identificar el negocio para phone_number_id: {PhoneNumberId}", phoneNumberId);
                     continue; // Saltar este entry si no se puede identificar el negocio
                 }
 
@@ -94,7 +98,7 @@ public class WhatsAppWebhookFunction
                 var distinctUserNumbers = allMessages.Select(m => m.UserNumber).Distinct().ToList();
                 if (distinctUserNumbers.Count > 1)
                 {
-                    var errorMessage = $"Se detectaron mensajes de múltiples usuarios ({distinctUserNumbers.Count} usuarios: {string.Join(", ", distinctUserNumbers)}) en el mismo Entry.Id: {entry.Id}. " +
+                    var errorMessage = $"Se detectaron mensajes de múltiples usuarios ({distinctUserNumbers.Count} usuarios: {string.Join(", ", distinctUserNumbers)}) en el mismo entry. " +
                         "Esto no debería ocurrir normalmente.";
                     _logger.LogError(errorMessage);
                     throw new InvalidOperationException(errorMessage);

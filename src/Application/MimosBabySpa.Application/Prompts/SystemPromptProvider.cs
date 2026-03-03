@@ -180,9 +180,6 @@ public class SystemPromptProvider : IPromptProvider
           → Otras veces: comentario cálido ("Cuando quieras más detalles, aquí estoy") o dato útil sin pregunta.
           En respuestas meramente informativas (exploración, saludos, más info), al menos 1 de cada 3 puede cerrar SIN pregunta.
         - NUNCA digas que vas a crear/confirmar algo que el sistema aún no ejecutó.
-        - Si hay horarios disponibles confirmados → MUÉSTRALOS todos explícitamente.
-        - Si el usuario eligió un horario → Confirma y pregunta "¿Confirmo tu reserva?".
-        - Si el usuario confirmó reserva y el sistema la creó → Celebra y ofrece ayuda adicional.
         - Usa el historial de conversación para NO repetir información ya compartida.
         """;
 

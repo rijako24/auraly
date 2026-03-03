@@ -1,27 +1,37 @@
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using MimosBabySpa.Application.DTOs;
 using MimosBabySpa.Application.Services;
 
 namespace MimosBabySpa.Infrastructure.Services;
 
+public class WhatsAppWebhookOptions
+{
+    public const string SectionName = "WhatsApp:Webhook";
+    public string VerifyToken { get; set; } = string.Empty;
+}
+
 public class WhatsAppService : IWhatsAppService
 {
-    private const string ApiBaseUrl = "https://graph.facebook.com/v18.0/";
+    private const string ApiBaseUrl = "https://graph.facebook.com/v22.0/";
 
     private readonly HttpClient _httpClient;
     private readonly IWhatsAppCredentialResolver _credentialResolver;
     private readonly ILogger<WhatsAppService> _logger;
+    private readonly string? _verifyToken;
 
     public WhatsAppService(
         HttpClient httpClient,
         IWhatsAppCredentialResolver credentialResolver,
-        ILogger<WhatsAppService> logger)
+        ILogger<WhatsAppService> logger,
+        IOptions<WhatsAppWebhookOptions>? webhookOptions = null)
     {
         _httpClient = httpClient;
         _credentialResolver = credentialResolver;
         _logger = logger;
+        _verifyToken = webhookOptions?.Value?.VerifyToken;
         _httpClient.BaseAddress = new Uri(ApiBaseUrl);
     }
 
@@ -116,8 +126,11 @@ public class WhatsAppService : IWhatsAppService
 
     public Task<bool> VerifyWebhookAsync(string mode, string token, string challenge)
     {
-        var isValid = mode == "subscribe" && !string.IsNullOrEmpty(challenge);
-        return Task.FromResult(isValid);
+        if (mode != "subscribe" || string.IsNullOrEmpty(challenge))
+            return Task.FromResult(false);
+        if (!string.IsNullOrEmpty(_verifyToken))
+            return Task.FromResult(token == _verifyToken);
+        return Task.FromResult(true);
     }
 
     private async Task<WhatsAppCredentials> ResolveCredentialsAsync(Guid businessId)

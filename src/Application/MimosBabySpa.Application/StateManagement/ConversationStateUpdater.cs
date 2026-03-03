@@ -27,6 +27,15 @@ public class ConversationStateUpdater : IConversationStateUpdater
     private static readonly Regex PhraseArticlePattern =
         new(@"\b(el|la|los|las)\s+(bebé|niño|niña|hijo|hija)\b", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
+    /// <summary>
+    /// Placeholders que el LLM puede extraer cuando el estado muestra null como "—" o similar.
+    /// Rechazarlos evita que datos falsos lleguen al FlowEngine y generen decisiones incorrectas.
+    /// </summary>
+    private static readonly HashSet<string> CustomerNamePlaceholders = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "-", "—", "N/A", "NA", ".", "x", "xx", "pendiente", "(pendiente)", "(no proporcionado)", "sin nombre"
+    };
+
     public ConversationStateUpdater(ILogger<ConversationStateUpdater> logger)
     {
         _logger = logger;
@@ -165,9 +174,18 @@ public class ConversationStateUpdater : IConversationStateUpdater
 
     private static ApplyFieldResult ApplyCustomerName(ConversationState state, string value)
     {
-        state.CustomerName = value;
+        var trimmed = value.Trim();
+        if (CustomerNamePlaceholders.Contains(trimmed))
+        {
+            return Fail($"'{value}' es un placeholder, no un nombre válido");
+        }
+        if (trimmed.Length < 2)
+        {
+            return Fail($"CustomerName debe tener al menos 2 caracteres. '{value}' no es válido");
+        }
+        state.CustomerName = trimmed;
         state.ConfirmationSummaryPresented = false;
-        return Ok($"CustomerName = '{value}'");
+        return Ok($"CustomerName = '{trimmed}'");
     }
 
     private static ApplyFieldResult ApplyEmail(ConversationState state, string value)

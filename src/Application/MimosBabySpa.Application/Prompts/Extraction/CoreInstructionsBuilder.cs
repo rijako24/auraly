@@ -43,6 +43,10 @@ public class CoreInstructionsBuilder
                c) Resolución contra catálogo: el usuario menciona un servicio por nombre parcial, abreviación o variación
                   ("post vacuna", "marineritos", "el plan de vacunas"). Resolver al nombre exacto del catálogo en la tabla
                   de campos disponibles. Confidence: 0.90 si el match es inequívoco, 0.70 si hay múltiples candidatos.
+                  IMPORTANTE — Service: Extraer SOLO cuando el usuario ELIGE, ACEPTA o SOLICITA RESERVAR el servicio.
+                  Preguntas informativas ("háblame de...", "qué incluye...", "cuánto cuesta el...", "qué tal las decoraciones")
+                  NO son selección → NO extraer Service. Si is_information_query=true, NO extraer Service salvo que el usuario
+                  use lenguaje explícito de selección ("quiero ese", "me quedo con", "reservar ese", "ese plan me gusta").
                d) Confidence: 0.92 si el referente es inequívoco en el historial. 0.70 si hay múltiples candidatos.
                e) Si el usuario claramente NO responde (cambia de tema) → no forzar extracción.
             5. Fechas temporales (mapeo obligatorio):
@@ -55,6 +59,10 @@ public class CoreInstructionsBuilder
                pertenecen EXCLUSIVAMENTE al bloque "intentions". NUNCA los incluyas en "extracted_fields".
             7. ALCANCE: Extraer SOLO del último mensaje del usuario (delimitado con ---MENSAJE A ANALIZAR---).
                 El historial es CONTEXTO para entender referencias. NO re-extraer datos que ya figuran en "Estado actual".
+                EXCEPCIÓN — Atributos multi-valor (CSV): Si el estado ya tiene valor y el usuario MODIFICA (agrega, quita o reemplaza),
+                extraer el resultado COMPLETO (CSV actualizado), no solo el fragmento mencionado.
+                Ej: Estado SelectedAddOns="Decoración Sencilla" + usuario "también el bouquet" → "Decoración Sencilla, Bouquet"
+                Ej: Estado SelectedAddOns="Decoración Sencilla, Bouquet" + usuario "quita el bouquet" → "Decoración Sencilla"
                 NO inventar campos fuera de la tabla de campos disponibles (ej. TotalPrice).
 
             ## Intenciones (detectar del texto, no inventar):

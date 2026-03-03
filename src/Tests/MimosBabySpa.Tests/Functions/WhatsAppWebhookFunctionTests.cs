@@ -87,7 +87,6 @@ public class WhatsAppWebhookFunctionTests
         
         var webhookDto = new WhatsAppWebhookDto
         {
-            Object = "whatsapp_business_account",
             Entry = new List<Entry>
             {
                 new Entry

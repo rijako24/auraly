@@ -157,13 +157,16 @@ var host = new HostBuilder()
 
         // Infrastructure Services - WhatsApp (credenciales desde BusinessWhatsAppNumbers)
         services.AddHttpClient();
+        services.Configure<WhatsAppWebhookOptions>(
+            configuration.GetSection(WhatsAppWebhookOptions.SectionName));
         services.AddScoped<IWhatsAppCredentialResolver, WhatsAppCredentialResolver>();
         services.AddScoped<IWhatsAppService>(sp =>
         {
             var httpClient = sp.GetRequiredService<IHttpClientFactory>().CreateClient();
             var resolver = sp.GetRequiredService<IWhatsAppCredentialResolver>();
             var logger = sp.GetRequiredService<ILogger<WhatsAppService>>();
-            return new WhatsAppService(httpClient, resolver, logger);
+            var webhookOptions = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<WhatsAppWebhookOptions>>();
+            return new WhatsAppService(httpClient, resolver, logger, webhookOptions);
         });
 
 

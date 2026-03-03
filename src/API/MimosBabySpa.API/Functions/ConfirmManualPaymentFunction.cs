@@ -9,7 +9,7 @@ using MimosBabySpa.Domain.Repositories;
 namespace MimosBabySpa.API.Functions;
 
 /// <summary>
-/// GET /api/admin/confirm-payment?ptx={paymentReferenceId}&t={token}
+/// GET /api/confirm-payment?ptx={paymentReferenceId}&t={token}
 /// El admin pulsa el link de la notificación de escalado para confirmar un pago manual.
 /// Valida token HMAC y ejecuta el flujo de confirmación (crear reserva + notificar cliente).
 /// </summary>
@@ -34,7 +34,7 @@ public class ConfirmManualPaymentFunction
 
     [Function("ConfirmManualPayment")]
     public async Task<HttpResponseData> Run(
-        [HttpTrigger(AuthorizationLevel.Anonymous, "get", "post", Route = "admin/confirm-payment")] HttpRequestData req)
+        [HttpTrigger(AuthorizationLevel.Anonymous, "get", "post", Route = "confirm-payment")] HttpRequestData req)
     {
         var query = QueryHelpers.ParseQuery(req.Url.Query);
         if (!query.TryGetValue("ptx", out var ptxValue) || !query.TryGetValue("t", out var tokenValue))

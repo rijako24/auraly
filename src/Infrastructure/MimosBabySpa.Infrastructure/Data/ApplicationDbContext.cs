@@ -231,8 +231,7 @@ public class ApplicationDbContext : DbContext
             entity.Property(e => e.DurationMinutes).IsRequired();
             entity.Property(e => e.Price).IsRequired().HasPrecision(18, 2); // Precisión para valores monetarios
             entity.Property(e => e.IsActive).IsRequired().HasDefaultValue(true);
-            entity.Property(e => e.Category).IsRequired()
-                  .HasDefaultValue(Domain.Enums.ServiceCategory.Otro).HasConversion<int>();
+            entity.Property(e => e.Category).IsRequired().HasConversion<int>();
             entity.Property(e => e.Tier).IsRequired().HasDefaultValue(Domain.Enums.ServiceTier.Base)
                   .HasConversion<int>();
             entity.Property(e => e.ServiceType).IsRequired()

@@ -85,6 +85,7 @@ public static class ResponseInstructionsTemplate
         - Si el usuario pregunta por una modalidad específica (hidroterapia, masaje, estimulación):
           → Presenta primero el plan de mayor tier que INCLUYA esa modalidad.
         - Usa la descripción del servicio para construir argumentos de venta concretos y emocionales.
+        - Si el servicio recomendado tiene servicios extras compatibles en el catálogo, menciónalos brevemente como opciones para complementar la experiencia (nombre y precio).
         - NO menciones precios de forma abrupta — primero el valor, luego el precio.
         - CIERRE: El usuario solo explora información. Puedes cerrar con invitación suave ("Cuando quieras más info, aquí estoy") o comentario cálido. No es obligatorio terminar con pregunta.
         """;
@@ -117,6 +118,7 @@ public static class ResponseInstructionsTemplate
 
         **PRIORIDAD: El cliente aún no ha elegido un servicio.**
         Presenta opciones del catálogo usando los NOMBRES EXACTOS y precios listados.
+        Si los servicios presentados tienen extras compatibles en el catálogo, menciónalos brevemente.
         NO preguntes fecha, hora ni datos personales — eso viene después de elegir servicio.
         Puedes invitar a elegir o cerrar con comentario que deje espacio ("Cuéntame si alguna te llama la atención" o similar). No siempre con pregunta directa.
         """;
@@ -163,12 +165,14 @@ public static class ResponseInstructionsTemplate
 
     /// <summary>
     /// Se incluye cuando el cliente eligió un servicio con servicios extras compatibles.
-    /// Se agrega junto con la instrucción de stage — no bloquea el siguiente paso.
+    /// Paso dedicado: confirma servicio y ofrece extras. NO se mezcla con la pregunta de fecha.
     /// </summary>
     public const string ServiceSelectedOfferAddOnsInstructions = """
 
-        **OBLIGATORIO — Servicios extras disponibles para este plan:**
-        Al responder, SIEMPRE incluye los servicios extras compatibles del catálogo (nombre y precio de cada uno).
-        Son opcionales — preséntalos de forma natural como parte de tu respuesta, junto con el siguiente paso.
+        **OBLIGATORIO — Confirma servicio y ofrece extras:**
+        - Confirma brevemente que registraste el servicio elegido.
+        - Presenta los servicios extras compatibles del catálogo (nombre y precio de cada uno).
+        - Son opcionales — pregunta al cliente si desea agregar alguno.
+        - NO preguntes por fecha ni otros datos en esta respuesta. Solo confirma servicio y ofrece extras.
         """;
 }
