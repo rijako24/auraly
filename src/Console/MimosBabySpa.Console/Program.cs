@@ -223,7 +223,7 @@ Console.WriteLine("Escribe 'exit' o 'quit' para salir.");
 Console.WriteLine();
 
 // Número de teléfono simulado (puedes cambiarlo)
-var userNumber = "+12345679509";
+var userNumber = "+12345679514";
 var customerName = "Bill";
 
 while (true)

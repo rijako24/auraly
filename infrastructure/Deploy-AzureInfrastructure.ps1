@@ -214,9 +214,8 @@ try {
         Write-Host "✓ Storage Account ya existe: $storageAccountName" -ForegroundColor Green
     }
     
-    # Obtener connection string del storage
+    # Obtener claves del storage (AzureWebJobsStorage se configura automáticamente al crear la Function App)
     $storageKeys = Get-AzStorageAccountKey -ResourceGroupName $ResourceGroupName -Name $storageAccountName
-    $storageConnectionString = "DefaultEndpointsProtocol=https;AccountName=$storageAccountName;AccountKey=$($storageKeys[0].Value);EndpointSuffix=core.windows.net"
     Write-Host ""
 
     # Paso 4: Crear contenedor de Blob Storage
@@ -408,7 +407,6 @@ try {
         "FUNCTIONS_WORKER_RUNTIME" = "dotnet-isolated"
         "WEBSITE_RUN_FROM_PACKAGE" = "1"
         "ConnectionStrings:DefaultConnection" = $sqlConnectionString
-        "BlobStorage:ConnectionString" = $storageConnectionString
         "BlobStorage:ContainerName" = "planes-images"
         "OpenAI:ApiKey" = $openAIKey
         "OpenAI:Endpoint" = $openAIEndpoint

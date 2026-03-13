@@ -262,7 +262,7 @@ public class AvailabilityService : IAvailabilityService
             endOfDay);
 
         return reservations
-            .Where(r => r.Status != ReservationStatus.Cancelled)
+            .Where(r => r.Status != ReservationStatus.Cancelled && r.Status != ReservationStatus.OnHold)
             .ToList();
     }
 

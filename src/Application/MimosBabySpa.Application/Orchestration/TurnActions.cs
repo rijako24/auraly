@@ -34,4 +34,14 @@ public class TurnActions
     /// Indica al LLM que debe informar que el pago está pendiente.
     /// </summary>
     public bool IsAwaitingPayment { get; set; }
+
+    /// <summary>
+    /// True cuando se ejecutó re-agendamiento de reserva.
+    /// </summary>
+    public bool RescheduleExecuted { get; set; }
+
+    /// <summary>
+    /// True cuando se puso la reserva en espera (OnHold).
+    /// </summary>
+    public bool SuspendExecuted { get; set; }
 }

@@ -43,10 +43,12 @@ public class CoreInstructionsBuilder
                c) Resolución contra catálogo: el usuario menciona un servicio por nombre parcial, abreviación o variación
                   ("post vacuna", "marineritos", "el plan de vacunas"). Resolver al nombre exacto del catálogo en la tabla
                   de campos disponibles. Confidence: 0.90 si el match es inequívoco, 0.70 si hay múltiples candidatos.
-                  IMPORTANTE — Service: Extraer SOLO cuando el usuario ELIGE, ACEPTA o SOLICITA RESERVAR el servicio.
-                  Preguntas informativas ("háblame de...", "qué incluye...", "cuánto cuesta el...", "qué tal las decoraciones")
-                  NO son selección → NO extraer Service. Si is_information_query=true, NO extraer Service salvo que el usuario
-                  use lenguaje explícito de selección ("quiero ese", "me quedo con", "reservar ese", "ese plan me gusta").
+                  IMPORTANTE — Service y Attribute:SelectedAddOns: Extraer cuando el usuario use lenguaje de SELECCIÓN explícita
+                  ("quiero X", "mejor el Y", "prefiero X", "la primera", "ese", "esa", "sí ese", "no el otro").
+                  Si is_information_query=true, NO extraer Service NI SelectedAddOns, salvo que el usuario use lenguaje de selección explícita
+                  o consulte disponibilidad. Preguntas informativas ("qué incluye...", "cuánto cuesta...", "háblame del bouquet")
+                  sin selección → is_information_query=true y NO extraer campos de selección.
+                  Afirmación vaga sin nombrar add-on ("sí", "ok", "está bien") cuando el bot mostró varios → NO extraer SelectedAddOns.
                d) Confidence: 0.92 si el referente es inequívoco en el historial. 0.70 si hay múltiples candidatos.
                e) Si el usuario claramente NO responde (cambia de tema) → no forzar extracción.
             5. Fechas temporales (mapeo obligatorio):
@@ -58,11 +60,18 @@ public class CoreInstructionsBuilder
             6. SEPARACIÓN ESTRICTA campos / intenciones: Los nombres ({intentionNames})
                pertenecen EXCLUSIVAMENTE al bloque "intentions". NUNCA los incluyas en "extracted_fields".
             7. ALCANCE: Extraer SOLO del último mensaje del usuario (delimitado con ---MENSAJE A ANALIZAR---).
-                El historial es CONTEXTO para entender referencias. NO re-extraer datos que ya figuran en "Estado actual".
-                EXCEPCIÓN — Atributos multi-valor (CSV): Si el estado ya tiene valor y el usuario MODIFICA (agrega, quita o reemplaza),
+                El historial es CONTEXTO para resolver referencias, NO fuente de datos a re-extraer.
+                Si el usuario MENCIONA un campo en su mensaje (servicio, fecha, hora, nombre, etc.) → SIEMPRE extraerlo,
+                incluso si ese campo ya tiene valor en "Estado actual" (sea igual o distinto). El backend maneja la idempotencia.
+                Si el usuario NO menciona un campo → NO extraerlo del estado ni del historial.
+                Ej: Estado Service="Plan Marineritos" + usuario "y para Plan Aventuras Marinas" → Service: "Plan Aventuras Marinas"
+                Ej: Estado Service="Plan Marineritos" + usuario "ok a las 9" → NO extraer Service (no lo mencionó)
+                EXCEPCIÓN CSV — Atributos multi-valor: Si el estado ya tiene valor y el usuario MODIFICA (agrega, quita o reemplaza),
                 extraer el resultado COMPLETO (CSV actualizado), no solo el fragmento mencionado.
                 Ej: Estado SelectedAddOns="Decoración Sencilla" + usuario "también el bouquet" → "Decoración Sencilla, Bouquet"
                 Ej: Estado SelectedAddOns="Decoración Sencilla, Bouquet" + usuario "quita el bouquet" → "Decoración Sencilla"
+                REEMPLAZAR: "mejor el bouquet", "prefiero la decoración sencilla", "no, el otro", "cambiemos a X"
+                  → extraer el valor NUEVO completo (reemplaza el anterior). Ej: "mejor el bouquet" → SelectedAddOns: "Bouquet"
                 NO inventar campos fuera de la tabla de campos disponibles (ej. TotalPrice).
 
             ## Intenciones (detectar del texto, no inventar):
@@ -78,6 +87,10 @@ public class CoreInstructionsBuilder
               "el pago ya está hecho" — solo cuando Stage=AwaitingPayment. Indica que verificaremos con la plataforma.
             - user_wants_human_assistance: "quiero hablar con una persona", "necesito un humano", "pásame con un agente",
               "quiero hablar con alguien real", "necesito un asesor" — solicitud explícita de redirección a humano.
+            - user_wants_to_reschedule: "quiero cambiar el horario", "mejor otro día", "cambiar la cita", "reagendar",
+              "para otra hora", "otra fecha por favor", "mejor a las 3" — solo cuando Stage=BookingCompleted (reserva ya creada).
+            - user_wants_to_hold: "no puede asistir", "avisa ella", "mejor que me avise", "dejamos pendiente",
+              "no voy a poder ir", "que me avisen cuando pueda" — reserva creada pero cliente no puede asistir ahora.
 
             ## Ambigüedades (tipos):
             - temporal: "pronto", "luego", "otro día" — sin fecha concreta.

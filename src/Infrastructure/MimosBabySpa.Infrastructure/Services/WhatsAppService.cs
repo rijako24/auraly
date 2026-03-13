@@ -4,35 +4,36 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using MimosBabySpa.Application.DTOs;
 using MimosBabySpa.Application.Services;
+using MimosBabySpa.Infrastructure.Configuration;
 
 namespace MimosBabySpa.Infrastructure.Services;
 
-public class WhatsAppWebhookOptions
-{
-    public const string SectionName = "WhatsApp:Webhook";
-    public string VerifyToken { get; set; } = string.Empty;
-}
-
 public class WhatsAppService : IWhatsAppService
 {
-    private const string ApiBaseUrl = "https://graph.facebook.com/v22.0/";
-
     private readonly HttpClient _httpClient;
     private readonly IWhatsAppCredentialResolver _credentialResolver;
     private readonly ILogger<WhatsAppService> _logger;
-    private readonly string? _verifyToken;
+    private readonly string _verifyToken;
 
     public WhatsAppService(
         HttpClient httpClient,
         IWhatsAppCredentialResolver credentialResolver,
         ILogger<WhatsAppService> logger,
-        IOptions<WhatsAppWebhookOptions>? webhookOptions = null)
+        IOptions<WhatsAppWebhookOptions> webhookOptions)
     {
         _httpClient = httpClient;
         _credentialResolver = credentialResolver;
         _logger = logger;
-        _verifyToken = webhookOptions?.Value?.VerifyToken;
-        _httpClient.BaseAddress = new Uri(ApiBaseUrl);
+
+        var options = webhookOptions?.Value
+            ?? throw new InvalidOperationException("WhatsApp:Webhook no está configurado.");
+        if (string.IsNullOrWhiteSpace(options.ApiBaseUrl))
+            throw new InvalidOperationException("WhatsApp:Webhook:ApiBaseUrl es obligatorio.");
+        if (string.IsNullOrWhiteSpace(options.VerifyToken))
+            throw new InvalidOperationException("WhatsApp:Webhook:VerifyToken es obligatorio.");
+
+        _verifyToken = options.VerifyToken;
+        _httpClient.BaseAddress = new Uri(options.ApiBaseUrl.TrimEnd('/') + "/");
     }
 
     public async Task SendTextMessageAsync(Guid businessId, string to, string message)
@@ -128,9 +129,7 @@ public class WhatsAppService : IWhatsAppService
     {
         if (mode != "subscribe" || string.IsNullOrEmpty(challenge))
             return Task.FromResult(false);
-        if (!string.IsNullOrEmpty(_verifyToken))
-            return Task.FromResult(token == _verifyToken);
-        return Task.FromResult(true);
+        return Task.FromResult(token == _verifyToken);
     }
 
     private async Task<WhatsAppCredentials> ResolveCredentialsAsync(Guid businessId)

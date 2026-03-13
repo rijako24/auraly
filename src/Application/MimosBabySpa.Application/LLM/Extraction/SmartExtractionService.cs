@@ -275,7 +275,9 @@ public class SmartExtractionService : ISmartExtractionService
                     UserWantsToCancel = GetBool(ip, "user_wants_to_cancel"),
                     UserRequestsNewPaymentLink = GetBool(ip, "user_requests_new_payment_link"),
                     UserSaysAlreadyPaid = GetBool(ip, "user_says_already_paid"),
-                    UserWantsHumanAssistance = GetBool(ip, "user_wants_human_assistance")
+                    UserWantsHumanAssistance = GetBool(ip, "user_wants_human_assistance"),
+                    UserWantsToReschedule = GetBool(ip, "user_wants_to_reschedule"),
+                    UserWantsToHold = GetBool(ip, "user_wants_to_hold")
                 };
             }
 

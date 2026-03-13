@@ -24,7 +24,9 @@ public static class JsonSchemaDefinition
     ""user_wants_to_cancel"": false,
     ""user_requests_new_payment_link"": false,
     ""user_says_already_paid"": false,
-    ""user_wants_human_assistance"": false
+    ""user_wants_human_assistance"": false,
+    ""user_wants_to_reschedule"": false,
+    ""user_wants_to_hold"": false
   },
   ""ambiguities"": [
     { ""field_name"": ""string"", ""type"": ""temporal|referential|multiple_values|incomplete"", ""text"": ""string"" }

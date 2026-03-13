@@ -51,6 +51,7 @@ public class HybridTransactionalOrchestrator
     private readonly IPaymentTransactionRepository _paymentTransactionRepository;
     private readonly IEscalationNotifier _escalationNotifier;
     private readonly IEscalationConfigProvider _escalationConfig;
+    private readonly IReservationService _reservationService;
     private readonly ILogger<HybridTransactionalOrchestrator> _logger;
 
     public HybridTransactionalOrchestrator(
@@ -67,6 +68,7 @@ public class HybridTransactionalOrchestrator
         IPaymentTransactionRepository paymentTransactionRepository,
         IEscalationNotifier escalationNotifier,
         IEscalationConfigProvider escalationConfig,
+        IReservationService reservationService,
         ILogger<HybridTransactionalOrchestrator> logger)
     {
         _stateManager                  = stateManager;
@@ -82,6 +84,7 @@ public class HybridTransactionalOrchestrator
         _paymentTransactionRepository  = paymentTransactionRepository;
         _escalationNotifier             = escalationNotifier;
         _escalationConfig               = escalationConfig;
+        _reservationService            = reservationService;
         _logger                        = logger;
     }
 
@@ -252,9 +255,10 @@ public class HybridTransactionalOrchestrator
         var state = await _stateManager.GetOrCreateStateAsync(
             conversationId, businessId, customerPhone, cancellationToken);
 
-        // Detección de nuevo ciclo: sesión completada O abandono prolongado.
-        var shouldResetForNewCycle = state.ReservationCreated;
+        // Detección de nuevo ciclo: sesión completada (reset inmediato tras reserva).
+        // PreviousSession captura ReservationId/Service para permitir "cambiar horario" / "avisa después" en cualquier momento.
         var inactivityPeriod = DateTime.UtcNow - state.UpdatedAt;
+        var shouldResetForNewCycle = state.ReservationCreated;
         var hasTransactionalData = !string.IsNullOrWhiteSpace(state.Service)
             || state.DesiredDate.HasValue
             || state.DesiredTime.HasValue;
@@ -331,6 +335,7 @@ public class HybridTransactionalOrchestrator
     private void ApplyExtractionToState(ProcessingContext ctx)
     {
         _logger.LogDebug("FASE 3: Aplicando {Count} campos...", ctx.ExtractionOutput?.ExtractedFields.Count);
+        var intentions = ctx.ExtractionOutput?.Intentions ?? new ExtractionIntentions();
 
         foreach (var field in ctx.ExtractionOutput?.ExtractedFields!)
         {
@@ -342,14 +347,35 @@ public class HybridTransactionalOrchestrator
             }
 
             var fieldName = field.FieldName;
-            
-            // Si el campo coincide con un atributo configurado, agregar el prefijo requerido por StateUpdater
-            if (ctx.BusinessContext.Attributes.ContainsKey(fieldName))
+            var isSelectedAddOns = string.Equals(fieldName, "SelectedAddOns", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(fieldName, "Attribute:SelectedAddOns", StringComparison.OrdinalIgnoreCase);
+
+            // Guardia: is_information_query → no aplicar campos de selección
+            if (intentions.IsInformationQuery && (isSelectedAddOns || string.Equals(fieldName, "Service", StringComparison.OrdinalIgnoreCase)))
             {
-                fieldName = $"Attribute:{fieldName}";
+                _logger.LogDebug("Ignorado por is_information_query [{Field}]", field.FieldName);
+                continue;
             }
 
-            var result = _stateUpdater.ApplyField(ctx.State, fieldName, field.Value);
+            var valueToApply = field.Value;
+            if (isSelectedAddOns)
+            {
+                var validated = ValidateAddOnNamesAgainstCatalog(
+                    field.Value, ctx.BusinessContext.AddOnRules, ctx.State.Service);
+                if (string.IsNullOrEmpty(validated))
+                {
+                    _logger.LogDebug("SelectedAddOns ignorado: ningún nombre válido en catálogo para '{Value}'", field.Value);
+                    continue;
+                }
+                if (validated != field.Value)
+                    _logger.LogInformation("SelectedAddOns validado: '{Original}' → '{Validated}'", field.Value, validated);
+                valueToApply = validated;
+            }
+
+            if (ctx.BusinessContext.Attributes.ContainsKey(fieldName))
+                fieldName = $"Attribute:{fieldName}";
+
+            var result = _stateUpdater.ApplyField(ctx.State, fieldName, valueToApply);
 
             if (result.Success)
                 _logger.LogInformation("✓ {Field}='{Value}' (conf={Conf:F2})",
@@ -358,8 +384,38 @@ public class HybridTransactionalOrchestrator
                 _logger.LogWarning("✗ {Field} no aplicado: {Msg}", field.FieldName, result.Message);
         }
 
-        // Re-evaluar flujo in-memory (sin BD) para que FASE 4 tenga datos frescos
         ctx.ReEvaluate();
+    }
+
+    /// <summary>
+    /// Valida nombres de add-ons contra el catálogo. Retorna CSV solo con nombres válidos.
+    /// </summary>
+    private static string ValidateAddOnNamesAgainstCatalog(
+        string value,
+        IReadOnlyList<AddOnRuleInfo> addOnRules,
+        string? currentService)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return value;
+
+        var names = value.Split([',', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var valid = new List<string>();
+
+        foreach (var name in names)
+        {
+            if (string.IsNullOrWhiteSpace(name)) continue;
+            var rule = addOnRules.FirstOrDefault(r =>
+                string.Equals(r.AddOnName, name.Trim(), StringComparison.OrdinalIgnoreCase));
+            if (rule != null)
+            {
+                if (string.IsNullOrWhiteSpace(rule.CompatibleWithServiceName)
+                    || string.Equals(rule.CompatibleWithServiceName, currentService, StringComparison.OrdinalIgnoreCase))
+                {
+                    valid.Add(rule.AddOnName); // Usar nombre exacto del catálogo
+                }
+            }
+        }
+
+        return valid.Count == 0 ? string.Empty : string.Join(", ", valid);
     }
 
     // ═════════════════════════════════════════════════════════════════
@@ -373,15 +429,50 @@ public class HybridTransactionalOrchestrator
         var turnActions = new TurnActions();
         var intentions  = ctx.ExtractionOutput?.Intentions ?? new ExtractionIntentions();
 
+        var activeReservationId = ctx.State.ReservationId ?? ctx.State.PreviousSession?.ReservationId;
+
         // ── 4a. Cancelación ─────────────────────────────────────
         if (intentions.UserWantsToCancel)
         {
+            if (activeReservationId.HasValue && !ctx.State.ReservationCreated)
+            {
+                ctx.State.ReservationCreated = true;
+                ctx.ReEvaluate();
+            }
             _logger.LogInformation("Usuario canceló — reseteando flags transaccionales");
             _stateUpdater.ResetTransactionalFlags(ctx.State);
             ctx.ReEvaluate();
             turnActions.CancellationExecuted = true;
             ctx.TurnActions = turnActions;
-            return; // No continuar con otras acciones
+            return;
+        }
+
+        // ── 4a.1. OnHold ("no puede asistir", "avisa después") ──
+        if (intentions.UserWantsToHold && activeReservationId.HasValue)
+        {
+            var suspended = await _reservationService.SuspendAsync(activeReservationId.Value, ct);
+            if (suspended)
+            {
+                turnActions.SuspendExecuted = true;
+                _logger.LogInformation("Reserva {ReservationId} puesta en OnHold", activeReservationId);
+                ctx.TurnActions = turnActions;
+                return;
+            }
+        }
+
+        // ── 4a.2. Setup re-agendamiento (data-driven, sin ReschedulingRequested) ──
+        if (intentions.UserWantsToReschedule && activeReservationId.HasValue && !ctx.State.ReservationId.HasValue)
+        {
+            var prev = ctx.State.PreviousSession!;
+            ctx.State.ReservationId = activeReservationId;
+            ctx.State.ReservationCreated = false;
+            ctx.State.Service = prev.Service ?? ctx.State.Service;
+            ctx.State.PaymentConfirmed = true;
+            ctx.State.ReservationConfirmed = true;
+            foreach (var (k, v) in prev.TransactionalAttributes)
+                ctx.State.SetAttribute(k, v);
+            ctx.ReEvaluate();
+            _logger.LogInformation("Setup re-agendamiento: ReservationId={ResId}, Service={Svc}", activeReservationId, ctx.State.Service);
         }
 
         // ── 4b. AwaitingPayment — decidir si regenerar link, verificar pago en caliente, o responder vía LLM ────
@@ -460,6 +551,7 @@ public class HybridTransactionalOrchestrator
             ctx.ReEvaluate();
         }
 
+
         // ── 4c. Verificación de disponibilidad ───────────────────
         //   - CanCheckAvailability: primera verificación (AvailabilityConfirmed=false)
         //   - ShouldRecheckAvailability + UserRequestedAvailability: re-verificación explícita
@@ -468,7 +560,6 @@ public class HybridTransactionalOrchestrator
 
         if (shouldCheck)
         {
-            // Si es re-verificación, primero resetear el flag para que el tool pueda ejecutar
             if (!ctx.FlowEvaluation.CanCheckAvailability && intentions.UserRequestedAvailability)
             {
                 _stateUpdater.ApplyConfirmationFlag(ctx.State, "AvailabilityConfirmed", false);
@@ -512,7 +603,8 @@ public class HybridTransactionalOrchestrator
         // ── 4e. Generar link de pago o crear transacción manual (si aplica) ─────────────────
         if (ctx.BusinessContext.PaymentConfig is { RequiresAnticipo: true } paymentConfig
             && ctx.FlowEvaluation.CurrentStage == TransactionStage.ConfirmingBooking
-            && string.IsNullOrWhiteSpace(ctx.State.PaymentReferenceId))
+            && string.IsNullOrWhiteSpace(ctx.State.PaymentReferenceId)
+            && !ctx.State.PaymentConfirmed)
         {
             var total = ReservationTotalCalculator.Calculate(
                 ctx.State, ctx.BusinessContext.Services, ctx.BusinessContext.AddOnRules);
@@ -580,18 +672,44 @@ public class HybridTransactionalOrchestrator
             }
         }
 
-        // ── 4f. Crear reserva ────────────────────────────────────
+        // ── 4f. Crear o re-agendar reserva ───────────────────────
         if (ctx.FlowEvaluation.CanCreateReservation)
         {
-            _logger.LogInformation("Creando reserva...");
-            var createResult = await ExecuteToolAndReloadAsync(ToolType.CreateReservation, ctx, ct);
-            turnActions.CreateReservationExecuted = createResult.Success;
-            turnActions.ReservationResultMessage  = createResult.Message;
+            if (ctx.State.ReservationId.HasValue)
+            {
+                _logger.LogInformation("Re-agendando reserva {ReservationId}...", ctx.State.ReservationId);
+                var rescheduled = await _reservationService.RescheduleAsync(
+                    ctx.State.ReservationId.Value,
+                    ctx.State.DesiredDate!.Value,
+                    ctx.State.DesiredTime!.Value,
+                    ct);
 
-            if (createResult.Success)
-                _logger.LogInformation("✅ Reserva creada exitosamente: {ReservationId}", ctx.State.ReservationId);
+                if (rescheduled)
+                {
+                    ctx.State.ReservationCreated = true;
+                    turnActions.RescheduleExecuted = true;
+                    turnActions.ReservationResultMessage = $"✓ Horario actualizado a {ctx.State.DesiredDate.Value:dd/MM/yyyy} {ctx.State.DesiredTime.Value:HH:mm}";
+                    ctx.ReEvaluate();
+                    _logger.LogInformation("✅ Reserva {ReservationId} re-agendada", ctx.State.ReservationId);
+                }
+                else
+                {
+                    turnActions.ReservationResultMessage = "No pude cambiar el horario. Intenta con otra fecha u hora.";
+                    _logger.LogWarning("Re-agendamiento falló para reserva {ReservationId}", ctx.State.ReservationId);
+                }
+            }
             else
-                _logger.LogWarning("❌ Creación de reserva falló: {Msg}", createResult.Message);
+            {
+                _logger.LogInformation("Creando reserva...");
+                var createResult = await ExecuteToolAndReloadAsync(ToolType.CreateReservation, ctx, ct);
+                turnActions.CreateReservationExecuted = createResult.Success;
+                turnActions.ReservationResultMessage  = createResult.Message;
+
+                if (createResult.Success)
+                    _logger.LogInformation("✅ Reserva creada exitosamente: {ReservationId}", ctx.State.ReservationId);
+                else
+                    _logger.LogWarning("❌ Creación de reserva falló: {Msg}", createResult.Message);
+            }
         }
 
         ctx.TurnActions = turnActions;
@@ -680,6 +798,19 @@ public class HybridTransactionalOrchestrator
             return "✅ ¡Tu reserva ha sido creada exitosamente!" +
                    ConfirmationSummaryBuilder.BuildPostCreationSummary(ctx.State, ctx.BusinessContext) +
                    "\n\n¡Nos vemos pronto! Si tienes alguna pregunta, aquí estoy.";
+        }
+
+        // 1b. RE-AGENDAMIENTO EXITOSO
+        if (ctx.TurnActions.RescheduleExecuted)
+        {
+            return (ctx.TurnActions.ReservationResultMessage ?? "✅ Tu horario ha sido actualizado.") +
+                   "\n\nSi necesitas otro cambio, aquí estoy.";
+        }
+
+        // 1c. RESERVA EN ESPERA (OnHold)
+        if (ctx.TurnActions.SuspendExecuted)
+        {
+            return "Entendido. He dejado tu reserva en espera. Cuando definas el horario, avísame y la reactivamos.";
         }
 
         // 2. ERROR DE PAGO — resumen + medios manuales + escalación en FASE 6
@@ -999,10 +1130,11 @@ public class HybridTransactionalOrchestrator
             return sb.ToString();
         }
 
-        // 2. Reserva creada: flujo terminado — no agregar instrucciones de stage.
-        if (turnActions.CreateReservationExecuted)
+        // 2. Reserva creada / re-agendada / suspendida: flujo terminado — no agregar instrucciones de stage.
+        if (turnActions.CreateReservationExecuted || turnActions.RescheduleExecuted || turnActions.SuspendExecuted)
         {
-            sb.AppendLine(ResponseInstructionsTemplate.CreateReservationInstructions);
+            if (turnActions.CreateReservationExecuted)
+                sb.AppendLine(ResponseInstructionsTemplate.CreateReservationInstructions);
             return sb.ToString();
         }
 
@@ -1197,6 +1329,8 @@ public class HybridTransactionalOrchestrator
     {
         if (turnActions.CancellationExecuted)
             return "Entendido. Si en algún momento quieres retomar, aquí estaré. ¿Hay algo más en lo que pueda ayudarte?";
+        if (turnActions.RescheduleExecuted)
+            return "¡El horario de tu reserva fue actualizado exitosamente! ¿Hay algo más en lo que pueda ayudarte?";
         if (turnActions.CreateReservationExecuted)
             return "¡Tu reserva fue creada exitosamente! Te enviaré los detalles. ¿Hay algo más en lo que pueda ayudarte?";
         if (turnActions.CheckAvailabilityExecuted)
@@ -1215,6 +1349,7 @@ public class HybridTransactionalOrchestrator
             || ctx.TurnActions.PaymentLinkGenerated)
         && !ctx.State.ReservationCreated
         && !ctx.TurnActions.CreateReservationExecuted
+        && !ctx.TurnActions.RescheduleExecuted
         && !ctx.State.ConfirmationSummaryPresented;
 
     // ═════════════════════════════════════════════════════════════════

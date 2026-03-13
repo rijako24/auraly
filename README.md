@@ -38,7 +38,7 @@ El proyecto sigue **Clean Architecture** con las siguientes capas:
    - `plan-basico.jpg`
    - `plan-premium.jpg`
    - `plan-deluxe.jpg`
-4. Actualizar `BlobStorage:ConnectionString` en `local.settings.json`
+4. Blob Storage usa `AzureWebJobsStorage` (la misma cuenta que Azure Functions requiere)
 
 ### 3. Configurar Azure OpenAI
 
@@ -131,7 +131,6 @@ az functionapp config appsettings set `
   --resource-group MimosBabySpa `
   --settings `
     "ConnectionStrings:DefaultConnection=<TU_CONNECTION_STRING>" `
-    "BlobStorage:ConnectionString=<TU_BLOB_CONNECTION_STRING>" `
     "BlobStorage:ContainerName=planes-images" `
     "OpenAI:ApiKey=<TU_OPENAI_KEY>" `
     "OpenAI:Endpoint=<TU_OPENAI_ENDPOINT>" `

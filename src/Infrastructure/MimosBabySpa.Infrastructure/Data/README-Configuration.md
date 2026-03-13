@@ -17,7 +17,7 @@ Las siguientes configuraciones deben estar en Application Settings de Azure Func
 
 ```
 ConnectionStrings:DefaultConnection = <cadena de conexión a SQL Server>
-BlobStorage:ConnectionString = <cadena de conexión a Blob Storage>
+AzureWebJobsStorage = <cadena de conexión a Storage - usada por Functions y Blob Storage>
 BlobStorage:ContainerName = planes-images
 OpenAI:ApiKey = <clave API de OpenAI>
 OpenAI:Endpoint = <endpoint de OpenAI>

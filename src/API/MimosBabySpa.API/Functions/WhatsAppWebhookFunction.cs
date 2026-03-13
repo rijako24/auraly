@@ -73,8 +73,13 @@ public class WhatsAppWebhookFunction
             {
                 // phone_number_id: value.metadata.phone_number_id (WhatsApp Cloud API) o entry.Id (fallback)
                 var phoneNumberId = entry.Changes?
-                    .FirstOrDefault(c => c?.Value?.Metadata != null)?.Value?.Metadata?.PhoneNumberId
-                    ?? entry.Id;
+                    .FirstOrDefault(c => c?.Value?.Metadata != null)?.Value?.Metadata?.PhoneNumberId;
+
+                if (string.IsNullOrEmpty(phoneNumberId))
+                {
+                    _logger.LogWarning("phone_number_id es nulo en los datos de entrada");
+                    continue; // Saltar este entry si no se puede identificar el negocio
+                }
 
                 var businessContext = await _businessIdentificationService.IdentifyBusinessAsync(phoneNumberId);
 
@@ -89,8 +94,8 @@ public class WhatsAppWebhookFunction
                 var allMessages = (await _webhookParserService.ExtractAllMessagesFromEntryAsync(entry, businessContext.BusinessId)).ToList();
 
                 if (!allMessages.Any())
-                {
-                    // No hay mensajes para procesar (puede ser otro tipo de evento)
+                { 
+                    _logger.LogWarning("No hay mensajes para procesar (puede ser otro tipo de evento) para phone_number_id: {PhoneNumberId}", phoneNumberId);
                     continue;
                 }
 

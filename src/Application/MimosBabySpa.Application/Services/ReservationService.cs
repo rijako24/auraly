@@ -291,6 +291,112 @@ public class ReservationService : IReservationService
         }
     }
 
+    /// <inheritdoc />
+    public async Task<bool> SuspendAsync(Guid reservationId, CancellationToken cancellationToken = default)
+    {
+        var reservation = await _unitOfWork.Reservations.GetByIdAsync(reservationId);
+        if (reservation == null)
+        {
+            _logger.LogWarning("Reservation {ReservationId} no encontrada para Suspend", reservationId);
+            return false;
+        }
+
+        if (reservation.Status == ReservationStatus.OnHold)
+        {
+            _logger.LogDebug("Reservation {ReservationId} ya está en OnHold", reservationId);
+            return true;
+        }
+
+        reservation.Status = ReservationStatus.OnHold;
+        reservation.UpdatedAt = DateTime.UtcNow;
+        await _unitOfWork.Reservations.UpdateAsync(reservation);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+        _logger.LogInformation("Reserva {ReservationId} puesta en OnHold", reservationId);
+        return true;
+    }
+
+    /// <inheritdoc />
+    public async Task<bool> RescheduleAsync(Guid reservationId, DateOnly newDate, TimeOnly newTime, CancellationToken cancellationToken = default)
+    {
+        var reservation = await _unitOfWork.Reservations.GetByIdAsync(reservationId);
+        if (reservation == null)
+        {
+            _logger.LogWarning("Reservation {ReservationId} no encontrada para Reschedule", reservationId);
+            return false;
+        }
+
+        if (reservation.Status == ReservationStatus.Cancelled)
+        {
+            _logger.LogWarning("Reservation {ReservationId} cancelada no puede re-agendarse", reservationId);
+            return false;
+        }
+
+        if (reservation.Status == ReservationStatus.OnHold)
+        {
+            reservation.Status = ReservationStatus.Confirmed;
+        }
+
+        var service = reservation.Service ?? await _unitOfWork.Services.GetByIdAsync(reservation.ServiceId);
+        if (service == null)
+        {
+            _logger.LogWarning("Servicio de reserva {ReservationId} no encontrado", reservationId);
+            return false;
+        }
+
+        var duration = service.DurationMinutes > 0 ? service.DurationMinutes : 60;
+        var reservationDateTime = newDate.ToDateTime(newTime);
+        var endTime = reservationDateTime.AddMinutes(duration);
+
+        var employee = await _employeeAssignmentService.FindBestAvailableEmployeeAsync(
+            reservation.BusinessId,
+            reservation.ServiceId,
+            reservationDateTime,
+            endTime,
+            cancellationToken);
+
+        if (employee == null)
+        {
+            _logger.LogWarning("No hay empleado disponible para nuevo horario {Date} {Time}", newDate, newTime);
+            return false;
+        }
+
+        reservation.ReservationDateTime = reservationDateTime;
+        reservation.DurationMinutes = duration;
+        reservation.EmployeeId = employee.EmployeeId;
+        reservation.UpdatedAt = DateTime.UtcNow;
+        await _unitOfWork.Reservations.UpdateAsync(reservation);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+        if (await IsCalendarSyncEnabledAsync(reservation.BusinessId, cancellationToken) && !string.IsNullOrEmpty(reservation.CalendarEventId))
+        {
+            try
+            {
+                var serviceName = service.ServiceName;
+                var calendarEvent = new CalendarEvent
+                {
+                    Title = $"[{serviceName}] Reserva",
+                    Description = $"Reserva {reservationDateTime:dd/MM/yyyy} {reservationDateTime:HH:mm}",
+                    StartDateTime = reservationDateTime,
+                    EndDateTime = reservationDateTime.AddMinutes(duration),
+                    ExtendedProperties = new Dictionary<string, string>
+                    {
+                        { "ReservationId", reservation.ReservationId.ToString() },
+                        { "BusinessId", reservation.BusinessId.ToString() }
+                    }
+                };
+                await _calendarService.UpdateEventAsync(reservation.BusinessId, reservation.CalendarEventId, calendarEvent, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "No se pudo actualizar evento de calendario para reserva {ReservationId}", reservationId);
+            }
+        }
+
+        _logger.LogInformation("Reserva {ReservationId} re-agendada a {Date} {Time}", reservationId, newDate, newTime);
+        return true;
+    }
+
     private static ReservationDto MapToDto(Reservation reservation)
     {
         if (reservation.Service == null)

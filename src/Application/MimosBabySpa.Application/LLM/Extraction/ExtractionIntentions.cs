@@ -51,4 +51,10 @@ public class ExtractionIntentions
 
     [JsonPropertyName("user_wants_human_assistance")]
     public bool UserWantsHumanAssistance { get; set; }
+
+    [JsonPropertyName("user_wants_to_reschedule")]
+    public bool UserWantsToReschedule { get; set; }
+
+    [JsonPropertyName("user_wants_to_hold")]
+    public bool UserWantsToHold { get; set; }
 }

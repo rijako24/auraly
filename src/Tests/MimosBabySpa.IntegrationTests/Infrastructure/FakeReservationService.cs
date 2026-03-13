@@ -86,6 +86,22 @@ public class FakeReservationService : IReservationService
             r.ReservationDateTime >= startDate &&
             r.ReservationDateTime <= endDate));
 
+    public Task<bool> SuspendAsync(Guid reservationId, CancellationToken cancellationToken = default)
+    {
+        var r = _reservationsCreated.FirstOrDefault(x => x.ReservationId == reservationId);
+        if (r != null) r.Status = ReservationStatus.OnHold;
+        return Task.FromResult(r != null);
+    }
+
+    public Task<bool> RescheduleAsync(Guid reservationId, DateOnly newDate, TimeOnly newTime, CancellationToken cancellationToken = default)
+    {
+        var r = _reservationsCreated.FirstOrDefault(x => x.ReservationId == reservationId);
+        if (r == null) return Task.FromResult(false);
+        r.ReservationDateTime = newDate.ToDateTime(newTime);
+        r.UpdatedAt = DateTime.UtcNow;
+        return Task.FromResult(true);
+    }
+
     private static IReadOnlyList<string> ParseAddOnNames(string? csv)
     {
         if (string.IsNullOrWhiteSpace(csv))

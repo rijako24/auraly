@@ -23,7 +23,7 @@ public static class ConfirmationSummaryBuilder
         var sb = new StringBuilder();
         sb.Append($"\n\n📋 *Resumen de tu reserva*\n{BuildSummaryBlock(state, businessContext)}");
 
-        if (businessContext.PaymentConfig is { RequiresAnticipo: true })
+        if (businessContext.PaymentConfig is { RequiresAnticipo: true } && !state.PaymentConfirmed)
         {
             sb.Append(BuildAnticipoBlock(state, businessContext));
             if (!string.IsNullOrWhiteSpace(state.PaymentLinkUrl))
@@ -45,13 +45,14 @@ public static class ConfirmationSummaryBuilder
 
     /// <summary>
     /// Resumen tras crear la reserva. Incluye anticipo pendiente si aplica.
+    /// Cuando PaymentConfirmed=true (webhook/post-pago) NO incluye link ni bloques de pago.
     /// </summary>
     public static string BuildPostCreationSummary(ConversationState state, LoadedBusinessContext businessContext)
     {
         var sb = new StringBuilder();
         sb.Append($"\n\n📋 *Resumen de tu reserva*\n{BuildSummaryBlock(state, businessContext)}");
 
-        if (businessContext.PaymentConfig is { RequiresAnticipo: true })
+        if (businessContext.PaymentConfig is { RequiresAnticipo: true } && !state.PaymentConfirmed)
             sb.Append(BuildAnticipoBlock(state, businessContext));
 
         return sb.ToString();

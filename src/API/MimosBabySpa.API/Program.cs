@@ -171,11 +171,11 @@ var host = new HostBuilder()
 
 
 
-        // Infrastructure Services - Blob Storage
+        // Infrastructure Services - Blob Storage (usa AzureWebJobsStorage)
         services.AddSingleton(sp =>
         {
             var config = sp.GetRequiredService<IConfiguration>();
-            var connectionString = config["BlobStorage:ConnectionString"] ?? throw new InvalidOperationException("BlobStorage:ConnectionString no configurado");
+            var connectionString = config["AzureWebJobsStorage"] ?? throw new InvalidOperationException("AzureWebJobsStorage debe estar configurado");
             
             return new BlobServiceClient(connectionString);
         });

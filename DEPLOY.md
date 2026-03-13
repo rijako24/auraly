@@ -46,7 +46,6 @@ az functionapp config appsettings set `
   --resource-group MimosBabySpa `
   --settings `
     "ConnectionStrings:DefaultConnection=Server=tcp:TU_SERVIDOR.database.windows.net,1433;Initial Catalog=TU_DB;Persist Security Info=False;User ID=TU_USUARIO;Password=TU_PASSWORD;MultipleActiveResultSets=False;Encrypt=True;TrustServerCertificate=False;Connection Timeout=30;" `
-    "BlobStorage:ConnectionString=DefaultEndpointsProtocol=https;AccountName=TU_CUENTA;AccountKey=TU_KEY;EndpointSuffix=core.windows.net" `
     "BlobStorage:ContainerName=planes-images" `
     "OpenAI:ApiKey=TU_OPENAI_KEY" `
     "OpenAI:Endpoint=https://TU_RECURSO.openai.azure.com/" `
