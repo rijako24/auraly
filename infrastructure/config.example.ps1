@@ -15,7 +15,8 @@ $Config = @{
     SqlAdminPassword = ConvertTo-SecureString "TuPassword123!" -AsPlainText -Force
     
     # Azure OpenAI
-    OpenAIModelDeploymentName = "gpt-4"  # o "gpt-4o-mini"
+    OpenAITextDeploymentName = "gpt-4o-mini"
+    OpenAIAudioDeploymentName = "whisper-1"
     
     # WhatsApp Business API
     WhatsAppPhoneNumberId = "123456789012345"
@@ -37,7 +38,8 @@ $Config = @{
     -Environment $Config.Environment `
     -SqlAdminUsername $Config.SqlAdminUsername `
     -SqlAdminPassword $Config.SqlAdminPassword `
-    -OpenAIModelDeploymentName $Config.OpenAIModelDeploymentName `
+    -OpenAITextDeploymentName $Config.OpenAITextDeploymentName `
+    -OpenAIAudioDeploymentName $Config.OpenAIAudioDeploymentName `
     -WhatsAppPhoneNumberId $Config.WhatsAppPhoneNumberId `
     -WhatsAppAccessToken $Config.WhatsAppAccessToken `
     -FunctionAppName $Config.FunctionAppName `

@@ -131,9 +131,9 @@ public class ConversationalBehaviorTests
                 throw new Exception("Primera respuesta debe contener saludo 'Hola'");
             }
 
-            if (!response1.Response.Contains("María", StringComparison.OrdinalIgnoreCase))
+            if (!response1.Response.Contains("Luna", StringComparison.OrdinalIgnoreCase))
             {
-                throw new Exception("Primera respuesta debe presentarse como 'María'");
+                throw new Exception("Primera respuesta debe presentarse como 'Luna'");
             }
 
             // ═══════════════════════════════════════════════════════

@@ -46,7 +46,8 @@ Este directorio contiene scripts para desplegar toda la infraestructura necesari
     -Environment "prod" `
     -SqlAdminUsername "sqladmin" `
     -SqlAdminPassword (ConvertTo-SecureString "TuPassword123!" -AsPlainText -Force) `
-    -OpenAIModelDeploymentName "gpt-4" `
+    -OpenAITextDeploymentName "gpt-4o-mini" `
+    -OpenAIAudioDeploymentName "whisper-1" `
     -WhatsAppPhoneNumberId "123456789012345" `
     -WhatsAppAccessToken (ConvertTo-SecureString "tu-access-token" -AsPlainText -Force) `
     -EnableApplicationInsights
@@ -62,7 +63,8 @@ Este directorio contiene scripts para desplegar toda la infraestructura necesari
 | `Environment` | No | Ambiente (dev/staging/prod) | `dev` |
 | `SqlAdminUsername` | Sí | Usuario administrador de SQL | - |
 | `SqlAdminPassword` | Sí | Contraseña del administrador SQL | - |
-| `OpenAIModelDeploymentName` | No | Nombre del deployment OpenAI | `gpt-4` |
+| `OpenAITextDeploymentName` | No | Nombre del deployment GPT | `gpt-4` |
+| `OpenAIAudioDeploymentName` | No | Nombre del deployment Whisper | `whisper-1` |
 | `WhatsAppPhoneNumberId` | Sí | Phone Number ID de WhatsApp | - |
 | `WhatsAppAccessToken` | Sí | Access Token de WhatsApp | - |
 | `FunctionAppName` | No | Nombre de la Function App | Auto-generado |

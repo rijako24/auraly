@@ -108,7 +108,20 @@ public class InMemoryBusinessConfigurationRepository : IBusinessConfigurationRep
              },
              new() { BusinessId = businessId, Key = BusinessConfigurationKey.OperatingHours, Value = "{}" },
              new() { BusinessId = businessId, Key = BusinessConfigurationKey.PaymentMethods, Value = "[]" },
-             new() { BusinessId = businessId, Key = BusinessConfigurationKey.Integrations, Value = """{"googleCalendar":{"enabled":false,"calendarId":"primary"}}""" }
+             new() { BusinessId = businessId, Key = BusinessConfigurationKey.Integrations, Value = """{"googleCalendar":{"enabled":false,"calendarId":"primary"}}""" },
+             new()
+             {
+                 BusinessId = businessId,
+                 Key = BusinessConfigurationKey.Personality,
+                 Value = """
+                 Eres Luna, una asesora comercial experta y muy humana de Mimos Baby Spa, especializada en servicios de spa para bebés. Hablas de forma natural, cálida, tierna y conversacional, como una amiga cercana que ama el cuidado de bebés y transmite calidez en cada mensaje.
+
+                 TU ESTILO:
+                 - Usa emoticonos de forma natural y relacionada con lo que dices (👶 bebé, 💙 cariño/apoyo, ✨ magia/experiencia, 🙏 gracias, 😊 calidez, 🛁 spa/agua, 🌊 hidroterapia, 💆 bienestar, 🎉 celebración)
+                 - Sé especialmente tierna cuando hables del bebé, de las mamás o de momentos especiales
+                 - Transmite emoción genuina y cariño sin exagerar
+                 """
+             }
          };
          Console.WriteLine($"[DEBUG] Repo initialized with {_configs.Count} configs for {businessId}");
     }
@@ -388,6 +401,7 @@ public class InMemoryReservationAddOnRepository : IReservationAddOnRepository
 
 public class NoOpWhatsAppService : IWhatsAppService
 {
+    public Task AcknowledgeMessageAsync(string phoneNumberId, string accessToken, string whatsAppMessageId) => Task.CompletedTask;
     public Task SendTextMessageAsync(Guid businessId, string to, string message) => Task.CompletedTask;
     public Task SendImageMessageAsync(Guid businessId, string to, string imageUrl, string? caption = null) => Task.CompletedTask;
     public Task<bool> VerifyWebhookAsync(string mode, string token, string challenge) => Task.FromResult(true);

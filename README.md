@@ -42,9 +42,11 @@ El proyecto sigue **Clean Architecture** con las siguientes capas:
 
 ### 3. Configurar Azure OpenAI
 
-1. Crear un recurso de Azure OpenAI
-2. Desplegar un modelo (GPT-4 o GPT-4o-mini)
-3. Actualizar `OpenAI:Endpoint`, `OpenAI:ApiKey` y `OpenAI:DeploymentName` en `local.settings.json`
+1. Crear recurso(s) de Azure OpenAI (texto/GPT y opcionalmente Whisper en recurso separado)
+2. Desplegar modelo GPT (gpt-4 o gpt-4o-mini) y Whisper (whisper-1)
+3. Actualizar en `local.settings.json`:
+   - `OpenAI:TextModel:ApiKey`, `OpenAI:TextModel:Endpoint`, `OpenAI:TextModel:DeploymentName`
+   - `OpenAI:AudioModel:ApiKey`, `OpenAI:AudioModel:Endpoint`, `OpenAI:AudioModel:DeploymentName`
 
 ### 4. Configurar WhatsApp Cloud API
 
@@ -132,9 +134,12 @@ az functionapp config appsettings set `
   --settings `
     "ConnectionStrings:DefaultConnection=<TU_CONNECTION_STRING>" `
     "BlobStorage:ContainerName=planes-images" `
-    "OpenAI:ApiKey=<TU_OPENAI_KEY>" `
-    "OpenAI:Endpoint=<TU_OPENAI_ENDPOINT>" `
-    "OpenAI:DeploymentName=gpt-4" `
+    "OpenAI:TextModel:ApiKey=<TU_GPT_KEY>" `
+    "OpenAI:TextModel:Endpoint=<TU_GPT_ENDPOINT>" `
+    "OpenAI:TextModel:DeploymentName=gpt-4o-mini" `
+    "OpenAI:AudioModel:ApiKey=<TU_WHISPER_KEY>" `
+    "OpenAI:AudioModel:Endpoint=<TU_WHISPER_ENDPOINT>" `
+    "OpenAI:AudioModel:DeploymentName=whisper-1" `
     "WhatsApp:PhoneNumberId=<TU_PHONE_NUMBER_ID>" `
     "WhatsApp:AccessToken=<TU_ACCESS_TOKEN>"
 ```

@@ -19,9 +19,12 @@ Las siguientes configuraciones deben estar en Application Settings de Azure Func
 ConnectionStrings:DefaultConnection = <cadena de conexión a SQL Server>
 AzureWebJobsStorage = <cadena de conexión a Storage - usada por Functions y Blob Storage>
 BlobStorage:ContainerName = planes-images
-OpenAI:ApiKey = <clave API de OpenAI>
-OpenAI:Endpoint = <endpoint de OpenAI>
-OpenAI:DeploymentName = gpt-4
+OpenAI:TextModel:ApiKey = <clave API para GPT>
+OpenAI:TextModel:Endpoint = <endpoint para GPT>
+OpenAI:TextModel:DeploymentName = gpt-4o-mini
+OpenAI:AudioModel:ApiKey = <clave API para Whisper>
+OpenAI:AudioModel:Endpoint = <endpoint para Whisper>
+OpenAI:AudioModel:DeploymentName = whisper-1
 WhatsApp:PhoneNumberId = <ID del número de teléfono>
 WhatsApp:AccessToken = <token de acceso de WhatsApp>
 ```

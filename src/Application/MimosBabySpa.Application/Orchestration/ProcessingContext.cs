@@ -27,8 +27,7 @@ public class ProcessingContext
     public LoadedBusinessContext BusinessContext { get; } // ✅ Nuevo: Contexto de negocio precargado
     public FlowEvaluationResult FlowEvaluation { get; private set; }
     public ToolExecutionContext ToolContext { get; private set; }
-    public ExtractionResult? ExtractionResult { get; set; }
-    /// <summary>Vista de extracción para el flujo (mapeada desde ExtractionResult).</summary>
+    /// <summary>Vista de extracción para el flujo.</summary>
     public ExtractionOutput? ExtractionOutput { get; set; }
     /// <summary>Acciones ejecutadas en este turno (FASE 4).</summary>
     public TurnActions TurnActions { get; set; } = new();

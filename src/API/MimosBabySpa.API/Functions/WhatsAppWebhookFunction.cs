@@ -13,17 +13,20 @@ public class WhatsAppWebhookFunction
 {
     private readonly IWhatsAppMessageProcessorService _messageProcessorService;
     private readonly IWhatsAppWebhookParserService _webhookParserService;
+    private readonly IWhatsAppService _whatsAppService;
     private readonly IBusinessIdentificationService _businessIdentificationService;
     private readonly ILogger<WhatsAppWebhookFunction> _logger;
 
     public WhatsAppWebhookFunction(
         IWhatsAppMessageProcessorService messageProcessorService,
         IWhatsAppWebhookParserService webhookParserService,
+        IWhatsAppService whatsAppService,
         IBusinessIdentificationService businessIdentificationService,
         ILogger<WhatsAppWebhookFunction> logger)
     {
         _messageProcessorService = messageProcessorService;
         _webhookParserService = webhookParserService;
+        _whatsAppService = whatsAppService;
         _businessIdentificationService = businessIdentificationService;
         _logger = logger;
     }
@@ -88,6 +91,17 @@ public class WhatsAppWebhookFunction
                     _logger.LogWarning("No se pudo identificar el negocio para phone_number_id: {PhoneNumberId}", phoneNumberId);
                     continue; // Saltar este entry si no se puede identificar el negocio
                 }
+
+                // Acuse de recibo inmediato (read + typing). Usa credenciales ya cargadas — sin query extra, seguro fire-and-forget.
+                var lastMessageId = entry.Changes?
+                    .Where(c => c?.Field == "messages" && c.Value?.Messages != null)
+                    .SelectMany(c => c.Value!.Messages)
+                    .LastOrDefault()?.Id;
+                if (!string.IsNullOrEmpty(lastMessageId))
+                    _ = _whatsAppService.AcknowledgeMessageAsync(
+                        businessContext.WhatsAppNumber.WhatsAppPhoneNumberId,
+                        businessContext.WhatsAppNumber.WhatsAppAccessToken,
+                        lastMessageId);
 
                 // Extraer todos los mensajes (texto y audio) de esta entrada específica.
                 // Los audios ya están transcritos dentro de ExtractAllMessagesFromEntryAsync

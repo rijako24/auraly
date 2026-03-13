@@ -13,7 +13,8 @@ namespace MimosBabySpa.Infrastructure.Services;
 
 public class AIService : IAIService
 {
-    private readonly OpenAIClient _openAIClient;
+    private readonly OpenAIClient _textClient;
+    private readonly OpenAIClient _audioClient;
     private readonly string _textDeploymentName; // Para GPT (texto)
     private readonly string _audioDeploymentName; // Para Whisper (audio)
     private readonly IPromptProvider _systemPromptProvider;
@@ -21,14 +22,16 @@ public class AIService : IAIService
     private readonly ILogger<AIService> _logger;
 
     public AIService(
-        OpenAIClient openAIClient,
+        OpenAIClient textClient,
+        OpenAIClient audioClient,
         string textDeploymentName,
         string audioDeploymentName,
         IPromptProvider systemPromptProvider,
         CachedBusinessContextProvider cachedContextProvider,
         ILogger<AIService> logger)
     {
-        _openAIClient = openAIClient;
+        _textClient = textClient ?? throw new ArgumentNullException(nameof(textClient));
+        _audioClient = audioClient ?? throw new ArgumentNullException(nameof(audioClient));
         _textDeploymentName = textDeploymentName;
         _audioDeploymentName = audioDeploymentName;
         _systemPromptProvider = systemPromptProvider;
@@ -83,7 +86,7 @@ public class AIService : IAIService
                 MaxTokens = 500
             };
 
-            var response = await _openAIClient.GetChatCompletionsAsync(options);
+            var response = await _textClient.GetChatCompletionsAsync(options);
             var generatedText = response.Value.Choices[0].Message.Content;
 
             _logger.LogDebug("Respuesta generada para intención: {Intent}", intent);
@@ -110,7 +113,7 @@ public class AIService : IAIService
 
             // Llamar a la API de Azure OpenAI Whisper para transcribir
             // IMPORTANTE: En la versión beta, el deployment name se pasa dentro de AudioTranscriptionOptions
-            var response = await _openAIClient.GetAudioTranscriptionAsync(
+            var response = await _audioClient.GetAudioTranscriptionAsync(
                 new AudioTranscriptionOptions(_audioDeploymentName, BinaryData.FromBytes(audioBytes))
                 {
                     ResponseFormat = AudioTranscriptionFormat.Verbose,
@@ -150,7 +153,7 @@ public class AIService : IAIService
                 options.ResponseFormat = ChatCompletionsResponseFormat.JsonObject;
             }
 
-            var response = await _openAIClient.GetChatCompletionsAsync(options);
+            var response = await _textClient.GetChatCompletionsAsync(options);
             return response.Value.Choices[0].Message.Content.Trim();
         }
         catch (Exception ex)

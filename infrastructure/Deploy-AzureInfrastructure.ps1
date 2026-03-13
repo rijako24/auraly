@@ -32,8 +32,11 @@
 .PARAMETER SqlAdminPassword
     Contraseña del administrador de SQL Server (debe cumplir requisitos de complejidad)
 
-.PARAMETER OpenAIModelDeploymentName
-    Nombre del deployment del modelo OpenAI (default: gpt-4)
+.PARAMETER OpenAITextDeploymentName
+    Nombre del deployment del modelo GPT (default: gpt-4)
+
+.PARAMETER OpenAIAudioDeploymentName
+    Nombre del deployment de Whisper (default: whisper-1)
 
 .PARAMETER WhatsAppPhoneNumberId
     Phone Number ID de WhatsApp Business API
@@ -88,7 +91,10 @@ param(
     [SecureString]$SqlAdminPassword,
     
     [Parameter(Mandatory=$false)]
-    [string]$OpenAIModelDeploymentName = "gpt-4",
+    [string]$OpenAITextDeploymentName = "gpt-4",
+    
+    [Parameter(Mandatory=$false)]
+    [string]$OpenAIAudioDeploymentName = "whisper-1",
     
     [Parameter(Mandatory=$true)]
     [string]$WhatsAppPhoneNumberId,
@@ -347,16 +353,31 @@ try {
         Write-Host "✓ Azure OpenAI ya existe: $openAIServiceName" -ForegroundColor Green
     }
     
+    # Text model (GPT) - recurso principal
     if ($null -ne $openAIService) {
         $openAIKeys = Get-AzCognitiveServicesAccountKey -ResourceGroupName $ResourceGroupName -Name $openAIServiceName
-        $openAIEndpoint = $openAIService.Endpoint
-        $openAIKey = $openAIKeys.Key1
+        $openAITextEndpoint = $openAIService.Endpoint
+        $openAITextKey = $openAIKeys.Key1
     } else {
         Write-Host "⚠ Azure OpenAI no disponible. Debes configurarlo manualmente." -ForegroundColor Yellow
-        $openAIEndpoint = Read-Host "Ingresa el endpoint de Azure OpenAI (ej: https://tu-recurso.openai.azure.com/)"
-        $openAIKey = Read-Host "Ingresa la API Key de Azure OpenAI" -AsSecureString
-        $BSTR = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($openAIKey)
-        $openAIKey = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($BSTR)
+        $openAITextEndpoint = Read-Host "Ingresa el endpoint de Azure OpenAI para texto/GPT (ej: https://tu-recurso.openai.azure.com/)"
+        $openAITextKeySecure = Read-Host "Ingresa la API Key de Azure OpenAI para texto/GPT" -AsSecureString
+        $BSTR = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($openAITextKeySecure)
+        $openAITextKey = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($BSTR)
+        [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($BSTR)
+    }
+    
+    # Audio model (Whisper) - puede ser el mismo recurso o uno diferente
+    Write-Host "Configuración de Whisper (audio):" -ForegroundColor Cyan
+    $useSameForAudio = Read-Host "¿Usar el mismo recurso OpenAI para Whisper? (S/n)"
+    if ($useSameForAudio -ne "n" -and $useSameForAudio -ne "N") {
+        $openAIAudioEndpoint = $openAITextEndpoint
+        $openAIAudioKey = $openAITextKey
+    } else {
+        $openAIAudioEndpoint = Read-Host "Endpoint de Azure OpenAI para Whisper (ej: https://recurso-whisper.openai.azure.com/)"
+        $openAIAudioKeySecure = Read-Host "API Key de Azure OpenAI para Whisper" -AsSecureString
+        $BSTR = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($openAIAudioKeySecure)
+        $openAIAudioKey = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($BSTR)
         [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($BSTR)
     }
     Write-Host ""
@@ -408,9 +429,12 @@ try {
         "WEBSITE_RUN_FROM_PACKAGE" = "1"
         "ConnectionStrings:DefaultConnection" = $sqlConnectionString
         "BlobStorage:ContainerName" = "planes-images"
-        "OpenAI:ApiKey" = $openAIKey
-        "OpenAI:Endpoint" = $openAIEndpoint
-        "OpenAI:DeploymentName" = $OpenAIModelDeploymentName
+        "OpenAI:TextModel:ApiKey" = $openAITextKey
+        "OpenAI:TextModel:Endpoint" = $openAITextEndpoint
+        "OpenAI:TextModel:DeploymentName" = $OpenAITextDeploymentName
+        "OpenAI:AudioModel:ApiKey" = $openAIAudioKey
+        "OpenAI:AudioModel:Endpoint" = $openAIAudioEndpoint
+        "OpenAI:AudioModel:DeploymentName" = $OpenAIAudioDeploymentName
         "WhatsApp:PhoneNumberId" = $WhatsAppPhoneNumberId
         "WhatsApp:AccessToken" = $WhatsAppAccessTokenPlain
     }

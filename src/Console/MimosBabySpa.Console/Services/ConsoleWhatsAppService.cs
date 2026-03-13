@@ -16,6 +16,11 @@ public class ConsoleWhatsAppService : IWhatsAppService
         _logger = logger;
     }
 
+    public Task AcknowledgeMessageAsync(string phoneNumberId, string accessToken, string whatsAppMessageId)
+    {
+        return Task.CompletedTask;
+    }
+
     public Task SendTextMessageAsync(Guid businessId, string to, string message)
     {
         System.Console.WriteLine();

@@ -129,7 +129,7 @@ public class HybridTransactionalOrchestrator
             ApplyExtractionToState(ctx);
 
             // ── FASE 4: Acciones de flujo ─────────────────────────
-            await ExecuteFlowActionsAsync(ctx, customerPhone, cancellationToken);
+            await ExecuteFlowActionsAsync(ctx, cancellationToken);
 
             // ── FASE 5: Generar respuesta ─────────────────────────
             var response = await GenerateResponseWithOutcomeAsync(userMessage, ctx, cancellationToken);
@@ -422,7 +422,7 @@ public class HybridTransactionalOrchestrator
     // FASE 4 — ACCIONES DE FLUJO
     // ═════════════════════════════════════════════════════════════════
 
-    private async Task ExecuteFlowActionsAsync(ProcessingContext ctx, string customerPhone, CancellationToken ct)
+    private async Task ExecuteFlowActionsAsync(ProcessingContext ctx, CancellationToken ct)
     {
         _logger.LogDebug("FASE 4: Ejecutando acciones de flujo...");
 
@@ -435,10 +435,7 @@ public class HybridTransactionalOrchestrator
         if (intentions.UserWantsToCancel)
         {
             if (activeReservationId.HasValue && !ctx.State.ReservationCreated)
-            {
                 ctx.State.ReservationCreated = true;
-                ctx.ReEvaluate();
-            }
             _logger.LogInformation("Usuario canceló — reseteando flags transaccionales");
             _stateUpdater.ResetTransactionalFlags(ctx.State);
             ctx.ReEvaluate();
@@ -468,7 +465,7 @@ public class HybridTransactionalOrchestrator
             ctx.State.ReservationCreated = false;
             ctx.State.Service = prev.Service ?? ctx.State.Service;
             ctx.State.PaymentConfirmed = true;
-            ctx.State.ReservationConfirmed = true;
+            // NO setear ReservationConfirmed: el usuario debe confirmar explícitamente el cambio (puerta ConfirmingBooking)
             foreach (var (k, v) in prev.TransactionalAttributes)
                 ctx.State.SetAttribute(k, v);
             ctx.ReEvaluate();
@@ -536,7 +533,9 @@ public class HybridTransactionalOrchestrator
         }
 
         // ── 4c. Servicios extras ────
-        if (!ctx.State.AddOnsOffered && ShouldOfferAddOns(ctx.State, ctx.BusinessContext))
+        // Durante re-agendamiento no ofrecer add-ons (ReservationId presente, reserva aún no creada)
+        var isRescheduling = ctx.State.ReservationId.HasValue && !ctx.State.ReservationCreated;
+        if (!ctx.State.AddOnsOffered && ShouldOfferAddOns(ctx.State, ctx.BusinessContext) && !isRescheduling)
         {
             var alreadySelectedAddOns = HasSelectedAddOnsInExtraction(ctx.ExtractionOutput);
             turnActions.AddOnOfferingRequired = !alreadySelectedAddOns;
@@ -823,11 +822,19 @@ public class HybridTransactionalOrchestrator
         // 3. PRE-CONFIRMACIÓN — primera presentación del resumen
         if (ShouldInjectConfirmationSummary(ctx))
         {
+            _stateUpdater.ApplyConfirmationFlag(ctx.State, "ConfirmationSummaryPresented", true);
+
+            // Re-agendamiento: resumen conciso pidiendo confirmación explícita del cambio
+            if (ctx.State.ReservationId.HasValue && !ctx.State.ReservationCreated)
+            {
+                return $"Tu reserva será cambiada para el {ctx.State.DesiredDate:dd/MM/yyyy} a las {ctx.State.DesiredTime:HH:mm}. ¿Confirmas este cambio?";
+            }
+
+            // Reserva nueva: flujo estándar
             var name = ctx.State.CustomerName;
             var intro = !string.IsNullOrWhiteSpace(name) && name != "-"
                 ? $"¡Gracias, {name}! Ya tengo todos los datos necesarios:"
                 : "¡Perfecto! Ya tengo todos los datos necesarios:";
-            _stateUpdater.ApplyConfirmationFlag(ctx.State, "ConfirmationSummaryPresented", true);
             return intro + ConfirmationSummaryBuilder.BuildPreConfirmationSummary(ctx.State, ctx.BusinessContext);
         }
 
@@ -1154,7 +1161,8 @@ public class HybridTransactionalOrchestrator
 
         // 5. Instrucción principal basada en el stage del FlowEngine.
         // No incluir stage instruction cuando add-on offering es el paso dedicado (evita mezclar con fecha).
-        if (!extraction.Intentions.IsInformationQuery && !turnActions.AddOnOfferingRequired)
+        // No incluir en primer mensaje de cliente recurrente (ReturningCustomerInstructions ya pregunta qué necesita).
+        if (!extraction.Intentions.IsInformationQuery && !turnActions.AddOnOfferingRequired && !(isFirstMessage && isReturningCustomer))
         {
             var stageInstruction = BuildStageInstruction(state, flowSnapshot, businessContext);
             if (!string.IsNullOrEmpty(stageInstruction))
@@ -1167,13 +1175,34 @@ public class HybridTransactionalOrchestrator
     /// <summary>
     /// Genera la instrucción principal según el stage del FlowEngine.
     /// Flujo: CollectingInformation → ExploringServices → CheckingAvailability → CompletingProfile → ConfirmingBooking.
-    /// Cada stage tiene instrucción específica; solo CompletingProfile y fallback usan MissingFields.
+    /// Re-agendamiento: ReservationId presente y reserva no creada — instrucciones específicas, NO ofrecer servicios.
     /// </summary>
     private static string BuildStageInstruction(
         Domain.Models.ConversationState state,
         FlowEvaluationResult flowSnapshot,
         Configuration.LoadedBusinessContext businessContext)
     {
+        // Re-agendamiento: ReservationId presente pero reserva aún no creada (forma del estado)
+        if (state.ReservationId.HasValue && !state.ReservationCreated)
+        {
+            return flowSnapshot.CurrentStage switch
+            {
+                TransactionStage.CollectingInformation or TransactionStage.ExploringServices =>
+                    "**RE-AGENDAMIENTO: El cliente quiere cambiar el horario de su reserva existente.**\n" +
+                    "Pregunta la nueva fecha y hora deseada. NO ofrezcas servicios ni catálogo.",
+
+                TransactionStage.CheckingAvailability =>
+                    "**RE-AGENDAMIENTO: Verificando disponibilidad para la nueva fecha/hora.**",
+
+                TransactionStage.CompletingProfile when flowSnapshot.MissingFields.Any() =>
+                    "**RE-AGENDAMIENTO: Faltan datos para completar el cambio.**\n" +
+                    $"Solicita: {string.Join(", ", flowSnapshot.MissingFields.Select(f => FieldLabelResolver.Resolve(f, businessContext.Attributes)))}",
+
+                _ => string.Empty
+            };
+        }
+
+        // Flujo estándar: reserva nueva
         return flowSnapshot.CurrentStage switch
         {
             TransactionStage.ConfirmingBooking =>

@@ -1,8 +1,9 @@
-using Microsoft.Extensions.Logging;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using MimosBabySpa.Application.FlowEngine;
-using MimosBabySpa.Domain.Repositories;
 using MimosBabySpa.Domain.Enums;
+using MimosBabySpa.Domain.Repositories;
+using Microsoft.Extensions.Logging;
 
 namespace MimosBabySpa.Application.Configuration;
 
@@ -394,56 +395,56 @@ public class LoadedBusinessContext
     }
 
     /// <summary>
-    /// Carga la personalidad del asistente desde BusinessConfiguration key=Personality (0).
-    /// El valor almacenado puede ser:
-    /// - Texto libre → se asigna a SystemIdentityText para inyección directa en el system prompt.
-    /// - JSON estructurado → se deserializa en los campos tipados de BusinessPersonality.
+    /// Carga la personalidad del asistente. Origen: BusinessConfiguration key=Personality (0).
+    /// Si no hay config por negocio, usa SystemConfiguration.ToneAndStyle como fallback.
+    /// Todo es texto libre — identidad, tono y estilo en un solo bloque.
     /// </summary>
     private async Task<BusinessPersonality> LoadPersonalityAsync(CancellationToken cancellationToken)
     {
         try
         {
+            // 1. Intentar BusinessConfiguration (por tenant)
             var config = await _unitOfWork.BusinessConfigurations
                 .GetByBusinessIdAndKeyAsync(BusinessId, BusinessConfigurationKey.Personality);
 
-            if (config == null || string.IsNullOrWhiteSpace(config.Value))
+            if (config != null && !string.IsNullOrWhiteSpace(config.Value))
             {
-                _logger.LogWarning(
-                    "No se encontró configuración de Personality (key=0) para BusinessId={BusinessId}. " +
-                    "El asistente usará identidad genérica.",
+                var text = config.Value.Trim();
+                _logger.LogDebug("Personality cargada desde BusinessConfiguration para BusinessId={BusinessId}", BusinessId);
+                return new BusinessPersonality
+                {
+                    PersonalityText = text,
+                    AssistantName = BusinessPersonality.ExtractAssistantName(text)
+                };
+            }
+
+            // 2. Fallback: SystemConfiguration.ToneAndStyle
+            var sysTone = await _unitOfWork.SystemConfigurations
+                .GetByKeyAsync(SystemConfigurationKey.ToneAndStyle);
+
+            if (sysTone != null && !string.IsNullOrWhiteSpace(sysTone.Value))
+            {
+                _logger.LogDebug(
+                    "Personality: fallback a SystemConfiguration.ToneAndStyle para BusinessId={BusinessId}",
                     BusinessId);
-                return BusinessPersonality.Default();
+                return new BusinessPersonality
+                {
+                    PersonalityText = sysTone.Value.Trim(),
+                    AssistantName = "Asistente"
+                };
             }
 
-            var trimmed = config.Value.TrimStart();
-
-            // Texto libre → inyección directa en el system prompt sin parsear
-            if (!trimmed.StartsWith("{"))
-            {
-                _logger.LogDebug("Personality cargada como texto libre para BusinessId={BusinessId}", BusinessId);
-                return new BusinessPersonality { SystemIdentityText = config.Value };
-            }
-
-            // JSON estructurado → deserializar en campos tipados
-            var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
-            var personality = JsonSerializer.Deserialize<BusinessPersonality>(config.Value, options);
-
-            if (personality == null)
-            {
-                _logger.LogWarning("Deserialización de Personality retornó null para BusinessId={BusinessId}", BusinessId);
-                return BusinessPersonality.Default();
-            }
-
-            _logger.LogDebug(
-                "Personality cargada desde JSON estructurado: AssistantName={AssistantName} para BusinessId={BusinessId}",
-                personality.AssistantName, BusinessId);
-
-            return personality;
+            // 3. Sin config
+            _logger.LogWarning(
+                "No se encontró Personality (key=0) ni SystemConfiguration.ToneAndStyle para BusinessId={BusinessId}. " +
+                "El asistente usará default genérico.",
+                BusinessId);
+            return new BusinessPersonality();
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error cargando Personality para BusinessId={BusinessId}", BusinessId);
-            return BusinessPersonality.Default();
+            return new BusinessPersonality();
         }
     }
 

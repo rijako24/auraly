@@ -67,38 +67,4 @@ public class BusinessConfigurationService : IBusinessConfigurationService
         }
         return config.Value;
     }
-
-    /// <summary>
-    /// [OBSOLETO] Este método ya no se usa. Usar SystemPromptProvider + LoadedBusinessContext en su lugar.
-    /// La información del negocio ahora viene de campos estructurados en la tabla Businesses.
-    /// </summary>
-    [Obsolete("Este método es obsoleto. Usar SystemPromptProvider + LoadedBusinessContext para generar prompts dinámicos.", false)]
-    public async Task<string> BuildSystemPromptAsync(Guid businessId)
-    {
-        var businessConfig = await GetConfigurationAsync(businessId);
-        var toneAndStyle = await GetSystemConfigurationAsync(SystemConfigurationKey.ToneAndStyle);
-
-        var promptBuilder = new StringBuilder();
-        
-        // FECHA ACTUAL (siempre primero para que la IA sepa qué día es hoy)
-        var today = DateTime.UtcNow;
-        // Colombia está en UTC-5
-        var colombiaOffset = TimeSpan.FromHours(-5);
-        var todayColombia = today.Add(colombiaOffset);
-        promptBuilder.AppendLine($"FECHA Y HORA ACTUAL: Hoy es {todayColombia:dddd, dd 'de' MMMM 'de' yyyy} (formato: {todayColombia:yyyy-MM-dd}). La hora actual es {todayColombia:HH:mm} (hora de Colombia, UTC-5).");
-        promptBuilder.AppendLine();
-        
-        // TONO Y ESTILO (genérico del sistema)
-        if (!string.IsNullOrEmpty(toneAndStyle))
-        {
-            promptBuilder.AppendLine(toneAndStyle);
-            promptBuilder.AppendLine();
-        }
-
-        // INFORMACIÓN DEL NEGOCIO (rol, servicios, estilo de conversación)
-        // NOTA: BusinessInformation fue eliminado. Este código ya no retorna información del negocio.
-        // Usar SystemPromptProvider + LoadedBusinessContext en su lugar.
-
-        return promptBuilder.ToString();
-    }
 }

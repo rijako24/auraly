@@ -47,9 +47,12 @@ az functionapp config appsettings set `
   --settings `
     "ConnectionStrings:DefaultConnection=Server=tcp:TU_SERVIDOR.database.windows.net,1433;Initial Catalog=TU_DB;Persist Security Info=False;User ID=TU_USUARIO;Password=TU_PASSWORD;MultipleActiveResultSets=False;Encrypt=True;TrustServerCertificate=False;Connection Timeout=30;" `
     "BlobStorage:ContainerName=planes-images" `
-    "OpenAI:ApiKey=TU_OPENAI_KEY" `
-    "OpenAI:Endpoint=https://TU_RECURSO.openai.azure.com/" `
-    "OpenAI:DeploymentName=gpt-4" `
+    "OpenAI:TextModel:ApiKey=TU_GPT_KEY" `
+    "OpenAI:TextModel:Endpoint=https://TU_RECURSO_GPT.openai.azure.com/" `
+    "OpenAI:TextModel:DeploymentName=gpt-4o-mini" `
+    "OpenAI:AudioModel:ApiKey=TU_WHISPER_KEY" `
+    "OpenAI:AudioModel:Endpoint=https://TU_RECURSO_WHISPER.openai.azure.com/" `
+    "OpenAI:AudioModel:DeploymentName=whisper-1" `
     "WhatsApp:PhoneNumberId=TU_PHONE_NUMBER_ID" `
     "WhatsApp:AccessToken=TU_ACCESS_TOKEN"
 ```

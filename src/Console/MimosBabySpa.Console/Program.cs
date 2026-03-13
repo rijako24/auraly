@@ -23,6 +23,7 @@ using MimosBabySpa.Application.Prompts;
 using MimosBabySpa.Application.StateManagement;
 using MimosBabySpa.Application.LLM;
 using MimosBabySpa.Application.LLM.Extraction;
+using Microsoft.Extensions.Options;
 
 // Configurar servicios (usa directorio del ejecutable para encontrar appsettings; migrate-integrations lee Calendar y Wompi)
 var configuration = new ConfigurationBuilder()
@@ -91,28 +92,41 @@ services.AddScoped<IAvailabilityService, AvailabilityService>();
 // HYBRID TRANSACTIONAL BRAIN ARCHITECTURE
 // ========================================
 
-// Infrastructure Services - OpenAI (debe estar antes del LLM Adapter)
-services.AddSingleton(sp =>
+// Infrastructure Services - OpenAI (Options como fuente única de configuración)
+services.Configure<OpenAITextModelOptions>(configuration.GetSection(OpenAITextModelOptions.SectionName));
+services.Configure<OpenAIAudioModelOptions>(configuration.GetSection(OpenAIAudioModelOptions.SectionName));
+
+services.AddKeyedSingleton<OpenAIClient>("Text", (sp, _) =>
 {
-    var config = sp.GetRequiredService<IConfiguration>();
-    var endpoint = config["OpenAI:Endpoint"] ?? throw new InvalidOperationException("OpenAI:Endpoint no configurado");
-    var apiKey = config["OpenAI:ApiKey"] ?? throw new InvalidOperationException("OpenAI:ApiKey no configurado");
-    
-    return new OpenAIClient(new Uri(endpoint), new Azure.AzureKeyCredential(apiKey));
+    var options = sp.GetRequiredService<IOptions<OpenAITextModelOptions>>().Value;
+    if (string.IsNullOrEmpty(options.Endpoint) || string.IsNullOrEmpty(options.ApiKey))
+        throw new InvalidOperationException("OpenAI:TextModel:Endpoint y ApiKey deben estar configurados");
+    if (string.IsNullOrEmpty(options.DeploymentName))
+        throw new InvalidOperationException("OpenAI:TextModel:DeploymentName debe estar configurado");
+    return new OpenAIClient(new Uri(options.Endpoint), new Azure.AzureKeyCredential(options.ApiKey));
+});
+services.AddKeyedSingleton<OpenAIClient>("Audio", (sp, _) =>
+{
+    var options = sp.GetRequiredService<IOptions<OpenAIAudioModelOptions>>().Value;
+    if (string.IsNullOrEmpty(options.Endpoint) || string.IsNullOrEmpty(options.ApiKey))
+        throw new InvalidOperationException("OpenAI:AudioModel:Endpoint y ApiKey deben estar configurados");
+    if (string.IsNullOrEmpty(options.DeploymentName))
+        throw new InvalidOperationException("OpenAI:AudioModel:DeploymentName debe estar configurado");
+    return new OpenAIClient(new Uri(options.Endpoint), new Azure.AzureKeyCredential(options.ApiKey));
 });
 
-// AI Service (para transcripción de audio)
+// AI Service (chat + transcripción de audio con clientes separados)
 services.AddScoped<IAIService>(sp =>
 {
-    var openAIClient = sp.GetRequiredService<OpenAIClient>();
-    var config = sp.GetRequiredService<IConfiguration>();
-    var textDeploymentName = config["OpenAI:TextDeploymentName"] ?? "gpt-4o-mini";
-    var audioDeploymentName = config["OpenAI:AudioDeploymentName"] ?? "whisper";
+    var textClient = sp.GetRequiredKeyedService<OpenAIClient>("Text");
+    var audioClient = sp.GetRequiredKeyedService<OpenAIClient>("Audio");
+    var textOptions = sp.GetRequiredService<IOptions<OpenAITextModelOptions>>().Value;
+    var audioOptions = sp.GetRequiredService<IOptions<OpenAIAudioModelOptions>>().Value;
     var systemPromptProvider = sp.GetRequiredService<IPromptProvider>();
     var cachedContextProvider = sp.GetRequiredService<CachedBusinessContextProvider>();
     var logger = sp.GetRequiredService<ILogger<AIService>>();
-    
-    return new AIService(openAIClient, textDeploymentName, audioDeploymentName, systemPromptProvider, cachedContextProvider, logger);
+
+    return new AIService(textClient, audioClient, textOptions.DeploymentName, audioOptions.DeploymentName, systemPromptProvider, cachedContextProvider, logger);
 });
 
 // Flow Engine (Cerebro Determinístico)
@@ -134,15 +148,14 @@ services.AddScoped<IPromptProvider, SystemPromptProvider>();
 // ✅ NEW: Localization Service (i18n básico)
 services.AddSingleton<ILocalizationService, LocalizationService>();
 
-// LLM Adapter Layer
+// LLM Adapter Layer (usa cliente de texto)
 services.AddScoped<ILLMAdapter>(sp =>
 {
-    var openAIClient = sp.GetRequiredService<OpenAIClient>();
-    var config = sp.GetRequiredService<IConfiguration>();
-    var deploymentName = config["OpenAI:TextDeploymentName"] ?? "gpt-4o-mini";
+    var textClient = sp.GetRequiredKeyedService<OpenAIClient>("Text");
+    var textOptions = sp.GetRequiredService<IOptions<OpenAITextModelOptions>>().Value;
     var logger = sp.GetRequiredService<ILogger<AzureOpenAIAdapter>>();
-    
-    return new AzureOpenAIAdapter(openAIClient, deploymentName, logger);
+
+    return new AzureOpenAIAdapter(textClient, textOptions.DeploymentName, logger);
 });
 
 // Tool Handlers (Domain-Agnostic)

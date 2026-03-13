@@ -24,12 +24,14 @@ public static class ResponseInstructionsTemplate
 
     /// <summary>
     /// Se incluye cuando el cliente recurre en nueva sesión (historial vacío pero existe visita anterior).
-    /// Saludo personalizado sin presentación genérica. Preferencias anteriores como sugerencia, no como datos confirmados.
+    /// Aditivo como FirstMessageInstructions: saludo + acción según contenido del mensaje.
     /// </summary>
     public const string ReturningCustomerInstructions = """
 
         **Cliente recurrente — nueva sesión de reserva.**
         - NO te presentes como si fuera la primera vez. Saluda con calidez reconociendo que regresa.
+        - Si el usuario solo saluda o envía un mensaje genérico → pregunta en qué está interesado esta vez. NO presentes servicios ni catálogo de entrada.
+        - Si el mensaje incluye una pregunta, datos o solicitud específica → respóndelos después del saludo de bienvenida.
         - Puedes mencionar brevemente preferencias de su visita anterior como sugerencia personalizada.
         - NUEVA SESIÓN: todos los datos transaccionales se recopilan desde cero.
         - Las preferencias anteriores son sugerencias, NO datos confirmados para esta sesión.

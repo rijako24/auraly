@@ -23,6 +23,8 @@ using MimosBabySpa.Application.LLM;
 using MimosBabySpa.Application.LLM.Extraction;
 using MimosBabySpa.Application.Prompts;
 using MimosBabySpa.Console.Services;
+using MimosBabySpa.Infrastructure.Configuration;
+using Microsoft.Extensions.Options;
 
 namespace MimosBabySpa.Tests.TestScenarios;
 
@@ -83,13 +85,27 @@ class RunScenarios
         // HYBRID TRANSACTIONAL BRAIN ARCHITECTURE
         // ========================================
 
-        // Infrastructure Services - OpenAI
-        services.AddSingleton(sp =>
+        // Infrastructure Services - OpenAI (Options como fuente única de configuración)
+        services.Configure<OpenAITextModelOptions>(configuration.GetSection(OpenAITextModelOptions.SectionName));
+        services.Configure<OpenAIAudioModelOptions>(configuration.GetSection(OpenAIAudioModelOptions.SectionName));
+
+        services.AddKeyedSingleton<OpenAIClient>("Text", (sp, _) =>
         {
-            var config = sp.GetRequiredService<IConfiguration>();
-            var endpoint = config["OpenAI:Endpoint"] ?? throw new InvalidOperationException("OpenAI:Endpoint no configurado");
-            var apiKey = config["OpenAI:ApiKey"] ?? throw new InvalidOperationException("OpenAI:ApiKey no configurado");
-            return new OpenAIClient(new Uri(endpoint), new Azure.AzureKeyCredential(apiKey));
+            var options = sp.GetRequiredService<IOptions<OpenAITextModelOptions>>().Value;
+            if (string.IsNullOrEmpty(options.Endpoint) || string.IsNullOrEmpty(options.ApiKey))
+                throw new InvalidOperationException("OpenAI:TextModel:Endpoint y ApiKey deben estar configurados");
+            if (string.IsNullOrEmpty(options.DeploymentName))
+                throw new InvalidOperationException("OpenAI:TextModel:DeploymentName debe estar configurado");
+            return new OpenAIClient(new Uri(options.Endpoint), new Azure.AzureKeyCredential(options.ApiKey));
+        });
+        services.AddKeyedSingleton<OpenAIClient>("Audio", (sp, _) =>
+        {
+            var options = sp.GetRequiredService<IOptions<OpenAIAudioModelOptions>>().Value;
+            if (string.IsNullOrEmpty(options.Endpoint) || string.IsNullOrEmpty(options.ApiKey))
+                throw new InvalidOperationException("OpenAI:AudioModel:Endpoint y ApiKey deben estar configurados");
+            if (string.IsNullOrEmpty(options.DeploymentName))
+                throw new InvalidOperationException("OpenAI:AudioModel:DeploymentName debe estar configurado");
+            return new OpenAIClient(new Uri(options.Endpoint), new Azure.AzureKeyCredential(options.ApiKey));
         });
 
         // Flow Engine (Cerebro Determinístico)
@@ -111,15 +127,14 @@ class RunScenarios
         // ✅ Prompt Provider
         services.AddScoped<IPromptProvider, SystemPromptProvider>();
 
-        // LLM Adapter Layer
+        // LLM Adapter Layer (usa cliente de texto)
         services.AddScoped<ILLMAdapter>(sp =>
         {
-            var openAIClient = sp.GetRequiredService<OpenAIClient>();
-            var config = sp.GetRequiredService<IConfiguration>();
-            var deploymentName = config["OpenAI:TextDeploymentName"] ?? "gpt-4o-mini";
+            var textClient = sp.GetRequiredKeyedService<OpenAIClient>("Text");
+            var textOptions = sp.GetRequiredService<IOptions<OpenAITextModelOptions>>().Value;
             var logger = sp.GetRequiredService<ILogger<AzureOpenAIAdapter>>();
-            
-            return new AzureOpenAIAdapter(openAIClient, deploymentName, logger);
+
+            return new AzureOpenAIAdapter(textClient, textOptions.DeploymentName, logger);
         });
 
         // Tool Handlers (Domain-Agnostic)

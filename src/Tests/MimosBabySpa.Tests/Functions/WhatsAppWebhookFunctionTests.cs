@@ -21,6 +21,7 @@ public class WhatsAppWebhookFunctionTests
 {
     private readonly Mock<IWhatsAppMessageProcessorService> _mockMessageProcessorService;
     private readonly Mock<IWhatsAppWebhookParserService> _mockWebhookParserService;
+    private readonly Mock<IWhatsAppService> _mockWhatsAppService;
     private readonly Mock<IBusinessIdentificationService> _mockBusinessIdentificationService;
     private readonly Mock<ILogger<WhatsAppWebhookFunction>> _mockLogger;
     private readonly WhatsAppWebhookFunction _function;
@@ -29,12 +30,14 @@ public class WhatsAppWebhookFunctionTests
     {
         _mockMessageProcessorService = new Mock<IWhatsAppMessageProcessorService>();
         _mockWebhookParserService = new Mock<IWhatsAppWebhookParserService>();
+        _mockWhatsAppService = new Mock<IWhatsAppService>();
         _mockBusinessIdentificationService = new Mock<IBusinessIdentificationService>();
         _mockLogger = new Mock<ILogger<WhatsAppWebhookFunction>>();
 
         _function = new WhatsAppWebhookFunction(
             _mockMessageProcessorService.Object,
             _mockWebhookParserService.Object,
+            _mockWhatsAppService.Object,
             _mockBusinessIdentificationService.Object,
             _mockLogger.Object
         );
@@ -99,10 +102,12 @@ public class WhatsAppWebhookFunctionTests
                             Field = "messages",
                             Value = new Value
                             {
+                                Metadata = new WebhookMetadata { PhoneNumberId = "entry_id" },
                                 Messages = new List<DtoMessage>
                                 {
                                     new DtoMessage
                                     {
+                                        Id = "wamid.test123",
                                         From = userNumber,
                                         Type = "text",
                                         Text = new TextMessage { Body = messageText }
@@ -125,7 +130,12 @@ public class WhatsAppWebhookFunctionTests
         var businessContext = new BusinessContext
         {
             BusinessId = businessId,
-            BusinessName = "Test Business"
+            BusinessName = "Test Business",
+            WhatsAppNumber = new BusinessWhatsAppNumberDto
+            {
+                WhatsAppPhoneNumberId = "entry_id",
+                WhatsAppAccessToken = "test_token"
+            }
         };
 
         var incomingMessage = new IncomingMessage
@@ -156,6 +166,7 @@ public class WhatsAppWebhookFunctionTests
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         
         _mockBusinessIdentificationService.Verify(x => x.IdentifyBusinessAsync("entry_id"), Times.Once);
+        _mockWhatsAppService.Verify(x => x.AcknowledgeMessageAsync("entry_id", "test_token", "wamid.test123"), Times.Once);
         _mockWebhookParserService.Verify(x => x.ExtractAllMessagesFromEntryAsync(It.IsAny<Entry>(), businessId), Times.Once);
         _mockMessageProcessorService.Verify(x => x.ProcessIncomingMessageAsync(
             businessId, 
@@ -186,10 +197,12 @@ public class WhatsAppWebhookFunctionTests
                             Field = "messages",
                             Value = new Value
                             {
+                                Metadata = new WebhookMetadata { PhoneNumberId = "entry_id" },
                                 Messages = new List<DtoMessage>
                                 {
                                     new DtoMessage
                                     {
+                                        Id = "wamid.test456",
                                         From = userNumber,
                                         Type = "text",
                                         Text = new TextMessage { Body = messageText }
@@ -205,7 +218,12 @@ public class WhatsAppWebhookFunctionTests
         var businessContext = new BusinessContext
         {
             BusinessId = businessId,
-            BusinessName = "Test Business"
+            BusinessName = "Test Business",
+            WhatsAppNumber = new BusinessWhatsAppNumberDto
+            {
+                WhatsAppPhoneNumberId = "entry_id",
+                WhatsAppAccessToken = "test_token"
+            }
         };
 
         var incomingMessage = new IncomingMessage

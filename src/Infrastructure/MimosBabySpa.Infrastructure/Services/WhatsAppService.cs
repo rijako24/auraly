@@ -36,6 +36,42 @@ public class WhatsAppService : IWhatsAppService
         _httpClient.BaseAddress = new Uri(options.ApiBaseUrl.TrimEnd('/') + "/");
     }
 
+    public async Task AcknowledgeMessageAsync(string phoneNumberId, string accessToken, string whatsAppMessageId)
+    {
+        if (string.IsNullOrWhiteSpace(whatsAppMessageId) || string.IsNullOrWhiteSpace(phoneNumberId))
+            return;
+
+        try
+        {
+            var payload = new
+            {
+                messaging_product = "whatsapp",
+                status = "read",
+                message_id = whatsAppMessageId,
+                typing_indicator = new { type = "text" }
+            };
+
+            var json = JsonSerializer.Serialize(payload);
+            var content = new StringContent(json, Encoding.UTF8, "application/json");
+
+            using var request = new HttpRequestMessage(HttpMethod.Post, $"{phoneNumberId}/messages")
+            {
+                Content = content
+            };
+            request.Headers.Add("Authorization", $"Bearer {accessToken}");
+
+            var response = await _httpClient.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+                _logger.LogWarning(
+                    "Acknowledge falló para MessageId={MessageId}: {Status}",
+                    whatsAppMessageId, response.StatusCode);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Acknowledge falló para MessageId={MessageId}", whatsAppMessageId);
+        }
+    }
+
     public async Task SendTextMessageAsync(Guid businessId, string to, string message)
     {
         var credentials = await ResolveCredentialsAsync(businessId);

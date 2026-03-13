@@ -37,10 +37,8 @@ public class FlowEngine : IFlowEngine
 
         var result = new FlowEvaluationResult
         {
-            CurrentStage            = nextStage,
-            SuggestedNextStage      = nextStage,
+            CurrentStage           = nextStage,
             MissingFields           = missingFields,
-            IsComplete              = missingFields.Count == 0,
             CompletenessPercentage  = totalRequired > 0 ? (int)((double)collected / totalRequired * 100) : 0,
             CanCheckAvailability    = CanCheckAvailability(state),
             CanCreateReservation    = CanCreateReservation(state, requiredFields),

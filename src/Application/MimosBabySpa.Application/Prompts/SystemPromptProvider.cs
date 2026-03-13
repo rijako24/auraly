@@ -9,8 +9,7 @@ namespace MimosBabySpa.Application.Prompts;
 /// Construye el system prompt para la generación de respuesta conversacional.
 ///
 /// Diseño lean (~800 tokens vs ~3,250 anterior):
-/// - Identidad dinámica por tenant: texto libre desde BusinessConfiguration key=Personality,
-///   o campos estructurados de BusinessPersonality como fallback.
+/// - Identidad + tono: texto libre desde BusinessConfiguration key=Personality (o fallback a SystemConfiguration.ToneAndStyle).
 /// - 5 principios condensados en ~80 tokens.
 /// - Información del negocio y catálogo de servicios: dinámicos desde tablas normalizadas.
 ///
@@ -56,8 +55,8 @@ public class SystemPromptProvider : IPromptProvider
             sb.AppendLine();
         }
 
-        // ── Regla de oro (siempre) ────────────────────────────────
-        sb.AppendLine(BuildGoldenRules(context.Personality));
+        // ── Reglas de formato (brevedad, no mentir, etc.) ────────────
+        sb.AppendLine(BuildGoldenRules());
 
         return Task.FromResult(sb.ToString().Trim());
     }
@@ -68,24 +67,10 @@ public class SystemPromptProvider : IPromptProvider
 
     private static string BuildRoleSection(LoadedBusinessContext context)
     {
-        // Texto libre configurado por el tenant → se inyecta directamente sin template
-        if (!string.IsNullOrWhiteSpace(context.Personality.SystemIdentityText))
-            return context.Personality.SystemIdentityText;
+        if (context.Personality.HasPersonality)
+            return context.Personality.PersonalityText;
 
-        // Fallback: construir identidad desde campos estructurados de BusinessPersonality
-        var expertise = !string.IsNullOrEmpty(context.Personality.Expertise)
-            ? $", {context.Personality.Expertise}"
-            : ", asistente virtual";
-
-        var tone = context.Personality.Tone.Any()
-            ? $"**Tono:** {string.Join(", ", context.Personality.Tone)}."
-            : string.Empty;
-
-        return RoleTemplate.Template
-            .Replace("{ASSISTANT_NAME}", context.Personality.AssistantName)
-            .Replace("{EXPERTISE_CLAUSE}", expertise)
-            .Replace("{BUSINESS_NAME}", context.Info.Name)
-            .Replace("{TONE_CLAUSE}", tone);
+        return $"Eres un asistente virtual de {context.Info.Name}. Habla de forma profesional y amable.";
     }
 
     private static string BuildPrinciplesSection() => """
@@ -172,7 +157,7 @@ public class SystemPromptProvider : IPromptProvider
         return sb.ToString().TrimEnd();
     }
 
-    private static string BuildGoldenRules(BusinessPersonality personality) => $"""
+    private static string BuildGoldenRules() => """
         ## Reglas críticas de respuesta:
         - Respuestas BREVES (3-4 líneas máximo). Una pregunta a la vez.
         - **CIERRES VARIADOS** — NO siempre termines con pregunta. Eso atosiga. Varía:
