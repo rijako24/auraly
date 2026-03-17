@@ -1,0 +1,9 @@
+namespace MimosBabySpa.Application.Identity.DTOs;
+
+public record CreateUserRequest(
+    string Username,
+    string Email,
+    string Password,
+    string FirstName,
+    string LastName,
+    string? PhoneNumber);

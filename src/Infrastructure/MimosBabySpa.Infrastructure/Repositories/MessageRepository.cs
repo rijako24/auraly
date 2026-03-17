@@ -32,4 +32,21 @@ public class MessageRepository : IMessageRepository
     {
         return await _context.Messages.FindAsync(messageId);
     }
+
+    public async Task<(IReadOnlyList<Message> Items, int TotalCount)> GetPagedByConversationIdAsync(
+        Guid conversationId, int page, int pageSize, CancellationToken ct = default)
+    {
+        var query = _context.Messages
+            .Where(m => m.ConversationId == conversationId)
+            .OrderBy(m => m.Timestamp);
+
+        var totalCount = await query.CountAsync(ct);
+
+        var items = await query
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .ToListAsync(ct);
+
+        return (items, totalCount);
+    }
 }

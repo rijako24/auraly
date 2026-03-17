@@ -27,8 +27,9 @@ Write-Host "Publicando base de datos..." -ForegroundColor Green
 Write-Host "Servidor: $ServerInstance" -ForegroundColor Cyan
 Write-Host "Base de datos: $DatabaseName" -ForegroundColor Cyan
 
-$projectPath = Join-Path $PSScriptRoot "MimosBabySpa.Database.sqlproj"
-$dacpacPath = Join-Path $PSScriptRoot "bin\Debug\MimosBabySpa.Database.dacpac"
+$projectDir = Split-Path -Parent $PSScriptRoot
+$projectPath = Join-Path $projectDir "MimosBabySpa.Database.sqlproj"
+$dacpacPath = Join-Path $projectDir "bin\Debug\MimosBabySpa.Database.dacpac"
 
 # Construir el proyecto
 Write-Host "`nCompilando proyecto..." -ForegroundColor Yellow
@@ -89,12 +90,9 @@ $sqlPackageArgs = @(
     "/Action:Publish",
     "/SourceFile:$dacpacPath",
     "/TargetConnectionString:$connectionString",
-    "/TargetDatabaseName:$DatabaseName",
     "/p:BackupDatabaseBeforeChanges=False",
     "/p:DoNotAlterChangeDataCaptureObjects=True",
-    "/p:DoNotAlterReplicatedObjects=True",
-    "/p:DoNotDropUsers=True",
-    "/p:DoNotDropRoleMembership=True"
+    "/p:DoNotAlterReplicatedObjects=True"
 )
 
 & $sqlPackagePath $sqlPackageArgs

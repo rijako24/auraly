@@ -1,7 +1,7 @@
 namespace MimosBabySpa.Application.Configuration;
 
 /// <summary>
-/// Configuración de integraciones externas por negocio (Google Calendar, Wompi, futuras: Sheets, SMS, etc.).
+/// Configuración de integraciones externas por negocio (Google Calendar, Wompi, Blob Storage, etc.).
 /// Fuente única: IIntegrationsConfigProvider lee desde BusinessConfiguration (Key=Integrations).
 /// </summary>
 public class IntegrationsConfiguration

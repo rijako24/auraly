@@ -130,6 +130,47 @@ public class WhatsAppService : IWhatsAppService
         _logger.LogInformation("Imagen enviada a {To}", to);
     }
 
+    public async Task SendDocumentMessageAsync(Guid businessId, string to, string documentUrl, string? caption = null, string? filename = null)
+    {
+        var credentials = await ResolveCredentialsAsync(businessId);
+
+        _logger.LogInformation(
+            "Enviando documento a WhatsApp API: To={To}, DocumentUrlLength={UrlLength}, Filename={Filename}",
+            to, documentUrl?.Length ?? 0, filename);
+
+        var payload = new
+        {
+            messaging_product = "whatsapp",
+            to = to,
+            type = "document",
+            document = new { link = documentUrl, caption = caption ?? string.Empty, filename = filename ?? string.Empty }
+        };
+
+        var json = JsonSerializer.Serialize(payload);
+        var content = new StringContent(json, Encoding.UTF8, "application/json");
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"{credentials.PhoneNumberId}/messages")
+        {
+            Content = content
+        };
+        request.Headers.Add("Authorization", $"Bearer {credentials.AccessToken}");
+
+        var response = await _httpClient.SendAsync(request);
+        var responseBody = await response.Content.ReadAsStringAsync();
+
+        if (!response.IsSuccessStatusCode)
+        {
+            _logger.LogError(
+                "WhatsApp API rechazó el documento: Status={Status}, Response={Response}",
+                response.StatusCode, responseBody);
+            response.EnsureSuccessStatusCode();
+        }
+
+        _logger.LogInformation(
+            "WhatsApp API aceptó el documento (Status={Status}): To={To}, ResponseLength={Length}",
+            response.StatusCode, to, responseBody?.Length ?? 0);
+    }
+
     public async Task<Stream> DownloadMediaAsync(Guid businessId, string mediaId)
     {
         var credentials = await ResolveCredentialsAsync(businessId);

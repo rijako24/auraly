@@ -1,6 +1,5 @@
 using Microsoft.Extensions.Logging;
 using MimosBabySpa.Application.Configuration;
-using MimosBabySpa.Application.Prompts.Templates;
 using MimosBabySpa.Application.StateManagement;
 using MimosBabySpa.Application.Tools;
 using MimosBabySpa.Domain.Entities;
@@ -12,7 +11,8 @@ namespace MimosBabySpa.Application.Services;
 
 /// <summary>
 /// Manejador de confirmación de pago (webhook Wompi, poller o confirmación manual).
-/// Crea la reserva y envía notificación proactiva al cliente.
+/// Verifica disponibilidad antes de crear la reserva. Si el slot fue tomado,
+/// notifica al cliente con alternativas para que elija otra hora.
 /// </summary>
 public class PaymentConfirmationHandler : IPaymentConfirmationHandler
 {
@@ -21,7 +21,8 @@ public class PaymentConfirmationHandler : IPaymentConfirmationHandler
     private readonly IConversationStateUpdater _stateUpdater;
     private readonly GenericToolDispatcher _toolDispatcher;
     private readonly CachedBusinessContextProvider _contextProvider;
-    private readonly IWhatsAppService _whatsAppService;
+    private readonly PaymentConfirmationNotifier _confirmationNotifier;
+    private readonly IAvailabilityService _availabilityService;
     private readonly ILogger<PaymentConfirmationHandler> _logger;
 
     public PaymentConfirmationHandler(
@@ -30,7 +31,8 @@ public class PaymentConfirmationHandler : IPaymentConfirmationHandler
         IConversationStateUpdater stateUpdater,
         GenericToolDispatcher toolDispatcher,
         CachedBusinessContextProvider contextProvider,
-        IWhatsAppService whatsAppService,
+        PaymentConfirmationNotifier confirmationNotifier,
+        IAvailabilityService availabilityService,
         ILogger<PaymentConfirmationHandler> logger)
     {
         _paymentTransactionRepository = paymentTransactionRepository;
@@ -38,7 +40,8 @@ public class PaymentConfirmationHandler : IPaymentConfirmationHandler
         _stateUpdater = stateUpdater;
         _toolDispatcher = toolDispatcher;
         _contextProvider = contextProvider;
-        _whatsAppService = whatsAppService;
+        _confirmationNotifier = confirmationNotifier;
+        _availabilityService = availabilityService;
         _logger = logger;
     }
 
@@ -91,10 +94,38 @@ public class PaymentConfirmationHandler : IPaymentConfirmationHandler
         await _paymentTransactionRepository.SaveAsync(paymentTx, ct);
 
         _stateUpdater.ApplyConfirmationFlag(state, "PaymentConfirmed", true);
-        _stateUpdater.ApplyConfirmationFlag(state, "ReservationConfirmed", true);
         await _stateManager.SaveStateAsync(conversationId, state, ct);
 
         var businessContext = await _contextProvider.GetOrLoadAsync(state.BusinessId, ct);
+        var originalTime = state.DesiredTime?.ToString("HH:mm") ?? "??";
+
+        var availability = await _availabilityService.CheckAvailabilityAsync(
+            state.BusinessId,
+            state.Service!,
+            state.DesiredDate!.Value.ToDateTime(TimeOnly.MinValue),
+            state.DesiredTime!.Value.ToTimeSpan(),
+            ct);
+
+        if (!availability.IsAvailable)
+        {
+            _logger.LogWarning(
+                "Webhook: slot tomado tras pago. Ref={Ref} Service={Service} Date={Date} Time={Time}",
+                paymentReferenceId, state.Service, state.DesiredDate, originalTime);
+
+            _stateUpdater.ApplyConfirmationFlag(state, "AvailabilityConfirmed", false);
+            state.DesiredTime = null;
+
+            if (availability.AvailableTimeSlots.Count == 0)
+                state.DesiredDate = null;
+
+            state.Owner = ConversationOwner.Bot;
+            state.ConsecutiveDegradedTurns = 0;
+            await _stateManager.SaveStateAsync(conversationId, state, ct);
+
+            await _confirmationNotifier.SendSlotTakenAsync(state, originalTime, availability.AvailableTimeSlots, ct);
+            return new PaymentConfirmationResult(true, null);
+        }
+
         var context = new ToolExecutionContext
         {
             ConversationId = conversationId,
@@ -111,9 +142,29 @@ public class PaymentConfirmationHandler : IPaymentConfirmationHandler
 
         if (!result.Success)
         {
-            _logger.LogError("Webhook: CreateReservation falló Ref={Ref} Error={Error}",
+            _logger.LogWarning(
+                "Webhook: CreateReservation falló tras disponibilidad OK (race condition). Ref={Ref} Error={Error}",
                 paymentReferenceId, result.Message);
-            return new PaymentConfirmationResult(false, result.Message);
+
+            var fallbackAvailability = await _availabilityService.CheckAvailabilityAsync(
+                state.BusinessId,
+                state.Service!,
+                state.DesiredDate!.Value.ToDateTime(TimeOnly.MinValue),
+                null,
+                ct);
+
+            _stateUpdater.ApplyConfirmationFlag(state, "AvailabilityConfirmed", false);
+            state.DesiredTime = null;
+
+            if (fallbackAvailability.AvailableTimeSlots.Count == 0)
+                state.DesiredDate = null;
+
+            state.Owner = ConversationOwner.Bot;
+            state.ConsecutiveDegradedTurns = 0;
+            await _stateManager.SaveStateAsync(conversationId, state, ct);
+
+            await _confirmationNotifier.SendSlotTakenAsync(state, originalTime, fallbackAvailability.AvailableTimeSlots, ct);
+            return new PaymentConfirmationResult(true, null);
         }
 
         _logger.LogInformation("Webhook: reserva creada exitosamente Ref={Ref} ReservationId={ResId}",
@@ -123,33 +174,7 @@ public class PaymentConfirmationHandler : IPaymentConfirmationHandler
         state.ConsecutiveDegradedTurns = 0;
         await _stateManager.SaveStateAsync(conversationId, state, ct);
 
-        await SendProactiveConfirmationAsync(state, businessContext, ct);
+        await _confirmationNotifier.SendAsync(state, businessContext, ct);
         return new PaymentConfirmationResult(true, null);
-    }
-
-    private async Task SendProactiveConfirmationAsync(
-        Domain.Models.ConversationState state,
-        LoadedBusinessContext businessContext,
-        CancellationToken ct)
-    {
-        var phone = state.Phone?.Trim();
-        if (string.IsNullOrWhiteSpace(phone))
-        {
-            _logger.LogDebug("No se envía notificación proactiva: teléfono vacío");
-            return;
-        }
-
-        try
-        {
-            var summary = ConfirmationSummaryBuilder.BuildPostCreationSummary(state, businessContext);
-            var message = "✅ ¡Tu pago ha sido confirmado y tu reserva creada!" + summary;
-
-            await _whatsAppService.SendTextMessageAsync(state.BusinessId, phone, message);
-            _logger.LogInformation("Notificación proactiva enviada a {Phone}", phone);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error enviando notificación proactiva al cliente");
-        }
     }
 }

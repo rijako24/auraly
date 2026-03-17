@@ -5,6 +5,13 @@ using MimosBabySpa.Application.Services;
 
 namespace MimosBabySpa.IntegrationTests.Infrastructure;
 
+// Shared category ID for Plan (usado por Services y AddOnRules)
+internal static class TestCategoryIds
+{
+    public static readonly Guid Plan = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+    public static readonly Guid Otros = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Service Repository — pre-populates the three MimosBabySpa services
 // ─────────────────────────────────────────────────────────────────────────────
@@ -12,20 +19,22 @@ namespace MimosBabySpa.IntegrationTests.Infrastructure;
 public class InMemoryServiceRepository : IServiceRepository
 {
     private readonly List<Service> _store;
+    private static readonly ServiceCategory PlanCategory = new()
+    {
+        ServiceCategoryId = TestCategoryIds.Plan,
+        Name = "Plan",
+        DisplayOrder = 0
+    };
 
     public InMemoryServiceRepository(Guid businessId)
     {
         _store = new List<Service>
         {
-            new() { ServiceId = Guid.NewGuid(), BusinessId = businessId, ServiceName = "Plan Marineritos",      DurationMinutes = 60, Price = 80, IsActive = true, Category = ServiceCategory.Plan, Tier = ServiceTier.Base,    CreatedAt = DateTime.UtcNow },
-            new() { ServiceId = Guid.NewGuid(), BusinessId = businessId, ServiceName = "Plan Post Vacunas",    DurationMinutes = 60, Price = 90, IsActive = true, Category = ServiceCategory.Plan, Tier = ServiceTier.Premium, CreatedAt = DateTime.UtcNow },
-            new() { ServiceId = Guid.NewGuid(), BusinessId = businessId, ServiceName = "Plan Aventuras Marinas", DurationMinutes = 75, Price = 100, IsActive = true, Category = ServiceCategory.Plan, Tier = ServiceTier.Deluxe, CreatedAt = DateTime.UtcNow },
-            
-            // Dedicated Plan for Add-On Test
-            new() { ServiceId = Guid.Parse("dddddddd-dddd-dddd-dddd-dddddddddddd"), BusinessId = businessId, ServiceName = "Plan Deluxe", DurationMinutes = 90, Price = 120, IsActive = true, Category = ServiceCategory.Plan, Tier = ServiceTier.Deluxe, CreatedAt = DateTime.UtcNow },
-
-            // Add-on service
-            new() { ServiceId = Guid.Parse("cccccccc-cccc-cccc-cccc-cccccccccccc"), BusinessId = businessId, ServiceName = "Masaje Extra 15m", DurationMinutes = 15, Price = 20, IsActive = true, Category = ServiceCategory.Plan, Tier = ServiceTier.Base, ServiceType = ServiceType.AddOn, CreatedAt = DateTime.UtcNow }
+            new() { ServiceId = Guid.NewGuid(), BusinessId = businessId, ServiceName = "Plan Marineritos",      DurationMinutes = 60, Price = 80, IsActive = true, CategoryId = TestCategoryIds.Plan, ServiceCategory = PlanCategory, Tier = ServiceTier.Base,    CreatedAt = DateTime.UtcNow },
+            new() { ServiceId = Guid.NewGuid(), BusinessId = businessId, ServiceName = "Plan Post Vacunas",    DurationMinutes = 60, Price = 90, IsActive = true, CategoryId = TestCategoryIds.Plan, ServiceCategory = PlanCategory, Tier = ServiceTier.Premium, CreatedAt = DateTime.UtcNow },
+            new() { ServiceId = Guid.NewGuid(), BusinessId = businessId, ServiceName = "Plan Aventuras Marinas", DurationMinutes = 75, Price = 100, IsActive = true, CategoryId = TestCategoryIds.Plan, ServiceCategory = PlanCategory, Tier = ServiceTier.Deluxe, CreatedAt = DateTime.UtcNow },
+            new() { ServiceId = Guid.Parse("dddddddd-dddd-dddd-dddd-dddddddddddd"), BusinessId = businessId, ServiceName = "Plan Deluxe", DurationMinutes = 90, Price = 120, IsActive = true, CategoryId = TestCategoryIds.Plan, ServiceCategory = PlanCategory, Tier = ServiceTier.Deluxe, CreatedAt = DateTime.UtcNow },
+            new() { ServiceId = Guid.Parse("cccccccc-cccc-cccc-cccc-cccccccccccc"), BusinessId = businessId, ServiceName = "Masaje Extra 15m", DurationMinutes = 15, Price = 20, IsActive = true, CategoryId = TestCategoryIds.Plan, ServiceCategory = PlanCategory, Tier = ServiceTier.Base, ServiceType = ServiceType.AddOn, CreatedAt = DateTime.UtcNow }
         };
     }
 
@@ -334,7 +343,44 @@ public class InMemoryLeadRepository : ILeadRepository
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ServiceAddOnRule Repository — empty
+// ServiceCategory Repository — Plan y Otros para tests
+// ─────────────────────────────────────────────────────────────────────────────
+
+public class InMemoryServiceCategoryRepository : IServiceCategoryRepository
+{
+    private readonly List<ServiceCategory> _store;
+
+    public InMemoryServiceCategoryRepository(Guid businessId)
+    {
+        _store = new List<ServiceCategory>
+        {
+            new() { ServiceCategoryId = TestCategoryIds.Plan, BusinessId = businessId, Name = "Plan", DisplayOrder = 0, IsActive = true, CreatedAt = DateTime.UtcNow },
+            new() { ServiceCategoryId = TestCategoryIds.Otros, BusinessId = businessId, Name = "Otros", DisplayOrder = 99, IsActive = true, CreatedAt = DateTime.UtcNow }
+        };
+    }
+
+    public Task<ServiceCategory?> GetByIdAsync(Guid serviceCategoryId) =>
+        Task.FromResult(_store.FirstOrDefault(c => c.ServiceCategoryId == serviceCategoryId));
+
+    public Task<IEnumerable<ServiceCategory>> GetByBusinessIdAsync(Guid businessId) =>
+        Task.FromResult(_store.Where(c => c.BusinessId == businessId));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BusinessAttachment Repository — vacío para tests
+// ─────────────────────────────────────────────────────────────────────────────
+
+public class InMemoryBusinessAttachmentRepository : IBusinessAttachmentRepository
+{
+    public Task<BusinessAttachment?> GetByIdAsync(Guid businessAttachmentId) =>
+        Task.FromResult<BusinessAttachment?>(null);
+
+    public Task<IEnumerable<BusinessAttachment>> GetByBusinessIdAsync(Guid businessId) =>
+        Task.FromResult(Enumerable.Empty<BusinessAttachment>());
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ServiceAddOnRule Repository
 // ─────────────────────────────────────────────────────────────────────────────
 
 public class InMemoryServiceAddOnRuleRepository : IServiceAddOnRuleRepository
@@ -345,24 +391,27 @@ public class InMemoryServiceAddOnRuleRepository : IServiceAddOnRuleRepository
     {
         var planDeluxeId      = Guid.Parse("dddddddd-dddd-dddd-dddd-dddddddddddd");
         var masajeExtraId     = Guid.Parse("cccccccc-cccc-cccc-cccc-cccccccccccc");
+        var planCat = new ServiceCategory { ServiceCategoryId = TestCategoryIds.Plan, Name = "Plan", DisplayOrder = 0 };
+        var otrosCat = new ServiceCategory { ServiceCategoryId = TestCategoryIds.Otros, Name = "Otros", DisplayOrder = 99 };
 
-        // Mock Service objects for navigation properties (REQUIRED by LoadedBusinessContext)
         var planDeluxe = new Service
         {
             ServiceId = planDeluxeId,
             ServiceName = "Plan Deluxe",
             ServiceType = ServiceType.Standard,
-            Category = ServiceCategory.Plan 
+            CategoryId = TestCategoryIds.Plan,
+            ServiceCategory = planCat
         };
 
         var masajeExtra = new Service
         {
-             ServiceId = masajeExtraId,
-             ServiceName = "Masaje Extra 15m",
-             ServiceType = ServiceType.AddOn,
-             Category = ServiceCategory.Otro,
-             Price = 15.00m,
-             Description = "15 minutos de masaje relajante"
+            ServiceId = masajeExtraId,
+            ServiceName = "Masaje Extra 15m",
+            ServiceType = ServiceType.AddOn,
+            CategoryId = TestCategoryIds.Otros,
+            ServiceCategory = otrosCat,
+            Price = 15.00m,
+            Description = "15 minutos de masaje relajante"
         };
 
         _rules = new List<ServiceAddOnRule>
@@ -404,6 +453,7 @@ public class NoOpWhatsAppService : IWhatsAppService
     public Task AcknowledgeMessageAsync(string phoneNumberId, string accessToken, string whatsAppMessageId) => Task.CompletedTask;
     public Task SendTextMessageAsync(Guid businessId, string to, string message) => Task.CompletedTask;
     public Task SendImageMessageAsync(Guid businessId, string to, string imageUrl, string? caption = null) => Task.CompletedTask;
+    public Task SendDocumentMessageAsync(Guid businessId, string to, string documentUrl, string? caption = null, string? filename = null) => Task.CompletedTask;
     public Task<bool> VerifyWebhookAsync(string mode, string token, string challenge) => Task.FromResult(true);
     public Task<Stream> DownloadMediaAsync(Guid businessId, string mediaId) => Task.FromResult<Stream>(Stream.Null);
 }

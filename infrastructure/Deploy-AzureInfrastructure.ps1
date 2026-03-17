@@ -428,7 +428,6 @@ try {
         "FUNCTIONS_WORKER_RUNTIME" = "dotnet-isolated"
         "WEBSITE_RUN_FROM_PACKAGE" = "1"
         "ConnectionStrings:DefaultConnection" = $sqlConnectionString
-        "BlobStorage:ContainerName" = "planes-images"
         "OpenAI:TextModel:ApiKey" = $openAITextKey
         "OpenAI:TextModel:Endpoint" = $openAITextEndpoint
         "OpenAI:TextModel:DeploymentName" = $OpenAITextDeploymentName

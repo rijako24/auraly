@@ -8,24 +8,24 @@ namespace MimosBabySpa.Infrastructure.Services;
 public class BlobStorageService : IBlobStorageService
 {
     private readonly BlobServiceClient _blobServiceClient;
-    private readonly string _containerName;
     private readonly ILogger<BlobStorageService> _logger;
 
     public BlobStorageService(
         BlobServiceClient blobServiceClient,
-        string containerName,
         ILogger<BlobStorageService> logger)
     {
         _blobServiceClient = blobServiceClient;
-        _containerName = containerName;
         _logger = logger;
     }
 
-    public async Task<string> UploadImageAsync(Stream imageStream, string fileName)
+    private static string GetContainerName(Guid businessId) => $"business-{businessId:N}".ToLowerInvariant();
+
+    public async Task<string> UploadImageAsync(Guid businessId, Stream imageStream, string fileName)
     {
         try
         {
-            var containerClient = _blobServiceClient.GetBlobContainerClient(_containerName);
+            var container = GetContainerName(businessId);
+            var containerClient = _blobServiceClient.GetBlobContainerClient(container);
             await containerClient.CreateIfNotExistsAsync(PublicAccessType.Blob);
 
             var blobClient = containerClient.GetBlobClient(fileName);
@@ -42,11 +42,12 @@ public class BlobStorageService : IBlobStorageService
         }
     }
 
-    public async Task<string> GetImageUrlAsync(string fileName)
+    public async Task<string> GetImageUrlAsync(Guid businessId, string fileName)
     {
         try
         {
-            var containerClient = _blobServiceClient.GetBlobContainerClient(_containerName);
+            var container = GetContainerName(businessId);
+            var containerClient = _blobServiceClient.GetBlobContainerClient(container);
             var blobClient = containerClient.GetBlobClient(fileName);
             
             if (await blobClient.ExistsAsync())
@@ -64,11 +65,12 @@ public class BlobStorageService : IBlobStorageService
         }
     }
 
-    public async Task<bool> ImageExistsAsync(string fileName)
+    public async Task<bool> ImageExistsAsync(Guid businessId, string fileName)
     {
         try
         {
-            var containerClient = _blobServiceClient.GetBlobContainerClient(_containerName);
+            var container = GetContainerName(businessId);
+            var containerClient = _blobServiceClient.GetBlobContainerClient(container);
             var blobClient = containerClient.GetBlobClient(fileName);
             return await blobClient.ExistsAsync();
         }

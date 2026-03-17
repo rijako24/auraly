@@ -1,6 +1,6 @@
 # Proyecto de Base de Datos - Mimos Baby Spa
 
-Este proyecto contiene la definición completa de la base de datos SQL Server para la aplicación Mimos Baby Spa, lista para desplegar.
+Este proyecto contiene la definición completa de la base de datos SQL Server para la aplicación Mimos Baby Spa. **Es la única fuente de verdad del esquema**; ya no se usan migraciones de Entity Framework.
 
 ## 📁 Estructura
 
@@ -9,10 +9,14 @@ database/
 ├── MimosBabySpa.Database.sln          # Solución de Visual Studio
 ├── MimosBabySpa.Database/
 │   ├── MimosBabySpa.Database.sqlproj  # Proyecto de base de datos
-│   ├── Tables/                         # Scripts de tablas
+│   ├── Tables/                         # Scripts de tablas (28 tablas)
+│   │   ├── Tenants.sql
+│   │   ├── Businesses.sql
+│   │   ├── AppUsers.sql
+│   │   ├── AppRoles.sql
 │   │   ├── Conversations.sql
 │   │   ├── Messages.sql
-│   │   └── Leads.sql
+│   │   ├── Leads.sql
 │   ├── Scripts/                        # Scripts de despliegue
 │   │   ├── CreateDatabase.ps1         # Crear base de datos
 │   │   ├── Deploy.ps1                 # Despliegue completo
@@ -48,13 +52,17 @@ cd database\MimosBabySpa.Database\Scripts
 
 ## 📊 Esquema de Base de Datos
 
-### Tablas Principales
+### Tablas (28 en total)
 
-- **Conversations**: Almacena las conversaciones de WhatsApp
-- **Messages**: Almacena todos los mensajes intercambiados
-- **Leads**: Almacena información de clientes potenciales
+**Multitenancy y negocio:** Tenants, Businesses, BusinessWhatsAppNumbers, BusinessConfigurations, BusinessResources, SystemConfigurations
 
-Ver `MimosBabySpa.Database/README.md` para detalles completos del esquema.
+**Conversaciones:** Conversations, ConversationContexts, ConversationStates, Messages, Leads
+
+**Servicios y reservas:** Services, ServiceAddOnRules, ServiceBundleItems, ServiceResourceUsages, Employees, EmployeeServices, Reservations, ReservationAddOns
+
+**Identidad y auditoría:** AppUsers, AppRoles, Permissions, UserRoles, RolePermissions, UserExternalLogins, RefreshTokens, AuditLogs
+
+**Pagos:** PaymentTransactions
 
 ## 📖 Documentación
 
@@ -69,6 +77,8 @@ Ver `MimosBabySpa.Database/README.md` para detalles completos del esquema.
 
 ## 📝 Notas
 
+- **Ya no se usan migraciones de EF** – El esquema se gestiona exclusivamente desde este proyecto
 - Este proyecto está en una solución separada para facilitar el despliegue independiente
 - Los scripts de PowerShell incluyen manejo de errores y validaciones
 - El proyecto usa DACPAC para despliegues incrementales y comparación de esquemas
+- Los cambios de esquema se hacen editando los archivos en `Tables/` y desplegando con `Deploy.ps1`

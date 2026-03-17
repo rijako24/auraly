@@ -3,15 +3,45 @@
   <Sdk Name="Microsoft.Build.Sql" Version="0.1.10-preview" />
   <PropertyGroup>
     <TargetFramework>netstandard2.1</TargetFramework>
-    <SqlServerVersion>Sql150</SqlServerVersion>
+    <SqlServerVersion>SqlAzureV12</SqlServerVersion>
     <ProjectGuid>a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d</ProjectGuid>
-    <DSP>Microsoft.Data.Tools.Schema.Sql.Sql150DatabaseSchemaProvider</DSP>
+    <DSP>Microsoft.Data.Tools.Schema.Sql.SqlAzureV12DatabaseSchemaProvider</DSP>
     <ModelCollation>1033, CI</ModelCollation>
   </PropertyGroup>
   <ItemGroup>
+    <Build Remove="Scripts\*.sql" />
+  </ItemGroup>
+  <ItemGroup>
+    <Build Include="Tables\Tenants.sql" />
+    <Build Include="Tables\Permissions.sql" />
+    <Build Include="Tables\SystemConfigurations.sql" />
+    <Build Include="Tables\Businesses.sql" />
+    <Build Include="Tables\AppUsers.sql" />
+    <Build Include="Tables\AppRoles.sql" />
+    <Build Include="Tables\BusinessWhatsAppNumbers.sql" />
+    <Build Include="Tables\BusinessConfigurations.sql" />
+    <Build Include="Tables\BusinessAttachments.sql" />
+    <Build Include="Tables\BusinessResources.sql" />
+    <Build Include="Tables\ServiceCategories.sql" />
+    <Build Include="Tables\Services.sql" />
+    <Build Include="Tables\Employees.sql" />
     <Build Include="Tables\Conversations.sql" />
+    <Build Include="Tables\ConversationContexts.sql" />
+    <Build Include="Tables\ConversationStates.sql" />
     <Build Include="Tables\Messages.sql" />
     <Build Include="Tables\Leads.sql" />
+    <Build Include="Tables\Reservations.sql" />
+    <Build Include="Tables\ReservationAddOns.sql" />
+    <Build Include="Tables\ServiceAddOnRules.sql" />
+    <Build Include="Tables\ServiceBundleItems.sql" />
+    <Build Include="Tables\ServiceResourceUsages.sql" />
+    <Build Include="Tables\EmployeeServices.sql" />
+    <Build Include="Tables\PaymentTransactions.sql" />
+    <Build Include="Tables\UserRoles.sql" />
+    <Build Include="Tables\RolePermissions.sql" />
+    <Build Include="Tables\UserExternalLogins.sql" />
+    <Build Include="Tables\RefreshTokens.sql" />
+    <Build Include="Tables\AuditLogs.sql" />
   </ItemGroup>
   <ItemGroup>
     <PostDeploy Include="Scripts\PostDeployment.sql" />

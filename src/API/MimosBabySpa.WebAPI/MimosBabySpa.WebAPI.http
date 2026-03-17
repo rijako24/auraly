@@ -1,0 +1,6 @@
+@MimosBabySpa.WebAPI_HostAddress = http://localhost:5057
+
+GET {{MimosBabySpa.WebAPI_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

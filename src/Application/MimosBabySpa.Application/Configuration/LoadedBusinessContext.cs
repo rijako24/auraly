@@ -37,6 +37,21 @@ public class LoadedBusinessContext
     /// </summary>
     public PaymentConfiguration? PaymentConfig { get; private set; }
 
+    /// <summary>
+    /// Mensajes enviados al cliente cuando se confirma el pago. Null = usar mensaje default.
+    /// </summary>
+    public PaymentConfirmationMessagesConfig? ConfirmationMessages { get; private set; }
+
+    /// <summary>
+    /// Categorías de servicio del negocio (ordenadas por DisplayOrder).
+    /// </summary>
+    public List<CategoryInfo> Categories { get; private set; } = null!;
+
+    /// <summary>
+    /// Adjuntos del negocio por ID. Usado para resolver attachmentId en mensajes de confirmación.
+    /// </summary>
+    public IReadOnlyDictionary<Guid, AttachmentInfo> Attachments { get; private set; } = null!;
+
     private readonly IUnitOfWork _unitOfWork;
     private readonly ILogger<LoadedBusinessContext> _logger;
 
@@ -84,6 +99,12 @@ public class LoadedBusinessContext
             _logger.LogDebug("Cargando Services...");
             Services = await LoadServicesAsync(cancellationToken);
 
+            _logger.LogDebug("Cargando Categories...");
+            Categories = await LoadCategoriesAsync(cancellationToken);
+
+            _logger.LogDebug("Cargando Attachments...");
+            Attachments = await LoadAttachmentsAsync(cancellationToken);
+
             _logger.LogDebug("Cargando AddOnRules...");
             AddOnRules = await LoadAddOnRulesAsync(cancellationToken);
             
@@ -98,6 +119,9 @@ public class LoadedBusinessContext
 
             _logger.LogDebug("Cargando PaymentConfig...");
             PaymentConfig = await LoadPaymentConfigAsync(cancellationToken);
+
+            _logger.LogDebug("Cargando ConfirmationMessages...");
+            ConfirmationMessages = await LoadConfirmationMessagesAsync(cancellationToken);
 
             // Construir RequiredFields basado en Attributes cargados
             RequiredFields = BuildRequiredFields();
@@ -234,15 +258,17 @@ public class LoadedBusinessContext
                 .Where(s => s.IsActive)
                 .Select(s => new ServiceInfo
                 {
-                    Name            = s.ServiceName,
-                    Description     = s.Description,
-                    DurationMinutes = s.DurationMinutes,
-                    Price           = s.Price,
-                    IsActive        = s.IsActive,
-                    Category        = s.Category,
-                    Tier            = s.Tier,
-                    ServiceType     = s.ServiceType,
-                    BundleItems     = s.BundleItems
+                    Name                 = s.ServiceName,
+                    Description          = s.Description,
+                    DurationMinutes      = s.DurationMinutes,
+                    Price                = s.Price,
+                    IsActive             = s.IsActive,
+                    CategoryId           = s.CategoryId,
+                    CategoryName         = s.ServiceCategory.Name,
+                    CategoryDisplayOrder = s.ServiceCategory.DisplayOrder,
+                    Tier                 = s.Tier,
+                    ServiceType          = s.ServiceType,
+                    BundleItems          = s.BundleItems
                         .OrderBy(b => b.DisplayOrder)
                         .Select(b => new BundleItemInfo
                         {
@@ -262,6 +288,51 @@ public class LoadedBusinessContext
         }
     }
 
+    private async Task<List<CategoryInfo>> LoadCategoriesAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            var categories = await _unitOfWork.ServiceCategories.GetByBusinessIdAsync(BusinessId);
+            return categories
+                .Select(sc => new CategoryInfo
+                {
+                    CategoryId    = sc.ServiceCategoryId,
+                    Name          = sc.Name,
+                    DisplayOrder  = sc.DisplayOrder
+                })
+                .ToList();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error cargando categorías");
+            return new List<CategoryInfo>();
+        }
+    }
+
+    private async Task<IReadOnlyDictionary<Guid, AttachmentInfo>> LoadAttachmentsAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            var attachments = await _unitOfWork.BusinessAttachments.GetByBusinessIdAsync(BusinessId);
+            return attachments
+                .Where(a => a.IsActive)
+                .ToDictionary(
+                    a => a.BusinessAttachmentId,
+                    a => new AttachmentInfo
+                    {
+                        AttachmentId = a.BusinessAttachmentId,
+                        BlobPath     = a.BlobPath,
+                        MediaType    = a.MediaType,
+                        Filename     = a.Filename
+                    });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error cargando adjuntos del negocio");
+            return new Dictionary<Guid, AttachmentInfo>();
+        }
+    }
+
     private async Task<List<AddOnRuleInfo>> LoadAddOnRulesAsync(CancellationToken cancellationToken)
     {
         try
@@ -275,7 +346,8 @@ public class LoadedBusinessContext
                     AddOnPrice               = r.AddOnService.Price,
                     DisplayOrder             = r.DisplayOrder,
                     CompatibleWithServiceName = r.CompatibleService?.ServiceName,
-                    CompatibleServiceCategory = r.CompatibleService?.Category
+                    CompatibleCategoryId     = r.CompatibleService?.CategoryId,
+                    CompatibleCategoryName   = r.CompatibleService?.ServiceCategory?.Name
                 })
                 .OrderBy(r => r.DisplayOrder)
                 .ThenBy(r => r.AddOnName)
@@ -492,6 +564,55 @@ public class LoadedBusinessContext
         {
             _logger.LogWarning(ex,
                 "Error deserializando PaymentConfig para BusinessId={BusinessId}. Sin anticipo.",
+                BusinessId);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Carga los mensajes de confirmación de pago desde BusinessConfiguration key=PaymentConfirmationMessages (8).
+    /// JSON: Messages (Body, opcional AttachmentId).
+    /// </summary>
+    private async Task<PaymentConfirmationMessagesConfig?> LoadConfirmationMessagesAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            var config = await _unitOfWork.BusinessConfigurations
+                .GetByBusinessIdAndKeyAsync(BusinessId, BusinessConfigurationKey.PaymentConfirmationMessages);
+
+            if (config == null || string.IsNullOrWhiteSpace(config.Value))
+            {
+                _logger.LogDebug(
+                    "No se encontró PaymentConfirmationMessages (key=8) para BusinessId={BusinessId}. Usará default.",
+                    BusinessId);
+                return null;
+            }
+
+            var trimmed = config.Value.TrimStart();
+            if (!trimmed.StartsWith("{"))
+            {
+                _logger.LogWarning(
+                    "PaymentConfirmationMessages para BusinessId={BusinessId} no es JSON válido. Usará default.",
+                    BusinessId);
+                return null;
+            }
+
+            var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+            var parsed = JsonSerializer.Deserialize<PaymentConfirmationMessagesConfig>(config.Value, options);
+
+            if (parsed?.Messages is { Count: > 0 })
+            {
+                _logger.LogInformation(
+                    "ConfirmationMessages cargados para BusinessId={BusinessId}: {Count} mensajes",
+                    BusinessId, parsed.Messages.Count);
+            }
+
+            return parsed;
+        }
+        catch (JsonException ex)
+        {
+            _logger.LogWarning(ex,
+                "Error deserializando PaymentConfirmationMessages para BusinessId={BusinessId}. Usará default.",
                 BusinessId);
             return null;
         }

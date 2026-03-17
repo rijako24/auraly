@@ -11,4 +11,5 @@ public class Tenant
     
     // Navigation properties
     public virtual ICollection<Business> Businesses { get; set; } = new List<Business>();
+    public virtual ICollection<AppUser> AppUsers { get; set; } = new List<AppUser>();
 }

@@ -16,22 +16,21 @@ public class ConsoleBlobStorageService : IBlobStorageService
         _logger = logger;
     }
 
-    public Task<string> UploadImageAsync(Stream imageStream, string fileName)
+    public Task<string> UploadImageAsync(Guid businessId, Stream imageStream, string fileName)
     {
-        _logger.LogDebug("[MOCK] UploadImageAsync llamado para: {FileName}", fileName);
+        _logger.LogDebug("[MOCK] UploadImageAsync llamado para business {BusinessId}: {FileName}", businessId, fileName);
         return Task.FromResult<string>(string.Empty);
     }
 
-    public Task<string> GetImageUrlAsync(string fileName)
+    public Task<string> GetImageUrlAsync(Guid businessId, string fileName)
     {
-        _logger.LogDebug("[MOCK] GetImageUrlAsync llamado para: {FileName}", fileName);
-        // Retornar null para que el código envíe solo texto en lugar de imagen
+        _logger.LogDebug("[MOCK] GetImageUrlAsync llamado para business {BusinessId}: {FileName}", businessId, fileName);
         return Task.FromResult<string>(string.Empty);
     }
 
-    public Task<bool> ImageExistsAsync(string fileName)
+    public Task<bool> ImageExistsAsync(Guid businessId, string fileName)
     {
-        _logger.LogDebug("[MOCK] ImageExistsAsync llamado para: {FileName}", fileName);
+        _logger.LogDebug("[MOCK] ImageExistsAsync llamado para business {BusinessId}: {FileName}", businessId, fileName);
         return Task.FromResult(false);
     }
 }

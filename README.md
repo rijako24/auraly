@@ -133,7 +133,6 @@ az functionapp config appsettings set `
   --resource-group MimosBabySpa `
   --settings `
     "ConnectionStrings:DefaultConnection=<TU_CONNECTION_STRING>" `
-    "BlobStorage:ContainerName=planes-images" `
     "OpenAI:TextModel:ApiKey=<TU_GPT_KEY>" `
     "OpenAI:TextModel:Endpoint=<TU_GPT_ENDPOINT>" `
     "OpenAI:TextModel:DeploymentName=gpt-4o-mini" `

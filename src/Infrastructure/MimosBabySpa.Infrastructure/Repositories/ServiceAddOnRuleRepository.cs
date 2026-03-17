@@ -18,7 +18,8 @@ public class ServiceAddOnRuleRepository : IServiceAddOnRuleRepository
     {
         return await _context.ServiceAddOnRules
             .Include(r => r.AddOnService)
-            .Include(r => r.CompatibleService)
+            .Include(r => r.CompatibleService!)
+                .ThenInclude(s => s.ServiceCategory)
             .Where(r => r.BusinessId == businessId)
             .OrderBy(r => r.DisplayOrder)
             .ThenBy(r => r.AddOnService.ServiceName)

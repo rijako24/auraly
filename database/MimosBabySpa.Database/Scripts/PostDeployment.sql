@@ -11,7 +11,8 @@ Post-Deployment Script Template
 */
 
 -- Scripts de post-despliegue
--- Aquí puedes agregar datos iniciales, índices adicionales, etc.
+:r .\SeedServiceCategoriesForNewBusinesses.sql
+:r .\SeedAdminAttachmentsAndKey8ForBusiness2222.sql
 
 PRINT 'Post-deployment script ejecutado correctamente.';
 

@@ -94,21 +94,7 @@ Test-Item "CachedBusinessContextProvider existe" {
     return $false
 }
 
-# Test 4: SystemPrompts existe
-Test-Item "SystemPrompts (constantes estáticas) existen" {
-    $path = Join-Path $projectRoot "src\Application\MimosBabySpa.Application\Prompts\SystemPrompts.cs"
-    $exists = Test-Path $path
-    if ($exists) {
-        $content = Get-Content $path -Raw
-        # Verificar que tiene las secciones principales
-        return $content -match "public static class SystemPrompts" -and 
-               $content -match "public static class Roles" -and
-               $content -match "public static class ConversationRules"
-    }
-    return $false
-}
-
-# Test 5: SystemPromptProvider existe
+# Test 4: SystemPromptProvider existe
 Test-Item "SystemPromptProvider existe" {
     $path = Join-Path $projectRoot "src\Application\MimosBabySpa.Application\Prompts\SystemPromptProvider.cs"
     $exists = Test-Path $path
@@ -120,7 +106,7 @@ Test-Item "SystemPromptProvider existe" {
     return $false
 }
 
-# Test 6: HybridTransactionalOrchestrator refactorizado
+# Test 5: HybridTransactionalOrchestrator refactorizado
 Test-Item "HybridTransactionalOrchestrator usa CachedBusinessContextProvider" {
     $path = Join-Path $projectRoot "src\Application\MimosBabySpa.Application\Orchestration\HybridTransactionalOrchestrator.cs"
     $exists = Test-Path $path
@@ -133,7 +119,7 @@ Test-Item "HybridTransactionalOrchestrator usa CachedBusinessContextProvider" {
     return $false
 }
 
-# Test 7: JsonSchemaPromptBuilder refactorizado
+# Test 6: JsonSchemaPromptBuilder refactorizado
 Test-Item "JsonSchemaPromptBuilder usa LoadedBusinessContext" {
     $path = Join-Path $projectRoot "src\Application\MimosBabySpa.Application\LLM\Extraction\JsonSchemaPromptBuilder.cs"
     $exists = Test-Path $path
@@ -145,7 +131,7 @@ Test-Item "JsonSchemaPromptBuilder usa LoadedBusinessContext" {
     return $false
 }
 
-# Test 8: SmartExtractionService refactorizado
+# Test 7: SmartExtractionService refactorizado
 Test-Item "SmartExtractionService usa LoadedBusinessContext" {
     $path = Join-Path $projectRoot "src\Application\MimosBabySpa.Application\LLM\Extraction\SmartExtractionService.cs"
     $exists = Test-Path $path
@@ -157,7 +143,7 @@ Test-Item "SmartExtractionService usa LoadedBusinessContext" {
     return $false
 }
 
-# Test 9: ProcessingContext actualizado
+# Test 8: ProcessingContext actualizado
 Test-Item "ProcessingContext incluye BusinessContext" {
     $path = Join-Path $projectRoot "src\Application\MimosBabySpa.Application\Orchestration\ProcessingContext.cs"
     $exists = Test-Path $path
@@ -169,7 +155,7 @@ Test-Item "ProcessingContext incluye BusinessContext" {
     return $false
 }
 
-# Test 10: Program.cs tiene registro de servicios
+# Test 9: Program.cs tiene registro de servicios
 Test-Item "Program.cs registra CachedBusinessContextProvider" {
     $path = Join-Path $projectRoot "src\API\MimosBabySpa.API\Program.cs"
     $exists = Test-Path $path
@@ -183,7 +169,7 @@ Test-Item "Program.cs registra CachedBusinessContextProvider" {
     return $false
 }
 
-# Test 11: Microsoft.Extensions.Caching.Memory agregado
+# Test 10: Microsoft.Extensions.Caching.Memory agregado
 Test-Item "Paquete Microsoft.Extensions.Caching.Memory agregado" {
     $path = Join-Path $projectRoot "src\Application\MimosBabySpa.Application\MimosBabySpa.Application.csproj"
     $exists = Test-Path $path
@@ -194,7 +180,7 @@ Test-Item "Paquete Microsoft.Extensions.Caching.Memory agregado" {
     return $false
 }
 
-# Test 12: Sin repositorio duplicado
+# Test 11: Sin repositorio duplicado
 Test-Item "No hay IBusinessConfigurationRepository duplicado" {
     $path1 = Join-Path $projectRoot "src\Application\MimosBabySpa.Application\Configuration\IBusinessConfigurationRepository.cs"
     $path2 = Join-Path $projectRoot "src\Application\MimosBabySpa.Application\Configuration\BusinessConfigurationRepository.cs"

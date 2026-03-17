@@ -9,28 +9,20 @@ namespace MimosBabySpa.Application.Prompts.Templates;
 ///
 /// Estrategia de presentación:
 ///   1. Solo servicios Standard en el catálogo principal.
-///   2. Servicios agrupados por Category, ordenados por Tier dentro de cada categoría.
+///   2. Servicios agrupados por categoría (data-driven), ordenados por Tier dentro de cada categoría.
 ///   3. Los bundles muestran su composición desde ServiceBundleItems.
 ///   4. Add-ons: mostrados inmediatamente después de cada categoría de servicios (contexto local para el LLM).
-///     Solo ofrecer DESPUÉS de elegir servicio principal; filtrados por selectedServiceCategory cuando aplica.
+///     Solo ofrecer DESPUÉS de elegir servicio principal; filtrados por selectedCategoryId cuando aplica.
 ///
 /// Multitenant: todo desde datos. Nada hardcodeado.
 /// </summary>
 public static class ServiceCatalogBuilder
 {
-    private static readonly IReadOnlyDictionary<ServiceCategory, string> CategoryLabels =
-        new Dictionary<ServiceCategory, string>
-        {
-            [ServiceCategory.Plan] = "Planes",
-            [ServiceCategory.Taller] = "Talleres",
-            [ServiceCategory.Clase] = "Clases",
-            [ServiceCategory.Otro] = "Otros servicios"
-        };
-
     public static string Build(
         List<ServiceInfo> services,
         List<AddOnRuleInfo> addOnRules,
-        ServiceCategory? selectedServiceCategory = null)
+        List<CategoryInfo> categories,
+        Guid? selectedCategoryId = null)
     {
         var active = services
             .Where(s => s.IsActive && s.ServiceType == ServiceType.Standard)
@@ -46,22 +38,19 @@ public static class ServiceCatalogBuilder
             return sb.ToString().TrimEnd();
         }
 
-        // ── Servicios agrupados por categoría, ordenados por Tier ─────────────────
-        var byCategory = active
-            .Where(s => s.Category != ServiceCategory.Otro)
-            .GroupBy(s => s.Category)
-            .OrderBy(g => g.Key == ServiceCategory.Plan ? 0 : g.Key == ServiceCategory.Taller ? 1 : g.Key == ServiceCategory.Clase ? 2 : 99);
-
-        foreach (var group in byCategory)
+        foreach (var category in categories.OrderBy(c => c.DisplayOrder).ThenBy(c => c.Name))
         {
-            var label = CategoryLabels.GetValueOrDefault(group.Key, group.Key.ToString());
-            sb.AppendLine($"### {label}");
+            var group = active.Where(s => s.CategoryId == category.CategoryId).ToList();
+            if (group.Count == 0)
+                continue;
+
+            sb.AppendLine($"### {category.Name}");
             var ordered = group.OrderByDescending(s => (int)s.Tier).ToList();
 
             foreach (var svc in ordered)
             {
                 var header = svc == ordered.First()
-                    ? $"#### ⭐ {svc.Name}  ← *RECOMIENDA ESTA PRIMERO*"
+                    ? $"#### ⭐ {svc.Name}"
                     : $"#### {svc.Name}";
                 sb.AppendLine(header);
                 var composition = BuildCompositionLine(svc);
@@ -73,29 +62,10 @@ public static class ServiceCatalogBuilder
                 sb.AppendLine();
             }
 
-            AppendAddOnsForCategory(sb, addOnRules, group.Key, selectedServiceCategory);
+            AppendAddOnsForCategory(sb, addOnRules, category.CategoryId, selectedCategoryId);
         }
 
-        // ── Servicios Otro (independientes) ─────────────────
-        var otros = active
-            .Where(s => s.Category == ServiceCategory.Otro)
-            .OrderBy(s => s.Price)
-            .ToList();
-
-        foreach (var svc in otros)
-        {
-            sb.AppendLine($"### {svc.Name}");
-            if (!string.IsNullOrEmpty(svc.Description))
-                sb.AppendLine(svc.Description);
-            sb.AppendLine($"_Duración: {svc.DurationMinutes} min | Precio: ${svc.Price:N0}_");
-            sb.AppendLine();
-        }
-
-        if (otros.Any())
-            AppendAddOnsForCategory(sb, addOnRules, ServiceCategory.Otro, selectedServiceCategory);
-
-        // ── Add-ons compatibles con todos (solo cuando no hay categoría elegida) ─
-        AppendUniversalAddOns(sb, addOnRules, selectedServiceCategory);
+        AppendUniversalAddOns(sb, addOnRules, selectedCategoryId);
 
         sb.AppendLine("Solo puedes ofrecer los servicios y servicios extras listados arriba. No inventes ni combinas servicios distintos.");
         return sb.ToString().TrimEnd();
@@ -104,10 +74,10 @@ public static class ServiceCatalogBuilder
     private static void AppendAddOnsForCategory(
         StringBuilder sb,
         List<AddOnRuleInfo> addOnRules,
-        ServiceCategory category,
-        ServiceCategory? selectedServiceCategory)
+        Guid categoryId,
+        Guid? selectedCategoryId)
     {
-        var addOns = GetAddOnsForCategory(addOnRules, category, selectedServiceCategory);
+        var addOns = GetAddOnsForCategory(addOnRules, categoryId, selectedCategoryId);
         if (addOns.Count == 0)
             return;
 
@@ -128,13 +98,13 @@ public static class ServiceCatalogBuilder
     private static void AppendUniversalAddOns(
         StringBuilder sb,
         List<AddOnRuleInfo> addOnRules,
-        ServiceCategory? selectedServiceCategory)
+        Guid? selectedCategoryId)
     {
-        if (selectedServiceCategory.HasValue)
+        if (selectedCategoryId.HasValue)
             return;
 
         var universal = addOnRules
-            .Where(r => !r.CompatibleServiceCategory.HasValue)
+            .Where(r => !r.CompatibleCategoryId.HasValue)
             .OrderBy(r => r.DisplayOrder)
             .ThenBy(r => r.AddOnName)
             .ToList();
@@ -158,39 +128,39 @@ public static class ServiceCatalogBuilder
 
     private static List<AddOnRuleInfo> GetAddOnsForCategory(
         List<AddOnRuleInfo> rules,
-        ServiceCategory category,
-        ServiceCategory? selectedServiceCategory)
+        Guid categoryId,
+        Guid? selectedCategoryId)
     {
-        var filtered = FilterAddOnsByCategory(rules, selectedServiceCategory);
-        if (selectedServiceCategory.HasValue && category != selectedServiceCategory.Value)
+        var filtered = FilterAddOnsByCategory(rules, selectedCategoryId);
+        if (selectedCategoryId.HasValue && categoryId != selectedCategoryId.Value)
             return [];
 
         return filtered.Where(r =>
         {
-            if (!r.CompatibleServiceCategory.HasValue)
-                return selectedServiceCategory.HasValue;
-            return r.CompatibleServiceCategory.Value == category;
+            if (!r.CompatibleCategoryId.HasValue)
+                return selectedCategoryId.HasValue;
+            return r.CompatibleCategoryId.Value == categoryId;
         }).ToList();
     }
 
     private static List<AddOnRuleInfo> FilterAddOnsByCategory(
         List<AddOnRuleInfo> rules,
-        ServiceCategory? selectedCategory)
+        Guid? selectedCategoryId)
     {
-        if (!selectedCategory.HasValue)
+        if (!selectedCategoryId.HasValue)
             return rules;
 
         return rules
-            .Where(r => IsAddOnCompatibleWithCategory(r, selectedCategory.Value))
+            .Where(r => IsAddOnCompatibleWithCategory(r, selectedCategoryId.Value))
             .ToList();
     }
 
-    private static bool IsAddOnCompatibleWithCategory(AddOnRuleInfo rule, ServiceCategory category)
+    private static bool IsAddOnCompatibleWithCategory(AddOnRuleInfo rule, Guid categoryId)
     {
-        if (!rule.CompatibleServiceCategory.HasValue)
+        if (!rule.CompatibleCategoryId.HasValue)
             return true;
 
-        return rule.CompatibleServiceCategory.Value == category;
+        return rule.CompatibleCategoryId.Value == categoryId;
     }
 
     private static string BuildCompatibilityText(AddOnRuleInfo rule)
@@ -198,8 +168,8 @@ public static class ServiceCatalogBuilder
         if (!string.IsNullOrEmpty(rule.CompatibleWithServiceName))
             return $"compatible con: {rule.CompatibleWithServiceName}";
 
-        if (rule.CompatibleServiceCategory.HasValue)
-            return $"compatible con servicios {CategoryLabels.GetValueOrDefault(rule.CompatibleServiceCategory.Value, rule.CompatibleServiceCategory.Value.ToString())}";
+        if (rule.CompatibleCategoryId.HasValue && !string.IsNullOrEmpty(rule.CompatibleCategoryName))
+            return $"compatible con servicios {rule.CompatibleCategoryName}";
 
         return "compatible con todos los servicios anteriores";
     }

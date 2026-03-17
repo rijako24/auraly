@@ -66,7 +66,8 @@ public class ReleaseConversationFunction
         {
             ReleaseResult.Released => SuccessHtml(),
             ReleaseResult.AlreadyWithBot => SuccessHtml(),
-            ReleaseResult.NotFound => ErrorHtml("Conversación no encontrada.")
+            ReleaseResult.NotFound => ErrorHtml("Conversación no encontrada."),
+            _ => throw new NotImplementedException()
         };
         await response.WriteStringAsync(html);
         return response;

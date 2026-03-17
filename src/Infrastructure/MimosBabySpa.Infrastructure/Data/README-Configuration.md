@@ -17,8 +17,7 @@ Las siguientes configuraciones deben estar en Application Settings de Azure Func
 
 ```
 ConnectionStrings:DefaultConnection = <cadena de conexión a SQL Server>
-AzureWebJobsStorage = <cadena de conexión a Storage - usada por Functions y Blob Storage>
-BlobStorage:ContainerName = planes-images
+AzureWebJobsStorage = <cadena de conexión a Storage - usada por Functions y Blob Storage; cada negocio usa contenedor business-{BusinessId}>
 OpenAI:TextModel:ApiKey = <clave API para GPT>
 OpenAI:TextModel:Endpoint = <endpoint para GPT>
 OpenAI:TextModel:DeploymentName = gpt-4o-mini

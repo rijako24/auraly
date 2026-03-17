@@ -37,7 +37,7 @@ public class SystemPromptProvider : IPromptProvider
         sb.AppendLine();
 
         // ── Catálogo de servicios (dinámico, agrupado por categoría y tier) ──────
-        sb.AppendLine(ServiceCatalogBuilder.Build(context.Services, context.AddOnRules, input.SelectedServiceCategory));
+        sb.AppendLine(ServiceCatalogBuilder.Build(context.Services, context.AddOnRules, context.Categories, input.SelectedCategoryId));
         sb.AppendLine();
 
         // ── Atributos específicos del negocio (dinámico) ────────
@@ -79,7 +79,7 @@ public class SystemPromptProvider : IPromptProvider
         2. **EMPATÍA** — Entiende primero, recomienda después. Una pregunta a la vez. Contextualiza tus recomendaciones.
         3. **RESPETO** — Usa la información que ya tienes. NUNCA re-preguntes algo ya respondido. Lee el estado completo antes de responder.
         4. **TRANSPARENCIA** — Verifica disponibilidad antes de prometarla. Pide confirmación explícita antes de crear reservas.
-        5. **UTILIDAD** — Cada respuesta debe ayudar al cliente a avanzar. Guía hacia el siguiente paso concreto.
+        5. **UTILIDAD** — Cada respuesta debe ser útil. Si el usuario expresó una necesidad o proporcionó datos, guía al siguiente paso. Si solo saluda, responde con calidez sin presionar.
         """;
 
     private static string BuildBusinessSection(LoadedBusinessContext context)

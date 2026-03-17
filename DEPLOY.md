@@ -46,7 +46,6 @@ az functionapp config appsettings set `
   --resource-group MimosBabySpa `
   --settings `
     "ConnectionStrings:DefaultConnection=Server=tcp:TU_SERVIDOR.database.windows.net,1433;Initial Catalog=TU_DB;Persist Security Info=False;User ID=TU_USUARIO;Password=TU_PASSWORD;MultipleActiveResultSets=False;Encrypt=True;TrustServerCertificate=False;Connection Timeout=30;" `
-    "BlobStorage:ContainerName=planes-images" `
     "OpenAI:TextModel:ApiKey=TU_GPT_KEY" `
     "OpenAI:TextModel:Endpoint=https://TU_RECURSO_GPT.openai.azure.com/" `
     "OpenAI:TextModel:DeploymentName=gpt-4o-mini" `

@@ -27,7 +27,7 @@ public static class ConfirmationSummaryBuilder
         {
             sb.Append(BuildAnticipoBlock(state, businessContext));
             if (!string.IsNullOrWhiteSpace(state.PaymentLinkUrl))
-                sb.Append("\n\nRealiza el pago del anticipo para confirmar tu reserva.");
+                sb.Append("\n\nUna vez confirmado el anticipo, tu reserva quedará asegurada. ¡Estamos para ayudarte!");
             else
                 sb.Append("\n\n¿Confirmas la reserva con estos datos?");
         }
@@ -91,7 +91,7 @@ public static class ConfirmationSummaryBuilder
     {
         var (porcentaje, anticipo) = CalculateAnticipo(state, businessContext);
 
-        return $"\n\nPara confirmar tu reserva, necesitas realizar el pago del anticipo ({porcentaje:P0})." +
+        return $"\n\nPara asegurar tu espacio, solicitamos el anticipo del {porcentaje:P0} del servicio." +
                $"\n\n💳 *Anticipo ({porcentaje:P0}):* ${anticipo:N0}" +
                $"\n\n🔗 Puedes completar tu pago de forma segura accediendo al siguiente enlace:\n{state.PaymentLinkUrl}";
     }
@@ -118,7 +118,7 @@ public static class ConfirmationSummaryBuilder
         var config = businessContext.PaymentConfig!;
 
         var sb = new StringBuilder();
-        sb.AppendLine($"\n\n💰 Se requiere el {porcentaje:P0} como anticipo del servicio.");
+        sb.AppendLine($"\n\n💰 Para confirmar tu reserva, solicitamos un anticipo del {porcentaje:P0} del valor del servicio.");
         sb.AppendLine($"*Anticipo:* ${anticipo:N0} {config.Currency}");
 
         if (!string.IsNullOrWhiteSpace(state.PaymentLinkUrl))

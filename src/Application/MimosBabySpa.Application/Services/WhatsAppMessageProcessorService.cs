@@ -111,7 +111,7 @@ public class WhatsAppMessageProcessorService : IWhatsAppMessageProcessorService
         if (!string.IsNullOrEmpty(planName))
         {
             var imageFileName = BuildPlanImageFileName(planName);
-            var imageUrl      = await _blobStorageService.GetImageUrlAsync(imageFileName);
+            var imageUrl      = await _blobStorageService.GetImageUrlAsync(conversation.BusinessId, imageFileName);
 
             if (!string.IsNullOrEmpty(imageUrl))
             {

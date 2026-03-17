@@ -1,0 +1,394 @@
+"use client";
+
+import * as React from "react";
+import {
+  ColumnDef,
+  ColumnFiltersState,
+  SortingState,
+  VisibilityState,
+  flexRender,
+  getCoreRowModel,
+  getFilteredRowModel,
+  getPaginationRowModel,
+  getSortedRowModel,
+  useReactTable,
+} from "@tanstack/react-table";
+import { Download } from "lucide-react";
+
+import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { Skeleton } from "@/components/ui/skeleton";
+
+import {
+  DataTablePagination,
+  type DataTablePaginationProps,
+} from "./data-table-pagination";
+import {
+  DataTableToolbar,
+  type ViewMode,
+  type FacetedFilterConfig,
+} from "./data-table-toolbar";
+
+export interface DataTableProps<TData, TValue> {
+  columns: ColumnDef<TData, TValue>[];
+  data: TData[];
+  searchKey?: string;
+  searchPlaceholder?: string;
+  isLoading?: boolean;
+  pageCount?: number;
+  onPaginationChange?: (page: number, pageSize: number) => void;
+  onSearch?: (value: string) => void;
+  bulkActions?: {
+    label: string;
+    onClick: (rows: TData[]) => void;
+    variant?: "default" | "destructive" | "outline" | "secondary" | "ghost" | "link";
+  }[];
+  facetedFilters?: FacetedFilterConfig[];
+  viewMode?: ViewMode;
+  onViewModeChange?: (mode: ViewMode) => void;
+  cardRenderer?: (item: TData) => React.ReactNode;
+  listRenderer?: (item: TData) => React.ReactNode;
+  onExport?: () => void;
+  enableRowSelection?: boolean;
+  className?: string;
+}
+
+export function DataTable<TData, TValue>({
+  columns,
+  data,
+  searchKey,
+  searchPlaceholder = "Buscar...",
+  isLoading = false,
+  pageCount: controlledPageCount,
+  onPaginationChange,
+  onSearch,
+  bulkActions = [],
+  facetedFilters = [],
+  viewMode = "table",
+  onViewModeChange,
+  cardRenderer,
+  listRenderer,
+  onExport,
+  enableRowSelection = true,
+  className,
+}: DataTableProps<TData, TValue>) {
+  const [sorting, setSorting] = React.useState<SortingState>([]);
+  const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>([]);
+  const [columnVisibility, setColumnVisibility] = React.useState<VisibilityState>({});
+  const [rowSelection, setRowSelection] = React.useState<Record<string, boolean>>({});
+  const [searchValue, setSearchValue] = React.useState("");
+  const [internalViewMode, setViewMode] = React.useState<ViewMode>(viewMode ?? "table");
+  const [facetedFilterValues, setFacetedFilterValues] = React.useState<
+    Record<string, Set<string>>
+  >({});
+
+  const effectiveViewMode = viewMode ?? internalViewMode;
+  const handleViewModeChange = onViewModeChange ?? setViewMode;
+
+  const columnsWithSelection = React.useMemo<ColumnDef<TData, TValue>[]>(() => {
+    if (!enableRowSelection) return columns;
+    const selectColumn: ColumnDef<TData, TValue> = {
+      id: "select",
+      header: ({ table }) => (
+        <Checkbox
+          checked={
+            table.getIsAllPageRowsSelected() ||
+            (table.getIsSomePageRowsSelected() && "indeterminate")
+          }
+          onCheckedChange={(value) => table.toggleAllPageRowsSelected(!!value)}
+          aria-label="Seleccionar todo"
+        />
+      ),
+      cell: ({ row }) => (
+        <Checkbox
+          checked={row.getIsSelected()}
+          onCheckedChange={(value) => row.toggleSelected(!!value)}
+          aria-label="Seleccionar fila"
+        />
+      ),
+      enableSorting: false,
+      enableHiding: false,
+    };
+    return [selectColumn, ...columns];
+  }, [columns, enableRowSelection]);
+
+  const filteredData = React.useMemo(() => {
+    let result = data;
+    if (searchValue && searchKey && !onSearch) {
+      const lower = searchValue.toLowerCase();
+      result = result.filter((row) => {
+        const val = (row as Record<string, unknown>)[searchKey];
+        return String(val ?? "").toLowerCase().includes(lower);
+      });
+    }
+    facetedFilters.forEach((filter) => {
+      const selected = facetedFilterValues[filter.column];
+      if (selected?.size) {
+        result = result.filter((row) => {
+          const val = (row as Record<string, unknown>)[filter.column];
+          return selected.has(String(val ?? ""));
+        });
+      }
+    });
+    return result;
+  }, [data, searchValue, searchKey, onSearch, facetedFilters, facetedFilterValues]);
+
+  const table = useReactTable({
+    data: filteredData,
+    columns: columnsWithSelection,
+    getCoreRowModel: getCoreRowModel(),
+    getPaginationRowModel: onPaginationChange ? undefined : getPaginationRowModel(),
+    onSortingChange: setSorting,
+    getSortedRowModel: getSortedRowModel(),
+    onColumnFiltersChange: setColumnFilters,
+    getFilteredRowModel: getFilteredRowModel(),
+    onColumnVisibilityChange: setColumnVisibility,
+    onRowSelectionChange: setRowSelection,
+    state: {
+      sorting,
+      columnFilters,
+      columnVisibility,
+      rowSelection,
+    },
+    manualPagination: !!onPaginationChange,
+    pageCount: controlledPageCount ?? -1,
+    manualFiltering: !!onSearch,
+  });
+
+  const handleSearch = (value: string) => {
+    setSearchValue(value);
+    onSearch?.(value);
+    if (!onSearch && searchKey) {
+      table.getColumn(searchKey)?.setFilterValue(value);
+    }
+  };
+
+  const handleFacetedFilterChange = (column: string, values: Set<string>) => {
+    setFacetedFilterValues((prev) => ({ ...prev, [column]: values }));
+  };
+
+  const handleReset = () => {
+    setSearchValue("");
+    setFacetedFilterValues({});
+    onSearch?.("");
+    if (searchKey) {
+      table.getColumn(searchKey)?.setFilterValue("");
+    }
+  };
+
+  const selectedRows = table.getFilteredSelectedRowModel().rows.map((r) => r.original);
+  const hasSelection = selectedRows.length > 0;
+
+  const handleExport = () => {
+    onExport?.();
+    // Stub: could implement CSV/Excel export here
+  };
+
+  const currentViewData =
+    onPaginationChange && !searchValue && Object.keys(facetedFilterValues).every(
+      (k) => !facetedFilterValues[k]?.size
+    )
+      ? data
+      : filteredData;
+
+  const displayItems = currentViewData;
+
+  return (
+    <div className={cn("space-y-4", className)}>
+      <DataTableToolbar<TData>
+        searchKey={searchKey}
+        searchPlaceholder={searchPlaceholder}
+        searchValue={searchValue}
+        onSearch={handleSearch}
+        facetedFilters={facetedFilters}
+        facetedFilterValues={facetedFilterValues}
+        onFacetedFilterChange={handleFacetedFilterChange}
+        viewMode={effectiveViewMode}
+        onViewModeChange={handleViewModeChange}
+        columnVisibility={columnVisibility}
+        onColumnVisibilityChange={setColumnVisibility}
+        onReset={handleReset}
+        table={table}
+      >
+        {onExport && (
+          <Button variant="outline" size="sm" className="h-8" onClick={handleExport}>
+            <Download className="mr-2 h-4 w-4" />
+            Exportar
+          </Button>
+        )}
+      </DataTableToolbar>
+
+      {hasSelection && bulkActions.length > 0 && (
+        <div className="flex items-center gap-2 rounded-md border bg-muted/50 px-4 py-2">
+          <span className="text-sm font-medium">
+            {selectedRows.length} fila(s) seleccionada(s)
+          </span>
+          {bulkActions.map((action) => (
+            <Button
+              key={action.label}
+              variant={action.variant ?? "default"}
+              size="sm"
+              onClick={() => action.onClick(selectedRows)}
+            >
+              {action.label}
+            </Button>
+          ))}
+        </div>
+      )}
+
+      {isLoading ? (
+        <div className="space-y-2">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <Skeleton key={i} className="h-12 w-full" />
+          ))}
+        </div>
+      ) : effectiveViewMode === "table" ? (
+        <>
+          <div className="rounded-md border">
+            <Table>
+              <TableHeader>
+                {table.getHeaderGroups().map((headerGroup) => (
+                  <TableRow key={headerGroup.id}>
+                    {headerGroup.headers.map((header) => (
+                      <TableHead
+                        key={header.id}
+                        className={
+                          header.column.getCanSort()
+                            ? "cursor-pointer select-none"
+                            : ""
+                        }
+                        onClick={header.column.getCanSort() ? header.column.getToggleSortingHandler() : undefined}
+                      >
+                        {flexRender(
+                          header.column.columnDef.header,
+                          header.getContext()
+                        )}
+                      </TableHead>
+                    ))}
+                  </TableRow>
+                ))}
+              </TableHeader>
+              <TableBody>
+                {table.getRowModel().rows?.length ? (
+                  table.getRowModel().rows.map((row) => (
+                    <TableRow
+                      key={row.id}
+                      data-state={row.getIsSelected() && "selected"}
+                    >
+                      {row.getVisibleCells().map((cell) => (
+                        <TableCell key={cell.id}>
+                          {flexRender(
+                            cell.column.columnDef.cell,
+                            cell.getContext()
+                          )}
+                        </TableCell>
+                      ))}
+                    </TableRow>
+                  ))
+                ) : (
+                  <TableRow>
+                    <TableCell
+                      colSpan={columnsWithSelection.length}
+                      className="h-24 text-center"
+                    >
+                      Sin resultados.
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </div>
+          {(!onPaginationChange || controlledPageCount !== undefined) && (
+            <DataTablePagination
+              pageIndex={table.getState().pagination.pageIndex}
+              pageSize={table.getState().pagination.pageSize}
+              pageCount={table.getPageCount()}
+              totalItems={table.getFilteredRowModel().rows.length}
+              onPageChange={table.setPageIndex}
+              onPageSizeChange={table.setPageSize}
+            />
+          )}
+        </>
+      ) : effectiveViewMode === "card" && cardRenderer ? (
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {displayItems.map((item, idx) => (
+            <React.Fragment key={idx}>
+              {cardRenderer(item)}
+            </React.Fragment>
+          ))}
+          {displayItems.length === 0 && (
+            <div className="col-span-full flex h-24 items-center justify-center rounded-md border text-muted-foreground">
+              Sin resultados.
+            </div>
+          )}
+        </div>
+      ) : effectiveViewMode === "list" && listRenderer ? (
+        <div className="space-y-2">
+          {displayItems.map((item, idx) => (
+            <React.Fragment key={idx}>
+              {listRenderer(item)}
+            </React.Fragment>
+          ))}
+          {displayItems.length === 0 && (
+            <div className="flex h-24 items-center justify-center rounded-md border text-muted-foreground">
+              Sin resultados.
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="rounded-md border">
+          <Table>
+            <TableHeader>
+              {table.getHeaderGroups().map((headerGroup) => (
+                <TableRow key={headerGroup.id}>
+                  {headerGroup.headers.map((header) => (
+                    <TableHead key={header.id}>
+                      {flexRender(
+                        header.column.columnDef.header,
+                        header.getContext()
+                      )}
+                    </TableHead>
+                  ))}
+                </TableRow>
+              ))}
+            </TableHeader>
+            <TableBody>
+              {table.getRowModel().rows?.length ? (
+                table.getRowModel().rows.map((row) => (
+                  <TableRow key={row.id}>
+                    {row.getVisibleCells().map((cell) => (
+                      <TableCell key={cell.id}>
+                        {flexRender(
+                          cell.column.columnDef.cell,
+                          cell.getContext()
+                        )}
+                      </TableCell>
+                    ))}
+                  </TableRow>
+                ))
+              ) : (
+                <TableRow>
+                  <TableCell
+                    colSpan={columnsWithSelection.length}
+                    className="h-24 text-center"
+                  >
+                    Sin resultados.
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </div>
+      )}
+    </div>
+  );
+}

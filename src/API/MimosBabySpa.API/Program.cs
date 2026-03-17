@@ -136,6 +136,10 @@ var host = new HostBuilder()
         // Payment Confirmation Handler (Webhook)
         services.AddScoped<IPaymentConfirmationHandler, PaymentConfirmationHandler>();
 
+        // Payment Confirmation Messages (configurables por negocio)
+        services.AddScoped<IMediaUrlResolver, BlobMediaUrlResolver>();
+        services.AddScoped<PaymentConfirmationNotifier>();
+
         // Webhook signature validation (Wompi)
         services.AddSingleton<IWompiWebhookSignatureValidator, WompiWebhookSignatureValidator>();
 
@@ -195,10 +199,7 @@ var host = new HostBuilder()
         services.AddScoped<IBlobStorageService>(sp =>
         {
             var client = sp.GetRequiredService<BlobServiceClient>();
-            var config = sp.GetRequiredService<IConfiguration>();
-            var containerName = config["BlobStorage:ContainerName"] ?? "planes-images";
-            
-            return new BlobStorageService(client, containerName, sp.GetRequiredService<ILogger<BlobStorageService>>());
+            return new BlobStorageService(client, sp.GetRequiredService<ILogger<BlobStorageService>>());
         });
 
         // Integrations Config Provider (Google Calendar, Wompi) — fuente única desde BusinessConfiguration

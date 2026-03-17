@@ -12,14 +12,25 @@ public interface IUnitOfWork : IDisposable
     IConversationContextRepository ConversationContexts { get; }
     IReservationRepository Reservations { get; }
     IServiceRepository Services { get; }
+    IServiceCategoryRepository ServiceCategories { get; }
+    IBusinessAttachmentRepository BusinessAttachments { get; }
     IBusinessResourceRepository BusinessResources { get; }
     IEmployeeRepository Employees { get; }
     IEmployeeServiceRepository EmployeeServices { get; }
     IConversationStateRepository ConversationStates { get; }
     IServiceAddOnRuleRepository ServiceAddOnRules { get; }
     IReservationAddOnRepository ReservationAddOns { get; }
-    
-    // Repositorios de IA Vendedor
-    
+
+    IPaymentTransactionRepository PaymentTransactions { get; }
+    IAppUserRepository AppUsers { get; }
+    IAppRoleRepository AppRoles { get; }
+    IPermissionRepository Permissions { get; }
+    IUserRoleRepository UserRoles { get; }
+    IRolePermissionRepository RolePermissions { get; }
+    IRefreshTokenRepository RefreshTokens { get; }
+    IUserExternalLoginRepository UserExternalLogins { get; }
+    IAuditLogRepository AuditLogs { get; }
+    ITenantRepository Tenants { get; }
+
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

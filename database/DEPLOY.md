@@ -203,11 +203,13 @@ $msbuild = & "${env:ProgramFiles}\Microsoft Visual Studio\Installer\vswhere.exe"
 
 ## Actualizaciones Futuras
 
+**Ya no se usan migraciones de Entity Framework.** El esquema se gestiona exclusivamente desde este proyecto.
+
 Cuando necesites actualizar el esquema:
 
 1. Modifica los archivos `.sql` correspondientes en `Tables/`
-2. Compila el proyecto
-3. Publica nuevamente - SqlPackage comparará y aplicará solo los cambios necesarios
+2. Compila el proyecto: `dotnet build MimosBabySpa.Database.sqlproj`
+3. Publica nuevamente con `Deploy.ps1` - SqlPackage comparará y aplicará solo los cambios necesarios
 
 ## Scripts de Mantenimiento
 

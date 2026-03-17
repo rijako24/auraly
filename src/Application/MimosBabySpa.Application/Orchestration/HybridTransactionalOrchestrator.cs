@@ -279,8 +279,8 @@ public class HybridTransactionalOrchestrator
         }
 
         // System prompt del LLM de respuesta (dinámico por negocio y servicio elegido para filtrar add-ons)
-        var selectedCategory = ResolveSelectedCategory(businessContext.Services, state.Service);
-        var promptInput = new SystemPromptInput(businessContext, selectedCategory);
+        var selectedCategoryId = ResolveSelectedCategoryId(businessContext.Services, state.Service);
+        var promptInput = new SystemPromptInput(businessContext, selectedCategoryId);
         var systemPrompt = await _systemPromptProvider.BuildAsync(promptInput, cancellationToken);
 
         var context = new ProcessingContext(
@@ -603,7 +603,8 @@ public class HybridTransactionalOrchestrator
         if (ctx.BusinessContext.PaymentConfig is { RequiresAnticipo: true } paymentConfig
             && ctx.FlowEvaluation.CurrentStage == TransactionStage.ConfirmingBooking
             && string.IsNullOrWhiteSpace(ctx.State.PaymentReferenceId)
-            && !ctx.State.PaymentConfirmed)
+            && !ctx.State.PaymentConfirmed
+            && !turnActions.CheckAvailabilityExecuted)
         {
             var total = ReservationTotalCalculator.Calculate(
                 ctx.State, ctx.BusinessContext.Services, ctx.BusinessContext.AddOnRules);
@@ -981,7 +982,7 @@ public class HybridTransactionalOrchestrator
                     .Select(a => $"{FieldLabelResolver.Resolve($"Attribute:{a.Key}", businessContext.Attributes)}: {a.Value}"));
                 sb.AppendLine($"- Preferencias: {prefs}");
             }
-            sb.AppendLine("→ NUEVA SESIÓN: recopilar todo de nuevo. Puedes referenciar preferencias anteriores como sugerencia.");
+            sb.AppendLine("→ NUEVA SESIÓN: recopilar todo de nuevo. Las preferencias anteriores son contexto interno; solo referenciarlas si el usuario las menciona o pide recomendación.");
         }
 
         sb.AppendLine();
@@ -1150,8 +1151,7 @@ public class HybridTransactionalOrchestrator
             sb.AppendLine(ResponseInstructionsTemplate.ServiceSelectedOfferAddOnsInstructions);
 
         // 4. Instrucciones de turno (complementan al stage).
-        if (turnActions.CheckAvailabilityExecuted
-            && flowSnapshot.CurrentStage != TransactionStage.ConfirmingBooking)
+        if (turnActions.CheckAvailabilityExecuted)
         {
             sb.AppendLine(ResponseInstructionsTemplate.CheckAvailabilityInstructions);
         }
@@ -1162,7 +1162,9 @@ public class HybridTransactionalOrchestrator
         // 5. Instrucción principal basada en el stage del FlowEngine.
         // No incluir stage instruction cuando add-on offering es el paso dedicado (evita mezclar con fecha).
         // No incluir en primer mensaje de cliente recurrente (ReturningCustomerInstructions ya pregunta qué necesita).
-        if (!extraction.Intentions.IsInformationQuery && !turnActions.AddOnOfferingRequired && !(isFirstMessage && isReturningCustomer))
+        // No incluir ConfirmingBooking cuando se verificó disponibilidad este turno (el resumen se difirió).
+        if (!extraction.Intentions.IsInformationQuery && !turnActions.AddOnOfferingRequired && !(isFirstMessage && isReturningCustomer)
+            && !(turnActions.CheckAvailabilityExecuted && flowSnapshot.CurrentStage == TransactionStage.ConfirmingBooking))
         {
             var stageInstruction = BuildStageInstruction(state, flowSnapshot, businessContext);
             if (!string.IsNullOrEmpty(stageInstruction))
@@ -1252,7 +1254,7 @@ public class HybridTransactionalOrchestrator
             || string.Equals(r.CompatibleWithServiceName, service.Name, StringComparison.OrdinalIgnoreCase));
     }
 
-    private static ServiceCategory? ResolveSelectedCategory(
+    private static Guid? ResolveSelectedCategoryId(
         List<ServiceInfo> services,
         string? serviceName)
     {
@@ -1262,7 +1264,7 @@ public class HybridTransactionalOrchestrator
         var service = services.FirstOrDefault(s =>
             string.Equals(s.Name, serviceName, StringComparison.OrdinalIgnoreCase));
 
-        return service?.Category;
+        return service?.CategoryId;
     }
 
     // ─────────────────────────────────────────────────────────────────
@@ -1379,7 +1381,8 @@ public class HybridTransactionalOrchestrator
         && !ctx.State.ReservationCreated
         && !ctx.TurnActions.CreateReservationExecuted
         && !ctx.TurnActions.RescheduleExecuted
-        && !ctx.State.ConfirmationSummaryPresented;
+        && !ctx.State.ConfirmationSummaryPresented
+        && !ctx.TurnActions.CheckAvailabilityExecuted;
 
     // ═════════════════════════════════════════════════════════════════
     // FASE 6 — GUARDAR METADATOS FINALES

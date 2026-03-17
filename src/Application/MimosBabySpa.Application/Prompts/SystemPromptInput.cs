@@ -1,5 +1,4 @@
 using MimosBabySpa.Application.Configuration;
-using MimosBabySpa.Domain.Enums;
 
 namespace MimosBabySpa.Application.Prompts;
 
@@ -9,4 +8,4 @@ namespace MimosBabySpa.Application.Prompts;
 /// </summary>
 public record SystemPromptInput(
     LoadedBusinessContext BusinessContext,
-    ServiceCategory? SelectedServiceCategory = null);
+    Guid? SelectedCategoryId = null);

@@ -13,6 +13,8 @@ public class InMemoryUnitOfWork : IUnitOfWork
     public IMessageRepository Messages { get; }
     public IConversationStateRepository ConversationStates { get; }
     public IServiceRepository Services { get; }
+    public IServiceCategoryRepository ServiceCategories { get; }
+    public IBusinessAttachmentRepository BusinessAttachments { get; }
     public IBusinessRepository Businesses { get; }
     public IBusinessWhatsAppNumberRepository BusinessWhatsAppNumbers => throw new NotImplementedException();
     public IBusinessConfigurationRepository BusinessConfigurations { get; }
@@ -35,6 +37,8 @@ public class InMemoryUnitOfWork : IUnitOfWork
         Messages             = new InMemoryMessageRepository();
         ConversationStates   = new InMemoryConversationStateRepository();
         Services             = new InMemoryServiceRepository(businessId);
+        ServiceCategories    = new InMemoryServiceCategoryRepository(businessId);
+        BusinessAttachments  = new InMemoryBusinessAttachmentRepository();
         Businesses           = new InMemoryBusinessRepository(businessId);
         BusinessConfigurations = new InMemoryBusinessConfigurationRepository(businessId);
         SystemConfigurations = new InMemorySystemConfigurationRepository();

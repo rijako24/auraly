@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using MimosBabySpa.Domain.Entities;
 using MimosBabySpa.Domain.Repositories;
 using MimosBabySpa.Infrastructure.Data;
+using MimosBabySpa.Infrastructure.Extensions;
 
 namespace MimosBabySpa.Infrastructure.Repositories;
 
@@ -35,9 +36,75 @@ public class ReservationRepository : IReservationRepository
             .ToListAsync();
     }
 
+    public async Task<(IReadOnlyList<Reservation> Items, int TotalCount)> GetPagedByBusinessIdAsync(
+        Guid businessId, int page, int pageSize, string? search,
+        DateTime? startDate, DateTime? endDate, CancellationToken ct)
+    {
+        var query = _context.Reservations
+            .Include(r => r.Service)
+            .Include(r => r.Employee)
+            .Where(r => r.BusinessId == businessId);
+
+        if (startDate.HasValue)
+            query = query.Where(r => r.ReservationDateTime >= startDate.Value);
+        if (endDate.HasValue)
+            query = query.Where(r => r.ReservationDateTime <= endDate.Value);
+
+        if (!string.IsNullOrWhiteSpace(search))
+        {
+            var s = search.Trim().ToLower();
+            query = query.Where(r =>
+                r.Service.ServiceName.ToLower().Contains(s) ||
+                r.Employee.Name.ToLower().Contains(s));
+        }
+
+        return await query.OrderByDescending(r => r.ReservationDateTime).ToPagedListAsync(page, pageSize, ct);
+    }
+
+    public async Task<IReadOnlyList<Reservation>> GetRecentByBusinessIdAsync(
+        Guid businessId, int limit, CancellationToken ct)
+    {
+        return await _context.Reservations
+            .Include(r => r.Service)
+            .Include(r => r.Employee)
+            .Include(r => r.Conversation)
+            .Where(r => r.BusinessId == businessId)
+            .OrderByDescending(r => r.ReservationDateTime)
+            .Take(limit)
+            .ToListAsync(ct);
+    }
+
+    public async Task<IReadOnlyList<(Guid ServiceId, string ServiceName, int TotalReservations, decimal Revenue)>> GetTopServicesByBusinessIdAsync(
+        Guid businessId, int limit, DateTime? from, DateTime? to, CancellationToken ct)
+    {
+        var query = _context.Reservations
+            .Where(r => r.BusinessId == businessId && r.Status != Domain.Enums.ReservationStatus.Cancelled);
+
+        if (from.HasValue)
+            query = query.Where(r => r.ReservationDateTime >= from.Value);
+        if (to.HasValue)
+            query = query.Where(r => r.ReservationDateTime <= to.Value);
+
+        var grouped = await query
+            .Join(_context.Services, r => r.ServiceId, s => s.ServiceId, (r, s) => new { Reservation = r, Service = s })
+            .GroupBy(x => new { x.Service.ServiceId, x.Service.ServiceName })
+            .Select(g => new
+            {
+                g.Key.ServiceId,
+                g.Key.ServiceName,
+                TotalReservations = g.Count(),
+                Revenue = g.Sum(x => x.Service.Price)
+            })
+            .OrderByDescending(x => x.TotalReservations)
+            .Take(limit)
+            .ToListAsync(ct);
+
+        return grouped.Select(x => (x.ServiceId, x.ServiceName, x.TotalReservations, x.Revenue)).ToList();
+    }
+
     public async Task<IEnumerable<Reservation>> GetByBusinessIdAndDateRangeAsync(
-        Guid businessId, 
-        DateTime startDate, 
+        Guid businessId,
+        DateTime startDate,
         DateTime endDate)
     {
         return await _context.Reservations

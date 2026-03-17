@@ -208,7 +208,8 @@ public class ConversationStateUpdater : IConversationStateUpdater
             state.AddOnsOffered = false;
             state.ConfirmationSummaryPresented = false;
             state.AvailableTimeSlots = null;
-            ResetPaymentFieldsStatic(state);
+            if (!state.PaymentConfirmed)
+                ResetPaymentFieldsStatic(state);
         }
         return Ok($"Service = '{value}'" + (changed ? " (disponibilidad y add-ons reseteados)" : ""));
     }
@@ -222,12 +223,13 @@ public class ConversationStateUpdater : IConversationStateUpdater
         state.DesiredDate = date;
         if (changed)
         {
-            state.DesiredTime = null; // Hora depende de fecha; nueva fecha invalida hora anterior.
+            state.DesiredTime = null;
             state.AvailabilityConfirmed = false;
             state.ReservationConfirmed = false;
             state.ConfirmationSummaryPresented = false;
             state.AvailableTimeSlots = null;
-            ResetPaymentFieldsStatic(state);
+            if (!state.PaymentConfirmed)
+                ResetPaymentFieldsStatic(state);
         }
         return Ok($"DesiredDate = '{date:yyyy-MM-dd}'" + (changed ? " (hora y disponibilidad reseteadas)" : ""));
     }
@@ -245,7 +247,8 @@ public class ConversationStateUpdater : IConversationStateUpdater
             state.ReservationConfirmed = false;
             state.ConfirmationSummaryPresented = false;
             state.AvailableTimeSlots = null;
-            ResetPaymentFieldsStatic(state);
+            if (!state.PaymentConfirmed)
+                ResetPaymentFieldsStatic(state);
         }
         return Ok($"DesiredTime = '{time:HH:mm}'" + (changed ? " (disponibilidad y alternativas reseteadas)" : ""));
     }

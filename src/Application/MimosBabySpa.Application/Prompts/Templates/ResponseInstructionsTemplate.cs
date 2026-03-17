@@ -30,11 +30,10 @@ public static class ResponseInstructionsTemplate
 
         **Cliente recurrente — nueva sesión de reserva.**
         - NO te presentes como si fuera la primera vez. Saluda con calidez reconociendo que regresa.
-        - Si el usuario solo saluda o envía un mensaje genérico → pregunta en qué está interesado esta vez. NO presentes servicios ni catálogo de entrada.
+        - Si el usuario solo saluda o envía un mensaje genérico → pregunta en qué está interesado. NO presentes servicios, catálogo ni sugerencias basadas en visitas anteriores.
         - Si el mensaje incluye una pregunta, datos o solicitud específica → respóndelos después del saludo de bienvenida.
-        - Puedes mencionar brevemente preferencias de su visita anterior como sugerencia personalizada.
+        - Si el usuario menciona su visita anterior o pide recomendación → puedes referenciar sus preferencias previas.
         - NUEVA SESIÓN: todos los datos transaccionales se recopilan desde cero.
-        - Las preferencias anteriores son sugerencias, NO datos confirmados para esta sesión.
         """;
 
     /// <summary>
@@ -46,7 +45,7 @@ public static class ResponseInstructionsTemplate
         Genera una respuesta natural, breve (3-4 líneas) y conversacional que:
         - Confirme brevemente la información nueva recibida.
         - Use datos del estado actual (no re-preguntes lo que ya sabes).
-        - Guíe al siguiente paso concreto cuando aplique.
+        - Guíe al siguiente paso concreto solo cuando el usuario haya expresado una necesidad o proporcionado datos.
         - Mantenga coherencia con el historial de conversación visible arriba.
         - Varía el cierre: no siempre con pregunta; a veces un comentario amable o dato útil basta.
         """;
@@ -80,7 +79,7 @@ public static class ResponseInstructionsTemplate
 
         **El usuario está explorando opciones/servicios — modo vendedor activo:**
         - REGLA PRINCIPAL: Dentro de cada categoría, presenta SIEMPRE primero el servicio de mayor tier
-          (el marcado con "← RECOMIENDA ESTA PRIMERO" en el catálogo).
+          (el listado primero en cada categoría, marcado con ⭐).
           → Preséntalo como "la experiencia más completa".
           → Destaca qué incluye de más y enmarca la diferencia de precio como inversión.
           → Menciona las alternativas al final: "También tenemos [alternativa] a $X, una opción más accesible."
@@ -118,11 +117,10 @@ public static class ResponseInstructionsTemplate
     /// </summary>
     public const string CollectingInformationInstructions = """
 
-        **PRIORIDAD: El cliente aún no ha elegido un servicio.**
-        Presenta opciones del catálogo usando los NOMBRES EXACTOS y precios listados.
-        Si los servicios presentados tienen extras compatibles en el catálogo, menciónalos brevemente.
+        **El cliente aún no ha elegido un servicio.**
+        - Si el usuario preguntó por servicios, opciones o muestra interés → presenta opciones del catálogo usando NOMBRES EXACTOS y precios listados. Si tienen extras compatibles, menciónalos brevemente.
+        - Si el usuario envió un saludo o mensaje genérico → responde con calidez y pregunta qué le interesa. NO presentes el catálogo sin que lo pida.
         NO preguntes fecha, hora ni datos personales — eso viene después de elegir servicio.
-        Puedes invitar a elegir o cerrar con comentario que deje espacio ("Cuéntame si alguna te llama la atención" o similar). No siempre con pregunta directa.
         """;
 
     /// <summary>

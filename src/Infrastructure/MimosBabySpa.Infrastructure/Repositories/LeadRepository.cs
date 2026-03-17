@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using MimosBabySpa.Domain.Entities;
 using MimosBabySpa.Domain.Repositories;
 using MimosBabySpa.Infrastructure.Data;
+using MimosBabySpa.Infrastructure.Extensions;
 
 namespace MimosBabySpa.Infrastructure.Repositories;
 
@@ -24,6 +25,31 @@ public class LeadRepository : ILeadRepository
     {
         return await _context.Leads
             .FirstOrDefaultAsync(l => l.BusinessId == businessId && l.UserNumber == userNumber);
+    }
+
+    public async Task<IEnumerable<Lead>> GetByBusinessIdAsync(Guid businessId)
+    {
+        return await _context.Leads
+            .Where(l => l.BusinessId == businessId)
+            .OrderByDescending(l => l.Timestamp)
+            .ToListAsync();
+    }
+
+    public async Task<(IReadOnlyList<Lead> Items, int TotalCount)> GetPagedByBusinessIdAsync(
+        Guid businessId, int page, int pageSize, string? search, CancellationToken ct)
+    {
+        var query = _context.Leads
+            .Where(l => l.BusinessId == businessId);
+
+        if (!string.IsNullOrWhiteSpace(search))
+        {
+            var s = search.Trim().ToLower();
+            query = query.Where(l =>
+                l.UserNumber.ToLower().Contains(s) ||
+                (l.CustomerName != null && l.CustomerName.ToLower().Contains(s)));
+        }
+
+        return await query.OrderByDescending(l => l.Timestamp).ToPagedListAsync(page, pageSize, ct);
     }
 
     public Task<Lead> CreateAsync(Lead lead)

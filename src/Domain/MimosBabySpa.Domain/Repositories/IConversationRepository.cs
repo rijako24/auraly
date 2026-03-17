@@ -1,4 +1,5 @@
 using MimosBabySpa.Domain.Entities;
+using MimosBabySpa.Domain.Enums;
 
 namespace MimosBabySpa.Domain.Repositories;
 
@@ -9,4 +10,11 @@ public interface IConversationRepository
     Task<Conversation> CreateAsync(Conversation conversation);
     Task<Conversation> UpdateAsync(Conversation conversation);
     Task<Conversation?> GetByIdAsync(Guid conversationId);
+
+    /// <summary>
+    /// Gets paginated conversations for admin dashboard.
+    /// </summary>
+    Task<(IReadOnlyList<Conversation> Items, int TotalCount)> GetPagedByBusinessIdAsync(
+        Guid businessId, int page, int pageSize, string? search = null,
+        ConversationState? state = null, CancellationToken ct = default);
 }

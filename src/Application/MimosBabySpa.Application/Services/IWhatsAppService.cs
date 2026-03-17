@@ -11,6 +11,7 @@ public interface IWhatsAppService
 
     Task SendTextMessageAsync(Guid businessId, string to, string message);
     Task SendImageMessageAsync(Guid businessId, string to, string imageUrl, string? caption = null);
+    Task SendDocumentMessageAsync(Guid businessId, string to, string documentUrl, string? caption = null, string? filename = null);
     Task<bool> VerifyWebhookAsync(string mode, string token, string challenge);
     Task<Stream> DownloadMediaAsync(Guid businessId, string mediaId);
 }

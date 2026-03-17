@@ -43,6 +43,23 @@ public class ConsoleWhatsAppService : IWhatsAppService
         return Task.CompletedTask;
     }
 
+    public Task SendDocumentMessageAsync(Guid businessId, string to, string documentUrl, string? caption = null, string? filename = null)
+    {
+        System.Console.WriteLine();
+        System.Console.WriteLine("🤖 Bot (documento):");
+        if (!string.IsNullOrEmpty(caption))
+        {
+            System.Console.WriteLine(caption);
+        }
+        System.Console.WriteLine($"📄 URL de documento: {documentUrl}");
+        if (!string.IsNullOrEmpty(filename))
+        {
+            System.Console.WriteLine($"   Nombre: {filename}");
+        }
+        System.Console.WriteLine();
+        return Task.CompletedTask;
+    }
+
     public Task<Stream> DownloadMediaAsync(Guid businessId, string mediaId)
     {
         // En la aplicación de consola, no podemos descargar media real de WhatsApp

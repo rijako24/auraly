@@ -16,11 +16,13 @@ public class ApplicationDbContext : DbContext
     public DbSet<Tenant> Tenants { get; set; }
     public DbSet<Business> Businesses { get; set; }
     public DbSet<BusinessWhatsAppNumber> BusinessWhatsAppNumbers { get; set; }
+    public DbSet<BusinessAttachment> BusinessAttachments { get; set; }
     public DbSet<BusinessConfiguration> BusinessConfigurations { get; set; }
     public DbSet<SystemConfiguration> SystemConfigurations { get; set; }
     public DbSet<ConversationContext> ConversationContexts { get; set; }
     public DbSet<Reservation> Reservations { get; set; }
     public DbSet<Service> Services { get; set; }
+    public DbSet<ServiceCategory> ServiceCategories { get; set; }
     public DbSet<ServiceBundleItem> ServiceBundleItems { get; set; }
     public DbSet<ServiceAddOnRule> ServiceAddOnRules { get; set; }
     public DbSet<ReservationAddOn> ReservationAddOns { get; set; }
@@ -30,6 +32,15 @@ public class ApplicationDbContext : DbContext
     public DbSet<EmployeeService> EmployeeServices { get; set; }
     public DbSet<ConversationStateEntity> ConversationStates { get; set; }
     public DbSet<PaymentTransaction> PaymentTransactions { get; set; }
+
+    public DbSet<AppUser> AppUsers { get; set; }
+    public DbSet<AppRole> AppRoles { get; set; }
+    public DbSet<Permission> Permissions { get; set; }
+    public DbSet<UserRole> UserRoles { get; set; }
+    public DbSet<RolePermission> RolePermissions { get; set; }
+    public DbSet<UserExternalLogin> UserExternalLogins { get; set; }
+    public DbSet<RefreshToken> RefreshTokens { get; set; }
+    public DbSet<AuditLog> AuditLogs { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -222,16 +233,44 @@ public class ApplicationDbContext : DbContext
             entity.HasIndex(e => new { e.BusinessId, e.ResourceName }).IsUnique(); // Un recurso único por nombre por negocio
         });
 
+        // BusinessAttachment configuration
+        modelBuilder.Entity<BusinessAttachment>(entity =>
+        {
+            entity.HasKey(e => e.BusinessAttachmentId);
+            entity.Property(e => e.BlobPath).IsRequired().HasMaxLength(500);
+            entity.Property(e => e.MediaType).IsRequired().HasMaxLength(50).HasDefaultValue("document");
+            entity.Property(e => e.Filename).HasMaxLength(200);
+            entity.Property(e => e.Description).HasMaxLength(500);
+            entity.HasOne(e => e.Business)
+                  .WithMany()
+                  .HasForeignKey(e => e.BusinessId)
+                  .OnDelete(DeleteBehavior.Restrict);
+            entity.HasIndex(e => e.BusinessId);
+        });
+
+        // ServiceCategory configuration
+        modelBuilder.Entity<ServiceCategory>(entity =>
+        {
+            entity.HasKey(e => e.ServiceCategoryId);
+            entity.Property(e => e.Name).IsRequired().HasMaxLength(100);
+            entity.Property(e => e.DisplayOrder).IsRequired().HasDefaultValue(0);
+            entity.HasOne(e => e.Business)
+                  .WithMany()
+                  .HasForeignKey(e => e.BusinessId)
+                  .OnDelete(DeleteBehavior.Restrict);
+            entity.HasIndex(e => e.BusinessId);
+            entity.HasIndex(e => new { e.BusinessId, e.Name }).IsUnique();
+        });
+
         // Service configuration
         modelBuilder.Entity<Service>(entity =>
         {
             entity.HasKey(e => e.ServiceId);
             entity.Property(e => e.ServiceName).IsRequired().HasMaxLength(200);
-            entity.Property(e => e.Description).HasColumnType("NVARCHAR(MAX)"); // Descripción sin límite para contenido detallado
+            entity.Property(e => e.Description).HasColumnType("NVARCHAR(MAX)");
             entity.Property(e => e.DurationMinutes).IsRequired();
-            entity.Property(e => e.Price).IsRequired().HasPrecision(18, 2); // Precisión para valores monetarios
+            entity.Property(e => e.Price).IsRequired().HasPrecision(18, 2);
             entity.Property(e => e.IsActive).IsRequired().HasDefaultValue(true);
-            entity.Property(e => e.Category).IsRequired().HasConversion<int>();
             entity.Property(e => e.Tier).IsRequired().HasDefaultValue(Domain.Enums.ServiceTier.Base)
                   .HasConversion<int>();
             entity.Property(e => e.ServiceType).IsRequired()
@@ -240,8 +279,12 @@ public class ApplicationDbContext : DbContext
                   .WithMany()
                   .HasForeignKey(e => e.BusinessId)
                   .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.ServiceCategory)
+                  .WithMany()
+                  .HasForeignKey(e => e.CategoryId)
+                  .OnDelete(DeleteBehavior.Restrict);
             entity.HasIndex(e => e.BusinessId);
-            entity.HasIndex(e => new { e.BusinessId, e.Category });
+            entity.HasIndex(e => new { e.BusinessId, e.CategoryId });
             entity.HasIndex(e => new { e.BusinessId, e.ServiceName }).IsUnique();
         });
 
@@ -393,6 +436,144 @@ public class ApplicationDbContext : DbContext
             entity.HasIndex(e => e.PaymentReferenceId).IsUnique();
             entity.HasIndex(e => e.ConversationId);
             entity.HasIndex(e => e.BusinessId);
+        });
+
+        // AppUser configuration
+        modelBuilder.Entity<AppUser>(entity =>
+        {
+            entity.HasKey(e => e.UserId);
+            entity.Property(e => e.Username).IsRequired().HasMaxLength(100);
+            entity.Property(e => e.NormalizedUsername).IsRequired().HasMaxLength(100);
+            entity.Property(e => e.Email).IsRequired().HasMaxLength(256);
+            entity.Property(e => e.NormalizedEmail).IsRequired().HasMaxLength(256);
+            entity.Property(e => e.PasswordHash).HasMaxLength(500);
+            entity.Property(e => e.FirstName).IsRequired().HasMaxLength(100);
+            entity.Property(e => e.LastName).IsRequired().HasMaxLength(100);
+            entity.Property(e => e.PhoneNumber).HasMaxLength(20);
+            entity.Property(e => e.AvatarUrl).HasMaxLength(500);
+            entity.HasOne(e => e.Tenant)
+                .WithMany(t => t.AppUsers)
+                .HasForeignKey(e => e.TenantId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasIndex(e => e.NormalizedUsername).IsUnique();
+            entity.HasIndex(e => e.NormalizedEmail).IsUnique();
+            entity.HasIndex(e => e.TenantId);
+        });
+
+        // AppRole configuration
+        modelBuilder.Entity<AppRole>(entity =>
+        {
+            entity.HasKey(e => e.RoleId);
+            entity.Property(e => e.Name).IsRequired().HasMaxLength(100);
+            entity.Property(e => e.NormalizedName).IsRequired().HasMaxLength(100);
+            entity.Property(e => e.Description).HasMaxLength(500);
+            entity.HasOne(e => e.Tenant)
+                .WithMany()
+                .HasForeignKey(e => e.TenantId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasIndex(e => new { e.TenantId, e.NormalizedName }).IsUnique();
+        });
+
+        // Permission configuration
+        modelBuilder.Entity<Permission>(entity =>
+        {
+            entity.HasKey(e => e.PermissionId);
+            entity.Property(e => e.Module).IsRequired().HasMaxLength(50);
+            entity.Property(e => e.Action).IsRequired().HasMaxLength(50);
+            entity.Property(e => e.Resource).IsRequired().HasMaxLength(100);
+            entity.Property(e => e.Description).HasMaxLength(500);
+            entity.HasIndex(e => e.Resource).IsUnique();
+        });
+
+        // UserRole configuration
+        modelBuilder.Entity<UserRole>(entity =>
+        {
+            entity.HasKey(e => e.UserRoleId);
+            entity.HasOne(e => e.User)
+                .WithMany(u => u.UserRoles)
+                .HasForeignKey(e => e.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(e => e.Role)
+                .WithMany(r => r.UserRoles)
+                .HasForeignKey(e => e.RoleId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(e => e.Business)
+                .WithMany()
+                .HasForeignKey(e => e.BusinessId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasIndex(e => new { e.UserId, e.RoleId, e.BusinessId }).IsUnique().HasFilter("BusinessId IS NOT NULL");
+            entity.HasIndex(e => new { e.UserId, e.RoleId }).IsUnique().HasFilter("BusinessId IS NULL");
+        });
+
+        // RolePermission configuration
+        modelBuilder.Entity<RolePermission>(entity =>
+        {
+            entity.HasKey(e => e.RolePermissionId);
+            entity.HasOne(e => e.Role)
+                .WithMany(r => r.RolePermissions)
+                .HasForeignKey(e => e.RoleId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(e => e.Permission)
+                .WithMany(p => p.RolePermissions)
+                .HasForeignKey(e => e.PermissionId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasIndex(e => new { e.RoleId, e.PermissionId }).IsUnique();
+        });
+
+        // UserExternalLogin configuration
+        modelBuilder.Entity<UserExternalLogin>(entity =>
+        {
+            entity.HasKey(e => e.ExternalLoginId);
+            entity.Property(e => e.Provider).IsRequired().HasMaxLength(50);
+            entity.Property(e => e.ProviderKey).IsRequired().HasMaxLength(256);
+            entity.Property(e => e.ProviderDisplayName).HasMaxLength(200);
+            entity.Property(e => e.ProviderEmail).HasMaxLength(256);
+            entity.HasOne(e => e.User)
+                .WithMany(u => u.ExternalLogins)
+                .HasForeignKey(e => e.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasIndex(e => new { e.Provider, e.ProviderKey }).IsUnique();
+        });
+
+        // RefreshToken configuration
+        modelBuilder.Entity<RefreshToken>(entity =>
+        {
+            entity.HasKey(e => e.RefreshTokenId);
+            entity.Property(e => e.Token).IsRequired().HasMaxLength(500);
+            entity.Property(e => e.DeviceInfo).HasMaxLength(500);
+            entity.Property(e => e.IpAddress).HasMaxLength(50);
+            entity.HasOne(e => e.User)
+                .WithMany(u => u.RefreshTokens)
+                .HasForeignKey(e => e.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasIndex(e => e.Token).IsUnique();
+            entity.HasIndex(e => e.UserId);
+            entity.HasIndex(e => e.ExpiresAt);
+        });
+
+        // AuditLog configuration
+        modelBuilder.Entity<AuditLog>(entity =>
+        {
+            entity.HasKey(e => e.AuditLogId);
+            entity.Property(e => e.Action).IsRequired().HasMaxLength(100);
+            entity.Property(e => e.EntityType).IsRequired().HasMaxLength(100);
+            entity.Property(e => e.EntityId).HasMaxLength(100);
+            entity.Property(e => e.OldValues).HasColumnType("NVARCHAR(MAX)");
+            entity.Property(e => e.NewValues).HasColumnType("NVARCHAR(MAX)");
+            entity.Property(e => e.IpAddress).HasMaxLength(50);
+            entity.Property(e => e.UserAgent).HasMaxLength(500);
+            entity.Property(e => e.CorrelationId).HasMaxLength(100);
+            entity.HasOne(e => e.User)
+                .WithMany()
+                .HasForeignKey(e => e.UserId)
+                .OnDelete(DeleteBehavior.SetNull);
+            entity.HasOne(e => e.Tenant)
+                .WithMany()
+                .HasForeignKey(e => e.TenantId)
+                .OnDelete(DeleteBehavior.SetNull);
+            entity.HasIndex(e => new { e.TenantId, e.Timestamp });
+            entity.HasIndex(e => e.UserId);
+            entity.HasIndex(e => e.CorrelationId);
         });
     }
 }

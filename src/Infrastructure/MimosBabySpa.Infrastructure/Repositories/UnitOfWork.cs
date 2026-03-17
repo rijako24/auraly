@@ -1,4 +1,3 @@
-using Microsoft.Extensions.Logging;
 using MimosBabySpa.Domain.Repositories;
 using MimosBabySpa.Infrastructure.Data;
 
@@ -17,12 +16,24 @@ public class UnitOfWork : IUnitOfWork
     private IConversationContextRepository? _conversationContexts;
     private IReservationRepository? _reservations;
     private IServiceRepository? _services;
+    private IServiceCategoryRepository? _serviceCategories;
+    private IBusinessAttachmentRepository? _businessAttachments;
     private IBusinessResourceRepository? _businessResources;
     private IEmployeeRepository? _employees;
     private IEmployeeServiceRepository? _employeeServices;
     private IConversationStateRepository? _conversationStates;
     private IServiceAddOnRuleRepository? _serviceAddOnRules;
     private IReservationAddOnRepository? _reservationAddOns;
+    private IPaymentTransactionRepository? _paymentTransactions;
+    private IAppUserRepository? _appUsers;
+    private IAppRoleRepository? _appRoles;
+    private IPermissionRepository? _permissions;
+    private IUserRoleRepository? _userRoles;
+    private IRolePermissionRepository? _rolePermissions;
+    private IRefreshTokenRepository? _refreshTokens;
+    private IUserExternalLoginRepository? _userExternalLogins;
+    private IAuditLogRepository? _auditLogs;
+    private ITenantRepository? _tenants;
 
     public UnitOfWork(ApplicationDbContext context)
     {
@@ -59,6 +70,12 @@ public class UnitOfWork : IUnitOfWork
     public IServiceRepository Services =>
         _services ??= new ServiceRepository(_context);
 
+    public IServiceCategoryRepository ServiceCategories =>
+        _serviceCategories ??= new ServiceCategoryRepository(_context);
+
+    public IBusinessAttachmentRepository BusinessAttachments =>
+        _businessAttachments ??= new BusinessAttachmentRepository(_context);
+
     public IBusinessResourceRepository BusinessResources =>
         _businessResources ??= new BusinessResourceRepository(_context);
 
@@ -76,6 +93,36 @@ public class UnitOfWork : IUnitOfWork
 
     public IReservationAddOnRepository ReservationAddOns =>
         _reservationAddOns ??= new ReservationAddOnRepository(_context);
+
+    public IPaymentTransactionRepository PaymentTransactions =>
+        _paymentTransactions ??= new PaymentTransactionRepository(_context);
+
+    public IAppUserRepository AppUsers =>
+        _appUsers ??= new AppUserRepository(_context);
+
+    public IAppRoleRepository AppRoles =>
+        _appRoles ??= new AppRoleRepository(_context);
+
+    public IPermissionRepository Permissions =>
+        _permissions ??= new PermissionRepository(_context);
+
+    public IUserRoleRepository UserRoles =>
+        _userRoles ??= new UserRoleRepository(_context);
+
+    public IRolePermissionRepository RolePermissions =>
+        _rolePermissions ??= new RolePermissionRepository(_context);
+
+    public IRefreshTokenRepository RefreshTokens =>
+        _refreshTokens ??= new RefreshTokenRepository(_context);
+
+    public IUserExternalLoginRepository UserExternalLogins =>
+        _userExternalLogins ??= new UserExternalLoginRepository(_context);
+
+    public IAuditLogRepository AuditLogs =>
+        _auditLogs ??= new AuditLogRepository(_context);
+
+    public ITenantRepository Tenants =>
+        _tenants ??= new TenantRepository(_context);
 
     public async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {

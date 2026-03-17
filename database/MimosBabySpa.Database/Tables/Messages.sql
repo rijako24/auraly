@@ -3,10 +3,9 @@ CREATE TABLE [dbo].[Messages] (
     [ConversationId] UNIQUEIDENTIFIER NOT NULL,
     [Sender] NVARCHAR(20) NOT NULL,
     [MessageText] NVARCHAR(2000) NOT NULL,
-    [Intent] NVARCHAR(50) NOT NULL,
     [Timestamp] DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
-    CONSTRAINT [FK_Messages_Conversations] FOREIGN KEY ([ConversationId]) 
-        REFERENCES [dbo].[Conversations] ([ConversationId]) 
+    CONSTRAINT [FK_Messages_Conversations] FOREIGN KEY ([ConversationId])
+        REFERENCES [dbo].[Conversations] ([ConversationId])
         ON DELETE CASCADE
 );
 

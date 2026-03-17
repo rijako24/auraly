@@ -1,5 +1,3 @@
-using MimosBabySpa.Domain.Enums;
-
 namespace MimosBabySpa.Application.Configuration;
 
 /// <summary>
@@ -19,8 +17,13 @@ public class AddOnRuleInfo
     public string? CompatibleWithServiceName { get; set; }
 
     /// <summary>
-    /// Categoría del servicio compatible (derivada de CompatibleService.Category).
-    /// Null = compatible con todos los servicios. Usado para presentación en catálogo.
+    /// ID de la categoría compatible (derivada de CompatibleService.CategoryId).
+    /// Null = compatible con todos los servicios.
     /// </summary>
-    public ServiceCategory? CompatibleServiceCategory { get; set; }
+    public Guid? CompatibleCategoryId { get; set; }
+
+    /// <summary>
+    /// Nombre de la categoría compatible (para presentación).
+    /// </summary>
+    public string? CompatibleCategoryName { get; set; }
 }
