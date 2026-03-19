@@ -45,6 +45,9 @@ public static class ServiceCatalogBuilder
                 continue;
 
             sb.AppendLine($"### {category.Name}");
+            if (!string.IsNullOrWhiteSpace(category.Description))
+                sb.AppendLine(category.Description);
+            sb.AppendLine();
             var ordered = group.OrderByDescending(s => (int)s.Tier).ToList();
 
             foreach (var svc in ordered)
@@ -62,7 +65,7 @@ public static class ServiceCatalogBuilder
                 sb.AppendLine();
             }
 
-            AppendAddOnsForCategory(sb, addOnRules, category.CategoryId, selectedCategoryId);
+            AppendAddOnsForCategory(sb, addOnRules, category.CategoryId, selectedCategoryId, ordered);
         }
 
         AppendUniversalAddOns(sb, addOnRules, selectedCategoryId);
@@ -75,24 +78,47 @@ public static class ServiceCatalogBuilder
         StringBuilder sb,
         List<AddOnRuleInfo> addOnRules,
         Guid categoryId,
-        Guid? selectedCategoryId)
+        Guid? selectedCategoryId,
+        List<ServiceInfo> servicesInCategory)
     {
         var addOns = GetAddOnsForCategory(addOnRules, categoryId, selectedCategoryId);
         if (addOns.Count == 0)
             return;
 
-        sb.AppendLine("**Servicios extras para complementar tu plan** (opcionales):");
+        sb.AppendLine("**Extras opcionales para este plan:**");
         sb.AppendLine();
         foreach (var rule in addOns.OrderBy(r => r.DisplayOrder).ThenBy(r => r.AddOnName))
         {
             var compat = BuildCompatibilityText(rule);
-            sb.AppendLine($"- **{rule.AddOnName}** — ${rule.AddOnPrice:N0} ({compat})");
+            // Precio combinado: plan base de referencia + add-on (si hay un único plan compatible)
+            var refPlan = FindReferencePlan(servicesInCategory, rule);
+            var comboLine = refPlan != null
+                ? $"${rule.AddOnPrice:N0} adicional (plan + extra = ${refPlan.Price + rule.AddOnPrice:N0})"
+                : $"${rule.AddOnPrice:N0} adicional";
+            sb.AppendLine($"- **{rule.AddOnName}** — {comboLine} ({compat})");
             if (!string.IsNullOrEmpty(rule.AddOnDescription))
                 sb.AppendLine($"  _{rule.AddOnDescription}_");
         }
         sb.AppendLine();
-        sb.AppendLine("Los servicios extras son opcionales.");
+        sb.AppendLine("Los extras son opcionales; ofrécelos solo después de que el cliente elija el plan principal.");
         sb.AppendLine();
+    }
+
+    /// <summary>
+    /// Devuelve el plan de referencia para calcular el precio combinado plan+addon.
+    /// Solo si el add-on es compatible con un servicio específico (no genérico).
+    /// </summary>
+    private static ServiceInfo? FindReferencePlan(List<ServiceInfo> servicesInCategory, AddOnRuleInfo rule)
+    {
+        if (!string.IsNullOrEmpty(rule.CompatibleWithServiceName))
+            return servicesInCategory.FirstOrDefault(s =>
+                string.Equals(s.Name, rule.CompatibleWithServiceName, StringComparison.OrdinalIgnoreCase));
+
+        // Si aplica a toda la categoría y solo hay un plan → precio combinado tiene sentido
+        if (servicesInCategory.Count == 1)
+            return servicesInCategory[0];
+
+        return null;
     }
 
     private static void AppendUniversalAddOns(
@@ -112,17 +138,17 @@ public static class ServiceCatalogBuilder
         if (universal.Count == 0)
             return;
 
-        sb.AppendLine("**Servicios extras disponibles para cualquier plan** (opcionales):");
+        sb.AppendLine("**Extras opcionales disponibles para cualquier plan:**");
         sb.AppendLine();
         foreach (var rule in universal)
         {
             var compat = BuildCompatibilityText(rule);
-            sb.AppendLine($"- **{rule.AddOnName}** — ${rule.AddOnPrice:N0} ({compat})");
+            sb.AppendLine($"- **{rule.AddOnName}** — ${rule.AddOnPrice:N0} adicional ({compat})");
             if (!string.IsNullOrEmpty(rule.AddOnDescription))
                 sb.AppendLine($"  _{rule.AddOnDescription}_");
         }
         sb.AppendLine();
-        sb.AppendLine("Los servicios extras son opcionales.");
+        sb.AppendLine("Los extras son opcionales; ofrécelos solo después de que el cliente elija el plan principal.");
         sb.AppendLine();
     }
 

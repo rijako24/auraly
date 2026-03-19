@@ -42,6 +42,16 @@ public class ApplicationDbContext : DbContext
     public DbSet<RefreshToken> RefreshTokens { get; set; }
     public DbSet<AuditLog> AuditLogs { get; set; }
 
+    // Generic Flow Engine
+    public DbSet<AgentType> AgentTypes { get; set; }
+    public DbSet<Agent> Agents { get; set; }
+    public DbSet<AgentPromptSection> AgentPromptSections { get; set; }
+    public DbSet<KnowledgeSource> KnowledgeSources { get; set; }
+    public DbSet<AgentKnowledgeSource> AgentKnowledgeSources { get; set; }
+    public DbSet<FlowDefinitionEntity> FlowDefinitions { get; set; }
+    public DbSet<FlowExecutionStateEntity> FlowExecutionStates { get; set; }
+    public DbSet<FlowTemplate> FlowTemplates { get; set; }
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
@@ -86,8 +96,14 @@ public class ApplicationDbContext : DbContext
                   .WithMany(b => b.WhatsAppNumbers)
                   .HasForeignKey(e => e.BusinessId)
                   .OnDelete(DeleteBehavior.Cascade);
+            // AgentId: which agent handles conversations on this number (nullable for backwards compat)
+            entity.HasOne(e => e.Agent)
+                  .WithMany()
+                  .HasForeignKey(e => e.AgentId)
+                  .OnDelete(DeleteBehavior.SetNull);
             entity.HasIndex(e => e.WhatsAppPhoneNumberId).IsUnique();
             entity.HasIndex(e => e.BusinessId);
+            entity.HasIndex(e => e.AgentId);
         });
 
         // BusinessConfiguration configuration
@@ -574,6 +590,125 @@ public class ApplicationDbContext : DbContext
             entity.HasIndex(e => new { e.TenantId, e.Timestamp });
             entity.HasIndex(e => e.UserId);
             entity.HasIndex(e => e.CorrelationId);
+        });
+
+        // ── Generic Flow Engine ─────────────────────────────────────────────────────
+
+        modelBuilder.Entity<AgentType>(entity =>
+        {
+            entity.HasKey(e => e.AgentTypeId);
+            entity.Property(e => e.Name).IsRequired().HasMaxLength(100);
+            entity.Property(e => e.Description).HasMaxLength(500);
+        });
+
+        modelBuilder.Entity<Agent>(entity =>
+        {
+            entity.HasKey(e => e.AgentId);
+            entity.Property(e => e.Name).IsRequired().HasMaxLength(200);
+            entity.Property(e => e.Description).HasMaxLength(500);
+            entity.Property(e => e.SettingsJson).HasColumnType("NVARCHAR(MAX)");
+            entity.HasOne(e => e.Business)
+                .WithMany()
+                .HasForeignKey(e => e.BusinessId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.AgentType)
+                .WithMany(at => at.Agents)
+                .HasForeignKey(e => e.AgentTypeId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasIndex(e => e.BusinessId);
+            entity.HasIndex(e => new { e.BusinessId, e.Name }).IsUnique();
+        });
+
+        modelBuilder.Entity<AgentPromptSection>(entity =>
+        {
+            entity.HasKey(e => e.AgentPromptSectionId);
+            entity.Property(e => e.Key).IsRequired().HasMaxLength(100);
+            entity.Property(e => e.Title).IsRequired().HasMaxLength(200);
+            entity.Property(e => e.Content).IsRequired().HasColumnType("NVARCHAR(MAX)");
+            entity.Property(e => e.InjectionPoint).IsRequired().HasMaxLength(50);
+            entity.HasOne(e => e.Agent)
+                .WithMany(a => a.PromptSections)
+                .HasForeignKey(e => e.AgentId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasIndex(e => e.AgentId);
+            entity.HasIndex(e => new { e.AgentId, e.Key }).IsUnique();
+        });
+
+        modelBuilder.Entity<KnowledgeSource>(entity =>
+        {
+            entity.HasKey(e => e.KnowledgeSourceId);
+            entity.Property(e => e.Name).IsRequired().HasMaxLength(200);
+            entity.Property(e => e.Type).HasConversion<int>();
+            entity.Property(e => e.Content)
+                .IsRequired()
+                .HasColumnName("Content")
+                .HasColumnType("NVARCHAR(MAX)");
+            entity.HasOne(e => e.Business)
+                .WithMany()
+                .HasForeignKey(e => e.BusinessId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasIndex(e => e.BusinessId);
+        });
+
+        modelBuilder.Entity<AgentKnowledgeSource>(entity =>
+        {
+            entity.HasKey(e => e.AgentKnowledgeSourceId);
+            entity.HasOne(e => e.Agent)
+                .WithMany(a => a.KnowledgeSources)
+                .HasForeignKey(e => e.AgentId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(e => e.KnowledgeSource)
+                .WithMany(ks => ks.AgentKnowledgeSources)
+                .HasForeignKey(e => e.KnowledgeSourceId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasIndex(e => new { e.AgentId, e.KnowledgeSourceId }).IsUnique();
+        });
+
+        modelBuilder.Entity<FlowDefinitionEntity>(entity =>
+        {
+            entity.HasKey(e => e.FlowDefinitionId);
+            entity.Property(e => e.Name).IsRequired().HasMaxLength(200);
+            entity.Property(e => e.Description).HasMaxLength(500);
+            entity.Property(e => e.DefinitionJson).IsRequired().HasColumnType("NVARCHAR(MAX)");
+            entity.Property(e => e.Version).IsRequired().HasMaxLength(20);
+            entity.HasOne(e => e.Agent)
+                .WithMany(a => a.FlowDefinitions)
+                .HasForeignKey(e => e.AgentId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasIndex(e => e.AgentId);
+            entity.HasIndex(e => new { e.AgentId, e.IsActive });
+        });
+
+        modelBuilder.Entity<FlowExecutionStateEntity>(entity =>
+        {
+            entity.HasKey(e => e.FlowExecutionStateId);
+            entity.Property(e => e.UserIdentifier).IsRequired().HasMaxLength(100);
+            entity.Property(e => e.CurrentNodeId).IsRequired().HasMaxLength(100);
+            entity.Property(e => e.Owner).IsRequired().HasMaxLength(20);
+            entity.Property(e => e.VariablesJson).IsRequired().HasColumnType("NVARCHAR(MAX)");
+            entity.Property(e => e.FlagsJson).IsRequired().HasColumnType("NVARCHAR(MAX)");
+            entity.Property(e => e.ActionResultsJson).IsRequired().HasColumnType("NVARCHAR(MAX)");
+            entity.Property(e => e.TraceJson).HasColumnType("NVARCHAR(MAX)");
+            entity.Property(e => e.PreviousSessionJson).HasColumnType("NVARCHAR(MAX)");
+            entity.HasOne(e => e.Agent)
+                .WithMany()
+                .HasForeignKey(e => e.AgentId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.FlowDefinition)
+                .WithMany()
+                .HasForeignKey(e => e.FlowDefinitionId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasIndex(e => new { e.BusinessId, e.UserIdentifier, e.AgentId }).IsUnique();
+            entity.HasIndex(e => e.AgentId);
+        });
+
+        modelBuilder.Entity<FlowTemplate>(entity =>
+        {
+            entity.HasKey(e => e.FlowTemplateId);
+            entity.Property(e => e.Name).IsRequired().HasMaxLength(200);
+            entity.Property(e => e.Description).HasMaxLength(500);
+            entity.Property(e => e.Category).HasMaxLength(100);
+            entity.Property(e => e.DefinitionJson).IsRequired().HasColumnType("NVARCHAR(MAX)");
         });
     }
 }

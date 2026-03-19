@@ -43,7 +43,8 @@ public class FakeReservationService : IReservationService
         }
 
         var reservationId = Guid.NewGuid();
-        var addOnNames = ParseAddOnNames(request.SelectedAddOnsCsv);
+        var addOnNames = ParseAddOnNames(
+            ReservationBusinessAttributeKeys.GetSelectedAddOnsCsv(request.BusinessAttributes));
 
         var dto = new ReservationDto
         {

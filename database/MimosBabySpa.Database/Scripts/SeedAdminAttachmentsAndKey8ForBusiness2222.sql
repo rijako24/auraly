@@ -128,19 +128,9 @@ DECLARE @Value NVARCHAR(MAX) = N'{
   ]
 }';
 
-IF EXISTS (SELECT 1 FROM [dbo].[BusinessConfigurations] WHERE [BusinessId] = @BusinessId AND [Key] = 8)
-BEGIN
-    UPDATE [dbo].[BusinessConfigurations]
-    SET [Value] = @Value, [UpdatedAt] = GETUTCDATE()
-    WHERE [BusinessId] = @BusinessId AND [Key] = 8;
-    PRINT N'Key=8 (PaymentConfirmationMessages) actualizado.';
-END
-ELSE
-BEGIN
-    INSERT INTO [dbo].[BusinessConfigurations] (BusinessConfigurationId, BusinessId, [Key], [Value], [Description], IsActive, CreatedAt)
-    VALUES (NEWID(), @BusinessId, 8, @Value, N'Mensajes enviados al cliente cuando se confirma el pago. Incluye adjuntos de indicaciones y términos.', 1, GETUTCDATE());
-    PRINT N'Key=8 (PaymentConfirmationMessages) creado.';
-END
+-- Key=8 (PaymentConfirmationMessages) eliminado en migración 020 — no se inserta ni actualiza.
+-- Los attachments siguen siendo válidos en BusinessAttachments.
+PRINT N'Key=8 omitido: deprecated en migración 020_NodeConfigMigration.';
 
 PRINT N'Seed completado para negocio 22222222-2222-2222-2222-222222222222.';
 GO

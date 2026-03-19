@@ -196,8 +196,11 @@ public class HybridTransactionalOrchestrator
         ctx.UpdateMessageMetadata(userMessage, messageToUser);
         await ctx.SaveStateAsync(ct);
 
-        await _escalationNotifier.NotifyAdminsAsync(
+        // Legacy orchestrator: contacts are passed empty — escalation to Human still applies.
+        // Contacts are now configured in the generic flow node (escalate.config.contacts).
+        await _escalationNotifier.NotifyAsync(
             ctx.ToolContext.BusinessId,
+            [],
             new EscalationNotification(
                 ctx.ToolContext.ConversationId,
                 ctx.State.Phone ?? "",
@@ -1401,8 +1404,10 @@ public class HybridTransactionalOrchestrator
         {
             ctx.State.Owner = Domain.Models.ConversationOwner.Human;
             ctx.State.LastEscalatedAt = DateTime.UtcNow;
-            await _escalationNotifier.NotifyAdminsAsync(
+            // Legacy orchestrator: contacts passed empty — see escalate node config for generic engine.
+            await _escalationNotifier.NotifyAsync(
                 ctx.ToolContext.BusinessId,
+                [],
                 new EscalationNotification(
                     ctx.ToolContext.ConversationId,
                     ctx.State.Phone ?? "",

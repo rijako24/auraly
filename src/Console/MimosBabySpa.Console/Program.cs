@@ -3,18 +3,23 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using MimosBabySpa.Application.Services;
-using MimosBabySpa.Application.Orchestration;
 using MimosBabySpa.Domain.Repositories;
 using MimosBabySpa.Infrastructure.Data;
 using MimosBabySpa.Infrastructure.Repositories;
 using MimosBabySpa.Infrastructure.Services;
 using MimosBabySpa.Infrastructure.Configuration;
 using MimosBabySpa.Console.Services;
-using Azure.Storage.Blobs;
 using Azure.AI.OpenAI;
-using System.Net.Http;
+using Microsoft.Extensions.Options;
 
-// HYBRID TRANSACTIONAL BRAIN - New Architecture
+// Generic Flow Engine
+using MimosBabySpa.Application.GenericFlow;
+using MimosBabySpa.Application.GenericFlow.Actions;
+using MimosBabySpa.Application.GenericFlow.Handlers;
+using MimosBabySpa.Application.GenericFlow.Services;
+
+// Legacy (kept for migrate-integrations command only)
+using MimosBabySpa.Application.Orchestration;
 using MimosBabySpa.Application.FlowEngine;
 using MimosBabySpa.Application.Tools;
 using MimosBabySpa.Application.BusinessRules;
@@ -23,16 +28,13 @@ using MimosBabySpa.Application.Prompts;
 using MimosBabySpa.Application.StateManagement;
 using MimosBabySpa.Application.LLM;
 using MimosBabySpa.Application.LLM.Extraction;
-using Microsoft.Extensions.Options;
 
-// Configurar servicios (usa directorio del ejecutable para encontrar appsettings; migrate-integrations lee Calendar y Wompi)
 var configuration = new ConfigurationBuilder()
     .SetBasePath(AppContext.BaseDirectory)
     .AddJsonFile("appsettings.json", optional: true, reloadOnChange: true)
     .AddJsonFile("appSettings.json", optional: true, reloadOnChange: true)
     .Build();
 
-// Migración única: copiar Calendar y Wompi de appsettings a BusinessConfiguration.Integrations
 if (args is ["migrate-integrations"])
 {
     var connectionString = configuration.GetConnectionString("DefaultConnection")
@@ -43,30 +45,24 @@ if (args is ["migrate-integrations"])
 
 var services = new ServiceCollection();
 
-// Registrar IConfiguration
 services.AddSingleton<IConfiguration>(configuration);
 
-// Logging
 services.AddLogging(builder =>
 {
     builder.AddConfiguration(configuration.GetSection("Logging"));
     builder.AddConsole();
     builder.SetMinimumLevel(LogLevel.Warning);
-    // Desactivar completamente los logs de Entity Framework
     builder.AddFilter("Microsoft.EntityFrameworkCore", LogLevel.None);
-    builder.AddFilter("Microsoft.EntityFrameworkCore.Database.Command", LogLevel.None);
-    builder.AddFilter("Microsoft.EntityFrameworkCore.Database.Transaction", LogLevel.None);
-    builder.AddFilter("Microsoft.EntityFrameworkCore.Query", LogLevel.None);
-    builder.AddFilter("Microsoft.EntityFrameworkCore.Infrastructure", LogLevel.None);
-    // Solo mostrar errores y advertencias de nuestra aplicación
     builder.AddFilter("MimosBabySpa", LogLevel.Warning);
+    // Flow extraction + intentions for easier error routing
+    builder.AddFilter("MimosBabySpa.Application.GenericFlow", LogLevel.Information);
 });
 
 // Database
 services.AddDbContext<ApplicationDbContext>(options =>
     options.UseSqlServer(configuration.GetConnectionString("DefaultConnection")));
 
-// Repositories
+// ── Core Repositories ──────────────────────────────────────────────────────────
 services.AddScoped<IUnitOfWork, UnitOfWork>();
 services.AddScoped<IConversationRepository, ConversationRepository>();
 services.AddScoped<IConversationStateRepository, ConversationStateRepository>();
@@ -75,7 +71,13 @@ services.AddScoped<ILeadRepository, LeadRepository>();
 services.AddScoped<IReservationRepository, ReservationRepository>();
 services.AddScoped<IPaymentTransactionRepository, PaymentTransactionRepository>();
 
-// Application Services
+// ── Generic Flow Repositories ──────────────────────────────────────────────────
+services.AddScoped<MimosBabySpa.Domain.Repositories.IAgentRepository, AgentRepository>();
+services.AddScoped<MimosBabySpa.Domain.Repositories.IFlowDefinitionRepository, FlowDefinitionRepository>();
+services.AddScoped<MimosBabySpa.Domain.Repositories.IFlowExecutionStateRepository, FlowExecutionStateRepository>();
+services.AddScoped<MimosBabySpa.Domain.Repositories.IKnowledgeSourceRepository, KnowledgeSourceRepository>();
+
+// ── Application Services ───────────────────────────────────────────────────────
 services.AddScoped<IConversationService, ConversationService>();
 services.AddScoped<IMessageService, MessageService>();
 services.AddScoped<ILeadService, LeadService>();
@@ -83,171 +85,138 @@ services.AddScoped<IReservationService, ReservationService>();
 services.AddScoped<IBusinessIdentificationService, BusinessIdentificationService>();
 services.AddScoped<IBusinessConfigurationService, BusinessConfigurationService>();
 services.AddScoped<IWhatsAppWebhookParserService, WhatsAppWebhookParserService>();
-
-// Services necesarios para Tools
 services.AddScoped<IEmployeeAssignmentService, EmployeeAssignmentService>();
 services.AddScoped<IAvailabilityService, AvailabilityService>();
 
-// ========================================
-// HYBRID TRANSACTIONAL BRAIN ARCHITECTURE
-// ========================================
-
-// Infrastructure Services - OpenAI (Options como fuente única de configuración)
+// ── OpenAI Clients ─────────────────────────────────────────────────────────────
 services.Configure<OpenAITextModelOptions>(configuration.GetSection(OpenAITextModelOptions.SectionName));
 services.Configure<OpenAIAudioModelOptions>(configuration.GetSection(OpenAIAudioModelOptions.SectionName));
 
 services.AddKeyedSingleton<OpenAIClient>("Text", (sp, _) =>
 {
-    var options = sp.GetRequiredService<IOptions<OpenAITextModelOptions>>().Value;
-    if (string.IsNullOrEmpty(options.Endpoint) || string.IsNullOrEmpty(options.ApiKey))
+    var opts = sp.GetRequiredService<IOptions<OpenAITextModelOptions>>().Value;
+    if (string.IsNullOrEmpty(opts.Endpoint) || string.IsNullOrEmpty(opts.ApiKey))
         throw new InvalidOperationException("OpenAI:TextModel:Endpoint y ApiKey deben estar configurados");
-    if (string.IsNullOrEmpty(options.DeploymentName))
-        throw new InvalidOperationException("OpenAI:TextModel:DeploymentName debe estar configurado");
-    return new OpenAIClient(new Uri(options.Endpoint), new Azure.AzureKeyCredential(options.ApiKey));
+    return new OpenAIClient(new Uri(opts.Endpoint), new Azure.AzureKeyCredential(opts.ApiKey));
 });
+
 services.AddKeyedSingleton<OpenAIClient>("Audio", (sp, _) =>
 {
-    var options = sp.GetRequiredService<IOptions<OpenAIAudioModelOptions>>().Value;
-    if (string.IsNullOrEmpty(options.Endpoint) || string.IsNullOrEmpty(options.ApiKey))
+    var opts = sp.GetRequiredService<IOptions<OpenAIAudioModelOptions>>().Value;
+    if (string.IsNullOrEmpty(opts.Endpoint) || string.IsNullOrEmpty(opts.ApiKey))
         throw new InvalidOperationException("OpenAI:AudioModel:Endpoint y ApiKey deben estar configurados");
-    if (string.IsNullOrEmpty(options.DeploymentName))
-        throw new InvalidOperationException("OpenAI:AudioModel:DeploymentName debe estar configurado");
-    return new OpenAIClient(new Uri(options.Endpoint), new Azure.AzureKeyCredential(options.ApiKey));
+    return new OpenAIClient(new Uri(opts.Endpoint), new Azure.AzureKeyCredential(opts.ApiKey));
 });
 
-// AI Service (chat + transcripción de audio con clientes separados)
-services.AddScoped<IAIService>(sp =>
-{
-    var textClient = sp.GetRequiredKeyedService<OpenAIClient>("Text");
-    var audioClient = sp.GetRequiredKeyedService<OpenAIClient>("Audio");
-    var textOptions = sp.GetRequiredService<IOptions<OpenAITextModelOptions>>().Value;
-    var audioOptions = sp.GetRequiredService<IOptions<OpenAIAudioModelOptions>>().Value;
-    var systemPromptProvider = sp.GetRequiredService<IPromptProvider>();
-    var cachedContextProvider = sp.GetRequiredService<CachedBusinessContextProvider>();
-    var logger = sp.GetRequiredService<ILogger<AIService>>();
-
-    return new AIService(textClient, audioClient, textOptions.DeploymentName, audioOptions.DeploymentName, systemPromptProvider, cachedContextProvider, logger);
-});
-
-// Flow Engine (Cerebro Determinístico)
-services.AddSingleton<IFlowEngine, FlowEngine>();
-
-// State Management (debe ser Scoped para usar IConversationStateRepository)
-services.AddScoped<IConversationStateManager, ConversationStateManager>();
-
-// Business Rules Engine
-services.AddScoped<IBusinessRuleEngine, BusinessRuleEngine>();
-
-// ✅ NEW: Cached Business Context Provider (elimina cargas redundantes + caché)
-services.AddMemoryCache();
-services.AddScoped<CachedBusinessContextProvider>();
-
-// ✅ NEW: Prompt Providers (prompts organizados y modulares)
-services.AddScoped<IPromptProvider, SystemPromptProvider>();
-
-// ✅ NEW: Localization Service (i18n básico)
-services.AddSingleton<ILocalizationService, LocalizationService>();
-
-// LLM Adapter Layer (usa cliente de texto)
+// LLM Adapter (shared by both legacy and generic engine)
 services.AddScoped<ILLMAdapter>(sp =>
 {
     var textClient = sp.GetRequiredKeyedService<OpenAIClient>("Text");
     var textOptions = sp.GetRequiredService<IOptions<OpenAITextModelOptions>>().Value;
     var logger = sp.GetRequiredService<ILogger<AzureOpenAIAdapter>>();
-
     return new AzureOpenAIAdapter(textClient, textOptions.DeploymentName, logger);
 });
 
-// Tool Handlers (Domain-Agnostic)
+// ── Generic Flow Engine ────────────────────────────────────────────────────────
+
+services.AddScoped<TemplateResolver>();
+services.AddScoped<KnowledgeSourceRenderer>();
+services.AddScoped<FlowPromptBuilder>();
+services.AddScoped<FlowIntentionDetector>();
+services.AddScoped<FlowExtractionService>();
+services.AddScoped<FlowStateManager>();
+services.AddScoped<ServiceNameResolver>();
+services.AddScoped<ReservationPricingResolver>();
+services.AddScoped<ICatalogContentGenerator, CatalogContentGenerator>();
+
+// Node Handlers
+services.AddScoped<INodeHandler, StartNodeHandler>();
+services.AddScoped<INodeHandler, EndNodeHandler>();
+services.AddScoped<INodeHandler, CollectFieldsNodeHandler>();
+services.AddScoped<INodeHandler, ActionNodeHandler>();
+services.AddScoped<INodeHandler, LLMClassifyNodeHandler>();
+services.AddScoped<INodeHandler, IntentionRouterNodeHandler>();
+services.AddScoped<INodeHandler, GenerateResponseNodeHandler>();
+services.AddScoped<INodeHandler, WaitForEventNodeHandler>();
+services.AddScoped<INodeHandler, EscalateNodeHandler>();
+
+// Flow Actions
+services.AddScoped<IFlowAction, CheckAvailabilityAction>();
+services.AddScoped<IFlowAction, ResolvePricingAction>();
+services.AddScoped<IFlowAction, CreateReservationAction>();
+services.AddScoped<IFlowAction, GeneratePaymentLinkAction>();
+services.AddScoped<IFlowAction, VerifyPaymentAction>();
+services.AddScoped<IFlowAction, SetupRescheduleAction>();
+services.AddScoped<IFlowAction, RescheduleAction>();
+services.AddScoped<IFlowAction, SuspendAction>();
+
+services.AddScoped<IFlowOrchestrationService, FlowOrchestrationService>();
+
+// ── Supporting infrastructure used by actions ──────────────────────────────────
+services.AddMemoryCache();
+services.AddScoped<CachedBusinessContextProvider>();
+services.AddScoped<IPromptProvider, SystemPromptProvider>();
+services.AddScoped<ILocalizationService, LocalizationService>();
+services.AddScoped<IConversationStateManager, ConversationStateManager>();
 services.AddScoped<IConversationStateUpdater, ConversationStateUpdater>();
-services.AddScoped<CheckAvailabilityToolHandler>();
-services.AddScoped<CreateReservationToolHandler>();
-
-// Tool Factory & Dispatcher
-services.AddScoped<IToolFactory, ToolFactory>();
-services.AddScoped<GenericToolDispatcher>();
-
-// Extraction Services
-services.AddScoped<JsonSchemaPromptBuilder>();
-services.AddScoped<IExtractionValidator, ExtractionValidator>();
-services.AddScoped<ISmartExtractionService, SmartExtractionService>();
-
-// Escalation y release (handover a humano)
 services.AddScoped<IEscalationNotifier, EscalationNotifier>();
 services.AddScoped<IEscalationConfigProvider, EscalationConfigProvider>();
 services.AddScoped<AdminActionLinkService>();
 services.AddScoped<IAdminActionLinkService>(sp => sp.GetRequiredService<AdminActionLinkService>());
 services.AddScoped<IReleaseLinkService>(sp => sp.GetRequiredService<AdminActionLinkService>());
 services.AddScoped<IConversationReleaseService, ConversationReleaseService>();
+services.Configure<ReleaseLinkSettings>(configuration.GetSection(ReleaseLinkSettings.SectionName));
 
-// Hybrid Transactional Orchestrator
-services.AddScoped<HybridTransactionalOrchestrator>();
-
-// Infrastructure Services - WhatsApp (Mock para consola)
-// Usamos ConsoleWhatsAppService que muestra las respuestas en consola en lugar de enviarlas por WhatsApp
 services.AddScoped<IWhatsAppService>(sp =>
-{
-    var logger = sp.GetRequiredService<ILogger<ConsoleWhatsAppService>>();
-    return new ConsoleWhatsAppService(logger);
-});
+    new ConsoleWhatsAppService(sp.GetRequiredService<ILogger<ConsoleWhatsAppService>>()));
 
-
-// WhatsAppMessageProcessorService (usa HybridTransactionalOrchestrator)
-services.AddScoped<IWhatsAppMessageProcessorService, WhatsAppMessageProcessorService>();
-
-// Infrastructure Services - Blob Storage (Mock para consola)
-// Usamos ConsoleBlobStorageService que retorna valores vacíos ya que no es necesario para probar OpenAI
 services.AddScoped<IBlobStorageService>(sp =>
-{
-    var logger = sp.GetRequiredService<ILogger<ConsoleBlobStorageService>>();
-    return new ConsoleBlobStorageService(logger);
-});
+    new ConsoleBlobStorageService(sp.GetRequiredService<ILogger<ConsoleBlobStorageService>>()));
 
-// Integrations Config Provider (Google Calendar, Wompi) — fuente única desde BusinessConfiguration
 services.AddScoped<IIntegrationsConfigProvider, IntegrationsConfigProvider>();
-
-// Release Link (URL firmada; sin config = no se genera link en notificaciones)
-services.Configure<ReleaseLinkSettings>(
-    configuration.GetSection(ReleaseLinkSettings.SectionName));
-
-// Payment Link Service (Wompi; sin config = no genera links)
 services.AddScoped<IPaymentLinkService, WompiPaymentLinkService>();
 
-// Infrastructure Services - Calendar
 services.AddHttpClient();
-services.AddHttpClient<GoogleCalendarService>(client =>
-{
-    client.Timeout = TimeSpan.FromSeconds(30);
-});
+services.AddHttpClient<GoogleCalendarService>(c => c.Timeout = TimeSpan.FromSeconds(30));
 services.AddScoped<ICalendarService, GoogleCalendarService>();
 
-// Construir el service provider
+services.AddScoped<JsonSchemaPromptBuilder>();
+services.AddScoped<IExtractionValidator, ExtractionValidator>();
+services.AddScoped<ISmartExtractionService, SmartExtractionService>();
+
+// ── Build ──────────────────────────────────────────────────────────────────────
 var serviceProvider = services.BuildServiceProvider();
-var logger = serviceProvider.GetRequiredService<ILogger<Program>>();
-var processor = serviceProvider.GetRequiredService<IWhatsAppMessageProcessorService>();
 
-// Interfaz de consola
-Console.WriteLine("================================================");
-Console.WriteLine("  Mimos Baby Spa - Simulador de WhatsApp");
-Console.WriteLine("================================================");
+// ── Console UI ─────────────────────────────────────────────────────────────────
+Console.WriteLine("════════════════════════════════════════════════════════");
+Console.WriteLine("  Mimos Baby Spa — Simulador Generic Flow Engine");
+Console.WriteLine("════════════════════════════════════════════════════════");
 Console.WriteLine();
-Console.WriteLine("Escribe mensajes como si fueras un cliente de WhatsApp.");
-Console.WriteLine("Escribe 'exit' o 'quit' para salir.");
+Console.WriteLine("  Agente  : Mimo Bot (+573194823017)");
+Console.WriteLine("  Escribe  'exit' para salir");
+Console.WriteLine("  Escribe  'reset' para reiniciar la sesión");
 Console.WriteLine();
 
-// Número de teléfono simulado (puedes cambiarlo)
-var userNumber = "+12345679515";
-var customerName = "Bill";
+// AgentId del Mimo Bot — resuelto directamente de la BD (BusinessWhatsAppNumbers.AgentId).
+// En producción este valor viene de BusinessIdentificationService.IdentifyBusinessAsync().
+const string agentIdStr = "7105A9D5-D4E4-4BBA-9F3A-DBB34E0B1B86";
+var agentId = Guid.Parse(agentIdStr);
+
+// Simula el teléfono del cliente (clave de sesión)
+const string userPhone = "+12345679537";
 
 while (true)
 {
+    Console.ForegroundColor = ConsoleColor.Cyan;
     Console.Write("Tú: ");
+    Console.ResetColor();
+
     var input = Console.ReadLine();
 
     if (string.IsNullOrWhiteSpace(input))
         continue;
 
-    if (input.Equals("exit", StringComparison.OrdinalIgnoreCase) || 
+    if (input.Equals("exit", StringComparison.OrdinalIgnoreCase) ||
         input.Equals("quit", StringComparison.OrdinalIgnoreCase) ||
         input.Equals("salir", StringComparison.OrdinalIgnoreCase))
     {
@@ -255,18 +224,65 @@ while (true)
         break;
     }
 
+    if (input.Equals("reset", StringComparison.OrdinalIgnoreCase))
+    {
+        Console.ForegroundColor = ConsoleColor.Yellow;
+        Console.WriteLine("[sesión reiniciada — escribe tu siguiente mensaje]");
+        Console.ResetColor();
+        Console.WriteLine();
+        continue;
+    }
+
     try
     {
-        // Usar el BusinessId por defecto que existe en la base de datos (creado en la migración)
-        var businessId = Guid.Parse("22222222-2222-2222-2222-222222222222");
-        
-        // Procesar el mensaje como si viniera de WhatsApp
-        await processor.ProcessIncomingMessageAsync(businessId, userNumber, input, customerName);
+        await using var scope = serviceProvider.CreateAsyncScope();
+        var agentRepo = scope.ServiceProvider.GetRequiredService<IAgentRepository>();
+        var conversationService = scope.ServiceProvider.GetRequiredService<IConversationService>();
+        var orchestrator = scope.ServiceProvider.GetRequiredService<IFlowOrchestrationService>();
+
+        var agentEntity = await agentRepo.GetByIdAsync(agentId);
+        if (agentEntity == null)
+        {
+            Console.ForegroundColor = ConsoleColor.Red;
+            Console.WriteLine($"✗ Agente {agentId} no encontrado en la base de datos.");
+            Console.ResetColor();
+            Console.WriteLine();
+            continue;
+        }
+
+        var conversation = await conversationService.GetOrCreateConversationAsync(
+            agentEntity.BusinessId, userPhone, customerName: null);
+
+        var result = await orchestrator.ProcessTurnAsync(
+            conversation.ConversationId,
+            agentId,
+            userPhone,
+            input);
+
+        Console.ForegroundColor = ConsoleColor.Green;
+        Console.Write("Mimo: ");
+        Console.ResetColor();
+
+        if (!string.IsNullOrWhiteSpace(result.BotResponse))
+            Console.WriteLine(result.BotResponse);
+        else
+            Console.WriteLine("[sin respuesta]");
+
+        Console.WriteLine();
+
+        if (result.IsEscalated)
+        {
+            Console.ForegroundColor = ConsoleColor.Yellow;
+            Console.WriteLine("  ⚠  Conversación transferida a agente humano.");
+            Console.ResetColor();
+            Console.WriteLine();
+        }
     }
     catch (Exception ex)
     {
-        logger.LogError(ex, "Error procesando mensaje");
+        Console.ForegroundColor = ConsoleColor.Red;
         Console.WriteLine($"✗ Error: {ex.Message}");
+        Console.ResetColor();
         Console.WriteLine();
     }
 }

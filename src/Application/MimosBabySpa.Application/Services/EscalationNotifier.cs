@@ -1,45 +1,40 @@
-using System.Text.Json;
 using Microsoft.Extensions.Logging;
-using MimosBabySpa.Domain.Enums;
 using MimosBabySpa.Domain.Repositories;
 
 namespace MimosBabySpa.Application.Services;
 
 /// <summary>
 /// Envía notificaciones de escalado a admins vía WhatsApp.
-/// Lee contactos de BusinessConfiguration.EscalationContacts.
-/// Intenta todos los contactos — no aborta en el primer fallo.
+///
+/// Los contactos se reciben como parámetro — no se lee ninguna clave de
+/// BusinessConfigurations. El nodo Escalate en el flow JSON es quien los provee.
 /// </summary>
 public class EscalationNotifier : IEscalationNotifier
 {
-    private readonly IUnitOfWork _unitOfWork;
     private readonly IWhatsAppService _whatsAppService;
     private readonly IAdminActionLinkService _adminActionLinkService;
     private readonly ILogger<EscalationNotifier> _logger;
 
     public EscalationNotifier(
-        IUnitOfWork unitOfWork,
         IWhatsAppService whatsAppService,
         IAdminActionLinkService adminActionLinkService,
         ILogger<EscalationNotifier> logger)
     {
-        _unitOfWork = unitOfWork;
         _whatsAppService = whatsAppService;
         _adminActionLinkService = adminActionLinkService;
         _logger = logger;
     }
 
-    public async Task<bool> NotifyAdminsAsync(
+    public async Task<bool> NotifyAsync(
         Guid businessId,
+        IReadOnlyList<string> contacts,
         EscalationNotification notification,
         CancellationToken ct = default)
     {
-        var adminNumbers = await GetEscalationContactsAsync(businessId, ct);
-        if (adminNumbers.Count == 0)
+        if (contacts.Count == 0)
         {
             _logger.LogInformation(
-                "Sin contactos de escalado configurados para Biz={BusinessId}",
-                businessId);
+                "Sin contactos de escalado para Biz={BusinessId}", businessId);
             return false;
         }
 
@@ -66,50 +61,23 @@ public class EscalationNotifier : IEscalationNotifier
             sb.Append($"\n\n📎 Devolver al bot:\n{releaseUrl}");
 
         var message = sb.ToString();
-
         var notifiedCount = 0;
-        foreach (var number in adminNumbers)
+
+        foreach (var number in contacts)
         {
             try
             {
-                var normalizedNumber = number.Replace("+", "").Replace(" ", "").Trim();
-                await _whatsAppService.SendTextMessageAsync(businessId, normalizedNumber, message);
+                var normalized = number.Replace("+", "").Replace(" ", "").Trim();
+                await _whatsAppService.SendTextMessageAsync(businessId, normalized, message);
                 notifiedCount++;
-                _logger.LogInformation("Notificación enviada a {Number}", number);
+                _logger.LogInformation("Notificación de escalado enviada a {Number}", number);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error enviando notificación a {Number}", number);
+                _logger.LogError(ex, "Error enviando notificación de escalado a {Number}", number);
             }
         }
 
         return notifiedCount > 0;
-    }
-
-    private async Task<List<string>> GetEscalationContactsAsync(Guid businessId, CancellationToken ct)
-    {
-        var config = await _unitOfWork.BusinessConfigurations
-            .GetByBusinessIdAndKeyAsync(businessId, BusinessConfigurationKey.EscalationContacts);
-        if (config == null || string.IsNullOrWhiteSpace(config.Value))
-            return new List<string>();
-
-        try
-        {
-            using var doc = JsonDocument.Parse(config.Value);
-            var root = doc.RootElement;
-            if (!root.TryGetProperty("WhatsAppNumbers", out var arr) || arr.ValueKind != JsonValueKind.Array)
-                return new List<string>();
-
-            return arr.EnumerateArray()
-                .Select(e => e.GetString())
-                .Where(s => !string.IsNullOrWhiteSpace(s))
-                .Cast<string>()
-                .ToList();
-        }
-        catch (JsonException ex)
-        {
-            _logger.LogWarning(ex, "JSON inválido en EscalationContacts para Biz={BusinessId}", businessId);
-            return new List<string>();
-        }
     }
 }

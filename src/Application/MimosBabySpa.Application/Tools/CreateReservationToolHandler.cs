@@ -56,17 +56,24 @@ public class CreateReservationToolHandler : BaseToolHandler
     {
         try
         {
+            var attrs = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var kv in context.State.Attributes ?? [])
+                attrs[kv.Key] = kv.Value;
+
+            var legacyAddOns = context.State.GetAttribute("SelectedAddOns");
+            if (!string.IsNullOrWhiteSpace(legacyAddOns))
+                attrs[ReservationBusinessAttributeKeys.SelectedAddOns] = legacyAddOns.Trim();
+
             var request = new CreateReservationRequest(
                 context.BusinessId,
                 context.ConversationId,
                 context.State.Service!,
                 context.State.DesiredDate!.Value,
                 context.State.DesiredTime!.Value,
-                context.State.GetAttribute("SelectedAddOns"),
                 context.State.CustomerName,
                 context.State.Email,
                 context.State.Phone,
-                context.State.Attributes);
+                attrs);
 
             var response = await _reservationService.CreateReservationAsync(request, cancellationToken);
 

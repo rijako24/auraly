@@ -153,10 +153,12 @@ public class LoadedBusinessContext
                 return new BusinessInfo { BusinessId = BusinessId, Name = "Negocio Desconocido" };
             }
 
+            // Legacy keys used only by the old engine — not part of the generic flow engine.
+            // Values stored in DB under int key 4 (operating hours) and 5 (payment methods).
             var operatingHoursConfig = await _unitOfWork.BusinessConfigurations
-                .GetByBusinessIdAndKeyAsync(BusinessId, BusinessConfigurationKey.OperatingHours);
+                .GetByBusinessIdAndKeyAsync(BusinessId, (BusinessConfigurationKey)4);
             var paymentMethodsConfig = await _unitOfWork.BusinessConfigurations
-                .GetByBusinessIdAndKeyAsync(BusinessId, BusinessConfigurationKey.PaymentMethods);
+                .GetByBusinessIdAndKeyAsync(BusinessId, (BusinessConfigurationKey)5);
 
             var schedule = DeserializeSchedule(operatingHoursConfig?.Value ?? "{}");
             var paymentMethods = DeserializePaymentMethods(paymentMethodsConfig?.Value ?? "[]");
@@ -298,6 +300,7 @@ public class LoadedBusinessContext
                 {
                     CategoryId    = sc.ServiceCategoryId,
                     Name          = sc.Name,
+                    Description   = sc.Description,
                     DisplayOrder  = sc.DisplayOrder
                 })
                 .ToList();
@@ -369,9 +372,9 @@ public class LoadedBusinessContext
     {
         try
         {
-            // ✅ ÚNICA CARGA de EntityExtractionConfig
+            // Legacy key used only by the old engine — int value 1 (EntityExtractionConfig).
             var config = await _unitOfWork.BusinessConfigurations
-                .GetByBusinessIdAndKeyAsync(BusinessId, BusinessConfigurationKey.EntityExtractionConfig);
+                .GetByBusinessIdAndKeyAsync(BusinessId, (BusinessConfigurationKey)1);
             
             var configJson = config?.Value ?? string.Empty;
 
@@ -475,9 +478,9 @@ public class LoadedBusinessContext
     {
         try
         {
-            // 1. Intentar BusinessConfiguration (por tenant)
+            // Legacy key used only by the old engine — int value 0 (Personality).
             var config = await _unitOfWork.BusinessConfigurations
-                .GetByBusinessIdAndKeyAsync(BusinessId, BusinessConfigurationKey.Personality);
+                .GetByBusinessIdAndKeyAsync(BusinessId, (BusinessConfigurationKey)0);
 
             if (config != null && !string.IsNullOrWhiteSpace(config.Value))
             {
@@ -528,8 +531,9 @@ public class LoadedBusinessContext
     {
         try
         {
+            // Legacy key used only by the old engine — int value 3 (PaymentConfig).
             var config = await _unitOfWork.BusinessConfigurations
-                .GetByBusinessIdAndKeyAsync(BusinessId, BusinessConfigurationKey.PaymentConfig);
+                .GetByBusinessIdAndKeyAsync(BusinessId, (BusinessConfigurationKey)3);
 
             if (config == null || string.IsNullOrWhiteSpace(config.Value))
             {
@@ -577,8 +581,9 @@ public class LoadedBusinessContext
     {
         try
         {
+            // Legacy key used only by the old engine — int value 8 (PaymentConfirmationMessages).
             var config = await _unitOfWork.BusinessConfigurations
-                .GetByBusinessIdAndKeyAsync(BusinessId, BusinessConfigurationKey.PaymentConfirmationMessages);
+                .GetByBusinessIdAndKeyAsync(BusinessId, (BusinessConfigurationKey)8);
 
             if (config == null || string.IsNullOrWhiteSpace(config.Value))
             {
@@ -626,8 +631,9 @@ public class LoadedBusinessContext
     {
         try
         {
+            // Legacy key used only by the old engine — int value 2 (SalesStrategy).
             var config = await _unitOfWork.BusinessConfigurations
-                .GetByBusinessIdAndKeyAsync(BusinessId, BusinessConfigurationKey.SalesStrategy);
+                .GetByBusinessIdAndKeyAsync(BusinessId, (BusinessConfigurationKey)2);
 
             if (config == null || string.IsNullOrWhiteSpace(config.Value))
             {

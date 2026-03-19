@@ -66,10 +66,11 @@ public class ReservationService : IReservationService
                 "No hay empleado disponible para este horario. Por favor intenta con otra fecha u hora.");
         }
 
-        // 4. Resolver add-ons (nombres CSV → IDs + entidades para PriceSnapshot)
+        // 4. Resolver add-ons desde BusinessAttributes (único canal)
+        var addOnsCsv = ReservationBusinessAttributeKeys.GetSelectedAddOnsCsv(request.BusinessAttributes);
         var (addOnServiceIds, addOnNames) = await ResolveAddOnsAsync(
             request.BusinessId,
-            request.SelectedAddOnsCsv,
+            addOnsCsv,
             cancellationToken);
 
         // 5. Construir metadata para calendario
@@ -172,7 +173,7 @@ public class ReservationService : IReservationService
     }
 
     /// <summary>
-    /// Resuelve SelectedAddOnsCsv a (ServiceId, Service) para crear ReservationAddOns
+    /// Resuelve CSV de nombres de add-ons a (ServiceId, Service) para crear ReservationAddOns
     /// y retorna la lista de nombres para el mensaje de éxito.
     /// </summary>
     private async Task<(List<(Guid Id, Service Entity)>, IReadOnlyList<string>)> ResolveAddOnsAsync(

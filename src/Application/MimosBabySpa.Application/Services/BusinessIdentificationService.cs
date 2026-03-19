@@ -45,13 +45,14 @@ public class BusinessIdentificationService : IBusinessIdentificationService
                 BusinessId = business.BusinessId,
                 TenantId = business.TenantId,
                 BusinessName = business.Name,
+                AgentId = whatsAppNumber.AgentId,
                 WhatsAppNumber = new BusinessWhatsAppNumberDto
                 {
                     PhoneNumber = whatsAppNumber.PhoneNumber,
                     WhatsAppPhoneNumberId = whatsAppNumber.WhatsAppPhoneNumberId,
                     WhatsAppAccessToken = whatsAppNumber.WhatsAppAccessToken
                 },
-                Configuration = configuration // Todas las configuraciones
+                Configuration = configuration
             };
         }
         catch (Exception ex)

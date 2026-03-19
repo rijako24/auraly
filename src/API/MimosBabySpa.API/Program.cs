@@ -26,6 +26,12 @@ using MimosBabySpa.Application.LLM;
 using MimosBabySpa.Application.LLM.Extraction;
 using MimosBabySpa.Application.Prompts;
 
+// Generic Flow Engine
+using MimosBabySpa.Application.GenericFlow;
+using MimosBabySpa.Application.GenericFlow.Actions;
+using MimosBabySpa.Application.GenericFlow.Handlers;
+using MimosBabySpa.Application.GenericFlow.Services;
+
 var host = new HostBuilder()
     .ConfigureFunctionsWorkerDefaults()
     .ConfigureServices((context, services) =>
@@ -165,11 +171,54 @@ var host = new HostBuilder()
         services.AddScoped<IReleaseLinkService>(sp => sp.GetRequiredService<AdminActionLinkService>());
         services.AddScoped<IConversationReleaseService, ConversationReleaseService>();
 
-        // Hybrid Transactional Orchestrator
+        // Hybrid Transactional Orchestrator (legacy — preserved for existing flows)
         services.AddScoped<HybridTransactionalOrchestrator>();
         
         // WhatsAppMessageProcessorService (usa HybridTransactionalOrchestrator)
         services.AddScoped<IWhatsAppMessageProcessorService, WhatsAppMessageProcessorService>();
+
+        // ── Generic Flow Engine ────────────────────────────────────────────────────
+
+        // Repositories
+        services.AddScoped<MimosBabySpa.Domain.Repositories.IAgentRepository, AgentRepository>();
+        services.AddScoped<MimosBabySpa.Domain.Repositories.IFlowDefinitionRepository, FlowDefinitionRepository>();
+        services.AddScoped<MimosBabySpa.Domain.Repositories.IFlowExecutionStateRepository, FlowExecutionStateRepository>();
+        services.AddScoped<MimosBabySpa.Domain.Repositories.IKnowledgeSourceRepository, KnowledgeSourceRepository>();
+
+        // Core services
+        services.AddScoped<TemplateResolver>();
+        services.AddScoped<KnowledgeSourceRenderer>();
+        services.AddScoped<FlowPromptBuilder>();
+        services.AddScoped<FlowIntentionDetector>();
+        services.AddScoped<FlowExtractionService>();
+        services.AddScoped<FlowStateManager>();
+        services.AddScoped<ServiceNameResolver>();
+        services.AddScoped<ReservationPricingResolver>();
+        services.AddScoped<ICatalogContentGenerator, CatalogContentGenerator>();
+
+        // Node Handlers (registered as INodeHandler collection)
+        services.AddScoped<INodeHandler, StartNodeHandler>();
+        services.AddScoped<INodeHandler, EndNodeHandler>();
+        services.AddScoped<INodeHandler, CollectFieldsNodeHandler>();
+        services.AddScoped<INodeHandler, ActionNodeHandler>();
+        services.AddScoped<INodeHandler, LLMClassifyNodeHandler>();
+        services.AddScoped<INodeHandler, IntentionRouterNodeHandler>();
+        services.AddScoped<INodeHandler, GenerateResponseNodeHandler>();
+        services.AddScoped<INodeHandler, WaitForEventNodeHandler>();
+        services.AddScoped<INodeHandler, EscalateNodeHandler>();
+
+        // Flow Actions (registered as IFlowAction collection)
+        services.AddScoped<IFlowAction, CheckAvailabilityAction>();
+        services.AddScoped<IFlowAction, ResolvePricingAction>();
+        services.AddScoped<IFlowAction, CreateReservationAction>();
+        services.AddScoped<IFlowAction, GeneratePaymentLinkAction>();
+        services.AddScoped<IFlowAction, VerifyPaymentAction>();
+        services.AddScoped<IFlowAction, SetupRescheduleAction>();
+        services.AddScoped<IFlowAction, RescheduleAction>();
+        services.AddScoped<IFlowAction, SuspendAction>();
+
+        // Main orchestrator
+        services.AddScoped<IFlowOrchestrationService, FlowOrchestrationService>();
 
         // Infrastructure Services - WhatsApp (credenciales desde BusinessWhatsAppNumbers)
         services.AddHttpClient();

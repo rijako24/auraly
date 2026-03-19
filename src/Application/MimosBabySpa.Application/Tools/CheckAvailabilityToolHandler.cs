@@ -96,6 +96,7 @@ public class CheckAvailabilityToolHandler : BaseToolHandler
                 service,
                 date.ToDateTime(TimeOnly.MinValue),
                 time,
+                policy: null,
                 cancellationToken);
 
             // Actualizar estado vía StateUpdater (fuente de verdad centralizada)

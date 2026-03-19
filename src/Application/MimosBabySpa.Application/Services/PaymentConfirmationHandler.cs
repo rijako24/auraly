@@ -104,6 +104,7 @@ public class PaymentConfirmationHandler : IPaymentConfirmationHandler
             state.Service!,
             state.DesiredDate!.Value.ToDateTime(TimeOnly.MinValue),
             state.DesiredTime!.Value.ToTimeSpan(),
+            policy: null,
             ct);
 
         if (!availability.IsAvailable)
@@ -151,6 +152,7 @@ public class PaymentConfirmationHandler : IPaymentConfirmationHandler
                 state.Service!,
                 state.DesiredDate!.Value.ToDateTime(TimeOnly.MinValue),
                 null,
+                policy: null,
                 ct);
 
             _stateUpdater.ApplyConfirmationFlag(state, "AvailabilityConfirmed", false);
