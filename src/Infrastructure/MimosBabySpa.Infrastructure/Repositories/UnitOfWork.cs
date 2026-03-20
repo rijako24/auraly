@@ -34,6 +34,12 @@ public class UnitOfWork : IUnitOfWork
     private IUserExternalLoginRepository? _userExternalLogins;
     private IAuditLogRepository? _auditLogs;
     private ITenantRepository? _tenants;
+    private IAgentRepository? _agents;
+    private IAgentTypeRepository? _agentTypes;
+    private IFlowDefinitionRepository? _flowDefinitions;
+    private IFlowExecutionStateRepository? _flowExecutionStates;
+    private IFlowNodeCatalogRepository? _flowNodeCatalog;
+    private IKnowledgeSourceRepository? _knowledgeSources;
 
     public UnitOfWork(ApplicationDbContext context)
     {
@@ -123,6 +129,24 @@ public class UnitOfWork : IUnitOfWork
 
     public ITenantRepository Tenants =>
         _tenants ??= new TenantRepository(_context);
+
+    public IAgentRepository Agents =>
+        _agents ??= new AgentRepository(_context);
+
+    public IAgentTypeRepository AgentTypes =>
+        _agentTypes ??= new AgentTypeRepository(_context);
+
+    public IFlowDefinitionRepository FlowDefinitions =>
+        _flowDefinitions ??= new FlowDefinitionRepository(_context);
+
+    public IFlowExecutionStateRepository FlowExecutionStates =>
+        _flowExecutionStates ??= new FlowExecutionStateRepository(_context);
+
+    public IFlowNodeCatalogRepository FlowNodeCatalog =>
+        _flowNodeCatalog ??= new FlowNodeCatalogRepository(_context);
+
+    public IKnowledgeSourceRepository KnowledgeSources =>
+        _knowledgeSources ??= new KnowledgeSourceRepository(_context);
 
     public async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {

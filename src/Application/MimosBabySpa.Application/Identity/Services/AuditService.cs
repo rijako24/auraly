@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using MimosBabySpa.Application.Common.DTOs;
 using MimosBabySpa.Application.Common.Interfaces;
 using MimosBabySpa.Application.Identity.DTOs;
@@ -10,6 +11,12 @@ namespace MimosBabySpa.Application.Identity.Services;
 
 public class AuditService : IAuditService
 {
+    private static readonly JsonSerializerOptions AuditSerializationOptions = new()
+    {
+        ReferenceHandler = ReferenceHandler.IgnoreCycles,
+        WriteIndented = false
+    };
+
     private readonly IUnitOfWork _unitOfWork;
     private readonly ITenantContext _tenantContext;
     private readonly ICorrelationIdProvider _correlationIdProvider;
@@ -37,8 +44,8 @@ public class AuditService : IAuditService
             Action = action,
             EntityType = entityType,
             EntityId = entityId,
-            OldValues = oldValues is not null ? JsonSerializer.Serialize(oldValues) : null,
-            NewValues = newValues is not null ? JsonSerializer.Serialize(newValues) : null,
+            OldValues = oldValues is not null ? JsonSerializer.Serialize(oldValues, AuditSerializationOptions) : null,
+            NewValues = newValues is not null ? JsonSerializer.Serialize(newValues, AuditSerializationOptions) : null,
             CorrelationId = _correlationIdProvider.CorrelationId,
             Timestamp = DateTime.UtcNow
         }, ct);

@@ -1,6 +1,5 @@
 using Microsoft.EntityFrameworkCore;
 using MimosBabySpa.Domain.Entities;
-using MimosBabySpa.Domain.Enums;
 using MimosBabySpa.Domain.Repositories;
 using MimosBabySpa.Infrastructure.Data;
 
@@ -49,13 +48,10 @@ public class ConversationRepository : IConversationRepository
     }
 
     public async Task<(IReadOnlyList<Conversation> Items, int TotalCount)> GetPagedByBusinessIdAsync(
-        Guid businessId, int page, int pageSize, string? search, Domain.Enums.ConversationState? state, CancellationToken ct)
+        Guid businessId, int page, int pageSize, string? search, CancellationToken ct)
     {
         var query = _context.Conversations
             .Where(c => c.BusinessId == businessId);
-
-        if (state.HasValue)
-            query = query.Where(c => c.State == state.Value);
 
         if (!string.IsNullOrWhiteSpace(search))
         {

@@ -12,9 +12,20 @@ public enum FlowNodeType
     End = 7,
 
     /// <summary>
-    /// Routes the flow based on boolean intention flags detected during extraction.
-    /// Zero LLM calls — reads ctx.DetectedIntentions and routes by matching port.
-    /// Config: { "routes": [{ "when": "intent_key", "port": "portId" }], "defaultPort": "string" }
+    /// Reserved for deserialization compatibility. No handler registered.
+    /// Extraction is now handled inside Agent sub-nodes.
     /// </summary>
-    IntentionRouter = 9
+    Extract = 8,
+
+    /// <summary>
+    /// Three-phase routing: flags → pre-detected intents → LLM classification.
+    /// Config: { "routes": [...], "defaultPort": "string", "classification": { "instructions": "..." } }
+    /// </summary>
+    IntentionRouter = 9,
+
+    /// <summary>
+    /// Cluster node with sub-nodes (Extract, Actions, Knowledge, Event).
+    /// Agents are sticky — conversation stays on the active agent between turns.
+    /// </summary>
+    Agent = 10
 }

@@ -9,23 +9,19 @@ using MimosBabySpa.Domain.Models.Flow;
 namespace MimosBabySpa.Application.GenericFlow.Services;
 
 /// <summary>
-/// Unified extraction service: a single LLM call in JSON mode extracts both
-/// field values AND boolean intention flags from the user message.
+/// Extraction service for cluster-node architecture.
+/// Each agent invokes extraction with scoped variables and intentions from its own sub-node.
 ///
-/// Prompt assembly (engine is 100% generic — no domain knowledge here):
+/// A single LLM call in JSON mode extracts both field values AND boolean intention flags.
+///
+/// Prompt assembly:
 ///   1. JSON output schema (extracted_fields + intentions + ambiguities)
 ///   2. General extraction rules
-///   3. ExtractionInstructions from FlowDefinitionDocument (date rules, catalog hints, etc.)
-///   4. Intention definitions from IntentionSchema (descriptions + examples)
+///   3. ExtractionInstructions from FlowDefinitionDocument
+///   4. Scoped intention definitions from the calling agent
 ///   5. ServiceCatalog knowledge sources as valid value reference
 ///   6. Current variable state
 ///   7. Variable definitions with ExtractionHints
-///
-/// Conversation history is passed as LLM messages so the LLM can resolve
-/// references like "ese", "sí", "la primera" against what the bot previously said.
-///
-/// Returns FlowExtractionResult with both fields and intentions.
-/// WasSuccessful = false → caller should use FlowIntentionDetector.DegradedDetect as fallback.
 /// </summary>
 public class FlowExtractionService
 {
@@ -46,6 +42,9 @@ public class FlowExtractionService
         _logger = logger;
     }
 
+    /// <summary>
+    /// Agent-scoped extraction: extracts only the specified variables and intentions.
+    /// </summary>
     public async Task<FlowExtractionResult> ExtractAsync(
         string userMessage,
         FlowDefinitionDocument flow,
@@ -53,19 +52,11 @@ public class FlowExtractionService
         IReadOnlyList<FlowConversationMessage> conversationHistory,
         IEnumerable<KnowledgeSource> knowledgeSources,
         FlowEngineSettings settings,
-        CancellationToken ct)
+        CancellationToken ct,
+        List<FlowVariable> scopedVariables,
+        List<FlowIntentionSchema> scopedIntentions)
     {
-        var extractableVars = flow.Variables
-            .Where(v => !v.IsSystemManaged)
-            .ToList();
-
-        // Determine which intentions to include based on their stageCondition
-        var activeIntentions = flow.IntentionSchema
-            .Where(i => IsIntentionConditionMet(i, state))
-            .ToList();
-
-        // Nothing to do if no variables and no intentions configured
-        if (extractableVars.Count == 0 && activeIntentions.Count == 0)
+        if (scopedVariables.Count == 0 && scopedIntentions.Count == 0)
             return new FlowExtractionResult { WasSuccessful = true };
 
         var resolvedInstructions = string.IsNullOrWhiteSpace(flow.ExtractionInstructions)
@@ -73,7 +64,7 @@ public class FlowExtractionService
             : _templateResolver.ResolveStandalone(flow.ExtractionInstructions, settings.DateTimeCulture);
 
         var prompt = BuildExtractionPrompt(
-            extractableVars, activeIntentions, state, resolvedInstructions, knowledgeSources, settings);
+            scopedVariables, scopedIntentions, state, resolvedInstructions, knowledgeSources, settings);
 
         var messages = new List<LLMMessage>
         {
@@ -114,7 +105,7 @@ public class FlowExtractionService
             }
 
             return ParseExtractionResponse(
-                response.Content, extractableVars, activeIntentions, flow.IntentionSchema, settings.ExtractionMinConfidence);
+                response.Content, scopedVariables, scopedIntentions, settings.ExtractionMinConfidence);
         }
         catch (Exception ex)
         {
@@ -200,26 +191,6 @@ public class FlowExtractionService
         }
     }
 
-    // ── Condition check ────────────────────────────────────────────────────────
-
-    /// <summary>
-    /// Returns true if the intention should be included in the extraction prompt this turn.
-    /// StageCondition format: "flag:{flagKey}" → checks state.GetFlag(flagKey).
-    /// No condition → always active.
-    /// </summary>
-    private static bool IsIntentionConditionMet(FlowIntentionSchema intention, FlowExecutionState state)
-    {
-        if (string.IsNullOrEmpty(intention.StageCondition)) return true;
-
-        if (intention.StageCondition.StartsWith("flag:", StringComparison.OrdinalIgnoreCase))
-        {
-            var flagKey = intention.StageCondition[5..];
-            return state.GetFlag(flagKey);
-        }
-
-        return true;
-    }
-
     // ── Prompt builder ─────────────────────────────────────────────────────────
 
     private string BuildExtractionPrompt(
@@ -232,12 +203,10 @@ public class FlowExtractionService
     {
         var sb = new StringBuilder();
 
-        // ── Header ──────────────────────────────────────────────────────────────
         sb.AppendLine("# EXTRACCIÓN DE INFORMACIÓN — JSON MODE");
         sb.AppendLine("Responde SOLO con JSON válido. Sin texto, markdown ni explicaciones fuera del JSON.");
         sb.AppendLine();
 
-        // ── Output schema ────────────────────────────────────────────────────────
         sb.AppendLine("## Formato de respuesta:");
         sb.AppendLine("{");
         sb.AppendLine("  \"extracted_fields\": [");
@@ -260,7 +229,6 @@ public class FlowExtractionService
         sb.AppendLine("}");
         sb.AppendLine();
 
-        // ── General extraction rules ─────────────────────────────────────────────
         sb.AppendLine("## Reglas generales de extracción:");
         sb.AppendLine("- Extrae SOLO del mensaje delimitado con ---MENSAJE A ANALIZAR---.");
         sb.AppendLine("- El historial de conversación es contexto previo para resolver referencias (\"ese\", \"sí\", \"la primera\"), NO fuente de datos a re-extraer.");
@@ -273,7 +241,6 @@ public class FlowExtractionService
         }
         sb.AppendLine();
 
-        // ── Flow-specific extraction instructions ────────────────────────────────
         if (!string.IsNullOrWhiteSpace(resolvedExtractionInstructions))
         {
             sb.AppendLine("## Instrucciones específicas de este flujo:");
@@ -281,7 +248,6 @@ public class FlowExtractionService
             sb.AppendLine();
         }
 
-        // ── Intention definitions ────────────────────────────────────────────────
         if (activeIntentions.Count > 0)
         {
             sb.AppendLine("## Intenciones (detectar del texto, no inventar):");
@@ -295,10 +261,6 @@ public class FlowExtractionService
             sb.AppendLine();
         }
 
-        // ── Knowledge sources — names only ───────────────────────────────────────
-        // Inject only service/category headings, not full descriptions.
-        // Full content triggers Azure content filters on domains with clinical terms.
-        // The LLM only needs names to resolve aliases ("el marineritos" → "Plan Marineritos").
         var catalogSources = knowledgeSources
             .Where(ks => ks.IsActive && ks.Type == KnowledgeSourceType.ServiceCatalog)
             .ToList();
@@ -317,7 +279,6 @@ public class FlowExtractionService
             }
         }
 
-        // ── Current state ────────────────────────────────────────────────────────
         var filled = variables.Where(v => state.GetVariable(v.Key) != null).ToList();
         if (filled.Count > 0)
         {
@@ -327,7 +288,6 @@ public class FlowExtractionService
             sb.AppendLine();
         }
 
-        // ── Variable definitions ─────────────────────────────────────────────────
         if (variables.Count > 0)
         {
             sb.AppendLine("## Campos a extraer:");
@@ -349,14 +309,12 @@ public class FlowExtractionService
         string json,
         List<FlowVariable> variables,
         List<FlowIntentionSchema> activeIntentions,
-        List<FlowIntentionSchema> allIntentions,
         double minConfidence)
     {
         var result = new FlowExtractionResult { WasSuccessful = true };
         var validKeys = new HashSet<string>(variables.Select(v => v.Key));
 
-        // Default all intentions to false
-        foreach (var i in allIntentions)
+        foreach (var i in activeIntentions)
             result.Intentions[i.Key] = false;
 
         try
@@ -364,7 +322,6 @@ public class FlowExtractionService
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
 
-            // Parse extracted_fields
             if (root.TryGetProperty("extracted_fields", out var fieldsEl)
                 && fieldsEl.ValueKind == JsonValueKind.Array)
             {
@@ -385,7 +342,6 @@ public class FlowExtractionService
                 }
             }
 
-            // Parse intentions object
             if (root.TryGetProperty("intentions", out var intentionsEl)
                 && intentionsEl.ValueKind == JsonValueKind.Object)
             {

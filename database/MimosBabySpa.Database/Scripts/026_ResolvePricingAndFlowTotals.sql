@@ -64,9 +64,17 @@ SET @Json = JSON_MODIFY(@Json, 'append $.variables', JSON_QUERY(@VarAddonsDetail
 SET @Json = JSON_MODIFY(@Json, 'append $.variables', JSON_QUERY(@VarTotalPrice));
 SET @Json = JSON_MODIFY(@Json, 'append $.variables', JSON_QUERY(@VarTotalInv));
 
+-- anticipo_amount variable (populated by resolve_pricing when anticipoPercentage > 0)
+IF NOT EXISTS (
+    SELECT 1 FROM OPENJSON(JSON_QUERY(@Json, N'$.variables'))
+    WHERE JSON_VALUE(value, N'$.key') = N'anticipo_amount'
+)
+    SET @Json = JSON_MODIFY(@Json, 'append $.variables',
+        JSON_QUERY(N'{"key":"anticipo_amount","label":"Anticipo requerido","dataType":"String","required":false,"group":"system","displayOrder":101,"showInSummary":false,"isSystemManaged":true}'));
+
 -- ── Node resolve_pricing ──────────────────────────────────────────────────────
 
-DECLARE @ResolveNode NVARCHAR(MAX) = N'{"id":"resolve_pricing","type":2,"label":"Resolver precios","config":{"action_type":"resolve_pricing","input_mapping":{"item":"{{variables.service}}","selected_add_ons":"{{variables.selected_add_ons}}"},"output_mapping":{"service_price":"service_price","addons_detail":"addons_detail","total_price":"total_price","total_price_invariant":"total_price_invariant"}}}';
+DECLARE @ResolveNode NVARCHAR(MAX) = N'{"id":"resolve_pricing","type":2,"label":"Resolver precios","config":{"action_type":"resolve_pricing","input_mapping":{"item":"{{variables.service}}","selected_add_ons":"{{variables.selected_add_ons}}"},"pricing":{"anticipoPercentage":50},"output_mapping":{"service_price":"service_price","addons_detail":"addons_detail","total_price":"total_price","total_price_invariant":"total_price_invariant","anticipo_amount":"anticipo_amount"}}}';
 SET @Json = JSON_MODIFY(@Json, 'append $.nodes', JSON_QUERY(@ResolveNode));
 
 -- ── Edge e12 → resolve_pricing; append e12b ─────────────────────────────────
@@ -80,7 +88,7 @@ DECLARE @E12Idx NVARCHAR(10) = (
 IF @E12Idx IS NOT NULL
     SET @Json = JSON_MODIFY(@Json, '$.edges[' + @E12Idx + '].targetNodeId', N'resolve_pricing');
 
-SET @Json = JSON_MODIFY(@Json, 'append $.edges', JSON_QUERY(N'{"id":"e12b","sourceNodeId":"resolve_pricing","targetNodeId":"show_confirmation"}'));
+SET @Json = JSON_MODIFY(@Json, 'append $.edges', JSON_QUERY(N'{"id":"e12b","sourceNodeId":"resolve_pricing","targetNodeId":"generate_payment_link"}'));
 
 -- ── service.onChange.resetVariables ───────────────────────────────────────────
 
@@ -153,6 +161,12 @@ IF NOT EXISTS (
     WHERE value = N'total_price_invariant'
 )
     SET @Json = JSON_MODIFY(@Json, 'append $.sessionConfig.transactionalVariables', N'total_price_invariant');
+
+IF NOT EXISTS (
+    SELECT 1 FROM OPENJSON(JSON_QUERY(@Json, N'$.sessionConfig.transactionalVariables'))
+    WHERE value = N'anticipo_amount'
+)
+    SET @Json = JSON_MODIFY(@Json, 'append $.sessionConfig.transactionalVariables', N'anticipo_amount');
 
 UPDATE [dbo].[FlowDefinitions]
 SET [DefinitionJson] = @Json, [UpdatedAt] = SYSUTCDATETIME()

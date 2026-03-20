@@ -1,6 +1,5 @@
 import {
   BusinessConfigurationKey,
-  ConversationStateEnum,
   LeadStatus,
   PaymentTransactionSource,
   PaymentTransactionStatus,
@@ -178,12 +177,8 @@ export interface Conversation {
   businessId: string;
   userNumber: string;
   lastMessage: string | null;
-  lastIntent: string | null;
   timestamp: string;
   customerName: string | null;
-  babyAge: number | null;
-  recommendedPlan: string | null;
-  state: ConversationStateEnum;
   messages?: Message[];
   business?: Business;
 }
@@ -313,4 +308,141 @@ export interface SystemConfiguration {
   createdAt: string;
   updatedAt: string | null;
   isActive: boolean;
+}
+
+/** Admin — agent list row */
+export interface Agent {
+  agentId: string;
+  businessId: string;
+  name: string;
+  description: string | null;
+  agentTypeName: string;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string | null;
+}
+
+export interface AgentPromptSection {
+  agentPromptSectionId: string;
+  key: string;
+  title: string;
+  content: string;
+  injectionPoint: string;
+  displayOrder: number;
+}
+
+export interface KnowledgeSourceAdmin {
+  knowledgeSourceId: string;
+  name: string;
+  type: string;
+  content: string;
+  autoInject: boolean;
+  displayOrder: number;
+  createdAt: string;
+}
+
+export interface AgentDetail extends Agent {
+  agentTypeId: string;
+  settingsJson: string | null;
+  promptSections: AgentPromptSection[];
+  knowledgeSources: KnowledgeSourceAdmin[];
+}
+
+export interface AgentType {
+  agentTypeId: string;
+  name: string;
+  description: string | null;
+}
+
+export interface FlowDefinitionAdmin {
+  flowDefinitionId: string;
+  agentId: string;
+  name: string;
+  description: string | null;
+  definitionJson: string;
+  version: string;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string | null;
+}
+
+export interface FlowPort {
+  id: string;
+  label: string;
+}
+
+export interface FlowNodeCatalogEntry {
+  id: string;
+  name: string;
+  type: number;
+  icon: string;
+  inputs: FlowPort[];
+  outputs: FlowPort[];
+  configSchemaJson: string;
+  category?: string | null;
+  color?: string | null;
+}
+
+export interface FlowSubNodeConfig {
+  id: string;
+  label: string;
+  slot: number;
+  config: Record<string, unknown>;
+}
+
+export interface FlowSubNodeSet {
+  extract?: FlowSubNodeConfig;
+  actions?: FlowSubNodeConfig[];
+  knowledge?: FlowSubNodeConfig[];
+  event?: FlowSubNodeConfig;
+  classifier?: FlowSubNodeConfig;
+}
+
+export interface FlowDocumentNode {
+  id: string;
+  type: number;
+  label: string;
+  config: Record<string, unknown>;
+  subNodes?: FlowSubNodeSet;
+  handlesIntent?: string;
+}
+
+export interface FlowDocumentEdge {
+  id: string;
+  sourceNodeId: string;
+  targetNodeId: string;
+  portId?: string | null;
+}
+
+export interface FlowRoutingIntent {
+  key: string;
+  description: string;
+  examples?: string[];
+  degradedRegex?: string;
+}
+
+export interface FlowDocument {
+  variables: unknown[];
+  intentionSchema: unknown[];
+  routingIntents?: FlowRoutingIntent[];
+  sessionConfig: Record<string, unknown>;
+  engineSettings: Record<string, unknown>;
+  nodes: FlowDocumentNode[];
+  edges: FlowDocumentEdge[];
+  extractionInstructions?: string;
+}
+
+export interface AgentChatRequest {
+  message: string;
+  resetSession?: boolean;
+}
+
+export interface AgentChatResponse {
+  success: boolean;
+  botResponse: string;
+  errorMessage: string | null;
+  isEscalated: boolean;
+  isFlowComplete: boolean;
+  currentNodeId: string | null;
+  variables: Record<string, string | null>;
 }

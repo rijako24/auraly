@@ -31,20 +31,20 @@ public class KnowledgeSourceRepository : IKnowledgeSourceRepository
             .ToListAsync(ct);
     }
 
-    public async Task<KnowledgeSource> AddAsync(
+    public Task<KnowledgeSource> AddAsync(
         KnowledgeSource source, CancellationToken ct = default)
     {
-        source.KnowledgeSourceId = Guid.NewGuid();
+        if (source.KnowledgeSourceId == Guid.Empty)
+            source.KnowledgeSourceId = Guid.NewGuid();
         source.CreatedAt = DateTime.UtcNow;
         _db.KnowledgeSources.Add(source);
-        await _db.SaveChangesAsync(ct);
-        return source;
+        return Task.FromResult(source);
     }
 
-    public async Task UpdateAsync(KnowledgeSource source, CancellationToken ct = default)
+    public Task UpdateAsync(KnowledgeSource source, CancellationToken ct = default)
     {
         source.UpdatedAt = DateTime.UtcNow;
         _db.KnowledgeSources.Update(source);
-        await _db.SaveChangesAsync(ct);
+        return Task.CompletedTask;
     }
 }

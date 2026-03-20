@@ -12,6 +12,7 @@ using MimosBabySpa.Application.Identity.Services;
 using MimosBabySpa.Domain.Repositories;
 using MimosBabySpa.Infrastructure.CrossCutting;
 using MimosBabySpa.Infrastructure.Data;
+using MimosBabySpa.Infrastructure.DependencyInjection;
 using MimosBabySpa.Infrastructure.Identity;
 using MimosBabySpa.Infrastructure.MultiTenancy;
 using MimosBabySpa.Infrastructure.Repositories;
@@ -76,6 +77,9 @@ builder.Services.AddScoped<IBusinessConfigurationAdminService, BusinessConfigura
 builder.Services.AddScoped<IConversationAdminService, ConversationAdminService>();
 builder.Services.AddScoped<IPaymentAdminService, PaymentAdminService>();
 builder.Services.AddScoped<IDashboardService, DashboardService>();
+builder.Services.AddScoped<IAgentAdminService, AgentAdminService>();
+
+builder.Services.AddQuantixGenericFlowEngine(builder.Configuration);
 
 builder.Services.AddControllers();
 

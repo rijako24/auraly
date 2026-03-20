@@ -9,6 +9,14 @@ public class FlowDefinitionDocument
     /// (no separate call needed). Replaces the old Intentions list.
     /// </summary>
     public List<FlowIntentionSchema> IntentionSchema { get; set; } = new();
+
+    /// <summary>
+    /// Flow-level routing intents. Inherited by all agent nodes for escape-intent detection
+    /// and used by the Router for initial classification. Replaces the routing aspects of
+    /// <see cref="IntentionSchema"/> in the new cluster-node architecture.
+    /// </summary>
+    public List<FlowRoutingIntent> RoutingIntents { get; set; } = new();
+
     public FlowSessionConfig SessionConfig { get; set; } = new();
     public FlowEngineSettings EngineSettings { get; set; } = new();
     public List<FlowNode> Nodes { get; set; } = new();

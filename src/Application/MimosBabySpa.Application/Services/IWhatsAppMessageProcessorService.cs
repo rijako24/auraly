@@ -14,7 +14,12 @@ public interface IWhatsAppMessageProcessorService
     Task<string?> VerifyWebhookAsync(string mode, string token, string challenge);
 
     /// <summary>
-    /// Procesa un mensaje entrante de WhatsApp (texto)
+    /// Procesa un mensaje entrante de WhatsApp (texto) usando el Generic Flow Engine.
+    /// <paramref name="businessContext"/> debe incluir <see cref="BusinessContext.AgentId"/> del canal.
     /// </summary>
-    Task ProcessIncomingMessageAsync(Guid businessId, string userNumber, string messageText, string? customerName = null);
+    Task ProcessIncomingMessageAsync(
+        BusinessContext businessContext,
+        string userNumber,
+        string messageText,
+        string? customerName = null);
 }

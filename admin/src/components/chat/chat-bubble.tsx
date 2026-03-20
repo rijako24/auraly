@@ -16,37 +16,48 @@ export function ChatBubble({ message }: ChatBubbleProps) {
   return (
     <div
       className={cn(
-        "flex gap-3",
-        isUser ? "flex-row-reverse" : "flex-row"
+        "flex w-full min-w-0 gap-2.5 sm:gap-3",
+        isUser ? "flex-row-reverse" : "flex-row",
+        "items-end"
       )}
     >
-      <Avatar className="h-8 w-8 flex-shrink-0">
+      <Avatar className="h-8 w-8 shrink-0">
         <AvatarFallback
           className={cn(
             "text-xs",
-            isUser ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
+            isUser
+              ? "bg-primary text-primary-foreground"
+              : "border border-border bg-card text-muted-foreground"
           )}
         >
-          {isUser ? <User className="h-4 w-4" /> : <Bot className="h-4 w-4" />}
+          {isUser ? <User className="h-4 w-4" aria-hidden /> : <Bot className="h-4 w-4" aria-hidden />}
         </AvatarFallback>
       </Avatar>
       <div
         className={cn(
-          "flex max-w-[80%] flex-col gap-0.5",
+          "flex min-w-0 flex-1 flex-col gap-1",
           isUser ? "items-end" : "items-start"
         )}
       >
         <div
           className={cn(
-            "rounded-2xl px-4 py-2.5 text-sm shadow-sm",
+            // Ancho cómodo para lectura: cortos = w-fit; largos = envuelven a ~32rem (no todo el panel)
+            "min-w-0 w-fit max-w-[min(100%,32rem)] rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed shadow-sm",
             isUser
-              ? "rounded-tr-md bg-primary text-primary-foreground"
-              : "rounded-tl-md bg-muted text-foreground"
+              ? "ml-auto rounded-tr-md bg-primary text-primary-foreground"
+              : "rounded-tl-md border border-border/60 bg-muted/80 text-foreground"
           )}
         >
-          <p className="whitespace-pre-wrap break-words">{message.messageText}</p>
+          <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
+            {message.messageText}
+          </p>
         </div>
-        <span className="text-xs text-muted-foreground">
+        <span
+          className={cn(
+            "max-w-[min(100%,32rem)] px-0.5 text-[11px] leading-snug text-muted-foreground/90 sm:text-xs",
+            isUser ? "ml-auto text-right" : "text-left"
+          )}
+        >
           {formatDateTime(message.timestamp)}
         </span>
       </div>

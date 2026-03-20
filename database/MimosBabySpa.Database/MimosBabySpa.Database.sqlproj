@@ -16,6 +16,8 @@
     <Build Include="Tables\Permissions.sql" />
     <Build Include="Tables\SystemConfigurations.sql" />
     <Build Include="Tables\Businesses.sql" />
+    <Build Include="Tables\AgentTypes.sql" />
+    <Build Include="Tables\Agents.sql" />
     <Build Include="Tables\AppUsers.sql" />
     <Build Include="Tables\AppRoles.sql" />
     <Build Include="Tables\BusinessWhatsAppNumbers.sql" />
@@ -25,6 +27,13 @@
     <Build Include="Tables\ServiceCategories.sql" />
     <Build Include="Tables\Services.sql" />
     <Build Include="Tables\Employees.sql" />
+    <Build Include="Tables\AgentPromptSections.sql" />
+    <Build Include="Tables\KnowledgeSources.sql" />
+    <Build Include="Tables\AgentKnowledgeSources.sql" />
+    <Build Include="Tables\FlowDefinitions.sql" />
+    <Build Include="Tables\FlowExecutionStates.sql" />
+    <Build Include="Tables\FlowTemplates.sql" />
+    <Build Include="Tables\FlowNodeCatalog.sql" />
     <Build Include="Tables\Conversations.sql" />
     <Build Include="Tables\ConversationContexts.sql" />
     <Build Include="Tables\ConversationStates.sql" />

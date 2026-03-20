@@ -71,7 +71,7 @@ export function MobileNav() {
               className="flex items-center gap-2 text-lg font-semibold"
             >
               <MessageCircle className="h-6 w-6" />
-              Talkio Admin
+              Quantix AI Admin
             </Link>
           </SheetTitle>
         </SheetHeader>

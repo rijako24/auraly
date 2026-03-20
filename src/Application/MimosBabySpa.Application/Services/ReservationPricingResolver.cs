@@ -27,11 +27,14 @@ public class ReservationPricingResolver
 
     /// <summary>
     /// Calcula precios. <paramref name="selectedAddOnsRaw"/> puede ser CSV o "ninguno".
+    /// Si <paramref name="anticipoPercentage"/> está entre 1 y 100, calcula y formatea el anticipo
+    /// con la misma regla que el resto de montos (único lugar de presentación de dinero).
     /// </summary>
     public async Task<ReservationPricingResult?> ResolveAsync(
         Guid businessId,
         string? serviceName,
         string? selectedAddOnsRaw,
+        int? anticipoPercentage = null,
         CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(serviceName))
@@ -70,19 +73,38 @@ public class ReservationPricingResolver
 
                 total += addOnEntity.Price;
                 addonsSb.AppendLine(
-                    $"- Extra: {addOnEntity.ServiceName} — ${addOnEntity.Price.ToString("N0", CultureInfo.InvariantCulture)}");
+                    $"- Extra: {addOnEntity.ServiceName} — {FormatMoney(addOnEntity.Price)}");
             }
         }
 
         var addonsDetail = addonsSb.ToString().TrimEnd();
+
+        string? anticipoDisplay = null;
+        if (anticipoPercentage is > 0 and <= 100)
+        {
+            var anticipo = total * anticipoPercentage.Value / 100m;
+            anticipoDisplay = FormatMoney(anticipo);
+            _logger.LogDebug(
+                "ReservationPricingResolver: anticipo {Pct}% of total {Total} = {Display}",
+                anticipoPercentage.Value, total, anticipoDisplay);
+        }
+
         return new ReservationPricingResult(
             ServicePrice: mainService.Price,
             Total: total,
-            ServicePriceDisplay: $"${mainService.Price.ToString("N0", CultureInfo.InvariantCulture)}",
+            ServicePriceDisplay: FormatMoney(mainService.Price),
             AddOnsDetailDisplay: string.IsNullOrEmpty(addonsDetail) ? "—" : addonsDetail,
-            TotalDisplay: $"${total.ToString("N0", CultureInfo.InvariantCulture)}",
-            TotalInvariant: total.ToString(CultureInfo.InvariantCulture));
+            TotalDisplay: FormatMoney(total),
+            TotalInvariant: total.ToString(CultureInfo.InvariantCulture),
+            AnticipoDisplay: anticipoDisplay);
     }
+
+    /// <summary>
+    /// Formato único de montos para UI del flujo (catálogo, totales, anticipo).
+    /// Si en el futuro la moneda/cultura viene por negocio, se centraliza aquí.
+    /// </summary>
+    private static string FormatMoney(decimal amount) =>
+        $"${amount.ToString("N0", CultureInfo.InvariantCulture)}";
 
     private static bool IsNoAddOns(string? raw) =>
         string.IsNullOrWhiteSpace(raw) ||
@@ -110,4 +132,6 @@ public sealed record ReservationPricingResult(
     string AddOnsDetailDisplay,
     string TotalDisplay,
     /// <summary>Total como string parseable (InvariantCulture) para montos y APIs.</summary>
-    string TotalInvariant);
+    string TotalInvariant,
+    /// <summary>Anticipo formateado; null si no se solicitó porcentaje o es 0.</summary>
+    string? AnticipoDisplay);

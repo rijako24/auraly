@@ -422,6 +422,10 @@ VALUES (
     {
       "key": "payment_link_url", "label": "Link de pago", "dataType": "String",
       "required": false, "group": "system", "isSystemManaged": true, "showInSummary": false
+    },
+    {
+      "key": "anticipo_amount", "label": "Anticipo requerido", "dataType": "String",
+      "required": false, "group": "system", "isSystemManaged": true, "showInSummary": false
     }
   ],
 
@@ -467,7 +471,7 @@ VALUES (
     "resetOnFlowCompletion": true,
     "completionFlags": ["reservation_created"],
     "persistentVariables": ["customer_name", "email", "phone", "baby_name", "baby_age"],
-    "transactionalVariables": ["service", "desired_date", "desired_time", "available_time_slots", "reservation_id", "payment_reference_id", "payment_link_url"]
+    "transactionalVariables": ["service", "desired_date", "desired_time", "available_time_slots", "reservation_id", "payment_reference_id", "payment_link_url", "anticipo_amount"]
   },
 
   "engineSettings": {
@@ -604,6 +608,7 @@ VALUES (
     {
       "id": "generate_payment_link", "type": 2, "label": "Generar link de pago",
       "config": {
+        "executeWhen": { "type": "FlagIsFalse", "parameters": { "flag": "is_rescheduling" } },
         "action_type": "generate_payment_link",
         "input_mapping": {
           "item": "{{variables.service}}",
@@ -611,7 +616,14 @@ VALUES (
         },
         "output_mapping": {
           "payment_link_url": "link_url",
-          "payment_reference_id": "reference_id"
+          "payment_reference_id": "reference_id",
+          "anticipo_amount_cents": "anticipo_amount_cents"
+        },
+        "payment": {
+          "requiresAnticipo": true,
+          "anticipoPercentage": 50,
+          "currency": "COP",
+          "expirationMinutes": 1440
         }
       }
     },
@@ -620,7 +632,7 @@ VALUES (
       "id": "wait_payment", "type": 5, "label": "Esperar pago",
       "config": {
         "event_type": "payment_confirmed",
-        "waitingMessage": "Para confirmar tu reserva, realiza el anticipo del 50% aquí:\n\n💳 {{variables.payment_link_url}}\n\nUna vez realizado el pago, te confirmaremos automáticamente. Si ya pagaste, escríbenos 😊",
+        "waitingMessage": "📋 *Resumen de tu reserva:*\n\n{{collected_data}}\n\n💰 Para confirmar tu reserva se requiere un anticipo de {{variables.anticipo_amount}}:\n\n💳 {{variables.payment_link_url}}\n\nUna vez realizado el pago, tu reserva quedará confirmada automáticamente 🎉",
         "localIntentions": [
           {
             "key": "user_says_paid",
@@ -691,7 +703,7 @@ VALUES (
         "setVariables": {
           "service": null, "desired_date": null, "desired_time": null,
           "available_time_slots": null, "reservation_id": null,
-          "payment_reference_id": null, "payment_link_url": null
+          "payment_reference_id": null, "payment_link_url": null, "anticipo_amount": null
         },
         "setFlags": {
           "availability_confirmed": false, "reservation_confirmed": false,
@@ -747,16 +759,17 @@ VALUES (
     { "id": "e09", "sourceNodeId": "check_availability",    "targetNodeId": "collect_identity",       "portId": "success" },
     { "id": "e10", "sourceNodeId": "check_availability",    "targetNodeId": "show_alternatives",      "portId": "failure" },
     { "id": "e11", "sourceNodeId": "show_alternatives",     "targetNodeId": "collect_date" },
-    { "id": "e12", "sourceNodeId": "collect_identity",      "targetNodeId": "show_confirmation" },
+    { "id": "e12", "sourceNodeId": "collect_identity",      "targetNodeId": "generate_payment_link" },
     { "id": "e13", "sourceNodeId": "show_confirmation",     "targetNodeId": "detect_confirmation" },
     { "id": "e14", "sourceNodeId": "detect_confirmation",   "targetNodeId": "reschedule_reservation", "portId": "confirmed" },
     { "id": "e15", "sourceNodeId": "detect_confirmation",   "targetNodeId": "collect_service",        "portId": "wants_changes" },
     { "id": "e16", "sourceNodeId": "detect_confirmation",   "targetNodeId": "cancel_response",        "portId": "cancel" },
     { "id": "e17", "sourceNodeId": "reschedule_reservation","targetNodeId": "success_response",       "portId": "success" },
-    { "id": "e18", "sourceNodeId": "reschedule_reservation","targetNodeId": "generate_payment_link",  "portId": "skipped" },
+    { "id": "e18", "sourceNodeId": "reschedule_reservation","targetNodeId": "create_reservation",     "portId": "skipped" },
     { "id": "e19", "sourceNodeId": "reschedule_reservation","targetNodeId": "escalate",               "portId": "failure" },
     { "id": "e20", "sourceNodeId": "generate_payment_link", "targetNodeId": "wait_payment",           "portId": "success" },
-    { "id": "e21", "sourceNodeId": "generate_payment_link", "targetNodeId": "create_reservation",     "portId": "not_required" },
+    { "id": "e21", "sourceNodeId": "generate_payment_link", "targetNodeId": "show_confirmation",      "portId": "not_required" },
+    { "id": "e21s","sourceNodeId": "generate_payment_link", "targetNodeId": "show_confirmation",      "portId": "skipped" },
     { "id": "e22", "sourceNodeId": "generate_payment_link", "targetNodeId": "escalate",               "portId": "failure" },
     { "id": "e23", "sourceNodeId": "wait_payment",          "targetNodeId": "create_reservation",     "portId": "received" },
     { "id": "e24", "sourceNodeId": "wait_payment",          "targetNodeId": "verify_payment",         "portId": "user_claims_done" },

@@ -21,20 +21,33 @@ public class MessageService : IMessageService
     {
         try
         {
+            var now = DateTime.UtcNow;
             var message = new Domain.Entities.Message
             {
                 MessageId      = Guid.NewGuid(),
                 ConversationId = conversationId,
                 Sender         = sender,
                 MessageText    = messageText,
-                Timestamp      = DateTime.UtcNow
+                Timestamp      = now
             };
 
-            var created = await _unitOfWork.Messages.CreateAsync(message);
+            await _unitOfWork.Messages.CreateAsync(message);
+
+            if (string.Equals(sender, "User", StringComparison.OrdinalIgnoreCase))
+            {
+                var conversation = await _unitOfWork.Conversations.GetByIdAsync(conversationId);
+                if (conversation != null)
+                {
+                    conversation.LastMessage = messageText;
+                    conversation.Timestamp   = now;
+                    await _unitOfWork.Conversations.UpdateAsync(conversation);
+                }
+            }
+
             await _unitOfWork.SaveChangesAsync();
 
             _logger.LogDebug("Mensaje guardado: sender={Sender}, conv={ConversationId}", sender, conversationId);
-            return created;
+            return message;
         }
         catch (Exception ex)
         {

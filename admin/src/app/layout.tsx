@@ -13,8 +13,8 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "Talkio Admin",
-  description: "Panel de administración de Talkio",
+  title: "Quantix AI Admin",
+  description: "Panel de administración de Quantix AI",
 };
 
 export default function RootLayout({

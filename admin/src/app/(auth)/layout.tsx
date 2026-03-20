@@ -20,7 +20,7 @@ export default function AuthLayout({
         <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-white/10 to-transparent" />
         <div className="relative z-10 px-12 text-center">
           <h2 className="text-3xl font-bold text-primary-foreground mb-4">
-            Talkio Admin
+            Quantix AI Admin
           </h2>
           <p className="text-primary-foreground/90 text-lg max-w-sm">
             Gestiona tu negocio con inteligencia artificial. Reservas,

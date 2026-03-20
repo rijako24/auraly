@@ -126,7 +126,7 @@ const PLANS = [
 const TESTIMONIALS = [
   {
     quote:
-      "Talkio redujo nuestras no-shows en un 60%. Los clientes reservan y pagan por WhatsApp sin llamar.",
+      "Quantix AI redujo nuestras no-shows en un 60%. Los clientes reservan y pagan por WhatsApp sin llamar.",
     name: "María García",
     role: "Directora",
     company: "Spa Belleza Total",
@@ -153,7 +153,7 @@ const TESTIMONIALS = [
 const FAQ_ITEMS = [
   {
     q: "¿Necesito un número de WhatsApp Business?",
-    a: "Sí. Talkio se conecta a tu número de WhatsApp Business existente. Si no tienes uno, puedes crearlo desde la app de WhatsApp en minutos.",
+    a: "Sí. Quantix AI se conecta a tu número de WhatsApp Business existente. Si no tienes uno, puedes crearlo desde la app de WhatsApp en minutos.",
   },
   {
     q: "¿Cómo funciona el agente de IA?",
@@ -190,7 +190,7 @@ export default function LandingPage() {
         <nav className="container mx-auto flex h-16 items-center justify-between px-4">
           <Link href="/" className="flex items-center gap-2 font-semibold text-xl">
             <span className="bg-gradient-to-r from-primary to-primary/70 bg-clip-text text-transparent">
-              Talkio
+              Quantix AI
             </span>
           </Link>
 
@@ -278,7 +278,7 @@ export default function LandingPage() {
               </span>
             </h1>
             <p className="mt-6 text-lg text-muted-foreground sm:text-xl max-w-2xl mx-auto">
-              Talkio conecta tu negocio con tus clientes a través de WhatsApp, gestiona reservas,
+              Quantix AI conecta tu negocio con tus clientes a través de WhatsApp, gestiona reservas,
               cobros y más con un agente de IA.
             </p>
             <div className="mt-10 flex flex-col sm:flex-row gap-4 justify-center">
@@ -299,7 +299,7 @@ export default function LandingPage() {
               <div className="aspect-video rounded-xl bg-gradient-to-br from-primary/20 via-muted/30 to-primary/10 dark:from-primary/30 dark:via-muted/20 dark:to-primary/20 flex items-center justify-center">
                 <div className="text-center text-muted-foreground">
                   <BarChart3 className="mx-auto h-16 w-16 mb-2 opacity-50" />
-                  <p className="text-sm font-medium">Dashboard Talkio</p>
+                  <p className="text-sm font-medium">Dashboard Quantix AI</p>
                 </div>
               </div>
             </div>
@@ -435,7 +435,7 @@ export default function LandingPage() {
               Lo que dicen nuestros clientes
             </h2>
             <p className="mt-4 text-lg text-muted-foreground max-w-2xl mx-auto">
-              Negocios que ya automatizaron con Talkio
+              Negocios que ya automatizaron con Quantix AI
             </p>
           </div>
           <div className="grid gap-8 md:grid-cols-3">
@@ -524,7 +524,7 @@ export default function LandingPage() {
           <div className="grid gap-12 md:grid-cols-4">
             <div>
               <Link href="/" className="font-semibold text-xl">
-                Talkio
+                Quantix AI
               </Link>
               <p className="mt-4 text-sm text-muted-foreground">
                 Automatiza reservas, cobros y atención al cliente con IA.
@@ -588,7 +588,7 @@ export default function LandingPage() {
           </div>
           <div className="mt-12 pt-8 border-t border-border/40 flex flex-col sm:flex-row justify-between items-center gap-4">
             <p className="text-sm text-muted-foreground">
-              © {new Date().getFullYear()} Talkio. Todos los derechos reservados.
+              © {new Date().getFullYear()} Quantix AI. Todos los derechos reservados.
             </p>
             <div className="flex gap-4">
               <a href="#" className="text-muted-foreground hover:text-foreground transition-colors">

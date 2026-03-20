@@ -14,7 +14,11 @@ public class ConversationService : IConversationService
         _logger = logger;
     }
 
-    public async Task<Domain.Entities.Conversation> GetOrCreateConversationAsync(Guid businessId, string userNumber, string? customerName = null)
+    public async Task<Domain.Entities.Conversation> GetOrCreateConversationAsync(
+        Guid businessId,
+        string userNumber,
+        string? customerName = null,
+        Guid? agentId = null)
     {
         try
         {
@@ -22,12 +26,25 @@ public class ConversationService : IConversationService
             
             if (existingConversation != null)
             {
+                var needsSave = false;
                 if (!string.IsNullOrEmpty(customerName) && string.IsNullOrEmpty(existingConversation.CustomerName))
                 {
                     existingConversation.CustomerName = customerName;
+                    needsSave = true;
+                }
+
+                if (agentId.HasValue && existingConversation.AgentId != agentId)
+                {
+                    existingConversation.AgentId = agentId;
+                    needsSave = true;
+                }
+
+                if (needsSave)
+                {
                     await _unitOfWork.Conversations.UpdateAsync(existingConversation);
                     await _unitOfWork.SaveChangesAsync();
                 }
+
                 return existingConversation;
             }
 
@@ -35,6 +52,7 @@ public class ConversationService : IConversationService
             {
                 ConversationId = Guid.NewGuid(),
                 BusinessId = businessId,
+                AgentId = agentId,
                 UserNumber = userNumber,
                 CustomerName = customerName,
                 Timestamp = DateTime.UtcNow
@@ -49,31 +67,6 @@ public class ConversationService : IConversationService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error al obtener o crear conversación para {UserNumber} en negocio {BusinessId}", userNumber, businessId);
-            throw;
-        }
-    }
-
-    public async Task UpdateConversationContextAsync(Guid conversationId, string? lastMessage, string? lastIntent)
-    {
-        try
-        {
-            var conversation = await _unitOfWork.Conversations.GetByIdAsync(conversationId);
-            if (conversation == null)
-            {
-                _logger.LogWarning("Conversación {ConversationId} no encontrada", conversationId);
-                return;
-            }
-
-            conversation.LastMessage = lastMessage;
-            conversation.LastIntent = lastIntent;
-            conversation.Timestamp = DateTime.UtcNow;
-
-            await _unitOfWork.Conversations.UpdateAsync(conversation);
-            await _unitOfWork.SaveChangesAsync();
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error al actualizar contexto de conversación {ConversationId}", conversationId);
             throw;
         }
     }

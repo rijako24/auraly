@@ -30,4 +30,23 @@ public class InMemoryConversationRepository : IConversationRepository
 
     public Task<Conversation?> GetByIdAsync(Guid conversationId) =>
         Task.FromResult(_store.FirstOrDefault(c => c.ConversationId == conversationId));
+
+    public Task<(IReadOnlyList<Conversation> Items, int TotalCount)> GetPagedByBusinessIdAsync(
+        Guid businessId, int page, int pageSize, string? search = null, CancellationToken ct = default)
+    {
+        var query = _store.Where(c => c.BusinessId == businessId).AsEnumerable();
+        if (!string.IsNullOrWhiteSpace(search))
+        {
+            var term = search.Trim().ToLowerInvariant();
+            query = query.Where(c =>
+                c.UserNumber.ToLowerInvariant().Contains(term) ||
+                (c.CustomerName != null && c.CustomerName.ToLowerInvariant().Contains(term)) ||
+                (c.LastMessage != null && c.LastMessage.ToLowerInvariant().Contains(term)));
+        }
+
+        var list = query.OrderByDescending(c => c.Timestamp).ToList();
+        var total = list.Count;
+        var items = list.Skip((page - 1) * pageSize).Take(pageSize).ToList();
+        return Task.FromResult<(IReadOnlyList<Conversation> Items, int TotalCount)>((items, total));
+    }
 }

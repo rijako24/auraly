@@ -7,7 +7,6 @@ export const conversationsApi = {
     params?: Partial<PagedRequest> & {
       businessId?: string;
       userNumber?: string;
-      state?: number;
     }
   ) =>
     apiClient.get<PagedResponse<Conversation>>(
@@ -15,13 +14,18 @@ export const conversationsApi = {
       params as Record<string, string | number | undefined>
     ),
   getById: (id: string) =>
-    apiClient.get<Conversation & { messages?: Message[] }>(
-      `/conversations/${id}`
-    ),
-  getByIdWithMessages: (id: string) =>
-    apiClient.get<Conversation & { messages: Message[] }>(
-      `/conversations/${id}?include=messages`
-    ),
+    apiClient.get<Conversation>(`/conversations/${id}`),
+  /** Conversación + primer página grande de mensajes (API no soporta include=messages). */
+  getByIdWithMessages: async (id: string) => {
+    const [conversation, messagesPage] = await Promise.all([
+      apiClient.get<Conversation>(`/conversations/${id}`),
+      apiClient.get<PagedResponse<Message>>(
+        `/conversations/${id}/messages`,
+        { page: 1, pageSize: 500 } as Record<string, string | number | undefined>
+      ),
+    ]);
+    return { ...conversation, messages: messagesPage.items };
+  },
   listMessages: (
     conversationId: string,
     params?: Partial<PagedRequest>

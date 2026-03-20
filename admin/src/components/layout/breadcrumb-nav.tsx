@@ -16,7 +16,6 @@ import { cn } from "@/lib/utils";
 
 const pathLabels: Record<string, string> = {
   dashboard: "Dashboard",
-  analytics: "Analytics",
   services: "Servicios",
   employees: "Empleados",
   reservations: "Reservaciones",

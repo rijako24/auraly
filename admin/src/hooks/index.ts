@@ -16,13 +16,19 @@ export {
   useTopServices,
   useRecentReservations,
 } from "./use-dashboard";
-export {
-  useAnalyticsMetrics,
-  useCustomerGrowth,
-  useReservationsByDay,
-  useRevenueByCategory,
-  useLeadFunnel,
-  useTopPerformingServices,
-} from "./use-analytics";
 export { useMediaQuery } from "./use-media-query";
 export { useToast } from "./use-toast";
+export {
+  useAgents,
+  useAgentDetail,
+  useAgentTypes,
+  useNodeCatalog,
+  useAgentWorkflow,
+  useAgentKnowledge,
+  useCreateAgent,
+  useUpdateAgent,
+  useSaveAgentWorkflow,
+  useAddAgentKnowledge,
+  useAgentChat,
+  agentKeys,
+} from "./use-agents";

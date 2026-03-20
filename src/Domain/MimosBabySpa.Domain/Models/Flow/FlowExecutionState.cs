@@ -12,6 +12,12 @@ public class FlowExecutionState
     public string CurrentNodeId { get; set; } = "start";
 
     /// <summary>
+    /// When set, the traversal engine jumps to this node id instead of following the edge from the current node.
+    /// Cleared after use. Not persisted (same-turn only).
+    /// </summary>
+    public string? PendingJumpNodeId { get; set; }
+
+    /// <summary>
     /// True when the engine stopped at this node and is awaiting user input.
     /// </summary>
     public bool IsWaitingForUser { get; set; }

@@ -6,9 +6,10 @@ Este servicio encapsula toda la lógica de negocio para procesar mensajes de Wha
 
 ### `IWhatsAppMessageProcessorService`
 
-Servicio principal que procesa mensajes entrantes de WhatsApp. Maneja:
+Servicio principal que procesa mensajes entrantes de WhatsApp con el **Generic Flow Engine** (`IFlowOrchestrationService`). Maneja:
 - Verificación de webhooks
-- Procesamiento de mensajes (conversaciones, leads, clasificación de intención, respuestas con IA, etc.)
+- Procesamiento de mensajes (conversaciones, leads, respuesta del flujo, envío por WhatsApp)
+- Requiere `BusinessContext.AgentId` (asignado al número en `BusinessWhatsAppNumbers`)
 
 ### `IWhatsAppWebhookParserService`
 
@@ -33,10 +34,10 @@ public class WhatsAppWebhookFunction
         foreach (var message in messages)
         {
             await _messageProcessorService.ProcessIncomingMessageAsync(
+                businessContext,
                 message.UserNumber,
                 message.MessageText,
-                message.CustomerName
-            );
+                message.CustomerName);
         }
     }
 }
@@ -62,11 +63,12 @@ class Program
         var processor = serviceProvider.GetRequiredService<IWhatsAppMessageProcessorService>();
 
         // Procesar un mensaje directamente
+        var businessContext = /* resolver vía IBusinessIdentificationService u otro origen */;
         await processor.ProcessIncomingMessageAsync(
+            businessContext,
             userNumber: "+1234567890",
             messageText: "Hola, quiero información sobre los planes",
-            customerName: "Juan Pérez"
-        );
+            customerName: "Juan Pérez");
     }
 }
 ```

@@ -3,7 +3,6 @@ using Microsoft.AspNetCore.Mvc;
 using MimosBabySpa.Application.Common.DTOs;
 using MimosBabySpa.Application.Identity.DTOs;
 using MimosBabySpa.Application.Identity.Interfaces;
-using MimosBabySpa.Domain.Enums;
 using MimosBabySpa.WebAPI.Authorization;
 using MimosBabySpa.WebAPI.Extensions;
 
@@ -25,12 +24,11 @@ public class ConversationsController : ControllerBase
     [PermissionAuthorize("conversations.read")]
     public async Task<ActionResult<PagedResponse<ConversationDto>>> GetByBusiness(
         [FromQuery] Guid businessId,
-        [FromQuery] ConversationState? state,
         [FromQuery] PagedRequest request,
         CancellationToken ct)
     {
         return Ok(await _service.GetPagedByBusinessIdAsync(
-            User.GetTenantId(), businessId, request, state, ct));
+            User.GetTenantId(), businessId, request, ct));
     }
 
     [HttpGet("{conversationId:guid}")]

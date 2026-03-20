@@ -13,3 +13,4 @@ export { configurationsApi } from "./configurations";
 export { auditLogsApi } from "./audit-logs";
 export { authApi } from "./auth";
 export { dashboardApi } from "./dashboard";
+export { agentsApi } from "./agents";

@@ -10,10 +10,7 @@ export const conversationKeys = {
   lists: () => [...conversationKeys.all, "list"] as const,
   list: (
     businessId: string | null,
-    params?: Partial<PagedRequest> & {
-      userNumber?: string;
-      state?: number;
-    }
+    params?: Partial<PagedRequest> & { userNumber?: string }
   ) => [...conversationKeys.lists(), businessId, params] as const,
   details: () => [...conversationKeys.all, "detail"] as const,
   detail: (id: string) => [...conversationKeys.details(), id] as const,
@@ -22,10 +19,7 @@ export const conversationKeys = {
 };
 
 export function useConversations(
-  params?: Partial<PagedRequest> & {
-    userNumber?: string;
-    state?: number;
-  }
+  params?: Partial<PagedRequest> & { userNumber?: string }
 ) {
   const businessId = useBusinessContextStore((s) => s.selectedBusinessId);
 
@@ -52,3 +46,4 @@ export function useConversationWithMessages(id: string | null) {
     enabled: !!id,
   });
 }
+

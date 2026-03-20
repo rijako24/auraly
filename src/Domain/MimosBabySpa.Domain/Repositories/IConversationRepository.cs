@@ -1,5 +1,4 @@
 using MimosBabySpa.Domain.Entities;
-using MimosBabySpa.Domain.Enums;
 
 namespace MimosBabySpa.Domain.Repositories;
 
@@ -15,6 +14,5 @@ public interface IConversationRepository
     /// Gets paginated conversations for admin dashboard.
     /// </summary>
     Task<(IReadOnlyList<Conversation> Items, int TotalCount)> GetPagedByBusinessIdAsync(
-        Guid businessId, int page, int pageSize, string? search = null,
-        ConversationState? state = null, CancellationToken ct = default);
+        Guid businessId, int page, int pageSize, string? search = null, CancellationToken ct = default);
 }

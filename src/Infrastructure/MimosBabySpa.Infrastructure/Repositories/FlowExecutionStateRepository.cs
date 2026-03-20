@@ -42,11 +42,14 @@ public class FlowExecutionStateRepository : IFlowExecutionStateRepository
             existing.Owner = state.Owner;
             existing.Version = state.Version;
             existing.UpdatedAt = state.UpdatedAt;
+            existing.SessionStartedAt = state.SessionStartedAt;
             existing.VariablesJson = state.VariablesJson;
             existing.FlagsJson = state.FlagsJson;
             existing.ActionResultsJson = state.ActionResultsJson;
             existing.TraceJson = state.TraceJson;
             existing.PreviousSessionJson = state.PreviousSessionJson;
+            existing.ConversationHistoryJson = state.ConversationHistoryJson;
+            existing.ConsecutiveDegradedTurns = state.ConsecutiveDegradedTurns;
         }
 
         await _db.SaveChangesAsync(ct);

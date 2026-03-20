@@ -46,5 +46,7 @@ public static class PermissionCatalog
         ("BusinessConfig", "Update", "business_config.update", "Actualizar configuración"),
         ("AuditLogs", "Read", "audit_logs.read", "Ver logs de auditoría"),
         ("Dashboard", "Read", "dashboard.read", "Ver dashboard"),
+        ("Agents", "Read", "agents.read", "Ver agentes y flujos"),
+        ("Agents", "Write", "agents.write", "Crear y editar agentes, flujos y playground"),
     };
 }

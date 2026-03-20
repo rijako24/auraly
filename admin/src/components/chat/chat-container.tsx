@@ -40,23 +40,24 @@ export function ChatContainer({
   };
 
   return (
-    <div className="flex h-full flex-col">
-      <ScrollArea className="flex-1 flex-grow overflow-y-auto px-4">
-        <div className="flex flex-col gap-4 py-4">
+    <div className="flex h-full min-h-0 w-full min-w-0 flex-col bg-background">
+      <ScrollArea className="h-full min-h-0 w-full min-w-0 flex-1">
+        <div className="flex min-h-full w-full min-w-0 flex-col justify-end gap-3 px-4 py-3">
           {messages.map((msg) => (
             <ChatBubble key={msg.messageId} message={msg} />
           ))}
-          <div ref={scrollRef} aria-hidden />
+          <div ref={scrollRef} className="h-px w-full shrink-0" aria-hidden />
         </div>
       </ScrollArea>
-      <div className="flex-shrink-0 border-t border-border bg-background p-3">
-        <form onSubmit={handleSubmit} className="flex items-center gap-2">
+      <div className="w-full min-w-0 shrink-0 border-t border-border bg-muted/20 px-3 py-3">
+        <form onSubmit={handleSubmit} className="flex w-full min-w-0 items-center gap-2">
           <Button
             type="button"
             variant="ghost"
             size="icon"
-            className="flex-shrink-0"
+            className="shrink-0 text-muted-foreground"
             disabled={disabled}
+            aria-label="Adjuntar"
           >
             <Paperclip className="h-5 w-5" />
           </Button>
@@ -64,13 +65,14 @@ export function ChatContainer({
             ref={inputRef}
             placeholder={placeholder}
             disabled={disabled}
-            className={cn("flex-1")}
+            className={cn("h-11 flex-1 bg-background")}
           />
           <Button
             type="submit"
             size="icon"
-            className="flex-shrink-0"
+            className="h-11 w-11 shrink-0"
             disabled={disabled}
+            aria-label="Enviar"
           >
             <Send className="h-5 w-5" />
           </Button>

@@ -1,12 +1,13 @@
 import type { LucideIcon } from "lucide-react";
 import {
-  BarChart3,
+  Bot,
   Building2,
   Calendar,
   CalendarDays,
   CreditCard,
   FileSearch,
   LayoutDashboard,
+  LayoutGrid,
   MessageSquare,
   Package,
   Settings,
@@ -34,7 +35,6 @@ export type NavEntry = NavItem | NavSeparator;
 
 export const navigation: NavEntry[] = [
   { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard, permission: "dashboard.read" },
-  { name: "Analytics", href: "/dashboard/analytics", icon: BarChart3, permission: "dashboard.read" },
   { type: "separator", label: "Negocio" },
   { name: "Servicios", href: "/dashboard/services", icon: Package, permission: "services.read" },
   { name: "Empleados", href: "/dashboard/employees", icon: Users, permission: "employees.read" },
@@ -51,6 +51,9 @@ export const navigation: NavEntry[] = [
   { name: "Usuarios", href: "/dashboard/users", icon: UserCog, permission: "users.read" },
   { name: "Roles", href: "/dashboard/roles", icon: Shield, permission: "roles.read" },
   { name: "Auditoría", href: "/dashboard/audit-logs", icon: FileSearch, permission: "audit_logs.read" },
+  { type: "separator", label: "AI" },
+  { name: "Agents", href: "/dashboard/agents", icon: Bot, permission: "agents.read" },
+  { name: "Workspaces", href: "/dashboard/agents/workspaces", icon: LayoutGrid, permission: "agents.read" },
   { type: "separator", label: "Configuración" },
   { name: "Configuración", href: "/dashboard/settings", icon: Settings, permission: "business_config.read" },
 ];

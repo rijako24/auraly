@@ -116,36 +116,6 @@ export const ServiceTierColors: Record<ServiceTier, string> = {
   [ServiceTier.Deluxe]: "bg-violet-100 text-violet-800 dark:bg-violet-900 dark:text-violet-300",
 };
 
-export enum ConversationStateEnum {
-  Idle = 0,
-  CollectingData = 1,
-  CheckingAvailability = 2,
-  ReadyToReserve = 3,
-  CreatingReservation = 4,
-  WaitingForPayment = 5,
-  Confirmed = 6,
-}
-
-export const ConversationStateLabels: Record<ConversationStateEnum, string> = {
-  [ConversationStateEnum.Idle]: "Inactiva",
-  [ConversationStateEnum.CollectingData]: "Recopilando datos",
-  [ConversationStateEnum.CheckingAvailability]: "Verificando disponibilidad",
-  [ConversationStateEnum.ReadyToReserve]: "Lista para reservar",
-  [ConversationStateEnum.CreatingReservation]: "Creando reservación",
-  [ConversationStateEnum.WaitingForPayment]: "Esperando pago",
-  [ConversationStateEnum.Confirmed]: "Confirmada",
-};
-
-export const ConversationStateColors: Record<ConversationStateEnum, string> = {
-  [ConversationStateEnum.Idle]: "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-300",
-  [ConversationStateEnum.CollectingData]: "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300",
-  [ConversationStateEnum.CheckingAvailability]: "bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-300",
-  [ConversationStateEnum.ReadyToReserve]: "bg-teal-100 text-teal-800 dark:bg-teal-900 dark:text-teal-300",
-  [ConversationStateEnum.CreatingReservation]: "bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-300",
-  [ConversationStateEnum.WaitingForPayment]: "bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-300",
-  [ConversationStateEnum.Confirmed]: "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300",
-};
-
 export enum SystemConfigurationKey {
   ToneAndStyle = 1,
   HumanEscalationErrorThreshold = 2,

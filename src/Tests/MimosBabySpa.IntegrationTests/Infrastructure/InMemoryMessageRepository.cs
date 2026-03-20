@@ -18,4 +18,19 @@ public class InMemoryMessageRepository : IMessageRepository
 
     public Task<Message?> GetByIdAsync(Guid messageId) =>
         Task.FromResult(_store.FirstOrDefault(m => m.MessageId == messageId));
+
+    public Task<(IReadOnlyList<Message> Items, int TotalCount)> GetPagedByConversationIdAsync(
+        Guid conversationId, int page, int pageSize, CancellationToken ct = default)
+    {
+        var ordered = _store
+            .Where(m => m.ConversationId == conversationId)
+            .OrderBy(m => m.Timestamp)
+            .ToList();
+        var total = ordered.Count;
+        var items = ordered
+            .Skip(Math.Max(0, (page - 1) * pageSize))
+            .Take(pageSize)
+            .ToList();
+        return Task.FromResult<(IReadOnlyList<Message> Items, int TotalCount)>((items, total));
+    }
 }

@@ -24,31 +24,26 @@ public class DashboardService : IDashboardService
         var (from, to) = ParsePeriod(period ?? "30d");
         var (prevFrom, prevTo) = GetPreviousPeriod(from, to);
 
-        var reservationsTask = _unitOfWork.Reservations.GetPagedByBusinessIdAsync(
+        // Mismo DbContext en IUnitOfWork: las consultas deben ser secuenciales (no Task.WhenAll).
+        var reservationsPage = await _unitOfWork.Reservations.GetPagedByBusinessIdAsync(
             businessId, 1, 1, null, from, to, ct);
-        var leadsTask = _unitOfWork.Leads.GetPagedByBusinessIdAsync(businessId, 1, 1, null, ct);
-        var convTask = _unitOfWork.Conversations.GetPagedByBusinessIdAsync(
-            businessId, 1, 1, null, null, ct);
-        var revenueTask = _unitOfWork.PaymentTransactions.GetTotalRevenueByBusinessIdAsync(
+        var leadsPage = await _unitOfWork.Leads.GetPagedByBusinessIdAsync(businessId, 1, 1, null, ct);
+        var conversationsPage = await _unitOfWork.Conversations.GetPagedByBusinessIdAsync(
+            businessId, 1, 1, null, ct);
+        var totalRevenue = await _unitOfWork.PaymentTransactions.GetTotalRevenueByBusinessIdAsync(
             businessId, from, to, ct);
-        var prevRevenueTask = _unitOfWork.PaymentTransactions.GetTotalRevenueByBusinessIdAsync(
+        var prevRevenue = await _unitOfWork.PaymentTransactions.GetTotalRevenueByBusinessIdAsync(
             businessId, prevFrom, prevTo, ct);
-        var prevReservationsTask = _unitOfWork.Reservations.GetPagedByBusinessIdAsync(
+        var prevReservationsPage = await _unitOfWork.Reservations.GetPagedByBusinessIdAsync(
             businessId, 1, 1, null, prevFrom, prevTo, ct);
-        var prevLeadsTask = _unitOfWork.Leads.GetPagedByBusinessIdAsync(
+        var prevLeadsPage = await _unitOfWork.Leads.GetPagedByBusinessIdAsync(
             businessId, 1, 1, null, ct);
 
-        await Task.WhenAll(
-            reservationsTask, leadsTask, convTask, revenueTask,
-            prevRevenueTask, prevReservationsTask, prevLeadsTask);
-
-        var totalReservations = (await reservationsTask).TotalCount;
-        var totalLeads = (await leadsTask).TotalCount;
-        var totalConversations = (await convTask).TotalCount;
-        var totalRevenue = await revenueTask;
-        var prevRevenue = await prevRevenueTask;
-        var prevReservations = (await prevReservationsTask).TotalCount;
-        var prevLeads = (await prevLeadsTask).TotalCount;
+        var totalReservations = reservationsPage.TotalCount;
+        var totalLeads = leadsPage.TotalCount;
+        var totalConversations = conversationsPage.TotalCount;
+        var prevReservations = prevReservationsPage.TotalCount;
+        var prevLeads = prevLeadsPage.TotalCount;
 
         var conversionRate = totalLeads > 0 ? (double)totalReservations / totalLeads * 100 : 0;
         var revenueGrowth = prevRevenue > 0 ? (double)((totalRevenue - prevRevenue) / prevRevenue * 100) : 0;

@@ -1,0 +1,12 @@
+CREATE TABLE [dbo].[FlowTemplates] (
+    [FlowTemplateId] UNIQUEIDENTIFIER NOT NULL PRIMARY KEY DEFAULT NEWID(),
+    [Name] NVARCHAR(200) NOT NULL,
+    [Description] NVARCHAR(500) NULL,
+    [Category] NVARCHAR(100) NULL,
+    [DefinitionJson] NVARCHAR(MAX) NOT NULL,
+    [IsActive] BIT NOT NULL DEFAULT 1,
+    [CreatedAt] DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
+    [UpdatedAt] DATETIME2 NULL
+);
+
+GO

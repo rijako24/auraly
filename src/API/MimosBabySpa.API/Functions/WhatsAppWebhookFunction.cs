@@ -138,11 +138,10 @@ public class WhatsAppWebhookFunction
                 try
                 {
                     await _messageProcessorService.ProcessIncomingMessageAsync(
-                        businessContext.BusinessId,
+                        businessContext,
                         userNumber,
                         combinedMessage,
-                        customerName
-                    );
+                        customerName);
                 }
                 catch (Exception ex)
                 {

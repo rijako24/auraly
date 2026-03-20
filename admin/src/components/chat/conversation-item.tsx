@@ -1,10 +1,8 @@
 "use client";
 
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import { getInitials, truncate } from "@/lib/utils";
-import { ConversationStateLabels, ConversationStateColors } from "@/types/enums";
+import { getInitials } from "@/lib/utils";
 import type { Conversation } from "@/types/entities";
 import { formatRelativeTime } from "@/lib/utils";
 
@@ -28,9 +26,10 @@ export function ConversationItem({
       type="button"
       onClick={onClick}
       className={cn(
-        "flex w-full items-start gap-3 rounded-lg p-3 text-left transition-colors",
-        "hover:bg-muted/80 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2",
-        isActive && "bg-muted"
+        "flex w-full items-start gap-3 rounded-lg px-3 py-2.5 text-left transition-colors",
+        "hover:bg-muted/70 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-0",
+        isActive &&
+          "bg-primary/10 ring-1 ring-inset ring-primary/35 shadow-none"
       )}
     >
       <div className="relative flex-shrink-0">
@@ -45,36 +44,24 @@ export function ConversationItem({
           </span>
         )}
       </div>
-      <div className="min-w-0 flex-1 overflow-hidden">
-        <div className="flex items-center justify-between gap-2">
-          <span className="truncate font-medium text-foreground">
+      <div className="min-w-0 flex-1">
+        <div className="flex items-start justify-between gap-2">
+          <span className="min-w-0 flex-1 break-words font-medium leading-snug text-foreground line-clamp-2">
             {displayName}
           </span>
-          <span className="flex-shrink-0 text-xs text-muted-foreground">
+          <span className="shrink-0 pt-0.5 text-[11px] tabular-nums text-muted-foreground/90">
             {formatRelativeTime(conversation.timestamp)}
           </span>
         </div>
-        <div className="mt-0.5 flex items-center gap-2">
-          <span
-            className={cn(
-              "truncate text-sm",
-              unreadCount > 0 ? "font-medium text-foreground" : "text-muted-foreground"
-            )}
-          >
-            {truncate(conversation.lastMessage ?? "Sin mensajes", 40)}
-          </span>
-        </div>
-        <div className="mt-1.5">
-          <Badge
-            variant="secondary"
-            className={cn(
-              "text-xs font-normal",
-              ConversationStateColors[conversation.state]
-            )}
-          >
-            {ConversationStateLabels[conversation.state]}
-          </Badge>
-        </div>
+        <p
+          title={conversation.lastMessage?.trim() || undefined}
+          className={cn(
+            "mt-1 line-clamp-4 text-left text-sm leading-snug break-words [overflow-wrap:anywhere]",
+            unreadCount > 0 ? "font-medium text-foreground" : "text-muted-foreground"
+          )}
+        >
+          {conversation.lastMessage?.trim() || "Sin mensajes"}
+        </p>
       </div>
     </button>
   );

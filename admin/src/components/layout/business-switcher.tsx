@@ -20,6 +20,11 @@ import {
 import { cn } from "@/lib/utils";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 
+/** Value for cmdk: searchable by name and id, unique per business */
+function commandValue(business: { businessId: string; name: string }) {
+  return `${business.name} ${business.businessId}`.trim();
+}
+
 export function BusinessSwitcher() {
   const [open, setOpen] = useState(false);
   const { businesses, selectedBusinessId, selectBusiness } =
@@ -31,16 +36,7 @@ export function BusinessSwitcher() {
 
   if (businesses.length === 0) return null;
 
-  if (businesses.length === 1) {
-    return (
-      <div className="flex items-center gap-2 px-2 text-sm font-medium">
-        <Building2 className="h-4 w-4 text-muted-foreground" />
-        <span className="truncate max-w-[160px]">
-          {businesses[0].name}
-        </span>
-      </div>
-    );
-  }
+  const displayName = selectedBusiness?.name ?? "Seleccionar negocio";
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -49,28 +45,32 @@ export function BusinessSwitcher() {
           variant="outline"
           role="combobox"
           aria-expanded={open}
-          className="w-[200px] justify-between"
+          aria-label="Cambiar negocio"
+          title={displayName}
+          className="h-9 min-w-[12rem] max-w-[min(100vw-8rem,20rem)] justify-between px-3"
           size="sm"
         >
-          <div className="flex items-center gap-2 truncate">
+          <div className="flex min-w-0 flex-1 items-center gap-2">
             <Building2 className="h-4 w-4 shrink-0 text-muted-foreground" />
-            <span className="truncate">
-              {selectedBusiness?.name ?? "Seleccionar negocio"}
-            </span>
+            <span className="truncate text-left font-medium">{displayName}</span>
           </div>
           <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
         </Button>
       </PopoverTrigger>
-      <PopoverContent className="w-[200px] p-0" align="start">
-        <Command>
-          <CommandInput placeholder="Buscar negocio..." />
+      <PopoverContent
+        className="w-[min(100vw-2rem,22rem)] p-0"
+        align="start"
+        sideOffset={6}
+      >
+        <Command shouldFilter>
+          <CommandInput placeholder="Filtrar por nombre…" />
           <CommandList>
-            <CommandEmpty>No se encontraron negocios.</CommandEmpty>
-            <CommandGroup>
+            <CommandEmpty>No hay negocios que coincidan.</CommandEmpty>
+            <CommandGroup heading="Negocios del tenant">
               {businesses.map((business) => (
                 <CommandItem
                   key={business.businessId}
-                  value={business.name}
+                  value={commandValue(business)}
                   onSelect={() => {
                     selectBusiness(business.businessId);
                     setOpen(false);
@@ -78,7 +78,7 @@ export function BusinessSwitcher() {
                 >
                   <Check
                     className={cn(
-                      "mr-2 h-4 w-4",
+                      "mr-2 h-4 w-4 shrink-0",
                       selectedBusinessId === business.businessId
                         ? "opacity-100"
                         : "opacity-0"

@@ -44,8 +44,8 @@ export function ConversationList({
           />
         </div>
       </div>
-      <ScrollArea className="flex-1">
-        <div className="space-y-0.5 p-2">
+      <ScrollArea className="flex-1 min-h-0">
+        <div className="space-y-1 p-2 pb-3">
           {filtered.map((conv) => (
             <ConversationItem
               key={conv.conversationId}

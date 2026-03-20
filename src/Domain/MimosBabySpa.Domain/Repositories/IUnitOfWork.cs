@@ -32,5 +32,12 @@ public interface IUnitOfWork : IDisposable
     IAuditLogRepository AuditLogs { get; }
     ITenantRepository Tenants { get; }
 
+    IAgentRepository Agents { get; }
+    IAgentTypeRepository AgentTypes { get; }
+    IFlowDefinitionRepository FlowDefinitions { get; }
+    IFlowExecutionStateRepository FlowExecutionStates { get; }
+    IFlowNodeCatalogRepository FlowNodeCatalog { get; }
+    IKnowledgeSourceRepository KnowledgeSources { get; }
+
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

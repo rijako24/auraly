@@ -51,6 +51,7 @@ public class ApplicationDbContext : DbContext
     public DbSet<FlowDefinitionEntity> FlowDefinitions { get; set; }
     public DbSet<FlowExecutionStateEntity> FlowExecutionStates { get; set; }
     public DbSet<FlowTemplate> FlowTemplates { get; set; }
+    public DbSet<FlowNodeCatalog> FlowNodeCatalog { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -139,18 +140,17 @@ public class ApplicationDbContext : DbContext
             entity.HasKey(e => e.ConversationId);
             entity.Property(e => e.UserNumber).IsRequired().HasMaxLength(50);
             entity.Property(e => e.LastMessage).HasMaxLength(1000);
-            entity.Property(e => e.LastIntent).HasMaxLength(50);
             entity.Property(e => e.CustomerName).HasMaxLength(100);
-            entity.Property(e => e.RecommendedPlan).HasMaxLength(100);
-            entity.Property(e => e.State)
-                  .HasConversion<int>() // Convertir enum ConversationState a int
-                  .HasDefaultValue(ConversationState.Idle); // Valor por defecto
             entity.HasOne(e => e.Business)
                   .WithMany(b => b.Conversations)
                   .HasForeignKey(e => e.BusinessId)
                   .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.Agent)
+                  .WithMany()
+                  .HasForeignKey(e => e.AgentId)
+                  .OnDelete(DeleteBehavior.SetNull);
             entity.HasIndex(e => new { e.BusinessId, e.UserNumber }); // Índice compuesto
-            entity.HasIndex(e => e.State); // Índice para búsquedas por estado
+            entity.HasIndex(e => e.AgentId);
             // Relación con ConversationContext
             entity.HasMany(e => e.Contexts)
                   .WithOne(c => c.Conversation)
@@ -709,6 +709,22 @@ public class ApplicationDbContext : DbContext
             entity.Property(e => e.Description).HasMaxLength(500);
             entity.Property(e => e.Category).HasMaxLength(100);
             entity.Property(e => e.DefinitionJson).IsRequired().HasColumnType("NVARCHAR(MAX)");
+        });
+
+        modelBuilder.Entity<FlowNodeCatalog>(entity =>
+        {
+            entity.ToTable("FlowNodeCatalog");
+            entity.HasKey(e => e.FlowNodeCatalogId);
+            entity.Property(e => e.CatalogKey).IsRequired().HasMaxLength(100);
+            entity.Property(e => e.Name).IsRequired().HasMaxLength(200);
+            entity.Property(e => e.Icon).IsRequired().HasMaxLength(100);
+            entity.Property(e => e.Category).HasMaxLength(100);
+            entity.Property(e => e.Color).HasMaxLength(50);
+            entity.Property(e => e.InputsJson).IsRequired().HasColumnType("NVARCHAR(MAX)");
+            entity.Property(e => e.OutputsJson).IsRequired().HasColumnType("NVARCHAR(MAX)");
+            entity.Property(e => e.ConfigSchemaJson).IsRequired().HasColumnType("NVARCHAR(MAX)");
+            entity.HasIndex(e => e.CatalogKey).IsUnique();
+            entity.HasIndex(e => new { e.IsActive, e.DisplayOrder, e.Name });
         });
     }
 }

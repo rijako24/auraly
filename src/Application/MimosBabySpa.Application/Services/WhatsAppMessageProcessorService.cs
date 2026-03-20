@@ -1,46 +1,42 @@
 using Microsoft.Extensions.Logging;
-using MimosBabySpa.Application.Orchestration;
-using MimosBabySpa.Application.StateManagement;
+using MimosBabySpa.Application.DTOs;
+using MimosBabySpa.Application.GenericFlow;
 using MimosBabySpa.Domain.Entities;
-using MimosBabySpa.Domain.Models;
 
 namespace MimosBabySpa.Application.Services;
 
 public class WhatsAppMessageProcessorService : IWhatsAppMessageProcessorService
 {
     private readonly IConversationService _conversationService;
-    private readonly IConversationStateManager _stateManager;
     private readonly IMessageService _messageService;
     private readonly ILeadService _leadService;
     private readonly IWhatsAppService _whatsAppService;
-    private readonly HybridTransactionalOrchestrator _orchestrator;
+    private readonly IFlowOrchestrationService _flowOrchestrator;
     private readonly IBlobStorageService _blobStorageService;
     private readonly ILogger<WhatsAppMessageProcessorService> _logger;
 
     public WhatsAppMessageProcessorService(
         IConversationService conversationService,
-        IConversationStateManager stateManager,
         IMessageService messageService,
         ILeadService leadService,
         IWhatsAppService whatsAppService,
-        HybridTransactionalOrchestrator orchestrator,
+        IFlowOrchestrationService flowOrchestrator,
         IBlobStorageService blobStorageService,
         ILogger<WhatsAppMessageProcessorService> logger)
     {
         _conversationService = conversationService;
-        _stateManager = stateManager;
         _messageService = messageService;
         _leadService = leadService;
         _whatsAppService = whatsAppService;
-        _orchestrator = orchestrator;
+        _flowOrchestrator = flowOrchestrator;
         _blobStorageService = blobStorageService;
         _logger = logger;
     }
 
-    public Task<string?> VerifyWebhookAsync(string mode, string token, string challenge)
+    public async Task<string?> VerifyWebhookAsync(string mode, string token, string challenge)
     {
-        return _whatsAppService.VerifyWebhookAsync(mode, token, challenge)
-            .ContinueWith(t => t.Result ? challenge : (string?)null);
+        var ok = await _whatsAppService.VerifyWebhookAsync(mode, token, challenge);
+        return ok ? challenge : null;
     }
 
     /// <summary>
@@ -48,61 +44,60 @@ public class WhatsAppMessageProcessorService : IWhatsAppMessageProcessorService
     ///
     /// ORDEN deliberado:
     ///   1. Obtener/crear conversación y lead.
-    ///   2. Procesar con el orquestador (historial NO incluye el mensaje actual porque aún no se guardó).
-    ///   3. Guardar mensaje del usuario y respuesta del bot — UNA SOLA VEZ cada uno.
-    ///   4. Actualizar lead basado en ReservationCreated (dato determinístico, no parseo de texto).
+    ///   2. Procesar con <see cref="IFlowOrchestrationService"/> (Generic Flow).
+    ///   3. Guardar mensaje del usuario y respuesta del bot cuando corresponda.
+    ///   4. Actualizar lead según resultado del flujo.
     ///   5. Enviar respuesta al usuario.
-    ///
-    /// Con este orden el LLM nunca ve el mensaje actual duplicado en el historial.
     /// </summary>
     public async Task ProcessIncomingMessageAsync(
-        Guid businessId,
+        BusinessContext businessContext,
         string userNumber,
         string messageText,
         string? customerName = null)
     {
         _logger.LogDebug(
             "Procesando mensaje de {UserNumber} en negocio {BusinessId}: {Message}",
-            userNumber, businessId, messageText);
+            userNumber, businessContext.BusinessId, messageText);
 
-        // 1. Obtener/crear conversación y lead
-        var conversation = await _conversationService.GetOrCreateConversationAsync(businessId, userNumber, customerName);
-        var lead = await _leadService.GetOrCreateLeadAsync(businessId, userNumber, customerName);
+        if (businessContext.AgentId is null)
+        {
+            _logger.LogWarning(
+                "Sin AgentId en el canal WhatsApp para BusinessId={BusinessId}; no se puede ejecutar el flujo",
+                businessContext.BusinessId);
+            var conv = await _conversationService.GetOrCreateConversationAsync(
+                businessContext.BusinessId, userNumber, customerName, agentId: null);
+            await _messageService.SaveMessageAsync(conv.ConversationId, "User", messageText);
+            return;
+        }
 
-        // 2. Routing: si está en manos del humano, solo guardar mensaje y retornar (bot inhibido)
-        var state = await _stateManager.GetStateByConversationIdAsync(conversation.ConversationId);
-        if (state?.Owner == ConversationOwner.Human)
+        var agentId = businessContext.AgentId.Value;
+
+        var conversation = await _conversationService.GetOrCreateConversationAsync(
+            businessContext.BusinessId, userNumber, customerName, agentId);
+        var lead = await _leadService.GetOrCreateLeadAsync(
+            businessContext.BusinessId, userNumber, customerName);
+
+        var result = await _flowOrchestrator.ProcessTurnAsync(
+            conversation.ConversationId,
+            agentId,
+            userNumber,
+            messageText);
+
+        if (string.IsNullOrWhiteSpace(result.BotResponse))
         {
             await _messageService.SaveMessageAsync(conversation.ConversationId, "User", messageText);
-            _logger.LogInformation(
-                "Conv {ConvId} en manos de humano — mensaje guardado, bot inhibido",
+            _logger.LogDebug(
+                "Sin respuesta del bot (humano o vacío) — Conv={ConvId}",
                 conversation.ConversationId);
             return;
         }
 
-        // 3. Procesar con el orquestador
-        //    El historial que carga el orquestador NO incluye el mensaje actual (no se guardó aún).
-        //    El mensaje se añade explícitamente como último rol "user" dentro del orquestador.
-        var result = await _orchestrator.ProcessMessageAsync(
-            conversation.ConversationId,
-            businessId,
-            userNumber,
-            messageText);
-
-        // 4. Guardar mensajes — UNA VEZ cada uno, DESPUÉS del orquestador
         await _messageService.SaveMessageAsync(conversation.ConversationId, "User", messageText);
-        await _messageService.SaveMessageAsync(conversation.ConversationId, "Bot", result.Response);
+        await _messageService.SaveMessageAsync(conversation.ConversationId, "Bot", result.BotResponse);
 
-        // 5. Actualizar lead con dato determinístico (no parseo de texto)
-        await UpdateLeadStatusAsync(lead, result.ReservationCreated);
-
-        // 6. Enviar respuesta (con imagen si aplica)
-        await SendResponseAsync(userNumber, result.Response, conversation);
+        await UpdateLeadStatusAsync(lead, result);
+        await SendResponseAsync(userNumber, result.BotResponse, conversation);
     }
-
-    // ─────────────────────────────────────────────────────────────────
-    // Envío de respuesta (texto o imagen según contexto)
-    // ─────────────────────────────────────────────────────────────────
 
     private async Task SendResponseAsync(string userNumber, string response, Conversation conversation)
     {
@@ -111,7 +106,7 @@ public class WhatsAppMessageProcessorService : IWhatsAppMessageProcessorService
         if (!string.IsNullOrEmpty(planName))
         {
             var imageFileName = BuildPlanImageFileName(planName);
-            var imageUrl      = await _blobStorageService.GetImageUrlAsync(conversation.BusinessId, imageFileName);
+            var imageUrl = await _blobStorageService.GetImageUrlAsync(conversation.BusinessId, imageFileName);
 
             if (!string.IsNullOrEmpty(imageUrl))
             {
@@ -123,10 +118,6 @@ public class WhatsAppMessageProcessorService : IWhatsAppMessageProcessorService
         await _whatsAppService.SendTextMessageAsync(conversation.BusinessId, userNumber, response);
     }
 
-    /// <summary>
-    /// Extrae el nombre de un plan de la respuesta del bot para acompañarlo con imagen.
-    /// Multitenant: busca el patrón genérico "Plan X" sin depender de nombres específicos.
-    /// </summary>
     private string? ExtractPlanNameFromResponse(string response)
     {
         var match = System.Text.RegularExpressions.Regex.Match(
@@ -146,13 +137,9 @@ public class WhatsAppMessageProcessorService : IWhatsAppMessageProcessorService
         return $"plan-{normalized}.jpg";
     }
 
-    // ─────────────────────────────────────────────────────────────────
-    // Actualización del lead — basada en dato determinístico
-    // ─────────────────────────────────────────────────────────────────
-
-    private async Task UpdateLeadStatusAsync(Lead lead, bool reservationCreated)
+    private async Task UpdateLeadStatusAsync(Lead lead, FlowOrchestratorResult result)
     {
-        var newStatus = reservationCreated ? "Closed" : "Contacted";
+        var newStatus = result.IsFlowComplete ? "Closed" : "Contacted";
 
         if (newStatus != lead.Status)
         {

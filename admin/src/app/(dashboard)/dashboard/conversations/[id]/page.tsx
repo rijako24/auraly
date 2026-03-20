@@ -1,17 +1,11 @@
 "use client";
 
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, Clock, MessageSquare } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import {
-  ConversationStateEnum,
-  ConversationStateLabels,
-  ConversationStateColors,
-} from "@/types/enums";
 import type {
   Conversation,
   Message,
@@ -19,9 +13,8 @@ import type {
 } from "@/types/entities";
 import { formatDateTime } from "@/lib/utils";
 import { ChatContainer } from "@/components/chat/chat-container";
-import { cn } from "@/lib/utils";
 
-// Mock data for this conversation
+// Mock data (página demo; la lista principal usa la API)
 const MOCK_CONTEXT: ConversationContext[] = [
   {
     conversationContextId: "ctx-1",
@@ -81,79 +74,15 @@ const MOCK_MESSAGES: Message[] = [
     messageText: "Hola, quisiera agendar una cita para mi bebé",
     timestamp: new Date(Date.now() - 2 * 60 * 60 * 1000 + 60000).toISOString(),
   },
-  {
-    messageId: "m3",
-    conversationId: "conv-1",
-    sender: "Bot",
-    messageText:
-      "¡Perfecto! Nos encantaría atender a tu bebé. ¿Cómo se llama tu bebé y cuántos meses tiene?",
-    timestamp: new Date(Date.now() - 2 * 60 * 60 * 1000 + 120000).toISOString(),
-  },
-  {
-    messageId: "m4",
-    conversationId: "conv-1",
-    sender: "User",
-    messageText: "Se llama Sofía y tiene 4 meses",
-    timestamp: new Date(Date.now() - 2 * 60 * 60 * 1000 + 180000).toISOString(),
-  },
-  {
-    messageId: "m5",
-    conversationId: "conv-1",
-    sender: "Bot",
-    messageText:
-      "¡Qué linda! Para Sofía de 4 meses tenemos el paquete Baby Spa que incluye masaje relajante e hidroterapia. ¿Te gustaría reservar para algún día en particular?",
-    timestamp: new Date(Date.now() - 2 * 60 * 60 * 1000 + 240000).toISOString(),
-  },
-  {
-    messageId: "m6",
-    conversationId: "conv-1",
-    sender: "User",
-    messageText: "Sí, el próximo viernes 20 de marzo si hay disponibilidad",
-    timestamp: new Date(Date.now() - 2 * 60 * 60 * 1000 + 300000).toISOString(),
-  },
-  {
-    messageId: "m7",
-    conversationId: "conv-1",
-    sender: "Bot",
-    messageText:
-      "Déjame verificar la disponibilidad para el viernes 20 de marzo. Tenemos horarios a las 10:00, 11:30 y 15:00. ¿Cuál prefieres?",
-    timestamp: new Date(Date.now() - 2 * 60 * 60 * 1000 + 360000).toISOString(),
-  },
-  {
-    messageId: "m8",
-    conversationId: "conv-1",
-    sender: "User",
-    messageText: "Las 11:30 me queda bien",
-    timestamp: new Date(Date.now() - 2 * 60 * 60 * 1000 + 420000).toISOString(),
-  },
-  {
-    messageId: "m9",
-    conversationId: "conv-1",
-    sender: "Bot",
-    messageText:
-      "Excelente. He reservado el viernes 20 de marzo a las 11:30 para Sofía. El servicio tiene un valor de $85.000. ¿Deseas proceder con el pago?",
-    timestamp: new Date(Date.now() - 2 * 60 * 60 * 1000 + 480000).toISOString(),
-  },
-  {
-    messageId: "m10",
-    conversationId: "conv-1",
-    sender: "User",
-    messageText: "Sí, por favor",
-    timestamp: new Date(Date.now() - 2 * 60 * 60 * 1000 + 540000).toISOString(),
-  },
 ];
 
 const MOCK_CONVERSATION: Conversation = {
   conversationId: "conv-1",
   businessId: "bus-1",
   userNumber: "+57 300 123 4567",
-  lastMessage: "Sí, por favor",
-  lastIntent: "ConfirmPayment",
+  lastMessage: "Hola, quisiera agendar una cita para mi bebé",
   timestamp: new Date().toISOString(),
   customerName: "María García",
-  babyAge: 4,
-  recommendedPlan: "Baby Spa",
-  state: 5, // WaitingForPayment
   business: {
     businessId: "bus-1",
     tenantId: "t1",
@@ -181,7 +110,6 @@ const CONTEXT_LABELS: Record<string, string> = {
 
 export default function ConversationDetailPage() {
   const params = useParams();
-  const router = useRouter();
   const id = params.id as string;
 
   const conversation = MOCK_CONVERSATION;
@@ -189,15 +117,13 @@ export default function ConversationDetailPage() {
   const context = MOCK_CONTEXT;
 
   const handleSendMessage = (text: string) => {
-    console.log("Send message:", text);
-    // Mock: would send via API
+    console.log("Send message:", text, id);
   };
 
   const displayName = conversation.customerName ?? conversation.userNumber;
 
   return (
     <div className="flex h-[calc(100vh-5.5rem)] -m-4 flex-col overflow-hidden lg:-m-6 lg:h-[calc(100vh-5.5rem)]">
-      {/* Header */}
       <div className="flex shrink-0 items-center gap-4 border-b border-border bg-background px-4 py-3">
         <Button variant="ghost" size="icon" asChild>
           <Link href="/dashboard/conversations">
@@ -210,19 +136,9 @@ export default function ConversationDetailPage() {
             {conversation.userNumber}
           </p>
         </div>
-        <Badge
-          variant="secondary"
-          className={cn(
-            "shrink-0",
-            ConversationStateColors[conversation.state as ConversationStateEnum]
-          )}
-        >
-          {ConversationStateLabels[conversation.state as ConversationStateEnum]}
-        </Badge>
       </div>
 
       <div className="flex flex-1 min-h-0">
-        {/* Chat area */}
         <div className="flex flex-1 flex-col min-w-0 border-r border-border">
           <ChatContainer
             messages={messages}
@@ -231,7 +147,6 @@ export default function ConversationDetailPage() {
           />
         </div>
 
-        {/* Side panel - conversation context */}
         <aside className="hidden w-80 flex-shrink-0 border-l border-border bg-muted/30 lg:block">
           <ScrollArea className="h-full">
             <div className="p-4 space-y-6">
@@ -241,18 +156,6 @@ export default function ConversationDetailPage() {
                   Información de la conversación
                 </h3>
                 <div className="space-y-2 text-sm">
-                  <div className="flex justify-between gap-2">
-                    <span className="text-muted-foreground">Estado</span>
-                    <Badge
-                      variant="secondary"
-                      className={cn(
-                        "text-xs",
-                        ConversationStateColors[conversation.state as ConversationStateEnum]
-                      )}
-                    >
-                      {ConversationStateLabels[conversation.state as ConversationStateEnum]}
-                    </Badge>
-                  </div>
                   <div className="flex justify-between gap-2">
                     <span className="text-muted-foreground">Negocio</span>
                     <span className="font-medium truncate max-w-[140px]">
@@ -266,10 +169,12 @@ export default function ConversationDetailPage() {
                       {formatDateTime(conversation.timestamp)}
                     </span>
                   </div>
-                  {conversation.recommendedPlan && (
-                    <div className="flex justify-between gap-2">
-                      <span className="text-muted-foreground">Plan recomendado</span>
-                      <span className="font-medium">{conversation.recommendedPlan}</span>
+                  {conversation.lastMessage && (
+                    <div className="flex flex-col gap-1">
+                      <span className="text-muted-foreground">Último mensaje (usuario)</span>
+                      <span className="font-medium text-xs leading-snug">
+                        {conversation.lastMessage}
+                      </span>
                     </div>
                   )}
                 </div>

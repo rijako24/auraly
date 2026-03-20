@@ -102,18 +102,22 @@ public class ConversationServiceTests
     }
 
     [Fact]
-    public async Task UpdateConversationContextAsync_WithValidData_ShouldUpdateConversation()
+    public async Task GetOrCreateConversationAsync_WhenExistingWithoutAgentId_ShouldPersistAgentId()
     {
-        // Arrange
-        var conversationId = Guid.NewGuid();
+        var businessId = Guid.NewGuid();
+        var userNumber = "3001234567";
+        var agentId = Guid.NewGuid();
         var existingConversation = new Conversation
         {
-            ConversationId = conversationId,
-            UserNumber = "1234567890"
+            ConversationId = Guid.NewGuid(),
+            BusinessId = businessId,
+            UserNumber = userNumber,
+            AgentId = null,
+            Timestamp = DateTime.UtcNow
         };
 
         _mockConversationRepository
-            .Setup(x => x.GetByIdAsync(conversationId))
+            .Setup(x => x.GetByBusinessIdAndUserNumberAsync(businessId, userNumber))
             .ReturnsAsync(existingConversation);
 
         _mockConversationRepository
@@ -124,36 +128,10 @@ public class ConversationServiceTests
             .Setup(x => x.SaveChangesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(1);
 
-        // Act
-        await _service.UpdateConversationContextAsync(
-            conversationId,
-            lastMessage: "Hola",
-            lastIntent: "Greeting");
+        var result = await _service.GetOrCreateConversationAsync(businessId, userNumber, agentId: agentId);
 
-        // Assert
-        _mockConversationRepository.Verify(x => x.GetByIdAsync(conversationId), Times.Once);
-        _mockConversationRepository.Verify(x => x.UpdateAsync(It.Is<Conversation>(c =>
-            c.LastMessage == "Hola" &&
-            c.LastIntent == "Greeting")), Times.Once);
+        result.AgentId.Should().Be(agentId);
+        _mockConversationRepository.Verify(x => x.UpdateAsync(It.Is<Conversation>(c => c.AgentId == agentId)), Times.Once);
         _mockUnitOfWork.Verify(x => x.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Once);
-    }
-
-    [Fact]
-    public async Task UpdateConversationContextAsync_WhenConversationNotFound_ShouldNotUpdate()
-    {
-        // Arrange
-        var conversationId = Guid.NewGuid();
-
-        _mockConversationRepository
-            .Setup(x => x.GetByIdAsync(conversationId))
-            .ReturnsAsync((Conversation?)null);
-
-        // Act
-        await _service.UpdateConversationContextAsync(conversationId, "Hola", "Greeting");
-
-        // Assert
-        _mockConversationRepository.Verify(x => x.GetByIdAsync(conversationId), Times.Once);
-        _mockConversationRepository.Verify(x => x.UpdateAsync(It.IsAny<Conversation>()), Times.Never);
-        _mockUnitOfWork.Verify(x => x.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Never);
     }
 }

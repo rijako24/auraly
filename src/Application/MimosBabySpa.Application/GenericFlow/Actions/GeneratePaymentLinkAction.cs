@@ -9,6 +9,8 @@ namespace MimosBabySpa.Application.GenericFlow.Actions;
 /// <summary>
 /// Generates a payment link for the current reservation.
 ///
+/// Responsibility: generate link only. Display formatting lives in ResolvePricingAction.
+///
 /// Input keys (from input_mapping):
 ///   item — service description / name
 ///
@@ -19,8 +21,12 @@ namespace MimosBabySpa.Application.GenericFlow.Actions;
 ///     currency:            string — currency code (default: "COP")
 ///     expirationMinutes:   int    — link validity in minutes (default: 1440 = 24h)
 ///
-/// Output keys: link_url, reference_id, anticipo_amount_cents (string).
-/// Requiere <c>total_price_invariant</c> en estado (lo rellena <c>resolve_pricing</c>).
+/// Output keys:
+///   link_url              — payment link URL
+///   reference_id          — payment reference ID
+///   anticipo_amount_cents — raw anticipo amount in cents (string, InvariantCulture)
+///
+/// Requires <c>total_price_invariant</c> in state (populated by <c>resolve_pricing</c>).
 /// Output ports: success, failure, not_required
 /// </summary>
 public class GeneratePaymentLinkAction : IFlowAction

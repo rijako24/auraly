@@ -78,7 +78,7 @@ export function Sidebar() {
                   <MessageCircle className="h-6 w-6 text-sidebar-primary shrink-0" />
                 </Link>
               </TooltipTrigger>
-              <TooltipContent side="right">Talkio Admin</TooltipContent>
+              <TooltipContent side="right">Quantix AI Admin</TooltipContent>
             </Tooltip>
           ) : (
             <Link
@@ -86,7 +86,7 @@ export function Sidebar() {
               className="flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-sidebar-accent transition-colors"
             >
               <MessageCircle className="h-6 w-6 text-sidebar-primary shrink-0" />
-              <span className="font-semibold text-sidebar-primary truncate">Talkio</span>
+              <span className="font-semibold text-sidebar-primary truncate">Quantix AI</span>
             </Link>
           )}
         </div>

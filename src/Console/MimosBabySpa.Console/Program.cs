@@ -122,7 +122,6 @@ services.AddScoped<ILLMAdapter>(sp =>
 services.AddScoped<TemplateResolver>();
 services.AddScoped<KnowledgeSourceRenderer>();
 services.AddScoped<FlowPromptBuilder>();
-services.AddScoped<FlowIntentionDetector>();
 services.AddScoped<FlowExtractionService>();
 services.AddScoped<FlowStateManager>();
 services.AddScoped<ServiceNameResolver>();
@@ -139,6 +138,7 @@ services.AddScoped<INodeHandler, IntentionRouterNodeHandler>();
 services.AddScoped<INodeHandler, GenerateResponseNodeHandler>();
 services.AddScoped<INodeHandler, WaitForEventNodeHandler>();
 services.AddScoped<INodeHandler, EscalateNodeHandler>();
+services.AddScoped<INodeHandler, AgentNodeHandler>();
 
 // Flow Actions
 services.AddScoped<IFlowAction, CheckAvailabilityAction>();
@@ -203,7 +203,7 @@ const string agentIdStr = "7105A9D5-D4E4-4BBA-9F3A-DBB34E0B1B86";
 var agentId = Guid.Parse(agentIdStr);
 
 // Simula el teléfono del cliente (clave de sesión)
-const string userPhone = "+12345679537";
+const string userPhone = "+12345679539";
 
 while (true)
 {
@@ -251,7 +251,7 @@ while (true)
         }
 
         var conversation = await conversationService.GetOrCreateConversationAsync(
-            agentEntity.BusinessId, userPhone, customerName: null);
+            agentEntity.BusinessId, userPhone, customerName: null, agentId: agentId);
 
         var result = await orchestrator.ProcessTurnAsync(
             conversation.ConversationId,

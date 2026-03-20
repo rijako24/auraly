@@ -1,4 +1,3 @@
-using MimosBabySpa.Domain.Entities;
 using MimosBabySpa.Domain.Repositories;
 
 namespace MimosBabySpa.IntegrationTests.Infrastructure;
@@ -27,6 +26,24 @@ public class InMemoryUnitOfWork : IUnitOfWork
     public ILeadRepository Leads { get; }
     public IServiceAddOnRuleRepository ServiceAddOnRules { get; }
     public IReservationAddOnRepository ReservationAddOns { get; }
+
+    public IPaymentTransactionRepository PaymentTransactions => throw new NotImplementedException();
+    public IAppUserRepository AppUsers => throw new NotImplementedException();
+    public IAppRoleRepository AppRoles => throw new NotImplementedException();
+    public IPermissionRepository Permissions => throw new NotImplementedException();
+    public IUserRoleRepository UserRoles => throw new NotImplementedException();
+    public IRolePermissionRepository RolePermissions => throw new NotImplementedException();
+    public IRefreshTokenRepository RefreshTokens => throw new NotImplementedException();
+    public IUserExternalLoginRepository UserExternalLogins => throw new NotImplementedException();
+    public IAuditLogRepository AuditLogs => throw new NotImplementedException();
+    public ITenantRepository Tenants => throw new NotImplementedException();
+
+    public IAgentRepository Agents => throw new NotImplementedException();
+    public IAgentTypeRepository AgentTypes => throw new NotImplementedException();
+    public IFlowDefinitionRepository FlowDefinitions => throw new NotImplementedException();
+    public IFlowExecutionStateRepository FlowExecutionStates => throw new NotImplementedException();
+    public IFlowNodeCatalogRepository FlowNodeCatalog => throw new NotImplementedException();
+    public IKnowledgeSourceRepository KnowledgeSources => throw new NotImplementedException();
 
     private readonly Guid _businessId;
 

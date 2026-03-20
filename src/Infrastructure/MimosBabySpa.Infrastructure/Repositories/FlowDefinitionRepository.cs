@@ -22,20 +22,20 @@ public class FlowDefinitionRepository : IFlowDefinitionRepository
         Guid flowDefinitionId, CancellationToken ct = default) =>
         await _db.FlowDefinitions.FindAsync([flowDefinitionId], ct);
 
-    public async Task<FlowDefinitionEntity> AddAsync(
+    public Task<FlowDefinitionEntity> AddAsync(
         FlowDefinitionEntity definition, CancellationToken ct = default)
     {
-        definition.FlowDefinitionId = Guid.NewGuid();
+        if (definition.FlowDefinitionId == Guid.Empty)
+            definition.FlowDefinitionId = Guid.NewGuid();
         definition.CreatedAt = DateTime.UtcNow;
         _db.FlowDefinitions.Add(definition);
-        await _db.SaveChangesAsync(ct);
-        return definition;
+        return Task.FromResult(definition);
     }
 
-    public async Task UpdateAsync(FlowDefinitionEntity definition, CancellationToken ct = default)
+    public Task UpdateAsync(FlowDefinitionEntity definition, CancellationToken ct = default)
     {
         definition.UpdatedAt = DateTime.UtcNow;
         _db.FlowDefinitions.Update(definition);
-        await _db.SaveChangesAsync(ct);
+        return Task.CompletedTask;
     }
 }

@@ -13,6 +13,20 @@ public class FlowNode
     /// Raw configuration. Deserialized by each handler into its own typed config.
     /// </summary>
     public JsonElement Config { get; set; }
+
+    /// <summary>
+    /// Sub-nodes for cluster nodes (Agent, Router). Null for simple nodes.
+    /// Sub-nodes are orchestrated internally by the parent handler — they do NOT
+    /// participate in the main graph traversal.
+    /// </summary>
+    public FlowSubNodeSet? SubNodes { get; set; }
+
+    /// <summary>
+    /// The routing intent that brings users TO this agent node.
+    /// Used by the agent to detect when the user's intent no longer matches
+    /// and a re-route is needed. Null for non-agent nodes.
+    /// </summary>
+    public string? HandlesIntent { get; set; }
 }
 
 public class FlowEdge

@@ -50,6 +50,12 @@ public class FlowTurnContext
     /// </summary>
     public string? PendingBotResponse { get; set; }
 
+    /// <summary>
+    /// When set after a node handler runs, the engine stops traversal and returns this outcome immediately
+    /// (e.g. global intention escalation from the Extract node).
+    /// </summary>
+    public FlowTurnTerminationRequest? TerminateTurn { get; set; }
+
     public void ReEvaluate() => ShouldReEvaluate = true;
 
     public bool IsIntentionDetected(string key) =>

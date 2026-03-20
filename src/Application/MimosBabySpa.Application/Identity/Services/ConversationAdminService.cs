@@ -17,13 +17,12 @@ public class ConversationAdminService : IConversationAdminService
     }
 
     public async Task<PagedResponse<ConversationDto>> GetPagedByBusinessIdAsync(
-        Guid tenantId, Guid businessId, PagedRequest request,
-        Domain.Enums.ConversationState? state, CancellationToken ct)
+        Guid tenantId, Guid businessId, PagedRequest request, CancellationToken ct)
     {
         await EnsureBusinessBelongsToTenantAsync(tenantId, businessId, ct);
 
         var (items, totalCount) = await _unitOfWork.Conversations.GetPagedByBusinessIdAsync(
-            businessId, request.Page, request.PageSize, request.Search, state, ct);
+            businessId, request.Page, request.PageSize, request.Search, ct);
 
         return new PagedResponse<ConversationDto>(
             items.Select(MapToDto).ToList(), totalCount, request.Page, request.PageSize);
@@ -55,11 +54,7 @@ public class ConversationAdminService : IConversationAdminService
     }
 
     private static ConversationDto MapToDto(Conversation c) =>
-        new(
-            c.ConversationId, c.BusinessId, c.UserNumber,
-            c.LastMessage, c.LastIntent, c.Timestamp,
-            c.CustomerName, c.BabyAge, c.RecommendedPlan,
-            c.State.ToString());
+        new(c.ConversationId, c.BusinessId, c.UserNumber, c.LastMessage, c.Timestamp, c.CustomerName);
 
     private async Task EnsureBusinessBelongsToTenantAsync(Guid tenantId, Guid businessId, CancellationToken ct)
     {
