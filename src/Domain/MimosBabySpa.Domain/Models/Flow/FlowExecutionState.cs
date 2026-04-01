@@ -33,8 +33,8 @@ public class FlowExecutionState
     public List<FlowConversationMessage> ConversationHistory { get; set; } = new();
 
     /// <summary>
-    /// Counts turns where the extraction produced no useful output.
-    /// Resets to 0 when at least one variable is successfully extracted.
+    /// Counts consecutive turns where the unified extraction LLM call failed.
+    /// Resets to 0 when extraction succeeds.
     /// Used to trigger auto-escalation when DegradedTurnsBeforeEscalation threshold is reached.
     /// </summary>
     public int ConsecutiveDegradedTurns { get; set; }

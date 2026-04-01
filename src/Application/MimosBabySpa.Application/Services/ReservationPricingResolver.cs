@@ -1,13 +1,13 @@
 using System.Globalization;
-using System.Text;
 using Microsoft.Extensions.Logging;
 using MimosBabySpa.Domain.Repositories;
 
 namespace MimosBabySpa.Application.Services;
 
 /// <summary>
-/// Resuelve precios de servicio principal + add-ons desde el catálogo del negocio.
-/// Fuente única de verdad para totales en flujo genérico (resumen, link de pago, reserva).
+/// Resuelve precios de items del catálogo de un negocio.
+/// Genérico: no distingue entre servicios, add-ons ni complementos.
+/// Recibe un diccionario de items, resuelve cada uno contra la BD y suma totales.
 /// </summary>
 public class ReservationPricingResolver
 {
@@ -26,88 +26,78 @@ public class ReservationPricingResolver
     }
 
     /// <summary>
-    /// Calcula precios. <paramref name="selectedAddOnsRaw"/> puede ser CSV o "ninguno".
+    /// Resuelve precios para un conjunto de items identificados por clave.
+    /// Cada valor puede ser un nombre simple o CSV (separado por <c>,</c> o <c>;</c>).
+    /// Valores vacíos, nulos o "ninguno" se ignoran.
     /// </summary>
-    public async Task<ReservationPricingResult?> ResolveAsync(
+    public async Task<PricingResult?> ResolveAsync(
         Guid businessId,
-        string? serviceName,
-        string? selectedAddOnsRaw,
+        IReadOnlyDictionary<string, string?> items,
         CancellationToken ct = default)
     {
-        if (string.IsNullOrWhiteSpace(serviceName))
-        {
-            _logger.LogWarning("ReservationPricingResolver: service name empty");
-            return null;
-        }
+        var lineItems = new List<PricingLineItem>();
+        var formattedByKey = new Dictionary<string, string>();
 
-        var canonicalService = await _nameResolver.ResolveAsync(businessId, serviceName, ct) ?? serviceName.Trim();
-        var mainService = await _unitOfWork.Services.GetByBusinessIdAndNameAsync(businessId, canonicalService);
-        if (mainService == null)
+        foreach (var (inputKey, rawValue) in items)
         {
-            _logger.LogWarning(
-                "ReservationPricingResolver: service '{Service}' not found for business {BusinessId}",
-                canonicalService, businessId);
-            return null;
-        }
+            if (string.IsNullOrWhiteSpace(rawValue) || IsSkippable(rawValue))
+                continue;
 
-        decimal total = mainService.Price;
-        var addonsSb = new StringBuilder();
+            var resolvedForKey = new List<string>();
 
-        if (!IsNoAddOns(selectedAddOnsRaw))
-        {
-            foreach (var rawName in SplitAddOnNames(selectedAddOnsRaw))
+            foreach (var name in SplitNames(rawValue))
             {
-                var resolved = await _nameResolver.ResolveAsync(businessId, rawName, ct) ?? rawName.Trim();
-                var addOnEntity = await _unitOfWork.Services.GetByBusinessIdAndNameAsync(businessId, resolved);
-                if (addOnEntity == null)
+                var canonical = await _nameResolver.ResolveAsync(businessId, name, ct);
+                if (canonical == null)
                 {
-                    _logger.LogWarning(
-                        "ReservationPricingResolver: add-on '{Name}' not found — skipped",
-                        rawName);
-                    addonsSb.AppendLine($"- Extra: {rawName.Trim()} — (no encontrado en catálogo)");
+                    _logger.LogWarning("PricingResolver: '{Name}' not resolved — skipped", name);
                     continue;
                 }
 
-                total += addOnEntity.Price;
-                addonsSb.AppendLine(
-                    $"- Extra: {addOnEntity.ServiceName} — ${addOnEntity.Price.ToString("N0", CultureInfo.InvariantCulture)}");
+                var entity = await _unitOfWork.Services.GetByBusinessIdAndNameAsync(businessId, canonical);
+                if (entity == null) continue;
+
+                lineItems.Add(new PricingLineItem(entity.ServiceName, entity.Price));
+                resolvedForKey.Add(FormatItem(entity.ServiceName, entity.Price));
             }
+
+            if (resolvedForKey.Count > 0)
+                formattedByKey[inputKey] = string.Join("; ", resolvedForKey);
         }
 
-        var addonsDetail = addonsSb.ToString().TrimEnd();
-        return new ReservationPricingResult(
-            ServicePrice: mainService.Price,
-            Total: total,
-            ServicePriceDisplay: $"${mainService.Price.ToString("N0", CultureInfo.InvariantCulture)}",
-            AddOnsDetailDisplay: string.IsNullOrEmpty(addonsDetail) ? "—" : addonsDetail,
-            TotalDisplay: $"${total.ToString("N0", CultureInfo.InvariantCulture)}",
-            TotalInvariant: total.ToString(CultureInfo.InvariantCulture));
+        if (lineItems.Count == 0) return null;
+
+        var total = lineItems.Sum(li => li.Price);
+        return new PricingResult(lineItems, formattedByKey, total);
     }
 
-    private static bool IsNoAddOns(string? raw) =>
+    private static string FormatItem(string name, decimal price) =>
+        $"{name} — ${price.ToString("N0", CultureInfo.InvariantCulture)}";
+
+    private static bool IsSkippable(string? raw) =>
         string.IsNullOrWhiteSpace(raw) ||
         string.Equals(raw.Trim(), "ninguno", StringComparison.OrdinalIgnoreCase);
 
-    private static IEnumerable<string> SplitAddOnNames(string? raw)
+    private static IEnumerable<string> SplitNames(string raw)
     {
-        if (string.IsNullOrWhiteSpace(raw)) yield break;
         foreach (var part in raw.Split([',', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
-            if (string.Equals(part, "ninguno", StringComparison.OrdinalIgnoreCase))
-                continue;
-            yield return part;
+            if (!string.Equals(part, "ninguno", StringComparison.OrdinalIgnoreCase))
+                yield return part;
         }
     }
 }
 
-/// <summary>
-/// Resultado de <see cref="ReservationPricingResolver.ResolveAsync"/>.
-/// </summary>
-public sealed record ReservationPricingResult(
-    decimal ServicePrice,
-    decimal Total,
-    string ServicePriceDisplay,
-    string AddOnsDetailDisplay,
-    string TotalDisplay,
-    /// <summary>Total como string parseable (InvariantCulture) para montos y APIs.</summary>
-    string TotalInvariant);
+public sealed record PricingLineItem(string Name, decimal Price);
+
+public sealed record PricingResult(
+    IReadOnlyList<PricingLineItem> LineItems,
+    IReadOnlyDictionary<string, string> FormattedByKey,
+    decimal Total)
+{
+    public string TotalDisplay =>
+        $"${Total.ToString("N0", CultureInfo.InvariantCulture)}";
+
+    public string TotalInvariant =>
+        Total.ToString(CultureInfo.InvariantCulture);
+}

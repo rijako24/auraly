@@ -23,7 +23,7 @@ namespace MimosBabySpa.Application.GenericFlow;
 ///  5. Load knowledge sources (dynamic catalog when applicable)
 ///  6. Build FlowTurnContext (ConversationId supplied by caller)
 ///  7–8. Unified extraction + intention handling
-///  9. Degraded-turn / auto-escalation
+///  9. Failed-extraction streak / auto-escalation
 ///  10. Traverse graph until WaitForUser or End
 ///  11–12. Append history, save state, return result
 /// </summary>
@@ -200,8 +200,8 @@ public class FlowOrchestrationService : IFlowOrchestrationService
 
         _extractionService.ApplyExtraction(extractionResult.ExtractedFields, flow, state, ctx, allSources);
 
-        // ── 9. Track degraded turns and auto-escalate if threshold reached ─────────
-        UpdateDegradedTurns(state, extractionResult.ExtractedFields, flow);
+        // ── 9. Track failed extraction turns and auto-escalate if threshold reached ─
+        UpdateDegradedTurns(state, extractionResult.WasSuccessful);
 
         var degradedEscalation = TryEscalateForDegradedTurns(state, flow, agent, ctx);
         if (degradedEscalation != null)
@@ -461,29 +461,19 @@ public class FlowOrchestrationService : IFlowOrchestrationService
         _handlers.FirstOrDefault(h => h.NodeType == type);
 
     /// <summary>
-    /// Increments the degraded-turn counter when nothing was extracted despite pending required
-    /// variables; resets it when at least one variable was successfully applied.
+    /// Increments the counter when the extraction LLM call failed (WasSuccessful false);
+    /// resets it when extraction succeeded (including when the model returned no fields).
     /// </summary>
-    private static void UpdateDegradedTurns(
-        FlowExecutionState state,
-        Dictionary<string, string?> extracted,
-        FlowDefinitionDocument flow)
+    private static void UpdateDegradedTurns(FlowExecutionState state, bool extractionWasSuccessful)
     {
-        var hasPendingRequired = flow.Variables
-            .Any(v => v.Required && !v.IsSystemManaged && state.GetVariable(v.Key) == null);
-
-        if (extracted.Count > 0)
-        {
+        if (extractionWasSuccessful)
             state.ConsecutiveDegradedTurns = 0;
-        }
-        else if (hasPendingRequired)
-        {
+        else
             state.ConsecutiveDegradedTurns++;
-        }
     }
 
     /// <summary>
-    /// Returns an escalation result if the degraded-turn threshold has been reached.
+    /// Returns an escalation result if the failed-extraction streak reaches the configured threshold.
     /// Sets Owner=Human and resets the counter so a fresh session can start later.
     /// Returns null when escalation is disabled or threshold not yet reached.
     /// </summary>
@@ -498,7 +488,7 @@ public class FlowOrchestrationService : IFlowOrchestrationService
             return null;
 
         _logger.LogWarning(
-            "Auto-escalating after {N} consecutive degraded turns for {Identifier}",
+            "Auto-escalating after {N} consecutive failed extraction calls for {Identifier}",
             state.ConsecutiveDegradedTurns, ctx.UserIdentifier);
 
         state.Owner = ConversationOwner.Human;

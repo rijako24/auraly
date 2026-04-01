@@ -41,7 +41,7 @@ public class FlowEngineSettings
     public int ClassifyMaxTokens { get; set; } = 80;
 
     /// <summary>
-    /// Number of consecutive degraded turns (no variables extracted) before auto-escalating.
+    /// Number of consecutive failed extraction LLM calls before auto-escalating.
     /// 0 = disabled. When reached, the engine escalates and resets the counter.
     /// </summary>
     public int DegradedTurnsBeforeEscalation { get; set; } = 2;

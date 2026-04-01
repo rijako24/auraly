@@ -1,6 +1,6 @@
 using System.Text;
-using System.Text.Json;
 using MimosBabySpa.Domain.Entities;
+using MimosBabySpa.Domain.Enums;
 using MimosBabySpa.Domain.Models.Flow;
 
 namespace MimosBabySpa.Application.GenericFlow.Services;
@@ -10,7 +10,8 @@ namespace MimosBabySpa.Application.GenericFlow.Services;
 /// 1. Agent prompt sections (sorted by injection point and display order)
 /// 2. Auto-injected knowledge sources
 /// 3. Current state summary
-/// 4. Node-specific instructions
+/// 4. Action results for the current turn (raw service outputs for the LLM)
+/// 5. Node-specific instructions
 /// </summary>
 public class FlowPromptBuilder
 {
@@ -57,6 +58,7 @@ public class FlowPromptBuilder
         }
 
         AppendCurrentState(sb, ctx);
+        AppendActionResults(sb, ctx);
         AppendSections(sb, sections, "after_instructions", ctx);
         AppendNodeInstructions(sb, currentNode, ctx);
         AppendSections(sb, sections, "context_footer", ctx);
@@ -112,6 +114,8 @@ public class FlowPromptBuilder
             sb.AppendLine("# DATOS RECOPILADOS");
             foreach (var v in collectedVars)
                 sb.AppendLine($"- {v.Label}: {state.GetVariable(v.Key)}");
+            sb.AppendLine(
+                "(Estos datos ya fueron confirmados. Úsalos como contexto interno pero no los repitas como opciones nuevas ni los vuelvas a ofrecer.)");
             sb.AppendLine();
         }
 
@@ -125,6 +129,41 @@ public class FlowPromptBuilder
             sb.AppendLine("# DATOS PENDIENTES");
             foreach (var v in missingRequired)
                 sb.AppendLine($"- {v.Label}");
+            sb.AppendLine();
+        }
+    }
+
+    /// <summary>
+    /// Surfaces action node outputs from this turn so the LLM can reason about availability,
+    /// pricing, etc. without the engine interpreting business meaning.
+    /// </summary>
+    private static void AppendActionResults(StringBuilder sb, FlowTurnContext ctx)
+    {
+        var state = ctx.State;
+        var actionNodeIds = state.Trace
+            .Where(t => t.TurnNumber == ctx.TurnNumber &&
+                        string.Equals(t.NodeType, nameof(FlowNodeType.Action), StringComparison.OrdinalIgnoreCase))
+            .Select(t => t.NodeId)
+            .Distinct()
+            .ToList();
+
+        if (actionNodeIds.Count == 0)
+            return;
+
+        sb.AppendLine("# RESULTADO DE ACCIONES EJECUTADAS (ESTE TURNO)");
+        foreach (var nodeId in actionNodeIds)
+        {
+            if (!state.ActionResults.TryGetValue(nodeId, out var data) || data.Count == 0)
+                continue;
+
+            sb.AppendLine($"## {nodeId}");
+            foreach (var (key, value) in data.OrderBy(kv => kv.Key, StringComparer.OrdinalIgnoreCase))
+            {
+                if (value is null)
+                    continue;
+                sb.AppendLine($"- {key}: {value}");
+            }
+
             sb.AppendLine();
         }
     }

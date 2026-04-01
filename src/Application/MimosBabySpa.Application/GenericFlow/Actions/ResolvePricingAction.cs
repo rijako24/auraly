@@ -5,17 +5,14 @@ using MimosBabySpa.Domain.Models.Flow;
 namespace MimosBabySpa.Application.GenericFlow.Actions;
 
 /// <summary>
-/// Resuelve precio del servicio principal, detalle de extras y total desde el catálogo del negocio.
+/// Resuelve precios de todos los items recibidos en input_mapping contra el catálogo del negocio.
+/// Genérico: no tiene keys hardcodeados. Trata cada input como un item (o CSV de items) a pricear.
+/// Para cada input key devuelve "NombreCanónico — $Precio"; el output_mapping del flujo controla
+/// dónde se escriben en el estado.
 ///
-/// Input keys (input_mapping):
-///   item — nombre del servicio ({{variables.service}})
-///   selected_add_ons — CSV de extras o vacío / "ninguno"
-///
-/// Output keys:
-///   service_price — texto formateado p. ej. "$125.000"
-///   addons_detail — líneas "- Extra: … — $…" o "—"
-///   total_price — total formateado p. ej. "$140.000"
-///   total_price_invariant — total decimal string (CultureInfo.InvariantCulture) para cálculo de anticipo
+/// Output keys fijos:
+///   total_price          — total formateado (e.g. "$135,000")
+///   total_price_invariant — total como string parseable (InvariantCulture)
 /// </summary>
 public class ResolvePricingAction : IFlowAction
 {
@@ -37,23 +34,26 @@ public class ResolvePricingAction : IFlowAction
         FlowTurnContext ctx,
         CancellationToken ct)
     {
-        var item = inputs.GetString("item");
-        var addOns = inputs.GetString("selected_add_ons");
+        var items = inputs
+            .Where(kv => kv.Value is string s && !string.IsNullOrWhiteSpace(s))
+            .ToDictionary(kv => kv.Key, kv => (string?)kv.Value!.ToString());
 
-        var resolved = await _pricingResolver.ResolveAsync(ctx.BusinessId, item, addOns, ct);
-        if (resolved == null)
-            return FlowActionResult.Failed("Could not resolve service pricing");
+        var result = await _pricingResolver.ResolveAsync(ctx.BusinessId, items, ct);
+        if (result == null)
+            return FlowActionResult.Failed("No priceable items found");
 
         _logger.LogDebug(
-            "ResolvePricing: business={BusinessId} total={Total}",
-            ctx.BusinessId, resolved.Total);
+            "ResolvePricing: business={BusinessId} items={Count} total={Total}",
+            ctx.BusinessId, result.LineItems.Count, result.Total);
 
-        return FlowActionResult.Succeeded(new Dictionary<string, object?>
-        {
-            ["service_price"] = resolved.ServicePriceDisplay,
-            ["addons_detail"] = resolved.AddOnsDetailDisplay,
-            ["total_price"] = resolved.TotalDisplay,
-            ["total_price_invariant"] = resolved.TotalInvariant
-        });
+        var output = new Dictionary<string, object?>();
+
+        foreach (var (key, formatted) in result.FormattedByKey)
+            output[key] = formatted;
+
+        output["total_price"] = result.TotalDisplay;
+        output["total_price_invariant"] = result.TotalInvariant;
+
+        return FlowActionResult.Succeeded(output);
     }
 }

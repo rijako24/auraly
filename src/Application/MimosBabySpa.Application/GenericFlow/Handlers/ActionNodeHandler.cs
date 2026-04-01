@@ -13,7 +13,7 @@ namespace MimosBabySpa.Application.GenericFlow.Handlers;
 ///   action_type: string              — key to resolve the IFlowAction
 ///   input_mapping: { key: template } — inputs resolved from state
 ///   output_mapping: { stateKey: resultKey | "flag:KEY": resultKey } — map action data to state.
-///   Null action values are skipped (existing state is not cleared). Use setVariables on a node to clear explicitly.
+///   Key absent from result → state untouched. Key present with null → entry removed from state.
 ///   onSuccessTemplate: string?       — optional direct response on success
 ///   onFailureTemplate: string?       — optional direct response on failure
 /// </summary>
@@ -142,21 +142,23 @@ public class ActionNodeHandler : INodeHandler
             var stateKey = prop.Name;
             var dataKey = prop.Value.GetString() ?? string.Empty;
 
+            // Key absent from result → don't touch state
             if (!result.Data.TryGetValue(dataKey, out var value)) continue;
-            // Do not write nulls: e.g. confirmed_time=null must not erase desired_time extracted earlier.
-            if (value is null) continue;
-
-            var strValue = value.ToString();
 
             if (stateKey.StartsWith("flag:", StringComparison.OrdinalIgnoreCase))
             {
                 var flagKey = stateKey["flag:".Length..];
-                if (bool.TryParse(strValue, out var boolVal))
+                if (value is not null && bool.TryParse(value.ToString(), out var boolVal))
                     state.SetFlag(flagKey, boolVal);
+                else
+                    state.Flags.Remove(flagKey);
             }
             else
             {
-                state.Variables[stateKey] = strValue;
+                if (value is not null)
+                    state.Variables[stateKey] = value.ToString();
+                else
+                    state.Variables.Remove(stateKey);
             }
         }
     }

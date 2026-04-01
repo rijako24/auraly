@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Console;
 using MimosBabySpa.Application.Services;
 using MimosBabySpa.Domain.Repositories;
 using MimosBabySpa.Infrastructure.Data;
@@ -50,7 +51,8 @@ services.AddSingleton<IConfiguration>(configuration);
 services.AddLogging(builder =>
 {
     builder.AddConfiguration(configuration.GetSection("Logging"));
-    builder.AddConsole();
+    builder.AddConsoleFormatter<MimosBabySpa.Console.CleanConsoleFormatter, ConsoleFormatterOptions>();
+    builder.AddConsole(options => options.FormatterName = MimosBabySpa.Console.CleanConsoleFormatter.FormatterName);
     builder.SetMinimumLevel(LogLevel.Warning);
     builder.AddFilter("Microsoft.EntityFrameworkCore", LogLevel.None);
     builder.AddFilter("MimosBabySpa", LogLevel.Warning);
@@ -203,7 +205,7 @@ const string agentIdStr = "7105A9D5-D4E4-4BBA-9F3A-DBB34E0B1B86";
 var agentId = Guid.Parse(agentIdStr);
 
 // Simula el teléfono del cliente (clave de sesión)
-const string userPhone = "+12345679537";
+const string userPhone = "+12345679702";
 
 while (true)
 {
