@@ -30,4 +30,9 @@ public class InMemoryConversationRepository : IConversationRepository
 
     public Task<Conversation?> GetByIdAsync(Guid conversationId) =>
         Task.FromResult(_store.FirstOrDefault(c => c.ConversationId == conversationId));
+
+    public Task<(IReadOnlyList<Conversation> Items, int TotalCount)> GetPagedByBusinessIdAsync(
+        Guid businessId, int page, int pageSize, string? search = null,
+        Domain.Enums.ConversationState? state = null, CancellationToken ct = default) =>
+        throw new NotImplementedException();
 }

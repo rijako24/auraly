@@ -54,6 +54,10 @@ public class InMemoryServiceRepository : IServiceRepository
 
     public Task<Service> CreateAsync(Service service) { _store.Add(service); return Task.FromResult(service); }
     public Task<Service> UpdateAsync(Service service) => Task.FromResult(service);
+
+    public Task<(IReadOnlyList<Service> Items, int TotalCount)> GetPagedByBusinessIdAsync(
+        Guid businessId, int page, int pageSize, string? search, CancellationToken ct = default) =>
+        throw new NotImplementedException();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -87,6 +91,13 @@ public class InMemoryBusinessRepository : IBusinessRepository
 
     public Task<Business> CreateAsync(Business business) => Task.FromResult(business);
     public Task<Business> UpdateAsync(Business business) => Task.FromResult(business);
+
+    public Task<IReadOnlyList<Business>> GetByTenantIdAsync(Guid tenantId, CancellationToken ct = default) =>
+        throw new NotImplementedException();
+
+    public Task<(IReadOnlyList<Business> Items, int TotalCount)> GetPagedByTenantIdAsync(
+        Guid tenantId, int page, int pageSize, string? search, CancellationToken ct = default) =>
+        throw new NotImplementedException();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -99,40 +110,21 @@ public class InMemoryBusinessConfigurationRepository : IBusinessConfigurationRep
 
     public InMemoryBusinessConfigurationRepository(Guid businessId)
     {
-         _configs = new List<BusinessConfiguration>
-         {
-             new()
-             {
-                 BusinessId = businessId,
-                 Key = BusinessConfigurationKey.EntityExtractionConfig,
-                 Value = """
-                 {
-                   "SelectedAddOns": {
-                     "Description": "Servicios extra seleccionados por el cliente",
-                     "Type": "Text",
-                     "IsRequired": false
-                   }
-                 }
-                 """
-             },
-             new() { BusinessId = businessId, Key = BusinessConfigurationKey.OperatingHours, Value = "{}" },
-             new() { BusinessId = businessId, Key = BusinessConfigurationKey.PaymentMethods, Value = "[]" },
-             new() { BusinessId = businessId, Key = BusinessConfigurationKey.Integrations, Value = """{"googleCalendar":{"enabled":false,"calendarId":"primary"}}""" },
-             new()
-             {
-                 BusinessId = businessId,
-                 Key = BusinessConfigurationKey.Personality,
-                 Value = """
-                 Eres Luna, una asesora comercial experta y muy humana de Mimos Baby Spa, especializada en servicios de spa para bebés. Hablas de forma natural, cálida, tierna y conversacional, como una amiga cercana que ama el cuidado de bebés y transmite calidez en cada mensaje.
-
-                 TU ESTILO:
-                 - Usa emoticonos de forma natural y relacionada con lo que dices (👶 bebé, 💙 cariño/apoyo, ✨ magia/experiencia, 🙏 gracias, 😊 calidez, 🛁 spa/agua, 🌊 hidroterapia, 💆 bienestar, 🎉 celebración)
-                 - Sé especialmente tierna cuando hables del bebé, de las mamás o de momentos especiales
-                 - Transmite emoción genuina y cariño sin exagerar
-                 """
-             }
-         };
-         Console.WriteLine($"[DEBUG] Repo initialized with {_configs.Count} configs for {businessId}");
+        _configs = new List<BusinessConfiguration>
+        {
+            new()
+            {
+                BusinessId = businessId,
+                Key = BusinessConfigurationKey.Integrations,
+                Value = """{"googleCalendar":{"enabled":false,"calendarId":"primary"}}"""
+            },
+            new()
+            {
+                BusinessId = businessId,
+                Key = BusinessConfigurationKey.UseAgenticOrchestrator,
+                Value = "true"
+            }
+        };
     }
 
     public Task<IEnumerable<BusinessConfiguration>> GetByBusinessIdAsync(Guid businessId) =>
@@ -141,27 +133,6 @@ public class InMemoryBusinessConfigurationRepository : IBusinessConfigurationRep
     public Task<BusinessConfiguration?> GetByBusinessIdAndKeyAsync(Guid businessId, BusinessConfigurationKey key)
     {
         var config = _configs.FirstOrDefault(c => c.BusinessId == businessId && c.Key == key);
-        
-        if (config == null && key == BusinessConfigurationKey.EntityExtractionConfig)
-        {
-             Console.WriteLine("[DEBUG] Force-returning EntityExtractionConfig (fallback)!");
-             return Task.FromResult<BusinessConfiguration?>(new BusinessConfiguration
-             {
-                 BusinessId = businessId,
-                 Key = BusinessConfigurationKey.EntityExtractionConfig,
-                 Value = """
-                 {
-                   "SelectedAddOns": {
-                     "Description": "Servicios extra seleccionados por el cliente",
-                     "Type": "Text",
-                     "IsRequired": false
-                   }
-                 }
-                 """
-             });
-        }
-
-        Console.WriteLine($"[DEBUG] Query Key={key}, Found={config != null}");
         return Task.FromResult(config);
     }
 
@@ -236,6 +207,18 @@ public class InMemoryReservationRepository : IReservationRepository
         Guid businessId, DateTime reservationDate, TimeSpan reservationTime,
         int durationMinutes, Guid? excludeReservationId = null) =>
         Task.FromResult(false);
+
+    public Task<(IReadOnlyList<Reservation> Items, int TotalCount)> GetPagedByBusinessIdAsync(
+        Guid businessId, int page, int pageSize, string? search, DateTime? from, DateTime? to, CancellationToken ct = default) =>
+        throw new NotImplementedException();
+
+    public Task<IReadOnlyList<Reservation>> GetRecentByBusinessIdAsync(
+        Guid businessId, int count, CancellationToken ct = default) =>
+        throw new NotImplementedException();
+
+    public Task<IReadOnlyList<(Guid ServiceId, string ServiceName, int TotalReservations, decimal Revenue)>> GetTopServicesByBusinessIdAsync(
+        Guid businessId, int top, DateTime? from, DateTime? to, CancellationToken ct = default) =>
+        throw new NotImplementedException();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -294,6 +277,10 @@ public class InMemoryEmployeeRepository : IEmployeeRepository
 
     public Task<Employee> CreateAsync(Employee employee) { _store.Add(employee); return Task.FromResult(employee); }
     public Task<Employee> UpdateAsync(Employee employee) => Task.FromResult(employee);
+
+    public Task<(IReadOnlyList<Employee> Items, int TotalCount)> GetPagedByBusinessIdAsync(
+        Guid businessId, int page, int pageSize, string? search, CancellationToken ct = default) =>
+        throw new NotImplementedException();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -338,8 +325,15 @@ public class InMemoryLeadRepository : ILeadRepository
     public Task<Lead?> GetByIdAsync(Guid leadId) =>
         Task.FromResult<Lead?>(null);
 
+    public Task<IEnumerable<Lead>> GetByBusinessIdAsync(Guid businessId) =>
+        Task.FromResult(Enumerable.Empty<Lead>());
+
     public Task<Lead> CreateAsync(Lead lead) => Task.FromResult(lead);
     public Task<Lead> UpdateAsync(Lead lead) => Task.FromResult(lead);
+
+    public Task<(IReadOnlyList<Lead> Items, int TotalCount)> GetPagedByBusinessIdAsync(
+        Guid businessId, int page, int pageSize, string? search, CancellationToken ct = default) =>
+        throw new NotImplementedException();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

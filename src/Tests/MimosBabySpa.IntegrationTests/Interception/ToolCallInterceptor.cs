@@ -1,46 +1,58 @@
 using System.Diagnostics;
-using Azure.AI.OpenAI;
-using MimosBabySpa.Application.Tools;
+using System.Text.Json;
+using MimosBabySpa.Application.Agents;
+using MimosBabySpa.Application.Agents.Tools;
 
 namespace MimosBabySpa.IntegrationTests.Interception;
 
 /// <summary>
-/// Decorator over IToolHandler that logs every execution to a ToolCallLog.
-/// Uses the Decorator pattern — wraps any IToolHandler without modifying it.
+/// Decorador sobre IAgentTool que registra cada ejecución en un ToolCallLog.
+/// Usa el patrón Decorator — envuelve cualquier IAgentTool sin modificarlo.
 /// </summary>
-public class ToolCallInterceptor : IToolHandler
+public class ToolCallInterceptor : IAgentTool
 {
-    private readonly IToolHandler _inner;
-    private readonly ToolType _toolType;
+    private readonly IAgentTool _inner;
     private readonly ToolCallLog _log;
 
-    public ToolCallInterceptor(IToolHandler inner, ToolType toolType, ToolCallLog log)
+    public ToolCallInterceptor(IAgentTool inner, ToolCallLog log)
     {
-        _inner    = inner;
-        _toolType = toolType;
-        _log      = log;
+        _inner = inner;
+        _log = log;
     }
 
-    // ── IToolHandler contract ──────────────────────────────────────────────
-    public string FunctionName => _inner.FunctionName;
+    public string Name => _inner.Name;
+    public string Description => _inner.Description;
+    public string ParametersSchema => _inner.ParametersSchema;
 
-    public FunctionDefinition GetDefinition() => _inner.GetDefinition();
-
-    public async Task<ToolExecutionResult> ExecuteAsync(
-        ToolExecutionContext context,
+    public async Task<string> ExecuteAsync(
+        JsonElement arguments,
+        AgentToolContext context,
         CancellationToken cancellationToken = default)
     {
         var sw = Stopwatch.StartNew();
-        var result = await _inner.ExecuteAsync(context, cancellationToken);
+        var result = await _inner.ExecuteAsync(arguments, context, cancellationToken);
         sw.Stop();
 
+        var isError = IsToolError(result);
+
         _log.Add(new ToolCallRecord(
-            ToolType:    _toolType,
-            Arguments:   new Dictionary<string, object>(),
-            Result:      result,
-            CalledAt:    DateTimeOffset.UtcNow,
-            ElapsedMs:   sw.ElapsedMilliseconds));
+            ToolName: _inner.Name,
+            ArgumentsJson: arguments.GetRawText(),
+            ResultJson: result,
+            ResultIsError: isError,
+            CalledAt: DateTimeOffset.UtcNow,
+            ElapsedMs: sw.ElapsedMilliseconds));
 
         return result;
+    }
+
+    private static bool IsToolError(string json)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            return doc.RootElement.TryGetProperty("ok", out var ok) && ok.GetBoolean() == false;
+        }
+        catch { return false; }
     }
 }

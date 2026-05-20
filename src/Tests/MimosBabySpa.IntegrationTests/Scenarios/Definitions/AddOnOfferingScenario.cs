@@ -1,12 +1,11 @@
-using MimosBabySpa.Domain.Enums;
 using MimosBabySpa.IntegrationTests.Infrastructure;
+using MimosBabySpa.IntegrationTests.Scenarios;
 
 namespace MimosBabySpa.IntegrationTests.Scenarios.Definitions;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ESCENARIO 7: Servicios extras integrados con disponibilidad
-// El bot muestra disponibilidad + servicios extras en la misma respuesta.
-// Usuario confirma con servicio extra en el siguiente mensaje.
+// Escenario: Plan Deluxe con add-on. El bot verifica disponibilidad y el usuario
+// confirma con un servicio extra incluido.
 // ─────────────────────────────────────────────────────────────────────────────
 
 public class AddOnOfferingScenario : TestScenario
@@ -30,42 +29,19 @@ public class AddOnOfferingScenario : TestScenario
     public override IReadOnlyList<ConversationStep> Steps =>
     [
         new(
-            UserMessage:   "Quiero reservar Plan Deluxe el 2025-08-15 a las 10am.",
-            ExtractionJson: """
-            {
-              "extracted_fields": [
-                {"field": "Service",      "value": "Plan Deluxe",      "confidence": 0.98},
-                {"field": "DesiredDate",  "value": "2025-08-15",       "confidence": 0.99},
-                {"field": "DesiredTime",  "value": "10:00",            "confidence": 0.97},
-                {"field": "CustomerName", "value": "Cliente Test",     "confidence": 0.90}
-              ],
-              "intentions": {
-                "user_requested_availability": true,
-                "user_confirmed_booking":      false,
-                "is_information_query":        false,
-                "user_wants_to_cancel":        false
-              },
-              "ambiguities": []
-            }
-            """,
-            ExpectedBotResponseContains: "disponib"), // Step 1: Disponibilidad + servicios extras en misma respuesta
+            UserMessage: "Quiero reservar Plan Deluxe el 2026-08-15 a las 10am.",
+            LlmScript: FakeLlmScript.ToolThenText(
+                "check_availability",
+                """{"service":"Plan Deluxe","date":"2026-08-15","time":"10:00"}""",
+                "Hay disponibilidad el 15 de agosto a las 10:00. El Plan Deluxe incluye la opción de agregar Masaje Extra 15m. ¿Lo incluimos?"),
+            ExpectedBotResponseContains: "disponib"),
 
         new(
-            UserMessage:   "Sí, agrega el Masaje Extra 15m y confirma.",
-            ExtractionJson: """
-            {
-              "extracted_fields": [
-                {"field": "SelectedAddOns", "value": "Masaje Extra 15m", "confidence": 0.95}
-              ],
-              "intentions": {
-                "user_requested_availability": false,
-                "user_confirmed_booking":      true,
-                "is_information_query":        false,
-                "user_wants_to_cancel":        false
-              },
-              "ambiguities": []
-            }
-            """,
-            ExpectedBotResponseContains: "reserva") // Step 2: Reserva creada con servicio extra
+            UserMessage: "Sí, agrega el Masaje Extra 15m y confirma.",
+            LlmScript: FakeLlmScript.ToolThenText(
+                "create_reservation",
+                """{"service":"Plan Deluxe","date":"2026-08-15","time":"10:00","customer_name":"Cliente Test","customer_phone":"+5491100000000","add_ons":"Masaje Extra 15m","customer_confirmed":true}""",
+                "¡Reserva creada con Masaje Extra 15m! Te esperamos el 15 de agosto."),
+            ExpectedBotResponseContains: "reserva")
     ];
 }

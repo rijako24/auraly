@@ -30,4 +30,19 @@ public class InMemoryPaymentTransactionRepository : IPaymentTransactionRepositor
             _store.Add(transaction);
         return Task.CompletedTask;
     }
+
+    public Task<PaymentTransaction?> GetByIdAsync(Guid paymentTransactionId, CancellationToken ct = default) =>
+        throw new NotImplementedException();
+
+    public Task<(IReadOnlyList<PaymentTransaction> Items, int TotalCount)> GetPagedByBusinessIdAsync(
+        Guid businessId, int page, int pageSize, string? search, Domain.Enums.PaymentTransactionStatus? status, CancellationToken ct = default) =>
+        throw new NotImplementedException();
+
+    public Task<decimal> GetTotalRevenueByBusinessIdAsync(
+        Guid businessId, DateTime? from, DateTime? to, CancellationToken ct = default) =>
+        throw new NotImplementedException();
+
+    public Task<IReadOnlyList<(string Date, decimal Amount)>> GetRevenueChartDataAsync(
+        Guid businessId, DateTime from, DateTime to, bool groupByMonth, CancellationToken ct = default) =>
+        throw new NotImplementedException();
 }

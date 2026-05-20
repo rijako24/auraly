@@ -1,6 +1,6 @@
 using System.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
-using MimosBabySpa.Application.Orchestration;
+using MimosBabySpa.Application.Agents;
 using MimosBabySpa.IntegrationTests.Bootstrap;
 using MimosBabySpa.IntegrationTests.Infrastructure;
 using MimosBabySpa.IntegrationTests.Interception;
@@ -10,12 +10,13 @@ using MimosBabySpa.IntegrationTests.Validation;
 namespace MimosBabySpa.IntegrationTests.Runner;
 
 /// <summary>
-/// Runs a list of TestScenarios sequentially, each with its own isolated ServiceProvider.
-/// Collects and returns ScenarioResult instances.
+/// Ejecuta una lista de TestScenarios secuencialmente, cada uno con su propio ServiceProvider aislado.
+/// Recoge y devuelve instancias de ScenarioResult.
 /// </summary>
 public class ScenarioRunner
 {
     private static readonly Guid BusinessId = new("11111111-1111-1111-1111-111111111111");
+    private static readonly Guid AgentId    = new("22222222-2222-2222-2222-222222222222");
     private readonly TestRuleEngine _ruleEngine = new();
 
     public async Task<IReadOnlyList<ScenarioResult>> RunAllAsync(
@@ -39,35 +40,31 @@ public class ScenarioRunner
         var stepResults = new List<StepResult>();
         var toolLog     = new ToolCallLog();
         string? scenarioError = null;
-        bool passed = false;
 
         try
         {
-            // ── Build scripts from steps ───────────────────────────────
-            var scripts = scenario.Steps
-                .Select((s, i) => new TurnScript(
-                    ExtractionJson:          s.ExtractionJson,
-                    ConversationalResponse:  GetConversationalResponse(s, i, scenario)))
-                .ToList();
+            // ── Construir FakeChatClient con todas las respuestas scripteadas ──
+            var allLlmResults = scenario.Steps.SelectMany(s => s.LlmScript).ToList();
+            var fakeChatClient = new FakeChatClient(allLlmResults);
 
-            // ── Build isolated DI container ────────────────────────────
+            // ── DI container aislado por escenario ────────────────────────────
             var services = new ServiceCollection();
             TestServiceBuilder.Register(
                 services,
                 BusinessId,
+                AgentId,
                 scenario.CalendarMode,
                 scenario.ReservationMode,
                 toolLog,
-                scripts);
+                fakeChatClient);
 
             using var provider = services.BuildServiceProvider();
-            var orchestrator   = provider.GetRequiredService<HybridTransactionalOrchestrator>();
+            var agentService   = provider.GetRequiredService<IAgentConversationService>();
 
-            // ── Create a persisted conversation ────────────────────────
+            // ── Conversación única para el escenario ──────────────────────────
             var conversationId = Guid.NewGuid();
-            var customerPhone  = "+5491100000000";
 
-            // ── Execute each step ──────────────────────────────────────
+            // ── Ejecutar cada paso ────────────────────────────────────────────
             foreach (var (step, idx) in scenario.Steps.Select((s, i) => (s, i)))
             {
                 var sw = Stopwatch.StartNew();
@@ -77,19 +74,20 @@ public class ScenarioRunner
 
                 try
                 {
-                    var result = await orchestrator.ProcessMessageAsync(
+                    var result = await agentService.ProcessMessageAsync(
+                        AgentId,
                         conversationId,
-                        BusinessId,
-                        customerPhone,
                         step.UserMessage,
                         cancellationToken);
 
                     botResponse = result.Response;
-                    stepOk      = true;
+                    stepOk      = result.Success;
+                    if (!result.Success)
+                        stepError = result.ErrorMessage;
                 }
                 catch (Exception ex)
                 {
-                    stepError = ex.Message;
+                    stepError   = ex.Message;
                     botResponse = $"[ERROR] {ex.Message}";
                 }
                 finally
@@ -101,21 +99,22 @@ public class ScenarioRunner
                     || botResponse.Contains(step.ExpectedBotResponseContains, StringComparison.OrdinalIgnoreCase);
 
                 stepResults.Add(new StepResult(
-                    StepIndex:            idx,
-                    UserMessage:          step.UserMessage,
-                    BotResponse:          botResponse,
-                    BotResponseMatches:   responseMatches,
-                    StepSucceeded:        stepOk,
-                    ErrorMessage:         stepError,
-                    ElapsedMs:            sw.ElapsedMilliseconds));
+                    StepIndex:          idx,
+                    UserMessage:        step.UserMessage,
+                    BotResponse:        botResponse,
+                    BotResponseMatches: responseMatches,
+                    StepSucceeded:      stepOk,
+                    ErrorMessage:       stepError,
+                    ElapsedMs:          sw.ElapsedMilliseconds));
             }
 
-            // ── Evaluate business rules ────────────────────────────────
+            // ── Evaluar reglas de negocio ─────────────────────────────────────
             IReadOnlyList<TestRuleResult> ruleResults = scenario.RulesToValidate.Count == 0
                 ? _ruleEngine.EvaluateAll(toolLog)
                 : _ruleEngine.EvaluateNamed(toolLog, scenario.RulesToValidate);
 
-            passed = stepResults.All(s => s.StepSucceeded) && ruleResults.All(r => r.Passed);
+            bool passed = stepResults.All(s => s.StepSucceeded && s.BotResponseMatches)
+                       && ruleResults.All(r => r.Passed);
 
             total.Stop();
             return new ScenarioResult(
@@ -141,37 +140,5 @@ public class ScenarioRunner
                 TotalElapsedMs:      total.ElapsedMilliseconds,
                 ExecutedAt:          DateTimeOffset.UtcNow);
         }
-    }
-
-    /// <summary>
-    /// Maps a scenario step to the scripted bot conversational response.
-    /// Generates a plausible bot reply based on the extraction intentions so
-    /// the response contains the expected keywords (e.g. "disponib", "reserva").
-    /// </summary>
-    private static string GetConversationalResponse(
-        ConversationStep step, int idx, TestScenario scenario)
-    {
-        // Try to detect what the step is doing from the JSON
-        var json = step.ExtractionJson;
-        bool confirming    = json.Contains("\"user_confirmed_booking\": true");
-        bool checking      = json.Contains("\"user_requested_availability\": true");
-        bool hasService    = json.Contains("\"Service\"") || json.Contains("\"Plan ");
-        bool hasDate       = json.Contains("\"DesiredDate\"");
-
-        if (confirming && !string.IsNullOrEmpty(step.ExpectedBotResponseContains)
-                       && step.ExpectedBotResponseContains.Contains("reserva"))
-            return "¡Perfecto! Tu reserva ha sido confirmada exitosamente. Te esperamos en Mimos Baby Spa.";
-
-        if (confirming)
-            return "Entendido. Voy a confirmar tu reserva ahora.";
-
-        if (checking && hasService && hasDate)
-            return "Déjame verificar la disponibilidad para esa fecha. " +
-                   "Tenemos horarios disponibles: 10:00, 11:00 y 14:00. ¿Cuál prefiere?";
-
-        if (checking)
-            return "Verificando disponibilidad. Un momento por favor.";
-
-        return "Claro, cuéntame más detalles para poder ayudarte mejor.";
     }
 }

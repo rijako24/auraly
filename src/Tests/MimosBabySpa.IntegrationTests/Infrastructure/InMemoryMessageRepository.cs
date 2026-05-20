@@ -18,4 +18,8 @@ public class InMemoryMessageRepository : IMessageRepository
 
     public Task<Message?> GetByIdAsync(Guid messageId) =>
         Task.FromResult(_store.FirstOrDefault(m => m.MessageId == messageId));
+
+    public Task<(IReadOnlyList<Message> Items, int TotalCount)> GetPagedByConversationIdAsync(
+        Guid conversationId, int page, int pageSize, CancellationToken ct = default) =>
+        throw new NotImplementedException();
 }

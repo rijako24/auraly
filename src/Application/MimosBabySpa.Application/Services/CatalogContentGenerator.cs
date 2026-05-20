@@ -1,6 +1,5 @@
 using Microsoft.Extensions.Logging;
 using MimosBabySpa.Application.Configuration;
-using MimosBabySpa.Application.Prompts.Templates;
 using MimosBabySpa.Domain.Repositories;
 
 namespace MimosBabySpa.Application.Services;

@@ -27,6 +27,16 @@ public class InMemoryUnitOfWork : IUnitOfWork
     public ILeadRepository Leads { get; }
     public IServiceAddOnRuleRepository ServiceAddOnRules { get; }
     public IReservationAddOnRepository ReservationAddOns { get; }
+    public IPaymentTransactionRepository PaymentTransactions => throw new NotImplementedException();
+    public IAppUserRepository AppUsers => throw new NotImplementedException();
+    public IAppRoleRepository AppRoles => throw new NotImplementedException();
+    public IPermissionRepository Permissions => throw new NotImplementedException();
+    public IUserRoleRepository UserRoles => throw new NotImplementedException();
+    public IRolePermissionRepository RolePermissions => throw new NotImplementedException();
+    public IRefreshTokenRepository RefreshTokens => throw new NotImplementedException();
+    public IUserExternalLoginRepository UserExternalLogins => throw new NotImplementedException();
+    public IAuditLogRepository AuditLogs => throw new NotImplementedException();
+    public ITenantRepository Tenants => throw new NotImplementedException();
 
     private readonly Guid _businessId;
 

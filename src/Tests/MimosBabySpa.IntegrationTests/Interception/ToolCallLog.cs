@@ -1,9 +1,9 @@
-using MimosBabySpa.Application.Tools;
+using System.Text.Json;
 
 namespace MimosBabySpa.IntegrationTests.Interception;
 
 /// <summary>
-/// Thread-safe log of all tool calls made during a test scenario.
+/// Registro thread-safe de todas las invocaciones de tools durante un escenario de test.
 /// </summary>
 public class ToolCallLog
 {
@@ -20,26 +20,52 @@ public class ToolCallLog
         get { lock (_lock) return _records.ToList(); }
     }
 
-    public bool WasCalled(ToolType toolType) =>
-        All.Any(r => r.ToolType == toolType);
+    public bool WasCalled(string toolName) =>
+        All.Any(r => string.Equals(r.ToolName, toolName, StringComparison.OrdinalIgnoreCase));
 
-    public int CallCount(ToolType toolType) =>
-        All.Count(r => r.ToolType == toolType);
+    public int CallCount(string toolName) =>
+        All.Count(r => string.Equals(r.ToolName, toolName, StringComparison.OrdinalIgnoreCase));
 
-    public ToolCallRecord? LastCall(ToolType toolType) =>
-        All.LastOrDefault(r => r.ToolType == toolType);
+    public ToolCallRecord? LastCall(string toolName) =>
+        All.LastOrDefault(r => string.Equals(r.ToolName, toolName, StringComparison.OrdinalIgnoreCase));
 
-    public IReadOnlyList<ToolCallRecord> AllCalls(ToolType toolType) =>
-        All.Where(r => r.ToolType == toolType).ToList();
+    public IReadOnlyList<ToolCallRecord> AllCalls(string toolName) =>
+        All.Where(r => string.Equals(r.ToolName, toolName, StringComparison.OrdinalIgnoreCase)).ToList();
 
-    /// <summary>Returns true if CheckAvailability was called before CreateReservation in sequence.</summary>
-    public bool CheckAvailabilityCalledBefore(ToolType laterTool)
+    /// <summary>
+    /// Retorna true si firstTool fue llamada antes que secondTool.
+    /// </summary>
+    public bool CalledBefore(string firstTool, string secondTool)
     {
-        var all        = All.ToList();
-        var checkIndex = all.FindIndex(r => r.ToolType == ToolType.CheckAvailability);
-        var laterIndex = all.FindIndex(r => r.ToolType == laterTool);
-        if (checkIndex < 0 || laterIndex < 0) return false;
-        return checkIndex < laterIndex;
+        var all = All.ToList();
+        var firstIdx = all.FindIndex(r => string.Equals(r.ToolName, firstTool, StringComparison.OrdinalIgnoreCase));
+        var secondIdx = all.FindIndex(r => string.Equals(r.ToolName, secondTool, StringComparison.OrdinalIgnoreCase));
+        if (firstIdx < 0 || secondIdx < 0) return false;
+        return firstIdx < secondIdx;
+    }
+
+    /// <summary>
+    /// Intenta parsear el resultado JSON de la última llamada exitosa a una tool.
+    /// </summary>
+    public bool TryGetLastResult(string toolName, out JsonElement element)
+    {
+        var call = LastCall(toolName);
+        if (call == null || call.ResultIsError)
+        {
+            element = default;
+            return false;
+        }
+        try
+        {
+            using var doc = JsonDocument.Parse(call.ResultJson);
+            element = doc.RootElement.Clone();
+            return true;
+        }
+        catch
+        {
+            element = default;
+            return false;
+        }
     }
 
     public void Clear()

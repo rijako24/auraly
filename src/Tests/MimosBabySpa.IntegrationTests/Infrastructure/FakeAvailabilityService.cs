@@ -1,3 +1,4 @@
+using MimosBabySpa.Application.Configuration;
 using MimosBabySpa.Application.Services;
 
 namespace MimosBabySpa.IntegrationTests.Infrastructure;
@@ -34,6 +35,7 @@ public class FakeAvailabilityService : IAvailabilityService
         string service,
         DateTime date,
         TimeSpan? time,
+        AvailabilityParams? policy = null,
         CancellationToken cancellationToken = default)
     {
         _callLog.Add(date);

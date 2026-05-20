@@ -1,10 +1,13 @@
-using MimosBabySpa.Domain.Entities;
-
 namespace MimosBabySpa.Application.Services;
 
+/// <summary>
+/// Servicio de transcripción de audio. La generación de respuestas chat
+/// fue migrada a AgentConversationService + IChatClient.
+/// </summary>
 public interface IAIService
 {
-    Task<string> GenerateResponseAsync(Guid businessId, string userMessage, Conversation? conversation, string intent, Lead? lead);
+    /// <summary>
+    /// Transcribe un stream de audio (voz de WhatsApp) a texto usando Whisper.
+    /// </summary>
     Task<string> TranscribeAudioAsync(Stream audioStream, string mimeType);
-    Task<string> ProcessCustomPromptAsync(string systemPrompt, string userPrompt, bool jsonResponse = false, float temperature = 0.3f, int maxTokens = 400);
 }

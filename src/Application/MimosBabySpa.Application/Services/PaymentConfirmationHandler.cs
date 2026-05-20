@@ -1,8 +1,7 @@
 using Microsoft.Extensions.Logging;
 using MimosBabySpa.Application.Configuration;
+using MimosBabySpa.Application.DTOs;
 using MimosBabySpa.Application.StateManagement;
-using MimosBabySpa.Application.Tools;
-using MimosBabySpa.Domain.Entities;
 using MimosBabySpa.Domain.Enums;
 using MimosBabySpa.Domain.Models;
 using MimosBabySpa.Domain.Repositories;
@@ -19,7 +18,7 @@ public class PaymentConfirmationHandler : IPaymentConfirmationHandler
     private readonly IPaymentTransactionRepository _paymentTransactionRepository;
     private readonly IConversationStateManager _stateManager;
     private readonly IConversationStateUpdater _stateUpdater;
-    private readonly GenericToolDispatcher _toolDispatcher;
+    private readonly IReservationService _reservationService;
     private readonly CachedBusinessContextProvider _contextProvider;
     private readonly PaymentConfirmationNotifier _confirmationNotifier;
     private readonly IAvailabilityService _availabilityService;
@@ -29,7 +28,7 @@ public class PaymentConfirmationHandler : IPaymentConfirmationHandler
         IPaymentTransactionRepository paymentTransactionRepository,
         IConversationStateManager stateManager,
         IConversationStateUpdater stateUpdater,
-        GenericToolDispatcher toolDispatcher,
+        IReservationService reservationService,
         CachedBusinessContextProvider contextProvider,
         PaymentConfirmationNotifier confirmationNotifier,
         IAvailabilityService availabilityService,
@@ -38,7 +37,7 @@ public class PaymentConfirmationHandler : IPaymentConfirmationHandler
         _paymentTransactionRepository = paymentTransactionRepository;
         _stateManager = stateManager;
         _stateUpdater = stateUpdater;
-        _toolDispatcher = toolDispatcher;
+        _reservationService = reservationService;
         _contextProvider = contextProvider;
         _confirmationNotifier = confirmationNotifier;
         _availabilityService = availabilityService;
@@ -127,25 +126,28 @@ public class PaymentConfirmationHandler : IPaymentConfirmationHandler
             return new PaymentConfirmationResult(true, null);
         }
 
-        var context = new ToolExecutionContext
+        try
         {
-            ConversationId = conversationId,
-            BusinessId = state.BusinessId,
-            State = state,
-            RequiredFields = businessContext.RequiredFields,
-            UserMessage = "[Webhook pago confirmado]"
-        };
+            var addOnsCsv = state.GetAttribute("SelectedAddOns");
+            var attributes = string.IsNullOrWhiteSpace(addOnsCsv)
+                ? new Dictionary<string, string>()
+                : new Dictionary<string, string> { ["SelectedAddOns"] = addOnsCsv };
 
-        var result = await _toolDispatcher.ExecuteAsync(
-            ToolType.CreateReservation,
-            context,
-            ct);
+            var reservation = await _reservationService.CreateReservationAsync(
+                new CreateReservationRequest(
+                    state.BusinessId, conversationId,
+                    state.Service!, state.DesiredDate!.Value, state.DesiredTime!.Value,
+                    state.CustomerName, state.Email, state.Phone, attributes),
+                ct);
 
-        if (!result.Success)
+            state.ReservationCreated = true;
+            state.ReservationId = reservation.ReservationId;
+        }
+        catch (Exception ex)
         {
-            _logger.LogWarning(
-                "Webhook: CreateReservation falló tras disponibilidad OK (race condition). Ref={Ref} Error={Error}",
-                paymentReferenceId, result.Message);
+            _logger.LogWarning(ex,
+                "Webhook: CreateReservation falló tras disponibilidad OK (race condition). Ref={Ref}",
+                paymentReferenceId);
 
             var fallbackAvailability = await _availabilityService.CheckAvailabilityAsync(
                 state.BusinessId,

@@ -1,5 +1,4 @@
 using MimosBabySpa.Application.Configuration;
-using MimosBabySpa.Application.Prompts.Templates;
 using MimosBabySpa.Domain.Models;
 using Microsoft.Extensions.Logging;
 
