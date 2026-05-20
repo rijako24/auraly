@@ -57,7 +57,7 @@ public class FlowPromptBuilder
             sb.AppendLine(_ksRenderer.RenderMany(nodeSpecificSources));
         }
 
-        AppendCurrentState(sb, ctx);
+        AppendCurrentState(sb, ctx, currentNode);
         AppendActionResults(sb, ctx);
         AppendSections(sb, sections, "after_instructions", ctx);
         AppendNodeInstructions(sb, currentNode, ctx);
@@ -83,7 +83,7 @@ public class FlowPromptBuilder
         }
     }
 
-    private static void AppendCurrentState(StringBuilder sb, FlowTurnContext ctx)
+    private static void AppendCurrentState(StringBuilder sb, FlowTurnContext ctx, FlowNode currentNode)
     {
         var state = ctx.State;
         var flow = ctx.FlowDefinition;
@@ -93,13 +93,13 @@ public class FlowPromptBuilder
         var isFirstMessage = state.ConversationHistory.Count == 0;
         var isReturningCustomer = isFirstMessage && state.PreviousSession != null;
 
-        sb.AppendLine("# CONTEXTO DE SESIÓN");
-        sb.AppendLine($"- Turno: {ctx.TurnNumber}");
-        sb.AppendLine($"- Primera interacción de la sesión: {(isFirstMessage ? "Sí" : "No")}");
-        sb.AppendLine($"- Cliente recurrente (sesión previa): {(isReturningCustomer ? "Sí" : "No")}");
+        sb.AppendLine("# SESSION CONTEXT");
+        sb.AppendLine($"- Turn: {ctx.TurnNumber}");
+        sb.AppendLine($"- First interaction in session: {(isFirstMessage ? "Yes" : "No")}");
+        sb.AppendLine($"- Returning customer (previous session): {(isReturningCustomer ? "Yes" : "No")}");
 
         if (isReturningCustomer && state.PreviousSession != null)
-            sb.AppendLine($"- Sesión anterior finalizada: {state.PreviousSession.SessionEndedAt:yyyy-MM-dd HH:mm} UTC");
+            sb.AppendLine($"- Previous session ended: {state.PreviousSession.SessionEndedAt:yyyy-MM-dd HH:mm} UTC");
 
         sb.AppendLine();
 
@@ -111,25 +111,42 @@ public class FlowPromptBuilder
 
         if (collectedVars.Count > 0)
         {
-            sb.AppendLine("# DATOS RECOPILADOS");
+            sb.AppendLine("# COLLECTED DATA");
             foreach (var v in collectedVars)
                 sb.AppendLine($"- {v.Label}: {state.GetVariable(v.Key)}");
             sb.AppendLine(
-                "(Estos datos ya fueron confirmados. Úsalos como contexto interno pero no los repitas como opciones nuevas ni los vuelvas a ofrecer.)");
+                "(This data is already confirmed. Use it as internal context but do not re-offer or re-list it as new options.)");
             sb.AppendLine();
         }
 
-        var missingRequired = flow.Variables
-            .Where(v => v.Required && !v.IsSystemManaged && state.GetVariable(v.Key) == null)
-            .OrderBy(v => v.DisplayOrder)
-            .ToList();
-
-        if (missingRequired.Count > 0)
+        // ── Pending fields — scoped to the current node only ──────────────────────
+        // Only CollectFields nodes actively collect fields from the user.
+        // Exposing fields from future nodes causes the LLM to ask about them prematurely.
+        HashSet<string>? nodeFieldKeys = null;
+        if (currentNode.Type == FlowNodeType.CollectFields &&
+            currentNode.Config.TryGetProperty("fields", out var fieldsProp))
         {
-            sb.AppendLine("# DATOS PENDIENTES");
-            foreach (var v in missingRequired)
-                sb.AppendLine($"- {v.Label}");
-            sb.AppendLine();
+            nodeFieldKeys = fieldsProp.EnumerateArray()
+                .Select(e => e.GetString() ?? "")
+                .Where(k => k.Length > 0)
+                .ToHashSet();
+        }
+
+        if (nodeFieldKeys != null)
+        {
+            var missingRequired = flow.Variables
+                .Where(v => v.Required && !v.IsSystemManaged && state.GetVariable(v.Key) == null
+                            && nodeFieldKeys.Contains(v.Key))
+                .OrderBy(v => v.DisplayOrder)
+                .ToList();
+
+            if (missingRequired.Count > 0)
+            {
+                sb.AppendLine("# PENDING DATA");
+                foreach (var v in missingRequired)
+                    sb.AppendLine($"- {v.Label}");
+                sb.AppendLine();
+            }
         }
     }
 
