@@ -32,6 +32,13 @@ using MimosBabySpa.Application.GenericFlow.Actions;
 using MimosBabySpa.Application.GenericFlow.Handlers;
 using MimosBabySpa.Application.GenericFlow.Services;
 
+// Agentic Engine (Function Calling)
+using MimosBabySpa.Application.Agents;
+using MimosBabySpa.Application.Agents.Tools;
+using MimosBabySpa.Application.Agents.Tools.Impl;
+using MimosBabySpa.Application.LLM;
+using MimosBabySpa.Infrastructure.LLM;
+
 var host = new HostBuilder()
     .ConfigureFunctionsWorkerDefaults()
     .ConfigureServices((context, services) =>
@@ -219,6 +226,36 @@ var host = new HostBuilder()
 
         // Main orchestrator
         services.AddScoped<IFlowOrchestrationService, FlowOrchestrationService>();
+
+        // ── AGENTIC ENGINE (Function Calling) ─────────────────────────────────────
+        // IChatClient con soporte nativo de tools (reemplazará a ILLMAdapter en Fase 3)
+        services.AddScoped<IChatClient>(sp =>
+        {
+            var textClient = sp.GetRequiredKeyedService<OpenAIClient>("Text");
+            var textOptions = sp.GetRequiredService<IOptions<OpenAITextModelOptions>>().Value;
+            var logger = sp.GetRequiredService<ILogger<AzureOpenAIChatClient>>();
+            return new AzureOpenAIChatClient(textClient, textOptions.DeploymentName, logger);
+        });
+
+        // Config provider por agente (usa IAgentRepository + IMemoryCache)
+        services.AddScoped<IAgentConfigProvider, AgentConfigProvider>();
+
+        // Tools (registered as IAgentTool collection for AgentToolRegistry)
+        services.AddScoped<IAgentTool, CheckAvailabilityTool>();
+        services.AddScoped<IAgentTool, ResolvePricingTool>();
+        services.AddScoped<IAgentTool, CreateReservationTool>();
+        services.AddScoped<IAgentTool, RescheduleReservationTool>();
+        services.AddScoped<IAgentTool, SuspendReservationTool>();
+        services.AddScoped<IAgentTool, GeneratePaymentLinkTool>();
+        services.AddScoped<IAgentTool, VerifyPaymentTool>();
+        services.AddScoped<IAgentTool, EscalateToHumanTool>();
+        services.AddScoped<IAgentTool, GetServiceCatalogTool>();
+
+        // Tool registry (resolución por nombre)
+        services.AddScoped<AgentToolRegistry>();
+
+        // Orquestador agentico (entry point único)
+        services.AddScoped<IAgentConversationService, AgentConversationService>();
 
         // Infrastructure Services - WhatsApp (credenciales desde BusinessWhatsAppNumbers)
         services.AddHttpClient();
