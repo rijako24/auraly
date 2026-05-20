@@ -13,7 +13,13 @@ using MimosBabySpa.Console.Services;
 using Azure.AI.OpenAI;
 using Microsoft.Extensions.Options;
 
-// Generic Flow Engine
+// Agentic Engine
+using MimosBabySpa.Application.Agents;
+using MimosBabySpa.Application.Agents.Tools;
+using MimosBabySpa.Application.Agents.Tools.Impl;
+using MimosBabySpa.Infrastructure.LLM;
+
+// Generic Flow Engine (legacy — kept until full migration)
 using MimosBabySpa.Application.GenericFlow;
 using MimosBabySpa.Application.GenericFlow.Actions;
 using MimosBabySpa.Application.GenericFlow.Handlers;
@@ -186,12 +192,40 @@ services.AddScoped<JsonSchemaPromptBuilder>();
 services.AddScoped<IExtractionValidator, ExtractionValidator>();
 services.AddScoped<ISmartExtractionService, SmartExtractionService>();
 
+// ── Business Rules Engine ──────────────────────────────────────────────────────
+services.AddScoped<MimosBabySpa.Application.BusinessRules.IBusinessRuleEngine,
+    MimosBabySpa.Application.BusinessRules.BusinessRuleEngine>();
+
+// ── Agentic Engine (Function Calling) ─────────────────────────────────────────
+services.AddScoped<MimosBabySpa.Application.LLM.IChatClient>(sp =>
+{
+    var textClient = sp.GetRequiredKeyedService<OpenAIClient>("Text");
+    var textOptions = sp.GetRequiredService<IOptions<OpenAITextModelOptions>>().Value;
+    var logger = sp.GetRequiredService<ILogger<AzureOpenAIChatClient>>();
+    return new AzureOpenAIChatClient(textClient, textOptions.DeploymentName, logger);
+});
+
+services.AddScoped<IAgentConfigProvider, AgentConfigProvider>();
+
+services.AddScoped<IAgentTool, CheckAvailabilityTool>();
+services.AddScoped<IAgentTool, ResolvePricingTool>();
+services.AddScoped<IAgentTool, CreateReservationTool>();
+services.AddScoped<IAgentTool, RescheduleReservationTool>();
+services.AddScoped<IAgentTool, SuspendReservationTool>();
+services.AddScoped<IAgentTool, GeneratePaymentLinkTool>();
+services.AddScoped<IAgentTool, VerifyPaymentTool>();
+services.AddScoped<IAgentTool, EscalateToHumanTool>();
+services.AddScoped<IAgentTool, GetServiceCatalogTool>();
+
+services.AddScoped<AgentToolRegistry>();
+services.AddScoped<IAgentConversationService, AgentConversationService>();
+
 // ── Build ──────────────────────────────────────────────────────────────────────
 var serviceProvider = services.BuildServiceProvider();
 
 // ── Console UI ─────────────────────────────────────────────────────────────────
 Console.WriteLine("════════════════════════════════════════════════════════");
-Console.WriteLine("  Mimos Baby Spa — Simulador Generic Flow Engine");
+Console.WriteLine("  Mimos Baby Spa — Simulador Agentic Engine (FC)");
 Console.WriteLine("════════════════════════════════════════════════════════");
 Console.WriteLine();
 Console.WriteLine("  Agente  : Mimo Bot (+573194823017)");
@@ -240,7 +274,7 @@ while (true)
         await using var scope = serviceProvider.CreateAsyncScope();
         var agentRepo = scope.ServiceProvider.GetRequiredService<IAgentRepository>();
         var conversationService = scope.ServiceProvider.GetRequiredService<IConversationService>();
-        var orchestrator = scope.ServiceProvider.GetRequiredService<IFlowOrchestrationService>();
+        var agentService = scope.ServiceProvider.GetRequiredService<IAgentConversationService>();
 
         var agentEntity = await agentRepo.GetByIdAsync(agentId);
         if (agentEntity == null)
@@ -255,24 +289,25 @@ while (true)
         var conversation = await conversationService.GetOrCreateConversationAsync(
             agentEntity.BusinessId, userPhone, customerName: null);
 
-        var result = await orchestrator.ProcessTurnAsync(
-            conversation.ConversationId,
+        var result = await agentService.ProcessMessageAsync(
             agentId,
-            userPhone,
+            conversation.ConversationId,
             input);
 
         Console.ForegroundColor = ConsoleColor.Green;
         Console.Write("Mimo: ");
         Console.ResetColor();
 
-        if (!string.IsNullOrWhiteSpace(result.BotResponse))
-            Console.WriteLine(result.BotResponse);
+        if (!string.IsNullOrWhiteSpace(result.Response))
+            Console.WriteLine(result.Response);
+        else if (!result.Success)
+            Console.WriteLine($"[error: {result.ErrorMessage}]");
         else
             Console.WriteLine("[sin respuesta]");
 
         Console.WriteLine();
 
-        if (result.IsEscalated)
+        if (result.EscalatedToHuman)
         {
             Console.ForegroundColor = ConsoleColor.Yellow;
             Console.WriteLine("  ⚠  Conversación transferida a agente humano.");

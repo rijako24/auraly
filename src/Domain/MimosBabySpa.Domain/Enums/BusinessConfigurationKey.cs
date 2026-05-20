@@ -9,5 +9,6 @@ namespace MimosBabySpa.Domain.Enums;
 /// </summary>
 public enum BusinessConfigurationKey
 {
-    Integrations = 6  // JSON: integraciones externas (Google Calendar, webhooks, etc.)
+    Integrations = 6,  // JSON: integraciones externas (Google Calendar, webhooks, etc.)
+    UseAgenticOrchestrator = 7  // "true" para enrutar al motor agentico (Function Calling)
 }
