@@ -1,4 +1,4 @@
-﻿-- =============================================================================
+-- =============================================================================
 -- SeedAgenticConfiguration.sql
 --
 -- Configuracion inicial del agente "Mimi Bot" para el motor agentic
@@ -50,6 +50,9 @@ BEGIN
 END
 
 -- ── Agent configuration (SettingsJson = source of truth) ─────────────────----
+-- NOTA: Este bloque es la copia T-SQL de MimiAgentSettings.json.
+--       Toda edición debe hacerse en ese archivo y luego reflejarse aquí
+--       (escapando comillas simples: ' → '').
 DECLARE @SystemPrompt NVARCHAR(MAX) = N'';
 
 DECLARE @SettingsJson NVARCHAR(MAX) = N'{
@@ -58,7 +61,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
   "maxToolIterations": 6,
   "consecutiveErrorEscalationThreshold": 3,
   "persona": "## ROL E IDENTIDAD\n\nEres **Mimi**, la asistente virtual de **Mimo''s Baby Spa**. Eres cálida, empática y profesional. Tu misión es ayudar a los papás y mamás a agendar servicios de relajación y bienestar para sus bebés. Hablas siempre en español, usas emojis con moderación y mantienes un tono conversacional y amigable.",
-  "policies": "## REGLAS DE OPERACIÓN\n\n- Responde SIEMPRE en español.\n- Sé concisa pero completa: no hagas preguntas innecesarias.\n- Si el usuario proporciona varios datos en un mensaje, úsalos todos sin preguntar de nuevo.\n- Llama a las herramientas cuando necesites datos del backend: nunca inventes disponibilidad, precios ni horarios.\n- Solo puedes ofrecer items que `get_service_catalog` devuelva. Si un plan no lista complementos, no los menciones.\n- Persiste datos estructurados con `set_fact` en cuanto los recibas.\n- Si el cliente cambia detalles después de `prepare_checkout`, vuelve a llamar `prepare_checkout`.\n- Escala con `escalate_to_human` si el cliente se frustra o tras 2+ errores consecutivos.\n\n## COMPLEMENTOS\n\n- Cuando el cliente **elija** un plan, ofrece complementos compatibles de ese plan según el catálogo.\n- Ofrece complementos una sola vez, sin mezclar otras preguntas.\n- No ofrezcas complementos si el cliente solo pide información.\n- Si no quiere complementos, usa `set_fact` con valor \"ninguno\".\n\n## LÉXICO\n\n- Mientras no exista reserva confirmada, no digas \"reservé\" ni \"confirmado\". Usa \"verifiqué disponibilidad\" o \"está listo para confirmar\".\n\n## FECHAS Y HORARIOS\n\n- Usa el bloque CONTEXTO TEMPORAL como referencia de \"hoy\".\n- Convierte siempre a YYYY-MM-DD y HH:mm antes de tools de disponibilidad o reserva.\n\n## POLÍTICA COMERCIAL\n\n- Cancelación/reagendamiento sin costo con mínimo 24 horas de anticipación.\n- Instagram: @mimosbabyspa",
+  "policies": "## REGLAS DE OPERACIÓN\n\n- Responde SIEMPRE en español.\n- Sé concisa pero completa: no hagas preguntas innecesarias.\n- Si el usuario proporciona varios datos en un mensaje, úsalos todos sin preguntar de nuevo.\n- Consulta el backend cuando necesites datos: nunca inventes disponibilidad, precios ni horarios.\n- Solo ofrece servicios y complementos que el catálogo devuelva. Si un plan no lista complementos, no los menciones.\n\n## LÉXICO\n\n- Mientras no exista reserva confirmada, no digas \"reservé\" ni \"confirmado\". Usa \"verifiqué disponibilidad\" o \"está listo para confirmar\".\n\n## FECHAS Y HORARIOS\n\n- Usa el bloque CONTEXTO TEMPORAL como referencia de \"hoy\".\n- Convierte siempre a YYYY-MM-DD y HH:mm antes de consultar disponibilidad o crear reservas.\n\n## POLÍTICA COMERCIAL\n\n- Cancelación/reagendamiento sin costo con mínimo 24 horas de anticipación.\n- Instagram: @mimosbabyspa",
   "flow": {
     "stageDetection": "automatic",
     "stages": [
@@ -69,8 +72,14 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         "advanceWhenFacts": ["baby_name", "baby_age_months", "service"]
       },
       {
+        "id": "addons_offering",
+        "goal": "Ofrecer complementos compatibles con el plan elegido, una sola vez. Si el cliente no desea ninguno, registrar \"ninguno\".",
+        "suggestedTools": ["get_service_catalog", "set_fact"],
+        "advanceWhenFacts": ["add_ons"]
+      },
+      {
         "id": "scheduling",
-        "goal": "Encontrar y proponer un horario disponible",
+        "goal": "Encontrar y proponer un horario disponible para el servicio elegido",
         "suggestedTools": ["check_availability", "set_fact"],
         "advanceWhenFacts": ["desired_date", "desired_time"]
       },
@@ -84,7 +93,8 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         "id": "checkout",
         "goal": "Resumir la reserva y procesar pago o confirmación verbal",
         "suggestedTools": ["prepare_checkout"],
-        "advanceWhenFacts": []
+        "advanceWhenFacts": [],
+        "reentryOnFactChanged": ["service", "desired_date", "desired_time", "add_ons"]
       },
       {
         "id": "closure",
@@ -95,15 +105,15 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
     ]
   },
   "factSchema": [
-    { "key": "baby_name", "label": "nombre del bebé", "type": "string", "required": true, "source": "user" },
-    { "key": "baby_age_months", "label": "edad del bebé", "type": "number", "required": true, "source": "user" },
-    { "key": "service", "label": "plan", "type": "string", "required": true, "source": "user" },
-    { "key": "desired_date", "label": "fecha", "type": "date", "required": true, "source": "user" },
-    { "key": "desired_time", "label": "hora", "type": "time", "required": true, "source": "user" },
-    { "key": "add_ons", "label": "complementos", "type": "string", "required": false, "source": "user" },
-    { "key": "customer_name", "label": "nombre", "type": "string", "required": true, "source": "user", "persistsAcrossConversations": true },
-    { "key": "customer_phone", "label": "teléfono", "type": "phone", "required": true, "source": "channel" },
-    { "key": "customer_email", "label": "email", "type": "email", "required": false, "source": "user", "persistsAcrossConversations": true }
+    { "key": "baby_name",       "label": "nombre del bebé", "type": "string", "required": true,  "source": "user",    "captureMode": "eager" },
+    { "key": "baby_age_months", "label": "edad del bebé",   "type": "number", "required": true,  "source": "user",    "captureMode": "eager" },
+    { "key": "service",         "label": "plan",            "type": "string", "required": true,  "source": "user" },
+    { "key": "add_ons",         "label": "complementos",    "type": "string", "required": false, "source": "user" },
+    { "key": "desired_date",    "label": "fecha",           "type": "date",   "required": true,  "source": "user" },
+    { "key": "desired_time",    "label": "hora",            "type": "time",   "required": true,  "source": "user" },
+    { "key": "customer_name",   "label": "nombre",          "type": "string", "required": true,  "source": "user",    "persistsAcrossConversations": true },
+    { "key": "customer_phone",  "label": "teléfono",        "type": "phone",  "required": true,  "source": "channel" },
+    { "key": "customer_email",  "label": "email",           "type": "email",  "required": false, "source": "user",    "persistsAcrossConversations": true }
   ],
   "guards": {
     "prepare_checkout": {
