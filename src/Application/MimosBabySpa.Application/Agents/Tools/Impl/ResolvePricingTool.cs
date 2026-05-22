@@ -24,9 +24,7 @@ public sealed class ResolvePricingTool : IAgentTool
     public string Name => "resolve_pricing";
 
     public string Description =>
-        "Calculates the total price for a service and optional add-ons from the catalog, " +
-        "including deposit amount when required by the business booking policy. " +
-        "Always call this before presenting prices or generating payment links.";
+        "Calculates service total, add-on totals, and deposit amount from catalog data and booking policy.";
 
     public string ParametersSchema => """
         {

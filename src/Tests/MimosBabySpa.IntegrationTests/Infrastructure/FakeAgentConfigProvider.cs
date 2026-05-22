@@ -21,7 +21,7 @@ public class FakeAgentConfigProvider : IAgentConfigProvider
             AgentId = agentId,
             BusinessId = _businessId,
             Name = "Mimo",
-            SystemPrompt = """
+            Persona = """
                 Eres Mimo, asistente de MimosBabySpa.
 
                 ## SALUDO Y PRESENTACION

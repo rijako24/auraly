@@ -1,8 +1,10 @@
+using MimosBabySpa.Application.Agents.Configuration;
+
 namespace MimosBabySpa.Application.Agents;
 
 /// <summary>
 /// Configuración de un agente cargada desde BD por turno (con caché).
-/// Lee: Agents.SystemPromptMarkdown + Agents.SettingsJson.
+/// Fuente: Agents.SettingsJson (persona, flow, guards, etc.) con fallback legacy a SystemPromptMarkdown.
 /// </summary>
 public sealed class AgentConfig
 {
@@ -10,8 +12,36 @@ public sealed class AgentConfig
     public Guid BusinessId { get; init; }
     public string Name { get; init; } = string.Empty;
 
-    /// <summary>System prompt del agente (Agents.SystemPromptMarkdown).</summary>
+    /// <summary>Identidad y tono del agente (SettingsJson → persona).</summary>
+    public string Persona { get; init; } = string.Empty;
+
+    /// <summary>Políticas operativas en markdown (SettingsJson → policies).</summary>
+    public string Policies { get; init; } = string.Empty;
+
+    /// <summary>Flujo conversacional estructurado por etapas.</summary>
+    public AgentFlowDefinition Flow { get; init; } = new();
+
+    /// <summary>Schema de facts rastreados por este agente.</summary>
+    public IReadOnlyList<FactSchemaEntry> FactSchema { get; init; } = [];
+
+    /// <summary>Precondiciones declarativas por tool (SettingsJson → guards).</summary>
+    public IReadOnlyDictionary<string, GuardDefinition> Guards { get; init; }
+        = new Dictionary<string, GuardDefinition>(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Plantillas de mensaje override por templateId.</summary>
+    public IReadOnlyDictionary<string, string> Templates { get; init; }
+        = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Legacy: Agents.SystemPromptMarkdown. Usado solo si Persona está vacía.</summary>
     public string SystemPrompt { get; init; } = string.Empty;
+
+    /// <summary>Contenido base del prompt: Persona + Policies, o SystemPrompt legacy.</summary>
+    public string BasePrompt =>
+        !string.IsNullOrWhiteSpace(Persona)
+            ? string.IsNullOrWhiteSpace(Policies)
+                ? Persona.Trim()
+                : $"{Persona.Trim()}{Environment.NewLine}{Environment.NewLine}{Policies.Trim()}"
+            : SystemPrompt.Trim();
 
     /// <summary>
     /// Plantilla sugerida para el primer turno (SettingsJson → messages.firstTurnGreetingHint).

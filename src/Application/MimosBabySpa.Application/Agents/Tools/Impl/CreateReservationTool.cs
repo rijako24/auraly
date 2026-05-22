@@ -44,10 +44,8 @@ public sealed class CreateReservationTool : IAgentTool
     public string Name => "create_reservation";
 
     public string Description =>
-        "Creates a confirmed reservation for verbal-confirmation flows only (no advance payment). " +
-        "Call after prepare_checkout when flow=verbal_confirmation and the customer explicitly confirms. " +
-        "Do NOT call when deposit is required — the booking is confirmed automatically after Wompi validates payment. " +
-        "The confirmation message is sent automatically — do not rewrite it.";
+        "Creates a confirmed reservation from the current booking facts and customer confirmation flag. " +
+        "Returns reservation_id, status, and a rendered confirmation summary token.";
 
     public string ParametersSchema => """
         {

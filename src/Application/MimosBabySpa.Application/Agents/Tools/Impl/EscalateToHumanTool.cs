@@ -31,8 +31,7 @@ public sealed class EscalateToHumanTool : IAgentTool
 
 
     public string Description =>
-
-        "Transfers the conversation to a human agent when the customer requests it or after repeated failures.";
+        "Marks the conversation as owned by a human agent and notifies configured escalation contacts.";
 
 
 

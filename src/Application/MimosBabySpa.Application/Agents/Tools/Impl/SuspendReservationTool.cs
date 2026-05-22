@@ -16,7 +16,7 @@ public sealed class SuspendReservationTool : IAgentTool
     public string Name => "suspend_reservation";
 
     public string Description =>
-        "Suspends (puts on hold) an existing reservation when the customer cannot attend and wants to reschedule later.";
+        "Sets an existing reservation to suspended status, identified by reservation_id.";
 
     public string ParametersSchema => """
         {

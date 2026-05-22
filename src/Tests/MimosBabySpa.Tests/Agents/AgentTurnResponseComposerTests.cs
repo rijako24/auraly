@@ -1,5 +1,6 @@
 using FluentAssertions;
 using Microsoft.Extensions.Logging.Abstractions;
+using MimosBabySpa.Application.Agents;
 using MimosBabySpa.Application.Agents.Templates;
 using Xunit;
 
@@ -7,21 +8,25 @@ namespace MimosBabySpa.Tests.Agents;
 
 public class AgentTurnResponseComposerTests
 {
-    [Fact]
-    public void Compose_ReplacesTokenInLlmResponse()
+    private static readonly AgentConfig ConfigWithCheckoutTemplate = new()
     {
-        const string prompt = """
-            [template: checkout_no_deposit]
-            ```
-            TOTAL: ${{total}}
-            ```
-            """;
+        Templates = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["checkout_no_deposit"] = "TOTAL: ${{total}}",
+            ["checkout_with_deposit"] = "TOTAL: ${{total}}"
+        }
+    };
 
-        var composer = new AgentTurnResponseComposer(
-            new PromptTemplateExtractor(),
+    private static AgentTurnResponseComposer CreateComposer() =>
+        new(
+            new AgentTemplateResolver(),
             new PromptTemplateRenderer(),
             NullLogger<AgentTurnResponseComposer>.Instance);
 
+    [Fact]
+    public void Compose_ReplacesTokenInLlmResponse()
+    {
+        var composer = CreateComposer();
         const string token = "{{CHECKOUT:abc123}}";
         var fragments = new[]
         {
@@ -30,7 +35,7 @@ public class AgentTurnResponseComposerTests
                 new Dictionary<string, object?> { ["total"] = "100,000" }))
         };
 
-        var result = composer.Compose(prompt, $"Gracias! {token}", fragments);
+        var result = composer.Compose(ConfigWithCheckoutTemplate, [], $"Gracias! {token}", fragments);
 
         result.Should().Contain("TOTAL: $100,000");
         result.Should().NotContain(token);
@@ -39,18 +44,7 @@ public class AgentTurnResponseComposerTests
     [Fact]
     public void Compose_ExclusiveMode_DiscardsLlmProse()
     {
-        const string prompt = """
-            [template: checkout_with_deposit]
-            ```
-            TOTAL: ${{total}}
-            ```
-            """;
-
-        var composer = new AgentTurnResponseComposer(
-            new PromptTemplateExtractor(),
-            new PromptTemplateRenderer(),
-            NullLogger<AgentTurnResponseComposer>.Instance);
-
+        var composer = CreateComposer();
         const string token = "{{CHECKOUT:abc123}}";
         var fragments = new[]
         {
@@ -61,7 +55,8 @@ public class AgentTurnResponseComposerTests
         };
 
         var result = composer.Compose(
-            prompt,
+            ConfigWithCheckoutTemplate,
+            [],
             "Aquí tienes el resumen con anticipo del 50%. Por favor paga en el enlace.",
             fragments);
 
@@ -73,20 +68,19 @@ public class AgentTurnResponseComposerTests
     [Fact]
     public void Compose_RequiredFragment_PrependsWhenTokenMissing()
     {
-        const string prompt = """
-            [template: availability_slots]
-            ```
-            {{#each slots}}
-            - {{this}}
-            {{/each}}
-            ```
-            """;
+        var config = new AgentConfig
+        {
+            Templates = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["availability_slots"] = """
+                    {{#each slots}}
+                    - {{this}}
+                    {{/each}}
+                    """
+            }
+        };
 
-        var composer = new AgentTurnResponseComposer(
-            new PromptTemplateExtractor(),
-            new PromptTemplateRenderer(),
-            NullLogger<AgentTurnResponseComposer>.Instance);
-
+        var composer = CreateComposer();
         const string token = "{{SLOTS:xyz789}}";
         var fragments = new[]
         {
@@ -97,7 +91,7 @@ public class AgentTurnResponseComposerTests
                 FragmentPriority.Required))
         };
 
-        var result = composer.Compose(prompt, "¿Confirmas?", fragments);
+        var result = composer.Compose(config, [], "¿Confirmas?", fragments);
 
         result.Should().StartWith("- 09:00");
         result.Should().EndWith("¿Confirmas?");
@@ -106,18 +100,7 @@ public class AgentTurnResponseComposerTests
     [Fact]
     public void Compose_OptionalFragment_SkipsWhenTokenMissing()
     {
-        const string prompt = """
-            [template: checkout_no_deposit]
-            ```
-            TOTAL: ${{total}}
-            ```
-            """;
-
-        var composer = new AgentTurnResponseComposer(
-            new PromptTemplateExtractor(),
-            new PromptTemplateRenderer(),
-            NullLogger<AgentTurnResponseComposer>.Instance);
-
+        var composer = CreateComposer();
         const string token = "{{CHECKOUT:xyz789}}";
         var fragments = new[]
         {
@@ -128,7 +111,7 @@ public class AgentTurnResponseComposerTests
                 FragmentPriority.Optional))
         };
 
-        var result = composer.Compose(prompt, "¿Confirmas?", fragments);
+        var result = composer.Compose(ConfigWithCheckoutTemplate, [], "¿Confirmas?", fragments);
 
         result.Should().Be("¿Confirmas?");
         result.Should().NotContain("TOTAL");
@@ -137,18 +120,7 @@ public class AgentTurnResponseComposerTests
     [Fact]
     public void Compose_PrependsWhenTokenMissing()
     {
-        const string prompt = """
-            [template: checkout_no_deposit]
-            ```
-            TOTAL: ${{total}}
-            ```
-            """;
-
-        var composer = new AgentTurnResponseComposer(
-            new PromptTemplateExtractor(),
-            new PromptTemplateRenderer(),
-            NullLogger<AgentTurnResponseComposer>.Instance);
-
+        var composer = CreateComposer();
         const string token = "{{CHECKOUT:xyz789}}";
         var fragments = new[]
         {
@@ -159,7 +131,7 @@ public class AgentTurnResponseComposerTests
                 FragmentPriority.Required))
         };
 
-        var result = composer.Compose(prompt, "¿Confirmas?", fragments);
+        var result = composer.Compose(ConfigWithCheckoutTemplate, [], "¿Confirmas?", fragments);
 
         result.Should().StartWith("TOTAL: $50,000");
         result.Should().EndWith("¿Confirmas?");

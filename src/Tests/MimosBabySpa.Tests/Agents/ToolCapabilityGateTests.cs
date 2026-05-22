@@ -2,6 +2,7 @@ using System.Text.Json;
 using FluentAssertions;
 using Moq;
 using MimosBabySpa.Application.Agents;
+using MimosBabySpa.Application.Agents.Composition;
 using MimosBabySpa.Application.Agents.Gating;
 using MimosBabySpa.Application.Agents.Tools.Impl;
 using MimosBabySpa.Application.BusinessRules;
@@ -29,7 +30,8 @@ public class ToolCapabilityGateTests
 
     public ToolCapabilityGateTests()
     {
-        _gate = new ToolCapabilityGate(new ToolPreconditionProvider(), _verifications);
+        _gate = new ToolCapabilityGate(
+            new GuardEvaluator(_verifications, new ToolPreconditionProvider()));
     }
 
     [Fact]
@@ -102,6 +104,8 @@ public class ToolCapabilityGateTests
         BusinessId = Guid.NewGuid(),
         ConversationId = Guid.NewGuid(),
         BusinessToday = new DateOnly(2026, 5, 21),
+        Config = new AgentConfig(),
+        BookingPolicy = new BookingPolicyParams(),
         ConversationState = new ConversationStateModel(),
         Conversation = new Conversation(),
         Facts = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)

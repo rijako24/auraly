@@ -30,11 +30,8 @@ public sealed class SetFactTool : IAgentTool
     public string Name => "set_fact";
 
     public string Description =>
-        "Persists a key-value fact into conversation state for later turns and tools. " +
-        "Use for customer data (customer_name, customer_phone, customer_email), " +
-        "booking fields (service, desired_date, desired_time, add_ons), " +
-        "or tenant-specific facts (baby_age_months, party_size, etc.). " +
-        "Call as soon as the customer provides structured data — do not wait until checkout.";
+        "Persists a key-value pair into conversation state. " +
+        "Input: fact key and value. Output: stored key and normalized value.";
 
     public string ParametersSchema => """
         {

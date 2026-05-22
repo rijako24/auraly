@@ -46,11 +46,9 @@ public sealed class PrepareCheckoutTool : IAgentTool
     public string Name => "prepare_checkout";
 
     public string Description =>
-        "Prepares checkout in one step: validates booking data, calculates pricing, renders the summary " +
-        "template (with or without deposit based on business policy), and generates a payment link when required. " +
-        "Does NOT create a reservation — payment snapshot or verbal confirmation handles that later. " +
-        "Call when service, date, time, customer name and phone are collected. " +
-        "The rendered summary is sent automatically — do not repeat prices or summary lines in your text.";
+        "Validates booking facts, resolves pricing, renders the checkout summary template, " +
+        "and creates a payment link when the business policy requires a deposit. " +
+        "Does not create a reservation. Returns pricing, flow metadata, and a rendered summary token.";
 
     public string ParametersSchema => """
         {

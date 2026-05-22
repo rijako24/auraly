@@ -1,4 +1,5 @@
 using System.Text.Json;
+using MimosBabySpa.Application.Agents.Composition;
 using MimosBabySpa.Application.Agents.Tools;
 
 namespace MimosBabySpa.Application.Agents.Gating;
@@ -16,50 +17,37 @@ public interface IToolCapabilityGate
 
 public sealed class ToolCapabilityGate : IToolCapabilityGate
 {
-    private readonly IToolPreconditionProvider _preconditions;
-    private readonly IConversationVerificationService _verifications;
+    private readonly IGuardEvaluator _guardEvaluator;
 
-    public ToolCapabilityGate(
-        IToolPreconditionProvider preconditions,
-        IConversationVerificationService verifications)
+    public ToolCapabilityGate(IGuardEvaluator guardEvaluator)
     {
-        _preconditions = preconditions;
-        _verifications = verifications;
+        _guardEvaluator = guardEvaluator;
     }
 
-    public async Task<GateResult> EvaluateAsync(
+    public Task<GateResult> EvaluateAsync(
         IAgentTool tool,
         JsonElement arguments,
         AgentToolContext ctx,
         CancellationToken ct)
     {
-        foreach (var precondition in _preconditions.GetFor(tool.Name))
+        var config = ctx.Config;
+        if (config is null)
         {
-            var scopeKey = precondition.ScopeKeyResolver(arguments, ctx);
-            if (string.IsNullOrWhiteSpace(scopeKey))
-            {
-                return new GateResult(
-                    false,
-                    "precondition_incomplete",
-                    $"Cannot evaluate '{precondition.FactType}' — required booking fields are missing.",
-                    precondition.Remediation);
-            }
-
-            var isActive = _verifications.IsActive(
-                ctx.ConversationState,
-                precondition.FactType,
-                scopeKey);
-
-            if (!isActive)
-            {
-                return new GateResult(
-                    false,
-                    "precondition_failed",
-                    precondition.MissingMessage,
-                    precondition.Remediation);
-            }
+            return Task.FromResult(new GateResult(
+                false,
+                "agent_config_missing",
+                "Agent configuration is not available for tool gating.",
+                "Retry the turn or escalate to human."));
         }
 
-        return new GateResult(true, null, null, null);
+        var evaluation = _guardEvaluator.EvaluateTool(tool, config, ctx, arguments);
+        if (evaluation.IsAvailable)
+            return Task.FromResult(new GateResult(true, null, null, null));
+
+        return Task.FromResult(new GateResult(
+            false,
+            "precondition_failed",
+            evaluation.BlockReason,
+            evaluation.Remediation));
     }
 }

@@ -45,9 +45,8 @@ public sealed class AssignPaidSlotTool : IAgentTool
     public string Name => "assign_paid_slot";
 
     public string Description =>
-        "Assigns a new time slot to a confirmed payment that has no reservation yet (slot was taken after payment). " +
-        "Creates the Confirmed reservation and links it to the PaymentTransaction. " +
-        "Only use when the customer has a paid deposit pending reschedule — not for normal bookings.";
+        "Creates a confirmed reservation for a paid PaymentTransaction that has no linked reservation yet, " +
+        "using the verified service/date/time snapshot. Links the reservation to the payment record.";
 
     public string ParametersSchema => """
         {

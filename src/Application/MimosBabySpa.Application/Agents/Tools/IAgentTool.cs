@@ -1,4 +1,5 @@
 using System.Text.Json;
+using MimosBabySpa.Application.Agents.Composition;
 
 namespace MimosBabySpa.Application.Agents.Tools;
 
@@ -12,11 +13,21 @@ public interface IAgentTool
     /// <summary>Nombre de la función tal como aparece en OpenAI (snake_case).</summary>
     string Name { get; }
 
-    /// <summary>Descripción que el LLM usa para decidir cuándo llamar la tool.</summary>
+    /// <summary>Descripción técnica de qué hace la tool (no cuándo llamarla).</summary>
     string Description { get; }
 
     /// <summary>JSON Schema RFC 7159 de los parámetros.</summary>
     string ParametersSchema { get; }
+
+    /// <summary>Plantilla por defecto si la tool renderiza output al cliente.</summary>
+    string? DefaultTemplateId => null;
+
+    /// <summary>Contenido de la plantilla por defecto.</summary>
+    string? DefaultTemplate => null;
+
+    /// <summary>Invariantes universales evaluadas antes de ejecutar la tool.</summary>
+    ToolAvailabilityResult Evaluate(AgentToolContext ctx, JsonElement arguments) =>
+        new(true, null, null);
 
     /// <summary>
     /// Ejecuta la tool. Siempre retorna un JSON serializable con shape:

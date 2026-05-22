@@ -39,8 +39,7 @@ public sealed class GeneratePaymentLinkTool : IAgentTool
     public string Name => "generate_payment_link";
 
     public string Description =>
-        "Generates an advance payment link with immutable booking snapshot. " +
-        "Prefer prepare_checkout when available. Requires service, date, time and contact phone.";
+        "Creates a PaymentTransaction with an advance payment link and an immutable booking snapshot.";
 
     public string ParametersSchema => """
         {

@@ -1,3 +1,4 @@
+using MimosBabySpa.Application.Configuration;
 using MimosBabySpa.Domain.Entities;
 using MimosBabySpa.Domain.Models;
 
@@ -17,6 +18,9 @@ public sealed class AgentToolContext
     public string ChannelPhone { get; init; } = string.Empty;
     public IReadOnlyList<string> EscalationContacts { get; init; } = [];
     public int CurrentToolIteration { get; set; }
+
+    public AgentConfig? Config { get; set; }
+    public BookingPolicyParams? BookingPolicy { get; set; }
 
     public ConversationState ConversationState { get; init; } = null!;
     public Conversation Conversation { get; init; } = null!;

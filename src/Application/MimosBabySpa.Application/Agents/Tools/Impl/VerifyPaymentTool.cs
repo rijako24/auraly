@@ -24,9 +24,8 @@ public sealed class VerifyPaymentTool : IAgentTool
     public string Name => "verify_payment";
 
     public string Description =>
-        "Read-only status check for an advance payment. Use only when the customer has insisted " +
-        "3+ times that they paid but has not yet received the automatic confirmation message. " +
-        "Returns payment status — does NOT create a reservation or confirm the booking.";
+        "Read-only lookup of PaymentTransaction status for the current conversation. " +
+        "Does not create reservations or mutate payment state.";
 
     public string ParametersSchema => """
         {

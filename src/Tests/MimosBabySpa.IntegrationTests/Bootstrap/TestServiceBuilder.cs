@@ -2,6 +2,7 @@ using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using MimosBabySpa.Application.Agents;
+using MimosBabySpa.Application.Agents.Composition;
 using MimosBabySpa.Application.Agents.Gating;
 using MimosBabySpa.Application.Agents.Templates;
 using MimosBabySpa.Application.Agents.Tools;
@@ -71,7 +72,10 @@ public static class TestServiceBuilder
         services.AddSingleton<IReservationIntentBuilder, ReservationIntentBuilder>();
         services.AddSingleton<IConversationVerificationService, ConversationVerificationService>();
         services.AddSingleton<IToolPreconditionProvider, ToolPreconditionProvider>();
+        services.AddSingleton<IGuardEvaluator, GuardEvaluator>();
         services.AddSingleton<IToolCapabilityGate, ToolCapabilityGate>();
+        services.AddSingleton<IFlowStageDetector, FlowStageDetector>();
+        services.AddSingleton<IPromptComposer, AgentPromptComposer>();
 
         services.AddSingleton<IWhatsAppService, NoOpWhatsAppService>();
         services.AddSingleton<FakeAdminActionLinkService>();
@@ -122,7 +126,7 @@ public static class TestServiceBuilder
             return new AgentToolRegistry(intercepted, logger);
         });
 
-        services.AddSingleton<IPromptTemplateExtractor, PromptTemplateExtractor>();
+        services.AddSingleton<IAgentTemplateResolver, AgentTemplateResolver>();
         services.AddSingleton<ITemplateRenderer, PromptTemplateRenderer>();
         services.AddSingleton<IAgentTurnResponseComposer, AgentTurnResponseComposer>();
 

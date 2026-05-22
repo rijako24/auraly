@@ -35,10 +35,9 @@ public sealed class CheckAvailabilityTool : IAgentTool
     public string Name => "check_availability";
 
     public string Description =>
-        "Checks available time slots for a service on a specific date. " +
-        "Read-only: does NOT create or hold a reservation. " +
-        "Always call this before confirming any appointment time. " +
-        "If time is provided, checks that specific slot. Otherwise returns all available slots for the day.";
+        "Read-only availability lookup for a service on a date. " +
+        "If time is provided, validates that slot; otherwise returns available slots for the day. " +
+        "Returns verbal_status, slot data, and an optional rendered slots token.";
 
     public string ParametersSchema => """
         {

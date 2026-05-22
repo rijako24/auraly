@@ -4,21 +4,25 @@ namespace MimosBabySpa.Application.Agents.Templates;
 
 public sealed class AgentTurnResponseComposer : IAgentTurnResponseComposer
 {
-    private readonly IPromptTemplateExtractor _extractor;
+    private readonly IAgentTemplateResolver _templateResolver;
     private readonly ITemplateRenderer _renderer;
     private readonly ILogger<AgentTurnResponseComposer> _logger;
 
     public AgentTurnResponseComposer(
-        IPromptTemplateExtractor extractor,
+        IAgentTemplateResolver templateResolver,
         ITemplateRenderer renderer,
         ILogger<AgentTurnResponseComposer> logger)
     {
-        _extractor = extractor;
+        _templateResolver = templateResolver;
         _renderer = renderer;
         _logger = logger;
     }
 
-    public string Compose(string agentSystemPrompt, string llmResponse, IEnumerable<TurnFragmentEntry> fragments)
+    public string Compose(
+        AgentConfig config,
+        IReadOnlyList<Tools.IAgentTool> enabledTools,
+        string llmResponse,
+        IEnumerable<TurnFragmentEntry> fragments)
     {
         var fragmentList = fragments.ToList();
         if (fragmentList.Count == 0)
@@ -29,13 +33,13 @@ public sealed class AgentTurnResponseComposer : IAgentTurnResponseComposer
 
         foreach (var entry in fragmentList)
         {
-            var template = _extractor.Extract(agentSystemPrompt, entry.Fragment.TemplateId)
-                ?? TemplateFallbackCatalog.Get(entry.Fragment.TemplateId);
+            var template = _templateResolver.Resolve(config, entry.Fragment.TemplateId, enabledTools)
+                ?? AgentToolTemplates.Get(entry.Fragment.TemplateId);
 
             if (template is null)
             {
                 _logger.LogWarning(
-                    "Template '{TemplateId}' not found in agent prompt and no fallback available",
+                    "Template '{TemplateId}' not found in agent config or tool defaults",
                     entry.Fragment.TemplateId);
                 continue;
             }

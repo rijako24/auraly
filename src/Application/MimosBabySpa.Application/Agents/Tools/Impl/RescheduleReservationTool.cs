@@ -17,8 +17,7 @@ public sealed class RescheduleReservationTool : IAgentTool
     public string Name => "reschedule_reservation";
 
     public string Description =>
-        "Changes the date and time of an existing reservation. " +
-        "Call check_availability first to confirm the new slot is open.";
+        "Updates the date and time of an existing reservation identified by reservation_id.";
 
     public string ParametersSchema => """
         {

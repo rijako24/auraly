@@ -14,6 +14,14 @@ public class ConversationState
     public string? LastUserMessage { get; set; }
     public string? LastBotMessage { get; set; }
     public Dictionary<string, VerificationEntry> Verifications { get; set; } = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Snapshots de los facts en el momento en que cada etapa fue completada por primera vez.
+    /// Clave: stageId · Valor: factKey → factValue al momento de completarse.
+    /// Usado para detectar si el cliente cambió datos relevantes después del cierre de una etapa.
+    /// </summary>
+    public Dictionary<string, Dictionary<string, string>> StageFactSnapshots { get; set; } = new(StringComparer.Ordinal);
+
     public int Version { get; set; } = 1;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;

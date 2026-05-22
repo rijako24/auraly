@@ -1,3 +1,4 @@
+using MimosBabySpa.Application.Agents.Configuration;
 using System.Text.Json;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
@@ -7,7 +8,6 @@ namespace MimosBabySpa.Application.Agents;
 
 /// <summary>
 /// Lee la configuración del agente desde BD y la cachea 10 minutos.
-/// El system prompt se obtiene directamente de Agents.SystemPromptMarkdown.
 /// </summary>
 public sealed class AgentConfigProvider : IAgentConfigProvider
 {
@@ -58,6 +58,12 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
             AgentId = agentId,
             BusinessId = agent.BusinessId,
             Name = agent.Name,
+            Persona = settings.Persona?.Trim() ?? string.Empty,
+            Policies = settings.Policies?.Trim() ?? string.Empty,
+            Flow = settings.Flow ?? new AgentFlowDefinition(),
+            FactSchema = settings.FactSchema ?? [],
+            Guards = settings.Guards ?? new Dictionary<string, GuardDefinition>(StringComparer.OrdinalIgnoreCase),
+            Templates = settings.Templates ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
             SystemPrompt = agent.SystemPromptMarkdown?.Trim() ?? string.Empty,
             FirstTurnGreetingHint = settings.Messages?.FirstTurnGreetingHint?.Trim(),
             ReturningCustomerGreetingHint = settings.Messages?.ReturningCustomerGreetingHint?.Trim(),
@@ -72,8 +78,8 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
         _cache.Set(cacheKey, config, CacheTtl);
 
         _logger.LogInformation(
-            "AgentConfig loaded: AgentId={Id}, Model={Model}, Tools={Tools}",
-            agentId, config.Model, string.Join(",", config.EnabledToolNames));
+            "AgentConfig loaded: AgentId={Id}, Model={Model}, Tools={Tools}, FlowStages={Stages}",
+            agentId, config.Model, string.Join(",", config.EnabledToolNames), config.Flow.Stages.Count);
 
         return config;
     }
@@ -97,6 +103,12 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
 
     private sealed class AgentSettings
     {
+        public string? Persona { get; set; }
+        public string? Policies { get; set; }
+        public AgentFlowDefinition? Flow { get; set; }
+        public IReadOnlyList<FactSchemaEntry>? FactSchema { get; set; }
+        public Dictionary<string, GuardDefinition>? Guards { get; set; }
+        public Dictionary<string, string>? Templates { get; set; }
         public string? Model { get; set; }
         public float? Temperature { get; set; }
         public int? MaxToolIterations { get; set; }

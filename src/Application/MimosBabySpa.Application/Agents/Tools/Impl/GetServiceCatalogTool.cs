@@ -16,9 +16,7 @@ public sealed class GetServiceCatalogTool : IAgentTool
     public string Name => "get_service_catalog";
 
     public string Description =>
-        "Returns the current list of services, compatible add-ons per service, and prices from the catalog. " +
-        "Call when the customer asks about services or prices, or before resolving pricing. " +
-        "Never invent services — show only what this tool returns.";
+        "Returns the business service catalog: services, compatible add-ons per service, prices, and durations.";
 
     public string ParametersSchema => """
         {

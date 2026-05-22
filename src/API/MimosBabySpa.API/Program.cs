@@ -20,6 +20,7 @@ using MimosBabySpa.Application.StateManagement;
 
 // Agentic Engine (Function Calling)
 using MimosBabySpa.Application.Agents;
+using MimosBabySpa.Application.Agents.Composition;
 using MimosBabySpa.Application.Agents.Gating;
 using MimosBabySpa.Application.Agents.Tools;
 using MimosBabySpa.Application.Agents.Tools.Impl;
@@ -147,13 +148,16 @@ var host = new HostBuilder()
 
         services.AddScoped<IAgentConfigProvider, AgentConfigProvider>();
 
-        services.AddScoped<IPromptTemplateExtractor, PromptTemplateExtractor>();
-        services.AddScoped<ITemplateRenderer, PromptTemplateRenderer>();
-        services.AddScoped<IAgentTurnResponseComposer, AgentTurnResponseComposer>();
-
+        services.AddSingleton<IFlowStageDetector, FlowStageDetector>();
         services.AddSingleton<IToolPreconditionProvider, ToolPreconditionProvider>();
         services.AddScoped<IConversationVerificationService, ConversationVerificationService>();
+        services.AddScoped<IGuardEvaluator, GuardEvaluator>();
         services.AddScoped<IToolCapabilityGate, ToolCapabilityGate>();
+        services.AddScoped<IPromptComposer, AgentPromptComposer>();
+
+        services.AddScoped<IAgentTemplateResolver, AgentTemplateResolver>();
+        services.AddScoped<ITemplateRenderer, PromptTemplateRenderer>();
+        services.AddScoped<IAgentTurnResponseComposer, AgentTurnResponseComposer>();
 
         services.AddScoped<IAgentTool, CheckAvailabilityTool>();
         services.AddScoped<IAgentTool, ResolvePricingTool>();

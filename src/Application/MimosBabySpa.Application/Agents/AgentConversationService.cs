@@ -1,5 +1,7 @@
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
+using MimosBabySpa.Application.Agents.Composition;
+using MimosBabySpa.Application.Agents.Configuration;
 using MimosBabySpa.Application.Agents.Gating;
 using MimosBabySpa.Application.Agents.Templates;
 using MimosBabySpa.Application.Agents.Tools;
@@ -48,8 +50,10 @@ public sealed class AgentConversationService : IAgentConversationService
     private readonly IPaymentLifecycleService _paymentLifecycle;
     private readonly IConversationService _conversationService;
     private readonly IConversationLifecycleService _lifecycleService;
+    private readonly IPromptComposer _promptComposer;
     private readonly IAgentTurnResponseComposer _turnResponseComposer;
     private readonly IToolCapabilityGate _toolCapabilityGate;
+    private readonly IFlowStageDetector _flowStageDetector;
     private readonly ILogger<AgentConversationService> _logger;
 
     public AgentConversationService(
@@ -67,8 +71,10 @@ public sealed class AgentConversationService : IAgentConversationService
         IPaymentLifecycleService paymentLifecycle,
         IConversationService conversationService,
         IConversationLifecycleService lifecycleService,
+        IPromptComposer promptComposer,
         IAgentTurnResponseComposer turnResponseComposer,
         IToolCapabilityGate toolCapabilityGate,
+        IFlowStageDetector flowStageDetector,
         ILogger<AgentConversationService> logger)
     {
         _configProvider = configProvider;
@@ -85,8 +91,10 @@ public sealed class AgentConversationService : IAgentConversationService
         _paymentLifecycle = paymentLifecycle;
         _conversationService = conversationService;
         _lifecycleService = lifecycleService;
+        _promptComposer = promptComposer;
         _turnResponseComposer = turnResponseComposer;
         _toolCapabilityGate = toolCapabilityGate;
+        _flowStageDetector = flowStageDetector;
         _logger = logger;
     }
 
@@ -127,9 +135,20 @@ public sealed class AgentConversationService : IAgentConversationService
         var clockSnapshot = await _businessClock.GetSnapshotAsync(config.BusinessId, cancellationToken);
         var temporal = _temporalReferenceBuilder.Build(clockSnapshot);
         var bookingPolicy = await _bookingPolicy.GetAsync(config.BusinessId, cancellationToken);
+        session.BookingPolicy = bookingPolicy;
         var latestPayment = await _paymentLifecycle.GetLatestByConversationAsync(conversationId, cancellationToken);
-        var systemPrompt = AgentTurnPromptContext.AppendTurnContext(
-            config.SystemPrompt, config, history, temporal, session, bookingPolicy, latestPayment, engagement);
+        var enabledTools = _toolRegistry.GetToolsForAgent(config.EnabledToolNames).ToList();
+        var systemPrompt = _promptComposer.Compose(new PromptCompositionInput
+        {
+            Config = config,
+            History = history,
+            Temporal = temporal,
+            Session = session,
+            BookingPolicy = bookingPolicy,
+            LatestPayment = latestPayment,
+            Engagement = engagement,
+            EnabledTools = enabledTools
+        });
         var messages = BuildMessages(systemPrompt, history, userMessage);
         var turn = new AgentTurnExecution(config.ConsecutiveErrorEscalationThreshold);
         session.Turn = turn;
@@ -140,7 +159,7 @@ public sealed class AgentConversationService : IAgentConversationService
         {
             AgentLoopOutcome.OutcomeKind.Completed =>
                 await FinalizeTurnAsync(
-                    conversationId, userMessage, loop.Response!, session.ConversationState, turn, config, cancellationToken),
+                    conversationId, userMessage, loop.Response!, session, turn, config, cancellationToken),
 
             AgentLoopOutcome.OutcomeKind.AutoEscalate =>
                 await EscalateAndPersistAsync(
@@ -259,17 +278,19 @@ public sealed class AgentConversationService : IAgentConversationService
         Guid conversationId,
         string userMessage,
         string botResponse,
-        ConversationState state,
+        AgentToolContext session,
         AgentTurnExecution turn,
         AgentConfig config,
         CancellationToken ct)
     {
         var finalResponse = _turnResponseComposer.Compose(
-            config.SystemPrompt,
+            config,
+            _toolRegistry.GetToolsForAgent(config.EnabledToolNames).ToList(),
             botResponse,
             turn.FragmentEntries);
 
-        await PersistTurnAsync(conversationId, userMessage, finalResponse, state, turn.ReservationCreated, ct);
+        UpdateStageSnapshots(config, session);
+        await PersistTurnAsync(conversationId, userMessage, finalResponse, session.ConversationState, turn.ReservationCreated, ct);
 
         _logger.LogInformation(
             "Conv {ConvId}: turn complete — tokens={Tokens}, tools={Tools}, escalated={Esc}, fragments={Fragments}",
@@ -368,6 +389,7 @@ public sealed class AgentConversationService : IAgentConversationService
             BusinessNow = clockSnapshot.Now,
             ChannelPhone = channelPhone?.Trim() ?? conversation.UserNumber,
             EscalationContacts = config.EscalationContacts,
+            Config = config,
             ConversationState = state,
             Conversation = conversation,
             Facts = new Dictionary<string, string>(facts, StringComparer.OrdinalIgnoreCase),
@@ -422,4 +444,44 @@ public sealed class AgentConversationService : IAgentConversationService
 
     private static string SanitizeResponse(string response) =>
         response.Length > 4096 ? response[..4096].Trim() : response.Trim();
+
+    /// <summary>
+    /// Al finalizar cada turno, guarda snapshots de los facts para las etapas que acaban de completarse
+    /// y que tienen ReentryOnFactChanged configurado.
+    /// Solo se graba la primera vez que una etapa se completa (snapshot inmutable).
+    /// </summary>
+    private void UpdateStageSnapshots(AgentConfig config, AgentToolContext session)
+    {
+        if (config.Flow.Stages.Count == 0) return;
+
+        var currentStage = _flowStageDetector.DetectCurrentStage(config.Flow, session);
+        var currentIdx = currentStage is null
+            ? config.Flow.Stages.Count
+            : config.Flow.Stages.ToList().FindIndex(s => s.Id == currentStage.Id);
+
+        var snapshots = session.ConversationState.StageFactSnapshots;
+
+        for (var i = 0; i < currentIdx; i++)
+        {
+            var stage = config.Flow.Stages[i];
+            if (stage.ReentryOnFactChanged.Count == 0) continue;
+            if (snapshots.ContainsKey(stage.Id)) continue;
+
+            var snap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var key in stage.ReentryOnFactChanged)
+            {
+                var value = ConversationFactKeys.Get(session.Facts, key)
+                    ?? (session.Facts.TryGetValue(key, out var raw) ? raw : null);
+                if (!string.IsNullOrWhiteSpace(value))
+                    snap[key] = value;
+            }
+
+            if (snap.Count > 0)
+            {
+                snapshots[stage.Id] = snap;
+                _logger.LogDebug("Conv {ConvId}: stage '{Stage}' snapshot saved ({Count} facts)",
+                    session.ConversationId, stage.Id, snap.Count);
+            }
+        }
+    }
 }
