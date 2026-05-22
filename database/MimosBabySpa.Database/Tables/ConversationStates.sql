@@ -7,6 +7,7 @@ CREATE TABLE [dbo].[ConversationStates] (
     [LastUserMessage] NVARCHAR(MAX) NULL,
     [LastBotMessage] NVARCHAR(MAX) NULL,
     [PreviousSessionJson] NVARCHAR(MAX) NULL,
+    [VerificationsJson] NVARCHAR(MAX) NULL,
     [SessionStartedAt] DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
     [Version] INT NOT NULL DEFAULT 1,
     [CreatedAt] DATETIME2 NOT NULL DEFAULT GETUTCDATE(),

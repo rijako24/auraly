@@ -108,6 +108,7 @@ public class ConversationStateManager : IConversationStateManager
         LastUserMessage = entity.LastUserMessage,
         LastBotMessage = entity.LastBotMessage,
         PreviousSession = DeserializePreviousSession(entity.PreviousSessionJson),
+        Verifications = DeserializeVerifications(entity.VerificationsJson),
         SessionStartedAt = entity.SessionStartedAt,
         Version = entity.Version,
         CreatedAt = entity.CreatedAt,
@@ -125,6 +126,9 @@ public class ConversationStateManager : IConversationStateManager
         entity.PreviousSessionJson = state.PreviousSession is null
             ? null
             : JsonSerializer.Serialize(state.PreviousSession, JsonOptions);
+        entity.VerificationsJson = state.Verifications.Count == 0
+            ? null
+            : JsonSerializer.Serialize(state.Verifications, JsonOptions);
         entity.SessionStartedAt = state.SessionStartedAt;
         entity.Version = state.Version;
         entity.UpdatedAt = state.UpdatedAt;
@@ -140,6 +144,22 @@ public class ConversationStateManager : IConversationStateManager
         catch
         {
             return null;
+        }
+    }
+
+    private static Dictionary<string, VerificationEntry> DeserializeVerifications(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+            return new Dictionary<string, VerificationEntry>(StringComparer.Ordinal);
+
+        try
+        {
+            return JsonSerializer.Deserialize<Dictionary<string, VerificationEntry>>(json, JsonOptions)
+                ?? new Dictionary<string, VerificationEntry>(StringComparer.Ordinal);
+        }
+        catch
+        {
+            return new Dictionary<string, VerificationEntry>(StringComparer.Ordinal);
         }
     }
 }

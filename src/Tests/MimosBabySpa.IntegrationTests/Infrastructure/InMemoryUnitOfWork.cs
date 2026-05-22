@@ -28,7 +28,6 @@ public class InMemoryUnitOfWork : IUnitOfWork
     public IServiceAddOnRuleRepository ServiceAddOnRules { get; }
     public IReservationAddOnRepository ReservationAddOns { get; }
     public IPaymentTransactionRepository PaymentTransactions { get; }
-    public IConversationVerificationRepository ConversationVerifications { get; }
     public IAppUserRepository AppUsers => throw new NotImplementedException();
     public IAppRoleRepository AppRoles => throw new NotImplementedException();
     public IPermissionRepository Permissions => throw new NotImplementedException();
@@ -56,7 +55,6 @@ public class InMemoryUnitOfWork : IUnitOfWork
         ConversationContexts   = new InMemoryConversationContextRepository();
         Reservations         = new InMemoryReservationRepository();
         PaymentTransactions  = new InMemoryPaymentTransactionRepository();
-        ConversationVerifications = new InMemoryConversationVerificationRepository();
         BusinessResources    = new InMemoryBusinessResourceRepository();
         Employees            = new InMemoryEmployeeRepository(businessId);
         EmployeeServices     = new InMemoryEmployeeServiceRepository();

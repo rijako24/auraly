@@ -45,11 +45,10 @@ public sealed class ToolCapabilityGate : IToolCapabilityGate
                     precondition.Remediation);
             }
 
-            var isActive = await _verifications.IsActiveAsync(
-                ctx.ConversationId,
+            var isActive = _verifications.IsActive(
+                ctx.ConversationState,
                 precondition.FactType,
-                scopeKey,
-                ct);
+                scopeKey);
 
             if (!isActive)
             {

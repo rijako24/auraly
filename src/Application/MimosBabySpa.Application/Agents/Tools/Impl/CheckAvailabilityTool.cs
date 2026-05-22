@@ -100,7 +100,7 @@ public sealed class CheckAvailabilityTool : IAgentTool
         }
 
         if (result.IsAvailable)
-            await RecordAvailabilityVerificationsAsync(ctx, service, dateStr, timeStr, result, cancellationToken);
+            RecordAvailabilityVerifications(ctx, service, dateStr, timeStr, result);
 
         var verbalStatus = result.IsAvailable && time.HasValue
             ? "horario_disponible_no_reservado"
@@ -178,37 +178,30 @@ public sealed class CheckAvailabilityTool : IAgentTool
         return [];
     }
 
-    private async Task RecordAvailabilityVerificationsAsync(
+    private void RecordAvailabilityVerifications(
         AgentToolContext ctx,
         string service,
         string dateStr,
         string? timeStr,
-        AvailabilityResult result,
-        CancellationToken cancellationToken)
+        AvailabilityResult result)
     {
         if (!string.IsNullOrWhiteSpace(timeStr))
         {
-            await _verifications.RecordAsync(
-                ctx.ConversationId,
-                ctx.BusinessId,
+            _verifications.Record(
+                ctx,
                 VerificationFactTypes.AvailabilityChecked,
                 SlotVerificationScope.Build(service, dateStr, timeStr),
-                VerificationTtl.AvailabilityChecked,
-                payloadJson: null,
-                cancellationToken);
+                VerificationTtl.AvailabilityChecked);
             return;
         }
 
         foreach (var slot in result.AvailableTimeSlots)
         {
-            await _verifications.RecordAsync(
-                ctx.ConversationId,
-                ctx.BusinessId,
+            _verifications.Record(
+                ctx,
                 VerificationFactTypes.AvailabilityChecked,
                 SlotVerificationScope.Build(service, dateStr, slot),
-                VerificationTtl.AvailabilityChecked,
-                payloadJson: null,
-                cancellationToken);
+                VerificationTtl.AvailabilityChecked);
         }
     }
 

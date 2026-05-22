@@ -3,13 +3,11 @@ using FluentAssertions;
 using Moq;
 using MimosBabySpa.Application.Agents;
 using MimosBabySpa.Application.Agents.Gating;
-using MimosBabySpa.Application.Agents.Tools;
 using MimosBabySpa.Application.Agents.Tools.Impl;
 using MimosBabySpa.Application.BusinessRules;
 using MimosBabySpa.Application.Configuration;
 using MimosBabySpa.Application.Services;
 using MimosBabySpa.Domain.Entities;
-using MimosBabySpa.Domain.Enums;
 using ConversationStateModel = MimosBabySpa.Domain.Models.ConversationState;
 using Xunit;
 
@@ -17,7 +15,7 @@ namespace MimosBabySpa.Tests.Agents;
 
 public class ToolCapabilityGateTests
 {
-    private readonly Mock<IConversationVerificationService> _verifications = new();
+    private readonly ConversationVerificationService _verifications = new();
     private readonly ToolCapabilityGate _gate;
     private readonly CreateReservationTool _createReservationTool = new(
         Mock.Of<IReservationService>(),
@@ -30,32 +28,22 @@ public class ToolCapabilityGateTests
 
     public ToolCapabilityGateTests()
     {
-        _gate = new ToolCapabilityGate(new ToolPreconditionProvider(), _verifications.Object);
+        _gate = new ToolCapabilityGate(new ToolPreconditionProvider(), _verifications);
     }
 
     [Fact]
     public async Task EvaluateAsync_CreateReservation_WithoutAvailabilityVerification_IsRejected()
     {
-        _verifications
-            .Setup(v => v.IsActiveAsync(
-                It.IsAny<Guid>(),
-                VerificationFactTypes.AvailabilityChecked,
-                It.IsAny<string>(),
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(false);
-
-        _verifications
-            .Setup(v => v.IsActiveAsync(
-                It.IsAny<Guid>(),
-                VerificationFactTypes.CustomerIdentified,
-                SlotVerificationScope.UniversalScope,
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(true);
-
         var ctx = CreateContext();
         ctx.Facts[ConversationFactKeys.Service] = "Plan Marineritos";
         ctx.Facts[ConversationFactKeys.DesiredDate] = "2026-05-22";
         ctx.Facts[ConversationFactKeys.DesiredTime] = "09:00";
+
+        _verifications.Record(
+            ctx,
+            VerificationFactTypes.CustomerIdentified,
+            SlotVerificationScope.UniversalScope,
+            ttl: null);
 
         using var args = JsonDocument.Parse("""{"customer_confirmed":true}""");
         var result = await _gate.EvaluateAsync(_createReservationTool, args.RootElement, ctx, CancellationToken.None);
@@ -68,14 +56,22 @@ public class ToolCapabilityGateTests
     [Fact]
     public async Task EvaluateAsync_CreateReservation_WithVerifications_IsAllowed()
     {
-        _verifications
-            .Setup(v => v.IsActiveAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(true);
-
         var ctx = CreateContext();
         ctx.Facts[ConversationFactKeys.Service] = "Plan Marineritos";
         ctx.Facts[ConversationFactKeys.DesiredDate] = "2026-05-22";
         ctx.Facts[ConversationFactKeys.DesiredTime] = "09:00";
+
+        _verifications.Record(
+            ctx,
+            VerificationFactTypes.AvailabilityChecked,
+            SlotVerificationScope.Build("Plan Marineritos", "2026-05-22", "09:00"),
+            VerificationTtl.AvailabilityChecked);
+
+        _verifications.Record(
+            ctx,
+            VerificationFactTypes.CustomerIdentified,
+            SlotVerificationScope.UniversalScope,
+            ttl: null);
 
         using var args = JsonDocument.Parse("""{"customer_confirmed":true}""");
         var result = await _gate.EvaluateAsync(_createReservationTool, args.RootElement, ctx, CancellationToken.None);
@@ -89,7 +85,7 @@ public class ToolCapabilityGateTests
         var setFactTool = new SetFactTool(
             Mock.Of<IConversationFactsService>(),
             Mock.Of<IAddOnCatalogService>(),
-            _verifications.Object);
+            _verifications);
 
         var ctx = CreateContext();
         using var args = JsonDocument.Parse("""{"key":"service","value":"Plan Marineritos"}""");
@@ -97,8 +93,6 @@ public class ToolCapabilityGateTests
         var result = await _gate.EvaluateAsync(setFactTool, args.RootElement, ctx, CancellationToken.None);
 
         result.IsAllowed.Should().BeTrue();
-        _verifications.Verify(v => v.IsActiveAsync(
-            It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     private static AgentToolContext CreateContext() => new()

@@ -22,7 +22,6 @@ public interface IUnitOfWork : IDisposable
     IReservationAddOnRepository ReservationAddOns { get; }
 
     IPaymentTransactionRepository PaymentTransactions { get; }
-    IConversationVerificationRepository ConversationVerifications { get; }
     IAppUserRepository AppUsers { get; }
     IAppRoleRepository AppRoles { get; }
     IPermissionRepository Permissions { get; }

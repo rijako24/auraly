@@ -15,6 +15,7 @@ public class ConversationStateEntity
     public string? LastUserMessage { get; set; }
     public string? LastBotMessage { get; set; }
     public string? PreviousSessionJson { get; set; }
+    public string? VerificationsJson { get; set; }
     public DateTime SessionStartedAt { get; set; } = DateTime.UtcNow;
     public int Version { get; set; } = 1;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;

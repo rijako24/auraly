@@ -139,14 +139,11 @@ public sealed class AssignPaidSlotTool : IAgentTool
                     : null);
         }
 
-        await _verifications.RecordAsync(
-            ctx.ConversationId,
-            ctx.BusinessId,
+        _verifications.Record(
+            ctx,
             VerificationFactTypes.AvailabilityChecked,
             SlotVerificationScope.Build(service.ServiceName, dateStr!, timeStr!),
-            VerificationTtl.AvailabilityChecked,
-            payloadJson: null,
-            cancellationToken);
+            VerificationTtl.AvailabilityChecked);
 
         var newDateTime = date.ToDateTime(time);
 
