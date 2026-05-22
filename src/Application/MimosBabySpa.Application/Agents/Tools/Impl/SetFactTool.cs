@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.Json;
+using MimosBabySpa.Application.Agents.Gating;
 using MimosBabySpa.Application.Configuration;
 using MimosBabySpa.Application.Services;
 
@@ -12,11 +13,16 @@ public sealed class SetFactTool : IAgentTool
 {
     private readonly IConversationFactsService _factsService;
     private readonly IAddOnCatalogService _addOnCatalog;
+    private readonly IConversationVerificationService _verifications;
 
-    public SetFactTool(IConversationFactsService factsService, IAddOnCatalogService addOnCatalog)
+    public SetFactTool(
+        IConversationFactsService factsService,
+        IAddOnCatalogService addOnCatalog,
+        IConversationVerificationService verifications)
     {
         _factsService = factsService;
         _addOnCatalog = addOnCatalog;
+        _verifications = verifications;
     }
 
     public string Name => "set_fact";
@@ -106,6 +112,8 @@ public sealed class SetFactTool : IAgentTool
         if (key.Equals(ConversationFactKeys.CustomerEmail, StringComparison.OrdinalIgnoreCase))
             ctx.Conversation.CustomerEmail = value;
 
+        await TryRecordCustomerIdentifiedAsync(ctx, cancellationToken);
+
         if (key.Equals(ConversationFactKeys.Service, StringComparison.OrdinalIgnoreCase))
         {
             var compatibleAddOns = await _addOnCatalog.GetCompatibleAsync(
@@ -121,6 +129,25 @@ public sealed class SetFactTool : IAgentTool
         }
 
         return ToolResultHelper.Ok(new { key, value, storage = "fact" });
+    }
+
+    private async Task TryRecordCustomerIdentifiedAsync(AgentToolContext ctx, CancellationToken cancellationToken)
+    {
+        var name = ConversationFactKeys.Get(ctx.Facts, ConversationFactKeys.CustomerName)
+            ?? ctx.Conversation.CustomerName;
+        var phone = ConversationContactPhone.Resolve(ctx.Facts, ctx.ChannelPhone);
+
+        if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(phone))
+            return;
+
+        await _verifications.RecordAsync(
+            ctx.ConversationId,
+            ctx.BusinessId,
+            VerificationFactTypes.CustomerIdentified,
+            SlotVerificationScope.UniversalScope,
+            ttl: null,
+            payloadJson: null,
+            cancellationToken);
     }
 
     private static IReadOnlyList<object> MapCompatibleAddOns(IReadOnlyList<AddOnRuleInfo> addOns) =>

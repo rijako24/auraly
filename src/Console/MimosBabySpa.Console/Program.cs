@@ -15,6 +15,7 @@ using Microsoft.Extensions.Options;
 
 // Agentic Engine
 using MimosBabySpa.Application.Agents;
+using MimosBabySpa.Application.Agents.Gating;
 using MimosBabySpa.Application.Agents.Tools;
 using MimosBabySpa.Application.Agents.Tools.Impl;
 using MimosBabySpa.Application.BusinessRules;
@@ -160,6 +161,10 @@ services.AddScoped<IPromptTemplateExtractor, PromptTemplateExtractor>();
 services.AddScoped<ITemplateRenderer, PromptTemplateRenderer>();
 services.AddScoped<IAgentTurnResponseComposer, AgentTurnResponseComposer>();
 
+services.AddSingleton<IToolPreconditionProvider, ToolPreconditionProvider>();
+services.AddScoped<IConversationVerificationService, ConversationVerificationService>();
+services.AddScoped<IToolCapabilityGate, ToolCapabilityGate>();
+
 services.AddScoped<IAgentTool, CheckAvailabilityTool>();
 services.AddScoped<IAgentTool, ResolvePricingTool>();
 services.AddScoped<IAgentTool, PrepareCheckoutTool>();
@@ -197,7 +202,7 @@ const string agentIdStr = "7105A9D5-D4E4-4BBA-9F3A-DBB34E0B1B86";
 var agentId = Guid.Parse(agentIdStr);
 
 // Simula el teléfono del cliente (clave de sesión)
-const string userPhone = "+12345679709";
+const string userPhone = "+12345679710";
 
 while (true)
 {

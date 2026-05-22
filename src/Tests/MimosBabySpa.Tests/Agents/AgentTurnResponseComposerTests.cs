@@ -71,6 +71,70 @@ public class AgentTurnResponseComposerTests
     }
 
     [Fact]
+    public void Compose_RequiredFragment_PrependsWhenTokenMissing()
+    {
+        const string prompt = """
+            [template: availability_slots]
+            ```
+            {{#each slots}}
+            - {{this}}
+            {{/each}}
+            ```
+            """;
+
+        var composer = new AgentTurnResponseComposer(
+            new PromptTemplateExtractor(),
+            new PromptTemplateRenderer(),
+            NullLogger<AgentTurnResponseComposer>.Instance);
+
+        const string token = "{{SLOTS:xyz789}}";
+        var fragments = new[]
+        {
+            new TurnFragmentEntry(token, new TurnFragment(
+                "availability_slots",
+                new Dictionary<string, object?> { ["slots"] = new List<object> { "09:00", "10:00" } },
+                FragmentRenderMode.Inline,
+                FragmentPriority.Required))
+        };
+
+        var result = composer.Compose(prompt, "¿Confirmas?", fragments);
+
+        result.Should().StartWith("- 09:00");
+        result.Should().EndWith("¿Confirmas?");
+    }
+
+    [Fact]
+    public void Compose_OptionalFragment_SkipsWhenTokenMissing()
+    {
+        const string prompt = """
+            [template: checkout_no_deposit]
+            ```
+            TOTAL: ${{total}}
+            ```
+            """;
+
+        var composer = new AgentTurnResponseComposer(
+            new PromptTemplateExtractor(),
+            new PromptTemplateRenderer(),
+            NullLogger<AgentTurnResponseComposer>.Instance);
+
+        const string token = "{{CHECKOUT:xyz789}}";
+        var fragments = new[]
+        {
+            new TurnFragmentEntry(token, new TurnFragment(
+                "checkout_no_deposit",
+                new Dictionary<string, object?> { ["total"] = "50,000" },
+                FragmentRenderMode.Inline,
+                FragmentPriority.Optional))
+        };
+
+        var result = composer.Compose(prompt, "¿Confirmas?", fragments);
+
+        result.Should().Be("¿Confirmas?");
+        result.Should().NotContain("TOTAL");
+    }
+
+    [Fact]
     public void Compose_PrependsWhenTokenMissing()
     {
         const string prompt = """
@@ -90,7 +154,9 @@ public class AgentTurnResponseComposerTests
         {
             new TurnFragmentEntry(token, new TurnFragment(
                 "checkout_no_deposit",
-                new Dictionary<string, object?> { ["total"] = "50,000" }))
+                new Dictionary<string, object?> { ["total"] = "50,000" },
+                FragmentRenderMode.Inline,
+                FragmentPriority.Required))
         };
 
         var result = composer.Compose(prompt, "¿Confirmas?", fragments);

@@ -32,6 +32,16 @@ internal static class TemplateFallbackCatalog
                 ✅ *¡Reserva confirmada!*
                 Te esperamos el {{date_formatted}} a las {{time}}, {{customer_name}}.
                 """,
+            "availability_slots" =>
+                """
+                📅 *Horarios disponibles para {{date_formatted}}* ({{service_name}})
+
+                {{#each slots}}
+                - {{this}}
+                {{/each}}
+
+                ¿Cuál prefieres?
+                """,
             _ => null
         };
 }

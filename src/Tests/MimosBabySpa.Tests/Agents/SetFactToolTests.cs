@@ -2,6 +2,7 @@ using System.Text.Json;
 using FluentAssertions;
 using Moq;
 using MimosBabySpa.Application.Agents;
+using MimosBabySpa.Application.Agents.Gating;
 using MimosBabySpa.Application.Agents.Tools.Impl;
 using MimosBabySpa.Application.Configuration;
 using MimosBabySpa.Application.Services;
@@ -15,10 +16,22 @@ public class SetFactToolTests
 {
     private readonly Mock<IConversationFactsService> _facts = new();
     private readonly Mock<IAddOnCatalogService> _addOnCatalog = new();
+    private readonly Mock<IConversationVerificationService> _verifications = new();
     private readonly SetFactTool _tool;
 
     public SetFactToolTests()
     {
+        _verifications
+            .Setup(v => v.RecordAsync(
+                It.IsAny<Guid>(),
+                It.IsAny<Guid>(),
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<TimeSpan?>(),
+                It.IsAny<string?>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
         _addOnCatalog
             .Setup(c => c.ValidateAsync(
                 It.IsAny<Guid>(),
@@ -35,7 +48,7 @@ public class SetFactToolTests
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<AddOnRuleInfo>());
 
-        _tool = new SetFactTool(_facts.Object, _addOnCatalog.Object);
+        _tool = new SetFactTool(_facts.Object, _addOnCatalog.Object, _verifications.Object);
     }
 
     [Fact]

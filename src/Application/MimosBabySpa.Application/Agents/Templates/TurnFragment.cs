@@ -7,4 +7,5 @@ namespace MimosBabySpa.Application.Agents.Templates;
 public sealed record TurnFragment(
     string TemplateId,
     IReadOnlyDictionary<string, object?> Data,
-    FragmentRenderMode Mode = FragmentRenderMode.Inline);
+    FragmentRenderMode Mode = FragmentRenderMode.Inline,
+    FragmentPriority Priority = FragmentPriority.Optional);

@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
+using MimosBabySpa.Application.Agents.Gating;
 using MimosBabySpa.Application.Agents.Templates;
 using MimosBabySpa.Application.Agents.Tools;
 using MimosBabySpa.Application.Agents.Tools.Impl;
@@ -47,6 +48,7 @@ public sealed class AgentConversationService : IAgentConversationService
     private readonly IPaymentLifecycleService _paymentLifecycle;
     private readonly IConversationService _conversationService;
     private readonly IAgentTurnResponseComposer _turnResponseComposer;
+    private readonly IToolCapabilityGate _toolCapabilityGate;
     private readonly ILogger<AgentConversationService> _logger;
 
     public AgentConversationService(
@@ -64,6 +66,7 @@ public sealed class AgentConversationService : IAgentConversationService
         IPaymentLifecycleService paymentLifecycle,
         IConversationService conversationService,
         IAgentTurnResponseComposer turnResponseComposer,
+        IToolCapabilityGate toolCapabilityGate,
         ILogger<AgentConversationService> logger)
     {
         _configProvider = configProvider;
@@ -80,6 +83,7 @@ public sealed class AgentConversationService : IAgentConversationService
         _paymentLifecycle = paymentLifecycle;
         _conversationService = conversationService;
         _turnResponseComposer = turnResponseComposer;
+        _toolCapabilityGate = toolCapabilityGate;
         _logger = logger;
     }
 
@@ -213,6 +217,18 @@ public sealed class AgentConversationService : IAgentConversationService
         try
         {
             using var argsDoc = JsonDocument.Parse(toolCall.ArgumentsJson);
+
+            var gate = await _toolCapabilityGate.EvaluateAsync(tool, argsDoc.RootElement, ctx, ct);
+            if (!gate.IsAllowed)
+            {
+                _logger.LogInformation(
+                    "Conv {ConvId}: tool {Name} blocked by gate ({Code}): {Reason}",
+                    ctx.ConversationId, toolCall.FunctionName, gate.Code, gate.Reason);
+
+                return ToolExecutionOutcome.Parse(
+                    ToolResultHelper.Error(gate.Code!, gate.Reason!, gate.Remediation));
+            }
+
             var rawJson = await tool.ExecuteAsync(argsDoc.RootElement, ctx, ct);
             var outcome = ToolExecutionOutcome.Parse(rawJson);
 

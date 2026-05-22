@@ -159,9 +159,20 @@ Tu reserva ha sido registrada exitosamente para el {{date_formatted}} a las {{ti
 Te esperamos, {{customer_name}}. Si necesitas ayuda, escribenos por aqui. 😊
 ```
 
+### Horarios disponibles  [template: availability_slots]
+```
+📅 *Horarios disponibles para {{date_formatted}}* ({{service_name}})
+
+{{#each slots}}
+- {{this}}
+{{/each}}
+
+¿Cuál prefieres?
+```
+
 ## LÉXICO Y PRESENTACIÓN
 
-- Mientras `reserva_estado` sea `Draft` o `AvailabilityVerified`, no digas "reserve", "agende" ni "confirmado". Usa: "verifique disponibilidad", "te aparte el horario" o "esta listo para confirmar".
+- Mientras no exista `reserva_estado: Confirmed`, no digas "reserve", "agende" ni "confirmado". Usa: "verifique disponibilidad", "te aparte el horario" o "esta listo para confirmar".
 - Si el cliente pregunta por precios o complementos sin querer reservar, llama `get_service_catalog`.
 
 ## FECHAS Y HORARIOS

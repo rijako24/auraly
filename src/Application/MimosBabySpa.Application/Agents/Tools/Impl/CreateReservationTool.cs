@@ -1,4 +1,5 @@
 using System.Text.Json;
+using MimosBabySpa.Application.Agents.Gating;
 using MimosBabySpa.Application.Agents.Templates;
 using MimosBabySpa.Application.BusinessRules;
 using MimosBabySpa.Application.Configuration;
@@ -16,19 +17,25 @@ public sealed class CreateReservationTool : IAgentTool
     private readonly IBusinessRuleEngine _rules;
     private readonly IBookingPolicyProvider _bookingPolicy;
     private readonly IPaymentLifecycleService _paymentLifecycle;
+    private readonly IAvailabilityService _availability;
+    private readonly ISchedulingPolicyProvider _schedulingPolicy;
 
     public CreateReservationTool(
         IReservationService reservations,
         IReservationIntentBuilder intentBuilder,
         IBusinessRuleEngine rules,
         IBookingPolicyProvider bookingPolicy,
-        IPaymentLifecycleService paymentLifecycle)
+        IPaymentLifecycleService paymentLifecycle,
+        IAvailabilityService availability,
+        ISchedulingPolicyProvider schedulingPolicy)
     {
         _reservations = reservations;
         _intentBuilder = intentBuilder;
         _rules = rules;
         _bookingPolicy = bookingPolicy;
         _paymentLifecycle = paymentLifecycle;
+        _availability = availability;
+        _schedulingPolicy = schedulingPolicy;
     }
 
     public string Name => "create_reservation";
@@ -105,6 +112,10 @@ public sealed class CreateReservationTool : IAgentTool
             });
         }
 
+        var idempotentResult = TryBuildIdempotentResult(ctx, service!, dateStr!, timeStr!, customerName!);
+        if (idempotentResult is not null)
+            return idempotentResult;
+
         var policy = await _bookingPolicy.GetAsync(ctx.BusinessId, cancellationToken);
         if (policy.DepositRequired)
         {
@@ -129,6 +140,25 @@ public sealed class CreateReservationTool : IAgentTool
         {
             return ToolResultHelper.Error("business_rule_violation",
                 ruleResult.Reason ?? "Business rules prevent this reservation.");
+        }
+
+        var schedulingPolicy = await _schedulingPolicy.GetAsync(ctx.BusinessId, cancellationToken);
+        var availability = await _availability.CheckAvailabilityAsync(
+            ctx.BusinessId,
+            service!,
+            date.ToDateTime(TimeOnly.MinValue),
+            time.ToTimeSpan(),
+            schedulingPolicy,
+            cancellationToken);
+
+        if (!availability.IsAvailable)
+        {
+            return ToolResultHelper.Error(
+                "slot_unavailable",
+                availability.ResponseMessage ?? "The selected time is not available.",
+                availability.AvailableTimeSlots.Count > 0
+                    ? $"Available slots: {string.Join(", ", availability.AvailableTimeSlots)}"
+                    : "Call check_availability for alternative times.");
         }
 
         var intent = await _intentBuilder.BuildFromContextAsync(ctx, cancellationToken);
@@ -176,6 +206,41 @@ public sealed class CreateReservationTool : IAgentTool
             response.AddOnNames);
     }
 
+    private static string? TryBuildIdempotentResult(
+        AgentToolContext ctx,
+        string service,
+        string dateStr,
+        string timeStr,
+        string customerName)
+    {
+        var reservation = ctx.ActiveReservation;
+        if (reservation?.Status != ReservationStatus.Confirmed
+            || !reservation.ReservationDateTime.HasValue)
+        {
+            return null;
+        }
+
+        var existingDate = DateOnly.FromDateTime(reservation.ReservationDateTime.Value);
+        var existingTime = TimeOnly.FromDateTime(reservation.ReservationDateTime.Value);
+
+        if (!DateOnly.TryParse(dateStr, out var requestedDate)
+            || !TimeOnly.TryParse(timeStr, out var requestedTime)
+            || existingDate != requestedDate
+            || existingTime != requestedTime)
+        {
+            return null;
+        }
+
+        return BuildSuccessResult(
+            ctx,
+            reservation.ReservationId,
+            service,
+            dateStr,
+            timeStr,
+            customerName,
+            idempotentReplay: true);
+    }
+
     private static string BuildSuccessResult(
         AgentToolContext ctx,
         Guid reservationId,
@@ -185,7 +250,8 @@ public sealed class CreateReservationTool : IAgentTool
         string customerName,
         string? employee = null,
         int? durationMinutes = null,
-        IReadOnlyList<string>? addOnNames = null)
+        IReadOnlyList<string>? addOnNames = null,
+        bool idempotentReplay = false)
     {
         string? confirmationToken = null;
         if (ctx.Turn is not null
@@ -221,8 +287,9 @@ public sealed class CreateReservationTool : IAgentTool
             employee,
             duration_minutes = durationMinutes,
             add_ons = addOnNames,
-            confirmation_token = confirmationToken
-        }, ReservationCreated);
+            confirmation_token = confirmationToken,
+            idempotent_replay = idempotentReplay
+        }, idempotentReplay ? [] : [ReservationCreated]);
     }
 
     private static string? Coalesce(JsonElement args, string property, string? fallback)

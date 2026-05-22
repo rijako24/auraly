@@ -50,14 +50,21 @@ public sealed class AgentTurnResponseComposer : IAgentTurnResponseComposer
 
             if (inlineResult.Contains(entry.Token, StringComparison.Ordinal))
                 inlineResult = inlineResult.Replace(entry.Token, rendered, StringComparison.Ordinal);
-            else
+            else if (entry.Fragment.Priority == FragmentPriority.Required)
             {
                 _logger.LogDebug(
-                    "Token {Token} not found in LLM response — prepending rendered template",
+                    "Required token {Token} not found in LLM response — prepending rendered template",
                     entry.Token);
                 inlineResult = string.IsNullOrWhiteSpace(inlineResult)
                     ? rendered
                     : $"{rendered}{Environment.NewLine}{Environment.NewLine}{inlineResult}";
+            }
+            else
+            {
+                _logger.LogDebug(
+                    "Optional token {Token} not referenced — skipping fragment {TemplateId}",
+                    entry.Token,
+                    entry.Fragment.TemplateId);
             }
         }
 

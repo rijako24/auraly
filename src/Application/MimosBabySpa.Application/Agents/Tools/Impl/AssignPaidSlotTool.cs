@@ -1,4 +1,5 @@
 using System.Text.Json;
+using MimosBabySpa.Application.Agents.Gating;
 using MimosBabySpa.Application.Agents.Templates;
 using MimosBabySpa.Application.Configuration;
 using MimosBabySpa.Application.DTOs;
@@ -20,19 +21,22 @@ public sealed class AssignPaidSlotTool : IAgentTool
     private readonly IAvailabilityService _availability;
     private readonly ISchedulingPolicyProvider _schedulingPolicy;
     private readonly IUnitOfWork _unitOfWork;
+    private readonly IConversationVerificationService _verifications;
 
     public AssignPaidSlotTool(
         IPaymentLifecycleService paymentLifecycle,
         IReservationService reservations,
         IAvailabilityService availability,
         ISchedulingPolicyProvider schedulingPolicy,
-        IUnitOfWork unitOfWork)
+        IUnitOfWork unitOfWork,
+        IConversationVerificationService verifications)
     {
         _paymentLifecycle = paymentLifecycle;
         _reservations = reservations;
         _availability = availability;
         _schedulingPolicy = schedulingPolicy;
         _unitOfWork = unitOfWork;
+        _verifications = verifications;
     }
 
     public string Name => "assign_paid_slot";
@@ -72,12 +76,23 @@ public sealed class AssignPaidSlotTool : IAgentTool
 
         if (payment is null
             || payment.Status != PaymentTransactionStatus.Confirmed
-            || !payment.RequiresRescheduling
-            || payment.ReservationId.HasValue)
+            || !payment.RequiresRescheduling)
         {
             return ToolResultHelper.Error(
                 "no_pending_reschedule",
                 "There is no confirmed payment pending slot assignment for this conversation.");
+        }
+
+        if (payment.ReservationId.HasValue)
+        {
+            return ToolResultHelper.Ok(new
+            {
+                reservation_id = payment.ReservationId.Value,
+                payment_transaction_id = payment.PaymentTransactionId,
+                status = ReservationStatus.Confirmed.ToString(),
+                is_booking_confirmed = true,
+                idempotent_replay = true
+            });
         }
 
         var dateStr = Coalesce(arguments, "date", ConversationFactKeys.Get(ctx.Facts, ConversationFactKeys.DesiredDate));
@@ -123,6 +138,15 @@ public sealed class AssignPaidSlotTool : IAgentTool
                     ? $"Available slots: {string.Join(", ", availability.AvailableTimeSlots)}"
                     : null);
         }
+
+        await _verifications.RecordAsync(
+            ctx.ConversationId,
+            ctx.BusinessId,
+            VerificationFactTypes.AvailabilityChecked,
+            SlotVerificationScope.Build(service.ServiceName, dateStr!, timeStr!),
+            VerificationTtl.AvailabilityChecked,
+            payloadJson: null,
+            cancellationToken);
 
         var newDateTime = date.ToDateTime(time);
 

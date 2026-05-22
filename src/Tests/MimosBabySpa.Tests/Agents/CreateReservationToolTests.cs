@@ -2,6 +2,7 @@ using System.Text.Json;
 using FluentAssertions;
 using Moq;
 using MimosBabySpa.Application.Agents;
+using MimosBabySpa.Application.Agents.Gating;
 using MimosBabySpa.Application.Agents.Tools.Impl;
 using MimosBabySpa.Application.BusinessRules;
 using MimosBabySpa.Application.Configuration;
@@ -21,6 +22,8 @@ public class CreateReservationToolTests
     private readonly Mock<IBusinessRuleEngine> _rules = new();
     private readonly Mock<IBookingPolicyProvider> _bookingPolicy = new();
     private readonly Mock<IPaymentLifecycleService> _paymentLifecycle = new();
+    private readonly Mock<IAvailabilityService> _availability = new();
+    private readonly Mock<ISchedulingPolicyProvider> _schedulingPolicy = new();
     private readonly CreateReservationTool _tool;
 
     public CreateReservationToolTests()
@@ -29,12 +32,26 @@ public class CreateReservationToolTests
                 It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<DateOnly>(), It.IsAny<TimeOnly>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new BusinessRuleValidationResult { IsValid = true });
 
+        _schedulingPolicy.Setup(p => p.GetAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(AvailabilityParams.Default);
+
+        _availability.Setup(a => a.CheckAvailabilityAsync(
+                It.IsAny<Guid>(),
+                It.IsAny<string>(),
+                It.IsAny<DateTime>(),
+                It.IsAny<TimeSpan?>(),
+                It.IsAny<AvailabilityParams>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AvailabilityResult { IsAvailable = true });
+
         _tool = new CreateReservationTool(
             _reservations.Object,
             _intentBuilder.Object,
             _rules.Object,
             _bookingPolicy.Object,
-            _paymentLifecycle.Object);
+            _paymentLifecycle.Object,
+            _availability.Object,
+            _schedulingPolicy.Object);
     }
 
     [Fact]

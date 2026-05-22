@@ -30,12 +30,14 @@ public sealed partial class PromptTemplateRenderer : ITemplateRenderer
             if (!data.TryGetValue(listName, out var raw) || raw is null)
                 return string.Empty;
 
-            if (raw is not IEnumerable<object> items)
+            if (raw is not System.Collections.IEnumerable items || raw is string)
                 return string.Empty;
 
             var renderedItems = new List<string>();
             foreach (var item in items)
             {
+                if (item is null)
+                    continue;
                 var scope = MergeScope(data, item);
                 var block = inner;
                 block = RenderIfBlocks(block, scope);
@@ -116,6 +118,12 @@ public sealed partial class PromptTemplateRenderer : ITemplateRenderer
         {
             foreach (var (k, v) in dict)
                 merged[k] = v;
+            return merged;
+        }
+
+        if (item is string or ValueType)
+        {
+            merged["this"] = item;
             return merged;
         }
 

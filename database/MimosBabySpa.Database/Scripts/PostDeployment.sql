@@ -20,6 +20,7 @@
 
 :r .\Migrations\MigrateMultitenantStateArchitecture.sql
 :r .\Migrations\MigratePaymentSnapshotAndReservationCustomAttrs.sql
+:r .\Migrations\MigrateConversationVerifications.sql
 :r .\Seeds\SeedAdminUser.sql
 :r .\Seeds\SeedSqlAppLoginPermissions.sql
 :r .\Seeds\SeedServiceCategoriesForNewBusinesses.sql

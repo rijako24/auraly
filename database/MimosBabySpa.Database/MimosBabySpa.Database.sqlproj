@@ -40,6 +40,7 @@
     <Build Include="Tables\ServiceResourceUsages.sql" />
     <Build Include="Tables\EmployeeServices.sql" />
     <Build Include="Tables\PaymentTransactions.sql" />
+    <Build Include="Tables\ConversationVerifications.sql" />
     <Build Include="Tables\UserRoles.sql" />
     <Build Include="Tables\RolePermissions.sql" />
     <Build Include="Tables\UserExternalLogins.sql" />

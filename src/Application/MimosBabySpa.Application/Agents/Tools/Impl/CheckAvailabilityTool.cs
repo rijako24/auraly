@@ -1,4 +1,6 @@
 using System.Text.Json;
+using MimosBabySpa.Application.Agents.Gating;
+using MimosBabySpa.Application.Agents.Templates;
 using MimosBabySpa.Application.Configuration;
 using MimosBabySpa.Application.Services;
 using MimosBabySpa.Domain.Repositories;
@@ -14,17 +16,20 @@ public sealed class CheckAvailabilityTool : IAgentTool
     private readonly ISchedulingPolicyProvider _schedulingPolicy;
     private readonly IEmployeeAssignmentService _employeeAssignment;
     private readonly IUnitOfWork _unitOfWork;
+    private readonly IConversationVerificationService _verifications;
 
     public CheckAvailabilityTool(
         IAvailabilityService availability,
         ISchedulingPolicyProvider schedulingPolicy,
         IEmployeeAssignmentService employeeAssignment,
-        IUnitOfWork unitOfWork)
+        IUnitOfWork unitOfWork,
+        IConversationVerificationService verifications)
     {
         _availability = availability;
         _schedulingPolicy = schedulingPolicy;
         _employeeAssignment = employeeAssignment;
         _unitOfWork = unitOfWork;
+        _verifications = verifications;
     }
 
     public string Name => "check_availability";
@@ -94,11 +99,51 @@ public sealed class CheckAvailabilityTool : IAgentTool
             }
         }
 
+        if (result.IsAvailable)
+            await RecordAvailabilityVerificationsAsync(ctx, service, dateStr, timeStr, result, cancellationToken);
+
         var verbalStatus = result.IsAvailable && time.HasValue
             ? "horario_disponible_no_reservado"
             : result.IsAvailable
                 ? "slots_disponibles_sin_reservar"
                 : "sin_disponibilidad";
+
+        string? presentationToken = null;
+        var slotsForPresentation = BuildPresentationSlots(result, timeStr);
+        if (result.IsAvailable && slotsForPresentation.Count > 0 && ctx.Turn is not null)
+        {
+            presentationToken = ctx.Turn.RegisterFragment(
+                "SLOTS",
+                "availability_slots",
+                new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["service_name"] = result.RequestServiceName ?? service,
+                    ["date_formatted"] = date.ToString("dd/MM/yyyy"),
+                    ["slots"] = slotsForPresentation.Select(static s => (object)s).ToList()
+                },
+                FragmentRenderMode.Inline,
+                FragmentPriority.Required);
+        }
+
+        if (presentationToken is not null)
+        {
+            return ToolResultHelper.Ok(new
+            {
+                is_available = result.IsAvailable,
+                is_booking_confirmed = false,
+                slot_held = false,
+                verbal_status = verbalStatus,
+                service = result.RequestServiceName,
+                date = result.RequestDateString,
+                time = result.RequestTimeString,
+                slot_count = slotsForPresentation.Count,
+                preferred_employee_id = preferredEmployeeId,
+                presentation_token = presentationToken,
+                presentation_instruction =
+                    "Embed presentation_token verbatim in your reply. Do NOT list slot times in prose.",
+                message = result.ResponseMessage
+            });
+        }
 
         return ToolResultHelper.Ok(new
         {
@@ -113,6 +158,58 @@ public sealed class CheckAvailabilityTool : IAgentTool
             preferred_employee_id = preferredEmployeeId,
             message = result.ResponseMessage
         });
+    }
+
+    private static List<string> BuildPresentationSlots(AvailabilityResult result, string? timeStr)
+    {
+        if (result.AvailableTimeSlots.Count > 0)
+        {
+            return result.AvailableTimeSlots
+                .Select(s => TimeOnly.TryParse(s, out var parsed) ? parsed.ToString("HH:mm") : s)
+                .ToList();
+        }
+
+        if (!string.IsNullOrWhiteSpace(result.RequestTimeString))
+            return [TimeOnly.TryParse(result.RequestTimeString, out var parsed) ? parsed.ToString("HH:mm") : result.RequestTimeString];
+
+        if (!string.IsNullOrWhiteSpace(timeStr))
+            return [TimeOnly.TryParse(timeStr, out var fromArg) ? fromArg.ToString("HH:mm") : timeStr];
+
+        return [];
+    }
+
+    private async Task RecordAvailabilityVerificationsAsync(
+        AgentToolContext ctx,
+        string service,
+        string dateStr,
+        string? timeStr,
+        AvailabilityResult result,
+        CancellationToken cancellationToken)
+    {
+        if (!string.IsNullOrWhiteSpace(timeStr))
+        {
+            await _verifications.RecordAsync(
+                ctx.ConversationId,
+                ctx.BusinessId,
+                VerificationFactTypes.AvailabilityChecked,
+                SlotVerificationScope.Build(service, dateStr, timeStr),
+                VerificationTtl.AvailabilityChecked,
+                payloadJson: null,
+                cancellationToken);
+            return;
+        }
+
+        foreach (var slot in result.AvailableTimeSlots)
+        {
+            await _verifications.RecordAsync(
+                ctx.ConversationId,
+                ctx.BusinessId,
+                VerificationFactTypes.AvailabilityChecked,
+                SlotVerificationScope.Build(service, dateStr, slot),
+                VerificationTtl.AvailabilityChecked,
+                payloadJson: null,
+                cancellationToken);
+        }
     }
 
     private static string? Coalesce(JsonElement args, string property, string? factValue)

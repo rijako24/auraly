@@ -2,6 +2,7 @@ using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using MimosBabySpa.Application.Agents;
+using MimosBabySpa.Application.Agents.Gating;
 using MimosBabySpa.Application.Agents.Templates;
 using MimosBabySpa.Application.Agents.Tools;
 using MimosBabySpa.Application.Agents.Tools.Impl;
@@ -66,6 +67,9 @@ public static class TestServiceBuilder
         services.AddSingleton<IReservationLifecycleService, ReservationLifecycleService>();
         services.AddSingleton<IPaymentLifecycleService, PaymentLifecycleService>();
         services.AddSingleton<IReservationIntentBuilder, ReservationIntentBuilder>();
+        services.AddSingleton<IConversationVerificationService, ConversationVerificationService>();
+        services.AddSingleton<IToolPreconditionProvider, ToolPreconditionProvider>();
+        services.AddSingleton<IToolCapabilityGate, ToolCapabilityGate>();
 
         services.AddSingleton<IWhatsAppService, NoOpWhatsAppService>();
         services.AddSingleton<FakeAdminActionLinkService>();
@@ -91,17 +95,21 @@ public static class TestServiceBuilder
                     sp.GetRequiredService<IAvailabilityService>(),
                     sp.GetRequiredService<ISchedulingPolicyProvider>(),
                     sp.GetRequiredService<IEmployeeAssignmentService>(),
-                    sp.GetRequiredService<IUnitOfWork>()),
+                    sp.GetRequiredService<IUnitOfWork>(),
+                    sp.GetRequiredService<IConversationVerificationService>()),
                 new CreateReservationTool(
                     sp.GetRequiredService<IReservationService>(),
                     sp.GetRequiredService<IReservationIntentBuilder>(),
                     sp.GetRequiredService<IBusinessRuleEngine>(),
                     sp.GetRequiredService<IBookingPolicyProvider>(),
-                    sp.GetRequiredService<IPaymentLifecycleService>()),
+                    sp.GetRequiredService<IPaymentLifecycleService>(),
+                    sp.GetRequiredService<IAvailabilityService>(),
+                    sp.GetRequiredService<ISchedulingPolicyProvider>()),
                 new EscalateToHumanTool(sp.GetRequiredService<IEscalationNotifier>()),
                 new SetFactTool(
                     sp.GetRequiredService<IConversationFactsService>(),
-                    sp.GetRequiredService<IAddOnCatalogService>()),
+                    sp.GetRequiredService<IAddOnCatalogService>(),
+                    sp.GetRequiredService<IConversationVerificationService>()),
             ];
 
             var intercepted = rawTools

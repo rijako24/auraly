@@ -34,6 +34,7 @@ public class ApplicationDbContext : DbContext
     public DbSet<EmployeeService> EmployeeServices { get; set; }
     public DbSet<ConversationStateEntity> ConversationStates { get; set; }
     public DbSet<PaymentTransaction> PaymentTransactions { get; set; }
+    public DbSet<ConversationVerification> ConversationVerifications { get; set; }
 
     public DbSet<AppUser> AppUsers { get; set; }
     public DbSet<AppRole> AppRoles { get; set; }
@@ -468,6 +469,24 @@ public class ApplicationDbContext : DbContext
             entity.HasIndex(e => e.ConversationId);
             entity.HasIndex(e => e.BusinessId);
             entity.HasIndex(e => e.ReservationId);
+        });
+
+        modelBuilder.Entity<ConversationVerification>(entity =>
+        {
+            entity.HasKey(e => e.VerificationId);
+            entity.Property(e => e.FactType).IsRequired().HasMaxLength(64);
+            entity.Property(e => e.ScopeKey).IsRequired().HasMaxLength(256);
+            entity.Property(e => e.PayloadJson).HasColumnType("NVARCHAR(MAX)");
+            entity.HasOne<Conversation>()
+                .WithMany()
+                .HasForeignKey(e => e.ConversationId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne<Business>()
+                .WithMany()
+                .HasForeignKey(e => e.BusinessId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasIndex(e => new { e.ConversationId, e.FactType, e.ScopeKey, e.ExpiresAt })
+                .HasDatabaseName("IX_ConversationVerifications_Lookup");
         });
 
         // AppUser configuration

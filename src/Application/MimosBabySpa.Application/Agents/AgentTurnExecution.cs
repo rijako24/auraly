@@ -62,11 +62,12 @@ internal sealed class AgentTurnExecution
         string tokenPrefix,
         string templateId,
         IReadOnlyDictionary<string, object?> data,
-        FragmentRenderMode mode = FragmentRenderMode.Inline)
+        FragmentRenderMode mode = FragmentRenderMode.Inline,
+        FragmentPriority priority = FragmentPriority.Optional)
     {
         var suffix = Guid.NewGuid().ToString("N")[..6];
         var token = $"{{{{{tokenPrefix}:{suffix}}}}}";
-        _fragments[token] = new TurnFragment(templateId, data, mode);
+        _fragments[token] = new TurnFragment(templateId, data, mode, priority);
         return token;
     }
 
