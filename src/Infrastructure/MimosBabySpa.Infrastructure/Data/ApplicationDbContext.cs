@@ -2,8 +2,6 @@ using Microsoft.EntityFrameworkCore;
 using MimosBabySpa.Domain.Entities;
 using MimosBabySpa.Domain.Enums;
 using MimosBabySpa.Domain.Models;
-using ConversationFlowState = MimosBabySpa.Domain.Enums.ConversationState;
-
 namespace MimosBabySpa.Infrastructure.Data;
 
 public class ApplicationDbContext : DbContext
@@ -137,16 +135,16 @@ public class ApplicationDbContext : DbContext
             entity.Property(e => e.LastMessage).HasMaxLength(1000);
             entity.Property(e => e.CustomerName).HasMaxLength(100);
             entity.Property(e => e.CustomerEmail).HasMaxLength(200);
-            entity.Property(e => e.State)
-                  .HasConversion<int>()
-                  .HasDefaultValue(ConversationFlowState.Idle);
+            entity.Property(e => e.Status).HasConversion<byte>().HasDefaultValue(ConversationLifecycleStatus.Active);
+            entity.Property(e => e.OpenedAt).IsRequired();
+            entity.Property(e => e.LastActivityAt).IsRequired();
+            entity.Property(e => e.CloseReason).HasMaxLength(50);
             entity.HasOne(e => e.Business)
                   .WithMany(b => b.Conversations)
                   .HasForeignKey(e => e.BusinessId)
                   .OnDelete(DeleteBehavior.Restrict);
-            entity.HasIndex(e => new { e.BusinessId, e.UserNumber }); // Índice compuesto
-            entity.HasIndex(e => e.State); // Índice para búsquedas por estado
-            // Relación con ConversationContext
+            entity.HasIndex(e => new { e.BusinessId, e.UserNumber });
+            entity.HasIndex(e => e.Status);
             entity.HasMany(e => e.Contexts)
                   .WithOne(c => c.Conversation)
                   .HasForeignKey(c => c.ConversationId)
@@ -187,6 +185,7 @@ public class ApplicationDbContext : DbContext
             entity.Property(e => e.UserNumber).IsRequired().HasMaxLength(50);
             entity.Property(e => e.Status).IsRequired().HasMaxLength(20);
             entity.Property(e => e.CustomerName).HasMaxLength(100);
+            entity.Property(e => e.CustomerEmail).HasMaxLength(200);
             entity.Property(e => e.Notes).HasMaxLength(1000);
             entity.HasOne(e => e.Business)
                   .WithMany(b => b.Leads)
@@ -413,7 +412,6 @@ public class ApplicationDbContext : DbContext
             entity.Property(e => e.Owner).HasConversion<byte>().HasDefaultValue(ConversationOwner.Bot);
             entity.Property(e => e.LastUserMessage).HasColumnType("NVARCHAR(MAX)");
             entity.Property(e => e.LastBotMessage).HasColumnType("NVARCHAR(MAX)");
-            entity.Property(e => e.PreviousSessionJson).HasColumnType("NVARCHAR(MAX)");
             entity.Property(e => e.VerificationsJson).HasColumnType("NVARCHAR(MAX)");
             entity.Property(e => e.Version).IsRequired().HasDefaultValue(1);
             entity.Property(e => e.UpdatedAt).IsRequired();
@@ -447,6 +445,12 @@ public class ApplicationDbContext : DbContext
             entity.Property(e => e.Snapshot_CustomerPhone).HasMaxLength(50);
             entity.Property(e => e.Snapshot_AddOnIds).HasMaxLength(500);
             entity.Property(e => e.Snapshot_CustomAttributesJson).HasColumnType("NVARCHAR(MAX)");
+            entity.Property(e => e.SupersededAt);
+            entity.HasOne<PaymentTransaction>()
+                .WithMany()
+                .HasForeignKey(e => e.SupersededByPaymentTransactionId)
+                .OnDelete(DeleteBehavior.Restrict)
+                .IsRequired(false);
             entity.HasOne(e => e.Business)
                 .WithMany()
                 .HasForeignKey(e => e.BusinessId)

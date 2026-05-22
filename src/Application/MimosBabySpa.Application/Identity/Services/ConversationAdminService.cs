@@ -3,6 +3,7 @@ using MimosBabySpa.Application.Common.Exceptions;
 using MimosBabySpa.Application.Identity.DTOs;
 using MimosBabySpa.Application.Identity.Interfaces;
 using MimosBabySpa.Domain.Entities;
+using MimosBabySpa.Domain.Enums;
 using MimosBabySpa.Domain.Repositories;
 
 namespace MimosBabySpa.Application.Identity.Services;
@@ -18,12 +19,12 @@ public class ConversationAdminService : IConversationAdminService
 
     public async Task<PagedResponse<ConversationDto>> GetPagedByBusinessIdAsync(
         Guid tenantId, Guid businessId, PagedRequest request,
-        Domain.Enums.ConversationState? state, CancellationToken ct)
+        ConversationLifecycleStatus? status, CancellationToken ct)
     {
         await EnsureBusinessBelongsToTenantAsync(tenantId, businessId, ct);
 
         var (items, totalCount) = await _unitOfWork.Conversations.GetPagedByBusinessIdAsync(
-            businessId, request.Page, request.PageSize, request.Search, state, ct);
+            businessId, request.Page, request.PageSize, request.Search, status, ct);
 
         return new PagedResponse<ConversationDto>(
             items.Select(MapToDto).ToList(), totalCount, request.Page, request.PageSize);
@@ -59,7 +60,8 @@ public class ConversationAdminService : IConversationAdminService
             c.ConversationId, c.BusinessId, c.UserNumber,
             c.LastMessage, c.Timestamp,
             c.CustomerName, c.CustomerEmail,
-            c.State.ToString());
+            c.Status.ToString(),
+            c.OpenedAt, c.LastActivityAt, c.ClosedAt, c.CloseReason);
 
     private async Task EnsureBusinessBelongsToTenantAsync(Guid tenantId, Guid businessId, CancellationToken ct)
     {

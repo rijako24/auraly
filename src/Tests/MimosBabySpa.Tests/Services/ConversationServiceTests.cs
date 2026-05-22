@@ -10,6 +10,7 @@ namespace MimosBabySpa.Tests.Services;
 
 public class ConversationServiceTests
 {
+    private readonly Mock<IConversationLifecycleService> _mockLifecycle;
     private readonly Mock<IUnitOfWork> _mockUnitOfWork;
     private readonly Mock<IConversationRepository> _mockConversationRepository;
     private readonly Mock<ILogger<ConversationService>> _mockLogger;
@@ -17,141 +18,82 @@ public class ConversationServiceTests
 
     public ConversationServiceTests()
     {
+        _mockLifecycle = new Mock<IConversationLifecycleService>();
         _mockUnitOfWork = new Mock<IUnitOfWork>();
         _mockConversationRepository = new Mock<IConversationRepository>();
         _mockLogger = new Mock<ILogger<ConversationService>>();
 
         _mockUnitOfWork.Setup(u => u.Conversations).Returns(_mockConversationRepository.Object);
 
-        _service = new ConversationService(_mockUnitOfWork.Object, _mockLogger.Object);
+        _service = new ConversationService(
+            _mockLifecycle.Object,
+            _mockUnitOfWork.Object,
+            _mockLogger.Object);
     }
 
     [Fact]
-    public async Task GetOrCreateConversationAsync_WhenConversationExists_ShouldReturnExistingConversation()
+    public async Task GetOrCreateConversationAsync_DelegatesToLifecycleService()
     {
-        // Arrange
         var businessId = Guid.NewGuid();
         var userNumber = "1234567890";
-        var existingConversation = new Conversation
+        var expected = new Conversation
         {
             ConversationId = Guid.NewGuid(),
             BusinessId = businessId,
-            UserNumber = userNumber,
-            Timestamp = DateTime.UtcNow
+            UserNumber = userNumber
         };
 
-        _mockConversationRepository
-            .Setup(x => x.GetByBusinessIdAndUserNumberAsync(businessId, userNumber))
-            .ReturnsAsync(existingConversation);
+        _mockLifecycle
+            .Setup(x => x.GetOrOpenForCustomerAsync(businessId, userNumber, null, default))
+            .ReturnsAsync(expected);
 
-        // Act
         var result = await _service.GetOrCreateConversationAsync(businessId, userNumber);
 
-        // Assert
-        result.Should().NotBeNull();
-        result.ConversationId.Should().Be(existingConversation.ConversationId);
-        result.UserNumber.Should().Be(userNumber);
-        
-        _mockConversationRepository.Verify(x => x.GetByBusinessIdAndUserNumberAsync(businessId, userNumber), Times.Once);
-        _mockConversationRepository.Verify(x => x.CreateAsync(It.IsAny<Conversation>()), Times.Never);
+        result.Should().BeSameAs(expected);
+        _mockLifecycle.Verify(
+            x => x.GetOrOpenForCustomerAsync(businessId, userNumber, null, default),
+            Times.Once);
     }
 
     [Fact]
-    public async Task GetOrCreateConversationAsync_WhenConversationDoesNotExist_ShouldCreateNewConversation()
+    public async Task UpdateConversationContextAsync_DelegatesToLifecycleTouch()
     {
-        // Arrange
-        var businessId = Guid.NewGuid();
-        var userNumber = "1234567890";
-        var customerName = "Juan Pérez";
-
-        _mockConversationRepository
-            .Setup(x => x.GetByBusinessIdAndUserNumberAsync(businessId, userNumber))
-            .ReturnsAsync((Conversation?)null);
-
-        var newConversation = new Conversation
-        {
-            ConversationId = Guid.NewGuid(),
-            BusinessId = businessId,
-            UserNumber = userNumber,
-            CustomerName = customerName,
-            Timestamp = DateTime.UtcNow
-        };
-
-        _mockConversationRepository
-            .Setup(x => x.CreateAsync(It.IsAny<Conversation>()))
-            .ReturnsAsync(newConversation);
-
-        _mockUnitOfWork
-            .Setup(x => x.SaveChangesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(1);
-
-        // Act
-        var result = await _service.GetOrCreateConversationAsync(businessId, userNumber, customerName);
-
-        // Assert
-        result.Should().NotBeNull();
-        result.UserNumber.Should().Be(userNumber);
-        result.CustomerName.Should().Be(customerName);
-
-        _mockConversationRepository.Verify(x => x.GetByBusinessIdAndUserNumberAsync(businessId, userNumber), Times.Once);
-        _mockConversationRepository.Verify(x => x.CreateAsync(It.Is<Conversation>(c =>
-            c.BusinessId == businessId &&
-            c.UserNumber == userNumber &&
-            c.CustomerName == customerName)), Times.Once);
-        _mockUnitOfWork.Verify(x => x.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Once);
-    }
-
-    [Fact]
-    public async Task UpdateConversationContextAsync_WithValidData_ShouldUpdateConversation()
-    {
-        // Arrange
-        var conversationId = Guid.NewGuid();
-        var existingConversation = new Conversation
-        {
-            ConversationId = conversationId,
-            UserNumber = "1234567890"
-        };
-
-        _mockConversationRepository
-            .Setup(x => x.GetByIdAsync(conversationId))
-            .ReturnsAsync(existingConversation);
-
-        _mockConversationRepository
-            .Setup(x => x.UpdateAsync(It.IsAny<Conversation>()))
-            .ReturnsAsync(existingConversation);
-
-        _mockUnitOfWork
-            .Setup(x => x.SaveChangesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(1);
-
-        // Act
-        await _service.UpdateConversationContextAsync(
-            conversationId,
-            lastMessage: "Hola");
-
-        // Assert
-        _mockConversationRepository.Verify(x => x.GetByIdAsync(conversationId), Times.Once);
-        _mockConversationRepository.Verify(x => x.UpdateAsync(It.Is<Conversation>(c =>
-            c.LastMessage == "Hola")), Times.Once);
-        _mockUnitOfWork.Verify(x => x.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Once);
-    }
-
-    [Fact]
-    public async Task UpdateConversationContextAsync_WhenConversationNotFound_ShouldNotUpdate()
-    {
-        // Arrange
         var conversationId = Guid.NewGuid();
 
-        _mockConversationRepository
-            .Setup(x => x.GetByIdAsync(conversationId))
-            .ReturnsAsync((Conversation?)null);
-
-        // Act
         await _service.UpdateConversationContextAsync(conversationId, "Hola");
 
-        // Assert
-        _mockConversationRepository.Verify(x => x.GetByIdAsync(conversationId), Times.Once);
-        _mockConversationRepository.Verify(x => x.UpdateAsync(It.IsAny<Conversation>()), Times.Never);
-        _mockUnitOfWork.Verify(x => x.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Never);
+        _mockLifecycle.Verify(
+            x => x.TouchActivityAsync(conversationId, "Hola", default),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task GetConversationByIdAsync_DelegatesToRepository()
+    {
+        var conversationId = Guid.NewGuid();
+        var expected = new Conversation { ConversationId = conversationId };
+
+        _mockConversationRepository
+            .Setup(x => x.GetByIdAsync(conversationId))
+            .ReturnsAsync(expected);
+
+        var result = await _service.GetConversationByIdAsync(conversationId);
+
+        result.Should().BeSameAs(expected);
+    }
+
+    [Fact]
+    public async Task HasClosedConversationsAsync_DelegatesToRepository()
+    {
+        var businessId = Guid.NewGuid();
+        var userNumber = "1234567890";
+
+        _mockConversationRepository
+            .Setup(x => x.HasClosedConversationsAsync(businessId, userNumber, default))
+            .ReturnsAsync(true);
+
+        var result = await _service.HasClosedConversationsAsync(businessId, userNumber);
+
+        result.Should().BeTrue();
     }
 }

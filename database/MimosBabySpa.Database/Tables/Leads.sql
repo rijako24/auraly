@@ -4,6 +4,7 @@ CREATE TABLE [dbo].[Leads] (
     [UserNumber] NVARCHAR(50) NOT NULL,
     [Status] NVARCHAR(20) NOT NULL,
     [CustomerName] NVARCHAR(100) NULL,
+    [CustomerEmail] NVARCHAR(200) NULL,
     [Notes] NVARCHAR(1000) NULL,
     [Timestamp] DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
     CONSTRAINT [FK_Leads_Businesses] FOREIGN KEY ([BusinessId])

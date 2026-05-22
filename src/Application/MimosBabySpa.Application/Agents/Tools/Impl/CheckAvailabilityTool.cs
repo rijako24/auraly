@@ -140,8 +140,7 @@ public sealed class CheckAvailabilityTool : IAgentTool
                 preferred_employee_id = preferredEmployeeId,
                 presentation_token = presentationToken,
                 presentation_instruction =
-                    "Embed presentation_token verbatim in your reply. Do NOT list slot times in prose.",
-                message = result.ResponseMessage
+                    "Embed presentation_token verbatim in your reply. Do NOT list slot times in prose."
             });
         }
 

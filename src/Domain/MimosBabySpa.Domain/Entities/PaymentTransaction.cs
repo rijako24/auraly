@@ -31,6 +31,8 @@ public class PaymentTransaction
     public string? Snapshot_CustomAttributesJson { get; set; }
     public bool RequiresRescheduling { get; set; }
     public bool RequiresRefund { get; set; }
+    public DateTime? SupersededAt { get; set; }
+    public Guid? SupersededByPaymentTransactionId { get; set; }
 
     public virtual Business Business { get; set; } = null!;
     public virtual Conversation Conversation { get; set; } = null!;

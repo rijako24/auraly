@@ -24,6 +24,7 @@ public class CreateReservationToolTests
     private readonly Mock<IPaymentLifecycleService> _paymentLifecycle = new();
     private readonly Mock<IAvailabilityService> _availability = new();
     private readonly Mock<ISchedulingPolicyProvider> _schedulingPolicy = new();
+    private readonly Mock<IConversationLifecycleService> _lifecycle = new();
     private readonly CreateReservationTool _tool;
 
     public CreateReservationToolTests()
@@ -51,7 +52,8 @@ public class CreateReservationToolTests
             _bookingPolicy.Object,
             _paymentLifecycle.Object,
             _availability.Object,
-            _schedulingPolicy.Object);
+            _schedulingPolicy.Object,
+            _lifecycle.Object);
     }
 
     [Fact]

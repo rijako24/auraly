@@ -1,4 +1,3 @@
-using System.Globalization;
 using System.Text.Json;
 using MimosBabySpa.Application.Agents.Gating;
 using MimosBabySpa.Application.Configuration;
@@ -14,15 +13,18 @@ public sealed class SetFactTool : IAgentTool
     private readonly IConversationFactsService _factsService;
     private readonly IAddOnCatalogService _addOnCatalog;
     private readonly IConversationVerificationService _verifications;
+    private readonly ILeadService _leadService;
 
     public SetFactTool(
         IConversationFactsService factsService,
         IAddOnCatalogService addOnCatalog,
-        IConversationVerificationService verifications)
+        IConversationVerificationService verifications,
+        ILeadService leadService)
     {
         _factsService = factsService;
         _addOnCatalog = addOnCatalog;
         _verifications = verifications;
+        _leadService = leadService;
     }
 
     public string Name => "set_fact";
@@ -32,7 +34,6 @@ public sealed class SetFactTool : IAgentTool
         "Use for customer data (customer_name, customer_phone, customer_email), " +
         "booking fields (service, desired_date, desired_time, add_ons), " +
         "or tenant-specific facts (baby_age_months, party_size, etc.). " +
-        "When key=service, the result includes compatible_add_ons from the catalog. " +
         "Call as soon as the customer provides structured data — do not wait until checkout.";
 
     public string ParametersSchema => """
@@ -112,21 +113,18 @@ public sealed class SetFactTool : IAgentTool
         if (key.Equals(ConversationFactKeys.CustomerEmail, StringComparison.OrdinalIgnoreCase))
             ctx.Conversation.CustomerEmail = value;
 
-        await TryRecordCustomerIdentifiedAsync(ctx);
-
-        if (key.Equals(ConversationFactKeys.Service, StringComparison.OrdinalIgnoreCase))
+        if (key.Equals(ConversationFactKeys.CustomerName, StringComparison.OrdinalIgnoreCase)
+            || key.Equals(ConversationFactKeys.CustomerEmail, StringComparison.OrdinalIgnoreCase))
         {
-            var compatibleAddOns = await _addOnCatalog.GetCompatibleAsync(
-                ctx.BusinessId, value, cancellationToken);
-
-            return ToolResultHelper.Ok(new
-            {
-                key,
-                value,
-                storage = "fact",
-                compatible_add_ons = MapCompatibleAddOns(compatibleAddOns)
-            });
+            await _leadService.SyncCustomerIdentityAsync(
+                ctx.BusinessId,
+                ctx.Conversation.UserNumber,
+                key.Equals(ConversationFactKeys.CustomerName, StringComparison.OrdinalIgnoreCase) ? value : null,
+                key.Equals(ConversationFactKeys.CustomerEmail, StringComparison.OrdinalIgnoreCase) ? value : null,
+                cancellationToken);
         }
+
+        await TryRecordCustomerIdentifiedAsync(ctx);
 
         return ToolResultHelper.Ok(new { key, value, storage = "fact" });
     }
@@ -148,13 +146,4 @@ public sealed class SetFactTool : IAgentTool
 
         return Task.CompletedTask;
     }
-
-    private static IReadOnlyList<object> MapCompatibleAddOns(IReadOnlyList<AddOnRuleInfo> addOns) =>
-        addOns.Select(a => (object)new
-        {
-            name = a.AddOnName,
-            price = a.AddOnPrice,
-            price_formatted = a.AddOnPrice.ToString("N0", CultureInfo.InvariantCulture),
-            description = string.IsNullOrWhiteSpace(a.AddOnDescription) ? null : a.AddOnDescription
-        }).ToList();
 }

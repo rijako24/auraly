@@ -16,6 +16,7 @@ public class SetFactToolTests
 {
     private readonly Mock<IConversationFactsService> _facts = new();
     private readonly Mock<IAddOnCatalogService> _addOnCatalog = new();
+    private readonly Mock<ILeadService> _leadService = new();
     private readonly ConversationVerificationService _verifications = new();
     private readonly SetFactTool _tool;
 
@@ -37,54 +38,25 @@ public class SetFactToolTests
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<AddOnRuleInfo>());
 
-        _tool = new SetFactTool(_facts.Object, _addOnCatalog.Object, _verifications);
+        _tool = new SetFactTool(_facts.Object, _addOnCatalog.Object, _verifications, _leadService.Object);
     }
 
     [Fact]
-    public async Task ExecuteAsync_ServiceKey_ReturnsCompatibleAddOnsFromCatalog()
+    public async Task ExecuteAsync_ServiceKey_PersistsWithoutAddOnPayload()
     {
         var businessId = Guid.NewGuid();
         var ctx = CreateContext(businessId);
-
-        _addOnCatalog
-            .Setup(c => c.GetCompatibleAsync(businessId, "Plan Marineritos", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<AddOnRuleInfo>
-            {
-                new()
-                {
-                    AddOnName = "Decoración Sencilla",
-                    AddOnDescription = "Globos temáticos",
-                    AddOnPrice = 35000
-                },
-                new()
-                {
-                    AddOnName = "Decoración Bouquet Personalizado",
-                    AddOnPrice = 120000
-                }
-            });
 
         using var args = JsonDocument.Parse("""{"key":"service","value":"Plan Marineritos"}""");
         var json = await _tool.ExecuteAsync(args.RootElement, ctx, CancellationToken.None);
 
         using var doc = JsonDocument.Parse(json);
         doc.RootElement.GetProperty("ok").GetBoolean().Should().BeTrue();
-        var addOns = doc.RootElement.GetProperty("data").GetProperty("compatible_add_ons");
-        addOns.GetArrayLength().Should().Be(2);
-        addOns[0].GetProperty("name").GetString().Should().Be("Decoración Sencilla");
-        addOns[0].GetProperty("price").GetDecimal().Should().Be(35000);
-        addOns[1].GetProperty("name").GetString().Should().Be("Decoración Bouquet Personalizado");
+        doc.RootElement.GetProperty("data").TryGetProperty("compatible_add_ons", out _).Should().BeFalse();
         ctx.Facts[ConversationFactKeys.Service].Should().Be("Plan Marineritos");
-    }
-
-    [Fact]
-    public async Task ExecuteAsync_ServiceKey_WithNoAddOns_ReturnsEmptyList()
-    {
-        var ctx = CreateContext();
-
-        using var args = JsonDocument.Parse("""{"key":"service","value":"Plan Marineritos"}""");
-        var json = await _tool.ExecuteAsync(args.RootElement, ctx, CancellationToken.None);
-
-        json.Should().Contain("\"compatible_add_ons\":[]");
+        _addOnCatalog.Verify(
+            c => c.GetCompatibleAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never);
     }
 
     [Fact]

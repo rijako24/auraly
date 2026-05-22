@@ -73,6 +73,7 @@ services.AddScoped<MimosBabySpa.Domain.Repositories.IAgentRepository, AgentRepos
 
 // ── Application Services ───────────────────────────────────────────────────────
 services.AddScoped<IConversationService, ConversationService>();
+services.AddScoped<IConversationLifecycleService, ConversationLifecycleService>();
 services.AddScoped<IMessageService, MessageService>();
 services.AddScoped<ILeadService, LeadService>();
 services.AddScoped<IReservationService, ReservationService>();
@@ -192,12 +193,12 @@ Console.WriteLine("════════════════════�
 Console.WriteLine("  Mimos Baby Spa — Simulador Agentic Engine (FC)");
 Console.WriteLine("════════════════════════════════════════════════════════");
 Console.WriteLine();
-Console.WriteLine("  Agente  : Mimo Bot (+573194823017)");
+Console.WriteLine("  Agente  : Mimi Bot (+573194823017)");
 Console.WriteLine("  Escribe  'exit' para salir");
 Console.WriteLine("  Escribe  'reset' para reiniciar la sesión");
 Console.WriteLine();
 
-// AgentId del Mimo Bot — resuelto directamente de la BD.
+// AgentId del Mimi Bot — resuelto directamente de la BD.
 const string agentIdStr = "7105A9D5-D4E4-4BBA-9F3A-DBB34E0B1B86";
 var agentId = Guid.Parse(agentIdStr);
 
@@ -259,7 +260,7 @@ while (true)
             userPhone);
 
         Console.ForegroundColor = ConsoleColor.Green;
-        Console.Write("Mimo: ");
+        Console.Write("Mimi: ");
         Console.ResetColor();
 
         if (!string.IsNullOrWhiteSpace(result.Response))

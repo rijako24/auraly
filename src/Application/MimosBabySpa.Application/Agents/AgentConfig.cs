@@ -19,6 +19,11 @@ public sealed class AgentConfig
     /// </summary>
     public string? FirstTurnGreetingHint { get; init; }
 
+    /// <summary>
+    /// Plantilla sugerida cuando el cliente regresa en un engagement nuevo (SettingsJson → messages.returningCustomerGreetingHint).
+    /// </summary>
+    public string? ReturningCustomerGreetingHint { get; init; }
+
     /// <summary>Deployment o model name de Azure OpenAI.</summary>
     public string Model { get; init; } = string.Empty;
 

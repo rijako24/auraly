@@ -51,6 +51,8 @@ public static class TestServiceBuilder
         services.AddSingleton<IReservationService>(new FakeReservationService(reservationMode));
         services.AddSingleton<IEmployeeAssignmentService>(new FakeEmployeeAssignmentService(businessId));
         services.AddSingleton<IConversationService>(new FakeConversationService(businessId));
+        services.AddSingleton<IConversationLifecycleService, ConversationLifecycleService>();
+        services.AddSingleton<ILeadService, LeadService>();
         services.AddSingleton<IMessageService>(sp =>
             new FakeMessageService(sp.GetRequiredService<IUnitOfWork>().Messages));
         services.AddSingleton<IBusinessRuleEngine, FakeBusinessRuleEngine>();
@@ -104,12 +106,14 @@ public static class TestServiceBuilder
                     sp.GetRequiredService<IBookingPolicyProvider>(),
                     sp.GetRequiredService<IPaymentLifecycleService>(),
                     sp.GetRequiredService<IAvailabilityService>(),
-                    sp.GetRequiredService<ISchedulingPolicyProvider>()),
+                    sp.GetRequiredService<ISchedulingPolicyProvider>(),
+                    sp.GetRequiredService<IConversationLifecycleService>()),
                 new EscalateToHumanTool(sp.GetRequiredService<IEscalationNotifier>()),
                 new SetFactTool(
                     sp.GetRequiredService<IConversationFactsService>(),
                     sp.GetRequiredService<IAddOnCatalogService>(),
-                    sp.GetRequiredService<IConversationVerificationService>()),
+                    sp.GetRequiredService<IConversationVerificationService>(),
+                    sp.GetRequiredService<ILeadService>()),
             ];
 
             var intercepted = rawTools

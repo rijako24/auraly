@@ -20,9 +20,12 @@ public interface IPaymentLifecycleService
     Task MarkConfirmedAsync(PaymentTransaction payment, string? providerTransactionId, string? webhookPayload, CancellationToken ct = default);
     Task MarkRequiresReschedulingAsync(PaymentTransaction payment, CancellationToken ct = default);
     Task LinkReservationAsync(PaymentTransaction payment, Guid reservationId, CancellationToken ct = default);
+    Task MarkSupersededAsync(PaymentTransaction payment, Guid supersededByPaymentTransactionId, CancellationToken ct = default);
 
     Task<PaymentTransaction?> GetLatestByConversationAsync(Guid conversationId, CancellationToken ct = default);
     Task<PaymentTransaction?> GetPendingReschedulingByConversationAsync(Guid conversationId, CancellationToken ct = default);
 
     Task<bool> HasConfirmedDepositAsync(Guid conversationId, CancellationToken ct = default);
+
+    bool SnapshotsMatch(PaymentTransaction payment, ReservationIntentSnapshot intent, long amountInCents);
 }

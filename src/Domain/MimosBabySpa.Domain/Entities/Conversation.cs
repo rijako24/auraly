@@ -11,9 +11,11 @@ public class Conversation
     public DateTime Timestamp { get; set; }
     public string? CustomerName { get; set; }
     public string? CustomerEmail { get; set; }
-
-    /// <summary>Legacy flow enum — no usado por el motor agentic.</summary>
-    public ConversationState State { get; set; } = ConversationState.Idle;
+    public ConversationLifecycleStatus Status { get; set; } = ConversationLifecycleStatus.Active;
+    public DateTime OpenedAt { get; set; } = DateTime.UtcNow;
+    public DateTime LastActivityAt { get; set; } = DateTime.UtcNow;
+    public DateTime? ClosedAt { get; set; }
+    public string? CloseReason { get; set; }
 
     public virtual Business Business { get; set; } = null!;
     public virtual ICollection<Message> Messages { get; set; } = new List<Message>();

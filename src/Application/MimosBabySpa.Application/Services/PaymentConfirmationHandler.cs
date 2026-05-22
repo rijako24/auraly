@@ -17,6 +17,7 @@ public class PaymentConfirmationHandler : IPaymentConfirmationHandler
     private readonly PaymentConfirmationNotifier _confirmationNotifier;
     private readonly IAvailabilityService _availabilityService;
     private readonly ISchedulingPolicyProvider _schedulingPolicy;
+    private readonly IConversationLifecycleService _lifecycle;
     private readonly ILogger<PaymentConfirmationHandler> _logger;
 
     public PaymentConfirmationHandler(
@@ -27,6 +28,7 @@ public class PaymentConfirmationHandler : IPaymentConfirmationHandler
         PaymentConfirmationNotifier confirmationNotifier,
         IAvailabilityService availabilityService,
         ISchedulingPolicyProvider schedulingPolicy,
+        IConversationLifecycleService lifecycle,
         ILogger<PaymentConfirmationHandler> logger)
     {
         _unitOfWork = unitOfWork;
@@ -36,6 +38,7 @@ public class PaymentConfirmationHandler : IPaymentConfirmationHandler
         _confirmationNotifier = confirmationNotifier;
         _availabilityService = availabilityService;
         _schedulingPolicy = schedulingPolicy;
+        _lifecycle = lifecycle;
         _logger = logger;
     }
 
@@ -68,6 +71,15 @@ public class PaymentConfirmationHandler : IPaymentConfirmationHandler
                     outcome = PaymentConfirmationOutcome.Ok();
                     return;
                 }
+            }
+
+            if (paymentTx.Status == PaymentTransactionStatus.Superseded)
+            {
+                _logger.LogWarning("Webhook: pago superseded Ref={Ref}", paymentReferenceId);
+                paymentTx.RequiresRefund = true;
+                await _unitOfWork.PaymentTransactions.SaveAsync(paymentTx, ct);
+                outcome = PaymentConfirmationOutcome.Ok();
+                return;
             }
 
             if (paymentTx.AmountInCents != amountInCents)
@@ -156,6 +168,8 @@ public class PaymentConfirmationHandler : IPaymentConfirmationHandler
                 state.ConsecutiveDegradedTurns = 0;
                 await _stateManager.SaveStateAsync(paymentTx.ConversationId, state, ct);
                 await _confirmationNotifier.SendAsync(state, reservation, ct);
+                await _lifecycle.CloseAsync(
+                    paymentTx.ConversationId, ConversationCloseReasons.ReservationConfirmed, ct);
                 outcome = PaymentConfirmationOutcome.Ok();
             }
             catch (Exception ex)

@@ -50,7 +50,6 @@ public class ConversationStateManager : IConversationStateManager
             ConversationId = conversationId,
             BusinessId = businessId,
             Owner = ConversationOwner.Bot,
-            SessionStartedAt = now,
             Version = 1,
             CreatedAt = now,
             UpdatedAt = now
@@ -107,9 +106,7 @@ public class ConversationStateManager : IConversationStateManager
         ConsecutiveDegradedTurns = entity.ConsecutiveDegradedTurns,
         LastUserMessage = entity.LastUserMessage,
         LastBotMessage = entity.LastBotMessage,
-        PreviousSession = DeserializePreviousSession(entity.PreviousSessionJson),
         Verifications = DeserializeVerifications(entity.VerificationsJson),
-        SessionStartedAt = entity.SessionStartedAt,
         Version = entity.Version,
         CreatedAt = entity.CreatedAt,
         UpdatedAt = entity.UpdatedAt
@@ -123,28 +120,11 @@ public class ConversationStateManager : IConversationStateManager
         entity.ConsecutiveDegradedTurns = state.ConsecutiveDegradedTurns;
         entity.LastUserMessage = state.LastUserMessage;
         entity.LastBotMessage = state.LastBotMessage;
-        entity.PreviousSessionJson = state.PreviousSession is null
-            ? null
-            : JsonSerializer.Serialize(state.PreviousSession, JsonOptions);
         entity.VerificationsJson = state.Verifications.Count == 0
             ? null
             : JsonSerializer.Serialize(state.Verifications, JsonOptions);
-        entity.SessionStartedAt = state.SessionStartedAt;
         entity.Version = state.Version;
         entity.UpdatedAt = state.UpdatedAt;
-    }
-
-    private static PreviousSessionSnapshot? DeserializePreviousSession(string? json)
-    {
-        if (string.IsNullOrWhiteSpace(json)) return null;
-        try
-        {
-            return JsonSerializer.Deserialize<PreviousSessionSnapshot>(json, JsonOptions);
-        }
-        catch
-        {
-            return null;
-        }
     }
 
     private static Dictionary<string, VerificationEntry> DeserializeVerifications(string? json)

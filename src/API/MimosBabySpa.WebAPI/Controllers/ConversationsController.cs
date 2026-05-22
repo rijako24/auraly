@@ -25,12 +25,12 @@ public class ConversationsController : ControllerBase
     [PermissionAuthorize("conversations.read")]
     public async Task<ActionResult<PagedResponse<ConversationDto>>> GetByBusiness(
         [FromQuery] Guid businessId,
-        [FromQuery] ConversationState? state,
+        [FromQuery] ConversationLifecycleStatus? status,
         [FromQuery] PagedRequest request,
         CancellationToken ct)
     {
         return Ok(await _service.GetPagedByBusinessIdAsync(
-            User.GetTenantId(), businessId, request, state, ct));
+            User.GetTenantId(), businessId, request, status, ct));
     }
 
     [HttpGet("{conversationId:guid}")]

@@ -75,6 +75,8 @@ public class PaymentTransactionRepository : IPaymentTransactionRepository
             existing.Snapshot_CustomAttributesJson = transaction.Snapshot_CustomAttributesJson;
             existing.RequiresRescheduling = transaction.RequiresRescheduling;
             existing.RequiresRefund = transaction.RequiresRefund;
+            existing.SupersededAt = transaction.SupersededAt;
+            existing.SupersededByPaymentTransactionId = transaction.SupersededByPaymentTransactionId;
             _context.PaymentTransactions.Update(existing);
         }
         else

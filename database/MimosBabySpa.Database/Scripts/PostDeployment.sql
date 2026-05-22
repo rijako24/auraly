@@ -21,6 +21,9 @@
 :r .\Migrations\MigrateMultitenantStateArchitecture.sql
 :r .\Migrations\MigratePaymentSnapshotAndReservationCustomAttrs.sql
 :r .\Migrations\MigrateConversationStateVerifications.sql
+:r .\Migrations\MigrateObsoleteReservationStatuses.sql
+:r .\Migrations\MigrateConversationLifecycle.sql
+:r .\Migrations\MigratePaymentSupersession.sql
 :r .\Seeds\SeedAdminUser.sql
 :r .\Seeds\SeedSqlAppLoginPermissions.sql
 :r .\Seeds\SeedServiceCategoriesForNewBusinesses.sql

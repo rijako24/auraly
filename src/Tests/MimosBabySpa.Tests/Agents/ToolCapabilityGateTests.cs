@@ -24,7 +24,8 @@ public class ToolCapabilityGateTests
         Mock.Of<IBookingPolicyProvider>(),
         Mock.Of<IPaymentLifecycleService>(),
         Mock.Of<IAvailabilityService>(),
-        Mock.Of<ISchedulingPolicyProvider>());
+        Mock.Of<ISchedulingPolicyProvider>(),
+        Mock.Of<IConversationLifecycleService>());
 
     public ToolCapabilityGateTests()
     {
@@ -85,7 +86,8 @@ public class ToolCapabilityGateTests
         var setFactTool = new SetFactTool(
             Mock.Of<IConversationFactsService>(),
             Mock.Of<IAddOnCatalogService>(),
-            _verifications);
+            _verifications,
+            Mock.Of<ILeadService>());
 
         var ctx = CreateContext();
         using var args = JsonDocument.Parse("""{"key":"service","value":"Plan Marineritos"}""");

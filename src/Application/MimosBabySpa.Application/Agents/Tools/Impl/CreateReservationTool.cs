@@ -19,6 +19,7 @@ public sealed class CreateReservationTool : IAgentTool
     private readonly IPaymentLifecycleService _paymentLifecycle;
     private readonly IAvailabilityService _availability;
     private readonly ISchedulingPolicyProvider _schedulingPolicy;
+    private readonly IConversationLifecycleService _lifecycle;
 
     public CreateReservationTool(
         IReservationService reservations,
@@ -27,7 +28,8 @@ public sealed class CreateReservationTool : IAgentTool
         IBookingPolicyProvider bookingPolicy,
         IPaymentLifecycleService paymentLifecycle,
         IAvailabilityService availability,
-        ISchedulingPolicyProvider schedulingPolicy)
+        ISchedulingPolicyProvider schedulingPolicy,
+        IConversationLifecycleService lifecycle)
     {
         _reservations = reservations;
         _intentBuilder = intentBuilder;
@@ -36,6 +38,7 @@ public sealed class CreateReservationTool : IAgentTool
         _paymentLifecycle = paymentLifecycle;
         _availability = availability;
         _schedulingPolicy = schedulingPolicy;
+        _lifecycle = lifecycle;
     }
 
     public string Name => "create_reservation";
@@ -193,6 +196,9 @@ public sealed class CreateReservationTool : IAgentTool
             CustomerPhoneSnapshot = customerPhone,
             CustomAttributesJson = intent.CustomAttributesJson
         };
+
+        await _lifecycle.CloseAsync(
+            ctx.ConversationId, ConversationCloseReasons.ReservationConfirmed, cancellationToken);
 
         return BuildSuccessResult(
             ctx,

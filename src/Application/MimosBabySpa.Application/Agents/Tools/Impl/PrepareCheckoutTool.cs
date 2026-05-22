@@ -3,6 +3,7 @@ using MimosBabySpa.Application.Agents.Templates;
 using MimosBabySpa.Application.Configuration;
 using MimosBabySpa.Application.DTOs;
 using MimosBabySpa.Application.Services;
+using MimosBabySpa.Domain.Entities;
 using MimosBabySpa.Domain.Enums;
 
 namespace MimosBabySpa.Application.Agents.Tools.Impl;
@@ -212,12 +213,15 @@ public sealed class PrepareCheckoutTool : IAgentTool
         if (activePayment?.LinkUrl is not null
             && activePayment.ExpiresAt.HasValue
             && activePayment.ExpiresAt.Value > DateTime.UtcNow
-            && activePayment.Snapshot_ServiceId == intent.ServiceId
-            && activePayment.Snapshot_ReservationDateTime == intent.ReservationDateTime)
+            && _paymentLifecycle.SnapshotsMatch(activePayment, intent, checkout.DepositCents))
         {
             ctx.ActivePayment = activePayment;
             return (activePayment.LinkUrl, null);
         }
+
+        PaymentTransaction? supersededPayment = null;
+        if (activePayment is not null && activePayment.Status == PaymentTransactionStatus.Created)
+            supersededPayment = activePayment;
 
         var description = checkout.BuildServiceDescription();
         var currency = string.IsNullOrWhiteSpace(checkout.Policy.Currency) ? "COP" : checkout.Policy.Currency;
@@ -250,6 +254,9 @@ public sealed class PrepareCheckoutTool : IAgentTool
             currency,
             result.ExpiresAt ?? DateTime.UtcNow.AddHours(1),
             cancellationToken);
+
+        if (supersededPayment is not null)
+            await _paymentLifecycle.MarkSupersededAsync(supersededPayment, payment.PaymentTransactionId, cancellationToken);
 
         ctx.ActivePayment = payment;
         return (payment.LinkUrl, null);

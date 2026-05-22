@@ -82,6 +82,15 @@ public sealed class PaymentLifecycleService : IPaymentLifecycleService
         await _payments.SaveAsync(payment, ct);
     }
 
+    public async Task MarkSupersededAsync(
+        PaymentTransaction payment, Guid supersededByPaymentTransactionId, CancellationToken ct = default)
+    {
+        payment.Status = PaymentTransactionStatus.Superseded;
+        payment.SupersededAt = DateTime.UtcNow;
+        payment.SupersededByPaymentTransactionId = supersededByPaymentTransactionId;
+        await _payments.SaveAsync(payment, ct);
+    }
+
     public Task<PaymentTransaction?> GetLatestByConversationAsync(Guid conversationId, CancellationToken ct = default) =>
         _payments.GetLatestByConversationIdAsync(conversationId, ct);
 
@@ -93,4 +102,36 @@ public sealed class PaymentLifecycleService : IPaymentLifecycleService
         var latest = await _payments.GetLatestByConversationIdAsync(conversationId, ct);
         return latest?.Status == PaymentTransactionStatus.Confirmed;
     }
+
+    public bool SnapshotsMatch(PaymentTransaction payment, ReservationIntentSnapshot intent, long amountInCents)
+    {
+        if (payment.Snapshot_ServiceId != intent.ServiceId)
+            return false;
+
+        if (payment.Snapshot_ReservationDateTime != intent.ReservationDateTime)
+            return false;
+
+        if (payment.AmountInCents != amountInCents)
+            return false;
+
+        var paymentAddOns = NormalizeAddOnIds(payment.Snapshot_AddOnIds);
+        var intentAddOns = NormalizeAddOnIds(
+            intent.AddOnServiceIds.Count > 0
+                ? string.Join(",", intent.AddOnServiceIds)
+                : null);
+
+        if (!string.Equals(paymentAddOns, intentAddOns, StringComparison.Ordinal))
+            return false;
+
+        return string.Equals(
+            payment.Snapshot_CustomAttributesJson ?? string.Empty,
+            intent.CustomAttributesJson ?? string.Empty,
+            StringComparison.Ordinal);
+    }
+
+    private static string NormalizeAddOnIds(string? csv) =>
+        string.IsNullOrWhiteSpace(csv)
+            ? string.Empty
+            : string.Join(",", csv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .OrderBy(x => x, StringComparer.Ordinal));
 }

@@ -84,7 +84,7 @@ public class AvailabilityService : IAvailabilityService
                 businessToday, businessTimeOfDay, cancellationToken);
             result.IsAvailable = result.AvailableTimeSlots.Count > 0;
             result.ResponseMessage = result.IsAvailable
-                ? $"✓ Disponibilidad confirmada para {service} el {dateStr}. Horarios disponibles: {string.Join(",", result.AvailableTimeSlots)}."
+                ? $"✓ Disponibilidad confirmada para {service} el {dateStr}."
                 : $"✗ No hay disponibilidad para {service} el {dateStr}. No hay horarios disponibles para ese día.";
             _logger.LogInformation(
                 "Disponibilidad por día: {Date}, disponibles={Count}",
@@ -109,7 +109,7 @@ public class AvailabilityService : IAvailabilityService
                 businessId, requestedService, date, activeReservations, effectivePolicy,
                 businessToday, businessTimeOfDay, cancellationToken);
             result.ResponseMessage = result.AvailableTimeSlots.Count > 0
-                ? $"✗ No hay disponibilidad para {service} el {dateStr} a las {timeStr}. Horarios disponibles: {string.Join(", ", result.AvailableTimeSlots)}."
+                ? $"✗ No hay disponibilidad para {service} el {dateStr} a las {timeStr}. Consulta otros horarios del día."
                 : $"✗ No hay disponibilidad para {service} el {dateStr} a las {timeStr}. No hay horarios disponibles para ese día.";
             _logger.LogInformation(
                 "Horario {TimeStr} no disponible; alternativas del día: {Count}",
@@ -232,7 +232,13 @@ public class AvailabilityService : IAvailabilityService
         if (overlappingReservations.Count == 0)
             return true;
 
-        return await CheckResourceAvailabilityAsync(businessId, requestedService.ServiceId, overlappingReservations, cancellationToken);
+        return await CheckResourceAvailabilityAsync(
+            businessId,
+            requestedService.ServiceId,
+            requestedService.ServiceName,
+            startTime,
+            overlappingReservations,
+            cancellationToken);
     }
 
     private static List<Domain.Entities.Reservation> GetOverlappingReservations(
@@ -268,6 +274,8 @@ public class AvailabilityService : IAvailabilityService
     private async Task<bool> CheckResourceAvailabilityAsync(
         Guid businessId,
         Guid requestedServiceId,
+        string requestedServiceName,
+        TimeSpan slotStartTime,
         List<Domain.Entities.Reservation> overlappingReservations,
         CancellationToken cancellationToken)
     {
@@ -284,15 +292,33 @@ public class AvailabilityService : IAvailabilityService
         var requestedResourceUsage = requestedService.ResourceUsages
             .ToDictionary(ru => ru.BusinessResource.ResourceName, ru => ru.Quantity);
 
+        if (requestedResourceUsage.Count == 0)
+        {
+            _logger.LogWarning(
+                "Servicio '{ServiceName}' sin ResourceUsages configurados pero hay {OverlapCount} reserva(s) solapada(s) en {SlotTime} — slot considerado disponible por defecto",
+                requestedServiceName,
+                overlappingReservations.Count,
+                slotStartTime.ToString(@"hh\:mm"));
+            return true;
+        }
+
         var usedResources = new Dictionary<string, int>();
+        var skippedOverlapCount = 0;
         foreach (var reservation in overlappingReservations)
         {
             if (!reservation.ServiceId.HasValue)
+            {
+                skippedOverlapCount++;
                 continue;
+            }
 
             var reservationService = reservation.Service
                 ?? await _unitOfWork.Services.GetByIdAsync(reservation.ServiceId.Value);
-            if (reservationService == null) continue;
+            if (reservationService == null)
+            {
+                skippedOverlapCount++;
+                continue;
+            }
 
             foreach (var resourceUsage in reservationService.ResourceUsages)
             {
@@ -301,6 +327,16 @@ public class AvailabilityService : IAvailabilityService
             }
         }
 
+        if (skippedOverlapCount > 0)
+        {
+            _logger.LogWarning(
+                "Slot {SlotTime} para '{ServiceName}': {SkippedCount} reserva(s) solapada(s) sin ServiceId o servicio no encontrado — no aportan uso de recursos",
+                slotStartTime.ToString(@"hh\:mm"),
+                requestedServiceName,
+                skippedOverlapCount);
+        }
+
+        var resourceSummaries = new List<string>();
         foreach (var (name, requiredQty) in requestedResourceUsage)
         {
             if (!availableResources.TryGetValue(name, out var totalAvailable))
@@ -308,15 +344,31 @@ public class AvailabilityService : IAvailabilityService
                 _logger.LogWarning("Recurso '{ResourceName}' no encontrado en recursos del negocio", name);
                 return false;
             }
+
             var currentlyUsed = usedResources.TryGetValue(name, out var used) ? used : 0;
-            if (totalAvailable - currentlyUsed - requiredQty < 0)
+            var remaining = totalAvailable - currentlyUsed - requiredQty;
+            resourceSummaries.Add($"{name}: total={totalAvailable}, usado={currentlyUsed}, solicitado={requiredQty}, restante={remaining}");
+
+            if (remaining < 0)
             {
                 _logger.LogInformation(
-                    "Recurso insuficiente: '{ResourceName}'. Disponible: {Total}, Usado: {Used}, Solicitado: {Required}",
-                    name, totalAvailable, currentlyUsed, requiredQty);
+                    "Recurso insuficiente en {SlotTime} para '{ServiceName}': '{ResourceName}'. Disponible: {Total}, Usado: {Used}, Solicitado: {Required}",
+                    slotStartTime.ToString(@"hh\:mm"),
+                    requestedServiceName,
+                    name,
+                    totalAvailable,
+                    currentlyUsed,
+                    requiredQty);
                 return false;
             }
         }
+
+        _logger.LogInformation(
+            "Slot {SlotTime} disponible para '{ServiceName}' pese a {OverlapCount} reserva(s) solapada(s). Recursos: {ResourceSummary}",
+            slotStartTime.ToString(@"hh\:mm"),
+            requestedServiceName,
+            overlappingReservations.Count,
+            string.Join("; ", resourceSummaries));
 
         return true;
     }

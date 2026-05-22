@@ -6,7 +6,11 @@ CREATE TABLE [dbo].[Conversations] (
     [Timestamp] DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
     [CustomerName] NVARCHAR(100) NULL,
     [CustomerEmail] NVARCHAR(200) NULL,
-    [State] INT NOT NULL DEFAULT 0,
+    [Status] TINYINT NOT NULL DEFAULT 0,
+    [OpenedAt] DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
+    [LastActivityAt] DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
+    [ClosedAt] DATETIME2 NULL,
+    [CloseReason] NVARCHAR(50) NULL,
     CONSTRAINT [FK_Conversations_Businesses] FOREIGN KEY ([BusinessId])
         REFERENCES [dbo].[Businesses] ([BusinessId])
         ON DELETE NO ACTION
@@ -18,6 +22,8 @@ CREATE INDEX [IX_Conversations_BusinessId_UserNumber] ON [dbo].[Conversations] (
 
 GO
 
-CREATE INDEX [IX_Conversations_State] ON [dbo].[Conversations] ([State]);
+CREATE UNIQUE INDEX [UX_Conversations_OneActivePerCustomer]
+ON [dbo].[Conversations] ([BusinessId], [UserNumber])
+WHERE [Status] = 0;
 
 GO

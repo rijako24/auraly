@@ -87,4 +87,38 @@ public class LeadService : ILeadService
     {
         return await _unitOfWork.Leads.GetByBusinessIdAndUserNumberAsync(businessId, userNumber);
     }
+
+    public async Task SyncCustomerIdentityAsync(
+        Guid businessId,
+        string userNumber,
+        string? customerName = null,
+        string? customerEmail = null,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(customerName) && string.IsNullOrWhiteSpace(customerEmail))
+            return;
+
+        var lead = await GetOrCreateLeadAsync(businessId, userNumber, customerName);
+
+        var changed = false;
+        if (!string.IsNullOrWhiteSpace(customerName)
+            && !string.Equals(lead.CustomerName, customerName, StringComparison.Ordinal))
+        {
+            lead.CustomerName = customerName;
+            changed = true;
+        }
+
+        if (!string.IsNullOrWhiteSpace(customerEmail)
+            && !string.Equals(lead.CustomerEmail, customerEmail, StringComparison.Ordinal))
+        {
+            lead.CustomerEmail = customerEmail;
+            changed = true;
+        }
+
+        if (!changed)
+            return;
+
+        await _unitOfWork.Leads.UpdateAsync(lead);
+        await _unitOfWork.SaveChangesAsync(ct);
+    }
 }

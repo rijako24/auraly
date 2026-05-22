@@ -9,5 +9,6 @@ public enum PaymentTransactionStatus
     Confirmed = 1,
     Failed = 2,
     Refunded = 3,
-    Expired = 4
+    Expired = 4,
+    Superseded = 50
 }

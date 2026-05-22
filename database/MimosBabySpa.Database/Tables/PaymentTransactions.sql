@@ -25,6 +25,8 @@ CREATE TABLE [dbo].[PaymentTransactions] (
     [Snapshot_CustomAttributesJson] NVARCHAR(MAX) NULL,
     [RequiresRescheduling] BIT NOT NULL DEFAULT 0,
     [RequiresRefund] BIT NOT NULL DEFAULT 0,
+    [SupersededAt] DATETIME2 NULL,
+    [SupersededByPaymentTransactionId] UNIQUEIDENTIFIER NULL,
     CONSTRAINT [FK_PaymentTransactions_Businesses] FOREIGN KEY ([BusinessId])
         REFERENCES [dbo].[Businesses] ([BusinessId])
         ON DELETE NO ACTION,
@@ -36,6 +38,9 @@ CREATE TABLE [dbo].[PaymentTransactions] (
         ON DELETE NO ACTION,
     CONSTRAINT [FK_PaymentTransactions_SnapshotService] FOREIGN KEY ([Snapshot_ServiceId])
         REFERENCES [dbo].[Services] ([ServiceId])
+        ON DELETE NO ACTION,
+    CONSTRAINT [FK_PaymentTransactions_SupersededBy] FOREIGN KEY ([SupersededByPaymentTransactionId])
+        REFERENCES [dbo].[PaymentTransactions] ([PaymentTransactionId])
         ON DELETE NO ACTION
 );
 

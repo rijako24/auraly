@@ -8,4 +8,8 @@ public record ConversationDto(
     DateTime Timestamp,
     string? CustomerName,
     string? CustomerEmail,
-    string State);
+    string Status,
+    DateTime OpenedAt,
+    DateTime LastActivityAt,
+    DateTime? ClosedAt,
+    string? CloseReason);

@@ -47,6 +47,7 @@ public sealed class AgentConversationService : IAgentConversationService
     private readonly IReservationLifecycleService _reservationLifecycle;
     private readonly IPaymentLifecycleService _paymentLifecycle;
     private readonly IConversationService _conversationService;
+    private readonly IConversationLifecycleService _lifecycleService;
     private readonly IAgentTurnResponseComposer _turnResponseComposer;
     private readonly IToolCapabilityGate _toolCapabilityGate;
     private readonly ILogger<AgentConversationService> _logger;
@@ -65,6 +66,7 @@ public sealed class AgentConversationService : IAgentConversationService
         IReservationLifecycleService reservationLifecycle,
         IPaymentLifecycleService paymentLifecycle,
         IConversationService conversationService,
+        IConversationLifecycleService lifecycleService,
         IAgentTurnResponseComposer turnResponseComposer,
         IToolCapabilityGate toolCapabilityGate,
         ILogger<AgentConversationService> logger)
@@ -82,6 +84,7 @@ public sealed class AgentConversationService : IAgentConversationService
         _reservationLifecycle = reservationLifecycle;
         _paymentLifecycle = paymentLifecycle;
         _conversationService = conversationService;
+        _lifecycleService = lifecycleService;
         _turnResponseComposer = turnResponseComposer;
         _toolCapabilityGate = toolCapabilityGate;
         _logger = logger;
@@ -119,12 +122,14 @@ public sealed class AgentConversationService : IAgentConversationService
         userMessage = SanitizeInput(userMessage);
 
         var history = await _messageService.GetConversationHistoryAsync(conversationId);
+        var engagement = await ResolveEngagementContextAsync(
+            config.BusinessId, session.Conversation.UserNumber, history, cancellationToken);
         var clockSnapshot = await _businessClock.GetSnapshotAsync(config.BusinessId, cancellationToken);
         var temporal = _temporalReferenceBuilder.Build(clockSnapshot);
         var bookingPolicy = await _bookingPolicy.GetAsync(config.BusinessId, cancellationToken);
         var latestPayment = await _paymentLifecycle.GetLatestByConversationAsync(conversationId, cancellationToken);
         var systemPrompt = AgentTurnPromptContext.AppendTurnContext(
-            config.SystemPrompt, config, history, temporal, session, bookingPolicy, latestPayment);
+            config.SystemPrompt, config, history, temporal, session, bookingPolicy, latestPayment, engagement);
         var messages = BuildMessages(systemPrompt, history, userMessage);
         var turn = new AgentTurnExecution(config.ConsecutiveErrorEscalationThreshold);
         session.Turn = turn;
@@ -318,6 +323,24 @@ public sealed class AgentConversationService : IAgentConversationService
         state.ConsecutiveDegradedTurns = 0;
 
         await _stateManager.SaveStateAsync(conversationId, state, ct);
+        await _lifecycleService.TouchActivityAsync(conversationId, userMessage, ct);
+    }
+
+    private async Task<EngagementContext> ResolveEngagementContextAsync(
+        Guid businessId,
+        string userNumber,
+        IEnumerable<Domain.Entities.Message> history,
+        CancellationToken ct)
+    {
+        if (history.Any(m =>
+                m.Sender.Equals("bot", StringComparison.OrdinalIgnoreCase)
+                || m.Sender.Equals("assistant", StringComparison.OrdinalIgnoreCase)))
+        {
+            return EngagementContext.ContinuingSession;
+        }
+
+        var hasClosed = await _conversationService.HasClosedConversationsAsync(businessId, userNumber, ct);
+        return hasClosed ? EngagementContext.ReturningCustomer : EngagementContext.FirstEver;
     }
 
     private async Task<AgentToolContext> LoadTurnSessionAsync(

@@ -52,6 +52,7 @@ var host = new HostBuilder()
 
         // Application Services
         services.AddScoped<IConversationService, ConversationService>();
+        services.AddScoped<IConversationLifecycleService, ConversationLifecycleService>();
         services.AddScoped<IMessageService, MessageService>();
         services.AddScoped<ILeadService, LeadService>();
         services.AddScoped<IReservationService, ReservationService>();

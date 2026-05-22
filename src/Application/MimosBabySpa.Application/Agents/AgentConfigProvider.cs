@@ -60,6 +60,7 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
             Name = agent.Name,
             SystemPrompt = agent.SystemPromptMarkdown?.Trim() ?? string.Empty,
             FirstTurnGreetingHint = settings.Messages?.FirstTurnGreetingHint?.Trim(),
+            ReturningCustomerGreetingHint = settings.Messages?.ReturningCustomerGreetingHint?.Trim(),
             Model = settings.Model ?? "gpt-4.1-mini",
             Temperature = settings.Temperature ?? 0.7f,
             MaxToolIterations = settings.MaxToolIterations ?? 6,
@@ -110,6 +111,7 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
     private sealed class AgentMessagesSettings
     {
         public string? FirstTurnGreetingHint { get; set; }
+        public string? ReturningCustomerGreetingHint { get; set; }
     }
 
     private sealed class EscalationSettings
