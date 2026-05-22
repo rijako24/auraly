@@ -4,19 +4,28 @@ using MimosBabySpa.Application.Services;
 namespace MimosBabySpa.Application.Agents.Tools.Impl;
 
 /// <summary>
-/// Calcula el precio total de servicios y add-ons desde el catálogo.
+/// Calcula el precio total de servicios y add-ons desde el catálogo,
+/// incluyendo anticipo según BookingPolicy del negocio.
 /// El LLM NUNCA debe inventar precios — siempre llama esta tool.
 /// </summary>
 public sealed class ResolvePricingTool : IAgentTool
 {
-    private readonly ReservationPricingResolver _pricing;
+    private readonly IReservationCheckoutPricing _checkoutPricing;
+    private readonly IAddOnCatalogService _addOnCatalog;
 
-    public ResolvePricingTool(ReservationPricingResolver pricing) => _pricing = pricing;
+    public ResolvePricingTool(
+        IReservationCheckoutPricing checkoutPricing,
+        IAddOnCatalogService addOnCatalog)
+    {
+        _checkoutPricing = checkoutPricing;
+        _addOnCatalog = addOnCatalog;
+    }
 
     public string Name => "resolve_pricing";
 
     public string Description =>
-        "Calculates the total price for a service and optional add-ons from the catalog. " +
+        "Calculates the total price for a service and optional add-ons from the catalog, " +
+        "including deposit amount when required by the business booking policy. " +
         "Always call this before presenting prices or generating payment links.";
 
     public string ParametersSchema => """
@@ -44,12 +53,27 @@ public sealed class ResolvePricingTool : IAgentTool
         if (!ToolResultHelper.TryGetString(arguments, "service", out var service))
             return ToolResultHelper.Error("invalid_args", "Parameter 'service' is required.");
 
-        var items = new Dictionary<string, string?> { ["service"] = service };
+        ToolResultHelper.TryGetString(arguments, "add_ons", out var addOns);
+        addOns ??= ConversationFactKeys.Get(ctx.Facts, ConversationFactKeys.AddOns);
 
-        if (ToolResultHelper.TryGetString(arguments, "add_ons", out var addOns) && !string.IsNullOrWhiteSpace(addOns))
-            items["add_ons"] = addOns;
+        if (!string.IsNullOrWhiteSpace(addOns))
+        {
+            var validation = await _addOnCatalog.ValidateAsync(
+                ctx.BusinessId, service, addOns, cancellationToken);
 
-        var result = await _pricing.ResolveAsync(ctx.BusinessId, items, cancellationToken);
+            if (!validation.IsValid)
+            {
+                return ToolResultHelper.Error(
+                    "invalid_add_ons",
+                    validation.ErrorMessage ?? "Invalid add-on selection.",
+                    validation.Hint);
+            }
+
+            addOns = validation.NormalizedCsv;
+        }
+
+        var result = await _checkoutPricing.ResolveAsync(
+            ctx.BusinessId, service, addOns, cancellationToken);
 
         if (result is null)
             return ToolResultHelper.Error("service_not_found",
@@ -58,9 +82,12 @@ public sealed class ResolvePricingTool : IAgentTool
 
         return ToolResultHelper.Ok(new
         {
-            total = result.TotalDisplay,
-            total_cents = (long)(result.Total * 100),
-            line_items = result.LineItems.Select(li => new { name = li.Name, price = li.Price })
+            total = result.Pricing.TotalDisplay,
+            total_cents = result.TotalCents,
+            deposit_required = result.DepositRequired,
+            deposit_cents = result.DepositCents,
+            currency = result.Policy.Currency,
+            line_items = result.Pricing.LineItems.Select(li => new { name = li.Name, price = li.Price })
         });
     }
 }

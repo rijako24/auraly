@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using MimosBabySpa.Application.Configuration;
+using MimosBabySpa.Application.Time;
 using MimosBabySpa.Domain.Enums;
 using MimosBabySpa.Domain.Repositories;
 
@@ -22,15 +23,18 @@ public class AvailabilityService : IAvailabilityService
 {
     private readonly IUnitOfWork _unitOfWork;
     private readonly IEmployeeAssignmentService _employeeAssignmentService;
+    private readonly IBusinessClock _businessClock;
     private readonly ILogger<AvailabilityService> _logger;
 
     public AvailabilityService(
         IUnitOfWork unitOfWork,
         IEmployeeAssignmentService employeeAssignmentService,
+        IBusinessClock businessClock,
         ILogger<AvailabilityService> logger)
     {
         _unitOfWork = unitOfWork;
         _employeeAssignmentService = employeeAssignmentService;
+        _businessClock = businessClock;
         _logger = logger;
     }
 
@@ -43,6 +47,9 @@ public class AvailabilityService : IAvailabilityService
         CancellationToken cancellationToken = default)
     {
         var effectivePolicy = policy ?? AvailabilityParams.Default;
+        var clock = await _businessClock.GetSnapshotAsync(businessId, cancellationToken);
+        var businessToday = clock.Today;
+        var businessTimeOfDay = clock.Now.TimeOfDay;
 
         _logger.LogInformation(
             "Verificando disponibilidad: BusinessId={BusinessId}, Service={Service}, Date={Date}, Time={Time}",
@@ -73,7 +80,8 @@ public class AvailabilityService : IAvailabilityService
         if (!time.HasValue)
         {
             result.AvailableTimeSlots = await GetAvailableSlotsForDayAsync(
-                businessId, requestedService, date, activeReservations, effectivePolicy, cancellationToken);
+                businessId, requestedService, date, activeReservations, effectivePolicy,
+                businessToday, businessTimeOfDay, cancellationToken);
             result.IsAvailable = result.AvailableTimeSlots.Count > 0;
             result.ResponseMessage = result.IsAvailable
                 ? $"✓ Disponibilidad confirmada para {service} el {dateStr}. Horarios disponibles: {string.Join(",", result.AvailableTimeSlots)}."
@@ -87,7 +95,7 @@ public class AvailabilityService : IAvailabilityService
         var requestedStartTime = time.Value;
         var isAvailable = await IsSlotAvailableAsync(
             businessId, requestedService, date, requestedStartTime,
-            activeReservations, effectivePolicy, cancellationToken);
+            activeReservations, effectivePolicy, businessToday, businessTimeOfDay, cancellationToken);
 
         result.IsAvailable = isAvailable;
 
@@ -98,7 +106,8 @@ public class AvailabilityService : IAvailabilityService
         else
         {
             result.AvailableTimeSlots = await GetAvailableSlotsForDayAsync(
-                businessId, requestedService, date, activeReservations, effectivePolicy, cancellationToken);
+                businessId, requestedService, date, activeReservations, effectivePolicy,
+                businessToday, businessTimeOfDay, cancellationToken);
             result.ResponseMessage = result.AvailableTimeSlots.Count > 0
                 ? $"✗ No hay disponibilidad para {service} el {dateStr} a las {timeStr}. Horarios disponibles: {string.Join(", ", result.AvailableTimeSlots)}."
                 : $"✗ No hay disponibilidad para {service} el {dateStr} a las {timeStr}. No hay horarios disponibles para ese día.";
@@ -121,15 +130,20 @@ public class AvailabilityService : IAvailabilityService
         DateTime date,
         List<Domain.Entities.Reservation> activeReservations,
         AvailabilityParams policy,
+        DateOnly businessToday,
+        TimeSpan businessTimeOfDay,
         CancellationToken cancellationToken)
     {
         var duration = requestedService.DurationMinutes;
-        var candidateTimes = GetCandidateTimesFromSchedule(policy, date, duration);
+        var candidateTimes = GetCandidateTimesFromSchedule(
+            policy, date, duration, businessToday, businessTimeOfDay);
         var available = new List<string>();
         foreach (var startTime in candidateTimes)
         {
             if (cancellationToken.IsCancellationRequested) break;
-            if (await IsSlotAvailableAsync(businessId, requestedService, date, startTime, activeReservations, policy, cancellationToken))
+            if (await IsSlotAvailableAsync(
+                    businessId, requestedService, date, startTime, activeReservations, policy,
+                    businessToday, businessTimeOfDay, cancellationToken))
                 available.Add(startTime.ToString(@"hh\:mm"));
         }
         return available;
@@ -142,7 +156,9 @@ public class AvailabilityService : IAvailabilityService
     private List<TimeSpan> GetCandidateTimesFromSchedule(
         AvailabilityParams policy,
         DateTime date,
-        int durationMinutes)
+        int durationMinutes,
+        DateOnly businessToday,
+        TimeSpan businessTimeOfDay)
     {
         if (policy.Schedule == null || policy.Schedule.Count == 0)
         {
@@ -171,11 +187,8 @@ public class AvailabilityService : IAvailabilityService
             }
         }
 
-        if (date.Date == DateTime.Now.Date)
-        {
-            var now = DateTime.Now.TimeOfDay;
-            candidates.RemoveAll(t => t < now);
-        }
+        if (DateOnly.FromDateTime(date) == businessToday)
+            candidates.RemoveAll(t => t < businessTimeOfDay);
 
         _logger.LogDebug("Candidatos de horario para {Date}: {Count}", date.ToString("yyyy-MM-dd"), candidates.Count);
         return candidates;
@@ -188,9 +201,11 @@ public class AvailabilityService : IAvailabilityService
         TimeSpan startTime,
         List<Domain.Entities.Reservation> activeReservations,
         AvailabilityParams policy,
+        DateOnly businessToday,
+        TimeSpan businessTimeOfDay,
         CancellationToken cancellationToken)
     {
-        if (date.Date == DateTime.Now.Date && startTime < DateTime.Now.TimeOfDay)
+        if (DateOnly.FromDateTime(date) == businessToday && startTime < businessTimeOfDay)
         {
             _logger.LogDebug("Slot {StartTime} no disponible: hora ya pasada", startTime.ToString(@"hh\:mm"));
             return false;
@@ -226,10 +241,11 @@ public class AvailabilityService : IAvailabilityService
         TimeSpan endTime)
     {
         return activeReservations
+            .Where(r => r.ReservationDateTime.HasValue && r.DurationMinutes.HasValue)
             .Where(r =>
             {
-                var rStart = r.ReservationDateTime.TimeOfDay;
-                var rEnd = rStart.Add(TimeSpan.FromMinutes(r.DurationMinutes));
+                var rStart = r.ReservationDateTime!.Value.TimeOfDay;
+                var rEnd = rStart.Add(TimeSpan.FromMinutes(r.DurationMinutes!.Value));
                 return rStart < endTime && rEnd > startTime;
             })
             .ToList();
@@ -245,7 +261,7 @@ public class AvailabilityService : IAvailabilityService
             businessId, startOfDay, endOfDay);
 
         return reservations
-            .Where(r => r.Status != ReservationStatus.Cancelled && r.Status != ReservationStatus.OnHold)
+            .Where(r => r.ReservationDateTime.HasValue && r.Status.BlocksAvailability())
             .ToList();
     }
 
@@ -271,7 +287,11 @@ public class AvailabilityService : IAvailabilityService
         var usedResources = new Dictionary<string, int>();
         foreach (var reservation in overlappingReservations)
         {
-            var reservationService = reservation.Service ?? await _unitOfWork.Services.GetByIdAsync(reservation.ServiceId);
+            if (!reservation.ServiceId.HasValue)
+                continue;
+
+            var reservationService = reservation.Service
+                ?? await _unitOfWork.Services.GetByIdAsync(reservation.ServiceId.Value);
             if (reservationService == null) continue;
 
             foreach (var resourceUsage in reservationService.ResourceUsages)

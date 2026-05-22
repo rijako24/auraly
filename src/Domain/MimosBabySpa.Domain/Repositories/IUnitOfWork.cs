@@ -32,5 +32,9 @@ public interface IUnitOfWork : IDisposable
     IAuditLogRepository AuditLogs { get; }
     ITenantRepository Tenants { get; }
 
+    Task ExecuteInTransactionAsync(Func<Task> action, CancellationToken cancellationToken = default);
+
+    Task<T> ExecuteInTransactionAsync<T>(Func<Task<T>> action, CancellationToken cancellationToken = default);
+
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

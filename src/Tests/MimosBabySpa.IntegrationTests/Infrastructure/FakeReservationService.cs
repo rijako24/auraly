@@ -35,8 +35,9 @@ public class FakeReservationService : IReservationService
         if (_mode == ReservationMode.TrackDuplicates)
         {
             var duplicate = _reservationsCreated.FirstOrDefault(r =>
-                DateOnly.FromDateTime(r.ReservationDateTime) == request.Date &&
-                TimeOnly.FromDateTime(r.ReservationDateTime) == request.Time);
+                r.ReservationDateTime.HasValue &&
+                DateOnly.FromDateTime(r.ReservationDateTime.Value) == request.Date &&
+                TimeOnly.FromDateTime(r.ReservationDateTime.Value) == request.Time);
 
             if (duplicate != null)
                 throw new Exception($"Horario duplicado: ya existe reserva para {request.Date:yyyy-MM-dd} {request.Time:HH:mm}");
@@ -74,6 +75,26 @@ public class FakeReservationService : IReservationService
         return Task.FromResult(response);
     }
 
+    public Task<CreateReservationResponse> CreateFromIntentSnapshotAsync(
+        Guid businessId,
+        Guid conversationId,
+        ReservationIntentSnapshot snapshot,
+        DateTime reservationDateTime,
+        CancellationToken cancellationToken = default) =>
+        CreateReservationAsync(
+            new CreateReservationRequest(
+                businessId,
+                conversationId,
+                snapshot.ServiceName,
+                DateOnly.FromDateTime(reservationDateTime),
+                TimeOnly.FromDateTime(reservationDateTime),
+                snapshot.CustomerName,
+                snapshot.CustomerEmail,
+                snapshot.CustomerPhone,
+                new Dictionary<string, string>(),
+                snapshot.CustomAttributesJson),
+            cancellationToken);
+
     public Task<ReservationDto?> GetReservationByIdAsync(Guid reservationId) =>
         Task.FromResult(_reservationsCreated.FirstOrDefault(r => r.ReservationId == reservationId));
 
@@ -84,8 +105,9 @@ public class FakeReservationService : IReservationService
         Guid businessId, DateTime startDate, DateTime endDate) =>
         Task.FromResult(_reservationsCreated.Where(r =>
             r.BusinessId == businessId &&
-            r.ReservationDateTime >= startDate &&
-            r.ReservationDateTime <= endDate));
+            r.ReservationDateTime.HasValue &&
+            r.ReservationDateTime.Value >= startDate &&
+            r.ReservationDateTime.Value <= endDate));
 
     public Task<bool> SuspendAsync(Guid reservationId, CancellationToken cancellationToken = default)
     {

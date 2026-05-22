@@ -6,12 +6,6 @@ namespace MimosBabySpa.Application.Services;
 
 /// <summary>
 /// Implementación de ICatalogContentGenerator.
-///
-/// Carga servicios, categorías y reglas de add-on desde IUnitOfWork y delega la
-/// construcción del markdown a ServiceCatalogBuilder.
-///
-/// Diseño: stateless, inyectable. Sin caché deliberado — el contenido es pequeño y
-/// la frescura es más importante que el ahorro de una query ligera.
 /// </summary>
 public class CatalogContentGenerator : ICatalogContentGenerator
 {

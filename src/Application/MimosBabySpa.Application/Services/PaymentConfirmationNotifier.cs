@@ -1,42 +1,47 @@
-using MimosBabySpa.Application.Configuration;
-using MimosBabySpa.Domain.Models;
+using System.Text.Json;
 using Microsoft.Extensions.Logging;
+using MimosBabySpa.Application.Configuration;
+using MimosBabySpa.Domain.Entities;
+using MimosBabySpa.Domain.Enums;
+using MimosBabySpa.Domain.Repositories;
+using ConversationState = MimosBabySpa.Domain.Models.ConversationState;
 
 namespace MimosBabySpa.Application.Services;
 
-/// <summary>
-/// Envía mensajes proactivos al cliente tras confirmación de pago:
-/// éxito (reserva creada) o slot tomado (alternativas disponibles).
-/// </summary>
 public class PaymentConfirmationNotifier
 {
     private readonly IWhatsAppService _whatsAppService;
     private readonly IMediaUrlResolver _mediaUrlResolver;
+    private readonly IUnitOfWork _unitOfWork;
     private readonly ILogger<PaymentConfirmationNotifier> _logger;
 
     public PaymentConfirmationNotifier(
         IWhatsAppService whatsAppService,
         IMediaUrlResolver mediaUrlResolver,
+        IUnitOfWork unitOfWork,
         ILogger<PaymentConfirmationNotifier> logger)
     {
         _whatsAppService = whatsAppService;
         _mediaUrlResolver = mediaUrlResolver;
+        _unitOfWork = unitOfWork;
         _logger = logger;
     }
 
-    public async Task SendAsync(
-        ConversationState state,
-        LoadedBusinessContext businessContext,
-        CancellationToken ct = default)
+    public async Task SendAsync(ConversationState state, Reservation reservation, CancellationToken ct = default)
     {
-        var phone = state.Phone?.Trim();
+        var phone = reservation.CustomerPhoneSnapshot?.Trim();
         if (string.IsNullOrWhiteSpace(phone))
         {
             _logger.LogDebug("No se envía notificación: teléfono vacío");
             return;
         }
 
-        var messages = BuildMessageList(state, businessContext);
+        var config = await LoadConfirmationMessagesAsync(state.BusinessId);
+        var attachments = await LoadAttachmentsAsync(state.BusinessId);
+        var services = await LoadServicesAsync(state.BusinessId);
+        var addOnRules = await LoadAddOnRulesAsync(state.BusinessId);
+
+        var messages = BuildMessageList(reservation, config, attachments, services, addOnRules);
 
         var index = 0;
         foreach (var message in messages)
@@ -45,169 +50,191 @@ public class PaymentConfirmationNotifier
             try
             {
                 await SendMessageItemAsync(state.BusinessId, phone, message, ct);
-                _logger.LogDebug("Mensaje de confirmación {Index}/{Total} enviado a {Phone}",
-                    index, messages.Count, phone);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex,
-                    "Error enviando mensaje de confirmación {Index}/{Total} a {Phone}",
-                    index, messages.Count, phone);
+                _logger.LogError(ex, "Error enviando mensaje de confirmación {Index}/{Total}", index, messages.Count);
             }
         }
+    }
 
-        _logger.LogInformation("Notificación proactiva enviada a {Phone}: {Count} mensajes", phone, messages.Count);
+    public async Task SendSlotTakenAsync(
+        ConversationState state,
+        Reservation reservation,
+        string originalTime,
+        List<string> availableSlots,
+        CancellationToken ct = default)
+    {
+        await SendSlotTakenMessageAsync(state, reservation, originalTime, availableSlots, ct);
+    }
+
+    public async Task SendPaymentConfirmedAndSlotTakenAsync(
+        ConversationState state,
+        PaymentTransaction payment,
+        Reservation reservation,
+        string originalTime,
+        List<string> availableSlots,
+        CancellationToken ct = default)
+    {
+        var phone = reservation.CustomerPhoneSnapshot?.Trim();
+        if (string.IsNullOrWhiteSpace(phone))
+            return;
+
+        var amount = payment.AmountInCents / 100m;
+        var receipt = $"✅ Recibimos tu pago de ${amount:N0} {payment.Currency}. Tu comprobante quedó registrado.";
+
+        try
+        {
+            await _whatsAppService.SendTextMessageAsync(state.BusinessId, phone, receipt);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error enviando recibo de pago confirmado");
+        }
+
+        await SendSlotTakenMessageAsync(state, reservation, originalTime, availableSlots, ct);
+    }
+
+    private async Task SendSlotTakenMessageAsync(
+        ConversationState state,
+        Reservation reservation,
+        string originalTime,
+        List<string> availableSlots,
+        CancellationToken ct)
+    {
+        var phone = reservation.CustomerPhoneSnapshot?.Trim();
+        if (string.IsNullOrWhiteSpace(phone))
+            return;
+
+        string message = availableSlots.Count > 0
+            ? $"Lo sentimos, el horario de las {originalTime} ya no está disponible porque otro cliente lo reservó primero. " +
+              $"Tu pago está seguro. ¿Quieres elegir otro horario? Opciones: {string.Join(", ", availableSlots)}."
+            : $"Lo sentimos, el horario de las {originalTime} ya no está disponible y no hay más cupos ese día. " +
+              "Tu pago está seguro — escríbenos para elegir otra fecha.";
+
+        try
+        {
+            await _whatsAppService.SendTextMessageAsync(state.BusinessId, phone, message);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error enviando notificación de slot tomado");
+        }
+    }
+
+    private async Task<PaymentConfirmationMessagesConfig?> LoadConfirmationMessagesAsync(Guid businessId)
+    {
+        try
+        {
+            var config = await _unitOfWork.BusinessConfigurations
+                .GetByBusinessIdAndKeyAsync(businessId, BusinessConfigurationKey.PaymentConfirmationMessages);
+            if (config?.Value is null || !config.Value.TrimStart().StartsWith('{'))
+                return null;
+            return JsonSerializer.Deserialize<PaymentConfirmationMessagesConfig>(
+                config.Value, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+        }
+        catch (JsonException ex)
+        {
+            _logger.LogWarning(ex, "Error deserializando PaymentConfirmationMessages");
+            return null;
+        }
+    }
+
+    private async Task<IReadOnlyDictionary<Guid, (string BlobPath, string? MediaType, string? Filename)>> LoadAttachmentsAsync(Guid businessId)
+    {
+        var attachments = await _unitOfWork.BusinessAttachments.GetByBusinessIdAsync(businessId);
+        return attachments.Where(a => a.IsActive).ToDictionary(
+            a => a.BusinessAttachmentId,
+            a => (a.BlobPath, (string?)a.MediaType, (string?)a.Filename));
+    }
+
+    private async Task<List<ServiceInfo>> LoadServicesAsync(Guid businessId)
+    {
+        var services = await _unitOfWork.Services.GetActiveByBusinessIdAsync(businessId);
+        return services.Select(s => new ServiceInfo { Name = s.ServiceName, Price = s.Price }).ToList();
+    }
+
+    private async Task<List<AddOnRuleInfo>> LoadAddOnRulesAsync(Guid businessId)
+    {
+        var rules = await _unitOfWork.ServiceAddOnRules.GetByBusinessIdAsync(businessId);
+        return rules.Select(r => new AddOnRuleInfo
+        {
+            AddOnName = r.AddOnService.ServiceName,
+            AddOnPrice = r.AddOnService.Price
+        }).ToList();
     }
 
     private List<SendableMessageItem> BuildMessageList(
-        ConversationState state,
-        LoadedBusinessContext businessContext)
+        Reservation reservation,
+        PaymentConfirmationMessagesConfig? config,
+        IReadOnlyDictionary<Guid, (string BlobPath, string? MediaType, string? Filename)> attachments,
+        List<ServiceInfo> services,
+        List<AddOnRuleInfo> addOnRules)
     {
-        var config = businessContext.ConfirmationMessages;
-
         if (config?.Messages is not { Count: > 0 })
+            return [new("¡Tu pago ha sido confirmado y tu reserva creada!", null, null, null)];
+
+        return config.Messages.Select(m =>
         {
-            _logger.LogWarning("Sin configuración de mensajes de confirmación. Enviando fallback mínimo.");
-            return new List<SendableMessageItem> { new("¡Tu pago ha sido confirmado y tu reserva creada!", null, null, null) };
-        }
-
-        var list = new List<SendableMessageItem>();
-
-        foreach (var m in config.Messages)
-        {
-            var body = ResolvePlaceholders(m.Body, state, businessContext);
-            string? mediaRef = null;
-            string? mediaType = null;
-            string? filename = null;
-
-            if (m.AttachmentId.HasValue &&
-                businessContext.Attachments.TryGetValue(m.AttachmentId.Value, out var attachment))
+            var body = ResolvePlaceholders(m.Body, reservation, services, addOnRules);
+            string? mediaRef = null, mediaType = null, filename = null;
+            if (m.AttachmentId.HasValue && attachments.TryGetValue(m.AttachmentId.Value, out var att))
             {
-                mediaRef = attachment.BlobPath;
-                mediaType = attachment.MediaType;
-                filename = attachment.Filename;
-                _logger.LogInformation(
-                    "Adjunto resuelto: AttachmentId={AttachmentId}, BlobPath={BlobPath}, MediaType={MediaType}, Filename={Filename}",
-                    m.AttachmentId.Value, mediaRef, mediaType, filename);
+                mediaRef = att.BlobPath;
+                mediaType = att.MediaType;
+                filename = att.Filename;
             }
-            else if (m.AttachmentId.HasValue)
-            {
-                _logger.LogWarning("AttachmentId {AttachmentId} no encontrado en el negocio. Se envía solo el texto.",
-                    m.AttachmentId.Value);
-            }
-
-            list.Add(new SendableMessageItem(body, mediaRef, mediaType, filename));
-        }
-
-        return list;
+            return new SendableMessageItem(body, mediaRef, mediaType, filename);
+        }).ToList();
     }
 
     private sealed record SendableMessageItem(string? Body, string? MediaRef, string? MediaType, string? Filename);
 
-    private async Task SendMessageItemAsync(
-        Guid businessId,
-        string phone,
-        SendableMessageItem item,
-        CancellationToken ct)
+    private async Task SendMessageItemAsync(Guid businessId, string phone, SendableMessageItem item, CancellationToken ct)
     {
-        var hasBody = !string.IsNullOrWhiteSpace(item.Body);
-        var hasMedia = !string.IsNullOrWhiteSpace(item.MediaRef);
-
-        if (!hasBody && !hasMedia)
-        {
-            _logger.LogWarning("Mensaje de confirmación sin Body ni MediaRef — omitido");
+        if (string.IsNullOrWhiteSpace(item.Body) && string.IsNullOrWhiteSpace(item.MediaRef))
             return;
-        }
 
-        if (!hasMedia)
+        if (string.IsNullOrWhiteSpace(item.MediaRef))
         {
             await _whatsAppService.SendTextMessageAsync(businessId, phone, item.Body!);
             return;
         }
 
-        _logger.LogInformation(
-            "Iniciando envío de adjunto: BusinessId={BusinessId}, Phone={Phone}, MediaRef={MediaRef}, MediaType={MediaType}, Filename={Filename}",
-            businessId, phone, item.MediaRef, item.MediaType, item.Filename);
-
         var publicUrl = await _mediaUrlResolver.ResolveAsync(businessId, item.MediaRef!, ct);
-
-        var urlPreview = publicUrl.Length > 80 ? publicUrl[..80] + "..." : publicUrl;
-        _logger.LogInformation(
-            "URL del adjunto resuelta (preview): {UrlPreview}, LongitudTotal={Length}",
-            urlPreview, publicUrl.Length);
-
-        var caption = item.Body;
-
         if (string.Equals(item.MediaType, "image", StringComparison.OrdinalIgnoreCase))
-        {
-            _logger.LogInformation("Enviando imagen vía WhatsApp: Phone={Phone}", phone);
-            await _whatsAppService.SendImageMessageAsync(businessId, phone, publicUrl, caption);
-        }
+            await _whatsAppService.SendImageMessageAsync(businessId, phone, publicUrl, item.Body);
         else
-        {
-            _logger.LogInformation("Enviando documento vía WhatsApp: Phone={Phone}, Filename={Filename}", phone, item.Filename);
-            await _whatsAppService.SendDocumentMessageAsync(businessId, phone, publicUrl, caption, item.Filename);
-        }
-    }
-
-    /// <summary>
-    /// Notifica al cliente que el horario elegido ya fue tomado y ofrece alternativas.
-    /// </summary>
-    public async Task SendSlotTakenAsync(
-        ConversationState state,
-        string originalTime,
-        List<string> availableSlots,
-        CancellationToken ct = default)
-    {
-        var phone = state.Phone?.Trim();
-        if (string.IsNullOrWhiteSpace(phone))
-        {
-            _logger.LogDebug("No se envía notificación de slot tomado: teléfono vacío");
-            return;
-        }
-
-        string message;
-        if (availableSlots.Count > 0)
-        {
-            var slotList = string.Join(", ", availableSlots);
-            message = $"Lo sentimos, el horario de las {originalTime} ya fue tomado por otra persona que realizó el pago antes. " +
-                      $"Tu pago está registrado y seguro. " +
-                      $"Horarios disponibles para esa fecha: {slotList}. " +
-                      $"Responde con la hora que prefieras para confirmar tu reserva.";
-        }
-        else
-        {
-            message = $"Lo sentimos, el horario de las {originalTime} ya fue tomado y no hay más disponibilidad para ese día. " +
-                      $"Tu pago está registrado y seguro. " +
-                      $"Por favor indícanos otra fecha para verificar disponibilidad.";
-        }
-
-        try
-        {
-            await _whatsAppService.SendTextMessageAsync(state.BusinessId, phone, message);
-            _logger.LogInformation("Notificación de slot tomado enviada a {Phone}", phone);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error enviando notificación de slot tomado a {Phone}", phone);
-        }
+            await _whatsAppService.SendDocumentMessageAsync(businessId, phone, publicUrl, item.Body, item.Filename);
     }
 
     private static string? ResolvePlaceholders(
         string? template,
-        ConversationState state,
-        LoadedBusinessContext businessContext)
+        Reservation reservation,
+        List<ServiceInfo> services,
+        List<AddOnRuleInfo> addOnRules)
     {
-        if (string.IsNullOrWhiteSpace(template))
-            return template;
+        if (string.IsNullOrWhiteSpace(template)) return template;
 
-        var total = ReservationTotalCalculator.Calculate(state, businessContext.Services, businessContext.AddOnRules);
+        var serviceName = reservation.Service?.ServiceName ?? string.Empty;
+        var addOnNames = reservation.AddOns
+            .Select(a => a.AddOnService?.ServiceName)
+            .Where(n => !string.IsNullOrWhiteSpace(n));
+        var addOnsCsv = string.Join(", ", addOnNames!);
+        var total = ReservationTotalCalculator.Calculate(serviceName, addOnsCsv, services, addOnRules);
+
+        var date = reservation.ReservationDateTime.HasValue
+            ? DateOnly.FromDateTime(reservation.ReservationDateTime.Value).ToString("dd/MM/yyyy")
+            : string.Empty;
+        var time = reservation.ReservationDateTime.HasValue
+            ? TimeOnly.FromDateTime(reservation.ReservationDateTime.Value).ToString("HH:mm")
+            : string.Empty;
 
         return template
-            .Replace("{CustomerName}", state.CustomerName ?? "")
-            .Replace("{Service}", state.Service ?? "")
-            .Replace("{Date}", state.DesiredDate?.ToString("dd/MM/yyyy") ?? "")
-            .Replace("{Time}", state.DesiredTime?.ToString("HH:mm") ?? "")
+            .Replace("{CustomerName}", reservation.CustomerNameSnapshot ?? "")
+            .Replace("{Service}", serviceName)
+            .Replace("{Date}", date)
+            .Replace("{Time}", time)
             .Replace("{Total}", total.ToString("N0"));
     }
 }

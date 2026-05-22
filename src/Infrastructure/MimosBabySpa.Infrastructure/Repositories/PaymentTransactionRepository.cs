@@ -21,6 +21,24 @@ public class PaymentTransactionRepository : IPaymentTransactionRepository
             .FirstOrDefaultAsync(t => t.PaymentReferenceId == paymentReferenceId, ct);
     }
 
+    public async Task<PaymentTransaction?> GetByPaymentReferenceIdForUpdateAsync(string paymentReferenceId, CancellationToken ct = default)
+    {
+        return await _context.PaymentTransactions
+            .FromSqlInterpolated($"SELECT * FROM dbo.PaymentTransactions WITH (UPDLOCK, ROWLOCK) WHERE PaymentReferenceId = {paymentReferenceId}")
+            .FirstOrDefaultAsync(ct);
+    }
+
+    public async Task<PaymentTransaction?> GetPendingReschedulingByConversationIdAsync(Guid conversationId, CancellationToken ct = default)
+    {
+        return await _context.PaymentTransactions
+            .Where(t => t.ConversationId == conversationId
+                && t.Status == PaymentTransactionStatus.Confirmed
+                && t.RequiresRescheduling
+                && t.ReservationId == null)
+            .OrderByDescending(t => t.ConfirmedAt ?? t.CreatedAt)
+            .FirstOrDefaultAsync(ct);
+    }
+
     public async Task<List<PaymentTransaction>> GetPendingAutomatedTransactionsAsync(DateTime createdAfter, CancellationToken ct = default)
     {
         return await _context.PaymentTransactions
@@ -41,6 +59,22 @@ public class PaymentTransactionRepository : IPaymentTransactionRepository
             existing.Status = transaction.Status;
             existing.ConfirmedAt = transaction.ConfirmedAt;
             existing.WebhookPayloadJson = transaction.WebhookPayloadJson;
+            existing.LinkUrl = transaction.LinkUrl;
+            existing.ExpiresAt = transaction.ExpiresAt;
+            existing.ReservationId = transaction.ReservationId;
+            existing.AmountInCents = transaction.AmountInCents;
+            existing.Currency = transaction.Currency;
+            existing.Snapshot_ServiceId = transaction.Snapshot_ServiceId;
+            existing.Snapshot_ReservationDateTime = transaction.Snapshot_ReservationDateTime;
+            existing.Snapshot_PreferredEmployeeId = transaction.Snapshot_PreferredEmployeeId;
+            existing.Snapshot_DurationMinutes = transaction.Snapshot_DurationMinutes;
+            existing.Snapshot_CustomerName = transaction.Snapshot_CustomerName;
+            existing.Snapshot_CustomerEmail = transaction.Snapshot_CustomerEmail;
+            existing.Snapshot_CustomerPhone = transaction.Snapshot_CustomerPhone;
+            existing.Snapshot_AddOnIds = transaction.Snapshot_AddOnIds;
+            existing.Snapshot_CustomAttributesJson = transaction.Snapshot_CustomAttributesJson;
+            existing.RequiresRescheduling = transaction.RequiresRescheduling;
+            existing.RequiresRefund = transaction.RequiresRefund;
             _context.PaymentTransactions.Update(existing);
         }
         else
@@ -56,6 +90,36 @@ public class PaymentTransactionRepository : IPaymentTransactionRepository
         return await _context.PaymentTransactions
             .Include(t => t.Conversation)
             .FirstOrDefaultAsync(t => t.PaymentTransactionId == paymentTransactionId, ct);
+    }
+
+    public async Task<PaymentTransaction?> GetActiveByConversationIdAsync(Guid conversationId, CancellationToken ct = default)
+    {
+        var now = DateTime.UtcNow;
+        return await _context.PaymentTransactions
+            .Where(t => t.ConversationId == conversationId
+                && t.Status == PaymentTransactionStatus.Created
+                && (t.ExpiresAt == null || t.ExpiresAt > now))
+            .OrderByDescending(t => t.CreatedAt)
+            .FirstOrDefaultAsync(ct);
+    }
+
+    public async Task<PaymentTransaction?> GetActiveByReservationIdAsync(Guid reservationId, CancellationToken ct = default)
+    {
+        var now = DateTime.UtcNow;
+        return await _context.PaymentTransactions
+            .Where(t => t.ReservationId == reservationId
+                && t.Status == PaymentTransactionStatus.Created
+                && (t.ExpiresAt == null || t.ExpiresAt > now))
+            .OrderByDescending(t => t.CreatedAt)
+            .FirstOrDefaultAsync(ct);
+    }
+
+    public async Task<PaymentTransaction?> GetLatestByConversationIdAsync(Guid conversationId, CancellationToken ct = default)
+    {
+        return await _context.PaymentTransactions
+            .Where(t => t.ConversationId == conversationId)
+            .OrderByDescending(t => t.CreatedAt)
+            .FirstOrDefaultAsync(ct);
     }
 
     public async Task<(IReadOnlyList<PaymentTransaction> Items, int TotalCount)> GetPagedByBusinessIdAsync(

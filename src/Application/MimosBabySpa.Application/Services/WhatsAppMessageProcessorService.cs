@@ -96,7 +96,8 @@ public class WhatsAppMessageProcessorService : IWhatsAppMessageProcessorService
         var result = await _agentService.ProcessMessageAsync(
             agent.AgentId,
             conversation.ConversationId,
-            messageText);
+            messageText,
+            userNumber);
 
         if (!result.Success)
         {

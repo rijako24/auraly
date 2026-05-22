@@ -2,6 +2,7 @@ CREATE TABLE [dbo].[ServiceCategories] (
     [ServiceCategoryId]   UNIQUEIDENTIFIER NOT NULL PRIMARY KEY DEFAULT NEWID(),
     [BusinessId]          UNIQUEIDENTIFIER NOT NULL,
     [Name]                NVARCHAR(100)    NOT NULL,
+    [Description]         NVARCHAR(MAX)    NULL,
     [DisplayOrder]        INT              NOT NULL DEFAULT 0,
     [IsActive]            BIT              NOT NULL DEFAULT 1,
     [CreatedAt]           DATETIME2        NOT NULL DEFAULT GETUTCDATE(),

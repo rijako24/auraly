@@ -3,12 +3,14 @@ namespace MimosBabySpa.Domain.Enums;
 /// <summary>
 /// Claves de configuración almacenadas en BusinessConfigurations.
 ///
-/// Principio de diseño: solo pertenecen aquí las configuraciones de INFRAESTRUCTURA
-/// que son hechos del negocio independientes de cualquier flow (credenciales externas,
-/// conexiones, secrets). Todo comportamiento de flujo vive en el JSON del nodo.
+/// Solo pertenecen aquí configuraciones operativas del negocio independientes
+/// del prompt del agente: integraciones, mensajes de pago, política de agendamiento
+/// y política de reserva/anticipo.
 /// </summary>
 public enum BusinessConfigurationKey
 {
-    Integrations = 6,  // JSON: integraciones externas (Google Calendar, webhooks, etc.)
-    UseAgenticOrchestrator = 7  // "true" para enrutar al motor agentico (Function Calling)
+    Integrations = 0,
+    PaymentConfirmationMessages = 1,
+    SchedulingPolicy = 2,
+    BookingPolicy = 3
 }

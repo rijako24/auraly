@@ -5,7 +5,7 @@ namespace MimosBabySpa.Application.Agents.Tools.Impl;
 
 /// <summary>
 /// Retorna el catálogo actualizado de servicios y precios del negocio.
-/// Permite al LLM consultar el catálogo en tiempo real sin depender del system prompt.
+/// La elegibilidad (edad, capacidad, etc.) se infiere del texto en Description + contexto del cliente.
 /// </summary>
 public sealed class GetServiceCatalogTool : IAgentTool
 {
@@ -17,7 +17,8 @@ public sealed class GetServiceCatalogTool : IAgentTool
 
     public string Description =>
         "Returns the current list of services, add-ons and prices from the catalog. " +
-        "Call this when the customer asks about services or prices, or before resolving pricing.";
+        "Call when the customer asks about services or prices, or before resolving pricing. " +
+        "Never invent services — show only what this tool returns.";
 
     public string ParametersSchema => """
         {

@@ -3,11 +3,9 @@ CREATE TABLE [dbo].[Conversations] (
     [BusinessId] UNIQUEIDENTIFIER NOT NULL,
     [UserNumber] NVARCHAR(50) NOT NULL,
     [LastMessage] NVARCHAR(1000) NULL,
-    [LastIntent] NVARCHAR(50) NULL,
     [Timestamp] DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
     [CustomerName] NVARCHAR(100) NULL,
-    [BabyAge] INT NULL,
-    [RecommendedPlan] NVARCHAR(100) NULL,
+    [CustomerEmail] NVARCHAR(200) NULL,
     [State] INT NOT NULL DEFAULT 0,
     CONSTRAINT [FK_Conversations_Businesses] FOREIGN KEY ([BusinessId])
         REFERENCES [dbo].[Businesses] ([BusinessId])

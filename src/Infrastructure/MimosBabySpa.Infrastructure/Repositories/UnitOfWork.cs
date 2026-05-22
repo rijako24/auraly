@@ -129,6 +129,37 @@ public class UnitOfWork : IUnitOfWork
         return await _context.SaveChangesAsync(cancellationToken);
     }
 
+    public async Task ExecuteInTransactionAsync(Func<Task> action, CancellationToken cancellationToken = default)
+    {
+        await using var transaction = await _context.Database.BeginTransactionAsync(cancellationToken);
+        try
+        {
+            await action();
+            await transaction.CommitAsync(cancellationToken);
+        }
+        catch
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            throw;
+        }
+    }
+
+    public async Task<T> ExecuteInTransactionAsync<T>(Func<Task<T>> action, CancellationToken cancellationToken = default)
+    {
+        await using var transaction = await _context.Database.BeginTransactionAsync(cancellationToken);
+        try
+        {
+            var result = await action();
+            await transaction.CommitAsync(cancellationToken);
+            return result;
+        }
+        catch
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            throw;
+        }
+    }
+
     public void Dispose()
     {
         _context.Dispose();

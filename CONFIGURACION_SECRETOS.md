@@ -6,7 +6,6 @@ Los archivos `appsettings.json` y `appSettings.json` **no se commitean** porque 
 
 1. Copia la plantilla correspondiente:
    - Console: `src/Console/MimosBabySpa.Console/appSettings.Example.json` → `appSettings.json`
-   - TestScenarios: `src/Tests/TestScenarios/appsettings.Example.json` → `appsettings.json`
 
 2. Reemplaza los placeholders (`<...>`) con tus credenciales reales.
 

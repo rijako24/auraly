@@ -5,11 +5,11 @@ namespace MimosBabySpa.Application.Identity.DTOs;
 public record ReservationDto(
     Guid ReservationId,
     Guid BusinessId,
-    Guid ServiceId,
+    Guid? ServiceId,
     string ServiceName,
-    Guid EmployeeId,
+    Guid? EmployeeId,
     string EmployeeName,
-    DateTime ReservationDateTime,
-    int DurationMinutes,
+    DateTime? ReservationDateTime,
+    int? DurationMinutes,
     ReservationStatus Status,
     DateTime CreatedAt);

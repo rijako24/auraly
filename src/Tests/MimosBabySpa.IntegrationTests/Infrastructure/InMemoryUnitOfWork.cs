@@ -19,7 +19,7 @@ public class InMemoryUnitOfWork : IUnitOfWork
     public IBusinessWhatsAppNumberRepository BusinessWhatsAppNumbers => throw new NotImplementedException();
     public IBusinessConfigurationRepository BusinessConfigurations { get; }
     public ISystemConfigurationRepository SystemConfigurations { get; }
-    public IConversationContextRepository ConversationContexts => throw new NotImplementedException();
+    public IConversationContextRepository ConversationContexts { get; }
     public IReservationRepository Reservations { get; }
     public IBusinessResourceRepository BusinessResources { get; }
     public IEmployeeRepository Employees { get; }
@@ -27,7 +27,7 @@ public class InMemoryUnitOfWork : IUnitOfWork
     public ILeadRepository Leads { get; }
     public IServiceAddOnRuleRepository ServiceAddOnRules { get; }
     public IReservationAddOnRepository ReservationAddOns { get; }
-    public IPaymentTransactionRepository PaymentTransactions => throw new NotImplementedException();
+    public IPaymentTransactionRepository PaymentTransactions { get; }
     public IAppUserRepository AppUsers => throw new NotImplementedException();
     public IAppRoleRepository AppRoles => throw new NotImplementedException();
     public IPermissionRepository Permissions => throw new NotImplementedException();
@@ -52,7 +52,9 @@ public class InMemoryUnitOfWork : IUnitOfWork
         Businesses           = new InMemoryBusinessRepository(businessId);
         BusinessConfigurations = new InMemoryBusinessConfigurationRepository(businessId);
         SystemConfigurations = new InMemorySystemConfigurationRepository();
+        ConversationContexts   = new InMemoryConversationContextRepository();
         Reservations         = new InMemoryReservationRepository();
+        PaymentTransactions  = new InMemoryPaymentTransactionRepository();
         BusinessResources    = new InMemoryBusinessResourceRepository();
         Employees            = new InMemoryEmployeeRepository(businessId);
         EmployeeServices     = new InMemoryEmployeeServiceRepository();
@@ -63,6 +65,12 @@ public class InMemoryUnitOfWork : IUnitOfWork
 
     public Task<int> SaveChangesAsync(CancellationToken cancellationToken = default) =>
         Task.FromResult(0);
+
+    public Task ExecuteInTransactionAsync(Func<Task> action, CancellationToken cancellationToken = default) =>
+        action();
+
+    public async Task<T> ExecuteInTransactionAsync<T>(Func<Task<T>> action, CancellationToken cancellationToken = default) =>
+        await action();
 
     public void Dispose() { }
 }

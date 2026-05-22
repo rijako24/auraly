@@ -15,12 +15,14 @@ public class Agent
     /// </summary>
     public string? SettingsJson { get; set; }
 
+    /// <summary>
+    /// Full system prompt for this agent in Markdown. Single source of truth for LLM context.
+    /// </summary>
+    public string? SystemPromptMarkdown { get; set; }
+
     public DateTime CreatedAt { get; set; }
     public DateTime? UpdatedAt { get; set; }
 
     public virtual Business Business { get; set; } = null!;
     public virtual AgentType AgentType { get; set; } = null!;
-    public virtual ICollection<AgentPromptSection> PromptSections { get; set; } = new List<AgentPromptSection>();
-    public virtual ICollection<AgentKnowledgeSource> KnowledgeSources { get; set; } = new List<AgentKnowledgeSource>();
-    public virtual ICollection<FlowDefinitionEntity> FlowDefinitions { get; set; } = new List<FlowDefinitionEntity>();
 }

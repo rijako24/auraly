@@ -93,11 +93,12 @@ public class DashboardService : IDashboardService
 
         var reservations = (await _unitOfWork.Reservations.GetByBusinessIdAndDateRangeAsync(
             businessId, from, to)).ToList();
-        var reservationsByDay = reservations
-            .GroupBy(r => r.ReservationDateTime.Date)
+        var scheduled = reservations.Where(r => r.ReservationDateTime.HasValue).ToList();
+        var reservationsByDay = scheduled
+            .GroupBy(r => r.ReservationDateTime!.Value.Date)
             .ToDictionary(g => g.Key, g => g.Count());
-        var reservationsByMonth = reservations
-            .GroupBy(r => (r.ReservationDateTime.Year, r.ReservationDateTime.Month))
+        var reservationsByMonth = scheduled
+            .GroupBy(r => (r.ReservationDateTime!.Value.Year, r.ReservationDateTime!.Value.Month))
             .ToDictionary(g => g.Key, g => g.Count());
 
         if (groupByMonth)

@@ -14,8 +14,13 @@ internal static class ToolResultHelper
         WriteIndented = false
     };
 
-    public static string Ok(object data) =>
-        JsonSerializer.Serialize(new { ok = true, data }, Options);
+    public static string Ok(object data, params string[] effects)
+    {
+        if (effects is null || effects.Length == 0)
+            return JsonSerializer.Serialize(new { ok = true, data }, Options);
+
+        return JsonSerializer.Serialize(new { ok = true, data, effects }, Options);
+    }
 
     public static string Error(string code, string message, string? hint = null) =>
         JsonSerializer.Serialize(new { ok = false, error = new { code, message, hint } }, Options);
@@ -39,6 +44,21 @@ internal static class ToolResultHelper
         if (!args.TryGetProperty(property, out var el)) return false;
         if (el.ValueKind == JsonValueKind.True) { value = true; return true; }
         if (el.ValueKind == JsonValueKind.False) { value = false; return true; }
+        return false;
+    }
+
+    public static bool TryGetInt(JsonElement args, string property, out int value)
+    {
+        value = 0;
+        if (!args.TryGetProperty(property, out var el)) return false;
+
+        if (el.ValueKind == JsonValueKind.Number && el.TryGetInt32(out value))
+            return true;
+
+        if (el.ValueKind == JsonValueKind.String
+            && int.TryParse(el.GetString(), out value))
+            return true;
+
         return false;
     }
 }

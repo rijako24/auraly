@@ -1,25 +1,15 @@
 export enum BusinessConfigurationKey {
-  Personality = 0,
-  EntityExtractionConfig = 1,
-  SalesStrategy = 2,
-  PaymentConfig = 3,
-  OperatingHours = 4,
-  PaymentMethods = 5,
-  Integrations = 6,
-  EscalationContacts = 7,
-  PaymentConfirmationMessages = 8,
+  Integrations = 0,
+  PaymentConfirmationMessages = 1,
+  SchedulingPolicy = 2,
+  BookingPolicy = 3,
 }
 
 export const BusinessConfigurationKeyLabels: Record<BusinessConfigurationKey, string> = {
-  [BusinessConfigurationKey.Personality]: "Personalidad",
-  [BusinessConfigurationKey.EntityExtractionConfig]: "Extracción de Entidades",
-  [BusinessConfigurationKey.SalesStrategy]: "Estrategia de Ventas",
-  [BusinessConfigurationKey.PaymentConfig]: "Configuración de Pagos",
-  [BusinessConfigurationKey.OperatingHours]: "Horarios de Operación",
-  [BusinessConfigurationKey.PaymentMethods]: "Métodos de Pago",
   [BusinessConfigurationKey.Integrations]: "Integraciones",
-  [BusinessConfigurationKey.EscalationContacts]: "Contactos de Escalamiento",
   [BusinessConfigurationKey.PaymentConfirmationMessages]: "Mensajes de Confirmación",
+  [BusinessConfigurationKey.SchedulingPolicy]: "Política de Agendamiento",
+  [BusinessConfigurationKey.BookingPolicy]: "Política de Reserva y Pago",
 };
 
 export enum ReservationStatus {

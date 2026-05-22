@@ -20,7 +20,12 @@ using MimosBabySpa.Application.Agents.Tools.Impl;
 using MimosBabySpa.Application.BusinessRules;
 using MimosBabySpa.Application.Configuration;
 using MimosBabySpa.Application.StateManagement;
+using MimosBabySpa.Application.Agents.Templates;
+using MimosBabySpa.Application.Time;
 using MimosBabySpa.Infrastructure.LLM;
+
+Console.OutputEncoding = System.Text.Encoding.UTF8;
+Console.InputEncoding = System.Text.Encoding.UTF8;
 
 var configuration = new ConfigurationBuilder()
     .SetBasePath(AppContext.BaseDirectory)
@@ -64,7 +69,6 @@ services.AddScoped<ILeadRepository, LeadRepository>();
 services.AddScoped<IReservationRepository, ReservationRepository>();
 services.AddScoped<IPaymentTransactionRepository, PaymentTransactionRepository>();
 services.AddScoped<MimosBabySpa.Domain.Repositories.IAgentRepository, AgentRepository>();
-services.AddScoped<MimosBabySpa.Domain.Repositories.IKnowledgeSourceRepository, KnowledgeSourceRepository>();
 
 // ── Application Services ───────────────────────────────────────────────────────
 services.AddScoped<IConversationService, ConversationService>();
@@ -76,8 +80,15 @@ services.AddScoped<IBusinessConfigurationService, BusinessConfigurationService>(
 services.AddScoped<IWhatsAppWebhookParserService, WhatsAppWebhookParserService>();
 services.AddScoped<IEmployeeAssignmentService, EmployeeAssignmentService>();
 services.AddScoped<IAvailabilityService, AvailabilityService>();
+services.AddScoped<ServiceNameResolver>();
 services.AddScoped<ReservationPricingResolver>();
+services.AddScoped<ReservationCheckoutPricing>();
+services.AddScoped<IReservationCheckoutPricing>(sp =>
+    sp.GetRequiredService<ReservationCheckoutPricing>());
+services.AddScoped<IBusinessClock, BusinessClock>();
+services.AddSingleton<ITemporalReferenceBuilder, TemporalReferenceBuilder>();
 services.AddScoped<ICatalogContentGenerator, CatalogContentGenerator>();
+services.AddScoped<IAddOnCatalogService, AddOnCatalogService>();
 
 // ── OpenAI Clients ─────────────────────────────────────────────────────────────
 services.Configure<OpenAITextModelOptions>(configuration.GetSection(OpenAITextModelOptions.SectionName));
@@ -101,10 +112,13 @@ services.AddKeyedSingleton<OpenAIClient>("Audio", (sp, _) =>
 
 // ── Supporting Infrastructure ──────────────────────────────────────────────────
 services.AddMemoryCache();
-services.AddScoped<CachedBusinessContextProvider>();
 services.AddScoped<ILocalizationService, LocalizationService>();
 services.AddScoped<IConversationStateManager, ConversationStateManager>();
-services.AddScoped<IConversationStateUpdater, ConversationStateUpdater>();
+services.AddScoped<IConversationFactsService, ConversationFactsService>();
+services.AddScoped<IConversationFactsService, ConversationFactsService>();
+services.AddScoped<IReservationLifecycleService, ReservationLifecycleService>();
+services.AddScoped<IPaymentLifecycleService, PaymentLifecycleService>();
+services.AddScoped<IReservationIntentBuilder, ReservationIntentBuilder>();
 services.AddScoped<IEscalationNotifier, EscalationNotifier>();
 services.AddScoped<IEscalationConfigProvider, EscalationConfigProvider>();
 services.AddScoped<AdminActionLinkService>();
@@ -120,6 +134,8 @@ services.AddScoped<IBlobStorageService>(sp =>
     new ConsoleBlobStorageService(sp.GetRequiredService<ILogger<ConsoleBlobStorageService>>()));
 
 services.AddScoped<IIntegrationsConfigProvider, IntegrationsConfigProvider>();
+services.AddScoped<ISchedulingPolicyProvider, SchedulingPolicyProvider>();
+services.AddScoped<IBookingPolicyProvider, BookingPolicyProvider>();
 services.AddScoped<IPaymentLinkService, WompiPaymentLinkService>();
 
 services.AddHttpClient();
@@ -140,15 +156,22 @@ services.AddScoped<MimosBabySpa.Application.LLM.IChatClient>(sp =>
 
 services.AddScoped<IAgentConfigProvider, AgentConfigProvider>();
 
+services.AddScoped<IPromptTemplateExtractor, PromptTemplateExtractor>();
+services.AddScoped<ITemplateRenderer, PromptTemplateRenderer>();
+services.AddScoped<IAgentTurnResponseComposer, AgentTurnResponseComposer>();
+
 services.AddScoped<IAgentTool, CheckAvailabilityTool>();
 services.AddScoped<IAgentTool, ResolvePricingTool>();
+services.AddScoped<IAgentTool, PrepareCheckoutTool>();
 services.AddScoped<IAgentTool, CreateReservationTool>();
+services.AddScoped<IAgentTool, AssignPaidSlotTool>();
 services.AddScoped<IAgentTool, RescheduleReservationTool>();
 services.AddScoped<IAgentTool, SuspendReservationTool>();
 services.AddScoped<IAgentTool, GeneratePaymentLinkTool>();
 services.AddScoped<IAgentTool, VerifyPaymentTool>();
 services.AddScoped<IAgentTool, EscalateToHumanTool>();
 services.AddScoped<IAgentTool, GetServiceCatalogTool>();
+services.AddScoped<IAgentTool, SetFactTool>();
 
 services.AddScoped<AgentToolRegistry>();
 services.AddScoped<IAgentConversationService, AgentConversationService>();
@@ -157,6 +180,9 @@ services.AddScoped<IAgentConversationService, AgentConversationService>();
 var serviceProvider = services.BuildServiceProvider();
 
 // ── Console UI ─────────────────────────────────────────────────────────────────
+Console.OutputEncoding = System.Text.Encoding.UTF8;
+Console.InputEncoding = System.Text.Encoding.UTF8;
+
 Console.WriteLine("════════════════════════════════════════════════════════");
 Console.WriteLine("  Mimos Baby Spa — Simulador Agentic Engine (FC)");
 Console.WriteLine("════════════════════════════════════════════════════════");
@@ -171,7 +197,7 @@ const string agentIdStr = "7105A9D5-D4E4-4BBA-9F3A-DBB34E0B1B86";
 var agentId = Guid.Parse(agentIdStr);
 
 // Simula el teléfono del cliente (clave de sesión)
-const string userPhone = "+12345679703";
+const string userPhone = "+12345679709";
 
 while (true)
 {
@@ -224,7 +250,8 @@ while (true)
         var result = await agentService.ProcessMessageAsync(
             agentId,
             conversation.ConversationId,
-            input);
+            input,
+            userPhone);
 
         Console.ForegroundColor = ConsoleColor.Green;
         Console.Write("Mimo: ");
@@ -251,6 +278,8 @@ while (true)
     {
         Console.ForegroundColor = ConsoleColor.Red;
         Console.WriteLine($"✗ Error: {ex.Message}");
+        if (ex.InnerException is not null)
+            Console.WriteLine($"  Causa: {ex.InnerException.Message}");
         Console.ResetColor();
         Console.WriteLine();
     }

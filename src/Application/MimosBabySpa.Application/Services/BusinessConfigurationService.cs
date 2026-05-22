@@ -1,5 +1,3 @@
-using System.Text;
-using System.Linq;
 using MimosBabySpa.Application.DTOs;
 using MimosBabySpa.Domain.Enums;
 using MimosBabySpa.Domain.Repositories;
@@ -33,13 +31,6 @@ public class BusinessConfigurationService : IBusinessConfigurationService
         }
 
         return dto;
-    }
-
-    public async Task<string> GetBusinessConfigurationValueAsync(Guid businessId, BusinessConfigurationKey key)
-    {
-        var config = await _unitOfWork.BusinessConfigurations
-            .GetByBusinessIdAndKeyAsync(businessId, key);
-        return config?.Value ?? string.Empty;
     }
 
     public async Task<SystemConfigurationDto> GetAllSystemConfigurationsAsync()

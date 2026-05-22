@@ -57,8 +57,8 @@ public class ConversationAdminService : IConversationAdminService
     private static ConversationDto MapToDto(Conversation c) =>
         new(
             c.ConversationId, c.BusinessId, c.UserNumber,
-            c.LastMessage, c.LastIntent, c.Timestamp,
-            c.CustomerName, c.BabyAge, c.RecommendedPlan,
+            c.LastMessage, c.Timestamp,
+            c.CustomerName, c.CustomerEmail,
             c.State.ToString());
 
     private async Task EnsureBusinessBelongsToTenantAsync(Guid tenantId, Guid businessId, CancellationToken ct)

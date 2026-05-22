@@ -9,7 +9,8 @@
     <ModelCollation>1033, CI</ModelCollation>
   </PropertyGroup>
   <ItemGroup>
-    <Build Remove="Scripts\*.sql" />
+    <Build Remove="Scripts\**\*.sql" />
+    <None Include="Scripts\Seeds\*.sql" />
   </ItemGroup>
   <ItemGroup>
     <Build Include="Tables\Tenants.sql" />
@@ -18,6 +19,8 @@
     <Build Include="Tables\Businesses.sql" />
     <Build Include="Tables\AppUsers.sql" />
     <Build Include="Tables\AppRoles.sql" />
+    <Build Include="Tables\AgentTypes.sql" />
+    <Build Include="Tables\Agents.sql" />
     <Build Include="Tables\BusinessWhatsAppNumbers.sql" />
     <Build Include="Tables\BusinessConfigurations.sql" />
     <Build Include="Tables\BusinessAttachments.sql" />

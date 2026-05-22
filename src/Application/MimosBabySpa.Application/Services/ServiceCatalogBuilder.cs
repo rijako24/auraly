@@ -65,7 +65,7 @@ public static class ServiceCatalogBuilder
         // Add-ons
         if (addOnRules.Count > 0)
         {
-            sb.AppendLine("### Complementos (Add-ons)");
+            sb.AppendLine("### Complementos");
             foreach (var rule in addOnRules.OrderBy(r => r.DisplayOrder).ThenBy(r => r.AddOnName))
             {
                 var price = rule.AddOnPrice.ToString("N0", CultureInfo.InvariantCulture);

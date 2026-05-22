@@ -14,4 +14,5 @@ public record CreateReservationRequest(
     string? CustomerName,
     string? Email,
     string? Phone,
-    IReadOnlyDictionary<string, string> BusinessAttributes);
+    IReadOnlyDictionary<string, string> BusinessAttributes,
+    string? CustomAttributesJson = null);

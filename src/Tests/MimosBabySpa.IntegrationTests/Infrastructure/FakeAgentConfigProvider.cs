@@ -20,19 +20,25 @@ public class FakeAgentConfigProvider : IAgentConfigProvider
         {
             AgentId = agentId,
             BusinessId = _businessId,
-            Name = "Agente de Pruebas",
-            SystemPrompt = "Eres un asistente de pruebas de MimosBabySpa. Ayuda a los clientes a reservar servicios.",
-            Model = "gpt-4o",
+            Name = "Mimo",
+            SystemPrompt = """
+                Eres Mimo, asistente de MimosBabySpa.
+
+                ## SALUDO Y PRESENTACION
+                En el primer mensaje saluda y preséntate. En turnos siguientes no repitas el saludo.
+                """,
+            FirstTurnGreetingHint = "¡Hola! 😊 Soy Mimo de Mimo's Baby Spa. Un gusto saludarte.",
+            Model = "gpt-4.1-mini",
             Temperature = 0.3f,
             MaxToolIterations = 8,
             ConsecutiveErrorEscalationThreshold = 3,
             EnabledToolNames =
             [
                 "check_availability",
+                "prepare_checkout",
                 "create_reservation",
                 "get_service_catalog",
-                "resolve_pricing",
-                "generate_payment_link",
+                "set_fact",
                 "verify_payment",
                 "escalate_to_human"
             ],

@@ -1,12 +1,12 @@
 namespace MimosBabySpa.Application.Configuration;
 
 /// <summary>
-/// Parámetros de disponibilidad leídos del config del nodo <c>check_availability</c>.
+/// Parámetros de disponibilidad para calcular slots disponibles.
 ///
-/// Configuración completa para calcular slots disponibles sin leer ninguna tabla
-/// BusinessConfigurations. Cada nodo puede tener su propia política de agendamiento.
+/// Fuente única en runtime: BusinessConfiguration Key=SchedulingPolicy
+/// vía ISchedulingPolicyProvider.
 ///
-/// Estructura esperada en el config del nodo (propiedad "scheduling"):
+/// Estructura esperada en el JSON de SchedulingPolicy:
 /// <code>
 /// "scheduling": {
 ///   "slotIntervalMinutes": 60,

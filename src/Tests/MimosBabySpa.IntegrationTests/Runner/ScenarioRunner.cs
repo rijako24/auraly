@@ -78,6 +78,7 @@ public class ScenarioRunner
                         AgentId,
                         conversationId,
                         step.UserMessage,
+                        channelPhone: "+573001234567",
                         cancellationToken);
 
                     botResponse = result.Response;

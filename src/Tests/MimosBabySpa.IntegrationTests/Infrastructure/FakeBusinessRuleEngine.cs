@@ -1,16 +1,19 @@
 using MimosBabySpa.Application.BusinessRules;
-using MimosBabySpa.Domain.Models;
 
 namespace MimosBabySpa.IntegrationTests.Infrastructure;
 
 /// <summary>
-/// Fake IBusinessRuleEngine. Always returns valid. 
+/// Fake IBusinessRuleEngine. Always returns valid.
 /// Specific scenarios can inject their own override if needed.
 /// </summary>
 public class FakeBusinessRuleEngine : IBusinessRuleEngine
 {
     public Task<BusinessRuleValidationResult> ValidateReservationAsync(
-        Guid businessId, ConversationState state, CancellationToken cancellationToken = default) =>
+        Guid businessId,
+        string serviceName,
+        DateOnly desiredDate,
+        TimeOnly desiredTime,
+        CancellationToken cancellationToken = default) =>
         Task.FromResult(new BusinessRuleValidationResult { IsValid = true });
 
     public Task<BusinessRuleContext> GetBusinessContextAsync(

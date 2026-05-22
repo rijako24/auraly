@@ -26,6 +26,7 @@ public class FakeEmployeeAssignmentService : IEmployeeAssignmentService
     public Task<Employee?> FindBestAvailableEmployeeAsync(
         Guid businessId, Guid serviceId,
         DateTime startTime, DateTime endTime,
-        CancellationToken cancellationToken = default) =>
+        CancellationToken cancellationToken = default,
+        Guid? preferredEmployeeId = null) =>
         Task.FromResult<Employee?>(_employee);
 }

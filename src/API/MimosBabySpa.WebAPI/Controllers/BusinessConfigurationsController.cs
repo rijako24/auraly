@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MimosBabySpa.Application.Identity.DTOs;
 using MimosBabySpa.Application.Identity.Interfaces;
+using MimosBabySpa.Domain.Enums;
 using MimosBabySpa.WebAPI.Authorization;
 using MimosBabySpa.WebAPI.Extensions;
 
@@ -12,6 +13,9 @@ namespace MimosBabySpa.WebAPI.Controllers;
 [Authorize]
 public class BusinessConfigurationsController : ControllerBase
 {
+    private static readonly HashSet<BusinessConfigurationKey> AllowedKeys =
+        Enum.GetValues<BusinessConfigurationKey>().ToHashSet();
+
     private readonly IBusinessConfigurationAdminService _service;
 
     public BusinessConfigurationsController(IBusinessConfigurationAdminService service)
@@ -31,6 +35,19 @@ public class BusinessConfigurationsController : ControllerBase
     public async Task<IActionResult> Update(
         Guid businessId, [FromBody] UpdateBusinessConfigurationRequest request, CancellationToken ct)
     {
+        var invalidKeys = request.Configurations.Keys
+            .Where(k => !AllowedKeys.Contains(k))
+            .ToList();
+
+        if (invalidKeys.Count > 0)
+        {
+            return BadRequest(new
+            {
+                error = "Invalid configuration keys.",
+                invalidKeys = invalidKeys.Select(k => (int)k)
+            });
+        }
+
         return Ok(await _service.UpdateConfigurationAsync(User.GetTenantId(), businessId, request, ct));
     }
 }

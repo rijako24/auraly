@@ -53,7 +53,7 @@ public class ConversationService : IConversationService
         }
     }
 
-    public async Task UpdateConversationContextAsync(Guid conversationId, string? lastMessage, string? lastIntent)
+    public async Task UpdateConversationContextAsync(Guid conversationId, string? lastMessage)
     {
         try
         {
@@ -65,7 +65,6 @@ public class ConversationService : IConversationService
             }
 
             conversation.LastMessage = lastMessage;
-            conversation.LastIntent = lastIntent;
             conversation.Timestamp = DateTime.UtcNow;
 
             await _unitOfWork.Conversations.UpdateAsync(conversation);

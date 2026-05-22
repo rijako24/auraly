@@ -1,6 +1,5 @@
 using System.Text.Json;
 using MimosBabySpa.Application.Services;
-using MimosBabySpa.Application.StateManagement;
 
 namespace MimosBabySpa.Application.Agents.Tools.Impl;
 
@@ -11,13 +10,9 @@ namespace MimosBabySpa.Application.Agents.Tools.Impl;
 public sealed class RescheduleReservationTool : IAgentTool
 {
     private readonly IReservationService _reservations;
-    private readonly IConversationStateManager _stateManager;
 
-    public RescheduleReservationTool(IReservationService reservations, IConversationStateManager stateManager)
-    {
+    public RescheduleReservationTool(IReservationService reservations) =>
         _reservations = reservations;
-        _stateManager = stateManager;
-    }
 
     public string Name => "reschedule_reservation";
 
@@ -54,10 +49,10 @@ public sealed class RescheduleReservationTool : IAgentTool
         if (!ToolResultHelper.TryGetString(arguments, "new_time", out var timeStr))
             return ToolResultHelper.Error("invalid_args", "'new_time' is required.");
 
-        if (!DateOnly.TryParse(dateStr, out var newDate))
+        if (!AgentDateRules.TryParseDate(dateStr, out var newDate))
             return ToolResultHelper.Error("invalid_date", $"'{dateStr}' is not a valid date.", "Use YYYY-MM-DD.");
 
-        if (newDate < DateOnly.FromDateTime(DateTime.UtcNow))
+        if (AgentDateRules.IsPastDate(newDate, ctx.BusinessToday))
             return ToolResultHelper.Error("past_date", "New date must be today or in the future.");
 
         if (!TimeOnly.TryParse(timeStr, out var newTime))

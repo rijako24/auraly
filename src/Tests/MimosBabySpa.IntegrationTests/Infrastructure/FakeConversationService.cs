@@ -39,7 +39,7 @@ public class FakeConversationService : IConversationService
     }
 
     public Task UpdateConversationContextAsync(
-        Guid conversationId, string? lastMessage, string? lastIntent) =>
+        Guid conversationId, string? lastMessage) =>
         Task.CompletedTask;
 
     public Task<Conversation?> GetConversationByIdAsync(Guid conversationId) =>

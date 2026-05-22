@@ -14,9 +14,6 @@ public class AgentRepository : IAgentRepository
     public async Task<Agent?> GetByIdAsync(Guid agentId, CancellationToken ct = default) =>
         await _db.Agents
             .Include(a => a.AgentType)
-            .Include(a => a.PromptSections.Where(ps => ps.IsActive))
-            .Include(a => a.KnowledgeSources.OrderBy(aks => aks.DisplayOrder))
-                .ThenInclude(aks => aks.KnowledgeSource)
             .FirstOrDefaultAsync(a => a.AgentId == agentId && a.IsActive, ct);
 
     public async Task<IReadOnlyList<Agent>> GetByBusinessAsync(Guid businessId, CancellationToken ct = default) =>

@@ -2,7 +2,7 @@ namespace MimosBabySpa.Application.Agents;
 
 /// <summary>
 /// Configuración de un agente cargada desde BD por turno (con caché).
-/// Lee: Agent.SettingsJson + AgentPromptSections + AgentKnowledgeSources + AgentTools.
+/// Lee: Agents.SystemPromptMarkdown + Agents.SettingsJson.
 /// </summary>
 public sealed class AgentConfig
 {
@@ -10,8 +10,14 @@ public sealed class AgentConfig
     public Guid BusinessId { get; init; }
     public string Name { get; init; } = string.Empty;
 
-    /// <summary>System prompt final del agente (identity + KS + políticas).</summary>
+    /// <summary>System prompt del agente (Agents.SystemPromptMarkdown).</summary>
     public string SystemPrompt { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Plantilla sugerida para el primer turno (SettingsJson → messages.firstTurnGreetingHint).
+    /// El orquestador la inyecta como hint; el LLM la adapta al mensaje del cliente.
+    /// </summary>
+    public string? FirstTurnGreetingHint { get; init; }
 
     /// <summary>Deployment o model name de Azure OpenAI.</summary>
     public string Model { get; init; } = string.Empty;

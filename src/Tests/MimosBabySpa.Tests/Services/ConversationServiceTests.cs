@@ -127,14 +127,12 @@ public class ConversationServiceTests
         // Act
         await _service.UpdateConversationContextAsync(
             conversationId,
-            lastMessage: "Hola",
-            lastIntent: "Greeting");
+            lastMessage: "Hola");
 
         // Assert
         _mockConversationRepository.Verify(x => x.GetByIdAsync(conversationId), Times.Once);
         _mockConversationRepository.Verify(x => x.UpdateAsync(It.Is<Conversation>(c =>
-            c.LastMessage == "Hola" &&
-            c.LastIntent == "Greeting")), Times.Once);
+            c.LastMessage == "Hola")), Times.Once);
         _mockUnitOfWork.Verify(x => x.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Once);
     }
 
@@ -149,7 +147,7 @@ public class ConversationServiceTests
             .ReturnsAsync((Conversation?)null);
 
         // Act
-        await _service.UpdateConversationContextAsync(conversationId, "Hola", "Greeting");
+        await _service.UpdateConversationContextAsync(conversationId, "Hola");
 
         // Assert
         _mockConversationRepository.Verify(x => x.GetByIdAsync(conversationId), Times.Once);

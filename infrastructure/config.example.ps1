@@ -15,7 +15,7 @@ $Config = @{
     SqlAdminPassword = ConvertTo-SecureString "TuPassword123!" -AsPlainText -Force
     
     # Azure OpenAI
-    OpenAITextDeploymentName = "gpt-4o-mini"
+    OpenAITextDeploymentName = "gpt-4.1-mini"
     OpenAIAudioDeploymentName = "whisper-1"
     
     # WhatsApp Business API

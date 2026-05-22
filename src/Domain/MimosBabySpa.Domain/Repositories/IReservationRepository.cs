@@ -28,6 +28,7 @@ public interface IReservationRepository
 
     Task<Reservation> CreateAsync(Reservation reservation);
     Task<Reservation> UpdateAsync(Reservation reservation);
+    Task<Reservation?> GetActiveByConversationIdAsync(Guid conversationId, CancellationToken ct = default);
     Task<bool> ExistsOverlappingReservationAsync(
         Guid businessId, 
         DateTime reservationDate, 

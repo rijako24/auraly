@@ -31,8 +31,40 @@ public class InMemoryPaymentTransactionRepository : IPaymentTransactionRepositor
         return Task.CompletedTask;
     }
 
+    public Task<PaymentTransaction?> GetActiveByConversationIdAsync(Guid conversationId, CancellationToken ct = default) =>
+        Task.FromResult(_store
+            .Where(t => t.ConversationId == conversationId
+                && t.Status == Domain.Enums.PaymentTransactionStatus.Created)
+            .OrderByDescending(t => t.CreatedAt)
+            .FirstOrDefault());
+
+    public Task<PaymentTransaction?> GetActiveByReservationIdAsync(Guid reservationId, CancellationToken ct = default) =>
+        Task.FromResult(_store
+            .Where(t => t.ReservationId == reservationId
+                && t.Status == Domain.Enums.PaymentTransactionStatus.Created)
+            .OrderByDescending(t => t.CreatedAt)
+            .FirstOrDefault());
+
+    public Task<PaymentTransaction?> GetLatestByConversationIdAsync(Guid conversationId, CancellationToken ct = default) =>
+        Task.FromResult(_store
+            .Where(t => t.ConversationId == conversationId)
+            .OrderByDescending(t => t.CreatedAt)
+            .FirstOrDefault());
+
+    public Task<PaymentTransaction?> GetByPaymentReferenceIdForUpdateAsync(string paymentReferenceId, CancellationToken ct = default) =>
+        GetByPaymentReferenceIdAsync(paymentReferenceId, ct);
+
+    public Task<PaymentTransaction?> GetPendingReschedulingByConversationIdAsync(Guid conversationId, CancellationToken ct = default) =>
+        Task.FromResult(_store
+            .Where(t => t.ConversationId == conversationId
+                && t.Status == Domain.Enums.PaymentTransactionStatus.Confirmed
+                && t.RequiresRescheduling
+                && t.ReservationId == null)
+            .OrderByDescending(t => t.ConfirmedAt ?? t.CreatedAt)
+            .FirstOrDefault());
+
     public Task<PaymentTransaction?> GetByIdAsync(Guid paymentTransactionId, CancellationToken ct = default) =>
-        throw new NotImplementedException();
+        Task.FromResult(_store.FirstOrDefault(t => t.PaymentTransactionId == paymentTransactionId));
 
     public Task<(IReadOnlyList<PaymentTransaction> Items, int TotalCount)> GetPagedByBusinessIdAsync(
         Guid businessId, int page, int pageSize, string? search, Domain.Enums.PaymentTransactionStatus? status, CancellationToken ct = default) =>

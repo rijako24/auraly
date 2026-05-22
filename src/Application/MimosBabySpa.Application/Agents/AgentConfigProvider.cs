@@ -1,4 +1,3 @@
-using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
@@ -8,7 +7,7 @@ namespace MimosBabySpa.Application.Agents;
 
 /// <summary>
 /// Lee la configuración del agente desde BD y la cachea 10 minutos.
-/// Construye el system prompt final ensamblando AgentPromptSections + KnowledgeSources.
+/// El system prompt se obtiene directamente de Agents.SystemPromptMarkdown.
 /// </summary>
 public sealed class AgentConfigProvider : IAgentConfigProvider
 {
@@ -19,13 +18,17 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
     private static readonly TimeSpan CacheTtl = TimeSpan.FromMinutes(10);
     private const string CachePrefix = "agent_config_";
 
-    // Nombres de tools habilitadas por defecto si el agente no especifica la lista
     private static readonly IReadOnlyList<string> DefaultEnabledTools =
     [
-        "check_availability", "resolve_pricing", "create_reservation",
-        "reschedule_reservation", "suspend_reservation",
-        "generate_payment_link", "verify_payment",
-        "escalate_to_human", "get_service_catalog"
+        "set_fact",
+        "check_availability",
+        "prepare_checkout",
+        "create_reservation",
+        "reschedule_reservation",
+        "suspend_reservation",
+        "verify_payment",
+        "escalate_to_human",
+        "get_service_catalog"
     ];
 
     public AgentConfigProvider(
@@ -50,16 +53,14 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
 
         var settings = ParseSettings(agent.SettingsJson);
 
-        // Construir system prompt desde secciones ordenadas + KS auto-inject
-        var systemPrompt = BuildSystemPrompt(agent, settings);
-
         var config = new AgentConfig
         {
             AgentId = agentId,
             BusinessId = agent.BusinessId,
             Name = agent.Name,
-            SystemPrompt = systemPrompt,
-            Model = settings.Model ?? "gpt-4o-mini",
+            SystemPrompt = agent.SystemPromptMarkdown?.Trim() ?? string.Empty,
+            FirstTurnGreetingHint = settings.Messages?.FirstTurnGreetingHint?.Trim(),
+            Model = settings.Model ?? "gpt-4.1-mini",
             Temperature = settings.Temperature ?? 0.7f,
             MaxToolIterations = settings.MaxToolIterations ?? 6,
             ConsecutiveErrorEscalationThreshold = settings.ConsecutiveErrorEscalationThreshold ?? 3,
@@ -74,57 +75,6 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
             agentId, config.Model, string.Join(",", config.EnabledToolNames));
 
         return config;
-    }
-
-    private static string BuildSystemPrompt(Domain.Entities.Agent agent, AgentSettings settings)
-    {
-        var sb = new StringBuilder();
-
-        // 1. Secciones de prompt ordenadas por DisplayOrder e InjectionPoint
-        var sections = agent.PromptSections
-            .Where(s => s.IsActive)
-            .OrderBy(s => s.DisplayOrder)
-            .ToList();
-
-        foreach (var section in sections.Where(s => s.InjectionPoint == "system_header"))
-            AppendSection(sb, section.Title, section.Content);
-
-        foreach (var section in sections.Where(s => s.InjectionPoint == "before_instructions"))
-            AppendSection(sb, section.Title, section.Content);
-
-        // 2. KnowledgeSources marcados como AutoInject
-        var autoKs = agent.KnowledgeSources
-            .Where(aks => aks.AutoInject && aks.KnowledgeSource.IsActive)
-            .OrderBy(aks => aks.DisplayOrder)
-            .Select(aks => aks.KnowledgeSource)
-            .ToList();
-
-        if (autoKs.Count > 0)
-        {
-            sb.AppendLine("## KNOWLEDGE BASE");
-            foreach (var ks in autoKs)
-            {
-                sb.AppendLine($"### {ks.Name}");
-                sb.AppendLine(ks.Content);
-                sb.AppendLine();
-            }
-        }
-
-        foreach (var section in sections.Where(s => s.InjectionPoint == "after_instructions"))
-            AppendSection(sb, section.Title, section.Content);
-
-        foreach (var section in sections.Where(s => s.InjectionPoint == "context_footer"))
-            AppendSection(sb, section.Title, section.Content);
-
-        return sb.ToString().Trim();
-    }
-
-    private static void AppendSection(StringBuilder sb, string title, string content)
-    {
-        if (!string.IsNullOrWhiteSpace(title))
-            sb.AppendLine($"## {title.ToUpperInvariant()}");
-        sb.AppendLine(content.Trim());
-        sb.AppendLine();
     }
 
     private static AgentSettings ParseSettings(string? settingsJson)
@@ -151,9 +101,15 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
         public int? MaxToolIterations { get; set; }
         public int? ConsecutiveErrorEscalationThreshold { get; set; }
         public IReadOnlyList<string>? EnabledTools { get; set; }
+        public AgentMessagesSettings? Messages { get; set; }
         public EscalationSettings? Escalation { get; set; }
         public IReadOnlyList<string>? EscalationContacts =>
             Escalation?.Contacts ?? [];
+    }
+
+    private sealed class AgentMessagesSettings
+    {
+        public string? FirstTurnGreetingHint { get; set; }
     }
 
     private sealed class EscalationSettings
