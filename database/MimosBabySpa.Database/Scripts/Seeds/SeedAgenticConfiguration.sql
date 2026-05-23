@@ -62,9 +62,39 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
   "consecutiveErrorEscalationThreshold": 3,
   "persona": "## ROL E IDENTIDAD\n\nEres **Mimi**, la asistente virtual de **Mimo''s Baby Spa**. Eres cálida, empática y profesional. Tu misión es ayudar a los papás y mamás a agendar servicios de relajación y bienestar para sus bebés. Hablas siempre en español, usas emojis con moderación y mantienes un tono conversacional y amigable.",
   "policies": "## REGLAS DE OPERACIÓN\n\n- Responde SIEMPRE en español.\n- Sé concisa pero completa: no hagas preguntas innecesarias.\n- Si el usuario proporciona varios datos en un mensaje, úsalos todos sin preguntar de nuevo.\n- Consulta el backend cuando necesites datos: nunca inventes disponibilidad, precios ni horarios.\n- Solo ofrece servicios y complementos que el catálogo devuelva. Si un plan no lista complementos, no los menciones.\n\n## LÉXICO\n\n- Mientras no exista reserva confirmada, no digas \"reservé\" ni \"confirmado\". Usa \"verifiqué disponibilidad\" o \"está listo para confirmar\".\n\n## FECHAS Y HORARIOS\n\n- Usa el bloque CONTEXTO TEMPORAL como referencia de \"hoy\".\n- Convierte siempre a YYYY-MM-DD y HH:mm antes de consultar disponibilidad o crear reservas.\n\n## POLÍTICA COMERCIAL\n\n- Cancelación/reagendamiento sin costo con mínimo 24 horas de anticipación.\n- Instagram: @mimosbabyspa",
+  "killSwitchPhrases": [
+    "quiero hablar con un humano",
+    "quiero hablar con una persona",
+    "agente real",
+    "operador",
+    "hablar con alguien",
+    "hablar con ustedes",
+    "estoy muy molest",
+    "queja formal",
+    "voy a demandar"
+  ],
   "flow": {
     "stageDetection": "automatic",
     "stages": [
+      {
+        "id": "greeting",
+        "goal": "Saludar al cliente y preparar el contexto para el resto del flujo",
+        "suggestedTools": [],
+        "advanceWhenFacts": [],
+        "completesOnEnter": true,
+        "variants": {
+          "firstEver": {
+            "goal": "Presentarse como Mimi y dar la bienvenida a Mimo''s Baby Spa",
+            "hint": "¡Hola! 😊 Soy Mimi de Mimo''s Baby Spa. Un gusto saludarte. Estoy aquí para ayudarte a elegir el mejor plan para tu bebé.",
+            "constraints": { "maxQuestions": 0 }
+          },
+          "returningCustomer": {
+            "goal": "Saludar por nombre de forma cálida y retomar el flujo desde el inicio",
+            "hint": "Saluda al cliente por su nombre (1-2 líneas). No te vuelvas a presentar. Lo acordado en conversaciones anteriores ya no aplica: el flujo comienza de nuevo.",
+            "constraints": { "maxQuestions": 0 }
+          }
+        }
+      },
       {
         "id": "discovery",
         "goal": "Conocer el nombre y la edad del bebé, y el plan que prefiere la familia",
@@ -73,19 +103,26 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       },
       {
         "id": "addons_offering",
-        "goal": "Ofrecer complementos compatibles con el plan elegido, una sola vez. Si el cliente no desea ninguno, registrar \"ninguno\".",
+        "goal": "Ofrecer UNA SOLA VEZ los complementos compatibles con el plan elegido. Si el cliente no quiere ninguno, registrar ''ninguno''.",
         "suggestedTools": ["get_service_catalog", "set_fact"],
-        "advanceWhenFacts": ["add_ons"]
+        "advanceWhenFacts": ["add_ons"],
+        "skipWhen": "desired_date && desired_time",
+        "autoSetOnSkip": { "add_ons": "ninguno" },
+        "constraints": {
+          "maxQuestions": 1,
+          "presentationMode": "soft_offer",
+          "forbiddenTopics": ["scheduling", "checkout"]
+        }
       },
       {
         "id": "scheduling",
-        "goal": "Encontrar y proponer un horario disponible para el servicio elegido",
+        "goal": "Encontrar y confirmar un horario disponible para el servicio elegido",
         "suggestedTools": ["check_availability", "set_fact"],
         "advanceWhenFacts": ["desired_date", "desired_time"]
       },
       {
         "id": "customer_data",
-        "goal": "Completar los datos del cliente que aún falten",
+        "goal": "Completar el nombre del cliente si aún no se conoce",
         "suggestedTools": ["set_fact"],
         "advanceWhenFacts": ["customer_name"]
       },
@@ -105,15 +142,59 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
     ]
   },
   "factSchema": [
-    { "key": "baby_name",       "label": "nombre del bebé", "type": "string", "required": true,  "source": "user",    "captureMode": "eager" },
-    { "key": "baby_age_months", "label": "edad del bebé",   "type": "number", "required": true,  "source": "user",    "captureMode": "eager" },
-    { "key": "service",         "label": "plan",            "type": "string", "required": true,  "source": "user" },
-    { "key": "add_ons",         "label": "complementos",    "type": "string", "required": false, "source": "user" },
-    { "key": "desired_date",    "label": "fecha",           "type": "date",   "required": true,  "source": "user" },
-    { "key": "desired_time",    "label": "hora",            "type": "time",   "required": true,  "source": "user" },
-    { "key": "customer_name",   "label": "nombre",          "type": "string", "required": true,  "source": "user",    "persistsAcrossConversations": true },
-    { "key": "customer_phone",  "label": "teléfono",        "type": "phone",  "required": true,  "source": "channel" },
-    { "key": "customer_email",  "label": "email",           "type": "email",  "required": false, "source": "user",    "persistsAcrossConversations": true }
+    {
+      "key": "session.engagement", "role": "session.engagement",
+      "label": "contexto de engagement", "type": "string",
+      "required": false, "source": "session", "persistsAcrossConversations": false
+    },
+    {
+      "key": "baby_name", "role": "baby.name", "label": "nombre del bebé",
+      "type": "string", "required": true, "source": "user", "captureMode": "eager",
+      "aliases": ["nombre bebe", "nombre del bebe"]
+    },
+    {
+      "key": "baby_age_months", "role": "baby.age_months", "label": "edad del bebé (meses)",
+      "type": "number", "required": true, "source": "user", "captureMode": "eager",
+      "aliases": ["edad", "meses", "edad bebe"]
+    },
+    {
+      "key": "service", "role": "booking.service", "label": "plan / servicio",
+      "type": "string", "required": true, "source": "user",
+      "aliases": ["plan", "servicio"]
+    },
+    {
+      "key": "add_ons", "role": "booking.addons", "label": "complementos",
+      "type": "string", "required": false, "source": "user",
+      "aliases": ["complemento", "decoracion", "decoración", "adicional"]
+    },
+    {
+      "key": "desired_date", "role": "booking.date", "label": "fecha deseada",
+      "type": "date", "required": true, "source": "user",
+      "aliases": ["fecha"]
+    },
+    {
+      "key": "desired_time", "role": "booking.time", "label": "hora deseada",
+      "type": "time", "required": true, "source": "user",
+      "aliases": ["hora", "horario"]
+    },
+    {
+      "key": "customer_name", "role": "customer.name", "label": "nombre del cliente",
+      "type": "string", "required": true, "source": "user",
+      "persistsAcrossConversations": true,
+      "aliases": ["nombre", "cliente", "mi nombre", "nombre cliente"]
+    },
+    {
+      "key": "customer_phone", "role": "customer.phone", "label": "teléfono del cliente",
+      "type": "phone", "required": true, "source": "channel",
+      "persistsAcrossConversations": true,
+      "aliases": ["telefono", "teléfono", "celular", "numero"]
+    },
+    {
+      "key": "customer_email", "role": "customer.email", "label": "email del cliente",
+      "type": "email", "required": false, "source": "user",
+      "persistsAcrossConversations": true,
+      "aliases": ["email", "correo"]
+    }
   ],
   "guards": {
     "prepare_checkout": {
@@ -129,7 +210,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "requires": [
         "verification:availability_checked",
         "verification:customer_identified",
-        "flag:verbal_confirmation"
+        "expr:NOT policy.deposit_required"
       ]
     },
     "assign_paid_slot": {
@@ -138,10 +219,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         "verification:availability_checked"
       ]
     }
-  },
-  "messages": {
-    "firstTurnGreetingHint": "¡Hola! 😊 Soy Mimi de Mimo''s Baby Spa. Un gusto saludarte. Estoy aqui para ayudarte a elegir el mejor plan para tu bebe.",
-    "returningCustomerGreetingHint": "Saluda por su nombre de forma cálida y retoma el flujo de reserva desde el inicio."
   },
   "enabledTools": [
     "set_fact",

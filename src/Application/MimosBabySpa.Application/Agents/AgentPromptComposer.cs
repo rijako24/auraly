@@ -1,5 +1,6 @@
 using MimosBabySpa.Application.Agents.Composition;
 using MimosBabySpa.Application.Agents.Configuration;
+using MimosBabySpa.Application.Agents.Tools;
 using MimosBabySpa.Application.Configuration;
 using MimosBabySpa.Application.Time;
 using MimosBabySpa.Domain.Entities;
@@ -10,6 +11,8 @@ namespace MimosBabySpa.Application.Agents;
 
 /// <summary>
 /// Compone el system prompt runtime a partir de Persona, Flow, Facts, Guards y contexto de turno.
+/// El comportamiento del primer turno, el saludo y el engagement se manejan a través de
+/// la etapa "greeting" con CompletesOnEnter y Variants — sin lógica hardcoded aquí.
 /// </summary>
 public sealed class AgentPromptComposer : IPromptComposer
 {
@@ -24,13 +27,14 @@ public sealed class AgentPromptComposer : IPromptComposer
 
     public string Compose(PromptCompositionInput input)
     {
-        var historyList = input.History.ToList();
-        var isFirstBotTurn = !historyList.Any(m => IsBotSender(m.Sender));
         var blocks = new List<string>();
 
         var basePrompt = input.Config.BasePrompt;
         if (!string.IsNullOrWhiteSpace(basePrompt))
             blocks.Add(basePrompt.Trim());
+
+        // DetectCurrentStage: llamada única y cacheada para todo el Compose
+        var currentStage = _flowStageDetector.DetectCurrentStage(input.Config.Flow, input.Session);
 
         var eagerBlock = BuildEagerCaptureBlock(input.Config, input.Session);
         if (!string.IsNullOrWhiteSpace(eagerBlock))
@@ -40,19 +44,15 @@ public sealed class AgentPromptComposer : IPromptComposer
         if (!string.IsNullOrWhiteSpace(temporalBlock))
             blocks.Add(temporalBlock);
 
-        var customerBlock = BuildCustomerBlock(input.Session, input.Engagement, isFirstBotTurn);
-        if (!string.IsNullOrWhiteSpace(customerBlock))
-            blocks.Add(customerBlock);
-
         var stateBlock = BuildStateFactsBlock(input.Config, input.Session, input.BookingPolicy, input.LatestPayment);
         if (!string.IsNullOrWhiteSpace(stateBlock))
             blocks.Add(stateBlock);
 
-        var flowBlock = BuildFlowBlock(input.Config, input.Session);
+        var flowBlock = BuildFlowBlock(input.Config, input.Session, currentStage);
         if (!string.IsNullOrWhiteSpace(flowBlock))
             blocks.Add(flowBlock);
 
-        var reentryBlock = BuildReentryBlock(input.Config, input.Session);
+        var reentryBlock = BuildReentryBlock(input.Config, input.Session, currentStage);
         if (!string.IsNullOrWhiteSpace(reentryBlock))
             blocks.Add(reentryBlock);
 
@@ -60,40 +60,11 @@ public sealed class AgentPromptComposer : IPromptComposer
         if (!string.IsNullOrWhiteSpace(actionsBlock))
             blocks.Add(actionsBlock);
 
-        var turnBlock = BuildTurnContextBlock(input.Config, isFirstBotTurn, input.Engagement);
-        if (!string.IsNullOrWhiteSpace(turnBlock))
-            blocks.Add(turnBlock);
+        var triggersBlock = BuildSemanticTriggersBlock(input.EnabledTools, input.Config);
+        if (!string.IsNullOrWhiteSpace(triggersBlock))
+            blocks.Add(triggersBlock);
 
         return string.Join($"{Environment.NewLine}{Environment.NewLine}", blocks);
-    }
-
-    internal static string BuildCustomerBlock(
-        AgentToolContext? session,
-        EngagementContext engagement,
-        bool isFirstBotTurn)
-    {
-        if (engagement != EngagementContext.ReturningCustomer || !isFirstBotTurn)
-            return string.Empty;
-
-        var customerName = ConversationFactKeys.Get(session?.Facts, ConversationFactKeys.CustomerName)
-            ?? session?.Conversation?.CustomerName;
-
-        var lines = new List<string>
-        {
-            "## CLIENTE",
-            "- regreso_de_cliente: true"
-        };
-
-        if (!string.IsNullOrWhiteSpace(customerName))
-            lines.Add($"- nombre: {customerName}");
-
-        lines.Add(string.Empty);
-        lines.Add("Instrucciones para este turno:");
-        lines.Add("- Saluda al cliente por su nombre; no te presentes desde cero.");
-        lines.Add("- Lo acordado en conversaciones anteriores ya no aplica: retoma el flujo desde el inicio.");
-        lines.Add("- La identidad del cliente ya está disponible; no la pidas ni la confirmes.");
-
-        return string.Join(Environment.NewLine, lines);
     }
 
     internal static string BuildStateFactsBlock(
@@ -105,112 +76,121 @@ public sealed class AgentPromptComposer : IPromptComposer
         if (session is null && bookingPolicy is null)
             return string.Empty;
 
-        var lines = new List<string> { "## ESTADO ACTUAL" };
-        var paymentForContext = ResolvePaymentForContext(session?.ActivePayment, latestPayment);
-        var schemaByKey = config.FactSchema
-            .ToDictionary(x => x.Key, x => x.Label, StringComparer.OrdinalIgnoreCase);
+        // Keys de facts del sistema/sesión que no deben renderizarse al LLM
+        var systemKeys = config.FactSchema
+            .Where(e => !e.Source.Equals("user", StringComparison.OrdinalIgnoreCase))
+            .Select(e => e.Key)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
+        var blocks = new List<string>();
+        var paymentForContext = ResolvePaymentForContext(session?.ActivePayment, latestPayment);
+
+        // ── ESTADO ACTUAL: solo facts del schema + extras no-schema ──────────
         if (session is not null)
         {
+            var factsLines = new List<string> { "## ESTADO ACTUAL" };
             var renderedKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
+            // 1. Facts declarados en el schema (con label humanizado) — excluye facts de sistema
             foreach (var entry in config.FactSchema.OrderBy(x => x.Key, StringComparer.OrdinalIgnoreCase))
             {
-                var value = ConversationFactKeys.Get(session.Facts, entry.Key)
-                    ?? (session.Facts.TryGetValue(entry.Key, out var raw) ? raw : null);
+                if (!entry.Source.Equals("user", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                session.Facts.TryGetValue(entry.Key, out var raw);
+                var value = !string.IsNullOrWhiteSpace(raw) ? raw : null;
 
                 if (!string.IsNullOrWhiteSpace(value))
                 {
                     var label = string.IsNullOrWhiteSpace(entry.Label) ? entry.Key : entry.Label;
-                    lines.Add($"- {label}: {value}");
+                    factsLines.Add($"- {label}: {value}");
                     renderedKeys.Add(entry.Key);
                 }
             }
 
+            // 2. Facts extra no declarados en schema — excluye keys de sistema conocidos
             foreach (var (key, value) in session.Facts.OrderBy(x => x.Key, StringComparer.OrdinalIgnoreCase))
             {
-                if (renderedKeys.Contains(key) || string.IsNullOrWhiteSpace(value))
+                if (renderedKeys.Contains(key)
+                    || string.IsNullOrWhiteSpace(value)
+                    || systemKeys.Contains(key))
+                {
                     continue;
+                }
 
-                var label = schemaByKey.TryGetValue(key, out var schemaLabel) && !string.IsNullOrWhiteSpace(schemaLabel)
-                    ? schemaLabel
-                    : key;
-                lines.Add($"- {label}: {value}");
+                factsLines.Add($"- {key}: {value}");
             }
 
+            if (factsLines.Count > 1)
+                blocks.Add(string.Join(Environment.NewLine, factsLines));
+
+            // ── ESTADO RESERVA ─────────────────────────────────────────────────
             var reservation = session.ActiveReservation;
-            var serviceName = reservation?.Service?.ServiceName
-                ?? ConversationFactKeys.Get(session.Facts, ConversationFactKeys.Service);
-
-            if (!string.IsNullOrWhiteSpace(serviceName))
-                lines.Add($"- servicio: {serviceName}");
-
-            if (reservation?.ReservationDateTime is not null)
-            {
-                lines.Add($"- fecha: {DateOnly.FromDateTime(reservation.ReservationDateTime.Value):yyyy-MM-dd}");
-                lines.Add($"- hora: {TimeOnly.FromDateTime(reservation.ReservationDateTime.Value):HH:mm}");
-            }
-            else
-            {
-                var factDate = ConversationFactKeys.Get(session.Facts, ConversationFactKeys.DesiredDate);
-                var factTime = ConversationFactKeys.Get(session.Facts, ConversationFactKeys.DesiredTime);
-                if (!string.IsNullOrWhiteSpace(factDate))
-                    lines.Add($"- fecha: {factDate}");
-                if (!string.IsNullOrWhiteSpace(factTime))
-                    lines.Add($"- hora: {factTime}");
-            }
-
             if (reservation is not null)
-                lines.Add($"- reserva_estado: {reservation.Status}");
+            {
+                var reservaLines = new List<string> { "## ESTADO RESERVA" };
+                reservaLines.Add($"- estado: {reservation.Status}");
 
-            var customerName = ConversationFactKeys.Get(session.Facts, ConversationFactKeys.CustomerName)
-                ?? session.Conversation?.CustomerName;
-            lines.Add($"- cliente: {FormatNullable(customerName)}");
+                if (reservation.ReservationDateTime is not null)
+                {
+                    reservaLines.Add($"- fecha_confirmada: {DateOnly.FromDateTime(reservation.ReservationDateTime.Value):yyyy-MM-dd}");
+                    reservaLines.Add($"- hora_confirmada: {TimeOnly.FromDateTime(reservation.ReservationDateTime.Value):HH:mm}");
+                }
 
-            var phone = ConversationContactPhone.Resolve(session.Facts, session.ChannelPhone);
-            lines.Add($"- telefono: {FormatNullable(phone)}");
+                if (reservation.Status == ReservationStatus.Confirmed && reservation.ReservationId != Guid.Empty)
+                    reservaLines.Add($"- id_reserva: {reservation.ReservationId}");
 
-            var email = ConversationFactKeys.Get(session.Facts, ConversationFactKeys.CustomerEmail)
-                ?? session.Conversation?.CustomerEmail;
-            lines.Add($"- email: {FormatNullable(email)}");
+                blocks.Add(string.Join(Environment.NewLine, reservaLines));
+            }
 
-            if (reservation?.Status == ReservationStatus.Confirmed && reservation.ReservationId != Guid.Empty)
-                lines.Add($"- reserva_id: {reservation.ReservationId}");
-
+            // ── ESTADO PAGO: pago confirmado sin slot ─────────────────────────
             if (paymentForContext?.RequiresRescheduling == true
                 && paymentForContext.Status == PaymentTransactionStatus.Confirmed
                 && !paymentForContext.ReservationId.HasValue)
             {
-                lines.Add("- pago_confirmado_sin_slot: true");
-                lines.Add($"- payment_transaction_id: {paymentForContext.PaymentTransactionId}");
-                lines.Add("- accion_requerida: cuando el cliente confirme nuevo horario, usa assign_paid_slot");
+                var paySpecial = new List<string>
+                {
+                    "## ESTADO PAGO",
+                    "- pago_confirmado_sin_slot: true",
+                    $"- payment_transaction_id: {paymentForContext.PaymentTransactionId}",
+                    "- accion_requerida: cuando el cliente confirme nuevo horario, llama assign_paid_slot"
+                };
+                blocks.Add(string.Join(Environment.NewLine, paySpecial));
             }
         }
 
-        lines.Add(TurnContextPaymentFormatter.FormatDepositLine(bookingPolicy));
+        // ── POLÍTICA DE PAGO ──────────────────────────────────────────────────
+        var policyLines = new List<string>();
+        var depositLine = TurnContextPaymentFormatter.FormatDepositLine(bookingPolicy);
+        if (!string.IsNullOrWhiteSpace(depositLine))
+            policyLines.Add(depositLine);
 
         var paymentLine = TurnContextPaymentFormatter.FormatPaymentLine(paymentForContext, bookingPolicy);
         if (!string.IsNullOrWhiteSpace(paymentLine))
-            lines.Add(paymentLine);
+            policyLines.Add(paymentLine);
 
-        return string.Join(Environment.NewLine, lines);
+        if (policyLines.Count > 0)
+            blocks.Add(string.Join(Environment.NewLine, policyLines));
+
+        return blocks.Count == 0
+            ? string.Empty
+            : string.Join($"{Environment.NewLine}{Environment.NewLine}", blocks);
     }
 
     /// <summary>
     /// Emite una instrucción permanente con los facts que deben capturarse de inmediato
     /// (captureMode=eager) aunque el flujo aún no haya llegado a la etapa que los solicita.
-    /// Solo lista los facts que todavía no tienen valor.
+    /// Solo lista los facts de usuario que todavía no tienen valor.
     /// </summary>
     internal static string BuildEagerCaptureBlock(AgentConfig config, AgentToolContext? session)
     {
         var eagerMissing = config.FactSchema
-            .Where(e => e.CaptureMode.Equals("eager", StringComparison.OrdinalIgnoreCase))
+            .Where(e => e.CaptureMode.Equals("eager", StringComparison.OrdinalIgnoreCase)
+                     && e.Source.Equals("user", StringComparison.OrdinalIgnoreCase))
             .Where(e =>
             {
                 if (session is null) return true;
-                var value = ConversationFactKeys.Get(session.Facts, e.Key)
-                    ?? (session.Facts.TryGetValue(e.Key, out var raw) ? raw : null);
-                return string.IsNullOrWhiteSpace(value);
+                return !session.Facts.TryGetValue(e.Key, out var raw) || string.IsNullOrWhiteSpace(raw);
             })
             .ToList();
 
@@ -235,8 +215,12 @@ public sealed class AgentPromptComposer : IPromptComposer
     /// <summary>
     /// Compara los facts actuales contra el snapshot guardado al completar etapas anteriores.
     /// Si algún fact relevante cambió, inyecta un bloque ATENCIÓN para que el LLM rehaga las acciones dependientes.
+    /// Recibe el currentStage ya detectado para evitar una segunda llamada a DetectCurrentStage.
     /// </summary>
-    internal string BuildReentryBlock(AgentConfig config, AgentToolContext? session)
+    internal string BuildReentryBlock(
+        AgentConfig config,
+        AgentToolContext? session,
+        AgentFlowStage? currentStage = null)
     {
         if (session is null || config.Flow.Stages.Count == 0)
             return string.Empty;
@@ -245,10 +229,10 @@ public sealed class AgentPromptComposer : IPromptComposer
         if (snapshots.Count == 0)
             return string.Empty;
 
-        var currentStage = _flowStageDetector.DetectCurrentStage(config.Flow, session);
-        var currentIdx = currentStage is null
+        var resolvedStage = currentStage ?? _flowStageDetector.DetectCurrentStage(config.Flow, session);
+        var currentIdx = resolvedStage is null
             ? config.Flow.Stages.Count
-            : config.Flow.Stages.ToList().FindIndex(s => s.Id == currentStage.Id);
+            : config.Flow.Stages.ToList().FindIndex(s => s.Id == resolvedStage.Id);
 
         var alerts = new List<string>();
 
@@ -263,9 +247,7 @@ public sealed class AgentPromptComposer : IPromptComposer
 
             foreach (var factKey in stage.ReentryOnFactChanged)
             {
-                var current = ConversationFactKeys.Get(session.Facts, factKey)
-                    ?? (session.Facts.TryGetValue(factKey, out var raw) ? raw : null);
-
+                session.Facts.TryGetValue(factKey, out var current);
                 snapshot.TryGetValue(factKey, out var saved);
 
                 if (string.IsNullOrWhiteSpace(current) || current == saved)
@@ -294,24 +276,108 @@ public sealed class AgentPromptComposer : IPromptComposer
         return string.Join(Environment.NewLine, lines);
     }
 
-    private string BuildFlowBlock(AgentConfig config, AgentToolContext? session)
+    /// <summary>
+    /// Construye el bloque de la etapa actual, aplicando la variante correspondiente
+    /// al engagement del turno si la etapa tiene variantes declaradas.
+    /// El greeting stage con CompletesOnEnter no necesita lógica hardcoded aquí:
+    /// su hint y objetivo vienen de su Variant.
+    /// </summary>
+    private string BuildFlowBlock(
+        AgentConfig config,
+        AgentToolContext? session,
+        AgentFlowStage? currentStage)
     {
-        if (config.Flow.Stages.Count == 0)
+        if (config.Flow.Stages.Count == 0 || currentStage is null)
             return string.Empty;
 
-        var current = _flowStageDetector.DetectCurrentStage(config.Flow, session);
-        if (current is null)
-            return string.Empty;
+        // Resolver variante activa (si la etapa tiene variantes y hay engagement en facts)
+        var variant = FlowStageDetector.GetActiveVariant(currentStage, session);
+
+        var goal = !string.IsNullOrWhiteSpace(variant?.Goal) ? variant.Goal : currentStage.Goal;
+        var constraints = variant?.Constraints ?? currentStage.Constraints;
 
         var lines = new List<string>
         {
             "## ETAPA ACTUAL",
-            $"- etapa: {current.Id}",
-            $"- objetivo: {current.Goal}"
+            $"- etapa: {currentStage.Id}",
+            $"- objetivo: {goal}"
         };
 
-        if (current.SuggestedTools.Count > 0)
-            lines.Add($"- acciones_sugeridas: {string.Join(", ", current.SuggestedTools)}");
+        if (currentStage.SuggestedTools.Count > 0)
+            lines.Add($"- acciones_sugeridas: {string.Join(", ", currentStage.SuggestedTools)}");
+
+        // Hint de la variante: orientación específica para el engagement actual
+        if (!string.IsNullOrWhiteSpace(variant?.Hint))
+        {
+            lines.Add(string.Empty);
+            lines.Add($"Orientación para este engagement:");
+            lines.Add($"- {variant.Hint.Trim()}");
+        }
+
+        // Traducir restricciones declarativas a instrucciones para el LLM
+        if (constraints is not null)
+        {
+            var constraintLines = new List<string>();
+
+            if (constraints.MaxQuestions.HasValue)
+            {
+                constraintLines.Add(constraints.MaxQuestions.Value == 0
+                    ? "- NO hagas preguntas en este turno; solo responde o saluda."
+                    : $"- Haz como máximo {constraints.MaxQuestions.Value} pregunta(s) en este turno.");
+            }
+
+            if (constraints.ForbiddenTopics.Count > 0)
+                constraintLines.Add($"- NO mezcles los siguientes temas en este turno: {string.Join(", ", constraints.ForbiddenTopics)}.");
+
+            if (!string.IsNullOrWhiteSpace(constraints.PresentationMode))
+            {
+                constraintLines.Add(constraints.PresentationMode == "soft_offer"
+                    ? "- Presenta las opciones de forma amable y no presiones. Termina con UNA sola pregunta cerrada."
+                    : $"- Modo de presentación: {constraints.PresentationMode}.");
+            }
+
+            if (constraintLines.Count > 0)
+            {
+                lines.Add(string.Empty);
+                lines.Add("Restricciones de esta etapa:");
+                lines.AddRange(constraintLines);
+            }
+        }
+
+        return string.Join(Environment.NewLine, lines);
+    }
+
+    /// <summary>
+    /// Emite un bloque describiendo las condiciones semánticas que disparan tools especiales.
+    /// Solo se incluye para tools que tienen SemanticTriggers definidos y están habilitadas.
+    /// </summary>
+    internal static string BuildSemanticTriggersBlock(
+        IReadOnlyList<IAgentTool> enabledTools,
+        AgentConfig config)
+    {
+        var triggeredTools = enabledTools
+            .Where(t => t.SemanticTriggers.Count > 0
+                && config.EnabledToolNames.Contains(t.Name, StringComparer.OrdinalIgnoreCase))
+            .ToList();
+
+        if (triggeredTools.Count == 0)
+            return string.Empty;
+
+        var lines = new List<string> { "## CUÁNDO USAR HERRAMIENTAS ESPECIALES" };
+
+        foreach (var tool in triggeredTools)
+        {
+            var conditions = tool.SemanticTriggers.Select(t => t switch
+            {
+                "customer_frustration"  => "el cliente expresa frustración o enojo",
+                "consecutive_errors"    => "hay 2 o más errores consecutivos sin resolución",
+                "out_of_scope_request"  => "el cliente pide algo fuera del alcance del bot",
+                "explicit_human_request"=> "el cliente pide explícitamente hablar con un humano",
+                _                       => t
+            });
+
+            lines.Add($"- `{tool.Name}`: Úsalo cuando {string.Join(", o cuando ", conditions)}.");
+        }
 
         return string.Join(Environment.NewLine, lines);
     }
@@ -336,13 +402,9 @@ public sealed class AgentPromptComposer : IPromptComposer
 
             var eval = _guardEvaluator.EvaluateTool(tool, input.Config, session, emptyArgs.RootElement);
             if (eval.IsAvailable)
-            {
                 available.Add(tool.Name);
-            }
             else
-            {
                 blocked.Add($"- {tool.Name}: {eval.BlockReason}");
-            }
         }
 
         var lines = new List<string>();
@@ -375,66 +437,6 @@ public sealed class AgentPromptComposer : IPromptComposer
             return activePayment;
 
         return latestPayment;
-    }
-
-    private static string FormatNullable(string? value) =>
-        string.IsNullOrWhiteSpace(value) ? "—" : value;
-
-    private static string BuildTurnContextBlock(
-        AgentConfig config,
-        bool isFirstBotTurn,
-        EngagementContext engagement)
-    {
-        if (!isFirstBotTurn)
-        {
-            return """
-                ## CONTEXTO DE ESTE TURNO
-
-                La conversación ya comenzó: **ya te presentaste** en un turno anterior.
-
-                - NO repitas saludo completo ni presentación.
-
-                - Usa transiciones naturales ("Perfecto", "Entendido", "Claro", etc.).
-
-                """;
-        }
-
-        if (engagement == EngagementContext.ReturningCustomer)
-        {
-            var returningHint = string.IsNullOrWhiteSpace(config.ReturningCustomerGreetingHint)
-                ? "Saluda por su nombre de forma cálida (1–2 líneas) y retoma el flujo desde el inicio."
-                : $"Plantilla sugerida (adáptala al mensaje del cliente): {config.ReturningCustomerGreetingHint.Trim()}";
-
-            return $"""
-                ## CONTEXTO DE ESTE TURNO
-
-                Este es el **primer mensaje** del cliente en esta conversación, pero **ya nos conoce**.
-
-                - Saluda por su nombre; **no** repitas presentación completa de **{config.Name}** ni del negocio.
-
-                - {returningHint}
-
-                - Si el cliente ya pidió algo en su mensaje, responde en el mismo turno.
-
-                """;
-        }
-
-        var presentationHint = string.IsNullOrWhiteSpace(config.FirstTurnGreetingHint)
-            ? $"Preséntate como **{config.Name}** y saluda al cliente de forma cálida (1–2 líneas)."
-            : $"Plantilla sugerida (adáptala al mensaje del cliente): {config.FirstTurnGreetingHint.Trim()}";
-
-        return $"""
-            ## CONTEXTO DE ESTE TURNO
-
-            Este es el **primer mensaje** del cliente en esta conversación.
-
-            - Debes saludar y presentarte antes de continuar.
-
-            - {presentationHint}
-
-            - Si el cliente ya pidió algo en su mensaje, saluda brevemente y responde en el mismo turno.
-
-            """;
     }
 
     private static bool IsBotSender(string sender) =>

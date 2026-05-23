@@ -22,6 +22,12 @@ public class ConversationState
     /// </summary>
     public Dictionary<string, Dictionary<string, string>> StageFactSnapshots { get; set; } = new(StringComparer.Ordinal);
 
+    /// <summary>
+    /// Ids de etapas con CompletesOnEnter=true que ya se ejecutaron al menos una vez.
+    /// Evita que el saludo (u otras etapas de un solo disparo) se repitan.
+    /// </summary>
+    public HashSet<string> CompletedOneShotStages { get; set; } = new(StringComparer.Ordinal);
+
     public int Version { get; set; } = 1;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;

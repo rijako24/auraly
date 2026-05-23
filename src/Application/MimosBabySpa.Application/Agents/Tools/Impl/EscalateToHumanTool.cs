@@ -28,7 +28,13 @@ public sealed class EscalateToHumanTool : IAgentTool
 
     public string Name => "escalate_to_human";
 
-
+    public IReadOnlyList<string> SemanticTriggers =>
+    [
+        "customer_frustration",
+        "consecutive_errors",
+        "out_of_scope_request",
+        "explicit_human_request"
+    ];
 
     public string Description =>
         "Marks the conversation as owned by a human agent and notifies configured escalation contacts.";

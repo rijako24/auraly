@@ -107,9 +107,14 @@ public sealed class CheckAvailabilityTool : IAgentTool
                 ? "slots_disponibles_sin_reservar"
                 : "sin_disponibilidad";
 
+        // Solo emitir fragmento SLOTS en modo lista (sin time específico).
+        // En modo confirmación (time presente) el LLM solo debe confirmar disponibilidad del slot,
+        // no volver a listar horarios — evita el bug de repetición del slot seleccionado.
+        var isListMode = !time.HasValue;
+
         string? presentationToken = null;
         var slotsForPresentation = BuildPresentationSlots(result, timeStr);
-        if (result.IsAvailable && slotsForPresentation.Count > 0 && ctx.Turn is not null)
+        if (result.IsAvailable && isListMode && slotsForPresentation.Count > 0 && ctx.Turn is not null)
         {
             presentationToken = ctx.Turn.RegisterFragment(
                 "SLOTS",

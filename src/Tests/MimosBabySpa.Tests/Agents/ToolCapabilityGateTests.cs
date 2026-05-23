@@ -31,7 +31,7 @@ public class ToolCapabilityGateTests
     public ToolCapabilityGateTests()
     {
         _gate = new ToolCapabilityGate(
-            new GuardEvaluator(_verifications, new ToolPreconditionProvider()));
+            new GuardEvaluator(_verifications));
     }
 
     [Fact]
@@ -99,12 +99,31 @@ public class ToolCapabilityGateTests
         result.IsAllowed.Should().BeTrue();
     }
 
+    /// <summary>
+    /// Config con guards declarativos equivalentes a lo que Mimi configura en producción.
+    /// Los tests validan el comportamiento del GuardEvaluator con guards explícitos,
+    /// no con precondiciones hardcoded (ToolPreconditionProvider eliminado).
+    /// </summary>
+    private static AgentConfig CreateConfigWithGuards() => new()
+    {
+        AgentId = Guid.NewGuid(),
+        BusinessId = Guid.NewGuid(),
+        EnabledToolNames = ["create_reservation"],
+        Guards = new Dictionary<string, MimosBabySpa.Application.Agents.Configuration.GuardDefinition>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["create_reservation"] = new()
+            {
+                Requires = ["verification:availability_checked", "verification:customer_identified"]
+            }
+        }
+    };
+
     private static AgentToolContext CreateContext() => new()
     {
         BusinessId = Guid.NewGuid(),
         ConversationId = Guid.NewGuid(),
         BusinessToday = new DateOnly(2026, 5, 21),
-        Config = new AgentConfig(),
+        Config = CreateConfigWithGuards(),
         BookingPolicy = new BookingPolicyParams(),
         ConversationState = new ConversationStateModel(),
         Conversation = new Conversation(),

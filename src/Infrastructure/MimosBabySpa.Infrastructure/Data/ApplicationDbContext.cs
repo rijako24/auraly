@@ -414,6 +414,7 @@ public class ApplicationDbContext : DbContext
             entity.Property(e => e.LastBotMessage).HasColumnType("NVARCHAR(MAX)");
             entity.Property(e => e.VerificationsJson).HasColumnType("NVARCHAR(MAX)");
             entity.Property(e => e.StageSnapshotsJson).HasColumnType("NVARCHAR(MAX)");
+            entity.Property(e => e.CompletedStagesJson).HasColumnType("NVARCHAR(MAX)");
             entity.Property(e => e.Version).IsRequired().HasDefaultValue(1);
             entity.Property(e => e.UpdatedAt).IsRequired();
             entity.Property(e => e.CreatedAt).IsRequired();

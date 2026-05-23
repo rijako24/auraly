@@ -10,14 +10,10 @@ namespace MimosBabySpa.Application.Agents.Composition;
 public sealed class GuardEvaluator : IGuardEvaluator
 {
     private readonly IConversationVerificationService _verifications;
-    private readonly IToolPreconditionProvider _legacyPreconditions;
 
-    public GuardEvaluator(
-        IConversationVerificationService verifications,
-        IToolPreconditionProvider legacyPreconditions)
+    public GuardEvaluator(IConversationVerificationService verifications)
     {
         _verifications = verifications;
-        _legacyPreconditions = legacyPreconditions;
     }
 
     public ToolAvailabilityResult EvaluateTool(
@@ -30,19 +26,17 @@ public sealed class GuardEvaluator : IGuardEvaluator
         if (!toolEval.IsAvailable)
             return toolEval;
 
-        if (config.Guards.TryGetValue(tool.Name, out var guard) && guard.Requires.Count > 0)
-        {
-            foreach (var requirement in guard.Requires)
-            {
-                var result = EvaluateRequirement(requirement, tool, ctx, arguments);
-                if (!result.IsAvailable)
-                    return result;
-            }
-
+        if (!config.Guards.TryGetValue(tool.Name, out var guard) || guard.Requires.Count == 0)
             return ToolAvailabilityResultAvailable;
+
+        foreach (var requirement in guard.Requires)
+        {
+            var result = EvaluateRequirement(requirement, tool, ctx, arguments);
+            if (!result.IsAvailable)
+                return result;
         }
 
-        return EvaluateLegacyPreconditions(tool, ctx, arguments);
+        return ToolAvailabilityResultAvailable;
     }
 
     private ToolAvailabilityResult EvaluateRequirement(
@@ -54,11 +48,8 @@ public sealed class GuardEvaluator : IGuardEvaluator
         if (requirement.StartsWith("fact:", StringComparison.OrdinalIgnoreCase))
         {
             var key = requirement["fact:".Length..];
-            if (ConversationFactKeys.Get(ctx.Facts, key) is not null
-                || (ctx.Facts.TryGetValue(key, out var v) && !string.IsNullOrWhiteSpace(v)))
-            {
+            if (ctx.Facts.TryGetValue(key, out var v) && !string.IsNullOrWhiteSpace(v))
                 return ToolAvailabilityResultAvailable;
-            }
 
             return new ToolAvailabilityResult(
                 false,
@@ -110,10 +101,91 @@ public sealed class GuardEvaluator : IGuardEvaluator
                 "Use create_reservation for verbal confirmation flows.");
         }
 
+        if (requirement.StartsWith("expr:", StringComparison.OrdinalIgnoreCase))
+        {
+            var expr = requirement["expr:".Length..].Trim();
+            return EvaluateExpression(expr, tool, ctx, arguments);
+        }
+
         return new ToolAvailabilityResult(
             false,
             $"Unknown guard requirement '{requirement}'.",
             "Check agent guard configuration.");
+    }
+
+    /// <summary>
+    /// Evaluador de expresiones guard.
+    /// Gramática soportada:
+    ///   facts.KEY                         → fact KEY existe y no está vacío
+    ///   NOT facts.KEY                     → fact KEY no existe o está vacío
+    ///   policy.deposit_required           → bookingPolicy.DepositRequired == true
+    ///   NOT policy.deposit_required       → bookingPolicy.DepositRequired == false
+    ///   verification.TYPE                 → verificación TYPE está activa
+    ///   NOT verification.TYPE             → verificación TYPE no está activa
+    /// </summary>
+    private ToolAvailabilityResult EvaluateExpression(
+        string expr,
+        IAgentTool tool,
+        AgentToolContext ctx,
+        JsonElement arguments)
+    {
+        var negate = false;
+        var raw = expr;
+
+        if (raw.StartsWith("NOT ", StringComparison.OrdinalIgnoreCase))
+        {
+            negate = true;
+            raw = raw[4..].Trim();
+        }
+
+        bool result;
+        string positiveBlockReason;
+        string negativeBlockReason;
+
+        if (raw.StartsWith("facts.", StringComparison.OrdinalIgnoreCase))
+        {
+            var key = raw["facts.".Length..].Trim();
+            var hasFact = ctx.Facts.TryGetValue(key, out var v) && !string.IsNullOrWhiteSpace(v);
+            result = hasFact;
+            positiveBlockReason = $"Fact '{key}' is missing.";
+            negativeBlockReason = $"Fact '{key}' must be absent or empty.";
+        }
+        else if (raw.Equals("policy.deposit_required", StringComparison.OrdinalIgnoreCase))
+        {
+            result = ctx.BookingPolicy?.DepositRequired == true;
+            positiveBlockReason = "Deposit is not required for this business.";
+            negativeBlockReason = "Deposit is required for this business.";
+        }
+        else if (raw.StartsWith("verification.", StringComparison.OrdinalIgnoreCase))
+        {
+            var verType = raw["verification.".Length..].Trim();
+            var scope = verType == VerificationFactTypes.AvailabilityChecked
+                ? SlotVerificationScope.FromFacts(ctx.Facts, ctx.Config?.FactSchema)
+                : SlotVerificationScope.UniversalScope;
+
+            result = !string.IsNullOrWhiteSpace(scope)
+                && _verifications.IsActive(ctx.ConversationState, verType, scope);
+
+            positiveBlockReason = $"Verification '{verType}' is not active.";
+            negativeBlockReason = $"Verification '{verType}' must not be active.";
+        }
+        else
+        {
+            return new ToolAvailabilityResult(
+                false,
+                $"Unsupported expr guard '{raw}'.",
+                "Use: facts.KEY, policy.deposit_required, or verification.TYPE.");
+        }
+
+        var passed = negate ? !result : result;
+
+        if (passed)
+            return ToolAvailabilityResultAvailable;
+
+        return new ToolAvailabilityResult(
+            false,
+            negate ? negativeBlockReason : positiveBlockReason,
+            $"Check guard expression: {(negate ? "NOT " : "")}{raw}");
     }
 
     private ToolAvailabilityResult EvaluateVerification(
@@ -122,15 +194,23 @@ public sealed class GuardEvaluator : IGuardEvaluator
         AgentToolContext ctx,
         JsonElement arguments)
     {
-        string? scopeKey = factType switch
+        string? scopeKey;
+
+        if (factType == VerificationFactTypes.AvailabilityChecked)
         {
-            VerificationFactTypes.AvailabilityChecked when string.Equals(
-                tool.Name, "assign_paid_slot", StringComparison.OrdinalIgnoreCase) =>
-                ResolveAssignPaidSlotScope(arguments, ctx),
-            VerificationFactTypes.AvailabilityChecked => SlotVerificationScope.FromFacts(ctx.Facts),
-            VerificationFactTypes.CustomerIdentified => SlotVerificationScope.UniversalScope,
-            _ => null
-        };
+            // Si la tool declara su propio scope resolver, usarlo (sin hardcodear nombres de tool)
+            scopeKey = tool.VerificationScopeResolver is not null
+                ? tool.VerificationScopeResolver(arguments, ctx)
+                : SlotVerificationScope.FromFacts(ctx.Facts, ctx.Config?.FactSchema);
+        }
+        else if (factType == VerificationFactTypes.CustomerIdentified)
+        {
+            scopeKey = SlotVerificationScope.UniversalScope;
+        }
+        else
+        {
+            scopeKey = null;
+        }
 
         if (string.IsNullOrWhiteSpace(scopeKey))
         {
@@ -168,65 +248,6 @@ public sealed class GuardEvaluator : IGuardEvaluator
                     "Use set_fact for customer_name and customer_phone.",
                 _ => "Complete the required step first."
             });
-    }
-
-    private ToolAvailabilityResult EvaluateLegacyPreconditions(
-        IAgentTool tool,
-        AgentToolContext ctx,
-        JsonElement arguments)
-    {
-        foreach (var precondition in _legacyPreconditions.GetFor(tool.Name))
-        {
-            var scopeKey = precondition.ScopeKeyResolver(arguments, ctx);
-            if (string.IsNullOrWhiteSpace(scopeKey))
-            {
-                return new ToolAvailabilityResult(
-                    false,
-                    $"Cannot evaluate '{precondition.FactType}' — required booking fields are missing.",
-                    precondition.Remediation);
-            }
-
-            if (!_verifications.IsActive(ctx.ConversationState, precondition.FactType, scopeKey))
-            {
-                return new ToolAvailabilityResult(
-                    false,
-                    precondition.MissingMessage,
-                    precondition.Remediation);
-            }
-        }
-
-        return ToolAvailabilityResultAvailable;
-    }
-
-    private static string? ResolveAssignPaidSlotScope(JsonElement args, AgentToolContext ctx)
-    {
-        var date = ResolveArgOrFact(args, "date", ConversationFactKeys.DesiredDate, ctx.Facts);
-        var time = ResolveArgOrFact(args, "time", ConversationFactKeys.DesiredTime, ctx.Facts);
-        var serviceName = ConversationFactKeys.Get(ctx.Facts, ConversationFactKeys.Service);
-
-        if (string.IsNullOrWhiteSpace(serviceName)
-            || string.IsNullOrWhiteSpace(date)
-            || string.IsNullOrWhiteSpace(time))
-        {
-            return null;
-        }
-
-        return SlotVerificationScope.Build(serviceName, date, time);
-    }
-
-    private static string? ResolveArgOrFact(
-        JsonElement args,
-        string property,
-        string factKey,
-        IReadOnlyDictionary<string, string> facts)
-    {
-        if (ToolResultHelper.TryGetString(args, property, out var fromArgs)
-            && !string.IsNullOrWhiteSpace(fromArgs))
-        {
-            return fromArgs;
-        }
-
-        return ConversationFactKeys.Get(facts, factKey);
     }
 
     private static readonly ToolAvailabilityResult ToolAvailabilityResultAvailable =

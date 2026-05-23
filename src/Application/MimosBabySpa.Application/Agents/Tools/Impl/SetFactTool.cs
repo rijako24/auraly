@@ -1,4 +1,5 @@
 using System.Text.Json;
+using MimosBabySpa.Application.Agents.Facts;
 using MimosBabySpa.Application.Agents.Gating;
 using MimosBabySpa.Application.Configuration;
 using MimosBabySpa.Application.Services;
@@ -61,7 +62,11 @@ public sealed class SetFactTool : IAgentTool
             return ToolResultHelper.MissingPrerequisites(["key", "value"]);
         }
 
-        if (!FactKeyNormalizer.TryNormalizeKey(rawKey, out var key))
+        // Normalizar alias → key canónico usando el schema del tenant
+        var roleIndex = new FactRoleIndex(ctx.Config?.FactSchema ?? []);
+        var canonicalKey = roleIndex.NormalizeKey(rawKey.Trim());
+
+        if (!FactKeyNormalizer.TryNormalizeKey(canonicalKey, out var key))
         {
             return ToolResultHelper.Error(
                 "invalid_key",
@@ -75,6 +80,15 @@ public sealed class SetFactTool : IAgentTool
                 "invalid_value",
                 "Fact value cannot be empty.",
                 "Provide a structured value, not a full sentence.");
+        }
+
+        // Validación de tipo basada en schema del tenant
+        var schemaEntry = roleIndex.EntryFor(key);
+        if (schemaEntry is not null)
+        {
+            var typeError = ValidateType(key, value, schemaEntry.Type);
+            if (typeError is not null)
+                return typeError;
         }
 
         if (key.Equals(ConversationFactKeys.AddOns, StringComparison.OrdinalIgnoreCase))
@@ -142,5 +156,37 @@ public sealed class SetFactTool : IAgentTool
             ttl: null);
 
         return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Valida el valor contra el tipo declarado en factSchema.
+    /// Devuelve null si pasa la validación o un JSON de error si no.
+    /// </summary>
+    private static string? ValidateType(string key, string value, string type)
+    {
+        return type.ToLowerInvariant() switch
+        {
+            "number" when !decimal.TryParse(value, System.Globalization.NumberStyles.Any,
+                              System.Globalization.CultureInfo.InvariantCulture, out _) =>
+                ToolResultHelper.Error(
+                    "invalid_type",
+                    $"'{key}' must be a number, got '{value}'.",
+                    "Provide a numeric value (e.g. 5, 12)."),
+
+            "date" when !System.DateOnly.TryParseExact(value, "yyyy-MM-dd", null,
+                             System.Globalization.DateTimeStyles.None, out _) =>
+                ToolResultHelper.Error(
+                    "invalid_type",
+                    $"'{key}' must be a date in YYYY-MM-DD format, got '{value}'.",
+                    "Use format YYYY-MM-DD (e.g. 2026-05-23)."),
+
+            "time" when !System.TimeSpan.TryParse(value, out _) =>
+                ToolResultHelper.Error(
+                    "invalid_type",
+                    $"'{key}' must be a time in HH:mm format, got '{value}'.",
+                    "Use 24-hour format (e.g. 08:00)."),
+
+            _ => null
+        };
     }
 }

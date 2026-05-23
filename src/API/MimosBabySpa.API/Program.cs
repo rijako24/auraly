@@ -21,6 +21,7 @@ using MimosBabySpa.Application.StateManagement;
 // Agentic Engine (Function Calling)
 using MimosBabySpa.Application.Agents;
 using MimosBabySpa.Application.Agents.Composition;
+using MimosBabySpa.Application.Agents.Facts;
 using MimosBabySpa.Application.Agents.Gating;
 using MimosBabySpa.Application.Agents.Tools;
 using MimosBabySpa.Application.Agents.Tools.Impl;
@@ -148,8 +149,12 @@ var host = new HostBuilder()
 
         services.AddScoped<IAgentConfigProvider, AgentConfigProvider>();
 
+        // Hydrator: plugin model
+        services.AddSingleton<IFactSourceResolver, MimosBabySpa.Application.Agents.Facts.Resolvers.ChannelPhoneResolver>();
+        services.AddSingleton<IFactSourceResolver, MimosBabySpa.Application.Agents.Facts.Resolvers.ChannelEmailResolver>();
+        services.AddSingleton<IFactSourceResolver, MimosBabySpa.Application.Agents.Facts.Resolvers.EngagementResolver>();
+        services.AddSingleton<IFactHydrator, FactHydrator>();
         services.AddSingleton<IFlowStageDetector, FlowStageDetector>();
-        services.AddSingleton<IToolPreconditionProvider, ToolPreconditionProvider>();
         services.AddScoped<IConversationVerificationService, ConversationVerificationService>();
         services.AddScoped<IGuardEvaluator, GuardEvaluator>();
         services.AddScoped<IToolCapabilityGate, ToolCapabilityGate>();

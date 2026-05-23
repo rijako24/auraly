@@ -18,18 +18,6 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
     private static readonly TimeSpan CacheTtl = TimeSpan.FromMinutes(10);
     private const string CachePrefix = "agent_config_";
 
-    private static readonly IReadOnlyList<string> DefaultEnabledTools =
-    [
-        "set_fact",
-        "check_availability",
-        "prepare_checkout",
-        "create_reservation",
-        "reschedule_reservation",
-        "suspend_reservation",
-        "verify_payment",
-        "escalate_to_human",
-        "get_service_catalog"
-    ];
 
     public AgentConfigProvider(
         IAgentRepository agentRepo,
@@ -65,15 +53,21 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
             Guards = settings.Guards ?? new Dictionary<string, GuardDefinition>(StringComparer.OrdinalIgnoreCase),
             Templates = settings.Templates ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
             SystemPrompt = agent.SystemPromptMarkdown?.Trim() ?? string.Empty,
-            FirstTurnGreetingHint = settings.Messages?.FirstTurnGreetingHint?.Trim(),
-            ReturningCustomerGreetingHint = settings.Messages?.ReturningCustomerGreetingHint?.Trim(),
+            KillSwitchPhrases = settings.KillSwitchPhrases ?? [],
             Model = settings.Model ?? "gpt-4.1-mini",
             Temperature = settings.Temperature ?? 0.7f,
             MaxToolIterations = settings.MaxToolIterations ?? 6,
             ConsecutiveErrorEscalationThreshold = settings.ConsecutiveErrorEscalationThreshold ?? 3,
-            EnabledToolNames = settings.EnabledTools ?? DefaultEnabledTools,
+            EnabledToolNames = settings.EnabledTools ?? [],
             EscalationContacts = settings.EscalationContacts ?? []
         };
+
+        if (config.EnabledToolNames.Count == 0)
+        {
+            _logger.LogWarning(
+                "AgentConfig {AgentId}: enabledTools is empty — agent will have no tools available. Configure tools in SettingsJson.",
+                agentId);
+        }
 
         _cache.Set(cacheKey, config, CacheTtl);
 
@@ -81,7 +75,61 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
             "AgentConfig loaded: AgentId={Id}, Model={Model}, Tools={Tools}, FlowStages={Stages}",
             agentId, config.Model, string.Join(",", config.EnabledToolNames), config.Flow.Stages.Count);
 
+        ValidateConfig(config);
+
         return config;
+    }
+
+    /// <summary>
+    /// Valida la coherencia de la configuración del agente y emite advertencias en log.
+    /// No lanza excepciones — la config se acepta aunque tenga inconsistencias menores.
+    /// </summary>
+    private void ValidateConfig(AgentConfig config)
+    {
+        var schemaKeys = new HashSet<string>(
+            config.FactSchema.Select(e => e.Key),
+            StringComparer.OrdinalIgnoreCase);
+
+        foreach (var stage in config.Flow.Stages)
+        {
+            foreach (var factKey in stage.AdvanceWhenFacts)
+            {
+                if (!schemaKeys.Contains(factKey))
+                {
+                    _logger.LogWarning(
+                        "AgentConfig {AgentId}: stage '{Stage}' advanceWhenFacts references unknown fact '{Key}'",
+                        config.AgentId, stage.Id, factKey);
+                }
+            }
+
+            foreach (var factKey in stage.ReentryOnFactChanged)
+            {
+                if (!schemaKeys.Contains(factKey))
+                {
+                    _logger.LogWarning(
+                        "AgentConfig {AgentId}: stage '{Stage}' reentryOnFactChanged references unknown fact '{Key}'",
+                        config.AgentId, stage.Id, factKey);
+                }
+            }
+
+            if (stage.AutoSetOnSkip.Count > 0 && string.IsNullOrWhiteSpace(stage.SkipWhen))
+            {
+                _logger.LogWarning(
+                    "AgentConfig {AgentId}: stage '{Stage}' has autoSetOnSkip but no skipWhen — auto-set will never trigger",
+                    config.AgentId, stage.Id);
+            }
+        }
+
+        // Verificar que los guards solo referencian tools habilitadas
+        foreach (var (toolName, _) in config.Guards)
+        {
+            if (!config.EnabledToolNames.Contains(toolName, StringComparer.OrdinalIgnoreCase))
+            {
+                _logger.LogWarning(
+                    "AgentConfig {AgentId}: guard for '{Tool}' exists but tool is not in enabledTools",
+                    config.AgentId, toolName);
+            }
+        }
     }
 
     private static AgentSettings ParseSettings(string? settingsJson)
@@ -114,16 +162,10 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
         public int? MaxToolIterations { get; set; }
         public int? ConsecutiveErrorEscalationThreshold { get; set; }
         public IReadOnlyList<string>? EnabledTools { get; set; }
-        public AgentMessagesSettings? Messages { get; set; }
+        public IReadOnlyList<string>? KillSwitchPhrases { get; set; }
         public EscalationSettings? Escalation { get; set; }
         public IReadOnlyList<string>? EscalationContacts =>
             Escalation?.Contacts ?? [];
-    }
-
-    private sealed class AgentMessagesSettings
-    {
-        public string? FirstTurnGreetingHint { get; set; }
-        public string? ReturningCustomerGreetingHint { get; set; }
     }
 
     private sealed class EscalationSettings

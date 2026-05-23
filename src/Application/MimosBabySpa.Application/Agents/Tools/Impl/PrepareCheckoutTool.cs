@@ -69,6 +69,8 @@ public sealed class PrepareCheckoutTool : IAgentTool
                 "Turn context is not available for template rendering.");
         }
 
+        // Los facts requeridos se garantizan por el guard (verification:availability_checked,
+        // verification:customer_identified). Si el guard pasa, estas variables no serán nulas.
         var service = ConversationFactKeys.Get(ctx.Facts, ConversationFactKeys.Service);
         var dateStr = ConversationFactKeys.Get(ctx.Facts, ConversationFactKeys.DesiredDate);
         var timeStr = ConversationFactKeys.Get(ctx.Facts, ConversationFactKeys.DesiredTime);
@@ -76,15 +78,6 @@ public sealed class PrepareCheckoutTool : IAgentTool
             ?? ctx.Conversation.CustomerName;
         var customerPhone = ConversationContactPhone.Resolve(ctx.Facts, ctx.ChannelPhone);
         var addOns = ConversationFactKeys.Get(ctx.Facts, ConversationFactKeys.AddOns);
-
-        var missing = new List<string>();
-        if (string.IsNullOrWhiteSpace(service)) missing.Add("service");
-        if (string.IsNullOrWhiteSpace(dateStr)) missing.Add("desired_date");
-        if (string.IsNullOrWhiteSpace(timeStr)) missing.Add("desired_time");
-        if (string.IsNullOrWhiteSpace(customerName)) missing.Add("customer_name");
-        if (string.IsNullOrWhiteSpace(customerPhone)) missing.Add("customer_phone");
-        if (missing.Count > 0)
-            return ToolResultHelper.MissingPrerequisites([.. missing]);
 
         if (!AgentDateRules.TryParseDate(dateStr!, out var date))
             return ToolResultHelper.Error("invalid_date", $"'{dateStr}' is not a valid date.");

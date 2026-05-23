@@ -25,6 +25,7 @@
 :r .\Migrations\MigrateConversationLifecycle.sql
 :r .\Migrations\MigratePaymentSupersession.sql
 :r .\Migrations\MigrateFlowStageSnapshots.sql
+:r .\Migrations\MigrateCompletedOneShotStages.sql
 :r .\Seeds\SeedAdminUser.sql
 :r .\Seeds\SeedSqlAppLoginPermissions.sql
 :r .\Seeds\SeedServiceCategoriesForNewBusinesses.sql

@@ -14,6 +14,10 @@ public sealed class PromptCompositionInput
     public AgentToolContext? Session { get; init; }
     public BookingPolicyParams? BookingPolicy { get; init; }
     public PaymentTransaction? LatestPayment { get; init; }
-    public EngagementContext Engagement { get; init; } = EngagementContext.ContinuingSession;
+
+    /// <summary>
+    /// El engagement se lee desde Session.Facts["session.engagement"] durante la composición.
+    /// Valores: "firstEver" | "returningCustomer" | "continuingSession"
+    /// </summary>
     public IReadOnlyList<IAgentTool> EnabledTools { get; init; } = [];
 }

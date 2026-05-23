@@ -48,6 +48,25 @@ public sealed class AssignPaidSlotTool : IAgentTool
         "Creates a confirmed reservation for a paid PaymentTransaction that has no linked reservation yet, " +
         "using the verified service/date/time snapshot. Links the reservation to the payment record.";
 
+    /// <summary>
+    /// Scope personalizado: usa los argumentos date/time de la llamada (no los facts del turno),
+    /// porque la verificación de disponibilidad fue para el NUEVO horario elegido tras el pago.
+    /// </summary>
+    public Func<JsonElement, AgentToolContext, string?>? VerificationScopeResolver =>
+        (args, ctx) =>
+        {
+            if (!ToolResultHelper.TryGetString(args, "date", out var date) || string.IsNullOrWhiteSpace(date))
+                return null;
+            if (!ToolResultHelper.TryGetString(args, "time", out var time) || string.IsNullOrWhiteSpace(time))
+                return null;
+
+            ctx.Facts.TryGetValue(ConversationFactKeys.Service, out var service);
+            if (string.IsNullOrWhiteSpace(service))
+                return null;
+
+            return SlotVerificationScope.Build(service, date, time);
+        };
+
     public string ParametersSchema => """
         {
           "type": "object",

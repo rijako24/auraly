@@ -2,6 +2,7 @@ using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using MimosBabySpa.Application.Agents.Composition;
 using MimosBabySpa.Application.Agents.Configuration;
+using MimosBabySpa.Application.Agents.Facts;
 using MimosBabySpa.Application.Agents.Gating;
 using MimosBabySpa.Application.Agents.Templates;
 using MimosBabySpa.Application.Agents.Tools;
@@ -27,14 +28,6 @@ namespace MimosBabySpa.Application.Agents;
 /// </summary>
 public sealed class AgentConversationService : IAgentConversationService
 {
-    // Frases que activan escalación inmediata antes de tocar el LLM
-    private static readonly string[] KillSwitchPhrases =
-    [
-        "quiero hablar con un humano", "quiero hablar con una persona",
-        "agente real", "operador", "hablar con alguien",
-        "escalate", "human agent", "hablar con ustedes",
-        "estoy muy molest", "queja formal", "voy a demandar"
-    ];
 
     private readonly IAgentConfigProvider _configProvider;
     private readonly IChatClient _chatClient;
@@ -54,6 +47,7 @@ public sealed class AgentConversationService : IAgentConversationService
     private readonly IAgentTurnResponseComposer _turnResponseComposer;
     private readonly IToolCapabilityGate _toolCapabilityGate;
     private readonly IFlowStageDetector _flowStageDetector;
+    private readonly IFactHydrator _factHydrator;
     private readonly ILogger<AgentConversationService> _logger;
 
     public AgentConversationService(
@@ -75,6 +69,7 @@ public sealed class AgentConversationService : IAgentConversationService
         IAgentTurnResponseComposer turnResponseComposer,
         IToolCapabilityGate toolCapabilityGate,
         IFlowStageDetector flowStageDetector,
+        IFactHydrator factHydrator,
         ILogger<AgentConversationService> logger)
     {
         _configProvider = configProvider;
@@ -95,6 +90,7 @@ public sealed class AgentConversationService : IAgentConversationService
         _turnResponseComposer = turnResponseComposer;
         _toolCapabilityGate = toolCapabilityGate;
         _flowStageDetector = flowStageDetector;
+        _factHydrator = factHydrator;
         _logger = logger;
     }
 
@@ -119,7 +115,7 @@ public sealed class AgentConversationService : IAgentConversationService
             return AgentTurnResult.Ok(string.Empty);
         }
 
-        if (IsKillSwitchPhrase(userMessage))
+        if (IsKillSwitchPhrase(userMessage, config.KillSwitchPhrases))
         {
             _logger.LogInformation("Conv {ConvId}: kill-switch triggered", conversationId);
             return await EscalateAndPersistAsync(
@@ -130,8 +126,12 @@ public sealed class AgentConversationService : IAgentConversationService
         userMessage = SanitizeInput(userMessage);
 
         var history = await _messageService.GetConversationHistoryAsync(conversationId);
-        var engagement = await ResolveEngagementContextAsync(
+
+        // Resolver engagement e inyectarlo como fact de sesión (efímero, no persiste en BD)
+        var engagementKey = await ResolveEngagementKeyAsync(
             config.BusinessId, session.Conversation.UserNumber, history, cancellationToken);
+        session.Facts["session.engagement"] = engagementKey;
+
         var clockSnapshot = await _businessClock.GetSnapshotAsync(config.BusinessId, cancellationToken);
         var temporal = _temporalReferenceBuilder.Build(clockSnapshot);
         var bookingPolicy = await _bookingPolicy.GetAsync(config.BusinessId, cancellationToken);
@@ -146,7 +146,6 @@ public sealed class AgentConversationService : IAgentConversationService
             Session = session,
             BookingPolicy = bookingPolicy,
             LatestPayment = latestPayment,
-            Engagement = engagement,
             EnabledTools = enabledTools
         });
         var messages = BuildMessages(systemPrompt, history, userMessage);
@@ -290,6 +289,7 @@ public sealed class AgentConversationService : IAgentConversationService
             turn.FragmentEntries);
 
         UpdateStageSnapshots(config, session);
+        MarkCompletedOneShotStage(config, session);
         await PersistTurnAsync(conversationId, userMessage, finalResponse, session.ConversationState, turn.ReservationCreated, ct);
 
         _logger.LogInformation(
@@ -347,7 +347,11 @@ public sealed class AgentConversationService : IAgentConversationService
         await _lifecycleService.TouchActivityAsync(conversationId, userMessage, ct);
     }
 
-    private async Task<EngagementContext> ResolveEngagementContextAsync(
+    /// <summary>
+    /// Determina el engagement y lo devuelve como key de string para almacenar en facts.
+    /// Valores: "firstEver" | "returningCustomer" | "continuingSession"
+    /// </summary>
+    private async Task<string> ResolveEngagementKeyAsync(
         Guid businessId,
         string userNumber,
         IEnumerable<Domain.Entities.Message> history,
@@ -357,11 +361,11 @@ public sealed class AgentConversationService : IAgentConversationService
                 m.Sender.Equals("bot", StringComparison.OrdinalIgnoreCase)
                 || m.Sender.Equals("assistant", StringComparison.OrdinalIgnoreCase)))
         {
-            return EngagementContext.ContinuingSession;
+            return "continuingSession";
         }
 
         var hasClosed = await _conversationService.HasClosedConversationsAsync(businessId, userNumber, ct);
-        return hasClosed ? EngagementContext.ReturningCustomer : EngagementContext.FirstEver;
+        return hasClosed ? "returningCustomer" : "firstEver";
     }
 
     private async Task<AgentToolContext> LoadTurnSessionAsync(
@@ -379,23 +383,84 @@ public sealed class AgentConversationService : IAgentConversationService
         var activePayment = await _paymentLifecycle.GetActiveByConversationAsync(conversationId, ct);
 
         var clockSnapshot = await _businessClock.GetSnapshotAsync(config.BusinessId, ct);
+        var resolvedPhone = channelPhone?.Trim() ?? conversation.UserNumber;
 
-        return new AgentToolContext
+        var mutableFacts = new Dictionary<string, string>(facts, StringComparer.OrdinalIgnoreCase);
+
+        // Hidratar facts de fuente=channel/session antes de construir el contexto
+        // Nota: el engagement se agrega por separado en ProcessMessageAsync (requiere historia)
+        _factHydrator.Hydrate(config.FactSchema, mutableFacts, new FactHydratorContext
+        {
+            ChannelPhone = resolvedPhone
+        });
+
+        var session = new AgentToolContext
         {
             AgentId = config.AgentId,
             BusinessId = config.BusinessId,
             ConversationId = conversationId,
             BusinessToday = clockSnapshot.Today,
             BusinessNow = clockSnapshot.Now,
-            ChannelPhone = channelPhone?.Trim() ?? conversation.UserNumber,
+            ChannelPhone = resolvedPhone,
             EscalationContacts = config.EscalationContacts,
             Config = config,
             ConversationState = state,
             Conversation = conversation,
-            Facts = new Dictionary<string, string>(facts, StringComparer.OrdinalIgnoreCase),
+            Facts = mutableFacts,
             ActiveReservation = activeReservation,
             ActivePayment = activePayment
         };
+
+        // Aplicar AutoSetOnSkip para stages que se saltan declarativamente
+        await ApplySkipWhenAutoSetsAsync(config, session, ct);
+
+        return session;
+    }
+
+    /// <summary>
+    /// Para cada etapa que tenga SkipWhen satisfecho, aplica AutoSetOnSkip
+    /// solo si el fact aún no tiene valor (el dato de usuario tiene precedencia).
+    /// </summary>
+    private async Task ApplySkipWhenAutoSetsAsync(
+        AgentConfig config,
+        AgentToolContext session,
+        CancellationToken ct)
+    {
+        foreach (var stage in config.Flow.Stages)
+        {
+            if (stage.AutoSetOnSkip.Count == 0 || string.IsNullOrWhiteSpace(stage.SkipWhen))
+                continue;
+
+            if (!EvaluateSkipWhen(stage.SkipWhen, session.Facts))
+                continue;
+
+            foreach (var (factKey, factValue) in stage.AutoSetOnSkip)
+            {
+                if (session.Facts.TryGetValue(factKey, out var existing)
+                    && !string.IsNullOrWhiteSpace(existing))
+                {
+                    continue;
+                }
+
+                await _factsService.SetAsync(
+                    session.ConversationId, session.BusinessId, factKey, factValue, ct);
+                session.Facts[factKey] = factValue;
+
+                _logger.LogDebug(
+                    "Conv {ConvId}: stage '{Stage}' skip-auto-set {Key}={Value}",
+                    session.ConversationId, stage.Id, factKey, factValue);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Evalúa la condición SkipWhen (keys separados por &amp;&amp;, todos deben estar presentes).
+    /// </summary>
+    private static bool EvaluateSkipWhen(string skipWhen, IReadOnlyDictionary<string, string> facts)
+    {
+        var conditions = skipWhen.Split("&&", StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return conditions.All(cond =>
+            facts.TryGetValue(cond, out var val) && !string.IsNullOrWhiteSpace(val));
     }
 
     private IReadOnlyList<ChatToolDefinition> BuildToolDefinitions(IReadOnlyList<string> enabledNames) =>
@@ -433,10 +498,30 @@ public sealed class AgentConversationService : IAgentConversationService
     private static bool IsFinalAnswer(ChatCompletionFinishReason reason) =>
         reason is ChatCompletionFinishReason.Stop or ChatCompletionFinishReason.Length;
 
-    private static bool IsKillSwitchPhrase(string message)
+    private static bool IsKillSwitchPhrase(string message, IReadOnlyList<string> configuredPhrases)
     {
+        if (configuredPhrases.Count == 0)
+            return false;
+
         var lower = message.ToLowerInvariant();
-        return KillSwitchPhrases.Any(phrase => lower.Contains(phrase));
+        return configuredPhrases.Any(phrase => lower.Contains(phrase.ToLowerInvariant()));
+    }
+
+    /// <summary>
+    /// Si la etapa activa tiene CompletesOnEnter, la registra en CompletedOneShotStages
+    /// para que no vuelva a aparecer como stage activa en el próximo turno.
+    /// </summary>
+    private void MarkCompletedOneShotStage(AgentConfig config, AgentToolContext session)
+    {
+        if (config.Flow.Stages.Count == 0) return;
+
+        var currentStage = _flowStageDetector.DetectCurrentStage(config.Flow, session);
+        if (currentStage is null || !currentStage.CompletesOnEnter) return;
+
+        session.ConversationState.CompletedOneShotStages.Add(currentStage.Id);
+
+        _logger.LogDebug("Conv {ConvId}: one-shot stage '{Stage}' marked as completed",
+            session.ConversationId, currentStage.Id);
     }
 
     private static string SanitizeInput(string message) =>
@@ -470,10 +555,8 @@ public sealed class AgentConversationService : IAgentConversationService
             var snap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             foreach (var key in stage.ReentryOnFactChanged)
             {
-                var value = ConversationFactKeys.Get(session.Facts, key)
-                    ?? (session.Facts.TryGetValue(key, out var raw) ? raw : null);
-                if (!string.IsNullOrWhiteSpace(value))
-                    snap[key] = value;
+                if (session.Facts.TryGetValue(key, out var raw) && !string.IsNullOrWhiteSpace(raw))
+                    snap[key] = raw;
             }
 
             if (snap.Count > 0)

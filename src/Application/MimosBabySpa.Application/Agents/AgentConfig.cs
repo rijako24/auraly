@@ -44,15 +44,11 @@ public sealed class AgentConfig
             : SystemPrompt.Trim();
 
     /// <summary>
-    /// Plantilla sugerida para el primer turno (SettingsJson → messages.firstTurnGreetingHint).
-    /// El orquestador la inyecta como hint; el LLM la adapta al mensaje del cliente.
+    /// Frases que disparan escalación inmediata a humano sin pasar por el LLM.
+    /// Evaluación case-insensitive, por contención parcial.
+    /// Vacío = kill-switch desactivado.
     /// </summary>
-    public string? FirstTurnGreetingHint { get; init; }
-
-    /// <summary>
-    /// Plantilla sugerida cuando el cliente regresa en un engagement nuevo (SettingsJson → messages.returningCustomerGreetingHint).
-    /// </summary>
-    public string? ReturningCustomerGreetingHint { get; init; }
+    public IReadOnlyList<string> KillSwitchPhrases { get; init; } = [];
 
     /// <summary>Deployment o model name de Azure OpenAI.</summary>
     public string Model { get; init; } = string.Empty;
