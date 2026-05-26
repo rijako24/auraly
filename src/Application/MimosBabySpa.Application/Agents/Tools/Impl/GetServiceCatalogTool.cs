@@ -1,36 +1,117 @@
-using System.Text.Json;
+using MimosBabySpa.Application.Agents.Facts;
+using MimosBabySpa.Application.Agents.Packs.Booking;
 using MimosBabySpa.Application.Services;
+using MimosBabySpa.Domain.Enums;
+using MimosBabySpa.Domain.Repositories;
 
 namespace MimosBabySpa.Application.Agents.Tools.Impl;
 
 /// <summary>
-/// Retorna el catálogo actualizado de servicios y precios del negocio.
-/// La elegibilidad (edad, capacidad, etc.) se infiere del texto en Description + contexto del cliente.
+/// Catálogo en dos modos:
+///   - Sin <c>service</c>: todos los planes estándar activos (referencia para el LLM o template verbatim).
+///   - Con <c>service</c>: add-ons compatibles con ese plan.
 /// </summary>
 public sealed class GetServiceCatalogTool : IAgentTool
 {
-    private readonly ICatalogContentGenerator _catalog;
+    private readonly IUnitOfWork _unitOfWork;
+    private readonly IAddOnCatalogService _addOnCatalog;
 
-    public GetServiceCatalogTool(ICatalogContentGenerator catalog) => _catalog = catalog;
+    public GetServiceCatalogTool(
+        IUnitOfWork unitOfWork,
+        IAddOnCatalogService addOnCatalog)
+    {
+        _unitOfWork = unitOfWork;
+        _addOnCatalog = addOnCatalog;
+    }
+
+    public string PackId => BookingPackIds.Booking;
 
     public string Name => "get_service_catalog";
 
     public string Description =>
-        "Returns the business service catalog: services, compatible add-ons per service, prices, and durations.";
+        "Returns the business service catalog. Without service: all standard plans. " +
+        "With service (exact plan name): compatible add-ons only.";
 
     public string ParametersSchema => """
         {
           "type": "object",
-          "properties": {}
+          "properties": {
+            "service": {
+              "type": "string",
+              "description": "Optional. Exact plan name. When set, returns add-ons for that plan only."
+            }
+          }
         }
         """;
 
     public async Task<string> ExecuteAsync(
-        JsonElement arguments,
-        AgentToolContext ctx,
+        ToolInvocation invocation,
         CancellationToken cancellationToken = default)
     {
-        var content = await _catalog.GenerateAsync(ctx.BusinessId, cancellationToken);
-        return ToolResultHelper.Ok(new { catalog = content });
+        var ctx = invocation.Context;
+
+        if (ToolResultHelper.TryGetString(invocation.Arguments, "service", out var serviceName))
+            return await ReturnAddOnsAsync(ctx.BusinessId, serviceName, cancellationToken);
+
+        return await ReturnAllPlansAsync(ctx.BusinessId, cancellationToken);
+    }
+
+    private async Task<string> ReturnAddOnsAsync(
+        Guid businessId,
+        string serviceName,
+        CancellationToken cancellationToken)
+    {
+        var compatible = await _addOnCatalog.GetCompatibleAsync(
+            businessId, serviceName, cancellationToken);
+
+        var addOns = compatible
+            .Select(a => new
+            {
+                name = a.AddOnName,
+                description = a.AddOnDescription,
+                price = a.AddOnPrice
+            })
+            .ToList();
+
+        return ToolResultHelper.Ok(new
+        {
+            service = serviceName,
+            add_ons = addOns,
+            template_id = "addons_compatible_list",
+            template_data = new
+            {
+                service_name = serviceName,
+                addons = addOns
+            }
+        });
+    }
+
+    private async Task<string> ReturnAllPlansAsync(
+        Guid businessId,
+        CancellationToken cancellationToken)
+    {
+        var services = await _unitOfWork.Services.GetByBusinessIdAsync(businessId);
+        var serviceList = services
+            .Where(s => s.IsActive && s.ServiceType == ServiceType.Standard)
+            .OrderBy(s => s.ServiceName)
+            .Select(s => new
+            {
+                name = s.ServiceName,
+                description = s.Description,
+                duration_minutes = s.DurationMinutes,
+                price = s.Price
+            })
+            .ToList();
+
+        return ToolResultHelper.Ok(new
+        {
+            services = serviceList,
+            template_id = "service_catalog_summary",
+            template_data = new
+            {
+                services = serviceList,
+                currency = "COP"
+            }
+        });
     }
 }

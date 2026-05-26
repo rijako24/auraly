@@ -1,6 +1,7 @@
 using System.Text.Json;
 using MimosBabySpa.Application.Agents.Configuration;
 using MimosBabySpa.Application.Agents.Gating;
+using MimosBabySpa.Application.Agents.Packs.Booking;
 using MimosBabySpa.Application.Agents.Tools;
 using MimosBabySpa.Application.Agents.Tools.Impl;
 using MimosBabySpa.Domain.Enums;
@@ -11,10 +12,8 @@ public sealed class GuardEvaluator : IGuardEvaluator
 {
     private readonly IConversationVerificationService _verifications;
 
-    public GuardEvaluator(IConversationVerificationService verifications)
-    {
+    public GuardEvaluator(IConversationVerificationService verifications) =>
         _verifications = verifications;
-    }
 
     public ToolAvailabilityResult EvaluateTool(
         IAgentTool tool,
@@ -65,7 +64,7 @@ public sealed class GuardEvaluator : IGuardEvaluator
 
         if (requirement.Equals("state:payment_confirmed_no_slot", StringComparison.OrdinalIgnoreCase))
         {
-            var payment = ctx.ActivePayment;
+            var payment = ctx.GetPackContext<IBookingPackContext>()?.ActivePayment;
             if (payment?.RequiresRescheduling == true
                 && payment.Status == PaymentTransactionStatus.Confirmed
                 && !payment.ReservationId.HasValue)
@@ -81,7 +80,7 @@ public sealed class GuardEvaluator : IGuardEvaluator
 
         if (requirement.Equals("flag:verbal_confirmation", StringComparison.OrdinalIgnoreCase))
         {
-            if (ctx.BookingPolicy?.DepositRequired == false)
+            if (ctx.GetPackContext<IBookingPackContext>()?.BookingPolicy?.DepositRequired == false)
                 return ToolAvailabilityResultAvailable;
 
             return new ToolAvailabilityResult(
@@ -92,13 +91,29 @@ public sealed class GuardEvaluator : IGuardEvaluator
 
         if (requirement.Equals("flag:deposit_required", StringComparison.OrdinalIgnoreCase))
         {
-            if (ctx.BookingPolicy?.DepositRequired == true)
+            if (ctx.GetPackContext<IBookingPackContext>()?.BookingPolicy?.DepositRequired == true)
                 return ToolAvailabilityResultAvailable;
 
             return new ToolAvailabilityResult(
                 false,
                 "Deposit is not required for this business.",
                 "Use create_reservation for verbal confirmation flows.");
+        }
+
+        if (requirement.StartsWith("stage:", StringComparison.OrdinalIgnoreCase))
+        {
+            var requiredStage = requirement["stage:".Length..].Trim();
+            var currentStage = ctx.CurrentStageId;
+            if (!string.IsNullOrWhiteSpace(currentStage)
+                && string.Equals(currentStage, requiredStage, StringComparison.OrdinalIgnoreCase))
+            {
+                return ToolAvailabilityResultAvailable;
+            }
+
+            return new ToolAvailabilityResult(
+                false,
+                $"Tool '{tool.Name}' is only available during the '{requiredStage}' stage.",
+                $"Use the tool only when the current stage is '{requiredStage}'.");
         }
 
         if (requirement.StartsWith("expr:", StringComparison.OrdinalIgnoreCase))
@@ -152,7 +167,7 @@ public sealed class GuardEvaluator : IGuardEvaluator
         }
         else if (raw.Equals("policy.deposit_required", StringComparison.OrdinalIgnoreCase))
         {
-            result = ctx.BookingPolicy?.DepositRequired == true;
+            result = ctx.GetPackContext<IBookingPackContext>()?.BookingPolicy?.DepositRequired == true;
             positiveBlockReason = "Deposit is not required for this business.";
             negativeBlockReason = "Deposit is required for this business.";
         }
@@ -198,7 +213,6 @@ public sealed class GuardEvaluator : IGuardEvaluator
 
         if (factType == VerificationFactTypes.AvailabilityChecked)
         {
-            // Si la tool declara su propio scope resolver, usarlo (sin hardcodear nombres de tool)
             scopeKey = tool.VerificationScopeResolver is not null
                 ? tool.VerificationScopeResolver(arguments, ctx)
                 : SlotVerificationScope.FromFacts(ctx.Facts, ctx.Config?.FactSchema);

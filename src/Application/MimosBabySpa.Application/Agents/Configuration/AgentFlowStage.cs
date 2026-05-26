@@ -1,61 +1,71 @@
 namespace MimosBabySpa.Application.Agents.Configuration;
 
 /// <summary>
-/// Una etapa del flujo conversacional declarado por tenant.
+/// Una etapa del flujo conversacional declarada en el JSON del tenant.
+/// El motor (FlowEngine) la interpreta; el LLM solo redacta respuestas.
 /// </summary>
 public sealed class AgentFlowStage
 {
+    /// <summary>Identificador único del stage, en snake_case.</summary>
     public string Id { get; init; } = string.Empty;
 
-    /// <summary>Objetivo narrativo de la etapa (lenguaje natural para el LLM).</summary>
-    public string Goal { get; init; } = string.Empty;
-
-    /// <summary>Tools sugeridas en esta etapa (preferencia, no obligación).</summary>
-    public IReadOnlyList<string> SuggestedTools { get; init; } = [];
-
-    /// <summary>Facts que deben estar presentes para avanzar a la siguiente etapa.</summary>
-    public IReadOnlyList<string> AdvanceWhenFacts { get; init; } = [];
+    /// <summary>
+    /// Condición de activación del stage.
+    /// Si está definida y evalúa false, el motor salta al siguiente stage.
+    /// Soporta @fact.X, @pack.X. No soporta @result.X (eso es execute.appliesWhen).
+    /// </summary>
+    public AgentFlowStageCondition? AppliesWhen { get; init; }
 
     /// <summary>
-    /// Si alguno de estos facts cambia después de que la etapa fue completada,
-    /// el compositor inyecta un bloque de ATENCIÓN para que el LLM repita acciones dependientes.
+    /// Texto literal devuelto al usuario sin pasar por el LLM.
+    /// Si está definido, el motor lo devuelve directamente y marca el stage como completado.
     /// </summary>
-    public IReadOnlyList<string> ReentryOnFactChanged { get; init; } = [];
+    public string? Verbatim { get; init; }
 
     /// <summary>
-    /// Restricciones de comportamiento conversacional. Declarativas por tenant.
-    /// El compositor las traduce en instrucciones para el LLM.
+    /// Instrucción al LLM sobre qué hacer en este stage (lenguaje natural, en inglés).
+    /// El motor la incluye en el system prompt. Si null, el LLM usa su criterio basado en el ID.
     /// </summary>
-    public StageConstraints? Constraints { get; init; }
+    public string? Ask { get; init; }
 
     /// <summary>
-    /// Expresión de facts que, si se cumple, permite saltar esta etapa aunque sus
-    /// AdvanceWhenFacts no estén completos (ej. el cliente dio fecha/hora antes de elegir add-ons).
-    /// Sintaxis: fact keys separados por "&&" (todos deben estar presentes).
-    /// Ej.: "desired_date &amp;&amp; desired_time"
+    /// Tool de solo lectura ejecutada por el motor ANTES de la llamada LLM.
+    /// Idempotente: enriquece contexto, no crea ni modifica datos.
     /// </summary>
-    public string? SkipWhen { get; init; }
+    public AgentFlowStageLookup? Lookup { get; init; }
 
     /// <summary>
-    /// Map fact → valor a grabar automáticamente cuando la etapa se salta por SkipWhen.
-    /// Garantiza consistencia del estado sin intervención del LLM.
-    /// Ej.: { "add_ons": "ninguno" }
+    /// Tool destructiva ejecutada por el motor cuando se cumplen las condiciones de completedWhen.
     /// </summary>
-    public Dictionary<string, string> AutoSetOnSkip { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+    public AgentFlowStageExecute? Execute { get; init; }
 
     /// <summary>
-    /// Si true, la etapa se considera completada tras haber sido la etapa activa
-    /// en al menos un turno del bot. No requiere facts — completa por el hecho de haberse ejecutado.
-    /// Ideal para: saludo, disclaimer, cierre de despedida.
+    /// Lista de tools permitidas en este stage. Si está definida, el LLM solo puede ver estas tools.
     /// </summary>
-    public bool CompletesOnEnter { get; init; }
+    public IReadOnlyList<string> AllowedTools { get; init; } = [];
 
     /// <summary>
-    /// Variantes de la etapa por engagement context.
-    /// Keys: "firstEver" | "returningCustomer" | "continuingSession".
-    /// Si la etapa tiene Variants y el engagement actual NO está en el dict,
-    /// la etapa se salta automáticamente (no aplica a este tipo de cliente).
+    /// ID del template Handlebars a renderizar con los datos del lookup o execute.
+    /// Puede ser un ID literal (p. ej. "availability_slots") o "@result.template_id"
+    /// para usar el template_id que devuelve la tool en su rawJson.
     /// </summary>
-    public Dictionary<string, AgentFlowStageVariant> Variants { get; init; }
-        = new(StringComparer.OrdinalIgnoreCase);
+    public string? Template { get; init; }
+
+    /// <summary>
+    /// Presentación del lookup: <see cref="FlowStageLookupPresentation.Verbatim"/> (default) o
+    /// <see cref="FlowStageLookupPresentation.LlmCurate"/> (catálogo en prompt; el LLM filtra, p. ej. por edad).
+    /// </summary>
+    public string? LookupPresentation { get; init; }
+
+    /// <summary>
+    /// Facts que este stage espera capturar del usuario.
+    /// El LLM los verá en el prompt como campos a extraer.
+    /// El stage avanza cuando todos están presentes (si completedWhen=factsCollected).
+    /// </summary>
+    public IReadOnlyList<string> Collects { get; init; } = [];
+
+    /// <summary>
+    /// Criterio de completado del stage. Ver <see cref="StageCompletionCriteria"/>.
+    /// </summary>
+    public string CompletedWhen { get; init; } = StageCompletionCriteria.Always;
 }

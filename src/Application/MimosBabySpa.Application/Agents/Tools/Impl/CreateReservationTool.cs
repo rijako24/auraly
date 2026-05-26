@@ -1,6 +1,6 @@
 using System.Text.Json;
-using MimosBabySpa.Application.Agents.Gating;
-using MimosBabySpa.Application.Agents.Templates;
+using MimosBabySpa.Application.Agents.Facts;
+using MimosBabySpa.Application.Agents.Packs.Booking;
 using MimosBabySpa.Application.BusinessRules;
 using MimosBabySpa.Application.Configuration;
 using MimosBabySpa.Application.DTOs;
@@ -15,7 +15,6 @@ public sealed class CreateReservationTool : IAgentTool
     private readonly IReservationService _reservations;
     private readonly IReservationIntentBuilder _intentBuilder;
     private readonly IBusinessRuleEngine _rules;
-    private readonly IBookingPolicyProvider _bookingPolicy;
     private readonly IPaymentLifecycleService _paymentLifecycle;
     private readonly IAvailabilityService _availability;
     private readonly ISchedulingPolicyProvider _schedulingPolicy;
@@ -25,7 +24,6 @@ public sealed class CreateReservationTool : IAgentTool
         IReservationService reservations,
         IReservationIntentBuilder intentBuilder,
         IBusinessRuleEngine rules,
-        IBookingPolicyProvider bookingPolicy,
         IPaymentLifecycleService paymentLifecycle,
         IAvailabilityService availability,
         ISchedulingPolicyProvider schedulingPolicy,
@@ -34,14 +32,28 @@ public sealed class CreateReservationTool : IAgentTool
         _reservations = reservations;
         _intentBuilder = intentBuilder;
         _rules = rules;
-        _bookingPolicy = bookingPolicy;
         _paymentLifecycle = paymentLifecycle;
         _availability = availability;
         _schedulingPolicy = schedulingPolicy;
         _lifecycle = lifecycle;
     }
 
+    public string PackId => BookingPackIds.Booking;
+
     public string Name => "create_reservation";
+
+    public IReadOnlyList<RoleRequirement> RoleRequirements =>
+    [
+        new(FactRoles.BookingService),
+        new(FactRoles.BookingDate),
+        new(FactRoles.BookingTime),
+        new(FactRoles.CustomerName),
+        new(FactRoles.CustomerPhone),
+        new(FactRoles.CustomerEmail, Required: false),
+        new(FactRoles.BookingAddOns, Required: false)
+    ];
+
+    public IReadOnlyList<string> RequiredTemplateIds => [];
 
     public string Description =>
         "Creates a confirmed reservation from the current booking facts and customer confirmation flag. " +
@@ -65,20 +77,22 @@ public sealed class CreateReservationTool : IAgentTool
         """;
 
     public async Task<string> ExecuteAsync(
-        JsonElement arguments,
-        AgentToolContext ctx,
+        ToolInvocation invocation,
         CancellationToken cancellationToken = default)
     {
-        var service = Coalesce(arguments, "service", ConversationFactKeys.Get(ctx.Facts, ConversationFactKeys.Service));
-        var dateStr = Coalesce(arguments, "date", ConversationFactKeys.Get(ctx.Facts, ConversationFactKeys.DesiredDate));
-        var timeStr = Coalesce(arguments, "time", ConversationFactKeys.Get(ctx.Facts, ConversationFactKeys.DesiredTime));
-        var customerName = Coalesce(arguments, "customer_name",
-            ConversationFactKeys.Get(ctx.Facts, ConversationFactKeys.CustomerName) ?? ctx.Conversation.CustomerName);
-        var customerPhone = Coalesce(arguments, "customer_phone",
-            ConversationContactPhone.Resolve(ctx.Facts, ctx.ChannelPhone));
-        var customerEmail = Coalesce(arguments, "customer_email",
-            ConversationFactKeys.Get(ctx.Facts, ConversationFactKeys.CustomerEmail) ?? ctx.Conversation.CustomerEmail);
-        var addOns = Coalesce(arguments, "add_ons", ConversationFactKeys.Get(ctx.Facts, ConversationFactKeys.AddOns));
+        var ctx = invocation.Context;
+        var booking = ctx.GetPackContext<IBookingPackContext>();
+
+        var service = Coalesce(invocation.Arguments, "service", invocation.Get(FactRoles.BookingService));
+        var dateStr = Coalesce(invocation.Arguments, "date", invocation.Get(FactRoles.BookingDate));
+        var timeStr = Coalesce(invocation.Arguments, "time", invocation.Get(FactRoles.BookingTime));
+        var customerName = Coalesce(invocation.Arguments, "customer_name",
+            invocation.Get(FactRoles.CustomerName) ?? ctx.Conversation.CustomerName);
+        var customerPhone = Coalesce(invocation.Arguments, "customer_phone",
+            ConversationContactPhone.Resolve(ctx) ?? invocation.Get(FactRoles.CustomerPhone));
+        var customerEmail = Coalesce(invocation.Arguments, "customer_email",
+            invocation.Get(FactRoles.CustomerEmail) ?? ctx.Conversation.CustomerEmail);
+        var addOns = Coalesce(invocation.Arguments, "add_ons", invocation.Get(FactRoles.BookingAddOns));
 
         var missing = new List<string>();
         if (string.IsNullOrWhiteSpace(service)) missing.Add("service");
@@ -96,7 +110,7 @@ public sealed class CreateReservationTool : IAgentTool
         if (!TimeOnly.TryParse(timeStr, out var time))
             return ToolResultHelper.Error("invalid_time", $"'{timeStr}' is not a valid time.");
 
-        if (!ToolResultHelper.TryGetBool(arguments, "customer_confirmed", out var confirmed) || !confirmed)
+        if (!ToolResultHelper.TryGetBool(invocation.Arguments, "customer_confirmed", out var confirmed) || !confirmed)
         {
             return ToolResultHelper.Ok(new
             {
@@ -113,15 +127,15 @@ public sealed class CreateReservationTool : IAgentTool
             });
         }
 
-        var idempotentResult = TryBuildIdempotentResult(ctx, service!, dateStr!, timeStr!, customerName!);
+        var idempotentResult = TryBuildIdempotentResult(ctx, booking, service!, dateStr!, timeStr!, customerName!);
         if (idempotentResult is not null)
             return idempotentResult;
 
-        var policy = await _bookingPolicy.GetAsync(ctx.BusinessId, cancellationToken);
-        if (policy.DepositRequired)
+        var policy = booking?.BookingPolicy;
+        if (policy?.DepositRequired == true)
         {
             var hasConfirmedPayment =
-                ctx.ActivePayment?.Status == PaymentTransactionStatus.Confirmed
+                booking?.ActivePayment?.Status == PaymentTransactionStatus.Confirmed
                 || await _paymentLifecycle.HasConfirmedDepositAsync(ctx.ConversationId, cancellationToken);
 
             if (!hasConfirmedPayment)
@@ -183,7 +197,7 @@ public sealed class CreateReservationTool : IAgentTool
                 intent.CustomAttributesJson),
             cancellationToken);
 
-        ctx.ActiveReservation = new Domain.Entities.Reservation
+        var reservation = new Domain.Entities.Reservation
         {
             ReservationId = response.ReservationId,
             BusinessId = ctx.BusinessId,
@@ -194,6 +208,8 @@ public sealed class CreateReservationTool : IAgentTool
             CustomerPhoneSnapshot = customerPhone,
             CustomAttributesJson = intent.CustomAttributesJson
         };
+
+        BookingPackContext.Replace(ctx, activeReservation: reservation);
 
         await _lifecycle.CloseAsync(
             ctx.ConversationId, ConversationCloseReasons.ReservationConfirmed, cancellationToken);
@@ -212,12 +228,13 @@ public sealed class CreateReservationTool : IAgentTool
 
     private static string? TryBuildIdempotentResult(
         AgentToolContext ctx,
+        IBookingPackContext? booking,
         string service,
         string dateStr,
         string timeStr,
         string customerName)
     {
-        var reservation = ctx.ActiveReservation;
+        var reservation = booking?.ActiveReservation;
         if (reservation?.Status != ReservationStatus.Confirmed
             || !reservation.ReservationDateTime.HasValue)
         {
@@ -257,17 +274,17 @@ public sealed class CreateReservationTool : IAgentTool
         IReadOnlyList<string>? addOnNames = null,
         bool idempotentReplay = false)
     {
-        string? confirmationToken = null;
-        if (ctx.Turn is not null
-            && DateOnly.TryParse(dateStr, out var date)
-            && TimeOnly.TryParse(timeStr, out var time))
+        object? templateData = null;
+        if (DateOnly.TryParse(dateStr, out var date) && TimeOnly.TryParse(timeStr, out var time))
         {
             var data = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
             {
                 ["customer_name"] = customerName,
                 ["service_name"] = service,
                 ["date_formatted"] = date.ToString("dd/MM/yyyy"),
-                ["time"] = time.ToString("HH:mm")
+                ["time"] = time.ToString("HH:mm"),
+                ["employee"] = employee,
+                ["add_ons"] = addOnNames is { Count: > 0 } ? string.Join(", ", addOnNames) : null
             };
 
             foreach (var (key, value) in ctx.Facts)
@@ -276,8 +293,7 @@ public sealed class CreateReservationTool : IAgentTool
                     data[key] = value;
             }
 
-            confirmationToken = ctx.Turn.RegisterFragment(
-                "CONFIRMATION", "reservation_created", data, FragmentRenderMode.Exclusive);
+            templateData = data;
         }
 
         return ToolResultHelper.Ok(new
@@ -291,7 +307,8 @@ public sealed class CreateReservationTool : IAgentTool
             employee,
             duration_minutes = durationMinutes,
             add_ons = addOnNames,
-            confirmation_token = confirmationToken,
+            template_id = "reservation_created",
+            template_data = templateData,
             idempotent_replay = idempotentReplay
         }, idempotentReplay ? [] : [ReservationCreated]);
     }

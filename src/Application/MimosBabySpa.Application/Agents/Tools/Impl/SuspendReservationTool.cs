@@ -1,4 +1,6 @@
 using System.Text.Json;
+using MimosBabySpa.Application.Agents.Facts;
+using MimosBabySpa.Application.Agents.Packs.Booking;
 using MimosBabySpa.Application.Services;
 
 namespace MimosBabySpa.Application.Agents.Tools.Impl;
@@ -12,6 +14,8 @@ public sealed class SuspendReservationTool : IAgentTool
     private readonly IReservationService _reservations;
 
     public SuspendReservationTool(IReservationService reservations) => _reservations = reservations;
+
+    public string PackId => BookingPackIds.Booking;
 
     public string Name => "suspend_reservation";
 
@@ -29,11 +33,10 @@ public sealed class SuspendReservationTool : IAgentTool
         """;
 
     public async Task<string> ExecuteAsync(
-        JsonElement arguments,
-        AgentToolContext ctx,
+        ToolInvocation invocation,
         CancellationToken cancellationToken = default)
     {
-        if (!ToolResultHelper.TryGetString(arguments, "reservation_id", out var reservationIdStr))
+        if (!ToolResultHelper.TryGetString(invocation.Arguments, "reservation_id", out var reservationIdStr))
             return ToolResultHelper.Error("invalid_args", "'reservation_id' is required.");
 
         if (!Guid.TryParse(reservationIdStr, out var reservationId))

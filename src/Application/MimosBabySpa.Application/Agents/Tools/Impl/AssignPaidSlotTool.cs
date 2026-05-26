@@ -1,6 +1,7 @@
 using System.Text.Json;
+using MimosBabySpa.Application.Agents.Facts;
 using MimosBabySpa.Application.Agents.Gating;
-using MimosBabySpa.Application.Agents.Templates;
+using MimosBabySpa.Application.Agents.Packs.Booking;
 using MimosBabySpa.Application.Configuration;
 using MimosBabySpa.Application.DTOs;
 using MimosBabySpa.Application.Services;
@@ -42,7 +43,16 @@ public sealed class AssignPaidSlotTool : IAgentTool
         _lifecycle = lifecycle;
     }
 
+    public string PackId => BookingPackIds.Booking;
+
     public string Name => "assign_paid_slot";
+
+    public IReadOnlyList<RoleRequirement> RoleRequirements =>
+    [
+        new(FactRoles.BookingService, Required: false),
+        new(FactRoles.BookingDate, Required: false),
+        new(FactRoles.BookingTime, Required: false)
+    ];
 
     public string Description =>
         "Creates a confirmed reservation for a paid PaymentTransaction that has no linked reservation yet, " +
@@ -60,7 +70,7 @@ public sealed class AssignPaidSlotTool : IAgentTool
             if (!ToolResultHelper.TryGetString(args, "time", out var time) || string.IsNullOrWhiteSpace(time))
                 return null;
 
-            ctx.Facts.TryGetValue(ConversationFactKeys.Service, out var service);
+            var service = ctx.GetFactByRole(FactRoles.BookingService);
             if (string.IsNullOrWhiteSpace(service))
                 return null;
 
@@ -80,19 +90,20 @@ public sealed class AssignPaidSlotTool : IAgentTool
         """;
 
     public async Task<string> ExecuteAsync(
-        JsonElement arguments,
-        AgentToolContext ctx,
+        ToolInvocation invocation,
         CancellationToken cancellationToken = default)
     {
+        var ctx = invocation.Context;
+        var booking = ctx.GetPackContext<IBookingPackContext>();
         PaymentTransaction? payment = null;
 
-        if (ToolResultHelper.TryGetString(arguments, "payment_transaction_id", out var paymentIdStr)
+        if (ToolResultHelper.TryGetString(invocation.Arguments, "payment_transaction_id", out var paymentIdStr)
             && Guid.TryParse(paymentIdStr, out var paymentId))
         {
             payment = await _unitOfWork.PaymentTransactions.GetByIdAsync(paymentId, cancellationToken);
         }
 
-        payment ??= ctx.ActivePayment;
+        payment ??= booking?.ActivePayment;
         payment ??= await _paymentLifecycle.GetPendingReschedulingByConversationAsync(ctx.ConversationId, cancellationToken);
 
         if (payment is null
@@ -116,8 +127,8 @@ public sealed class AssignPaidSlotTool : IAgentTool
             });
         }
 
-        var dateStr = Coalesce(arguments, "date", ConversationFactKeys.Get(ctx.Facts, ConversationFactKeys.DesiredDate));
-        var timeStr = Coalesce(arguments, "time", ConversationFactKeys.Get(ctx.Facts, ConversationFactKeys.DesiredTime));
+        var dateStr = Coalesce(invocation.Arguments, "date", invocation.Get(FactRoles.BookingDate));
+        var timeStr = Coalesce(invocation.Arguments, "time", invocation.Get(FactRoles.BookingTime));
 
         if (string.IsNullOrWhiteSpace(dateStr) || string.IsNullOrWhiteSpace(timeStr))
             return ToolResultHelper.MissingPrerequisites(["date", "time"]);
@@ -187,19 +198,13 @@ public sealed class AssignPaidSlotTool : IAgentTool
         await _lifecycle.CloseAsync(
             ctx.ConversationId, ConversationCloseReasons.ReservationConfirmed, cancellationToken);
 
-        string? confirmationToken = null;
-        if (ctx.Turn is not null)
+        var templateData = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
         {
-            var data = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
-            {
-                ["customer_name"] = snapshot.CustomerName,
-                ["service_name"] = snapshot.ServiceName,
-                ["date_formatted"] = date.ToString("dd/MM/yyyy"),
-                ["time"] = time.ToString("HH:mm")
-            };
-            confirmationToken = ctx.Turn.RegisterFragment(
-                "CONFIRMATION", "reservation_created", data, FragmentRenderMode.Exclusive);
-        }
+            ["customer_name"] = snapshot.CustomerName,
+            ["service_name"] = snapshot.ServiceName,
+            ["date_formatted"] = date.ToString("dd/MM/yyyy"),
+            ["time"] = time.ToString("HH:mm")
+        };
 
         return ToolResultHelper.Ok(new
         {
@@ -210,7 +215,8 @@ public sealed class AssignPaidSlotTool : IAgentTool
             time = timeStr,
             status = ReservationStatus.Confirmed.ToString(),
             is_booking_confirmed = true,
-            confirmation_token = confirmationToken
+            template_id = "reservation_created",
+            template_data = templateData
         }, ReservationCreated);
     }
 

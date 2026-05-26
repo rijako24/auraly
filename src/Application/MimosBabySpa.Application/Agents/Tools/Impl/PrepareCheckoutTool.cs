@@ -1,4 +1,5 @@
-using System.Text.Json;
+using MimosBabySpa.Application.Agents.Facts;
+using MimosBabySpa.Application.Agents.Packs.Booking;
 using MimosBabySpa.Application.Agents.Templates;
 using MimosBabySpa.Application.Configuration;
 using MimosBabySpa.Application.DTOs;
@@ -43,12 +44,27 @@ public sealed class PrepareCheckoutTool : IAgentTool
         _employeeAssignment = employeeAssignment;
     }
 
+    public string PackId => BookingPackIds.Booking;
+
     public string Name => "prepare_checkout";
 
+    public IReadOnlyList<RoleRequirement> RoleRequirements =>
+    [
+        new(FactRoles.BookingService),
+        new(FactRoles.BookingDate),
+        new(FactRoles.BookingTime),
+        new(FactRoles.CustomerName),
+        new(FactRoles.CustomerPhone),
+        new(FactRoles.BookingAddOns, Required: false)
+    ];
+
+    public IReadOnlyList<string> RequiredTemplateIds => [];
+
     public string Description =>
-        "Validates booking facts, resolves pricing, renders the checkout summary template, " +
-        "and creates a payment link when the business policy requires a deposit. " +
-        "Does not create a reservation. Returns pricing, flow metadata, and a rendered summary token.";
+        "Non-destructive step: validates booking facts, resolves final pricing, renders the checkout summary, " +
+        "and generates a payment link only when a deposit is required by policy. " +
+        "Call this proactively as soon as all booking facts (service, date, time, name, add_ons) are ready — " +
+        "do NOT ask the customer for permission first. Does not create a reservation.";
 
     public string ParametersSchema => """
         {
@@ -58,28 +74,31 @@ public sealed class PrepareCheckoutTool : IAgentTool
         """;
 
     public async Task<string> ExecuteAsync(
-        JsonElement arguments,
-        AgentToolContext ctx,
+        ToolInvocation invocation,
         CancellationToken cancellationToken = default)
     {
-        if (ctx.Turn is null)
+        var ctx = invocation.Context;
+        var booking = ctx.GetPackContext<IBookingPackContext>();
+        var bookingPolicy = booking?.BookingPolicy;
+        if (bookingPolicy is null || string.IsNullOrWhiteSpace(bookingPolicy.Currency))
         {
             return ToolResultHelper.Error(
-                "internal_error",
-                "Turn context is not available for template rendering.");
+                "missing_currency",
+                "Booking policy currency is not configured for this business.");
         }
 
-        // Los facts requeridos se garantizan por el guard (verification:availability_checked,
-        // verification:customer_identified). Si el guard pasa, estas variables no serán nulas.
-        var service = ConversationFactKeys.Get(ctx.Facts, ConversationFactKeys.Service);
-        var dateStr = ConversationFactKeys.Get(ctx.Facts, ConversationFactKeys.DesiredDate);
-        var timeStr = ConversationFactKeys.Get(ctx.Facts, ConversationFactKeys.DesiredTime);
-        var customerName = ConversationFactKeys.Get(ctx.Facts, ConversationFactKeys.CustomerName)
-            ?? ctx.Conversation.CustomerName;
-        var customerPhone = ConversationContactPhone.Resolve(ctx.Facts, ctx.ChannelPhone);
-        var addOns = ConversationFactKeys.Get(ctx.Facts, ConversationFactKeys.AddOns);
+        var service = invocation.GetRequired(FactRoles.BookingService);
+        var dateStr = invocation.GetRequired(FactRoles.BookingDate);
+        var timeStr = invocation.GetRequired(FactRoles.BookingTime);
+        var customerName = invocation.Get(FactRoles.CustomerName) ?? ctx.Conversation.CustomerName;
+        var customerPhone = ConversationContactPhone.Resolve(ctx)
+            ?? invocation.Get(FactRoles.CustomerPhone);
+        var addOns = invocation.Get(FactRoles.BookingAddOns);
 
-        if (!AgentDateRules.TryParseDate(dateStr!, out var date))
+        if (string.IsNullOrWhiteSpace(customerName) || string.IsNullOrWhiteSpace(customerPhone))
+            return ToolResultHelper.MissingPrerequisites(["customer_name", "customer_phone"]);
+
+        if (!AgentDateRules.TryParseDate(dateStr, out var date))
             return ToolResultHelper.Error("invalid_date", $"'{dateStr}' is not a valid date.");
         if (!TimeOnly.TryParse(timeStr, out var time))
             return ToolResultHelper.Error("invalid_time", $"'{timeStr}' is not a valid time.");
@@ -87,7 +106,7 @@ public sealed class PrepareCheckoutTool : IAgentTool
         if (!string.IsNullOrWhiteSpace(addOns))
         {
             var validation = await _addOnCatalog.ValidateAsync(
-                ctx.BusinessId, service!, addOns, cancellationToken);
+                ctx.BusinessId, service, addOns, cancellationToken);
             if (!validation.IsValid)
             {
                 return ToolResultHelper.Error(
@@ -98,7 +117,7 @@ public sealed class PrepareCheckoutTool : IAgentTool
         }
 
         var checkout = await _checkoutPricing.ResolveAsync(
-            ctx.BusinessId, service!, addOns, cancellationToken);
+            ctx.BusinessId, service, addOns, cancellationToken);
         if (checkout is null)
         {
             return ToolResultHelper.Error(
@@ -118,7 +137,7 @@ public sealed class PrepareCheckoutTool : IAgentTool
         var policy = await _schedulingPolicy.GetAsync(ctx.BusinessId, cancellationToken);
         var availability = await _availability.CheckAvailabilityAsync(
             ctx.BusinessId,
-            service!,
+            service,
             date.ToDateTime(TimeOnly.MinValue),
             time.ToTimeSpan(),
             policy,
@@ -157,7 +176,7 @@ public sealed class PrepareCheckoutTool : IAgentTool
         if (checkout.DepositRequired)
         {
             var linkResult = await EnsurePaymentLinkAsync(
-                ctx, intent, checkout, service!, customerPhone!, cancellationToken);
+                ctx, booking, bookingPolicy, intent, checkout, service, customerPhone, cancellationToken);
             if (linkResult.Error is not null)
                 return linkResult.Error;
 
@@ -169,22 +188,15 @@ public sealed class PrepareCheckoutTool : IAgentTool
             : "checkout_no_deposit";
 
         var templateData = CheckoutTemplateDataBuilder.Build(
-            ctx, checkout, service!, date, time, customerName!, customerPhone!, linkUrl);
-
-        var checkoutToken = ctx.Turn.RegisterFragment(
-            "CHECKOUT", templateId, templateData, FragmentRenderMode.Exclusive);
-        ctx.Turn.MarkCheckoutPrepared();
+            ctx, checkout, service, date, time, customerName, customerPhone, linkUrl);
 
         var flow = checkout.DepositRequired ? "deposit_required" : "verbal_confirmation";
-        var nextAction = checkout.DepositRequired
-            ? "wait_for_customer_payment_confirmation"
-            : "create_reservation_after_customer_says_yes";
 
         return ToolResultHelper.Ok(new
         {
             flow,
-            checkout_token = checkoutToken,
-            next_action_hint = nextAction,
+            template_id = templateId,
+            template_data = templateData,
             deposit_required = checkout.DepositRequired,
             is_booking_confirmed = false
         });
@@ -192,13 +204,15 @@ public sealed class PrepareCheckoutTool : IAgentTool
 
     private async Task<(string? LinkUrl, string? Error)> EnsurePaymentLinkAsync(
         AgentToolContext ctx,
+        IBookingPackContext? booking,
+        BookingPolicyParams bookingPolicy,
         ReservationIntentSnapshot intent,
         CheckoutPricingResult checkout,
         string service,
         string phone,
         CancellationToken cancellationToken)
     {
-        var activePayment = ctx.ActivePayment
+        var activePayment = booking?.ActivePayment
             ?? await _paymentLifecycle.GetActiveByConversationAsync(ctx.ConversationId, cancellationToken);
 
         if (activePayment?.LinkUrl is not null
@@ -206,7 +220,7 @@ public sealed class PrepareCheckoutTool : IAgentTool
             && activePayment.ExpiresAt.Value > DateTime.UtcNow
             && _paymentLifecycle.SnapshotsMatch(activePayment, intent, checkout.DepositCents))
         {
-            ctx.ActivePayment = activePayment;
+            BookingPackContext.Replace(ctx, activePayment: activePayment);
             return (activePayment.LinkUrl, null);
         }
 
@@ -215,7 +229,7 @@ public sealed class PrepareCheckoutTool : IAgentTool
             supersededPayment = activePayment;
 
         var description = checkout.BuildServiceDescription();
-        var currency = string.IsNullOrWhiteSpace(checkout.Policy.Currency) ? "COP" : checkout.Policy.Currency;
+        var currency = bookingPolicy.Currency;
 
         var result = await _paymentLinks.GenerateAnticipoLinkAsync(
             new PaymentLinkRequest(
@@ -225,7 +239,7 @@ public sealed class PrepareCheckoutTool : IAgentTool
                 description,
                 checkout.DepositCents,
                 currency,
-                ExpirationMinutes: 60),
+                ExpirationMinutes: bookingPolicy.PaymentLinkExpirationMinutes),
             cancellationToken);
 
         if (!result.Success)
@@ -243,13 +257,13 @@ public sealed class PrepareCheckoutTool : IAgentTool
             result.PaymentLinkUrl!,
             checkout.DepositCents,
             currency,
-            result.ExpiresAt ?? DateTime.UtcNow.AddHours(1),
+            result.ExpiresAt ?? DateTime.UtcNow.AddMinutes(bookingPolicy.PaymentLinkExpirationMinutes),
             cancellationToken);
 
         if (supersededPayment is not null)
             await _paymentLifecycle.MarkSupersededAsync(supersededPayment, payment.PaymentTransactionId, cancellationToken);
 
-        ctx.ActivePayment = payment;
+        BookingPackContext.Replace(ctx, activePayment: payment);
         return (payment.LinkUrl, null);
     }
 }

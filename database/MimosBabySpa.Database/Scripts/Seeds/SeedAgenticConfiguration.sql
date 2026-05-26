@@ -1,8 +1,8 @@
 -- =============================================================================
 -- SeedAgenticConfiguration.sql
 --
--- Configuracion inicial del agente "Mimi Bot" para el motor agentic
--- (OpenAI Function Calling sobre gpt-4.1-mini).
+-- Configuracion inicial del agente "Mimi Bot" para el FlowEngine
+-- (motor declarativo + gpt-4.1-mini).
 --
 -- Crea/actualiza:
 --   * AgentType "Vendedor"
@@ -10,8 +10,8 @@
 --   * BusinessWhatsAppNumbers.AgentId (link del numero al agente)
 --
 -- Notas de diseno:
---   - Persona, flow, guards, factSchema y policies viven en Agents.SettingsJson.
---   - SystemPromptMarkdown queda vacio (legacy); el motor usa IPromptComposer.
+--   - promptSections, flow, guards, factSchema y humanMessages viven en Agents.SettingsJson.
+--   - SystemPromptMarkdown queda vacio (legacy); el motor usa promptSections + flow.
 --   - El catalogo NO se siembra como texto: get_service_catalog lo genera desde dbo.Services.
 --
 -- Idempotente: usa MERGE / IF NOT EXISTS para que pueda ejecutarse multiples veces.
@@ -50,18 +50,50 @@ BEGIN
 END
 
 -- ── Agent configuration (SettingsJson = source of truth) ─────────────────----
--- NOTA: Este bloque es la copia T-SQL de MimiAgentSettings.json.
---       Toda edición debe hacerse en ese archivo y luego reflejarse aquí
---       (escapando comillas simples: ' → '').
+-- NOTA: Este bloque define el agente Mimi Bot directamente en el seed SQL.
+--       El archivo JSON duplicado se eliminó para mantener una única fuente de verdad.
 DECLARE @SystemPrompt NVARCHAR(MAX) = N'';
 
 DECLARE @SettingsJson NVARCHAR(MAX) = N'{
   "model": "gpt-4.1-mini",
-  "temperature": 0.7,
+  "temperature": 0.3,
   "maxToolIterations": 6,
   "consecutiveErrorEscalationThreshold": 3,
-  "persona": "## ROL E IDENTIDAD\n\nEres **Mimi**, la asistente virtual de **Mimo''s Baby Spa**. Eres cálida, empática y profesional. Tu misión es ayudar a los papás y mamás a agendar servicios de relajación y bienestar para sus bebés. Hablas siempre en español, usas emojis con moderación y mantienes un tono conversacional y amigable.",
-  "policies": "## REGLAS DE OPERACIÓN\n\n- Responde SIEMPRE en español.\n- Sé concisa pero completa: no hagas preguntas innecesarias.\n- Si el usuario proporciona varios datos en un mensaje, úsalos todos sin preguntar de nuevo.\n- Consulta el backend cuando necesites datos: nunca inventes disponibilidad, precios ni horarios.\n- Solo ofrece servicios y complementos que el catálogo devuelva. Si un plan no lista complementos, no los menciones.\n\n## LÉXICO\n\n- Mientras no exista reserva confirmada, no digas \"reservé\" ni \"confirmado\". Usa \"verifiqué disponibilidad\" o \"está listo para confirmar\".\n\n## FECHAS Y HORARIOS\n\n- Usa el bloque CONTEXTO TEMPORAL como referencia de \"hoy\".\n- Convierte siempre a YYYY-MM-DD y HH:mm antes de consultar disponibilidad o crear reservas.\n\n## POLÍTICA COMERCIAL\n\n- Cancelación/reagendamiento sin costo con mínimo 24 horas de anticipación.\n- Instagram: @mimosbabyspa",
+  "capabilityPacks": ["booking"],
+  "promptSections": [
+    {
+      "id": "persona",
+      "order": 10,
+      "content": "## ROL E IDENTIDAD\n\nEres **Mimi**, la asistente virtual de **Mimo''s Baby Spa**. Eres cálida, empática y profesional. Tu misión es ayudar a los papás y mamás a agendar servicios de relajación y bienestar para sus bebés. Hablas siempre en español, usas emojis con moderación y mantienes un tono conversacional y amigable."
+    },
+    {
+      "id": "policies",
+      "order": 20,
+      "content": "## REGLAS DE OPERACIÓN\n\n- Responde SIEMPRE en español.\n- Sé concisa pero completa: no hagas preguntas innecesarias.\n- Si el usuario proporciona varios datos en un mensaje, úsalos todos sin preguntar de nuevo.\n- Consulta el backend cuando necesites datos: nunca inventes disponibilidad, precios ni horarios.\n- Solo ofrece servicios y complementos que el catálogo devuelva. Si un plan no lista complementos, no los menciones.\n\n## LÉXICO\n\n- Mientras no exista reserva confirmada, no digas \"reservé\" ni \"confirmado\". Usa \"verifiqué disponibilidad\" o \"está listo para confirmar\".\n\n## FECHAS Y HORARIOS\n\n- Usa el contexto de fecha del motor como referencia de \"hoy\".\n- Convierte siempre a YYYY-MM-DD y HH:mm antes de consultar disponibilidad o crear reservas.\n\n## POLÍTICA COMERCIAL\n\n- Cancelación/reagendamiento sin costo con mínimo 24 horas de anticipación.\n- Instagram: @mimosbabyspa"
+    }
+  ],
+  "humanMessages": {
+    "escalationUserMessage": "Entiendo. Te voy a conectar con una persona de nuestro equipo para ayudarte mejor. En un momento te atienden. 🙏",
+    "semanticTriggers": {
+      "customer_frustration": "el cliente expresa frustración o enojo",
+      "consecutive_errors": "hay 2 o más errores consecutivos sin resolución",
+      "out_of_scope_request": "el cliente pide algo fuera del alcance del bot",
+      "explicit_human_request": "el cliente pide explícitamente hablar con un humano"
+    }
+  },
+  "operationalLimits": {
+    "inputMaxChars": 4000,
+    "outputMaxChars": 4096,
+    "maxResponseTokens": 800
+  },
+  "templates": {
+    "service_catalog_summary": "🌟 *Planes disponibles para bebés*\n\n{{#each services}}\n*{{name}}* — ${{price}} {{../currency}}\n{{description}}\n_Duración: {{duration_minutes}} min_\n\n{{/each}}\n¿Cuál te interesa para tu bebé?",
+    "addons_compatible_list": "✨ *Complementos disponibles para {{service_name}}*\n\n{{#each addons}}\n- *{{name}}*: ${{price}}\n  {{description}}\n{{/each}}\n\n¿Deseas agregar alguno a tu reserva? (o escribe ''ninguno'')",
+    "availability_slots": "📅 *Horarios disponibles para {{service_name}} el {{date_formatted}}*\n\n{{#each slots}}\n- {{this}}\n{{/each}}\n\n¿Cuál prefieres?",
+    "checkout_with_deposit": "📋 *Resumen de tu reserva*\n- Servicio: {{service_name}}\n- Fecha: {{date_formatted}}\n- Hora: {{time}}\n- Precio: ${{service_price}}\n{{#each addons}}\n- {{name}}: ${{price}}\n{{/each}}\n- *TOTAL: ${{total}} {{currency}}*\n\n👤 {{customer_name}} | 📞 {{customer_phone}}\n{{#if baby_name}}\n👶 {{baby_name}}{{#if baby_age_months}} ({{baby_age_months}} meses){{/if}}\n{{/if}}\n\n💰 *Anticipo requerido:* ${{deposit}} {{currency}} ({{deposit_pct}}%)\n\n🔗 Paga en línea: {{link_url}}\n\nCuando confirmes el pago, tu reserva quedará asegurada. ¡Estamos para ayudarte!",
+    "checkout_no_deposit": "📋 *Resumen de tu reserva*\n- Servicio: {{service_name}}\n- Fecha: {{date_formatted}}\n- Hora: {{time}}\n- Precio: ${{service_price}}\n{{#each addons}}\n- {{name}}: ${{price}}\n{{/each}}\n- *TOTAL: ${{total}} {{currency}}*\n\n👤 {{customer_name}} | 📞 {{customer_phone}}\n{{#if baby_name}}\n👶 {{baby_name}}{{#if baby_age_months}} ({{baby_age_months}} meses){{/if}}\n{{/if}}\n\n¿Confirmas la reserva con esta información?",
+    "reservation_created": "✅ *¡Reserva confirmada!*\n\nTu reserva ha sido registrada exitosamente:\n- Servicio: {{service_name}}\n- Fecha: {{date_formatted}}\n- Hora: {{time}}\n{{#if employee}}\n- Especialista: {{employee}}\n{{/if}}\n\nTe esperamos, {{customer_name}}. Si necesitas ayuda o cambios, escríbenos por aquí. 😊"
+  },
   "killSwitchPhrases": [
     "quiero hablar con un humano",
     "quiero hablar con una persona",
@@ -78,138 +110,222 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
     "stages": [
       {
         "id": "greeting",
-        "goal": "Saludar al cliente y preparar el contexto para el resto del flujo",
-        "suggestedTools": [],
-        "advanceWhenFacts": [],
-        "completesOnEnter": true,
-        "variants": {
-          "firstEver": {
-            "goal": "Presentarse como Mimi y dar la bienvenida a Mimo''s Baby Spa",
-            "hint": "¡Hola! 😊 Soy Mimi de Mimo''s Baby Spa. Un gusto saludarte. Estoy aquí para ayudarte a elegir el mejor plan para tu bebé.",
-            "constraints": { "maxQuestions": 0 }
-          },
-          "returningCustomer": {
-            "goal": "Saludar por nombre de forma cálida y retomar el flujo desde el inicio",
-            "hint": "Saluda al cliente por su nombre (1-2 líneas). No te vuelvas a presentar. Lo acordado en conversaciones anteriores ya no aplica: el flujo comienza de nuevo.",
-            "constraints": { "maxQuestions": 0 }
-          }
-        }
+        "verbatim": "¡Hola! 😊 Soy Mimi de Mimo''s Baby Spa. Un gusto saludarte. ¿En qué puedo ayudarte hoy? Estoy aquí para ayudarte a elegir el mejor plan para tu bebé.",
+        "completedWhen": "always"
       },
       {
         "id": "discovery",
-        "goal": "Conocer el nombre y la edad del bebé, y el plan que prefiere la familia",
-        "suggestedTools": ["get_service_catalog", "set_fact"],
-        "advanceWhenFacts": ["baby_name", "baby_age_months", "service"]
+        "ask": "Pide el nombre del bebé y la edad en meses en una sola pregunta breve. Si el cliente dice solo ''mi bebé'', ''mi peque'' o similar, eso NO es nombre: pregunta cómo se llama. Usa set_fact(baby_name) solo con nombre propio; set_fact(baby_age_months) como entero (convierte ''5 meses'', ''casi un año'', etc.). Si baby_name o baby_age_months ya están en facts, NO los repitas ni preguntes ''¿correcto?''; pide solo el dato que falte.",
+        "allowedTools": ["set_fact", "escalate_to_human"],
+        "collects": ["baby_name", "baby_age_months"],
+        "completedWhen": "factsCollected"
+      },
+      {
+        "id": "service_presentation",
+        "ask": "Con el catálogo de referencia, presenta solo los planes aptos para baby_age_months. Formato WhatsApp: un plan por línea con viñeta (-). No los juntes en un párrafo. Si baby_name y baby_age_months ya están en facts, no los reconfirmes. Cuando el cliente elija un plan, set_fact(service) con el nombre exacto del catálogo.",
+        "lookup": {
+          "tool": "get_service_catalog",
+          "args": {}
+        },
+        "lookupPresentation": "llm_curate",
+        "template": "@result.template_id",
+        "allowedTools": ["set_fact", "escalate_to_human"],
+        "collects": ["service"],
+        "completedWhen": "factsCollected"
       },
       {
         "id": "addons_offering",
-        "goal": "Ofrecer UNA SOLA VEZ los complementos compatibles con el plan elegido. Si el cliente no quiere ninguno, registrar ''ninguno''.",
-        "suggestedTools": ["get_service_catalog", "set_fact"],
-        "advanceWhenFacts": ["add_ons"],
-        "skipWhen": "desired_date && desired_time",
-        "autoSetOnSkip": { "add_ons": "ninguno" },
-        "constraints": {
-          "maxQuestions": 1,
-          "presentationMode": "soft_offer",
-          "forbiddenTopics": ["scheduling", "checkout"]
-        }
+        "ask": "Muestra los complementos compatibles con el servicio elegido. Un complemento por línea con viñeta. Pregunta si desea alguno; puede responder ''ninguno''. Al elegir, set_fact(add_ons) con el nombre exacto.",
+        "lookup": {
+          "tool": "get_service_catalog",
+          "args": { "service": "@fact.service" }
+        },
+        "template": "@result.template_id",
+        "allowedTools": ["set_fact", "get_service_catalog", "escalate_to_human"],
+        "collects": ["add_ons"],
+        "completedWhen": "factsCollected"
       },
       {
         "id": "scheduling",
-        "goal": "Encontrar y confirmar un horario disponible para el servicio elegido",
-        "suggestedTools": ["check_availability", "set_fact"],
-        "advanceWhenFacts": ["desired_date", "desired_time"]
+        "ask": "Protocolo en 3 pasos. (1) Solo fecha: set_fact(desired_date) en YYYY-MM-DD (mañana, el lunes → usa la fecha de referencia del sistema) y check_availability(service, date); muestra el template de horarios (slot_confirmed=false). (2) El cliente elige hora: set_fact(desired_time) en HH:mm 24h y check_availability(service, date, time). Si slot_confirmed=false, ofrece available_slots. Si slot_confirmed=true, confirma en una frase corta (sin preguntar otra vez si desea reservar). (3) No cierres el stage hasta slot_confirmed=true. Pide fecha y hora de forma breve, sin ejemplos largos al cliente.",
+        "lookup": {
+          "tool": "check_availability",
+          "args": {
+            "service": "@fact.service",
+            "date": "@fact.desired_date",
+            "time": "@fact.desired_time"
+          }
+        },
+        "template": "@result.template_id",
+        "allowedTools": ["set_fact", "check_availability", "escalate_to_human"],
+        "collects": ["desired_date", "desired_time", "result:slot_confirmed=true"],
+        "completedWhen": "factsCollected"
       },
       {
         "id": "customer_data",
-        "goal": "Completar el nombre del cliente si aún no se conoce",
-        "suggestedTools": ["set_fact"],
-        "advanceWhenFacts": ["customer_name"]
+        "ask": "Pide el nombre completo del cliente para completar la reserva. Una sola pregunta breve y amable. set_fact(customer_name) cuando lo proporcione.",
+        "allowedTools": ["set_fact", "escalate_to_human"],
+        "collects": ["customer_name"],
+        "completedWhen": "factsCollected"
       },
       {
-        "id": "checkout",
-        "goal": "Resumir la reserva y procesar pago o confirmación verbal",
-        "suggestedTools": ["prepare_checkout"],
-        "advanceWhenFacts": [],
-        "reentryOnFactChanged": ["service", "desired_date", "desired_time", "add_ons"]
+        "id": "post_reservation",
+        "appliesWhen": {
+          "field": "@pack.booking.has_active_reservation",
+          "equals": "true"
+        },
+        "ask": "There is a confirmed reservation. If the customer greets, greet back. If they ask for details, answer from facts. If they want to reschedule, call reschedule_reservation. If they want to cancel, call suspend_reservation.",
+        "allowedTools": ["reschedule_reservation", "suspend_reservation", "escalate_to_human"],
+        "completedWhen": "always"
+      },
+      {
+        "id": "await_payment",
+        "appliesWhen": {
+          "field": "@pack.booking.has_pending_payment",
+          "equals": "true"
+        },
+        "ask": "A payment link was already sent. Call verify_payment to get real-time status. If status=confirmed or is_approved=true, tell the customer their reservation is being confirmed automatically. If pending, ask them to wait a few minutes and retry. Do NOT call create_reservation — the webhook handles that.",
+        "lookup": {
+          "tool": "verify_payment",
+          "args": {}
+        },
+        "allowedTools": ["verify_payment", "escalate_to_human"],
+        "completedWhen": "toolSucceeded"
       },
       {
         "id": "closure",
-        "goal": "Confirmar la reserva o asignar slot post-pago",
-        "suggestedTools": ["create_reservation", "assign_paid_slot", "verify_payment"],
-        "advanceWhenFacts": []
+        "appliesWhen": {
+          "field": "@pack.booking.has_active_reservation",
+          "equals": "false"
+        },
+        "ask": "Presenta el resumen de la reserva usando el template de checkout. Si flow=verbal_confirmation, pide un ''sí'' explícito para confirmar; solo entonces se crea la reserva. Si flow=deposit_required, muestra el enlace de pago; NO llames create_reservation tú misma.",
+        "lookup": {
+          "tool": "prepare_checkout",
+          "args": {}
+        },
+        "template": "@result.template_id",
+        "allowedTools": ["prepare_checkout", "escalate_to_human"],
+        "execute": {
+          "appliesWhen": {
+            "field": "@result.flow",
+            "equals": "verbal_confirmation"
+          },
+          "tool": "create_reservation",
+          "args": { "customer_confirmed": "@const.true" }
+        },
+        "completedWhen": "userConfirms"
       }
     ]
   },
   "factSchema": [
     {
-      "key": "session.engagement", "role": "session.engagement",
-      "label": "contexto de engagement", "type": "string",
-      "required": false, "source": "session", "persistsAcrossConversations": false
+      "key": "session.engagement",
+      "role": "session.engagement",
+      "label": "contexto de engagement",
+      "type": "string",
+      "required": false,
+      "source": "session",
+      "persistsAcrossConversations": false
     },
     {
-      "key": "baby_name", "role": "baby.name", "label": "nombre del bebé",
-      "type": "string", "required": true, "source": "user", "captureMode": "eager",
-      "aliases": ["nombre bebe", "nombre del bebe"]
+      "key": "baby_name",
+      "role": "baby.name",
+      "label": "nombre del bebé",
+      "type": "string",
+      "required": true,
+      "source": "user"
     },
     {
-      "key": "baby_age_months", "role": "baby.age_months", "label": "edad del bebé (meses)",
-      "type": "number", "required": true, "source": "user", "captureMode": "eager",
-      "aliases": ["edad", "meses", "edad bebe"]
+      "key": "baby_age_months",
+      "role": "baby.age_months",
+      "label": "edad del bebé (meses)",
+      "type": "number",
+      "required": true,
+      "source": "user",
+      "range": { "min": 0, "max": 60 }
     },
     {
-      "key": "service", "role": "booking.service", "label": "plan / servicio",
-      "type": "string", "required": true, "source": "user",
-      "aliases": ["plan", "servicio"]
+      "key": "service",
+      "role": "booking.service",
+      "label": "plan / servicio",
+      "type": "string",
+      "required": true,
+      "source": "user"
     },
     {
-      "key": "add_ons", "role": "booking.addons", "label": "complementos",
-      "type": "string", "required": false, "source": "user",
-      "aliases": ["complemento", "decoracion", "decoración", "adicional"]
+      "key": "add_ons",
+      "role": "booking.addons",
+      "label": "complementos",
+      "type": "string",
+      "required": true,
+      "source": "user"
     },
     {
-      "key": "desired_date", "role": "booking.date", "label": "fecha deseada",
-      "type": "date", "required": true, "source": "user",
-      "aliases": ["fecha"]
+      "key": "desired_date",
+      "role": "booking.date",
+      "label": "fecha deseada",
+      "type": "date",
+      "required": true,
+      "source": "user"
     },
     {
-      "key": "desired_time", "role": "booking.time", "label": "hora deseada",
-      "type": "time", "required": true, "source": "user",
-      "aliases": ["hora", "horario"]
+      "key": "desired_time",
+      "role": "booking.time",
+      "label": "hora deseada",
+      "type": "time",
+      "required": true,
+      "source": "user"
     },
     {
-      "key": "customer_name", "role": "customer.name", "label": "nombre del cliente",
-      "type": "string", "required": true, "source": "user",
-      "persistsAcrossConversations": true,
-      "aliases": ["nombre", "cliente", "mi nombre", "nombre cliente"]
+      "key": "customer_name",
+      "role": "customer.name",
+      "label": "nombre del cliente",
+      "type": "string",
+      "required": true,
+      "source": "user",
+      "persistsAcrossConversations": true
     },
     {
-      "key": "customer_phone", "role": "customer.phone", "label": "teléfono del cliente",
-      "type": "phone", "required": true, "source": "channel",
-      "persistsAcrossConversations": true,
-      "aliases": ["telefono", "teléfono", "celular", "numero"]
+      "key": "customer_phone",
+      "role": "customer.phone",
+      "label": "teléfono del cliente",
+      "type": "phone",
+      "required": true,
+      "source": "channel",
+      "persistsAcrossConversations": true
     },
     {
-      "key": "customer_email", "role": "customer.email", "label": "email del cliente",
-      "type": "email", "required": false, "source": "user",
-      "persistsAcrossConversations": true,
-      "aliases": ["email", "correo"]
+      "key": "customer_email",
+      "role": "customer.email",
+      "label": "email del cliente",
+      "type": "email",
+      "required": false,
+      "source": "user",
+      "persistsAcrossConversations": true
     }
   ],
   "guards": {
+    "check_availability": {
+      "requires": [
+        "fact:service",
+        "fact:desired_date"
+      ]
+    },
     "prepare_checkout": {
       "requires": [
         "fact:service",
         "fact:desired_date",
         "fact:desired_time",
         "fact:customer_name",
-        "verification:availability_checked"
+        "fact:add_ons"
       ]
     },
     "create_reservation": {
       "requires": [
-        "verification:availability_checked",
-        "verification:customer_identified",
+        "fact:service",
+        "fact:desired_date",
+        "fact:desired_time",
+        "fact:customer_name",
         "expr:NOT policy.deposit_required"
       ]
     },
@@ -273,7 +389,7 @@ BEGIN
         SettingsJson          = @SettingsJson,
         SystemPromptMarkdown  = @SystemPrompt,
         Model                 = N'gpt-4.1-mini',
-        Temperature           = 0.7,
+        Temperature           = 0.3,
         MaxToolIterations     = 6,
         IsActive              = 1,
         UpdatedAt             = SYSUTCDATETIME()

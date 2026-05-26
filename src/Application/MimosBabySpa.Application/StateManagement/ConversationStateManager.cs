@@ -109,6 +109,8 @@ public class ConversationStateManager : IConversationStateManager
         Verifications = DeserializeVerifications(entity.VerificationsJson),
         StageFactSnapshots = DeserializeStageSnapshots(entity.StageSnapshotsJson),
         CompletedOneShotStages = DeserializeStringSet(entity.CompletedStagesJson),
+        CompletedActionStages = DeserializeStringSet(entity.CompletedActionStagesJson),
+        LastAskedFact = entity.LastAskedFact,
         Version = entity.Version,
         CreatedAt = entity.CreatedAt,
         UpdatedAt = entity.UpdatedAt
@@ -131,6 +133,10 @@ public class ConversationStateManager : IConversationStateManager
         entity.CompletedStagesJson = state.CompletedOneShotStages.Count == 0
             ? null
             : JsonSerializer.Serialize(state.CompletedOneShotStages, JsonOptions);
+        entity.CompletedActionStagesJson = state.CompletedActionStages.Count == 0
+            ? null
+            : JsonSerializer.Serialize(state.CompletedActionStages, JsonOptions);
+        entity.LastAskedFact = state.LastAskedFact;
         entity.Version = state.Version;
         entity.UpdatedAt = state.UpdatedAt;
     }

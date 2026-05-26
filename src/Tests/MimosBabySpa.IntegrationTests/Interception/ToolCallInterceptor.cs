@@ -1,6 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
-using MimosBabySpa.Application.Agents;
+using MimosBabySpa.Application.Agents.Facts;
 using MimosBabySpa.Application.Agents.Tools;
 
 namespace MimosBabySpa.IntegrationTests.Interception;
@@ -25,19 +25,18 @@ public class ToolCallInterceptor : IAgentTool
     public string ParametersSchema => _inner.ParametersSchema;
 
     public async Task<string> ExecuteAsync(
-        JsonElement arguments,
-        AgentToolContext context,
+        ToolInvocation invocation,
         CancellationToken cancellationToken = default)
     {
         var sw = Stopwatch.StartNew();
-        var result = await _inner.ExecuteAsync(arguments, context, cancellationToken);
+        var result = await _inner.ExecuteAsync(invocation, cancellationToken);
         sw.Stop();
 
         var isError = IsToolError(result);
 
         _log.Add(new ToolCallRecord(
             ToolName: _inner.Name,
-            ArgumentsJson: arguments.GetRawText(),
+            ArgumentsJson: invocation.Arguments.GetRawText(),
             ResultJson: result,
             ResultIsError: isError,
             CalledAt: DateTimeOffset.UtcNow,

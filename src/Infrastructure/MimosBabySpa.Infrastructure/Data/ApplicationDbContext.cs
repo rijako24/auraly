@@ -135,6 +135,7 @@ public class ApplicationDbContext : DbContext
             entity.Property(e => e.LastMessage).HasMaxLength(1000);
             entity.Property(e => e.CustomerName).HasMaxLength(100);
             entity.Property(e => e.CustomerEmail).HasMaxLength(200);
+            entity.Property(e => e.IdentityAttributesJson).HasColumnType("NVARCHAR(MAX)");
             entity.Property(e => e.Status).HasConversion<byte>().HasDefaultValue(ConversationLifecycleStatus.Active);
             entity.Property(e => e.OpenedAt).IsRequired();
             entity.Property(e => e.LastActivityAt).IsRequired();
@@ -170,7 +171,7 @@ public class ApplicationDbContext : DbContext
         {
             entity.HasKey(e => e.MessageId);
             entity.Property(e => e.Sender).IsRequired().HasMaxLength(20);
-            entity.Property(e => e.MessageText).IsRequired().HasMaxLength(2000);
+            entity.Property(e => e.MessageText).IsRequired().HasColumnType("nvarchar(max)");
             entity.HasOne(e => e.Conversation)
                   .WithMany(c => c.Messages)
                   .HasForeignKey(e => e.ConversationId)
@@ -186,6 +187,7 @@ public class ApplicationDbContext : DbContext
             entity.Property(e => e.Status).IsRequired().HasMaxLength(20);
             entity.Property(e => e.CustomerName).HasMaxLength(100);
             entity.Property(e => e.CustomerEmail).HasMaxLength(200);
+            entity.Property(e => e.IdentityAttributesJson).HasColumnType("NVARCHAR(MAX)");
             entity.Property(e => e.Notes).HasMaxLength(1000);
             entity.HasOne(e => e.Business)
                   .WithMany(b => b.Leads)
@@ -415,6 +417,8 @@ public class ApplicationDbContext : DbContext
             entity.Property(e => e.VerificationsJson).HasColumnType("NVARCHAR(MAX)");
             entity.Property(e => e.StageSnapshotsJson).HasColumnType("NVARCHAR(MAX)");
             entity.Property(e => e.CompletedStagesJson).HasColumnType("NVARCHAR(MAX)");
+            entity.Property(e => e.CompletedActionStagesJson).HasColumnType("NVARCHAR(MAX)");
+            entity.Property(e => e.LastAskedFact).HasMaxLength(200);
             entity.Property(e => e.Version).IsRequired().HasDefaultValue(1);
             entity.Property(e => e.UpdatedAt).IsRequired();
             entity.Property(e => e.CreatedAt).IsRequired();

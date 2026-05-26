@@ -26,6 +26,10 @@
 :r .\Migrations\MigratePaymentSupersession.sql
 :r .\Migrations\MigrateFlowStageSnapshots.sql
 :r .\Migrations\MigrateCompletedOneShotStages.sql
+:r .\Migrations\MigrateIdentityAttributes.sql
+:r .\Migrations\MigrateLastAskedFact.sql
+:r .\Migrations\MigrateCompletedActionStages.sql
+:r .\Migrations\MigrateMessagesTextWhatsAppLimit.sql
 :r .\Seeds\SeedAdminUser.sql
 :r .\Seeds\SeedSqlAppLoginPermissions.sql
 :r .\Seeds\SeedServiceCategoriesForNewBusinesses.sql
@@ -33,6 +37,8 @@
 :r .\Seeds\SeedSchedulingPolicy.sql
 :r .\Seeds\SeedBookingPolicy.sql
 :r .\Seeds\SeedAgenticConfiguration.sql
+:r .\Seeds\SeedMimiServiceCatalogDescriptions.sql
+:r .\Seeds\SeedMimiDeleteLegacyServices.sql
 :r .\Seeds\SeedDefaultResources.sql
 :r .\Seeds\SeedDefaultEmployees.sql
 

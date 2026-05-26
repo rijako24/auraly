@@ -1,22 +1,17 @@
 using System.Text.Json;
+using MimosBabySpa.Application.Agents.Composition;
 
 namespace MimosBabySpa.Application.Agents;
 
 /// <summary>
 /// Resultado parseado de la ejecución de una tool.
-///
-/// Encapsula el JSON crudo que vuelve al LLM, el estado ok/error y
-/// los side-effects declarados por la tool en el campo "effects".
-/// Aísla al orquestador del parsing JSON ad-hoc.
-///
-/// Shape esperada de una tool:
-///   ok=true  → { "ok": true,  "data": {...}, "effects": ["reservation_created"] }
-///   ok=false → { "ok": false, "error": { "code", "message", "hint" } }
 /// </summary>
-internal sealed record ToolExecutionOutcome(
+public sealed record ToolExecutionOutcome(
     string RawJson,
     bool IsError,
-    IReadOnlyList<string> SideEffects)
+    IReadOnlyList<string> SideEffects,
+    string? ErrorCode = null,
+    string? ErrorMessage = null)
 {
     private static readonly IReadOnlyList<string> None = [];
 
@@ -41,7 +36,17 @@ internal sealed record ToolExecutionOutcome(
                     .ToArray();
             }
 
-            return new ToolExecutionOutcome(rawJson, isError, effects);
+            string? errorCode = null;
+            string? errorMessage = null;
+            if (isError && root.TryGetProperty("error", out var err) && err.ValueKind == JsonValueKind.Object)
+            {
+                if (err.TryGetProperty("code", out var code))
+                    errorCode = code.GetString();
+                if (err.TryGetProperty("message", out var msg))
+                    errorMessage = msg.GetString();
+            }
+
+            return new ToolExecutionOutcome(rawJson, isError, effects, errorCode, errorMessage);
         }
         catch
         {

@@ -1,38 +1,46 @@
-using System.Text.Json;
 using MimosBabySpa.Application.Agents.Facts;
 using MimosBabySpa.Application.Agents.Gating;
+using MimosBabySpa.Application.Agents.Identity;
+using MimosBabySpa.Application.Agents.Packs.Booking;
 using MimosBabySpa.Application.Configuration;
 using MimosBabySpa.Application.Services;
+using MimosBabySpa.Domain.Repositories;
 
 namespace MimosBabySpa.Application.Agents.Tools.Impl;
 
 /// <summary>
-/// Persiste un hecho clave-valor en ConversationContexts (Facts).
+/// Única vía de persistencia de facts de usuario: clave canónica del factSchema del tenant.
 /// </summary>
 public sealed class SetFactTool : IAgentTool
 {
     private readonly IConversationFactsService _factsService;
+    private readonly IFactAccessor _facts;
     private readonly IAddOnCatalogService _addOnCatalog;
     private readonly IConversationVerificationService _verifications;
-    private readonly ILeadService _leadService;
+    private readonly IIdentityAttributeService _identityAttributes;
+    private readonly IUnitOfWork _unitOfWork;
 
     public SetFactTool(
         IConversationFactsService factsService,
+        IFactAccessor facts,
         IAddOnCatalogService addOnCatalog,
         IConversationVerificationService verifications,
-        ILeadService leadService)
+        IIdentityAttributeService identityAttributes,
+        IUnitOfWork unitOfWork)
     {
         _factsService = factsService;
+        _facts = facts;
         _addOnCatalog = addOnCatalog;
         _verifications = verifications;
-        _leadService = leadService;
+        _identityAttributes = identityAttributes;
+        _unitOfWork = unitOfWork;
     }
 
     public string Name => "set_fact";
 
     public string Description =>
-        "Persists a key-value pair into conversation state. " +
-        "Input: fact key and value. Output: stored key and normalized value.";
+        "Persists one user fact (canonical key + structured value) into conversation state. " +
+        "Call once per fact. Use only keys from the current stage fact list in the system prompt.";
 
     public string ParametersSchema => """
         {
@@ -40,11 +48,11 @@ public sealed class SetFactTool : IAgentTool
           "properties": {
             "key": {
               "type": "string",
-              "description": "Short snake_case identifier (e.g. customer_name, baby_age_months, service)"
+              "description": "Canonical fact key from the tenant schema (snake_case)"
             },
             "value": {
               "type": "string",
-              "description": "Structured value (number, name, date YYYY-MM-DD, time HH:mm — not a full sentence)"
+              "description": "Structured value only (name, number, YYYY-MM-DD, HH:mm — not a full sentence)"
             }
           },
           "required": ["key", "value"]
@@ -52,17 +60,16 @@ public sealed class SetFactTool : IAgentTool
         """;
 
     public async Task<string> ExecuteAsync(
-        JsonElement arguments,
-        AgentToolContext ctx,
+        ToolInvocation invocation,
         CancellationToken cancellationToken = default)
     {
-        if (!ToolResultHelper.TryGetString(arguments, "key", out var rawKey)
-            || !ToolResultHelper.TryGetString(arguments, "value", out var rawValue))
+        if (!ToolResultHelper.TryGetString(invocation.Arguments, "key", out var rawKey)
+            || !ToolResultHelper.TryGetString(invocation.Arguments, "value", out var rawValue))
         {
             return ToolResultHelper.MissingPrerequisites(["key", "value"]);
         }
 
-        // Normalizar alias → key canónico usando el schema del tenant
+        var ctx = invocation.Context;
         var roleIndex = new FactRoleIndex(ctx.Config?.FactSchema ?? []);
         var canonicalKey = roleIndex.NormalizeKey(rawKey.Trim());
 
@@ -71,7 +78,7 @@ public sealed class SetFactTool : IAgentTool
             return ToolResultHelper.Error(
                 "invalid_key",
                 "Fact key must be a short snake_case identifier.",
-                "Use keys like customer_name, service, or baby_age_months.");
+                ValidKeysRemediation(ctx));
         }
 
         if (!FactKeyNormalizer.TryNormalizeValue(rawValue, out var value))
@@ -82,19 +89,58 @@ public sealed class SetFactTool : IAgentTool
                 "Provide a structured value, not a full sentence.");
         }
 
-        // Validación de tipo basada en schema del tenant
         var schemaEntry = roleIndex.EntryFor(key);
-        if (schemaEntry is not null)
+
+        if (schemaEntry is null && ctx.Config?.FactSchema.Count > 0)
         {
-            var typeError = ValidateType(key, value, schemaEntry.Type);
-            if (typeError is not null)
-                return typeError;
+            return ToolResultHelper.Error(
+                "unknown_key",
+                $"'{key}' is not in this agent's fact schema.",
+                ValidKeysRemediation(ctx));
         }
 
-        if (key.Equals(ConversationFactKeys.AddOns, StringComparison.OrdinalIgnoreCase))
+        if (schemaEntry is not null
+            && !schemaEntry.Source.Equals("user", StringComparison.OrdinalIgnoreCase))
         {
-            var service = ConversationFactKeys.Get(ctx.Facts, ConversationFactKeys.Service)
-                ?? ctx.ActiveReservation?.Service?.ServiceName;
+            return ToolResultHelper.Error(
+                "non_user_source",
+                $"Fact '{key}' cannot be set by the assistant.",
+                "Use only user-sourced facts from the schema.");
+        }
+
+        if (schemaEntry is not null)
+        {
+            var shape = FactShapeValidator.Validate(schemaEntry, value);
+            if (!shape.Ok)
+            {
+                return ToolResultHelper.Error(
+                    "invalid_value_shape",
+                    shape.ErrorCode ?? "invalid_shape",
+                    shape.Remediation ?? "Provide a value matching the fact type.");
+            }
+        }
+
+        var role = _facts.GetRoleForKey(ctx, key);
+
+        if (string.Equals(role, FactRoles.BookingService, StringComparison.OrdinalIgnoreCase))
+        {
+            var services = await _unitOfWork.Services.GetActiveByBusinessIdAsync(ctx.BusinessId);
+            var canonical = ActiveServiceCatalogMatcher.MatchExact(services, value);
+            if (canonical is null)
+            {
+                return ToolResultHelper.Error(
+                    "unknown_service",
+                    $"Service '{value}' is not in the active catalog.",
+                    "Call get_service_catalog and use an exact service name from the list.");
+            }
+
+            value = canonical;
+        }
+
+        if (string.Equals(role, FactRoles.BookingAddOns, StringComparison.OrdinalIgnoreCase))
+        {
+            var service = _facts.GetByRole(ctx, FactRoles.BookingService)
+                ?? ctx.GetPackContext<IBookingPackContext>()?.ActiveReservation?.Service?.ServiceName;
 
             if (string.IsNullOrWhiteSpace(service))
             {
@@ -119,32 +165,31 @@ public sealed class SetFactTool : IAgentTool
         await _factsService.SetAsync(ctx.ConversationId, ctx.BusinessId, key, value, cancellationToken);
         ctx.Facts[key] = value;
 
-        if (key.Equals(ConversationFactKeys.CustomerName, StringComparison.OrdinalIgnoreCase))
-            ctx.Conversation.CustomerName = value;
-        if (key.Equals(ConversationFactKeys.CustomerEmail, StringComparison.OrdinalIgnoreCase))
-            ctx.Conversation.CustomerEmail = value;
-
-        if (key.Equals(ConversationFactKeys.CustomerName, StringComparison.OrdinalIgnoreCase)
-            || key.Equals(ConversationFactKeys.CustomerEmail, StringComparison.OrdinalIgnoreCase))
-        {
-            await _leadService.SyncCustomerIdentityAsync(
-                ctx.BusinessId,
-                ctx.Conversation.UserNumber,
-                key.Equals(ConversationFactKeys.CustomerName, StringComparison.OrdinalIgnoreCase) ? value : null,
-                key.Equals(ConversationFactKeys.CustomerEmail, StringComparison.OrdinalIgnoreCase) ? value : null,
-                cancellationToken);
-        }
+        if (schemaEntry is not null)
+            await _identityAttributes.SyncFromFactAsync(ctx, schemaEntry, value, cancellationToken);
 
         await TryRecordCustomerIdentifiedAsync(ctx);
 
         return ToolResultHelper.Ok(new { key, value, storage = "fact" });
     }
 
+    private static string ValidKeysRemediation(AgentToolContext ctx)
+    {
+        var validKeys = ctx.Config?.FactSchema
+            .Where(e => e.Source.Equals("user", StringComparison.OrdinalIgnoreCase))
+            .Select(e => e.Key)
+            .OrderBy(k => k, StringComparer.OrdinalIgnoreCase)
+            .ToList() ?? [];
+
+        return validKeys.Count > 0
+            ? $"Use one of: {string.Join(", ", validKeys)}"
+            : "Configure factSchema keys for this agent.";
+    }
+
     private Task TryRecordCustomerIdentifiedAsync(AgentToolContext ctx)
     {
-        var name = ConversationFactKeys.Get(ctx.Facts, ConversationFactKeys.CustomerName)
-            ?? ctx.Conversation.CustomerName;
-        var phone = ConversationContactPhone.Resolve(ctx.Facts, ctx.ChannelPhone);
+        var name = _facts.GetByRole(ctx, FactRoles.CustomerName) ?? ctx.Conversation.CustomerName;
+        var phone = ConversationContactPhone.Resolve(ctx);
 
         if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(phone))
             return Task.CompletedTask;
@@ -156,37 +201,5 @@ public sealed class SetFactTool : IAgentTool
             ttl: null);
 
         return Task.CompletedTask;
-    }
-
-    /// <summary>
-    /// Valida el valor contra el tipo declarado en factSchema.
-    /// Devuelve null si pasa la validación o un JSON de error si no.
-    /// </summary>
-    private static string? ValidateType(string key, string value, string type)
-    {
-        return type.ToLowerInvariant() switch
-        {
-            "number" when !decimal.TryParse(value, System.Globalization.NumberStyles.Any,
-                              System.Globalization.CultureInfo.InvariantCulture, out _) =>
-                ToolResultHelper.Error(
-                    "invalid_type",
-                    $"'{key}' must be a number, got '{value}'.",
-                    "Provide a numeric value (e.g. 5, 12)."),
-
-            "date" when !System.DateOnly.TryParseExact(value, "yyyy-MM-dd", null,
-                             System.Globalization.DateTimeStyles.None, out _) =>
-                ToolResultHelper.Error(
-                    "invalid_type",
-                    $"'{key}' must be a date in YYYY-MM-DD format, got '{value}'.",
-                    "Use format YYYY-MM-DD (e.g. 2026-05-23)."),
-
-            "time" when !System.TimeSpan.TryParse(value, out _) =>
-                ToolResultHelper.Error(
-                    "invalid_type",
-                    $"'{key}' must be a time in HH:mm format, got '{value}'.",
-                    "Use 24-hour format (e.g. 08:00)."),
-
-            _ => null
-        };
     }
 }

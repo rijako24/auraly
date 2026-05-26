@@ -23,7 +23,7 @@ public class BookingPolicyProviderTests
 
         policy.DepositRequired.Should().BeFalse();
         policy.DepositPercentage.Should().Be(50);
-        policy.Currency.Should().Be("COP");
+        policy.Currency.Should().BeEmpty();
     }
 
     [Fact]

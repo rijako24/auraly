@@ -16,7 +16,11 @@ public sealed class FactRoleIndex
     private readonly Dictionary<string, string> _roleToKey =
         new(StringComparer.OrdinalIgnoreCase);
 
-    private readonly Dictionary<string, string> _aliasToKey =
+    /// <summary>
+    /// Maps a slug-normalized label to its canonical key.
+    /// e.g. "fecha deseada" → slug "fecha_deseada" → "desired_date"
+    /// </summary>
+    private readonly Dictionary<string, string> _labelSlugToKey =
         new(StringComparer.OrdinalIgnoreCase);
 
     private readonly IReadOnlyList<FactSchemaEntry> _schema;
@@ -34,9 +38,37 @@ public sealed class FactRoleIndex
             if (!string.IsNullOrWhiteSpace(entry.Role))
                 _roleToKey.TryAdd(entry.Role, entry.Key);
 
-            foreach (var alias in entry.Aliases)
-                _aliasToKey.TryAdd(alias, entry.Key);
+            if (!string.IsNullOrWhiteSpace(entry.Label))
+            {
+                var slug = ToSlug(entry.Label);
+                if (!string.IsNullOrWhiteSpace(slug))
+                    _labelSlugToKey.TryAdd(slug, entry.Key);
+            }
         }
+    }
+
+    /// <summary>
+    /// Converts a human-readable label to a snake_case slug for lookup.
+    /// "fecha deseada" → "fecha_deseada", "plan / servicio" → "plan_servicio"
+    /// </summary>
+    private static string ToSlug(string label)
+    {
+        var sb = new System.Text.StringBuilder();
+        var prevUnderscore = false;
+        foreach (var c in label.ToLowerInvariant())
+        {
+            if (char.IsLetterOrDigit(c))
+            {
+                sb.Append(c);
+                prevUnderscore = false;
+            }
+            else if (!prevUnderscore && sb.Length > 0)
+            {
+                sb.Append('_');
+                prevUnderscore = true;
+            }
+        }
+        return sb.ToString().TrimEnd('_');
     }
 
     /// <summary>
@@ -47,11 +79,18 @@ public sealed class FactRoleIndex
         _roleToKey.TryGetValue(role, out var key) ? key : null;
 
     /// <summary>
-    /// Si el input es un alias conocido, devuelve el key canónico.
-    /// Si no es alias, devuelve el input tal cual (puede ser ya el key canónico).
+    /// Normalizes a raw key: checks aliases first, then label slugs, then returns as-is.
+    /// This corrects common LLM mistakes like "complementos" → "add_ons" or
+    /// "fecha_deseada" (slug of "fecha deseada") → "desired_date".
     /// </summary>
-    public string NormalizeKey(string rawKey) =>
-        _aliasToKey.TryGetValue(rawKey, out var canonical) ? canonical : rawKey;
+    public string NormalizeKey(string rawKey)
+    {
+        var slug = ToSlug(rawKey);
+        if (_labelSlugToKey.TryGetValue(slug, out var byLabel))
+            return byLabel;
+
+        return rawKey;
+    }
 
     /// <summary>
     /// Devuelve la entrada de schema para un key (después de normalizar alias).
@@ -61,6 +100,13 @@ public sealed class FactRoleIndex
         var key = NormalizeKey(rawKey);
         return _schema.FirstOrDefault(e =>
             e.Key.Equals(key, StringComparison.OrdinalIgnoreCase));
+    }
+
+    public string? RoleForKey(string rawKey)
+    {
+        var key = NormalizeKey(rawKey);
+        return _schema.FirstOrDefault(e =>
+            e.Key.Equals(key, StringComparison.OrdinalIgnoreCase))?.Role;
     }
 
     /// <summary>

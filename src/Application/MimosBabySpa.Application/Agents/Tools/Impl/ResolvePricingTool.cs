@@ -1,4 +1,6 @@
 using System.Text.Json;
+using MimosBabySpa.Application.Agents.Facts;
+using MimosBabySpa.Application.Agents.Packs.Booking;
 using MimosBabySpa.Application.Services;
 
 namespace MimosBabySpa.Application.Agents.Tools.Impl;
@@ -21,7 +23,15 @@ public sealed class ResolvePricingTool : IAgentTool
         _addOnCatalog = addOnCatalog;
     }
 
+    public string PackId => BookingPackIds.Booking;
+
     public string Name => "resolve_pricing";
+
+    public IReadOnlyList<RoleRequirement> RoleRequirements =>
+    [
+        new(FactRoles.BookingService, Required: false),
+        new(FactRoles.BookingAddOns, Required: false)
+    ];
 
     public string Description =>
         "Calculates service total, add-on totals, and deposit amount from catalog data and booking policy.";
@@ -44,15 +54,19 @@ public sealed class ResolvePricingTool : IAgentTool
         """;
 
     public async Task<string> ExecuteAsync(
-        JsonElement arguments,
-        AgentToolContext ctx,
+        ToolInvocation invocation,
         CancellationToken cancellationToken = default)
     {
-        if (!ToolResultHelper.TryGetString(arguments, "service", out var service))
+        var ctx = invocation.Context;
+
+        if (!ToolResultHelper.TryGetString(invocation.Arguments, "service", out var service))
+            service = invocation.Get(FactRoles.BookingService);
+
+        if (string.IsNullOrWhiteSpace(service))
             return ToolResultHelper.Error("invalid_args", "Parameter 'service' is required.");
 
-        ToolResultHelper.TryGetString(arguments, "add_ons", out var addOns);
-        addOns ??= ConversationFactKeys.Get(ctx.Facts, ConversationFactKeys.AddOns);
+        ToolResultHelper.TryGetString(invocation.Arguments, "add_ons", out var addOns);
+        addOns ??= invocation.Get(FactRoles.BookingAddOns);
 
         if (!string.IsNullOrWhiteSpace(addOns))
         {

@@ -2,14 +2,13 @@ using System.Text.Json;
 using FluentAssertions;
 using Moq;
 using MimosBabySpa.Application.Agents;
-using MimosBabySpa.Application.Agents.Gating;
+using MimosBabySpa.Application.Agents.Packs.Booking;
 using MimosBabySpa.Application.Agents.Tools.Impl;
 using MimosBabySpa.Application.BusinessRules;
 using MimosBabySpa.Application.Configuration;
 using MimosBabySpa.Application.DTOs;
 using MimosBabySpa.Application.Services;
 using MimosBabySpa.Domain.Entities;
-using MimosBabySpa.Domain.Enums;
 using ConversationStateModel = MimosBabySpa.Domain.Models.ConversationState;
 using Xunit;
 
@@ -20,7 +19,6 @@ public class CreateReservationToolTests
     private readonly Mock<IReservationService> _reservations = new();
     private readonly Mock<IReservationIntentBuilder> _intentBuilder = new();
     private readonly Mock<IBusinessRuleEngine> _rules = new();
-    private readonly Mock<IBookingPolicyProvider> _bookingPolicy = new();
     private readonly Mock<IPaymentLifecycleService> _paymentLifecycle = new();
     private readonly Mock<IAvailabilityService> _availability = new();
     private readonly Mock<ISchedulingPolicyProvider> _schedulingPolicy = new();
@@ -49,7 +47,6 @@ public class CreateReservationToolTests
             _reservations.Object,
             _intentBuilder.Object,
             _rules.Object,
-            _bookingPolicy.Object,
             _paymentLifecycle.Object,
             _availability.Object,
             _schedulingPolicy.Object,
@@ -59,12 +56,25 @@ public class CreateReservationToolTests
     [Fact]
     public async Task ExecuteAsync_WhenDepositRequiredAndNoPayment_ReturnsPaymentRequired()
     {
-        _bookingPolicy.Setup(p => p.GetAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new BookingPolicyParams { DepositRequired = true, DepositPercentage = 50 });
         _paymentLifecycle.Setup(p => p.HasConfirmedDepositAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(false);
 
+        _intentBuilder.Setup(b => b.BuildFromContextAsync(It.IsAny<AgentToolContext>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ReservationIntentSnapshot(
+                Guid.NewGuid(),
+                "Plan Marineritos",
+                new DateTime(2026, 5, 22, 9, 0, 0),
+                60,
+                null,
+                "Richard",
+                null,
+                "+573001234567",
+                [],
+                "{}"));
+
         var ctx = CreateContext();
+        AgentTestHelpers.SetBookingPack(ctx, new BookingPolicyParams { DepositRequired = true, DepositPercentage = 50 });
+
         using var args = JsonDocument.Parse("""
             {
               "service":"Plan Marineritos",
@@ -76,7 +86,7 @@ public class CreateReservationToolTests
             }
             """);
 
-        var json = await _tool.ExecuteAsync(args.RootElement, ctx, CancellationToken.None);
+        var json = await _tool.ExecuteAsync(AgentTestHelpers.Invoke(_tool, args.RootElement, ctx), CancellationToken.None);
 
         json.Should().Contain("payment_required");
         _reservations.Verify(r => r.CreateReservationAsync(It.IsAny<CreateReservationRequest>(), It.IsAny<CancellationToken>()), Times.Never);
@@ -85,9 +95,6 @@ public class CreateReservationToolTests
     [Fact]
     public async Task ExecuteAsync_WhenDepositNotRequired_CreatesConfirmedReservation()
     {
-        _bookingPolicy.Setup(p => p.GetAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new BookingPolicyParams { DepositRequired = false });
-
         _intentBuilder.Setup(b => b.BuildFromContextAsync(It.IsAny<AgentToolContext>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ReservationIntentSnapshot(
                 Guid.NewGuid(),
@@ -112,6 +119,8 @@ public class CreateReservationToolTests
                 []));
 
         var ctx = CreateContext();
+        AgentTestHelpers.SetBookingPack(ctx, new BookingPolicyParams { DepositRequired = false });
+
         using var args = JsonDocument.Parse("""
             {
               "service":"Plan Marineritos",
@@ -123,7 +132,7 @@ public class CreateReservationToolTests
             }
             """);
 
-        var json = await _tool.ExecuteAsync(args.RootElement, ctx, CancellationToken.None);
+        var json = await _tool.ExecuteAsync(AgentTestHelpers.Invoke(_tool, args.RootElement, ctx), CancellationToken.None);
 
         json.Should().Contain("\"ok\":true");
         json.Should().Contain("\"is_booking_confirmed\":true");
@@ -136,6 +145,7 @@ public class CreateReservationToolTests
         BusinessId = Guid.NewGuid(),
         ConversationId = Guid.NewGuid(),
         BusinessToday = new DateOnly(2026, 5, 21),
+        Config = new AgentConfig { FactSchema = AgentTestHelpers.MimiFactSchema },
         ConversationState = new ConversationStateModel(),
         Conversation = new Conversation(),
         Facts = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)

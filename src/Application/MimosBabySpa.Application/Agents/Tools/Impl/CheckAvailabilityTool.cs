@@ -1,6 +1,7 @@
 using System.Text.Json;
+using MimosBabySpa.Application.Agents.Facts;
 using MimosBabySpa.Application.Agents.Gating;
-using MimosBabySpa.Application.Agents.Templates;
+using MimosBabySpa.Application.Agents.Packs.Booking;
 using MimosBabySpa.Application.Configuration;
 using MimosBabySpa.Application.Services;
 using MimosBabySpa.Domain.Repositories;
@@ -32,12 +33,23 @@ public sealed class CheckAvailabilityTool : IAgentTool
         _verifications = verifications;
     }
 
+    public string PackId => BookingPackIds.Booking;
+
     public string Name => "check_availability";
+
+    public IReadOnlyList<RoleRequirement> RoleRequirements =>
+    [
+        new(FactRoles.BookingService, ArgName: "service"),
+        new(FactRoles.BookingDate, ArgName: "date"),
+        new(FactRoles.BookingTime, ArgName: "time", Required: false)
+    ];
+
+    public IReadOnlyList<string> RequiredTemplateIds => [];
 
     public string Description =>
         "Read-only availability lookup for a service on a date. " +
-        "If time is provided, validates that slot; otherwise returns available slots for the day. " +
-        "Returns verbal_status, slot data, and an optional rendered slots token.";
+        "Without time: returns available_slots for the day (slot_confirmed=false). " +
+        "With time: slot_confirmed=true only if that slot is free; otherwise available_slots lists alternatives.";
 
     public string ParametersSchema => """
         {
@@ -52,12 +64,12 @@ public sealed class CheckAvailabilityTool : IAgentTool
         """;
 
     public async Task<string> ExecuteAsync(
-        JsonElement arguments,
-        AgentToolContext ctx,
+        ToolInvocation invocation,
         CancellationToken cancellationToken = default)
     {
-        var service = Coalesce(arguments, "service", ConversationFactKeys.Get(ctx.Facts, ConversationFactKeys.Service));
-        var dateStr = Coalesce(arguments, "date", ConversationFactKeys.Get(ctx.Facts, ConversationFactKeys.DesiredDate));
+        var ctx = invocation.Context;
+        var service = Coalesce(invocation.Arguments, "service", invocation.Get(FactRoles.BookingService));
+        var dateStr = Coalesce(invocation.Arguments, "date", invocation.Get(FactRoles.BookingDate));
 
         if (string.IsNullOrWhiteSpace(service))
             return ToolResultHelper.Error("invalid_args", "Parameter 'service' is required.");
@@ -71,7 +83,7 @@ public sealed class CheckAvailabilityTool : IAgentTool
             return ToolResultHelper.Error("past_date", "The date must be today or in the future.");
 
         TimeSpan? time = null;
-        var timeStr = Coalesce(arguments, "time", ConversationFactKeys.Get(ctx.Facts, ConversationFactKeys.DesiredTime));
+        var timeStr = Coalesce(invocation.Arguments, "time", invocation.Get(FactRoles.BookingTime));
         if (!string.IsNullOrWhiteSpace(timeStr))
         {
             if (!TimeSpan.TryParse(timeStr, out var parsedTime))
@@ -107,61 +119,58 @@ public sealed class CheckAvailabilityTool : IAgentTool
                 ? "slots_disponibles_sin_reservar"
                 : "sin_disponibilidad";
 
-        // Solo emitir fragmento SLOTS en modo lista (sin time específico).
-        // En modo confirmación (time presente) el LLM solo debe confirmar disponibilidad del slot,
-        // no volver a listar horarios — evita el bug de repetición del slot seleccionado.
         var isListMode = !time.HasValue;
-
-        string? presentationToken = null;
         var slotsForPresentation = BuildPresentationSlots(result, timeStr);
-        if (result.IsAvailable && isListMode && slotsForPresentation.Count > 0 && ctx.Turn is not null)
-        {
-            presentationToken = ctx.Turn.RegisterFragment(
-                "SLOTS",
-                "availability_slots",
-                new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
-                {
-                    ["service_name"] = result.RequestServiceName ?? service,
-                    ["date_formatted"] = date.ToString("dd/MM/yyyy"),
-                    ["slots"] = slotsForPresentation.Select(static s => (object)s).ToList()
-                },
-                FragmentRenderMode.Inline,
-                FragmentPriority.Required);
-        }
+        var availableSlots = NormalizeSlotList(
+            slotsForPresentation.Count > 0 ? slotsForPresentation : result.AvailableTimeSlots);
+        var slotConfirmed = time.HasValue && result.IsAvailable;
 
-        if (presentationToken is not null)
+        // Modo lista: día con horarios — slot_confirmed siempre false; el motor usa el template de slots.
+        if (result.IsAvailable && isListMode && slotsForPresentation.Count > 0)
         {
             return ToolResultHelper.Ok(new
             {
-                is_available = result.IsAvailable,
+                slot_confirmed = false,
+                available_slots = availableSlots,
                 is_booking_confirmed = false,
                 slot_held = false,
                 verbal_status = verbalStatus,
                 service = result.RequestServiceName,
                 date = result.RequestDateString,
                 time = result.RequestTimeString,
-                slot_count = slotsForPresentation.Count,
+                slot_count = availableSlots.Count,
                 preferred_employee_id = preferredEmployeeId,
-                presentation_token = presentationToken,
-                presentation_instruction =
-                    "Embed presentation_token verbatim in your reply. Do NOT list slot times in prose."
+                template_id = "availability_slots",
+                template_data = new
+                {
+                    service_name = result.RequestServiceName ?? service,
+                    date_formatted = date.ToString("dd/MM/yyyy"),
+                    slots = availableSlots
+                }
             });
         }
 
         return ToolResultHelper.Ok(new
         {
-            is_available = result.IsAvailable,
+            slot_confirmed = slotConfirmed,
+            available_slots = availableSlots,
             is_booking_confirmed = false,
             slot_held = false,
             verbal_status = verbalStatus,
             service = result.RequestServiceName,
             date = result.RequestDateString,
             time = result.RequestTimeString,
-            available_slots = result.AvailableTimeSlots,
             preferred_employee_id = preferredEmployeeId,
             message = result.ResponseMessage
         });
     }
+
+    private static List<string> NormalizeSlotList(IEnumerable<string> slots) =>
+        slots
+            .Select(s => TimeOnly.TryParse(s, out var parsed) ? parsed.ToString("HH:mm") : s)
+            .Where(s => !string.IsNullOrWhiteSpace(s))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
 
     private static List<string> BuildPresentationSlots(AvailabilityResult result, string? timeStr)
     {

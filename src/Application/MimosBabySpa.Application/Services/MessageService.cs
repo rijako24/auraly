@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using MimosBabySpa.Application.Messaging;
 using MimosBabySpa.Domain.Repositories;
 
 namespace MimosBabySpa.Application.Services;
@@ -21,12 +22,13 @@ public class MessageService : IMessageService
     {
         try
         {
+            var text = FitWhatsAppTextBody(conversationId, messageText);
             var message = new Domain.Entities.Message
             {
                 MessageId      = Guid.NewGuid(),
                 ConversationId = conversationId,
                 Sender         = sender,
-                MessageText    = messageText,
+                MessageText    = text,
                 Timestamp      = DateTime.UtcNow
             };
 
@@ -41,6 +43,20 @@ public class MessageService : IMessageService
             _logger.LogError(ex, "Error al guardar mensaje para conv={ConversationId}", conversationId);
             throw;
         }
+    }
+
+    private string FitWhatsAppTextBody(Guid conversationId, string messageText)
+    {
+        if (messageText.Length <= WhatsAppMessageLimits.MaxTextBodyChars)
+            return messageText;
+
+        _logger.LogWarning(
+            "Mensaje truncado de {Original} a {Max} caracteres (límite WhatsApp) para conv={ConversationId}",
+            messageText.Length,
+            WhatsAppMessageLimits.MaxTextBodyChars,
+            conversationId);
+
+        return messageText[..WhatsAppMessageLimits.MaxTextBodyChars].Trim();
     }
 
     public async Task<IEnumerable<Domain.Entities.Message>> GetConversationHistoryAsync(Guid conversationId)

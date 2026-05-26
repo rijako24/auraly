@@ -1,35 +1,26 @@
-using MimosBabySpa.Application.Agents.Templates;
-
 namespace MimosBabySpa.Application.Agents;
 
 /// <summary>
-/// Estado acumulado de un turno del agente.
-///
-/// Reemplaza las variables mutables dispersas del bucle:
-///   totalTokens, toolCallCount, escalated, reservationCreated, ConsecutiveToolErrors.
-///
-/// Toda actualización del estado del turno ocurre a través de este objeto,
-/// centralizando la lógica de auto-escalación y side-effects.
+/// Estado acumulado de un turno del FlowEngine.
+/// Centraliza métricas y side-effects; ya no gestiona fragments.
 /// </summary>
-internal sealed class AgentTurnExecution
+public sealed class AgentTurnExecution
 {
     private readonly int _errorEscalationThreshold;
-    private readonly Dictionary<string, TurnFragment> _fragments = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _successfulToolNames = new(StringComparer.OrdinalIgnoreCase);
 
     public AgentTurnExecution(int errorEscalationThreshold)
     {
         _errorEscalationThreshold = errorEscalationThreshold;
     }
 
-    public int TotalTokens { get; private set; }
-    public int ToolCallCount { get; private set; }
+    public int TotalTokens { get; set; }
+    public int ToolCallCount { get; set; }
     public int ConsecutiveToolErrors { get; private set; }
     public bool EscalatedToHuman { get; private set; }
     public bool ReservationCreated { get; private set; }
-    public bool CheckoutPrepared { get; private set; }
 
-    public IReadOnlyList<TurnFragmentEntry> FragmentEntries =>
-        _fragments.Select(kv => new TurnFragmentEntry(kv.Key, kv.Value)).ToList();
+    public IReadOnlySet<string> SuccessfulToolNames => _successfulToolNames;
 
     public bool ShouldAutoEscalate =>
         ConsecutiveToolErrors >= _errorEscalationThreshold;
@@ -37,10 +28,9 @@ internal sealed class AgentTurnExecution
     public void AddTokens(int prompt, int completion) =>
         TotalTokens += prompt + completion;
 
-    public void RecordToolOutcome(ToolExecutionOutcome outcome)
+    public void RecordToolOutcome(ToolExecutionOutcome outcome, string toolName)
     {
         ToolCallCount++;
-
         if (outcome.IsError)
         {
             ConsecutiveToolErrors++;
@@ -48,6 +38,7 @@ internal sealed class AgentTurnExecution
         }
 
         ConsecutiveToolErrors = 0;
+        _successfulToolNames.Add(toolName);
 
         if (outcome.HasEffect(ToolSideEffectNames.ReservationCreated))
             ReservationCreated = true;
@@ -57,21 +48,6 @@ internal sealed class AgentTurnExecution
     }
 
     public void RecordToolException() => ConsecutiveToolErrors++;
-
-    public string RegisterFragment(
-        string tokenPrefix,
-        string templateId,
-        IReadOnlyDictionary<string, object?> data,
-        FragmentRenderMode mode = FragmentRenderMode.Inline,
-        FragmentPriority priority = FragmentPriority.Optional)
-    {
-        var suffix = Guid.NewGuid().ToString("N")[..6];
-        var token = $"{{{{{tokenPrefix}:{suffix}}}}}";
-        _fragments[token] = new TurnFragment(templateId, data, mode, priority);
-        return token;
-    }
-
-    public void MarkCheckoutPrepared() => CheckoutPrepared = true;
 
     public AgentTurnResult ToSuccessResult(string response) =>
         AgentTurnResult.Ok(response, EscalatedToHuman, ReservationCreated, TotalTokens, ToolCallCount);

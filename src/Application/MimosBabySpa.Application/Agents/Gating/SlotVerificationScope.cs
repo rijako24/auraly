@@ -26,21 +26,13 @@ public static class SlotVerificationScope
         IReadOnlyDictionary<string, string> facts,
         IReadOnlyList<Configuration.FactSchemaEntry>? factSchema = null)
     {
-        string? service, date, time;
+        if (factSchema is not { Count: > 0 })
+            return null;
 
-        if (factSchema is { Count: > 0 })
-        {
-            var index = new FactRoleIndex(factSchema);
-            service = index.GetByRole(facts, "booking.service");
-            date    = index.GetByRole(facts, "booking.date");
-            time    = index.GetByRole(facts, "booking.time");
-        }
-        else
-        {
-            facts.TryGetValue(ConversationFactKeys.Service, out service);
-            facts.TryGetValue(ConversationFactKeys.DesiredDate, out date);
-            facts.TryGetValue(ConversationFactKeys.DesiredTime, out time);
-        }
+        var index = new FactRoleIndex(factSchema);
+        var service = index.GetByRole(facts, FactRoles.BookingService);
+        var date = index.GetByRole(facts, FactRoles.BookingDate);
+        var time = index.GetByRole(facts, FactRoles.BookingTime);
 
         if (string.IsNullOrWhiteSpace(service)
             || string.IsNullOrWhiteSpace(date)

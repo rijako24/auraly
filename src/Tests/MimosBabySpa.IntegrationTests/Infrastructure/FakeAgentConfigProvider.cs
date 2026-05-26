@@ -1,4 +1,5 @@
 using MimosBabySpa.Application.Agents;
+using MimosBabySpa.Application.Agents.Configuration;
 
 namespace MimosBabySpa.IntegrationTests.Infrastructure;
 
@@ -21,13 +22,26 @@ public class FakeAgentConfigProvider : IAgentConfigProvider
             AgentId = agentId,
             BusinessId = _businessId,
             Name = "Mimo",
-            Persona = """
-                Eres Mimo, asistente de MimosBabySpa.
+            PromptSections =
+            [
+                new PromptSection
+                {
+                    Id = "persona",
+                    Order = 10,
+                    Content = """
+                        Eres Mimo, asistente de MimosBabySpa.
 
-                ## SALUDO Y PRESENTACION
-                En el primer mensaje saluda y preséntate. En turnos siguientes no repitas el saludo.
-                """,
-            FirstTurnGreetingHint = "¡Hola! 😊 Soy Mimo de Mimo's Baby Spa. Un gusto saludarte.",
+                        ## SALUDO Y PRESENTACION
+                        En el primer mensaje saluda y preséntate. En turnos siguientes no repitas el saludo.
+                        """
+                }
+            ],
+            CapabilityPacks = ["booking"],
+            HumanMessages = new AgentHumanMessages
+            {
+                EscalationUserMessage = "Te conecto con un agente humano en un momento.",
+                SemanticTriggerLineFormat = "- `{0}`: Úsalo cuando {1}."
+            },
             Model = "gpt-4.1-mini",
             Temperature = 0.3f,
             MaxToolIterations = 8,

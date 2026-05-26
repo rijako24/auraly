@@ -3,6 +3,7 @@ using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using MimosBabySpa.Application.DTOs;
+using MimosBabySpa.Application.Messaging;
 using MimosBabySpa.Application.Services;
 using MimosBabySpa.Infrastructure.Configuration;
 
@@ -75,13 +76,14 @@ public class WhatsAppService : IWhatsAppService
     public async Task SendTextMessageAsync(Guid businessId, string to, string message)
     {
         var credentials = await ResolveCredentialsAsync(businessId);
+        var body = FitTextBody(to, message);
 
         var payload = new
         {
             messaging_product = "whatsapp",
             to = to,
             type = "text",
-            text = new { body = message }
+            text = new { body }
         };
 
         var json = JsonSerializer.Serialize(payload);
@@ -207,6 +209,20 @@ public class WhatsAppService : IWhatsAppService
         if (mode != "subscribe" || string.IsNullOrEmpty(challenge))
             return Task.FromResult(false);
         return Task.FromResult(token == _verifyToken);
+    }
+
+    private string FitTextBody(string to, string message)
+    {
+        if (message.Length <= WhatsAppMessageLimits.MaxTextBodyChars)
+            return message;
+
+        _logger.LogWarning(
+            "Texto WhatsApp truncado de {Original} a {Max} chars para destinatario {To}",
+            message.Length,
+            WhatsAppMessageLimits.MaxTextBodyChars,
+            to);
+
+        return message[..WhatsAppMessageLimits.MaxTextBodyChars].Trim();
     }
 
     private async Task<WhatsAppCredentials> ResolveCredentialsAsync(Guid businessId)

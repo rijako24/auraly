@@ -8,12 +8,10 @@ namespace MimosBabySpa.Application.Services;
 public sealed class AddOnCatalogService : IAddOnCatalogService
 {
     private readonly IUnitOfWork _unitOfWork;
-    private readonly ServiceNameResolver _nameResolver;
 
-    public AddOnCatalogService(IUnitOfWork unitOfWork, ServiceNameResolver nameResolver)
+    public AddOnCatalogService(IUnitOfWork unitOfWork)
     {
         _unitOfWork = unitOfWork;
-        _nameResolver = nameResolver;
     }
 
     public async Task<IReadOnlyList<AddOnRuleInfo>> GetCompatibleAsync(
@@ -56,12 +54,13 @@ public sealed class AddOnCatalogService : IAddOnCatalogService
             .Select(a => a.AddOnName)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
+        var activeServices = (await _unitOfWork.Services.GetActiveByBusinessIdAsync(businessId)).ToList();
         var resolvedNames = new List<string>();
         var invalidNames = new List<string>();
 
         foreach (var rawName in SplitNames(addOnsCsv))
         {
-            var canonical = await _nameResolver.ResolveAsync(businessId, rawName, ct);
+            var canonical = ActiveServiceCatalogMatcher.MatchExact(activeServices, rawName);
             if (canonical is null || !compatibleNames.Contains(canonical))
             {
                 invalidNames.Add(rawName);
@@ -88,7 +87,8 @@ public sealed class AddOnCatalogService : IAddOnCatalogService
     private async Task<Service?> ResolveServiceAsync(
         Guid businessId, string serviceName, CancellationToken ct)
     {
-        var canonical = await _nameResolver.ResolveAsync(businessId, serviceName, ct);
+        var services = await _unitOfWork.Services.GetActiveByBusinessIdAsync(businessId);
+        var canonical = ActiveServiceCatalogMatcher.MatchExact(services, serviceName);
         if (canonical is null)
             return null;
 

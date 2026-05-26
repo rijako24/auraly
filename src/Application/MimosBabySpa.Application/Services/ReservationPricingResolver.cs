@@ -5,31 +5,21 @@ using MimosBabySpa.Domain.Repositories;
 namespace MimosBabySpa.Application.Services;
 
 /// <summary>
-/// Resuelve precios de items del catálogo de un negocio.
-/// Genérico: no distingue entre servicios, add-ons ni complementos.
-/// Recibe un diccionario de items, resuelve cada uno contra la BD y suma totales.
+/// Resuelve precios de items del catálogo de un negocio (coincidencia exacta de nombre).
 /// </summary>
 public class ReservationPricingResolver
 {
     private readonly IUnitOfWork _unitOfWork;
-    private readonly ServiceNameResolver _nameResolver;
     private readonly ILogger<ReservationPricingResolver> _logger;
 
     public ReservationPricingResolver(
         IUnitOfWork unitOfWork,
-        ServiceNameResolver nameResolver,
         ILogger<ReservationPricingResolver> logger)
     {
         _unitOfWork = unitOfWork;
-        _nameResolver = nameResolver;
         _logger = logger;
     }
 
-    /// <summary>
-    /// Resuelve precios para un conjunto de items identificados por clave.
-    /// Cada valor puede ser un nombre simple o CSV (separado por <c>,</c> o <c>;</c>).
-    /// Valores vacíos, nulos o "ninguno" se ignoran.
-    /// </summary>
     public async Task<PricingResult?> ResolveAsync(
         Guid businessId,
         IReadOnlyDictionary<string, string?> items,
@@ -37,6 +27,7 @@ public class ReservationPricingResolver
     {
         var lineItems = new List<PricingLineItem>();
         var formattedByKey = new Dictionary<string, string>();
+        var activeServices = (await _unitOfWork.Services.GetActiveByBusinessIdAsync(businessId)).ToList();
 
         foreach (var (inputKey, rawValue) in items)
         {
@@ -47,15 +38,16 @@ public class ReservationPricingResolver
 
             foreach (var name in SplitNames(rawValue))
             {
-                var canonical = await _nameResolver.ResolveAsync(businessId, name, ct);
-                if (canonical == null)
+                var canonical = ActiveServiceCatalogMatcher.MatchExact(activeServices, name);
+                if (canonical is null)
                 {
-                    _logger.LogWarning("PricingResolver: '{Name}' not resolved — skipped", name);
+                    _logger.LogWarning("PricingResolver: '{Name}' not in active catalog — skipped", name);
                     continue;
                 }
 
                 var entity = await _unitOfWork.Services.GetByBusinessIdAndNameAsync(businessId, canonical);
-                if (entity == null) continue;
+                if (entity is null)
+                    continue;
 
                 lineItems.Add(new PricingLineItem(entity.ServiceName, entity.Price));
                 resolvedForKey.Add(FormatItem(entity.ServiceName, entity.Price));
@@ -65,7 +57,8 @@ public class ReservationPricingResolver
                 formattedByKey[inputKey] = string.Join("; ", resolvedForKey);
         }
 
-        if (lineItems.Count == 0) return null;
+        if (lineItems.Count == 0)
+            return null;
 
         var total = lineItems.Sum(li => li.Price);
         return new PricingResult(lineItems, formattedByKey, total);

@@ -1,4 +1,3 @@
-using MimosBabySpa.Application.Agents;
 using MimosBabySpa.Domain.Repositories;
 
 namespace MimosBabySpa.Application.Services;
@@ -24,23 +23,6 @@ public sealed class ConversationFactsService : IConversationFactsService
     public async Task SetAsync(Guid conversationId, Guid businessId, string key, string value, CancellationToken ct = default)
     {
         await _unitOfWork.ConversationContexts.CreateOrUpdateAsync(conversationId, key, value);
-
-        if (key.Equals(ConversationFactKeys.CustomerName, StringComparison.OrdinalIgnoreCase)
-            || key.Equals(ConversationFactKeys.CustomerEmail, StringComparison.OrdinalIgnoreCase))
-        {
-            var conversation = await _unitOfWork.Conversations.GetByIdAsync(conversationId);
-            if (conversation is not null)
-            {
-                if (key.Equals(ConversationFactKeys.CustomerName, StringComparison.OrdinalIgnoreCase))
-                    conversation.CustomerName = value;
-                else
-                    conversation.CustomerEmail = value;
-
-                conversation.Timestamp = DateTime.UtcNow;
-                await _unitOfWork.Conversations.UpdateAsync(conversation);
-            }
-        }
-
         await _unitOfWork.SaveChangesAsync(ct);
     }
 }

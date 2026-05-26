@@ -34,11 +34,18 @@ public sealed class AzureOpenAIChatClient : IChatClient
         try
         {
             var sdkMessages = messages.Select(ToSdkMessage).ToList();
-            var sdkOptions = new ChatCompletionsOptions(_deploymentName, sdkMessages)
+            var deployment = string.IsNullOrWhiteSpace(options?.DeploymentNameOverride)
+                ? _deploymentName
+                : options!.DeploymentNameOverride!.Trim();
+
+            var sdkOptions = new ChatCompletionsOptions(deployment, sdkMessages)
             {
                 Temperature = options?.Temperature ?? 0.7f,
                 MaxTokens = options?.MaxTokens ?? 800
             };
+
+            if (options?.ForceJsonResponse == true)
+                sdkOptions.ResponseFormat = ChatCompletionsResponseFormat.JsonObject;
 
             if (tools is { Count: > 0 } && options?.ForceTextResponse != true)
             {
@@ -49,8 +56,8 @@ public sealed class AzureOpenAIChatClient : IChatClient
             }
 
             _logger.LogDebug(
-                "Chat completion: messages={MsgCount}, tools={ToolCount}, forceText={Force}",
-                messages.Count, tools?.Count ?? 0, options?.ForceTextResponse);
+                "Chat completion: messages={MsgCount}, tools={ToolCount}, forceText={Force}, forceJson={Json}",
+                messages.Count, tools?.Count ?? 0, options?.ForceTextResponse, options?.ForceJsonResponse);
 
             var response = await _client.GetChatCompletionsAsync(sdkOptions, cancellationToken);
             var choice = response.Value.Choices[0];

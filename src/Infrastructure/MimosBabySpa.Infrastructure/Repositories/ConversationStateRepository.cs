@@ -34,6 +34,9 @@ public class ConversationStateRepository : IConversationStateRepository
             existing.LastUserMessage = entity.LastUserMessage;
             existing.LastBotMessage = entity.LastBotMessage;
             existing.VerificationsJson = entity.VerificationsJson;
+            existing.StageSnapshotsJson = entity.StageSnapshotsJson;
+            existing.CompletedStagesJson = entity.CompletedStagesJson;
+            existing.LastAskedFact = entity.LastAskedFact;
             existing.Version = entity.Version;
             existing.UpdatedAt = entity.UpdatedAt;
             _context.ConversationStates.Update(existing);

@@ -35,7 +35,7 @@ internal static class CheckoutTemplateDataBuilder
             ["total"] = pricing.Total.ToString("N0", CultureInfo.InvariantCulture),
             ["date_formatted"] = date.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture),
             ["time"] = time.ToString("HH:mm", CultureInfo.InvariantCulture),
-            ["currency"] = string.IsNullOrWhiteSpace(policy.Currency) ? "COP" : policy.Currency,
+            ["currency"] = policy.Currency,
             ["deposit_pct"] = policy.DepositPercentage,
             ["deposit"] = (checkout.DepositCents / 100m).ToString("N0", CultureInfo.InvariantCulture),
             ["customer_name"] = customerName,

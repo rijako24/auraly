@@ -2,6 +2,8 @@ using System.Text.Json;
 using FluentAssertions;
 using Moq;
 using MimosBabySpa.Application.Agents;
+using MimosBabySpa.Application.Agents.Facts;
+using MimosBabySpa.Application.Agents.Packs.Booking;
 using MimosBabySpa.Application.Agents.Tools.Impl;
 using MimosBabySpa.Application.Configuration;
 using MimosBabySpa.Application.DTOs;
@@ -40,7 +42,7 @@ public class ResolvePricingToolTests
         using var args = JsonDocument.Parse("""
             {"service":"Plan Marineritos","add_ons":"Decoración Sencilla"}
             """);
-        var json = await tool.ExecuteAsync(args.RootElement, ctx, CancellationToken.None);
+        var json = await tool.ExecuteAsync(AgentTestHelpers.Invoke(tool, args.RootElement, ctx), CancellationToken.None);
 
         json.Should().Contain("\"ok\":true");
         json.Should().Contain("\"deposit_required\":true");
@@ -64,7 +66,7 @@ public class ResolvePricingToolTests
         var ctx = new AgentToolContext { BusinessId = Guid.NewGuid() };
 
         using var args = JsonDocument.Parse("""{"service":"Unknown"}""");
-        var json = await tool.ExecuteAsync(args.RootElement, ctx, CancellationToken.None);
+        var json = await tool.ExecuteAsync(AgentTestHelpers.Invoke(tool, args.RootElement, ctx), CancellationToken.None);
 
         json.Should().Contain("service_not_found");
     }
@@ -105,7 +107,7 @@ public class GeneratePaymentLinkToolTests
 
         var ctx = CreateContext(service: null);
         using var args = JsonDocument.Parse("{}");
-        var json = await tool.ExecuteAsync(args.RootElement, ctx, CancellationToken.None);
+        var json = await tool.ExecuteAsync(AgentTestHelpers.Invoke(tool, args.RootElement, ctx), CancellationToken.None);
 
         json.Should().Contain("missing_prerequisites");
     }
@@ -122,8 +124,13 @@ public class GeneratePaymentLinkToolTests
             .ReturnsAsync(CreateCheckoutResult(100000, 0, depositRequired: false));
 
         var ctx = CreateContext("Plan Marineritos");
+        AgentTestHelpers.SetBookingPack(ctx, new BookingPolicyParams
+        {
+            DepositRequired = false,
+            Currency = "COP"
+        });
         using var args = JsonDocument.Parse("{}");
-        var json = await tool.ExecuteAsync(args.RootElement, ctx, CancellationToken.None);
+        var json = await tool.ExecuteAsync(AgentTestHelpers.Invoke(tool, args.RootElement, ctx), CancellationToken.None);
 
         json.Should().Contain("deposit_not_required");
     }
@@ -175,13 +182,13 @@ public class GeneratePaymentLinkToolTests
 
         var ctx = CreateContext("Plan Marineritos", "Decoración Sencilla");
         using var args = JsonDocument.Parse("{}");
-        var json = await tool.ExecuteAsync(args.RootElement, ctx, CancellationToken.None);
+        var json = await tool.ExecuteAsync(AgentTestHelpers.Invoke(tool, args.RootElement, ctx), CancellationToken.None);
 
         json.Should().Contain("\"ok\":true");
         json.Should().Contain("\"deposit_cents\":100000");
         json.Should().Contain("https://pay.test/link");
-        ctx.ActivePayment!.LinkUrl.Should().Be("https://pay.test/link");
-        ctx.ActivePayment.AmountInCents.Should().Be(100000);
+        ctx.GetPackContext<IBookingPackContext>()!.ActivePayment!.LinkUrl.Should().Be("https://pay.test/link");
+        ctx.GetPackContext<IBookingPackContext>()!.ActivePayment!.AmountInCents.Should().Be(100000);
     }
 
     [Fact]
@@ -223,7 +230,7 @@ public class GeneratePaymentLinkToolTests
 
         var ctx = CreateContext("Plan Marineritos", channelPhone: "+573001234567");
         using var args = JsonDocument.Parse("{}");
-        var json = await tool.ExecuteAsync(args.RootElement, ctx, CancellationToken.None);
+        var json = await tool.ExecuteAsync(AgentTestHelpers.Invoke(tool, args.RootElement, ctx), CancellationToken.None);
 
         json.Should().Contain("\"ok\":true");
     }
@@ -306,21 +313,31 @@ public class GeneratePaymentLinkToolTests
     {
         var facts = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         if (!string.IsNullOrWhiteSpace(service))
-            facts[ConversationFactKeys.Service] = service;
+            facts["service"] = service;
         if (!string.IsNullOrWhiteSpace(addOns))
-            facts[ConversationFactKeys.AddOns] = addOns;
+            facts["add_ons"] = addOns;
         if (!string.IsNullOrWhiteSpace(phone))
-            facts[ConversationFactKeys.CustomerPhone] = phone;
+            facts["customer_phone"] = phone;
 
-        return new AgentToolContext
+        var ctx = new AgentToolContext
         {
             BusinessId = _businessId,
             ConversationId = _conversationId,
             ChannelPhone = channelPhone ?? "+573001234567",
+            Config = new AgentConfig { FactSchema = AgentTestHelpers.MimiFactSchema },
             ConversationState = new ConversationStateModel { BusinessId = _businessId },
             Conversation = new Conversation(),
             Facts = facts
         };
+
+        AgentTestHelpers.SetBookingPack(ctx, new BookingPolicyParams
+        {
+            DepositRequired = true,
+            DepositPercentage = 50,
+            Currency = "COP"
+        });
+
+        return ctx;
     }
 
     private static CheckoutPricingResult CreateCheckoutResult(

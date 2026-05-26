@@ -18,7 +18,7 @@ using MimosBabySpa.Application.BusinessRules;
 using MimosBabySpa.Application.Configuration;
 using MimosBabySpa.Application.StateManagement;
 
-// Agentic Engine (Function Calling)
+// Agentic Engine
 using MimosBabySpa.Application.Agents;
 using MimosBabySpa.Application.Agents.Composition;
 using MimosBabySpa.Application.Agents.Facts;
@@ -26,6 +26,11 @@ using MimosBabySpa.Application.Agents.Gating;
 using MimosBabySpa.Application.Agents.Tools;
 using MimosBabySpa.Application.Agents.Tools.Impl;
 using MimosBabySpa.Application.LLM;
+using MimosBabySpa.Application.Agents.Identity;
+using MimosBabySpa.Application.Agents.Packs;
+using MimosBabySpa.Application.Agents.Packs.Booking;
+using MimosBabySpa.Application.Agents.Packs.Leadgen;
+using MimosBabySpa.Application.Agents.Orchestration;
 using MimosBabySpa.Application.Agents.Templates;
 using MimosBabySpa.Application.Time;
 using MimosBabySpa.Infrastructure.LLM;
@@ -63,7 +68,6 @@ var host = new HostBuilder()
         services.AddScoped<IWhatsAppWebhookParserService, WhatsAppWebhookParserService>();
         services.AddScoped<IEmployeeAssignmentService, EmployeeAssignmentService>();
         services.AddScoped<IAvailabilityService, AvailabilityService>();
-        services.AddScoped<ServiceNameResolver>();
         services.AddScoped<ReservationPricingResolver>();
         services.AddScoped<ReservationCheckoutPricing>();
         services.AddScoped<IReservationCheckoutPricing>(sp =>
@@ -125,6 +129,14 @@ var host = new HostBuilder()
         services.AddScoped<IConversationFactsService, ConversationFactsService>();
         services.AddScoped<IReservationLifecycleService, ReservationLifecycleService>();
         services.AddScoped<IPaymentLifecycleService, PaymentLifecycleService>();
+        services.AddSingleton<IFactAccessor, FactAccessor>();
+        services.AddSingleton<IRoleFactResolver, RoleFactResolver>();
+        services.AddSingleton<IToolCapabilityPack, BookingPack>();
+        services.AddSingleton<IToolCapabilityPack, LeadgenPack>();
+        services.AddSingleton<IToolCapabilityPackRegistry, ToolCapabilityPackRegistry>();
+        services.AddScoped<IPackContextLoader, BookingPackContextLoader>();
+        services.AddScoped<IPackContextLoader, LeadgenPackContextLoader>();
+        services.AddScoped<IIdentityAttributeService, IdentityAttributeService>();
         services.AddScoped<IReservationIntentBuilder, ReservationIntentBuilder>();
 
         // Webhook signature validation (Wompi)
@@ -138,7 +150,7 @@ var host = new HostBuilder()
         services.AddScoped<IReleaseLinkService>(sp => sp.GetRequiredService<AdminActionLinkService>());
         services.AddScoped<IConversationReleaseService, ConversationReleaseService>();
 
-        // ── AGENTIC ENGINE (Function Calling) ─────────────────────────────────────
+        // ── AGENTIC ENGINE (FlowEngine) ───────────────────────────────────────────
         services.AddScoped<IChatClient>(sp =>
         {
             var textClient = sp.GetRequiredKeyedService<OpenAIClient>("Text");
@@ -149,7 +161,6 @@ var host = new HostBuilder()
 
         services.AddScoped<IAgentConfigProvider, AgentConfigProvider>();
 
-        // Hydrator: plugin model
         services.AddSingleton<IFactSourceResolver, MimosBabySpa.Application.Agents.Facts.Resolvers.ChannelPhoneResolver>();
         services.AddSingleton<IFactSourceResolver, MimosBabySpa.Application.Agents.Facts.Resolvers.ChannelEmailResolver>();
         services.AddSingleton<IFactSourceResolver, MimosBabySpa.Application.Agents.Facts.Resolvers.EngagementResolver>();
@@ -158,11 +169,11 @@ var host = new HostBuilder()
         services.AddScoped<IConversationVerificationService, ConversationVerificationService>();
         services.AddScoped<IGuardEvaluator, GuardEvaluator>();
         services.AddScoped<IToolCapabilityGate, ToolCapabilityGate>();
-        services.AddScoped<IPromptComposer, AgentPromptComposer>();
+        services.AddScoped<IFlowLlm, FlowLlm>();
+        services.AddScoped<IFlowEngine, FlowEngine>();
 
         services.AddScoped<IAgentTemplateResolver, AgentTemplateResolver>();
         services.AddScoped<ITemplateRenderer, PromptTemplateRenderer>();
-        services.AddScoped<IAgentTurnResponseComposer, AgentTurnResponseComposer>();
 
         services.AddScoped<IAgentTool, CheckAvailabilityTool>();
         services.AddScoped<IAgentTool, ResolvePricingTool>();
@@ -176,6 +187,7 @@ var host = new HostBuilder()
         services.AddScoped<IAgentTool, EscalateToHumanTool>();
         services.AddScoped<IAgentTool, GetServiceCatalogTool>();
         services.AddScoped<IAgentTool, SetFactTool>();
+        services.AddScoped<IAgentTool, CaptureLeadTool>();
 
         services.AddScoped<AgentToolRegistry>();
         services.AddScoped<IAgentConversationService, AgentConversationService>();

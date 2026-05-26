@@ -1,6 +1,7 @@
 using FluentAssertions;
 using Microsoft.Extensions.Logging;
 using Moq;
+using MimosBabySpa.Application.Messaging;
 using MimosBabySpa.Application.Services;
 using MimosBabySpa.Domain.Entities;
 using MimosBabySpa.Domain.Repositories;
@@ -90,5 +91,27 @@ public class MessageServiceTests
         result.Should().NotBeNull();
         result.Should().HaveCount(2);
         _mockMessageRepository.Verify(x => x.GetByConversationIdAsync(conversationId), Times.Once);
+    }
+
+    [Fact]
+    public async Task SaveMessageAsync_TruncatesToWhatsAppTextBodyLimit()
+    {
+        var conversationId = Guid.NewGuid();
+        var longText = new string('x', WhatsAppMessageLimits.MaxTextBodyChars + 500);
+        var expectedTruncated = longText[..WhatsAppMessageLimits.MaxTextBodyChars].Trim();
+
+        _mockMessageRepository
+            .Setup(x => x.CreateAsync(It.IsAny<Message>()))
+            .ReturnsAsync((Message m) => m);
+
+        _mockUnitOfWork
+            .Setup(x => x.SaveChangesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(1);
+
+        var result = await _service.SaveMessageAsync(conversationId, "bot", longText);
+
+        result.MessageText.Should().Be(expectedTruncated);
+        _mockMessageRepository.Verify(x => x.CreateAsync(It.Is<Message>(m =>
+            m.MessageText.Length == WhatsAppMessageLimits.MaxTextBodyChars)), Times.Once);
     }
 }

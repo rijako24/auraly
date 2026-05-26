@@ -23,6 +23,11 @@ using MimosBabySpa.Application.Agents.Tools.Impl;
 using MimosBabySpa.Application.BusinessRules;
 using MimosBabySpa.Application.Configuration;
 using MimosBabySpa.Application.StateManagement;
+using MimosBabySpa.Application.Agents.Identity;
+using MimosBabySpa.Application.Agents.Packs;
+using MimosBabySpa.Application.Agents.Packs.Booking;
+using MimosBabySpa.Application.Agents.Packs.Leadgen;
+using MimosBabySpa.Application.Agents.Orchestration;
 using MimosBabySpa.Application.Agents.Templates;
 using MimosBabySpa.Application.Time;
 using MimosBabySpa.Infrastructure.LLM;
@@ -84,7 +89,6 @@ services.AddScoped<IBusinessConfigurationService, BusinessConfigurationService>(
 services.AddScoped<IWhatsAppWebhookParserService, WhatsAppWebhookParserService>();
 services.AddScoped<IEmployeeAssignmentService, EmployeeAssignmentService>();
 services.AddScoped<IAvailabilityService, AvailabilityService>();
-services.AddScoped<ServiceNameResolver>();
 services.AddScoped<ReservationPricingResolver>();
 services.AddScoped<ReservationCheckoutPricing>();
 services.AddScoped<IReservationCheckoutPricing>(sp =>
@@ -119,9 +123,16 @@ services.AddMemoryCache();
 services.AddScoped<ILocalizationService, LocalizationService>();
 services.AddScoped<IConversationStateManager, ConversationStateManager>();
 services.AddScoped<IConversationFactsService, ConversationFactsService>();
-services.AddScoped<IConversationFactsService, ConversationFactsService>();
 services.AddScoped<IReservationLifecycleService, ReservationLifecycleService>();
 services.AddScoped<IPaymentLifecycleService, PaymentLifecycleService>();
+services.AddSingleton<IFactAccessor, FactAccessor>();
+services.AddSingleton<IRoleFactResolver, RoleFactResolver>();
+services.AddSingleton<IToolCapabilityPack, BookingPack>();
+services.AddSingleton<IToolCapabilityPack, LeadgenPack>();
+services.AddSingleton<IToolCapabilityPackRegistry, ToolCapabilityPackRegistry>();
+services.AddScoped<IPackContextLoader, BookingPackContextLoader>();
+services.AddScoped<IPackContextLoader, LeadgenPackContextLoader>();
+services.AddScoped<IIdentityAttributeService, IdentityAttributeService>();
 services.AddScoped<IReservationIntentBuilder, ReservationIntentBuilder>();
 services.AddScoped<IEscalationNotifier, EscalationNotifier>();
 services.AddScoped<IEscalationConfigProvider, EscalationConfigProvider>();
@@ -149,7 +160,7 @@ services.AddScoped<ICalendarService, GoogleCalendarService>();
 // ── Business Rules Engine ──────────────────────────────────────────────────────
 services.AddScoped<IBusinessRuleEngine, BusinessRuleEngine>();
 
-// ── Agentic Engine (Function Calling) ─────────────────────────────────────────
+// ── Agentic Engine (FlowEngine) ───────────────────────────────────────────────
 services.AddScoped<MimosBabySpa.Application.LLM.IChatClient>(sp =>
 {
     var textClient = sp.GetRequiredKeyedService<OpenAIClient>("Text");
@@ -160,7 +171,6 @@ services.AddScoped<MimosBabySpa.Application.LLM.IChatClient>(sp =>
 
 services.AddScoped<IAgentConfigProvider, AgentConfigProvider>();
 
-// Hydrator: plugin model
 services.AddSingleton<IFactSourceResolver, MimosBabySpa.Application.Agents.Facts.Resolvers.ChannelPhoneResolver>();
 services.AddSingleton<IFactSourceResolver, MimosBabySpa.Application.Agents.Facts.Resolvers.ChannelEmailResolver>();
 services.AddSingleton<IFactSourceResolver, MimosBabySpa.Application.Agents.Facts.Resolvers.EngagementResolver>();
@@ -169,11 +179,11 @@ services.AddSingleton<IFlowStageDetector, FlowStageDetector>();
 services.AddScoped<IConversationVerificationService, ConversationVerificationService>();
 services.AddScoped<IGuardEvaluator, GuardEvaluator>();
 services.AddScoped<IToolCapabilityGate, ToolCapabilityGate>();
-services.AddScoped<IPromptComposer, AgentPromptComposer>();
+services.AddScoped<IFlowLlm, FlowLlm>();
+services.AddScoped<IFlowEngine, FlowEngine>();
 
 services.AddScoped<IAgentTemplateResolver, AgentTemplateResolver>();
 services.AddScoped<ITemplateRenderer, PromptTemplateRenderer>();
-services.AddScoped<IAgentTurnResponseComposer, AgentTurnResponseComposer>();
 
 services.AddScoped<IAgentTool, CheckAvailabilityTool>();
 services.AddScoped<IAgentTool, ResolvePricingTool>();
@@ -187,6 +197,7 @@ services.AddScoped<IAgentTool, VerifyPaymentTool>();
 services.AddScoped<IAgentTool, EscalateToHumanTool>();
 services.AddScoped<IAgentTool, GetServiceCatalogTool>();
 services.AddScoped<IAgentTool, SetFactTool>();
+services.AddScoped<IAgentTool, CaptureLeadTool>();
 
 services.AddScoped<AgentToolRegistry>();
 services.AddScoped<IAgentConversationService, AgentConversationService>();
@@ -212,7 +223,7 @@ const string agentIdStr = "7105A9D5-D4E4-4BBA-9F3A-DBB34E0B1B86";
 var agentId = Guid.Parse(agentIdStr);
 
 // Simula el teléfono del cliente (clave de sesión)
-const string userPhone = "+12345679711";
+const string userPhone = "+12345679751";
 
 while (true)
 {

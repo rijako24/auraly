@@ -12,8 +12,14 @@ public class BookingPolicyParams
     /// <summary>Porcentaje del total que se cobra como anticipo (0–100).</summary>
     public int DepositPercentage { get; set; } = 50;
 
-    /// <summary>Código ISO de moneda para links de pago (ej. COP).</summary>
-    public string Currency { get; set; } = "COP";
+    /// <summary>Código ISO de moneda para links de pago (ej. COP). Sin default en runtime — configurar por negocio.</summary>
+    public string Currency { get; set; } = string.Empty;
+
+    /// <summary>Minutos de expiración del link de pago.</summary>
+    public int PaymentLinkExpirationMinutes { get; set; } = 60;
+
+    /// <summary>Duración default de servicio cuando el catálogo no define duración.</summary>
+    public int DefaultServiceDurationMinutes { get; set; } = 60;
 
     public static readonly BookingPolicyParams Default = new();
 

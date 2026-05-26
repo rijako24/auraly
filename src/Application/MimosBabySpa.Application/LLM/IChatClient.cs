@@ -30,6 +30,17 @@ public sealed class ChatCompletionOptions
     /// Usado para cortar loops o forzar respuesta final.
     /// </summary>
     public bool ForceTextResponse { get; init; }
+
+    /// <summary>
+    /// Cuando es true, fuerza response_format = json_object.
+    /// Requerido para que el FlowEngine reciba JSON estructurado del LLM.
+    /// </summary>
+    public bool ForceJsonResponse { get; init; }
+
+    /// <summary>
+    /// Override del deployment/modelo para esta llamada.
+    /// </summary>
+    public string? DeploymentNameOverride { get; init; }
 }
 
 /// <summary>

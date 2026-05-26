@@ -28,6 +28,18 @@ public class ConversationState
     /// </summary>
     public HashSet<string> CompletedOneShotStages { get; set; } = new(StringComparer.Ordinal);
 
+    /// <summary>
+    /// Ids de etapas con ExecutesTool que ya ejecutaron su tool con éxito.
+    /// Permite al detector de etapas avanzar de checkout → closure sin esperar facts adicionales.
+    /// Se borra si reentryOnFactChanged detecta un cambio relevante en la etapa.
+    /// </summary>
+    public HashSet<string> CompletedActionStages { get; set; } = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Fact key preguntado en el turno anterior del bot. Usado por NEXT MOVE para interpretar respuestas.
+    /// </summary>
+    public string? LastAskedFact { get; set; }
+
     public int Version { get; set; } = 1;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;

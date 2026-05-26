@@ -9,6 +9,7 @@ public class Lead
     public DateTime Timestamp { get; set; }
     public string? CustomerName { get; set; }
     public string? CustomerEmail { get; set; }
+    public string? IdentityAttributesJson { get; set; }
     public string? Notes { get; set; }
 
     public virtual Business Business { get; set; } = null!;

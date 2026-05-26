@@ -6,9 +6,6 @@ using MimosBabySpa.Domain.Repositories;
 
 namespace MimosBabySpa.Application.Agents;
 
-/// <summary>
-/// Lee la configuración del agente desde BD y la cachea 10 minutos.
-/// </summary>
 public sealed class AgentConfigProvider : IAgentConfigProvider
 {
     private readonly IAgentRepository _agentRepo;
@@ -17,7 +14,6 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
 
     private static readonly TimeSpan CacheTtl = TimeSpan.FromMinutes(10);
     private const string CachePrefix = "agent_config_";
-
 
     public AgentConfigProvider(
         IAgentRepository agentRepo,
@@ -46,15 +42,17 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
             AgentId = agentId,
             BusinessId = agent.BusinessId,
             Name = agent.Name,
-            Persona = settings.Persona?.Trim() ?? string.Empty,
-            Policies = settings.Policies?.Trim() ?? string.Empty,
+            PromptSections = settings.PromptSections ?? [],
             Flow = settings.Flow ?? new AgentFlowDefinition(),
             FactSchema = settings.FactSchema ?? [],
             Guards = settings.Guards ?? new Dictionary<string, GuardDefinition>(StringComparer.OrdinalIgnoreCase),
             Templates = settings.Templates ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
             SystemPrompt = agent.SystemPromptMarkdown?.Trim() ?? string.Empty,
             KillSwitchPhrases = settings.KillSwitchPhrases ?? [],
-            Model = settings.Model ?? "gpt-4.1-mini",
+            HumanMessages = settings.HumanMessages ?? new AgentHumanMessages(),
+            OperationalLimits = settings.OperationalLimits ?? new AgentOperationalLimits(),
+            CapabilityPacks = settings.CapabilityPacks ?? [Packs.Booking.BookingPackIds.Booking],
+            Model = settings.Model ?? string.Empty,
             Temperature = settings.Temperature ?? 0.7f,
             MaxToolIterations = settings.MaxToolIterations ?? 6,
             ConsecutiveErrorEscalationThreshold = settings.ConsecutiveErrorEscalationThreshold ?? 3,
@@ -62,97 +60,36 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
             EscalationContacts = settings.EscalationContacts ?? []
         };
 
-        if (config.EnabledToolNames.Count == 0)
-        {
-            _logger.LogWarning(
-                "AgentConfig {AgentId}: enabledTools is empty — agent will have no tools available. Configure tools in SettingsJson.",
-                agentId);
-        }
+        if (string.IsNullOrWhiteSpace(config.Model))
+            _logger.LogWarning("AgentConfig {AgentId}: model is not configured.", agentId);
+
+        if (string.IsNullOrWhiteSpace(config.HumanMessages.EscalationUserMessage))
+            _logger.LogWarning("AgentConfig {AgentId}: humanMessages.escalationUserMessage is not configured.", agentId);
 
         _cache.Set(cacheKey, config, CacheTtl);
 
         _logger.LogInformation(
-            "AgentConfig loaded: AgentId={Id}, Model={Model}, Tools={Tools}, FlowStages={Stages}",
-            agentId, config.Model, string.Join(",", config.EnabledToolNames), config.Flow.Stages.Count);
-
-        ValidateConfig(config);
+            "AgentConfig loaded: AgentId={Id} Model={Model} FlowStages={Stages} Templates={Tpls}",
+            agentId, config.Model, config.Flow.Stages.Count, config.Templates.Count);
 
         return config;
     }
 
-    /// <summary>
-    /// Valida la coherencia de la configuración del agente y emite advertencias en log.
-    /// No lanza excepciones — la config se acepta aunque tenga inconsistencias menores.
-    /// </summary>
-    private void ValidateConfig(AgentConfig config)
-    {
-        var schemaKeys = new HashSet<string>(
-            config.FactSchema.Select(e => e.Key),
-            StringComparer.OrdinalIgnoreCase);
-
-        foreach (var stage in config.Flow.Stages)
-        {
-            foreach (var factKey in stage.AdvanceWhenFacts)
-            {
-                if (!schemaKeys.Contains(factKey))
-                {
-                    _logger.LogWarning(
-                        "AgentConfig {AgentId}: stage '{Stage}' advanceWhenFacts references unknown fact '{Key}'",
-                        config.AgentId, stage.Id, factKey);
-                }
-            }
-
-            foreach (var factKey in stage.ReentryOnFactChanged)
-            {
-                if (!schemaKeys.Contains(factKey))
-                {
-                    _logger.LogWarning(
-                        "AgentConfig {AgentId}: stage '{Stage}' reentryOnFactChanged references unknown fact '{Key}'",
-                        config.AgentId, stage.Id, factKey);
-                }
-            }
-
-            if (stage.AutoSetOnSkip.Count > 0 && string.IsNullOrWhiteSpace(stage.SkipWhen))
-            {
-                _logger.LogWarning(
-                    "AgentConfig {AgentId}: stage '{Stage}' has autoSetOnSkip but no skipWhen — auto-set will never trigger",
-                    config.AgentId, stage.Id);
-            }
-        }
-
-        // Verificar que los guards solo referencian tools habilitadas
-        foreach (var (toolName, _) in config.Guards)
-        {
-            if (!config.EnabledToolNames.Contains(toolName, StringComparer.OrdinalIgnoreCase))
-            {
-                _logger.LogWarning(
-                    "AgentConfig {AgentId}: guard for '{Tool}' exists but tool is not in enabledTools",
-                    config.AgentId, toolName);
-            }
-        }
-    }
-
     private static AgentSettings ParseSettings(string? settingsJson)
     {
-        if (string.IsNullOrWhiteSpace(settingsJson))
-            return new AgentSettings();
-
+        if (string.IsNullOrWhiteSpace(settingsJson)) return new AgentSettings();
         try
         {
             return JsonSerializer.Deserialize<AgentSettings>(settingsJson,
                 new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
                 ?? new AgentSettings();
         }
-        catch
-        {
-            return new AgentSettings();
-        }
+        catch { return new AgentSettings(); }
     }
 
     private sealed class AgentSettings
     {
-        public string? Persona { get; set; }
-        public string? Policies { get; set; }
+        public IReadOnlyList<PromptSection>? PromptSections { get; set; }
         public AgentFlowDefinition? Flow { get; set; }
         public IReadOnlyList<FactSchemaEntry>? FactSchema { get; set; }
         public Dictionary<string, GuardDefinition>? Guards { get; set; }
@@ -162,7 +99,10 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
         public int? MaxToolIterations { get; set; }
         public int? ConsecutiveErrorEscalationThreshold { get; set; }
         public IReadOnlyList<string>? EnabledTools { get; set; }
+        public IReadOnlyList<string>? CapabilityPacks { get; set; }
         public IReadOnlyList<string>? KillSwitchPhrases { get; set; }
+        public AgentHumanMessages? HumanMessages { get; set; }
+        public AgentOperationalLimits? OperationalLimits { get; set; }
         public EscalationSettings? Escalation { get; set; }
         public IReadOnlyList<string>? EscalationContacts =>
             Escalation?.Contacts ?? [];

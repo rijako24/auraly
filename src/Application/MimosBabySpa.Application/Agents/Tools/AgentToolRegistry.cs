@@ -1,11 +1,9 @@
 using Microsoft.Extensions.Logging;
+using MimosBabySpa.Application.Agents.Configuration;
+using MimosBabySpa.Application.Agents.Tools;
 
 namespace MimosBabySpa.Application.Agents.Tools;
 
-/// <summary>
-/// Registro de todas las tools disponibles en el sistema.
-/// Filtra por la lista de nombres habilitados del AgentConfig antes de exponerlas al LLM.
-/// </summary>
 public sealed class AgentToolRegistry
 {
     private readonly IReadOnlyDictionary<string, IAgentTool> _allTools;
@@ -21,24 +19,41 @@ public sealed class AgentToolRegistry
             _allTools.Count, string.Join(", ", _allTools.Keys));
     }
 
-    /// <summary>
-    /// Retorna las tools filtradas por los nombres habilitados del agente.
-    /// Si enabledNames está vacío, retorna todas (útil en desarrollo).
-    /// </summary>
-    public IReadOnlyList<IAgentTool> GetToolsForAgent(IReadOnlyList<string> enabledNames)
+    public IReadOnlyList<IAgentTool> GetToolsForAgent(AgentConfig config) =>
+        GetToolsForAgent(config.EnabledToolNames, config.CapabilityPacks);
+
+    public IReadOnlyList<IAgentTool> GetToolsForAgent(
+        IReadOnlyList<string> enabledNames,
+        IReadOnlyList<string> capabilityPacks)
     {
         if (enabledNames.Count == 0)
-            return _allTools.Values.ToList();
+            return [];
 
         return enabledNames
             .Where(name => _allTools.ContainsKey(name))
             .Select(name => _allTools[name])
+            .Where(tool => IsToolAllowedForPacks(tool, capabilityPacks))
             .ToList();
     }
 
-    /// <summary>
-    /// Resuelve una tool por nombre para ejecutarla tras recibir un tool_call del LLM.
-    /// </summary>
     public IAgentTool? Resolve(string name) =>
         _allTools.TryGetValue(name, out var tool) ? tool : null;
+
+    public IReadOnlyList<IAgentTool> GetToolsForStage(AgentConfig config, AgentFlowStage? stage)
+    {
+        var tools = GetToolsForAgent(config);
+        if (stage is null || stage.AllowedTools.Count == 0)
+            return tools;
+
+        var allowed = new HashSet<string>(stage.AllowedTools, StringComparer.OrdinalIgnoreCase);
+        return tools.Where(tool => allowed.Contains(tool.Name)).ToList();
+    }
+
+    private static bool IsToolAllowedForPacks(IAgentTool tool, IReadOnlyList<string> capabilityPacks)
+    {
+        if (string.IsNullOrWhiteSpace(tool.PackId))
+            return true;
+
+        return capabilityPacks.Contains(tool.PackId, StringComparer.OrdinalIgnoreCase);
+    }
 }

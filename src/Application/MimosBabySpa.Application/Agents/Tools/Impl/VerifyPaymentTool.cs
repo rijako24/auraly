@@ -1,4 +1,6 @@
 using System.Text.Json;
+using MimosBabySpa.Application.Agents.Facts;
+using MimosBabySpa.Application.Agents.Packs.Booking;
 using MimosBabySpa.Application.Services;
 using MimosBabySpa.Domain.Enums;
 
@@ -21,6 +23,8 @@ public sealed class VerifyPaymentTool : IAgentTool
         _paymentLifecycle = paymentLifecycle;
     }
 
+    public string PackId => BookingPackIds.Booking;
+
     public string Name => "verify_payment";
 
     public string Description =>
@@ -38,17 +42,19 @@ public sealed class VerifyPaymentTool : IAgentTool
         """;
 
     public async Task<string> ExecuteAsync(
-        JsonElement arguments,
-        AgentToolContext ctx,
+        ToolInvocation invocation,
         CancellationToken cancellationToken = default)
     {
-        ToolResultHelper.TryGetString(arguments, "payment_reference_id", out var referenceId);
-        referenceId ??= ctx.ActivePayment?.PaymentReferenceId;
+        var ctx = invocation.Context;
+        var booking = ctx.GetPackContext<IBookingPackContext>();
+
+        ToolResultHelper.TryGetString(invocation.Arguments, "payment_reference_id", out var referenceId);
+        referenceId ??= booking?.ActivePayment?.PaymentReferenceId;
 
         if (string.IsNullOrWhiteSpace(referenceId))
             return ToolResultHelper.Error("no_payment_reference", "No payment link has been generated yet.");
 
-        var payment = ctx.ActivePayment
+        var payment = booking?.ActivePayment
             ?? await _paymentLifecycle.GetLatestByConversationAsync(ctx.ConversationId, cancellationToken);
 
         if (payment is null || !string.Equals(payment.PaymentReferenceId, referenceId, StringComparison.OrdinalIgnoreCase))

@@ -115,11 +115,7 @@ public class AddOnCatalogServiceTests
         unitOfWork.Setup(u => u.ServiceAddOnRules.GetByBusinessIdAsync(_businessId))
             .ReturnsAsync(rules);
 
-        var nameResolver = new ServiceNameResolver(
-            unitOfWork.Object,
-            Mock.Of<Microsoft.Extensions.Logging.ILogger<ServiceNameResolver>>());
-
-        return new AddOnCatalogService(unitOfWork.Object, nameResolver);
+        return new AddOnCatalogService(unitOfWork.Object);
     }
 
     private Service CreateService(Guid id, string name) => new()

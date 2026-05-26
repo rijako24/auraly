@@ -1,4 +1,6 @@
 using System.Text.Json;
+using MimosBabySpa.Application.Agents.Facts;
+using MimosBabySpa.Application.Agents.Packs.Booking;
 using MimosBabySpa.Application.Configuration;
 using MimosBabySpa.Application.DTOs;
 using MimosBabySpa.Application.Services;
@@ -36,7 +38,18 @@ public sealed class GeneratePaymentLinkTool : IAgentTool
         _employeeAssignment = employeeAssignment;
     }
 
+    public string PackId => BookingPackIds.Booking;
+
     public string Name => "generate_payment_link";
+
+    public IReadOnlyList<RoleRequirement> RoleRequirements =>
+    [
+        new(FactRoles.BookingService),
+        new(FactRoles.BookingDate),
+        new(FactRoles.BookingTime),
+        new(FactRoles.CustomerPhone),
+        new(FactRoles.BookingAddOns, Required: false)
+    ];
 
     public string Description =>
         "Creates a PaymentTransaction with an advance payment link and an immutable booking snapshot.";
@@ -52,19 +65,29 @@ public sealed class GeneratePaymentLinkTool : IAgentTool
         """;
 
     public async Task<string> ExecuteAsync(
-        JsonElement arguments,
-        AgentToolContext ctx,
+        ToolInvocation invocation,
         CancellationToken cancellationToken = default)
     {
-        var phone = ConversationContactPhone.Resolve(ctx.Facts, ctx.ChannelPhone);
+        var ctx = invocation.Context;
+        var booking = ctx.GetPackContext<IBookingPackContext>();
+        var bookingPolicy = booking?.BookingPolicy;
+
+        var phone = ConversationContactPhone.Resolve(ctx) ?? invocation.Get(FactRoles.CustomerPhone);
         if (string.IsNullOrWhiteSpace(phone))
             return ToolResultHelper.Error("missing_phone", "Contact phone is required before generating a payment link.");
 
-        var service = ConversationFactKeys.Get(ctx.Facts, ConversationFactKeys.Service);
+        var service = invocation.Get(FactRoles.BookingService);
         if (string.IsNullOrWhiteSpace(service))
             return ToolResultHelper.MissingPrerequisites(["service"]);
 
-        var addOnsCsv = ConversationFactKeys.Get(ctx.Facts, ConversationFactKeys.AddOns);
+        if (bookingPolicy is null || string.IsNullOrWhiteSpace(bookingPolicy.Currency))
+        {
+            return ToolResultHelper.Error(
+                "missing_currency",
+                "Booking policy currency is not configured for this business.");
+        }
+
+        var addOnsCsv = invocation.Get(FactRoles.BookingAddOns);
         var checkout = await _checkoutPricing.ResolveAsync(ctx.BusinessId, service, addOnsCsv, cancellationToken);
 
         if (checkout is null)
@@ -98,7 +121,7 @@ public sealed class GeneratePaymentLinkTool : IAgentTool
 
         intent = intent with { PreferredEmployeeId = employee.EmployeeId };
 
-        var activePayment = ctx.ActivePayment
+        var activePayment = booking?.ActivePayment
             ?? await _paymentLifecycle.GetActiveByConversationAsync(ctx.ConversationId, cancellationToken);
 
         if (activePayment?.LinkUrl is not null
@@ -118,16 +141,17 @@ public sealed class GeneratePaymentLinkTool : IAgentTool
             });
         }
 
-        var description = ToolResultHelper.TryGetString(arguments, "service_description", out var customDescription)
+        var description = ToolResultHelper.TryGetString(invocation.Arguments, "service_description", out var customDescription)
             && !string.IsNullOrWhiteSpace(customDescription)
                 ? customDescription
                 : checkout.BuildServiceDescription();
 
-        var currency = string.IsNullOrWhiteSpace(checkout.Policy.Currency) ? "COP" : checkout.Policy.Currency;
+        var currency = bookingPolicy.Currency;
         var result = await _paymentLinks.GenerateAnticipoLinkAsync(
             new PaymentLinkRequest(
                 ctx.BusinessId, ctx.ConversationId, phone,
-                description, checkout.DepositCents, currency, ExpirationMinutes: 60),
+                description, checkout.DepositCents, currency,
+                ExpirationMinutes: bookingPolicy.PaymentLinkExpirationMinutes),
             cancellationToken);
 
         if (!result.Success)
@@ -141,10 +165,10 @@ public sealed class GeneratePaymentLinkTool : IAgentTool
             result.PaymentLinkUrl!,
             checkout.DepositCents,
             currency,
-            result.ExpiresAt ?? DateTime.UtcNow.AddHours(1),
+            result.ExpiresAt ?? DateTime.UtcNow.AddMinutes(bookingPolicy.PaymentLinkExpirationMinutes),
             cancellationToken);
 
-        ctx.ActivePayment = payment;
+        BookingPackContext.Replace(ctx, activePayment: payment);
 
         return ToolResultHelper.Ok(new
         {
