@@ -3,6 +3,7 @@ using FluentAssertions;
 using Moq;
 using MimosBabySpa.Application.Agents;
 using MimosBabySpa.Application.Agents.Composition;
+using MimosBabySpa.Application.Agents.Configuration;
 using MimosBabySpa.Application.Agents.Gating;
 using MimosBabySpa.Application.Agents.Tools.Impl;
 using MimosBabySpa.Application.BusinessRules;
@@ -31,7 +32,8 @@ public class ToolCapabilityGateTests
     public ToolCapabilityGateTests()
     {
         _gate = new ToolCapabilityGate(
-            new GuardEvaluator(_verifications));
+            new GuardEvaluator(_verifications),
+            new FlowStageDetector());
     }
 
     [Fact]
@@ -83,6 +85,53 @@ public class ToolCapabilityGateTests
     }
 
     [Fact]
+    public async Task EvaluateAsync_CheckAvailability_DuringAddonsOffering_IsBlocked()
+    {
+        var checkAvailabilityTool = new CheckAvailabilityTool(
+            Mock.Of<IAvailabilityService>(),
+            Mock.Of<ISchedulingPolicyProvider>(),
+            Mock.Of<IEmployeeAssignmentService>(),
+            Mock.Of<MimosBabySpa.Domain.Repositories.IUnitOfWork>(),
+            _verifications);
+
+        var ctx = CreateContext();
+        ctx.Config = CreateConfigWithAddonsStage();
+        ctx.Facts[ConversationFactKeys.Service] = "Plan Marineritos";
+        ctx.Facts["baby_name"] = "Thomas";
+        ctx.Facts["baby_age_months"] = "5";
+
+        using var args = JsonDocument.Parse("""{"service":"Plan Marineritos","date":"2026-05-27"}""");
+        var result = await _gate.EvaluateAsync(checkAvailabilityTool, args.RootElement, ctx, CancellationToken.None);
+
+        result.IsAllowed.Should().BeFalse();
+        result.Code.Should().Be("stage_action_pending");
+        result.Remediation.Should().Contain("set_fact");
+        result.Remediation.Should().Contain("add_ons");
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_CheckAvailability_DuringDiscoveryWithMissingService_MentionsServiceFact()
+    {
+        var checkAvailabilityTool = new CheckAvailabilityTool(
+            Mock.Of<IAvailabilityService>(),
+            Mock.Of<ISchedulingPolicyProvider>(),
+            Mock.Of<IEmployeeAssignmentService>(),
+            Mock.Of<MimosBabySpa.Domain.Repositories.IUnitOfWork>(),
+            _verifications);
+
+        var ctx = CreateContext();
+        ctx.Config = CreateConfigWithAddonsStage();
+        ctx.Facts["baby_name"] = "Thomas";
+        ctx.Facts["baby_age_months"] = "5";
+
+        using var args = JsonDocument.Parse("""{"service":"Plan Marineritos","date":"2026-05-27"}""");
+        var result = await _gate.EvaluateAsync(checkAvailabilityTool, args.RootElement, ctx, CancellationToken.None);
+
+        result.IsAllowed.Should().BeFalse();
+        result.Remediation.Should().Contain("service");
+    }
+
+    [Fact]
     public async Task EvaluateAsync_SetFact_HasNoPreconditions()
     {
         var setFactTool = new SetFactTool(
@@ -104,6 +153,36 @@ public class ToolCapabilityGateTests
     /// Los tests validan el comportamiento del GuardEvaluator con guards explícitos,
     /// no con precondiciones hardcoded (ToolPreconditionProvider eliminado).
     /// </summary>
+    private static AgentConfig CreateConfigWithAddonsStage() => new()
+    {
+        AgentId = Guid.NewGuid(),
+        BusinessId = Guid.NewGuid(),
+        EnabledToolNames = ["set_fact", "get_service_catalog", "check_availability"],
+        Flow = new AgentFlowDefinition
+        {
+            StageDetection = "automatic",
+            Stages =
+            [
+                new AgentFlowStage
+                {
+                    Id = "discovery",
+                    Goal = "discovery",
+                    Hint = "Presenta catálogo y registra service con set_fact al elegir.",
+                    AllowedTools = ["get_service_catalog", "set_fact"],
+                    AdvanceWhenFacts = ["baby_name", "baby_age_months", "service"]
+                },
+                new AgentFlowStage
+                {
+                    Id = "addons_offering",
+                    Goal = "Ofrecer complementos",
+                    Hint = "Lista complementos y registra add_ons con set_fact.",
+                    AllowedTools = ["get_service_catalog", "set_fact"],
+                    AdvanceWhenFacts = ["add_ons"]
+                }
+            ]
+        }
+    };
+
     private static AgentConfig CreateConfigWithGuards() => new()
     {
         AgentId = Guid.NewGuid(),

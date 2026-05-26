@@ -2,6 +2,7 @@ using System.Text.Json;
 using FluentAssertions;
 using Moq;
 using MimosBabySpa.Application.Agents;
+using MimosBabySpa.Application.Agents.Configuration;
 using MimosBabySpa.Application.Agents.Gating;
 using MimosBabySpa.Application.Agents.Tools.Impl;
 using MimosBabySpa.Application.Configuration;
@@ -106,6 +107,53 @@ public class SetFactToolTests
         using var args = JsonDocument.Parse("""{"value":"5"}""");
         var json = await _tool.ExecuteAsync(args.RootElement, ctx, CancellationToken.None);
         json.Should().Contain("missing_prerequisites");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_UnknownKey_WhenSchemaDefined_ReturnsUnknownFactKeyError()
+    {
+        var ctx = CreateContext();
+        ctx.Config = new AgentConfig
+        {
+            FactSchema =
+            [
+                new FactSchemaEntry { Key = "desired_time", Label = "hora", Type = "time", Source = "user" },
+                new FactSchemaEntry { Key = "service", Label = "servicio", Source = "user" }
+            ]
+        };
+
+        using var args = JsonDocument.Parse("""{"key":"hour_desired","value":"09:00"}""");
+        var json = await _tool.ExecuteAsync(args.RootElement, ctx, CancellationToken.None);
+
+        json.Should().Contain("unknown_fact_key");
+        json.Should().Contain("desired_time");
+        ctx.Facts.Should().NotContainKey("hour_desired");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_AliasKey_WhenSchemaDefined_ResolvesToCanonicalKey()
+    {
+        var ctx = CreateContext();
+        ctx.Config = new AgentConfig
+        {
+            FactSchema =
+            [
+                new FactSchemaEntry
+                {
+                    Key = "desired_time",
+                    Label = "hora",
+                    Type = "time",
+                    Source = "user",
+                    Aliases = ["hora"]
+                }
+            ]
+        };
+
+        using var args = JsonDocument.Parse("""{"key":"hora","value":"09:00"}""");
+        var json = await _tool.ExecuteAsync(args.RootElement, ctx, CancellationToken.None);
+
+        json.Should().Contain("\"ok\":true");
+        ctx.Facts["desired_time"].Should().Be("09:00");
     }
 
     private static AgentToolContext CreateContext(Guid? businessId = null) => new()

@@ -93,9 +93,9 @@ public sealed class FlowStageDetector : IFlowStageDetector
         if (stage.CompletesOnEnter)
             return false;
 
-        // Sin facts requeridos → la etapa no tiene condición de avance propia (siempre completa)
+        // Sin facts requeridos → la etapa permanece activa hasta salir del flujo (etapa terminal/acción)
         if (stage.AdvanceWhenFacts.Count == 0)
-            return true;
+            return false;
 
         foreach (var factKey in stage.AdvanceWhenFacts)
         {

@@ -118,6 +118,16 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
                     "AgentConfig {AgentId}: stage '{Stage}' has autoSetOnSkip but no skipWhen — auto-set will never trigger",
                     config.AgentId, stage.Id);
             }
+
+            foreach (var toolName in stage.AllowedTools)
+            {
+                if (!config.EnabledToolNames.Contains(toolName, StringComparer.OrdinalIgnoreCase))
+                {
+                    _logger.LogWarning(
+                        "AgentConfig {AgentId}: stage '{Stage}' allowedTools references '{Tool}' which is not in enabledTools",
+                        config.AgentId, stage.Id, toolName);
+                }
+            }
         }
 
         // Verificar que los guards solo referencian tools habilitadas

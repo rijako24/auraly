@@ -435,8 +435,8 @@ public class AgentPromptComposerTests
                 [
                     new AgentFlowStage
                     {
-                        Id = "checkout",
-                        ReentryOnFactChanged = ["service", "desired_date"]
+                        Id = "scheduling",
+                        ReentryOnFactChanged = ["desired_date", "desired_time"]
                     }
                 ]
             }
@@ -469,16 +469,22 @@ public class AgentPromptComposerTests
             {
                 Stages =
                 [
-                    new AgentFlowStage { Id = "checkout", ReentryOnFactChanged = ["service"] },
-                    new AgentFlowStage { Id = "closure", AdvanceWhenFacts = [] }
+                    new AgentFlowStage
+                    {
+                        Id = "scheduling",
+                        AdvanceWhenFacts = ["desired_date", "desired_time"],
+                        ReentryOnFactChanged = ["desired_date", "desired_time"]
+                    },
+                    new AgentFlowStage { Id = "finalization", AdvanceWhenFacts = [] }
                 ]
             }
         };
 
         var state = new ConversationState();
-        state.StageFactSnapshots["checkout"] = new Dictionary<string, string>
+        state.StageFactSnapshots["scheduling"] = new Dictionary<string, string>
         {
-            ["service"] = "Plan Marineritos"
+            ["desired_date"] = "2026-05-27",
+            ["desired_time"] = "08:00"
         };
 
         var session = new AgentToolContext
@@ -487,7 +493,8 @@ public class AgentPromptComposerTests
             ConversationState = state,
             Facts = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {
-                ["service"] = "Plan Marineritos"
+                ["desired_date"] = "2026-05-27",
+                ["desired_time"] = "08:00"
             }
         };
 
@@ -506,22 +513,29 @@ public class AgentPromptComposerTests
             Name = "Mimi",
             FactSchema =
             [
-                new FactSchemaEntry { Key = "service", Label = "plan", Source = "user" }
+                new FactSchemaEntry { Key = "desired_date", Label = "fecha deseada", Source = "user" },
+                new FactSchemaEntry { Key = "desired_time", Label = "hora deseada", Source = "user" }
             ],
             Flow = new AgentFlowDefinition
             {
                 Stages =
                 [
-                    new AgentFlowStage { Id = "checkout", ReentryOnFactChanged = ["service"] },
-                    new AgentFlowStage { Id = "closure", AdvanceWhenFacts = [] }
+                    new AgentFlowStage
+                    {
+                        Id = "scheduling",
+                        AdvanceWhenFacts = ["desired_date", "desired_time"],
+                        ReentryOnFactChanged = ["desired_date", "desired_time"]
+                    },
+                    new AgentFlowStage { Id = "finalization", AdvanceWhenFacts = [] }
                 ]
             }
         };
 
         var state = new ConversationState();
-        state.StageFactSnapshots["checkout"] = new Dictionary<string, string>
+        state.StageFactSnapshots["scheduling"] = new Dictionary<string, string>
         {
-            ["service"] = "Plan Pequeñines"
+            ["desired_date"] = "2026-05-27",
+            ["desired_time"] = "08:00"
         };
 
         var session = new AgentToolContext
@@ -530,14 +544,15 @@ public class AgentPromptComposerTests
             ConversationState = state,
             Facts = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {
-                ["service"] = "Plan Marineritos"
+                ["desired_date"] = "2026-05-28",
+                ["desired_time"] = "10:00"
             }
         };
 
         var result = Compose(config, [], session);
 
         result.Should().Contain("## ATENCIÓN: DATOS MODIFICADOS");
-        result.Should().Contain("Plan Pequeñines");
-        result.Should().Contain("Plan Marineritos");
+        result.Should().Contain("2026-05-27");
+        result.Should().Contain("2026-05-28");
     }
 }

@@ -138,7 +138,7 @@ public sealed class AgentConversationService : IAgentConversationService
         session.BookingPolicy = bookingPolicy;
         var latestPayment = await _paymentLifecycle.GetLatestByConversationAsync(conversationId, cancellationToken);
         var enabledTools = _toolRegistry.GetToolsForAgent(config.EnabledToolNames).ToList();
-        var systemPrompt = _promptComposer.Compose(new PromptCompositionInput
+        var compositionInput = new PromptCompositionInput
         {
             Config = config,
             History = history,
@@ -147,12 +147,14 @@ public sealed class AgentConversationService : IAgentConversationService
             BookingPolicy = bookingPolicy,
             LatestPayment = latestPayment,
             EnabledTools = enabledTools
-        });
+        };
+        var systemPrompt = _promptComposer.Compose(compositionInput);
         var messages = BuildMessages(systemPrompt, history, userMessage);
         var turn = new AgentTurnExecution(config.ConsecutiveErrorEscalationThreshold);
         session.Turn = turn;
 
-        var loop = await RunAgentLoopAsync(config, conversationId, messages, turn, session, cancellationToken);
+        var loop = await RunAgentLoopAsync(
+            config, conversationId, messages, turn, session, compositionInput, cancellationToken);
 
         return loop.Kind switch
         {
@@ -176,9 +178,11 @@ public sealed class AgentConversationService : IAgentConversationService
         List<ChatMessage> messages,
         AgentTurnExecution turn,
         AgentToolContext toolCtx,
+        PromptCompositionInput compositionInput,
         CancellationToken ct)
     {
         var toolDefinitions = BuildToolDefinitions(config.EnabledToolNames);
+        var lastStageId = _flowStageDetector.DetectCurrentStage(config.Flow, toolCtx)?.Id;
 
         for (int iteration = 0; iteration <= config.MaxToolIterations; iteration++)
         {
@@ -216,9 +220,34 @@ public sealed class AgentConversationService : IAgentConversationService
                     return AgentLoopOutcome.AutoEscalate("consecutive_tool_errors");
                 }
             }
+
+            RefreshSystemPromptIfStageChanged(config, messages, compositionInput, ref lastStageId);
         }
 
         return AgentLoopOutcome.Failed("Max iterations exceeded without final response.");
+    }
+
+    /// <summary>
+    /// Tras ejecutar tools, la etapa activa puede haber avanzado. Recompone el system prompt
+    /// para que el LLM reciba goal, hint y acciones_permitidas actualizados en la siguiente iteración.
+    /// </summary>
+    private void RefreshSystemPromptIfStageChanged(
+        AgentConfig config,
+        List<ChatMessage> messages,
+        PromptCompositionInput compositionInput,
+        ref string? lastStageId)
+    {
+        var currentStageId = _flowStageDetector.DetectCurrentStage(config.Flow, compositionInput.Session)?.Id;
+        if (string.Equals(currentStageId, lastStageId, StringComparison.OrdinalIgnoreCase))
+            return;
+
+        lastStageId = currentStageId;
+        var systemPrompt = _promptComposer.Compose(compositionInput);
+        messages[0] = ChatMessage.System(systemPrompt);
+
+        _logger.LogDebug(
+            "Conv: stage changed to '{Stage}' — system prompt refreshed",
+            currentStageId ?? "(none)");
     }
 
     private async Task<ToolExecutionOutcome> ExecuteToolCallAsync(

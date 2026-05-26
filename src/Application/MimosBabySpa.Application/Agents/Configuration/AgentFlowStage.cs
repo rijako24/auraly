@@ -13,6 +13,18 @@ public sealed class AgentFlowStage
     /// <summary>Tools sugeridas en esta etapa (preferencia, no obligación).</summary>
     public IReadOnlyList<string> SuggestedTools { get; init; } = [];
 
+    /// <summary>
+    /// Whitelist de tools permitidas en esta etapa. Vacío = sin restricción por etapa.
+    /// Cuando está definido, el gate bloquea cualquier otra tool con la instrucción de la etapa.
+    /// </summary>
+    public IReadOnlyList<string> AllowedTools { get; init; } = [];
+
+    /// <summary>
+    /// Orientación concreta para el LLM en esta etapa (acción y pregunta cerrada esperada).
+    /// Las variantes pueden sobreescribir con su propio hint.
+    /// </summary>
+    public string? Hint { get; init; }
+
     /// <summary>Facts que deben estar presentes para avanzar a la siguiente etapa.</summary>
     public IReadOnlyList<string> AdvanceWhenFacts { get; init; } = [];
 

@@ -101,36 +101,46 @@ public sealed class CheckAvailabilityTool : IAgentTool
         if (result.IsAvailable)
             RecordAvailabilityVerifications(ctx, service, dateStr, timeStr, result);
 
+        var slotsForPresentation = BuildPresentationSlots(result, timeStr);
+        var isListMode = !time.HasValue && result.IsAvailable;
+        var isUnavailableRequestedTime = time.HasValue && !result.IsAvailable && slotsForPresentation.Count > 0;
+
         var verbalStatus = result.IsAvailable && time.HasValue
             ? "horario_disponible_no_reservado"
-            : result.IsAvailable
-                ? "slots_disponibles_sin_reservar"
-                : "sin_disponibilidad";
-
-        // Solo emitir fragmento SLOTS en modo lista (sin time específico).
-        // En modo confirmación (time presente) el LLM solo debe confirmar disponibilidad del slot,
-        // no volver a listar horarios — evita el bug de repetición del slot seleccionado.
-        var isListMode = !time.HasValue;
+            : isUnavailableRequestedTime
+                ? "horario_no_disponible_alternativas"
+                : result.IsAvailable
+                    ? "slots_disponibles_sin_reservar"
+                    : "sin_disponibilidad";
 
         string? presentationToken = null;
-        var slotsForPresentation = BuildPresentationSlots(result, timeStr);
-        if (result.IsAvailable && isListMode && slotsForPresentation.Count > 0 && ctx.Turn is not null)
+        if (ctx.Turn is not null && slotsForPresentation.Count > 0 && (isListMode || isUnavailableRequestedTime))
         {
+            var fragmentData = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["service_name"] = result.RequestServiceName ?? service,
+                ["date_formatted"] = date.ToString("dd/MM/yyyy"),
+                ["slots"] = slotsForPresentation.Select(static s => (object)s).ToList()
+            };
+
+            if (isUnavailableRequestedTime)
+                fragmentData["intro_message"] =
+                    "El horario pedido no está disponible; estos son los libres ese día";
+
             presentationToken = ctx.Turn.RegisterFragment(
                 "SLOTS",
                 "availability_slots",
-                new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
-                {
-                    ["service_name"] = result.RequestServiceName ?? service,
-                    ["date_formatted"] = date.ToString("dd/MM/yyyy"),
-                    ["slots"] = slotsForPresentation.Select(static s => (object)s).ToList()
-                },
+                fragmentData,
                 FragmentRenderMode.Inline,
                 FragmentPriority.Required);
         }
 
         if (presentationToken is not null)
         {
+            var presentationInstruction = isUnavailableRequestedTime
+                ? "Tu respuesta debe ser ÚNICAMENTE el token presentation_token tal cual. La plantilla ya incluye el aviso del horario pedido y la pregunta de cierre; no agregues texto antes ni después."
+                : "Tu respuesta debe ser ÚNICAMENTE el token presentation_token tal cual. La plantilla ya cierra con la pregunta para que el cliente elija horario; no agregues texto antes ni después.";
+
             return ToolResultHelper.Ok(new
             {
                 is_available = result.IsAvailable,
@@ -143,8 +153,7 @@ public sealed class CheckAvailabilityTool : IAgentTool
                 slot_count = slotsForPresentation.Count,
                 preferred_employee_id = preferredEmployeeId,
                 presentation_token = presentationToken,
-                presentation_instruction =
-                    "Embed presentation_token verbatim in your reply. Do NOT list slot times in prose."
+                presentation_instruction = presentationInstruction
             });
         }
 

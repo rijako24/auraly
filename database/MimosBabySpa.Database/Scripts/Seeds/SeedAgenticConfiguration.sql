@@ -50,9 +50,8 @@ BEGIN
 END
 
 -- ── Agent configuration (SettingsJson = source of truth) ─────────────────----
--- NOTA: Este bloque es la copia T-SQL de MimiAgentSettings.json.
---       Toda edición debe hacerse en ese archivo y luego reflejarse aquí
---       (escapando comillas simples: ' → '').
+-- NOTA: SettingsJson en este script es la fuente de verdad del agente.
+--       Editar aquí (escapar comillas simples: ' → '').
 DECLARE @SystemPrompt NVARCHAR(MAX) = N'';
 
 DECLARE @SettingsJson NVARCHAR(MAX) = N'{
@@ -97,46 +96,50 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       },
       {
         "id": "discovery",
-        "goal": "Conocer el nombre y la edad del bebé, y el plan que prefiere la familia",
+        "goal": "Conoce al bebé (nombre, edad) y guía al cliente para elegir un servicio. Presenta el catálogo agrupado por categoría (Plan, Taller, Clase) para que vea todas las familias antes de decidir.",
+        "hint": "Pregunta nombre y edad del bebé en una frase si faltan. Llama get_service_catalog y presenta opciones por categoría. Cuando el cliente elija un servicio, persiste set_fact con key service y el nombre exacto que devolvió el catálogo. Cierra confirmando la elección o pregunta cuál le interesa si aún no eligió.",
+        "allowedTools": ["get_service_catalog", "set_fact"],
         "suggestedTools": ["get_service_catalog", "set_fact"],
         "advanceWhenFacts": ["baby_name", "baby_age_months", "service"]
       },
       {
         "id": "addons_offering",
-        "goal": "Ofrecer UNA SOLA VEZ los complementos compatibles con el plan elegido. Si el cliente no quiere ninguno, registrar ''ninguno''.",
+        "goal": "Ofrece los complementos compatibles con el plan elegido. Si el cliente no quiere ninguno, registra add_ons = ''ninguno''.",
+        "hint": "Llama get_service_catalog si necesitas precios de complementos. Lista los compatibles con precio. Cierra con: ¿Agregas alguno o seguimos sin complementos? Luego set_fact con add_ons.",
+        "allowedTools": ["get_service_catalog", "set_fact"],
         "suggestedTools": ["get_service_catalog", "set_fact"],
-        "advanceWhenFacts": ["add_ons"],
-        "skipWhen": "desired_date && desired_time",
-        "autoSetOnSkip": { "add_ons": "ninguno" },
-        "constraints": {
-          "maxQuestions": 1,
-          "presentationMode": "soft_offer",
-          "forbiddenTopics": ["scheduling", "checkout"]
-        }
+        "advanceWhenFacts": ["add_ons"]
       },
       {
         "id": "scheduling",
-        "goal": "Encontrar y confirmar un horario disponible para el servicio elegido",
+        "goal": "Encuentra y confirma fecha y hora del servicio elegido.",
+        "hint": "Antes de llamar check_availability necesitas la fecha que el cliente quiere. Reglas: (a) Si el cliente NO te dio fecha en este turno ni en turnos anteriores, primero pregúntale qué día le interesa — NO inventes fechas, NO uses ''mañana'' como default. (b) Cuando el cliente confirme la fecha, regístrala con set_fact(desired_date=YYYY-MM-DD). Si además te dio una hora específica, regístrala con set_fact(desired_time=HH:mm). (c) Llama check_availability pasando service y date siempre; pasa time solo si el cliente especificó una hora concreta. (d) Si la tool devuelve presentation_token, úsalo tal cual y pregunta cuál horario prefiere (o cuál alternativo, si el horario pedido no estaba disponible). (e) Cuando el cliente confirme un horario, set_fact con desired_time si aún no está registrada.",
+        "allowedTools": ["check_availability", "set_fact"],
         "suggestedTools": ["check_availability", "set_fact"],
-        "advanceWhenFacts": ["desired_date", "desired_time"]
+        "advanceWhenFacts": ["desired_date", "desired_time"],
+        "reentryOnFactChanged": ["desired_date", "desired_time"]
       },
       {
         "id": "customer_data",
-        "goal": "Completar el nombre del cliente si aún no se conoce",
+        "goal": "Obtén el nombre del cliente (papá o mamá), no el del bebé.",
+        "hint": "Confirma brevemente el horario seleccionado en una línea (sin justificar pasos próximos ni mencionar verificaciones). Luego haz UNA pregunta directa: ¿A nombre de quién hacemos la reserva? Cuando el cliente responda, set_fact con customer_name.",
+        "allowedTools": ["set_fact"],
         "suggestedTools": ["set_fact"],
         "advanceWhenFacts": ["customer_name"]
       },
       {
-        "id": "checkout",
-        "goal": "Resumir la reserva y procesar pago o confirmación verbal",
-        "suggestedTools": ["prepare_checkout"],
-        "advanceWhenFacts": [],
-        "reentryOnFactChanged": ["service", "desired_date", "desired_time", "add_ons"]
-      },
-      {
-        "id": "closure",
-        "goal": "Confirmar la reserva o asignar slot post-pago",
-        "suggestedTools": ["create_reservation", "assign_paid_slot", "verify_payment"],
+        "id": "finalization",
+        "goal": "Cierra la reserva: presenta el resumen, procesa confirmación verbal o pago con anticipo, y registra la cita o asigna el slot pagado.",
+        "hint": "Si aún no se mostró resumen, llama prepare_checkout. Si cualquier dato cambia después (servicio, fecha, hora, complementos), vuelve a llamar prepare_checkout para regenerar el resumen actualizado. Si el cliente confirma verbalmente y no se requiere anticipo, llama create_reservation. Si el cliente reporta haber pagado, llama verify_payment y luego assign_paid_slot. Si falta un dato, complétalo con set_fact antes de reintentar.",
+        "allowedTools": [
+          "prepare_checkout",
+          "create_reservation",
+          "assign_paid_slot",
+          "verify_payment",
+          "check_availability",
+          "set_fact"
+        ],
+        "suggestedTools": ["prepare_checkout", "create_reservation", "assign_paid_slot", "verify_payment"],
         "advanceWhenFacts": []
       }
     ]

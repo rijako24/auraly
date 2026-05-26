@@ -84,6 +84,18 @@ public sealed class SetFactTool : IAgentTool
 
         // Validación de tipo basada en schema del tenant
         var schemaEntry = roleIndex.EntryFor(key);
+        if (schemaEntry is null && ctx.Config?.FactSchema.Count > 0)
+        {
+            var validKeys = string.Join(", ", ctx.Config.FactSchema
+                .Where(e => e.Source.Equals("user", StringComparison.OrdinalIgnoreCase))
+                .Select(e => e.Key));
+
+            return ToolResultHelper.Error(
+                "unknown_fact_key",
+                $"'{key}' no es una clave reconocida del esquema de este agente.",
+                $"Usa exactamente una de estas claves: {validKeys}.");
+        }
+
         if (schemaEntry is not null)
         {
             var typeError = ValidateType(key, value, schemaEntry.Type);

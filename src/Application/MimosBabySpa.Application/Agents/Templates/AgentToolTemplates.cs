@@ -85,6 +85,10 @@ internal static class AgentToolTemplates
 
     public const string AvailabilitySlots =
         """
+        {{#if intro_message}}
+        {{intro_message}}
+
+        {{/if}}
         📅 *Horarios disponibles para {{date_formatted}}* ({{service_name}})
 
         {{#each slots}}

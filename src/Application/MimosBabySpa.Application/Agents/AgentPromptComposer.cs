@@ -303,15 +303,32 @@ public sealed class AgentPromptComposer : IPromptComposer
             $"- objetivo: {goal}"
         };
 
-        if (currentStage.SuggestedTools.Count > 0)
+        if (currentStage.AllowedTools.Count > 0)
+            lines.Add($"- acciones_permitidas: {string.Join(", ", currentStage.AllowedTools)}");
+        else if (currentStage.SuggestedTools.Count > 0)
             lines.Add($"- acciones_sugeridas: {string.Join(", ", currentStage.SuggestedTools)}");
 
-        // Hint de la variante: orientación específica para el engagement actual
-        if (!string.IsNullOrWhiteSpace(variant?.Hint))
+        var stageHint = !string.IsNullOrWhiteSpace(variant?.Hint) ? variant!.Hint : currentStage.Hint;
+        if (!string.IsNullOrWhiteSpace(stageHint))
         {
             lines.Add(string.Empty);
-            lines.Add($"Orientación para este engagement:");
-            lines.Add($"- {variant.Hint.Trim()}");
+            lines.Add(variant?.Hint is not null
+                ? "Orientación para este engagement:"
+                : "Qué hacer ahora:");
+            lines.Add($"- {stageHint.Trim()}");
+        }
+
+        if (session is not null && currentStage.AdvanceWhenFacts.Count > 0)
+        {
+            var missingFacts = currentStage.AdvanceWhenFacts
+                .Where(f => !session.Facts.TryGetValue(f, out var v) || string.IsNullOrWhiteSpace(v))
+                .ToList();
+
+            if (missingFacts.Count > 0)
+            {
+                lines.Add($"- facts_pendientes: {string.Join(", ", missingFacts)}");
+                lines.Add("- Regístralos con set_fact en cuanto el cliente los confirme en este turno.");
+            }
         }
 
         // Traducir restricciones declarativas a instrucciones para el LLM

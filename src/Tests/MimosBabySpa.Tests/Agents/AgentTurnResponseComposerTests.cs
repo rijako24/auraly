@@ -66,6 +66,33 @@ public class AgentTurnResponseComposerTests
     }
 
     [Fact]
+    public void Compose_AvailabilitySlotsWithIntroMessage_RendersContextualLead()
+    {
+        var composer = CreateComposer();
+        const string token = "{{SLOTS:alt123}}";
+        var fragments = new[]
+        {
+            new TurnFragmentEntry(token, new TurnFragment(
+                "availability_slots",
+                new Dictionary<string, object?>
+                {
+                    ["intro_message"] = "El horario pedido no está disponible; estos son los libres ese día",
+                    ["service_name"] = "Plan Marineritos",
+                    ["date_formatted"] = "27/05/2026",
+                    ["slots"] = new List<object> { "09:00", "10:00" }
+                },
+                FragmentRenderMode.Inline,
+                FragmentPriority.Required))
+        };
+
+        var result = composer.Compose(new AgentConfig(), [], token, fragments);
+
+        result.Should().Contain("El horario pedido no está disponible");
+        result.Should().Contain("- 09:00");
+        result.Should().Contain("Plan Marineritos");
+    }
+
+    [Fact]
     public void Compose_RequiredFragment_PrependsWhenTokenMissing()
     {
         var config = new AgentConfig
