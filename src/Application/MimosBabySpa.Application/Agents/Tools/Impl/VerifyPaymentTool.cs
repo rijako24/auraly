@@ -43,13 +43,14 @@ public sealed class VerifyPaymentTool : IAgentTool
         CancellationToken cancellationToken = default)
     {
         ToolResultHelper.TryGetString(arguments, "payment_reference_id", out var referenceId);
-        referenceId ??= ctx.ActivePayment?.PaymentReferenceId;
-
-        if (string.IsNullOrWhiteSpace(referenceId))
-            return ToolResultHelper.Error("no_payment_reference", "No payment link has been generated yet.");
 
         var payment = ctx.ActivePayment
             ?? await _paymentLifecycle.GetLatestByConversationAsync(ctx.ConversationId, cancellationToken);
+
+        referenceId ??= payment?.PaymentReferenceId;
+
+        if (string.IsNullOrWhiteSpace(referenceId))
+            return ToolResultHelper.Error("no_payment_reference", "No payment link has been generated yet.");
 
         if (payment is null || !string.Equals(payment.PaymentReferenceId, referenceId, StringComparison.OrdinalIgnoreCase))
         {

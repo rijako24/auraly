@@ -74,8 +74,8 @@ public sealed class AddOnCatalogService : IAddOnCatalogService
         if (invalidNames.Count > 0)
         {
             var hint = compatible.Count > 0
-                ? $"Compatible add-ons for '{service.ServiceName}': {string.Join(", ", compatible.Select(a => a.AddOnName))}."
-                : $"There are no compatible add-ons for '{service.ServiceName}'.";
+                ? $"Compatible add-ons for '{service.ServiceName}': {string.Join(", ", compatible.Select(a => a.AddOnName))}. To indicate no add-ons, use 'ninguno'."
+                : $"There are no compatible add-ons for '{service.ServiceName}'. To indicate no add-ons, use 'ninguno'.";
 
             return AddOnValidationResult.Fail(
                 $"Invalid or incompatible add-on(s): {string.Join(", ", invalidNames)}.",

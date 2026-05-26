@@ -7,6 +7,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="MimosBabySpa.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\..\Domain\MimosBabySpa.Domain\MimosBabySpa.Domain.csproj" />
   </ItemGroup>
 

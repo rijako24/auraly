@@ -130,7 +130,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       {
         "id": "finalization",
         "goal": "Cierra la reserva: presenta el resumen, procesa confirmación verbal o pago con anticipo, y registra la cita o asigna el slot pagado.",
-        "hint": "Si aún no se mostró resumen, llama prepare_checkout. Si cualquier dato cambia después (servicio, fecha, hora, complementos), vuelve a llamar prepare_checkout para regenerar el resumen actualizado. Si el cliente confirma verbalmente y no se requiere anticipo, llama create_reservation. Si el cliente reporta haber pagado, llama verify_payment y luego assign_paid_slot. Si falta un dato, complétalo con set_fact antes de reintentar.",
+        "hint": "Si aún no se mostró resumen, llama prepare_checkout. Si cualquier dato cambia después (servicio, fecha, hora, complementos), vuelve a llamar prepare_checkout para regenerar el resumen actualizado. Para quitar todos los complementos, llama set_fact con key=add_ons y value=''ninguno''. Si el cliente confirma verbalmente y no se requiere anticipo, llama create_reservation. Si el cliente reporta haber pagado, llama verify_payment y luego assign_paid_slot. Si falta un dato, complétalo con set_fact antes de reintentar.",
         "allowedTools": [
           "prepare_checkout",
           "create_reservation",

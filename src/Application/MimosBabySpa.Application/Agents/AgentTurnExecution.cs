@@ -65,6 +65,18 @@ internal sealed class AgentTurnExecution
         FragmentRenderMode mode = FragmentRenderMode.Inline,
         FragmentPriority priority = FragmentPriority.Optional)
     {
+        if (mode == FragmentRenderMode.Exclusive)
+        {
+            var stale = _fragments
+                .Where(kv => kv.Value.Mode == FragmentRenderMode.Exclusive
+                             && kv.Value.TemplateId.Equals(templateId, StringComparison.OrdinalIgnoreCase))
+                .Select(kv => kv.Key)
+                .ToList();
+
+            foreach (var key in stale)
+                _fragments.Remove(key);
+        }
+
         var suffix = Guid.NewGuid().ToString("N")[..6];
         var token = $"{{{{{tokenPrefix}:{suffix}}}}}";
         _fragments[token] = new TurnFragment(templateId, data, mode, priority);

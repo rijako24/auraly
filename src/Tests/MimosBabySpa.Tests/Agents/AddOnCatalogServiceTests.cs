@@ -76,6 +76,7 @@ public class AddOnCatalogServiceTests
 
         result.IsValid.Should().BeFalse();
         result.ErrorMessage.Should().Contain("Masaje Inventado");
+        result.Hint.Should().Contain("ninguno");
     }
 
     [Fact]
