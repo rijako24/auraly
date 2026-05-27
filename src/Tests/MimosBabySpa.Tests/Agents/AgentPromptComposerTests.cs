@@ -340,6 +340,45 @@ public class AgentPromptComposerTests
         result.Should().NotContain("¡Hola! Soy Mimi.");
     }
 
+    [Fact]
+    public void Compose_MimiStyleFlow_DiscoveryFirstStage_PersonaHasGreetingRules()
+    {
+        var config = new AgentConfig
+        {
+            AgentId = DefaultConfig.AgentId,
+            BusinessId = DefaultConfig.BusinessId,
+            Name = "Mimi",
+            Persona = "## ROL\nEres Mimi.\n\n## CÓMO ABRES LA CONVERSACIÓN\n- En tu primer mensaje: saludo.\n- Si conoces el nombre del cliente, salúdalo por nombre.",
+            Flow = new AgentFlowDefinition
+            {
+                StageDetection = "automatic",
+                Stages =
+                [
+                    new AgentFlowStage
+                    {
+                        Id = "discovery",
+                        Goal = "Conocer al bebé y elegir servicio",
+                        AllowedTools = ["get_service_catalog", "set_fact"],
+                        AdvanceWhenFacts = ["baby_name", "baby_age_months", "service"]
+                    }
+                ]
+            }
+        };
+
+        var session = new AgentToolContext
+        {
+            Conversation = new Conversation(),
+            ConversationState = new ConversationState(),
+            Facts = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        };
+
+        var result = Compose(config, [], session);
+
+        result.Should().Contain("CÓMO ABRES LA CONVERSACIÓN");
+        result.Should().Contain("etapa: discovery");
+        result.Should().NotContain("etapa: greeting");
+    }
+
     // ── BuildEagerCaptureBlock ────────────────────────────────────────────────
 
     [Fact]

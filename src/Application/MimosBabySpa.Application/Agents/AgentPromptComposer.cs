@@ -11,8 +11,7 @@ namespace MimosBabySpa.Application.Agents;
 
 /// <summary>
 /// Compone el system prompt runtime a partir de Persona, Flow, Facts, Guards y contexto de turno.
-/// El comportamiento del primer turno, el saludo y el engagement se manejan a través de
-/// la etapa "greeting" con CompletesOnEnter y Variants — sin lógica hardcoded aquí.
+/// El saludo puede vivir en Persona; stages opcionales pueden usar CompletesOnEnter y Variants.
 /// </summary>
 public sealed class AgentPromptComposer : IPromptComposer
 {
@@ -279,8 +278,6 @@ public sealed class AgentPromptComposer : IPromptComposer
     /// <summary>
     /// Construye el bloque de la etapa actual, aplicando la variante correspondiente
     /// al engagement del turno si la etapa tiene variantes declaradas.
-    /// El greeting stage con CompletesOnEnter no necesita lógica hardcoded aquí:
-    /// su hint y objetivo vienen de su Variant.
     /// </summary>
     private string BuildFlowBlock(
         AgentConfig config,
