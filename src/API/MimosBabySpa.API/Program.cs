@@ -124,6 +124,7 @@ var host = new HostBuilder()
 
         services.AddScoped<IConversationFactsService, ConversationFactsService>();
         services.AddScoped<IReservationLifecycleService, ReservationLifecycleService>();
+        services.AddScoped<ICustomerReservationResolver, CustomerReservationResolver>();
         services.AddScoped<IPaymentLifecycleService, PaymentLifecycleService>();
         services.AddScoped<IReservationIntentBuilder, ReservationIntentBuilder>();
 

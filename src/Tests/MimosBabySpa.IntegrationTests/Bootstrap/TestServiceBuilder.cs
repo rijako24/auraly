@@ -68,6 +68,7 @@ public static class TestServiceBuilder
         services.AddSingleton<IConversationStateManager, ConversationStateManager>();
         services.AddSingleton<IConversationFactsService, ConversationFactsService>();
         services.AddSingleton<IReservationLifecycleService, ReservationLifecycleService>();
+        services.AddSingleton<ICustomerReservationResolver, CustomerReservationResolver>();
         services.AddSingleton<IPaymentLifecycleService, PaymentLifecycleService>();
         services.AddSingleton<IReservationIntentBuilder, ReservationIntentBuilder>();
         services.AddSingleton<IConversationVerificationService, ConversationVerificationService>();

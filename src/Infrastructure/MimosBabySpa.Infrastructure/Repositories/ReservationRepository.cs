@@ -131,6 +131,30 @@ public class ReservationRepository : IReservationRepository
             .FirstOrDefaultAsync(ct);
     }
 
+    public async Task<IReadOnlyList<Reservation>> GetManageableByCustomerPhoneAsync(
+        Guid businessId,
+        string customerPhone,
+        DateOnly businessToday,
+        CancellationToken ct = default)
+    {
+        var phone = customerPhone.Trim();
+
+        return await _context.Reservations
+            .Include(r => r.Service)
+            .Include(r => r.Employee)
+            .Include(r => r.AddOns)
+            .Where(r => r.BusinessId == businessId
+                && r.CustomerPhoneSnapshot != null
+                && r.CustomerPhoneSnapshot.Trim() == phone
+                && (r.Status == Domain.Enums.ReservationStatus.Confirmed
+                    || r.Status == Domain.Enums.ReservationStatus.OnHold)
+                && (!r.ReservationDateTime.HasValue
+                    || DateOnly.FromDateTime(r.ReservationDateTime.Value) >= businessToday))
+            .OrderBy(r => r.ReservationDateTime)
+            .ThenByDescending(r => r.UpdatedAt ?? r.CreatedAt)
+            .ToListAsync(ct);
+    }
+
     public Task<Reservation> CreateAsync(Reservation reservation)
     {
         _context.Reservations.Add(reservation);

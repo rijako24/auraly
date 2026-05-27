@@ -117,10 +117,13 @@ public class AgentPromptComposerTests
                 ["service"]         = "Plan Marineritos",
                 ["add_ons"]         = "Decoración Sencilla"
             },
-            ActiveReservation = new Reservation
-            {
-                Service = new Service { ServiceName = "Plan Marineritos" }
-            }
+            ManageableReservations =
+            [
+                new Reservation
+                {
+                    Service = new Service { ServiceName = "Plan Marineritos" }
+                }
+            ]
         };
 
         var result = Compose(config, [], session);

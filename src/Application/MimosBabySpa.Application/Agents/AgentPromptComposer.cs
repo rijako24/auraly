@@ -2,6 +2,7 @@ using MimosBabySpa.Application.Agents.Composition;
 using MimosBabySpa.Application.Agents.Configuration;
 using MimosBabySpa.Application.Agents.Tools;
 using MimosBabySpa.Application.Configuration;
+using MimosBabySpa.Application.Services;
 using MimosBabySpa.Application.Time;
 using MimosBabySpa.Domain.Entities;
 using MimosBabySpa.Domain.Enums;
@@ -124,23 +125,9 @@ public sealed class AgentPromptComposer : IPromptComposer
                 blocks.Add(string.Join(Environment.NewLine, factsLines));
 
             // ── ESTADO RESERVA ─────────────────────────────────────────────────
-            var reservation = session.ActiveReservation;
-            if (reservation is not null)
-            {
-                var reservaLines = new List<string> { "## ESTADO RESERVA" };
-                reservaLines.Add($"- estado: {reservation.Status}");
-
-                if (reservation.ReservationDateTime is not null)
-                {
-                    reservaLines.Add($"- fecha_confirmada: {DateOnly.FromDateTime(reservation.ReservationDateTime.Value):yyyy-MM-dd}");
-                    reservaLines.Add($"- hora_confirmada: {TimeOnly.FromDateTime(reservation.ReservationDateTime.Value):HH:mm}");
-                }
-
-                if (reservation.Status == ReservationStatus.Confirmed && reservation.ReservationId != Guid.Empty)
-                    reservaLines.Add($"- id_reserva: {reservation.ReservationId}");
-
-                blocks.Add(string.Join(Environment.NewLine, reservaLines));
-            }
+            var reservationBlock = BuildReservationContextBlock(session);
+            if (!string.IsNullOrWhiteSpace(reservationBlock))
+                blocks.Add(reservationBlock);
 
             // ── ESTADO PAGO: pago confirmado sin slot ─────────────────────────
             if (paymentForContext?.RequiresRescheduling == true
@@ -174,6 +161,56 @@ public sealed class AgentPromptComposer : IPromptComposer
         return blocks.Count == 0
             ? string.Empty
             : string.Join($"{Environment.NewLine}{Environment.NewLine}", blocks);
+    }
+
+    internal static string BuildReservationContextBlock(AgentToolContext session)
+    {
+        return session.ManageableReservations.Count switch
+        {
+            0 => string.Empty,
+            1 => BuildSingleReservationBlock(session.ManageableReservations[0]),
+            _ => BuildMultipleReservationsBlock(session.ManageableReservations)
+        };
+    }
+
+    private static string BuildSingleReservationBlock(Reservation r)
+    {
+        var lines = new List<string> { "## ESTADO RESERVA", $"- estado: {r.Status}" };
+
+        var serviceName = r.Service?.ServiceName ?? r.GetServiceName();
+        if (!string.IsNullOrWhiteSpace(serviceName))
+            lines.Add($"- servicio: {serviceName}");
+
+        if (r.ReservationDateTime is not null)
+        {
+            lines.Add($"- fecha_confirmada: {DateOnly.FromDateTime(r.ReservationDateTime.Value):yyyy-MM-dd}");
+            lines.Add($"- hora_confirmada: {TimeOnly.FromDateTime(r.ReservationDateTime.Value):HH:mm}");
+        }
+
+        if (r.ReservationId != Guid.Empty)
+            lines.Add($"- id_reserva: {r.ReservationId}");
+
+        lines.Add("- gestion: reagendar o cancelar usando las tools; no pidas UUID al cliente.");
+        return string.Join(Environment.NewLine, lines);
+    }
+
+    private static string BuildMultipleReservationsBlock(IReadOnlyList<Reservation> reservations)
+    {
+        var lines = new List<string>
+        {
+            "## RESERVAS DEL CLIENTE",
+            "- varias_citas: true",
+            "- accion: pregunta cuál cita (fecha y servicio); nunca pidas UUID al cliente."
+        };
+
+        var index = 1;
+        foreach (var r in reservations)
+        {
+            lines.Add($"- cita_{index}: {CustomerReservationResolver.FormatReservationLine(r)}");
+            index++;
+        }
+
+        return string.Join(Environment.NewLine, lines);
     }
 
     /// <summary>

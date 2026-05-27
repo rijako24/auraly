@@ -183,17 +183,20 @@ public sealed class CreateReservationTool : IAgentTool
                 intent.CustomAttributesJson),
             cancellationToken);
 
-        ctx.ActiveReservation = new Domain.Entities.Reservation
-        {
-            ReservationId = response.ReservationId,
-            BusinessId = ctx.BusinessId,
-            ConversationId = ctx.ConversationId,
-            Status = ReservationStatus.Confirmed,
-            ReservationDateTime = date.ToDateTime(time),
-            CustomerNameSnapshot = customerName,
-            CustomerPhoneSnapshot = customerPhone,
-            CustomAttributesJson = intent.CustomAttributesJson
-        };
+        ctx.ManageableReservations =
+        [
+            new Domain.Entities.Reservation
+            {
+                ReservationId = response.ReservationId,
+                BusinessId = ctx.BusinessId,
+                ConversationId = ctx.ConversationId,
+                Status = ReservationStatus.Confirmed,
+                ReservationDateTime = date.ToDateTime(time),
+                CustomerNameSnapshot = customerName,
+                CustomerPhoneSnapshot = customerPhone,
+                CustomAttributesJson = intent.CustomAttributesJson
+            }
+        ];
 
         await _lifecycle.CloseAsync(
             ctx.ConversationId, ConversationCloseReasons.ReservationConfirmed, cancellationToken);
@@ -217,7 +220,7 @@ public sealed class CreateReservationTool : IAgentTool
         string timeStr,
         string customerName)
     {
-        var reservation = ctx.ActiveReservation;
+        var reservation = ctx.SingleManageableReservation;
         if (reservation?.Status != ReservationStatus.Confirmed
             || !reservation.ReservationDateTime.HasValue)
         {

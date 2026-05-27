@@ -408,11 +408,16 @@ public sealed class AgentConversationService : IAgentConversationService
         var conversation = await _conversationService.GetConversationByIdAsync(conversationId)
             ?? throw new InvalidOperationException($"Conversation {conversationId} not found.");
 
-        var activeReservation = await _reservationLifecycle.GetActiveAsync(conversationId, ct);
-        var activePayment = await _paymentLifecycle.GetActiveByConversationAsync(conversationId, ct);
-
         var clockSnapshot = await _businessClock.GetSnapshotAsync(config.BusinessId, ct);
         var resolvedPhone = channelPhone?.Trim() ?? conversation.UserNumber;
+
+        var reservationSession = await _reservationLifecycle.ResolveForSessionAsync(
+            conversationId,
+            config.BusinessId,
+            resolvedPhone,
+            clockSnapshot.Today,
+            ct);
+        var activePayment = await _paymentLifecycle.GetActiveByConversationAsync(conversationId, ct);
 
         var mutableFacts = new Dictionary<string, string>(facts, StringComparer.OrdinalIgnoreCase);
 
@@ -436,7 +441,7 @@ public sealed class AgentConversationService : IAgentConversationService
             ConversationState = state,
             Conversation = conversation,
             Facts = mutableFacts,
-            ActiveReservation = activeReservation,
+            ManageableReservations = reservationSession.ManageableReservations,
             ActivePayment = activePayment
         };
 

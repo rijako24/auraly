@@ -5,6 +5,16 @@ namespace MimosBabySpa.Application.Services;
 public interface IReservationLifecycleService
 {
     Task<Reservation?> GetActiveAsync(Guid conversationId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Reserva de la conversación actual, o —si la conversación se cerró tras confirmar— la del cliente por teléfono (política B).
+    /// </summary>
+    Task<CustomerReservationSession> ResolveForSessionAsync(
+        Guid conversationId,
+        Guid businessId,
+        string channelPhone,
+        DateOnly businessToday,
+        CancellationToken ct = default);
     Task<Reservation> GetOrCreateActiveAsync(Guid conversationId, Guid businessId, CancellationToken ct = default);
     Task<Reservation> ApplyServiceByNameAsync(Reservation reservation, Guid businessId, string serviceName, CancellationToken ct = default);
     Task<Reservation> ApplyDateTimeAsync(Reservation reservation, DateOnly date, TimeOnly time, CancellationToken ct = default);

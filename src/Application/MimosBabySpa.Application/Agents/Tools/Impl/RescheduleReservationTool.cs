@@ -4,30 +4,37 @@ using MimosBabySpa.Application.Services;
 namespace MimosBabySpa.Application.Agents.Tools.Impl;
 
 /// <summary>
-/// Cambia la fecha y hora de una reserva existente.
-/// Pre-condición: debe existir una reserva confirmada para la conversación.
+/// Cambia la fecha y hora de una reserva existente del cliente.
+/// <c>reservation_id</c> es opcional: se resuelve por conversación o teléfono del canal.
 /// </summary>
 public sealed class RescheduleReservationTool : IAgentTool
 {
     private readonly IReservationService _reservations;
+    private readonly ICustomerReservationResolver _reservationResolver;
 
-    public RescheduleReservationTool(IReservationService reservations) =>
+    public RescheduleReservationTool(
+        IReservationService reservations,
+        ICustomerReservationResolver reservationResolver)
+    {
         _reservations = reservations;
+        _reservationResolver = reservationResolver;
+    }
 
     public string Name => "reschedule_reservation";
 
     public string Description =>
-        "Updates the date and time of an existing reservation identified by reservation_id.";
+        "Updates the date and time of an existing reservation for the current customer. " +
+        "reservation_id is optional when there is a single active reservation in session context.";
 
     public string ParametersSchema => """
         {
           "type": "object",
           "properties": {
-            "reservation_id": { "type": "string", "description": "UUID of the reservation to reschedule" },
+            "reservation_id": { "type": "string", "description": "Optional. Internal UUID; omit when only one reservation is in ESTADO RESERVA." },
             "new_date": { "type": "string", "description": "New date in YYYY-MM-DD format" },
             "new_time": { "type": "string", "description": "New time in HH:mm format" }
           },
-          "required": ["reservation_id", "new_date", "new_time"]
+          "required": ["new_date", "new_time"]
         }
         """;
 
@@ -36,11 +43,14 @@ public sealed class RescheduleReservationTool : IAgentTool
         AgentToolContext ctx,
         CancellationToken cancellationToken = default)
     {
-        if (!ToolResultHelper.TryGetString(arguments, "reservation_id", out var reservationIdStr))
-            return ToolResultHelper.Error("invalid_args", "'reservation_id' is required.");
+        ToolResultHelper.TryGetString(arguments, "reservation_id", out var reservationIdStr);
+        reservationIdStr = string.IsNullOrWhiteSpace(reservationIdStr) ? null : reservationIdStr;
 
-        if (!Guid.TryParse(reservationIdStr, out var reservationId))
-            return ToolResultHelper.Error("invalid_args", $"'{reservationIdStr}' is not a valid reservation ID.");
+        var resolved = await _reservationResolver.ResolveAsync(ctx, reservationIdStr, cancellationToken);
+        if (!resolved.Success)
+            return resolved.ErrorJson!;
+
+        var reservationId = resolved.Reservation!.ReservationId;
 
         if (!ToolResultHelper.TryGetString(arguments, "new_date", out var dateStr))
             return ToolResultHelper.Error("invalid_args", "'new_date' is required.");
@@ -62,7 +72,7 @@ public sealed class RescheduleReservationTool : IAgentTool
         if (!success)
             return ToolResultHelper.Error("reschedule_failed",
                 "The reservation could not be rescheduled.",
-                "Verify the reservation ID is correct and the new slot is available.");
+                "Verify the new slot is available.");
 
         return ToolResultHelper.Ok(new
         {

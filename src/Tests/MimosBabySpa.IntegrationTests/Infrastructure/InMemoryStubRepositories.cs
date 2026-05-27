@@ -217,6 +217,26 @@ public class InMemoryReservationRepository : IReservationRepository
             .OrderByDescending(r => r.UpdatedAt ?? r.CreatedAt)
             .FirstOrDefault());
 
+    public Task<IReadOnlyList<Reservation>> GetManageableByCustomerPhoneAsync(
+        Guid businessId,
+        string customerPhone,
+        DateOnly businessToday,
+        CancellationToken ct = default)
+    {
+        var phone = customerPhone.Trim();
+        var list = _store
+            .Where(r => r.BusinessId == businessId
+                && !string.IsNullOrWhiteSpace(r.CustomerPhoneSnapshot)
+                && string.Equals(r.CustomerPhoneSnapshot.Trim(), phone, StringComparison.OrdinalIgnoreCase)
+                && (r.Status == ReservationStatus.Confirmed || r.Status == ReservationStatus.OnHold)
+                && (!r.ReservationDateTime.HasValue
+                    || DateOnly.FromDateTime(r.ReservationDateTime.Value) >= businessToday))
+            .OrderBy(r => r.ReservationDateTime)
+            .ThenByDescending(r => r.UpdatedAt ?? r.CreatedAt)
+            .ToList();
+        return Task.FromResult<IReadOnlyList<Reservation>>(list);
+    }
+
     public Task<Reservation> CreateAsync(Reservation reservation)
     {
         _store.Add(reservation);

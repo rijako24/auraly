@@ -107,7 +107,7 @@ public sealed class SetFactTool : IAgentTool
         if (key.Equals(ConversationFactKeys.AddOns, StringComparison.OrdinalIgnoreCase))
         {
             var service = ConversationFactKeys.Get(ctx.Facts, ConversationFactKeys.Service)
-                ?? ctx.ActiveReservation?.Service?.ServiceName;
+                ?? ctx.SingleManageableReservation?.Service?.ServiceName;
 
             if (string.IsNullOrWhiteSpace(service))
             {
