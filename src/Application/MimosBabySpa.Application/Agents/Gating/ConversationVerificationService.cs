@@ -13,6 +13,11 @@ public interface IConversationVerificationService
         string? payloadJson = null);
 
     bool IsActive(ConversationState state, string factType, string scopeKey);
+
+    /// <summary>
+    /// Elimina todas las verificaciones de un tipo (p. ej. al cambiar slot de booking).
+    /// </summary>
+    void RevokeByFactType(ConversationState state, string factType);
 }
 
 public sealed class ConversationVerificationService : IConversationVerificationService
@@ -47,6 +52,17 @@ public sealed class ConversationVerificationService : IConversationVerificationS
             return false;
 
         return !entry.ExpiresAt.HasValue || entry.ExpiresAt > DateTime.UtcNow;
+    }
+
+    public void RevokeByFactType(ConversationState state, string factType)
+    {
+        var prefix = $"{factType}|";
+        var stale = state.Verifications.Keys
+            .Where(k => k.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        foreach (var key in stale)
+            state.Verifications.Remove(key);
     }
 
     private static string BuildKey(string factType, string scopeKey) =>

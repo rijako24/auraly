@@ -1,4 +1,5 @@
 using System.Text.Json;
+using MimosBabySpa.Application.Agents.Configuration;
 using MimosBabySpa.Application.Agents.Facts;
 using MimosBabySpa.Application.Agents.Gating;
 using MimosBabySpa.Application.Configuration;
@@ -128,8 +129,17 @@ public sealed class SetFactTool : IAgentTool
                 value = validation.NormalizedCsv;
         }
 
+        ctx.Facts.TryGetValue(key, out var previousValue);
+        var valueChanged = !string.Equals(
+            previousValue?.Trim(),
+            value.Trim(),
+            StringComparison.OrdinalIgnoreCase);
+
         await _factsService.SetAsync(ctx.ConversationId, ctx.BusinessId, key, value, cancellationToken);
         ctx.Facts[key] = value;
+
+        if (valueChanged && InvalidatesAvailabilityVerification(schemaEntry, key))
+            _verifications.RevokeByFactType(ctx.ConversationState, VerificationFactTypes.AvailabilityChecked);
 
         if (key.Equals(ConversationFactKeys.CustomerName, StringComparison.OrdinalIgnoreCase))
             ctx.Conversation.CustomerName = value;
@@ -150,6 +160,21 @@ public sealed class SetFactTool : IAgentTool
         await TryRecordCustomerIdentifiedAsync(ctx);
 
         return ToolResultHelper.Ok(new { key, value, storage = "fact" });
+    }
+
+    private static bool InvalidatesAvailabilityVerification(FactSchemaEntry? schemaEntry, string key)
+    {
+        if (schemaEntry?.Role is { } role
+            && (role.Equals("booking.service", StringComparison.OrdinalIgnoreCase)
+                || role.Equals("booking.date", StringComparison.OrdinalIgnoreCase)
+                || role.Equals("booking.time", StringComparison.OrdinalIgnoreCase)))
+        {
+            return true;
+        }
+
+        return key.Equals(ConversationFactKeys.Service, StringComparison.OrdinalIgnoreCase)
+            || key.Equals(ConversationFactKeys.DesiredDate, StringComparison.OrdinalIgnoreCase)
+            || key.Equals(ConversationFactKeys.DesiredTime, StringComparison.OrdinalIgnoreCase);
     }
 
     private Task TryRecordCustomerIdentifiedAsync(AgentToolContext ctx)

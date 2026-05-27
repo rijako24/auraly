@@ -131,6 +131,62 @@ public class SetFactToolTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_DesiredTimeChange_RevokesAvailabilityVerification()
+    {
+        var ctx = CreateContext();
+        ctx.Config = CreateMimiLikeSchema();
+        ctx.Facts[ConversationFactKeys.Service] = "Plan Marineritos";
+        ctx.Facts[ConversationFactKeys.DesiredDate] = "2026-05-27";
+        ctx.Facts[ConversationFactKeys.DesiredTime] = "08:00";
+
+        var oldScope = SlotVerificationScope.Build("Plan Marineritos", "2026-05-27", "08:00");
+        _verifications.Record(ctx, VerificationFactTypes.AvailabilityChecked, oldScope, null);
+        _verifications.IsActive(ctx.ConversationState, VerificationFactTypes.AvailabilityChecked, oldScope)
+            .Should().BeTrue();
+
+        using var args = JsonDocument.Parse("""{"key":"desired_time","value":"09:00"}""");
+        var json = await _tool.ExecuteAsync(args.RootElement, ctx, CancellationToken.None);
+
+        json.Should().Contain("\"ok\":true");
+        _verifications.IsActive(ctx.ConversationState, VerificationFactTypes.AvailabilityChecked, oldScope)
+            .Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_DesiredTimeSameValue_DoesNotRevokeAvailabilityVerification()
+    {
+        var ctx = CreateContext();
+        ctx.Config = CreateMimiLikeSchema();
+        ctx.Facts[ConversationFactKeys.DesiredTime] = "09:00";
+
+        var scope = SlotVerificationScope.Build("Plan Marineritos", "2026-05-27", "09:00");
+        _verifications.Record(ctx, VerificationFactTypes.AvailabilityChecked, scope, null);
+
+        using var args = JsonDocument.Parse("""{"key":"desired_time","value":"09:00"}""");
+        await _tool.ExecuteAsync(args.RootElement, ctx, CancellationToken.None);
+
+        _verifications.IsActive(ctx.ConversationState, VerificationFactTypes.AvailabilityChecked, scope)
+            .Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_AddOnsChange_DoesNotRevokeAvailabilityVerification()
+    {
+        var ctx = CreateContext();
+        ctx.Config = CreateMimiLikeSchema();
+        ctx.Facts[ConversationFactKeys.Service] = "Plan Marineritos";
+
+        var scope = SlotVerificationScope.Build("Plan Marineritos", "2026-05-27", "08:00");
+        _verifications.Record(ctx, VerificationFactTypes.AvailabilityChecked, scope, null);
+
+        using var args = JsonDocument.Parse("""{"key":"add_ons","value":"Decoración Sencilla"}""");
+        await _tool.ExecuteAsync(args.RootElement, ctx, CancellationToken.None);
+
+        _verifications.IsActive(ctx.ConversationState, VerificationFactTypes.AvailabilityChecked, scope)
+            .Should().BeTrue();
+    }
+
+    [Fact]
     public async Task ExecuteAsync_AliasKey_WhenSchemaDefined_ResolvesToCanonicalKey()
     {
         var ctx = CreateContext();
@@ -155,6 +211,17 @@ public class SetFactToolTests
         json.Should().Contain("\"ok\":true");
         ctx.Facts["desired_time"].Should().Be("09:00");
     }
+
+    private static AgentConfig CreateMimiLikeSchema() => new()
+    {
+        FactSchema =
+        [
+            new FactSchemaEntry { Key = "service", Role = "booking.service", Source = "user" },
+            new FactSchemaEntry { Key = "desired_date", Role = "booking.date", Type = "date", Source = "user" },
+            new FactSchemaEntry { Key = "desired_time", Role = "booking.time", Type = "time", Source = "user" },
+            new FactSchemaEntry { Key = "add_ons", Role = "booking.addons", Source = "user" }
+        ]
+    };
 
     private static AgentToolContext CreateContext(Guid? businessId = null) => new()
     {
