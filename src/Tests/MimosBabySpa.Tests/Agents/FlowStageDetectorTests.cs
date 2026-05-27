@@ -73,4 +73,39 @@ public sealed class FlowStageDetectorTests
 
         stage!.Id.Should().Be("discovery");
     }
+
+    [Fact]
+    public void DetectCurrentStage_IntentCaptureCompletesOnEnter_ThenDiscovery()
+    {
+        var flow = new AgentFlowDefinition
+        {
+            StageDetection = "automatic",
+            Stages =
+            [
+                new AgentFlowStage
+                {
+                    Id = "intent_capture",
+                    CompletesOnEnter = true,
+                    AdvanceWhenFacts = []
+                },
+                new AgentFlowStage
+                {
+                    Id = "discovery",
+                    AdvanceWhenFacts = ["service"]
+                }
+            ]
+        };
+
+        var session = new AgentToolContext
+        {
+            Conversation = new Conversation(),
+            ConversationState = new ConversationState(),
+            Facts = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        };
+
+        _detector.DetectCurrentStage(flow, session)!.Id.Should().Be("intent_capture");
+
+        session.ConversationState.CompletedOneShotStages.Add("intent_capture");
+        _detector.DetectCurrentStage(flow, session)!.Id.Should().Be("discovery");
+    }
 }

@@ -76,10 +76,19 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
     "stageDetection": "automatic",
     "stages": [
       {
+        "id": "intent_capture",
+        "goal": "Entender qué necesita el cliente hoy antes de iniciar agendamiento u otra gestión.",
+        "hint": "1) Si mencionó nombre o edad del bebé, regístralos con set_fact. 2) Si el mensaje no deja claro qué quiere (solo saludo u otro mensaje sin pedido concreto), saluda según tu identidad y pregunta en una línea: ¿En qué puedo ayudarte hoy — agendar, información de servicios, cambiar horario de una reserva o cancelar? 3) Si quiere agendar o información de servicios/planes, responde en el mismo mensaje: llama get_service_catalog si necesitas el catálogo y atiende su pedido. 4) Si quiere cambiar horario, usa reschedule_reservation cuando tengas reservation_id, nueva fecha y hora; si falta algún dato, pídelo en este mensaje. 5) Si quiere cancelar o suspender, usa suspend_reservation con reservation_id; si falta el id, pídelo en este mensaje.",
+        "allowedTools": ["set_fact", "get_service_catalog", "reschedule_reservation", "suspend_reservation"],
+        "suggestedTools": ["set_fact", "get_service_catalog"],
+        "advanceWhenFacts": [],
+        "completesOnEnter": true
+      },
+      {
         "id": "discovery",
         "goal": "Conoce al bebé (nombre, edad) y guía al cliente para elegir un servicio. Presenta el catálogo agrupado por categoría (Plan, Taller, Clase) para que vea todas las familias antes de decidir.",
-        "hint": "Si el cliente dio nombre o edad del bebé en su mensaje, regístralos con set_fact antes de otras acciones. Pregunta nombre y edad en una frase solo si faltan. Llama get_service_catalog y presenta opciones por categoría. Cuando el cliente elija un servicio, persiste set_fact con key service y el nombre exacto que devolvió el catálogo. Cierra confirmando la elección o pregunta cuál le interesa si aún no eligió.",
-        "allowedTools": ["get_service_catalog", "set_fact"],
+        "hint": "Si el cliente sigue con reagendar o cancelar, atiende eso con reschedule_reservation o suspend_reservation antes de pedir datos de agendamiento. Si dio nombre o edad del bebé en su mensaje, regístralos con set_fact antes de otras acciones. Pregunta nombre y edad en una frase solo si faltan. Llama get_service_catalog y presenta opciones por categoría. Cuando el cliente elija un servicio, persiste set_fact con key service y el nombre exacto que devolvió el catálogo. Cierra confirmando la elección o pregunta cuál le interesa si aún no eligió.",
+        "allowedTools": ["get_service_catalog", "set_fact", "reschedule_reservation", "suspend_reservation"],
         "suggestedTools": ["get_service_catalog", "set_fact"],
         "advanceWhenFacts": ["baby_name", "baby_age_months", "service"]
       },
