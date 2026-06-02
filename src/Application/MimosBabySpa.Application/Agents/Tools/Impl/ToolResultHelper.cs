@@ -22,13 +22,14 @@ internal static class ToolResultHelper
         return JsonSerializer.Serialize(new { ok = true, data, effects }, Options);
     }
 
-    public static string Error(string code, string message, string? hint = null) =>
-        JsonSerializer.Serialize(new { ok = false, error = new { code, message, hint } }, Options);
+    public static string Error(string code, string message, string? hint = null, bool recoverable = false) =>
+        JsonSerializer.Serialize(new { ok = false, error = new { code, message, hint, recoverable } }, Options);
 
     public static string MissingPrerequisites(params string[] missing) =>
         Error("missing_prerequisites",
             "Required data is missing before this action can be performed.",
-            $"Collect the following first: {string.Join(", ", missing)}");
+            $"Collect the following first: {string.Join(", ", missing)}",
+            recoverable: true);
 
     public static bool TryGetString(JsonElement args, string property, out string value)
     {

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using MimosBabySpa.Application.Agents.Facts;
 using MimosBabySpa.Application.Agents.Gating;
 using MimosBabySpa.Application.Agents.Templates;
 using MimosBabySpa.Application.Configuration;
@@ -60,22 +61,22 @@ public sealed class CheckAvailabilityTool : IAgentTool
         var dateStr = Coalesce(arguments, "date", ConversationFactKeys.Get(ctx.Facts, ConversationFactKeys.DesiredDate));
 
         if (string.IsNullOrWhiteSpace(service))
-            return ToolResultHelper.Error("invalid_args", "Parameter 'service' is required.");
+            return ToolResultHelper.Error("invalid_args", "Parameter 'service' is required.", recoverable: true);
         if (string.IsNullOrWhiteSpace(dateStr))
-            return ToolResultHelper.Error("invalid_args", "Parameter 'date' is required.");
+            return ToolResultHelper.Error("invalid_args", "Parameter 'date' is required.", recoverable: true);
 
         if (!AgentDateRules.TryParseDate(dateStr, out var date))
-            return ToolResultHelper.Error("invalid_date", $"'{dateStr}' is not a valid date.", "Use YYYY-MM-DD format.");
+            return ToolResultHelper.Error("invalid_date", $"'{dateStr}' is not a valid date.", "Use YYYY-MM-DD format.", recoverable: true);
 
         if (AgentDateRules.IsPastDate(date, ctx.BusinessToday))
-            return ToolResultHelper.Error("past_date", "The date must be today or in the future.");
+            return ToolResultHelper.Error("past_date", "The date must be today or in the future.", recoverable: true);
 
         TimeSpan? time = null;
         var timeStr = Coalesce(arguments, "time", ConversationFactKeys.Get(ctx.Facts, ConversationFactKeys.DesiredTime));
         if (!string.IsNullOrWhiteSpace(timeStr))
         {
             if (!TimeSpan.TryParse(timeStr, out var parsedTime))
-                return ToolResultHelper.Error("invalid_time", $"'{timeStr}' is not a valid time.", "Use HH:mm format.");
+                return ToolResultHelper.Error("invalid_time", $"'{timeStr}' is not a valid time.", "Use HH:mm format.", recoverable: true);
             time = parsedTime;
         }
 
@@ -197,24 +198,25 @@ public sealed class CheckAvailabilityTool : IAgentTool
         string? timeStr,
         AvailabilityResult result)
     {
-        if (!string.IsNullOrWhiteSpace(timeStr))
-        {
-            _verifications.Record(
-                ctx,
-                VerificationFactTypes.AvailabilityChecked,
-                SlotVerificationScope.Build(service, dateStr, timeStr),
-                VerificationTtl.AvailabilityChecked);
-            return;
-        }
+        var roles = new FactRoleIndex(ctx.Config?.FactSchema ?? []);
+        var serviceKey = roles.KeyByRole("booking.service") ?? ConversationFactKeys.Service;
+        var dateKey = roles.KeyByRole("booking.date") ?? ConversationFactKeys.DesiredDate;
+        var timeKey = roles.KeyByRole("booking.time") ?? ConversationFactKeys.DesiredTime;
 
-        foreach (var slot in result.AvailableTimeSlots)
+        var pairs = new List<KeyValuePair<string, string>>
         {
-            _verifications.Record(
-                ctx,
-                VerificationFactTypes.AvailabilityChecked,
-                SlotVerificationScope.Build(service, dateStr, slot),
-                VerificationTtl.AvailabilityChecked);
-        }
+            new(serviceKey, service),
+            new(dateKey, dateStr)
+        };
+
+        if (!string.IsNullOrWhiteSpace(timeStr))
+            pairs.Add(new KeyValuePair<string, string>(timeKey, timeStr));
+
+        _verifications.Record(
+            ctx,
+            VerificationFactTypes.AvailabilityChecked,
+            VerificationSnapshot.FromValues(pairs.ToArray()),
+            VerificationTtl.AvailabilityChecked);
     }
 
     private static string? Coalesce(JsonElement args, string property, string? factValue)

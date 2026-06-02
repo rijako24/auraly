@@ -27,7 +27,6 @@ public class FakeAgentConfigProvider : IAgentConfigProvider
                 ## SALUDO Y PRESENTACION
                 En el primer mensaje saluda y preséntate. En turnos siguientes no repitas el saludo.
                 """,
-            FirstTurnGreetingHint = "¡Hola! 😊 Soy Mimo de Mimo's Baby Spa. Un gusto saludarte.",
             Model = "gpt-4.1-mini",
             Temperature = 0.3f,
             MaxToolIterations = 8,

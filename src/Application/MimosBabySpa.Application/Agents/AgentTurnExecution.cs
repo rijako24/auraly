@@ -15,6 +15,8 @@ internal sealed class AgentTurnExecution
 {
     private readonly int _errorEscalationThreshold;
     private readonly Dictionary<string, TurnFragment> _fragments = new(StringComparer.Ordinal);
+    private readonly List<OutboundMessage> _outboundMessages = [];
+    private readonly HashSet<string> _enqueuedSequences = new(StringComparer.OrdinalIgnoreCase);
 
     public AgentTurnExecution(int errorEscalationThreshold)
     {
@@ -31,6 +33,8 @@ internal sealed class AgentTurnExecution
     public IReadOnlyList<TurnFragmentEntry> FragmentEntries =>
         _fragments.Select(kv => new TurnFragmentEntry(kv.Key, kv.Value)).ToList();
 
+    public IReadOnlyList<OutboundMessage> OutboundMessages => _outboundMessages;
+
     public bool ShouldAutoEscalate =>
         ConsecutiveToolErrors >= _errorEscalationThreshold;
 
@@ -43,7 +47,8 @@ internal sealed class AgentTurnExecution
 
         if (outcome.IsError)
         {
-            ConsecutiveToolErrors++;
+            if (!outcome.IsRecoverableError)
+                ConsecutiveToolErrors++;
             return;
         }
 
@@ -85,6 +90,20 @@ internal sealed class AgentTurnExecution
 
     public void MarkCheckoutPrepared() => CheckoutPrepared = true;
 
+    /// <summary>Encola mensajes outbound para envío tras la respuesta principal del turno.</summary>
+    public void EnqueueOutbound(IEnumerable<OutboundMessage> messages) =>
+        _outboundMessages.AddRange(messages);
+
+    /// <summary>Evita encolar la misma secuencia dos veces en un turno.</summary>
+    public bool TryMarkSequenceEnqueued(string sequenceName) =>
+        _enqueuedSequences.Add(sequenceName);
+
     public AgentTurnResult ToSuccessResult(string response) =>
-        AgentTurnResult.Ok(response, EscalatedToHuman, ReservationCreated, TotalTokens, ToolCallCount);
+        AgentTurnResult.Ok(
+            response,
+            EscalatedToHuman,
+            ReservationCreated,
+            TotalTokens,
+            ToolCallCount,
+            OutboundMessages);
 }

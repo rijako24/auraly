@@ -26,6 +26,9 @@ public sealed class AgentToolContext
     public Conversation Conversation { get; init; } = null!;
     public Dictionary<string, string> Facts { get; init; } = new(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>Resumen rodante de episodios anteriores (CustomerMemory.customer_summary).</summary>
+    public string? CustomerMemorySummary { get; set; }
+
     /// <summary>
     /// Citas confirmadas o en espera del cliente en este turno (conversación actual o teléfono del canal).
     /// </summary>

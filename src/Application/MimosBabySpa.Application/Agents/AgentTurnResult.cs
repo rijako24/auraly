@@ -21,8 +21,18 @@ public sealed class AgentTurnResult
     /// <summary>Número de tool calls ejecutadas en el turno.</summary>
     public int ToolCallCount { get; init; }
 
-    public static AgentTurnResult Ok(string response, bool escalated = false, bool reservationCreated = false,
-        int tokens = 0, int toolCalls = 0) =>
+    /// <summary>
+    /// Mensajes adicionales (texto/adjuntos) a enviar tras la respuesta principal, en orden.
+    /// </summary>
+    public IReadOnlyList<OutboundMessage> OutboundMessages { get; init; } = [];
+
+    public static AgentTurnResult Ok(
+        string response,
+        bool escalated = false,
+        bool reservationCreated = false,
+        int tokens = 0,
+        int toolCalls = 0,
+        IReadOnlyList<OutboundMessage>? outboundMessages = null) =>
         new()
         {
             Success = true,
@@ -30,7 +40,8 @@ public sealed class AgentTurnResult
             EscalatedToHuman = escalated,
             ReservationCreated = reservationCreated,
             TotalTokens = tokens,
-            ToolCallCount = toolCalls
+            ToolCallCount = toolCalls,
+            OutboundMessages = outboundMessages ?? []
         };
 
     public static AgentTurnResult Fail(string error) =>

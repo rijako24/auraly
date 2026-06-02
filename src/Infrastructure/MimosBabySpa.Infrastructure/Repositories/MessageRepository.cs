@@ -28,6 +28,22 @@ public class MessageRepository : IMessageRepository
             .ToListAsync();
     }
 
+    public async Task<IReadOnlyList<Message>> GetRecentByConversationIdAsync(
+        Guid conversationId, int limit, CancellationToken ct = default)
+    {
+        if (limit <= 0)
+            return [];
+
+        var recent = await _context.Messages
+            .Where(m => m.ConversationId == conversationId)
+            .OrderByDescending(m => m.Timestamp)
+            .Take(limit)
+            .ToListAsync(ct);
+
+        recent.Reverse();
+        return recent;
+    }
+
     public async Task<Message?> GetByIdAsync(Guid messageId)
     {
         return await _context.Messages.FindAsync(messageId);

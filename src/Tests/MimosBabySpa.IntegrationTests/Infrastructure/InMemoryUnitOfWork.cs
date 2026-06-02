@@ -20,6 +20,7 @@ public class InMemoryUnitOfWork : IUnitOfWork
     public IBusinessConfigurationRepository BusinessConfigurations { get; }
     public ISystemConfigurationRepository SystemConfigurations { get; }
     public IConversationContextRepository ConversationContexts { get; }
+    public ICustomerMemoryRepository CustomerMemory { get; }
     public IReservationRepository Reservations { get; }
     public IBusinessResourceRepository BusinessResources { get; }
     public IEmployeeRepository Employees { get; }
@@ -53,6 +54,7 @@ public class InMemoryUnitOfWork : IUnitOfWork
         BusinessConfigurations = new InMemoryBusinessConfigurationRepository(businessId);
         SystemConfigurations = new InMemorySystemConfigurationRepository();
         ConversationContexts   = new InMemoryConversationContextRepository();
+        CustomerMemory         = new InMemoryCustomerMemoryRepository();
         Reservations         = new InMemoryReservationRepository();
         PaymentTransactions  = new InMemoryPaymentTransactionRepository();
         BusinessResources    = new InMemoryBusinessResourceRepository();

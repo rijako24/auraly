@@ -213,7 +213,7 @@ public class InMemoryReservationRepository : IReservationRepository
 
     public Task<Reservation?> GetActiveByConversationIdAsync(Guid conversationId, CancellationToken ct = default) =>
         Task.FromResult(_store
-            .Where(r => r.ConversationId == conversationId && r.Status.IsActiveDraft())
+            .Where(r => r.ConversationId == conversationId && r.Status == ReservationStatus.Confirmed)
             .OrderByDescending(r => r.UpdatedAt ?? r.CreatedAt)
             .FirstOrDefault());
 
@@ -442,6 +442,17 @@ public class InMemoryServiceCategoryRepository : IServiceCategoryRepository
 
     public Task<IEnumerable<ServiceCategory>> GetByBusinessIdAsync(Guid businessId) =>
         Task.FromResult(_store.Where(c => c.BusinessId == businessId));
+
+    public Task<ServiceCategory?> GetByBusinessIdAndNameAsync(Guid businessId, string name) =>
+        Task.FromResult(_store.FirstOrDefault(c =>
+            c.BusinessId == businessId
+            && c.Name.Equals(name, StringComparison.OrdinalIgnoreCase)));
+
+    public Task<ServiceCategory> CreateAsync(ServiceCategory category)
+    {
+        _store.Add(category);
+        return Task.FromResult(category);
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

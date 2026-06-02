@@ -1,4 +1,6 @@
 using Microsoft.Extensions.Logging;
+using MimosBabySpa.Application.Agents;
+using MimosBabySpa.Application.Agents.Configuration;
 using MimosBabySpa.Application.Configuration;
 using MimosBabySpa.Application.DTOs;
 using MimosBabySpa.Application.StateManagement;
@@ -14,7 +16,9 @@ public class PaymentConfirmationHandler : IPaymentConfirmationHandler
     private readonly IConversationStateManager _stateManager;
     private readonly IPaymentLifecycleService _paymentLifecycle;
     private readonly IReservationService _reservationService;
-    private readonly PaymentConfirmationNotifier _confirmationNotifier;
+    private readonly IActiveAgentConfigResolver _activeAgentConfig;
+    private readonly IMessageSequenceResolver _sequenceResolver;
+    private readonly IOutboundMessageDispatcher _outboundDispatcher;
     private readonly IAvailabilityService _availabilityService;
     private readonly ISchedulingPolicyProvider _schedulingPolicy;
     private readonly IConversationLifecycleService _lifecycle;
@@ -25,7 +29,9 @@ public class PaymentConfirmationHandler : IPaymentConfirmationHandler
         IConversationStateManager stateManager,
         IPaymentLifecycleService paymentLifecycle,
         IReservationService reservationService,
-        PaymentConfirmationNotifier confirmationNotifier,
+        IActiveAgentConfigResolver activeAgentConfig,
+        IMessageSequenceResolver sequenceResolver,
+        IOutboundMessageDispatcher outboundDispatcher,
         IAvailabilityService availabilityService,
         ISchedulingPolicyProvider schedulingPolicy,
         IConversationLifecycleService lifecycle,
@@ -35,7 +41,9 @@ public class PaymentConfirmationHandler : IPaymentConfirmationHandler
         _stateManager = stateManager;
         _paymentLifecycle = paymentLifecycle;
         _reservationService = reservationService;
-        _confirmationNotifier = confirmationNotifier;
+        _activeAgentConfig = activeAgentConfig;
+        _sequenceResolver = sequenceResolver;
+        _outboundDispatcher = outboundDispatcher;
         _availabilityService = availabilityService;
         _schedulingPolicy = schedulingPolicy;
         _lifecycle = lifecycle;
@@ -138,9 +146,20 @@ public class PaymentConfirmationHandler : IPaymentConfirmationHandler
                 state.ConsecutiveDegradedTurns = 0;
                 await _stateManager.SaveStateAsync(paymentTx.ConversationId, state, ct);
 
-                var stubReservation = PaymentTransactionSnapshotMapper.ToNotificationReservation(paymentTx, service.ServiceName);
-                await _confirmationNotifier.SendPaymentConfirmedAndSlotTakenAsync(
-                    state, paymentTx, stubReservation, originalTime, availability.AvailableTimeSlots, ct);
+                var stubReservation = PaymentTransactionSnapshotMapper.ToNotificationReservation(
+                    paymentTx, service.ServiceName);
+                await SendWebhookSequenceAsync(
+                    state.BusinessId,
+                    stubReservation,
+                    WompiWebhookOutcomes.SlotUnavailableAfterPayment,
+                    new PaymentSequenceContext
+                    {
+                        Amount = paymentTx.AmountInCents / 100m,
+                        Currency = paymentTx.Currency,
+                        OriginalTime = originalTime,
+                        AvailableSlots = availability.AvailableTimeSlots
+                    },
+                    ct);
 
                 outcome = PaymentConfirmationOutcome.Ok();
                 return;
@@ -167,7 +186,14 @@ public class PaymentConfirmationHandler : IPaymentConfirmationHandler
                 state.Owner = ConversationOwner.Bot;
                 state.ConsecutiveDegradedTurns = 0;
                 await _stateManager.SaveStateAsync(paymentTx.ConversationId, state, ct);
-                await _confirmationNotifier.SendAsync(state, reservation, ct);
+
+                await SendWebhookSequenceAsync(
+                    state.BusinessId,
+                    reservation,
+                    WompiWebhookOutcomes.ReservationCreated,
+                    payment: null,
+                    ct);
+
                 await _lifecycle.CloseAsync(
                     paymentTx.ConversationId, ConversationCloseReasons.ReservationConfirmed, ct);
                 outcome = PaymentConfirmationOutcome.Ok();
@@ -183,6 +209,67 @@ public class PaymentConfirmationHandler : IPaymentConfirmationHandler
         }, ct);
 
         return outcome?.ToResult() ?? new PaymentConfirmationResult(false, "Error interno");
+    }
+
+    private async Task SendWebhookSequenceAsync(
+        Guid businessId,
+        Domain.Entities.Reservation reservation,
+        string outcomeKey,
+        PaymentSequenceContext? payment,
+        CancellationToken ct)
+    {
+        var phone = reservation.CustomerPhoneSnapshot?.Trim();
+        if (string.IsNullOrWhiteSpace(phone))
+        {
+            _logger.LogDebug("Webhook outbound: teléfono vacío, no se envía secuencia");
+            return;
+        }
+
+        var agentConfig = await _activeAgentConfig.GetActiveConfigAsync(businessId, ct);
+        if (agentConfig is null)
+        {
+            _logger.LogWarning(
+                "Webhook outbound: no hay agente activo para BusinessId={BusinessId}",
+                businessId);
+            return;
+        }
+
+        var sequenceName = agentConfig.Webhooks.Wompi?.TryGetValue(outcomeKey, out var outcome) == true
+            ? outcome.SendMessageSequence
+            : null;
+
+        if (string.IsNullOrWhiteSpace(sequenceName))
+        {
+            _logger.LogWarning(
+                "Webhook outbound: outcome '{Outcome}' sin sendMessageSequence para BusinessId={BusinessId}",
+                outcomeKey,
+                businessId);
+            return;
+        }
+
+        var context = new MessageSequenceContext
+        {
+            Reservation = reservation,
+            Payment = payment
+        };
+
+        var messages = await _sequenceResolver.ResolveAsync(
+            businessId,
+            sequenceName,
+            agentConfig.MessageSequences,
+            context,
+            ct);
+
+        if (messages.Count == 0)
+        {
+            _logger.LogWarning(
+                "Webhook outbound: secuencia '{Sequence}' vacía para BusinessId={BusinessId}",
+                sequenceName,
+                businessId);
+            return;
+        }
+
+        await _outboundDispatcher.SendAllAsync(businessId, phone, messages, ct);
     }
 
     private sealed record PaymentConfirmationOutcome(bool Success, string? Error)

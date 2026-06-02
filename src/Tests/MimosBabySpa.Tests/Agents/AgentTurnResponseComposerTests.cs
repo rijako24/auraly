@@ -68,6 +68,26 @@ public class AgentTurnResponseComposerTests
     [Fact]
     public void Compose_AvailabilitySlotsWithIntroMessage_RendersContextualLead()
     {
+        var config = new AgentConfig
+        {
+            Templates = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["availability_slots"] = """
+                    {{#if intro_message}}
+                    {{intro_message}}
+
+                    {{/if}}
+                    📅 *Horarios disponibles para {{date_formatted}}* ({{service_name}})
+
+                    {{#each slots}}
+                    - {{this}}
+                    {{/each}}
+
+                    ¿Cuál prefieres?
+                    """
+            }
+        };
+
         var composer = CreateComposer();
         const string token = "{{SLOTS:alt123}}";
         var fragments = new[]
@@ -85,11 +105,30 @@ public class AgentTurnResponseComposerTests
                 FragmentPriority.Required))
         };
 
-        var result = composer.Compose(new AgentConfig(), [], token, fragments);
+        var result = composer.Compose(config, [], token, fragments);
 
         result.Should().Contain("El horario pedido no está disponible");
         result.Should().Contain("- 09:00");
         result.Should().Contain("Plan Marineritos");
+    }
+
+    [Fact]
+    public void Compose_WhenTemplateMissingInConfig_SkipsFragment()
+    {
+        var composer = CreateComposer();
+        const string token = "{{CHECKOUT:missing}}";
+        var fragments = new[]
+        {
+            new TurnFragmentEntry(token, new TurnFragment(
+                "checkout_no_deposit",
+                new Dictionary<string, object?> { ["total"] = "50,000" },
+                FragmentRenderMode.Exclusive))
+        };
+
+        var result = composer.Compose(new AgentConfig(), [], "Texto del modelo", fragments);
+
+        result.Should().Be("Texto del modelo");
+        result.Should().NotContain("50,000");
     }
 
     [Fact]

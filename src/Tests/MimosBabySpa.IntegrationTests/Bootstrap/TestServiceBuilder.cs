@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using MimosBabySpa.Application.Agents;
 using MimosBabySpa.Application.Agents.Composition;
+using MimosBabySpa.Application.Agents.Facts;
 using MimosBabySpa.Application.Agents.Gating;
 using MimosBabySpa.Application.Agents.Templates;
 using MimosBabySpa.Application.Agents.Tools;
@@ -45,6 +46,7 @@ public static class TestServiceBuilder
         services.AddSingleton(unitOfWork.Messages);
         services.AddSingleton(unitOfWork.ConversationStates);
         services.AddSingleton(unitOfWork.ConversationContexts);
+        services.AddSingleton(unitOfWork.CustomerMemory);
         services.AddSingleton(unitOfWork.Reservations);
         services.AddSingleton(unitOfWork.PaymentTransactions);
 
@@ -66,16 +68,21 @@ public static class TestServiceBuilder
         services.AddSingleton<IPaymentTransactionRepository>(unitOfWork.PaymentTransactions);
         services.AddSingleton<IPaymentLinkService, FakePaymentLinkService>();
         services.AddSingleton<IConversationStateManager, ConversationStateManager>();
+        services.AddSingleton<ICustomerMemoryService, CustomerMemoryService>();
+        services.AddSingleton<IConversationClosedHook, ConversationSummaryHook>();
         services.AddSingleton<IConversationFactsService, ConversationFactsService>();
         services.AddSingleton<IReservationLifecycleService, ReservationLifecycleService>();
         services.AddSingleton<ICustomerReservationResolver, CustomerReservationResolver>();
         services.AddSingleton<IPaymentLifecycleService, PaymentLifecycleService>();
         services.AddSingleton<IReservationIntentBuilder, ReservationIntentBuilder>();
         services.AddSingleton<IConversationVerificationService, ConversationVerificationService>();
-        services.AddSingleton<IToolPreconditionProvider, ToolPreconditionProvider>();
         services.AddSingleton<IGuardEvaluator, GuardEvaluator>();
         services.AddSingleton<IToolCapabilityGate, ToolCapabilityGate>();
         services.AddSingleton<IFlowStageDetector, FlowStageDetector>();
+        services.AddSingleton<IFactHydrator, FactHydrator>();
+        services.AddSingleton<IFactSourceResolver, MimosBabySpa.Application.Agents.Facts.Resolvers.ChannelPhoneResolver>();
+        services.AddSingleton<IFactSourceResolver, MimosBabySpa.Application.Agents.Facts.Resolvers.ChannelEmailResolver>();
+        services.AddSingleton<IFactSourceResolver, MimosBabySpa.Application.Agents.Facts.Resolvers.EngagementResolver>();
         services.AddSingleton<IPromptComposer, AgentPromptComposer>();
 
         services.AddSingleton<IWhatsAppService, NoOpWhatsAppService>();

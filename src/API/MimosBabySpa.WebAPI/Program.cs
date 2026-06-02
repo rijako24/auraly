@@ -1,4 +1,6 @@
 using System.Text;
+using Azure;
+using Azure.AI.OpenAI;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
@@ -9,7 +11,11 @@ using MimosBabySpa.Application.Auth.Services;
 using MimosBabySpa.Application.Common.Interfaces;
 using MimosBabySpa.Application.Identity.Interfaces;
 using MimosBabySpa.Application.Identity.Services;
+using MimosBabySpa.Application.LLM;
 using MimosBabySpa.Domain.Repositories;
+using MimosBabySpa.Infrastructure.Catalog;
+using MimosBabySpa.Infrastructure.Configuration;
+using MimosBabySpa.Infrastructure.LLM;
 using MimosBabySpa.Infrastructure.CrossCutting;
 using MimosBabySpa.Infrastructure.Data;
 using MimosBabySpa.Infrastructure.Identity;
@@ -73,6 +79,28 @@ builder.Services.AddScoped<IEmployeeAdminService, EmployeeAdminService>();
 builder.Services.AddScoped<IReservationAdminService, ReservationAdminService>();
 builder.Services.AddScoped<ILeadAdminService, LeadAdminService>();
 builder.Services.AddScoped<IBusinessConfigurationAdminService, BusinessConfigurationAdminService>();
+builder.Services.AddScoped<IAgentRepository, AgentRepository>();
+builder.Services.AddScoped<IAgentAdminService, AgentAdminService>();
+builder.Services.AddScoped<ICatalogImportAdminService, CatalogImportAdminService>();
+builder.Services.AddScoped<ICatalogDocumentTextExtractor, CatalogDocumentTextExtractor>();
+builder.Services.AddScoped<ICatalogDraftParser, CatalogDraftAiParser>();
+
+builder.Services.Configure<OpenAITextModelOptions>(builder.Configuration.GetSection(OpenAITextModelOptions.SectionName));
+builder.Services.AddSingleton<OpenAIClient>(sp =>
+{
+    var options = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<OpenAITextModelOptions>>().Value;
+    if (string.IsNullOrWhiteSpace(options.Endpoint) || string.IsNullOrWhiteSpace(options.ApiKey))
+        throw new InvalidOperationException("OpenAI:TextModel:Endpoint y ApiKey deben estar configurados en WebAPI.");
+    return new OpenAIClient(new Uri(options.Endpoint), new AzureKeyCredential(options.ApiKey));
+});
+builder.Services.AddScoped<IChatClient>(sp =>
+{
+    var client = sp.GetRequiredService<OpenAIClient>();
+    var options = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<OpenAITextModelOptions>>().Value;
+    var logger = sp.GetRequiredService<ILogger<AzureOpenAIChatClient>>();
+    return new AzureOpenAIChatClient(client, options.DeploymentName, logger);
+});
+
 builder.Services.AddScoped<IConversationAdminService, ConversationAdminService>();
 builder.Services.AddScoped<IPaymentAdminService, PaymentAdminService>();
 builder.Services.AddScoped<IDashboardService, DashboardService>();

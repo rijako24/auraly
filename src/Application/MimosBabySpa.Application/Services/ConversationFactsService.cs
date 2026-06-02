@@ -6,8 +6,13 @@ namespace MimosBabySpa.Application.Services;
 public sealed class ConversationFactsService : IConversationFactsService
 {
     private readonly IUnitOfWork _unitOfWork;
+    private readonly ICustomerMemoryService _customerMemory;
 
-    public ConversationFactsService(IUnitOfWork unitOfWork) => _unitOfWork = unitOfWork;
+    public ConversationFactsService(IUnitOfWork unitOfWork, ICustomerMemoryService customerMemory)
+    {
+        _unitOfWork = unitOfWork;
+        _customerMemory = customerMemory;
+    }
 
     public async Task<IReadOnlyDictionary<string, string>> GetAllAsync(Guid conversationId, CancellationToken ct = default)
     {
@@ -21,23 +26,36 @@ public sealed class ConversationFactsService : IConversationFactsService
         return string.IsNullOrWhiteSpace(ctx?.Value) ? null : ctx.Value.Trim();
     }
 
-    public async Task SetAsync(Guid conversationId, Guid businessId, string key, string value, CancellationToken ct = default)
+    public async Task SetAsync(
+        Guid conversationId,
+        Guid businessId,
+        string key,
+        string value,
+        bool persistsAcrossConversations = false,
+        CancellationToken ct = default)
     {
         await _unitOfWork.ConversationContexts.CreateOrUpdateAsync(conversationId, key, value);
 
-        if (key.Equals(ConversationFactKeys.CustomerName, StringComparison.OrdinalIgnoreCase)
-            || key.Equals(ConversationFactKeys.CustomerEmail, StringComparison.OrdinalIgnoreCase))
-        {
-            var conversation = await _unitOfWork.Conversations.GetByIdAsync(conversationId);
-            if (conversation is not null)
-            {
-                if (key.Equals(ConversationFactKeys.CustomerName, StringComparison.OrdinalIgnoreCase))
-                    conversation.CustomerName = value;
-                else
-                    conversation.CustomerEmail = value;
+        var conversation = await _unitOfWork.Conversations.GetByIdAsync(conversationId);
 
+        if (conversation is not null)
+        {
+            if (key.Equals(ConversationFactKeys.CustomerName, StringComparison.OrdinalIgnoreCase))
+                conversation.CustomerName = value;
+            else if (key.Equals(ConversationFactKeys.CustomerEmail, StringComparison.OrdinalIgnoreCase))
+                conversation.CustomerEmail = value;
+
+            if (key.Equals(ConversationFactKeys.CustomerName, StringComparison.OrdinalIgnoreCase)
+                || key.Equals(ConversationFactKeys.CustomerEmail, StringComparison.OrdinalIgnoreCase))
+            {
                 conversation.Timestamp = DateTime.UtcNow;
                 await _unitOfWork.Conversations.UpdateAsync(conversation);
+            }
+
+            if (persistsAcrossConversations)
+            {
+                await _customerMemory.RememberAsync(
+                    businessId, conversation.UserNumber, key, value, ct);
             }
         }
 

@@ -1,6 +1,6 @@
 using System.Text.Json;
+using MimosBabySpa.Application.Agents.Facts;
 using MimosBabySpa.Application.Agents.Gating;
-using MimosBabySpa.Application.Agents.Templates;
 using MimosBabySpa.Application.Configuration;
 using MimosBabySpa.Application.DTOs;
 using MimosBabySpa.Application.Services;
@@ -48,11 +48,7 @@ public sealed class AssignPaidSlotTool : IAgentTool
         "Creates a confirmed reservation for a paid PaymentTransaction that has no linked reservation yet, " +
         "using the verified service/date/time snapshot. Links the reservation to the payment record.";
 
-    /// <summary>
-    /// Scope personalizado: usa los argumentos date/time de la llamada (no los facts del turno),
-    /// porque la verificación de disponibilidad fue para el NUEVO horario elegido tras el pago.
-    /// </summary>
-    public Func<JsonElement, AgentToolContext, string?>? VerificationScopeResolver =>
+    public Func<JsonElement, AgentToolContext, IReadOnlyDictionary<string, string>?>? VerificationDependencyResolver =>
         (args, ctx) =>
         {
             if (!ToolResultHelper.TryGetString(args, "date", out var date) || string.IsNullOrWhiteSpace(date))
@@ -60,11 +56,19 @@ public sealed class AssignPaidSlotTool : IAgentTool
             if (!ToolResultHelper.TryGetString(args, "time", out var time) || string.IsNullOrWhiteSpace(time))
                 return null;
 
-            ctx.Facts.TryGetValue(ConversationFactKeys.Service, out var service);
+            var roles = new FactRoleIndex(ctx.Config?.FactSchema ?? []);
+            var serviceKey = roles.KeyByRole("booking.service") ?? ConversationFactKeys.Service;
+            var dateKey = roles.KeyByRole("booking.date") ?? ConversationFactKeys.DesiredDate;
+            var timeKey = roles.KeyByRole("booking.time") ?? ConversationFactKeys.DesiredTime;
+
+            ctx.Facts.TryGetValue(serviceKey, out var service);
             if (string.IsNullOrWhiteSpace(service))
                 return null;
 
-            return SlotVerificationScope.Build(service, date, time);
+            return VerificationSnapshot.FromValues(
+                new KeyValuePair<string, string>(serviceKey, service),
+                new KeyValuePair<string, string>(dateKey, date),
+                new KeyValuePair<string, string>(timeKey, time));
         };
 
     public string ParametersSchema => """
@@ -160,10 +164,18 @@ public sealed class AssignPaidSlotTool : IAgentTool
                     : null);
         }
 
+        var roles = new FactRoleIndex(ctx.Config?.FactSchema ?? []);
+        var serviceKey = roles.KeyByRole("booking.service") ?? ConversationFactKeys.Service;
+        var dateKey = roles.KeyByRole("booking.date") ?? ConversationFactKeys.DesiredDate;
+        var timeKey = roles.KeyByRole("booking.time") ?? ConversationFactKeys.DesiredTime;
+
         _verifications.Record(
             ctx,
             VerificationFactTypes.AvailabilityChecked,
-            SlotVerificationScope.Build(service.ServiceName, dateStr!, timeStr!),
+            VerificationSnapshot.FromValues(
+                new KeyValuePair<string, string>(serviceKey, service.ServiceName),
+                new KeyValuePair<string, string>(dateKey, dateStr!),
+                new KeyValuePair<string, string>(timeKey, timeStr!)),
             VerificationTtl.AvailabilityChecked);
 
         var newDateTime = date.ToDateTime(time);
@@ -187,20 +199,6 @@ public sealed class AssignPaidSlotTool : IAgentTool
         await _lifecycle.CloseAsync(
             ctx.ConversationId, ConversationCloseReasons.ReservationConfirmed, cancellationToken);
 
-        string? confirmationToken = null;
-        if (ctx.Turn is not null)
-        {
-            var data = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
-            {
-                ["customer_name"] = snapshot.CustomerName,
-                ["service_name"] = snapshot.ServiceName,
-                ["date_formatted"] = date.ToString("dd/MM/yyyy"),
-                ["time"] = time.ToString("HH:mm")
-            };
-            confirmationToken = ctx.Turn.RegisterFragment(
-                "CONFIRMATION", "reservation_created", data, FragmentRenderMode.Exclusive);
-        }
-
         return ToolResultHelper.Ok(new
         {
             reservation_id = response.ReservationId,
@@ -208,9 +206,9 @@ public sealed class AssignPaidSlotTool : IAgentTool
             service = response.ServiceName,
             date = dateStr,
             time = timeStr,
+            customer_name = snapshot.CustomerName,
             status = ReservationStatus.Confirmed.ToString(),
-            is_booking_confirmed = true,
-            confirmation_token = confirmationToken
+            is_booking_confirmed = true
         }, ReservationCreated);
     }
 

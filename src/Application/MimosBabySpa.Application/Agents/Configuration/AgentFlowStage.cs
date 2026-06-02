@@ -10,9 +10,6 @@ public sealed class AgentFlowStage
     /// <summary>Objetivo narrativo de la etapa (lenguaje natural para el LLM).</summary>
     public string Goal { get; init; } = string.Empty;
 
-    /// <summary>Tools sugeridas en esta etapa (preferencia, no obligación).</summary>
-    public IReadOnlyList<string> SuggestedTools { get; init; } = [];
-
     /// <summary>
     /// Whitelist de tools permitidas en esta etapa. Vacío = sin restricción por etapa.
     /// Cuando está definido, el gate bloquea cualquier otra tool con la instrucción de la etapa.

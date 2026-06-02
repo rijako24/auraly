@@ -30,11 +30,6 @@ const CONFIG_KEYS: {
     useJsonEditor: true,
   },
   {
-    key: BusinessConfigurationKey.PaymentConfirmationMessages,
-    description: "Mensajes enviados al cliente cuando se confirma el pago. Soporta texto y adjuntos.",
-    useJsonEditor: true,
-  },
-  {
     key: BusinessConfigurationKey.SchedulingPolicy,
     description:
       "Horarios de operación por día (schedule), intervalo entre slots, buffer entre citas y reglas de empleado.",

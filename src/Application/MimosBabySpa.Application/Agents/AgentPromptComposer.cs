@@ -33,6 +33,10 @@ public sealed class AgentPromptComposer : IPromptComposer
         if (!string.IsNullOrWhiteSpace(basePrompt))
             blocks.Add(basePrompt.Trim());
 
+        var memoryBlock = BuildCustomerMemoryBlock(input.Session);
+        if (!string.IsNullOrWhiteSpace(memoryBlock))
+            blocks.Add(memoryBlock);
+
         // DetectCurrentStage: llamada única y cacheada para todo el Compose
         var currentStage = _flowStageDetector.DetectCurrentStage(input.Config.Flow, input.Session);
 
@@ -65,6 +69,19 @@ public sealed class AgentPromptComposer : IPromptComposer
             blocks.Add(triggersBlock);
 
         return string.Join($"{Environment.NewLine}{Environment.NewLine}", blocks);
+    }
+
+    internal static string BuildCustomerMemoryBlock(AgentToolContext? session)
+    {
+        if (session is null || string.IsNullOrWhiteSpace(session.CustomerMemorySummary))
+            return string.Empty;
+
+        return string.Join(Environment.NewLine, new[]
+        {
+            "## MEMORIA DEL CLIENTE (visitas anteriores)",
+            session.CustomerMemorySummary.Trim(),
+            "- Úsalo solo como contexto; NO repitas reservas pasadas como si fueran nuevas."
+        });
     }
 
     internal static string BuildStateFactsBlock(
@@ -122,7 +139,10 @@ public sealed class AgentPromptComposer : IPromptComposer
             }
 
             if (factsLines.Count > 1)
+            {
+                factsLines.Add("- No vuelvas a llamar set_fact para un dato ya listado arriba con el mismo valor.");
                 blocks.Add(string.Join(Environment.NewLine, factsLines));
+            }
 
             // ── ESTADO RESERVA ─────────────────────────────────────────────────
             var reservationBlock = BuildReservationContextBlock(session);
@@ -339,8 +359,6 @@ public sealed class AgentPromptComposer : IPromptComposer
 
         if (currentStage.AllowedTools.Count > 0)
             lines.Add($"- acciones_permitidas: {string.Join(", ", currentStage.AllowedTools)}");
-        else if (currentStage.SuggestedTools.Count > 0)
-            lines.Add($"- acciones_sugeridas: {string.Join(", ", currentStage.SuggestedTools)}");
 
         var stageHint = !string.IsNullOrWhiteSpace(variant?.Hint) ? variant!.Hint : currentStage.Hint;
         if (!string.IsNullOrWhiteSpace(stageHint))
@@ -363,6 +381,10 @@ public sealed class AgentPromptComposer : IPromptComposer
                 lines.Add($"- facts_pendientes: {string.Join(", ", missingFacts)}");
                 lines.Add("- Regístralos con set_fact en cuanto el cliente los confirme en este turno.");
             }
+
+            lines.Add(
+                "- Concéntrate únicamente en el objetivo de esta etapa y ciérrala con la pregunta o acción que le corresponde. "
+                + "Cuando los datos necesarios queden registrados, el sistema te llevará automáticamente al siguiente paso.");
         }
 
         // Traducir restricciones declarativas a instrucciones para el LLM
@@ -376,9 +398,6 @@ public sealed class AgentPromptComposer : IPromptComposer
                     ? "- NO hagas preguntas en este turno; solo responde o saluda."
                     : $"- Haz como máximo {constraints.MaxQuestions.Value} pregunta(s) en este turno.");
             }
-
-            if (constraints.ForbiddenTopics.Count > 0)
-                constraintLines.Add($"- NO mezcles los siguientes temas en este turno: {string.Join(", ", constraints.ForbiddenTopics)}.");
 
             if (!string.IsNullOrWhiteSpace(constraints.PresentationMode))
             {

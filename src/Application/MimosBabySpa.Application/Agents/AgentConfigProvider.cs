@@ -57,9 +57,12 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
             Model = settings.Model ?? "gpt-4.1-mini",
             Temperature = settings.Temperature ?? 0.7f,
             MaxToolIterations = settings.MaxToolIterations ?? 6,
+            HistoryWindowSize = settings.HistoryWindowSize ?? 20,
             ConsecutiveErrorEscalationThreshold = settings.ConsecutiveErrorEscalationThreshold ?? 3,
             EnabledToolNames = settings.EnabledTools ?? [],
-            EscalationContacts = settings.EscalationContacts ?? []
+            EscalationContacts = settings.EscalationContacts ?? [],
+            MessageSequences = settings.MessageSequences ?? new MessageSequenceCatalog(),
+            Webhooks = settings.Webhooks ?? new WebhookDefinitions()
         };
 
         if (config.EnabledToolNames.Count == 0)
@@ -140,6 +143,64 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
                     config.AgentId, toolName);
             }
         }
+
+        ValidateMessageSequences(config);
+        ValidateTemplates(config);
+    }
+
+    /// <summary>
+    /// Plantillas que las tools del motor pueden emitir según enabledTools.
+    /// Deben existir en SettingsJson.templates (no hay fallback en código).
+    /// </summary>
+    private static readonly IReadOnlyDictionary<string, string[]> ToolRequiredTemplateIds =
+        new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["prepare_checkout"] = ["checkout_with_deposit", "checkout_no_deposit"],
+            ["check_availability"] = ["availability_slots"]
+        };
+
+    private void ValidateTemplates(AgentConfig config)
+    {
+        var required = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var toolName in config.EnabledToolNames)
+        {
+            if (ToolRequiredTemplateIds.TryGetValue(toolName, out var templateIds))
+            {
+                foreach (var id in templateIds)
+                    required.Add(id);
+            }
+        }
+
+        foreach (var templateId in required)
+        {
+            if (!config.Templates.TryGetValue(templateId, out var body) || string.IsNullOrWhiteSpace(body))
+            {
+                _logger.LogWarning(
+                    "AgentConfig {AgentId}: enabled tools require template '{TemplateId}' but it is missing or empty in SettingsJson.templates",
+                    config.AgentId, templateId);
+            }
+        }
+    }
+
+    private void ValidateMessageSequences(AgentConfig config)
+    {
+        if (config.Webhooks.Wompi is null)
+            return;
+
+        foreach (var (outcomeKey, outcome) in config.Webhooks.Wompi)
+        {
+            var sequenceName = outcome.SendMessageSequence;
+            if (string.IsNullOrWhiteSpace(sequenceName))
+                continue;
+
+            if (!config.MessageSequences.ContainsKey(sequenceName))
+            {
+                _logger.LogWarning(
+                    "AgentConfig {AgentId}: webhooks.wompi['{Outcome}'] references unknown sequence '{Sequence}'",
+                    config.AgentId, outcomeKey, sequenceName);
+            }
+        }
     }
 
     private static AgentSettings ParseSettings(string? settingsJson)
@@ -170,10 +231,13 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
         public string? Model { get; set; }
         public float? Temperature { get; set; }
         public int? MaxToolIterations { get; set; }
+        public int? HistoryWindowSize { get; set; }
         public int? ConsecutiveErrorEscalationThreshold { get; set; }
         public IReadOnlyList<string>? EnabledTools { get; set; }
         public IReadOnlyList<string>? KillSwitchPhrases { get; set; }
         public EscalationSettings? Escalation { get; set; }
+        public MessageSequenceCatalog? MessageSequences { get; set; }
+        public WebhookDefinitions? Webhooks { get; set; }
         public IReadOnlyList<string>? EscalationContacts =>
             Escalation?.Contacts ?? [];
     }

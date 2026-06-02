@@ -39,6 +39,7 @@ public sealed class AgentConversationService : IAgentConversationService
     private readonly ITemporalReferenceBuilder _temporalReferenceBuilder;
     private readonly IBookingPolicyProvider _bookingPolicy;
     private readonly IConversationFactsService _factsService;
+    private readonly ICustomerMemoryService _customerMemory;
     private readonly IReservationLifecycleService _reservationLifecycle;
     private readonly IPaymentLifecycleService _paymentLifecycle;
     private readonly IConversationService _conversationService;
@@ -61,6 +62,7 @@ public sealed class AgentConversationService : IAgentConversationService
         ITemporalReferenceBuilder temporalReferenceBuilder,
         IBookingPolicyProvider bookingPolicy,
         IConversationFactsService factsService,
+        ICustomerMemoryService customerMemory,
         IReservationLifecycleService reservationLifecycle,
         IPaymentLifecycleService paymentLifecycle,
         IConversationService conversationService,
@@ -82,6 +84,7 @@ public sealed class AgentConversationService : IAgentConversationService
         _temporalReferenceBuilder = temporalReferenceBuilder;
         _bookingPolicy = bookingPolicy;
         _factsService = factsService;
+        _customerMemory = customerMemory;
         _reservationLifecycle = reservationLifecycle;
         _paymentLifecycle = paymentLifecycle;
         _conversationService = conversationService;
@@ -125,7 +128,8 @@ public sealed class AgentConversationService : IAgentConversationService
         // Capa 2 — bucle de Function Calling
         userMessage = SanitizeInput(userMessage);
 
-        var history = await _messageService.GetConversationHistoryAsync(conversationId);
+        var history = (await _messageService.GetRecentConversationHistoryAsync(
+            conversationId, config.HistoryWindowSize, cancellationToken)).ToList();
 
         // Resolver engagement e inyectarlo como fact de sesión (efímero, no persiste en BD)
         var engagementKey = await ResolveEngagementKeyAsync(
@@ -181,7 +185,7 @@ public sealed class AgentConversationService : IAgentConversationService
         PromptCompositionInput compositionInput,
         CancellationToken ct)
     {
-        var toolDefinitions = BuildToolDefinitions(config.EnabledToolNames);
+        var toolDefinitions = BuildToolDefinitions(config);
         var lastStageId = _flowStageDetector.DetectCurrentStage(config.Flow, toolCtx)?.Id;
 
         for (int iteration = 0; iteration <= config.MaxToolIterations; iteration++)
@@ -219,6 +223,14 @@ public sealed class AgentConversationService : IAgentConversationService
                         conversationId, turn.ConsecutiveToolErrors);
                     return AgentLoopOutcome.AutoEscalate("consecutive_tool_errors");
                 }
+            }
+
+            if (turn.OutboundMessages.Count > 0)
+            {
+                _logger.LogInformation(
+                    "Conv {ConvId}: salida directa al usuario encolada ({Count} mensajes) — turno completo sin texto del LLM",
+                    conversationId, turn.OutboundMessages.Count);
+                return AgentLoopOutcome.Completed(string.Empty);
             }
 
             RefreshSystemPromptIfStageChanged(config, messages, compositionInput, ref lastStageId);
@@ -421,6 +433,19 @@ public sealed class AgentConversationService : IAgentConversationService
 
         var mutableFacts = new Dictionary<string, string>(facts, StringComparer.OrdinalIgnoreCase);
 
+        var durable = await _customerMemory.GetAllAsync(config.BusinessId, conversation.UserNumber, ct);
+        foreach (var entry in config.FactSchema.Where(e => e.PersistsAcrossConversations))
+        {
+            if (!durable.TryGetValue(entry.Key, out var durableValue)
+                || string.IsNullOrWhiteSpace(durableValue))
+            {
+                continue;
+            }
+
+            if (!mutableFacts.TryGetValue(entry.Key, out var current) || string.IsNullOrWhiteSpace(current))
+                mutableFacts[entry.Key] = durableValue;
+        }
+
         // Hidratar facts de fuente=channel/session antes de construir el contexto
         // Nota: el engagement se agrega por separado en ProcessMessageAsync (requiere historia)
         _factHydrator.Hydrate(config.FactSchema, mutableFacts, new FactHydratorContext
@@ -441,6 +466,10 @@ public sealed class AgentConversationService : IAgentConversationService
             ConversationState = state,
             Conversation = conversation,
             Facts = mutableFacts,
+            CustomerMemorySummary = durable.TryGetValue(CustomerMemoryKeys.Summary, out var summary)
+                && !string.IsNullOrWhiteSpace(summary)
+                    ? summary.Trim()
+                    : null,
             ManageableReservations = reservationSession.ManageableReservations,
             ActivePayment = activePayment
         };
@@ -476,8 +505,16 @@ public sealed class AgentConversationService : IAgentConversationService
                     continue;
                 }
 
+                var schemaEntry = config.FactSchema.FirstOrDefault(e =>
+                    e.Key.Equals(factKey, StringComparison.OrdinalIgnoreCase));
+
                 await _factsService.SetAsync(
-                    session.ConversationId, session.BusinessId, factKey, factValue, ct);
+                    session.ConversationId,
+                    session.BusinessId,
+                    factKey,
+                    factValue,
+                    schemaEntry?.PersistsAcrossConversations ?? false,
+                    ct);
                 session.Facts[factKey] = factValue;
 
                 _logger.LogDebug(
@@ -497,13 +534,13 @@ public sealed class AgentConversationService : IAgentConversationService
             facts.TryGetValue(cond, out var val) && !string.IsNullOrWhiteSpace(val));
     }
 
-    private IReadOnlyList<ChatToolDefinition> BuildToolDefinitions(IReadOnlyList<string> enabledNames) =>
-        _toolRegistry.GetToolsForAgent(enabledNames)
+    private IReadOnlyList<ChatToolDefinition> BuildToolDefinitions(AgentConfig config) =>
+        _toolRegistry.GetToolsForAgent(config.EnabledToolNames)
             .Select(t => new ChatToolDefinition
             {
                 Name           = t.Name,
                 Description    = t.Description,
-                ParametersJson = t.ParametersSchema
+                ParametersJson = t.BuildParametersSchema(config)
             })
             .ToList();
 

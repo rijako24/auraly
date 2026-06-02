@@ -36,7 +36,10 @@ import {
   type BusinessAttachment,
   type BusinessResource,
 } from "@/types/entities";
-import { BusinessConfigurationKeyLabels } from "@/types/enums";
+import {
+  BusinessConfigurationKey,
+  BusinessConfigurationKeyLabels,
+} from "@/types/enums";
 import { formatDate } from "@/lib/utils";
 import { cn, getInitials } from "@/lib/utils";
 
@@ -60,9 +63,9 @@ const MOCK_CONFIGURATIONS: BusinessConfiguration[] = [
   {
     businessConfigurationId: "cfg-1",
     businessId: "bus-001",
-    key: 0,
-    value: '{"tone": "amigable", "style": "cercano"}',
-    description: "Personalidad del bot conversacional",
+    key: BusinessConfigurationKey.Integrations,
+    value: '{"wompi": {"enabled": true}}',
+    description: "Integraciones externas",
     isActive: true,
     createdAt: "2024-01-15T10:00:00Z",
     updatedAt: null,
@@ -70,7 +73,7 @@ const MOCK_CONFIGURATIONS: BusinessConfiguration[] = [
   {
     businessConfigurationId: "cfg-2",
     businessId: "bus-001",
-    key: 4,
+    key: BusinessConfigurationKey.SchedulingPolicy,
     value: '{"monday": "9:00-18:00", "tuesday": "9:00-18:00"}',
     description: "Horarios de operación",
     isActive: true,
@@ -80,9 +83,9 @@ const MOCK_CONFIGURATIONS: BusinessConfiguration[] = [
   {
     businessConfigurationId: "cfg-3",
     businessId: "bus-001",
-    key: 3,
-    value: '{"provider": "wompi", "enabled": true}',
-    description: "Configuración de pagos",
+    key: BusinessConfigurationKey.BookingPolicy,
+    value: '{"depositRequired": false}',
+    description: "Política de reserva",
     isActive: true,
     createdAt: "2024-01-15T10:00:00Z",
     updatedAt: null,

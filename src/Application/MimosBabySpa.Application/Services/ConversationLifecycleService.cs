@@ -23,15 +23,18 @@ public sealed class ConversationLifecycleService : IConversationLifecycleService
 {
     private readonly IUnitOfWork _unitOfWork;
     private readonly IBusinessClock _businessClock;
+    private readonly IEnumerable<IConversationClosedHook> _closedHooks;
     private readonly ILogger<ConversationLifecycleService> _logger;
 
     public ConversationLifecycleService(
         IUnitOfWork unitOfWork,
         IBusinessClock businessClock,
+        IEnumerable<IConversationClosedHook> closedHooks,
         ILogger<ConversationLifecycleService> logger)
     {
         _unitOfWork = unitOfWork;
         _businessClock = businessClock;
+        _closedHooks = closedHooks;
         _logger = logger;
     }
 
@@ -121,6 +124,21 @@ public sealed class ConversationLifecycleService : IConversationLifecycleService
         _logger.LogInformation(
             "Closed conversation {ConvId} reason={Reason}",
             conversation.ConversationId, closeReason);
+
+        foreach (var hook in _closedHooks)
+        {
+            try
+            {
+                await hook.OnClosedAsync(conversation, closeReason, ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(
+                    ex,
+                    "Closed-hook failed for conversation {ConvId}",
+                    conversation.ConversationId);
+            }
+        }
     }
 
     private static bool HasDayChanged(DateTime lastActivityUtc, BusinessClockSnapshot clock)

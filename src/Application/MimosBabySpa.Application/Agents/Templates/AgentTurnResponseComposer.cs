@@ -33,13 +33,12 @@ public sealed class AgentTurnResponseComposer : IAgentTurnResponseComposer
 
         foreach (var entry in fragmentList)
         {
-            var template = _templateResolver.Resolve(config, entry.Fragment.TemplateId, enabledTools)
-                ?? AgentToolTemplates.Get(entry.Fragment.TemplateId);
+            var template = _templateResolver.Resolve(config, entry.Fragment.TemplateId, enabledTools);
 
             if (template is null)
             {
                 _logger.LogWarning(
-                    "Template '{TemplateId}' not found in agent config or tool defaults",
+                    "Template '{TemplateId}' not found in agent SettingsJson.templates",
                     entry.Fragment.TemplateId);
                 continue;
             }

@@ -8,16 +8,13 @@ public interface IConversationVerificationService
     void Record(
         AgentToolContext ctx,
         string factType,
-        string scopeKey,
-        TimeSpan? ttl,
-        string? payloadJson = null);
+        IReadOnlyDictionary<string, string> dependencyFacts,
+        TimeSpan? ttl);
 
-    bool IsActive(ConversationState state, string factType, string scopeKey);
-
-    /// <summary>
-    /// Elimina todas las verificaciones de un tipo (p. ej. al cambiar slot de booking).
-    /// </summary>
-    void RevokeByFactType(ConversationState state, string factType);
+    bool IsActive(
+        ConversationState state,
+        string factType,
+        IReadOnlyDictionary<string, string> currentFacts);
 }
 
 public sealed class ConversationVerificationService : IConversationVerificationService
@@ -27,14 +24,15 @@ public sealed class ConversationVerificationService : IConversationVerificationS
     public void Record(
         AgentToolContext ctx,
         string factType,
-        string scopeKey,
-        TimeSpan? ttl,
-        string? payloadJson = null)
+        IReadOnlyDictionary<string, string> dependencyFacts,
+        TimeSpan? ttl)
     {
         var now = DateTime.UtcNow;
-        var key = BuildKey(factType, scopeKey);
+        var payloadJson = dependencyFacts.Count > 0
+            ? VerificationSnapshot.Serialize(dependencyFacts)
+            : null;
 
-        ctx.ConversationState.Verifications[key] = new VerificationEntry(
+        ctx.ConversationState.Verifications[factType] = new VerificationEntry(
             now,
             ttl.HasValue ? now.Add(ttl.Value) : null,
             payloadJson);
@@ -43,30 +41,21 @@ public sealed class ConversationVerificationService : IConversationVerificationS
         EnforceMaxSize(ctx.ConversationState.Verifications);
     }
 
-    public bool IsActive(ConversationState state, string factType, string scopeKey)
+    public bool IsActive(
+        ConversationState state,
+        string factType,
+        IReadOnlyDictionary<string, string> currentFacts)
     {
         PurgeExpired(state.Verifications);
 
-        var key = BuildKey(factType, scopeKey);
-        if (!state.Verifications.TryGetValue(key, out var entry))
+        if (!state.Verifications.TryGetValue(factType, out var entry))
             return false;
 
-        return !entry.ExpiresAt.HasValue || entry.ExpiresAt > DateTime.UtcNow;
+        if (entry.ExpiresAt is { } expiresAt && expiresAt <= DateTime.UtcNow)
+            return false;
+
+        return VerificationSnapshot.Matches(entry.PayloadJson, currentFacts);
     }
-
-    public void RevokeByFactType(ConversationState state, string factType)
-    {
-        var prefix = $"{factType}|";
-        var stale = state.Verifications.Keys
-            .Where(k => k.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
-            .ToList();
-
-        foreach (var key in stale)
-            state.Verifications.Remove(key);
-    }
-
-    private static string BuildKey(string factType, string scopeKey) =>
-        $"{factType}|{scopeKey}";
 
     private static void PurgeExpired(Dictionary<string, VerificationEntry> map)
     {

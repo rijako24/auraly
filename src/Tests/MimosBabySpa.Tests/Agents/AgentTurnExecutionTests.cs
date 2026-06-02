@@ -33,10 +33,57 @@ public sealed class AgentTurnExecutionTests
             FragmentRenderMode.Exclusive);
         turn.RegisterFragment(
             "RESERVATION",
-            "reservation_created",
+            "checkout_no_deposit",
             new Dictionary<string, object?>(),
             FragmentRenderMode.Exclusive);
 
         turn.FragmentEntries.Should().HaveCount(2);
+    }
+
+    [Fact]
+    public void RecordToolOutcome_RecoverableErrors_DoNotCountTowardEscalation()
+    {
+        var turn = new AgentTurnExecution(errorEscalationThreshold: 3);
+        var recoverable = ToolExecutionOutcome.Parse(
+            """{"ok":false,"error":{"code":"unknown_fact_key","message":"x","recoverable":true}}""");
+
+        turn.RecordToolOutcome(recoverable);
+        turn.RecordToolOutcome(recoverable);
+        turn.RecordToolOutcome(recoverable);
+
+        turn.ShouldAutoEscalate.Should().BeFalse();
+        turn.ConsecutiveToolErrors.Should().Be(0);
+    }
+
+    [Fact]
+    public void RecordToolOutcome_FatalErrors_CountTowardEscalation()
+    {
+        var turn = new AgentTurnExecution(errorEscalationThreshold: 3);
+        var fatal = ToolExecutionOutcome.Parse(
+            """{"ok":false,"error":{"code":"tool_exception","message":"x"}}""");
+
+        turn.RecordToolOutcome(fatal);
+        turn.RecordToolOutcome(fatal);
+        turn.ShouldAutoEscalate.Should().BeFalse();
+
+        turn.RecordToolOutcome(fatal);
+        turn.ShouldAutoEscalate.Should().BeTrue();
+    }
+
+    [Fact]
+    public void RecordToolOutcome_SuccessResetsFatalErrorCounter()
+    {
+        var turn = new AgentTurnExecution(errorEscalationThreshold: 3);
+        var fatal = ToolExecutionOutcome.Parse(
+            """{"ok":false,"error":{"code":"tool_exception","message":"x"}}""");
+        var ok = ToolExecutionOutcome.Parse("""{"ok":true,"data":{}}""");
+
+        turn.RecordToolOutcome(fatal);
+        turn.RecordToolOutcome(fatal);
+        turn.RecordToolOutcome(ok);
+        turn.RecordToolOutcome(fatal);
+
+        turn.ShouldAutoEscalate.Should().BeFalse();
+        turn.ConsecutiveToolErrors.Should().Be(1);
     }
 }

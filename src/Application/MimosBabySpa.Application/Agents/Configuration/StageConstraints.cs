@@ -14,14 +14,6 @@ public sealed class StageConstraints
     public int? MaxQuestions { get; init; }
 
     /// <summary>
-    /// Temas / intenciones que el LLM NO debe mezclar con el objetivo de esta etapa.
-    /// Ej. ["scheduling", "checkout"] evita que en addons_offering se hable de horarios.
-    /// Valores posibles: cualquier id de otra etapa del flow, o temas genéricos
-    /// ("payment", "scheduling", "catalog", "customer_data").
-    /// </summary>
-    public IReadOnlyList<string> ForbiddenTopics { get; init; } = [];
-
-    /// <summary>
     /// Estilo de presentación para etapas de oferta suave.
     /// "soft_offer"  → presenta opciones sin presionar; una sola pregunta cerrada.
     /// "direct_ask"  → pregunta directa y concisa (por defecto implícito).

@@ -20,6 +20,7 @@ public class ApplicationDbContext : DbContext
     public DbSet<BusinessConfiguration> BusinessConfigurations { get; set; }
     public DbSet<SystemConfiguration> SystemConfigurations { get; set; }
     public DbSet<ConversationContext> ConversationContexts { get; set; }
+    public DbSet<CustomerMemory> CustomerMemory { get; set; }
     public DbSet<Reservation> Reservations { get; set; }
     public DbSet<Service> Services { get; set; }
     public DbSet<ServiceCategory> ServiceCategories { get; set; }
@@ -163,6 +164,21 @@ public class ApplicationDbContext : DbContext
                   .OnDelete(DeleteBehavior.Cascade);
             entity.HasIndex(e => e.ConversationId);
             entity.HasIndex(e => new { e.ConversationId, e.Field }).IsUnique();
+        });
+
+        // CustomerMemory configuration
+        modelBuilder.Entity<CustomerMemory>(entity =>
+        {
+            entity.HasKey(e => e.CustomerMemoryId);
+            entity.Property(e => e.UserNumber).IsRequired().HasMaxLength(50);
+            entity.Property(e => e.Field).IsRequired().HasMaxLength(100);
+            entity.Property(e => e.Value).IsRequired();
+            entity.Property(e => e.UpdatedAt).IsRequired();
+            entity.HasOne(e => e.Business)
+                  .WithMany()
+                  .HasForeignKey(e => e.BusinessId)
+                  .OnDelete(DeleteBehavior.Cascade);
+            entity.HasIndex(e => new { e.BusinessId, e.UserNumber, e.Field }).IsUnique();
         });
 
         // Message configuration

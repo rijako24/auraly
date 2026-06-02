@@ -33,6 +33,7 @@
     <Build Include="Tables\ConversationStates.sql" />
     <Build Include="Tables\Messages.sql" />
     <Build Include="Tables\Leads.sql" />
+    <Build Include="Tables\CustomerMemory.sql" />
     <Build Include="Tables\Reservations.sql" />
     <Build Include="Tables\ReservationAddOns.sql" />
     <Build Include="Tables\ServiceAddOnRules.sql" />

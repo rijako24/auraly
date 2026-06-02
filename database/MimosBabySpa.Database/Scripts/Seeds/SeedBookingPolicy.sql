@@ -1,7 +1,7 @@
 -- ============================================================
 -- Script: SeedBookingPolicy
 -- Política de reserva y anticipo (Key=3) para negocios activos.
--- Mimo's: sin anticipo (confirmación verbal con create_reservation).
+-- Mimo's: anticipo del 50% (flujo prepare_checkout → pago → assign_paid_slot).
 -- Idempotente (MERGE por BusinessId + Key).
 -- ============================================================
 
@@ -9,8 +9,8 @@ SET QUOTED_IDENTIFIER ON;
 SET NOCOUNT ON;
 
 DECLARE @BookingPolicyValue NVARCHAR(MAX) = N'{
-  "depositRequired": false,
-  "depositPercentage": 0,
+  "depositRequired": true,
+  "depositPercentage": 50,
   "currency": "COP"
 }';
 
@@ -24,7 +24,7 @@ USING (
 WHEN MATCHED THEN
     UPDATE SET
         [Value] = @BookingPolicyValue,
-        [Description] = N'Política de reserva: sin anticipo (confirmación verbal)',
+        [Description] = N'Política de reserva: anticipo 50% requerido',
         UpdatedAt = GETUTCDATE(),
         IsActive = 1
 WHEN NOT MATCHED THEN
@@ -34,7 +34,7 @@ WHEN NOT MATCHED THEN
         src.BusinessId,
         3,
         @BookingPolicyValue,
-        N'Política de reserva: sin anticipo (confirmación verbal)',
+        N'Política de reserva: anticipo 50% requerido',
         1,
         GETUTCDATE()
     );

@@ -1,4 +1,6 @@
 using System.Text.Json;
+using MimosBabySpa.Application.Agents.Facts;
+using MimosBabySpa.Application.Agents.Gating;
 using MimosBabySpa.Application.Agents.Templates;
 using MimosBabySpa.Application.Configuration;
 using MimosBabySpa.Application.DTOs;
@@ -22,6 +24,7 @@ public sealed class PrepareCheckoutTool : IAgentTool
     private readonly IAvailabilityService _availability;
     private readonly ISchedulingPolicyProvider _schedulingPolicy;
     private readonly IEmployeeAssignmentService _employeeAssignment;
+    private readonly IConversationVerificationService _verifications;
 
     public PrepareCheckoutTool(
         IReservationCheckoutPricing checkoutPricing,
@@ -31,7 +34,8 @@ public sealed class PrepareCheckoutTool : IAgentTool
         IReservationIntentBuilder intentBuilder,
         IAvailabilityService availability,
         ISchedulingPolicyProvider schedulingPolicy,
-        IEmployeeAssignmentService employeeAssignment)
+        IEmployeeAssignmentService employeeAssignment,
+        IConversationVerificationService verifications)
     {
         _checkoutPricing = checkoutPricing;
         _addOnCatalog = addOnCatalog;
@@ -41,6 +45,7 @@ public sealed class PrepareCheckoutTool : IAgentTool
         _availability = availability;
         _schedulingPolicy = schedulingPolicy;
         _employeeAssignment = employeeAssignment;
+        _verifications = verifications;
     }
 
     public string Name => "prepare_checkout";
@@ -174,6 +179,19 @@ public sealed class PrepareCheckoutTool : IAgentTool
         var checkoutToken = ctx.Turn.RegisterFragment(
             "CHECKOUT", templateId, templateData, FragmentRenderMode.Exclusive);
         ctx.Turn.MarkCheckoutPrepared();
+
+        var roles = new FactRoleIndex(ctx.Config?.FactSchema ?? []);
+        var checkoutDeps = VerificationSnapshot.Of(ctx.Facts,
+            roles.KeyByRole("booking.service") ?? ConversationFactKeys.Service,
+            roles.KeyByRole("booking.date") ?? ConversationFactKeys.DesiredDate,
+            roles.KeyByRole("booking.time") ?? ConversationFactKeys.DesiredTime,
+            roles.KeyByRole("booking.addons") ?? ConversationFactKeys.AddOns);
+
+        _verifications.Record(
+            ctx,
+            VerificationFactTypes.CheckoutPrepared,
+            checkoutDeps,
+            ttl: null);
 
         var flow = checkout.DepositRequired ? "deposit_required" : "verbal_confirmation";
         var nextAction = checkout.DepositRequired

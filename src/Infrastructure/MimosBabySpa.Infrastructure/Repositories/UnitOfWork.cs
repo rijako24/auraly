@@ -14,6 +14,7 @@ public class UnitOfWork : IUnitOfWork
     private IBusinessConfigurationRepository? _businessConfigurations;
     private ISystemConfigurationRepository? _systemConfigurations;
     private IConversationContextRepository? _conversationContexts;
+    private ICustomerMemoryRepository? _customerMemory;
     private IReservationRepository? _reservations;
     private IServiceRepository? _services;
     private IServiceCategoryRepository? _serviceCategories;
@@ -63,6 +64,9 @@ public class UnitOfWork : IUnitOfWork
 
     public IConversationContextRepository ConversationContexts =>
         _conversationContexts ??= new ConversationContextRepository(_context);
+
+    public ICustomerMemoryRepository CustomerMemory =>
+        _customerMemory ??= new CustomerMemoryRepository(_context);
 
     public IReservationRepository Reservations =>
         _reservations ??= new ReservationRepository(_context);

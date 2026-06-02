@@ -1,6 +1,5 @@
 using System.Text.Json;
 using MimosBabySpa.Application.Agents.Gating;
-using MimosBabySpa.Application.Agents.Templates;
 using MimosBabySpa.Application.BusinessRules;
 using MimosBabySpa.Application.Configuration;
 using MimosBabySpa.Application.DTOs;
@@ -45,7 +44,7 @@ public sealed class CreateReservationTool : IAgentTool
 
     public string Description =>
         "Creates a confirmed reservation from the current booking facts and customer confirmation flag. " +
-        "Returns reservation_id, status, and a rendered confirmation summary token.";
+        "Returns reservation_id, service, date, time, and status. Does not send customer-facing messages.";
 
     public string ParametersSchema => """
         {
@@ -202,7 +201,6 @@ public sealed class CreateReservationTool : IAgentTool
             ctx.ConversationId, ConversationCloseReasons.ReservationConfirmed, cancellationToken);
 
         return BuildSuccessResult(
-            ctx,
             response.ReservationId,
             response.ServiceName ?? service!,
             dateStr!,
@@ -239,7 +237,6 @@ public sealed class CreateReservationTool : IAgentTool
         }
 
         return BuildSuccessResult(
-            ctx,
             reservation.ReservationId,
             service,
             dateStr,
@@ -249,7 +246,6 @@ public sealed class CreateReservationTool : IAgentTool
     }
 
     private static string BuildSuccessResult(
-        AgentToolContext ctx,
         Guid reservationId,
         string service,
         string dateStr,
@@ -260,41 +256,18 @@ public sealed class CreateReservationTool : IAgentTool
         IReadOnlyList<string>? addOnNames = null,
         bool idempotentReplay = false)
     {
-        string? confirmationToken = null;
-        if (ctx.Turn is not null
-            && DateOnly.TryParse(dateStr, out var date)
-            && TimeOnly.TryParse(timeStr, out var time))
-        {
-            var data = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
-            {
-                ["customer_name"] = customerName,
-                ["service_name"] = service,
-                ["date_formatted"] = date.ToString("dd/MM/yyyy"),
-                ["time"] = time.ToString("HH:mm")
-            };
-
-            foreach (var (key, value) in ctx.Facts)
-            {
-                if (!data.ContainsKey(key))
-                    data[key] = value;
-            }
-
-            confirmationToken = ctx.Turn.RegisterFragment(
-                "CONFIRMATION", "reservation_created", data, FragmentRenderMode.Exclusive);
-        }
-
         return ToolResultHelper.Ok(new
         {
             reservation_id = reservationId,
             service,
             date = dateStr,
             time = timeStr,
+            customer_name = customerName,
             status = ReservationStatus.Confirmed.ToString(),
             is_booking_confirmed = true,
             employee,
             duration_minutes = durationMinutes,
             add_ons = addOnNames,
-            confirmation_token = confirmationToken,
             idempotent_replay = idempotentReplay
         }, idempotentReplay ? [] : [ReservationCreated]);
     }

@@ -127,8 +127,58 @@ public class CreateReservationToolTests
 
         json.Should().Contain("\"ok\":true");
         json.Should().Contain("\"is_booking_confirmed\":true");
+        json.Should().NotContain("confirmation_token");
         _reservations.Verify(r => r.CreateReservationAsync(It.IsAny<CreateReservationRequest>(), It.IsAny<CancellationToken>()), Times.Once);
         _paymentLifecycle.Verify(p => p.HasConfirmedDepositAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenDepositNotRequired_DoesNotRegisterConfirmationFragment()
+    {
+        _bookingPolicy.Setup(p => p.GetAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new BookingPolicyParams { DepositRequired = false });
+
+        _intentBuilder.Setup(b => b.BuildFromContextAsync(It.IsAny<AgentToolContext>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ReservationIntentSnapshot(
+                Guid.NewGuid(),
+                "Plan Marineritos",
+                new DateTime(2026, 5, 22, 9, 0, 0),
+                60,
+                null,
+                "Richard",
+                null,
+                "+573001234567",
+                [],
+                "{}"));
+
+        _reservations.Setup(r => r.CreateReservationAsync(It.IsAny<CreateReservationRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CreateReservationResponse(
+                Guid.NewGuid(),
+                "Plan Marineritos",
+                "María",
+                new DateOnly(2026, 5, 22),
+                new TimeOnly(9, 0),
+                60,
+                []));
+
+        var turn = new AgentTurnExecution(errorEscalationThreshold: 3);
+        var ctx = CreateContext();
+        ctx.Turn = turn;
+
+        using var args = JsonDocument.Parse("""
+            {
+              "service":"Plan Marineritos",
+              "date":"2026-05-22",
+              "time":"09:00",
+              "customer_name":"Richard",
+              "customer_phone":"+573001234567",
+              "customer_confirmed":true
+            }
+            """);
+
+        await _tool.ExecuteAsync(args.RootElement, ctx, CancellationToken.None);
+
+        turn.FragmentEntries.Should().BeEmpty();
     }
 
     private static AgentToolContext CreateContext() => new()

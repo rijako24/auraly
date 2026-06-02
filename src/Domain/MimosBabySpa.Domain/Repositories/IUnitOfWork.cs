@@ -10,6 +10,7 @@ public interface IUnitOfWork : IDisposable
     IBusinessConfigurationRepository BusinessConfigurations { get; }
     ISystemConfigurationRepository SystemConfigurations { get; }
     IConversationContextRepository ConversationContexts { get; }
+    ICustomerMemoryRepository CustomerMemory { get; }
     IReservationRepository Reservations { get; }
     IServiceRepository Services { get; }
     IServiceCategoryRepository ServiceCategories { get; }

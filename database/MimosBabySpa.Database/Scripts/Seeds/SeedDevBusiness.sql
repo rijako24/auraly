@@ -3,7 +3,7 @@
 -- Para el negocio 22222222-2222-2222-2222-222222222222:
 --   1. Crea usuario admin con rol Administrator asignado al negocio
 --   2. Crea adjuntos (indicaciones, términos)
---   3. Crea/actualiza configuración Key=1 (PaymentConfirmationMessages)
+--   3. Crea adjuntos de confirmación (BusinessAttachments) para messageSequences del agente
 -- Contraseña admin: Admin123!
 -- ============================================================
 
@@ -115,29 +115,6 @@ BEGIN
     VALUES (@AttachmentId2, @BusinessId, N'confirmations/terminos-y-condiciones.pdf', N'document', N'Terminos-y-condiciones.pdf', N'Términos y condiciones', 1, GETUTCDATE());
     PRINT N'Adjunto creado: terminos-y-condiciones.pdf';
 END
-
--- ============================================================
--- 3. Configuración Key=1 (PaymentConfirmationMessages)
--- ============================================================
-
-DECLARE @ConfirmationMessagesValue NVARCHAR(MAX) = N'{
-  "messages": [
-    {"body": "✅ ¡Tu pago ha sido confirmado y tu reserva creada!"},
-    {"body": "📋 Adjuntamos las indicaciones para tu visita:", "attachmentId": "8a1ec489-f1ba-4c7c-9576-382dfc9a55f1"},
-    {"body": "Estos son los términos y condiciones:", "attachmentId": "9b2fd590-a2cb-5d8d-a687-493efd0b66a2"}
-  ]
-}';
-
-MERGE dbo.BusinessConfigurations AS target
-USING (SELECT @BusinessId AS BusinessId, 1 AS [Key]) AS src
-   ON target.BusinessId = src.BusinessId AND target.[Key] = src.[Key]
-WHEN MATCHED THEN
-    UPDATE SET [Value] = @ConfirmationMessagesValue, UpdatedAt = GETUTCDATE()
-WHEN NOT MATCHED THEN
-    INSERT (BusinessConfigurationId, BusinessId, [Key], [Value], IsActive, CreatedAt)
-    VALUES (NEWID(), @BusinessId, 1, @ConfirmationMessagesValue, 1, GETUTCDATE());
-
-PRINT N'Key=1 (PaymentConfirmationMessages) configurada.';
 
 PRINT N'Seed completado para negocio 22222222-2222-2222-2222-222222222222.';
 GO

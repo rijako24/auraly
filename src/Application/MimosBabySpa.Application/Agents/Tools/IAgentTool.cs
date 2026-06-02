@@ -16,8 +16,14 @@ public interface IAgentTool
     /// <summary>Descripción técnica de qué hace la tool (no cuándo llamarla).</summary>
     string Description { get; }
 
-    /// <summary>JSON Schema RFC 7159 de los parámetros.</summary>
+    /// <summary>JSON Schema RFC 7159 de los parámetros (fallback estático).</summary>
     string ParametersSchema { get; }
+
+    /// <summary>
+    /// JSON Schema contextual por tenant. Por defecto devuelve <see cref="ParametersSchema"/>.
+    /// Tools como set_fact generan el contrato desde <see cref="AgentConfig.FactSchema"/>.
+    /// </summary>
+    string BuildParametersSchema(AgentConfig config) => ParametersSchema;
 
     /// <summary>Plantilla por defecto si la tool renderiza output al cliente.</summary>
     string? DefaultTemplateId => null;
@@ -38,12 +44,12 @@ public interface IAgentTool
         new(true, null, null);
 
     /// <summary>
-    /// Resuelve la clave de scope para verificaciones de esta tool.
-    /// Null (default) = usa el resolver estándar basado en facts del contexto.
-    /// Override cuando la tool necesita resolver el scope desde sus argumentos
-    /// (ej. assign_paid_slot usa args.date/args.time en lugar de los facts del turno).
+    /// Resuelve los facts contra los que comparar el snapshot de una verificación al evaluar guards.
+    /// Null (default) = usa <see cref="AgentToolContext.Facts"/>.
+    /// Override cuando la tool valida inputs distintos a los facts del turno (p. ej. args date/time).
     /// </summary>
-    Func<JsonElement, AgentToolContext, string?>? VerificationScopeResolver => null;
+    Func<JsonElement, AgentToolContext, IReadOnlyDictionary<string, string>?>? VerificationDependencyResolver =>
+        null;
 
     /// <summary>
     /// Ejecuta la tool. Siempre retorna un JSON serializable con shape:

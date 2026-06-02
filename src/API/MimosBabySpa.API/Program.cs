@@ -120,9 +120,13 @@ var host = new HostBuilder()
         // Payment Confirmation Handler (Webhook)
         services.AddScoped<IPaymentConfirmationHandler, PaymentConfirmationHandler>();
         services.AddScoped<IMediaUrlResolver, BlobMediaUrlResolver>();
-        services.AddScoped<PaymentConfirmationNotifier>();
+        services.AddScoped<IOutboundMessageDispatcher, OutboundMessageDispatcher>();
+        services.AddScoped<IMessageSequenceResolver, MessageSequenceResolver>();
+        services.AddScoped<IActiveAgentConfigResolver, ActiveAgentConfigResolver>();
 
         services.AddScoped<IConversationFactsService, ConversationFactsService>();
+        services.AddScoped<ICustomerMemoryService, CustomerMemoryService>();
+        services.AddScoped<IConversationClosedHook, ConversationSummaryHook>();
         services.AddScoped<IReservationLifecycleService, ReservationLifecycleService>();
         services.AddScoped<ICustomerReservationResolver, CustomerReservationResolver>();
         services.AddScoped<IPaymentLifecycleService, PaymentLifecycleService>();
@@ -177,6 +181,7 @@ var host = new HostBuilder()
         services.AddScoped<IAgentTool, EscalateToHumanTool>();
         services.AddScoped<IAgentTool, GetServiceCatalogTool>();
         services.AddScoped<IAgentTool, SetFactTool>();
+        services.AddScoped<IAgentTool, SendMessageSequenceTool>();
 
         services.AddScoped<AgentToolRegistry>();
         services.AddScoped<IAgentConversationService, AgentConversationService>();

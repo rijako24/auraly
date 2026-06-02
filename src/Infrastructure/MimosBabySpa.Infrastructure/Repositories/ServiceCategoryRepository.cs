@@ -28,4 +28,20 @@ public class ServiceCategoryRepository : IServiceCategoryRepository
             .ThenBy(sc => sc.Name)
             .ToListAsync();
     }
+
+    public async Task<ServiceCategory?> GetByBusinessIdAndNameAsync(Guid businessId, string name) =>
+        await _context.ServiceCategories
+            .FirstOrDefaultAsync(sc =>
+                sc.BusinessId == businessId &&
+                sc.Name == name &&
+                sc.IsActive);
+
+    public async Task<ServiceCategory> CreateAsync(ServiceCategory category)
+    {
+        category.ServiceCategoryId = Guid.NewGuid();
+        category.CreatedAt = DateTime.UtcNow;
+        _context.ServiceCategories.Add(category);
+        await _context.SaveChangesAsync();
+        return category;
+    }
 }

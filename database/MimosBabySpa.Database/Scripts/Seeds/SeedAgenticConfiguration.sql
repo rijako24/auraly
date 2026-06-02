@@ -72,6 +72,38 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
     "queja formal",
     "voy a demandar"
   ],
+  "messageSequences": {
+    "reservation_docs": {
+      "messages": [
+        { "body": "📋 Adjuntamos las indicaciones para tu visita:", "attachmentId": "8a1ec489-f1ba-4c7c-9576-382dfc9a55f1" },
+        { "body": "Estos son los términos y condiciones:", "attachmentId": "9b2fd590-a2cb-5d8d-a687-493efd0b66a2" }
+      ]
+    },
+    "reservation_confirmed": {
+      "messages": [
+        { "body": "✅ ¡Tu reserva ha sido confirmada para el {Date} a las {Time}!" },
+        { "body": "📋 Adjuntamos las indicaciones para tu visita:", "attachmentId": "8a1ec489-f1ba-4c7c-9576-382dfc9a55f1" },
+        { "body": "Estos son los términos y condiciones:", "attachmentId": "9b2fd590-a2cb-5d8d-a687-493efd0b66a2" }
+      ]
+    },
+    "payment_slot_taken": {
+      "messages": [
+        { "body": "✅ Recibimos tu pago de ${amount} {currency}. Tu comprobante quedó registrado." },
+        { "body": "Lo sentimos, el horario de las {Time} ya no está disponible porque otro cliente lo reservó primero. Tu pago está seguro. ¿Quieres elegir otro horario? Opciones: {slots}." }
+      ]
+    }
+  },
+  "webhooks": {
+    "wompi": {
+      "reservation_created": { "sendMessageSequence": "reservation_confirmed" },
+      "slot_unavailable_after_payment": { "sendMessageSequence": "payment_slot_taken" }
+    }
+  },
+  "templates": {
+    "checkout_with_deposit": "📋 *Resumen de tu reserva*\n- Servicio: {{service_name}}\n- Fecha: {{date_formatted}}\n- Hora: {{time}}\n- Precio servicio: ${{service_price}}\n{{#each addons}}\n- {{name}}: ${{price}}\n{{/each}}\n- *TOTAL: ${{total}}*\n\n- Nombre del cliente: {{customer_name}}\n- Teléfono: {{customer_phone}}\n{{#if baby_age_months}}\n- Edad del bebé: {{baby_age_months}}\n{{/if}}\n{{#if baby_name}}\n- Nombre del bebé: {{baby_name}}\n{{/if}}\n{{#if baby_birth_date}}\n- Fecha de nacimiento del bebé: {{baby_birth_date}}\n{{/if}}\n\n💰 Para confirmar tu reserva, solicitamos un anticipo del {{deposit_pct}}% del valor del servicio.\n\n*Anticipo:* ${{deposit}} {{currency}}\n\n🔗 Paga en línea: {{link_url}}\n\nUna vez confirmado el anticipo, tu reserva quedará asegurada. ¡Estamos para ayudarte!",
+    "checkout_no_deposit": "📋 *Resumen de tu reserva*\n- Servicio: {{service_name}}\n- Fecha: {{date_formatted}}\n- Hora: {{time}}\n- Precio servicio: ${{service_price}}\n{{#each addons}}\n- {{name}}: ${{price}}\n{{/each}}\n- *TOTAL: ${{total}}*\n\n- Nombre del cliente: {{customer_name}}\n- Teléfono: {{customer_phone}}\n{{#if baby_age_months}}\n- Edad del bebé: {{baby_age_months}}\n{{/if}}\n{{#if baby_name}}\n- Nombre del bebé: {{baby_name}}\n{{/if}}\n{{#if baby_birth_date}}\n- Fecha de nacimiento del bebé: {{baby_birth_date}}\n{{/if}}\n\n¿Confirmas la reserva con esta información?",
+    "availability_slots": "{{#if intro_message}}\n{{intro_message}}\n\n{{/if}}\n📅 *Horarios disponibles para {{date_formatted}}* ({{service_name}})\n\n{{#each slots}}\n- {{this}}\n{{/each}}\n\n¿Cuál prefieres?"
+  },
   "flow": {
     "stageDetection": "automatic",
     "stages": [
@@ -80,56 +112,53 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         "goal": "Entender qué necesita el cliente hoy antes de iniciar agendamiento u otra gestión.",
         "hint": "1) Si mencionó nombre o edad del bebé, regístralos con set_fact. 2) Si el mensaje no deja claro qué quiere (solo saludo u otro mensaje sin pedido concreto): cumple las reglas de apertura de tu identidad (presentación y que estás para ayudarle a elegir el mejor plan para su bebé). Termina con una invitación breve a que te cuente qué necesita. No enumeres opciones ni menciones agendar, cancelar, reagendar, catálogo ni horarios en ese mensaje. 3) Si quiere agendar o información de servicios/planes, responde en el mismo mensaje: llama get_service_catalog si necesitas el catálogo y atiende su pedido. 4) Si quiere cambiar horario o fecha y hay ESTADO RESERVA o RESERVAS DEL CLIENTE, usa reschedule_reservation con new_date y new_time (reservation_id solo si hay varias citas en contexto); nunca pidas UUID ni id al cliente. 5) Si quiere cancelar o suspender y hay reserva en contexto, usa suspend_reservation sin pedir identificadores al cliente.",
         "allowedTools": ["set_fact", "get_service_catalog", "reschedule_reservation", "suspend_reservation"],
-        "suggestedTools": ["set_fact", "get_service_catalog"],
         "advanceWhenFacts": [],
         "completesOnEnter": true
       },
       {
         "id": "discovery",
-        "goal": "Conoce al bebé (nombre, edad) y guía al cliente para elegir un servicio. Presenta el catálogo agrupado por categoría (Plan, Taller, Clase) para que vea todas las familias antes de decidir.",
-        "hint": "Si el cliente quiere reagendar o cancelar, usa reschedule_reservation o suspend_reservation según ESTADO RESERVA (sin pedir UUID al cliente). Si dio nombre o edad del bebé en su mensaje, regístralos con set_fact antes de otras acciones. Pregunta nombre y edad en una frase solo si faltan. Llama get_service_catalog y presenta opciones por categoría. Cuando el cliente elija un servicio, persiste set_fact con key service y el nombre exacto que devolvió el catálogo. Cierra confirmando la elección o pregunta cuál le interesa si aún no eligió.",
+        "goal": "Conocer al bebé (nombre y edad) y que el cliente elija un plan del catálogo. La etapa termina cuando el cliente elige un servicio.",
+        "hint": "Si dio nombre o edad del bebé, regístralos con set_fact. Si faltan, pregúntalos en una frase. Llama get_service_catalog y presenta opciones por categoría (Plan, Taller, Clase). Cierra según el caso: si AÚN no eligió plan, pregunta cuál le interesa; si ya eligió, registra service con set_fact (nombre exacto del catálogo) y confirma la elección en una frase. Si pide reagendar o cancelar, usa reschedule_reservation o suspend_reservation según ESTADO RESERVA.",
         "allowedTools": ["get_service_catalog", "set_fact", "reschedule_reservation", "suspend_reservation"],
-        "suggestedTools": ["get_service_catalog", "set_fact"],
-        "advanceWhenFacts": ["baby_name", "baby_age_months", "service"]
+        "advanceWhenFacts": ["baby_name", "baby_age_months", "service"],
+        "constraints": { "maxQuestions": 1 }
       },
       {
         "id": "addons_offering",
         "goal": "Ofrece los complementos compatibles con el plan elegido. Si el cliente no quiere ninguno, registra add_ons = ''ninguno''.",
         "hint": "Llama get_service_catalog si necesitas precios de complementos. Lista los compatibles con precio. Cierra con: ¿Agregas alguno o seguimos sin complementos? Luego set_fact con add_ons.",
         "allowedTools": ["get_service_catalog", "set_fact"],
-        "suggestedTools": ["get_service_catalog", "set_fact"],
-        "advanceWhenFacts": ["add_ons"]
+        "advanceWhenFacts": ["add_ons"],
+        "constraints": { "maxQuestions": 1 }
       },
       {
         "id": "scheduling",
         "goal": "Encuentra y confirma fecha y hora del servicio elegido.",
         "hint": "Antes de llamar check_availability necesitas la fecha que el cliente quiere. Reglas: (a) Si el cliente NO te dio fecha en este turno ni en turnos anteriores, primero pregúntale qué día le interesa — NO inventes fechas, NO uses ''mañana'' como default. (b) Cuando el cliente confirme la fecha, regístrala con set_fact(desired_date=YYYY-MM-DD). Si además te dio una hora específica, regístrala con set_fact(desired_time=HH:mm). (c) Llama check_availability pasando service y date siempre; pasa time solo si el cliente especificó una hora concreta. (d) Si la tool devuelve presentation_token, úsalo tal cual y pregunta cuál horario prefiere (o cuál alternativo, si el horario pedido no estaba disponible). (e) Cuando el cliente confirme un horario, set_fact con desired_time si aún no está registrada.",
         "allowedTools": ["check_availability", "set_fact"],
-        "suggestedTools": ["check_availability", "set_fact"],
         "advanceWhenFacts": ["desired_date", "desired_time"],
         "reentryOnFactChanged": ["desired_date", "desired_time"]
       },
       {
         "id": "customer_data",
-        "goal": "Obtén el nombre del cliente (papá o mamá), no el del bebé.",
-        "hint": "Confirma brevemente el horario seleccionado en una línea (sin justificar pasos próximos ni mencionar verificaciones). Luego haz UNA pregunta directa: ¿A nombre de quién hacemos la reserva? Cuando el cliente responda, set_fact con customer_name.",
+        "goal": "Obtén el nombre del cliente (papá o mamá) y la fecha de nacimiento del bebé.",
+        "hint": "Confirma brevemente el horario seleccionado en una línea (sin justificar pasos próximos ni mencionar verificaciones). Luego, UNA pregunta por mensaje: (1) si falta customer_name → ¿A nombre de quién hacemos la reserva? y set_fact(customer_name). (2) si falta baby_birth_date → pide la fecha de nacimiento del bebé y set_fact(baby_birth_date) en YYYY-MM-DD (convierte expresiones como ''15 de marzo de 2024''). Si un dato ya está en ESTADO ACTUAL, no lo repreguntes; si el bebé persistido podría ser otro hijo, confírmalo antes de reusarlo. No pidas ambos datos en el mismo mensaje.",
         "allowedTools": ["set_fact"],
-        "suggestedTools": ["set_fact"],
-        "advanceWhenFacts": ["customer_name"]
+        "advanceWhenFacts": ["customer_name", "baby_birth_date"]
       },
       {
         "id": "finalization",
-        "goal": "Cierra la reserva: presenta el resumen, procesa confirmación verbal o pago con anticipo, y registra la cita o asigna el slot pagado.",
-        "hint": "Si aún no se mostró resumen, llama prepare_checkout. Si el cliente modifica datos después del resumen: complementos — set_fact con add_ons (o ninguno para quitar) y prepare_checkout; fecha u hora — set_fact con desired_date o desired_time, luego check_availability, y solo después prepare_checkout; servicio — set_fact con service, check_availability, prepare_checkout. No llames prepare_checkout tras cambiar fecha u hora sin haber actualizado el fact y verificado disponibilidad. No inventes horarios; obténlos de check_availability. Para quitar todos los complementos, set_fact con key=add_ons y value=''ninguno''. Si el cliente confirma verbalmente y no se requiere anticipo, llama create_reservation. Si el cliente reporta haber pagado, llama verify_payment y luego assign_paid_slot. Si falta un dato, complétalo con set_fact antes de reintentar.",
+        "goal": "Cierra la reserva: resumen, pago o confirmación verbal, registro de cita y mensajes post-reserva.",
+        "hint": "Resumen y edición: si aún no se mostró resumen, llama prepare_checkout. Si el cliente modifica datos: complementos — set_fact con add_ons (o ninguno) y prepare_checkout; fecha u hora — set_fact, luego check_availability, y solo después prepare_checkout; servicio — set_fact con service, check_availability, prepare_checkout. No inventes horarios; obténlos de check_availability. Cierre sin anticipo: si confirma verbalmente, llama create_reservation. Cierre con pago: si reporta haber pagado, llama verify_payment y luego assign_paid_slot. Tras create_reservation o assign_paid_slot exitoso, llama send_message_sequence con sequence=''reservation_confirmed''. Si falta un dato, complétalo con set_fact antes de reintentar.",
         "allowedTools": [
           "prepare_checkout",
           "create_reservation",
           "assign_paid_slot",
           "verify_payment",
           "check_availability",
-          "set_fact"
+          "set_fact",
+          "send_message_sequence"
         ],
-        "suggestedTools": ["prepare_checkout", "create_reservation", "assign_paid_slot", "verify_payment"],
         "advanceWhenFacts": []
       }
     ]
@@ -143,12 +172,19 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
     {
       "key": "baby_name", "role": "baby.name", "label": "nombre del bebé",
       "type": "string", "required": true, "source": "user", "captureMode": "eager",
+      "persistsAcrossConversations": true,
       "aliases": ["nombre bebe", "nombre del bebe"]
     },
     {
       "key": "baby_age_months", "role": "baby.age_months", "label": "edad del bebé (meses)",
       "type": "number", "required": true, "source": "user", "captureMode": "eager",
       "aliases": ["edad", "meses", "edad bebe"]
+    },
+    {
+      "key": "baby_birth_date", "role": "baby.birth_date", "label": "fecha de nacimiento del bebé",
+      "type": "date", "required": false, "source": "user", "captureMode": "onDemand",
+      "persistsAcrossConversations": true,
+      "aliases": ["fecha de nacimiento", "fecha nacimiento", "nacimiento", "cuando nacio", "cuándo nació"]
     },
     {
       "key": "service", "role": "booking.service", "label": "plan / servicio",
@@ -203,6 +239,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "requires": [
         "verification:availability_checked",
         "verification:customer_identified",
+        "verification:checkout_prepared",
         "expr:NOT policy.deposit_required"
       ]
     },
@@ -223,7 +260,8 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
     "reschedule_reservation",
     "suspend_reservation",
     "verify_payment",
-    "escalate_to_human"
+    "escalate_to_human",
+    "send_message_sequence"
   ],
   "escalation": {
     "contacts": ["+573012926660"]

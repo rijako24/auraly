@@ -159,12 +159,15 @@ public sealed class GuardEvaluator : IGuardEvaluator
         else if (raw.StartsWith("verification.", StringComparison.OrdinalIgnoreCase))
         {
             var verType = raw["verification.".Length..].Trim();
-            var scope = verType == VerificationFactTypes.AvailabilityChecked
-                ? SlotVerificationScope.FromFacts(ctx.Facts, ctx.Config?.FactSchema)
-                : SlotVerificationScope.UniversalScope;
-
-            result = !string.IsNullOrWhiteSpace(scope)
-                && _verifications.IsActive(ctx.ConversationState, verType, scope);
+            var factsForCheck = ResolveFactsForVerification(tool, ctx, arguments);
+            if (factsForCheck is null)
+            {
+                result = false;
+            }
+            else
+            {
+                result = _verifications.IsActive(ctx.ConversationState, verType, factsForCheck);
+            }
 
             positiveBlockReason = $"Verification '{verType}' is not active.";
             negativeBlockReason = $"Verification '{verType}' must not be active.";
@@ -194,61 +197,51 @@ public sealed class GuardEvaluator : IGuardEvaluator
         AgentToolContext ctx,
         JsonElement arguments)
     {
-        string? scopeKey;
-
-        if (factType == VerificationFactTypes.AvailabilityChecked)
-        {
-            // Si la tool declara su propio scope resolver, usarlo (sin hardcodear nombres de tool)
-            scopeKey = tool.VerificationScopeResolver is not null
-                ? tool.VerificationScopeResolver(arguments, ctx)
-                : SlotVerificationScope.FromFacts(ctx.Facts, ctx.Config?.FactSchema);
-        }
-        else if (factType == VerificationFactTypes.CustomerIdentified)
-        {
-            scopeKey = SlotVerificationScope.UniversalScope;
-        }
-        else
-        {
-            scopeKey = null;
-        }
-
-        if (string.IsNullOrWhiteSpace(scopeKey))
+        var factsForCheck = ResolveFactsForVerification(tool, ctx, arguments);
+        if (factsForCheck is null)
         {
             return new ToolAvailabilityResult(
                 false,
-                $"Cannot evaluate '{factType}' — required booking fields are missing.",
+                $"Cannot evaluate '{factType}' — required inputs are missing.",
                 factType switch
                 {
                     VerificationFactTypes.AvailabilityChecked =>
                         "Call check_availability first for the same service, date and time.",
-                    VerificationFactTypes.CustomerIdentified =>
-                        "Use set_fact for customer_name and customer_phone.",
+                    VerificationFactTypes.CheckoutPrepared =>
+                        "Call prepare_checkout first to show the booking summary.",
                     _ => "Complete required fields first."
                 });
         }
 
-        if (_verifications.IsActive(ctx.ConversationState, factType, scopeKey))
+        if (_verifications.IsActive(ctx.ConversationState, factType, factsForCheck))
             return ToolAvailabilityResultAvailable;
 
-        return new ToolAvailabilityResult(
-            false,
-            factType switch
-            {
-                VerificationFactTypes.AvailabilityChecked =>
-                    "Availability has not been verified for this service, date and time.",
-                VerificationFactTypes.CustomerIdentified =>
-                    "Customer name and phone must be collected before creating a reservation.",
-                _ => $"'{factType}' verification is not active."
-            },
-            factType switch
-            {
-                VerificationFactTypes.AvailabilityChecked =>
-                    "Call check_availability first for the same service, date and time.",
-                VerificationFactTypes.CustomerIdentified =>
-                    "Use set_fact for customer_name and customer_phone.",
-                _ => "Complete the required step first."
-            });
+        return factType switch
+        {
+            VerificationFactTypes.AvailabilityChecked => new ToolAvailabilityResult(
+                false,
+                "Availability has not been verified for the current booking inputs.",
+                "Call check_availability first for the same service, date and time."),
+            VerificationFactTypes.CheckoutPrepared => new ToolAvailabilityResult(
+                false,
+                "Checkout summary has not been prepared for the current booking inputs.",
+                "Call prepare_checkout to render the summary before create_reservation."),
+            VerificationFactTypes.CustomerIdentified => new ToolAvailabilityResult(
+                false,
+                "Customer name and phone must be collected before creating a reservation.",
+                "Use set_fact for customer_name and customer_phone."),
+            _ => new ToolAvailabilityResult(
+                false,
+                $"Verification '{factType}' is not active.",
+                $"Complete the step that records '{factType}' before calling {tool.Name}.")
+        };
     }
+
+    private static IReadOnlyDictionary<string, string>? ResolveFactsForVerification(
+        IAgentTool tool,
+        AgentToolContext ctx,
+        JsonElement arguments) =>
+        tool.VerificationDependencyResolver?.Invoke(arguments, ctx) ?? ctx.Facts;
 
     private static readonly ToolAvailabilityResult ToolAvailabilityResultAvailable =
         new(true, null, null);

@@ -17,6 +17,7 @@ public class WhatsAppMessageProcessorService : IWhatsAppMessageProcessorService
     private readonly IAgentConversationService _agentService;
     private readonly IAgentRepository _agentRepository;
     private readonly IBlobStorageService _blobStorageService;
+    private readonly IOutboundMessageDispatcher _outboundDispatcher;
     private readonly ILogger<WhatsAppMessageProcessorService> _logger;
 
     public WhatsAppMessageProcessorService(
@@ -28,6 +29,7 @@ public class WhatsAppMessageProcessorService : IWhatsAppMessageProcessorService
         IAgentConversationService agentService,
         IAgentRepository agentRepository,
         IBlobStorageService blobStorageService,
+        IOutboundMessageDispatcher outboundDispatcher,
         ILogger<WhatsAppMessageProcessorService> logger)
     {
         _conversationService = conversationService;
@@ -38,6 +40,7 @@ public class WhatsAppMessageProcessorService : IWhatsAppMessageProcessorService
         _agentService = agentService;
         _agentRepository = agentRepository;
         _blobStorageService = blobStorageService;
+        _outboundDispatcher = outboundDispatcher;
         _logger = logger;
     }
 
@@ -111,6 +114,14 @@ public class WhatsAppMessageProcessorService : IWhatsAppMessageProcessorService
 
         if (!string.IsNullOrWhiteSpace(result.Response))
             await SendResponseAsync(userNumber, result.Response, conversation);
+
+        if (result.OutboundMessages.Count > 0)
+        {
+            await _outboundDispatcher.SendAllAsync(
+                conversation.BusinessId,
+                userNumber,
+                result.OutboundMessages);
+        }
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────

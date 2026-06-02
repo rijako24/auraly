@@ -44,6 +44,28 @@ if (args is ["migrate-integrations"])
     return;
 }
 
+if (args is ["backfill-customer-memory"])
+{
+    var backfillServices = new ServiceCollection();
+    backfillServices.AddSingleton<IConfiguration>(configuration);
+    backfillServices.AddLogging(b => b.AddConsole().SetMinimumLevel(LogLevel.Information));
+    backfillServices.AddDbContext<ApplicationDbContext>(options =>
+        options.UseSqlServer(configuration.GetConnectionString("DefaultConnection")));
+    backfillServices.AddMemoryCache();
+    backfillServices.AddScoped<IUnitOfWork, UnitOfWork>();
+    backfillServices.AddScoped<IAgentRepository, AgentRepository>();
+    backfillServices.AddScoped<IAgentConfigProvider, AgentConfigProvider>();
+    backfillServices.AddScoped<ICustomerMemoryService, CustomerMemoryService>();
+    backfillServices.AddScoped<ICustomerMemoryBackfillService, CustomerMemoryBackfillService>();
+
+    await using var backfillProvider = backfillServices.BuildServiceProvider();
+    var backfill = backfillProvider.GetRequiredService<ICustomerMemoryBackfillService>();
+    var result = await backfill.RunAsync();
+    Console.WriteLine(
+        $"Backfill complete: businesses={result.BusinessesProcessed}, customers={result.CustomersProcessed}, facts={result.FactsWritten}");
+    return;
+}
+
 var services = new ServiceCollection();
 
 services.AddSingleton<IConfiguration>(configuration);
@@ -119,7 +141,9 @@ services.AddMemoryCache();
 services.AddScoped<ILocalizationService, LocalizationService>();
 services.AddScoped<IConversationStateManager, ConversationStateManager>();
 services.AddScoped<IConversationFactsService, ConversationFactsService>();
-services.AddScoped<IConversationFactsService, ConversationFactsService>();
+services.AddScoped<ICustomerMemoryService, CustomerMemoryService>();
+services.AddScoped<IConversationClosedHook, ConversationSummaryHook>();
+services.AddScoped<ICustomerMemoryBackfillService, CustomerMemoryBackfillService>();
 services.AddScoped<IReservationLifecycleService, ReservationLifecycleService>();
 services.AddScoped<ICustomerReservationResolver, CustomerReservationResolver>();
 services.AddScoped<IPaymentLifecycleService, PaymentLifecycleService>();
@@ -142,6 +166,10 @@ services.AddScoped<IIntegrationsConfigProvider, IntegrationsConfigProvider>();
 services.AddScoped<ISchedulingPolicyProvider, SchedulingPolicyProvider>();
 services.AddScoped<IBookingPolicyProvider, BookingPolicyProvider>();
 services.AddScoped<IPaymentLinkService, WompiPaymentLinkService>();
+services.AddScoped<IMediaUrlResolver, ConsoleMediaUrlResolver>();
+services.AddScoped<IOutboundMessageDispatcher, OutboundMessageDispatcher>();
+services.AddScoped<IMessageSequenceResolver, MessageSequenceResolver>();
+services.AddScoped<IActiveAgentConfigResolver, ActiveAgentConfigResolver>();
 
 services.AddHttpClient();
 services.AddHttpClient<GoogleCalendarService>(c => c.Timeout = TimeSpan.FromSeconds(30));
@@ -188,6 +216,7 @@ services.AddScoped<IAgentTool, VerifyPaymentTool>();
 services.AddScoped<IAgentTool, EscalateToHumanTool>();
 services.AddScoped<IAgentTool, GetServiceCatalogTool>();
 services.AddScoped<IAgentTool, SetFactTool>();
+services.AddScoped<IAgentTool, SendMessageSequenceTool>();
 
 services.AddScoped<AgentToolRegistry>();
 services.AddScoped<IAgentConversationService, AgentConversationService>();
@@ -213,7 +242,7 @@ const string agentIdStr = "7105A9D5-D4E4-4BBA-9F3A-DBB34E0B1B86";
 var agentId = Guid.Parse(agentIdStr);
 
 // Simula el teléfono del cliente (clave de sesión)
-const string userPhone = "+12345679770";
+const string userPhone = "+12345679809";
 
 while (true)
 {
@@ -275,10 +304,33 @@ while (true)
 
         if (!string.IsNullOrWhiteSpace(result.Response))
             Console.WriteLine(result.Response);
+
+        foreach (var outbound in result.OutboundMessages)
+        {
+            if (!string.IsNullOrWhiteSpace(outbound.MediaUrl))
+            {
+                Console.ForegroundColor = ConsoleColor.DarkGreen;
+                Console.WriteLine($"  [adjunto:{outbound.MediaType}] {outbound.Body ?? outbound.Filename ?? outbound.MediaUrl}");
+                Console.ResetColor();
+            }
+            else if (!string.IsNullOrWhiteSpace(outbound.Body))
+            {
+                Console.ForegroundColor = ConsoleColor.DarkGreen;
+                Console.WriteLine($"  {outbound.Body}");
+                Console.ResetColor();
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(result.Response)
+            && result.OutboundMessages.Count == 0)
+        {
+            if (!result.Success)
+                Console.WriteLine($"[error: {result.ErrorMessage}]");
+            else
+                Console.WriteLine("[sin respuesta]");
+        }
         else if (!result.Success)
             Console.WriteLine($"[error: {result.ErrorMessage}]");
-        else
-            Console.WriteLine("[sin respuesta]");
 
         Console.WriteLine();
 

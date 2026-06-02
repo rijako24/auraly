@@ -47,7 +47,7 @@ public class ToolCapabilityGateTests
         _verifications.Record(
             ctx,
             VerificationFactTypes.CustomerIdentified,
-            SlotVerificationScope.UniversalScope,
+            new Dictionary<string, string>(),
             ttl: null);
 
         using var args = JsonDocument.Parse("""{"customer_confirmed":true}""");
@@ -69,19 +69,63 @@ public class ToolCapabilityGateTests
         _verifications.Record(
             ctx,
             VerificationFactTypes.AvailabilityChecked,
-            SlotVerificationScope.Build("Plan Marineritos", "2026-05-22", "09:00"),
+            VerificationSnapshot.FromValues(
+                new KeyValuePair<string, string>(ConversationFactKeys.Service, "Plan Marineritos"),
+                new KeyValuePair<string, string>(ConversationFactKeys.DesiredDate, "2026-05-22"),
+                new KeyValuePair<string, string>(ConversationFactKeys.DesiredTime, "09:00")),
             VerificationTtl.AvailabilityChecked);
 
         _verifications.Record(
             ctx,
             VerificationFactTypes.CustomerIdentified,
-            SlotVerificationScope.UniversalScope,
+            new Dictionary<string, string>(),
+            ttl: null);
+
+        _verifications.Record(
+            ctx,
+            VerificationFactTypes.CheckoutPrepared,
+            VerificationSnapshot.Of(ctx.Facts,
+                ConversationFactKeys.Service,
+                ConversationFactKeys.DesiredDate,
+                ConversationFactKeys.DesiredTime,
+                ConversationFactKeys.AddOns),
             ttl: null);
 
         using var args = JsonDocument.Parse("""{"customer_confirmed":true}""");
         var result = await _gate.EvaluateAsync(_createReservationTool, args.RootElement, ctx, CancellationToken.None);
 
         result.IsAllowed.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_CreateReservation_WithoutCheckoutPrepared_IsRejected()
+    {
+        var ctx = CreateContext();
+        ctx.Facts[ConversationFactKeys.Service] = "Plan Marineritos";
+        ctx.Facts[ConversationFactKeys.DesiredDate] = "2026-05-22";
+        ctx.Facts[ConversationFactKeys.DesiredTime] = "09:00";
+
+        _verifications.Record(
+            ctx,
+            VerificationFactTypes.AvailabilityChecked,
+            VerificationSnapshot.FromValues(
+                new KeyValuePair<string, string>(ConversationFactKeys.Service, "Plan Marineritos"),
+                new KeyValuePair<string, string>(ConversationFactKeys.DesiredDate, "2026-05-22"),
+                new KeyValuePair<string, string>(ConversationFactKeys.DesiredTime, "09:00")),
+            VerificationTtl.AvailabilityChecked);
+
+        _verifications.Record(
+            ctx,
+            VerificationFactTypes.CustomerIdentified,
+            new Dictionary<string, string>(),
+            ttl: null);
+
+        using var args = JsonDocument.Parse("""{"customer_confirmed":true}""");
+        var result = await _gate.EvaluateAsync(_createReservationTool, args.RootElement, ctx, CancellationToken.None);
+
+        result.IsAllowed.Should().BeFalse();
+        result.Code.Should().Be("precondition_failed");
+        result.Remediation.Should().Contain("prepare_checkout");
     }
 
     [Fact]
@@ -192,7 +236,12 @@ public class ToolCapabilityGateTests
         {
             ["create_reservation"] = new()
             {
-                Requires = ["verification:availability_checked", "verification:customer_identified"]
+                Requires =
+                [
+                    "verification:availability_checked",
+                    "verification:customer_identified",
+                    "verification:checkout_prepared"
+                ]
             }
         }
     };

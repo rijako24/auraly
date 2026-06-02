@@ -380,6 +380,107 @@ public class AgentPromptComposerTests
         result.Should().Contain("CÓMO ABRES LA CONVERSACIÓN");
         result.Should().Contain("etapa: discovery");
         result.Should().NotContain("etapa: greeting");
+        result.Should().Contain("el sistema te llevará automáticamente al siguiente paso");
+    }
+
+    [Fact]
+    public void Compose_StageWithAdvanceWhenFacts_IncludesOrchestrationContract()
+    {
+        var config = new AgentConfig
+        {
+            AgentId = DefaultConfig.AgentId,
+            BusinessId = DefaultConfig.BusinessId,
+            Name = "Mimi",
+            Persona = DefaultConfig.Persona,
+            Flow = new AgentFlowDefinition
+            {
+                StageDetection = "automatic",
+                Stages =
+                [
+                    new AgentFlowStage
+                    {
+                        Id = "discovery",
+                        Goal = "Elegir plan",
+                        AdvanceWhenFacts = ["service"]
+                    }
+                ]
+            }
+        };
+
+        var session = new AgentToolContext
+        {
+            Conversation = new Conversation(),
+            ConversationState = new ConversationState(),
+            Facts = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        };
+
+        var result = Compose(config, [], session);
+
+        result.Should().Contain("el sistema te llevará automáticamente al siguiente paso");
+        result.Should().Contain("facts_pendientes: service");
+    }
+
+    [Fact]
+    public void Compose_FinalizationStage_OmitsOrchestrationContract()
+    {
+        var config = new AgentConfig
+        {
+            AgentId = DefaultConfig.AgentId,
+            BusinessId = DefaultConfig.BusinessId,
+            Name = "Mimi",
+            Persona = DefaultConfig.Persona,
+            Flow = new AgentFlowDefinition
+            {
+                StageDetection = "automatic",
+                Stages =
+                [
+                    new AgentFlowStage
+                    {
+                        Id = "intent_capture",
+                        Goal = "Capturar intención",
+                        CompletesOnEnter = true,
+                        AdvanceWhenFacts = []
+                    },
+                    new AgentFlowStage
+                    {
+                        Id = "discovery",
+                        Goal = "Elegir plan",
+                        AdvanceWhenFacts = ["service"]
+                    },
+                    new AgentFlowStage
+                    {
+                        Id = "finalization",
+                        Goal = "Cerrar reserva",
+                        AdvanceWhenFacts = []
+                    }
+                ]
+            }
+        };
+
+        var state = new ConversationState();
+        state.CompletedOneShotStages.Add("intent_capture");
+
+        var session = new AgentToolContext
+        {
+            Conversation = new Conversation(),
+            ConversationState = state,
+            Facts = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["service"] = "Plan Marineritos",
+                ["baby_name"] = "Thomas",
+                ["baby_age_months"] = "5",
+                ["add_ons"] = "ninguno",
+                ["desired_date"] = "2026-08-15",
+                ["desired_time"] = "10:00",
+                ["customer_name"] = "Ana",
+                ["baby_birth_date"] = "2026-03-15"
+            }
+        };
+
+        var result = Compose(config, [], session);
+
+        result.Should().Contain("etapa: finalization");
+        result.Should().NotContain("el sistema te llevará automáticamente al siguiente paso");
     }
 
     // ── BuildEagerCaptureBlock ────────────────────────────────────────────────
@@ -596,5 +697,22 @@ public class AgentPromptComposerTests
         result.Should().Contain("## ATENCIÓN: DATOS MODIFICADOS");
         result.Should().Contain("2026-05-27");
         result.Should().Contain("2026-05-28");
+    }
+
+    [Fact]
+    public void BuildCustomerMemoryBlock_WhenSummaryPresent_IncludesMemorySection()
+    {
+        var session = new AgentToolContext
+        {
+            Conversation = new Conversation(),
+            ConversationState = new ConversationState(),
+            CustomerMemorySummary = "2026-06-01: reservó Plan Marineritos para 2026-06-05 10:00."
+        };
+
+        var block = AgentPromptComposer.BuildCustomerMemoryBlock(session);
+
+        block.Should().Contain("## MEMORIA DEL CLIENTE");
+        block.Should().Contain("Plan Marineritos");
+        block.Should().Contain("NO repitas reservas pasadas");
     }
 }

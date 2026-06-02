@@ -1,7 +1,7 @@
 -- ============================================================
 -- Script: SeedServiceCategoriesForNewBusinesses
 -- Inserta categorías (Plan, Taller, Clase, Otros) para negocios que aún no tengan.
--- Opcional: crea adjunto indicaciones para uso en mensajes de confirmación (Key=1: PaymentConfirmationMessages).
+-- Opcional: crea adjunto indicaciones para uso en messageSequences del agente (Agents.SettingsJson).
 -- ============================================================
 
 SET NOCOUNT ON;

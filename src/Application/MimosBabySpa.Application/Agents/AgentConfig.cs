@@ -58,6 +58,9 @@ public sealed class AgentConfig
     /// <summary>Máximo de iteraciones de tool calling por turno (anti-loop).</summary>
     public int MaxToolIterations { get; init; } = 6;
 
+    /// <summary>Máximo de mensajes del historial enviados al LLM por turno.</summary>
+    public int HistoryWindowSize { get; init; } = 20;
+
     /// <summary>
     /// Nombres de tools habilitadas para este agente.
     /// El registry filtra el set completo antes de enviar al modelo.
@@ -75,4 +78,16 @@ public sealed class AgentConfig
     /// Leídos de Agent.SettingsJson → escalation.contacts[].
     /// </summary>
     public IReadOnlyList<string> EscalationContacts { get; init; } = [];
+
+    /// <summary>
+    /// Catálogo de secuencias outbound nombradas (texto + adjuntos).
+    /// Fuente: SettingsJson → messageSequences.
+    /// </summary>
+    public MessageSequenceCatalog MessageSequences { get; init; } = new();
+
+    /// <summary>
+    /// Disparadores de secuencias por webhook (p. ej. Wompi).
+    /// Fuente: SettingsJson → webhooks.
+    /// </summary>
+    public WebhookDefinitions Webhooks { get; init; } = new();
 }

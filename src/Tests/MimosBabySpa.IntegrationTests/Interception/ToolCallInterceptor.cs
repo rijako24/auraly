@@ -24,6 +24,12 @@ public class ToolCallInterceptor : IAgentTool
     public string Description => _inner.Description;
     public string ParametersSchema => _inner.ParametersSchema;
 
+    public string BuildParametersSchema(AgentConfig config) =>
+        _inner.BuildParametersSchema(config);
+
+    public Func<JsonElement, AgentToolContext, IReadOnlyDictionary<string, string>?>? VerificationDependencyResolver =>
+        _inner.VerificationDependencyResolver;
+
     public async Task<string> ExecuteAsync(
         JsonElement arguments,
         AgentToolContext context,
