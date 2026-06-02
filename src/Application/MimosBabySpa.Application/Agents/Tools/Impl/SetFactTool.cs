@@ -67,10 +67,11 @@ public sealed class SetFactTool : IAgentTool
 
 
     public string Description =>
-
-        "Persists a key-value pair into conversation state. " +
-
-        "Input: fact key and value. Output: stored key and normalized value.";
+        "Registra en el estado de la conversación un dato aportado por el cliente. " +
+        "Úsala SOLO cuando el cliente entregue un dato nuevo o cambie uno existente. " +
+        "NUNCA la uses para reconfirmar o repetir un dato que ya aparece en '## ESTADO ACTUAL' con el mismo valor. " +
+        "Normaliza fechas a YYYY-MM-DD y horas a HH:mm antes de registrar. " +
+        "Input: clave (key) y valor (value). Output: clave y valor normalizado almacenados.";
 
 
 

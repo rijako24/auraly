@@ -110,7 +110,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       {
         "id": "intent_capture",
         "goal": "Entender qué necesita el cliente hoy antes de iniciar agendamiento u otra gestión.",
-        "hint": "1) Si mencionó nombre o edad del bebé, regístralos con set_fact. 2) Si el mensaje no deja claro qué quiere (solo saludo u otro mensaje sin pedido concreto): cumple las reglas de apertura de tu identidad (presentación y que estás para ayudarle a elegir el mejor plan para su bebé). Termina con una invitación breve a que te cuente qué necesita. No enumeres opciones ni menciones agendar, cancelar, reagendar, catálogo ni horarios en ese mensaje. 3) Si quiere agendar o información de servicios/planes, responde en el mismo mensaje: llama get_service_catalog si necesitas el catálogo y atiende su pedido. 4) Si quiere cambiar horario o fecha y hay ESTADO RESERVA o RESERVAS DEL CLIENTE, usa reschedule_reservation con new_date y new_time (reservation_id solo si hay varias citas en contexto); nunca pidas UUID ni id al cliente. 5) Si quiere cancelar o suspender y hay reserva en contexto, usa suspend_reservation sin pedir identificadores al cliente.",
+        "hint": "1) Si el mensaje no deja claro qué quiere (solo saludo u otro mensaje sin pedido concreto): cumple las reglas de apertura de tu identidad (presentación y que estás para ayudarle a elegir el mejor plan para su bebé). Termina con una invitación breve a que te cuente qué necesita. No enumeres opciones ni menciones agendar, cancelar, reagendar, catálogo ni horarios en ese mensaje. 2) Si quiere agendar o información de servicios/planes, responde en el mismo mensaje: llama get_service_catalog si necesitas el catálogo y atiende su pedido. 3) Si quiere cambiar horario o fecha y hay ESTADO RESERVA o RESERVAS DEL CLIENTE, usa reschedule_reservation con new_date y new_time (reservation_id solo si hay varias citas en contexto); nunca pidas UUID ni id al cliente. 4) Si quiere cancelar o suspender y hay reserva en contexto, usa suspend_reservation sin pedir identificadores al cliente.",
         "allowedTools": ["set_fact", "get_service_catalog", "reschedule_reservation", "suspend_reservation"],
         "advanceWhenFacts": [],
         "completesOnEnter": true
@@ -118,15 +118,15 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       {
         "id": "discovery",
         "goal": "Conocer al bebé (nombre y edad) y que el cliente elija un plan del catálogo. La etapa termina cuando el cliente elige un servicio.",
-        "hint": "Si dio nombre o edad del bebé, regístralos con set_fact. Si faltan, pregúntalos en una frase. Llama get_service_catalog y presenta opciones por categoría (Plan, Taller, Clase). Cierra según el caso: si AÚN no eligió plan, pregunta cuál le interesa; si ya eligió, registra service con set_fact (nombre exacto del catálogo) y confirma la elección en una frase. Si pide reagendar o cancelar, usa reschedule_reservation o suspend_reservation según ESTADO RESERVA.",
+        "hint": "Si faltan el nombre o la edad del bebé, pregúntalos en una frase. Llama get_service_catalog y presenta opciones por categoría (Plan, Taller, Clase). Cierra según el caso: si AÚN no eligió plan, pregunta cuál le interesa; si ya eligió, confirma la elección en una frase usando el nombre exacto del catálogo. Si pide reagendar o cancelar, usa reschedule_reservation o suspend_reservation según ESTADO RESERVA.",
         "allowedTools": ["get_service_catalog", "set_fact", "reschedule_reservation", "suspend_reservation"],
         "advanceWhenFacts": ["baby_name", "baby_age_months", "service"],
         "constraints": { "maxQuestions": 1 }
       },
       {
         "id": "addons_offering",
-        "goal": "Ofrece los complementos compatibles con el plan elegido. Si el cliente no quiere ninguno, registra add_ons = ''ninguno''.",
-        "hint": "Llama get_service_catalog si necesitas precios de complementos. Lista los compatibles con precio. Cierra con: ¿Agregas alguno o seguimos sin complementos? Luego set_fact con add_ons.",
+        "goal": "Ofrece los complementos compatibles con el plan elegido. Si el cliente no quiere ninguno, el valor de complementos es ''ninguno''.",
+        "hint": "Llama get_service_catalog si necesitas precios de complementos. Lista los compatibles con precio. Cierra con: ¿Agregas alguno o seguimos sin complementos?",
         "allowedTools": ["get_service_catalog", "set_fact"],
         "advanceWhenFacts": ["add_ons"],
         "constraints": { "maxQuestions": 1 }
@@ -134,7 +134,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       {
         "id": "scheduling",
         "goal": "Encuentra y confirma fecha y hora del servicio elegido.",
-        "hint": "Antes de llamar check_availability necesitas la fecha que el cliente quiere. Reglas: (a) Si el cliente NO te dio fecha en este turno ni en turnos anteriores, primero pregúntale qué día le interesa — NO inventes fechas, NO uses ''mañana'' como default. (b) Cuando el cliente confirme la fecha, regístrala con set_fact(desired_date=YYYY-MM-DD). Si además te dio una hora específica, regístrala con set_fact(desired_time=HH:mm). (c) Llama check_availability pasando service y date siempre; pasa time solo si el cliente especificó una hora concreta. (d) Si la tool devuelve presentation_token, úsalo tal cual y pregunta cuál horario prefiere (o cuál alternativo, si el horario pedido no estaba disponible). (e) Cuando el cliente confirme un horario, set_fact con desired_time si aún no está registrada.",
+        "hint": "Antes de llamar check_availability necesitas la fecha que el cliente quiere. Reglas: (a) Si el cliente NO te dio fecha en este turno ni en turnos anteriores, primero pregúntale qué día le interesa — NO inventes fechas, NO uses ''mañana'' como default. (b) Llama check_availability pasando service y date siempre; pasa time solo si el cliente especificó una hora concreta. (c) Si la tool devuelve presentation_token, úsalo tal cual y pregunta cuál horario prefiere (o cuál alternativo, si el horario pedido no estaba disponible). (d) El horario que elija el cliente entre los ofrecidos es la hora deseada.",
         "allowedTools": ["check_availability", "set_fact"],
         "advanceWhenFacts": ["desired_date", "desired_time"],
         "reentryOnFactChanged": ["desired_date", "desired_time"]
@@ -142,14 +142,14 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       {
         "id": "customer_data",
         "goal": "Obtén el nombre del cliente (papá o mamá) y la fecha de nacimiento del bebé.",
-        "hint": "Confirma brevemente el horario seleccionado en una línea (sin justificar pasos próximos ni mencionar verificaciones). Luego, UNA pregunta por mensaje: (1) si falta customer_name → ¿A nombre de quién hacemos la reserva? y set_fact(customer_name). (2) si falta baby_birth_date → pide la fecha de nacimiento del bebé y set_fact(baby_birth_date) en YYYY-MM-DD (convierte expresiones como ''15 de marzo de 2024''). Si un dato ya está en ESTADO ACTUAL, no lo repreguntes; si el bebé persistido podría ser otro hijo, confírmalo antes de reusarlo. No pidas ambos datos en el mismo mensaje.",
+        "hint": "Confirma brevemente el horario seleccionado en una línea (sin justificar pasos próximos ni mencionar verificaciones). Luego, UNA pregunta por mensaje: (1) si falta el nombre del cliente → ¿A nombre de quién hacemos la reserva? (2) si falta la fecha de nacimiento del bebé → pídela. Si un dato ya está en ESTADO ACTUAL, no lo repreguntes; si el bebé persistido podría ser otro hijo, confírmalo antes de reusarlo. No pidas ambos datos en el mismo mensaje.",
         "allowedTools": ["set_fact"],
         "advanceWhenFacts": ["customer_name", "baby_birth_date"]
       },
       {
         "id": "finalization",
         "goal": "Cierra la reserva: resumen, pago o confirmación verbal, registro de cita y mensajes post-reserva.",
-        "hint": "Resumen y edición: si aún no se mostró resumen, llama prepare_checkout. Si el cliente modifica datos: complementos — set_fact con add_ons (o ninguno) y prepare_checkout; fecha u hora — set_fact, luego check_availability, y solo después prepare_checkout; servicio — set_fact con service, check_availability, prepare_checkout. No inventes horarios; obténlos de check_availability. Cierre sin anticipo: si confirma verbalmente, llama create_reservation. Cierre con pago: si reporta haber pagado, llama verify_payment y luego assign_paid_slot. Tras create_reservation o assign_paid_slot exitoso, llama send_message_sequence con sequence=''reservation_confirmed''. Si falta un dato, complétalo con set_fact antes de reintentar.",
+        "hint": "Si aún no se mostró el resumen, llama prepare_checkout. No inventes horarios; obténlos de check_availability. Si el cliente cambia el servicio, la fecha, la hora o los complementos, vuelve a verificar disponibilidad con check_availability cuando aplique y reconstruye el resumen con prepare_checkout. Cierre sin anticipo: si el cliente confirma verbalmente, llama create_reservation. Cierre con pago: si reporta haber pagado, llama verify_payment y luego assign_paid_slot. Tras create_reservation o assign_paid_slot exitoso, llama send_message_sequence con sequence=''reservation_confirmed''.",
         "allowedTools": [
           "prepare_checkout",
           "create_reservation",
