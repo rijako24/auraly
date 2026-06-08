@@ -23,8 +23,8 @@ public class ConversationState
     public Dictionary<string, Dictionary<string, string>> StageFactSnapshots { get; set; } = new(StringComparer.Ordinal);
 
     /// <summary>
-    /// Ids de etapas con CompletesOnEnter=true que ya se ejecutaron al menos una vez.
-    /// Evita que el saludo (u otras etapas de un solo disparo) se repitan.
+    /// Estado legacy de etapas one-shot persistidas por versiones anteriores.
+    /// El flujo actual avanza por facts de negocio, skipWhen y variantes.
     /// </summary>
     public HashSet<string> CompletedOneShotStages { get; set; } = new(StringComparer.Ordinal);
 

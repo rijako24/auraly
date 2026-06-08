@@ -4,27 +4,26 @@ using MimosBabySpa.Application.Services;
 namespace MimosBabySpa.Application.Agents.Tools.Impl;
 
 /// <summary>
-/// Calcula el precio total de servicios y add-ons desde el catálogo,
-/// incluyendo anticipo según BookingPolicy del negocio.
-/// El LLM NUNCA debe inventar precios — siempre llama esta tool.
+/// Calculates service and add-on totals from tenant catalog data.
+/// Payment rules are resolved by prepare_checkout from the agent checkout configuration.
 /// </summary>
 public sealed class ResolvePricingTool : IAgentTool
 {
-    private readonly IReservationCheckoutPricing _checkoutPricing;
+    private readonly ReservationPricingResolver _pricing;
     private readonly IAddOnCatalogService _addOnCatalog;
 
     public ResolvePricingTool(
-        IReservationCheckoutPricing checkoutPricing,
+        ReservationPricingResolver pricing,
         IAddOnCatalogService addOnCatalog)
     {
-        _checkoutPricing = checkoutPricing;
+        _pricing = pricing;
         _addOnCatalog = addOnCatalog;
     }
 
     public string Name => "resolve_pricing";
 
     public string Description =>
-        "Calculates service total, add-on totals, and deposit amount from catalog data and booking policy.";
+        "Calculates service total and add-on totals from catalog data.";
 
     public string ParametersSchema => """
         {
@@ -70,8 +69,10 @@ public sealed class ResolvePricingTool : IAgentTool
             addOns = validation.NormalizedCsv;
         }
 
-        var result = await _checkoutPricing.ResolveAsync(
-            ctx.BusinessId, service, addOns, cancellationToken);
+        var result = await _pricing.ResolveAsync(
+            ctx.BusinessId,
+            BuildPricingItems(service, addOns),
+            cancellationToken);
 
         if (result is null)
             return ToolResultHelper.Error("service_not_found",
@@ -80,12 +81,24 @@ public sealed class ResolvePricingTool : IAgentTool
 
         return ToolResultHelper.Ok(new
         {
-            total = result.Pricing.TotalDisplay,
-            total_cents = result.TotalCents,
-            deposit_required = result.DepositRequired,
-            deposit_cents = result.DepositCents,
-            currency = result.Policy.Currency,
-            line_items = result.Pricing.LineItems.Select(li => new { name = li.Name, price = li.Price })
+            total = result.TotalDisplay,
+            total_cents = (long)(result.Total * 100),
+            currency = ResolveCurrency(ctx),
+            line_items = result.LineItems.Select(li => new { name = li.Name, price = li.Price })
         });
+    }
+
+    private static string ResolveCurrency(AgentToolContext ctx)
+    {
+        var currency = ctx.Config?.Checkout?.Currency;
+        return string.IsNullOrWhiteSpace(currency) ? "COP" : currency.Trim().ToUpperInvariant();
+    }
+
+    private static IReadOnlyDictionary<string, string?> BuildPricingItems(string service, string? addOns)
+    {
+        var items = new Dictionary<string, string?> { ["service"] = service };
+        if (!string.IsNullOrWhiteSpace(addOns))
+            items["add_ons"] = addOns;
+        return items;
     }
 }

@@ -19,6 +19,10 @@ public class PaymentTransaction
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? ConfirmedAt { get; set; }
     public string? WebhookPayloadJson { get; set; }
+    public CheckoutKind CheckoutKind { get; set; } = CheckoutKind.Reservation;
+    public string? CheckoutSnapshotJson { get; set; }
+    public string? QuoteHash { get; set; }
+    public string? ConfirmationOutcome { get; set; }
 
     public Guid? Snapshot_ServiceId { get; set; }
     public DateTime? Snapshot_ReservationDateTime { get; set; }

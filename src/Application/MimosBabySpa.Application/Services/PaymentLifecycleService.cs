@@ -59,6 +59,60 @@ public sealed class PaymentLifecycleService : IPaymentLifecycleService
         return tx;
     }
 
+    public async Task<PaymentTransaction> CreatePendingCheckoutAsync(
+        Guid businessId,
+        Guid conversationId,
+        CheckoutKind checkoutKind,
+        string checkoutSnapshotJson,
+        string quoteHash,
+        string confirmationOutcome,
+        string paymentReferenceId,
+        string linkUrl,
+        long amountInCents,
+        string currency,
+        DateTime expiresAt,
+        ReservationIntentSnapshot? reservationSnapshot = null,
+        CancellationToken ct = default)
+    {
+        var tx = new PaymentTransaction
+        {
+            PaymentTransactionId = Guid.NewGuid(),
+            BusinessId = businessId,
+            ConversationId = conversationId,
+            ReservationId = null,
+            PaymentReferenceId = paymentReferenceId,
+            LinkUrl = linkUrl,
+            AmountInCents = amountInCents,
+            Currency = currency,
+            Status = PaymentTransactionStatus.Created,
+            Source = PaymentTransactionSource.Automated,
+            ExpiresAt = expiresAt,
+            CreatedAt = DateTime.UtcNow,
+            CheckoutKind = checkoutKind,
+            CheckoutSnapshotJson = checkoutSnapshotJson,
+            QuoteHash = quoteHash,
+            ConfirmationOutcome = confirmationOutcome
+        };
+
+        if (reservationSnapshot is not null)
+        {
+            tx.Snapshot_ServiceId = reservationSnapshot.ServiceId;
+            tx.Snapshot_ReservationDateTime = reservationSnapshot.ReservationDateTime;
+            tx.Snapshot_PreferredEmployeeId = reservationSnapshot.PreferredEmployeeId;
+            tx.Snapshot_DurationMinutes = reservationSnapshot.DurationMinutes;
+            tx.Snapshot_CustomerName = reservationSnapshot.CustomerName;
+            tx.Snapshot_CustomerEmail = reservationSnapshot.CustomerEmail;
+            tx.Snapshot_CustomerPhone = reservationSnapshot.CustomerPhone;
+            tx.Snapshot_AddOnIds = reservationSnapshot.AddOnServiceIds.Count > 0
+                ? string.Join(",", reservationSnapshot.AddOnServiceIds)
+                : null;
+            tx.Snapshot_CustomAttributesJson = reservationSnapshot.CustomAttributesJson;
+        }
+
+        await _payments.SaveAsync(tx, ct);
+        return tx;
+    }
+
     public async Task MarkConfirmedAsync(
         PaymentTransaction payment, string? providerTransactionId, string? webhookPayload, CancellationToken ct = default)
     {
@@ -88,6 +142,14 @@ public sealed class PaymentLifecycleService : IPaymentLifecycleService
         payment.Status = PaymentTransactionStatus.Superseded;
         payment.SupersededAt = DateTime.UtcNow;
         payment.SupersededByPaymentTransactionId = supersededByPaymentTransactionId;
+        await _payments.SaveAsync(payment, ct);
+    }
+
+    public async Task MarkAbandonedAsync(PaymentTransaction payment, CancellationToken ct = default)
+    {
+        payment.Status = PaymentTransactionStatus.Abandoned;
+        payment.SupersededAt = DateTime.UtcNow;
+        payment.SupersededByPaymentTransactionId = null;
         await _payments.SaveAsync(payment, ct);
     }
 

@@ -52,7 +52,7 @@ public sealed class MessageSequenceResolver : IMessageSequenceResolver
         {
             try
             {
-                var body = ResolvePlaceholders(step.Body, reservation, context.Payment, services, addOnRules);
+                var body = ResolvePlaceholders(step.Body, reservation, context.Payment, context.Custom, services, addOnRules);
                 string? mediaUrl = null;
                 string mediaType = "text";
                 string? filename = null;
@@ -126,6 +126,7 @@ public sealed class MessageSequenceResolver : IMessageSequenceResolver
         string? template,
         Reservation? reservation,
         PaymentSequenceContext? payment,
+        IReadOnlyDictionary<string, string> custom,
         List<ServiceInfo> services,
         List<AddOnRuleInfo> addOnRules)
     {
@@ -170,6 +171,9 @@ public sealed class MessageSequenceResolver : IMessageSequenceResolver
                 .Replace("{slots}", slots)
                 .Replace("{Time}", payment.OriginalTime ?? string.Empty);
         }
+
+        foreach (var (key, value) in custom)
+            resolved = resolved.Replace("{" + key + "}", value ?? string.Empty);
 
         return resolved;
     }

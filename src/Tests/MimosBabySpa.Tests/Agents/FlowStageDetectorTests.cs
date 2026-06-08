@@ -47,52 +47,15 @@ public sealed class FlowStageDetectorTests
     }
 
     [Fact]
-    public void DetectCurrentStage_GreetingWithCompletesOnEnter_SkipsAfterOneShotMarked()
+    public void DetectCurrentStage_WhenFirstBusinessStageHasMissingFacts_ReturnsIt()
     {
         var flow = new AgentFlowDefinition
         {
             StageDetection = "automatic",
             Stages =
             [
-                new AgentFlowStage { Id = "greeting", CompletesOnEnter = true, AdvanceWhenFacts = [] },
-                new AgentFlowStage { Id = "discovery", AdvanceWhenFacts = ["service"] }
-            ]
-        };
-
-        var state = new ConversationState();
-        state.CompletedOneShotStages.Add("greeting");
-
-        var session = new AgentToolContext
-        {
-            Conversation = new Conversation(),
-            ConversationState = state,
-            Facts = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-        };
-
-        var stage = _detector.DetectCurrentStage(flow, session);
-
-        stage!.Id.Should().Be("discovery");
-    }
-
-    [Fact]
-    public void DetectCurrentStage_IntentCaptureCompletesOnEnter_ThenDiscovery()
-    {
-        var flow = new AgentFlowDefinition
-        {
-            StageDetection = "automatic",
-            Stages =
-            [
-                new AgentFlowStage
-                {
-                    Id = "intent_capture",
-                    CompletesOnEnter = true,
-                    AdvanceWhenFacts = []
-                },
-                new AgentFlowStage
-                {
-                    Id = "discovery",
-                    AdvanceWhenFacts = ["service"]
-                }
+                new AgentFlowStage { Id = "discovery", AdvanceWhenFacts = ["service"] },
+                new AgentFlowStage { Id = "finalization", AdvanceWhenFacts = [] }
             ]
         };
 
@@ -103,9 +66,8 @@ public sealed class FlowStageDetectorTests
             Facts = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         };
 
-        _detector.DetectCurrentStage(flow, session)!.Id.Should().Be("intent_capture");
+        var stage = _detector.DetectCurrentStage(flow, session);
 
-        session.ConversationState.CompletedOneShotStages.Add("intent_capture");
-        _detector.DetectCurrentStage(flow, session)!.Id.Should().Be("discovery");
+        stage!.Id.Should().Be("discovery");
     }
 }

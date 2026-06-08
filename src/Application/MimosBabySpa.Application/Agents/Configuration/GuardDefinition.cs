@@ -6,7 +6,7 @@ namespace MimosBabySpa.Application.Agents.Configuration;
 ///   verification:availability_checked
 ///   verification:customer_identified
 ///   state:payment_confirmed_no_slot
-///   flag:deposit_required | flag:verbal_confirmation
+///   flag:verbal_confirmation
 /// </summary>
 public sealed class GuardDefinition
 {

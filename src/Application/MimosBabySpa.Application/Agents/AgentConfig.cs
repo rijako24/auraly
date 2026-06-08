@@ -90,4 +90,6 @@ public sealed class AgentConfig
     /// Fuente: SettingsJson → webhooks.
     /// </summary>
     public WebhookDefinitions Webhooks { get; init; } = new();
+
+    public CheckoutDefinitions Checkout { get; init; } = new();
 }

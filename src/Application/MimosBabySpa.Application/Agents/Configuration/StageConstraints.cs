@@ -8,7 +8,6 @@ public sealed class StageConstraints
 {
     /// <summary>
     /// Máximo de preguntas que el LLM puede hacer en un solo turno.
-    /// 0 = solo responder (ej. turno de saludo CompletesOnEnter).
     /// 1 = una sola pregunta enfocada (recomendado para add-ons, scheduling).
     /// </summary>
     public int? MaxQuestions { get; init; }

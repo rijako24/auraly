@@ -7,7 +7,6 @@ using MimosBabySpa.Application.Agents.Gating;
 using MimosBabySpa.Application.Agents.Templates;
 using MimosBabySpa.Application.Agents.Tools;
 using MimosBabySpa.Application.Agents.Tools.Impl;
-using MimosBabySpa.Application.Configuration;
 using MimosBabySpa.Application.Services;
 using MimosBabySpa.Application.StateManagement;
 using MimosBabySpa.Domain.Models;
@@ -37,7 +36,6 @@ public sealed class AgentConversationService : IAgentConversationService
     private readonly IEscalationConfigProvider _escalationConfig;
     private readonly IBusinessClock _businessClock;
     private readonly ITemporalReferenceBuilder _temporalReferenceBuilder;
-    private readonly IBookingPolicyProvider _bookingPolicy;
     private readonly IConversationFactsService _factsService;
     private readonly ICustomerMemoryService _customerMemory;
     private readonly IReservationLifecycleService _reservationLifecycle;
@@ -60,7 +58,6 @@ public sealed class AgentConversationService : IAgentConversationService
         IEscalationConfigProvider escalationConfig,
         IBusinessClock businessClock,
         ITemporalReferenceBuilder temporalReferenceBuilder,
-        IBookingPolicyProvider bookingPolicy,
         IConversationFactsService factsService,
         ICustomerMemoryService customerMemory,
         IReservationLifecycleService reservationLifecycle,
@@ -82,7 +79,6 @@ public sealed class AgentConversationService : IAgentConversationService
         _escalationConfig = escalationConfig;
         _businessClock = businessClock;
         _temporalReferenceBuilder = temporalReferenceBuilder;
-        _bookingPolicy = bookingPolicy;
         _factsService = factsService;
         _customerMemory = customerMemory;
         _reservationLifecycle = reservationLifecycle;
@@ -138,8 +134,6 @@ public sealed class AgentConversationService : IAgentConversationService
 
         var clockSnapshot = await _businessClock.GetSnapshotAsync(config.BusinessId, cancellationToken);
         var temporal = _temporalReferenceBuilder.Build(clockSnapshot);
-        var bookingPolicy = await _bookingPolicy.GetAsync(config.BusinessId, cancellationToken);
-        session.BookingPolicy = bookingPolicy;
         var latestPayment = await _paymentLifecycle.GetLatestByConversationAsync(conversationId, cancellationToken);
         var enabledTools = _toolRegistry.GetToolsForAgent(config.EnabledToolNames).ToList();
         var compositionInput = new PromptCompositionInput
@@ -148,7 +142,6 @@ public sealed class AgentConversationService : IAgentConversationService
             History = history,
             Temporal = temporal,
             Session = session,
-            BookingPolicy = bookingPolicy,
             LatestPayment = latestPayment,
             EnabledTools = enabledTools
         };
@@ -187,6 +180,7 @@ public sealed class AgentConversationService : IAgentConversationService
     {
         var toolDefinitions = BuildToolDefinitions(config);
         var lastStageId = _flowStageDetector.DetectCurrentStage(config.Flow, toolCtx)?.Id;
+        var recoveredEmptyToolTurn = false;
 
         for (int iteration = 0; iteration <= config.MaxToolIterations; iteration++)
         {
@@ -204,7 +198,25 @@ public sealed class AgentConversationService : IAgentConversationService
                 return AgentLoopOutcome.Failed($"LLM error: {result.ErrorMessage}");
 
             if (IsFinalAnswer(result.FinishReason))
-                return AgentLoopOutcome.Completed(SanitizeResponse(result.Content ?? string.Empty));
+            {
+                var response = SanitizeResponse(result.Content ?? string.Empty);
+                if (ShouldRecoverEmptyToolTurn(response, turn, forceText, recoveredEmptyToolTurn))
+                {
+                    recoveredEmptyToolTurn = true;
+                    _logger.LogWarning(
+                        "Conv {ConvId}: empty final response after tool calls - requesting textual continuation",
+                        conversationId);
+
+                    messages.Add(ChatMessage.System(
+                        "La respuesta final al cliente no puede estar vacia. Continua el flujo con una accion concreta: " +
+                        "si falta informacion, pide solo el siguiente dato; si una herramienta entrego datos listos, " +
+                        "usa la siguiente herramienta permitida o resume el resultado al cliente."));
+
+                    continue;
+                }
+
+                return AgentLoopOutcome.Completed(response);
+            }
 
             // FinishReason=ToolCalls → ejecutar y acumular resultados
             messages.Add(result.AssistantMessage);
@@ -330,7 +342,6 @@ public sealed class AgentConversationService : IAgentConversationService
             turn.FragmentEntries);
 
         UpdateStageSnapshots(config, session);
-        MarkCompletedOneShotStage(config, session);
         await PersistTurnAsync(conversationId, userMessage, finalResponse, session.ConversationState, turn.ReservationCreated, ct);
 
         _logger.LogInformation(
@@ -569,6 +580,18 @@ public sealed class AgentConversationService : IAgentConversationService
     private static bool IsFinalAnswer(ChatCompletionFinishReason reason) =>
         reason is ChatCompletionFinishReason.Stop or ChatCompletionFinishReason.Length;
 
+    private static bool ShouldRecoverEmptyToolTurn(
+        string response,
+        AgentTurnExecution turn,
+        bool forceText,
+        bool alreadyRecovered) =>
+        !forceText &&
+        !alreadyRecovered &&
+        string.IsNullOrWhiteSpace(response) &&
+        turn.ToolCallCount > 0 &&
+        turn.OutboundMessages.Count == 0 &&
+        turn.FragmentEntries.Count == 0;
+
     private static bool IsKillSwitchPhrase(string message, IReadOnlyList<string> configuredPhrases)
     {
         if (configuredPhrases.Count == 0)
@@ -576,23 +599,6 @@ public sealed class AgentConversationService : IAgentConversationService
 
         var lower = message.ToLowerInvariant();
         return configuredPhrases.Any(phrase => lower.Contains(phrase.ToLowerInvariant()));
-    }
-
-    /// <summary>
-    /// Si la etapa activa tiene CompletesOnEnter, la registra en CompletedOneShotStages
-    /// para que no vuelva a aparecer como stage activa en el próximo turno.
-    /// </summary>
-    private void MarkCompletedOneShotStage(AgentConfig config, AgentToolContext session)
-    {
-        if (config.Flow.Stages.Count == 0) return;
-
-        var currentStage = _flowStageDetector.DetectCurrentStage(config.Flow, session);
-        if (currentStage is null || !currentStage.CompletesOnEnter) return;
-
-        session.ConversationState.CompletedOneShotStages.Add(currentStage.Id);
-
-        _logger.LogDebug("Conv {ConvId}: one-shot stage '{Stage}' marked as completed",
-            session.ConversationId, currentStage.Id);
     }
 
     private static string SanitizeInput(string message) =>

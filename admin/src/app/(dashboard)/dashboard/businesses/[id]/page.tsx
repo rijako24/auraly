@@ -80,16 +80,6 @@ const MOCK_CONFIGURATIONS: BusinessConfiguration[] = [
     createdAt: "2024-01-15T10:00:00Z",
     updatedAt: null,
   },
-  {
-    businessConfigurationId: "cfg-3",
-    businessId: "bus-001",
-    key: BusinessConfigurationKey.BookingPolicy,
-    value: '{"depositRequired": false}',
-    description: "Política de reserva",
-    isActive: true,
-    createdAt: "2024-01-15T10:00:00Z",
-    updatedAt: null,
-  },
 ];
 
 const MOCK_WHATSAPP: BusinessWhatsAppNumber[] = [

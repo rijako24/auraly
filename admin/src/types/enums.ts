@@ -2,13 +2,11 @@ export enum BusinessConfigurationKey {
   Integrations = 0,
   PaymentConfirmationMessages = 1,
   SchedulingPolicy = 2,
-  BookingPolicy = 3,
 }
 
 export const BusinessConfigurationKeyLabels: Record<BusinessConfigurationKey, string> = {
   [BusinessConfigurationKey.Integrations]: "Integraciones",
   [BusinessConfigurationKey.SchedulingPolicy]: "Política de Agendamiento",
-  [BusinessConfigurationKey.BookingPolicy]: "Política de Reserva y Pago",
 };
 
 export enum ReservationStatus {

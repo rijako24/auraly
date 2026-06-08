@@ -59,6 +59,10 @@ public class PaymentTransactionRepository : IPaymentTransactionRepository
             existing.Status = transaction.Status;
             existing.ConfirmedAt = transaction.ConfirmedAt;
             existing.WebhookPayloadJson = transaction.WebhookPayloadJson;
+            existing.CheckoutKind = transaction.CheckoutKind;
+            existing.CheckoutSnapshotJson = transaction.CheckoutSnapshotJson;
+            existing.QuoteHash = transaction.QuoteHash;
+            existing.ConfirmationOutcome = transaction.ConfirmationOutcome;
             existing.LinkUrl = transaction.LinkUrl;
             existing.ExpiresAt = transaction.ExpiresAt;
             existing.ReservationId = transaction.ReservationId;

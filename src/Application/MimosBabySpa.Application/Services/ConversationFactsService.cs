@@ -61,4 +61,25 @@ public sealed class ConversationFactsService : IConversationFactsService
 
         await _unitOfWork.SaveChangesAsync(ct);
     }
+
+    public async Task<IReadOnlyList<string>> ClearNonPersistentAsync(
+        Guid conversationId,
+        IReadOnlyCollection<string> persistentKeys,
+        CancellationToken ct = default)
+    {
+        var keep = persistentKeys.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var contexts = await _unitOfWork.ConversationContexts.GetByConversationIdAsync(conversationId);
+        var fieldsToDelete = contexts
+            .Select(c => c.Field)
+            .Where(field => !keep.Contains(field))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (fieldsToDelete.Count == 0)
+            return [];
+
+        await _unitOfWork.ConversationContexts.DeleteFieldsAsync(conversationId, fieldsToDelete, ct);
+        await _unitOfWork.SaveChangesAsync(ct);
+        return fieldsToDelete;
+    }
 }

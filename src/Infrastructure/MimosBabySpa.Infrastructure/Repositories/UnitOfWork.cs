@@ -26,6 +26,7 @@ public class UnitOfWork : IUnitOfWork
     private IServiceAddOnRuleRepository? _serviceAddOnRules;
     private IReservationAddOnRepository? _reservationAddOns;
     private IPaymentTransactionRepository? _paymentTransactions;
+    private IEnrollmentRepository? _enrollments;
     private IAppUserRepository? _appUsers;
     private IAppRoleRepository? _appRoles;
     private IPermissionRepository? _permissions;
@@ -100,6 +101,9 @@ public class UnitOfWork : IUnitOfWork
 
     public IPaymentTransactionRepository PaymentTransactions =>
         _paymentTransactions ??= new PaymentTransactionRepository(_context);
+
+    public IEnrollmentRepository Enrollments =>
+        _enrollments ??= new EnrollmentRepository(_context);
 
     public IAppUserRepository AppUsers =>
         _appUsers ??= new AppUserRepository(_context);

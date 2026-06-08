@@ -107,11 +107,18 @@ public sealed class SetFactTool : IAgentTool
 
 
 
-        var rawValue = valueElement.ValueKind == JsonValueKind.Null
+        if (!TryReadScalarValue(valueElement, out var rawValue))
+        {
+            return ToolResultHelper.Error(
 
-            ? string.Empty
+                ToolErrorCodes.InvalidValue,
 
-            : valueElement.GetString() ?? string.Empty;
+                "Fact value must be a scalar value.",
+
+                "Provide a structured value like a name, number, date, or time.",
+
+                recoverable: true);
+        }
 
 
 
@@ -350,6 +357,44 @@ public sealed class SetFactTool : IAgentTool
 
 
         return Task.CompletedTask;
+
+    }
+
+
+
+    private static bool TryReadScalarValue(JsonElement valueElement, out string value)
+
+    {
+
+        value = valueElement.ValueKind switch
+
+        {
+
+            JsonValueKind.Null => string.Empty,
+
+            JsonValueKind.String => valueElement.GetString() ?? string.Empty,
+
+            JsonValueKind.Number => valueElement.GetRawText(),
+
+            JsonValueKind.True => bool.TrueString.ToLowerInvariant(),
+
+            JsonValueKind.False => bool.FalseString.ToLowerInvariant(),
+
+            _ => string.Empty
+
+        };
+
+
+
+        return valueElement.ValueKind is JsonValueKind.Null
+
+            or JsonValueKind.String
+
+            or JsonValueKind.Number
+
+            or JsonValueKind.True
+
+            or JsonValueKind.False;
 
     }
 

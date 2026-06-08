@@ -54,6 +54,18 @@ public class ConversationContextRepository : IConversationContextRepository
             .ToListAsync();
     }
 
+    public async Task DeleteFieldsAsync(Guid conversationId, IReadOnlyCollection<string> fields, CancellationToken ct = default)
+    {
+        if (fields.Count == 0)
+            return;
+
+        var contexts = await _context.ConversationContexts
+            .Where(c => c.ConversationId == conversationId && fields.Contains(c.Field))
+            .ToListAsync(ct);
+
+        _context.ConversationContexts.RemoveRange(contexts);
+    }
+
     public async Task DeleteByConversationIdAsync(Guid conversationId)
     {
         var contexts = await _context.ConversationContexts

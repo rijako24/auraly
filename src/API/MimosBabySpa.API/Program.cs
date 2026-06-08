@@ -50,6 +50,7 @@ var host = new HostBuilder()
         services.AddScoped<IReservationRepository, ReservationRepository>();
         services.AddScoped<IConversationStateRepository, ConversationStateRepository>();
         services.AddScoped<IPaymentTransactionRepository, PaymentTransactionRepository>();
+        services.AddScoped<IEnrollmentRepository, EnrollmentRepository>();
         services.AddScoped<IAgentRepository, AgentRepository>();
 
         // Application Services
@@ -65,9 +66,6 @@ var host = new HostBuilder()
         services.AddScoped<IAvailabilityService, AvailabilityService>();
         services.AddScoped<ServiceNameResolver>();
         services.AddScoped<ReservationPricingResolver>();
-        services.AddScoped<ReservationCheckoutPricing>();
-        services.AddScoped<IReservationCheckoutPricing>(sp =>
-            sp.GetRequiredService<ReservationCheckoutPricing>());
         services.AddScoped<IBusinessClock, BusinessClock>();
         services.AddSingleton<ITemporalReferenceBuilder, TemporalReferenceBuilder>();
         services.AddScoped<ICatalogContentGenerator, CatalogContentGenerator>();
@@ -131,6 +129,7 @@ var host = new HostBuilder()
         services.AddScoped<ICustomerReservationResolver, CustomerReservationResolver>();
         services.AddScoped<IPaymentLifecycleService, PaymentLifecycleService>();
         services.AddScoped<IReservationIntentBuilder, ReservationIntentBuilder>();
+        services.AddScoped<ICheckoutQuoteService, CheckoutQuoteService>();
 
         // Webhook signature validation (Wompi)
         services.AddSingleton<IWompiWebhookSignatureValidator, WompiWebhookSignatureValidator>();
@@ -176,11 +175,11 @@ var host = new HostBuilder()
         services.AddScoped<IAgentTool, AssignPaidSlotTool>();
         services.AddScoped<IAgentTool, RescheduleReservationTool>();
         services.AddScoped<IAgentTool, SuspendReservationTool>();
-        services.AddScoped<IAgentTool, GeneratePaymentLinkTool>();
         services.AddScoped<IAgentTool, VerifyPaymentTool>();
         services.AddScoped<IAgentTool, EscalateToHumanTool>();
         services.AddScoped<IAgentTool, GetServiceCatalogTool>();
         services.AddScoped<IAgentTool, SetFactTool>();
+        services.AddScoped<IAgentTool, ResetFlowContextTool>();
         services.AddScoped<IAgentTool, SendMessageSequenceTool>();
 
         services.AddScoped<AgentToolRegistry>();
@@ -220,7 +219,6 @@ var host = new HostBuilder()
         // Integrations Config Provider (Google Calendar, Wompi)
         services.AddScoped<IIntegrationsConfigProvider, IntegrationsConfigProvider>();
         services.AddScoped<ISchedulingPolicyProvider, SchedulingPolicyProvider>();
-        services.AddScoped<IBookingPolicyProvider, BookingPolicyProvider>();
 
         // Release Link
         services.Configure<ReleaseLinkSettings>(configuration.GetSection(ReleaseLinkSettings.SectionName));

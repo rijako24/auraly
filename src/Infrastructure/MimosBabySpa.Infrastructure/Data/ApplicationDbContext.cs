@@ -33,6 +33,7 @@ public class ApplicationDbContext : DbContext
     public DbSet<EmployeeService> EmployeeServices { get; set; }
     public DbSet<ConversationStateEntity> ConversationStates { get; set; }
     public DbSet<PaymentTransaction> PaymentTransactions { get; set; }
+    public DbSet<Enrollment> Enrollments { get; set; }
 
     public DbSet<AppUser> AppUsers { get; set; }
     public DbSet<AppRole> AppRoles { get; set; }
@@ -457,6 +458,10 @@ public class ApplicationDbContext : DbContext
             entity.Property(e => e.Source).HasConversion<int>();
             entity.Property(e => e.Source).HasConversion<int>().HasDefaultValue(Domain.Enums.PaymentTransactionSource.Automated);
             entity.Property(e => e.WebhookPayloadJson).HasColumnType("NVARCHAR(MAX)");
+            entity.Property(e => e.CheckoutKind).HasConversion<int>().HasDefaultValue(CheckoutKind.Reservation);
+            entity.Property(e => e.CheckoutSnapshotJson).HasColumnType("NVARCHAR(MAX)");
+            entity.Property(e => e.QuoteHash).HasMaxLength(128);
+            entity.Property(e => e.ConfirmationOutcome).HasMaxLength(100);
             entity.Property(e => e.LinkUrl).HasMaxLength(1000);
             entity.Property(e => e.Snapshot_CustomerName).HasMaxLength(200);
             entity.Property(e => e.Snapshot_CustomerEmail).HasMaxLength(200);
@@ -491,6 +496,39 @@ public class ApplicationDbContext : DbContext
             entity.HasIndex(e => e.ConversationId);
             entity.HasIndex(e => e.BusinessId);
             entity.HasIndex(e => e.ReservationId);
+        });
+
+        // Enrollment configuration
+        modelBuilder.Entity<Enrollment>(entity =>
+        {
+            entity.HasKey(e => e.EnrollmentId);
+            entity.Property(e => e.CustomerName).IsRequired().HasMaxLength(200);
+            entity.Property(e => e.CustomerPhone).IsRequired().HasMaxLength(50);
+            entity.Property(e => e.CustomerEmail).HasMaxLength(200);
+            entity.Property(e => e.FixedScheduleLabel).HasMaxLength(500);
+            entity.Property(e => e.Status).HasConversion<int>();
+            entity.Property(e => e.CustomAttributesJson).HasColumnType("NVARCHAR(MAX)");
+            entity.Property(e => e.CreatedAt).IsRequired();
+            entity.HasOne(e => e.Business)
+                .WithMany()
+                .HasForeignKey(e => e.BusinessId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.Conversation)
+                .WithMany()
+                .HasForeignKey(e => e.ConversationId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.Service)
+                .WithMany()
+                .HasForeignKey(e => e.ServiceId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.PaymentTransaction)
+                .WithMany()
+                .HasForeignKey(e => e.PaymentTransactionId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasIndex(e => e.BusinessId);
+            entity.HasIndex(e => e.ConversationId);
+            entity.HasIndex(e => e.ServiceId);
+            entity.HasIndex(e => e.PaymentTransactionId).IsUnique();
         });
 
         // AppUser configuration

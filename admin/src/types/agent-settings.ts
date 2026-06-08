@@ -51,6 +51,26 @@ export interface GuardDefinition {
   requires: string[];
 }
 
+export interface CheckoutPaymentDefinition {
+  type?: string;
+  percentage?: number;
+}
+
+export interface CheckoutModeDefinition {
+  payment?: CheckoutPaymentDefinition;
+  templateWithPayment?: string;
+  templateNoPayment?: string;
+  confirmationOutcome?: string;
+  requiredFactRoles?: Record<string, string>;
+  systemFactBindings?: Record<string, string>;
+  templateFactBindings?: Record<string, string>;
+}
+
+export interface CheckoutDefinitions {
+  categoryModes?: Record<string, string>;
+  modes?: Record<string, CheckoutModeDefinition>;
+}
+
 export interface AgentSettings {
   model?: string;
   temperature?: number;
@@ -65,6 +85,7 @@ export interface AgentSettings {
   factSchema?: FactSchemaEntry[];
   guards?: Record<string, GuardDefinition>;
   templates?: Record<string, string>;
+  checkout?: CheckoutDefinitions;
 }
 
 export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
@@ -81,6 +102,7 @@ export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
   factSchema: [],
   guards: {},
   templates: {},
+  checkout: { categoryModes: {}, modes: {} },
 };
 
 export function parseAgentSettingsFromAgent(agent: {

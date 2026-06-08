@@ -3,7 +3,6 @@ using MimosBabySpa.Application.Agents;
 using MimosBabySpa.Application.Agents.Composition;
 using MimosBabySpa.Application.Agents.Configuration;
 using MimosBabySpa.Application.Agents.Gating;
-using MimosBabySpa.Application.Configuration;
 using MimosBabySpa.Application.Time;
 using MimosBabySpa.Domain.Entities;
 using MimosBabySpa.Domain.Enums;
@@ -44,7 +43,6 @@ public class AgentPromptComposerTests
         AgentConfig config,
         IEnumerable<Message> history,
         AgentToolContext? session = null,
-        BookingPolicyParams? bookingPolicy = null,
         PaymentTransaction? latestPayment = null) =>
         Composer.Compose(new PromptCompositionInput
         {
@@ -52,7 +50,6 @@ public class AgentPromptComposerTests
             History = history,
             Temporal = DefaultTemporal,
             Session = session,
-            BookingPolicy = bookingPolicy,
             LatestPayment = latestPayment
         });
 
@@ -152,42 +149,8 @@ public class AgentPromptComposerTests
     }
 
     [Fact]
-    public void Compose_WithBookingPolicy_ShowsDepositRequired()
-    {
-        var policy = new BookingPolicyParams
-        {
-            DepositRequired = true,
-            DepositPercentage = 50
-        };
-
-        var result = Compose(
-            DefaultConfig,
-            [],
-            new AgentToolContext { Conversation = new Conversation(), Facts = [] },
-            policy);
-
-        result.Should().Contain("anticipo: requerido (50%");
-    }
-
-    [Fact]
-    public void Compose_WithBookingPolicyWithoutDeposit_ShowsExplicitNoDeposit()
-    {
-        var policy = new BookingPolicyParams { DepositRequired = false };
-
-        var result = Compose(
-            DefaultConfig,
-            [],
-            new AgentToolContext { Conversation = new Conversation(), Facts = [] },
-            policy);
-
-        result.Should().Contain("anticipo: no requerido");
-        result.Should().NotContain("pago:");
-    }
-
-    [Fact]
     public void Compose_WithPendingPayment_ShowsGranularPaymentState()
     {
-        var policy = new BookingPolicyParams { DepositRequired = true, DepositPercentage = 50 };
         var payment = new PaymentTransaction
         {
             Status = PaymentTransactionStatus.Created,
@@ -201,17 +164,19 @@ public class AgentPromptComposerTests
             DefaultConfig,
             [],
             new AgentToolContext { Conversation = new Conversation(), Facts = [] },
-            policy,
             payment);
 
         result.Should().Contain("pago: link generado");
         result.Should().Contain("COP $67,500");
+        result.Should().Contain("## CHECKOUT PENDIENTE");
+        result.Should().Contain("si el cliente cambia servicio");
+        result.Should().Contain("esa eleccion autoriza el siguiente paso del flujo");
+        result.Should().Contain("prepare_checkout");
     }
 
     [Fact]
     public void Compose_WithConfirmedPayment_ShowsConfirmedState()
     {
-        var policy = new BookingPolicyParams { DepositRequired = true, DepositPercentage = 50 };
         var payment = new PaymentTransaction
         {
             Status = PaymentTransactionStatus.Confirmed,
@@ -223,7 +188,6 @@ public class AgentPromptComposerTests
             DefaultConfig,
             [],
             new AgentToolContext { Conversation = new Conversation(), Facts = [] },
-            policy,
             payment);
 
         result.Should().Contain("pago: confirmado");
@@ -241,7 +205,6 @@ public class AgentPromptComposerTests
         result.Should().NotContain("## ESTADO ACTUAL");
     }
 
-    // ── Greeting stage with CompletesOnEnter + Variants ──────────────────────
 
     [Fact]
     public void Compose_GreetingStage_FirstEver_RendersVariantHint()
@@ -261,7 +224,6 @@ public class AgentPromptComposerTests
                     {
                         Id = "greeting",
                         Goal = "Saludar al cliente",
-                        CompletesOnEnter = true,
                         Variants = new Dictionary<string, AgentFlowStageVariant>
                         {
                             ["firstEver"] = new() { Hint = "¡Hola! Soy Mimi de Mimo's Baby Spa." }
@@ -306,7 +268,6 @@ public class AgentPromptComposerTests
                     {
                         Id = "greeting",
                         Goal = "Saludar al cliente",
-                        CompletesOnEnter = true,
                         Variants = new Dictionary<string, AgentFlowStageVariant>
                         {
                             ["firstEver"]         = new() { Hint = "¡Hola! Soy Mimi." },
@@ -323,13 +284,10 @@ public class AgentPromptComposerTests
             }
         };
 
-        var state = new ConversationState();
-        state.CompletedOneShotStages.Add("greeting");
-
         var session = new AgentToolContext
         {
             Conversation = new Conversation(),
-            ConversationState = state,
+            ConversationState = new ConversationState(),
             Facts = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {
                 ["session.engagement"] = "continuingSession"
@@ -436,13 +394,6 @@ public class AgentPromptComposerTests
                 [
                     new AgentFlowStage
                     {
-                        Id = "intent_capture",
-                        Goal = "Capturar intención",
-                        CompletesOnEnter = true,
-                        AdvanceWhenFacts = []
-                    },
-                    new AgentFlowStage
-                    {
                         Id = "discovery",
                         Goal = "Elegir plan",
                         AdvanceWhenFacts = ["service"]
@@ -457,13 +408,10 @@ public class AgentPromptComposerTests
             }
         };
 
-        var state = new ConversationState();
-        state.CompletedOneShotStages.Add("intent_capture");
-
         var session = new AgentToolContext
         {
             Conversation = new Conversation(),
-            ConversationState = state,
+            ConversationState = new ConversationState(),
             Facts = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {
                 ["service"] = "Plan Marineritos",

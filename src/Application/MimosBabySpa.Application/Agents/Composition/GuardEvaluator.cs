@@ -80,26 +80,7 @@ public sealed class GuardEvaluator : IGuardEvaluator
         }
 
         if (requirement.Equals("flag:verbal_confirmation", StringComparison.OrdinalIgnoreCase))
-        {
-            if (ctx.BookingPolicy?.DepositRequired == false)
-                return ToolAvailabilityResultAvailable;
-
-            return new ToolAvailabilityResult(
-                false,
-                "Verbal confirmation flow is not active for this business.",
-                "Do not call create_reservation when deposit is required.");
-        }
-
-        if (requirement.Equals("flag:deposit_required", StringComparison.OrdinalIgnoreCase))
-        {
-            if (ctx.BookingPolicy?.DepositRequired == true)
-                return ToolAvailabilityResultAvailable;
-
-            return new ToolAvailabilityResult(
-                false,
-                "Deposit is not required for this business.",
-                "Use create_reservation for verbal confirmation flows.");
-        }
+            return ToolAvailabilityResultAvailable;
 
         if (requirement.StartsWith("expr:", StringComparison.OrdinalIgnoreCase))
         {
@@ -118,8 +99,6 @@ public sealed class GuardEvaluator : IGuardEvaluator
     /// Gramática soportada:
     ///   facts.KEY                         → fact KEY existe y no está vacío
     ///   NOT facts.KEY                     → fact KEY no existe o está vacío
-    ///   policy.deposit_required           → bookingPolicy.DepositRequired == true
-    ///   NOT policy.deposit_required       → bookingPolicy.DepositRequired == false
     ///   verification.TYPE                 → verificación TYPE está activa
     ///   NOT verification.TYPE             → verificación TYPE no está activa
     /// </summary>
@@ -150,12 +129,6 @@ public sealed class GuardEvaluator : IGuardEvaluator
             positiveBlockReason = $"Fact '{key}' is missing.";
             negativeBlockReason = $"Fact '{key}' must be absent or empty.";
         }
-        else if (raw.Equals("policy.deposit_required", StringComparison.OrdinalIgnoreCase))
-        {
-            result = ctx.BookingPolicy?.DepositRequired == true;
-            positiveBlockReason = "Deposit is not required for this business.";
-            negativeBlockReason = "Deposit is required for this business.";
-        }
         else if (raw.StartsWith("verification.", StringComparison.OrdinalIgnoreCase))
         {
             var verType = raw["verification.".Length..].Trim();
@@ -177,7 +150,7 @@ public sealed class GuardEvaluator : IGuardEvaluator
             return new ToolAvailabilityResult(
                 false,
                 $"Unsupported expr guard '{raw}'.",
-                "Use: facts.KEY, policy.deposit_required, or verification.TYPE.");
+                "Use: facts.KEY or verification.TYPE.");
         }
 
         var passed = negate ? !result : result;
@@ -209,6 +182,8 @@ public sealed class GuardEvaluator : IGuardEvaluator
                         "Call check_availability first for the same service, date and time.",
                     VerificationFactTypes.CheckoutPrepared =>
                         "Call prepare_checkout first to show the booking summary.",
+                    VerificationFactTypes.CheckoutNoPaymentPrepared =>
+                        "Call prepare_checkout first and continue only when it returns payment_required=false.",
                     _ => "Complete required fields first."
                 });
         }
@@ -226,6 +201,10 @@ public sealed class GuardEvaluator : IGuardEvaluator
                 false,
                 "Checkout summary has not been prepared for the current booking inputs.",
                 "Call prepare_checkout to render the summary before create_reservation."),
+            VerificationFactTypes.CheckoutNoPaymentPrepared => new ToolAvailabilityResult(
+                false,
+                "A no-payment reservation checkout has not been prepared for the current booking inputs.",
+                "Call prepare_checkout first. Only call create_reservation after verbal confirmation when payment_required=false."),
             VerificationFactTypes.CustomerIdentified => new ToolAvailabilityResult(
                 false,
                 "Customer name and phone must be collected before creating a reservation.",

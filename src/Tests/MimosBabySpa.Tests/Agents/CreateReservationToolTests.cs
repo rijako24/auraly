@@ -20,7 +20,6 @@ public class CreateReservationToolTests
     private readonly Mock<IReservationService> _reservations = new();
     private readonly Mock<IReservationIntentBuilder> _intentBuilder = new();
     private readonly Mock<IBusinessRuleEngine> _rules = new();
-    private readonly Mock<IBookingPolicyProvider> _bookingPolicy = new();
     private readonly Mock<IPaymentLifecycleService> _paymentLifecycle = new();
     private readonly Mock<IAvailabilityService> _availability = new();
     private readonly Mock<ISchedulingPolicyProvider> _schedulingPolicy = new();
@@ -49,7 +48,6 @@ public class CreateReservationToolTests
             _reservations.Object,
             _intentBuilder.Object,
             _rules.Object,
-            _bookingPolicy.Object,
             _paymentLifecycle.Object,
             _availability.Object,
             _schedulingPolicy.Object,
@@ -57,12 +55,10 @@ public class CreateReservationToolTests
     }
 
     [Fact]
-    public async Task ExecuteAsync_WhenDepositRequiredAndNoPayment_ReturnsPaymentRequired()
+    public async Task ExecuteAsync_WhenPaymentPending_ReturnsPaymentPending()
     {
-        _bookingPolicy.Setup(p => p.GetAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new BookingPolicyParams { DepositRequired = true, DepositPercentage = 50 });
-        _paymentLifecycle.Setup(p => p.HasConfirmedDepositAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(false);
+        _paymentLifecycle.Setup(p => p.GetActiveByConversationAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PaymentTransaction { Status = PaymentTransactionStatus.Created });
 
         var ctx = CreateContext();
         using var args = JsonDocument.Parse("""
@@ -78,16 +74,13 @@ public class CreateReservationToolTests
 
         var json = await _tool.ExecuteAsync(args.RootElement, ctx, CancellationToken.None);
 
-        json.Should().Contain("payment_required");
+        json.Should().Contain("payment_pending");
         _reservations.Verify(r => r.CreateReservationAsync(It.IsAny<CreateReservationRequest>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
     public async Task ExecuteAsync_WhenDepositNotRequired_CreatesConfirmedReservation()
     {
-        _bookingPolicy.Setup(p => p.GetAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new BookingPolicyParams { DepositRequired = false });
-
         _intentBuilder.Setup(b => b.BuildFromContextAsync(It.IsAny<AgentToolContext>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ReservationIntentSnapshot(
                 Guid.NewGuid(),
@@ -129,15 +122,12 @@ public class CreateReservationToolTests
         json.Should().Contain("\"is_booking_confirmed\":true");
         json.Should().NotContain("confirmation_token");
         _reservations.Verify(r => r.CreateReservationAsync(It.IsAny<CreateReservationRequest>(), It.IsAny<CancellationToken>()), Times.Once);
-        _paymentLifecycle.Verify(p => p.HasConfirmedDepositAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
+        _paymentLifecycle.Verify(p => p.GetActiveByConversationAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
     public async Task ExecuteAsync_WhenDepositNotRequired_DoesNotRegisterConfirmationFragment()
     {
-        _bookingPolicy.Setup(p => p.GetAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new BookingPolicyParams { DepositRequired = false });
-
         _intentBuilder.Setup(b => b.BuildFromContextAsync(It.IsAny<AgentToolContext>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ReservationIntentSnapshot(
                 Guid.NewGuid(),

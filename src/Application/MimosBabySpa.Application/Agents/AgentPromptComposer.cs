@@ -1,7 +1,6 @@
 using MimosBabySpa.Application.Agents.Composition;
 using MimosBabySpa.Application.Agents.Configuration;
 using MimosBabySpa.Application.Agents.Tools;
-using MimosBabySpa.Application.Configuration;
 using MimosBabySpa.Application.Services;
 using MimosBabySpa.Application.Time;
 using MimosBabySpa.Domain.Entities;
@@ -12,7 +11,6 @@ namespace MimosBabySpa.Application.Agents;
 
 /// <summary>
 /// Compone el system prompt runtime a partir de Persona, Flow, Facts, Guards y contexto de turno.
-/// El saludo puede vivir en Persona; stages opcionales pueden usar CompletesOnEnter y Variants.
 /// </summary>
 public sealed class AgentPromptComposer : IPromptComposer
 {
@@ -48,7 +46,7 @@ public sealed class AgentPromptComposer : IPromptComposer
         if (!string.IsNullOrWhiteSpace(temporalBlock))
             blocks.Add(temporalBlock);
 
-        var stateBlock = BuildStateFactsBlock(input.Config, input.Session, input.BookingPolicy, input.LatestPayment);
+        var stateBlock = BuildStateFactsBlock(input.Config, input.Session, input.LatestPayment);
         if (!string.IsNullOrWhiteSpace(stateBlock))
             blocks.Add(stateBlock);
 
@@ -87,10 +85,9 @@ public sealed class AgentPromptComposer : IPromptComposer
     internal static string BuildStateFactsBlock(
         AgentConfig config,
         AgentToolContext? session,
-        BookingPolicyParams? bookingPolicy = null,
         PaymentTransaction? latestPayment = null)
     {
-        if (session is null && bookingPolicy is null)
+        if (session is null)
             return string.Empty;
 
         // Keys de facts del sistema/sesión que no deben renderizarse al LLM
@@ -163,15 +160,15 @@ public sealed class AgentPromptComposer : IPromptComposer
                 };
                 blocks.Add(string.Join(Environment.NewLine, paySpecial));
             }
+
+            var pendingCheckoutBlock = BuildPendingCheckoutBlock(paymentForContext);
+            if (!string.IsNullOrWhiteSpace(pendingCheckoutBlock))
+                blocks.Add(pendingCheckoutBlock);
         }
 
         // ── POLÍTICA DE PAGO ──────────────────────────────────────────────────
         var policyLines = new List<string>();
-        var depositLine = TurnContextPaymentFormatter.FormatDepositLine(bookingPolicy);
-        if (!string.IsNullOrWhiteSpace(depositLine))
-            policyLines.Add(depositLine);
-
-        var paymentLine = TurnContextPaymentFormatter.FormatPaymentLine(paymentForContext, bookingPolicy);
+        var paymentLine = TurnContextPaymentFormatter.FormatPaymentLine(paymentForContext);
         if (!string.IsNullOrWhiteSpace(paymentLine))
             policyLines.Add(paymentLine);
 
@@ -231,6 +228,45 @@ public sealed class AgentPromptComposer : IPromptComposer
         }
 
         return string.Join(Environment.NewLine, lines);
+    }
+
+    private static string BuildPendingCheckoutBlock(PaymentTransaction? payment)
+    {
+        if (payment?.Status != PaymentTransactionStatus.Created)
+            return string.Empty;
+
+        var lines = new List<string>
+        {
+            "## CHECKOUT PENDIENTE",
+            "- hay_link_pendiente: true",
+            $"- checkout_kind: {payment.CheckoutKind}",
+            $"- monto_pendiente: {payment.Currency} ${(payment.AmountInCents / 100m).ToString("N0", System.Globalization.CultureInfo.InvariantCulture)}",
+            "- regla: el cliente puede pedir informacion normal sin modificar la solicitud.",
+            "- si el cliente cambia servicio, complementos, fecha, hora u horario fijo: actualiza primero los facts con set_fact y luego reconstruye el resumen/link con prepare_checkout.",
+            "- si el cliente elige una opcion concreta que acabas de listar, esa eleccion autoriza el siguiente paso del flujo: usa el nombre exacto de la opcion como service, llama prepare_checkout y entrega el resumen/link resultante.",
+            "- si el nuevo servicio es de inscripcion a horario fijo: no pidas fecha ni hora flexible; usa el horario fijo del servicio y registra fixed_schedule_label y fulfillment_ready=enrollment.",
+            "- si el cliente quiere cancelar o desistir de esta solicitud: llama reset_flow_context con checkout_action=abandon.",
+            "- no llames create_reservation mientras el pago siga pendiente."
+        };
+
+        if (!string.IsNullOrWhiteSpace(payment.LinkUrl))
+            lines.Add($"- link_actual: {payment.LinkUrl}");
+
+        return string.Join(Environment.NewLine, lines);
+    }
+
+    private static IEnumerable<string> DescribeFacts(AgentConfig config, IReadOnlyList<string> factKeys)
+    {
+        foreach (var factKey in factKeys)
+        {
+            var entry = config.FactSchema.FirstOrDefault(e =>
+                e.Key.Equals(factKey, StringComparison.OrdinalIgnoreCase));
+            var label = entry is not null && !string.IsNullOrWhiteSpace(entry.Label)
+                ? entry.Label
+                : factKey;
+
+            yield return $"{label} ({factKey})";
+        }
     }
 
     /// <summary>
@@ -379,6 +415,10 @@ public sealed class AgentPromptComposer : IPromptComposer
             if (missingFacts.Count > 0)
             {
                 lines.Add($"- facts_pendientes: {string.Join(", ", missingFacts)}");
+                lines.Add($"- datos_pendientes_para_avanzar: {string.Join(", ", DescribeFacts(config, missingFacts))}");
+                lines.Add(
+                    "- Mientras existan facts_pendientes, NO preguntes por acciones de etapas futuras ni intentes avanzar. " +
+                    "Si debes responder al cliente, pide solo el primer dato pendiente de esta lista.");
                 lines.Add("- Regístralos con set_fact en cuanto el cliente los confirme en este turno.");
             }
 

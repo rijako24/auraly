@@ -76,6 +76,27 @@ public class SetFactToolTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_NumberValue_PersistsAsString()
+    {
+        var ctx = CreateContext();
+        ctx.Config = new AgentConfig
+        {
+            FactSchema =
+            [
+                new FactSchemaEntry { Key = "baby_age_months", Label = "edad del bebe", Type = "number", Source = "user" }
+            ]
+        };
+
+        using var args = JsonDocument.Parse("""{"key":"baby_age_months","value":5}""");
+        var json = await _tool.ExecuteAsync(args.RootElement, ctx, CancellationToken.None);
+
+        json.Should().Contain("\"ok\":true");
+        ctx.Facts["baby_age_months"].Should().Be("5");
+        _facts.Verify(f => f.SetAsync(
+            ctx.ConversationId, ctx.BusinessId, "baby_age_months", "5", It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
     public async Task ExecuteAsync_CustomerName_PersistsToConversation()
     {
         var ctx = CreateContext();

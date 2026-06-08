@@ -14,6 +14,10 @@ CREATE TABLE [dbo].[PaymentTransactions] (
     [WebhookPayloadJson] NVARCHAR(MAX) NULL,
     [CreatedAt] DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
     [ConfirmedAt] DATETIME2 NULL,
+    [CheckoutKind] INT NOT NULL DEFAULT 0,
+    [CheckoutSnapshotJson] NVARCHAR(MAX) NULL,
+    [QuoteHash] NVARCHAR(128) NULL,
+    [ConfirmationOutcome] NVARCHAR(100) NULL,
     [Snapshot_ServiceId] UNIQUEIDENTIFIER NULL,
     [Snapshot_ReservationDateTime] DATETIME2 NULL,
     [Snapshot_PreferredEmployeeId] UNIQUEIDENTIFIER NULL,
@@ -59,6 +63,10 @@ CREATE INDEX [IX_PaymentTransactions_ConversationId] ON [dbo].[PaymentTransactio
 GO
 
 CREATE INDEX [IX_PaymentTransactions_ReservationId] ON [dbo].[PaymentTransactions] ([ReservationId]);
+
+GO
+
+CREATE INDEX [IX_PaymentTransactions_CheckoutKind] ON [dbo].[PaymentTransactions] ([CheckoutKind]);
 
 GO
 

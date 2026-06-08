@@ -16,7 +16,6 @@ public sealed class FlowStageDetector : IFlowStageDetector
         {
             if (IsStageComplete(stage, session)
                 || IsStageSkipped(stage, session)
-                || IsOneShotCompleted(stage, session)
                 || !IsVariantApplicable(stage, session))
             {
                 continue;
@@ -62,17 +61,6 @@ public sealed class FlowStageDetector : IFlowStageDetector
     }
 
     /// <summary>
-    /// Una etapa CompletesOnEnter se omite si ya figura en CompletedOneShotStages del estado.
-    /// </summary>
-    public static bool IsOneShotCompleted(AgentFlowStage stage, AgentToolContext? session)
-    {
-        if (!stage.CompletesOnEnter)
-            return false;
-
-        return session?.ConversationState?.CompletedOneShotStages.Contains(stage.Id) ?? false;
-    }
-
-    /// <summary>
     /// Una etapa se considera saltable si SkipWhen está definido y TODOS sus facts están presentes.
     /// Cuando se salta, los AutoSetOnSkip ya fueron aplicados en LoadTurnSessionAsync.
     /// </summary>
@@ -89,10 +77,6 @@ public sealed class FlowStageDetector : IFlowStageDetector
 
     private static bool IsStageComplete(AgentFlowStage stage, AgentToolContext? session)
     {
-        // CompletesOnEnter no avanza por facts sino por IsOneShotCompleted
-        if (stage.CompletesOnEnter)
-            return false;
-
         // Sin facts requeridos → la etapa permanece activa hasta salir del flujo (etapa terminal/acción)
         if (stage.AdvanceWhenFacts.Count == 0)
             return false;

@@ -32,7 +32,7 @@
 :r .\Seeds\SeedServiceCategoriesForNewBusinesses.sql
 :r .\Seeds\SeedDevBusiness.sql
 :r .\Seeds\SeedSchedulingPolicy.sql
-:r .\Seeds\SeedBookingPolicy.sql
+:r .\Seeds\CleanupObsoleteBookingPolicy.sql
 :r .\Seeds\SeedAgenticConfiguration.sql
 :r .\Seeds\SeedSolorzanoAgentConfiguration.sql
 :r .\Migrations\MigrateAuditAgentTemplates.sql

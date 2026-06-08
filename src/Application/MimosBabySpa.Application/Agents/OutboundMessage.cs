@@ -18,6 +18,9 @@ public sealed class MessageSequenceContext
     public Domain.Entities.Reservation? Reservation { get; init; }
 
     public PaymentSequenceContext? Payment { get; init; }
+
+    public IReadOnlyDictionary<string, string> Custom { get; init; } =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 }
 
 /// <summary>

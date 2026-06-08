@@ -14,7 +14,6 @@ public sealed class CreateReservationTool : IAgentTool
     private readonly IReservationService _reservations;
     private readonly IReservationIntentBuilder _intentBuilder;
     private readonly IBusinessRuleEngine _rules;
-    private readonly IBookingPolicyProvider _bookingPolicy;
     private readonly IPaymentLifecycleService _paymentLifecycle;
     private readonly IAvailabilityService _availability;
     private readonly ISchedulingPolicyProvider _schedulingPolicy;
@@ -24,7 +23,6 @@ public sealed class CreateReservationTool : IAgentTool
         IReservationService reservations,
         IReservationIntentBuilder intentBuilder,
         IBusinessRuleEngine rules,
-        IBookingPolicyProvider bookingPolicy,
         IPaymentLifecycleService paymentLifecycle,
         IAvailabilityService availability,
         ISchedulingPolicyProvider schedulingPolicy,
@@ -33,7 +31,6 @@ public sealed class CreateReservationTool : IAgentTool
         _reservations = reservations;
         _intentBuilder = intentBuilder;
         _rules = rules;
-        _bookingPolicy = bookingPolicy;
         _paymentLifecycle = paymentLifecycle;
         _availability = availability;
         _schedulingPolicy = schedulingPolicy;
@@ -116,22 +113,14 @@ public sealed class CreateReservationTool : IAgentTool
         if (idempotentResult is not null)
             return idempotentResult;
 
-        var policy = await _bookingPolicy.GetAsync(ctx.BusinessId, cancellationToken);
-        if (policy.DepositRequired)
+        var pendingPayment = ctx.ActivePayment
+            ?? await _paymentLifecycle.GetActiveByConversationAsync(ctx.ConversationId, cancellationToken);
+        if (pendingPayment?.Status == PaymentTransactionStatus.Created)
         {
-            var hasConfirmedPayment =
-                ctx.ActivePayment?.Status == PaymentTransactionStatus.Confirmed
-                || await _paymentLifecycle.HasConfirmedDepositAsync(ctx.ConversationId, cancellationToken);
-
-            if (!hasConfirmedPayment)
-            {
-                return ToolResultHelper.Error(
-                    "payment_required",
-                    "This reservation requires a confirmed advance payment. Do not call create_reservation — " +
-                    "the customer pays via prepare_checkout and confirmation is sent automatically when Wompi validates the payment.",
-                    "If the customer says they already paid, reassure them the confirmation will arrive shortly. " +
-                    "Use verify_payment only after 3+ insistences to check status — it does not create the reservation.");
-            }
+            return ToolResultHelper.Error(
+                "payment_pending",
+                "There is a pending checkout link for this conversation. Do not call create_reservation until the payment flow finishes or is abandoned.",
+                "If the customer wants to cancel the pending checkout, call reset_flow_context with checkout_action=abandon.");
         }
 
         var ruleResult = await _rules.ValidateReservationAsync(

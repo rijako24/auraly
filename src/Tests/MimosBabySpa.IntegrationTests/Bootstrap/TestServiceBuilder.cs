@@ -62,7 +62,6 @@ public static class TestServiceBuilder
         services.AddSingleton<IBusinessClock>(new FakeBusinessClock());
         services.AddSingleton<ITemporalReferenceBuilder, TemporalReferenceBuilder>();
         services.AddSingleton<ISchedulingPolicyProvider, FakeSchedulingPolicyProvider>();
-        services.AddSingleton<IBookingPolicyProvider, FakeBookingPolicyProvider>();
 
         services.AddSingleton<IConversationStateRepository>(unitOfWork.ConversationStates);
         services.AddSingleton<IPaymentTransactionRepository>(unitOfWork.PaymentTransactions);
@@ -115,7 +114,6 @@ public static class TestServiceBuilder
                     sp.GetRequiredService<IReservationService>(),
                     sp.GetRequiredService<IReservationIntentBuilder>(),
                     sp.GetRequiredService<IBusinessRuleEngine>(),
-                    sp.GetRequiredService<IBookingPolicyProvider>(),
                     sp.GetRequiredService<IPaymentLifecycleService>(),
                     sp.GetRequiredService<IAvailabilityService>(),
                     sp.GetRequiredService<ISchedulingPolicyProvider>(),

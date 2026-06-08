@@ -11,4 +11,9 @@ public interface IConversationFactsService
         string value,
         bool persistsAcrossConversations = false,
         CancellationToken ct = default);
+
+    Task<IReadOnlyList<string>> ClearNonPersistentAsync(
+        Guid conversationId,
+        IReadOnlyCollection<string> persistentKeys,
+        CancellationToken ct = default);
 }

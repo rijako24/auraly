@@ -298,6 +298,13 @@ public class InMemoryConversationContextRepository : IConversationContextReposit
     public Task<IEnumerable<ConversationContext>> GetByConversationIdAsync(Guid conversationId) =>
         Task.FromResult(_store.Where(c => c.ConversationId == conversationId));
 
+    public Task DeleteFieldsAsync(Guid conversationId, IReadOnlyCollection<string> fields, CancellationToken ct = default)
+    {
+        var delete = fields.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        _store.RemoveAll(c => c.ConversationId == conversationId && delete.Contains(c.Field));
+        return Task.CompletedTask;
+    }
+
     public Task DeleteByConversationIdAsync(Guid conversationId)
     {
         _store.RemoveAll(c => c.ConversationId == conversationId);

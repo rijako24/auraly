@@ -35,12 +35,6 @@ const CONFIG_KEYS: {
       "Horarios de operación por día (schedule), intervalo entre slots, buffer entre citas y reglas de empleado.",
     useJsonEditor: true,
   },
-  {
-    key: BusinessConfigurationKey.BookingPolicy,
-    description:
-      "Política de reserva: si requiere anticipo, porcentaje del total y moneda para links de pago.",
-    useJsonEditor: true,
-  },
 ];
 
 export default function BusinessSettingsPage() {

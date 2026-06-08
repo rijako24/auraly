@@ -23,7 +23,6 @@ public class ToolCapabilityGateTests
         Mock.Of<IReservationService>(),
         Mock.Of<IReservationIntentBuilder>(),
         Mock.Of<IBusinessRuleEngine>(),
-        Mock.Of<IBookingPolicyProvider>(),
         Mock.Of<IPaymentLifecycleService>(),
         Mock.Of<IAvailabilityService>(),
         Mock.Of<ISchedulingPolicyProvider>(),
@@ -252,7 +251,6 @@ public class ToolCapabilityGateTests
         ConversationId = Guid.NewGuid(),
         BusinessToday = new DateOnly(2026, 5, 21),
         Config = CreateConfigWithGuards(),
-        BookingPolicy = new BookingPolicyParams(),
         ConversationState = new ConversationStateModel(),
         Conversation = new Conversation(),
         Facts = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)

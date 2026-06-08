@@ -53,13 +53,6 @@ public sealed class AgentFlowStage
     public Dictionary<string, string> AutoSetOnSkip { get; init; } = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
-    /// Si true, la etapa se considera completada tras haber sido la etapa activa
-    /// en al menos un turno del bot. No requiere facts — completa por el hecho de haberse ejecutado.
-    /// Ideal para: saludo, disclaimer, cierre de despedida.
-    /// </summary>
-    public bool CompletesOnEnter { get; init; }
-
-    /// <summary>
     /// Variantes de la etapa por engagement context.
     /// Keys: "firstEver" | "returningCustomer" | "continuingSession".
     /// Si la etapa tiene Variants y el engagement actual NO está en el dict,

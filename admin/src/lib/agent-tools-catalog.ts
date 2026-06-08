@@ -14,7 +14,6 @@ export const AGENT_TOOLS_CATALOG: AgentToolMeta[] = [
   { name: "create_reservation", label: "Crear reserva", group: "Reserva" },
   { name: "assign_paid_slot", label: "Asignar slot pagado", group: "Reserva" },
   { name: "verify_payment", label: "Verificar pago", group: "Pagos" },
-  { name: "generate_payment_link", label: "Link de pago", group: "Pagos" },
   { name: "reschedule_reservation", label: "Reagendar", group: "Gestión" },
   { name: "suspend_reservation", label: "Cancelar / suspender", group: "Gestión" },
   { name: "escalate_to_human", label: "Escalar a humano", group: "Soporte" },

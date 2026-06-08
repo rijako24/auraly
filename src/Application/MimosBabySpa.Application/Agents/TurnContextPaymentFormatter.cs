@@ -1,5 +1,4 @@
 using System.Globalization;
-using MimosBabySpa.Application.Configuration;
 using MimosBabySpa.Domain.Entities;
 using MimosBabySpa.Domain.Enums;
 
@@ -7,23 +6,10 @@ namespace MimosBabySpa.Application.Agents;
 
 internal static class TurnContextPaymentFormatter
 {
-    internal static string FormatDepositLine(BookingPolicyParams? bookingPolicy)
+    internal static string? FormatPaymentLine(PaymentTransaction? payment)
     {
-        if (bookingPolicy?.DepositRequired == true && bookingPolicy.DepositPercentage > 0)
-        {
-            return $"- anticipo: requerido ({bookingPolicy.DepositPercentage}% — se calcula tras resolve_pricing)";
-        }
-
-        return "- anticipo: no requerido (puedes cerrar con create_reservation tras confirmación verbal)";
-    }
-
-    internal static string? FormatPaymentLine(PaymentTransaction? payment, BookingPolicyParams? bookingPolicy)
-    {
-        if (bookingPolicy?.DepositRequired != true)
-            return null;
-
         if (payment is null)
-            return "- pago: no iniciado";
+            return null;
 
         return payment.Status switch
         {
@@ -31,18 +17,18 @@ internal static class TurnContextPaymentFormatter
                 $"- pago: confirmado ({FormatAmount(payment.AmountInCents, payment.Currency)})",
 
             PaymentTransactionStatus.Created when IsExpired(payment) =>
-                "- pago: link expirado — regenerar con generate_payment_link",
+                "- pago: link expirado; regenerar con prepare_checkout",
 
             PaymentTransactionStatus.Created =>
                 $"- pago: link generado ({FormatAmount(payment.AmountInCents, payment.Currency)}, expira {FormatExpiry(payment.ExpiresAt)})",
 
             PaymentTransactionStatus.Failed =>
-                "- pago: fallido — regenerar con generate_payment_link",
+                "- pago: fallido; regenerar con prepare_checkout",
 
             PaymentTransactionStatus.Expired =>
-                "- pago: link expirado — regenerar con generate_payment_link",
+                "- pago: link expirado; regenerar con prepare_checkout",
 
-            _ => "- pago: no iniciado"
+            _ => null
         };
     }
 
@@ -58,7 +44,7 @@ internal static class TurnContextPaymentFormatter
     private static string FormatExpiry(DateTime? expiresAt)
     {
         if (!expiresAt.HasValue)
-            return "sin fecha de expiración";
+            return "sin fecha de expiracion";
 
         var remaining = expiresAt.Value - DateTime.UtcNow;
         if (remaining <= TimeSpan.Zero)

@@ -62,7 +62,8 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
             EnabledToolNames = settings.EnabledTools ?? [],
             EscalationContacts = settings.EscalationContacts ?? [],
             MessageSequences = settings.MessageSequences ?? new MessageSequenceCatalog(),
-            Webhooks = settings.Webhooks ?? new WebhookDefinitions()
+            Webhooks = settings.Webhooks ?? new WebhookDefinitions(),
+            Checkout = settings.Checkout ?? new CheckoutDefinitions()
         };
 
         if (config.EnabledToolNames.Count == 0)
@@ -155,7 +156,6 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
     private static readonly IReadOnlyDictionary<string, string[]> ToolRequiredTemplateIds =
         new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
         {
-            ["prepare_checkout"] = ["checkout_with_deposit", "checkout_no_deposit"],
             ["check_availability"] = ["availability_slots"]
         };
 
@@ -238,6 +238,7 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
         public EscalationSettings? Escalation { get; set; }
         public MessageSequenceCatalog? MessageSequences { get; set; }
         public WebhookDefinitions? Webhooks { get; set; }
+        public CheckoutDefinitions? Checkout { get; set; }
         public IReadOnlyList<string>? EscalationContacts =>
             Escalation?.Contacts ?? [];
     }
