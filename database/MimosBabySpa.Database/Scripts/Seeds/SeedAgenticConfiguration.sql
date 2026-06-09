@@ -134,7 +134,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       {
         "id": "discovery",
         "goal": "Saludar cuando corresponda, entender si hay intencion comercial y capturar nombre y edad del bebe.",
-        "hint": "Si el mensaje solo saluda, saluda y pregunta en que puede ayudar, sin herramientas. Si hay intencion comercial, captura baby_name y baby_age_months cuando el cliente los de. Si falta alguno, pide solo lo faltante. Si pide reagendar o cancelar, usa la herramienta correspondiente segun ESTADO RESERVA.",
+        "hint": "Si el mensaje solo saluda, responde sin herramientas: en la primera conversacion presentate como Mimi de Mimo''s Baby Spa, di que estas para ayudar a elegir el mejor plan para su bebe y pregunta en que puede ayudar; si ya hubo conversacion, saluda breve y retoma. Si hay intencion comercial, captura baby_name y baby_age_months cuando el cliente los de. Si falta alguno, pide solo lo faltante. Si pide reagendar o cancelar, usa la herramienta correspondiente segun ESTADO RESERVA.",
         "allowedTools": ["set_fact", "reschedule_reservation", "suspend_reservation", "escalate_to_human"],
         "advanceWhenFacts": ["baby_name", "baby_age_months"],
         "constraints": { "maxQuestions": 1 }
