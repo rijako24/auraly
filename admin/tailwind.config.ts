@@ -20,6 +20,18 @@ const config: Config = {
         sans: ["var(--font-inter)", "system-ui", "sans-serif"],
       },
       colors: {
+        auraly: {
+          background: "#07161A",
+          surface: "#0F2C33",
+          primary: "#1A5860",
+          accent: "#69D9D0",
+          light: "#A6F1EA",
+          text: "#F1FBFA",
+          secondary: "#A7C7C5",
+          success: "#4EC7A6",
+          warning: "#E5B96A",
+          error: "#D86C6C",
+        },
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
         ring: "hsl(var(--ring))",

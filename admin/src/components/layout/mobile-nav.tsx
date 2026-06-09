@@ -2,8 +2,8 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { MessageCircle } from "lucide-react";
 
+import { AuralyLogo } from "@/components/brand/auraly-logo";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
@@ -70,8 +70,7 @@ export function MobileNav() {
               onClick={handleClose}
               className="flex items-center gap-2 text-lg font-semibold"
             >
-              <MessageCircle className="h-6 w-6" />
-              Talkio Admin
+              <AuralyLogo className="[&>span]:text-foreground" />
             </Link>
           </SheetTitle>
         </SheetHeader>

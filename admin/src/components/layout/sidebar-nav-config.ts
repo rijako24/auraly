@@ -1,7 +1,6 @@
 import type { LucideIcon } from "lucide-react";
 import {
   BarChart3,
-  Bot,
   Building2,
   Calendar,
   CalendarDays,
@@ -12,6 +11,7 @@ import {
   Package,
   Settings,
   Shield,
+  Sparkles,
   Store,
   UserCog,
   UserPlus,
@@ -42,7 +42,7 @@ export const navigation: NavEntry[] = [
   { type: "separator", label: "Operaciones" },
   { name: "Reservaciones", href: "/dashboard/reservations", icon: CalendarDays, permission: "reservations.read" },
   { name: "Calendario", href: "/dashboard/reservations/calendar", icon: Calendar, permission: "reservations.read" },
-  { name: "Agente IA", href: "/dashboard/agents", icon: Bot, permission: "agents.read" },
+  { name: "Agente IA", href: "/dashboard/agents", icon: Sparkles, permission: "agents.read" },
   { name: "Conversaciones", href: "/dashboard/conversations", icon: MessageSquare, permission: "conversations.read" },
   { name: "Leads", href: "/dashboard/leads", icon: UserPlus, permission: "leads.read" },
   { type: "separator", label: "Finanzas" },

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Bot, Settings2 } from "lucide-react";
+import { Settings2, Sparkles } from "lucide-react";
 
 import { PageError } from "@/components/ui/page-error";
 import { PageLoading } from "@/components/ui/page-loading";
@@ -42,7 +42,7 @@ export default function AgentsPage() {
       {(agents ?? []).length === 0 ? (
         <Card>
           <CardContent className="flex flex-col items-center gap-3 py-12 text-center">
-            <Bot className="h-10 w-10 text-muted-foreground" />
+            <Sparkles className="h-10 w-10 text-muted-foreground" />
             <p className="text-muted-foreground">
               No hay agentes activos para este negocio. Créalos desde la base de datos
               o el seed <code className="text-xs">SeedAgenticConfiguration.sql</code>.
@@ -57,7 +57,7 @@ export default function AgentsPage() {
                 <div className="flex items-start justify-between gap-2">
                   <div>
                     <CardTitle className="flex items-center gap-2 text-lg">
-                      <Bot className="h-5 w-5 text-primary" />
+                      <Sparkles className="h-5 w-5 text-primary" />
                       {agent.name}
                     </CardTitle>
                     <CardDescription>{agent.agentTypeName}</CardDescription>

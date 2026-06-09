@@ -31,7 +31,7 @@ export const ReservationStatusLabels: Record<ReservationStatus, string> = {
 export const ReservationStatusColors: Record<ReservationStatus, string> = {
   [ReservationStatus.Pending]: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300",
   [ReservationStatus.Confirmed]: "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300",
-  [ReservationStatus.Completed]: "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300",
+  [ReservationStatus.Completed]: "bg-teal-100 text-teal-800 dark:bg-teal-900 dark:text-teal-300",
   [ReservationStatus.Cancelled]: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300",
   [ReservationStatus.PendingCalendar]: "bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-300",
   [ReservationStatus.OnHold]: "bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-300",
@@ -57,7 +57,7 @@ export const PaymentStatusColors: Record<PaymentTransactionStatus, string> = {
   [PaymentTransactionStatus.Created]: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300",
   [PaymentTransactionStatus.Confirmed]: "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300",
   [PaymentTransactionStatus.Failed]: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300",
-  [PaymentTransactionStatus.Refunded]: "bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-300",
+  [PaymentTransactionStatus.Refunded]: "bg-cyan-100 text-cyan-800 dark:bg-cyan-900 dark:text-cyan-300",
   [PaymentTransactionStatus.Expired]: "bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-300",
 };
 
@@ -101,7 +101,7 @@ export const ServiceTierLabels: Record<ServiceTier, string> = {
 export const ServiceTierColors: Record<ServiceTier, string> = {
   [ServiceTier.Base]: "bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-300",
   [ServiceTier.Premium]: "bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-300",
-  [ServiceTier.Deluxe]: "bg-violet-100 text-violet-800 dark:bg-violet-900 dark:text-violet-300",
+  [ServiceTier.Deluxe]: "bg-cyan-100 text-cyan-800 dark:bg-cyan-900 dark:text-cyan-300",
 };
 
 export enum ConversationStateEnum {
@@ -126,10 +126,10 @@ export const ConversationStateLabels: Record<ConversationStateEnum, string> = {
 
 export const ConversationStateColors: Record<ConversationStateEnum, string> = {
   [ConversationStateEnum.Idle]: "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-300",
-  [ConversationStateEnum.CollectingData]: "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300",
+  [ConversationStateEnum.CollectingData]: "bg-teal-100 text-teal-800 dark:bg-teal-900 dark:text-teal-300",
   [ConversationStateEnum.CheckingAvailability]: "bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-300",
   [ConversationStateEnum.ReadyToReserve]: "bg-teal-100 text-teal-800 dark:bg-teal-900 dark:text-teal-300",
-  [ConversationStateEnum.CreatingReservation]: "bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-300",
+  [ConversationStateEnum.CreatingReservation]: "bg-cyan-100 text-cyan-800 dark:bg-cyan-900 dark:text-cyan-300",
   [ConversationStateEnum.WaitingForPayment]: "bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-300",
   [ConversationStateEnum.Confirmed]: "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300",
 };
@@ -157,7 +157,7 @@ export const LeadStatusLabels: Record<LeadStatus, string> = {
 };
 
 export const LeadStatusColors: Record<LeadStatus, string> = {
-  [LeadStatus.New]: "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300",
+  [LeadStatus.New]: "bg-teal-100 text-teal-800 dark:bg-teal-900 dark:text-teal-300",
   [LeadStatus.Contacted]: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300",
   [LeadStatus.Closed]: "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300",
 };

@@ -23,6 +23,7 @@ using MimosBabySpa.Infrastructure.Identity;
 using MimosBabySpa.Infrastructure.MultiTenancy;
 using MimosBabySpa.Infrastructure.Repositories;
 using MimosBabySpa.WebAPI.Authorization;
+using MimosBabySpa.WebAPI.Configuration;
 using MimosBabySpa.WebAPI.Middleware;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -34,6 +35,7 @@ builder.Services.AddScoped<ICorrelationIdProvider, CorrelationIdProvider>();
 builder.Services.AddScoped<ITenantContext, TenantContext>();
 
 builder.Services.Configure<JwtSettings>(builder.Configuration.GetSection(JwtSettings.SectionName));
+builder.Services.Configure<DemoRequestOptions>(builder.Configuration.GetSection(DemoRequestOptions.SectionName));
 var jwtSettings = builder.Configuration.GetSection(JwtSettings.SectionName).Get<JwtSettings>()!;
 
 builder.Services.AddAuthentication(options =>
