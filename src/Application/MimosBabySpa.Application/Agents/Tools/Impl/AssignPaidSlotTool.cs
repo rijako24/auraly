@@ -44,6 +44,8 @@ public sealed class AssignPaidSlotTool : IAgentTool
 
     public string Name => "assign_paid_slot";
 
+    public IReadOnlyList<string> Capabilities => [ToolCapabilities.PaidSlotAssign];
+
     public string Description =>
         "Creates a confirmed reservation for a paid PaymentTransaction that has no linked reservation yet, " +
         "using the verified service/date/time snapshot. Links the reservation to the payment record.";

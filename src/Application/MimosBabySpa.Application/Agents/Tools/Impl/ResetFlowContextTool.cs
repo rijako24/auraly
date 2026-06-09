@@ -103,7 +103,6 @@ public sealed class ResetFlowContextTool : IAgentTool
 
         ctx.ConversationState.Verifications.Clear();
         ctx.ConversationState.StageFactSnapshots.Clear();
-        ctx.ConversationState.CompletedOneShotStages.Clear();
 
         return ToolResultHelper.Ok(new
         {

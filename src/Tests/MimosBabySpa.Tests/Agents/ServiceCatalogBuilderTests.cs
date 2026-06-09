@@ -52,4 +52,28 @@ public class ServiceCatalogBuilderTests
         catalog.Should().NotContain("Decoración Bouquet Personalizado");
         catalog.Should().NotContain("### Complementos");
     }
+
+    [Fact]
+    public void Build_WhenServiceHasNoCompatibleAddOns_StatesNoneExplicitly()
+    {
+        var serviceId = Guid.NewGuid();
+        var services = new List<ServiceInfo>
+        {
+            new()
+            {
+                Name = "Taller Grupal - 3 dÃ­as/semana",
+                Description = "Taller por edades",
+                DurationMinutes = 60,
+                Price = 330000,
+                IsActive = true,
+                CategoryId = serviceId,
+                ServiceType = ServiceType.Standard
+            }
+        };
+
+        var catalog = ServiceCatalogBuilder.Build(services, [], []);
+
+        catalog.Should().Contain("Taller Grupal - 3 dÃ­as/semana");
+        catalog.Should().Contain("Complementos compatibles: ninguno");
+    }
 }

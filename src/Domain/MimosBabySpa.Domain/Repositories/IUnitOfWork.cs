@@ -33,6 +33,11 @@ public interface IUnitOfWork : IDisposable
     IUserExternalLoginRepository UserExternalLogins { get; }
     IAuditLogRepository AuditLogs { get; }
     ITenantRepository Tenants { get; }
+    ISubscriptionPlanRepository SubscriptionPlans { get; }
+    IBusinessSubscriptionRepository BusinessSubscriptions { get; }
+    IBusinessUsagePeriodRepository BusinessUsagePeriods { get; }
+    IUsageLedgerRepository UsageLedger { get; }
+    IUsageCostRateRepository UsageCostRates { get; }
 
     Task ExecuteInTransactionAsync(Func<Task> action, CancellationToken cancellationToken = default);
 

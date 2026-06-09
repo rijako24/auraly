@@ -53,6 +53,12 @@ public sealed class AgentFlowStage
     public Dictionary<string, string> AutoSetOnSkip { get; init; } = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
+    /// Reglas declarativas evaluadas despues de tool calls en esta etapa.
+    /// Ej.: si get_compatible_add_ons devuelve data.count == 0, setear add_ons=ninguno.
+    /// </summary>
+    public IReadOnlyList<StageAfterToolRule> AfterTool { get; init; } = [];
+
+    /// <summary>
     /// Variantes de la etapa por engagement context.
     /// Keys: "firstEver" | "returningCustomer" | "continuingSession".
     /// Si la etapa tiene Variants y el engagement actual NO está en el dict,

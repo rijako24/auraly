@@ -43,6 +43,11 @@ public class ApplicationDbContext : DbContext
     public DbSet<UserExternalLogin> UserExternalLogins { get; set; }
     public DbSet<RefreshToken> RefreshTokens { get; set; }
     public DbSet<AuditLog> AuditLogs { get; set; }
+    public DbSet<SubscriptionPlan> SubscriptionPlans { get; set; }
+    public DbSet<BusinessSubscription> BusinessSubscriptions { get; set; }
+    public DbSet<BusinessUsagePeriod> BusinessUsagePeriods { get; set; }
+    public DbSet<UsageLedgerEntry> UsageLedgerEntries { get; set; }
+    public DbSet<UsageCostRate> UsageCostRates { get; set; }
 
     // Agentic engine
     public DbSet<AgentType> AgentTypes { get; set; }
@@ -303,6 +308,9 @@ public class ApplicationDbContext : DbContext
                   .HasConversion<int>();
             entity.Property(e => e.ServiceType).IsRequired()
                   .HasDefaultValue(Domain.Enums.ServiceType.Standard).HasConversion<int>();
+            entity.Property(e => e.FulfillmentKind).IsRequired()
+                  .HasDefaultValue(Domain.Enums.ServiceFulfillmentKind.Reservation).HasConversion<int>();
+            entity.Property(e => e.FixedScheduleLabel).HasMaxLength(500);
             entity.HasOne(e => e.Business)
                   .WithMany()
                   .HasForeignKey(e => e.BusinessId)
@@ -431,7 +439,6 @@ public class ApplicationDbContext : DbContext
             entity.Property(e => e.LastBotMessage).HasColumnType("NVARCHAR(MAX)");
             entity.Property(e => e.VerificationsJson).HasColumnType("NVARCHAR(MAX)");
             entity.Property(e => e.StageSnapshotsJson).HasColumnType("NVARCHAR(MAX)");
-            entity.Property(e => e.CompletedStagesJson).HasColumnType("NVARCHAR(MAX)");
             entity.Property(e => e.Version).IsRequired().HasDefaultValue(1);
             entity.Property(e => e.UpdatedAt).IsRequired();
             entity.Property(e => e.CreatedAt).IsRequired();
@@ -670,6 +677,101 @@ public class ApplicationDbContext : DbContext
         });
 
         // ── Generic Flow Engine ─────────────────────────────────────────────────────
+
+        modelBuilder.Entity<SubscriptionPlan>(entity =>
+        {
+            entity.HasKey(e => e.SubscriptionPlanId);
+            entity.Property(e => e.Code).IsRequired().HasMaxLength(50);
+            entity.Property(e => e.Name).IsRequired().HasMaxLength(100);
+            entity.Property(e => e.MonthlyPriceCop).HasPrecision(18, 2);
+            entity.Property(e => e.MaxVariableCostCop).HasPrecision(18, 2);
+            entity.Property(e => e.MaxVariableCostPercent).HasPrecision(5, 2);
+            entity.Property(e => e.FeaturesJson).HasColumnType("NVARCHAR(MAX)");
+            entity.HasIndex(e => e.Code).IsUnique();
+        });
+
+        modelBuilder.Entity<BusinessSubscription>(entity =>
+        {
+            entity.HasKey(e => e.BusinessSubscriptionId);
+            entity.Property(e => e.Status).HasConversion<int>();
+            entity.Property(e => e.PlanCodeSnapshot).IsRequired().HasMaxLength(50);
+            entity.Property(e => e.PlanNameSnapshot).IsRequired().HasMaxLength(100);
+            entity.Property(e => e.MonthlyPriceCop).HasPrecision(18, 2);
+            entity.Property(e => e.MaxVariableCostCop).HasPrecision(18, 2);
+            entity.Property(e => e.MaxVariableCostPercent).HasPrecision(5, 2);
+            entity.Property(e => e.ExtraVariableCostCop).HasPrecision(18, 2);
+            entity.HasOne(e => e.Business)
+                .WithMany()
+                .HasForeignKey(e => e.BusinessId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.SubscriptionPlan)
+                .WithMany(p => p.BusinessSubscriptions)
+                .HasForeignKey(e => e.SubscriptionPlanId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasIndex(e => e.BusinessId);
+            entity.HasIndex(e => new { e.BusinessId, e.Status });
+        });
+
+        modelBuilder.Entity<BusinessUsagePeriod>(entity =>
+        {
+            entity.HasKey(e => e.BusinessUsagePeriodId);
+            entity.Property(e => e.Status).HasConversion<int>();
+            entity.Property(e => e.VariableCostLimitCop).HasPrecision(18, 2);
+            entity.Property(e => e.VariableCostExtraCop).HasPrecision(18, 2);
+            entity.Property(e => e.VariableCostUsedCop).HasPrecision(18, 2);
+            entity.HasOne(e => e.BusinessSubscription)
+                .WithMany(s => s.UsagePeriods)
+                .HasForeignKey(e => e.BusinessSubscriptionId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(e => e.Business)
+                .WithMany()
+                .HasForeignKey(e => e.BusinessId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasIndex(e => new { e.BusinessSubscriptionId, e.PeriodStart, e.PeriodEnd }).IsUnique();
+            entity.HasIndex(e => new { e.BusinessId, e.PeriodStart, e.PeriodEnd });
+        });
+
+        modelBuilder.Entity<UsageLedgerEntry>(entity =>
+        {
+            entity.HasKey(e => e.UsageLedgerEntryId);
+            entity.Property(e => e.OperationType).HasConversion<int>();
+            entity.Property(e => e.EstimatedCostCop).HasPrecision(18, 4);
+            entity.Property(e => e.ActualCostCop).HasPrecision(18, 4);
+            entity.Property(e => e.Model).HasMaxLength(100);
+            entity.Property(e => e.MetadataJson).HasColumnType("NVARCHAR(MAX)");
+            entity.HasOne(e => e.BusinessUsagePeriod)
+                .WithMany(p => p.LedgerEntries)
+                .HasForeignKey(e => e.BusinessUsagePeriodId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(e => e.Business)
+                .WithMany()
+                .HasForeignKey(e => e.BusinessId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.Agent)
+                .WithMany()
+                .HasForeignKey(e => e.AgentId)
+                .OnDelete(DeleteBehavior.SetNull)
+                .IsRequired(false);
+            entity.HasOne(e => e.Conversation)
+                .WithMany()
+                .HasForeignKey(e => e.ConversationId)
+                .OnDelete(DeleteBehavior.SetNull)
+                .IsRequired(false);
+            entity.HasIndex(e => e.BusinessId);
+            entity.HasIndex(e => e.BusinessUsagePeriodId);
+            entity.HasIndex(e => e.CreatedAt);
+        });
+
+        modelBuilder.Entity<UsageCostRate>(entity =>
+        {
+            entity.HasKey(e => e.UsageCostRateId);
+            entity.Property(e => e.Code).IsRequired().HasMaxLength(100);
+            entity.Property(e => e.OperationType).HasConversion<int>();
+            entity.Property(e => e.Unit).IsRequired().HasMaxLength(50);
+            entity.Property(e => e.CostUsd).HasPrecision(18, 8);
+            entity.Property(e => e.CostCop).HasPrecision(18, 4);
+            entity.HasIndex(e => new { e.Code, e.OperationType, e.EffectiveFrom });
+        });
 
         modelBuilder.Entity<AgentType>(entity =>
         {

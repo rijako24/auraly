@@ -5,7 +5,6 @@ namespace MimosBabySpa.Application.Agents.Configuration;
 public sealed class CheckoutDefinitions
 {
     public string Currency { get; set; } = "COP";
-    public Dictionary<string, string> CategoryModes { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public Dictionary<string, CheckoutModeDefinition> Modes { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
     public CheckoutModeDefinition? ResolveMode(string checkoutKind)

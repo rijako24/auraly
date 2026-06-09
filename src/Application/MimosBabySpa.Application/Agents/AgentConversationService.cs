@@ -7,11 +7,13 @@ using MimosBabySpa.Application.Agents.Gating;
 using MimosBabySpa.Application.Agents.Templates;
 using MimosBabySpa.Application.Agents.Tools;
 using MimosBabySpa.Application.Agents.Tools.Impl;
+using MimosBabySpa.Application.Billing;
 using MimosBabySpa.Application.Services;
 using MimosBabySpa.Application.StateManagement;
 using MimosBabySpa.Domain.Models;
 using MimosBabySpa.Application.LLM;
 using MimosBabySpa.Application.Time;
+using MimosBabySpa.Domain.Enums;
 
 namespace MimosBabySpa.Application.Agents;
 
@@ -47,6 +49,7 @@ public sealed class AgentConversationService : IAgentConversationService
     private readonly IToolCapabilityGate _toolCapabilityGate;
     private readonly IFlowStageDetector _flowStageDetector;
     private readonly IFactHydrator _factHydrator;
+    private readonly IUsageBillingService _usageBilling;
     private readonly ILogger<AgentConversationService> _logger;
 
     public AgentConversationService(
@@ -69,6 +72,7 @@ public sealed class AgentConversationService : IAgentConversationService
         IToolCapabilityGate toolCapabilityGate,
         IFlowStageDetector flowStageDetector,
         IFactHydrator factHydrator,
+        IUsageBillingService usageBilling,
         ILogger<AgentConversationService> logger)
     {
         _configProvider = configProvider;
@@ -90,6 +94,7 @@ public sealed class AgentConversationService : IAgentConversationService
         _toolCapabilityGate = toolCapabilityGate;
         _flowStageDetector = flowStageDetector;
         _factHydrator = factHydrator;
+        _usageBilling = usageBilling;
         _logger = logger;
     }
 
@@ -101,6 +106,15 @@ public sealed class AgentConversationService : IAgentConversationService
         CancellationToken cancellationToken = default)
     {
         var config = await _configProvider.GetConfigAsync(agentId, cancellationToken);
+        var usageGate = await _usageBilling.CanProcessAsync(config.BusinessId, cancellationToken);
+        if (!usageGate.IsAllowed)
+        {
+            _logger.LogWarning(
+                "Business {BusinessId}: usage gate blocked agent turn ({Code}) for Conv {ConvId}",
+                config.BusinessId, usageGate.Code, conversationId);
+            return AgentTurnResult.Ok(string.Empty);
+        }
+
         var state = await _stateManager.GetOrCreateStateAsync(
             conversationId, config.BusinessId, channelPhone ?? string.Empty, cancellationToken);
 
@@ -225,6 +239,7 @@ public sealed class AgentConversationService : IAgentConversationService
             {
                 toolCtx.CurrentToolIteration = iteration;
                 var outcome = await ExecuteToolCallAsync(toolCall, toolCtx, ct);
+                await ApplyAfterToolRulesAsync(config, toolCall, outcome, toolCtx, ct);
 
                 turn.RecordToolOutcome(outcome);
                 messages.Add(ChatMessage.Tool(toolCall.Id, toolCall.FunctionName, outcome.RawJson));
@@ -326,6 +341,165 @@ public sealed class AgentConversationService : IAgentConversationService
 
     // ── Persistencia y escalación ────────────────────────────────────────────
 
+    private async Task ApplyAfterToolRulesAsync(
+        AgentConfig config,
+        ToolCallRequest toolCall,
+        ToolExecutionOutcome outcome,
+        AgentToolContext ctx,
+        CancellationToken ct)
+    {
+        if (outcome.IsError)
+            return;
+
+        var currentStage = _flowStageDetector.DetectCurrentStage(config.Flow, ctx);
+        if (currentStage is null || currentStage.AfterTool.Count == 0)
+            return;
+
+        foreach (var rule in currentStage.AfterTool)
+        {
+            if (!rule.Tool.Equals(toolCall.FunctionName, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            if (!IsAfterToolRuleMatch(outcome.RawJson, rule.When))
+                continue;
+
+            foreach (var (key, valueTemplate) in EnumerateAfterToolFactActions(rule))
+            {
+                if (ctx.Facts.TryGetValue(key, out var existing)
+                    && !string.IsNullOrWhiteSpace(existing))
+                {
+                    continue;
+                }
+
+                var value = ResolveAfterToolValue(outcome.RawJson, valueTemplate);
+                if (string.IsNullOrWhiteSpace(value))
+                    continue;
+
+                var schemaEntry = config.FactSchema.FirstOrDefault(e =>
+                    e.Key.Equals(key, StringComparison.OrdinalIgnoreCase));
+
+                await _factsService.SetAsync(
+                    ctx.ConversationId,
+                    ctx.BusinessId,
+                    key,
+                    value,
+                    schemaEntry?.PersistsAcrossConversations ?? false,
+                    ct);
+
+                ctx.Facts[key] = value;
+
+                _logger.LogInformation(
+                    "Conv {ConvId}: afterTool rule on stage '{Stage}' set {Key}={Value}",
+                    ctx.ConversationId,
+                    currentStage.Id,
+                    key,
+                    value);
+            }
+        }
+    }
+
+    private static IEnumerable<KeyValuePair<string, string>> EnumerateAfterToolFactActions(
+        MimosBabySpa.Application.Agents.Configuration.StageAfterToolRule rule)
+    {
+        if (!string.IsNullOrWhiteSpace(rule.SetFact.Key))
+            yield return new KeyValuePair<string, string>(rule.SetFact.Key, rule.SetFact.Value);
+
+        foreach (var pair in rule.SetFacts)
+        {
+            if (!string.IsNullOrWhiteSpace(pair.Key))
+                yield return pair;
+        }
+    }
+
+    private static string? ResolveAfterToolValue(string rawJson, string valueTemplate)
+    {
+        if (string.IsNullOrWhiteSpace(valueTemplate))
+            return null;
+
+        var trimmed = valueTemplate.Trim();
+        if (!trimmed.StartsWith("{{", StringComparison.Ordinal) || !trimmed.EndsWith("}}", StringComparison.Ordinal))
+            return trimmed;
+
+        var path = trimmed[2..^2].Trim();
+        if (string.IsNullOrWhiteSpace(path))
+            return null;
+
+        try
+        {
+            using var doc = JsonDocument.Parse(rawJson);
+            return TryGetJsonPath(doc.RootElement, path, out var value)
+                ? JsonElementToFactValue(value)
+                : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static bool IsAfterToolRuleMatch(
+        string rawJson,
+        MimosBabySpa.Application.Agents.Configuration.ToolResultCondition condition)
+    {
+        if (string.IsNullOrWhiteSpace(condition.Path))
+            return false;
+
+        try
+        {
+            using var doc = JsonDocument.Parse(rawJson);
+            if (!TryGetJsonPath(doc.RootElement, condition.Path, out var value))
+                return false;
+
+            return JsonElementEquals(value, condition.Expected);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool TryGetJsonPath(JsonElement root, string path, out JsonElement value)
+    {
+        value = root;
+        foreach (var segment in path.Split('.', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (value.ValueKind != JsonValueKind.Object || !value.TryGetProperty(segment, out value))
+            {
+                value = default;
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool JsonElementEquals(JsonElement value, string? expected)
+    {
+        if (expected is null)
+            return false;
+
+        return value.ValueKind switch
+        {
+            JsonValueKind.String => string.Equals(value.GetString(), expected, StringComparison.OrdinalIgnoreCase),
+            JsonValueKind.Number => string.Equals(value.GetRawText(), expected, StringComparison.OrdinalIgnoreCase),
+            JsonValueKind.True => string.Equals("true", expected, StringComparison.OrdinalIgnoreCase),
+            JsonValueKind.False => string.Equals("false", expected, StringComparison.OrdinalIgnoreCase),
+            JsonValueKind.Null => string.Equals("null", expected, StringComparison.OrdinalIgnoreCase),
+            _ => string.Equals(value.GetRawText(), expected, StringComparison.OrdinalIgnoreCase)
+        };
+    }
+
+    private static string? JsonElementToFactValue(JsonElement value) =>
+        value.ValueKind switch
+        {
+            JsonValueKind.String => value.GetString(),
+            JsonValueKind.Number => value.GetRawText(),
+            JsonValueKind.True => "true",
+            JsonValueKind.False => "false",
+            JsonValueKind.Null => null,
+            _ => value.GetRawText()
+        };
+
     private async Task<AgentTurnResult> FinalizeTurnAsync(
         Guid conversationId,
         string userMessage,
@@ -343,6 +517,23 @@ public sealed class AgentConversationService : IAgentConversationService
 
         UpdateStageSnapshots(config, session);
         await PersistTurnAsync(conversationId, userMessage, finalResponse, session.ConversationState, turn.ReservationCreated, ct);
+        await _usageBilling.ChargeAsync(new UsageChargeRequest(
+            config.BusinessId,
+            config.AgentId,
+            conversationId,
+            MessageId: null,
+            UsageOperationType.AgentTurn,
+            turn.PromptTokens,
+            turn.CompletionTokens,
+            turn.ToolCallCount,
+            turn.OutboundMessages.Count,
+            config.Model,
+            MetadataJson: JsonSerializer.Serialize(new
+            {
+                final_response = !string.IsNullOrWhiteSpace(finalResponse),
+                escalated = turn.EscalatedToHuman,
+                reservation_created = turn.ReservationCreated
+            })), ct);
 
         _logger.LogInformation(
             "Conv {ConvId}: turn complete — tokens={Tokens}, tools={Tools}, escalated={Esc}, fragments={Fragments}",
@@ -358,7 +549,7 @@ public sealed class AgentConversationService : IAgentConversationService
         string reason,
         CancellationToken ct)
     {
-        var escalateTool = _toolRegistry.Resolve("escalate_to_human");
+        var escalateTool = _toolRegistry.ResolveByCapability(ToolCapabilities.HumanEscalate);
         if (escalateTool is not null)
         {
             try
@@ -375,6 +566,17 @@ public sealed class AgentConversationService : IAgentConversationService
 
         const string escalateMsg = "Te estamos comunicando con un agente humano. En breve te atenderán.";
         await PersistTurnAsync(session.ConversationId, userMessage, escalateMsg, session.ConversationState, reservationCreated: false, ct);
+
+        await _usageBilling.ChargeAsync(new UsageChargeRequest(
+            config.BusinessId,
+            config.AgentId,
+            session.ConversationId,
+            MessageId: null,
+            UsageOperationType.AgentTurn,
+            ToolCalls: 1,
+            OutboundMessages: 1,
+            Model: config.Model,
+            MetadataJson: JsonSerializer.Serialize(new { escalated = true, reason })), ct);
 
         return AgentTurnResult.Ok(escalateMsg, escalated: true);
     }

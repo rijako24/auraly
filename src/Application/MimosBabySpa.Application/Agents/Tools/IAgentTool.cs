@@ -13,6 +13,12 @@ public interface IAgentTool
     /// <summary>Nombre de la función tal como aparece en OpenAI (snake_case).</summary>
     string Name { get; }
 
+    /// <summary>
+    /// Capacidades semanticas estables que implementa la tool.
+    /// El motor debe depender de estas capacidades, no del nombre de function calling.
+    /// </summary>
+    IReadOnlyList<string> Capabilities => [];
+
     /// <summary>Descripción técnica de qué hace la tool (no cuándo llamarla).</summary>
     string Description { get; }
 

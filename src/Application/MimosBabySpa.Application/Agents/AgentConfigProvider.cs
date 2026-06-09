@@ -123,6 +123,40 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
                     config.AgentId, stage.Id);
             }
 
+            foreach (var rule in stage.AfterTool)
+            {
+                if (!config.EnabledToolNames.Contains(rule.Tool, StringComparer.OrdinalIgnoreCase))
+                {
+                    _logger.LogWarning(
+                        "AgentConfig {AgentId}: stage '{Stage}' afterTool references '{Tool}' which is not in enabledTools",
+                        config.AgentId, stage.Id, rule.Tool);
+                }
+
+                if (!string.IsNullOrWhiteSpace(rule.SetFact.Key) && !schemaKeys.Contains(rule.SetFact.Key))
+                {
+                    _logger.LogWarning(
+                        "AgentConfig {AgentId}: stage '{Stage}' afterTool setFact references unknown fact '{Key}'",
+                        config.AgentId, stage.Id, rule.SetFact.Key);
+                }
+
+                foreach (var factKey in rule.SetFacts.Keys)
+                {
+                    if (!schemaKeys.Contains(factKey))
+                    {
+                        _logger.LogWarning(
+                            "AgentConfig {AgentId}: stage '{Stage}' afterTool setFacts references unknown fact '{Key}'",
+                            config.AgentId, stage.Id, factKey);
+                    }
+                }
+
+                if (string.IsNullOrWhiteSpace(rule.When.Path))
+                {
+                    _logger.LogWarning(
+                        "AgentConfig {AgentId}: stage '{Stage}' afterTool for '{Tool}' has empty when.path",
+                        config.AgentId, stage.Id, rule.Tool);
+                }
+            }
+
             foreach (var toolName in stage.AllowedTools)
             {
                 if (!config.EnabledToolNames.Contains(toolName, StringComparer.OrdinalIgnoreCase))
@@ -134,19 +168,57 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
             }
         }
 
-        // Verificar que los guards solo referencian tools habilitadas
-        foreach (var (toolName, _) in config.Guards)
+        var enabledCapabilities = BuildEnabledCapabilities(config);
+
+        // Verificar que los guards solo referencian capabilities habilitadas
+        foreach (var (guardKey, _) in config.Guards)
         {
-            if (!config.EnabledToolNames.Contains(toolName, StringComparer.OrdinalIgnoreCase))
+            if (!guardKey.StartsWith("capability:", StringComparison.OrdinalIgnoreCase))
             {
                 _logger.LogWarning(
-                    "AgentConfig {AgentId}: guard for '{Tool}' exists but tool is not in enabledTools",
-                    config.AgentId, toolName);
+                    "AgentConfig {AgentId}: guard '{GuardKey}' is not capability-scoped; use 'capability:<id>'",
+                    config.AgentId, guardKey);
+                continue;
+            }
+
+            var capability = guardKey["capability:".Length..];
+            if (!enabledCapabilities.Contains(capability))
+            {
+                _logger.LogWarning(
+                    "AgentConfig {AgentId}: guard for capability '{Capability}' exists but no enabled tool exposes it",
+                    config.AgentId, capability);
             }
         }
 
         ValidateMessageSequences(config);
         ValidateTemplates(config);
+    }
+
+    private static HashSet<string> BuildEnabledCapabilities(AgentConfig config)
+    {
+        var capabilities = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var toolName in config.EnabledToolNames)
+        {
+            foreach (var capability in ResolveKnownCapabilities(toolName))
+                capabilities.Add(capability);
+        }
+
+        return capabilities;
+    }
+
+    private static IEnumerable<string> ResolveKnownCapabilities(string toolName)
+    {
+        if (toolName.Equals("set_fact", StringComparison.OrdinalIgnoreCase))
+            yield return Tools.ToolCapabilities.FactWrite;
+        else if (toolName.Equals("escalate_to_human", StringComparison.OrdinalIgnoreCase))
+            yield return Tools.ToolCapabilities.HumanEscalate;
+        else if (toolName.Equals("prepare_checkout", StringComparison.OrdinalIgnoreCase))
+            yield return Tools.ToolCapabilities.CheckoutPrepare;
+        else if (toolName.Equals("create_reservation", StringComparison.OrdinalIgnoreCase))
+            yield return Tools.ToolCapabilities.ReservationCreate;
+        else if (toolName.Equals("assign_paid_slot", StringComparison.OrdinalIgnoreCase))
+            yield return Tools.ToolCapabilities.PaidSlotAssign;
     }
 
     /// <summary>

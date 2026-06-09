@@ -74,6 +74,16 @@ public class AgentPromptComposerTests
     }
 
     [Fact]
+    public void Compose_WhenNoBotHistory_IncludesFirstVisibleResponsePolicy()
+    {
+        var result = Compose(DefaultConfig, []);
+
+        result.Should().Contain("## POLITICA DEL TURNO");
+        result.Should().Contain("primera respuesta visible");
+        result.Should().Contain("saludo breve");
+    }
+
+    [Fact]
     public void Compose_WithBotHistory_IncludesTemporalBlock()
     {
         var history = new[]
@@ -169,9 +179,10 @@ public class AgentPromptComposerTests
         result.Should().Contain("pago: link generado");
         result.Should().Contain("COP $67,500");
         result.Should().Contain("## CHECKOUT PENDIENTE");
-        result.Should().Contain("si el cliente cambia servicio");
-        result.Should().Contain("esa eleccion autoriza el siguiente paso del flujo");
-        result.Should().Contain("prepare_checkout");
+        result.Should().Contain("hay_link_pendiente: true");
+        result.Should().Contain("link_actual: https://pay.example/link");
+        result.Should().NotContain("si el cliente cambia servicio");
+        result.Should().NotContain("prepare_checkout");
     }
 
     [Fact]

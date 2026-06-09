@@ -37,10 +37,12 @@ public class CatalogContentGenerator : ICatalogContentGenerator
                     IsActive             = s.IsActive,
                     CategoryId           = s.CategoryId,
                     CategoryName         = s.ServiceCategory?.Name ?? string.Empty,
-                    CategoryDisplayOrder = s.ServiceCategory?.DisplayOrder ?? 0,
-                    Tier                 = s.Tier,
-                    ServiceType          = s.ServiceType,
-                    BundleItems          = s.BundleItems
+                     CategoryDisplayOrder = s.ServiceCategory?.DisplayOrder ?? 0,
+                     Tier                 = s.Tier,
+                     ServiceType          = s.ServiceType,
+                     FulfillmentKind      = s.FulfillmentKind,
+                     FixedScheduleLabel   = s.FixedScheduleLabel,
+                     BundleItems          = s.BundleItems
                         .OrderBy(b => b.DisplayOrder)
                         .Select(b => new BundleItemInfo
                         {

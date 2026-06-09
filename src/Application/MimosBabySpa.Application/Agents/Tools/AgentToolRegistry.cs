@@ -41,4 +41,12 @@ public sealed class AgentToolRegistry
     /// </summary>
     public IAgentTool? Resolve(string name) =>
         _allTools.TryGetValue(name, out var tool) ? tool : null;
+
+    /// <summary>
+    /// Resuelve una tool por capacidad semantica estable.
+    /// Usado por el motor cuando necesita una accion interna sin depender del nombre OpenAI.
+    /// </summary>
+    public IAgentTool? ResolveByCapability(string capability) =>
+        _allTools.Values.FirstOrDefault(t =>
+            t.Capabilities.Contains(capability, StringComparer.OrdinalIgnoreCase));
 }

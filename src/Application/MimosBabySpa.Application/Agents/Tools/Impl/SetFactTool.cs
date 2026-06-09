@@ -36,6 +36,8 @@ public sealed class SetFactTool : IAgentTool
 
     private readonly ILeadService _leadService;
 
+    private readonly ServiceNameResolver _serviceNameResolver;
+
 
 
     public SetFactTool(
@@ -46,7 +48,9 @@ public sealed class SetFactTool : IAgentTool
 
         IConversationVerificationService verifications,
 
-        ILeadService leadService)
+        ILeadService leadService,
+
+        ServiceNameResolver serviceNameResolver)
 
     {
 
@@ -58,11 +62,16 @@ public sealed class SetFactTool : IAgentTool
 
         _leadService = leadService;
 
+        _serviceNameResolver = serviceNameResolver;
+
     }
 
 
 
     public string Name => "set_fact";
+
+
+    public IReadOnlyList<string> Capabilities => [ToolCapabilities.FactWrite];
 
 
 
@@ -205,6 +214,46 @@ public sealed class SetFactTool : IAgentTool
             if (typeError is not null)
 
                 return typeError;
+
+        }
+
+        if (key.Equals(ConversationFactKeys.Service, StringComparison.OrdinalIgnoreCase))
+
+        {
+
+            var canonicalService = await _serviceNameResolver.ResolveAsync(
+
+                ctx.BusinessId, value, cancellationToken);
+
+            if (canonicalService is null)
+
+            {
+
+                var candidates = await _serviceNameResolver.GetCandidateNamesAsync(
+
+                    ctx.BusinessId, value, ct: cancellationToken);
+
+                var hint = candidates.Count > 0
+
+                    ? $"No guardes un servicio inventado. Usa exactamente uno de estos nombres del catalogo: {string.Join(", ", candidates)}."
+
+                    : "Llama get_service_catalog y usa exactamente un nombre de servicio del catalogo.";
+
+                return ToolResultHelper.Error(
+
+                    ToolErrorCodes.ServiceNotResolved,
+
+                    $"No canonical service was found for '{value}'.",
+
+                    hint,
+
+                    recoverable: true);
+
+            }
+
+            if (canonicalService is not null)
+
+                value = canonicalService;
 
         }
 

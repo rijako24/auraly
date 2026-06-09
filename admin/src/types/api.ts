@@ -91,3 +91,17 @@ export interface TopService {
   totalReservations: number;
   revenue: number;
 }
+
+export interface BusinessUsage {
+  planName: string;
+  planCode: string;
+  creditsLimit: number;
+  creditsUsed: number;
+  creditsUsagePercent: number;
+  variableCostLimitCop: number;
+  variableCostUsedCop: number;
+  variableCostUsagePercent: number;
+  periodStart: string;
+  periodEnd: string;
+  status: "Open" | "Exceeded" | "Closed" | number;
+}

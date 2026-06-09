@@ -15,6 +15,7 @@ using Azure.AI.OpenAI;
 using Microsoft.Extensions.Options;
 
 using MimosBabySpa.Application.BusinessRules;
+using MimosBabySpa.Application.Billing;
 using MimosBabySpa.Application.Configuration;
 using MimosBabySpa.Application.StateManagement;
 
@@ -70,6 +71,7 @@ var host = new HostBuilder()
         services.AddSingleton<ITemporalReferenceBuilder, TemporalReferenceBuilder>();
         services.AddScoped<ICatalogContentGenerator, CatalogContentGenerator>();
         services.AddScoped<IAddOnCatalogService, AddOnCatalogService>();
+        services.AddScoped<IUsageBillingService, UsageBillingService>();
 
         // OpenAI Clients
         services.Configure<OpenAITextModelOptions>(configuration.GetSection(OpenAITextModelOptions.SectionName));
@@ -178,6 +180,8 @@ var host = new HostBuilder()
         services.AddScoped<IAgentTool, VerifyPaymentTool>();
         services.AddScoped<IAgentTool, EscalateToHumanTool>();
         services.AddScoped<IAgentTool, GetServiceCatalogTool>();
+        services.AddScoped<IAgentTool, GetCompatibleAddOnsTool>();
+        services.AddScoped<IAgentTool, GetServiceFulfillmentTool>();
         services.AddScoped<IAgentTool, SetFactTool>();
         services.AddScoped<IAgentTool, ResetFlowContextTool>();
         services.AddScoped<IAgentTool, SendMessageSequenceTool>();

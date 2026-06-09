@@ -25,7 +25,6 @@ export interface AgentFlowStage {
   reentryOnFactChanged?: string[];
   skipWhen?: string;
   autoSetOnSkip?: Record<string, string>;
-  completesOnEnter?: boolean;
   constraints?: StageConstraints;
   variants?: Record<string, AgentFlowStageVariant>;
 }

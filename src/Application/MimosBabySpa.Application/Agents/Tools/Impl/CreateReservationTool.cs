@@ -14,7 +14,6 @@ public sealed class CreateReservationTool : IAgentTool
     private readonly IReservationService _reservations;
     private readonly IReservationIntentBuilder _intentBuilder;
     private readonly IBusinessRuleEngine _rules;
-    private readonly IPaymentLifecycleService _paymentLifecycle;
     private readonly IAvailabilityService _availability;
     private readonly ISchedulingPolicyProvider _schedulingPolicy;
     private readonly IConversationLifecycleService _lifecycle;
@@ -23,7 +22,6 @@ public sealed class CreateReservationTool : IAgentTool
         IReservationService reservations,
         IReservationIntentBuilder intentBuilder,
         IBusinessRuleEngine rules,
-        IPaymentLifecycleService paymentLifecycle,
         IAvailabilityService availability,
         ISchedulingPolicyProvider schedulingPolicy,
         IConversationLifecycleService lifecycle)
@@ -31,13 +29,14 @@ public sealed class CreateReservationTool : IAgentTool
         _reservations = reservations;
         _intentBuilder = intentBuilder;
         _rules = rules;
-        _paymentLifecycle = paymentLifecycle;
         _availability = availability;
         _schedulingPolicy = schedulingPolicy;
         _lifecycle = lifecycle;
     }
 
     public string Name => "create_reservation";
+
+    public IReadOnlyList<string> Capabilities => [ToolCapabilities.ReservationCreate];
 
     public string Description =>
         "Creates a confirmed reservation from the current booking facts and customer confirmation flag. " +
@@ -112,16 +111,6 @@ public sealed class CreateReservationTool : IAgentTool
         var idempotentResult = TryBuildIdempotentResult(ctx, service!, dateStr!, timeStr!, customerName!);
         if (idempotentResult is not null)
             return idempotentResult;
-
-        var pendingPayment = ctx.ActivePayment
-            ?? await _paymentLifecycle.GetActiveByConversationAsync(ctx.ConversationId, cancellationToken);
-        if (pendingPayment?.Status == PaymentTransactionStatus.Created)
-        {
-            return ToolResultHelper.Error(
-                "payment_pending",
-                "There is a pending checkout link for this conversation. Do not call create_reservation until the payment flow finishes or is abandoned.",
-                "If the customer wants to cancel the pending checkout, call reset_flow_context with checkout_action=abandon.");
-        }
 
         var ruleResult = await _rules.ValidateReservationAsync(
             ctx.BusinessId, service!, date, time, cancellationToken);

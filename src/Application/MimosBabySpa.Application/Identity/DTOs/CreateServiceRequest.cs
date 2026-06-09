@@ -10,4 +10,6 @@ public record CreateServiceRequest(
     decimal Price,
     Guid CategoryId,
     ServiceTier Tier = ServiceTier.Base,
-    ServiceType ServiceType = ServiceType.Standard);
+    ServiceType ServiceType = ServiceType.Standard,
+    ServiceFulfillmentKind FulfillmentKind = ServiceFulfillmentKind.Reservation,
+    string? FixedScheduleLabel = null);

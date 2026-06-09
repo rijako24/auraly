@@ -46,6 +46,10 @@ public sealed class AgentPromptComposer : IPromptComposer
         if (!string.IsNullOrWhiteSpace(temporalBlock))
             blocks.Add(temporalBlock);
 
+        var turnPolicyBlock = BuildTurnPolicyBlock(input.History);
+        if (!string.IsNullOrWhiteSpace(turnPolicyBlock))
+            blocks.Add(turnPolicyBlock);
+
         var stateBlock = BuildStateFactsBlock(input.Config, input.Session, input.LatestPayment);
         if (!string.IsNullOrWhiteSpace(stateBlock))
             blocks.Add(stateBlock);
@@ -79,6 +83,19 @@ public sealed class AgentPromptComposer : IPromptComposer
             "## MEMORIA DEL CLIENTE (visitas anteriores)",
             session.CustomerMemorySummary.Trim(),
             "- Úsalo solo como contexto; NO repitas reservas pasadas como si fueran nuevas."
+        });
+    }
+
+    internal static string BuildTurnPolicyBlock(IEnumerable<Message> history)
+    {
+        if (history.Any(m => IsBotSender(m.Sender)))
+            return string.Empty;
+
+        return string.Join(Environment.NewLine, new[]
+        {
+            "## POLITICA DEL TURNO",
+            "- Esta sera la primera respuesta visible del bot en la conversacion.",
+            "- La respuesta final al cliente debe iniciar con un saludo breve, aunque hayas usado herramientas antes de responder."
         });
     }
 
@@ -240,13 +257,7 @@ public sealed class AgentPromptComposer : IPromptComposer
             "## CHECKOUT PENDIENTE",
             "- hay_link_pendiente: true",
             $"- checkout_kind: {payment.CheckoutKind}",
-            $"- monto_pendiente: {payment.Currency} ${(payment.AmountInCents / 100m).ToString("N0", System.Globalization.CultureInfo.InvariantCulture)}",
-            "- regla: el cliente puede pedir informacion normal sin modificar la solicitud.",
-            "- si el cliente cambia servicio, complementos, fecha, hora u horario fijo: actualiza primero los facts con set_fact y luego reconstruye el resumen/link con prepare_checkout.",
-            "- si el cliente elige una opcion concreta que acabas de listar, esa eleccion autoriza el siguiente paso del flujo: usa el nombre exacto de la opcion como service, llama prepare_checkout y entrega el resumen/link resultante.",
-            "- si el nuevo servicio es de inscripcion a horario fijo: no pidas fecha ni hora flexible; usa el horario fijo del servicio y registra fixed_schedule_label y fulfillment_ready=enrollment.",
-            "- si el cliente quiere cancelar o desistir de esta solicitud: llama reset_flow_context con checkout_action=abandon.",
-            "- no llames create_reservation mientras el pago siga pendiente."
+            $"- monto_pendiente: {payment.Currency} ${(payment.AmountInCents / 100m).ToString("N0", System.Globalization.CultureInfo.InvariantCulture)}"
         };
 
         if (!string.IsNullOrWhiteSpace(payment.LinkUrl))
@@ -418,7 +429,8 @@ public sealed class AgentPromptComposer : IPromptComposer
                 lines.Add($"- datos_pendientes_para_avanzar: {string.Join(", ", DescribeFacts(config, missingFacts))}");
                 lines.Add(
                     "- Mientras existan facts_pendientes, NO preguntes por acciones de etapas futuras ni intentes avanzar. " +
-                    "Si debes responder al cliente, pide solo el primer dato pendiente de esta lista.");
+                    "Si un dato pendiente requiere elegir entre opciones, presenta las opciones disponibles y pide una seleccion; " +
+                    "si es un dato simple, preguntalo directamente.");
                 lines.Add("- Regístralos con set_fact en cuanto el cliente los confirme en este turno.");
             }
 

@@ -24,6 +24,8 @@ internal sealed class AgentTurnExecution
     }
 
     public int TotalTokens { get; private set; }
+    public int PromptTokens { get; private set; }
+    public int CompletionTokens { get; private set; }
     public int ToolCallCount { get; private set; }
     public int ConsecutiveToolErrors { get; private set; }
     public bool EscalatedToHuman { get; private set; }
@@ -38,8 +40,12 @@ internal sealed class AgentTurnExecution
     public bool ShouldAutoEscalate =>
         ConsecutiveToolErrors >= _errorEscalationThreshold;
 
-    public void AddTokens(int prompt, int completion) =>
+    public void AddTokens(int prompt, int completion)
+    {
+        PromptTokens += prompt;
+        CompletionTokens += completion;
         TotalTokens += prompt + completion;
+    }
 
     public void RecordToolOutcome(ToolExecutionOutcome outcome)
     {

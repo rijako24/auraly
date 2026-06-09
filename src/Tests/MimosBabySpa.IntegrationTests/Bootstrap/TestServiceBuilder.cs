@@ -114,16 +114,20 @@ public static class TestServiceBuilder
                     sp.GetRequiredService<IReservationService>(),
                     sp.GetRequiredService<IReservationIntentBuilder>(),
                     sp.GetRequiredService<IBusinessRuleEngine>(),
-                    sp.GetRequiredService<IPaymentLifecycleService>(),
                     sp.GetRequiredService<IAvailabilityService>(),
                     sp.GetRequiredService<ISchedulingPolicyProvider>(),
                     sp.GetRequiredService<IConversationLifecycleService>()),
                 new EscalateToHumanTool(sp.GetRequiredService<IEscalationNotifier>()),
+                new GetCompatibleAddOnsTool(sp.GetRequiredService<IAddOnCatalogService>()),
+                new GetServiceFulfillmentTool(
+                    sp.GetRequiredService<IUnitOfWork>(),
+                    sp.GetRequiredService<ServiceNameResolver>()),
                 new SetFactTool(
                     sp.GetRequiredService<IConversationFactsService>(),
                     sp.GetRequiredService<IAddOnCatalogService>(),
                     sp.GetRequiredService<IConversationVerificationService>(),
-                    sp.GetRequiredService<ILeadService>()),
+                    sp.GetRequiredService<ILeadService>(),
+                    sp.GetRequiredService<ServiceNameResolver>()),
             ];
 
             var intercepted = rawTools

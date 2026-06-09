@@ -58,11 +58,6 @@ export function AgentFlowCanvas({
                   <span className="text-xs font-medium text-muted-foreground">
                     Etapa {index + 1}
                   </span>
-                  {stage.completesOnEnter && (
-                    <Badge variant="secondary" className="text-[10px]">
-                      auto
-                    </Badge>
-                  )}
                 </div>
                 <p className="font-semibold text-sm">{stage.id}</p>
                 <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">

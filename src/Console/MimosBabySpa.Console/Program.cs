@@ -15,6 +15,7 @@ using Microsoft.Extensions.Options;
 
 // Agentic Engine
 using MimosBabySpa.Application.Agents;
+using MimosBabySpa.Application.Billing;
 using MimosBabySpa.Application.Agents.Composition;
 using MimosBabySpa.Application.Agents.Facts;
 using MimosBabySpa.Application.Agents.Gating;
@@ -112,6 +113,7 @@ services.AddScoped<IBusinessClock, BusinessClock>();
 services.AddSingleton<ITemporalReferenceBuilder, TemporalReferenceBuilder>();
 services.AddScoped<ICatalogContentGenerator, CatalogContentGenerator>();
 services.AddScoped<IAddOnCatalogService, AddOnCatalogService>();
+services.AddScoped<IUsageBillingService, UsageBillingService>();
 
 // ── OpenAI Clients ─────────────────────────────────────────────────────────────
 services.Configure<OpenAITextModelOptions>(configuration.GetSection(OpenAITextModelOptions.SectionName));
@@ -211,6 +213,8 @@ services.AddScoped<IAgentTool, SuspendReservationTool>();
 services.AddScoped<IAgentTool, VerifyPaymentTool>();
 services.AddScoped<IAgentTool, EscalateToHumanTool>();
 services.AddScoped<IAgentTool, GetServiceCatalogTool>();
+services.AddScoped<IAgentTool, GetCompatibleAddOnsTool>();
+services.AddScoped<IAgentTool, GetServiceFulfillmentTool>();
 services.AddScoped<IAgentTool, SetFactTool>();
 services.AddScoped<IAgentTool, ResetFlowContextTool>();
 services.AddScoped<IAgentTool, SendMessageSequenceTool>();
@@ -239,7 +243,7 @@ const string agentIdStr = "7105A9D5-D4E4-4BBA-9F3A-DBB34E0B1B86";
 var agentId = Guid.Parse(agentIdStr);
 
 // Simula el teléfono del cliente (clave de sesión)
-const string userPhone = "+12345679822";
+const string userPhone = "+12345679845";
 
 while (true)
 {

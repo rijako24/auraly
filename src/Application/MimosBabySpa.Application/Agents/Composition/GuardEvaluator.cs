@@ -26,7 +26,8 @@ public sealed class GuardEvaluator : IGuardEvaluator
         if (!toolEval.IsAvailable)
             return toolEval;
 
-        if (!config.Guards.TryGetValue(tool.Name, out var guard) || guard.Requires.Count == 0)
+        var guard = ResolveGuard(tool, config);
+        if (guard is null || guard.Requires.Count == 0)
             return ToolAvailabilityResultAvailable;
 
         foreach (var requirement in guard.Requires)
@@ -54,13 +55,25 @@ public sealed class GuardEvaluator : IGuardEvaluator
             return new ToolAvailabilityResult(
                 false,
                 $"Missing required fact '{key}'.",
-                $"Collect '{key}' with set_fact before calling {tool.Name}.");
+                $"Collect required fact '{key}' before this action.");
         }
 
         if (requirement.StartsWith("verification:", StringComparison.OrdinalIgnoreCase))
         {
             var factType = requirement["verification:".Length..];
             return EvaluateVerification(factType, tool, ctx, arguments);
+        }
+
+        if (requirement.Equals("state:no_pending_checkout", StringComparison.OrdinalIgnoreCase))
+        {
+            var payment = ctx.ActivePayment;
+            if (payment?.Status != PaymentTransactionStatus.Created)
+                return ToolAvailabilityResultAvailable;
+
+            return new ToolAvailabilityResult(
+                false,
+                "There is a pending checkout link for this conversation.",
+                "Wait for payment confirmation, continue the pending checkout, or abandon it before this action.");
         }
 
         if (requirement.Equals("state:payment_confirmed_no_slot", StringComparison.OrdinalIgnoreCase))
@@ -76,7 +89,7 @@ public sealed class GuardEvaluator : IGuardEvaluator
             return new ToolAvailabilityResult(
                 false,
                 "No confirmed payment pending slot assignment.",
-                "Only use assign_paid_slot when pago_confirmado_sin_slot is active.");
+                "Only use this action when pago_confirmado_sin_slot is active.");
         }
 
         if (requirement.Equals("flag:verbal_confirmation", StringComparison.OrdinalIgnoreCase))
@@ -89,9 +102,20 @@ public sealed class GuardEvaluator : IGuardEvaluator
         }
 
         return new ToolAvailabilityResult(
-            false,
-            $"Unknown guard requirement '{requirement}'.",
-            "Check agent guard configuration.");
+                false,
+                $"Unknown guard requirement '{requirement}'.",
+                "Check agent guard configuration.");
+    }
+
+    private static GuardDefinition? ResolveGuard(IAgentTool tool, AgentConfig config)
+    {
+        foreach (var capability in tool.Capabilities)
+        {
+            if (config.Guards.TryGetValue($"capability:{capability}", out var capabilityGuard))
+                return capabilityGuard;
+        }
+
+        return null;
     }
 
     /// <summary>

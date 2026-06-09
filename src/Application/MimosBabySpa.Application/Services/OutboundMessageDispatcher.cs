@@ -1,5 +1,7 @@
 using MimosBabySpa.Application.Agents;
 using Microsoft.Extensions.Logging;
+using MimosBabySpa.Application.Billing;
+using MimosBabySpa.Domain.Enums;
 
 namespace MimosBabySpa.Application.Services;
 
@@ -19,13 +21,16 @@ public interface IOutboundMessageDispatcher
 public sealed class OutboundMessageDispatcher : IOutboundMessageDispatcher
 {
     private readonly IWhatsAppService _whatsAppService;
+    private readonly IUsageBillingService _usageBilling;
     private readonly ILogger<OutboundMessageDispatcher> _logger;
 
     public OutboundMessageDispatcher(
         IWhatsAppService whatsAppService,
+        IUsageBillingService usageBilling,
         ILogger<OutboundMessageDispatcher> logger)
     {
         _whatsAppService = whatsAppService;
+        _usageBilling = usageBilling;
         _logger = logger;
     }
 
@@ -37,6 +42,15 @@ public sealed class OutboundMessageDispatcher : IOutboundMessageDispatcher
     {
         if (string.IsNullOrWhiteSpace(phone) || messages.Count == 0)
             return;
+
+        var gate = await _usageBilling.CanProcessAsync(businessId, ct);
+        if (!gate.IsAllowed)
+        {
+            _logger.LogWarning(
+                "Business {BusinessId}: outbound blocked by usage gate ({Code})",
+                businessId, gate.Code);
+            return;
+        }
 
         var index = 0;
         foreach (var message in messages)
@@ -56,6 +70,15 @@ public sealed class OutboundMessageDispatcher : IOutboundMessageDispatcher
                     phone);
             }
         }
+
+        await _usageBilling.ChargeAsync(new UsageChargeRequest(
+            businessId,
+            AgentId: null,
+            ConversationId: null,
+            MessageId: null,
+            UsageOperationType.OutboundSequence,
+            OutboundMessages: messages.Count,
+            MetadataJson: $"{{\"channel\":\"whatsapp\",\"phone\":\"{phone}\"}}"), ct);
     }
 
     private async Task SendOneAsync(

@@ -36,6 +36,11 @@ public class UnitOfWork : IUnitOfWork
     private IUserExternalLoginRepository? _userExternalLogins;
     private IAuditLogRepository? _auditLogs;
     private ITenantRepository? _tenants;
+    private ISubscriptionPlanRepository? _subscriptionPlans;
+    private IBusinessSubscriptionRepository? _businessSubscriptions;
+    private IBusinessUsagePeriodRepository? _businessUsagePeriods;
+    private IUsageLedgerRepository? _usageLedger;
+    private IUsageCostRateRepository? _usageCostRates;
 
     public UnitOfWork(ApplicationDbContext context)
     {
@@ -131,6 +136,21 @@ public class UnitOfWork : IUnitOfWork
 
     public ITenantRepository Tenants =>
         _tenants ??= new TenantRepository(_context);
+
+    public ISubscriptionPlanRepository SubscriptionPlans =>
+        _subscriptionPlans ??= new SubscriptionPlanRepository(_context);
+
+    public IBusinessSubscriptionRepository BusinessSubscriptions =>
+        _businessSubscriptions ??= new BusinessSubscriptionRepository(_context);
+
+    public IBusinessUsagePeriodRepository BusinessUsagePeriods =>
+        _businessUsagePeriods ??= new BusinessUsagePeriodRepository(_context);
+
+    public IUsageLedgerRepository UsageLedger =>
+        _usageLedger ??= new UsageLedgerRepository(_context);
+
+    public IUsageCostRateRepository UsageCostRates =>
+        _usageCostRates ??= new UsageCostRateRepository(_context);
 
     public async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {

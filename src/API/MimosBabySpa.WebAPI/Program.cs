@@ -8,6 +8,7 @@ using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using MimosBabySpa.Application.Auth.Interfaces;
 using MimosBabySpa.Application.Auth.Services;
+using MimosBabySpa.Application.Billing;
 using MimosBabySpa.Application.Common.Interfaces;
 using MimosBabySpa.Application.Identity.Interfaces;
 using MimosBabySpa.Application.Identity.Services;
@@ -67,6 +68,7 @@ builder.Services.AddScoped<IUnitOfWork, UnitOfWork>();
 builder.Services.AddSingleton<IPasswordHasher, BCryptPasswordHasher>();
 builder.Services.AddScoped<ITokenService, TokenService>();
 builder.Services.AddScoped<IAuthService, AuthService>();
+builder.Services.AddScoped<IUsageBillingService, UsageBillingService>();
 
 builder.Services.AddScoped<IUserService, UserService>();
 builder.Services.AddScoped<IRoleService, RoleService>();

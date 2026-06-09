@@ -1,5 +1,6 @@
 using System.Text.Json;
 using FluentAssertions;
+using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using MimosBabySpa.Application.Agents;
 using MimosBabySpa.Application.Agents.Composition;
@@ -10,6 +11,8 @@ using MimosBabySpa.Application.BusinessRules;
 using MimosBabySpa.Application.Configuration;
 using MimosBabySpa.Application.Services;
 using MimosBabySpa.Domain.Entities;
+using MimosBabySpa.Domain.Enums;
+using MimosBabySpa.Domain.Repositories;
 using ConversationStateModel = MimosBabySpa.Domain.Models.ConversationState;
 using Xunit;
 
@@ -23,7 +26,6 @@ public class ToolCapabilityGateTests
         Mock.Of<IReservationService>(),
         Mock.Of<IReservationIntentBuilder>(),
         Mock.Of<IBusinessRuleEngine>(),
-        Mock.Of<IPaymentLifecycleService>(),
         Mock.Of<IAvailabilityService>(),
         Mock.Of<ISchedulingPolicyProvider>(),
         Mock.Of<IConversationLifecycleService>());
@@ -82,7 +84,7 @@ public class ToolCapabilityGateTests
 
         _verifications.Record(
             ctx,
-            VerificationFactTypes.CheckoutPrepared,
+            VerificationFactTypes.CheckoutNoPaymentPrepared,
             VerificationSnapshot.Of(ctx.Facts,
                 ConversationFactKeys.Service,
                 ConversationFactKeys.DesiredDate,
@@ -94,6 +96,48 @@ public class ToolCapabilityGateTests
         var result = await _gate.EvaluateAsync(_createReservationTool, args.RootElement, ctx, CancellationToken.None);
 
         result.IsAllowed.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_CreateReservation_WithPendingCheckout_IsRejectedByDeclarativeGuard()
+    {
+        var ctx = CreateContext();
+        ctx.ActivePayment = new PaymentTransaction { Status = PaymentTransactionStatus.Created };
+        ctx.Facts[ConversationFactKeys.Service] = "Plan Marineritos";
+        ctx.Facts[ConversationFactKeys.DesiredDate] = "2026-05-22";
+        ctx.Facts[ConversationFactKeys.DesiredTime] = "09:00";
+
+        _verifications.Record(
+            ctx,
+            VerificationFactTypes.AvailabilityChecked,
+            VerificationSnapshot.FromValues(
+                new KeyValuePair<string, string>(ConversationFactKeys.Service, "Plan Marineritos"),
+                new KeyValuePair<string, string>(ConversationFactKeys.DesiredDate, "2026-05-22"),
+                new KeyValuePair<string, string>(ConversationFactKeys.DesiredTime, "09:00")),
+            VerificationTtl.AvailabilityChecked);
+
+        _verifications.Record(
+            ctx,
+            VerificationFactTypes.CustomerIdentified,
+            new Dictionary<string, string>(),
+            ttl: null);
+
+        _verifications.Record(
+            ctx,
+            VerificationFactTypes.CheckoutNoPaymentPrepared,
+            VerificationSnapshot.Of(ctx.Facts,
+                ConversationFactKeys.Service,
+                ConversationFactKeys.DesiredDate,
+                ConversationFactKeys.DesiredTime,
+                ConversationFactKeys.AddOns),
+            ttl: null);
+
+        using var args = JsonDocument.Parse("""{"customer_confirmed":true}""");
+        var result = await _gate.EvaluateAsync(_createReservationTool, args.RootElement, ctx, CancellationToken.None);
+
+        result.IsAllowed.Should().BeFalse();
+        result.Code.Should().Be("precondition_failed");
+        result.Reason.Should().Contain("pending checkout");
     }
 
     [Fact]
@@ -148,7 +192,7 @@ public class ToolCapabilityGateTests
 
         result.IsAllowed.Should().BeFalse();
         result.Code.Should().Be("stage_action_pending");
-        result.Remediation.Should().Contain("set_fact");
+        result.Remediation.Should().Contain("datos faltantes");
         result.Remediation.Should().Contain("add_ons");
     }
 
@@ -181,7 +225,10 @@ public class ToolCapabilityGateTests
             Mock.Of<IConversationFactsService>(),
             Mock.Of<IAddOnCatalogService>(),
             _verifications,
-            Mock.Of<ILeadService>());
+            Mock.Of<ILeadService>(),
+            new ServiceNameResolver(
+                Mock.Of<IUnitOfWork>(u => u.Services == Mock.Of<IServiceRepository>()),
+                NullLogger<ServiceNameResolver>.Instance));
 
         var ctx = CreateContext();
         using var args = JsonDocument.Parse("""{"key":"service","value":"Plan Marineritos"}""");
@@ -233,13 +280,14 @@ public class ToolCapabilityGateTests
         EnabledToolNames = ["create_reservation"],
         Guards = new Dictionary<string, MimosBabySpa.Application.Agents.Configuration.GuardDefinition>(StringComparer.OrdinalIgnoreCase)
         {
-            ["create_reservation"] = new()
+            ["capability:reservation.create"] = new()
             {
                 Requires =
                 [
                     "verification:availability_checked",
                     "verification:customer_identified",
-                    "verification:checkout_prepared"
+                    "verification:checkout_no_payment_prepared",
+                    "state:no_pending_checkout"
                 ]
             }
         }

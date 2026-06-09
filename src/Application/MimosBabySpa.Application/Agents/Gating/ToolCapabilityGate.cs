@@ -79,7 +79,7 @@ public sealed class ToolCapabilityGate : IToolCapabilityGate
             .ToList();
 
         var remediation = missingFacts.Count > 0
-            ? $"{hint} Antes registra con set_fact: {string.Join(", ", missingFacts)}."
+            ? $"{hint} Antes registra los datos faltantes: {string.Join(", ", missingFacts)}."
             : hint;
 
         return new GateResult(

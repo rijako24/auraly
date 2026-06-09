@@ -28,6 +28,8 @@ public sealed class EscalateToHumanTool : IAgentTool
 
     public string Name => "escalate_to_human";
 
+    public IReadOnlyList<string> Capabilities => [ToolCapabilities.HumanEscalate];
+
     public IReadOnlyList<string> SemanticTriggers =>
     [
         "customer_frustration",

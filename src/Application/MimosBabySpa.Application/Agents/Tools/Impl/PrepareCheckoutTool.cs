@@ -25,6 +25,7 @@ public sealed class PrepareCheckoutTool : IAgentTool
     private readonly ICheckoutQuoteService _quotes;
     private readonly IConversationVerificationService _verifications;
     private readonly IUnitOfWork _unitOfWork;
+    private readonly ServiceNameResolver _serviceNameResolver;
 
     public PrepareCheckoutTool(
         ReservationPricingResolver pricing,
@@ -33,7 +34,8 @@ public sealed class PrepareCheckoutTool : IAgentTool
         IPaymentLifecycleService paymentLifecycle,
         ICheckoutQuoteService quotes,
         IConversationVerificationService verifications,
-        IUnitOfWork unitOfWork)
+        IUnitOfWork unitOfWork,
+        ServiceNameResolver serviceNameResolver)
     {
         _pricing = pricing;
         _addOnCatalog = addOnCatalog;
@@ -42,9 +44,12 @@ public sealed class PrepareCheckoutTool : IAgentTool
         _quotes = quotes;
         _verifications = verifications;
         _unitOfWork = unitOfWork;
+        _serviceNameResolver = serviceNameResolver;
     }
 
     public string Name => "prepare_checkout";
+
+    public IReadOnlyList<string> Capabilities => [ToolCapabilities.CheckoutPrepare];
 
     public string Description =>
         "Resolves an authoritative checkout from catalog data, tenant checkout settings and current facts; " +
@@ -55,7 +60,6 @@ public sealed class PrepareCheckoutTool : IAgentTool
           "type": "object",
           "properties": {
             "service": { "type": "string", "description": "Exact service name from the catalog. Optional when booking.service fact is already set." },
-            "checkout_kind": { "type": "string", "description": "Optional technical checkout mode, e.g. reservation or enrollment. Usually resolved from service category." },
             "add_ons": { "type": "string", "description": "Comma-separated add-on names, optional." }
           }
         }
@@ -168,10 +172,19 @@ public sealed class PrepareCheckoutTool : IAgentTool
         var service = await _unitOfWork.Services.GetByBusinessIdAndNameAsync(ctx.BusinessId, serviceName);
         if (service is null)
         {
+            var canonicalServiceName = await _serviceNameResolver.ResolveAsync(ctx.BusinessId, serviceName, cancellationToken);
+            if (!string.IsNullOrWhiteSpace(canonicalServiceName))
+            {
+                service = await _unitOfWork.Services.GetByBusinessIdAndNameAsync(ctx.BusinessId, canonicalServiceName);
+            }
+        }
+
+        if (service is null)
+        {
             return (null, ToolResultHelper.Error(
                 "service_not_found",
                 $"Service '{serviceName}' was not found in the catalog.",
-                "Call get_service_catalog and use the exact service name."));
+                "Use the canonical service name already selected if it can be resolved. Only call get_service_catalog if the service is genuinely unknown or ambiguous."));
         }
 
         if (!string.IsNullOrWhiteSpace(addOns))
@@ -190,22 +203,8 @@ public sealed class PrepareCheckoutTool : IAgentTool
         }
 
         var checkout = ctx.Config?.Checkout ?? new CheckoutDefinitions();
-        var checkoutKindText = ResolveCheckoutKind(arguments, checkout, service.ServiceCategory?.Name);
-        if (string.IsNullOrWhiteSpace(checkoutKindText))
-        {
-            return (null, ToolResultHelper.Error(
-                "checkout_mode_not_configured",
-                "No checkout mode is configured for the selected service category.",
-                "Configure checkout.categoryModes or pass checkout_kind from a fact set by the stage."));
-        }
-
-        if (!TryParseCheckoutKind(checkoutKindText, out var checkoutKind))
-        {
-            return (null, ToolResultHelper.Error(
-                "invalid_checkout_kind",
-                $"Checkout kind '{checkoutKindText}' is not supported.",
-                "Use a configured technical mode such as reservation or enrollment."));
-        }
+        var checkoutKind = ResolveCheckoutKind(service);
+        var checkoutKindText = checkoutKind.ToString().ToLowerInvariant();
 
         var checkoutMode = checkout.ResolveMode(checkoutKindText);
         if (checkoutMode is null)
@@ -277,37 +276,10 @@ public sealed class PrepareCheckoutTool : IAgentTool
         return items;
     }
 
-    private static string? ResolveCheckoutKind(JsonElement args, CheckoutDefinitions checkout, string? category)
-    {
-        if (ToolResultHelper.TryGetString(args, "checkout_kind", out var fromArgs)
-            && !string.IsNullOrWhiteSpace(fromArgs))
-            return fromArgs.Trim();
-
-        if (!string.IsNullOrWhiteSpace(category)
-            && checkout.CategoryModes.TryGetValue(category, out var fromCategory)
-            && !string.IsNullOrWhiteSpace(fromCategory))
-            return fromCategory.Trim();
-
-        return null;
-    }
-
-    private static bool TryParseCheckoutKind(string raw, out CheckoutKind checkoutKind)
-    {
-        if (raw.Equals("reservation", StringComparison.OrdinalIgnoreCase))
-        {
-            checkoutKind = CheckoutKind.Reservation;
-            return true;
-        }
-
-        if (raw.Equals("enrollment", StringComparison.OrdinalIgnoreCase))
-        {
-            checkoutKind = CheckoutKind.Enrollment;
-            return true;
-        }
-
-        checkoutKind = default;
-        return false;
-    }
+    private static CheckoutKind ResolveCheckoutKind(Service service) =>
+        service.FulfillmentKind == ServiceFulfillmentKind.Enrollment
+            ? CheckoutKind.Enrollment
+            : CheckoutKind.Reservation;
 
     private static long ResolvePayableCents(
         long totalCents,

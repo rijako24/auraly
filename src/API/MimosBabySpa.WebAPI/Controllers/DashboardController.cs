@@ -69,4 +69,20 @@ public class DashboardController : ControllerBase
     {
         return Ok(await _dashboardService.GetRecentReservationsAsync(User.GetTenantId(), businessId, limit, ct));
     }
+
+    [HttpGet("usage")]
+    [PermissionAuthorize("dashboard.read")]
+    public async Task<ActionResult<BusinessUsageDto?>> GetUsage(
+        [FromQuery] Guid businessId,
+        CancellationToken ct = default)
+    {
+        return Ok(await _dashboardService.GetUsageAsync(User.GetTenantId(), businessId, ct));
+    }
+
+    [HttpGet("plans")]
+    [AllowAnonymous]
+    public async Task<ActionResult<IReadOnlyList<SubscriptionPlanDto>>> GetPlans(CancellationToken ct = default)
+    {
+        return Ok(await _dashboardService.GetPlansAsync(ct));
+    }
 }

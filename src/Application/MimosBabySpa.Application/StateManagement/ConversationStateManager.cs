@@ -108,7 +108,6 @@ public class ConversationStateManager : IConversationStateManager
         LastBotMessage = entity.LastBotMessage,
         Verifications = DeserializeVerifications(entity.VerificationsJson),
         StageFactSnapshots = DeserializeStageSnapshots(entity.StageSnapshotsJson),
-        CompletedOneShotStages = DeserializeStringSet(entity.CompletedStagesJson),
         Version = entity.Version,
         CreatedAt = entity.CreatedAt,
         UpdatedAt = entity.UpdatedAt
@@ -128,9 +127,6 @@ public class ConversationStateManager : IConversationStateManager
         entity.StageSnapshotsJson = state.StageFactSnapshots.Count == 0
             ? null
             : JsonSerializer.Serialize(state.StageFactSnapshots, JsonOptions);
-        entity.CompletedStagesJson = state.CompletedOneShotStages.Count == 0
-            ? null
-            : JsonSerializer.Serialize(state.CompletedOneShotStages, JsonOptions);
         entity.Version = state.Version;
         entity.UpdatedAt = state.UpdatedAt;
     }
@@ -164,22 +160,6 @@ public class ConversationStateManager : IConversationStateManager
         catch
         {
             return new Dictionary<string, Dictionary<string, string>>(StringComparer.Ordinal);
-        }
-    }
-
-    private static HashSet<string> DeserializeStringSet(string? json)
-    {
-        if (string.IsNullOrWhiteSpace(json))
-            return new HashSet<string>(StringComparer.Ordinal);
-
-        try
-        {
-            return JsonSerializer.Deserialize<HashSet<string>>(json, JsonOptions)
-                ?? new HashSet<string>(StringComparer.Ordinal);
-        }
-        catch
-        {
-            return new HashSet<string>(StringComparer.Ordinal);
         }
     }
 }

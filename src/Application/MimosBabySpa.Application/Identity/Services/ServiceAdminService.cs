@@ -73,6 +73,8 @@ public class ServiceAdminService : IServiceAdminService
             CategoryId = request.CategoryId,
             Tier = request.Tier,
             ServiceType = request.ServiceType,
+            FulfillmentKind = request.FulfillmentKind,
+            FixedScheduleLabel = NormalizeFixedScheduleLabel(request.FixedScheduleLabel),
             CreatedAt = DateTime.UtcNow
         };
 
@@ -103,6 +105,8 @@ public class ServiceAdminService : IServiceAdminService
         if (request.CategoryId.HasValue) service.CategoryId = request.CategoryId.Value;
         if (request.Tier.HasValue) service.Tier = request.Tier.Value;
         if (request.ServiceType.HasValue) service.ServiceType = request.ServiceType.Value;
+        if (request.FulfillmentKind.HasValue) service.FulfillmentKind = request.FulfillmentKind.Value;
+        if (request.FixedScheduleLabel is not null) service.FixedScheduleLabel = NormalizeFixedScheduleLabel(request.FixedScheduleLabel);
 
         service.UpdatedAt = DateTime.UtcNow;
         await _unitOfWork.Services.UpdateAsync(service);
@@ -137,5 +141,9 @@ public class ServiceAdminService : IServiceAdminService
 
     private static ServiceDto MapToDto(Service s) => new(
         s.ServiceId, s.BusinessId, s.ServiceName, s.Description, s.DurationMinutes,
-        s.Price, s.IsActive, s.CategoryId, s.ServiceCategory.Name, s.Tier, s.ServiceType, s.CreatedAt);
+        s.Price, s.IsActive, s.CategoryId, s.ServiceCategory.Name, s.Tier, s.ServiceType,
+        s.FulfillmentKind, s.FixedScheduleLabel, s.CreatedAt);
+
+    private static string? NormalizeFixedScheduleLabel(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 }

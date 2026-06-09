@@ -1,5 +1,6 @@
 using System.Text.Json;
 using FluentAssertions;
+using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using MimosBabySpa.Application.Agents;
 using MimosBabySpa.Application.Agents.Configuration;
@@ -8,6 +9,7 @@ using MimosBabySpa.Application.Agents.Tools.Impl;
 using MimosBabySpa.Application.Configuration;
 using MimosBabySpa.Application.Services;
 using MimosBabySpa.Domain.Entities;
+using MimosBabySpa.Domain.Repositories;
 using ConversationStateModel = MimosBabySpa.Domain.Models.ConversationState;
 using Xunit;
 
@@ -18,6 +20,7 @@ public class SetFactToolTests
     private readonly Mock<IConversationFactsService> _facts = new();
     private readonly Mock<IAddOnCatalogService> _addOnCatalog = new();
     private readonly Mock<ILeadService> _leadService = new();
+    private readonly Mock<IServiceRepository> _services = new();
     private readonly ConversationVerificationService _verifications = new();
     private readonly SetFactTool _tool;
 
@@ -39,13 +42,39 @@ public class SetFactToolTests
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<AddOnRuleInfo>());
 
-        _tool = new SetFactTool(_facts.Object, _addOnCatalog.Object, _verifications, _leadService.Object);
+        _services
+            .Setup(s => s.GetActiveByBusinessIdAsync(It.IsAny<Guid>()))
+            .ReturnsAsync(Array.Empty<Service>());
+
+        var unitOfWork = new Mock<IUnitOfWork>();
+        unitOfWork.SetupGet(u => u.Services).Returns(_services.Object);
+
+        var serviceNameResolver = new ServiceNameResolver(
+            unitOfWork.Object,
+            NullLogger<ServiceNameResolver>.Instance);
+
+        _tool = new SetFactTool(
+            _facts.Object,
+            _addOnCatalog.Object,
+            _verifications,
+            _leadService.Object,
+            serviceNameResolver);
     }
 
     [Fact]
     public async Task ExecuteAsync_ServiceKey_PersistsWithoutAddOnPayload()
     {
         var businessId = Guid.NewGuid();
+        _services
+            .Setup(s => s.GetActiveByBusinessIdAsync(businessId))
+            .ReturnsAsync([
+                new Service
+                {
+                    BusinessId = businessId,
+                    ServiceName = "Plan Marineritos",
+                    IsActive = true
+                }
+            ]);
         var ctx = CreateContext(businessId);
 
         using var args = JsonDocument.Parse("""{"key":"service","value":"Plan Marineritos"}""");
@@ -73,6 +102,87 @@ public class SetFactToolTests
         ctx.Facts["baby_age_months"].Should().Be("5");
         _facts.Verify(f => f.SetAsync(
             ctx.ConversationId, ctx.BusinessId, "baby_age_months", "5", It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_ServiceKey_NormalizesToCanonicalCatalogName()
+    {
+        var businessId = Guid.NewGuid();
+        _services
+            .Setup(s => s.GetActiveByBusinessIdAsync(businessId))
+            .ReturnsAsync([
+                new Service
+                {
+                    BusinessId = businessId,
+                    ServiceName = "Taller Grupal - 3 dias/semana",
+                    IsActive = true
+                }
+            ]);
+        var ctx = CreateContext(businessId);
+
+        using var args = JsonDocument.Parse("""{"key":"service","value":"Taller Grupal 3 dias/semana"}""");
+        var json = await _tool.ExecuteAsync(args.RootElement, ctx, CancellationToken.None);
+
+        json.Should().Contain("\"ok\":true");
+        ctx.Facts[ConversationFactKeys.Service].Should().Be("Taller Grupal - 3 dias/semana");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_ServiceKey_WhenNoCanonicalMatch_DoesNotPersist()
+    {
+        var businessId = Guid.NewGuid();
+        _services
+            .Setup(s => s.GetActiveByBusinessIdAsync(businessId))
+            .ReturnsAsync([
+                new Service
+                {
+                    BusinessId = businessId,
+                    ServiceName = "Taller Grupal - 3 dias/semana",
+                    Description = "Programa de estimulacion temprana para bebes.",
+                    IsActive = true
+                }
+            ]);
+        var ctx = CreateContext(businessId);
+
+        using var args = JsonDocument.Parse("""{"key":"service","value":"Spa inventado premium"}""");
+        var json = await _tool.ExecuteAsync(args.RootElement, ctx, CancellationToken.None);
+
+        json.Should().Contain("service_not_resolved");
+        ctx.Facts.Should().NotContainKey(ConversationFactKeys.Service);
+        _facts.Verify(f => f.SetAsync(
+            It.IsAny<Guid>(), It.IsAny<Guid>(), ConversationFactKeys.Service, It.IsAny<string>(),
+            It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_ServiceKey_ResolvesDescriptiveWorkshopNameToCanonical()
+    {
+        var businessId = Guid.NewGuid();
+        _services
+            .Setup(s => s.GetActiveByBusinessIdAsync(businessId))
+            .ReturnsAsync([
+                new Service
+                {
+                    BusinessId = businessId,
+                    ServiceName = "Taller Grupal - 3 dias/semana",
+                    Description = "Programa de estimulacion temprana. Talleres grupales Mimos 2026.",
+                    IsActive = true
+                },
+                new Service
+                {
+                    BusinessId = businessId,
+                    ServiceName = "Taller Grupal - 2 dias/semana",
+                    Description = "Programa de estimulacion temprana. Talleres grupales Mimos 2026.",
+                    IsActive = true
+                }
+            ]);
+        var ctx = CreateContext(businessId);
+
+        using var args = JsonDocument.Parse("""{"key":"service","value":"Taller Estimulacion Temprana 3 dias a la semana"}""");
+        var json = await _tool.ExecuteAsync(args.RootElement, ctx, CancellationToken.None);
+
+        json.Should().Contain("\"ok\":true");
+        ctx.Facts[ConversationFactKeys.Service].Should().Be("Taller Grupal - 3 dias/semana");
     }
 
     [Fact]
@@ -314,6 +424,16 @@ public class SetFactToolTests
         var ctx = CreateContext();
         ctx.Config = CreateMimiLikeSchema();
         ctx.Facts[ConversationFactKeys.Service] = "Plan Marineritos";
+        _services
+            .Setup(s => s.GetActiveByBusinessIdAsync(ctx.BusinessId))
+            .ReturnsAsync([
+                new Service
+                {
+                    BusinessId = ctx.BusinessId,
+                    ServiceName = "Plan Marineritos",
+                    IsActive = true
+                }
+            ]);
 
         using var args = JsonDocument.Parse("""{"key":"service","value":"Plan Marineritos"}""");
         var json = await _tool.ExecuteAsync(args.RootElement, ctx, CancellationToken.None);

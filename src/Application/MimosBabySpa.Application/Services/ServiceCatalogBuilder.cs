@@ -1,12 +1,13 @@
 using System.Globalization;
 using System.Text;
 using MimosBabySpa.Application.Configuration;
+using MimosBabySpa.Domain.Enums;
 
 namespace MimosBabySpa.Application.Services;
 
 /// <summary>
-/// Construye el markdown del catálogo de servicios para inyectar en el LLM.
-/// Agrupa por categoría, ordena por Tier (Deluxe > Premium > Base) e incluye complementos compatibles por servicio.
+/// Construye el markdown del catalogo de servicios para inyectar en el LLM.
+/// Agrupa por categoria, ordena por Tier (Deluxe > Premium > Base) e incluye complementos compatibles por servicio.
 /// </summary>
 public static class ServiceCatalogBuilder
 {
@@ -16,16 +17,15 @@ public static class ServiceCatalogBuilder
         IReadOnlyList<CategoryInfo> categories)
     {
         var sb = new StringBuilder();
-        sb.AppendLine("## CATÁLOGO DE SERVICIOS");
+        sb.AppendLine("## CATALOGO DE SERVICIOS");
         sb.AppendLine();
 
         var standardServices = services
-            .Where(s => s.IsActive && s.ServiceType == Domain.Enums.ServiceType.Standard)
+            .Where(s => s.IsActive && s.ServiceType == ServiceType.Standard)
             .ToList();
 
         var categoryOrder = categories.OrderBy(c => c.DisplayOrder).ToList();
 
-        // Servicios sin categoría primero (si los hay)
         var uncategorized = standardServices
             .Where(s => !categoryOrder.Any(c => c.CategoryId == s.CategoryId))
             .OrderByDescending(s => s.Tier)
@@ -40,7 +40,6 @@ public static class ServiceCatalogBuilder
             sb.AppendLine();
         }
 
-        // Servicios por categoría
         foreach (var cat in categoryOrder)
         {
             var inCategory = standardServices
@@ -49,7 +48,8 @@ public static class ServiceCatalogBuilder
                 .ThenBy(s => s.Name)
                 .ToList();
 
-            if (inCategory.Count == 0) continue;
+            if (inCategory.Count == 0)
+                continue;
 
             sb.AppendLine($"### {cat.Name}");
             if (!string.IsNullOrWhiteSpace(cat.Description))
@@ -69,7 +69,13 @@ public static class ServiceCatalogBuilder
     {
         var price = svc.Price.ToString("N0", CultureInfo.InvariantCulture);
         var duration = $"{svc.DurationMinutes} min";
-        sb.AppendLine($"- **{svc.Name}**: {svc.Description} — ${price} ({duration})");
+        sb.AppendLine($"- **{svc.Name}**: {svc.Description} - ${price} ({duration})");
+
+        if (svc.FulfillmentKind == ServiceFulfillmentKind.Enrollment
+            && !string.IsNullOrWhiteSpace(svc.FixedScheduleLabel))
+        {
+            sb.AppendLine($"  - Horario de inscripcion: {svc.FixedScheduleLabel}");
+        }
 
         if (svc.IsBundle && svc.BundleItems.Count > 0)
         {
@@ -81,13 +87,17 @@ public static class ServiceCatalogBuilder
         }
 
         var compatibleAddOns = GetCompatibleAddOns(svc, addOnRules);
-        if (compatibleAddOns.Count > 0)
+        if (compatibleAddOns.Count == 0)
+        {
+            sb.AppendLine("  - Complementos compatibles: ninguno");
+        }
+        else
         {
             sb.AppendLine("  - Complementos compatibles:");
             foreach (var rule in compatibleAddOns)
             {
                 var addOnPrice = rule.AddOnPrice.ToString("N0", CultureInfo.InvariantCulture);
-                sb.AppendLine($"    - **{rule.AddOnName}**: {rule.AddOnDescription} — ${addOnPrice}");
+                sb.AppendLine($"    - **{rule.AddOnName}**: {rule.AddOnDescription} - ${addOnPrice}");
             }
         }
     }

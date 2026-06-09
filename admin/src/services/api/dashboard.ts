@@ -3,6 +3,7 @@ import type {
   DashboardStats,
   ChartDataPoint,
   TopService,
+  BusinessUsage,
 } from "@/types/api";
 import type { Reservation } from "@/types/entities";
 
@@ -64,6 +65,8 @@ export const dashboardApi = {
       "/dashboard/recent-reservations",
       { businessId, ...(limit !== undefined && { limit }) }
     ),
+  getUsage: (businessId: string) =>
+    apiClient.get<BusinessUsage | null>("/dashboard/usage", { businessId }),
   getAnalyticsMetrics: (period?: string) =>
     apiClient.get<AnalyticsMetrics>("/dashboard/analytics-metrics", { period }),
   getCustomerGrowth: (period?: string) =>

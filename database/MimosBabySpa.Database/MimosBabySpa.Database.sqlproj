@@ -17,6 +17,8 @@
     <Build Include="Tables\Permissions.sql" />
     <Build Include="Tables\SystemConfigurations.sql" />
     <Build Include="Tables\Businesses.sql" />
+    <Build Include="Tables\SubscriptionPlans.sql" />
+    <Build Include="Tables\UsageCostRates.sql" />
     <Build Include="Tables\AppUsers.sql" />
     <Build Include="Tables\AppRoles.sql" />
     <Build Include="Tables\AgentTypes.sql" />
@@ -42,6 +44,9 @@
     <Build Include="Tables\EmployeeServices.sql" />
     <Build Include="Tables\PaymentTransactions.sql" />
     <Build Include="Tables\Enrollments.sql" />
+    <Build Include="Tables\BusinessSubscriptions.sql" />
+    <Build Include="Tables\BusinessUsagePeriods.sql" />
+    <Build Include="Tables\UsageLedgerEntries.sql" />
     <Build Include="Tables\UserRoles.sql" />
     <Build Include="Tables\RolePermissions.sql" />
     <Build Include="Tables\UserExternalLogins.sql" />

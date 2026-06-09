@@ -65,7 +65,6 @@ public sealed class ResetFlowContextToolTests
             new(DateTime.UtcNow, null, "{}");
         ctx.ConversationState.StageFactSnapshots["scheduling"] =
             new Dictionary<string, string> { ["service"] = "Plan Marineritos" };
-        ctx.ConversationState.CompletedOneShotStages.Add("legacy_stage");
 
         using var args = JsonDocument.Parse("""{"reason":"start_new_request","checkout_action":"abandon"}""");
         var json = await tool.ExecuteAsync(args.RootElement, ctx, CancellationToken.None);
@@ -78,6 +77,5 @@ public sealed class ResetFlowContextToolTests
         ctx.Facts.Should().NotContainKey("desired_date");
         ctx.ConversationState.Verifications.Should().BeEmpty();
         ctx.ConversationState.StageFactSnapshots.Should().BeEmpty();
-        ctx.ConversationState.CompletedOneShotStages.Should().BeEmpty();
     }
 }

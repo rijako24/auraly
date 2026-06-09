@@ -133,6 +133,12 @@ Tests de integracion del motor:
 dotnet run --project src/Tests/MimosBabySpa.IntegrationTests/MimosBabySpa.IntegrationTests.csproj
 ```
 
+Publicacion de base de datos:
+
+- Para publicar BD, usar la cadena `ConnectionStrings:DefaultConnection` de `src/Console/MimosBabySpa.Console/appsettings.json`.
+- No asumir defaults de `database/MimosBabySpa.Database/Scripts/config.json` (`localhost/MimosBabySpa`) salvo que el usuario lo pida explicitamente.
+- Si se usa el proyecto SQL/DACPAC, derivar `ServerInstance`, `DatabaseName` y credenciales desde ese connection string antes de ejecutar `Publish.ps1`/`SqlPackage`.
+
 Azure Functions local:
 
 ```powershell

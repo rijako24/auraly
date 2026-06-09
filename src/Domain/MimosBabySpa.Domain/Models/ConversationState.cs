@@ -22,12 +22,6 @@ public class ConversationState
     /// </summary>
     public Dictionary<string, Dictionary<string, string>> StageFactSnapshots { get; set; } = new(StringComparer.Ordinal);
 
-    /// <summary>
-    /// Estado legacy de etapas one-shot persistidas por versiones anteriores.
-    /// El flujo actual avanza por facts de negocio, skipWhen y variantes.
-    /// </summary>
-    public HashSet<string> CompletedOneShotStages { get; set; } = new(StringComparer.Ordinal);
-
     public int Version { get; set; } = 1;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;

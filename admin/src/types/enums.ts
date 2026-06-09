@@ -6,6 +6,7 @@ export enum BusinessConfigurationKey {
 
 export const BusinessConfigurationKeyLabels: Record<BusinessConfigurationKey, string> = {
   [BusinessConfigurationKey.Integrations]: "Integraciones",
+  [BusinessConfigurationKey.PaymentConfirmationMessages]: "Mensajes de Confirmacion de Pago",
   [BusinessConfigurationKey.SchedulingPolicy]: "Política de Agendamiento",
 };
 

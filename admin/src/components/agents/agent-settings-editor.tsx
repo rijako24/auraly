@@ -270,18 +270,6 @@ export function AgentSettingsEditor({ value, onChange, section }: AgentSettingsE
                     }
                   />
                 </div>
-                <div className="flex items-center gap-2">
-                  <Checkbox
-                    id="completesOnEnter"
-                    checked={!!selectedStage.completesOnEnter}
-                    onCheckedChange={(c) =>
-                      updateStage(selectedStageIndex, {
-                        completesOnEnter: c === true,
-                      })
-                    }
-                  />
-                  <Label htmlFor="completesOnEnter">Completa al entrar</Label>
-                </div>
                 <div className="space-y-2">
                   <Label>Tools permitidas</Label>
                   <div className="flex flex-wrap gap-2">

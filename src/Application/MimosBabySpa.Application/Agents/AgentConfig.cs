@@ -24,7 +24,7 @@ public sealed class AgentConfig
     /// <summary>Schema de facts rastreados por este agente.</summary>
     public IReadOnlyList<FactSchemaEntry> FactSchema { get; init; } = [];
 
-    /// <summary>Precondiciones declarativas por tool (SettingsJson → guards).</summary>
+    /// <summary>Precondiciones declarativas por capability:<id> (SettingsJson -> guards).</summary>
     public IReadOnlyDictionary<string, GuardDefinition> Guards { get; init; }
         = new Dictionary<string, GuardDefinition>(StringComparer.OrdinalIgnoreCase);
 

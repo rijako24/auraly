@@ -20,7 +20,6 @@ public class CreateReservationToolTests
     private readonly Mock<IReservationService> _reservations = new();
     private readonly Mock<IReservationIntentBuilder> _intentBuilder = new();
     private readonly Mock<IBusinessRuleEngine> _rules = new();
-    private readonly Mock<IPaymentLifecycleService> _paymentLifecycle = new();
     private readonly Mock<IAvailabilityService> _availability = new();
     private readonly Mock<ISchedulingPolicyProvider> _schedulingPolicy = new();
     private readonly Mock<IConversationLifecycleService> _lifecycle = new();
@@ -48,34 +47,9 @@ public class CreateReservationToolTests
             _reservations.Object,
             _intentBuilder.Object,
             _rules.Object,
-            _paymentLifecycle.Object,
             _availability.Object,
             _schedulingPolicy.Object,
             _lifecycle.Object);
-    }
-
-    [Fact]
-    public async Task ExecuteAsync_WhenPaymentPending_ReturnsPaymentPending()
-    {
-        _paymentLifecycle.Setup(p => p.GetActiveByConversationAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PaymentTransaction { Status = PaymentTransactionStatus.Created });
-
-        var ctx = CreateContext();
-        using var args = JsonDocument.Parse("""
-            {
-              "service":"Plan Marineritos",
-              "date":"2026-05-22",
-              "time":"09:00",
-              "customer_name":"Richard",
-              "customer_phone":"+573001234567",
-              "customer_confirmed":true
-            }
-            """);
-
-        var json = await _tool.ExecuteAsync(args.RootElement, ctx, CancellationToken.None);
-
-        json.Should().Contain("payment_pending");
-        _reservations.Verify(r => r.CreateReservationAsync(It.IsAny<CreateReservationRequest>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -122,7 +96,6 @@ public class CreateReservationToolTests
         json.Should().Contain("\"is_booking_confirmed\":true");
         json.Should().NotContain("confirmation_token");
         _reservations.Verify(r => r.CreateReservationAsync(It.IsAny<CreateReservationRequest>(), It.IsAny<CancellationToken>()), Times.Once);
-        _paymentLifecycle.Verify(p => p.GetActiveByConversationAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
