@@ -13,8 +13,13 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "AURALY Admin",
+  title: "AURALY",
   description: "Panel de administracion de AURALY",
+  icons: {
+    icon: "/brand/auraly-mark.png",
+    shortcut: "/brand/auraly-mark.png",
+    apple: "/brand/auraly-mark.png",
+  },
 };
 
 export default function RootLayout({
