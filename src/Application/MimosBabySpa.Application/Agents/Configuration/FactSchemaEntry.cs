@@ -1,0 +1,39 @@
+namespace MimosBabySpa.Application.Agents.Configuration;
+
+public sealed class FactSchemaEntry
+{
+    public string Key { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Rol semántico universal (ej. "customer.name", "booking.service").
+    /// Permite que herramientas del motor busquen datos por intención, no por clave literal.
+    /// Opcional; si omitido, solo se accede por Key.
+    /// </summary>
+    public string? Role { get; init; }
+
+    /// <summary>Etiqueta legible para el LLM (ej. "edad del bebé").</summary>
+    public string Label { get; init; } = string.Empty;
+
+    /// <summary>string | number | date | time | phone | email</summary>
+    public string Type { get; init; } = "string";
+
+    public bool Required { get; init; }
+
+    /// <summary>user | channel | system</summary>
+    public string Source { get; init; } = "user";
+
+    public bool PersistsAcrossConversations { get; init; }
+
+    /// <summary>
+    /// eager  → el LLM debe capturar este dato en cuanto el cliente lo mencione, sin esperar su etapa.
+    /// onDemand → se captura cuando el flujo llega a la etapa correspondiente (comportamiento por defecto).
+    /// </summary>
+    public string CaptureMode { get; init; } = "onDemand";
+
+    /// <summary>
+    /// Nombres alternativos que el LLM puede usar al llamar set_fact.
+    /// Ej. ["nombre", "cliente"] para key=customer_name.
+    /// El motor los normaliza a Key canónico antes de persistir.
+    /// </summary>
+    public IReadOnlyList<string> Aliases { get; init; } = [];
+}

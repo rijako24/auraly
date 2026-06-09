@@ -12,7 +12,7 @@ using var doc = JsonDocument.Parse(jsonContent);
 var values = doc.RootElement.GetProperty("Values");
 var endpoint = values.TryGetProperty("OpenAI__TextModel__Endpoint", out var ep) ? ep.GetString() : values.TryGetProperty("OpenAI:TextModel:Endpoint", out var ep2) ? ep2.GetString() : null;
 var apiKey = values.TryGetProperty("OpenAI__TextModel__ApiKey", out var ak) ? ak.GetString() : values.TryGetProperty("OpenAI:TextModel:ApiKey", out var ak2) ? ak2.GetString() : null;
-var deploymentName = values.TryGetProperty("OpenAI__TextModel__DeploymentName", out var dn) ? dn.GetString() : values.TryGetProperty("OpenAI:TextModel:DeploymentName", out var dn2) ? dn2.GetString() : "gpt-4o-mini";
+var deploymentName = values.TryGetProperty("OpenAI__TextModel__DeploymentName", out var dn) ? dn.GetString() : values.TryGetProperty("OpenAI:TextModel:DeploymentName", out var dn2) ? dn2.GetString() : "gpt-4.1-mini";
 
 if (string.IsNullOrEmpty(endpoint) || endpoint!.Contains("<"))
 {

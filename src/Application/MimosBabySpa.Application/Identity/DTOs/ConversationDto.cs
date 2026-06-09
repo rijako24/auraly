@@ -5,9 +5,11 @@ public record ConversationDto(
     Guid BusinessId,
     string UserNumber,
     string? LastMessage,
-    string? LastIntent,
     DateTime Timestamp,
     string? CustomerName,
-    int? BabyAge,
-    string? RecommendedPlan,
-    string State);
+    string? CustomerEmail,
+    string Status,
+    DateTime OpenedAt,
+    DateTime LastActivityAt,
+    DateTime? ClosedAt,
+    string? CloseReason);

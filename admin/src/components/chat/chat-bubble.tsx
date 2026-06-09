@@ -4,7 +4,7 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
 import { formatDateTime } from "@/lib/utils";
 import type { Message } from "@/types/entities";
-import { Bot, User } from "lucide-react";
+import { Sparkles, User } from "lucide-react";
 
 interface ChatBubbleProps {
   message: Message;
@@ -27,7 +27,7 @@ export function ChatBubble({ message }: ChatBubbleProps) {
             isUser ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
           )}
         >
-          {isUser ? <User className="h-4 w-4" /> : <Bot className="h-4 w-4" />}
+          {isUser ? <User className="h-4 w-4" /> : <Sparkles className="h-4 w-4" />}
         </AvatarFallback>
       </Avatar>
       <div

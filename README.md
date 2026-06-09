@@ -95,20 +95,13 @@ Usa la URL de ngrok para configurar el webhook temporalmente.
 
 ## 📝 Scripts de Prueba
 
-Ejecuta los escenarios de prueba:
+Ejecuta los escenarios de integración del motor agentic:
 
 ```powershell
-cd src\Tests
-.\TestScenarios.ps1 -WebhookUrl "http://localhost:7071/api/WhatsAppWebhook" -TestPhoneNumber "1234567890"
+dotnet run --project src/Tests/MimosBabySpa.IntegrationTests/MimosBabySpa.IntegrationTests.csproj
 ```
 
-Los escenarios incluyen:
-1. Cliente curioso (saludo inicial)
-2. Cliente indeciso (pregunta por edad)
-3. Cliente directo (pregunta precios)
-4. Objeción (dudas de seguridad)
-5. Reserva directa
-6. Solicitud de humano
+Los escenarios cubren reservas exitosas, sin disponibilidad, doble booking, cambios de fecha, add-ons y flujos conversacionales completos.
 
 ## 🚢 Deploy a Azure
 

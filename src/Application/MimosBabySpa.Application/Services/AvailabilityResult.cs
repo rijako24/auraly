@@ -2,7 +2,7 @@ namespace MimosBabySpa.Application.Services;
 
 /// <summary>
 /// Resultado determinístico de verificación de disponibilidad.
-/// Un solo mensaje (ResponseMessage) listo para el usuario; el handler solo lo asigna.
+/// ResponseMessage es un resumen de estado sin datos de presentación (slots viven en AvailableTimeSlots).
 /// No se expone OverlappingSlots/BookedSlots a la IA para no confundirla.
 /// </summary>
 public class AvailabilityResult
@@ -12,7 +12,7 @@ public class AvailabilityResult
     /// <summary>Horarios realmente disponibles cuando se consulta sin hora (empleado + recursos verificados).</summary>
     public List<string> AvailableTimeSlots { get; set; } = new();
 
-    /// <summary>Único mensaje listo para mostrar al usuario. El handler lo asigna sin modificar.</summary>
+    /// <summary>Resumen de estado para tools (sin listar slots; usar AvailableTimeSlots para datos).</summary>
     public string ResponseMessage { get; set; } = string.Empty;
     /// <summary>Nombre del servicio consultado (contexto de la petición).</summary>
     public string RequestServiceName { get; set; } = string.Empty;

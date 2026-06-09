@@ -1,16 +1,20 @@
+using MimosBabySpa.Application.LLM;
 using MimosBabySpa.IntegrationTests.Infrastructure;
 
 namespace MimosBabySpa.IntegrationTests.Scenarios;
 
-/// <summary>Represents a single user message and the LLM scripteado turn.</summary>
+/// <summary>
+/// Representa un paso de conversación: mensaje del usuario y qué hace el "LLM falso" en ese turno.
+/// LlmScript es la lista ordenada de ChatCompletionResult que el FakeChatClient devolverá
+/// (una por llamada dentro del bucle de function calling).
+/// </summary>
 public record ConversationStep(
     string UserMessage,
-    string ExtractionJson,
+    IReadOnlyList<ChatCompletionResult> LlmScript,
     string ExpectedBotResponseContains = "");
 
 /// <summary>
-/// Defines a complete test scenario: which mocks to use, which steps to run,
-/// and which business rules to validate at the end.
+/// Define un escenario de test completo: mocks, pasos de conversación y reglas a validar.
 /// </summary>
 public abstract class TestScenario
 {

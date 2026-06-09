@@ -150,14 +150,17 @@ public class ReservationAdminService : IReservationAdminService
         if (request.Status.HasValue)
             reservation.Status = request.Status.Value;
 
-        var overlaps = await _unitOfWork.Reservations.ExistsOverlappingReservationAsync(
-            reservation.BusinessId,
-            reservation.ReservationDateTime.Date,
-            reservation.ReservationDateTime.TimeOfDay,
-            reservation.DurationMinutes,
-            reservationId);
-        if (overlaps)
-            throw new ConflictException("La modificación generaría solapamiento con otra reserva.");
+        if (reservation.ReservationDateTime.HasValue && reservation.DurationMinutes.HasValue)
+        {
+            var overlaps = await _unitOfWork.Reservations.ExistsOverlappingReservationAsync(
+                reservation.BusinessId,
+                reservation.ReservationDateTime.Value.Date,
+                reservation.ReservationDateTime.Value.TimeOfDay,
+                reservation.DurationMinutes.Value,
+                reservationId);
+            if (overlaps)
+                throw new ConflictException("La modificación generaría solapamiento con otra reserva.");
+        }
 
         reservation.UpdatedAt = DateTime.UtcNow;
         await _unitOfWork.Reservations.UpdateAsync(reservation);

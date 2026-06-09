@@ -6,35 +6,34 @@ public class Reservation
 {
     public Guid ReservationId { get; set; }
     public Guid BusinessId { get; set; }
-    public Guid ServiceId { get; set; } // ID del servicio (referencia a Services)
-    public Guid EmployeeId { get; set; } // ID del empleado asignado (obligatorio)
-    public DateTime ReservationDateTime { get; set; } // Fecha y hora de la reserva
-    public int DurationMinutes { get; set; } // Duración del servicio en minutos
-    public ReservationStatus Status { get; set; } = ReservationStatus.Pending;
-    public string? CalendarEventId { get; set; } // ID del evento en el calendario externo
-    public Guid? ConversationId { get; set; } // FK a Conversation (nullable)
+    public Guid? ServiceId { get; set; }
+    public Guid? EmployeeId { get; set; }
+    public DateTime? ReservationDateTime { get; set; }
+    public int? DurationMinutes { get; set; }
+    public ReservationStatus Status { get; set; } = ReservationStatus.Draft;
+    public string? CalendarEventId { get; set; }
+    public Guid? ConversationId { get; set; }
+
+    public string? CustomerNameSnapshot { get; set; }
+    public string? CustomerEmailSnapshot { get; set; }
+    public string? CustomerPhoneSnapshot { get; set; }
+    public string? AvailableSlotsCsv { get; set; }
+    public bool CustomerConfirmed { get; set; }
+    public string? CustomAttributesJson { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? UpdatedAt { get; set; }
-    
-    // Navigation properties
+
     public virtual Business Business { get; set; } = null!;
-    public virtual Service Service { get; set; } = null!;
-    public virtual Employee Employee { get; set; } = null!;
-    public virtual Conversation? Conversation { get; set; } // Navigation property a Conversation
+    public virtual Service? Service { get; set; }
+    public virtual Employee? Employee { get; set; }
+    public virtual Conversation? Conversation { get; set; }
     public virtual ICollection<ReservationAddOn> AddOns { get; set; } = new List<ReservationAddOn>();
-    
-    // Helper properties
-    public DateTime ReservationDate => ReservationDateTime.Date;
-    public TimeSpan ReservationTime => ReservationDateTime.TimeOfDay;
-    public DateTime EndDateTime => ReservationDateTime.AddMinutes(DurationMinutes);
-    
-    /// <summary>
-    /// Obtiene el nombre del servicio desde la relación Service.
-    /// Lanza InvalidOperationException si Service no está cargado.
-    /// </summary>
-    public string GetServiceName()
-    {
-        return Service?.ServiceName 
-            ?? throw new InvalidOperationException($"Service navigation property no está cargado para Reservation {ReservationId}");
-    }
+
+    public DateTime? EndDateTime =>
+        ReservationDateTime.HasValue && DurationMinutes.HasValue
+            ? ReservationDateTime.Value.AddMinutes(DurationMinutes.Value)
+            : null;
+
+    public string? GetServiceName() => Service?.ServiceName;
 }

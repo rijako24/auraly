@@ -7,14 +7,13 @@ public interface IConversationRepository
 {
     Task<Conversation?> GetByUserNumberAsync(string userNumber);
     Task<Conversation?> GetByBusinessIdAndUserNumberAsync(Guid businessId, string userNumber);
+    Task<Conversation?> GetActiveByBusinessIdAndUserNumberAsync(Guid businessId, string userNumber, CancellationToken ct = default);
+    Task<bool> HasClosedConversationsAsync(Guid businessId, string userNumber, CancellationToken ct = default);
     Task<Conversation> CreateAsync(Conversation conversation);
     Task<Conversation> UpdateAsync(Conversation conversation);
     Task<Conversation?> GetByIdAsync(Guid conversationId);
 
-    /// <summary>
-    /// Gets paginated conversations for admin dashboard.
-    /// </summary>
     Task<(IReadOnlyList<Conversation> Items, int TotalCount)> GetPagedByBusinessIdAsync(
         Guid businessId, int page, int pageSize, string? search = null,
-        ConversationState? state = null, CancellationToken ct = default);
+        ConversationLifecycleStatus? status = null, CancellationToken ct = default);
 }

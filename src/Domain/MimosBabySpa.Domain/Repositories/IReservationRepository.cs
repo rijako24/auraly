@@ -28,6 +28,17 @@ public interface IReservationRepository
 
     Task<Reservation> CreateAsync(Reservation reservation);
     Task<Reservation> UpdateAsync(Reservation reservation);
+    Task<Reservation?> GetActiveByConversationIdAsync(Guid conversationId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Reservas confirmadas o en espera del cliente (teléfono), con cita hoy o futura según el día del negocio.
+    /// </summary>
+    Task<IReadOnlyList<Reservation>> GetManageableByCustomerPhoneAsync(
+        Guid businessId,
+        string customerPhone,
+        DateOnly businessToday,
+        CancellationToken ct = default);
+
     Task<bool> ExistsOverlappingReservationAsync(
         Guid businessId, 
         DateTime reservationDate, 

@@ -1,7 +1,11 @@
 using Microsoft.Extensions.Logging;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using MimosBabySpa.Application.Agents;
+using MimosBabySpa.Application.Agents.Configuration;
 using MimosBabySpa.Application.Configuration;
+using MimosBabySpa.Application.DTOs;
 using MimosBabySpa.Application.StateManagement;
-using MimosBabySpa.Application.Tools;
 using MimosBabySpa.Domain.Entities;
 using MimosBabySpa.Domain.Enums;
 using MimosBabySpa.Domain.Models;
@@ -9,39 +13,43 @@ using MimosBabySpa.Domain.Repositories;
 
 namespace MimosBabySpa.Application.Services;
 
-/// <summary>
-/// Manejador de confirmación de pago (webhook Wompi, poller o confirmación manual).
-/// Verifica disponibilidad antes de crear la reserva. Si el slot fue tomado,
-/// notifica al cliente con alternativas para que elija otra hora.
-/// </summary>
 public class PaymentConfirmationHandler : IPaymentConfirmationHandler
 {
-    private readonly IPaymentTransactionRepository _paymentTransactionRepository;
+    private readonly IUnitOfWork _unitOfWork;
     private readonly IConversationStateManager _stateManager;
-    private readonly IConversationStateUpdater _stateUpdater;
-    private readonly GenericToolDispatcher _toolDispatcher;
-    private readonly CachedBusinessContextProvider _contextProvider;
-    private readonly PaymentConfirmationNotifier _confirmationNotifier;
+    private readonly IPaymentLifecycleService _paymentLifecycle;
+    private readonly IReservationService _reservationService;
+    private readonly IActiveAgentConfigResolver _activeAgentConfig;
+    private readonly IMessageSequenceResolver _sequenceResolver;
+    private readonly IOutboundMessageDispatcher _outboundDispatcher;
     private readonly IAvailabilityService _availabilityService;
+    private readonly ISchedulingPolicyProvider _schedulingPolicy;
+    private readonly IConversationLifecycleService _lifecycle;
     private readonly ILogger<PaymentConfirmationHandler> _logger;
 
     public PaymentConfirmationHandler(
-        IPaymentTransactionRepository paymentTransactionRepository,
+        IUnitOfWork unitOfWork,
         IConversationStateManager stateManager,
-        IConversationStateUpdater stateUpdater,
-        GenericToolDispatcher toolDispatcher,
-        CachedBusinessContextProvider contextProvider,
-        PaymentConfirmationNotifier confirmationNotifier,
+        IPaymentLifecycleService paymentLifecycle,
+        IReservationService reservationService,
+        IActiveAgentConfigResolver activeAgentConfig,
+        IMessageSequenceResolver sequenceResolver,
+        IOutboundMessageDispatcher outboundDispatcher,
         IAvailabilityService availabilityService,
+        ISchedulingPolicyProvider schedulingPolicy,
+        IConversationLifecycleService lifecycle,
         ILogger<PaymentConfirmationHandler> logger)
     {
-        _paymentTransactionRepository = paymentTransactionRepository;
+        _unitOfWork = unitOfWork;
         _stateManager = stateManager;
-        _stateUpdater = stateUpdater;
-        _toolDispatcher = toolDispatcher;
-        _contextProvider = contextProvider;
-        _confirmationNotifier = confirmationNotifier;
+        _paymentLifecycle = paymentLifecycle;
+        _reservationService = reservationService;
+        _activeAgentConfig = activeAgentConfig;
+        _sequenceResolver = sequenceResolver;
+        _outboundDispatcher = outboundDispatcher;
         _availabilityService = availabilityService;
+        _schedulingPolicy = schedulingPolicy;
+        _lifecycle = lifecycle;
         _logger = logger;
     }
 
@@ -52,129 +60,377 @@ public class PaymentConfirmationHandler : IPaymentConfirmationHandler
         string webhookPayload,
         CancellationToken ct = default)
     {
-        var paymentTx = await _paymentTransactionRepository.GetByPaymentReferenceIdAsync(paymentReferenceId, ct);
-        if (paymentTx == null)
+        PaymentConfirmationOutcome? outcome = null;
+
+        await _unitOfWork.ExecuteInTransactionAsync(async () =>
         {
-            _logger.LogWarning("Webhook: PaymentReferenceId={Ref} no encontrado en PaymentTransactions", paymentReferenceId);
-            return new PaymentConfirmationResult(false, "Conversación no encontrada");
+            var paymentTx = await _unitOfWork.PaymentTransactions
+                .GetByPaymentReferenceIdForUpdateAsync(paymentReferenceId, ct);
+
+            if (paymentTx is null)
+            {
+                _logger.LogWarning("Webhook: PaymentReferenceId={Ref} not found", paymentReferenceId);
+                outcome = PaymentConfirmationOutcome.NotFound("Conversación no encontrada");
+                return;
+            }
+
+            if (paymentTx.Status == PaymentTransactionStatus.Confirmed)
+            {
+                if (paymentTx.CheckoutKind == CheckoutKind.Enrollment)
+                {
+                    var existingEnrollment = await _unitOfWork.Enrollments
+                        .GetByPaymentTransactionIdAsync(paymentTx.PaymentTransactionId, ct);
+                    if (existingEnrollment is not null)
+                    {
+                        _logger.LogInformation("Webhook: inscripción ya procesada Ref={Ref}", paymentReferenceId);
+                        outcome = PaymentConfirmationOutcome.Ok();
+                        return;
+                    }
+                }
+
+                if (paymentTx.ReservationId.HasValue || paymentTx.RequiresRescheduling)
+                {
+                    _logger.LogInformation("Webhook: pago ya procesado Ref={Ref}", paymentReferenceId);
+                    outcome = PaymentConfirmationOutcome.Ok();
+                    return;
+                }
+            }
+
+            if (paymentTx.Status is PaymentTransactionStatus.Superseded
+                or PaymentTransactionStatus.Abandoned
+                or PaymentTransactionStatus.Expired)
+            {
+                _logger.LogWarning(
+                    "Webhook: pago para checkout inactivo Ref={Ref} Status={Status}",
+                    paymentReferenceId,
+                    paymentTx.Status);
+                paymentTx.RequiresRefund = true;
+                await _unitOfWork.PaymentTransactions.SaveAsync(paymentTx, ct);
+                outcome = PaymentConfirmationOutcome.Ok();
+                return;
+            }
+
+            if (paymentTx.AmountInCents != amountInCents)
+            {
+                _logger.LogWarning(
+                    "Webhook: monto no coincide esperado={Expected} recibido={Received}",
+                    paymentTx.AmountInCents, amountInCents);
+                outcome = PaymentConfirmationOutcome.Failed("Monto no coincide");
+                return;
+            }
+
+            if (paymentTx.CheckoutKind == CheckoutKind.Enrollment)
+            {
+                await HandleEnrollmentPaymentAsync(paymentTx, providerTransactionId, webhookPayload, ct);
+                outcome = PaymentConfirmationOutcome.Ok();
+                return;
+            }
+
+            var snapshot = PaymentTransactionSnapshotMapper.ToIntentSnapshot(paymentTx);
+            if (snapshot is null || !paymentTx.Snapshot_ServiceId.HasValue)
+            {
+                _logger.LogWarning("Webhook: snapshot incompleto Ref={Ref}", paymentReferenceId);
+                outcome = PaymentConfirmationOutcome.Failed("Intent de reserva incompleto");
+                return;
+            }
+
+            var service = await _unitOfWork.Services.GetByIdAsync(paymentTx.Snapshot_ServiceId.Value);
+            if (service is null)
+            {
+                outcome = PaymentConfirmationOutcome.Failed("Servicio del snapshot no encontrado");
+                return;
+            }
+
+            snapshot = snapshot with { ServiceName = service.ServiceName };
+
+            await _paymentLifecycle.MarkConfirmedAsync(paymentTx, providerTransactionId, webhookPayload, ct);
+
+            var state = await _stateManager.GetStateByConversationIdAsync(paymentTx.ConversationId, ct);
+            if (state is null)
+            {
+                _logger.LogWarning("Webhook: agent state not found ConvId={ConvId}", paymentTx.ConversationId);
+                outcome = PaymentConfirmationOutcome.Failed("Estado de conversación no encontrado");
+                return;
+            }
+
+            var originalTime = TimeOnly.FromDateTime(snapshot.ReservationDateTime).ToString("HH:mm");
+            var policy = await _schedulingPolicy.GetAsync(state.BusinessId, ct);
+
+            var availability = await _availabilityService.CheckAvailabilityAsync(
+                state.BusinessId,
+                service.ServiceName,
+                snapshot.ReservationDateTime.Date,
+                snapshot.ReservationDateTime.TimeOfDay,
+                policy,
+                ct);
+
+            if (!availability.IsAvailable)
+            {
+                _logger.LogWarning("Webhook: slot taken after payment Ref={Ref}", paymentReferenceId);
+                await _paymentLifecycle.MarkRequiresReschedulingAsync(paymentTx, ct);
+
+                state.Owner = ConversationOwner.Bot;
+                state.ConsecutiveDegradedTurns = 0;
+                await _stateManager.SaveStateAsync(paymentTx.ConversationId, state, ct);
+
+                var stubReservation = PaymentTransactionSnapshotMapper.ToNotificationReservation(
+                    paymentTx, service.ServiceName);
+                await SendWebhookSequenceAsync(
+                    state.BusinessId,
+                    stubReservation,
+                    WompiWebhookOutcomes.SlotUnavailableAfterPayment,
+                    new PaymentSequenceContext
+                    {
+                        Amount = paymentTx.AmountInCents / 100m,
+                        Currency = paymentTx.Currency,
+                        OriginalTime = originalTime,
+                        AvailableSlots = availability.AvailableTimeSlots
+                    },
+                    custom: null,
+                    ct);
+
+                outcome = PaymentConfirmationOutcome.Ok();
+                return;
+            }
+
+            try
+            {
+                var created = await _reservationService.CreateFromIntentSnapshotAsync(
+                    state.BusinessId,
+                    paymentTx.ConversationId,
+                    snapshot,
+                    snapshot.ReservationDateTime,
+                    ct);
+
+                await _paymentLifecycle.LinkReservationAsync(paymentTx, created.ReservationId, ct);
+
+                var reservation = await _unitOfWork.Reservations.GetByIdAsync(created.ReservationId);
+                if (reservation is null)
+                {
+                    outcome = PaymentConfirmationOutcome.Failed("Reserva creada pero no encontrada");
+                    return;
+                }
+
+                state.Owner = ConversationOwner.Bot;
+                state.ConsecutiveDegradedTurns = 0;
+                await _stateManager.SaveStateAsync(paymentTx.ConversationId, state, ct);
+
+                await SendWebhookSequenceAsync(
+                    state.BusinessId,
+                    reservation,
+                    ResolveOutcome(paymentTx, WompiWebhookOutcomes.ReservationCreated),
+                    payment: null,
+                    custom: null,
+                    ct);
+
+                await _lifecycle.CloseAsync(
+                    paymentTx.ConversationId, ConversationCloseReasons.ReservationConfirmed, ct);
+                outcome = PaymentConfirmationOutcome.Ok();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Webhook: CreateFromIntentSnapshot failed Ref={Ref}", paymentReferenceId);
+                await _paymentLifecycle.MarkRequiresReschedulingAsync(paymentTx, ct);
+                state.Owner = ConversationOwner.Bot;
+                await _stateManager.SaveStateAsync(paymentTx.ConversationId, state, ct);
+                outcome = PaymentConfirmationOutcome.Ok();
+            }
+        }, ct);
+
+        return outcome?.ToResult() ?? new PaymentConfirmationResult(false, "Error interno");
+    }
+
+    private async Task SendWebhookSequenceAsync(
+        Guid businessId,
+        Domain.Entities.Reservation reservation,
+        string outcomeKey,
+        PaymentSequenceContext? payment,
+        IReadOnlyDictionary<string, string>? custom,
+        CancellationToken ct)
+    {
+        var phone = reservation.CustomerPhoneSnapshot?.Trim();
+        if (string.IsNullOrWhiteSpace(phone))
+        {
+            _logger.LogDebug("Webhook outbound: teléfono vacío, no se envía secuencia");
+            return;
         }
 
-        var state = await _stateManager.GetStateByConversationIdAsync(paymentTx.ConversationId, ct);
-        if (state == null)
-        {
-            _logger.LogWarning("Webhook: estado no encontrado para ConversationId={ConvId}", paymentTx.ConversationId);
-            return new PaymentConfirmationResult(false, "Estado de conversación no encontrado");
-        }
-
-        var conversationId = paymentTx.ConversationId;
-
-        if (paymentTx.Status == PaymentTransactionStatus.Confirmed || state.PaymentConfirmed)
-        {
-            _logger.LogInformation("Webhook: pago ya procesado (idempotencia) Ref={Ref}", paymentReferenceId);
-            return new PaymentConfirmationResult(true, null);
-        }
-
-        if (state.PaymentReferenceId == null)
-        {
-            _logger.LogWarning("Webhook: usuario canceló antes del pago Ref={Ref}", paymentReferenceId);
-            return new PaymentConfirmationResult(false, "Reserva cancelada por el usuario");
-        }
-
-        if (state.AnticipoAmountInCents.HasValue && state.AnticipoAmountInCents.Value != amountInCents)
-        {
-            _logger.LogWarning("Webhook: monto no coincide esperado={Expected} recibido={Received}",
-                state.AnticipoAmountInCents, amountInCents);
-            return new PaymentConfirmationResult(false, "Monto no coincide");
-        }
-
-        paymentTx.ProviderTransactionId = providerTransactionId;
-        paymentTx.Status = PaymentTransactionStatus.Confirmed;
-        paymentTx.ConfirmedAt = DateTime.UtcNow;
-        paymentTx.WebhookPayloadJson = webhookPayload;
-        await _paymentTransactionRepository.SaveAsync(paymentTx, ct);
-
-        _stateUpdater.ApplyConfirmationFlag(state, "PaymentConfirmed", true);
-        await _stateManager.SaveStateAsync(conversationId, state, ct);
-
-        var businessContext = await _contextProvider.GetOrLoadAsync(state.BusinessId, ct);
-        var originalTime = state.DesiredTime?.ToString("HH:mm") ?? "??";
-
-        var availability = await _availabilityService.CheckAvailabilityAsync(
-            state.BusinessId,
-            state.Service!,
-            state.DesiredDate!.Value.ToDateTime(TimeOnly.MinValue),
-            state.DesiredTime!.Value.ToTimeSpan(),
-            ct);
-
-        if (!availability.IsAvailable)
+        var agentConfig = await _activeAgentConfig.GetActiveConfigAsync(businessId, ct);
+        if (agentConfig is null)
         {
             _logger.LogWarning(
-                "Webhook: slot tomado tras pago. Ref={Ref} Service={Service} Date={Date} Time={Time}",
-                paymentReferenceId, state.Service, state.DesiredDate, originalTime);
-
-            _stateUpdater.ApplyConfirmationFlag(state, "AvailabilityConfirmed", false);
-            state.DesiredTime = null;
-
-            if (availability.AvailableTimeSlots.Count == 0)
-                state.DesiredDate = null;
-
-            state.Owner = ConversationOwner.Bot;
-            state.ConsecutiveDegradedTurns = 0;
-            await _stateManager.SaveStateAsync(conversationId, state, ct);
-
-            await _confirmationNotifier.SendSlotTakenAsync(state, originalTime, availability.AvailableTimeSlots, ct);
-            return new PaymentConfirmationResult(true, null);
+                "Webhook outbound: no hay agente activo para BusinessId={BusinessId}",
+                businessId);
+            return;
         }
 
-        var context = new ToolExecutionContext
+        var sequenceName = agentConfig.Webhooks.Wompi?.TryGetValue(outcomeKey, out var outcome) == true
+            ? outcome.SendMessageSequence
+            : null;
+
+        if (string.IsNullOrWhiteSpace(sequenceName))
         {
-            ConversationId = conversationId,
-            BusinessId = state.BusinessId,
-            State = state,
-            RequiredFields = businessContext.RequiredFields,
-            UserMessage = "[Webhook pago confirmado]"
+            _logger.LogWarning(
+                "Webhook outbound: outcome '{Outcome}' sin sendMessageSequence para BusinessId={BusinessId}",
+                outcomeKey,
+                businessId);
+            return;
+        }
+
+        var context = new MessageSequenceContext
+        {
+            Reservation = reservation,
+            Payment = payment,
+            Custom = custom ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         };
 
-        var result = await _toolDispatcher.ExecuteAsync(
-            ToolType.CreateReservation,
+        var messages = await _sequenceResolver.ResolveAsync(
+            businessId,
+            sequenceName,
+            agentConfig.MessageSequences,
             context,
             ct);
 
-        if (!result.Success)
+        if (messages.Count == 0)
         {
             _logger.LogWarning(
-                "Webhook: CreateReservation falló tras disponibilidad OK (race condition). Ref={Ref} Error={Error}",
-                paymentReferenceId, result.Message);
-
-            var fallbackAvailability = await _availabilityService.CheckAvailabilityAsync(
-                state.BusinessId,
-                state.Service!,
-                state.DesiredDate!.Value.ToDateTime(TimeOnly.MinValue),
-                null,
-                ct);
-
-            _stateUpdater.ApplyConfirmationFlag(state, "AvailabilityConfirmed", false);
-            state.DesiredTime = null;
-
-            if (fallbackAvailability.AvailableTimeSlots.Count == 0)
-                state.DesiredDate = null;
-
-            state.Owner = ConversationOwner.Bot;
-            state.ConsecutiveDegradedTurns = 0;
-            await _stateManager.SaveStateAsync(conversationId, state, ct);
-
-            await _confirmationNotifier.SendSlotTakenAsync(state, originalTime, fallbackAvailability.AvailableTimeSlots, ct);
-            return new PaymentConfirmationResult(true, null);
+                "Webhook outbound: secuencia '{Sequence}' vacía para BusinessId={BusinessId}",
+                sequenceName,
+                businessId);
+            return;
         }
 
-        _logger.LogInformation("Webhook: reserva creada exitosamente Ref={Ref} ReservationId={ResId}",
-            paymentReferenceId, state.ReservationId);
+        await _outboundDispatcher.SendAllAsync(businessId, phone, messages, ct);
+    }
 
-        state.Owner = ConversationOwner.Bot;
-        state.ConsecutiveDegradedTurns = 0;
-        await _stateManager.SaveStateAsync(conversationId, state, ct);
+    private async Task HandleEnrollmentPaymentAsync(
+        PaymentTransaction paymentTx,
+        string providerTransactionId,
+        string webhookPayload,
+        CancellationToken ct)
+    {
+        var snapshot = ParseCheckoutSnapshot(paymentTx.CheckoutSnapshotJson)
+            ?? throw new InvalidOperationException("Enrollment checkout snapshot is missing or invalid.");
 
-        await _confirmationNotifier.SendAsync(state, businessContext, ct);
-        return new PaymentConfirmationResult(true, null);
+        await _paymentLifecycle.MarkConfirmedAsync(paymentTx, providerTransactionId, webhookPayload, ct);
+
+        var existing = await _unitOfWork.Enrollments.GetByPaymentTransactionIdAsync(paymentTx.PaymentTransactionId, ct);
+        if (existing is null)
+        {
+            await _unitOfWork.Enrollments.CreateAsync(new Enrollment
+            {
+                EnrollmentId = Guid.NewGuid(),
+                BusinessId = paymentTx.BusinessId,
+                ConversationId = paymentTx.ConversationId,
+                ServiceId = snapshot.ServiceId,
+                PaymentTransactionId = paymentTx.PaymentTransactionId,
+                CustomerName = snapshot.PayerName ?? string.Empty,
+                CustomerPhone = snapshot.PaymentPhone ?? string.Empty,
+                CustomerEmail = snapshot.PayerEmail,
+                FixedScheduleLabel = snapshot.FixedSchedule,
+                Status = EnrollmentStatus.Paid,
+                CustomAttributesJson = paymentTx.CheckoutSnapshotJson,
+                CreatedAt = DateTime.UtcNow
+            }, ct);
+            await _unitOfWork.SaveChangesAsync(ct);
+        }
+
+        var state = await _stateManager.GetStateByConversationIdAsync(paymentTx.ConversationId, ct);
+        if (state is not null)
+        {
+            state.Owner = ConversationOwner.Bot;
+            state.ConsecutiveDegradedTurns = 0;
+            await _stateManager.SaveStateAsync(paymentTx.ConversationId, state, ct);
+        }
+
+        var notification = new Domain.Entities.Reservation
+        {
+            ReservationId = Guid.Empty,
+            BusinessId = paymentTx.BusinessId,
+            ConversationId = paymentTx.ConversationId,
+            ServiceId = snapshot.ServiceId,
+            CustomerNameSnapshot = snapshot.PayerName,
+            CustomerPhoneSnapshot = snapshot.PaymentPhone,
+            CustomerEmailSnapshot = snapshot.PayerEmail,
+            CustomAttributesJson = paymentTx.CheckoutSnapshotJson,
+            Service = new Service { ServiceId = snapshot.ServiceId, ServiceName = snapshot.ServiceName ?? string.Empty }
+        };
+
+        var custom = new Dictionary<string, string>(snapshot.Facts ?? [], StringComparer.OrdinalIgnoreCase);
+        if (!string.IsNullOrWhiteSpace(snapshot.FixedSchedule))
+            custom["fixed_schedule"] = snapshot.FixedSchedule;
+        if (!string.IsNullOrWhiteSpace(snapshot.ServiceCategory))
+            custom["service_category"] = snapshot.ServiceCategory;
+
+        await SendWebhookSequenceAsync(
+            paymentTx.BusinessId,
+            notification,
+            ResolveOutcome(paymentTx, string.Empty),
+            new PaymentSequenceContext
+            {
+                Amount = paymentTx.AmountInCents / 100m,
+                Currency = paymentTx.Currency
+            },
+            custom,
+            ct);
+
+        await _lifecycle.CloseAsync(paymentTx.ConversationId, ConversationCloseReasons.ReservationConfirmed, ct);
+    }
+
+    private static string ResolveOutcome(PaymentTransaction payment, string legacyFallback) =>
+        !string.IsNullOrWhiteSpace(payment.ConfirmationOutcome)
+            ? payment.ConfirmationOutcome
+            : legacyFallback;
+
+    private static GenericCheckoutSnapshot? ParseCheckoutSnapshot(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+            return null;
+
+        try
+        {
+            return JsonSerializer.Deserialize<GenericCheckoutSnapshot>(
+                json,
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private sealed class GenericCheckoutSnapshot
+    {
+        [JsonPropertyName("service_id")]
+        public Guid ServiceId { get; set; }
+
+        [JsonPropertyName("service_name")]
+        public string? ServiceName { get; set; }
+
+        [JsonPropertyName("service_category")]
+        public string? ServiceCategory { get; set; }
+
+        [JsonPropertyName("payer_name")]
+        public string? PayerName { get; set; }
+
+        [JsonPropertyName("payment_phone")]
+        public string? PaymentPhone { get; set; }
+
+        [JsonPropertyName("payer_email")]
+        public string? PayerEmail { get; set; }
+
+        [JsonPropertyName("fixed_schedule")]
+        public string? FixedSchedule { get; set; }
+
+        [JsonPropertyName("facts")]
+        public Dictionary<string, string>? Facts { get; set; }
+    }
+
+    private sealed record PaymentConfirmationOutcome(bool Success, string? Error)
+    {
+        public static PaymentConfirmationOutcome Ok() => new(true, null);
+        public static PaymentConfirmationOutcome Failed(string error) => new(false, error);
+        public static PaymentConfirmationOutcome NotFound(string error) => new(false, error);
+        public PaymentConfirmationResult ToResult() => new(Success, Error);
     }
 }

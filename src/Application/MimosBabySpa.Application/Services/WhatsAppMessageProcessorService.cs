@@ -1,8 +1,9 @@
 using Microsoft.Extensions.Logging;
-using MimosBabySpa.Application.Orchestration;
+using MimosBabySpa.Application.Agents;
 using MimosBabySpa.Application.StateManagement;
 using MimosBabySpa.Domain.Entities;
 using MimosBabySpa.Domain.Models;
+using MimosBabySpa.Domain.Repositories;
 
 namespace MimosBabySpa.Application.Services;
 
@@ -13,8 +14,10 @@ public class WhatsAppMessageProcessorService : IWhatsAppMessageProcessorService
     private readonly IMessageService _messageService;
     private readonly ILeadService _leadService;
     private readonly IWhatsAppService _whatsAppService;
-    private readonly HybridTransactionalOrchestrator _orchestrator;
+    private readonly IAgentConversationService _agentService;
+    private readonly IAgentRepository _agentRepository;
     private readonly IBlobStorageService _blobStorageService;
+    private readonly IOutboundMessageDispatcher _outboundDispatcher;
     private readonly ILogger<WhatsAppMessageProcessorService> _logger;
 
     public WhatsAppMessageProcessorService(
@@ -23,8 +26,10 @@ public class WhatsAppMessageProcessorService : IWhatsAppMessageProcessorService
         IMessageService messageService,
         ILeadService leadService,
         IWhatsAppService whatsAppService,
-        HybridTransactionalOrchestrator orchestrator,
+        IAgentConversationService agentService,
+        IAgentRepository agentRepository,
         IBlobStorageService blobStorageService,
+        IOutboundMessageDispatcher outboundDispatcher,
         ILogger<WhatsAppMessageProcessorService> logger)
     {
         _conversationService = conversationService;
@@ -32,8 +37,10 @@ public class WhatsAppMessageProcessorService : IWhatsAppMessageProcessorService
         _messageService = messageService;
         _leadService = leadService;
         _whatsAppService = whatsAppService;
-        _orchestrator = orchestrator;
+        _agentService = agentService;
+        _agentRepository = agentRepository;
         _blobStorageService = blobStorageService;
+        _outboundDispatcher = outboundDispatcher;
         _logger = logger;
     }
 
@@ -46,14 +53,14 @@ public class WhatsAppMessageProcessorService : IWhatsAppMessageProcessorService
     /// <summary>
     /// Procesa un mensaje entrante de WhatsApp.
     ///
-    /// ORDEN deliberado:
-    ///   1. Obtener/crear conversación y lead.
-    ///   2. Procesar con el orquestador (historial NO incluye el mensaje actual porque aún no se guardó).
-    ///   3. Guardar mensaje del usuario y respuesta del bot — UNA SOLA VEZ cada uno.
-    ///   4. Actualizar lead basado en ReservationCreated (dato determinístico, no parseo de texto).
-    ///   5. Enviar respuesta al usuario.
+    /// Capa 1 (guardrail pre-LLM):
+    ///   - Owner=Human → guarda mensaje y detiene procesamiento del bot.
     ///
-    /// Con este orden el LLM nunca ve el mensaje actual duplicado en el historial.
+    /// Orden:
+    ///   1. Obtener/crear conversación y lead.
+    ///   2. Chequeo Owner=Human.
+    ///   3. Resolver agente activo y delegar a AgentConversationService.
+    ///   4. Actualizar lead y enviar respuesta al canal.
     /// </summary>
     public async Task ProcessIncomingMessageAsync(
         Guid businessId,
@@ -69,7 +76,7 @@ public class WhatsAppMessageProcessorService : IWhatsAppMessageProcessorService
         var conversation = await _conversationService.GetOrCreateConversationAsync(businessId, userNumber, customerName);
         var lead = await _leadService.GetOrCreateLeadAsync(businessId, userNumber, customerName);
 
-        // 2. Routing: si está en manos del humano, solo guardar mensaje y retornar (bot inhibido)
+        // ── Capa 1: handover humano — corto-circuito ─────────────────────────
         var state = await _stateManager.GetStateByConversationIdAsync(conversation.ConversationId);
         if (state?.Owner == ConversationOwner.Human)
         {
@@ -80,29 +87,50 @@ public class WhatsAppMessageProcessorService : IWhatsAppMessageProcessorService
             return;
         }
 
-        // 3. Procesar con el orquestador
-        //    El historial que carga el orquestador NO incluye el mensaje actual (no se guardó aún).
-        //    El mensaje se añade explícitamente como último rol "user" dentro del orquestador.
-        var result = await _orchestrator.ProcessMessageAsync(
+        // 2. Resolver agente activo para el negocio
+        var agent = await ResolveActiveAgentAsync(businessId);
+        if (agent is null)
+        {
+            _logger.LogWarning("No hay agente activo para negocio {BusinessId}. Mensaje ignorado.", businessId);
+            return;
+        }
+
+        // 3. Procesar con el motor agentico
+        var result = await _agentService.ProcessMessageAsync(
+            agent.AgentId,
             conversation.ConversationId,
-            businessId,
-            userNumber,
-            messageText);
+            messageText,
+            userNumber);
 
-        // 4. Guardar mensajes — UNA VEZ cada uno, DESPUÉS del orquestador
-        await _messageService.SaveMessageAsync(conversation.ConversationId, "User", messageText);
-        await _messageService.SaveMessageAsync(conversation.ConversationId, "Bot", result.Response);
+        if (!result.Success)
+        {
+            _logger.LogError("AgentConversationService falló para Conv {ConvId}: {Err}",
+                conversation.ConversationId, result.ErrorMessage);
+            return;
+        }
 
-        // 5. Actualizar lead con dato determinístico (no parseo de texto)
+        // 4. Actualizar lead y enviar al canal
         await UpdateLeadStatusAsync(lead, result.ReservationCreated);
 
-        // 6. Enviar respuesta (con imagen si aplica)
-        await SendResponseAsync(userNumber, result.Response, conversation);
+        if (!string.IsNullOrWhiteSpace(result.Response))
+            await SendResponseAsync(userNumber, result.Response, conversation);
+
+        if (result.OutboundMessages.Count > 0)
+        {
+            await _outboundDispatcher.SendAllAsync(
+                conversation.BusinessId,
+                userNumber,
+                result.OutboundMessages);
+        }
     }
 
-    // ─────────────────────────────────────────────────────────────────
-    // Envío de respuesta (texto o imagen según contexto)
-    // ─────────────────────────────────────────────────────────────────
+    // ── Helpers ──────────────────────────────────────────────────────────────
+
+    private async Task<Agent?> ResolveActiveAgentAsync(Guid businessId)
+    {
+        var agents = await _agentRepository.GetByBusinessAsync(businessId);
+        return agents.FirstOrDefault(a => a.IsActive);
+    }
 
     private async Task SendResponseAsync(string userNumber, string response, Conversation conversation)
     {
@@ -111,7 +139,7 @@ public class WhatsAppMessageProcessorService : IWhatsAppMessageProcessorService
         if (!string.IsNullOrEmpty(planName))
         {
             var imageFileName = BuildPlanImageFileName(planName);
-            var imageUrl      = await _blobStorageService.GetImageUrlAsync(conversation.BusinessId, imageFileName);
+            var imageUrl = await _blobStorageService.GetImageUrlAsync(conversation.BusinessId, imageFileName);
 
             if (!string.IsNullOrEmpty(imageUrl))
             {
@@ -123,10 +151,6 @@ public class WhatsAppMessageProcessorService : IWhatsAppMessageProcessorService
         await _whatsAppService.SendTextMessageAsync(conversation.BusinessId, userNumber, response);
     }
 
-    /// <summary>
-    /// Extrae el nombre de un plan de la respuesta del bot para acompañarlo con imagen.
-    /// Multitenant: busca el patrón genérico "Plan X" sin depender de nombres específicos.
-    /// </summary>
     private string? ExtractPlanNameFromResponse(string response)
     {
         var match = System.Text.RegularExpressions.Regex.Match(
@@ -145,10 +169,6 @@ public class WhatsAppMessageProcessorService : IWhatsAppMessageProcessorService
 
         return $"plan-{normalized}.jpg";
     }
-
-    // ─────────────────────────────────────────────────────────────────
-    // Actualización del lead — basada en dato determinístico
-    // ─────────────────────────────────────────────────────────────────
 
     private async Task UpdateLeadStatusAsync(Lead lead, bool reservationCreated)
     {

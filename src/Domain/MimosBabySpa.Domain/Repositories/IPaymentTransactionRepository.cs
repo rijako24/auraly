@@ -9,10 +9,15 @@ namespace MimosBabySpa.Domain.Repositories;
 /// </summary>
 public interface IPaymentTransactionRepository
 {
-    /// <summary>
-    /// Obtiene una transacción por su PaymentReferenceId (ID del payment link de Wompi).
-    /// </summary>
     Task<PaymentTransaction?> GetByPaymentReferenceIdAsync(string paymentReferenceId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Obtiene una transacción por su PaymentReferenceId con bloqueo pesimista (UPDLOCK).
+    /// Debe invocarse dentro de una transacción de base de datos.
+    /// </summary>
+    Task<PaymentTransaction?> GetByPaymentReferenceIdForUpdateAsync(string paymentReferenceId, CancellationToken ct = default);
+
+    Task<PaymentTransaction?> GetPendingReschedulingByConversationIdAsync(Guid conversationId, CancellationToken ct = default);
 
     /// <summary>
     /// Obtiene una transacción por su ID.
@@ -49,4 +54,13 @@ public interface IPaymentTransactionRepository
     /// Guarda o actualiza una transacción.
     /// </summary>
     Task SaveAsync(PaymentTransaction transaction, CancellationToken ct = default);
+
+    Task<PaymentTransaction?> GetActiveByConversationIdAsync(Guid conversationId, CancellationToken ct = default);
+
+    Task<PaymentTransaction?> GetActiveByReservationIdAsync(Guid reservationId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Transacción más reciente de la conversación (cualquier estado), para contexto del agente.
+    /// </summary>
+    Task<PaymentTransaction?> GetLatestByConversationIdAsync(Guid conversationId, CancellationToken ct = default);
 }

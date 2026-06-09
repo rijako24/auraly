@@ -5,7 +5,6 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using MimosBabySpa.Application.Services;
-using MimosBabySpa.Application.Orchestration;
 using MimosBabySpa.Domain.Repositories;
 using MimosBabySpa.Infrastructure.Data;
 using MimosBabySpa.Infrastructure.Repositories;
@@ -13,18 +12,24 @@ using MimosBabySpa.Infrastructure.Services;
 using MimosBabySpa.Infrastructure.Configuration;
 using Azure.Storage.Blobs;
 using Azure.AI.OpenAI;
-using System.Net.Http;
 using Microsoft.Extensions.Options;
 
-// HYBRID TRANSACTIONAL BRAIN - New Architecture
-using MimosBabySpa.Application.FlowEngine;
-using MimosBabySpa.Application.Tools;
 using MimosBabySpa.Application.BusinessRules;
+using MimosBabySpa.Application.Billing;
 using MimosBabySpa.Application.Configuration;
 using MimosBabySpa.Application.StateManagement;
+
+// Agentic Engine (Function Calling)
+using MimosBabySpa.Application.Agents;
+using MimosBabySpa.Application.Agents.Composition;
+using MimosBabySpa.Application.Agents.Facts;
+using MimosBabySpa.Application.Agents.Gating;
+using MimosBabySpa.Application.Agents.Tools;
+using MimosBabySpa.Application.Agents.Tools.Impl;
 using MimosBabySpa.Application.LLM;
-using MimosBabySpa.Application.LLM.Extraction;
-using MimosBabySpa.Application.Prompts;
+using MimosBabySpa.Application.Agents.Templates;
+using MimosBabySpa.Application.Time;
+using MimosBabySpa.Infrastructure.LLM;
 
 var host = new HostBuilder()
     .ConfigureFunctionsWorkerDefaults()
@@ -36,7 +41,6 @@ var host = new HostBuilder()
         services.AddDbContext<ApplicationDbContext>(options =>
             options.UseSqlServer(configuration.GetConnectionString("DefaultConnection")));
 
-        // ✅ Memory Cache (para CachedBusinessContextProvider)
         services.AddMemoryCache();
 
         // Repositories
@@ -47,25 +51,29 @@ var host = new HostBuilder()
         services.AddScoped<IReservationRepository, ReservationRepository>();
         services.AddScoped<IConversationStateRepository, ConversationStateRepository>();
         services.AddScoped<IPaymentTransactionRepository, PaymentTransactionRepository>();
+        services.AddScoped<IEnrollmentRepository, EnrollmentRepository>();
+        services.AddScoped<IAgentRepository, AgentRepository>();
 
         // Application Services
         services.AddScoped<IConversationService, ConversationService>();
+        services.AddScoped<IConversationLifecycleService, ConversationLifecycleService>();
         services.AddScoped<IMessageService, MessageService>();
         services.AddScoped<ILeadService, LeadService>();
         services.AddScoped<IReservationService, ReservationService>();
         services.AddScoped<IBusinessIdentificationService, BusinessIdentificationService>();
         services.AddScoped<IBusinessConfigurationService, BusinessConfigurationService>();
         services.AddScoped<IWhatsAppWebhookParserService, WhatsAppWebhookParserService>();
-        
-        // Services necesarios para Tools
         services.AddScoped<IEmployeeAssignmentService, EmployeeAssignmentService>();
         services.AddScoped<IAvailabilityService, AvailabilityService>();
-        
-        // ========================================
-        // HYBRID TRANSACTIONAL BRAIN ARCHITECTURE
-        // ========================================
-        
-        // Infrastructure Services - OpenAI (Options como fuente única de configuración)
+        services.AddScoped<ServiceNameResolver>();
+        services.AddScoped<ReservationPricingResolver>();
+        services.AddScoped<IBusinessClock, BusinessClock>();
+        services.AddSingleton<ITemporalReferenceBuilder, TemporalReferenceBuilder>();
+        services.AddScoped<ICatalogContentGenerator, CatalogContentGenerator>();
+        services.AddScoped<IAddOnCatalogService, AddOnCatalogService>();
+        services.AddScoped<IUsageBillingService, UsageBillingService>();
+
+        // OpenAI Clients
         services.Configure<OpenAITextModelOptions>(configuration.GetSection(OpenAITextModelOptions.SectionName));
         services.Configure<OpenAIAudioModelOptions>(configuration.GetSection(OpenAIAudioModelOptions.SectionName));
 
@@ -88,74 +96,45 @@ var host = new HostBuilder()
             return new OpenAIClient(new Uri(options.Endpoint), new Azure.AzureKeyCredential(options.ApiKey));
         });
 
-        // AI Service (chat + transcripción de audio con clientes separados)
+        // AI Service (solo transcripción de audio con Whisper)
         services.AddScoped<IAIService>(sp =>
         {
-            var textClient = sp.GetRequiredKeyedService<OpenAIClient>("Text");
             var audioClient = sp.GetRequiredKeyedService<OpenAIClient>("Audio");
-            var textOptions = sp.GetRequiredService<IOptions<OpenAITextModelOptions>>().Value;
             var audioOptions = sp.GetRequiredService<IOptions<OpenAIAudioModelOptions>>().Value;
-            var systemPromptProvider = sp.GetRequiredService<IPromptProvider>();
-            var cachedContextProvider = sp.GetRequiredService<CachedBusinessContextProvider>();
             var logger = sp.GetRequiredService<ILogger<AIService>>();
-
-            return new AIService(textClient, audioClient, textOptions.DeploymentName, audioOptions.DeploymentName, systemPromptProvider, cachedContextProvider, logger);
+            return new AIService(audioClient, audioOptions.DeploymentName, logger);
         });
-        
-        // Flow Engine (Cerebro Determinístico)
-        services.AddSingleton<IFlowEngine, FlowEngine>();
-        
-        // State Management (necesita IConversationStateRepository e IConversationService)
+
+        // State Management
         services.AddScoped<IConversationStateManager, ConversationStateManager>();
-        
+
         // Business Rules Engine
         services.AddScoped<IBusinessRuleEngine, BusinessRuleEngine>();
-        
-        // ✅ NEW: Cached Business Context Provider (elimina cargas redundantes + caché)
-        services.AddScoped<CachedBusinessContextProvider>();
-        
-        // ✅ NEW: Prompt Providers (prompts organizados y modulares)
-        services.AddScoped<IPromptProvider, SystemPromptProvider>();
-        
-        // ✅ NEW: Localization Service (i18n básico)
-        services.AddSingleton<ILocalizationService, LocalizationService>();
-        
-        // LLM Adapter Layer (usa cliente de texto)
-        services.AddScoped<ILLMAdapter>(sp =>
-        {
-            var textClient = sp.GetRequiredKeyedService<OpenAIClient>("Text");
-            var textOptions = sp.GetRequiredService<IOptions<OpenAITextModelOptions>>().Value;
-            var logger = sp.GetRequiredService<ILogger<AzureOpenAIAdapter>>();
 
-            return new AzureOpenAIAdapter(textClient, textOptions.DeploymentName, logger);
-        });
-        
+        // Supporting services
+        services.AddSingleton<ILocalizationService, LocalizationService>();
+
         // Payment Link Service (Wompi)
         services.AddScoped<IPaymentLinkService, WompiPaymentLinkService>();
 
         // Payment Confirmation Handler (Webhook)
         services.AddScoped<IPaymentConfirmationHandler, PaymentConfirmationHandler>();
-
-        // Payment Confirmation Messages (configurables por negocio)
         services.AddScoped<IMediaUrlResolver, BlobMediaUrlResolver>();
-        services.AddScoped<PaymentConfirmationNotifier>();
+        services.AddScoped<IOutboundMessageDispatcher, OutboundMessageDispatcher>();
+        services.AddScoped<IMessageSequenceResolver, MessageSequenceResolver>();
+        services.AddScoped<IActiveAgentConfigResolver, ActiveAgentConfigResolver>();
+
+        services.AddScoped<IConversationFactsService, ConversationFactsService>();
+        services.AddScoped<ICustomerMemoryService, CustomerMemoryService>();
+        services.AddScoped<IConversationClosedHook, ConversationSummaryHook>();
+        services.AddScoped<IReservationLifecycleService, ReservationLifecycleService>();
+        services.AddScoped<ICustomerReservationResolver, CustomerReservationResolver>();
+        services.AddScoped<IPaymentLifecycleService, PaymentLifecycleService>();
+        services.AddScoped<IReservationIntentBuilder, ReservationIntentBuilder>();
+        services.AddScoped<ICheckoutQuoteService, CheckoutQuoteService>();
 
         // Webhook signature validation (Wompi)
         services.AddSingleton<IWompiWebhookSignatureValidator, WompiWebhookSignatureValidator>();
-
-        // Tool Handlers (Domain-Agnostic)
-        services.AddScoped<IConversationStateUpdater, ConversationStateUpdater>();
-        services.AddScoped<CheckAvailabilityToolHandler>();
-        services.AddScoped<CreateReservationToolHandler>();
-        
-        // Tool Factory & Dispatcher
-        services.AddScoped<IToolFactory, ToolFactory>();
-        services.AddScoped<GenericToolDispatcher>();
-        
-        // Extraction Services
-        services.AddScoped<JsonSchemaPromptBuilder>(); // ✅ Refactorizado para usar LoadedBusinessContext
-        services.AddScoped<IExtractionValidator, ExtractionValidator>();
-        services.AddScoped<ISmartExtractionService, SmartExtractionService>();
 
         // Escalation y release (handover a humano)
         services.AddScoped<IEscalationNotifier, EscalationNotifier>();
@@ -165,34 +144,73 @@ var host = new HostBuilder()
         services.AddScoped<IReleaseLinkService>(sp => sp.GetRequiredService<AdminActionLinkService>());
         services.AddScoped<IConversationReleaseService, ConversationReleaseService>();
 
-        // Hybrid Transactional Orchestrator
-        services.AddScoped<HybridTransactionalOrchestrator>();
-        
-        // WhatsAppMessageProcessorService (usa HybridTransactionalOrchestrator)
+        // ── AGENTIC ENGINE (Function Calling) ─────────────────────────────────────
+        services.AddScoped<IChatClient>(sp =>
+        {
+            var textClient = sp.GetRequiredKeyedService<OpenAIClient>("Text");
+            var textOptions = sp.GetRequiredService<IOptions<OpenAITextModelOptions>>().Value;
+            var logger = sp.GetRequiredService<ILogger<AzureOpenAIChatClient>>();
+            return new AzureOpenAIChatClient(textClient, textOptions.DeploymentName, logger);
+        });
+
+        services.AddScoped<IAgentConfigProvider, AgentConfigProvider>();
+
+        // Hydrator: plugin model
+        services.AddSingleton<IFactSourceResolver, MimosBabySpa.Application.Agents.Facts.Resolvers.ChannelPhoneResolver>();
+        services.AddSingleton<IFactSourceResolver, MimosBabySpa.Application.Agents.Facts.Resolvers.ChannelEmailResolver>();
+        services.AddSingleton<IFactSourceResolver, MimosBabySpa.Application.Agents.Facts.Resolvers.EngagementResolver>();
+        services.AddSingleton<IFactHydrator, FactHydrator>();
+        services.AddSingleton<IFlowStageDetector, FlowStageDetector>();
+        services.AddScoped<IConversationVerificationService, ConversationVerificationService>();
+        services.AddScoped<IGuardEvaluator, GuardEvaluator>();
+        services.AddScoped<IToolCapabilityGate, ToolCapabilityGate>();
+        services.AddScoped<IPromptComposer, AgentPromptComposer>();
+
+        services.AddScoped<IAgentTemplateResolver, AgentTemplateResolver>();
+        services.AddScoped<ITemplateRenderer, PromptTemplateRenderer>();
+        services.AddScoped<IAgentTurnResponseComposer, AgentTurnResponseComposer>();
+
+        services.AddScoped<IAgentTool, CheckAvailabilityTool>();
+        services.AddScoped<IAgentTool, ResolvePricingTool>();
+        services.AddScoped<IAgentTool, PrepareCheckoutTool>();
+        services.AddScoped<IAgentTool, CreateReservationTool>();
+        services.AddScoped<IAgentTool, AssignPaidSlotTool>();
+        services.AddScoped<IAgentTool, RescheduleReservationTool>();
+        services.AddScoped<IAgentTool, SuspendReservationTool>();
+        services.AddScoped<IAgentTool, VerifyPaymentTool>();
+        services.AddScoped<IAgentTool, EscalateToHumanTool>();
+        services.AddScoped<IAgentTool, GetServiceCatalogTool>();
+        services.AddScoped<IAgentTool, GetCompatibleAddOnsTool>();
+        services.AddScoped<IAgentTool, GetServiceFulfillmentTool>();
+        services.AddScoped<IAgentTool, SetFactTool>();
+        services.AddScoped<IAgentTool, ResetFlowContextTool>();
+        services.AddScoped<IAgentTool, SendMessageSequenceTool>();
+
+        services.AddScoped<AgentToolRegistry>();
+        services.AddScoped<IAgentConversationService, AgentConversationService>();
+
+        // WhatsAppMessageProcessorService (usa AgentConversationService)
         services.AddScoped<IWhatsAppMessageProcessorService, WhatsAppMessageProcessorService>();
 
-        // Infrastructure Services - WhatsApp (credenciales desde BusinessWhatsAppNumbers)
+        // ── Infrastructure Services - WhatsApp ─────────────────────────────────────
         services.AddHttpClient();
-        services.Configure<WhatsAppWebhookOptions>(
-            configuration.GetSection(WhatsAppWebhookOptions.SectionName));
+        services.Configure<WhatsAppWebhookOptions>(configuration.GetSection(WhatsAppWebhookOptions.SectionName));
         services.AddScoped<IWhatsAppCredentialResolver, WhatsAppCredentialResolver>();
         services.AddScoped<IWhatsAppService>(sp =>
         {
             var httpClient = sp.GetRequiredService<IHttpClientFactory>().CreateClient();
             var resolver = sp.GetRequiredService<IWhatsAppCredentialResolver>();
             var logger = sp.GetRequiredService<ILogger<WhatsAppService>>();
-            var webhookOptions = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<WhatsAppWebhookOptions>>();
+            var webhookOptions = sp.GetRequiredService<IOptions<WhatsAppWebhookOptions>>();
             return new WhatsAppService(httpClient, resolver, logger, webhookOptions);
         });
 
-
-
-        // Infrastructure Services - Blob Storage (usa AzureWebJobsStorage)
+        // Infrastructure Services - Blob Storage
         services.AddSingleton(sp =>
         {
             var config = sp.GetRequiredService<IConfiguration>();
-            var connectionString = config["AzureWebJobsStorage"] ?? throw new InvalidOperationException("AzureWebJobsStorage debe estar configurado");
-            
+            var connectionString = config["AzureWebJobsStorage"]
+                ?? throw new InvalidOperationException("AzureWebJobsStorage debe estar configurado");
             return new BlobServiceClient(connectionString);
         });
 
@@ -202,22 +220,19 @@ var host = new HostBuilder()
             return new BlobStorageService(client, sp.GetRequiredService<ILogger<BlobStorageService>>());
         });
 
-        // Integrations Config Provider (Google Calendar, Wompi) — fuente única desde BusinessConfiguration
+        // Integrations Config Provider (Google Calendar, Wompi)
         services.AddScoped<IIntegrationsConfigProvider, IntegrationsConfigProvider>();
+        services.AddScoped<ISchedulingPolicyProvider, SchedulingPolicyProvider>();
 
-        // Release Link (URL firmada para devolver conversación al bot)
-        services.Configure<ReleaseLinkSettings>(
-            configuration.GetSection(ReleaseLinkSettings.SectionName));
+        // Release Link
+        services.Configure<ReleaseLinkSettings>(configuration.GetSection(ReleaseLinkSettings.SectionName));
 
-        // Infrastructure Services - Calendar
+        // Calendar
         services.AddHttpClient<GoogleCalendarService>(client =>
         {
             client.Timeout = TimeSpan.FromSeconds(30);
         });
         services.AddScoped<ICalendarService, GoogleCalendarService>();
-
-        // Application Insights (opcional)
-        // services.AddApplicationInsightsTelemetryWorkerService();
     })
     .Build();
 

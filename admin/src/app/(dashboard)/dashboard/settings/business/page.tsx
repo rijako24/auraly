@@ -19,32 +19,23 @@ import { truncate } from "@/lib/utils";
 import { configurationsApi } from "@/services/api";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 
-/** Keys shown in the UI (subset of backend keys) */
-const CONFIG_KEYS: { key: BusinessConfigurationKey; description: string }[] = [
-  { key: BusinessConfigurationKey.Personality, description: "Define la personalidad del asistente de IA" },
-  { key: BusinessConfigurationKey.EntityExtractionConfig, description: "Extracción de entidades y keywords" },
-  { key: BusinessConfigurationKey.SalesStrategy, description: "Estrategia de ventas del asistente" },
-  { key: BusinessConfigurationKey.PaymentConfig, description: "Configuración del proveedor de pagos" },
-  { key: BusinessConfigurationKey.OperatingHours, description: "Horarios de operación del negocio" },
-  { key: BusinessConfigurationKey.PaymentMethods, description: "Métodos de pago aceptados" },
-  { key: BusinessConfigurationKey.Integrations, description: "Integraciones con servicios externos" },
-  { key: BusinessConfigurationKey.EscalationContacts, description: "Contactos para escalamiento a humano" },
-  { key: BusinessConfigurationKey.PaymentConfirmationMessages, description: "Mensajes enviados al confirmar pago" },
+const CONFIG_KEYS: {
+  key: BusinessConfigurationKey;
+  description: string;
+  useJsonEditor: boolean;
+}[] = [
+  {
+    key: BusinessConfigurationKey.Integrations,
+    description: "Credenciales y configuración de servicios externos (Google Calendar, Wompi, etc.)",
+    useJsonEditor: true,
+  },
+  {
+    key: BusinessConfigurationKey.SchedulingPolicy,
+    description:
+      "Horarios de operación por día (schedule), intervalo entre slots, buffer entre citas y reglas de empleado.",
+    useJsonEditor: true,
+  },
 ];
-
-const JSON_KEYS = [
-  BusinessConfigurationKey.PaymentConfig,
-  BusinessConfigurationKey.OperatingHours,
-  BusinessConfigurationKey.PaymentMethods,
-  BusinessConfigurationKey.Integrations,
-  BusinessConfigurationKey.EscalationContacts,
-  BusinessConfigurationKey.PaymentConfirmationMessages,
-  BusinessConfigurationKey.EntityExtractionConfig,
-];
-
-function isJsonKey(key: BusinessConfigurationKey): boolean {
-  return JSON_KEYS.includes(key);
-}
 
 export default function BusinessSettingsPage() {
   const businessId = useBusinessContextStore((s) => s.selectedBusinessId);
@@ -70,17 +61,18 @@ export default function BusinessSettingsPage() {
 
   const configs = useMemo(() => {
     const configsMap = data?.configurations ?? {};
-    return CONFIG_KEYS.map(({ key, description }) => ({
+    return CONFIG_KEYS.map(({ key, description, useJsonEditor }) => ({
       key,
       keyLabel: BusinessConfigurationKeyLabels[key],
       description,
+      useJsonEditor,
       value: configsMap[BusinessConfigurationKey[key]] ?? "",
     }));
   }, [data]);
 
-  const startEdit = (key: BusinessConfigurationKey, value: string) => {
+  const startEdit = (key: BusinessConfigurationKey, value: string, useJsonEditor: boolean) => {
     setEditingKey(key);
-    if (isJsonKey(key)) {
+    if (useJsonEditor) {
       try {
         setEditValue(JSON.parse(value || "{}") as Record<string, unknown>);
       } catch {
@@ -158,7 +150,7 @@ export default function BusinessSettingsPage() {
             Configuración del Negocio
           </h1>
           <p className="text-muted-foreground">
-            Configura personalidad, pagos, horarios e integraciones
+            Integraciones externas y plantillas de mensajes de pago
           </p>
         </div>
       </div>
@@ -166,7 +158,6 @@ export default function BusinessSettingsPage() {
       <div className="space-y-4">
         {configs.map((cfg) => {
           const isEditing = editingKey === cfg.key;
-          const useJsonEditor = isJsonKey(cfg.key);
 
           return (
             <Card key={cfg.key}>
@@ -182,7 +173,7 @@ export default function BusinessSettingsPage() {
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() => startEdit(cfg.key, cfg.value)}
+                      onClick={() => startEdit(cfg.key, cfg.value, cfg.useJsonEditor)}
                     >
                       <Pencil className="mr-2 h-4 w-4" />
                       Editar
@@ -212,7 +203,7 @@ export default function BusinessSettingsPage() {
               </CardHeader>
               <CardContent>
                 {isEditing ? (
-                  useJsonEditor ? (
+                  cfg.useJsonEditor ? (
                     <JsonEditor
                       value={
                         typeof editValue === "object" ? editValue : { value: editValue }
@@ -230,7 +221,7 @@ export default function BusinessSettingsPage() {
                 ) : (
                   <p className="rounded-md bg-muted/50 p-3 font-mono text-sm">
                     {cfg.value
-                      ? getValuePreview(cfg.value, useJsonEditor)
+                      ? getValuePreview(cfg.value, cfg.useJsonEditor)
                       : "Sin configurar"}
                   </p>
                 )}

@@ -30,8 +30,8 @@ public class InMemoryServiceRepository : IServiceRepository
     {
         _store = new List<Service>
         {
-            new() { ServiceId = Guid.NewGuid(), BusinessId = businessId, ServiceName = "Plan Marineritos",      DurationMinutes = 60, Price = 80, IsActive = true, CategoryId = TestCategoryIds.Plan, ServiceCategory = PlanCategory, Tier = ServiceTier.Base,    CreatedAt = DateTime.UtcNow },
-            new() { ServiceId = Guid.NewGuid(), BusinessId = businessId, ServiceName = "Plan Post Vacunas",    DurationMinutes = 60, Price = 90, IsActive = true, CategoryId = TestCategoryIds.Plan, ServiceCategory = PlanCategory, Tier = ServiceTier.Premium, CreatedAt = DateTime.UtcNow },
+            new() { ServiceId = Guid.NewGuid(), BusinessId = businessId, ServiceName = "Plan Marineritos",      DurationMinutes = 60, Price = 80,  IsActive = true, CategoryId = TestCategoryIds.Plan, ServiceCategory = PlanCategory, Tier = ServiceTier.Base,    CreatedAt = DateTime.UtcNow },
+            new() { ServiceId = Guid.NewGuid(), BusinessId = businessId, ServiceName = "Plan Post Vacunas",    DurationMinutes = 60, Price = 90,  IsActive = true, CategoryId = TestCategoryIds.Plan, ServiceCategory = PlanCategory, Tier = ServiceTier.Premium, CreatedAt = DateTime.UtcNow },
             new() { ServiceId = Guid.NewGuid(), BusinessId = businessId, ServiceName = "Plan Aventuras Marinas", DurationMinutes = 75, Price = 100, IsActive = true, CategoryId = TestCategoryIds.Plan, ServiceCategory = PlanCategory, Tier = ServiceTier.Deluxe, CreatedAt = DateTime.UtcNow },
             new() { ServiceId = Guid.Parse("dddddddd-dddd-dddd-dddd-dddddddddddd"), BusinessId = businessId, ServiceName = "Plan Deluxe", DurationMinutes = 90, Price = 120, IsActive = true, CategoryId = TestCategoryIds.Plan, ServiceCategory = PlanCategory, Tier = ServiceTier.Deluxe, CreatedAt = DateTime.UtcNow },
             new() { ServiceId = Guid.Parse("cccccccc-cccc-cccc-cccc-cccccccccccc"), BusinessId = businessId, ServiceName = "Masaje Extra 15m", DurationMinutes = 15, Price = 20, IsActive = true, CategoryId = TestCategoryIds.Plan, ServiceCategory = PlanCategory, Tier = ServiceTier.Base, ServiceType = ServiceType.AddOn, CreatedAt = DateTime.UtcNow }
@@ -54,6 +54,10 @@ public class InMemoryServiceRepository : IServiceRepository
 
     public Task<Service> CreateAsync(Service service) { _store.Add(service); return Task.FromResult(service); }
     public Task<Service> UpdateAsync(Service service) => Task.FromResult(service);
+
+    public Task<(IReadOnlyList<Service> Items, int TotalCount)> GetPagedByBusinessIdAsync(
+        Guid businessId, int page, int pageSize, string? search, CancellationToken ct = default) =>
+        throw new NotImplementedException();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -87,6 +91,13 @@ public class InMemoryBusinessRepository : IBusinessRepository
 
     public Task<Business> CreateAsync(Business business) => Task.FromResult(business);
     public Task<Business> UpdateAsync(Business business) => Task.FromResult(business);
+
+    public Task<IReadOnlyList<Business>> GetByTenantIdAsync(Guid tenantId, CancellationToken ct = default) =>
+        throw new NotImplementedException();
+
+    public Task<(IReadOnlyList<Business> Items, int TotalCount)> GetPagedByTenantIdAsync(
+        Guid tenantId, int page, int pageSize, string? search, CancellationToken ct = default) =>
+        throw new NotImplementedException();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -99,40 +110,36 @@ public class InMemoryBusinessConfigurationRepository : IBusinessConfigurationRep
 
     public InMemoryBusinessConfigurationRepository(Guid businessId)
     {
-         _configs = new List<BusinessConfiguration>
-         {
-             new()
-             {
-                 BusinessId = businessId,
-                 Key = BusinessConfigurationKey.EntityExtractionConfig,
-                 Value = """
-                 {
-                   "SelectedAddOns": {
-                     "Description": "Servicios extra seleccionados por el cliente",
-                     "Type": "Text",
-                     "IsRequired": false
-                   }
-                 }
-                 """
-             },
-             new() { BusinessId = businessId, Key = BusinessConfigurationKey.OperatingHours, Value = "{}" },
-             new() { BusinessId = businessId, Key = BusinessConfigurationKey.PaymentMethods, Value = "[]" },
-             new() { BusinessId = businessId, Key = BusinessConfigurationKey.Integrations, Value = """{"googleCalendar":{"enabled":false,"calendarId":"primary"}}""" },
-             new()
-             {
-                 BusinessId = businessId,
-                 Key = BusinessConfigurationKey.Personality,
-                 Value = """
-                 Eres Luna, una asesora comercial experta y muy humana de Mimos Baby Spa, especializada en servicios de spa para bebés. Hablas de forma natural, cálida, tierna y conversacional, como una amiga cercana que ama el cuidado de bebés y transmite calidez en cada mensaje.
-
-                 TU ESTILO:
-                 - Usa emoticonos de forma natural y relacionada con lo que dices (👶 bebé, 💙 cariño/apoyo, ✨ magia/experiencia, 🙏 gracias, 😊 calidez, 🛁 spa/agua, 🌊 hidroterapia, 💆 bienestar, 🎉 celebración)
-                 - Sé especialmente tierna cuando hables del bebé, de las mamás o de momentos especiales
-                 - Transmite emoción genuina y cariño sin exagerar
-                 """
-             }
-         };
-         Console.WriteLine($"[DEBUG] Repo initialized with {_configs.Count} configs for {businessId}");
+        _configs = new List<BusinessConfiguration>
+        {
+            new()
+            {
+                BusinessId = businessId,
+                Key = BusinessConfigurationKey.Integrations,
+                Value = """{"googleCalendar":{"enabled":false,"calendarId":"primary"}}"""
+            },
+            new()
+            {
+                BusinessId = businessId,
+                Key = BusinessConfigurationKey.SchedulingPolicy,
+                Value = """
+                    {
+                      "slotIntervalMinutes": 60,
+                      "bufferBetweenAppointmentsMinutes": 0,
+                      "requireEmployee": true,
+                      "schedule": {
+                        "monday": [{"open":"08:00","close":"18:00"}],
+                        "tuesday": [{"open":"08:00","close":"18:00"}],
+                        "wednesday": [{"open":"08:00","close":"18:00"}],
+                        "thursday": [{"open":"08:00","close":"18:00"}],
+                        "friday": [{"open":"08:00","close":"18:00"}],
+                        "saturday": [{"open":"08:00","close":"18:00"}],
+                        "sunday": []
+                      }
+                    }
+                    """
+            }
+        };
     }
 
     public Task<IEnumerable<BusinessConfiguration>> GetByBusinessIdAsync(Guid businessId) =>
@@ -141,27 +148,6 @@ public class InMemoryBusinessConfigurationRepository : IBusinessConfigurationRep
     public Task<BusinessConfiguration?> GetByBusinessIdAndKeyAsync(Guid businessId, BusinessConfigurationKey key)
     {
         var config = _configs.FirstOrDefault(c => c.BusinessId == businessId && c.Key == key);
-        
-        if (config == null && key == BusinessConfigurationKey.EntityExtractionConfig)
-        {
-             Console.WriteLine("[DEBUG] Force-returning EntityExtractionConfig (fallback)!");
-             return Task.FromResult<BusinessConfiguration?>(new BusinessConfiguration
-             {
-                 BusinessId = businessId,
-                 Key = BusinessConfigurationKey.EntityExtractionConfig,
-                 Value = """
-                 {
-                   "SelectedAddOns": {
-                     "Description": "Servicios extra seleccionados por el cliente",
-                     "Type": "Text",
-                     "IsRequired": false
-                   }
-                 }
-                 """
-             });
-        }
-
-        Console.WriteLine($"[DEBUG] Query Key={key}, Found={config != null}");
         return Task.FromResult(config);
     }
 
@@ -221,8 +207,35 @@ public class InMemoryReservationRepository : IReservationRepository
         Guid businessId, DateTime startDate, DateTime endDate) =>
         Task.FromResult(_store.Where(r =>
             r.BusinessId == businessId &&
-            r.ReservationDateTime >= startDate &&
-            r.ReservationDateTime <= endDate));
+            r.ReservationDateTime.HasValue &&
+            r.ReservationDateTime.Value >= startDate &&
+            r.ReservationDateTime.Value <= endDate));
+
+    public Task<Reservation?> GetActiveByConversationIdAsync(Guid conversationId, CancellationToken ct = default) =>
+        Task.FromResult(_store
+            .Where(r => r.ConversationId == conversationId && r.Status == ReservationStatus.Confirmed)
+            .OrderByDescending(r => r.UpdatedAt ?? r.CreatedAt)
+            .FirstOrDefault());
+
+    public Task<IReadOnlyList<Reservation>> GetManageableByCustomerPhoneAsync(
+        Guid businessId,
+        string customerPhone,
+        DateOnly businessToday,
+        CancellationToken ct = default)
+    {
+        var phone = customerPhone.Trim();
+        var list = _store
+            .Where(r => r.BusinessId == businessId
+                && !string.IsNullOrWhiteSpace(r.CustomerPhoneSnapshot)
+                && string.Equals(r.CustomerPhoneSnapshot.Trim(), phone, StringComparison.OrdinalIgnoreCase)
+                && (r.Status == ReservationStatus.Confirmed || r.Status == ReservationStatus.OnHold)
+                && (!r.ReservationDateTime.HasValue
+                    || DateOnly.FromDateTime(r.ReservationDateTime.Value) >= businessToday))
+            .OrderBy(r => r.ReservationDateTime)
+            .ThenByDescending(r => r.UpdatedAt ?? r.CreatedAt)
+            .ToList();
+        return Task.FromResult<IReadOnlyList<Reservation>>(list);
+    }
 
     public Task<Reservation> CreateAsync(Reservation reservation)
     {
@@ -236,6 +249,67 @@ public class InMemoryReservationRepository : IReservationRepository
         Guid businessId, DateTime reservationDate, TimeSpan reservationTime,
         int durationMinutes, Guid? excludeReservationId = null) =>
         Task.FromResult(false);
+
+    public Task<(IReadOnlyList<Reservation> Items, int TotalCount)> GetPagedByBusinessIdAsync(
+        Guid businessId, int page, int pageSize, string? search, DateTime? from, DateTime? to, CancellationToken ct = default) =>
+        throw new NotImplementedException();
+
+    public Task<IReadOnlyList<Reservation>> GetRecentByBusinessIdAsync(
+        Guid businessId, int count, CancellationToken ct = default) =>
+        throw new NotImplementedException();
+
+    public Task<IReadOnlyList<(Guid ServiceId, string ServiceName, int TotalReservations, decimal Revenue)>> GetTopServicesByBusinessIdAsync(
+        Guid businessId, int top, DateTime? from, DateTime? to, CancellationToken ct = default) =>
+        throw new NotImplementedException();
+}
+
+public class InMemoryConversationContextRepository : IConversationContextRepository
+{
+    private readonly List<ConversationContext> _store = [];
+
+    public Task<ConversationContext?> GetByConversationIdAndFieldAsync(Guid conversationId, string field) =>
+        Task.FromResult(_store.FirstOrDefault(c =>
+            c.ConversationId == conversationId &&
+            string.Equals(c.Field, field, StringComparison.OrdinalIgnoreCase)));
+
+    public Task<ConversationContext> CreateOrUpdateAsync(Guid conversationId, string field, string value)
+    {
+        var existing = _store.FirstOrDefault(c =>
+            c.ConversationId == conversationId &&
+            string.Equals(c.Field, field, StringComparison.OrdinalIgnoreCase));
+
+        if (existing is not null)
+        {
+            existing.Value = value;
+            return Task.FromResult(existing);
+        }
+
+        var created = new ConversationContext
+        {
+            ConversationContextId = Guid.NewGuid(),
+            ConversationId = conversationId,
+            Field = field,
+            Value = value
+        };
+        _store.Add(created);
+        return Task.FromResult(created);
+    }
+
+    public Task<IEnumerable<ConversationContext>> GetByConversationIdAsync(Guid conversationId) =>
+        Task.FromResult(_store.Where(c => c.ConversationId == conversationId));
+
+    public Task DeleteFieldsAsync(Guid conversationId, IReadOnlyCollection<string> fields, CancellationToken ct = default)
+    {
+        var delete = fields.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        _store.RemoveAll(c => c.ConversationId == conversationId && delete.Contains(c.Field));
+        return Task.CompletedTask;
+    }
+
+    public Task DeleteByConversationIdAsync(Guid conversationId)
+    {
+        _store.RemoveAll(c => c.ConversationId == conversationId);
+        return Task.CompletedTask;
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -294,6 +368,10 @@ public class InMemoryEmployeeRepository : IEmployeeRepository
 
     public Task<Employee> CreateAsync(Employee employee) { _store.Add(employee); return Task.FromResult(employee); }
     public Task<Employee> UpdateAsync(Employee employee) => Task.FromResult(employee);
+
+    public Task<(IReadOnlyList<Employee> Items, int TotalCount)> GetPagedByBusinessIdAsync(
+        Guid businessId, int page, int pageSize, string? search, CancellationToken ct = default) =>
+        throw new NotImplementedException();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -338,8 +416,15 @@ public class InMemoryLeadRepository : ILeadRepository
     public Task<Lead?> GetByIdAsync(Guid leadId) =>
         Task.FromResult<Lead?>(null);
 
+    public Task<IEnumerable<Lead>> GetByBusinessIdAsync(Guid businessId) =>
+        Task.FromResult(Enumerable.Empty<Lead>());
+
     public Task<Lead> CreateAsync(Lead lead) => Task.FromResult(lead);
     public Task<Lead> UpdateAsync(Lead lead) => Task.FromResult(lead);
+
+    public Task<(IReadOnlyList<Lead> Items, int TotalCount)> GetPagedByBusinessIdAsync(
+        Guid businessId, int page, int pageSize, string? search, CancellationToken ct = default) =>
+        throw new NotImplementedException();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -364,6 +449,17 @@ public class InMemoryServiceCategoryRepository : IServiceCategoryRepository
 
     public Task<IEnumerable<ServiceCategory>> GetByBusinessIdAsync(Guid businessId) =>
         Task.FromResult(_store.Where(c => c.BusinessId == businessId));
+
+    public Task<ServiceCategory?> GetByBusinessIdAndNameAsync(Guid businessId, string name) =>
+        Task.FromResult(_store.FirstOrDefault(c =>
+            c.BusinessId == businessId
+            && c.Name.Equals(name, StringComparison.OrdinalIgnoreCase)));
+
+    public Task<ServiceCategory> CreateAsync(ServiceCategory category)
+    {
+        _store.Add(category);
+        return Task.FromResult(category);
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -441,7 +537,22 @@ public class InMemoryServiceAddOnRuleRepository : IServiceAddOnRuleRepository
 
 public class InMemoryReservationAddOnRepository : IReservationAddOnRepository
 {
-    public Task AddAsync(ReservationAddOn addOn) => Task.CompletedTask;
+    private readonly List<ReservationAddOn> _store = [];
+
+    public Task AddAsync(ReservationAddOn addOn)
+    {
+        _store.Add(addOn);
+        return Task.CompletedTask;
+    }
+
+    public Task<IReadOnlyList<ReservationAddOn>> GetByReservationIdAsync(Guid reservationId) =>
+        Task.FromResult<IReadOnlyList<ReservationAddOn>>(_store.Where(a => a.ReservationId == reservationId).ToList());
+
+    public Task DeleteAsync(ReservationAddOn addOn)
+    {
+        _store.Remove(addOn);
+        return Task.CompletedTask;
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

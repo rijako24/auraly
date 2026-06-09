@@ -13,8 +13,8 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "Talkio Admin",
-  description: "Panel de administración de Talkio",
+  title: "AURALY Admin",
+  description: "Panel de administracion de AURALY",
 };
 
 export default function RootLayout({

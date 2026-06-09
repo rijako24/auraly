@@ -14,4 +14,6 @@ public record ServiceDto(
     string CategoryName,
     ServiceTier Tier,
     ServiceType ServiceType,
+    ServiceFulfillmentKind FulfillmentKind,
+    string? FixedScheduleLabel,
     DateTime CreatedAt);

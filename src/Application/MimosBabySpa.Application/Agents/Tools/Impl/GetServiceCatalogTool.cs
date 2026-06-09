@@ -1,0 +1,36 @@
+using System.Text.Json;
+using MimosBabySpa.Application.Services;
+
+namespace MimosBabySpa.Application.Agents.Tools.Impl;
+
+/// <summary>
+/// Retorna el catálogo actualizado de servicios y precios del negocio.
+/// La elegibilidad (edad, capacidad, etc.) se infiere del texto en Description + contexto del cliente.
+/// </summary>
+public sealed class GetServiceCatalogTool : IAgentTool
+{
+    private readonly ICatalogContentGenerator _catalog;
+
+    public GetServiceCatalogTool(ICatalogContentGenerator catalog) => _catalog = catalog;
+
+    public string Name => "get_service_catalog";
+
+    public string Description =>
+        "Returns the business service catalog: services, compatible add-ons per service, prices, and durations.";
+
+    public string ParametersSchema => """
+        {
+          "type": "object",
+          "properties": {}
+        }
+        """;
+
+    public async Task<string> ExecuteAsync(
+        JsonElement arguments,
+        AgentToolContext ctx,
+        CancellationToken cancellationToken = default)
+    {
+        var content = await _catalog.GenerateAsync(ctx.BusinessId, cancellationToken);
+        return ToolResultHelper.Ok(new { catalog = content });
+    }
+}

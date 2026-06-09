@@ -5,6 +5,13 @@ public class BusinessContext
     public Guid BusinessId { get; set; }
     public Guid TenantId { get; set; }
     public string BusinessName { get; set; } = string.Empty;
-    public BusinessConfigurationDto Configuration { get; set; } = new(); // Siempre tiene configuración (puede estar vacía)
+
+    /// <summary>
+    /// Agent assigned to the WhatsApp number this message arrived on.
+    /// Null only when the number has no agent assigned yet.
+    /// </summary>
+    public Guid? AgentId { get; set; }
+
+    public BusinessConfigurationDto Configuration { get; set; } = new();
     public BusinessWhatsAppNumberDto WhatsAppNumber { get; set; } = null!;
 }

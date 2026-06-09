@@ -32,4 +32,8 @@ public class FakeMessageService : IMessageService
 
     public Task<IEnumerable<Message>> GetConversationHistoryAsync(Guid conversationId) =>
         _messages.GetByConversationIdAsync(conversationId);
+
+    public Task<IReadOnlyList<Message>> GetRecentConversationHistoryAsync(
+        Guid conversationId, int limit, CancellationToken ct = default) =>
+        _messages.GetRecentByConversationIdAsync(conversationId, limit, ct);
 }

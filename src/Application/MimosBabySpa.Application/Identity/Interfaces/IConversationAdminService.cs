@@ -8,7 +8,7 @@ public interface IConversationAdminService
 {
     Task<PagedResponse<ConversationDto>> GetPagedByBusinessIdAsync(
         Guid tenantId, Guid businessId, PagedRequest request,
-        ConversationState? state = null, CancellationToken ct = default);
+        ConversationLifecycleStatus? status = null, CancellationToken ct = default);
 
     Task<ConversationDto> GetByIdAsync(
         Guid tenantId, Guid conversationId, CancellationToken ct = default);

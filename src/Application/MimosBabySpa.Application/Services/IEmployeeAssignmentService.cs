@@ -33,5 +33,6 @@ public interface IEmployeeAssignmentService
         Guid serviceId,
         DateTime startTime,
         DateTime endTime,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default,
+        Guid? preferredEmployeeId = null);
 }

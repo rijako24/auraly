@@ -4,11 +4,11 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   ChevronRight,
-  MessageCircle,
   PanelLeftClose,
   PanelLeftOpen,
 } from "lucide-react";
 
+import { AuralyLogo } from "@/components/brand/auraly-logo";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -75,18 +75,17 @@ export function Sidebar() {
                   href="/dashboard"
                   className="flex items-center justify-center w-full rounded-md hover:bg-sidebar-accent transition-colors"
                 >
-                  <MessageCircle className="h-6 w-6 text-sidebar-primary shrink-0" />
+                  <AuralyLogo collapsed markClassName="h-7 w-8" />
                 </Link>
               </TooltipTrigger>
-              <TooltipContent side="right">Talkio Admin</TooltipContent>
+              <TooltipContent side="right">AURALY Admin</TooltipContent>
             </Tooltip>
           ) : (
             <Link
               href="/dashboard"
-              className="flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-sidebar-accent transition-colors"
+              className="flex items-center rounded-md px-2 py-1.5 hover:bg-sidebar-accent transition-colors"
             >
-              <MessageCircle className="h-6 w-6 text-sidebar-primary shrink-0" />
-              <span className="font-semibold text-sidebar-primary truncate">Talkio</span>
+              <AuralyLogo />
             </Link>
           )}
         </div>

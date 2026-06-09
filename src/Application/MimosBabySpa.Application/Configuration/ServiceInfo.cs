@@ -42,6 +42,16 @@ public class ServiceInfo
     public ServiceType ServiceType { get; set; } = ServiceType.Standard;
 
     /// <summary>
+    /// Define si el servicio se reserva por disponibilidad o se inscribe en horario fijo.
+    /// </summary>
+    public ServiceFulfillmentKind FulfillmentKind { get; set; } = ServiceFulfillmentKind.Reservation;
+
+    /// <summary>
+    /// Horario fijo de inscripcion para servicios Enrollment.
+    /// </summary>
+    public string? FixedScheduleLabel { get; set; }
+
+    /// <summary>
     /// Componentes que forman este bundle, ordenados por DisplayOrder.
     /// Lista vacía si el servicio no es un bundle.
     /// </summary>

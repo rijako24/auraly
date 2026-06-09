@@ -1,19 +1,20 @@
 "use client";
 import { useState } from "react";
-import { DollarSign, Users, CalendarDays, MessageSquare } from "lucide-react";
+import { DollarSign, Users, CalendarDays, MessageSquare, Gauge } from "lucide-react";
 import { StatCard } from "@/components/cards/stat-card";
 import { RevenueChart } from "@/components/charts/revenue-chart";
 import { OverviewChart } from "@/components/charts/overview-chart";
 import { PageLoading } from "@/components/ui/page-loading";
 import { PageError } from "@/components/ui/page-error";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ReservationStatusLabels } from "@/types/enums";
 import type { ReservationStatus } from "@/types/enums";
 import { formatCurrency, formatRelativeTime } from "@/lib/utils";
-import { useDashboardStats, useRevenueChart, useOverviewChart, useTopServices, useRecentReservations } from "@/hooks/use-dashboard";
+import { useDashboardStats, useRevenueChart, useOverviewChart, useTopServices, useRecentReservations, useBusinessUsage } from "@/hooks/use-dashboard";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 
 export default function DashboardPage() {
@@ -25,6 +26,7 @@ export default function DashboardPage() {
   const { data: overviewData } = useOverviewChart(period);
   const { data: topServices } = useTopServices(4);
   const { data: recentReservations } = useRecentReservations(5);
+  const { data: usage } = useBusinessUsage();
 
   if (!businessId) {
     return (
@@ -51,6 +53,27 @@ export default function DashboardPage() {
         <StatCard title="Nuevos leads" value={stats?.totalLeads ?? 0} change={stats?.leadGrowth} icon={Users} />
         <StatCard title="Conversaciones activas" value={stats?.totalConversations ?? 0} icon={MessageSquare} />
       </div>
+      {usage && (
+        <Card>
+          <CardHeader className="pb-3">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <CardTitle className="flex items-center gap-2 text-base"><Gauge className="h-4 w-4 text-primary" />Consumo del agente</CardTitle>
+                <CardDescription>Plan {usage.planName} · renovación {new Date(usage.periodEnd).toLocaleDateString("es-CO")}</CardDescription>
+              </div>
+              <div className="text-left sm:text-right"><p className="text-2xl font-semibold">{usage.creditsUsagePercent}%</p><p className="text-xs text-muted-foreground">uso del plan</p></div>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <Progress value={Math.min(100, usage.creditsUsagePercent)} />
+            <div className="grid gap-3 text-sm sm:grid-cols-3">
+              <div><p className="text-muted-foreground">Créditos usados</p><p className="font-medium">{usage.creditsUsed.toLocaleString("es-CO")} / {usage.creditsLimit.toLocaleString("es-CO")}</p></div>
+              <div><p className="text-muted-foreground">Costo operativo</p><p className="font-medium">{formatCurrency(usage.variableCostUsedCop)} / {formatCurrency(usage.variableCostLimitCop)}</p></div>
+              <div><p className="text-muted-foreground">Estado</p><p className="font-medium">{usage.status === "Exceeded" || usage.status === 2 ? "Límite alcanzado" : "Activo"}</p></div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
       <Card><CardHeader><CardTitle>Ingresos</CardTitle><CardDescription>Evolución de ingresos por período</CardDescription></CardHeader><CardContent><Tabs defaultValue="daily"><TabsList><TabsTrigger value="daily">Diario</TabsTrigger><TabsTrigger value="monthly">Mensual</TabsTrigger></TabsList><TabsContent value="daily"><RevenueChart data={dailyRevenue ?? []} /></TabsContent><TabsContent value="monthly"><RevenueChart data={monthlyRevenue ?? []} /></TabsContent></Tabs></CardContent></Card>
       <div className="grid gap-6 lg:grid-cols-2">
         <Card><CardHeader><CardTitle>Vista general</CardTitle><CardDescription>Ingresos y reservas combinados</CardDescription></CardHeader><CardContent><OverviewChart data={overviewData ?? []} /></CardContent></Card>

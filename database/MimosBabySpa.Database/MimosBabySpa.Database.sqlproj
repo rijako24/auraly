@@ -9,15 +9,20 @@
     <ModelCollation>1033, CI</ModelCollation>
   </PropertyGroup>
   <ItemGroup>
-    <Build Remove="Scripts\*.sql" />
+    <Build Remove="Scripts\**\*.sql" />
+    <None Include="Scripts\Seeds\*.sql" />
   </ItemGroup>
   <ItemGroup>
     <Build Include="Tables\Tenants.sql" />
     <Build Include="Tables\Permissions.sql" />
     <Build Include="Tables\SystemConfigurations.sql" />
     <Build Include="Tables\Businesses.sql" />
+    <Build Include="Tables\SubscriptionPlans.sql" />
+    <Build Include="Tables\UsageCostRates.sql" />
     <Build Include="Tables\AppUsers.sql" />
     <Build Include="Tables\AppRoles.sql" />
+    <Build Include="Tables\AgentTypes.sql" />
+    <Build Include="Tables\Agents.sql" />
     <Build Include="Tables\BusinessWhatsAppNumbers.sql" />
     <Build Include="Tables\BusinessConfigurations.sql" />
     <Build Include="Tables\BusinessAttachments.sql" />
@@ -30,6 +35,7 @@
     <Build Include="Tables\ConversationStates.sql" />
     <Build Include="Tables\Messages.sql" />
     <Build Include="Tables\Leads.sql" />
+    <Build Include="Tables\CustomerMemory.sql" />
     <Build Include="Tables\Reservations.sql" />
     <Build Include="Tables\ReservationAddOns.sql" />
     <Build Include="Tables\ServiceAddOnRules.sql" />
@@ -37,6 +43,10 @@
     <Build Include="Tables\ServiceResourceUsages.sql" />
     <Build Include="Tables\EmployeeServices.sql" />
     <Build Include="Tables\PaymentTransactions.sql" />
+    <Build Include="Tables\Enrollments.sql" />
+    <Build Include="Tables\BusinessSubscriptions.sql" />
+    <Build Include="Tables\BusinessUsagePeriods.sql" />
+    <Build Include="Tables\UsageLedgerEntries.sql" />
     <Build Include="Tables\UserRoles.sql" />
     <Build Include="Tables\RolePermissions.sql" />
     <Build Include="Tables\UserExternalLogins.sql" />

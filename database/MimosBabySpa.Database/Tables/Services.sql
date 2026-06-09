@@ -8,6 +8,8 @@ CREATE TABLE [dbo].[Services] (
     [CategoryId] UNIQUEIDENTIFIER NOT NULL,
     [Tier] INT NOT NULL DEFAULT 0,
     [ServiceType] INT NOT NULL DEFAULT 0,
+    [FulfillmentKind] INT NOT NULL DEFAULT 0,
+    [FixedScheduleLabel] NVARCHAR(500) NULL,
     [IsActive] BIT NOT NULL DEFAULT 1,
     [CreatedAt] DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
     [UpdatedAt] DATETIME2 NULL,

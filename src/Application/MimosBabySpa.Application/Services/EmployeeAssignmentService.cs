@@ -31,13 +31,13 @@ public class EmployeeAssignmentService : IEmployeeAssignmentService
         Guid serviceId,
         DateTime startTime,
         DateTime endTime,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        Guid? preferredEmployeeId = null)
     {
         _logger.LogInformation(
-            "Buscando mejor empleado disponible: BusinessId={BusinessId}, ServiceId={ServiceId}, StartTime={StartTime}, EndTime={EndTime}",
-            businessId, serviceId, startTime, endTime);
+            "Buscando mejor empleado disponible: BusinessId={BusinessId}, ServiceId={ServiceId}, StartTime={StartTime}, EndTime={EndTime}, Preferred={PreferredEmployeeId}",
+            businessId, serviceId, startTime, endTime, preferredEmployeeId);
 
-        // Paso 1: Obtener todos los empleados activos que pueden dar este servicio
         var capableEmployees = await _unitOfWork.Employees.GetByBusinessIdAndServiceIdAsync(
             businessId, 
             serviceId);
@@ -50,11 +50,6 @@ public class EmployeeAssignmentService : IEmployeeAssignmentService
             return null;
         }
 
-        _logger.LogInformation(
-            "Encontrados {Count} empleados capaces del servicio",
-            capableEmployees.Count());
-
-        // Paso 2: Filtrar empleados sin solapamientos de horario
         var availableEmployees = await FilterAvailableEmployeesAsync(
             capableEmployees,
             businessId,
@@ -70,12 +65,22 @@ public class EmployeeAssignmentService : IEmployeeAssignmentService
             return null;
         }
 
-        _logger.LogInformation(
-            "Encontrados {Count} empleados disponibles sin conflictos de horario",
-            availableEmployees.Count());
+        if (preferredEmployeeId.HasValue)
+        {
+            var preferred = availableEmployees.FirstOrDefault(e => e.EmployeeId == preferredEmployeeId.Value);
+            if (preferred is not null)
+            {
+                _logger.LogInformation(
+                    "Empleado preferido disponible: {EmployeeId} ({EmployeeName})",
+                    preferred.EmployeeId, preferred.Name);
+                return preferred;
+            }
 
-        // Paso 3: Seleccionar empleado menos polivalente para preservar al más versátil
-        // Si dos empleados pueden dar el mismo servicio, usar primero al que menos servicios puede brindar
+            _logger.LogInformation(
+                "Empleado preferido {PreferredEmployeeId} no disponible; seleccionando alternativa",
+                preferredEmployeeId.Value);
+        }
+
         var bestEmployee = await SelectBestEmployeeByResourcePreservationAsync(
             availableEmployees,
             businessId,

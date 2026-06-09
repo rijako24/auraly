@@ -80,7 +80,12 @@ function Publish-Database {
         "/Action:Publish",
         "/SourceFile:$dacpacPath",
         "/TargetConnectionString:$ConnStr",
-        "/p:BackupDatabaseBeforeChanges=False"
+        "/p:BackupDatabaseBeforeChanges=False",
+        "/p:DropObjectsNotInSource=True",
+        "/p:BlockOnPossibleDataLoss=False",
+        "/p:DoNotAlterChangeDataCaptureObjects=True",
+        "/p:DoNotAlterReplicatedObjects=True",
+        "/p:DoNotDropObjectTypes=Users;Logins;RoleMembership;Permissions"
     )
     & $sqlPackagePath $args
     if ($LASTEXITCODE -eq 0) {

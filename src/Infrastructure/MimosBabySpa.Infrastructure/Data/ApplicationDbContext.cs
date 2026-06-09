@@ -1,7 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using MimosBabySpa.Domain.Entities;
 using MimosBabySpa.Domain.Enums;
-
+using MimosBabySpa.Domain.Models;
 namespace MimosBabySpa.Infrastructure.Data;
 
 public class ApplicationDbContext : DbContext
@@ -20,6 +20,7 @@ public class ApplicationDbContext : DbContext
     public DbSet<BusinessConfiguration> BusinessConfigurations { get; set; }
     public DbSet<SystemConfiguration> SystemConfigurations { get; set; }
     public DbSet<ConversationContext> ConversationContexts { get; set; }
+    public DbSet<CustomerMemory> CustomerMemory { get; set; }
     public DbSet<Reservation> Reservations { get; set; }
     public DbSet<Service> Services { get; set; }
     public DbSet<ServiceCategory> ServiceCategories { get; set; }
@@ -32,6 +33,7 @@ public class ApplicationDbContext : DbContext
     public DbSet<EmployeeService> EmployeeServices { get; set; }
     public DbSet<ConversationStateEntity> ConversationStates { get; set; }
     public DbSet<PaymentTransaction> PaymentTransactions { get; set; }
+    public DbSet<Enrollment> Enrollments { get; set; }
 
     public DbSet<AppUser> AppUsers { get; set; }
     public DbSet<AppRole> AppRoles { get; set; }
@@ -41,6 +43,15 @@ public class ApplicationDbContext : DbContext
     public DbSet<UserExternalLogin> UserExternalLogins { get; set; }
     public DbSet<RefreshToken> RefreshTokens { get; set; }
     public DbSet<AuditLog> AuditLogs { get; set; }
+    public DbSet<SubscriptionPlan> SubscriptionPlans { get; set; }
+    public DbSet<BusinessSubscription> BusinessSubscriptions { get; set; }
+    public DbSet<BusinessUsagePeriod> BusinessUsagePeriods { get; set; }
+    public DbSet<UsageLedgerEntry> UsageLedgerEntries { get; set; }
+    public DbSet<UsageCostRate> UsageCostRates { get; set; }
+
+    // Agentic engine
+    public DbSet<AgentType> AgentTypes { get; set; }
+    public DbSet<Agent> Agents { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -86,8 +97,14 @@ public class ApplicationDbContext : DbContext
                   .WithMany(b => b.WhatsAppNumbers)
                   .HasForeignKey(e => e.BusinessId)
                   .OnDelete(DeleteBehavior.Cascade);
+            // AgentId: which agent handles conversations on this number (nullable for backwards compat)
+            entity.HasOne(e => e.Agent)
+                  .WithMany()
+                  .HasForeignKey(e => e.AgentId)
+                  .OnDelete(DeleteBehavior.SetNull);
             entity.HasIndex(e => e.WhatsAppPhoneNumberId).IsUnique();
             entity.HasIndex(e => e.BusinessId);
+            entity.HasIndex(e => e.AgentId);
         });
 
         // BusinessConfiguration configuration
@@ -123,19 +140,18 @@ public class ApplicationDbContext : DbContext
             entity.HasKey(e => e.ConversationId);
             entity.Property(e => e.UserNumber).IsRequired().HasMaxLength(50);
             entity.Property(e => e.LastMessage).HasMaxLength(1000);
-            entity.Property(e => e.LastIntent).HasMaxLength(50);
             entity.Property(e => e.CustomerName).HasMaxLength(100);
-            entity.Property(e => e.RecommendedPlan).HasMaxLength(100);
-            entity.Property(e => e.State)
-                  .HasConversion<int>() // Convertir enum ConversationState a int
-                  .HasDefaultValue(ConversationState.Idle); // Valor por defecto
+            entity.Property(e => e.CustomerEmail).HasMaxLength(200);
+            entity.Property(e => e.Status).HasConversion<byte>().HasDefaultValue(ConversationLifecycleStatus.Active);
+            entity.Property(e => e.OpenedAt).IsRequired();
+            entity.Property(e => e.LastActivityAt).IsRequired();
+            entity.Property(e => e.CloseReason).HasMaxLength(50);
             entity.HasOne(e => e.Business)
                   .WithMany(b => b.Conversations)
                   .HasForeignKey(e => e.BusinessId)
                   .OnDelete(DeleteBehavior.Restrict);
-            entity.HasIndex(e => new { e.BusinessId, e.UserNumber }); // Índice compuesto
-            entity.HasIndex(e => e.State); // Índice para búsquedas por estado
-            // Relación con ConversationContext
+            entity.HasIndex(e => new { e.BusinessId, e.UserNumber });
+            entity.HasIndex(e => e.Status);
             entity.HasMany(e => e.Contexts)
                   .WithOne(c => c.Conversation)
                   .HasForeignKey(c => c.ConversationId)
@@ -147,13 +163,28 @@ public class ApplicationDbContext : DbContext
         {
             entity.HasKey(e => e.ConversationContextId);
             entity.Property(e => e.Field).IsRequired().HasMaxLength(100);
-            entity.Property(e => e.Value).IsRequired().HasMaxLength(500);
+            entity.Property(e => e.Value).IsRequired().HasMaxLength(2000);
             entity.HasOne(e => e.Conversation)
                   .WithMany(c => c.Contexts)
                   .HasForeignKey(e => e.ConversationId)
                   .OnDelete(DeleteBehavior.Cascade);
             entity.HasIndex(e => e.ConversationId);
-            entity.HasIndex(e => new { e.ConversationId, e.Field }); // Índice compuesto para búsquedas rápidas
+            entity.HasIndex(e => new { e.ConversationId, e.Field }).IsUnique();
+        });
+
+        // CustomerMemory configuration
+        modelBuilder.Entity<CustomerMemory>(entity =>
+        {
+            entity.HasKey(e => e.CustomerMemoryId);
+            entity.Property(e => e.UserNumber).IsRequired().HasMaxLength(50);
+            entity.Property(e => e.Field).IsRequired().HasMaxLength(100);
+            entity.Property(e => e.Value).IsRequired();
+            entity.Property(e => e.UpdatedAt).IsRequired();
+            entity.HasOne(e => e.Business)
+                  .WithMany()
+                  .HasForeignKey(e => e.BusinessId)
+                  .OnDelete(DeleteBehavior.Cascade);
+            entity.HasIndex(e => new { e.BusinessId, e.UserNumber, e.Field }).IsUnique();
         });
 
         // Message configuration
@@ -176,6 +207,7 @@ public class ApplicationDbContext : DbContext
             entity.Property(e => e.UserNumber).IsRequired().HasMaxLength(50);
             entity.Property(e => e.Status).IsRequired().HasMaxLength(20);
             entity.Property(e => e.CustomerName).HasMaxLength(100);
+            entity.Property(e => e.CustomerEmail).HasMaxLength(200);
             entity.Property(e => e.Notes).HasMaxLength(1000);
             entity.HasOne(e => e.Business)
                   .WithMany(b => b.Leads)
@@ -188,13 +220,13 @@ public class ApplicationDbContext : DbContext
         modelBuilder.Entity<Reservation>(entity =>
         {
             entity.HasKey(e => e.ReservationId);
-            entity.Property(e => e.ServiceId).IsRequired();
-            entity.Property(e => e.EmployeeId).IsRequired();
-            entity.Property(e => e.ReservationDateTime).IsRequired();
-            entity.Property(e => e.DurationMinutes).IsRequired();
-            entity.Property(e => e.Status)
-                  .HasConversion<int>(); // Convertir enum a int
+            entity.Property(e => e.Status).HasConversion<int>();
             entity.Property(e => e.CalendarEventId).HasMaxLength(500);
+            entity.Property(e => e.CustomerNameSnapshot).HasMaxLength(100);
+            entity.Property(e => e.CustomerEmailSnapshot).HasMaxLength(200);
+            entity.Property(e => e.CustomerPhoneSnapshot).HasMaxLength(50);
+            entity.Property(e => e.AvailableSlotsCsv).HasColumnType("NVARCHAR(MAX)");
+            entity.Property(e => e.CustomAttributesJson).HasColumnType("NVARCHAR(MAX)");
             entity.HasOne(e => e.Business)
                   .WithMany(b => b.Reservations)
                   .HasForeignKey(e => e.BusinessId)
@@ -206,7 +238,8 @@ public class ApplicationDbContext : DbContext
             entity.HasOne(e => e.Employee)
                   .WithMany(emp => emp.Reservations)
                   .HasForeignKey(e => e.EmployeeId)
-                  .OnDelete(DeleteBehavior.Restrict);
+                  .OnDelete(DeleteBehavior.Restrict)
+                  .IsRequired(false);
             entity.HasOne(e => e.Conversation)
                   .WithMany()
                   .HasForeignKey(e => e.ConversationId)
@@ -275,6 +308,9 @@ public class ApplicationDbContext : DbContext
                   .HasConversion<int>();
             entity.Property(e => e.ServiceType).IsRequired()
                   .HasDefaultValue(Domain.Enums.ServiceType.Standard).HasConversion<int>();
+            entity.Property(e => e.FulfillmentKind).IsRequired()
+                  .HasDefaultValue(Domain.Enums.ServiceFulfillmentKind.Reservation).HasConversion<int>();
+            entity.Property(e => e.FixedScheduleLabel).HasMaxLength(500);
             entity.HasOne(e => e.Business)
                   .WithMany()
                   .HasForeignKey(e => e.BusinessId)
@@ -398,7 +434,11 @@ public class ApplicationDbContext : DbContext
         modelBuilder.Entity<ConversationStateEntity>(entity =>
         {
             entity.HasKey(e => e.ConversationId);
-            entity.Property(e => e.StateJson).IsRequired().HasColumnType("NVARCHAR(MAX)");
+            entity.Property(e => e.Owner).HasConversion<byte>().HasDefaultValue(ConversationOwner.Bot);
+            entity.Property(e => e.LastUserMessage).HasColumnType("NVARCHAR(MAX)");
+            entity.Property(e => e.LastBotMessage).HasColumnType("NVARCHAR(MAX)");
+            entity.Property(e => e.VerificationsJson).HasColumnType("NVARCHAR(MAX)");
+            entity.Property(e => e.StageSnapshotsJson).HasColumnType("NVARCHAR(MAX)");
             entity.Property(e => e.Version).IsRequired().HasDefaultValue(1);
             entity.Property(e => e.UpdatedAt).IsRequired();
             entity.Property(e => e.CreatedAt).IsRequired();
@@ -425,6 +465,22 @@ public class ApplicationDbContext : DbContext
             entity.Property(e => e.Source).HasConversion<int>();
             entity.Property(e => e.Source).HasConversion<int>().HasDefaultValue(Domain.Enums.PaymentTransactionSource.Automated);
             entity.Property(e => e.WebhookPayloadJson).HasColumnType("NVARCHAR(MAX)");
+            entity.Property(e => e.CheckoutKind).HasConversion<int>().HasDefaultValue(CheckoutKind.Reservation);
+            entity.Property(e => e.CheckoutSnapshotJson).HasColumnType("NVARCHAR(MAX)");
+            entity.Property(e => e.QuoteHash).HasMaxLength(128);
+            entity.Property(e => e.ConfirmationOutcome).HasMaxLength(100);
+            entity.Property(e => e.LinkUrl).HasMaxLength(1000);
+            entity.Property(e => e.Snapshot_CustomerName).HasMaxLength(200);
+            entity.Property(e => e.Snapshot_CustomerEmail).HasMaxLength(200);
+            entity.Property(e => e.Snapshot_CustomerPhone).HasMaxLength(50);
+            entity.Property(e => e.Snapshot_AddOnIds).HasMaxLength(500);
+            entity.Property(e => e.Snapshot_CustomAttributesJson).HasColumnType("NVARCHAR(MAX)");
+            entity.Property(e => e.SupersededAt);
+            entity.HasOne<PaymentTransaction>()
+                .WithMany()
+                .HasForeignKey(e => e.SupersededByPaymentTransactionId)
+                .OnDelete(DeleteBehavior.Restrict)
+                .IsRequired(false);
             entity.HasOne(e => e.Business)
                 .WithMany()
                 .HasForeignKey(e => e.BusinessId)
@@ -433,9 +489,53 @@ public class ApplicationDbContext : DbContext
                 .WithMany()
                 .HasForeignKey(e => e.ConversationId)
                 .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.Reservation)
+                .WithMany()
+                .HasForeignKey(e => e.ReservationId)
+                .OnDelete(DeleteBehavior.Restrict)
+                .IsRequired(false);
+            entity.HasOne<Service>()
+                .WithMany()
+                .HasForeignKey(e => e.Snapshot_ServiceId)
+                .OnDelete(DeleteBehavior.Restrict)
+                .IsRequired(false);
             entity.HasIndex(e => e.PaymentReferenceId).IsUnique();
             entity.HasIndex(e => e.ConversationId);
             entity.HasIndex(e => e.BusinessId);
+            entity.HasIndex(e => e.ReservationId);
+        });
+
+        // Enrollment configuration
+        modelBuilder.Entity<Enrollment>(entity =>
+        {
+            entity.HasKey(e => e.EnrollmentId);
+            entity.Property(e => e.CustomerName).IsRequired().HasMaxLength(200);
+            entity.Property(e => e.CustomerPhone).IsRequired().HasMaxLength(50);
+            entity.Property(e => e.CustomerEmail).HasMaxLength(200);
+            entity.Property(e => e.FixedScheduleLabel).HasMaxLength(500);
+            entity.Property(e => e.Status).HasConversion<int>();
+            entity.Property(e => e.CustomAttributesJson).HasColumnType("NVARCHAR(MAX)");
+            entity.Property(e => e.CreatedAt).IsRequired();
+            entity.HasOne(e => e.Business)
+                .WithMany()
+                .HasForeignKey(e => e.BusinessId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.Conversation)
+                .WithMany()
+                .HasForeignKey(e => e.ConversationId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.Service)
+                .WithMany()
+                .HasForeignKey(e => e.ServiceId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.PaymentTransaction)
+                .WithMany()
+                .HasForeignKey(e => e.PaymentTransactionId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasIndex(e => e.BusinessId);
+            entity.HasIndex(e => e.ConversationId);
+            entity.HasIndex(e => e.ServiceId);
+            entity.HasIndex(e => e.PaymentTransactionId).IsUnique();
         });
 
         // AppUser configuration
@@ -575,5 +675,129 @@ public class ApplicationDbContext : DbContext
             entity.HasIndex(e => e.UserId);
             entity.HasIndex(e => e.CorrelationId);
         });
+
+        // ── Generic Flow Engine ─────────────────────────────────────────────────────
+
+        modelBuilder.Entity<SubscriptionPlan>(entity =>
+        {
+            entity.HasKey(e => e.SubscriptionPlanId);
+            entity.Property(e => e.Code).IsRequired().HasMaxLength(50);
+            entity.Property(e => e.Name).IsRequired().HasMaxLength(100);
+            entity.Property(e => e.MonthlyPriceCop).HasPrecision(18, 2);
+            entity.Property(e => e.MaxVariableCostCop).HasPrecision(18, 2);
+            entity.Property(e => e.MaxVariableCostPercent).HasPrecision(5, 2);
+            entity.Property(e => e.FeaturesJson).HasColumnType("NVARCHAR(MAX)");
+            entity.HasIndex(e => e.Code).IsUnique();
+        });
+
+        modelBuilder.Entity<BusinessSubscription>(entity =>
+        {
+            entity.HasKey(e => e.BusinessSubscriptionId);
+            entity.Property(e => e.Status).HasConversion<int>();
+            entity.Property(e => e.PlanCodeSnapshot).IsRequired().HasMaxLength(50);
+            entity.Property(e => e.PlanNameSnapshot).IsRequired().HasMaxLength(100);
+            entity.Property(e => e.MonthlyPriceCop).HasPrecision(18, 2);
+            entity.Property(e => e.MaxVariableCostCop).HasPrecision(18, 2);
+            entity.Property(e => e.MaxVariableCostPercent).HasPrecision(5, 2);
+            entity.Property(e => e.ExtraVariableCostCop).HasPrecision(18, 2);
+            entity.HasOne(e => e.Business)
+                .WithMany()
+                .HasForeignKey(e => e.BusinessId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.SubscriptionPlan)
+                .WithMany(p => p.BusinessSubscriptions)
+                .HasForeignKey(e => e.SubscriptionPlanId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasIndex(e => e.BusinessId);
+            entity.HasIndex(e => new { e.BusinessId, e.Status });
+        });
+
+        modelBuilder.Entity<BusinessUsagePeriod>(entity =>
+        {
+            entity.HasKey(e => e.BusinessUsagePeriodId);
+            entity.Property(e => e.Status).HasConversion<int>();
+            entity.Property(e => e.VariableCostLimitCop).HasPrecision(18, 2);
+            entity.Property(e => e.VariableCostExtraCop).HasPrecision(18, 2);
+            entity.Property(e => e.VariableCostUsedCop).HasPrecision(18, 2);
+            entity.HasOne(e => e.BusinessSubscription)
+                .WithMany(s => s.UsagePeriods)
+                .HasForeignKey(e => e.BusinessSubscriptionId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(e => e.Business)
+                .WithMany()
+                .HasForeignKey(e => e.BusinessId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasIndex(e => new { e.BusinessSubscriptionId, e.PeriodStart, e.PeriodEnd }).IsUnique();
+            entity.HasIndex(e => new { e.BusinessId, e.PeriodStart, e.PeriodEnd });
+        });
+
+        modelBuilder.Entity<UsageLedgerEntry>(entity =>
+        {
+            entity.HasKey(e => e.UsageLedgerEntryId);
+            entity.Property(e => e.OperationType).HasConversion<int>();
+            entity.Property(e => e.EstimatedCostCop).HasPrecision(18, 4);
+            entity.Property(e => e.ActualCostCop).HasPrecision(18, 4);
+            entity.Property(e => e.Model).HasMaxLength(100);
+            entity.Property(e => e.MetadataJson).HasColumnType("NVARCHAR(MAX)");
+            entity.HasOne(e => e.BusinessUsagePeriod)
+                .WithMany(p => p.LedgerEntries)
+                .HasForeignKey(e => e.BusinessUsagePeriodId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(e => e.Business)
+                .WithMany()
+                .HasForeignKey(e => e.BusinessId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.Agent)
+                .WithMany()
+                .HasForeignKey(e => e.AgentId)
+                .OnDelete(DeleteBehavior.SetNull)
+                .IsRequired(false);
+            entity.HasOne(e => e.Conversation)
+                .WithMany()
+                .HasForeignKey(e => e.ConversationId)
+                .OnDelete(DeleteBehavior.SetNull)
+                .IsRequired(false);
+            entity.HasIndex(e => e.BusinessId);
+            entity.HasIndex(e => e.BusinessUsagePeriodId);
+            entity.HasIndex(e => e.CreatedAt);
+        });
+
+        modelBuilder.Entity<UsageCostRate>(entity =>
+        {
+            entity.HasKey(e => e.UsageCostRateId);
+            entity.Property(e => e.Code).IsRequired().HasMaxLength(100);
+            entity.Property(e => e.OperationType).HasConversion<int>();
+            entity.Property(e => e.Unit).IsRequired().HasMaxLength(50);
+            entity.Property(e => e.CostUsd).HasPrecision(18, 8);
+            entity.Property(e => e.CostCop).HasPrecision(18, 4);
+            entity.HasIndex(e => new { e.Code, e.OperationType, e.EffectiveFrom });
+        });
+
+        modelBuilder.Entity<AgentType>(entity =>
+        {
+            entity.HasKey(e => e.AgentTypeId);
+            entity.Property(e => e.Name).IsRequired().HasMaxLength(100);
+            entity.Property(e => e.Description).HasMaxLength(500);
+        });
+
+        modelBuilder.Entity<Agent>(entity =>
+        {
+            entity.HasKey(e => e.AgentId);
+            entity.Property(e => e.Name).IsRequired().HasMaxLength(200);
+            entity.Property(e => e.Description).HasMaxLength(500);
+            entity.Property(e => e.SettingsJson).HasColumnType("NVARCHAR(MAX)");
+            entity.Property(e => e.SystemPromptMarkdown).HasColumnType("NVARCHAR(MAX)");
+            entity.HasOne(e => e.Business)
+                .WithMany()
+                .HasForeignKey(e => e.BusinessId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.AgentType)
+                .WithMany(at => at.Agents)
+                .HasForeignKey(e => e.AgentTypeId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasIndex(e => e.BusinessId);
+            entity.HasIndex(e => new { e.BusinessId, e.Name }).IsUnique();
+        });
+
     }
 }

@@ -27,7 +27,13 @@ public class ConversationStateRepository : IConversationStateRepository
 
         if (existing != null)
         {
-            existing.StateJson = entity.StateJson;
+            existing.BusinessId = entity.BusinessId;
+            existing.Owner = entity.Owner;
+            existing.LastEscalatedAt = entity.LastEscalatedAt;
+            existing.ConsecutiveDegradedTurns = entity.ConsecutiveDegradedTurns;
+            existing.LastUserMessage = entity.LastUserMessage;
+            existing.LastBotMessage = entity.LastBotMessage;
+            existing.VerificationsJson = entity.VerificationsJson;
             existing.Version = entity.Version;
             existing.UpdatedAt = entity.UpdatedAt;
             _context.ConversationStates.Update(existing);

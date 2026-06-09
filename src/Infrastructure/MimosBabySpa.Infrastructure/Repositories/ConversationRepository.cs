@@ -26,7 +26,31 @@ public class ConversationRepository : IConversationRepository
     {
         return await _context.Conversations
             .Include(c => c.Messages)
-            .FirstOrDefaultAsync(c => c.BusinessId == businessId && c.UserNumber == userNumber);
+            .Where(c => c.BusinessId == businessId && c.UserNumber == userNumber)
+            .OrderByDescending(c => c.OpenedAt)
+            .FirstOrDefaultAsync();
+    }
+
+    public async Task<Conversation?> GetActiveByBusinessIdAndUserNumberAsync(
+        Guid businessId, string userNumber, CancellationToken ct = default)
+    {
+        return await _context.Conversations
+            .Include(c => c.Messages)
+            .FirstOrDefaultAsync(
+                c => c.BusinessId == businessId
+                    && c.UserNumber == userNumber
+                    && c.Status == ConversationLifecycleStatus.Active,
+                ct);
+    }
+
+    public async Task<bool> HasClosedConversationsAsync(
+        Guid businessId, string userNumber, CancellationToken ct = default)
+    {
+        return await _context.Conversations.AnyAsync(
+            c => c.BusinessId == businessId
+                && c.UserNumber == userNumber
+                && c.Status == ConversationLifecycleStatus.Closed,
+            ct);
     }
 
     public Task<Conversation> CreateAsync(Conversation conversation)
@@ -49,13 +73,14 @@ public class ConversationRepository : IConversationRepository
     }
 
     public async Task<(IReadOnlyList<Conversation> Items, int TotalCount)> GetPagedByBusinessIdAsync(
-        Guid businessId, int page, int pageSize, string? search, Domain.Enums.ConversationState? state, CancellationToken ct)
+        Guid businessId, int page, int pageSize, string? search,
+        ConversationLifecycleStatus? status, CancellationToken ct)
     {
         var query = _context.Conversations
             .Where(c => c.BusinessId == businessId);
 
-        if (state.HasValue)
-            query = query.Where(c => c.State == state.Value);
+        if (status.HasValue)
+            query = query.Where(c => c.Status == status.Value);
 
         if (!string.IsNullOrWhiteSpace(search))
         {
@@ -69,7 +94,7 @@ public class ConversationRepository : IConversationRepository
         var totalCount = await query.CountAsync(ct);
 
         var items = await query
-            .OrderByDescending(c => c.Timestamp)
+            .OrderByDescending(c => c.LastActivityAt)
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
             .ToListAsync(ct);

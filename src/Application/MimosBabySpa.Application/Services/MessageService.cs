@@ -47,4 +47,10 @@ public class MessageService : IMessageService
     {
         return await _unitOfWork.Messages.GetByConversationIdAsync(conversationId);
     }
+
+    public async Task<IReadOnlyList<Domain.Entities.Message>> GetRecentConversationHistoryAsync(
+        Guid conversationId, int limit, CancellationToken ct = default)
+    {
+        return await _unitOfWork.Messages.GetRecentByConversationIdAsync(conversationId, limit, ct);
+    }
 }

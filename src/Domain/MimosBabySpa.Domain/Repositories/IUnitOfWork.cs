@@ -10,6 +10,7 @@ public interface IUnitOfWork : IDisposable
     IBusinessConfigurationRepository BusinessConfigurations { get; }
     ISystemConfigurationRepository SystemConfigurations { get; }
     IConversationContextRepository ConversationContexts { get; }
+    ICustomerMemoryRepository CustomerMemory { get; }
     IReservationRepository Reservations { get; }
     IServiceRepository Services { get; }
     IServiceCategoryRepository ServiceCategories { get; }
@@ -22,6 +23,7 @@ public interface IUnitOfWork : IDisposable
     IReservationAddOnRepository ReservationAddOns { get; }
 
     IPaymentTransactionRepository PaymentTransactions { get; }
+    IEnrollmentRepository Enrollments { get; }
     IAppUserRepository AppUsers { get; }
     IAppRoleRepository AppRoles { get; }
     IPermissionRepository Permissions { get; }
@@ -31,6 +33,15 @@ public interface IUnitOfWork : IDisposable
     IUserExternalLoginRepository UserExternalLogins { get; }
     IAuditLogRepository AuditLogs { get; }
     ITenantRepository Tenants { get; }
+    ISubscriptionPlanRepository SubscriptionPlans { get; }
+    IBusinessSubscriptionRepository BusinessSubscriptions { get; }
+    IBusinessUsagePeriodRepository BusinessUsagePeriods { get; }
+    IUsageLedgerRepository UsageLedger { get; }
+    IUsageCostRateRepository UsageCostRates { get; }
+
+    Task ExecuteInTransactionAsync(Func<Task> action, CancellationToken cancellationToken = default);
+
+    Task<T> ExecuteInTransactionAsync<T>(Func<Task<T>> action, CancellationToken cancellationToken = default);
 
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

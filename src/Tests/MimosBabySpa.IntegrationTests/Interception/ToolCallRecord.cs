@@ -1,13 +1,12 @@
-using MimosBabySpa.Application.Tools;
-
 namespace MimosBabySpa.IntegrationTests.Interception;
 
 /// <summary>
-/// Represents one recorded tool call during a conversation turn.
+/// Representa una invocación de tool registrada durante un escenario de test.
 /// </summary>
 public record ToolCallRecord(
-    ToolType ToolType,
-    Dictionary<string, object> Arguments,
-    ToolExecutionResult Result,
+    string ToolName,
+    string ArgumentsJson,
+    string ResultJson,
+    bool ResultIsError,
     DateTimeOffset CalledAt,
     long ElapsedMs);

@@ -4,28 +4,30 @@ using Microsoft.Extensions.Logging;
 using MimosBabySpa.Domain.Entities;
 using MimosBabySpa.Domain.Models;
 using MimosBabySpa.Domain.Repositories;
-using MimosBabySpa.Application.Services;
 
 namespace MimosBabySpa.Application.StateManagement;
 
 /// <summary>
-/// Implementación del gestor de estado de conversación.
-/// Persiste el estado en la base de datos usando ConversationStateEntity.
+/// Persiste el estado columnar del motor agentic (ConversationStateEntity).
 /// </summary>
 public class ConversationStateManager : IConversationStateManager
 {
     private readonly ILogger<ConversationStateManager> _logger;
     private readonly IConversationStateRepository _stateRepository;
-    private readonly IConversationService _conversationService;
+
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        PropertyNameCaseInsensitive = true,
+        Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase) }
+    };
 
     public ConversationStateManager(
         ILogger<ConversationStateManager> logger,
-        IConversationStateRepository stateRepository,
-        IConversationService conversationService)
+        IConversationStateRepository stateRepository)
     {
         _logger = logger;
         _stateRepository = stateRepository;
-        _conversationService = conversationService;
     }
 
     public async Task<ConversationState> GetOrCreateStateAsync(
@@ -34,73 +36,34 @@ public class ConversationStateManager : IConversationStateManager
         string phone,
         CancellationToken cancellationToken = default)
     {
-        // Cargar SIEMPRE desde la base de datos (sin cache)
-        var stateEntity = await _stateRepository.GetByConversationIdAsync(conversationId, cancellationToken);
-
-        if (stateEntity != null)
+        var entity = await _stateRepository.GetByConversationIdAsync(conversationId, cancellationToken);
+        if (entity is not null)
         {
-            try
-            {
-                var state = DeserializeState(stateEntity.StateJson);
-                state.StateId = Guid.NewGuid(); // Generar nuevo StateId para esta sesión
-                state.Version = stateEntity.Version;
-                state.UpdatedAt = stateEntity.UpdatedAt;
-                state.CreatedAt = stateEntity.CreatedAt;
-
-                _logger.LogInformation(
-                    "Estado cargado desde BD: ConversationId={ConversationId}, Version={Version}, Attributes={AttributeCount}",
-                    conversationId, state.Version, state.Attributes.Count);
-
-                return state;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error deserializando estado desde BD. Creando nuevo estado.");
-            }
+            _logger.LogDebug("Agent state loaded: ConversationId={ConversationId}, Version={Version}",
+                conversationId, entity.Version);
+            return MapToModel(entity);
         }
 
-        // Crear nuevo estado
-        var newState = new ConversationState
+        var now = DateTime.UtcNow;
+        var newEntity = new ConversationStateEntity
         {
-            StateId = Guid.NewGuid(),
+            ConversationId = conversationId,
             BusinessId = businessId,
-            Phone = phone,
-            CurrentIntent = IntentType.Unknown,
-            CurrentStage = TransactionStage.CollectingInformation,
+            Owner = ConversationOwner.Bot,
             Version = 1,
-            CreatedAt = DateTime.UtcNow,
-            UpdatedAt = DateTime.UtcNow
+            CreatedAt = now,
+            UpdatedAt = now
         };
 
-        // Guardar en BD inmediatamente
-        await SaveStateToDatabaseAsync(newState, conversationId, cancellationToken);
-
-        _logger.LogInformation(
-            "Nuevo estado creado y guardado en BD: StateId={StateId} para BusinessId={BusinessId}, Phone={Phone}, ConversationId={ConversationId}",
-            newState.StateId, businessId, phone, conversationId);
-
-        return newState;
+        await _stateRepository.SaveAsync(newEntity, cancellationToken);
+        _logger.LogInformation("New agent state created for ConversationId={ConversationId}", conversationId);
+        return MapToModel(newEntity);
     }
 
     public async Task<ConversationState?> GetStateByConversationIdAsync(Guid conversationId, CancellationToken ct = default)
     {
-        var stateEntity = await _stateRepository.GetByConversationIdAsync(conversationId, ct);
-        if (stateEntity == null)
-            return null;
-
-        try
-        {
-            var state = DeserializeState(stateEntity.StateJson);
-            state.Version = stateEntity.Version;
-            state.UpdatedAt = stateEntity.UpdatedAt;
-            state.CreatedAt = stateEntity.CreatedAt;
-            return state;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error deserializando estado por ConversationId={ConvId}", conversationId);
-            return null;
-        }
+        var entity = await _stateRepository.GetByConversationIdAsync(conversationId, ct);
+        return entity is null ? null : MapToModel(entity);
     }
 
     public async Task<ConversationState> SaveStateAsync(
@@ -108,125 +71,95 @@ public class ConversationStateManager : IConversationStateManager
         ConversationState state,
         CancellationToken cancellationToken = default)
     {
-        if (state == null)
-        {
-            throw new ArgumentNullException(nameof(state));
-        }
-
-        // Incrementar versión
         state.Version++;
         state.UpdatedAt = DateTime.UtcNow;
 
-        // Guardar DIRECTAMENTE en base de datos (sin cache)
-        await SaveStateToDatabaseAsync(state, conversationId, cancellationToken);
-
-        _logger.LogInformation(
-            "Estado guardado en BD: StateId={StateId}, Version={Version}, ConversationId={ConversationId}, Attributes={AttributeCount}",
-            state.StateId, state.Version, conversationId, state.Attributes.Count);
-
-        return state;
-    }
-
-
-    // ========================================
-    // MÉTODOS PRIVADOS HELPER
-    // ========================================
-
-    private string GetKey(Guid businessId, string phone)
-    {
-        return $"{businessId}:{phone}";
-    }
-
-    /// <summary>
-    /// Guarda el estado en la base de datos
-    /// </summary>
-    private async Task SaveStateToDatabaseAsync(
-        ConversationState state,
-        Guid conversationId,
-        CancellationToken cancellationToken)
-    {
-        var stateJson = SerializeState(state);
-
-        // Verificar versión existente para optimistic locking
-        var existingEntity = await _stateRepository.GetByConversationIdAsync(conversationId, cancellationToken);
-        
-        if (existingEntity != null)
+        var existing = await _stateRepository.GetByConversationIdAsync(conversationId, cancellationToken);
+        if (existing is not null && existing.Version > state.Version)
         {
-            // Verificar versión para optimistic locking
-            if (existingEntity.Version > state.Version)
-            {
-                _logger.LogWarning(
-                    "Conflicto de versión en BD: ConversationId={ConversationId}, " +
-                    "DBVersion={DBVersion}, StateVersion={StateVersion}",
-                    conversationId, existingEntity.Version, state.Version);
-                
-                throw new InvalidOperationException(
-                    $"Conflict: El estado en BD tiene versión {existingEntity.Version}, " +
-                    $"pero el estado proporcionado tiene versión {state.Version}");
-            }
+            throw new InvalidOperationException(
+                $"Conflict: DB version {existing.Version} > state version {state.Version}");
         }
 
-        // Crear o actualizar entidad
-        var entity = existingEntity ?? new ConversationStateEntity
+        var entity = existing ?? new ConversationStateEntity
         {
             ConversationId = conversationId,
             BusinessId = state.BusinessId,
             CreatedAt = state.CreatedAt
         };
 
-        entity.StateJson = stateJson;
-        entity.Version = state.Version;
-        entity.UpdatedAt = state.UpdatedAt;
-
+        MapToEntity(state, entity);
         await _stateRepository.SaveAsync(entity, cancellationToken);
+        state.Version = entity.Version;
 
-        _logger.LogDebug(
-            "Estado guardado en BD: ConversationId={ConversationId}, Version={Version}",
+        _logger.LogDebug("Agent state saved: ConversationId={ConversationId}, Version={Version}",
             conversationId, state.Version);
-    }
-
-    /// <summary>
-    /// Serializa el estado a JSON
-    /// </summary>
-    private string SerializeState(ConversationState state)
-    {
-        return JsonSerializer.Serialize(state, GetSerializerOptions());
-    }
-
-    /// <summary>
-    /// Deserializa el estado desde JSON
-    /// </summary>
-    private ConversationState DeserializeState(string json)
-    {
-        var state = JsonSerializer.Deserialize<ConversationState>(json, GetSerializerOptions());
-        
-        if (state == null)
-        {
-            throw new InvalidOperationException("No se pudo deserializar el estado desde JSON");
-        }
-
-        // Asegurar que Attributes no sea null
-        if (state.Attributes == null)
-        {
-            state.Attributes = new Dictionary<string, string>();
-        }
-
         return state;
     }
 
-    private static JsonSerializerOptions GetSerializerOptions()
+    private static ConversationState MapToModel(ConversationStateEntity entity) => new()
     {
-        return new JsonSerializerOptions
-        {
-            WriteIndented = false,
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-            PropertyNameCaseInsensitive = true,
-            Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase) }
-        };
+        ConversationId = entity.ConversationId,
+        BusinessId = entity.BusinessId,
+        Owner = entity.Owner,
+        LastEscalatedAt = entity.LastEscalatedAt,
+        ConsecutiveDegradedTurns = entity.ConsecutiveDegradedTurns,
+        LastUserMessage = entity.LastUserMessage,
+        LastBotMessage = entity.LastBotMessage,
+        Verifications = DeserializeVerifications(entity.VerificationsJson),
+        StageFactSnapshots = DeserializeStageSnapshots(entity.StageSnapshotsJson),
+        Version = entity.Version,
+        CreatedAt = entity.CreatedAt,
+        UpdatedAt = entity.UpdatedAt
+    };
+
+    private static void MapToEntity(ConversationState state, ConversationStateEntity entity)
+    {
+        entity.BusinessId = state.BusinessId;
+        entity.Owner = state.Owner;
+        entity.LastEscalatedAt = state.LastEscalatedAt;
+        entity.ConsecutiveDegradedTurns = state.ConsecutiveDegradedTurns;
+        entity.LastUserMessage = state.LastUserMessage;
+        entity.LastBotMessage = state.LastBotMessage;
+        entity.VerificationsJson = state.Verifications.Count == 0
+            ? null
+            : JsonSerializer.Serialize(state.Verifications, JsonOptions);
+        entity.StageSnapshotsJson = state.StageFactSnapshots.Count == 0
+            ? null
+            : JsonSerializer.Serialize(state.StageFactSnapshots, JsonOptions);
+        entity.Version = state.Version;
+        entity.UpdatedAt = state.UpdatedAt;
     }
 
-    // Método de auditoría removido - sin cache en memoria, no hay historial temporal
-    // La auditoría debe implementarse en BD si es necesaria
+    private static Dictionary<string, VerificationEntry> DeserializeVerifications(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+            return new Dictionary<string, VerificationEntry>(StringComparer.Ordinal);
 
-    // Métodos helper removidos - ya no se necesitan sin cache en memoria
+        try
+        {
+            return JsonSerializer.Deserialize<Dictionary<string, VerificationEntry>>(json, JsonOptions)
+                ?? new Dictionary<string, VerificationEntry>(StringComparer.Ordinal);
+        }
+        catch
+        {
+            return new Dictionary<string, VerificationEntry>(StringComparer.Ordinal);
+        }
+    }
+
+    private static Dictionary<string, Dictionary<string, string>> DeserializeStageSnapshots(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+            return new Dictionary<string, Dictionary<string, string>>(StringComparer.Ordinal);
+
+        try
+        {
+            return JsonSerializer.Deserialize<Dictionary<string, Dictionary<string, string>>>(json, JsonOptions)
+                ?? new Dictionary<string, Dictionary<string, string>>(StringComparer.Ordinal);
+        }
+        catch
+        {
+            return new Dictionary<string, Dictionary<string, string>>(StringComparer.Ordinal);
+        }
+    }
 }

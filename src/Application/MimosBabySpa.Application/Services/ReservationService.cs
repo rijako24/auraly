@@ -66,10 +66,11 @@ public class ReservationService : IReservationService
                 "No hay empleado disponible para este horario. Por favor intenta con otra fecha u hora.");
         }
 
-        // 4. Resolver add-ons (nombres CSV → IDs + entidades para PriceSnapshot)
+        // 4. Resolver add-ons desde BusinessAttributes (único canal)
+        var addOnsCsv = ReservationBusinessAttributeKeys.GetSelectedAddOnsCsv(request.BusinessAttributes);
         var (addOnServiceIds, addOnNames) = await ResolveAddOnsAsync(
             request.BusinessId,
-            request.SelectedAddOnsCsv,
+            addOnsCsv,
             cancellationToken);
 
         // 5. Construir metadata para calendario
@@ -86,6 +87,10 @@ public class ReservationService : IReservationService
             DurationMinutes = duration,
             Status = ReservationStatus.Confirmed,
             ConversationId = request.ConversationId,
+            CustomerNameSnapshot = request.CustomerName?.Trim(),
+            CustomerEmailSnapshot = request.Email?.Trim(),
+            CustomerPhoneSnapshot = request.Phone?.Trim(),
+            CustomAttributesJson = request.CustomAttributesJson,
             CreatedAt = DateTime.UtcNow,
             UpdatedAt = DateTime.UtcNow
         };
@@ -147,6 +152,99 @@ public class ReservationService : IReservationService
             addOnNames);
     }
 
+    public async Task<CreateReservationResponse> CreateFromIntentSnapshotAsync(
+        Guid businessId,
+        Guid conversationId,
+        ReservationIntentSnapshot snapshot,
+        DateTime reservationDateTime,
+        CancellationToken cancellationToken = default)
+    {
+        var endTime = reservationDateTime.AddMinutes(snapshot.DurationMinutes);
+        var employee = await _employeeAssignmentService.FindBestAvailableEmployeeAsync(
+            businessId,
+            snapshot.ServiceId,
+            reservationDateTime,
+            endTime,
+            cancellationToken,
+            preferredEmployeeId: snapshot.PreferredEmployeeId);
+
+        if (employee is null)
+        {
+            throw new InvalidOperationException(
+                "No hay empleado disponible para este horario. Por favor intenta con otra fecha u hora.");
+        }
+
+        var addOnNames = new List<string>();
+        var reservation = new Reservation
+        {
+            ReservationId = Guid.NewGuid(),
+            BusinessId = businessId,
+            ServiceId = snapshot.ServiceId,
+            EmployeeId = employee.EmployeeId,
+            ReservationDateTime = reservationDateTime,
+            DurationMinutes = snapshot.DurationMinutes,
+            Status = ReservationStatus.Confirmed,
+            ConversationId = conversationId,
+            CustomerNameSnapshot = snapshot.CustomerName?.Trim(),
+            CustomerEmailSnapshot = snapshot.CustomerEmail?.Trim(),
+            CustomerPhoneSnapshot = snapshot.CustomerPhone?.Trim(),
+            CustomAttributesJson = snapshot.CustomAttributesJson,
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        };
+
+        var createdReservation = await _unitOfWork.Reservations.CreateAsync(reservation);
+
+        foreach (var addOnServiceId in snapshot.AddOnServiceIds)
+        {
+            var addOnService = await _unitOfWork.Services.GetByIdAsync(addOnServiceId);
+            if (addOnService is null)
+                continue;
+
+            await _unitOfWork.ReservationAddOns.AddAsync(new ReservationAddOn
+            {
+                ReservationAddOnId = Guid.NewGuid(),
+                ReservationId = createdReservation.ReservationId,
+                AddOnServiceId = addOnServiceId,
+                PriceSnapshot = addOnService.Price
+            });
+            addOnNames.Add(addOnService.ServiceName);
+        }
+
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+        if (await IsCalendarSyncEnabledAsync(businessId, cancellationToken))
+        {
+            var metadata = BuildMetadataFromSnapshot(snapshot);
+            var calendarEventId = await TrySyncReservationToCalendarAsync(
+                createdReservation,
+                snapshot.ServiceName,
+                metadata,
+                cancellationToken);
+            if (calendarEventId is not null)
+            {
+                createdReservation.CalendarEventId = calendarEventId;
+                await _unitOfWork.Reservations.UpdateAsync(createdReservation);
+                await _unitOfWork.SaveChangesAsync(cancellationToken);
+            }
+        }
+
+        _logger.LogInformation(
+            "Reserva creada desde snapshot: {ReservationId} servicio {ServiceName} el {DateTime}",
+            createdReservation.ReservationId,
+            snapshot.ServiceName,
+            reservationDateTime);
+
+        return new CreateReservationResponse(
+            createdReservation.ReservationId,
+            snapshot.ServiceName,
+            employee.Name,
+            DateOnly.FromDateTime(reservationDateTime),
+            TimeOnly.FromDateTime(reservationDateTime),
+            snapshot.DurationMinutes,
+            addOnNames);
+    }
+
     public async Task<ReservationDto?> GetReservationByIdAsync(Guid reservationId)
     {
         var reservation = await _unitOfWork.Reservations.GetByIdAsync(reservationId);
@@ -172,7 +270,7 @@ public class ReservationService : IReservationService
     }
 
     /// <summary>
-    /// Resuelve SelectedAddOnsCsv a (ServiceId, Service) para crear ReservationAddOns
+    /// Resuelve CSV de nombres de add-ons a (ServiceId, Service) para crear ReservationAddOns
     /// y retorna la lista de nombres para el mensaje de éxito.
     /// </summary>
     private async Task<(List<(Guid Id, Service Entity)>, IReadOnlyList<string>)> ResolveAddOnsAsync(
@@ -226,6 +324,37 @@ public class ReservationService : IReservationService
         return metadata;
     }
 
+    private static Dictionary<string, string> BuildMetadataFromSnapshot(ReservationIntentSnapshot snapshot)
+    {
+        var metadata = new Dictionary<string, string>();
+        if (!string.IsNullOrWhiteSpace(snapshot.CustomerName))
+            metadata["CustomerName"] = snapshot.CustomerName;
+        if (!string.IsNullOrWhiteSpace(snapshot.CustomerEmail))
+            metadata["Email"] = snapshot.CustomerEmail;
+        if (!string.IsNullOrWhiteSpace(snapshot.CustomerPhone))
+            metadata["Phone"] = snapshot.CustomerPhone;
+
+        if (!string.IsNullOrWhiteSpace(snapshot.CustomAttributesJson)
+            && snapshot.CustomAttributesJson != "{}")
+        {
+            try
+            {
+                var custom = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(snapshot.CustomAttributesJson);
+                if (custom is not null)
+                {
+                    foreach (var kvp in custom)
+                        metadata[kvp.Key] = kvp.Value;
+                }
+            }
+            catch
+            {
+                // ignore malformed JSON in metadata builder
+            }
+        }
+
+        return metadata;
+    }
+
     private async Task<bool> IsCalendarSyncEnabledAsync(Guid businessId, CancellationToken cancellationToken)
     {
         var integrations = await _integrationsProvider.GetAsync(businessId, cancellationToken);
@@ -238,8 +367,13 @@ public class ReservationService : IReservationService
         Dictionary<string, string> metadata,
         CancellationToken cancellationToken)
     {
+        if (!reservation.ReservationDateTime.HasValue || !reservation.EndDateTime.HasValue)
+            return null;
+
         try
         {
+            var reservationDateTime = reservation.ReservationDateTime.Value;
+            var endDateTime = reservation.EndDateTime.Value;
             var titleParts = new List<string> { $"[{serviceName}] Reserva" };
             foreach (var kvp in metadata)
             {
@@ -251,8 +385,8 @@ public class ReservationService : IReservationService
             var description = $@"Reserva confirmada
 
                                 Servicio: {serviceName}
-                                Fecha: {reservation.ReservationDateTime:dd/MM/yyyy}
-                                Hora: {reservation.ReservationDateTime:hh\:mm}
+                                Fecha: {reservationDateTime:dd/MM/yyyy}
+                                Hora: {reservationDateTime:hh\:mm}
                                 Duración: {reservation.DurationMinutes} minutos";
 
             if (metadata.Count > 0)
@@ -266,8 +400,8 @@ public class ReservationService : IReservationService
             {
                 Title = title,
                 Description = description,
-                StartDateTime = reservation.ReservationDateTime,
-                EndDateTime = reservation.EndDateTime,
+                StartDateTime = reservationDateTime,
+                EndDateTime = endDateTime,
                 ExtendedProperties = new Dictionary<string, string>
                 {
                     { "ReservationId", reservation.ReservationId.ToString() },
@@ -337,7 +471,13 @@ public class ReservationService : IReservationService
             reservation.Status = ReservationStatus.Confirmed;
         }
 
-        var service = reservation.Service ?? await _unitOfWork.Services.GetByIdAsync(reservation.ServiceId);
+        if (!reservation.ServiceId.HasValue)
+        {
+            _logger.LogWarning("Reservation {ReservationId} sin servicio no puede re-agendarse", reservationId);
+            return false;
+        }
+
+        var service = reservation.Service ?? await _unitOfWork.Services.GetByIdAsync(reservation.ServiceId.Value);
         if (service == null)
         {
             _logger.LogWarning("Servicio de reserva {ReservationId} no encontrado", reservationId);
@@ -350,7 +490,7 @@ public class ReservationService : IReservationService
 
         var employee = await _employeeAssignmentService.FindBestAvailableEmployeeAsync(
             reservation.BusinessId,
-            reservation.ServiceId,
+            reservation.ServiceId.Value,
             reservationDateTime,
             endTime,
             cancellationToken);
@@ -399,28 +539,14 @@ public class ReservationService : IReservationService
 
     private static ReservationDto MapToDto(Reservation reservation)
     {
-        if (reservation.Service == null)
-        {
-            throw new InvalidOperationException(
-                $"Service navigation property debe estar cargado para Reservation {reservation.ReservationId}. " +
-                "Use Include(r => r.Service) al obtener la reserva.");
-        }
-
-        if (reservation.Employee == null)
-        {
-            throw new InvalidOperationException(
-                $"Employee navigation property debe estar cargado para Reservation {reservation.ReservationId}. " +
-                "Use Include(r => r.Employee) al obtener la reserva.");
-        }
-
         return new ReservationDto
         {
             ReservationId = reservation.ReservationId,
             BusinessId = reservation.BusinessId,
             ServiceId = reservation.ServiceId,
             EmployeeId = reservation.EmployeeId,
-            ServiceName = reservation.Service.ServiceName,
-            EmployeeName = reservation.Employee.Name,
+            ServiceName = reservation.Service?.ServiceName ?? string.Empty,
+            EmployeeName = reservation.Employee?.Name ?? string.Empty,
             ReservationDateTime = reservation.ReservationDateTime,
             DurationMinutes = reservation.DurationMinutes,
             Status = reservation.Status,

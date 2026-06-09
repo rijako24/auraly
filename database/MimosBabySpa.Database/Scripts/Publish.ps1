@@ -48,7 +48,7 @@ if (-not (Test-Path $dacpacPath)) {
 }
 
 # Construir la cadena de conexión
-$connectionString = "Server=$ServerInstance;Database=$DatabaseName;"
+$connectionString = "Server=$ServerInstance;Database=$DatabaseName;TrustServerCertificate=True;"
 if ($UseIntegratedSecurity) {
     $connectionString += "Integrated Security=True;"
 } else {
@@ -92,7 +92,10 @@ $sqlPackageArgs = @(
     "/TargetConnectionString:$connectionString",
     "/p:BackupDatabaseBeforeChanges=False",
     "/p:DoNotAlterChangeDataCaptureObjects=True",
-    "/p:DoNotAlterReplicatedObjects=True"
+    "/p:DoNotAlterReplicatedObjects=True",
+    "/p:DropObjectsNotInSource=True",
+    "/p:BlockOnPossibleDataLoss=False",
+    "/p:DoNotDropObjectTypes=Users;Logins;RoleMembership;Permissions"
 )
 
 & $sqlPackagePath $sqlPackageArgs

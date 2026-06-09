@@ -5,6 +5,7 @@ namespace MimosBabySpa.Application.Services;
 public interface IConversationService
 {
     Task<Domain.Entities.Conversation> GetOrCreateConversationAsync(Guid businessId, string userNumber, string? customerName = null);
-    Task UpdateConversationContextAsync(Guid conversationId, string? lastMessage, string? lastIntent);
+    Task UpdateConversationContextAsync(Guid conversationId, string? lastMessage);
     Task<Domain.Entities.Conversation?> GetConversationByIdAsync(Guid conversationId);
+    Task<bool> HasClosedConversationsAsync(Guid businessId, string userNumber, CancellationToken ct = default);
 }

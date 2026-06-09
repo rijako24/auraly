@@ -18,9 +18,9 @@ public class OpenAITextModelOptions
     public string Endpoint { get; set; } = "";
 
     /// <summary>
-    /// Nombre del deployment del modelo (ej: gpt-4o-mini).
+    /// Nombre del deployment del modelo (ej: gpt-4.1-mini).
     /// </summary>
-    public string DeploymentName { get; set; } = "gpt-4o-mini";
+    public string DeploymentName { get; set; } = "gpt-4.1-mini";
 }
 
 /// <summary>

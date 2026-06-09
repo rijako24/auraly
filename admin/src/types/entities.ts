@@ -314,3 +314,17 @@ export interface SystemConfiguration {
   updatedAt: string | null;
   isActive: boolean;
 }
+
+export interface Agent {
+  agentId: string;
+  businessId: string;
+  agentTypeId: string;
+  agentTypeName: string;
+  name: string;
+  description: string | null;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string | null;
+  settingsJson: string | null;
+  settings: Record<string, unknown> | null;
+}

@@ -36,6 +36,16 @@ public class Service
     /// </summary>
     public ServiceType ServiceType { get; set; } = ServiceType.Standard;
 
+    /// <summary>
+    /// Define si el servicio se agenda por disponibilidad o se inscribe en un horario fijo.
+    /// </summary>
+    public ServiceFulfillmentKind FulfillmentKind { get; set; } = ServiceFulfillmentKind.Reservation;
+
+    /// <summary>
+    /// Etiqueta de horario fijo usada para servicios de inscripcion.
+    /// </summary>
+    public string? FixedScheduleLabel { get; set; }
+
     // Navigation properties
     public virtual Business Business { get; set; } = null!;
     public virtual ServiceCategory ServiceCategory { get; set; } = null!;

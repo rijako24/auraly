@@ -119,6 +119,42 @@ public class ReservationRepository : IReservationRepository
             .ToListAsync();
     }
 
+    public async Task<Reservation?> GetActiveByConversationIdAsync(Guid conversationId, CancellationToken ct = default)
+    {
+        return await _context.Reservations
+            .Include(r => r.Service)
+            .Include(r => r.Employee)
+            .Include(r => r.AddOns)
+            .Where(r => r.ConversationId == conversationId
+                && r.Status == Domain.Enums.ReservationStatus.Confirmed)
+            .OrderByDescending(r => r.UpdatedAt ?? r.CreatedAt)
+            .FirstOrDefaultAsync(ct);
+    }
+
+    public async Task<IReadOnlyList<Reservation>> GetManageableByCustomerPhoneAsync(
+        Guid businessId,
+        string customerPhone,
+        DateOnly businessToday,
+        CancellationToken ct = default)
+    {
+        var phone = customerPhone.Trim();
+
+        return await _context.Reservations
+            .Include(r => r.Service)
+            .Include(r => r.Employee)
+            .Include(r => r.AddOns)
+            .Where(r => r.BusinessId == businessId
+                && r.CustomerPhoneSnapshot != null
+                && r.CustomerPhoneSnapshot.Trim() == phone
+                && (r.Status == Domain.Enums.ReservationStatus.Confirmed
+                    || r.Status == Domain.Enums.ReservationStatus.OnHold)
+                && (!r.ReservationDateTime.HasValue
+                    || DateOnly.FromDateTime(r.ReservationDateTime.Value) >= businessToday))
+            .OrderBy(r => r.ReservationDateTime)
+            .ThenByDescending(r => r.UpdatedAt ?? r.CreatedAt)
+            .ToListAsync(ct);
+    }
+
     public Task<Reservation> CreateAsync(Reservation reservation)
     {
         _context.Reservations.Add(reservation);
@@ -148,8 +184,12 @@ public class ReservationRepository : IReservationRepository
         // Traer todas las reservas del día desde la base de datos
         var reservations = await _context.Reservations
             .Where(r => r.BusinessId == businessId &&
-                       r.Status != Domain.Enums.ReservationStatus.Cancelled &&
-                       r.ReservationDateTime.Date == reservationDate.Date)
+                       r.ReservationDateTime.HasValue &&
+                       r.ReservationDateTime.Value.Date == reservationDate.Date &&
+                       (r.Status == Domain.Enums.ReservationStatus.Confirmed ||
+                        r.Status == Domain.Enums.ReservationStatus.Completed ||
+                        r.Status == Domain.Enums.ReservationStatus.OnHold ||
+                        r.Status == Domain.Enums.ReservationStatus.PendingCalendar))
             .Select(r => new
             {
                 r.ReservationId,
@@ -161,11 +201,13 @@ public class ReservationRepository : IReservationRepository
         // Validar solapamiento en memoria usando LINQ
         // Dos intervalos se solapan si: start1 < end2 && end1 > start2
         return reservations
+            .Where(r => r.ReservationDateTime.HasValue && r.DurationMinutes.HasValue)
             .Where(r => !excludeReservationId.HasValue || r.ReservationId != excludeReservationId.Value)
             .Any(r =>
             {
-                var reservationEndDateTime = r.ReservationDateTime.AddMinutes(r.DurationMinutes);
-                return r.ReservationDateTime < newEndDateTime && reservationEndDateTime > newStartDateTime;
+                var start = r.ReservationDateTime!.Value;
+                var reservationEndDateTime = start.AddMinutes(r.DurationMinutes!.Value);
+                return start < newEndDateTime && reservationEndDateTime > newStartDateTime;
             });
     }
 }

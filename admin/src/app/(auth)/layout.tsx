@@ -1,5 +1,6 @@
 "use client";
 
+import { AuralyLogo } from "@/components/brand/auraly-logo";
 import { cn } from "@/lib/utils";
 
 export default function AuthLayout({
@@ -13,20 +14,22 @@ export default function AuthLayout({
       <div
         className={cn(
           "hidden lg:flex lg:w-1/2 flex-col justify-center items-center",
-          "bg-gradient-to-br from-primary via-primary/90 to-primary/80",
+          "bg-[radial-gradient(circle_at_50%_15%,rgba(105,217,208,0.18),transparent_30%),linear-gradient(135deg,#07161A_0%,#0F2C33_56%,#1A5860_100%)]",
           "relative overflow-hidden"
         )}
       >
-        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-white/10 to-transparent" />
+        <div className="absolute inset-x-12 bottom-12 h-px auraly-logo-gradient opacity-80" />
         <div className="relative z-10 px-12 text-center">
-          <h2 className="text-3xl font-bold text-primary-foreground mb-4">
-            Talkio Admin
+          <AuralyLogo className="mb-7 justify-center" markClassName="h-20 w-24" />
+          <h2 className="mb-3 text-3xl font-semibold uppercase tracking-[0.32em] text-primary">
+            AURALY
           </h2>
-          <p className="text-primary-foreground/90 text-lg max-w-sm">
-            Gestiona tu negocio con inteligencia artificial. Reservas,
-            pagos y conversaciones automatizadas en un solo lugar.
+          <p className="text-lg text-muted-foreground">
+            Intelligence Amplified.
           </p>
-          <div className="mt-12 w-64 h-40 mx-auto rounded-xl bg-white/10 backdrop-blur-sm border border-white/20" />
+          <p className="mt-1 text-lg text-muted-foreground">
+            Imagination Realized.
+          </p>
         </div>
       </div>
 

@@ -1,4 +1,5 @@
 using MimosBabySpa.Application.Common.Exceptions;
+using MimosBabySpa.Application.Billing;
 using MimosBabySpa.Application.Identity.DTOs;
 using MimosBabySpa.Application.Identity.Interfaces;
 using MimosBabySpa.Domain.Entities;
@@ -10,10 +11,12 @@ namespace MimosBabySpa.Application.Identity.Services;
 public class DashboardService : IDashboardService
 {
     private readonly IUnitOfWork _unitOfWork;
+    private readonly IUsageBillingService _usageBilling;
 
-    public DashboardService(IUnitOfWork unitOfWork)
+    public DashboardService(IUnitOfWork unitOfWork, IUsageBillingService usageBilling)
     {
         _unitOfWork = unitOfWork;
+        _usageBilling = usageBilling;
     }
 
     public async Task<DashboardStatsDto> GetStatsAsync(
@@ -93,11 +96,12 @@ public class DashboardService : IDashboardService
 
         var reservations = (await _unitOfWork.Reservations.GetByBusinessIdAndDateRangeAsync(
             businessId, from, to)).ToList();
-        var reservationsByDay = reservations
-            .GroupBy(r => r.ReservationDateTime.Date)
+        var scheduled = reservations.Where(r => r.ReservationDateTime.HasValue).ToList();
+        var reservationsByDay = scheduled
+            .GroupBy(r => r.ReservationDateTime!.Value.Date)
             .ToDictionary(g => g.Key, g => g.Count());
-        var reservationsByMonth = reservations
-            .GroupBy(r => (r.ReservationDateTime.Year, r.ReservationDateTime.Month))
+        var reservationsByMonth = scheduled
+            .GroupBy(r => (r.ReservationDateTime!.Value.Year, r.ReservationDateTime!.Value.Month))
             .ToDictionary(g => g.Key, g => g.Count());
 
         if (groupByMonth)
@@ -158,6 +162,42 @@ public class DashboardService : IDashboardService
             r.Conversation?.CustomerName,
             r.Status.ToString(),
             r.Service?.Price ?? 0)).ToList();
+    }
+
+    public async Task<BusinessUsageDto?> GetUsageAsync(Guid tenantId, Guid businessId, CancellationToken ct)
+    {
+        await EnsureBusinessBelongsToTenantAsync(tenantId, businessId, ct);
+        var usage = await _usageBilling.GetCurrentUsageAsync(businessId, ct);
+        return usage is null
+            ? null
+            : new BusinessUsageDto(
+                usage.PlanName,
+                usage.PlanCode,
+                usage.CreditsLimit,
+                usage.CreditsUsed,
+                usage.CreditsUsagePercent,
+                usage.VariableCostLimitCop,
+                usage.VariableCostUsedCop,
+                usage.VariableCostUsagePercent,
+                usage.PeriodStart,
+                usage.PeriodEnd,
+                usage.Status);
+    }
+
+    public async Task<IReadOnlyList<SubscriptionPlanDto>> GetPlansAsync(CancellationToken ct)
+    {
+        var plans = await _usageBilling.GetPlansAsync(ct);
+        return plans.Select(p => new SubscriptionPlanDto(
+            p.Code,
+            p.Name,
+            p.MonthlyPriceCop,
+            p.IncludedCredits,
+            p.MaxVariableCostCop,
+            p.MaxVariableCostPercent,
+            p.IncludedAgents,
+            p.IncludedUsers,
+            p.IncludedWorkspaces,
+            p.Features)).ToList();
     }
 
     private static (DateTime From, DateTime To) ParsePeriod(string period)

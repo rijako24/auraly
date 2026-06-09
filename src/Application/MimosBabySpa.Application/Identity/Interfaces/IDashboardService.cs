@@ -18,4 +18,9 @@ public interface IDashboardService
 
     Task<IReadOnlyList<RecentReservationDto>> GetRecentReservationsAsync(
         Guid tenantId, Guid businessId, int limit = 5, CancellationToken ct = default);
+
+    Task<BusinessUsageDto?> GetUsageAsync(
+        Guid tenantId, Guid businessId, CancellationToken ct = default);
+
+    Task<IReadOnlyList<SubscriptionPlanDto>> GetPlansAsync(CancellationToken ct = default);
 }

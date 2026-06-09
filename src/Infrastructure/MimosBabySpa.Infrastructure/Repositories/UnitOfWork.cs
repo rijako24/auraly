@@ -14,6 +14,7 @@ public class UnitOfWork : IUnitOfWork
     private IBusinessConfigurationRepository? _businessConfigurations;
     private ISystemConfigurationRepository? _systemConfigurations;
     private IConversationContextRepository? _conversationContexts;
+    private ICustomerMemoryRepository? _customerMemory;
     private IReservationRepository? _reservations;
     private IServiceRepository? _services;
     private IServiceCategoryRepository? _serviceCategories;
@@ -25,6 +26,7 @@ public class UnitOfWork : IUnitOfWork
     private IServiceAddOnRuleRepository? _serviceAddOnRules;
     private IReservationAddOnRepository? _reservationAddOns;
     private IPaymentTransactionRepository? _paymentTransactions;
+    private IEnrollmentRepository? _enrollments;
     private IAppUserRepository? _appUsers;
     private IAppRoleRepository? _appRoles;
     private IPermissionRepository? _permissions;
@@ -34,6 +36,11 @@ public class UnitOfWork : IUnitOfWork
     private IUserExternalLoginRepository? _userExternalLogins;
     private IAuditLogRepository? _auditLogs;
     private ITenantRepository? _tenants;
+    private ISubscriptionPlanRepository? _subscriptionPlans;
+    private IBusinessSubscriptionRepository? _businessSubscriptions;
+    private IBusinessUsagePeriodRepository? _businessUsagePeriods;
+    private IUsageLedgerRepository? _usageLedger;
+    private IUsageCostRateRepository? _usageCostRates;
 
     public UnitOfWork(ApplicationDbContext context)
     {
@@ -63,6 +70,9 @@ public class UnitOfWork : IUnitOfWork
 
     public IConversationContextRepository ConversationContexts =>
         _conversationContexts ??= new ConversationContextRepository(_context);
+
+    public ICustomerMemoryRepository CustomerMemory =>
+        _customerMemory ??= new CustomerMemoryRepository(_context);
 
     public IReservationRepository Reservations =>
         _reservations ??= new ReservationRepository(_context);
@@ -97,6 +107,9 @@ public class UnitOfWork : IUnitOfWork
     public IPaymentTransactionRepository PaymentTransactions =>
         _paymentTransactions ??= new PaymentTransactionRepository(_context);
 
+    public IEnrollmentRepository Enrollments =>
+        _enrollments ??= new EnrollmentRepository(_context);
+
     public IAppUserRepository AppUsers =>
         _appUsers ??= new AppUserRepository(_context);
 
@@ -124,9 +137,55 @@ public class UnitOfWork : IUnitOfWork
     public ITenantRepository Tenants =>
         _tenants ??= new TenantRepository(_context);
 
+    public ISubscriptionPlanRepository SubscriptionPlans =>
+        _subscriptionPlans ??= new SubscriptionPlanRepository(_context);
+
+    public IBusinessSubscriptionRepository BusinessSubscriptions =>
+        _businessSubscriptions ??= new BusinessSubscriptionRepository(_context);
+
+    public IBusinessUsagePeriodRepository BusinessUsagePeriods =>
+        _businessUsagePeriods ??= new BusinessUsagePeriodRepository(_context);
+
+    public IUsageLedgerRepository UsageLedger =>
+        _usageLedger ??= new UsageLedgerRepository(_context);
+
+    public IUsageCostRateRepository UsageCostRates =>
+        _usageCostRates ??= new UsageCostRateRepository(_context);
+
     public async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {
         return await _context.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task ExecuteInTransactionAsync(Func<Task> action, CancellationToken cancellationToken = default)
+    {
+        await using var transaction = await _context.Database.BeginTransactionAsync(cancellationToken);
+        try
+        {
+            await action();
+            await transaction.CommitAsync(cancellationToken);
+        }
+        catch
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            throw;
+        }
+    }
+
+    public async Task<T> ExecuteInTransactionAsync<T>(Func<Task<T>> action, CancellationToken cancellationToken = default)
+    {
+        await using var transaction = await _context.Database.BeginTransactionAsync(cancellationToken);
+        try
+        {
+            var result = await action();
+            await transaction.CommitAsync(cancellationToken);
+            return result;
+        }
+        catch
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            throw;
+        }
     }
 
     public void Dispose()

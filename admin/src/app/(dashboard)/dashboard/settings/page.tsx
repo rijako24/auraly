@@ -1,15 +1,21 @@
 "use client";
 
 import Link from "next/link";
-import { Building2, Bell, User, Settings } from "lucide-react";
+import { Building2, Bell, User, Settings, Sparkles } from "lucide-react";
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 
 const SETTINGS_CARDS = [
   {
+    title: "Agente IA (motor)",
+    description: "Asistente: catálogo PDF, persona, flujo, facts y publicación de SettingsJson",
+    href: "/dashboard/agents",
+    icon: Sparkles,
+  },
+  {
     title: "Configuración del Negocio",
-    description: "Personalidad del asistente, horarios, pagos e integraciones",
+    description: "Horarios, política de reserva, pagos e integraciones (operativo)",
     href: "/dashboard/settings/business",
     icon: Building2,
   },

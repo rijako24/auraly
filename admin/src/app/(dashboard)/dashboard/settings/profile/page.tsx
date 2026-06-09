@@ -15,7 +15,7 @@ import { getInitials } from "@/lib/utils";
 const MOCK_PROFILE = {
   firstName: "María",
   lastName: "García",
-  email: "maria@talkio.com",
+  email: "maria@auraly.ai",
   phoneNumber: "+57 300 123 4567",
   avatarUrl: null,
 };

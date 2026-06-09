@@ -10,4 +10,6 @@ public record UpdateServiceRequest(
     bool? IsActive,
     Guid? CategoryId,
     ServiceTier? Tier,
-    ServiceType? ServiceType);
+    ServiceType? ServiceType,
+    ServiceFulfillmentKind? FulfillmentKind,
+    string? FixedScheduleLabel);

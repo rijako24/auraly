@@ -1,10 +1,10 @@
 using MimosBabySpa.IntegrationTests.Infrastructure;
+using MimosBabySpa.IntegrationTests.Scenarios;
 
 namespace MimosBabySpa.IntegrationTests.Scenarios.Definitions;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ESCENARIO 1: Reserva Exitosa
-// El cliente proporciona todos los datos, hay disponibilidad, y confirma.
+// Escenario 1: Reserva Exitosa
 // ─────────────────────────────────────────────────────────────────────────────
 
 public class SuccessfulReservationScenario : TestScenario
@@ -27,47 +27,25 @@ public class SuccessfulReservationScenario : TestScenario
     public override IReadOnlyList<ConversationStep> Steps =>
     [
         new(
-            UserMessage:   "Hola, quiero reservar un Plan Marineritos para el 2025-08-15 a las 10am para mi bebé Lucía.",
-            ExtractionJson: """
-            {
-              "extracted_fields": [
-                {"field": "Service",     "value": "Plan Marineritos",   "confidence": 0.98},
-                {"field": "DesiredDate", "value": "2025-08-15",         "confidence": 0.99},
-                {"field": "DesiredTime", "value": "10:00",              "confidence": 0.97},
-                {"field": "CustomerName","value": "Lucía (mamá)",       "confidence": 0.90}
-              ],
-              "intentions": {
-                "user_requested_availability": true,
-                "user_confirmed_booking":      false,
-                "is_information_query":        false,
-                "user_wants_to_cancel":        false
-              },
-              "ambiguities": []
-            }
-            """,
+            UserMessage: "Hola, quiero reservar un Plan Marineritos para el 2026-08-15 a las 10am.",
+            LlmScript: FakeLlmScript.ToolThenText(
+                "check_availability",
+                """{"service":"Plan Marineritos","date":"2026-08-15","time":"10:00"}""",
+                "Hay disponibilidad el 15 de agosto a las 10:00. ¿Confirmamos la reserva?"),
             ExpectedBotResponseContains: "disponib"),
 
         new(
-            UserMessage:   "Sí, confirmo el horario de las 10am.",
-            ExtractionJson: """
-            {
-              "extracted_fields": [],
-              "intentions": {
-                "user_requested_availability": false,
-                "user_confirmed_booking":      true,
-                "is_information_query":        false,
-                "user_wants_to_cancel":        false
-              },
-              "ambiguities": []
-            }
-            """,
+            UserMessage: "Sí, confirmo el horario de las 10am.",
+            LlmScript: FakeLlmScript.ToolThenText(
+                "create_reservation",
+                """{"service":"Plan Marineritos","date":"2026-08-15","time":"10:00","customer_name":"Lucía","customer_phone":"+5491100000000","customer_confirmed":true}""",
+                "¡Tu reserva ha sido creada exitosamente! Te esperamos el 15 de agosto."),
             ExpectedBotResponseContains: "reserva")
     ];
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ESCENARIO 2: Sin Disponibilidad
-// El cliente pide una fecha sin horarios disponibles.
+// Escenario 2: Sin Disponibilidad
 // ─────────────────────────────────────────────────────────────────────────────
 
 public class NoAvailabilityScenario : TestScenario
@@ -89,36 +67,24 @@ public class NoAvailabilityScenario : TestScenario
     public override IReadOnlyList<ConversationStep> Steps =>
     [
         new(
-            UserMessage:   "Quiero un Plan Post Vacunas el 2025-08-20 a las 9am.",
-            ExtractionJson: """
-            {
-              "extracted_fields": [
-                {"field": "Service",     "value": "Plan Post Vacunas", "confidence": 0.97},
-                {"field": "DesiredDate", "value": "2025-08-20",        "confidence": 0.99},
-                {"field": "DesiredTime", "value": "09:00",             "confidence": 0.95}
-              ],
-              "intentions": {
-                "user_requested_availability": true,
-                "user_confirmed_booking":      false,
-                "is_information_query":        false,
-                "user_wants_to_cancel":        false
-              },
-              "ambiguities": []
-            }
-            """,
-            ExpectedBotResponseContains: "disponible")
+            UserMessage: "Quiero un Plan Post Vacunas el 2026-08-20 a las 9am.",
+            LlmScript: FakeLlmScript.ToolThenText(
+                "check_availability",
+                """{"service":"Plan Post Vacunas","date":"2026-08-20","time":"09:00"}""",
+                "Lo siento, no hay disponibilidad para esa fecha y hora. ¿Te gustaría elegir otra fecha?"),
+            ExpectedBotResponseContains: "")
     ];
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ESCENARIO 3: Confirmación sin verificación de disponibilidad
-// El bot intenta crear la reserva sin haber verificado disponibilidad antes.
+// Escenario 3: Confirmación sin verificar disponibilidad
+// El bot intenta confirmar sin haber verificado disponibilidad primero.
 // ─────────────────────────────────────────────────────────────────────────────
 
 public class ConfirmationWithoutAvailabilityScenario : TestScenario
 {
     public override string Id          => "test_confirmacion_sin_llamada";
-    public override string Description => "Se valida que el bot no puede crear reserva si no verificó disponibilidad primero.";
+    public override string Description => "Se valida que el bot no crea reserva sin verificar disponibilidad primero.";
     public override CalendarMode CalendarMode     => CalendarMode.NoSlots;
     public override ReservationMode ReservationMode => ReservationMode.AlwaysSucceed;
     public override bool ExpectReservationCreated  => false;
@@ -133,28 +99,14 @@ public class ConfirmationWithoutAvailabilityScenario : TestScenario
     public override IReadOnlyList<ConversationStep> Steps =>
     [
         new(
-            UserMessage:   "Confirmo la reserva para el Plan Marineritos el lunes.",
-            ExtractionJson: """
-            {
-              "extracted_fields": [
-                {"field": "Service",     "value": "Plan Marineritos", "confidence": 0.90}
-              ],
-              "intentions": {
-                "user_requested_availability": false,
-                "user_confirmed_booking":      true,
-                "is_information_query":        false,
-                "user_wants_to_cancel":        false
-              },
-              "ambiguities": []
-            }
-            """,
-            ExpectedBotResponseContains: "fecha")
+            UserMessage: "Confirmo la reserva para el Plan Marineritos el lunes.",
+            LlmScript: FakeLlmScript.TextOnly("Para confirmar una reserva primero necesito verificar disponibilidad. ¿Qué fecha y hora prefieres?"),
+            ExpectedBotResponseContains: "")
     ];
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ESCENARIO 4: Reserva Doble
-// El sistema detecta duplicados y no crea la segunda reserva.
+// Escenario 4: Reserva Doble
 // ─────────────────────────────────────────────────────────────────────────────
 
 public class DoubleBookingScenario : TestScenario
@@ -163,7 +115,7 @@ public class DoubleBookingScenario : TestScenario
     public override string Description => "Se intenta crear dos reservas en el mismo horario. El sistema debe rechazar la segunda.";
     public override CalendarMode CalendarMode     => CalendarMode.Available;
     public override ReservationMode ReservationMode => ReservationMode.TrackDuplicates;
-    public override bool ExpectReservationCreated  => true;  // first one succeeds
+    public override bool ExpectReservationCreated  => true;
     public override bool ExpectAvailabilityChecked => true;
 
     public override IReadOnlyList<string> RulesToValidate =>
@@ -176,50 +128,31 @@ public class DoubleBookingScenario : TestScenario
     public override IReadOnlyList<ConversationStep> Steps =>
     [
         new(
-            UserMessage:   "Quiero Plan Marineritos el 2025-08-15 a las 10am.",
-            ExtractionJson: """
-            {
-              "extracted_fields": [
-                {"field": "Service",      "value": "Plan Marineritos", "confidence": 0.98},
-                {"field": "DesiredDate",  "value": "2025-08-15",       "confidence": 0.99},
-                {"field": "DesiredTime",  "value": "10:00",            "confidence": 0.97},
-                {"field": "CustomerName", "value": "Cliente Test",     "confidence": 0.90}
-              ],
-              "intentions": {
-                "user_requested_availability": true,
-                "user_confirmed_booking":      false,
-                "is_information_query":        false,
-                "user_wants_to_cancel":        false
-              },
-              "ambiguities": []
-            }
-            """),
+            UserMessage: "Quiero Plan Marineritos el 2026-08-15 a las 10am.",
+            LlmScript: FakeLlmScript.ToolThenText(
+                "check_availability",
+                """{"service":"Plan Marineritos","date":"2026-08-15","time":"10:00"}""",
+                "Hay disponibilidad. ¿Confirmamos la reserva?"),
+            ExpectedBotResponseContains: ""),
+
         new(
-            UserMessage:   "Confirmo.",
-            ExtractionJson: """
-            {
-              "extracted_fields": [],
-              "intentions": {
-                "user_requested_availability": false,
-                "user_confirmed_booking":      true,
-                "is_information_query":        false,
-                "user_wants_to_cancel":        false
-              },
-              "ambiguities": []
-            }
-            """)
+            UserMessage: "Confirmo.",
+            LlmScript: FakeLlmScript.ToolThenText(
+                "create_reservation",
+                """{"service":"Plan Marineritos","date":"2026-08-15","time":"10:00","customer_name":"Cliente Test","customer_phone":"+5491100000000","customer_confirmed":true}""",
+                "¡Reserva creada exitosamente!"),
+            ExpectedBotResponseContains: "")
     ];
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ESCENARIO 5: Error del Backend de Calendario
-// El servicio de disponibilidad lanza una excepción.
+// Escenario 5: Error del Backend de Calendario
 // ─────────────────────────────────────────────────────────────────────────────
 
 public class BackendCalendarErrorScenario : TestScenario
 {
     public override string Id          => "test_error_backend_calendar";
-    public override string Description => "El servicio de disponibilidad lanza una excepción. El orquestador debe manejarla con gracia.";
+    public override string Description => "El servicio de disponibilidad lanza una excepción. El agente debe manejarla con gracia.";
     public override CalendarMode CalendarMode     => CalendarMode.ThrowError;
     public override ReservationMode ReservationMode => ReservationMode.AlwaysSucceed;
     public override bool ExpectReservationCreated  => false;
@@ -234,36 +167,27 @@ public class BackendCalendarErrorScenario : TestScenario
     public override IReadOnlyList<ConversationStep> Steps =>
     [
         new(
-            UserMessage:   "Quiero reservar Plan Aventuras Marinas para el 2025-09-01 a las 11am.",
-            ExtractionJson: """
-            {
-              "extracted_fields": [
-                {"field": "Service",     "value": "Plan Aventuras Marinas", "confidence": 0.97},
-                {"field": "DesiredDate", "value": "2025-09-01",             "confidence": 0.99},
-                {"field": "DesiredTime", "value": "11:00",                  "confidence": 0.95}
-              ],
-              "intentions": {
-                "user_requested_availability": true,
-                "user_confirmed_booking":      false,
-                "is_information_query":        false,
-                "user_wants_to_cancel":        false
-              },
-              "ambiguities": []
-            }
-            """,
+            UserMessage: "Quiero reservar Plan Aventuras Marinas para el 2026-09-01 a las 11am.",
+            LlmScript:
+            [
+                // LLM intenta llamar check_availability (fallará con error del backend)
+                .. FakeLlmScript.ToolThenText(
+                    "check_availability",
+                    """{"service":"Plan Aventuras Marinas","date":"2026-09-01","time":"11:00"}""",
+                    "Lo siento, hubo un problema al verificar disponibilidad. Por favor intenta más tarde.")
+            ],
             ExpectedBotResponseContains: "")
     ];
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ESCENARIO 6: Usuario Cambia de Fecha
-// El usuario especifica una fecha, el sistema verifica, luego el usuario cambia.
+// Escenario 6: Usuario Cambia de Fecha
 // ─────────────────────────────────────────────────────────────────────────────
 
 public class UserChangesDateScenario : TestScenario
 {
     public override string Id          => "test_usuario_cambia_fecha";
-    public override string Description => "El usuario cambia la fecha de reserva. El sistema debe re-verificar disponibilidad.";
+    public override string Description => "El usuario cambia la fecha de reserva. El sistema re-verifica disponibilidad.";
     public override CalendarMode CalendarMode     => CalendarMode.Available;
     public override ReservationMode ReservationMode => ReservationMode.AlwaysSucceed;
     public override bool ExpectReservationCreated  => true;
@@ -280,59 +204,27 @@ public class UserChangesDateScenario : TestScenario
     public override IReadOnlyList<ConversationStep> Steps =>
     [
         new(
-            UserMessage:   "Quiero Plan Marineritos el 2025-08-15 a las 9am.",
-            ExtractionJson: """
-            {
-              "extracted_fields": [
-                {"field": "Service",      "value": "Plan Marineritos", "confidence": 0.98},
-                {"field": "DesiredDate",  "value": "2025-08-15",       "confidence": 0.99},
-                {"field": "DesiredTime",  "value": "09:00",            "confidence": 0.95},
-                {"field": "CustomerName", "value": "Cliente Test",     "confidence": 0.90}
-              ],
-              "intentions": {
-                "user_requested_availability": true,
-                "user_confirmed_booking":      false,
-                "is_information_query":        false,
-                "user_wants_to_cancel":        false
-              },
-              "ambiguities": []
-            }
-            """,
+            UserMessage: "Quiero Plan Marineritos el 2026-08-15 a las 9am.",
+            LlmScript: FakeLlmScript.ToolThenText(
+                "check_availability",
+                """{"service":"Plan Marineritos","date":"2026-08-15","time":"09:00"}""",
+                "Hay disponibilidad el 15 de agosto a las 9:00. ¿Confirmamos?"),
             ExpectedBotResponseContains: "disponib"),
 
         new(
-            UserMessage:   "En realidad prefiero el 2025-08-22 a las 11am.",
-            ExtractionJson: """
-            {
-              "extracted_fields": [
-                {"field": "DesiredDate", "value": "2025-08-22", "confidence": 0.99},
-                {"field": "DesiredTime", "value": "11:00",      "confidence": 0.97}
-              ],
-              "intentions": {
-                "user_requested_availability": true,
-                "user_confirmed_booking":      false,
-                "is_information_query":        false,
-                "user_wants_to_cancel":        false
-              },
-              "ambiguities": []
-            }
-            """,
+            UserMessage: "En realidad prefiero el 2026-08-22 a las 11am.",
+            LlmScript: FakeLlmScript.ToolThenText(
+                "check_availability",
+                """{"service":"Plan Marineritos","date":"2026-08-22","time":"11:00"}""",
+                "También hay disponibilidad el 22 de agosto a las 11:00. ¿Confirmamos con la nueva fecha?"),
             ExpectedBotResponseContains: "disponib"),
 
         new(
-            UserMessage:   "Perfecto, confirmo el 22 de agosto.",
-            ExtractionJson: """
-            {
-              "extracted_fields": [],
-              "intentions": {
-                "user_requested_availability": false,
-                "user_confirmed_booking":      true,
-                "is_information_query":        false,
-                "user_wants_to_cancel":        false
-              },
-              "ambiguities": []
-            }
-            """,
+            UserMessage: "Perfecto, confirmo el 22 de agosto. Soy Cliente Test.",
+            LlmScript: FakeLlmScript.ToolThenText(
+                "create_reservation",
+                """{"service":"Plan Marineritos","date":"2026-08-22","time":"11:00","customer_name":"Cliente Test","customer_phone":"+5491100000000","customer_confirmed":true}""",
+                "¡Reserva creada para el 22 de agosto a las 11:00!"),
             ExpectedBotResponseContains: "reserva")
     ];
 }
