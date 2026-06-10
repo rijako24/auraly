@@ -39,5 +39,6 @@
 :r .\Seeds\SeedDefaultResources.sql
 :r .\Seeds\SeedWorkshopSchedulesInCatalog.sql
 :r .\Seeds\SeedDefaultEmployees.sql
+:r .\Seeds\CleanupDefaultTestServices.sql
 
 PRINT 'Post-deployment scripts executed successfully.';
