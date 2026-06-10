@@ -4,7 +4,13 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { getInitials, truncate } from "@/lib/utils";
-import { ConversationStateLabels, ConversationStateColors } from "@/types/enums";
+import {
+  ConversationLifecycleStatus,
+  ConversationLifecycleStatusColors,
+  ConversationLifecycleStatusLabels,
+  ConversationStateColors,
+  ConversationStateLabels,
+} from "@/types/enums";
 import type { Conversation } from "@/types/entities";
 import { formatRelativeTime } from "@/lib/utils";
 
@@ -22,6 +28,21 @@ export function ConversationItem({
   unreadCount = 0,
 }: ConversationItemProps) {
   const displayName = conversation.customerName ?? conversation.userNumber;
+  const lifecycleStatus =
+    conversation.status && conversation.status in ConversationLifecycleStatusLabels
+      ? conversation.status
+      : undefined;
+  const state = typeof conversation.state === "number" ? conversation.state : undefined;
+  const statusLabel = lifecycleStatus
+    ? ConversationLifecycleStatusLabels[lifecycleStatus]
+    : state !== undefined
+      ? ConversationStateLabels[state]
+      : ConversationLifecycleStatusLabels[ConversationLifecycleStatus.Active];
+  const statusColor = lifecycleStatus
+    ? ConversationLifecycleStatusColors[lifecycleStatus]
+    : state !== undefined
+      ? ConversationStateColors[state]
+      : ConversationLifecycleStatusColors[ConversationLifecycleStatus.Active];
 
   return (
     <button
@@ -64,15 +85,15 @@ export function ConversationItem({
             {truncate(conversation.lastMessage ?? "Sin mensajes", 40)}
           </span>
         </div>
-        <div className="mt-1.5">
+        <div className="mt-2">
           <Badge
             variant="secondary"
             className={cn(
               "text-xs font-normal",
-              ConversationStateColors[conversation.state]
+              statusColor
             )}
           >
-            {ConversationStateLabels[conversation.state]}
+            {statusLabel}
           </Badge>
         </div>
       </div>

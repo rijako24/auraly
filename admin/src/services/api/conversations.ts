@@ -19,9 +19,13 @@ export const conversationsApi = {
       `/conversations/${id}`
     ),
   getByIdWithMessages: (id: string) =>
-    apiClient.get<Conversation & { messages: Message[] }>(
-      `/conversations/${id}?include=messages`
-    ),
+    Promise.all([
+      conversationsApi.getById(id),
+      conversationsApi.listMessages(id, { page: 1, pageSize: 200 }),
+    ]).then(([conversation, messages]) => ({
+      ...conversation,
+      messages: messages.items,
+    })),
   listMessages: (
     conversationId: string,
     params?: Partial<PagedRequest>

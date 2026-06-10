@@ -1,6 +1,7 @@
 import {
   BusinessConfigurationKey,
   ConversationStateEnum,
+  ConversationLifecycleStatus,
   LeadStatus,
   PaymentTransactionSource,
   PaymentTransactionStatus,
@@ -178,12 +179,18 @@ export interface Conversation {
   businessId: string;
   userNumber: string;
   lastMessage: string | null;
-  lastIntent: string | null;
+  lastIntent?: string | null;
   timestamp: string;
   customerName: string | null;
-  babyAge: number | null;
-  recommendedPlan: string | null;
-  state: ConversationStateEnum;
+  customerEmail?: string | null;
+  babyAge?: number | null;
+  recommendedPlan?: string | null;
+  state?: ConversationStateEnum;
+  status?: ConversationLifecycleStatus;
+  openedAt?: string;
+  lastActivityAt?: string;
+  closedAt?: string | null;
+  closeReason?: string | null;
   messages?: Message[];
   business?: Business;
 }

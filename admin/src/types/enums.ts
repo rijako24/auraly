@@ -134,6 +134,21 @@ export const ConversationStateColors: Record<ConversationStateEnum, string> = {
   [ConversationStateEnum.Confirmed]: "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300",
 };
 
+export enum ConversationLifecycleStatus {
+  Active = "Active",
+  Closed = "Closed",
+}
+
+export const ConversationLifecycleStatusLabels: Record<ConversationLifecycleStatus, string> = {
+  [ConversationLifecycleStatus.Active]: "Activa",
+  [ConversationLifecycleStatus.Closed]: "Cerrada",
+};
+
+export const ConversationLifecycleStatusColors: Record<ConversationLifecycleStatus, string> = {
+  [ConversationLifecycleStatus.Active]: "bg-teal-100 text-teal-800 dark:bg-teal-900 dark:text-teal-300",
+  [ConversationLifecycleStatus.Closed]: "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-300",
+};
+
 export enum SystemConfigurationKey {
   ToneAndStyle = 1,
   HumanEscalationErrorThreshold = 2,

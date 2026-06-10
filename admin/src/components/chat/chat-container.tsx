@@ -40,9 +40,9 @@ export function ChatContainer({
   };
 
   return (
-    <div className="flex h-full flex-col">
-      <ScrollArea className="flex-1 flex-grow overflow-y-auto px-4">
-        <div className="flex flex-col gap-4 py-4">
+    <div className="flex h-full w-full flex-1 flex-col">
+      <ScrollArea className="min-h-0 flex-1 overflow-y-auto px-4">
+        <div className="flex min-h-full flex-col gap-4 py-4">
           {messages.map((msg) => (
             <ChatBubble key={msg.messageId} message={msg} />
           ))}
