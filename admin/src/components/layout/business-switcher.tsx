@@ -31,17 +31,6 @@ export function BusinessSwitcher() {
 
   if (businesses.length === 0) return null;
 
-  if (businesses.length === 1) {
-    return (
-      <div className="flex items-center gap-2 px-2 text-sm font-medium">
-        <Building2 className="h-4 w-4 text-muted-foreground" />
-        <span className="truncate max-w-[160px]">
-          {businesses[0].name}
-        </span>
-      </div>
-    );
-  }
-
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
@@ -49,7 +38,7 @@ export function BusinessSwitcher() {
           variant="outline"
           role="combobox"
           aria-expanded={open}
-          className="w-[200px] justify-between"
+          className="w-[220px] justify-between"
           size="sm"
         >
           <div className="flex items-center gap-2 truncate">
@@ -61,7 +50,7 @@ export function BusinessSwitcher() {
           <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
         </Button>
       </PopoverTrigger>
-      <PopoverContent className="w-[200px] p-0" align="start">
+      <PopoverContent className="w-[220px] p-0" align="start">
         <Command>
           <CommandInput placeholder="Buscar negocio..." />
           <CommandList>
