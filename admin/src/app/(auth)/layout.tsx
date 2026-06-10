@@ -20,16 +20,10 @@ export default function AuthLayout({
       >
         <div className="absolute inset-x-12 bottom-12 h-px auraly-logo-gradient opacity-80" />
         <div className="relative z-10 px-12 text-center">
-          <AuralyLogo className="mb-7 justify-center" markClassName="h-20 w-24" />
-          <h2 className="mb-3 text-3xl font-semibold uppercase tracking-[0.32em] text-primary">
-            AURALY
-          </h2>
-          <p className="text-lg text-muted-foreground">
-            Intelligence Amplified.
-          </p>
-          <p className="mt-1 text-lg text-muted-foreground">
-            Imagination Realized.
-          </p>
+          <AuralyLogo
+            className="mb-7 justify-center"
+            markClassName="h-20 w-24"
+          />
         </div>
       </div>
 
@@ -38,7 +32,7 @@ export default function AuthLayout({
         className={cn(
           "flex-1 flex flex-col justify-center items-center",
           "p-6 sm:p-8 lg:p-12",
-          "bg-background"
+          "bg-white text-[#151515]"
         )}
       >
         <div className="w-full max-w-md">{children}</div>

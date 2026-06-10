@@ -348,7 +348,7 @@ export default function LandingPage() {
             </div>
             <p className="max-w-md text-sm leading-6 text-black/65">Campanas y plantillas marketing de WhatsApp se cobran aparte. Asi protegemos margen y evitamos sorpresas.</p>
           </div>
-          <div className="mt-10 grid auto-rows-fr items-stretch gap-4 lg:grid-cols-4">
+          <div className="mt-10 grid auto-rows-fr items-stretch gap-4 min-[560px]:grid-cols-2 xl:grid-cols-4">
             {PLANS.map((plan) => (
               <Card key={plan.name} className={cn("flex h-full flex-col rounded-lg border-black/10 bg-white text-[#151515]", plan.highlight && "border-[#69D9D0] bg-[#E6FFFD]")}>
                 <CardHeader>
