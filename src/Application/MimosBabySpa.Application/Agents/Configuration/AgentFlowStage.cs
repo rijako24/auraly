@@ -32,12 +32,6 @@ public sealed class AgentFlowStage
     public IReadOnlyList<string> ReentryOnFactChanged { get; init; } = [];
 
     /// <summary>
-    /// Restricciones de comportamiento conversacional. Declarativas por tenant.
-    /// El compositor las traduce en instrucciones para el LLM.
-    /// </summary>
-    public StageConstraints? Constraints { get; init; }
-
-    /// <summary>
     /// Expresión de facts que, si se cumple, permite saltar esta etapa aunque sus
     /// AdvanceWhenFacts no estén completos (ej. el cliente dio fecha/hora antes de elegir add-ons).
     /// Sintaxis: fact keys separados por "&&" (todos deben estar presentes).

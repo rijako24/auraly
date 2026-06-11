@@ -1,9 +1,9 @@
 namespace MimosBabySpa.Application.Agents.Configuration;
 
 /// <summary>
-/// Variante de una etapa del flujo para un engagement context específico.
-/// Permite adaptar el objetivo, el hint y las restricciones según si el
-/// cliente es nuevo, recurrente, o viene de una sesión en curso.
+/// Variante de una etapa del flujo para un engagement context especifico.
+/// Permite adaptar el objetivo y el hint segun si el cliente es nuevo,
+/// recurrente, o viene de una sesion en curso.
 /// </summary>
 public sealed class AgentFlowStageVariant
 {
@@ -12,11 +12,7 @@ public sealed class AgentFlowStageVariant
 
     /// <summary>
     /// Plantilla sugerida para el LLM en este engagement.
-    /// Ej.: "¡Hola! Soy Mimi de Mimo's Baby Spa..." para firstEver.
     /// El LLM adapta el hint al mensaje concreto del cliente.
     /// </summary>
     public string? Hint { get; init; }
-
-    /// <summary>Override de constraints para este engagement. Null = usa constraints base.</summary>
-    public StageConstraints? Constraints { get; init; }
 }

@@ -65,16 +65,14 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         "goal": "Recoger ciudad, dirección, celular y nombre (opcional) — un solo dato por mensaje.",
         "hint": "Registra con set_fact **en el mismo turno** en que el cliente da el dato: city al confirmar ciudad, delivery_address al dar dirección, delivery_phone al dar celular. **Una sola pregunta** por mensaje. Si rechaza nombre, **no** llames set_fact customer_name (es opcional). Envío: Valledupar desde $6.000 urbano; nacional Servientrega $80.000 (1-12 botellas 750 ml). No menciones envío hasta tener city.",
         "allowedTools": ["set_fact", "escalate_to_human"],
-        "advanceWhenFacts": ["city", "delivery_address", "delivery_phone"],
-        "constraints": { "maxQuestions": 1 }
+        "advanceWhenFacts": ["city", "delivery_address", "delivery_phone"]
       },
       {
         "id": "finalization",
         "goal": "Un resumen, confirmación, método de pago y cierre del pedido.",
         "hint": "Fase A (primer resumen): llama resolve_pricing; calcula subtotal = precio unitario × quantity; envío según city (Valledupar $6.000; nacional $80.000); total = subtotal + envío. **Muestra el resumen de inmediato** con el formato de la plantilla checkout_no_deposit (templates): rellena service_name, quantity, unit_price, subtotal, shipping_label, shipping_cost, total, city, delivery_address, delivery_phone y customer_name si existe. **No preguntes** si desea ver el resumen. La plantilla ya cierra con **una sola pregunta** (método de pago); no agregues otra pregunta en el mismo mensaje. **Nunca** des resumen sin total ni preguntes transferencia/efectivo antes del total. Fase B (confirma o promo/sin promo): NO repitas resumen completo; 1-2 frases y, si falta, método de pago en **un solo mensaje**. Fase C (elige pago): set_fact payment_method; instrucciones según policies. Prohibido: reservar, agendar, cita, escalate_to_human, set_fact customer_name vacío. Solo resolve_pricing de nuevo si cambió service o quantity.",
         "allowedTools": ["resolve_pricing", "set_fact"],
-        "advanceWhenFacts": [],
-        "constraints": { "maxQuestions": 1 }
+        "advanceWhenFacts": []
       }
     ]
   },

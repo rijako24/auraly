@@ -349,7 +349,8 @@ public class AgentPromptComposerTests
         result.Should().Contain("CÓMO ABRES LA CONVERSACIÓN");
         result.Should().Contain("etapa: discovery");
         result.Should().NotContain("etapa: greeting");
-        result.Should().Contain("el sistema te llevará automáticamente al siguiente paso");
+        result.Should().Contain("facts_pendientes: baby_name, baby_age_months, service");
+        result.Should().NotContain("el sistema te llevará automáticamente al siguiente paso");
     }
 
     [Fact]
@@ -385,8 +386,8 @@ public class AgentPromptComposerTests
 
         var result = Compose(config, [], session);
 
-        result.Should().Contain("el sistema te llevará automáticamente al siguiente paso");
         result.Should().Contain("facts_pendientes: service");
+        result.Should().NotContain("el sistema te llevará automáticamente al siguiente paso");
     }
 
     [Fact]

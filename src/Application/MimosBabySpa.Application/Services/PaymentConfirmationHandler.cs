@@ -300,7 +300,12 @@ public class PaymentConfirmationHandler : IPaymentConfirmationHandler
             return;
         }
 
-        await _outboundDispatcher.SendAllAsync(businessId, phone, messages, ct);
+        await _outboundDispatcher.SendAllAsync(
+            businessId,
+            phone,
+            messages,
+            reservation.ConversationId,
+            ct);
     }
 
     private async Task HandleEnrollmentPaymentAsync(

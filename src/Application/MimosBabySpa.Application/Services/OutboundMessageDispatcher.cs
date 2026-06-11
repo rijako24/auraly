@@ -15,21 +15,25 @@ public interface IOutboundMessageDispatcher
         Guid businessId,
         string phone,
         IReadOnlyList<OutboundMessage> messages,
+        Guid? conversationId = null,
         CancellationToken ct = default);
 }
 
 public sealed class OutboundMessageDispatcher : IOutboundMessageDispatcher
 {
     private readonly IWhatsAppService _whatsAppService;
+    private readonly IMessageService _messageService;
     private readonly IUsageBillingService _usageBilling;
     private readonly ILogger<OutboundMessageDispatcher> _logger;
 
     public OutboundMessageDispatcher(
         IWhatsAppService whatsAppService,
+        IMessageService messageService,
         IUsageBillingService usageBilling,
         ILogger<OutboundMessageDispatcher> logger)
     {
         _whatsAppService = whatsAppService;
+        _messageService = messageService;
         _usageBilling = usageBilling;
         _logger = logger;
     }
@@ -38,6 +42,7 @@ public sealed class OutboundMessageDispatcher : IOutboundMessageDispatcher
         Guid businessId,
         string phone,
         IReadOnlyList<OutboundMessage> messages,
+        Guid? conversationId = null,
         CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(phone) || messages.Count == 0)
@@ -59,6 +64,7 @@ public sealed class OutboundMessageDispatcher : IOutboundMessageDispatcher
             try
             {
                 await SendOneAsync(businessId, phone, message, ct);
+                await SaveSentMessageAsync(conversationId, message);
             }
             catch (Exception ex)
             {
@@ -74,7 +80,7 @@ public sealed class OutboundMessageDispatcher : IOutboundMessageDispatcher
         await _usageBilling.ChargeAsync(new UsageChargeRequest(
             businessId,
             AgentId: null,
-            ConversationId: null,
+            ConversationId: conversationId,
             MessageId: null,
             UsageOperationType.OutboundSequence,
             OutboundMessages: messages.Count,
@@ -105,5 +111,58 @@ public sealed class OutboundMessageDispatcher : IOutboundMessageDispatcher
 
         await _whatsAppService.SendDocumentMessageAsync(
             businessId, phone, message.MediaUrl, message.Body, message.Filename);
+    }
+
+    private async Task SaveSentMessageAsync(Guid? conversationId, OutboundMessage message)
+    {
+        if (!conversationId.HasValue)
+            return;
+
+        var historyText = BuildHistoryText(message);
+        if (string.IsNullOrWhiteSpace(historyText))
+            return;
+
+        try
+        {
+            await _messageService.SaveMessageAsync(conversationId.Value, "bot", historyText);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(
+                ex,
+                "Error guardando mensaje outbound en historial para Conv {ConversationId}",
+                conversationId.Value);
+        }
+    }
+
+    private static string? BuildHistoryText(OutboundMessage message)
+    {
+        var body = message.Body?.Trim();
+        var media = BuildMediaReference(message);
+
+        if (string.IsNullOrWhiteSpace(body))
+            return media;
+
+        return string.IsNullOrWhiteSpace(media)
+            ? body
+            : $"{body}{Environment.NewLine}{Environment.NewLine}{media}";
+    }
+
+    private static string? BuildMediaReference(OutboundMessage message)
+    {
+        if (string.IsNullOrWhiteSpace(message.MediaUrl))
+            return null;
+
+        var mediaType = string.IsNullOrWhiteSpace(message.MediaType)
+            ? "media"
+            : message.MediaType.Trim().ToLowerInvariant();
+
+        var filename = string.IsNullOrWhiteSpace(message.Filename)
+            ? null
+            : message.Filename.Trim();
+
+        return filename is null
+            ? $"[{mediaType}] {message.MediaUrl}"
+            : $"[{mediaType}] {filename} - {message.MediaUrl}";
     }
 }

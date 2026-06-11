@@ -395,8 +395,6 @@ public sealed class AgentPromptComposer : IPromptComposer
         var variant = FlowStageDetector.GetActiveVariant(currentStage, session);
 
         var goal = !string.IsNullOrWhiteSpace(variant?.Goal) ? variant.Goal : currentStage.Goal;
-        var constraints = variant?.Constraints ?? currentStage.Constraints;
-
         var lines = new List<string>
         {
             "## ETAPA ACTUAL",
@@ -427,42 +425,6 @@ public sealed class AgentPromptComposer : IPromptComposer
             {
                 lines.Add($"- facts_pendientes: {string.Join(", ", missingFacts)}");
                 lines.Add($"- datos_pendientes_para_avanzar: {string.Join(", ", DescribeFacts(config, missingFacts))}");
-                lines.Add(
-                    "- Mientras existan facts_pendientes, NO preguntes por acciones de etapas futuras ni intentes avanzar. " +
-                    "Si un dato pendiente requiere elegir entre opciones, presenta las opciones disponibles y pide una seleccion; " +
-                    "si es un dato simple, preguntalo directamente.");
-                lines.Add("- Regístralos con set_fact en cuanto el cliente los confirme en este turno.");
-            }
-
-            lines.Add(
-                "- Concéntrate únicamente en el objetivo de esta etapa y ciérrala con la pregunta o acción que le corresponde. "
-                + "Cuando los datos necesarios queden registrados, el sistema te llevará automáticamente al siguiente paso.");
-        }
-
-        // Traducir restricciones declarativas a instrucciones para el LLM
-        if (constraints is not null)
-        {
-            var constraintLines = new List<string>();
-
-            if (constraints.MaxQuestions.HasValue)
-            {
-                constraintLines.Add(constraints.MaxQuestions.Value == 0
-                    ? "- NO hagas preguntas en este turno; solo responde o saluda."
-                    : $"- Haz como máximo {constraints.MaxQuestions.Value} pregunta(s) en este turno.");
-            }
-
-            if (!string.IsNullOrWhiteSpace(constraints.PresentationMode))
-            {
-                constraintLines.Add(constraints.PresentationMode == "soft_offer"
-                    ? "- Presenta las opciones de forma amable y no presiones. Termina con UNA sola pregunta cerrada."
-                    : $"- Modo de presentación: {constraints.PresentationMode}.");
-            }
-
-            if (constraintLines.Count > 0)
-            {
-                lines.Add(string.Empty);
-                lines.Add("Restricciones de esta etapa:");
-                lines.AddRange(constraintLines);
             }
         }
 

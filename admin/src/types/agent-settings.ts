@@ -4,15 +4,9 @@ export interface AgentEscalationSettings {
   contacts?: string[];
 }
 
-export interface StageConstraints {
-  maxQuestions?: number;
-  presentationMode?: string;
-}
-
 export interface AgentFlowStageVariant {
   goal?: string;
   hint?: string;
-  constraints?: StageConstraints;
 }
 
 export interface AgentFlowStage {
@@ -25,7 +19,6 @@ export interface AgentFlowStage {
   reentryOnFactChanged?: string[];
   skipWhen?: string;
   autoSetOnSkip?: Record<string, string>;
-  constraints?: StageConstraints;
   variants?: Record<string, AgentFlowStageVariant>;
 }
 

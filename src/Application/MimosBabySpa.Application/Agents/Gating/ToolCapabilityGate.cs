@@ -70,17 +70,9 @@ public sealed class ToolCapabilityGate : IToolCapabilityGate
         if (stage.AllowedTools.Contains(tool.Name, StringComparer.OrdinalIgnoreCase))
             return null;
 
-        var hint = !string.IsNullOrWhiteSpace(stage.Hint)
+        var remediation = !string.IsNullOrWhiteSpace(stage.Hint)
             ? stage.Hint.Trim()
-            : $"Usa una de estas acciones: {string.Join(", ", stage.AllowedTools)}.";
-
-        var missingFacts = stage.AdvanceWhenFacts
-            .Where(f => !ctx.Facts.TryGetValue(f, out var v) || string.IsNullOrWhiteSpace(v))
-            .ToList();
-
-        var remediation = missingFacts.Count > 0
-            ? $"{hint} Antes registra los datos faltantes: {string.Join(", ", missingFacts)}."
-            : hint;
+            : $"Continua con la etapa actual usando una de estas acciones: {string.Join(", ", stage.AllowedTools)}.";
 
         return new GateResult(
             false,

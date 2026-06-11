@@ -120,7 +120,8 @@ public class WhatsAppMessageProcessorService : IWhatsAppMessageProcessorService
             await _outboundDispatcher.SendAllAsync(
                 conversation.BusinessId,
                 userNumber,
-                result.OutboundMessages);
+                result.OutboundMessages,
+                conversation.ConversationId);
         }
     }
 
