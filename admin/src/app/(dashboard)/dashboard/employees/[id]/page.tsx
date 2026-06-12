@@ -2,79 +2,37 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { ArrowLeft, Calendar } from "lucide-react";
+import { ArrowLeft } from "lucide-react";
 
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import { formatDate, formatDateTime, getInitials } from "@/lib/utils";
-import { ReservationStatusLabels, ReservationStatusColors } from "@/types/enums";
-import type { ReservationStatus } from "@/types/enums";
-
-// Mock employee
-const MOCK_EMPLOYEE = {
-  employeeId: "emp-1",
-  name: "María Elena Rodríguez",
-  isActive: true,
-  createdAt: "2024-01-15T10:00:00Z",
-  services: [
-    "Spa Bebé Premium",
-    "Masaje Relajante",
-    "Hidroterapia",
-    "Flotación Neonatal",
-  ],
-};
-
-// Mock recent reservations
-const MOCK_RECENT_RESERVATIONS = [
-  {
-    reservationId: "res-001",
-    serviceName: "Spa Bebé Premium",
-    clientName: "María González",
-    reservationDateTime: "2025-03-16T10:00:00",
-    durationMinutes: 60,
-    status: 1 as ReservationStatus, // Confirmed
-  },
-  {
-    reservationId: "res-002",
-    serviceName: "Masaje Relajante",
-    clientName: "Carlos Pérez",
-    reservationDateTime: "2025-03-15T14:30:00",
-    durationMinutes: 45,
-    status: 2 as ReservationStatus, // Completed
-  },
-  {
-    reservationId: "res-003",
-    serviceName: "Hidroterapia",
-    clientName: "Ana Martínez",
-    reservationDateTime: "2025-03-15T09:00:00",
-    durationMinutes: 60,
-    status: 0 as ReservationStatus, // Pending
-  },
-  {
-    reservationId: "res-004",
-    serviceName: "Flotación Neonatal",
-    clientName: "Laura Rodríguez",
-    reservationDateTime: "2025-03-14T16:00:00",
-    durationMinutes: 60,
-    status: 2 as ReservationStatus, // Completed
-  },
-];
+import { PageError } from "@/components/ui/page-error";
+import { PageLoading } from "@/components/ui/page-loading";
+import { useEmployee } from "@/hooks/use-employees";
+import { useServices } from "@/hooks/use-services";
+import { formatDate, getInitials } from "@/lib/utils";
 
 export default function EmployeeDetailPage() {
   const params = useParams();
   const id = params.id as string;
+  const {
+    data: employee,
+    isLoading: isEmployeeLoading,
+    isError: isEmployeeError,
+    refetch: refetchEmployee,
+  } = useEmployee(id);
+  const { data: servicesData } = useServices({ page: 1, pageSize: 500 });
 
-  const employee = MOCK_EMPLOYEE;
+  if (isEmployeeLoading) return <PageLoading cards={2} />;
+  if (isEmployeeError || !employee) return <PageError onRetry={refetchEmployee} />;
+
+  const serviceNames = (employee.serviceIds ?? [])
+    .map((serviceId) => {
+      const service = servicesData?.items.find((item) => item.serviceId === serviceId);
+      return service?.serviceName ?? serviceId;
+    });
 
   return (
     <div className="space-y-6">
@@ -121,52 +79,17 @@ export default function EmployeeDetailPage() {
         </CardHeader>
         <CardContent>
           <div className="flex flex-wrap gap-2">
-            {employee.services.map((svc) => (
-              <Badge key={svc} variant="secondary">
-                {svc}
+            {serviceNames.map((serviceName) => (
+              <Badge key={serviceName} variant="secondary">
+                {serviceName}
               </Badge>
             ))}
+            {serviceNames.length === 0 && (
+              <p className="text-sm text-muted-foreground">
+                Sin servicios asignados.
+              </p>
+            )}
           </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Reservaciones recientes</CardTitle>
-          <p className="text-sm text-muted-foreground">
-            Últimas reservaciones asignadas a este empleado
-          </p>
-        </CardHeader>
-        <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Servicio</TableHead>
-                <TableHead>Cliente</TableHead>
-                <TableHead>Fecha/Hora</TableHead>
-                <TableHead>Duración</TableHead>
-                <TableHead>Estado</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {MOCK_RECENT_RESERVATIONS.map((r) => (
-                <TableRow key={r.reservationId}>
-                  <TableCell className="font-medium">{r.serviceName}</TableCell>
-                  <TableCell>{r.clientName}</TableCell>
-                  <TableCell>{formatDateTime(r.reservationDateTime)}</TableCell>
-                  <TableCell>{r.durationMinutes} min</TableCell>
-                  <TableCell>
-                    <Badge
-                      variant="outline"
-                      className={ReservationStatusColors[r.status]}
-                    >
-                      {ReservationStatusLabels[r.status]}
-                    </Badge>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
         </CardContent>
       </Card>
     </div>

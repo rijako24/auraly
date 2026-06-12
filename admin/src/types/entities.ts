@@ -140,6 +140,7 @@ export interface Employee {
   businessId: string;
   name: string;
   isActive: boolean;
+  serviceIds?: string[];
   createdAt: string;
   updatedAt: string | null;
   services?: Service[];

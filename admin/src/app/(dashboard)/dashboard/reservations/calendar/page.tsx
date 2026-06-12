@@ -1,91 +1,27 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import {
   ArrowLeft,
+  CalendarDays,
   ChevronLeft,
   ChevronRight,
-  CalendarDays,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { PageError } from "@/components/ui/page-error";
+import { PageLoading } from "@/components/ui/page-loading";
 import {
   ReservationStatus,
-  ReservationStatusLabels,
   ReservationStatusColors,
+  ReservationStatusLabels,
 } from "@/types/enums";
-import { formatDateTime } from "@/lib/utils";
-import { cn } from "@/lib/utils";
-
-interface MockReservation {
-  reservationId: string;
-  clientName: string;
-  serviceName: string;
-  reservationDateTime: string;
-  status: ReservationStatus;
-}
-
-const MOCK_RESERVATIONS: MockReservation[] = [
-  {
-    reservationId: "res-001",
-    clientName: "María González",
-    serviceName: "Spa Bebé Premium",
-    reservationDateTime: "2025-03-16T10:00:00",
-    status: 1,
-  },
-  {
-    reservationId: "res-002",
-    clientName: "Carlos Pérez",
-    serviceName: "Masaje Relajante",
-    reservationDateTime: "2025-03-16T09:30:00",
-    status: 0,
-  },
-  {
-    reservationId: "res-003",
-    clientName: "Ana Martínez",
-    serviceName: "Flotación Neonatal",
-    reservationDateTime: "2025-03-16T14:00:00",
-    status: 1,
-  },
-  {
-    reservationId: "res-004",
-    clientName: "Laura Rodríguez",
-    serviceName: "Spa Bebé Premium",
-    reservationDateTime: "2025-03-15T11:00:00",
-    status: 2,
-  },
-  {
-    reservationId: "res-005",
-    clientName: "Pedro Sánchez",
-    serviceName: "Hidroterapia",
-    reservationDateTime: "2025-03-15T09:00:00",
-    status: 2,
-  },
-  {
-    reservationId: "res-006",
-    clientName: "Sofía Herrera",
-    serviceName: "Spa Bebé Express",
-    reservationDateTime: "2025-03-17T10:30:00",
-    status: 0,
-  },
-  {
-    reservationId: "res-007",
-    clientName: "Miguel Torres",
-    serviceName: "Masaje Relajante",
-    reservationDateTime: "2025-03-17T15:00:00",
-    status: 1,
-  },
-  {
-    reservationId: "res-008",
-    clientName: "Elena Vega",
-    serviceName: "Flotación Neonatal",
-    reservationDateTime: "2025-03-14T16:00:00",
-    status: 3,
-  },
-];
+import type { Reservation } from "@/types/entities";
+import { formatDateTime, cn } from "@/lib/utils";
+import { useReservations } from "@/hooks/use-reservations";
 
 const STATUS_DOT_COLORS: Record<number, string> = {
   [ReservationStatus.Pending]: "bg-yellow-500",
@@ -96,12 +32,45 @@ const STATUS_DOT_COLORS: Record<number, string> = {
   [ReservationStatus.OnHold]: "bg-gray-500",
 };
 
-const DAYS = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
+const DAYS = ["Dom", "Lun", "Mar", "Mie", "Jue", "Vie", "Sab"];
 
 export default function ReservationsCalendarPage() {
-  const [currentDate, setCurrentDate] = useState(new Date(2025, 2, 1)); // March 2025
+  const [currentDate, setCurrentDate] = useState(() => {
+    const now = new Date();
+    return new Date(now.getFullYear(), now.getMonth(), 1);
+  });
+  const [selectedDate, setSelectedDate] = useState<{
+    year: number;
+    month: number;
+    day: number;
+  } | null>(null);
 
-  const { days, startOffset, daysInMonth } = useMemo(() => {
+  const range = useMemo(() => {
+    const start = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
+    const end = new Date(
+      currentDate.getFullYear(),
+      currentDate.getMonth() + 1,
+      0,
+      23,
+      59,
+      59,
+      999
+    );
+
+    return {
+      startDate: start.toISOString(),
+      endDate: end.toISOString(),
+    };
+  }, [currentDate]);
+
+  const { data, isLoading, isError, refetch } = useReservations({
+    page: 1,
+    pageSize: 500,
+    ...range,
+  });
+  const reservations = data?.items ?? [];
+
+  const { days, startOffset } = useMemo(() => {
     const year = currentDate.getFullYear();
     const month = currentDate.getMonth();
     const first = new Date(year, month, 1);
@@ -114,25 +83,27 @@ export default function ReservationsCalendarPage() {
       days.push({ date: d, isCurrentMonth: true });
     }
 
-    return { days, startOffset, daysInMonth };
+    return { days, startOffset };
   }, [currentDate]);
 
   const reservationsByDate = useMemo(() => {
-    const map: Record<string, MockReservation[]> = {};
-    MOCK_RESERVATIONS.forEach((r) => {
-      const d = new Date(r.reservationDateTime);
-      const key = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+    const map: Record<string, Reservation[]> = {};
+    reservations.forEach((reservation) => {
+      if (!reservation.reservationDateTime) return;
+      const date = new Date(reservation.reservationDateTime);
+      const key = `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
       if (!map[key]) map[key] = [];
-      map[key].push(r);
+      map[key].push(reservation);
     });
-    return map;
-  }, []);
 
-  const [selectedDate, setSelectedDate] = useState<{
-    year: number;
-    month: number;
-    day: number;
-  } | null>(null);
+    Object.values(map).forEach((items) =>
+      items.sort((a, b) =>
+        (a.reservationDateTime ?? "").localeCompare(b.reservationDateTime ?? "")
+      )
+    );
+
+    return map;
+  }, [reservations]);
 
   const selectedReservations = useMemo(() => {
     if (!selectedDate) return [];
@@ -141,16 +112,12 @@ export default function ReservationsCalendarPage() {
   }, [selectedDate, reservationsByDate]);
 
   const goPrev = () => {
-    setCurrentDate(
-      (d) => new Date(d.getFullYear(), d.getMonth() - 1, 1)
-    );
+    setCurrentDate((date) => new Date(date.getFullYear(), date.getMonth() - 1, 1));
     setSelectedDate(null);
   };
 
   const goNext = () => {
-    setCurrentDate(
-      (d) => new Date(d.getFullYear(), d.getMonth() + 1, 1)
-    );
+    setCurrentDate((date) => new Date(date.getFullYear(), date.getMonth() + 1, 1));
     setSelectedDate(null);
   };
 
@@ -179,6 +146,9 @@ export default function ReservationsCalendarPage() {
     today.getMonth() === currentDate.getMonth() &&
     today.getFullYear() === currentDate.getFullYear();
 
+  if (isLoading) return <PageLoading cards={1} />;
+  if (isError) return <PageError onRetry={refetch} />;
+
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-4">
@@ -191,9 +161,7 @@ export default function ReservationsCalendarPage() {
           <h1 className="text-2xl font-semibold tracking-tight">
             Calendario de Reservaciones
           </h1>
-          <p className="text-muted-foreground">
-            Vista mensual de reservaciones
-          </p>
+          <p className="text-muted-foreground">Vista mensual de reservaciones</p>
         </div>
       </div>
 
@@ -216,24 +184,24 @@ export default function ReservationsCalendarPage() {
           </div>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-7 gap-1 mb-2">
+          <div className="mb-2 grid grid-cols-7 gap-1">
             {DAYS.map((day) => (
               <div
                 key={day}
-                className="text-center text-xs font-medium text-muted-foreground py-1"
+                className="py-1 text-center text-xs font-medium text-muted-foreground"
               >
                 {day}
               </div>
             ))}
           </div>
           <div className="grid grid-cols-7 gap-1">
-            {Array.from({ length: startOffset }).map((_, i) => (
-              <div key={`empty-${i}`} className="aspect-square p-1" />
+            {Array.from({ length: startOffset }).map((_, index) => (
+              <div key={`empty-${index}`} className="aspect-square p-1" />
             ))}
             {days.map(({ date }) => {
               const key = `${currentDate.getFullYear()}-${currentDate.getMonth()}-${date}`;
-              const reservations = reservationsByDate[key] ?? [];
-              const count = reservations.length;
+              const dayReservations = reservationsByDate[key] ?? [];
+              const count = dayReservations.length;
               const isSelected =
                 selectedDate?.day === date &&
                 selectedDate.month === currentDate.getMonth() &&
@@ -245,23 +213,27 @@ export default function ReservationsCalendarPage() {
                   type="button"
                   onClick={() => handleDayClick(date)}
                   className={cn(
-                    "aspect-square p-1 rounded-md border text-left text-sm transition-colors hover:bg-muted/50",
+                    "aspect-square rounded-md border p-1 text-left text-sm transition-colors hover:bg-muted/50",
                     isToday(date) && "ring-2 ring-primary ring-offset-2",
-                    isSelected && "bg-primary/10 border-primary",
+                    isSelected && "border-primary bg-primary/10",
                     count > 0 && "bg-muted/30"
                   )}
                 >
                   <span className="block font-medium">{date}</span>
                   {count > 0 && (
                     <div className="mt-1 flex flex-wrap gap-0.5">
-                      {reservations.slice(0, 3).map((r) => (
+                      {dayReservations.slice(0, 3).map((reservation) => (
                         <div
-                          key={r.reservationId}
+                          key={reservation.reservationId}
                           className={cn(
-                            "h-1.5 w-1.5 rounded-full flex-shrink-0",
-                            STATUS_DOT_COLORS[r.status] ?? "bg-gray-400"
+                            "h-1.5 w-1.5 flex-shrink-0 rounded-full",
+                            STATUS_DOT_COLORS[reservation.status] ?? "bg-gray-400"
                           )}
-                          title={`${r.serviceName} - ${ReservationStatusLabels[r.status as keyof typeof ReservationStatusLabels]}`}
+                          title={`${reservation.serviceName || "Sin servicio"} - ${
+                            ReservationStatusLabels[
+                              reservation.status as keyof typeof ReservationStatusLabels
+                            ] ?? "Sin estado"
+                          }`}
                         />
                       ))}
                       {count > 3 && (
@@ -296,34 +268,39 @@ export default function ReservationsCalendarPage() {
           </CardHeader>
           <CardContent>
             {selectedReservations.length === 0 ? (
-              <p className="text-muted-foreground text-center py-8">
-                No hay reservaciones para este día
+              <p className="py-8 text-center text-muted-foreground">
+                No hay reservaciones para este dia
               </p>
             ) : (
               <div className="space-y-2">
-                {selectedReservations.map((r) => (
+                {selectedReservations.map((reservation) => (
                   <Link
-                    key={r.reservationId}
-                    href={`/dashboard/reservations/${r.reservationId}`}
-                    className="flex items-center justify-between p-3 rounded-lg border hover:bg-muted/50 transition-colors"
+                    key={reservation.reservationId}
+                    href={`/dashboard/reservations/${reservation.reservationId}`}
+                    className="flex items-center justify-between rounded-lg border p-3 transition-colors hover:bg-muted/50"
                   >
                     <div>
-                      <p className="font-medium">{r.serviceName}</p>
+                      <p className="font-medium">
+                        {reservation.serviceName || "Sin servicio"}
+                      </p>
                       <p className="text-sm text-muted-foreground">
-                        {r.clientName} • {formatDateTime(r.reservationDateTime)}
+                        {reservation.employeeName || "Sin empleado"} -{" "}
+                        {reservation.reservationDateTime
+                          ? formatDateTime(reservation.reservationDateTime)
+                          : "Sin fecha"}
                       </p>
                     </div>
                     <Badge
                       variant="secondary"
                       className={cn(
                         ReservationStatusColors[
-                          r.status as keyof typeof ReservationStatusColors
+                          reservation.status as keyof typeof ReservationStatusColors
                         ]
                       )}
                     >
                       {ReservationStatusLabels[
-                        r.status as keyof typeof ReservationStatusLabels
-                      ]}
+                        reservation.status as keyof typeof ReservationStatusLabels
+                      ] ?? "Sin estado"}
                     </Badge>
                   </Link>
                 ))}

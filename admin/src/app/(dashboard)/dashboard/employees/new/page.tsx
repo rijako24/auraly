@@ -4,33 +4,36 @@ import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, Check } from "lucide-react";
+import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
-
-// Mock services for multi-select
-const MOCK_SERVICES = [
-  { serviceId: "svc-1", serviceName: "Spa Bebé Premium" },
-  { serviceId: "svc-2", serviceName: "Masaje Relajante" },
-  { serviceId: "svc-3", serviceName: "Hidroterapia" },
-  { serviceId: "svc-4", serviceName: "Flotación Neonatal" },
-  { serviceId: "svc-5", serviceName: "Aceite de Almendras Premium" },
-  { serviceId: "svc-6", serviceName: "Fotografía Profesional" },
-  { serviceId: "svc-7", serviceName: "Aromaterapia Esencial" },
-  { serviceId: "svc-8", serviceName: "Spa Bebé Express" },
-  { serviceId: "svc-9", serviceName: "Champú y Peinado" },
-];
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { PageError } from "@/components/ui/page-error";
+import { PageLoading } from "@/components/ui/page-loading";
+import { Switch } from "@/components/ui/switch";
+import { useServices } from "@/hooks/use-services";
+import { employeesApi } from "@/services/api";
+import { useBusinessContextStore } from "@/stores/business-context-store";
 
 export default function NewEmployeePage() {
   const router = useRouter();
+  const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
+  const { data: servicesData, isLoading, isError, refetch } = useServices({
+    page: 1,
+    pageSize: 500,
+  });
   const [name, setName] = useState("");
   const [isActive, setIsActive] = useState(true);
-  const [selectedServiceIds, setSelectedServiceIds] = useState<Set<string>>(new Set());
+  const [selectedServiceIds, setSelectedServiceIds] = useState<Set<string>>(
+    new Set()
+  );
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const services = servicesData?.items ?? [];
 
   const toggleService = (serviceId: string) => {
     setSelectedServiceIds((prev) => {
@@ -46,6 +49,7 @@ export default function NewEmployeePage() {
 
   const validate = () => {
     const newErrors: Record<string, string> = {};
+    if (!businessId) newErrors.business = "Seleccione un negocio";
     if (!name.trim()) newErrors.name = "El nombre es requerido";
     if (selectedServiceIds.size === 0) {
       newErrors.services = "Seleccione al menos un servicio";
@@ -54,16 +58,33 @@ export default function NewEmployeePage() {
     return Object.keys(newErrors).length === 0;
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
     if (!validate()) return;
-    // TODO: API call
-    router.push("/dashboard/employees");
+
+    setIsSubmitting(true);
+    try {
+      await employeesApi.create({
+        businessId: businessId!,
+        name: name.trim(),
+        isActive,
+        serviceIds: Array.from(selectedServiceIds),
+      });
+      toast.success("Empleado creado");
+      router.push("/dashboard/employees");
+    } catch {
+      toast.error("No se pudo crear el empleado");
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const handleCancel = () => {
     router.push("/dashboard/employees");
   };
+
+  if (isLoading) return <PageLoading cards={1} />;
+  if (isError) return <PageError onRetry={refetch} />;
 
   return (
     <div className="space-y-6">
@@ -88,17 +109,20 @@ export default function NewEmployeePage() {
           <CardHeader>
             <CardTitle>Datos del empleado</CardTitle>
             <p className="text-sm text-muted-foreground">
-              Complete los datos básicos
+              Complete los datos basicos
             </p>
           </CardHeader>
           <CardContent className="space-y-6">
+            {errors.business && (
+              <p className="text-sm text-destructive">{errors.business}</p>
+            )}
             <div className="space-y-2">
               <Label htmlFor="name">Nombre completo</Label>
               <Input
                 id="name"
                 value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="Ej: María Elena Rodríguez"
+                onChange={(event) => setName(event.target.value)}
+                placeholder="Nombre del empleado"
                 className={errors.name ? "border-destructive" : ""}
               />
               {errors.name && (
@@ -121,39 +145,44 @@ export default function NewEmployeePage() {
                 <p className="text-sm text-destructive">{errors.services}</p>
               )}
               <div className="grid gap-2 rounded-md border p-4 sm:grid-cols-2">
-                {MOCK_SERVICES.map((svc) => {
-                  const isSelected = selectedServiceIds.has(svc.serviceId);
+                {services.map((service) => {
+                  const isSelected = selectedServiceIds.has(service.serviceId);
                   return (
                     <div
-                      key={svc.serviceId}
+                      key={service.serviceId}
                       className="flex items-center space-x-2"
                     >
                       <Checkbox
-                        id={svc.serviceId}
+                        id={service.serviceId}
                         checked={isSelected}
-                        onCheckedChange={() => toggleService(svc.serviceId)}
+                        onCheckedChange={() => toggleService(service.serviceId)}
                       />
                       <Label
-                        htmlFor={svc.serviceId}
+                        htmlFor={service.serviceId}
                         className="cursor-pointer font-normal"
                       >
-                        {svc.serviceName}
+                        {service.serviceName}
                       </Label>
                     </div>
                   );
                 })}
+                {services.length === 0 && (
+                  <p className="text-sm text-muted-foreground">
+                    No hay servicios disponibles para este negocio.
+                  </p>
+                )}
               </div>
               <p className="text-xs text-muted-foreground">
-                Seleccionados: {selectedServiceIds.size} de {MOCK_SERVICES.length}
+                Seleccionados: {selectedServiceIds.size} de {services.length}
               </p>
             </div>
           </CardContent>
         </Card>
 
         <div className="mt-6 flex gap-4">
-          <Button type="submit">
+          <Button type="submit" disabled={isSubmitting || services.length === 0}>
             <Check className="mr-2 h-4 w-4" />
-            Crear Empleado
+            {isSubmitting ? "Creando..." : "Crear Empleado"}
           </Button>
           <Button type="button" variant="outline" onClick={handleCancel}>
             Cancelar

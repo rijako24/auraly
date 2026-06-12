@@ -149,6 +149,89 @@ export const ConversationLifecycleStatusColors: Record<ConversationLifecycleStat
   [ConversationLifecycleStatus.Closed]: "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-300",
 };
 
+export function getConversationStageLabel(stageName?: string | null): string {
+  return stageName?.trim() || "Sin etapa";
+}
+
+function getNormalizedConversationStage(stageName?: string | null): string {
+  return (stageName ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
+export function getConversationStageColor(): string {
+  return "border text-white";
+}
+
+export function getConversationStageStyle(stageName?: string | null): Record<string, string> {
+  const normalized = getNormalizedConversationStage(stageName);
+  const color = getConversationStageAccentColor(normalized);
+
+  return {
+    backgroundColor: `${color}26`,
+    borderColor: color,
+    boxShadow: `0 0 0 1px ${color}33`,
+    color: "#ffffff",
+  };
+}
+
+function getConversationStageAccentColor(normalized: string): string {
+  if (!normalized) {
+    return "#64748b";
+  }
+
+  if (
+    normalized.includes("reserva creada") ||
+    normalized.includes("confirmada") ||
+    normalized.includes("cierre") ||
+    normalized.includes("finalization")
+  ) {
+    return "#22c55e";
+  }
+
+  if (normalized.includes("pago") || normalized.includes("checkout")) {
+    return "#10b981";
+  }
+
+  if (
+    normalized.includes("agenda") ||
+    normalized.includes("disponibilidad") ||
+    normalized.includes("scheduling")
+  ) {
+    return "#f59e0b";
+  }
+
+  if (
+    normalized.includes("datos") ||
+    normalized.includes("cliente") ||
+    normalized.includes("envio") ||
+    normalized.includes("customer") ||
+    normalized.includes("shipping")
+  ) {
+    return "#f97316";
+  }
+
+  if (normalized.includes("complement")) {
+    return "#d946ef";
+  }
+
+  if (
+    normalized.includes("servicio") ||
+    normalized.includes("producto") ||
+    normalized.includes("selection")
+  ) {
+    return "#06b6d4";
+  }
+
+  if (normalized.includes("descubr") || normalized.includes("discovery")) {
+    return "#38bdf8";
+  }
+
+  return "#94a3b8";
+}
+
 export enum SystemConfigurationKey {
   ToneAndStyle = 1,
   HumanEscalationErrorThreshold = 2,

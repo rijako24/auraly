@@ -82,7 +82,7 @@ export default function ServiceDetailPage() {
         />
         <StatCard
           title="Categoría"
-          value={service.category?.name ?? "—"}
+          value={service.categoryName ?? service.category?.name ?? "—"}
           icon={Package}
         />
       </div>
@@ -108,7 +108,7 @@ export default function ServiceDetailPage() {
                   <p className="text-sm font-medium text-muted-foreground">
                     Categoría
                   </p>
-                  <p>{service.category?.name ?? "—"}</p>
+                  <p>{service.categoryName ?? service.category?.name ?? "—"}</p>
                 </div>
                 <div>
                   <p className="text-sm font-medium text-muted-foreground">

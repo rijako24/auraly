@@ -1,4 +1,4 @@
-import { apiClient } from "./client";
+import { apiClient, withPagedDefaults } from "./client";
 import type { PagedResponse, PagedRequest } from "@/types/api";
 import type { Employee, EmployeeService } from "@/types/entities";
 
@@ -6,7 +6,7 @@ export const employeesApi = {
   list: (params?: Partial<PagedRequest> & { businessId?: string }) =>
     apiClient.get<PagedResponse<Employee>>(
       "/employees",
-      params as Record<string, string | number | undefined>
+      withPagedDefaults(params)
     ),
   getById: (id: string) => apiClient.get<Employee>(`/employees/${id}`),
   create: (data: Partial<Employee>) =>

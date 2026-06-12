@@ -1,184 +1,104 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, Camera } from "lucide-react";
+import { ArrowLeft } from "lucide-react";
+import { toast } from "sonner";
 
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Separator } from "@/components/ui/separator";
 import { getInitials } from "@/lib/utils";
-
-const MOCK_PROFILE = {
-  firstName: "María",
-  lastName: "García",
-  email: "maria@auraly.ai",
-  phoneNumber: "+57 300 123 4567",
-  avatarUrl: null,
-};
+import { usersApi } from "@/services/api";
+import { useAuthStore } from "@/stores/auth-store";
 
 export default function ProfileSettingsPage() {
-  const [firstName, setFirstName] = useState(MOCK_PROFILE.firstName);
-  const [lastName, setLastName] = useState(MOCK_PROFILE.lastName);
-  const [email, setEmail] = useState(MOCK_PROFILE.email);
-  const [phoneNumber, setPhoneNumber] = useState(MOCK_PROFILE.phoneNumber ?? "");
-  const [currentPassword, setCurrentPassword] = useState("");
-  const [newPassword, setNewPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
+  const authUser = useAuthStore((state) => state.user);
+  const [form, setForm] = useState({
+    firstName: "",
+    lastName: "",
+    email: "",
+    phoneNumber: "",
+  });
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const fullName = `${firstName} ${lastName}`.trim();
+  useEffect(() => {
+    if (!authUser) return;
+    setForm({
+      firstName: authUser.firstName,
+      lastName: authUser.lastName,
+      email: authUser.email,
+      phoneNumber: "",
+    });
+  }, [authUser]);
 
-  const handleSaveProfile = (e: React.FormEvent) => {
-    e.preventDefault();
-    // Mock save
-  };
+  const fullName = `${form.firstName} ${form.lastName}`.trim();
+  const updateForm = (key: keyof typeof form, value: string) =>
+    setForm((prev) => ({ ...prev, [key]: value }));
 
-  const handleChangePassword = (e: React.FormEvent) => {
-    e.preventDefault();
-    // Mock change password
-    setCurrentPassword("");
-    setNewPassword("");
-    setConfirmPassword("");
+  const handleSaveProfile = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!authUser) return;
+    setIsSubmitting(true);
+    try {
+      await usersApi.update(authUser.userId, form);
+      toast.success("Perfil actualizado");
+    } catch {
+      toast.error("No se pudo actualizar el perfil");
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-4">
         <Button variant="ghost" size="icon" asChild>
-          <Link href="/dashboard/settings">
-            <ArrowLeft className="h-4 w-4" />
-          </Link>
+          <Link href="/dashboard/settings"><ArrowLeft className="h-4 w-4" /></Link>
         </Button>
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Perfil</h1>
-          <p className="text-muted-foreground">
-            Tu información personal y seguridad
-          </p>
+          <p className="text-muted-foreground">Tu informacion personal</p>
         </div>
       </div>
 
-      <form onSubmit={handleSaveProfile}>
-        <Card>
-          <CardHeader>
-            <CardTitle>Información personal</CardTitle>
-            <p className="text-sm text-muted-foreground">
-              Actualiza tu nombre, email y teléfono
-            </p>
-          </CardHeader>
-          <CardContent className="space-y-6">
-            <div className="flex items-center gap-6">
-              <div className="relative">
+      {!authUser ? (
+        <Card><CardContent className="py-8 text-sm text-muted-foreground">No hay usuario autenticado.</CardContent></Card>
+      ) : (
+        <form onSubmit={handleSaveProfile}>
+          <Card>
+            <CardHeader>
+              <CardTitle>Informacion personal</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <div className="flex items-center gap-6">
                 <Avatar className="h-24 w-24">
                   <AvatarFallback className="text-2xl">
-                    {getInitials(fullName || "U")}
+                    {getInitials(fullName || authUser.username)}
                   </AvatarFallback>
                 </Avatar>
-                <Button
-                  type="button"
-                  variant="secondary"
-                  size="icon"
-                  className="absolute -bottom-1 -right-1 h-8 w-8 rounded-full"
-                >
-                  <Camera className="h-4 w-4" />
-                </Button>
+                <div>
+                  <p className="font-medium">{fullName || authUser.username}</p>
+                  <p className="text-sm text-muted-foreground">{form.email}</p>
+                </div>
               </div>
-              <div>
-                <p className="font-medium">{fullName || "Usuario"}</p>
-                <p className="text-sm text-muted-foreground">{email}</p>
-              </div>
-            </div>
 
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-2">
-                <Label htmlFor="firstName">Nombre</Label>
-                <Input
-                  id="firstName"
-                  value={firstName}
-                  onChange={(e) => setFirstName(e.target.value)}
-                  placeholder="Nombre"
-                />
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-2"><Label htmlFor="firstName">Nombre</Label><Input id="firstName" value={form.firstName} onChange={(e) => updateForm("firstName", e.target.value)} /></div>
+                <div className="space-y-2"><Label htmlFor="lastName">Apellido</Label><Input id="lastName" value={form.lastName} onChange={(e) => updateForm("lastName", e.target.value)} /></div>
+                <div className="space-y-2 sm:col-span-2"><Label htmlFor="email">Email</Label><Input id="email" type="email" value={form.email} onChange={(e) => updateForm("email", e.target.value)} /></div>
+                <div className="space-y-2 sm:col-span-2"><Label htmlFor="phone">Telefono</Label><Input id="phone" value={form.phoneNumber} onChange={(e) => updateForm("phoneNumber", e.target.value)} /></div>
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="lastName">Apellido</Label>
-                <Input
-                  id="lastName"
-                  value={lastName}
-                  onChange={(e) => setLastName(e.target.value)}
-                  placeholder="Apellido"
-                />
-              </div>
-              <div className="space-y-2 sm:col-span-2">
-                <Label htmlFor="email">Email</Label>
-                <Input
-                  id="email"
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="email@ejemplo.com"
-                />
-              </div>
-              <div className="space-y-2 sm:col-span-2">
-                <Label htmlFor="phone">Teléfono</Label>
-                <Input
-                  id="phone"
-                  value={phoneNumber}
-                  onChange={(e) => setPhoneNumber(e.target.value)}
-                  placeholder="+57 300 123 4567"
-                />
-              </div>
-            </div>
 
-            <Button type="submit">Guardar cambios</Button>
-          </CardContent>
-        </Card>
-      </form>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Cambiar contraseña</CardTitle>
-          <p className="text-sm text-muted-foreground">
-            Asegúrate de usar una contraseña segura
-          </p>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={handleChangePassword} className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="currentPassword">Contraseña actual</Label>
-              <Input
-                id="currentPassword"
-                type="password"
-                value={currentPassword}
-                onChange={(e) => setCurrentPassword(e.target.value)}
-                placeholder="••••••••"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="newPassword">Nueva contraseña</Label>
-              <Input
-                id="newPassword"
-                type="password"
-                value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
-                placeholder="••••••••"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="confirmPassword">Confirmar contraseña</Label>
-              <Input
-                id="confirmPassword"
-                type="password"
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                placeholder="••••••••"
-              />
-            </div>
-            <Button type="submit">Cambiar contraseña</Button>
-          </form>
-        </CardContent>
-      </Card>
+              <Button type="submit" disabled={isSubmitting}>
+                {isSubmitting ? "Guardando..." : "Guardar cambios"}
+              </Button>
+            </CardContent>
+          </Card>
+        </form>
+      )}
     </div>
   );
 }

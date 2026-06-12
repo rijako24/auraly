@@ -9,11 +9,9 @@ import { ConversationList } from "@/components/chat/conversation-list";
 import { PageLoading } from "@/components/ui/page-loading";
 import { PageError } from "@/components/ui/page-error";
 import {
-  ConversationLifecycleStatus,
-  ConversationLifecycleStatusColors,
-  ConversationLifecycleStatusLabels,
-  ConversationStateColors,
-  ConversationStateLabels,
+  getConversationStageColor,
+  getConversationStageLabel,
+  getConversationStageStyle,
 } from "@/types/enums";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { getInitials, cn } from "@/lib/utils";
@@ -30,21 +28,9 @@ export default function ConversationsPage() {
   const messages = selectedConversation?.messages ?? [];
   const showList = isMobile ? !selectedId : true;
   const showChat = isMobile ? !!selectedId : true;
-  const lifecycleStatus =
-    selectedConversation?.status && selectedConversation.status in ConversationLifecycleStatusLabels
-      ? selectedConversation.status
-      : undefined;
-  const state = typeof selectedConversation?.state === "number" ? selectedConversation.state : undefined;
-  const statusLabel = lifecycleStatus
-    ? ConversationLifecycleStatusLabels[lifecycleStatus]
-    : state !== undefined
-      ? ConversationStateLabels[state]
-      : ConversationLifecycleStatusLabels[ConversationLifecycleStatus.Active];
-  const statusColor = lifecycleStatus
-    ? ConversationLifecycleStatusColors[lifecycleStatus]
-    : state !== undefined
-      ? ConversationStateColors[state]
-      : ConversationLifecycleStatusColors[ConversationLifecycleStatus.Active];
+  const stageLabel = getConversationStageLabel(selectedConversation?.currentStageName);
+  const stageColor = getConversationStageColor();
+  const stageStyle = getConversationStageStyle(selectedConversation?.currentStageName);
 
   useEffect(() => {
     if (!isMobile && !selectedId && conversations.length > 0) {
@@ -66,8 +52,8 @@ export default function ConversationsPage() {
             <div className="flex flex-shrink-0 items-center gap-3 border-b border-border bg-muted/30 px-4 py-3">
               <Button variant="ghost" size="icon" className="lg:hidden" onClick={() => setSelectedId(null)}><ArrowLeft className="h-5 w-5" /></Button>
               <Avatar className="h-10 w-10"><AvatarFallback className="bg-primary/10 text-primary text-sm font-medium">{getInitials(selectedConversation.customerName ?? selectedConversation.userNumber)}</AvatarFallback></Avatar>
-              <div className="min-w-0 flex-1"><p className="truncate font-semibold text-foreground">{selectedConversation.customerName ?? selectedConversation.userNumber}</p><p className="flex items-center gap-1.5 text-xs text-muted-foreground"><Phone className="h-3.5 w-3.5" />{selectedConversation.userNumber}</p>{selectedConversation.currentStageName && <p className="truncate text-xs text-muted-foreground">{selectedConversation.currentStageName}</p>}</div>
-              <Badge variant="secondary" className={cn("hidden sm:inline-flex", statusColor)}>{statusLabel}</Badge>
+              <div className="min-w-0 flex-1"><p className="truncate font-semibold text-foreground">{selectedConversation.customerName ?? selectedConversation.userNumber}</p><p className="flex items-center gap-1.5 text-xs text-muted-foreground"><Phone className="h-3.5 w-3.5" />{selectedConversation.userNumber}</p></div>
+              <Badge variant="secondary" style={stageStyle} className={cn("hidden font-medium shadow-sm sm:inline-flex", stageColor)}>{stageLabel}</Badge>
             </div>
             <div className="flex min-h-0 min-w-0 flex-1"><ChatContainer messages={messages} onSendMessage={(message) => selectedId && sendWebMessage.mutate({ conversationId: selectedId, message })} placeholder="Escribe un mensaje..." disabled={sendWebMessage.isPending} /></div>
           </>

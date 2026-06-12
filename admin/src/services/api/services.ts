@@ -1,4 +1,4 @@
-import { apiClient } from "./client";
+import { apiClient, withPagedDefaults } from "./client";
 import type { PagedRequest, PagedResponse } from "@/types/api";
 import type { Service, ServiceCategory } from "@/types/entities";
 
@@ -7,12 +7,12 @@ export const servicesApi = {
   list: (params?: Partial<PagedRequest> & { businessId?: string }) =>
     apiClient.get<PagedResponse<Service>>(
       "/services",
-      params as Record<string, string | number | undefined>
+      withPagedDefaults(params)
     ),
   listByBusiness: (businessId: string, params?: Partial<PagedRequest>) =>
     apiClient.get<PagedResponse<Service>>(
       `/businesses/${businessId}/services`,
-      params as Record<string, string | number | undefined>
+      withPagedDefaults(params)
     ),
   getById: (id: string) => apiClient.get<Service>(`/services/${id}`),
   create: (data: Partial<Service>) =>
@@ -25,7 +25,7 @@ export const servicesApi = {
   listCategories: (params?: Partial<PagedRequest> & { businessId?: string }) =>
     apiClient.get<PagedResponse<ServiceCategory>>(
       "/service-categories",
-      params as Record<string, string | number | undefined>
+      withPagedDefaults(params)
     ),
   listCategoriesByBusiness: (
     businessId: string,
@@ -33,7 +33,7 @@ export const servicesApi = {
   ) =>
     apiClient.get<PagedResponse<ServiceCategory>>(
       `/businesses/${businessId}/service-categories`,
-      params as Record<string, string | number | undefined>
+      withPagedDefaults(params)
     ),
   getCategoryById: (id: string) =>
     apiClient.get<ServiceCategory>(`/service-categories/${id}`),

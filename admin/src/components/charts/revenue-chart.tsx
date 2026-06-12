@@ -30,6 +30,19 @@ export function RevenueChart({ data, period = "7d", className }: RevenueChartPro
     [data]
   );
 
+  if (formattedData.length === 0) {
+    return (
+      <div className={cn("flex h-[300px] w-full items-center justify-center rounded-md border border-dashed border-border/70", className)}>
+        <div className="max-w-sm text-center">
+          <p className="text-sm font-medium text-foreground">Sin ingresos en este periodo</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Cambia el periodo o registra reservas/pagos para ver la grafica.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className={cn("h-[300px] w-full", className)}>
       <ResponsiveContainer width="100%" height="100%">
@@ -55,7 +68,7 @@ export function RevenueChart({ data, period = "7d", className }: RevenueChartPro
             fontSize={12}
             tickLine={false}
             axisLine={false}
-            tickFormatter={(value) => formatCurrency(value * 100)}
+            tickFormatter={(value) => formatCurrency(value)}
           />
           <Tooltip
             content={({ active, payload }) => {
@@ -64,7 +77,7 @@ export function RevenueChart({ data, period = "7d", className }: RevenueChartPro
                 return (
                   <div className="rounded-lg border bg-background px-3 py-2 shadow-sm">
                     <p className="text-sm font-medium">
-                      {formatCurrency((val ?? 0) * 100)}
+                      {formatCurrency(val ?? 0)}
                     </p>
                     <p className="text-xs text-muted-foreground">
                       {payload[0].payload.date}

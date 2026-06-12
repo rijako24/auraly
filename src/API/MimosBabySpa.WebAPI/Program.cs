@@ -4,6 +4,7 @@ using Azure.AI.OpenAI;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using MimosBabySpa.Application.Auth.Interfaces;
@@ -13,6 +14,7 @@ using MimosBabySpa.Application.Common.Interfaces;
 using MimosBabySpa.Application.Identity.Interfaces;
 using MimosBabySpa.Application.Identity.Services;
 using MimosBabySpa.Application.LLM;
+using MimosBabySpa.Application.Services;
 using MimosBabySpa.Domain.Repositories;
 using MimosBabySpa.Infrastructure.Catalog;
 using MimosBabySpa.Infrastructure.Configuration;
@@ -22,6 +24,7 @@ using MimosBabySpa.Infrastructure.Data;
 using MimosBabySpa.Infrastructure.Identity;
 using MimosBabySpa.Infrastructure.MultiTenancy;
 using MimosBabySpa.Infrastructure.Repositories;
+using MimosBabySpa.Infrastructure.Services;
 using MimosBabySpa.WebAPI.Authorization;
 using MimosBabySpa.WebAPI.Configuration;
 using MimosBabySpa.WebAPI.Middleware;
@@ -71,6 +74,20 @@ builder.Services.AddSingleton<IPasswordHasher, BCryptPasswordHasher>();
 builder.Services.AddScoped<ITokenService, TokenService>();
 builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<IUsageBillingService, UsageBillingService>();
+builder.Services.AddScoped<IMessageService, MessageService>();
+builder.Services.AddScoped<IOutboundMessageDispatcher, OutboundMessageDispatcher>();
+
+builder.Services.AddHttpClient();
+builder.Services.Configure<WhatsAppWebhookOptions>(builder.Configuration.GetSection(WhatsAppWebhookOptions.SectionName));
+builder.Services.AddScoped<IWhatsAppCredentialResolver, WhatsAppCredentialResolver>();
+builder.Services.AddScoped<IWhatsAppService>(sp =>
+{
+    var httpClient = sp.GetRequiredService<IHttpClientFactory>().CreateClient();
+    var resolver = sp.GetRequiredService<IWhatsAppCredentialResolver>();
+    var logger = sp.GetRequiredService<ILogger<WhatsAppService>>();
+    var webhookOptions = sp.GetRequiredService<IOptions<WhatsAppWebhookOptions>>();
+    return new WhatsAppService(httpClient, resolver, logger, webhookOptions);
+});
 
 builder.Services.AddScoped<IUserService, UserService>();
 builder.Services.AddScoped<IRoleService, RoleService>();

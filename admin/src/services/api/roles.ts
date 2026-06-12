@@ -1,4 +1,4 @@
-import { apiClient } from "./client";
+import { apiClient, withPagedDefaults } from "./client";
 import type { PagedResponse, PagedRequest } from "@/types/api";
 import type { AppRole, Permission, RolePermission } from "@/types/entities";
 
@@ -6,7 +6,7 @@ export const rolesApi = {
   list: (params?: Partial<PagedRequest>) =>
     apiClient.get<PagedResponse<AppRole>>(
       "/roles",
-      params as Record<string, string | number | undefined>
+      withPagedDefaults(params)
     ),
   getById: (id: string) => apiClient.get<AppRole>(`/roles/${id}`),
   create: (data: Partial<AppRole>) => apiClient.post<AppRole>("/roles", data),
@@ -18,7 +18,7 @@ export const rolesApi = {
   listPermissions: (params?: Partial<PagedRequest>) =>
     apiClient.get<PagedResponse<Permission>>(
       "/roles/permissions",
-      params as Record<string, string | number | undefined>
+      withPagedDefaults(params)
     ),
   getPermissionById: (id: string) =>
     apiClient.get<Permission>(`/roles/permissions/${id}`),
@@ -33,7 +33,7 @@ export const rolesApi = {
   listRolePermissions: (roleId: string, params?: Partial<PagedRequest>) =>
     apiClient.get<PagedResponse<RolePermission>>(
       `/roles/${roleId}/permissions`,
-      params as Record<string, string | number | undefined>
+      withPagedDefaults(params)
     ),
   assignPermission: (roleId: string, permissionId: string) =>
     apiClient.post<RolePermission>(`/roles/${roleId}/permissions`, {

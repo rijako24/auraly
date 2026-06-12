@@ -42,11 +42,6 @@ public class PermissionRepository : IPermissionRepository
                 if (ur.BusinessId.HasValue && ur.BusinessId != businessId)
                     continue;
             }
-            else
-            {
-                if (ur.BusinessId.HasValue)
-                    continue;
-            }
 
             foreach (var rp in ur.Role.RolePermissions)
             {

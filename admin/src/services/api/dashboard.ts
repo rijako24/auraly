@@ -5,7 +5,6 @@ import type {
   TopService,
   BusinessUsage,
 } from "@/types/api";
-import type { Reservation } from "@/types/entities";
 
 export interface OverviewDataPoint {
   date: string;
@@ -40,6 +39,15 @@ export interface TopServiceWithGrowth extends TopService {
   growthPercent: number;
 }
 
+export interface RecentReservation {
+  reservationId: string;
+  reservationDateTime: string | null;
+  serviceName: string;
+  customerName: string | null;
+  status: string;
+  price: number;
+}
+
 export const dashboardApi = {
   getStats: (businessId: string, params?: { period?: string }) =>
     apiClient.get<DashboardStats>("/dashboard/stats", {
@@ -61,7 +69,7 @@ export const dashboardApi = {
       { businessId, ...(limit !== undefined && { limit }) }
     ),
   getRecentReservations: (businessId: string, limit?: number) =>
-    apiClient.get<(Reservation & { customerName?: string; serviceName?: string })[]>(
+    apiClient.get<RecentReservation[]>(
       "/dashboard/recent-reservations",
       { businessId, ...(limit !== undefined && { limit }) }
     ),

@@ -16,7 +16,8 @@ public interface IOutboundMessageDispatcher
         string phone,
         IReadOnlyList<OutboundMessage> messages,
         Guid? conversationId = null,
-        CancellationToken ct = default);
+        CancellationToken ct = default,
+        bool throwOnFailure = false);
 }
 
 public sealed class OutboundMessageDispatcher : IOutboundMessageDispatcher
@@ -43,7 +44,8 @@ public sealed class OutboundMessageDispatcher : IOutboundMessageDispatcher
         string phone,
         IReadOnlyList<OutboundMessage> messages,
         Guid? conversationId = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        bool throwOnFailure = false)
     {
         if (string.IsNullOrWhiteSpace(phone) || messages.Count == 0)
             return;
@@ -74,6 +76,9 @@ public sealed class OutboundMessageDispatcher : IOutboundMessageDispatcher
                     index,
                     messages.Count,
                     phone);
+
+                if (throwOnFailure)
+                    throw;
             }
         }
 

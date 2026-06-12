@@ -1,4 +1,4 @@
-import { apiClient } from "./client";
+import { apiClient, withPagedDefaults } from "./client";
 import type { PagedResponse, PagedRequest } from "@/types/api";
 import type { Conversation, Message } from "@/types/entities";
 
@@ -18,7 +18,7 @@ export const conversationsApi = {
   ) =>
     apiClient.get<PagedResponse<Conversation>>(
       "/conversations",
-      params as Record<string, string | number | undefined>
+      withPagedDefaults(params)
     ),
   getById: (id: string) =>
     apiClient.get<Conversation & { messages?: Message[] }>(
@@ -38,7 +38,7 @@ export const conversationsApi = {
   ) =>
     apiClient.get<PagedResponse<Message>>(
       `/conversations/${conversationId}/messages`,
-      params as Record<string, string | number | undefined>
+      withPagedDefaults(params)
     ),
   sendWebMessage: (conversationId: string, message: string) =>
     apiClient.post<WebConversationMessageResponse>(

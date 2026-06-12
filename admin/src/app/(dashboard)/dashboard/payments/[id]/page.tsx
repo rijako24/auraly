@@ -5,77 +5,32 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { ArrowLeft, ChevronDown, ChevronUp, ExternalLink } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
+import { PageError } from "@/components/ui/page-error";
+import { PageLoading } from "@/components/ui/page-loading";
+import { usePayment } from "@/hooks/use-payments";
+import { cn, formatCurrencyFromCents, formatDateTime } from "@/lib/utils";
 import {
-  PaymentTransactionStatus,
-  PaymentTransactionSource,
-  PaymentStatusLabels,
-  PaymentStatusColors,
   PaymentSourceLabels,
+  PaymentStatusColors,
+  PaymentStatusLabels,
 } from "@/types/enums";
-import type { PaymentTransaction } from "@/types/entities";
-import { formatCurrency, formatDateTime } from "@/lib/utils";
-import { cn } from "@/lib/utils";
-
-// Mock data
-const MOCK_PAYMENTS: Record<string, PaymentTransaction> = {
-  "pay-1": {
-    paymentTransactionId: "pay-1",
-    businessId: "bus-1",
-    conversationId: "conv-1",
-    paymentReferenceId: "REF-2025-001",
-    providerTransactionId: "prov-txn-001",
-    amountInCents: 12000000,
-    currency: "COP",
-    status: PaymentTransactionStatus.Confirmed,
-    source: PaymentTransactionSource.Automated,
-    createdAt: "2025-03-14T10:30:00Z",
-    confirmedAt: "2025-03-14T10:32:15Z",
-    webhookPayloadJson: JSON.stringify(
-      {
-        event: "payment.confirmed",
-        transactionId: "prov-txn-001",
-        amount: 120000,
-        currency: "COP",
-        timestamp: "2025-03-14T10:32:15Z",
-        metadata: { source: "whatsapp" },
-      },
-      null,
-      2
-    ),
-  },
-};
 
 export default function PaymentDetailPage() {
   const params = useParams();
   const id = params.id as string;
-  const payment = MOCK_PAYMENTS[id] ?? MOCK_PAYMENTS["pay-1"];
+  const { data: payment, isLoading, isError, refetch } = usePayment(id);
   const [webhookOpen, setWebhookOpen] = useState(false);
 
-  if (!payment) {
-    return (
-      <div className="space-y-6">
-        <Button variant="ghost" size="icon" asChild>
-          <Link href="/dashboard/payments">
-            <ArrowLeft className="h-4 w-4" />
-          </Link>
-        </Button>
-        <p className="text-muted-foreground">Pago no encontrado.</p>
-      </div>
-    );
-  }
+  if (isLoading) return <PageLoading cards={2} />;
+  if (isError || !payment) return <PageError onRetry={refetch} />;
 
   return (
     <div className="space-y-6">
@@ -99,7 +54,7 @@ export default function PaymentDetailPage() {
       <div className="grid gap-6 lg:grid-cols-2">
         <Card>
           <CardHeader>
-            <CardTitle>Información del pago</CardTitle>
+            <CardTitle>Informacion del pago</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="grid gap-4 sm:grid-cols-2">
@@ -112,7 +67,7 @@ export default function PaymentDetailPage() {
               <div>
                 <p className="text-sm font-medium text-muted-foreground">Monto</p>
                 <p className="font-semibold">
-                  {formatCurrency(payment.amountInCents, payment.currency)}
+                  {formatCurrencyFromCents(payment.amountInCents, payment.currency)}
                 </p>
               </div>
               <div>
@@ -166,7 +121,7 @@ export default function PaymentDetailPage() {
             <Button asChild variant="outline" className="mt-4">
               <Link href={`/dashboard/conversations/${payment.conversationId}`}>
                 <ExternalLink className="mr-2 h-4 w-4" />
-                Ver conversación
+                Ver conversacion
               </Link>
             </Button>
           </CardContent>
@@ -176,7 +131,7 @@ export default function PaymentDetailPage() {
           <Card>
             <Collapsible open={webhookOpen} onOpenChange={setWebhookOpen}>
               <CollapsibleTrigger asChild>
-                <CardHeader className="cursor-pointer hover:bg-muted/50 rounded-t-lg transition-colors">
+                <CardHeader className="cursor-pointer rounded-t-lg transition-colors hover:bg-muted/50">
                   <div className="flex items-center justify-between">
                     <CardTitle>Webhook payload</CardTitle>
                     {webhookOpen ? (

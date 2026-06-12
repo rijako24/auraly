@@ -182,26 +182,37 @@ public class PaymentTransactionRepository : IPaymentTransactionRepository
                 && t.ConfirmedAt >= from
                 && t.ConfirmedAt <= to);
 
-        var data = groupByMonth
-            ? await query
+        if (groupByMonth)
+        {
+            var monthly = await query
                 .GroupBy(t => new { Year = t.ConfirmedAt!.Value.Year, Month = t.ConfirmedAt.Value.Month })
                 .Select(g => new
                 {
-                    Date = g.Key.Year + "-" + g.Key.Month.ToString("D2") + "-01",
-                    Amount = g.Sum(t => t.AmountInCents) / 100m
+                    g.Key.Year,
+                    g.Key.Month,
+                    AmountInCents = g.Sum(t => t.AmountInCents)
                 })
-                .OrderBy(x => x.Date)
-                .ToListAsync(ct)
-            : await query
-                .GroupBy(t => t.ConfirmedAt!.Value.Date)
-                .Select(g => new
-                {
-                    Date = g.Key.ToString("yyyy-MM-dd"),
-                    Amount = g.Sum(t => t.AmountInCents) / 100m
-                })
-                .OrderBy(x => x.Date)
+                .OrderBy(x => x.Year)
+                .ThenBy(x => x.Month)
                 .ToListAsync(ct);
 
-        return data.Select(x => (x.Date, x.Amount)).ToList();
+            return monthly
+                .Select(x => ($"{x.Year:D4}-{x.Month:D2}-01", x.AmountInCents / 100m))
+                .ToList();
+        }
+
+        var daily = await query
+            .GroupBy(t => t.ConfirmedAt!.Value.Date)
+            .Select(g => new
+            {
+                Date = g.Key,
+                AmountInCents = g.Sum(t => t.AmountInCents)
+            })
+            .OrderBy(x => x.Date)
+            .ToListAsync(ct);
+
+        return daily
+            .Select(x => (x.Date.ToString("yyyy-MM-dd"), x.AmountInCents / 100m))
+            .ToList();
     }
 }

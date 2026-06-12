@@ -12,7 +12,7 @@ import { PageLoading } from "@/components/ui/page-loading";
 import { PageError } from "@/components/ui/page-error";
 import { PaymentTransactionStatus, PaymentStatusLabels, PaymentStatusColors, PaymentSourceLabels } from "@/types/enums";
 import type { PaymentTransaction } from "@/types/entities";
-import { formatCurrency, formatDateTime, cn } from "@/lib/utils";
+import { formatCurrencyFromCents, formatDateTime, cn } from "@/lib/utils";
 import { usePayments } from "@/hooks/use-payments";
 
 export default function PaymentsPage() {
@@ -27,7 +27,7 @@ export default function PaymentsPage() {
 
   const columns: ColumnDef<PaymentTransaction>[] = useMemo(() => [
     { accessorKey: "paymentReferenceId", header: "ID Referencia", cell: ({ row }) => <span className="font-mono text-sm">{row.original.paymentReferenceId}</span> },
-    { accessorKey: "amountInCents", header: "Monto", cell: ({ row }) => formatCurrency(row.original.amountInCents, row.original.currency) },
+    { accessorKey: "amountInCents", header: "Monto", cell: ({ row }) => formatCurrencyFromCents(row.original.amountInCents, row.original.currency) },
     { accessorKey: "currency", header: "Moneda" },
     { accessorKey: "status", header: "Estado", cell: ({ row }) => { const status = row.original.status; return <Badge variant="secondary" className={cn(PaymentStatusColors[status])}>{PaymentStatusLabels[status]}</Badge>; } },
     { accessorKey: "source", header: "Origen", cell: ({ row }) => <Badge variant="outline">{PaymentSourceLabels[row.original.source]}</Badge> },
@@ -48,7 +48,7 @@ export default function PaymentsPage() {
     <div className="space-y-6">
       <div><h1 className="text-2xl font-semibold tracking-tight">Pagos</h1><p className="text-muted-foreground">Transacciones de pago y estado de confirmación</p></div>
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard title="Ingresos totales" value={formatCurrency(totalRevenue)} icon={DollarSign} />
+        <StatCard title="Ingresos totales" value={formatCurrencyFromCents(totalRevenue)} icon={DollarSign} />
         <StatCard title="Pagos confirmados" value={confirmedCount} icon={CheckCircle} />
         <StatCard title="Pendientes" value={pendingCount} icon={CreditCard} />
         <StatCard title="Fallidos / Expirados" value={failedCount} icon={XCircle} />

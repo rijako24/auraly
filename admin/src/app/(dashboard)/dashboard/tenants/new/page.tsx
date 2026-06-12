@@ -3,24 +3,47 @@
 import { useState } from "react";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
+import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useRouter } from "next/navigation";
+import { tenantsApi } from "@/services/api";
 
 export default function NewTenantPage() {
   const router = useRouter();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
-  const [isActive, setIsActive] = useState(true);
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const validate = () => {
+    const newErrors: Record<string, string> = {};
+    if (!name.trim()) newErrors.name = "El nombre es requerido";
+    if (!email.trim()) newErrors.email = "El email es requerido";
+    setErrors(newErrors);
+    return Object.keys(newErrors).length === 0;
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    // Mock: redirect to list after "creating"
-    router.push("/dashboard/tenants");
+    if (!validate()) return;
+
+    setIsSubmitting(true);
+    try {
+      await tenantsApi.create({
+        name: name.trim(),
+        email: email.trim(),
+      });
+      toast.success("Tenant creado");
+      router.push("/dashboard/tenants");
+    } catch {
+      toast.error("No se pudo crear el tenant");
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -54,8 +77,12 @@ export default function NewTenantPage() {
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 placeholder="Ej: Mimos Baby Spa"
+                className={errors.name ? "border-destructive" : ""}
                 required
               />
+              {errors.name && (
+                <p className="text-sm text-destructive">{errors.name}</p>
+              )}
             </div>
             <div className="space-y-2">
               <Label htmlFor="email">Email</Label>
@@ -65,21 +92,19 @@ export default function NewTenantPage() {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="admin@empresa.com"
+                className={errors.email ? "border-destructive" : ""}
                 required
               />
-            </div>
-            <div className="flex items-center space-x-2">
-              <Switch
-                id="isActive"
-                checked={isActive}
-                onCheckedChange={setIsActive}
-              />
-              <Label htmlFor="isActive">Activo</Label>
+              {errors.email && (
+                <p className="text-sm text-destructive">{errors.email}</p>
+              )}
             </div>
           </CardContent>
         </Card>
         <div className="mt-6 flex gap-2">
-          <Button type="submit">Crear Tenant</Button>
+          <Button type="submit" disabled={isSubmitting}>
+            {isSubmitting ? "Creando..." : "Crear Tenant"}
+          </Button>
           <Button variant="outline" asChild>
             <Link href="/dashboard/tenants">Cancelar</Link>
           </Button>

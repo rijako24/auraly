@@ -50,7 +50,7 @@ export default function NewServicePage() {
     }
     const priceNum = parseInt(price, 10);
     if (!price || isNaN(priceNum) || priceNum <= 0) {
-      newErrors.price = "Precio inválido (en centavos)";
+      newErrors.price = "Precio invalido en COP";
     }
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
@@ -117,7 +117,7 @@ export default function NewServicePage() {
                 id="serviceName"
                 value={serviceName}
                 onChange={(e) => setServiceName(e.target.value)}
-                placeholder="Ej: Spa Bebé Premium"
+                placeholder="Nombre del servicio"
                 className={errors.serviceName ? "border-destructive" : ""}
               />
               {errors.serviceName && (
@@ -181,18 +181,18 @@ export default function NewServicePage() {
 
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
-                <Label htmlFor="price">Precio (centavos)</Label>
+                <Label htmlFor="price">Precio COP</Label>
                 <Input
                   id="price"
                   type="number"
                   min={0}
                   value={price}
                   onChange={(e) => setPrice(e.target.value)}
-                  placeholder="12000000"
+                  placeholder="120000"
                   className={errors.price ? "border-destructive" : ""}
                 />
                 <p className="text-xs text-muted-foreground">
-                  Ej: 12000000 = $120.000 COP
+                  Ej: 120000 = $120.000 COP
                 </p>
                 {errors.price && (
                   <p className="text-sm text-destructive">{errors.price}</p>

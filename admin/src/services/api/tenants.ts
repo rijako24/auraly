@@ -1,4 +1,4 @@
-import { apiClient } from "./client";
+import { apiClient, withPagedDefaults } from "./client";
 import type { PagedRequest, PagedResponse } from "@/types/api";
 import type { Tenant } from "@/types/entities";
 
@@ -6,7 +6,7 @@ export const tenantsApi = {
   list: (params?: Partial<PagedRequest>) =>
     apiClient.get<PagedResponse<Tenant>>(
       "/tenants",
-      params as Record<string, string | number | undefined>
+      withPagedDefaults(params)
     ),
   getById: (id: string) => apiClient.get<Tenant>(`/tenants/${id}`),
   create: (data: Partial<Tenant>) =>

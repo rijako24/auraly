@@ -29,6 +29,19 @@ export interface OverviewChartProps {
 }
 
 export function OverviewChart({ data, className }: OverviewChartProps) {
+  if (data.length === 0) {
+    return (
+      <div className={cn("flex h-[300px] w-full items-center justify-center rounded-md border border-dashed border-border/70", className)}>
+        <div className="max-w-sm text-center">
+          <p className="text-sm font-medium text-foreground">Sin actividad en este periodo</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Cambia el periodo o espera nuevas reservas/pagos para ver la grafica.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className={cn("h-[300px] w-full", className)}>
       <ResponsiveContainer width="100%" height="100%">
@@ -55,7 +68,7 @@ export function OverviewChart({ data, className }: OverviewChartProps) {
             fontSize={12}
             tickLine={false}
             axisLine={false}
-            tickFormatter={(v) => formatCurrency(v * 100)}
+            tickFormatter={(v) => formatCurrency(v)}
           />
           <YAxis
             yAxisId="reservations"
@@ -74,7 +87,7 @@ export function OverviewChart({ data, className }: OverviewChartProps) {
                     <p className="text-sm font-medium mb-2">{item.date}</p>
                     {item.revenue != null && (
                       <p className="text-xs">
-                        Ingresos: {formatCurrency((item.revenue as number) * 100)}
+                        Ingresos: {formatCurrency(item.revenue as number)}
                       </p>
                     )}
                     {item.reservations != null && (

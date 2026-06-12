@@ -12,8 +12,8 @@ export const reservationKeys = {
     businessId: string | null,
     params?: Partial<PagedRequest> & {
       status?: number;
-      fromDate?: string;
-      toDate?: string;
+      startDate?: string;
+      endDate?: string;
     }
   ) => [...reservationKeys.lists(), businessId, params] as const,
   details: () => [...reservationKeys.all, "detail"] as const,
@@ -23,8 +23,8 @@ export const reservationKeys = {
 export function useReservations(
   params?: Partial<PagedRequest> & {
     status?: number;
-    fromDate?: string;
-    toDate?: string;
+    startDate?: string;
+    endDate?: string;
   }
 ) {
   const businessId = useBusinessContextStore((s) => s.selectedBusinessId);

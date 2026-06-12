@@ -1,4 +1,4 @@
-import { apiClient } from "./client";
+import { apiClient, withPagedDefaults } from "./client";
 import type { PagedResponse, PagedRequest } from "@/types/api";
 import type {
   BusinessConfiguration,
@@ -32,7 +32,7 @@ export const configurationsApi = {
   ) =>
     apiClient.get<PagedResponse<BusinessConfiguration>>(
       `/businesses/${businessId}/configurations`,
-      params as Record<string, string | number | undefined>
+      withPagedDefaults(params)
     ),
   getBusinessConfigurationById: (
     businessId: string,
@@ -70,7 +70,7 @@ export const configurationsApi = {
   listSystemConfigurations: (params?: Partial<PagedRequest>) =>
     apiClient.get<PagedResponse<SystemConfiguration>>(
       "/configurations/system",
-      params as Record<string, string | number | undefined>
+      withPagedDefaults(params)
     ),
   getSystemConfigurationById: (id: string) =>
     apiClient.get<SystemConfiguration>(`/configurations/system/${id}`),

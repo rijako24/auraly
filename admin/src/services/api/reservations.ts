@@ -1,4 +1,4 @@
-import { apiClient } from "./client";
+import { apiClient, withPagedDefaults } from "./client";
 import type { PagedResponse, PagedRequest } from "@/types/api";
 import type { Reservation, ReservationAddOn } from "@/types/entities";
 
@@ -7,13 +7,13 @@ export const reservationsApi = {
     params?: Partial<PagedRequest> & {
       businessId?: string;
       status?: number;
-      fromDate?: string;
-      toDate?: string;
+      startDate?: string;
+      endDate?: string;
     }
   ) =>
     apiClient.get<PagedResponse<Reservation>>(
       "/reservations",
-      params as Record<string, string | number | undefined>
+      withPagedDefaults(params)
     ),
   getById: (id: string) =>
     apiClient.get<Reservation & { addOns?: ReservationAddOn[] }>(

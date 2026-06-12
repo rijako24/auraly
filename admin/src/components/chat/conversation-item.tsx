@@ -5,11 +5,9 @@ import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { getInitials, truncate } from "@/lib/utils";
 import {
-  ConversationLifecycleStatus,
-  ConversationLifecycleStatusColors,
-  ConversationLifecycleStatusLabels,
-  ConversationStateColors,
-  ConversationStateLabels,
+  getConversationStageColor,
+  getConversationStageLabel,
+  getConversationStageStyle,
 } from "@/types/enums";
 import type { Conversation } from "@/types/entities";
 import { formatRelativeTime } from "@/lib/utils";
@@ -28,21 +26,9 @@ export function ConversationItem({
   unreadCount = 0,
 }: ConversationItemProps) {
   const displayName = conversation.customerName ?? conversation.userNumber;
-  const lifecycleStatus =
-    conversation.status && conversation.status in ConversationLifecycleStatusLabels
-      ? conversation.status
-      : undefined;
-  const state = typeof conversation.state === "number" ? conversation.state : undefined;
-  const statusLabel = lifecycleStatus
-    ? ConversationLifecycleStatusLabels[lifecycleStatus]
-    : state !== undefined
-      ? ConversationStateLabels[state]
-      : ConversationLifecycleStatusLabels[ConversationLifecycleStatus.Active];
-  const statusColor = lifecycleStatus
-    ? ConversationLifecycleStatusColors[lifecycleStatus]
-    : state !== undefined
-      ? ConversationStateColors[state]
-      : ConversationLifecycleStatusColors[ConversationLifecycleStatus.Active];
+  const stageLabel = getConversationStageLabel(conversation.currentStageName);
+  const stageColor = getConversationStageColor();
+  const stageStyle = getConversationStageStyle(conversation.currentStageName);
 
   return (
     <button
@@ -85,20 +71,16 @@ export function ConversationItem({
             {truncate(conversation.lastMessage ?? "Sin mensajes", 40)}
           </span>
         </div>
-        {conversation.currentStageName && (
-          <p className="mt-1 truncate text-xs text-muted-foreground">
-            {conversation.currentStageName}
-          </p>
-        )}
         <div className="mt-2">
           <Badge
             variant="secondary"
+            style={stageStyle}
             className={cn(
-              "text-xs font-normal",
-              statusColor
+              "text-xs font-medium shadow-sm",
+              stageColor
             )}
           >
-            {statusLabel}
+            {stageLabel}
           </Badge>
         </div>
       </div>

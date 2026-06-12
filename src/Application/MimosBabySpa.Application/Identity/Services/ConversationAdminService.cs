@@ -1,10 +1,10 @@
+using Microsoft.Extensions.DependencyInjection;
 using MimosBabySpa.Application.Common.DTOs;
 using MimosBabySpa.Application.Common.Exceptions;
 using MimosBabySpa.Application.Identity.DTOs;
 using MimosBabySpa.Application.Identity.Interfaces;
 using MimosBabySpa.Application.Agents;
 using MimosBabySpa.Application.Services;
-using MimosBabySpa.Application.StateManagement;
 using MimosBabySpa.Domain.Entities;
 using MimosBabySpa.Domain.Enums;
 using MimosBabySpa.Domain.Models;
@@ -15,26 +15,14 @@ namespace MimosBabySpa.Application.Identity.Services;
 public class ConversationAdminService : IConversationAdminService
 {
     private readonly IUnitOfWork _unitOfWork;
-    private readonly IConversationStateManager _stateManager;
-    private readonly IMessageService _messageService;
-    private readonly IAgentConversationService _agentService;
-    private readonly ILeadService _leadService;
-    private readonly IAgentRepository _agentRepository;
+    private readonly IServiceProvider _serviceProvider;
 
     public ConversationAdminService(
         IUnitOfWork unitOfWork,
-        IConversationStateManager stateManager,
-        IMessageService messageService,
-        IAgentConversationService agentService,
-        ILeadService leadService,
-        IAgentRepository agentRepository)
+        IServiceProvider serviceProvider)
     {
         _unitOfWork = unitOfWork;
-        _stateManager = stateManager;
-        _messageService = messageService;
-        _agentService = agentService;
-        _leadService = leadService;
-        _agentRepository = agentRepository;
+        _serviceProvider = serviceProvider;
     }
 
     public async Task<PagedResponse<ConversationDto>> GetPagedByBusinessIdAsync(
@@ -86,36 +74,17 @@ public class ConversationAdminService : IConversationAdminService
 
         await EnsureBusinessBelongsToTenantAsync(tenantId, conv.BusinessId, ct);
 
-        var state = await _stateManager.GetStateByConversationIdAsync(conversationId, ct);
-        if (state?.Owner == ConversationOwner.Human)
-        {
-            await _messageService.SaveMessageAsync(conversationId, "User", request.Message.Trim());
-            await _unitOfWork.SaveChangesAsync(ct);
-            return new WebConversationMessageResponse(string.Empty, false, false);
-        }
-
-        var agent = (await _agentRepository.GetByBusinessAsync(conv.BusinessId, ct))
-            .FirstOrDefault(a => a.IsActive);
-        if (agent is null)
-            throw new DomainValidationException("Agent", "No hay un agente activo para este negocio.");
-
-        var result = await _agentService.ProcessMessageAsync(
-            agent.AgentId,
-            conversationId,
-            request.Message.Trim(),
+        var text = request.Message.Trim();
+        var outboundMessages = _serviceProvider.GetRequiredService<IOutboundMessageDispatcher>();
+        await outboundMessages.SendAllAsync(
+            conv.BusinessId,
             conv.UserNumber,
-            ct);
+            [new OutboundMessage(text, null)],
+            conversationId,
+            ct,
+            throwOnFailure: true);
 
-        if (!result.Success)
-            throw new DomainValidationException("Agent", result.ErrorMessage ?? "No se pudo procesar el mensaje.");
-
-        var lead = await _leadService.GetOrCreateLeadAsync(conv.BusinessId, conv.UserNumber, conv.CustomerName);
-        await UpdateLeadStatusAsync(lead, result.ReservationCreated);
-
-        return new WebConversationMessageResponse(
-            result.Response,
-            result.EscalatedToHuman,
-            result.ReservationCreated);
+        return new WebConversationMessageResponse(text, false, false);
     }
 
     private static ConversationDto MapToDto(Conversation c) =>
@@ -125,15 +94,6 @@ public class ConversationAdminService : IConversationAdminService
             c.CustomerName, c.CustomerEmail, c.CurrentStageName,
             c.Status.ToString(),
             c.OpenedAt, c.LastActivityAt, c.ClosedAt, c.CloseReason);
-
-    private async Task UpdateLeadStatusAsync(Lead lead, bool reservationCreated)
-    {
-        var newStatus = reservationCreated ? "Closed" : "Contacted";
-        if (newStatus == lead.Status)
-            return;
-
-        await _leadService.UpdateLeadAsync(lead.LeadId, status: newStatus);
-    }
 
     private async Task EnsureBusinessBelongsToTenantAsync(Guid tenantId, Guid businessId, CancellationToken ct)
     {

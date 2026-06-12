@@ -2,6 +2,7 @@ using Microsoft.Extensions.Logging;
 using MimosBabySpa.Application.Identity.DTOs;
 using MimosBabySpa.Application.Identity.Interfaces;
 using MimosBabySpa.Application.Identity;
+using MimosBabySpa.Domain.Entities;
 using MimosBabySpa.Domain.Repositories;
 
 namespace MimosBabySpa.Application.Identity.Services;
@@ -58,7 +59,36 @@ public class PermissionService : IPermissionService
         }
 
         await _unitOfWork.SaveChangesAsync(ct);
+        await SyncSystemRolePermissionsAsync(ct);
         _logger.LogInformation("Permission seed completed. Total: {Count}", PermissionCatalog.All.Length);
+    }
+
+    private async Task SyncSystemRolePermissionsAsync(CancellationToken ct)
+    {
+        var permissions = await _unitOfWork.Permissions.GetAllAsync(ct);
+        var systemRoles = await _unitOfWork.AppRoles.GetActiveSystemRolesAsync(ct);
+
+        foreach (var role in systemRoles)
+        {
+            var assignedPermissionIds = role.RolePermissions
+                .Select(rp => rp.PermissionId)
+                .ToHashSet();
+            var missing = permissions
+                .Where(p => !assignedPermissionIds.Contains(p.PermissionId))
+                .Select(p => new RolePermission
+                {
+                    RolePermissionId = Guid.NewGuid(),
+                    RoleId = role.RoleId,
+                    PermissionId = p.PermissionId,
+                    AssignedAt = DateTime.UtcNow
+                })
+                .ToList();
+
+            if (missing.Count > 0)
+                await _unitOfWork.RolePermissions.AddRangeAsync(missing, ct);
+        }
+
+        await _unitOfWork.SaveChangesAsync(ct);
     }
 
     private static PermissionDto MapToDto(Domain.Entities.Permission p) => new(

@@ -5,12 +5,16 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-export function formatCurrency(amountInCents: number, currency = "COP"): string {
+export function formatCurrency(amount: number, currency = "COP"): string {
   return new Intl.NumberFormat("es-CO", {
     style: "currency",
     currency,
     minimumFractionDigits: 0,
-  }).format(amountInCents / 100);
+  }).format(amount);
+}
+
+export function formatCurrencyFromCents(amountInCents: number, currency = "COP"): string {
+  return formatCurrency(amountInCents / 100, currency);
 }
 
 export function formatDate(date: string | Date): string {

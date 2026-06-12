@@ -168,3 +168,13 @@ class ApiClient {
 }
 
 export const apiClient = new ApiClient(API_BASE);
+
+export function withPagedDefaults<T extends Record<string, unknown> | undefined>(
+  params?: T
+): Record<string, string | number | boolean | undefined> {
+  return {
+    page: 1,
+    pageSize: 20,
+    ...(params ?? {}),
+  } as Record<string, string | number | boolean | undefined>;
+}

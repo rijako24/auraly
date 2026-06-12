@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
+import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -21,19 +22,55 @@ import {
   LeadStatus,
   LeadStatusLabels,
 } from "@/types/enums";
+import { leadsApi } from "@/services/api";
+import { useBusinessContextStore } from "@/stores/business-context-store";
 
 export default function NewLeadPage() {
   const router = useRouter();
+  const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
   const [customerName, setCustomerName] = useState("");
   const [userNumber, setUserNumber] = useState("");
   const [status, setStatus] = useState<LeadStatus>(LeadStatus.New);
   const [notes, setNotes] = useState("");
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const validate = () => {
+    const newErrors: Record<string, string> = {};
+    if (!businessId) newErrors.business = "Seleccione un negocio";
+    if (!userNumber.trim()) newErrors.userNumber = "El telefono es requerido";
+    setErrors(newErrors);
+    return Object.keys(newErrors).length === 0;
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    // Mock: simulate create and redirect
-    const newId = `lead-${Date.now()}`;
-    router.push(`/dashboard/leads/${newId}`);
+    if (!validate()) return;
+
+    setIsSubmitting(true);
+    try {
+      const created = await leadsApi.create({
+        businessId: businessId!,
+        userNumber: userNumber.trim(),
+        customerName: customerName.trim() || null,
+        notes: notes.trim() || null,
+      });
+
+      if (status !== LeadStatus.New) {
+        await leadsApi.update(created.leadId, {
+          status,
+          customerName: customerName.trim() || null,
+          notes: notes.trim() || null,
+        });
+      }
+
+      toast.success("Lead creado");
+      router.push(`/dashboard/leads/${created.leadId}`);
+    } catch {
+      toast.error("No se pudo crear el lead");
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -63,12 +100,15 @@ export default function NewLeadPage() {
             </p>
           </CardHeader>
           <CardContent className="space-y-4">
+            {errors.business && (
+              <p className="text-sm text-destructive">{errors.business}</p>
+            )}
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
                 <Label htmlFor="customerName">Nombre del cliente</Label>
                 <Input
                   id="customerName"
-                  placeholder="Ej: María García"
+                  placeholder="Nombre del cliente"
                   value={customerName}
                   onChange={(e) => setCustomerName(e.target.value)}
                 />
@@ -80,8 +120,12 @@ export default function NewLeadPage() {
                   placeholder="Ej: +57 300 123 4567"
                   value={userNumber}
                   onChange={(e) => setUserNumber(e.target.value)}
+                  className={errors.userNumber ? "border-destructive" : ""}
                   required
                 />
+                {errors.userNumber && (
+                  <p className="text-sm text-destructive">{errors.userNumber}</p>
+                )}
               </div>
             </div>
             <div className="space-y-2">
@@ -113,7 +157,9 @@ export default function NewLeadPage() {
               />
             </div>
             <div className="flex gap-2 pt-4">
-              <Button type="submit">Crear Lead</Button>
+              <Button type="submit" disabled={isSubmitting}>
+                {isSubmitting ? "Creando..." : "Crear Lead"}
+              </Button>
               <Button type="button" variant="outline" asChild>
                 <Link href="/dashboard/leads">Cancelar</Link>
               </Button>

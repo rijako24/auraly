@@ -27,31 +27,30 @@ public class DashboardService : IDashboardService
         var (from, to) = ParsePeriod(period ?? "30d");
         var (prevFrom, prevTo) = GetPreviousPeriod(from, to);
 
-        var reservationsTask = _unitOfWork.Reservations.GetPagedByBusinessIdAsync(
-            businessId, 1, 1, null, from, to, ct);
-        var leadsTask = _unitOfWork.Leads.GetPagedByBusinessIdAsync(businessId, 1, 1, null, ct);
-        var convTask = _unitOfWork.Conversations.GetPagedByBusinessIdAsync(
-            businessId, 1, 1, null, null, ct);
-        var revenueTask = _unitOfWork.PaymentTransactions.GetTotalRevenueByBusinessIdAsync(
+        var totalReservations = (await _unitOfWork.Reservations.GetPagedByBusinessIdAsync(
+            businessId, 1, 1, null, from, to, ct)).TotalCount;
+        var totalLeads = (await _unitOfWork.Leads.GetPagedByBusinessIdAsync(
+            businessId, 1, 1, null, ct)).TotalCount;
+        var totalConversations = (await _unitOfWork.Conversations.GetPagedByBusinessIdAsync(
+            businessId, 1, 1, null, null, ct)).TotalCount;
+        var totalRevenue = await _unitOfWork.PaymentTransactions.GetTotalRevenueByBusinessIdAsync(
             businessId, from, to, ct);
-        var prevRevenueTask = _unitOfWork.PaymentTransactions.GetTotalRevenueByBusinessIdAsync(
+        if (totalRevenue == 0)
+        {
+            totalRevenue = await GetEstimatedReservationRevenueAsync(businessId, from, to);
+        }
+
+        var prevRevenue = await _unitOfWork.PaymentTransactions.GetTotalRevenueByBusinessIdAsync(
             businessId, prevFrom, prevTo, ct);
-        var prevReservationsTask = _unitOfWork.Reservations.GetPagedByBusinessIdAsync(
-            businessId, 1, 1, null, prevFrom, prevTo, ct);
-        var prevLeadsTask = _unitOfWork.Leads.GetPagedByBusinessIdAsync(
-            businessId, 1, 1, null, ct);
+        if (prevRevenue == 0)
+        {
+            prevRevenue = await GetEstimatedReservationRevenueAsync(businessId, prevFrom, prevTo);
+        }
 
-        await Task.WhenAll(
-            reservationsTask, leadsTask, convTask, revenueTask,
-            prevRevenueTask, prevReservationsTask, prevLeadsTask);
-
-        var totalReservations = (await reservationsTask).TotalCount;
-        var totalLeads = (await leadsTask).TotalCount;
-        var totalConversations = (await convTask).TotalCount;
-        var totalRevenue = await revenueTask;
-        var prevRevenue = await prevRevenueTask;
-        var prevReservations = (await prevReservationsTask).TotalCount;
-        var prevLeads = (await prevLeadsTask).TotalCount;
+        var prevReservations = (await _unitOfWork.Reservations.GetPagedByBusinessIdAsync(
+            businessId, 1, 1, null, prevFrom, prevTo, ct)).TotalCount;
+        var prevLeads = (await _unitOfWork.Leads.GetPagedByBusinessIdAsync(
+            businessId, 1, 1, null, ct)).TotalCount;
 
         var conversionRate = totalLeads > 0 ? (double)totalReservations / totalLeads * 100 : 0;
         var revenueGrowth = prevRevenue > 0 ? (double)((totalRevenue - prevRevenue) / prevRevenue * 100) : 0;
@@ -79,6 +78,10 @@ public class DashboardService : IDashboardService
 
         var data = await _unitOfWork.PaymentTransactions.GetRevenueChartDataAsync(
             businessId, from, to, groupByMonth, ct);
+        if (data.Count == 0)
+        {
+            data = await GetEstimatedReservationRevenueChartAsync(businessId, from, to, groupByMonth);
+        }
 
         return data.Select(x => new ChartDataPointDto(x.Date, x.Amount)).ToList();
     }
@@ -93,6 +96,10 @@ public class DashboardService : IDashboardService
 
         var revenueData = await _unitOfWork.PaymentTransactions.GetRevenueChartDataAsync(
             businessId, from, to, groupByMonth, ct);
+        if (revenueData.Count == 0)
+        {
+            revenueData = await GetEstimatedReservationRevenueChartAsync(businessId, from, to, groupByMonth);
+        }
 
         var reservations = (await _unitOfWork.Reservations.GetByBusinessIdAndDateRangeAsync(
             businessId, from, to)).ToList();
@@ -106,13 +113,23 @@ public class DashboardService : IDashboardService
 
         if (groupByMonth)
         {
-            return revenueData.Select(x =>
+            var monthSet = revenueData
+                .Select(x => DateTime.TryParse(x.Date, out var d) ? (d.Year, d.Month) : ((int Year, int Month)?)null)
+                .Where(d => d.HasValue)
+                .Select(d => d!.Value)
+                .ToHashSet();
+            foreach (var month in reservationsByMonth.Keys.Where(m => !monthSet.Contains(m)))
+                monthSet.Add(month);
+
+            return monthSet.OrderBy(x => x.Year).ThenBy(x => x.Month).Select(month =>
             {
-                if (!DateTime.TryParse(x.Date, out var parsed))
-                    return new OverviewDataPointDto(x.Date, x.Amount, 0);
-                var key = (parsed.Year, parsed.Month);
-                var count = reservationsByMonth.TryGetValue(key, out var c) ? c : 0;
-                return new OverviewDataPointDto(x.Date, x.Amount, count);
+                var dateStr = $"{month.Year:D4}-{month.Month:D2}-01";
+                var match = revenueData.FirstOrDefault(x =>
+                    DateTime.TryParse(x.Date, out var rd) &&
+                    rd.Year == month.Year &&
+                    rd.Month == month.Month);
+                var count = reservationsByMonth.TryGetValue(month, out var c) ? c : 0;
+                return new OverviewDataPointDto(dateStr, match.Amount, count);
             }).ToList();
         }
 
@@ -208,7 +225,7 @@ public class DashboardService : IDashboardService
             "7d" or "7" => (now.AddDays(-7), now.AddDays(1)),
             "30d" or "30" => (now.AddDays(-30), now.AddDays(1)),
             "90d" or "90" => (now.AddDays(-90), now.AddDays(1)),
-            "daily" => (now.AddDays(-7), now.AddDays(1)),
+            "daily" => (now.AddDays(-30), now.AddDays(1)),
             "monthly" => (now.AddMonths(-3), now.AddDays(1)),
             _ => (now.AddDays(-30), now.AddDays(1))
         };
@@ -218,6 +235,52 @@ public class DashboardService : IDashboardService
     {
         var span = to - from;
         return (from - span, from);
+    }
+
+    private async Task<decimal> GetEstimatedReservationRevenueAsync(
+        Guid businessId, DateTime from, DateTime to)
+    {
+        var reservations = await GetRevenueReservationsAsync(businessId, from, to);
+        return reservations.Sum(r => r.Service?.Price ?? 0);
+    }
+
+    private async Task<IReadOnlyList<(string Date, decimal Amount)>> GetEstimatedReservationRevenueChartAsync(
+        Guid businessId, DateTime from, DateTime to, bool groupByMonth)
+    {
+        var reservations = await GetRevenueReservationsAsync(businessId, from, to);
+
+        if (groupByMonth)
+        {
+            return reservations
+                .GroupBy(r => new
+                {
+                    Year = r.ReservationDateTime!.Value.Year,
+                    Month = r.ReservationDateTime.Value.Month
+                })
+                .OrderBy(g => g.Key.Year)
+                .ThenBy(g => g.Key.Month)
+                .Select(g => ($"{g.Key.Year:D4}-{g.Key.Month:D2}-01", g.Sum(r => r.Service?.Price ?? 0)))
+                .ToList();
+        }
+
+        return reservations
+            .GroupBy(r => r.ReservationDateTime!.Value.Date)
+            .OrderBy(g => g.Key)
+            .Select(g => (g.Key.ToString("yyyy-MM-dd"), g.Sum(r => r.Service?.Price ?? 0)))
+            .ToList();
+    }
+
+    private async Task<IReadOnlyList<Reservation>> GetRevenueReservationsAsync(
+        Guid businessId, DateTime from, DateTime to)
+    {
+        var reservations = await _unitOfWork.Reservations.GetByBusinessIdAndDateRangeAsync(
+            businessId, from, to);
+
+        return reservations
+            .Where(r => r.ReservationDateTime.HasValue)
+            .Where(r => r.Status != ReservationStatus.Cancelled)
+            .Where(r => r.Service != null)
+            .ToList();
     }
 
     private async Task EnsureBusinessBelongsToTenantAsync(Guid tenantId, Guid businessId, CancellationToken ct)
