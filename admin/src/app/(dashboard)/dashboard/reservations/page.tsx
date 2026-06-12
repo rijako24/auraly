@@ -32,10 +32,10 @@ export default function ReservationsPage() {
 
   const columns: ColumnDef<Reservation>[] = useMemo(() => [
     { accessorKey: "reservationId", header: "ID", cell: ({ row }) => <span className="font-mono text-xs">{truncate(row.original.reservationId, 12)}</span> },
-    { accessorKey: "service", header: "Servicio", cell: ({ row }) => row.original.service?.serviceName ?? "—" },
-    { accessorKey: "employee", header: "Empleado", cell: ({ row }) => row.original.employee?.name ?? "—" },
-    { accessorKey: "reservationDateTime", header: "Fecha/Hora", cell: ({ row }) => formatDateTime(row.original.reservationDateTime) },
-    { accessorKey: "durationMinutes", header: "Duración", cell: ({ row }) => `${row.original.durationMinutes} min` },
+    { accessorKey: "serviceName", header: "Servicio", cell: ({ row }) => row.original.serviceName ?? row.original.service?.serviceName ?? "—" },
+    { accessorKey: "employeeName", header: "Empleado", cell: ({ row }) => row.original.employeeName ?? row.original.employee?.name ?? "—" },
+    { accessorKey: "reservationDateTime", header: "Fecha/Hora", cell: ({ row }) => row.original.reservationDateTime ? formatDateTime(row.original.reservationDateTime) : "—" },
+    { accessorKey: "durationMinutes", header: "Duración", cell: ({ row }) => row.original.durationMinutes ? `${row.original.durationMinutes} min` : "—" },
     { accessorKey: "status", header: "Estado", cell: ({ row }) => { const status = row.original.status; return <Badge variant="secondary" className={cn(ReservationStatusColors[status])}>{ReservationStatusLabels[status]}</Badge>; } },
     { id: "actions", cell: ({ row }) => { const res = row.original; return (<DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="h-8 w-8"><MoreHorizontal className="h-4 w-4" /></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem asChild><Link href={`/dashboard/reservations/${res.reservationId}`}><Eye className="mr-2 h-4 w-4" />Ver</Link></DropdownMenuItem>{res.status === ReservationStatus.Pending && <DropdownMenuItem><CheckCircle className="mr-2 h-4 w-4" />Confirmar</DropdownMenuItem>}{res.status !== ReservationStatus.Cancelled && res.status !== ReservationStatus.Completed && <DropdownMenuItem className="text-destructive"><XCircle className="mr-2 h-4 w-4" />Cancelar</DropdownMenuItem>}</DropdownMenuContent></DropdownMenu>); } },
   ], []);
@@ -56,11 +56,11 @@ export default function ReservationsPage() {
       <CardContent className="pt-4">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0 flex-1">
-            <h3 className="font-semibold">{item.service?.serviceName ?? "—"}</h3>
-            <p className="text-sm text-muted-foreground">{item.employee?.name ?? "—"}</p>
+            <h3 className="font-semibold">{item.serviceName ?? item.service?.serviceName ?? "—"}</h3>
+            <p className="text-sm text-muted-foreground">{item.employeeName ?? item.employee?.name ?? "—"}</p>
             <div className="mt-2 flex flex-wrap gap-1 text-xs text-muted-foreground">
-              <span className="flex items-center gap-1"><CalendarDays className="h-3 w-3" />{formatDateTime(item.reservationDateTime)}</span>
-              <span className="flex items-center gap-1"><Clock className="h-3 w-3" />{item.durationMinutes} min</span>
+              <span className="flex items-center gap-1"><CalendarDays className="h-3 w-3" />{item.reservationDateTime ? formatDateTime(item.reservationDateTime) : "—"}</span>
+              <span className="flex items-center gap-1"><Clock className="h-3 w-3" />{item.durationMinutes ? `${item.durationMinutes} min` : "—"}</span>
             </div>
           </div>
           <Badge variant="secondary" className={cn(ReservationStatusColors[item.status])}>{ReservationStatusLabels[item.status]}</Badge>

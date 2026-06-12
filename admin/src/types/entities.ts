@@ -87,8 +87,11 @@ export interface Service {
   price: number;
   isActive: boolean;
   categoryId: string;
+  categoryName?: string;
   tier: ServiceTier;
   serviceType: ServiceType;
+  fulfillmentKind?: number;
+  fixedScheduleLabel?: string | null;
   createdAt: string;
   updatedAt: string | null;
   category?: ServiceCategory;
@@ -152,10 +155,12 @@ export interface EmployeeService {
 export interface Reservation {
   reservationId: string;
   businessId: string;
-  serviceId: string;
-  employeeId: string;
-  reservationDateTime: string;
-  durationMinutes: number;
+  serviceId: string | null;
+  serviceName?: string;
+  employeeId: string | null;
+  employeeName?: string;
+  reservationDateTime: string | null;
+  durationMinutes: number | null;
   status: ReservationStatus;
   calendarEventId: string | null;
   conversationId: string | null;
@@ -183,6 +188,7 @@ export interface Conversation {
   timestamp: string;
   customerName: string | null;
   customerEmail?: string | null;
+  currentStageName?: string | null;
   babyAge?: number | null;
   recommendedPlan?: string | null;
   state?: ConversationStateEnum;

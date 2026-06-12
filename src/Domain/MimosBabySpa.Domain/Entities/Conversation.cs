@@ -11,6 +11,7 @@ public class Conversation
     public DateTime Timestamp { get; set; }
     public string? CustomerName { get; set; }
     public string? CustomerEmail { get; set; }
+    public string? CurrentStageName { get; set; }
     public ConversationLifecycleStatus Status { get; set; } = ConversationLifecycleStatus.Active;
     public DateTime OpenedAt { get; set; } = DateTime.UtcNow;
     public DateTime LastActivityAt { get; set; } = DateTime.UtcNow;

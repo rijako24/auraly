@@ -85,6 +85,11 @@ export function ConversationItem({
             {truncate(conversation.lastMessage ?? "Sin mensajes", 40)}
           </span>
         </div>
+        {conversation.currentStageName && (
+          <p className="mt-1 truncate text-xs text-muted-foreground">
+            {conversation.currentStageName}
+          </p>
+        )}
         <div className="mt-2">
           <Badge
             variant="secondary"

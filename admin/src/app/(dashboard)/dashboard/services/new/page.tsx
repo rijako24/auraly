@@ -20,17 +20,16 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ServiceTier, ServiceType } from "@/types/enums";
 import { ServiceTierLabels, ServiceTypeLabels } from "@/types/enums";
-
-// Mock categories
-const MOCK_CATEGORIES = [
-  { serviceCategoryId: "cat-001", name: "Spa" },
-  { serviceCategoryId: "cat-002", name: "Masaje" },
-  { serviceCategoryId: "cat-003", name: "Hidroterapia" },
-  { serviceCategoryId: "cat-004", name: "Add-ons" },
-];
+import { useCreateService, useServiceCategories } from "@/hooks/use-services";
+import { useBusinessContextStore } from "@/stores/business-context-store";
+import { PageLoading } from "@/components/ui/page-loading";
+import { PageError } from "@/components/ui/page-error";
 
 export default function NewServicePage() {
   const router = useRouter();
+  const businessId = useBusinessContextStore((s) => s.selectedBusinessId);
+  const { data: categoriesData, isLoading, isError, refetch } = useServiceCategories({ pageSize: 100 });
+  const createService = useCreateService();
   const [serviceName, setServiceName] = useState("");
   const [description, setDescription] = useState("");
   const [categoryId, setCategoryId] = useState("");
@@ -57,16 +56,33 @@ export default function NewServicePage() {
     return Object.keys(newErrors).length === 0;
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!validate()) return;
-    // TODO: API call
+    if (!validate() || !businessId) return;
+
+    await createService.mutateAsync({
+      businessId,
+      serviceName: serviceName.trim(),
+      description: description.trim(),
+      categoryId,
+      durationMinutes: parseInt(durationMinutes, 10),
+      price: parseInt(price, 10),
+      tier: Number(tier),
+      serviceType: Number(serviceType),
+      isActive,
+    });
+
     router.push("/dashboard/services");
   };
 
   const handleCancel = () => {
     router.push("/dashboard/services");
   };
+
+  if (isLoading) return <PageLoading cards={0} />;
+  if (isError) return <PageError onRetry={refetch} />;
+
+  const categories = categoriesData?.items ?? [];
 
   return (
     <div className="space-y-6">
@@ -134,7 +150,7 @@ export default function NewServicePage() {
                     <SelectValue placeholder="Seleccionar categoría" />
                   </SelectTrigger>
                   <SelectContent>
-                    {MOCK_CATEGORIES.map((c) => (
+                    {categories.map((c) => (
                       <SelectItem key={c.serviceCategoryId} value={c.serviceCategoryId}>
                         {c.name}
                       </SelectItem>
@@ -230,7 +246,7 @@ export default function NewServicePage() {
         </Card>
 
         <div className="mt-6 flex gap-4">
-          <Button type="submit">Crear Servicio</Button>
+          <Button type="submit" disabled={createService.isPending || categories.length === 0}>Crear Servicio</Button>
           <Button type="button" variant="outline" onClick={handleCancel}>
             Cancelar
           </Button>

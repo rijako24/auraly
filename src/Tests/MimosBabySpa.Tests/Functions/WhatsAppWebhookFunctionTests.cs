@@ -23,6 +23,7 @@ public class WhatsAppWebhookFunctionTests
     private readonly Mock<IWhatsAppWebhookParserService> _mockWebhookParserService;
     private readonly Mock<IWhatsAppService> _mockWhatsAppService;
     private readonly Mock<IBusinessIdentificationService> _mockBusinessIdentificationService;
+    private readonly Mock<IInboundMessageDeduplicationService> _mockDeduplicationService;
     private readonly Mock<ILogger<WhatsAppWebhookFunction>> _mockLogger;
     private readonly WhatsAppWebhookFunction _function;
 
@@ -32,13 +33,23 @@ public class WhatsAppWebhookFunctionTests
         _mockWebhookParserService = new Mock<IWhatsAppWebhookParserService>();
         _mockWhatsAppService = new Mock<IWhatsAppService>();
         _mockBusinessIdentificationService = new Mock<IBusinessIdentificationService>();
+        _mockDeduplicationService = new Mock<IInboundMessageDeduplicationService>();
         _mockLogger = new Mock<ILogger<WhatsAppWebhookFunction>>();
+
+        _mockDeduplicationService
+            .Setup(x => x.TryBeginProcessingAsync(
+                It.IsAny<Guid>(),
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
 
         _function = new WhatsAppWebhookFunction(
             _mockMessageProcessorService.Object,
             _mockWebhookParserService.Object,
             _mockWhatsAppService.Object,
             _mockBusinessIdentificationService.Object,
+            _mockDeduplicationService.Object,
             _mockLogger.Object
         );
     }
@@ -173,6 +184,86 @@ public class WhatsAppWebhookFunctionTests
             userNumber, 
             messageText, 
             customerName), Times.Once);
+        _mockDeduplicationService.Verify(x => x.MarkProcessedAsync(
+            businessId,
+            "whatsapp",
+            It.Is<IEnumerable<string>>(ids => ids.SequenceEqual(new[] { "wamid.test123" })),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Run_PostRequest_WithDuplicateMessage_ShouldNotParseOrProcessMessage()
+    {
+        // Arrange
+        var businessId = Guid.NewGuid();
+        var webhookDto = new WhatsAppWebhookDto
+        {
+            Entry = new List<Entry>
+            {
+                new Entry
+                {
+                    Id = "entry_id",
+                    Changes = new List<Change>
+                    {
+                        new Change
+                        {
+                            Field = "messages",
+                            Value = new Value
+                            {
+                                Metadata = new WebhookMetadata { PhoneNumberId = "entry_id" },
+                                Messages = new List<DtoMessage>
+                                {
+                                    new DtoMessage
+                                    {
+                                        Id = "wamid.duplicate",
+                                        From = "1234567890",
+                                        Type = "text",
+                                        Text = new TextMessage { Body = "Hola" }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        };
+
+        var businessContext = new BusinessContext
+        {
+            BusinessId = businessId,
+            BusinessName = "Test Business",
+            WhatsAppNumber = new BusinessWhatsAppNumberDto
+            {
+                WhatsAppPhoneNumberId = "entry_id",
+                WhatsAppAccessToken = "test_token"
+            }
+        };
+
+        var request = CreateMockHttpRequestData("POST", "", JsonSerializer.Serialize(webhookDto));
+
+        _mockBusinessIdentificationService
+            .Setup(x => x.IdentifyBusinessAsync("entry_id"))
+            .ReturnsAsync(businessContext);
+
+        _mockDeduplicationService
+            .Setup(x => x.TryBeginProcessingAsync(
+                businessId,
+                "whatsapp",
+                "wamid.duplicate",
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
+
+        // Act
+        var response = await _function.Run(request);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        _mockWebhookParserService.Verify(
+            x => x.ExtractAllMessagesFromEntryAsync(It.IsAny<Entry>(), It.IsAny<Guid>()),
+            Times.Never);
+        _mockMessageProcessorService.Verify(
+            x => x.ProcessIncomingMessageAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>()),
+            Times.Never);
     }
 
     [Fact]

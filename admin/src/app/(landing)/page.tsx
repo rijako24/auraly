@@ -1,18 +1,23 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { useState } from "react";
 import {
   ArrowRight,
   BarChart3,
+  Bot,
   CalendarCheck,
   Check,
   ChevronRight,
   Clock3,
   CreditCard,
   Gauge,
+  HandCoins,
+  LifeBuoy,
   Menu,
   MessageCircle,
+  RefreshCcw,
   ShieldCheck,
   Sparkles,
   X,
@@ -112,6 +117,57 @@ const OUTCOMES = [
   { icon: BarChart3, title: "Mide consumo y margen", text: "Controla creditos, costos de IA y limites operativos antes de que el canal se vuelva caro." },
 ];
 
+const AGENTS = [
+  {
+    name: "Agente de Agenda",
+    tagline: "Atiende campanas, responde 24/7 y convierte interes en citas confirmadas.",
+    image: "/agents/agent-office-assistant.png",
+    icon: Bot,
+    features: [
+      "Contesta campanas y chats entrantes 24/7",
+      "Da informacion del negocio, servicios y precios",
+      "Revisa disponibilidad y agenda citas",
+      "Actualiza datos y entrega contexto al equipo",
+    ],
+  },
+  {
+    name: "Agente de Cobros",
+    tagline: "Cierra ventas dentro del chat con resumen claro, link de pago y seguimiento.",
+    image: "/agents/agent-senior-analyst.png",
+    icon: HandCoins,
+    features: [
+      "Responde dudas de pago y condiciones 24/7",
+      "Genera links o instrucciones de pago",
+      "Confirma abonos y estados de la reserva",
+      "Recuerda pagos pendientes sin friccion",
+    ],
+  },
+  {
+    name: "Agente de Soporte",
+    tagline: "Resuelve preguntas frecuentes, orienta al cliente y escala cuando hace falta.",
+    image: "/agents/agent-receptionist.png",
+    icon: LifeBuoy,
+    features: [
+      "Atiende solicitudes y preguntas frecuentes 24/7",
+      "Explica politicas, horarios y ubicaciones",
+      "Detecta problemas y propone siguientes pasos",
+      "Escala casos sensibles con historial completo",
+    ],
+  },
+  {
+    name: "Agente Recuperador",
+    tagline: "Reactiva pagos, reservas y conversaciones que quedaron a mitad de camino.",
+    image: "/agents/agent-executive.png",
+    icon: RefreshCcw,
+    features: [
+      "Recupera pagos vencidos o abandonados",
+      "Reengancha clientes con mensajes oportunos",
+      "Responde informacion del negocio 24/7",
+      "Prioriza oportunidades con mayor probabilidad",
+    ],
+  },
+];
+
 const DIFFERENTIATORS = [
   ["Vertical primero", "No empieza como constructor generico. AURALY viene pensado para WhatsApp, ventas, reservas y pagos."],
   ["Humano cuando importa", "El agente sabe pausar, escalar y entregar contexto para que tu equipo intervenga sin perder la conversacion."],
@@ -188,6 +244,7 @@ export default function LandingPage() {
           </Link>
           <div className="hidden items-center gap-8 md:flex">
             <a href="#producto" className="text-sm font-medium text-black/65 hover:text-black">Producto</a>
+            <a href="#agentes" className="text-sm font-medium text-black/65 hover:text-black">Agentes</a>
             <a href="#planes" className="text-sm font-medium text-black/65 hover:text-black">Planes</a>
             <a href="#faq" className="text-sm font-medium text-black/65 hover:text-black">FAQ</a>
           </div>
@@ -204,6 +261,7 @@ export default function LandingPage() {
           <div className="border-t border-black/10 px-4 py-4 md:hidden">
             <div className="mx-auto flex max-w-7xl flex-col gap-3 text-sm">
               <a href="#producto" onClick={() => setMobileMenuOpen(false)}>Producto</a>
+              <a href="#agentes" onClick={() => setMobileMenuOpen(false)}>Agentes</a>
               <a href="#planes" onClick={() => setMobileMenuOpen(false)}>Planes</a>
               <a href="#faq" onClick={() => setMobileMenuOpen(false)}>FAQ</a>
             </div>
@@ -339,6 +397,62 @@ export default function LandingPage() {
         </div>
       </section>
 
+      <section id="agentes" className="bg-[#06090B] py-20 text-white">
+        <div className="mx-auto max-w-7xl px-4">
+          <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+            <div className="max-w-3xl">
+              <Badge className="mb-4 bg-[#69D9D0] text-[#07161A] hover:bg-[#69D9D0]">Agentes listos para operar</Badge>
+              <h2 className="text-3xl font-semibold sm:text-5xl">Estos son los agentes que puedes tener trabajando para tu negocio.</h2>
+            </div>
+            <p className="max-w-md text-sm leading-6 text-white/65">
+              Todos responden 24/7, usan la informacion de tu negocio y dejan trazabilidad para que el equipo tome control cuando lo necesite.
+            </p>
+          </div>
+
+          <div className="mt-10 grid auto-rows-fr gap-4 md:grid-cols-2 xl:grid-cols-4">
+            {AGENTS.map((agent) => {
+              const Icon = agent.icon;
+              return (
+                <article key={agent.name} className="flex h-full flex-col overflow-hidden rounded-lg border border-white/10 bg-[#0B0E10] shadow-2xl shadow-cyan-950/20">
+                  <div className="relative h-80 overflow-hidden border-b border-white/10 bg-black">
+                    <Image
+                      src={agent.image}
+                      alt={agent.name}
+                      fill
+                      sizes="(min-width: 1280px) 25vw, (min-width: 768px) 50vw, 100vw"
+                      className="object-cover object-top"
+                    />
+                    <div className="absolute inset-x-0 bottom-0 h-28 bg-gradient-to-t from-[#0B0E10] to-transparent" />
+                  </div>
+                  <div className="flex flex-1 flex-col p-5">
+                    <div className="flex items-start gap-3">
+                      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-[#69D9D0]/35 bg-[#69D9D0]/10 text-[#69D9D0]">
+                        <Icon className="h-5 w-5" />
+                      </span>
+                      <div>
+                        <h3 className="text-lg font-semibold text-[#69D9D0]">{agent.name}</h3>
+                        <p className="mt-1 text-sm leading-6 text-white/65">{agent.tagline}</p>
+                      </div>
+                    </div>
+                    <ul className="mt-5 space-y-3 text-sm text-white/85">
+                      {agent.features.map((feature) => (
+                        <li key={feature} className="flex gap-2">
+                          <Check className="mt-0.5 h-4 w-4 shrink-0 text-[#69D9D0]" />
+                          <span>{feature}</span>
+                        </li>
+                      ))}
+                    </ul>
+                    <Button className="mt-6 w-full border border-[#69D9D0]/30 bg-white text-[#07161A] hover:bg-[#E6FFFD]" asChild>
+                      <a href="#demo">Quiero este agente</a>
+                    </Button>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        </div>
+      </section>
+
       <section id="planes" className="bg-[#f7f8f2] py-20">
         <div className="mx-auto max-w-7xl px-4">
           <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
@@ -432,6 +546,7 @@ export default function LandingPage() {
           <p>AURALY. Intelligence Amplified. Imagination Realized.</p>
           <div className="flex gap-4">
             <a href="#producto">Producto</a>
+            <a href="#agentes">Agentes</a>
             <a href="#planes">Planes</a>
             <a href="#faq">FAQ</a>
           </div>

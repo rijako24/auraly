@@ -22,7 +22,7 @@ export const servicesApi = {
   delete: (id: string) => apiClient.delete(`/services/${id}`),
 
   // Service categories CRUD
-  listCategories: (params?: Partial<PagedRequest>) =>
+  listCategories: (params?: Partial<PagedRequest> & { businessId?: string }) =>
     apiClient.get<PagedResponse<ServiceCategory>>(
       "/service-categories",
       params as Record<string, string | number | undefined>

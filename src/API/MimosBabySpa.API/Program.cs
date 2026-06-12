@@ -63,6 +63,7 @@ var host = new HostBuilder()
         services.AddScoped<IBusinessIdentificationService, BusinessIdentificationService>();
         services.AddScoped<IBusinessConfigurationService, BusinessConfigurationService>();
         services.AddScoped<IWhatsAppWebhookParserService, WhatsAppWebhookParserService>();
+        services.AddScoped<IInboundMessageDeduplicationService, InboundMessageDeduplicationService>();
         services.AddScoped<IEmployeeAssignmentService, EmployeeAssignmentService>();
         services.AddScoped<IAvailabilityService, AvailabilityService>();
         services.AddScoped<ServiceNameResolver>();

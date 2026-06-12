@@ -17,7 +17,7 @@ import {
 } from "@/types/enums";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { getInitials, cn } from "@/lib/utils";
-import { useConversations, useConversationWithMessages } from "@/hooks/use-conversations";
+import { useConversations, useConversationWithMessages, useSendWebConversationMessage } from "@/hooks/use-conversations";
 
 export default function ConversationsPage() {
   const isMobile = useMediaQuery("(max-width: 768px)");
@@ -25,6 +25,7 @@ export default function ConversationsPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const { data: conversationsData, isLoading, isError, refetch } = useConversations();
   const { data: selectedConversation } = useConversationWithMessages(selectedId);
+  const sendWebMessage = useSendWebConversationMessage();
   const conversations = useMemo(() => { const items = conversationsData?.items ?? []; return [...items].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()); }, [conversationsData]);
   const messages = selectedConversation?.messages ?? [];
   const showList = isMobile ? !selectedId : true;
@@ -65,10 +66,10 @@ export default function ConversationsPage() {
             <div className="flex flex-shrink-0 items-center gap-3 border-b border-border bg-muted/30 px-4 py-3">
               <Button variant="ghost" size="icon" className="lg:hidden" onClick={() => setSelectedId(null)}><ArrowLeft className="h-5 w-5" /></Button>
               <Avatar className="h-10 w-10"><AvatarFallback className="bg-primary/10 text-primary text-sm font-medium">{getInitials(selectedConversation.customerName ?? selectedConversation.userNumber)}</AvatarFallback></Avatar>
-              <div className="min-w-0 flex-1"><p className="truncate font-semibold text-foreground">{selectedConversation.customerName ?? selectedConversation.userNumber}</p><p className="flex items-center gap-1.5 text-xs text-muted-foreground"><Phone className="h-3.5 w-3.5" />{selectedConversation.userNumber}</p></div>
+              <div className="min-w-0 flex-1"><p className="truncate font-semibold text-foreground">{selectedConversation.customerName ?? selectedConversation.userNumber}</p><p className="flex items-center gap-1.5 text-xs text-muted-foreground"><Phone className="h-3.5 w-3.5" />{selectedConversation.userNumber}</p>{selectedConversation.currentStageName && <p className="truncate text-xs text-muted-foreground">{selectedConversation.currentStageName}</p>}</div>
               <Badge variant="secondary" className={cn("hidden sm:inline-flex", statusColor)}>{statusLabel}</Badge>
             </div>
-            <div className="flex min-h-0 min-w-0 flex-1"><ChatContainer messages={messages} onSendMessage={() => {}} placeholder="Escribe un mensaje..." /></div>
+            <div className="flex min-h-0 min-w-0 flex-1"><ChatContainer messages={messages} onSendMessage={(message) => selectedId && sendWebMessage.mutate({ conversationId: selectedId, message })} placeholder="Escribe un mensaje..." disabled={sendWebMessage.isPending} /></div>
           </>
         ) : (
           <div className="flex flex-1 flex-col items-center justify-center gap-4 p-8 text-center">

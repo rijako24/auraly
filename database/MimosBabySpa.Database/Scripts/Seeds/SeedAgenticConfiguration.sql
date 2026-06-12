@@ -133,6 +133,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
     "stages": [
       {
         "id": "discovery",
+        "name": "Descubrimiento",
         "goal": "Saludar cuando corresponda, entender si hay intencion comercial y capturar nombre y edad del bebe.",
         "hint": "Saluda o retoma la conversacion con calidez. Si el mensaje es solamente un saludo, presentate como Mimi de Mimo''s Baby Spa y pregunta en que puedes ayudar. Cuando el cliente comparta informacion del bebe, captura los datos disponibles de esta etapa: nombre y edad. Estos datos pueden venir juntos o por separado; registra los que esten claros y pide con naturalidad solo la informacion de esta etapa que todavia falte. Usa la edad en meses cuando el cliente la exprese de forma clara. Si pide reagendar o cancelar, usa la herramienta correspondiente segun ESTADO RESERVA.",
         "allowedTools": ["set_fact", "reschedule_reservation", "suspend_reservation", "escalate_to_human"],
@@ -140,6 +141,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       },
       {
         "id": "service_selection",
+        "name": "Seleccion de servicio",
         "goal": "Ayudar al cliente a elegir primero una experiencia y luego un servicio exacto del catalogo.",
         "hint": "Si el cliente pregunta por servicios en general, presenta categorias reales de experiencia. Orienta primero desde la experiencia, no desde precios. Usa el catalogo disponible en el historial si ya fue consultado; si necesitas categorias, nombres exactos, precios u horarios, llama get_service_catalog. Presenta cada categoria con una explicacion breve de enfoque y beneficios para el bebe segun su edad/etapa. Cierra preguntando cual categoria desea conocer. Si el cliente elige una categoria o pide precios/servicios concretos, muestra solo las opciones de esa categoria con nombre exacto, precio y horario si aplica; acompana la lista con una explicacion breve del enfoque de esa categoria y pregunta cual opcion le interesa. Cuando el cliente enfoque una opcion exacta del catalogo, ya sea eligiendola, pidiendo detalles sobre ella o diciendo que le interesa, guarda service con set_fact usando el nombre canonico y luego explica en tono amoroso que beneficios tiene y por que puede ayudar segun la edad/etapa del bebe.",
         "allowedTools": ["get_service_catalog", "set_fact", "reschedule_reservation", "suspend_reservation", "escalate_to_human"],
@@ -147,6 +149,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       },
       {
         "id": "addons_offering",
+        "name": "Complementos",
         "goal": "Resolver complementos del servicio elegido: ofrecerlos solo si existen compatibles; si no existen, cerrar esta etapa internamente.",
         "hint": "Llama get_compatible_add_ons con el servicio exacto seleccionado. Si devuelve count>0, ofrece solo esos complementos con precio y cierra con una pregunta de eleccion: Agregas alguno o seguimos sin complementos? Si la respuesta del cliente indica que prefiere seguir sin agregar complementos, llama set_fact con key=add_ons y value=ninguno. Si elige un complemento, registra el nombre exacto del complemento con set_fact. Despues de registrar add_ons, continua con el siguiente paso natural del flujo. Si devuelve count=0, no hables de complementos; el flujo cerrara esta etapa automaticamente.",
         "allowedTools": ["get_compatible_add_ons", "set_fact", "reschedule_reservation", "suspend_reservation", "escalate_to_human"],
@@ -162,6 +165,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       },
       {
         "id": "scheduling",
+        "name": "Agenda",
         "goal": "Definir la ruta de atencion del servicio elegido: agenda con disponibilidad u horario fijo de inscripcion.",
         "hint": "Primero llama get_service_fulfillment con el servicio exacto seleccionado. Si devuelve fulfillment_kind=enrollment, usa el horario fijo del catalogo y deja que el flujo cierre internamente esta etapa. Si devuelve fulfillment_kind=reservation y faltan fecha u hora, continua desde la eleccion del cliente y pregunta para que dia y hora le gustaria agendar, en una sola pregunta cercana orientada a revisar disponibilidad. Si ya tienes fecha y hora, llama check_availability y registra desired_date, desired_time y fulfillment_ready=reservation. Si get_service_fulfillment devuelve error de horario no configurado, responde con la informacion oficial disponible y ofrece escalar a humano.",
         "allowedTools": ["get_service_fulfillment", "check_availability", "set_fact", "reschedule_reservation", "suspend_reservation", "escalate_to_human"],
@@ -180,6 +184,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       },
       {
         "id": "customer_data",
+        "name": "Datos del cliente",
         "goal": "Obten el nombre del cliente (papa o mama) y la fecha de nacimiento del bebe.",
         "hint": "Confirma brevemente la seleccion en una linea segun fulfillment_ready: fecha/hora si reservation; horario de inscripcion si enrollment. Luego, UNA pregunta por mensaje: (1) si falta el nombre del cliente, pregunta a nombre de quien hacemos el registro; (2) si falta la fecha de nacimiento del bebe, pidela. Si un dato ya esta en ESTADO ACTUAL, no lo repreguntes. No pidas ambos datos en el mismo mensaje.",
         "allowedTools": ["set_fact", "reschedule_reservation", "suspend_reservation", "escalate_to_human"],
@@ -187,6 +192,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       },
       {
         "id": "finalization",
+        "name": "Cierre",
         "goal": "Cierra la reserva: resumen, pago o confirmacion verbal, registro de cita y mensajes post-reserva.",
         "hint": "1) Objetivo: cerrar solo la solicitud actual con resumen, pago o confirmacion segun checkout. 2) Si aun no se mostro el resumen y ya estan los datos requeridos, llama prepare_checkout con el servicio exacto del catalogo; la herramienta resuelve precio, plantilla, monto y link. 3) Si hay link/resumen pendiente y el cliente solo pide informacion normal, responde sin cambiar la solicitud. 4) Si hay link/resumen pendiente y el cliente pide agregar o cambiar complementos sin nombrar uno exacto, llama get_compatible_add_ons y pide cual desea; si cambia servicio o complemento exacto, actualiza los facts correspondientes y reconstruye el resumen/link con prepare_checkout. 5) Premisa de avance: cuando el cliente elige una opcion concreta de una lista recien presentada, esa eleccion autoriza el siguiente paso; registra el nombre exacto de esa opcion como service, llama prepare_checkout y entrega el resumen/link resultante. 6) Si el cliente pide una categoria o servicio no exacto, llama get_service_catalog y ofrece opciones exactas; cuando elija una, aplica la premisa de avance. 7) Si quiere empezar otra solicitud distinta, pregunta si reemplaza la actual o la deja sin efecto; si decide desistir, llama reset_flow_context con reason=start_new_request o customer_abandoned y checkout_action=abandon. 8) Si prepare_checkout devuelve payment_required=true, entrega el resumen/link y espera confirmacion automatica del webhook; no llames create_reservation. 9) Si prepare_checkout devuelve payment_required=false y checkout_kind=Reservation, pregunta si confirma la reserva; cuando confirme verbalmente, llama create_reservation. 10) Si fulfillment_ready=reservation y falta o cambia fecha/hora, resuelve disponibilidad con check_availability antes de prepare_checkout. Si fulfillment_ready=enrollment, el pago confirma la inscripcion y el webhook enviara la secuencia configurada; no llames check_availability ni create_reservation.",
         "allowedTools": [

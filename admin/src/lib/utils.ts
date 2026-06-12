@@ -31,7 +31,8 @@ export function formatDateTime(date: string | Date): string {
   }).format(new Date(date));
 }
 
-export function formatRelativeTime(date: string | Date): string {
+export function formatRelativeTime(date: string | Date | null | undefined): string {
+  if (!date) return "—";
   const now = new Date();
   const d = new Date(date);
   const diff = now.getTime() - d.getTime();

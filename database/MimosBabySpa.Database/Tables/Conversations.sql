@@ -6,6 +6,7 @@ CREATE TABLE [dbo].[Conversations] (
     [Timestamp] DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
     [CustomerName] NVARCHAR(100) NULL,
     [CustomerEmail] NVARCHAR(200) NULL,
+    [CurrentStageName] NVARCHAR(100) NULL,
     [Status] TINYINT NOT NULL DEFAULT 0,
     [OpenedAt] DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
     [LastActivityAt] DATETIME2 NOT NULL DEFAULT GETUTCDATE(),

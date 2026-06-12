@@ -516,6 +516,7 @@ public sealed class AgentConversationService : IAgentConversationService
             turn.FragmentEntries);
 
         UpdateStageSnapshots(config, session);
+        await PersistCurrentStageNameAsync(config, session, ct);
         await PersistTurnAsync(conversationId, userMessage, finalResponse, session.ConversationState, turn.ReservationCreated, ct);
         await _usageBilling.ChargeAsync(new UsageChargeRequest(
             config.BusinessId,
@@ -599,6 +600,31 @@ public sealed class AgentConversationService : IAgentConversationService
 
         await _stateManager.SaveStateAsync(conversationId, state, ct);
         await _lifecycleService.TouchActivityAsync(conversationId, userMessage, ct);
+    }
+
+    private async Task PersistCurrentStageNameAsync(
+        AgentConfig config,
+        AgentToolContext session,
+        CancellationToken ct)
+    {
+        var currentStage = _flowStageDetector.DetectCurrentStage(config.Flow, session);
+        var stageName = ResolveStageName(currentStage);
+
+        if (string.Equals(session.Conversation.CurrentStageName, stageName, StringComparison.Ordinal))
+            return;
+
+        session.Conversation.CurrentStageName = stageName;
+        await _conversationService.UpdateConversationAsync(session.Conversation, ct);
+    }
+
+    private static string? ResolveStageName(AgentFlowStage? stage)
+    {
+        if (stage is null)
+            return null;
+
+        return !string.IsNullOrWhiteSpace(stage.Name)
+            ? stage.Name.Trim()
+            : stage.Id;
     }
 
     /// <summary>

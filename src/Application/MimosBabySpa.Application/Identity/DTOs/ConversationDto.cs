@@ -8,6 +8,7 @@ public record ConversationDto(
     DateTime Timestamp,
     string? CustomerName,
     string? CustomerEmail,
+    string? CurrentStageName,
     string Status,
     DateTime OpenedAt,
     DateTime LastActivityAt,

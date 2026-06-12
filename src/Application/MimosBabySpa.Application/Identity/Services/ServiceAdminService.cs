@@ -53,6 +53,31 @@ public class ServiceAdminService : IServiceAdminService
             items.Select(MapToDto).ToList(), totalCount, request.Page, request.PageSize);
     }
 
+    public async Task<PagedResponse<ServiceCategoryDto>> GetPagedCategoriesByBusinessIdAsync(
+        Guid tenantId, Guid businessId, PagedRequest request, CancellationToken ct)
+    {
+        await EnsureBusinessBelongsToTenantAsync(tenantId, businessId, ct);
+        var categories = (await _unitOfWork.ServiceCategories.GetByBusinessIdAsync(businessId))
+            .Select(MapCategoryToDto)
+            .ToList();
+
+        if (!string.IsNullOrWhiteSpace(request.Search))
+        {
+            var term = request.Search.Trim();
+            categories = categories
+                .Where(c => c.Name.Contains(term, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+        }
+
+        var totalCount = categories.Count;
+        var items = categories
+            .Skip((request.Page - 1) * request.PageSize)
+            .Take(request.PageSize)
+            .ToList();
+
+        return new PagedResponse<ServiceCategoryDto>(items, totalCount, request.Page, request.PageSize);
+    }
+
     public async Task<ServiceDto> CreateAsync(Guid tenantId, CreateServiceRequest request, CancellationToken ct)
     {
         await EnsureBusinessBelongsToTenantAsync(tenantId, request.BusinessId, ct);
@@ -143,6 +168,9 @@ public class ServiceAdminService : IServiceAdminService
         s.ServiceId, s.BusinessId, s.ServiceName, s.Description, s.DurationMinutes,
         s.Price, s.IsActive, s.CategoryId, s.ServiceCategory.Name, s.Tier, s.ServiceType,
         s.FulfillmentKind, s.FixedScheduleLabel, s.CreatedAt);
+
+    private static ServiceCategoryDto MapCategoryToDto(ServiceCategory c) => new(
+        c.ServiceCategoryId, c.BusinessId, c.Name, c.DisplayOrder, c.IsActive, c.CreatedAt);
 
     private static string? NormalizeFixedScheduleLabel(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim();

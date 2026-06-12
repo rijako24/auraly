@@ -16,4 +16,8 @@ public interface IConversationAdminService
     Task<PagedResponse<MessageDto>> GetMessagesByConversationIdAsync(
         Guid tenantId, Guid conversationId, PagedRequest request,
         CancellationToken ct = default);
+
+    Task<WebConversationMessageResponse> SendWebMessageAsync(
+        Guid tenantId, Guid conversationId, WebConversationMessageRequest request,
+        CancellationToken ct = default);
 }

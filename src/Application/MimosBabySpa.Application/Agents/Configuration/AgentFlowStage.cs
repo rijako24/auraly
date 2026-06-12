@@ -7,6 +7,9 @@ public sealed class AgentFlowStage
 {
     public string Id { get; init; } = string.Empty;
 
+    /// <summary>Nombre corto y amigable de la etapa para mostrar en interfaces administrativas.</summary>
+    public string Name { get; init; } = string.Empty;
+
     /// <summary>Objetivo narrativo de la etapa (lenguaje natural para el LLM).</summary>
     public string Goal { get; init; } = string.Empty;
 

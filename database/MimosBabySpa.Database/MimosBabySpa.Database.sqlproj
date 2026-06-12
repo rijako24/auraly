@@ -43,6 +43,7 @@
     <Build Include="Tables\ServiceResourceUsages.sql" />
     <Build Include="Tables\EmployeeServices.sql" />
     <Build Include="Tables\PaymentTransactions.sql" />
+    <Build Include="Tables\InboundMessageReceipts.sql" />
     <Build Include="Tables\Enrollments.sql" />
     <Build Include="Tables\BusinessSubscriptions.sql" />
     <Build Include="Tables\BusinessUsagePeriods.sql" />

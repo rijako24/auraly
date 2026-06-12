@@ -11,7 +11,7 @@ interface ChatBubbleProps {
 }
 
 export function ChatBubble({ message }: ChatBubbleProps) {
-  const isUser = message.sender === "User";
+  const isUser = message.sender.toLowerCase() === "user";
 
   return (
     <div

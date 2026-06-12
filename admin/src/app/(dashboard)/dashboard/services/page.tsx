@@ -51,9 +51,9 @@ export default function ServicesPage() {
         ),
       },
       {
-        accessorKey: "category",
+        accessorKey: "categoryName",
         header: "Categoría",
-        cell: ({ row }) => row.original.category?.name ?? "—",
+        cell: ({ row }) => row.original.categoryName ?? row.original.category?.name ?? "—",
       },
       {
         accessorKey: "durationMinutes",

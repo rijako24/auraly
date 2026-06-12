@@ -34,6 +34,7 @@ public class ApplicationDbContext : DbContext
     public DbSet<ConversationStateEntity> ConversationStates { get; set; }
     public DbSet<PaymentTransaction> PaymentTransactions { get; set; }
     public DbSet<Enrollment> Enrollments { get; set; }
+    public DbSet<InboundMessageReceipt> InboundMessageReceipts { get; set; }
 
     public DbSet<AppUser> AppUsers { get; set; }
     public DbSet<AppRole> AppRoles { get; set; }
@@ -142,6 +143,7 @@ public class ApplicationDbContext : DbContext
             entity.Property(e => e.LastMessage).HasMaxLength(1000);
             entity.Property(e => e.CustomerName).HasMaxLength(100);
             entity.Property(e => e.CustomerEmail).HasMaxLength(200);
+            entity.Property(e => e.CurrentStageName).HasMaxLength(100);
             entity.Property(e => e.Status).HasConversion<byte>().HasDefaultValue(ConversationLifecycleStatus.Active);
             entity.Property(e => e.OpenedAt).IsRequired();
             entity.Property(e => e.LastActivityAt).IsRequired();
@@ -503,6 +505,22 @@ public class ApplicationDbContext : DbContext
             entity.HasIndex(e => e.ConversationId);
             entity.HasIndex(e => e.BusinessId);
             entity.HasIndex(e => e.ReservationId);
+        });
+
+        // InboundMessageReceipt configuration
+        modelBuilder.Entity<InboundMessageReceipt>(entity =>
+        {
+            entity.HasKey(e => e.InboundMessageReceiptId);
+            entity.Property(e => e.Provider).IsRequired().HasMaxLength(30);
+            entity.Property(e => e.ProviderMessageId).IsRequired().HasMaxLength(128);
+            entity.Property(e => e.Status).IsRequired().HasMaxLength(20);
+            entity.Property(e => e.LastError).HasMaxLength(4000);
+            entity.HasOne(e => e.Business)
+                .WithMany()
+                .HasForeignKey(e => e.BusinessId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasIndex(e => new { e.BusinessId, e.Provider, e.ProviderMessageId }).IsUnique();
+            entity.HasIndex(e => new { e.Status, e.ProcessingStartedAtUtc });
         });
 
         // Enrollment configuration

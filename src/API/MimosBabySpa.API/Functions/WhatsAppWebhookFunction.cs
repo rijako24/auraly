@@ -11,10 +11,13 @@ namespace MimosBabySpa.API.Functions;
 
 public class WhatsAppWebhookFunction
 {
+    private const string WhatsAppProvider = "whatsapp";
+
     private readonly IWhatsAppMessageProcessorService _messageProcessorService;
     private readonly IWhatsAppWebhookParserService _webhookParserService;
     private readonly IWhatsAppService _whatsAppService;
     private readonly IBusinessIdentificationService _businessIdentificationService;
+    private readonly IInboundMessageDeduplicationService _deduplicationService;
     private readonly ILogger<WhatsAppWebhookFunction> _logger;
 
     public WhatsAppWebhookFunction(
@@ -22,12 +25,14 @@ public class WhatsAppWebhookFunction
         IWhatsAppWebhookParserService webhookParserService,
         IWhatsAppService whatsAppService,
         IBusinessIdentificationService businessIdentificationService,
+        IInboundMessageDeduplicationService deduplicationService,
         ILogger<WhatsAppWebhookFunction> logger)
     {
         _messageProcessorService = messageProcessorService;
         _webhookParserService = webhookParserService;
         _whatsAppService = whatsAppService;
         _businessIdentificationService = businessIdentificationService;
+        _deduplicationService = deduplicationService;
         _logger = logger;
     }
 
@@ -105,11 +110,52 @@ public class WhatsAppWebhookFunction
 
                 // Extraer todos los mensajes (texto y audio) de esta entrada específica.
                 // Los audios ya están transcritos dentro de ExtractAllMessagesFromEntryAsync
-                var allMessages = (await _webhookParserService.ExtractAllMessagesFromEntryAsync(entry, businessContext.BusinessId)).ToList();
+                var messageIdsToProcess = new HashSet<string>(StringComparer.Ordinal);
+                var includeMessagesWithoutIds = false;
+                foreach (var message in EnumerateIncomingMessages(entry))
+                {
+                    if (string.IsNullOrWhiteSpace(message.Id))
+                    {
+                        includeMessagesWithoutIds = true;
+                        continue;
+                    }
+
+                    var shouldProcess = await _deduplicationService.TryBeginProcessingAsync(
+                        businessContext.BusinessId,
+                        WhatsAppProvider,
+                        message.Id);
+
+                    if (shouldProcess)
+                    {
+                        messageIdsToProcess.Add(message.Id);
+                    }
+                    else
+                    {
+                        _logger.LogInformation(
+                            "Mensaje inbound duplicado ignorado. BusinessId: {BusinessId}, WhatsAppMessageId: {WhatsAppMessageId}",
+                            businessContext.BusinessId,
+                            message.Id);
+                    }
+                }
+
+                var entryToProcess = FilterEntryMessages(entry, messageIdsToProcess, includeMessagesWithoutIds);
+                if (!EnumerateIncomingMessages(entryToProcess).Any())
+                {
+                    _logger.LogInformation(
+                        "No hay mensajes nuevos para procesar para phone_number_id: {PhoneNumberId}",
+                        phoneNumberId);
+                    continue;
+                }
+
+                var allMessages = (await _webhookParserService.ExtractAllMessagesFromEntryAsync(entryToProcess, businessContext.BusinessId)).ToList();
 
                 if (!allMessages.Any())
                 { 
                     _logger.LogWarning("No hay mensajes para procesar (puede ser otro tipo de evento) para phone_number_id: {PhoneNumberId}", phoneNumberId);
+                    await _deduplicationService.MarkProcessedAsync(
+                        businessContext.BusinessId,
+                        WhatsAppProvider,
+                        messageIdsToProcess);
                     continue;
                 }
 
@@ -143,9 +189,20 @@ public class WhatsAppWebhookFunction
                         combinedMessage,
                         customerName
                     );
+
+                    await _deduplicationService.MarkProcessedAsync(
+                        businessContext.BusinessId,
+                        WhatsAppProvider,
+                        messageIdsToProcess);
                 }
                 catch (Exception ex)
                 {
+                    await _deduplicationService.MarkFailedAsync(
+                        businessContext.BusinessId,
+                        WhatsAppProvider,
+                        messageIdsToProcess,
+                        ex.Message);
+
                     // Log del error pero continuar con el siguiente Entry
                     _logger.LogError(ex, "Error procesando mensaje unificado del usuario {UserNumber} en negocio {BusinessId}", 
                         userNumber, businessContext.BusinessId);
@@ -161,5 +218,49 @@ public class WhatsAppWebhookFunction
             await errorResponse.WriteStringAsync("Error procesando webhook");
             return errorResponse;
         }
+    }
+
+    private static IEnumerable<Message> EnumerateIncomingMessages(Entry entry)
+    {
+        return entry.Changes?
+            .Where(c => c?.Field == "messages" && c.Value?.Messages != null)
+            .SelectMany(c => c.Value.Messages) ?? [];
+    }
+
+    private static Entry FilterEntryMessages(
+        Entry entry,
+        IReadOnlySet<string> messageIdsToProcess,
+        bool includeMessagesWithoutIds)
+    {
+        if (messageIdsToProcess.Count == 0 && !includeMessagesWithoutIds)
+        {
+            return new Entry
+            {
+                Id = entry.Id,
+                Changes = []
+            };
+        }
+
+        return new Entry
+        {
+            Id = entry.Id,
+            Changes = entry.Changes?
+                .Select(change => new Change
+                {
+                    Field = change.Field,
+                    Value = new Value
+                    {
+                        Metadata = change.Value.Metadata,
+                        Contacts = change.Value.Contacts,
+                        Messages = change.Value.Messages?
+                            .Where(message =>
+                                (!string.IsNullOrWhiteSpace(message.Id) && messageIdsToProcess.Contains(message.Id)) ||
+                                (includeMessagesWithoutIds && string.IsNullOrWhiteSpace(message.Id)))
+                            .ToList() ?? []
+                    }
+                })
+                .Where(change => change.Field == "messages" && change.Value.Messages.Any())
+                .ToList() ?? []
+        };
     }
 }

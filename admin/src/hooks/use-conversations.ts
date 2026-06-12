@@ -1,6 +1,6 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { conversationsApi } from "@/services/api";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 import type { PagedRequest } from "@/types/api";
@@ -50,5 +50,23 @@ export function useConversationWithMessages(id: string | null) {
     queryKey: conversationKeys.messages(id ?? ""),
     queryFn: () => conversationsApi.getByIdWithMessages(id!),
     enabled: !!id,
+  });
+}
+
+export function useSendWebConversationMessage() {
+  const queryClient = useQueryClient();
+  const businessId = useBusinessContextStore((s) => s.selectedBusinessId);
+
+  return useMutation({
+    mutationFn: ({ conversationId, message }: { conversationId: string; message: string }) =>
+      conversationsApi.sendWebMessage(conversationId, message),
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: conversationKeys.messages(variables.conversationId) });
+      queryClient.invalidateQueries({ queryKey: conversationKeys.detail(variables.conversationId) });
+      queryClient.invalidateQueries({ queryKey: conversationKeys.lists() });
+      if (businessId) {
+        queryClient.invalidateQueries({ queryKey: conversationKeys.list(businessId) });
+      }
+    },
   });
 }

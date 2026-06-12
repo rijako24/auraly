@@ -52,4 +52,15 @@ public class ConversationsController : ControllerBase
         return Ok(await _service.GetMessagesByConversationIdAsync(
             User.GetTenantId(), conversationId, request, ct));
     }
+
+    [HttpPost("{conversationId:guid}/messages/web")]
+    [PermissionAuthorize("conversations.read")]
+    public async Task<ActionResult<WebConversationMessageResponse>> SendWebMessage(
+        Guid conversationId,
+        [FromBody] WebConversationMessageRequest request,
+        CancellationToken ct)
+    {
+        return Ok(await _service.SendWebMessageAsync(
+            User.GetTenantId(), conversationId, request, ct));
+    }
 }

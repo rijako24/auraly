@@ -2,6 +2,12 @@ import { apiClient } from "./client";
 import type { PagedResponse, PagedRequest } from "@/types/api";
 import type { Conversation, Message } from "@/types/entities";
 
+export interface WebConversationMessageResponse {
+  response: string;
+  escalatedToHuman: boolean;
+  reservationCreated: boolean;
+}
+
 export const conversationsApi = {
   list: (
     params?: Partial<PagedRequest> & {
@@ -33,5 +39,10 @@ export const conversationsApi = {
     apiClient.get<PagedResponse<Message>>(
       `/conversations/${conversationId}/messages`,
       params as Record<string, string | number | undefined>
+    ),
+  sendWebMessage: (conversationId: string, message: string) =>
+    apiClient.post<WebConversationMessageResponse>(
+      `/conversations/${conversationId}/messages/web`,
+      { message }
     ),
 };

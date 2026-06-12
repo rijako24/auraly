@@ -26,6 +26,12 @@ public class ConversationService : IConversationService
     public Task UpdateConversationContextAsync(Guid conversationId, string? lastMessage) =>
         _lifecycle.TouchActivityAsync(conversationId, lastMessage);
 
+    public async Task UpdateConversationAsync(Domain.Entities.Conversation conversation, CancellationToken ct = default)
+    {
+        await _unitOfWork.Conversations.UpdateAsync(conversation);
+        await _unitOfWork.SaveChangesAsync(ct);
+    }
+
     public Task<Domain.Entities.Conversation?> GetConversationByIdAsync(Guid conversationId) =>
         _unitOfWork.Conversations.GetByIdAsync(conversationId);
 
