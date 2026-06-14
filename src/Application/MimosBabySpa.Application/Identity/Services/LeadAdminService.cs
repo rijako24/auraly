@@ -49,8 +49,13 @@ public class LeadAdminService : ILeadAdminService
         await EnsureBusinessBelongsToTenantAsync(tenantId, businessId, ct);
         var (items, totalCount) = await _unitOfWork.Leads.GetPagedByBusinessIdAsync(
             businessId, request.Page, request.PageSize, request.Search, ct);
+        var conversations = await GetLatestConversationsByUserNumberAsync(businessId, items, ct);
+
         return new PagedResponse<LeadDto>(
-            items.Select(MapToDto).ToList(), totalCount, request.Page, request.PageSize);
+            items.Select(l => MapToDto(l, conversations.GetValueOrDefault(l.UserNumber))).ToList(),
+            totalCount,
+            request.Page,
+            request.PageSize);
     }
 
     public async Task<LeadDto> CreateAsync(Guid tenantId, CreateLeadRequest request, CancellationToken ct)
@@ -109,6 +114,41 @@ public class LeadAdminService : ILeadAdminService
             throw new NotFoundException(nameof(Business), businessId);
     }
 
-    private static LeadDto MapToDto(Lead l) => new(
-        l.LeadId, l.BusinessId, l.UserNumber, l.Status, l.Timestamp, l.CustomerName, l.Notes);
+    private async Task<Dictionary<string, Conversation>> GetLatestConversationsByUserNumberAsync(
+        Guid businessId,
+        IReadOnlyList<Lead> leads,
+        CancellationToken ct)
+    {
+        var conversations = new Dictionary<string, Conversation>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var userNumber in leads
+            .Select(l => l.UserNumber)
+            .Where(n => !string.IsNullOrWhiteSpace(n))
+            .Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            var conversation = await _unitOfWork.Conversations.GetByBusinessIdAndUserNumberAsync(businessId, userNumber);
+            if (conversation is not null)
+                conversations[userNumber] = conversation;
+        }
+
+        return conversations;
+    }
+
+    private static LeadDto MapToDto(Lead l) => MapToDto(l, null);
+
+    private static LeadDto MapToDto(Lead l, Conversation? conversation)
+    {
+        return new LeadDto(
+            l.LeadId,
+            l.BusinessId,
+            l.UserNumber,
+            l.Status,
+            conversation?.LastActivityAt ?? l.Timestamp,
+            l.CustomerName ?? conversation?.CustomerName,
+            l.Notes,
+            conversation?.ConversationId,
+            conversation?.Status.ToString(),
+            conversation?.CurrentStageName,
+            conversation?.LastActivityAt);
+    }
 }

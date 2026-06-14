@@ -242,7 +242,10 @@ public sealed class AgentConversationService : IAgentConversationService
                 await ApplyAfterToolRulesAsync(config, toolCall, outcome, toolCtx, ct);
 
                 turn.RecordToolOutcome(outcome);
-                messages.Add(ChatMessage.Tool(toolCall.Id, toolCall.FunctionName, outcome.RawJson));
+                messages.Add(ChatMessage.Tool(
+                    toolCall.Id,
+                    toolCall.FunctionName,
+                    BuildLlmVisibleToolResult(outcome.RawJson)));
 
                 if (turn.ShouldAutoEscalate)
                 {
@@ -340,6 +343,32 @@ public sealed class AgentConversationService : IAgentConversationService
     }
 
     // ── Persistencia y escalación ────────────────────────────────────────────
+
+    private static string BuildLlmVisibleToolResult(string rawJson)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(rawJson);
+            var root = doc.RootElement;
+
+            if (!root.TryGetProperty("ok", out var ok) || ok.ValueKind != JsonValueKind.True)
+                return rawJson;
+
+            if (!root.TryGetProperty("llm", out var llm))
+                return rawJson;
+
+            return llm.ValueKind switch
+            {
+                JsonValueKind.Object or JsonValueKind.Array => $"{{\"ok\":true,\"data\":{llm.GetRawText()}}}",
+                JsonValueKind.String => $"{{\"ok\":true,\"message\":{llm.GetRawText()}}}",
+                _ => rawJson
+            };
+        }
+        catch
+        {
+            return rawJson;
+        }
+    }
 
     private async Task ApplyAfterToolRulesAsync(
         AgentConfig config,

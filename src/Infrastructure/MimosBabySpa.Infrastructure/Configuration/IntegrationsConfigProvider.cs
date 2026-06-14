@@ -1,25 +1,16 @@
 using System.Text.Json;
+using Microsoft.Extensions.Logging;
 using MimosBabySpa.Application.Configuration;
+using MimosBabySpa.Domain.Entities;
 using MimosBabySpa.Domain.Enums;
 using MimosBabySpa.Domain.Repositories;
-using Microsoft.Extensions.Logging;
 
 namespace MimosBabySpa.Infrastructure.Configuration;
 
-/// <summary>
-/// Implementación de IIntegrationsConfigProvider.
-/// Lee BusinessConfiguration (Key=Integrations) y deserializa a IntegrationsConfiguration.
-/// </summary>
 public class IntegrationsConfigProvider : IIntegrationsConfigProvider
 {
     private readonly IUnitOfWork _unitOfWork;
     private readonly ILogger<IntegrationsConfigProvider> _logger;
-
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        PropertyNameCaseInsensitive = true,
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-    };
 
     public IntegrationsConfigProvider(
         IUnitOfWork unitOfWork,
@@ -29,27 +20,119 @@ public class IntegrationsConfigProvider : IIntegrationsConfigProvider
         _logger = logger;
     }
 
-    /// <inheritdoc />
     public async Task<IntegrationsConfiguration?> GetAsync(Guid businessId, CancellationToken cancellationToken = default)
     {
-        var config = await _unitOfWork.BusinessConfigurations
-            .GetByBusinessIdAndKeyAsync(businessId, BusinessConfigurationKey.Integrations);
-
-        if (config == null || string.IsNullOrWhiteSpace(config.Value) || config.Value == "{}")
-        {
-            _logger.LogDebug("Integrations: sin configuración para BusinessId={BusinessId}", businessId);
+        var connections = await _unitOfWork.IntegrationConnections.GetByBusinessIdAsync(businessId, cancellationToken);
+        if (connections.Count == 0)
             return null;
-        }
+
+        return new IntegrationsConfiguration
+        {
+            GoogleCalendar = BuildGoogleCalendar(connections.FirstOrDefault(c =>
+                c.Provider == IntegrationProvider.GoogleCalendar &&
+                c.Capability == IntegrationCapability.Calendar)),
+            Wompi = BuildWompi(connections.FirstOrDefault(c =>
+                c.Provider == IntegrationProvider.Wompi &&
+                c.Capability == IntegrationCapability.Payments))
+        };
+    }
+
+    private GoogleCalendarIntegration? BuildGoogleCalendar(IntegrationConnection? connection)
+    {
+        if (connection is null)
+            return null;
+
+        var settings = ParseJson(connection.SettingsJson);
+        var secrets = ParseJson(connection.SecretsJson);
+
+        return new GoogleCalendarIntegration
+        {
+            Enabled = connection.IsEnabled,
+            Provider = "Google",
+            ClientId = GetString(secrets, "clientId"),
+            ClientSecret = GetString(secrets, "clientSecret"),
+            RefreshToken = GetString(secrets, "refreshToken"),
+            CalendarId = GetString(settings, "calendarId", "primary"),
+            TimeZone = GetString(settings, "timeZone", "America/Bogota"),
+            Scopes = GetNullableString(settings, "scopes")
+        };
+    }
+
+    private WompiIntegration? BuildWompi(IntegrationConnection? connection)
+    {
+        if (connection is null)
+            return null;
+
+        var settings = ParseJson(connection.SettingsJson);
+        var secrets = ParseJson(connection.SecretsJson);
+
+        return new WompiIntegration
+        {
+            PrivateKey = GetString(secrets, "privateKey"),
+            PublicKey = GetString(secrets, "publicKey"),
+            EventsSecret = GetString(secrets, "eventsSecret"),
+            IntegritySecret = GetString(secrets, "integritySecret"),
+            UseSandbox = GetBool(settings, "useSandbox", true),
+            SandboxBaseUrl = GetString(settings, "sandboxBaseUrl", "https://sandbox.wompi.co/v1"),
+            ProductionBaseUrl = GetString(settings, "productionBaseUrl", "https://production.wompi.co/v1"),
+            RequestTimeoutSeconds = GetInt(settings, "requestTimeoutSeconds", 30),
+            CheckoutBaseUrl = GetString(settings, "checkoutBaseUrl", "https://checkout.wompi.co/l/")
+        };
+    }
+
+    private Dictionary<string, JsonElement> ParseJson(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json) || json == "{}")
+            return new Dictionary<string, JsonElement>(StringComparer.OrdinalIgnoreCase);
 
         try
         {
-            var integrations = JsonSerializer.Deserialize<IntegrationsConfiguration>(config.Value, JsonOptions);
-            return integrations;
+            using var document = JsonDocument.Parse(json);
+            return document.RootElement.EnumerateObject()
+                .ToDictionary(
+                    p => p.Name,
+                    p => p.Value.Clone(),
+                    StringComparer.OrdinalIgnoreCase);
         }
         catch (JsonException ex)
         {
-            _logger.LogWarning(ex, "Integrations: JSON inválido para BusinessId={BusinessId}", businessId);
-            return null;
+            _logger.LogWarning(ex, "Integration connection JSON invalido");
+            return new Dictionary<string, JsonElement>(StringComparer.OrdinalIgnoreCase);
         }
+    }
+
+    private static string GetString(Dictionary<string, JsonElement> values, string key, string fallback = "")
+    {
+        var value = GetNullableString(values, key);
+        return string.IsNullOrWhiteSpace(value) ? fallback : value;
+    }
+
+    private static string? GetNullableString(Dictionary<string, JsonElement> values, string key)
+    {
+        if (!values.TryGetValue(key, out var value))
+            return null;
+
+        return value.ValueKind == JsonValueKind.String ? value.GetString() : value.ToString();
+    }
+
+    private static bool GetBool(Dictionary<string, JsonElement> values, string key, bool fallback)
+    {
+        if (!values.TryGetValue(key, out var value))
+            return fallback;
+
+        if (value.ValueKind == JsonValueKind.True) return true;
+        if (value.ValueKind == JsonValueKind.False) return false;
+        return bool.TryParse(value.ToString(), out var parsed) ? parsed : fallback;
+    }
+
+    private static int GetInt(Dictionary<string, JsonElement> values, string key, int fallback)
+    {
+        if (!values.TryGetValue(key, out var value))
+            return fallback;
+
+        if (value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out var number))
+            return number;
+
+        return int.TryParse(value.ToString(), out var parsed) ? parsed : fallback;
     }
 }

@@ -18,6 +18,11 @@ public interface IUnitOfWork : IDisposable
     IBusinessResourceRepository BusinessResources { get; }
     IEmployeeRepository Employees { get; }
     IEmployeeServiceRepository EmployeeServices { get; }
+    IBusinessWorkingHourRepository BusinessWorkingHours { get; }
+    IEmployeeWorkingHourRepository EmployeeWorkingHours { get; }
+    IEmployeeScheduleExceptionRepository EmployeeScheduleExceptions { get; }
+    IIntegrationConnectionRepository IntegrationConnections { get; }
+    IReservationIntegrationEventRepository ReservationIntegrationEvents { get; }
     IConversationStateRepository ConversationStates { get; }
     IServiceAddOnRuleRepository ServiceAddOnRules { get; }
     IReservationAddOnRepository ReservationAddOns { get; }

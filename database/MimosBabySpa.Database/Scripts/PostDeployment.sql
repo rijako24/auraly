@@ -26,6 +26,8 @@
 :r .\Migrations\MigratePaymentSupersession.sql
 :r .\Migrations\MigrateFlowStageSnapshots.sql
 :r .\Migrations\MigrateConversationCurrentStageName.sql
+:r .\Migrations\MigrateWorkingHoursFromSchedulingPolicy.sql
+:r .\Migrations\MigrateIntegrationsToConnections.sql
 :r .\Seeds\SeedAdminUser.sql
 :r .\Seeds\SeedAgentPermissions.sql
 :r .\Seeds\SeedSqlAppLoginPermissions.sql
@@ -33,6 +35,7 @@
 :r .\Seeds\SeedDevBusiness.sql
 :r .\Seeds\SeedBillingPlans.sql
 :r .\Seeds\SeedSchedulingPolicy.sql
+:r .\Seeds\SeedBusinessWorkingHours.sql
 :r .\Seeds\CleanupObsoleteBookingPolicy.sql
 :r .\Seeds\SeedAgenticConfiguration.sql
 :r .\Seeds\SeedSolorzanoAgentConfiguration.sql

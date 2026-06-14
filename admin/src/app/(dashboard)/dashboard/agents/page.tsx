@@ -1,13 +1,22 @@
 "use client";
 
 import Link from "next/link";
-import { Settings2, Sparkles } from "lucide-react";
+import { MessageCircle, Settings2, Sparkles } from "lucide-react";
 
+import { AgentTestChat } from "@/components/agents/agent-test-chat";
 import { PageError } from "@/components/ui/page-error";
 import { PageLoading } from "@/components/ui/page-loading";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 import { useAgents } from "@/hooks/use-agents";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 
@@ -85,6 +94,23 @@ export default function AgentsPage() {
                       Modo avanzado
                     </Link>
                   </Button>
+                  <Dialog>
+                    <DialogTrigger asChild>
+                      <Button type="button" variant="secondary">
+                        <MessageCircle className="mr-2 h-4 w-4" />
+                        Probar
+                      </Button>
+                    </DialogTrigger>
+                    <DialogContent className="max-w-3xl">
+                      <DialogHeader>
+                        <DialogTitle>Probar {agent.name}</DialogTitle>
+                        <DialogDescription>
+                          Ejecuta turnos reales del agente sin guardar mensajes.
+                        </DialogDescription>
+                      </DialogHeader>
+                      <AgentTestChat agent={agent} />
+                    </DialogContent>
+                  </Dialog>
                 </div>
               </CardContent>
             </Card>

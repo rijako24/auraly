@@ -1,6 +1,6 @@
 import { apiClient, withPagedDefaults } from "./client";
 import type { PagedResponse, PagedRequest } from "@/types/api";
-import type { Employee, EmployeeService } from "@/types/entities";
+import type { Employee, EmployeeService, EmployeeWorkingHours, WorkingHour } from "@/types/entities";
 
 export const employeesApi = {
   list: (params?: Partial<PagedRequest> & { businessId?: string }) =>
@@ -22,4 +22,10 @@ export const employeesApi = {
     }),
   removeService: (employeeId: string, serviceId: string) =>
     apiClient.delete(`/employees/${employeeId}/services/${serviceId}`),
+  getWorkingHours: (employeeId: string) =>
+    apiClient.get<EmployeeWorkingHours>(`/employees/${employeeId}/working-hours`),
+  updateWorkingHours: (employeeId: string, workingHours: WorkingHour[]) =>
+    apiClient.put<EmployeeWorkingHours>(`/employees/${employeeId}/working-hours`, {
+      workingHours,
+    }),
 };

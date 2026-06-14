@@ -83,14 +83,33 @@ public sealed class GetServiceFulfillmentTool : IAgentTool
                 recoverable: true);
         }
 
-        return ToolResultHelper.Ok(new
+        var serviceCategory = service.ServiceCategory?.Name ?? string.Empty;
+        var internalData = new
         {
             service = service.ServiceName,
-            service_category = service.ServiceCategory?.Name ?? string.Empty,
+            service_category = serviceCategory,
             fulfillment_kind = fulfillmentKind,
             requires_availability = fulfillmentKind == "reservation",
             fixed_schedule_label = fixedSchedule
-        });
+        };
+
+        var llmData = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["service"] = service.ServiceName,
+            ["service_category"] = serviceCategory
+        };
+
+        if (string.IsNullOrWhiteSpace(fixedSchedule))
+        {
+            llmData["guidance"] = "Continua con el siguiente dato necesario para revisar la agenda.";
+        }
+        else
+        {
+            llmData["official_schedule"] = fixedSchedule;
+            llmData["guidance"] = "Continua con el horario oficial de inscripcion.";
+        }
+
+        return ToolResultHelper.OkWithLlm(internalData, llmData);
     }
 
     private static string? NormalizeFixedScheduleLabel(string? label) =>

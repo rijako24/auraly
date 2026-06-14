@@ -1,8 +1,10 @@
 "use client";
-import { useMemo } from "react";
+
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import type { ColumnDef } from "@tanstack/react-table";
 import { MoreHorizontal, Eye, DollarSign, CreditCard, XCircle, CheckCircle } from "lucide-react";
+
 import { DataTable } from "@/components/tables/data-table";
 import { StatCard } from "@/components/cards/stat-card";
 import { Button } from "@/components/ui/button";
@@ -16,29 +18,99 @@ import { formatCurrencyFromCents, formatDateTime, cn } from "@/lib/utils";
 import { usePayments } from "@/hooks/use-payments";
 
 export default function PaymentsPage() {
-  const { data, isLoading, isError, refetch } = usePayments();
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [search, setSearch] = useState("");
+  const { data, isLoading, isError, refetch } = usePayments({
+    page,
+    pageSize,
+    search: search || undefined,
+  });
   const payments = data?.items ?? [];
+
   const { totalRevenue, confirmedCount, pendingCount, failedCount } = useMemo(() => {
     const confirmed = payments.filter((p) => p.status === PaymentTransactionStatus.Confirmed);
     const pending = payments.filter((p) => p.status === PaymentTransactionStatus.Created);
     const failed = payments.filter((p) => p.status === PaymentTransactionStatus.Failed || p.status === PaymentTransactionStatus.Expired);
-    return { totalRevenue: confirmed.reduce((acc, p) => acc + p.amountInCents, 0), confirmedCount: confirmed.length, pendingCount: pending.length, failedCount: failed.length };
+    return {
+      totalRevenue: confirmed.reduce((acc, p) => acc + p.amountInCents, 0),
+      confirmedCount: confirmed.length,
+      pendingCount: pending.length,
+      failedCount: failed.length,
+    };
   }, [payments]);
 
   const columns: ColumnDef<PaymentTransaction>[] = useMemo(() => [
-    { accessorKey: "paymentReferenceId", header: "ID Referencia", cell: ({ row }) => <span className="font-mono text-sm">{row.original.paymentReferenceId}</span> },
-    { accessorKey: "amountInCents", header: "Monto", cell: ({ row }) => formatCurrencyFromCents(row.original.amountInCents, row.original.currency) },
+    {
+      accessorKey: "paymentReferenceId",
+      header: "ID Referencia",
+      cell: ({ row }) => <span className="font-mono text-sm">{row.original.paymentReferenceId}</span>,
+    },
+    {
+      accessorKey: "amountInCents",
+      header: "Monto",
+      cell: ({ row }) => formatCurrencyFromCents(row.original.amountInCents, row.original.currency),
+    },
     { accessorKey: "currency", header: "Moneda" },
-    { accessorKey: "status", header: "Estado", cell: ({ row }) => { const status = row.original.status; return <Badge variant="secondary" className={cn(PaymentStatusColors[status])}>{PaymentStatusLabels[status]}</Badge>; } },
-    { accessorKey: "source", header: "Origen", cell: ({ row }) => <Badge variant="outline">{PaymentSourceLabels[row.original.source]}</Badge> },
+    {
+      accessorKey: "status",
+      header: "Estado",
+      cell: ({ row }) => {
+        const status = row.original.status;
+        return (
+          <Badge variant="secondary" className={cn(PaymentStatusColors[status])}>
+            {PaymentStatusLabels[status]}
+          </Badge>
+        );
+      },
+    },
+    {
+      accessorKey: "source",
+      header: "Origen",
+      cell: ({ row }) => <Badge variant="outline">{PaymentSourceLabels[row.original.source]}</Badge>,
+    },
     { accessorKey: "createdAt", header: "Creado", cell: ({ row }) => formatDateTime(row.original.createdAt) },
-    { accessorKey: "confirmedAt", header: "Confirmado", cell: ({ row }) => row.original.confirmedAt ? formatDateTime(row.original.confirmedAt) : "—" },
-    { id: "actions", cell: ({ row }) => { const payment = row.original; return (<DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="h-8 w-8"><MoreHorizontal className="h-4 w-4" /></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem asChild><Link href={`/dashboard/payments/${payment.paymentTransactionId}`}><Eye className="mr-2 h-4 w-4" />Ver Detalle</Link></DropdownMenuItem></DropdownMenuContent></DropdownMenu>); } },
+    {
+      accessorKey: "confirmedAt",
+      header: "Confirmado",
+      cell: ({ row }) => row.original.confirmedAt ? formatDateTime(row.original.confirmedAt) : "-",
+    },
+    {
+      id: "actions",
+      cell: ({ row }) => {
+        const payment = row.original;
+        return (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="icon" className="h-8 w-8">
+                <MoreHorizontal className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem asChild>
+                <Link href={`/dashboard/payments/${payment.paymentTransactionId}`}>
+                  <Eye className="mr-2 h-4 w-4" />
+                  Ver Detalle
+                </Link>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        );
+      },
+    },
   ], []);
 
   const facetedFilters = useMemo(() => [
-    { column: "status", title: "Estado", options: Object.entries(PaymentStatusLabels).map(([value, label]) => ({ label, value: String(value) })) },
-    { column: "source", title: "Origen", options: Object.entries(PaymentSourceLabels).map(([value, label]) => ({ label, value: String(value) })) },
+    {
+      column: "status",
+      title: "Estado",
+      options: Object.entries(PaymentStatusLabels).map(([value, label]) => ({ label, value: String(value) })),
+    },
+    {
+      column: "source",
+      title: "Origen",
+      options: Object.entries(PaymentSourceLabels).map(([value, label]) => ({ label, value: String(value) })),
+    },
   ], []);
 
   if (isLoading) return <PageLoading />;
@@ -46,14 +118,36 @@ export default function PaymentsPage() {
 
   return (
     <div className="space-y-6">
-      <div><h1 className="text-2xl font-semibold tracking-tight">Pagos</h1><p className="text-muted-foreground">Transacciones de pago y estado de confirmación</p></div>
+      <div>
+        <h1 className="text-2xl font-semibold tracking-tight">Pagos</h1>
+        <p className="text-muted-foreground">Transacciones de pago y estado de confirmacion</p>
+      </div>
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard title="Ingresos totales" value={formatCurrencyFromCents(totalRevenue)} icon={DollarSign} />
         <StatCard title="Pagos confirmados" value={confirmedCount} icon={CheckCircle} />
         <StatCard title="Pendientes" value={pendingCount} icon={CreditCard} />
         <StatCard title="Fallidos / Expirados" value={failedCount} icon={XCircle} />
       </div>
-      <DataTable columns={columns} data={payments} searchKey="paymentReferenceId" searchPlaceholder="Buscar por referencia..." facetedFilters={facetedFilters} enableRowSelection={false} />
+      <DataTable
+        columns={columns}
+        data={payments}
+        searchKey="paymentReferenceId"
+        searchPlaceholder="Buscar por referencia..."
+        facetedFilters={facetedFilters}
+        enableRowSelection={false}
+        page={page}
+        pageSize={pageSize}
+        pageCount={data?.totalPages}
+        totalItems={data?.totalCount}
+        onPaginationChange={(nextPage, nextPageSize) => {
+          setPage(nextPageSize === pageSize ? nextPage : 1);
+          setPageSize(nextPageSize);
+        }}
+        onSearch={(value) => {
+          setSearch(value);
+          setPage(1);
+        }}
+      />
     </div>
   );
 }

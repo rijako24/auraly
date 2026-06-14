@@ -106,7 +106,7 @@ export function Sidebar() {
                   )}
                 </CollapsibleTrigger>
                 <CollapsibleContent>
-                  <div className="mt-1 space-y-0.5">
+                  <div className={cn("mt-1 space-y-0.5", !isCollapsed && "pl-4 pr-1")}>
                     {group.items.map((item) => {
                       if (!("href" in item)) return null;
                       const Icon = item.icon;

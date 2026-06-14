@@ -25,6 +25,11 @@ public class InMemoryUnitOfWork : IUnitOfWork
     public IBusinessResourceRepository BusinessResources { get; }
     public IEmployeeRepository Employees { get; }
     public IEmployeeServiceRepository EmployeeServices { get; }
+    public IBusinessWorkingHourRepository BusinessWorkingHours { get; }
+    public IEmployeeWorkingHourRepository EmployeeWorkingHours { get; }
+    public IEmployeeScheduleExceptionRepository EmployeeScheduleExceptions { get; }
+    public IIntegrationConnectionRepository IntegrationConnections { get; }
+    public IReservationIntegrationEventRepository ReservationIntegrationEvents { get; }
     public ILeadRepository Leads { get; }
     public IServiceAddOnRuleRepository ServiceAddOnRules { get; }
     public IReservationAddOnRepository ReservationAddOns { get; }
@@ -67,6 +72,11 @@ public class InMemoryUnitOfWork : IUnitOfWork
         BusinessResources    = new InMemoryBusinessResourceRepository();
         Employees            = new InMemoryEmployeeRepository(businessId);
         EmployeeServices     = new InMemoryEmployeeServiceRepository();
+        BusinessWorkingHours = new InMemoryBusinessWorkingHourRepository(businessId);
+        EmployeeWorkingHours = new InMemoryEmployeeWorkingHourRepository();
+        EmployeeScheduleExceptions = new InMemoryEmployeeScheduleExceptionRepository();
+        IntegrationConnections = new InMemoryIntegrationConnectionRepository();
+        ReservationIntegrationEvents = new InMemoryReservationIntegrationEventRepository();
         Leads                = new InMemoryLeadRepository();
         ServiceAddOnRules    = new InMemoryServiceAddOnRuleRepository(businessId);
         ReservationAddOns    = new InMemoryReservationAddOnRepository();
@@ -210,4 +220,130 @@ internal sealed class InMemoryUsageCostRateRepository : IUsageCostRateRepository
 
     public Task<IReadOnlyList<UsageCostRate>> GetActiveAsync(CancellationToken ct = default) =>
         Task.FromResult<IReadOnlyList<UsageCostRate>>([]);
+}
+
+internal sealed class InMemoryBusinessWorkingHourRepository : IBusinessWorkingHourRepository
+{
+    private readonly List<BusinessWorkingHour> _hours;
+
+    public InMemoryBusinessWorkingHourRepository(Guid businessId)
+    {
+        _hours =
+        [
+            New(businessId, DayOfWeek.Monday, "08:00", "18:00"),
+            New(businessId, DayOfWeek.Tuesday, "08:00", "18:00"),
+            New(businessId, DayOfWeek.Wednesday, "08:00", "18:00"),
+            New(businessId, DayOfWeek.Thursday, "08:00", "18:00"),
+            New(businessId, DayOfWeek.Friday, "08:00", "18:00"),
+            New(businessId, DayOfWeek.Saturday, "08:00", "13:00")
+        ];
+    }
+
+    public Task<IReadOnlyList<BusinessWorkingHour>> GetByBusinessIdAsync(Guid businessId, CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<BusinessWorkingHour>>(_hours.Where(h => h.BusinessId == businessId).ToList());
+
+    public Task ReplaceForBusinessAsync(Guid businessId, IEnumerable<BusinessWorkingHour> workingHours, CancellationToken ct = default)
+    {
+        _hours.RemoveAll(h => h.BusinessId == businessId);
+        _hours.AddRange(workingHours);
+        return Task.CompletedTask;
+    }
+
+    private static BusinessWorkingHour New(Guid businessId, DayOfWeek day, string open, string close) => new()
+    {
+        BusinessWorkingHourId = Guid.NewGuid(),
+        BusinessId = businessId,
+        DayOfWeek = day,
+        OpenTime = TimeSpan.Parse(open),
+        CloseTime = TimeSpan.Parse(close),
+        IsActive = true
+    };
+}
+
+internal sealed class InMemoryEmployeeWorkingHourRepository : IEmployeeWorkingHourRepository
+{
+    private readonly List<EmployeeWorkingHour> _hours = [];
+
+    public Task<IReadOnlyList<EmployeeWorkingHour>> GetByEmployeeIdAsync(Guid employeeId, CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<EmployeeWorkingHour>>(_hours.Where(h => h.EmployeeId == employeeId).ToList());
+
+    public Task<IReadOnlyList<EmployeeWorkingHour>> GetByEmployeeIdsAsync(IEnumerable<Guid> employeeIds, CancellationToken ct = default)
+    {
+        var ids = employeeIds.ToHashSet();
+        return Task.FromResult<IReadOnlyList<EmployeeWorkingHour>>(_hours.Where(h => ids.Contains(h.EmployeeId)).ToList());
+    }
+
+    public Task ReplaceForEmployeeAsync(Guid employeeId, IEnumerable<EmployeeWorkingHour> workingHours, CancellationToken ct = default)
+    {
+        _hours.RemoveAll(h => h.EmployeeId == employeeId);
+        _hours.AddRange(workingHours);
+        return Task.CompletedTask;
+    }
+}
+
+internal sealed class InMemoryEmployeeScheduleExceptionRepository : IEmployeeScheduleExceptionRepository
+{
+    private readonly List<EmployeeScheduleException> _exceptions = [];
+
+    public Task<IReadOnlyList<EmployeeScheduleException>> GetByEmployeeIdAsync(Guid employeeId, CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<EmployeeScheduleException>>(_exceptions.Where(e => e.EmployeeId == employeeId).ToList());
+
+    public Task<IReadOnlyList<EmployeeScheduleException>> GetByEmployeeIdsAndDateAsync(IEnumerable<Guid> employeeIds, DateOnly date, CancellationToken ct = default)
+    {
+        var ids = employeeIds.ToHashSet();
+        return Task.FromResult<IReadOnlyList<EmployeeScheduleException>>(
+            _exceptions.Where(e => ids.Contains(e.EmployeeId) && e.Date == date).ToList());
+    }
+
+    public Task ReplaceForEmployeeAsync(Guid employeeId, IEnumerable<EmployeeScheduleException> exceptions, CancellationToken ct = default)
+    {
+        _exceptions.RemoveAll(e => e.EmployeeId == employeeId);
+        _exceptions.AddRange(exceptions);
+        return Task.CompletedTask;
+    }
+}
+
+internal sealed class InMemoryIntegrationConnectionRepository : IIntegrationConnectionRepository
+{
+    private readonly List<IntegrationConnection> _connections = [];
+
+    public Task<IReadOnlyList<IntegrationConnection>> GetByBusinessIdAsync(Guid businessId, CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<IntegrationConnection>>(_connections.Where(c => c.BusinessId == businessId).ToList());
+
+    public Task<IntegrationConnection?> GetByBusinessProviderCapabilityAsync(
+        Guid businessId,
+        Domain.Enums.IntegrationProvider provider,
+        Domain.Enums.IntegrationCapability capability,
+        CancellationToken ct = default) =>
+        Task.FromResult(_connections.FirstOrDefault(c =>
+            c.BusinessId == businessId && c.Provider == provider && c.Capability == capability));
+
+    public Task<IntegrationConnection> CreateAsync(IntegrationConnection connection, CancellationToken ct = default)
+    {
+        _connections.Add(connection);
+        return Task.FromResult(connection);
+    }
+
+    public Task<IntegrationConnection> UpdateAsync(IntegrationConnection connection, CancellationToken ct = default) =>
+        Task.FromResult(connection);
+}
+
+internal sealed class InMemoryReservationIntegrationEventRepository : IReservationIntegrationEventRepository
+{
+    private readonly List<ReservationIntegrationEvent> _events = [];
+
+    public Task<ReservationIntegrationEvent?> GetByReservationAndConnectionAsync(Guid reservationId, Guid integrationConnectionId, CancellationToken ct = default) =>
+        Task.FromResult(_events.FirstOrDefault(e => e.ReservationId == reservationId && e.IntegrationConnectionId == integrationConnectionId));
+
+    public Task<IReadOnlyList<ReservationIntegrationEvent>> GetByReservationIdAsync(Guid reservationId, CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<ReservationIntegrationEvent>>(_events.Where(e => e.ReservationId == reservationId).ToList());
+
+    public Task<ReservationIntegrationEvent> AddAsync(ReservationIntegrationEvent integrationEvent, CancellationToken ct = default)
+    {
+        _events.Add(integrationEvent);
+        return Task.FromResult(integrationEvent);
+    }
+
+    public Task<ReservationIntegrationEvent> UpdateAsync(ReservationIntegrationEvent integrationEvent, CancellationToken ct = default) =>
+        Task.FromResult(integrationEvent);
 }

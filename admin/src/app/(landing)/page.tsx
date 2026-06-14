@@ -250,8 +250,8 @@ export default function LandingPage() {
           </div>
           <div className="flex items-center gap-2">
             <ThemeToggle />
-            <Button variant="ghost" asChild className="hidden sm:inline-flex"><Link href="/login">Entrar</Link></Button>
-            <Button asChild className="bg-[#151515] text-white hover:bg-black"><a href="#demo">Solicitar demo</a></Button>
+            <Button variant="ghost" asChild><Link href="/login">Entrar</Link></Button>
+            <Button asChild className="hidden bg-[#151515] text-white hover:bg-black sm:inline-flex"><a href="#demo">Solicitar demo</a></Button>
             <Button variant="ghost" size="icon" className="md:hidden" onClick={() => setMobileMenuOpen((v) => !v)} aria-label="Menu">
               {mobileMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
             </Button>
@@ -264,6 +264,9 @@ export default function LandingPage() {
               <a href="#agentes" onClick={() => setMobileMenuOpen(false)}>Agentes</a>
               <a href="#planes" onClick={() => setMobileMenuOpen(false)}>Planes</a>
               <a href="#faq" onClick={() => setMobileMenuOpen(false)}>FAQ</a>
+              <Button asChild className="mt-2 bg-[#151515] text-white hover:bg-black sm:hidden">
+                <a href="#demo" onClick={() => setMobileMenuOpen(false)}>Solicitar demo</a>
+              </Button>
             </div>
           </div>
         )}

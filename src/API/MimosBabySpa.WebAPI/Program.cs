@@ -1,6 +1,7 @@
 using System.Text;
 using Azure;
 using Azure.AI.OpenAI;
+using Azure.Storage.Blobs;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
@@ -9,12 +10,25 @@ using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using MimosBabySpa.Application.Auth.Interfaces;
 using MimosBabySpa.Application.Auth.Services;
+using MimosBabySpa.Application.Agents;
+using MimosBabySpa.Application.Agents.Composition;
+using MimosBabySpa.Application.Agents.Facts;
+using MimosBabySpa.Application.Agents.Facts.Resolvers;
+using MimosBabySpa.Application.Agents.Gating;
+using MimosBabySpa.Application.Agents.Templates;
+using MimosBabySpa.Application.Agents.Testing;
+using MimosBabySpa.Application.Agents.Tools;
+using MimosBabySpa.Application.Agents.Tools.Impl;
 using MimosBabySpa.Application.Billing;
+using MimosBabySpa.Application.BusinessRules;
 using MimosBabySpa.Application.Common.Interfaces;
+using MimosBabySpa.Application.Configuration;
 using MimosBabySpa.Application.Identity.Interfaces;
 using MimosBabySpa.Application.Identity.Services;
 using MimosBabySpa.Application.LLM;
 using MimosBabySpa.Application.Services;
+using MimosBabySpa.Application.StateManagement;
+using MimosBabySpa.Application.Time;
 using MimosBabySpa.Domain.Repositories;
 using MimosBabySpa.Infrastructure.Catalog;
 using MimosBabySpa.Infrastructure.Configuration;
@@ -34,6 +48,7 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 
+builder.Services.AddMemoryCache();
 builder.Services.AddScoped<ICorrelationIdProvider, CorrelationIdProvider>();
 builder.Services.AddScoped<ITenantContext, TenantContext>();
 
@@ -69,6 +84,13 @@ builder.Services.Configure<GoogleAuthSettings>(builder.Configuration.GetSection(
 builder.Services.AddScoped<IGoogleAuthService, GoogleAuthService>();
 
 builder.Services.AddScoped<IUnitOfWork, UnitOfWork>();
+builder.Services.AddScoped<IConversationRepository, ConversationRepository>();
+builder.Services.AddScoped<IMessageRepository, MessageRepository>();
+builder.Services.AddScoped<ILeadRepository, LeadRepository>();
+builder.Services.AddScoped<IReservationRepository, ReservationRepository>();
+builder.Services.AddScoped<IConversationStateRepository, ConversationStateRepository>();
+builder.Services.AddScoped<IPaymentTransactionRepository, PaymentTransactionRepository>();
+builder.Services.AddScoped<IEnrollmentRepository, EnrollmentRepository>();
 
 builder.Services.AddSingleton<IPasswordHasher, BCryptPasswordHasher>();
 builder.Services.AddScoped<ITokenService, TokenService>();
@@ -76,6 +98,55 @@ builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<IUsageBillingService, UsageBillingService>();
 builder.Services.AddScoped<IMessageService, MessageService>();
 builder.Services.AddScoped<IOutboundMessageDispatcher, OutboundMessageDispatcher>();
+builder.Services.AddScoped<IWorkingHoursService, WorkingHoursService>();
+builder.Services.AddScoped<IConversationService, ConversationService>();
+builder.Services.AddScoped<IConversationLifecycleService, ConversationLifecycleService>();
+builder.Services.AddScoped<IConversationStateManager, ConversationStateManager>();
+builder.Services.AddScoped<ILeadService, LeadService>();
+builder.Services.AddScoped<IReservationService, ReservationService>();
+builder.Services.AddScoped<IEmployeeAssignmentService, EmployeeAssignmentService>();
+builder.Services.AddScoped<IAvailabilityService, AvailabilityService>();
+builder.Services.AddScoped<IBusinessRuleEngine, BusinessRuleEngine>();
+builder.Services.AddScoped<ServiceNameResolver>();
+builder.Services.AddScoped<ReservationPricingResolver>();
+builder.Services.AddScoped<IBusinessClock, BusinessClock>();
+builder.Services.AddSingleton<ITemporalReferenceBuilder, TemporalReferenceBuilder>();
+builder.Services.AddScoped<ICatalogContentGenerator, CatalogContentGenerator>();
+builder.Services.AddScoped<IAddOnCatalogService, AddOnCatalogService>();
+builder.Services.AddScoped<IIntegrationsConfigProvider, IntegrationsConfigProvider>();
+builder.Services.AddScoped<ISchedulingPolicyProvider, SchedulingPolicyProvider>();
+builder.Services.AddScoped<IPaymentLinkService, WompiPaymentLinkService>();
+builder.Services.AddScoped<IMediaUrlResolver, BlobMediaUrlResolver>();
+builder.Services.AddScoped<IMessageSequenceResolver, MessageSequenceResolver>();
+builder.Services.AddScoped<IActiveAgentConfigResolver, ActiveAgentConfigResolver>();
+builder.Services.AddScoped<IConversationFactsService, ConversationFactsService>();
+builder.Services.AddScoped<ICustomerMemoryService, CustomerMemoryService>();
+builder.Services.AddScoped<IConversationClosedHook, ConversationSummaryHook>();
+builder.Services.AddScoped<IReservationLifecycleService, ReservationLifecycleService>();
+builder.Services.AddScoped<ICustomerReservationResolver, CustomerReservationResolver>();
+builder.Services.AddScoped<IPaymentLifecycleService, PaymentLifecycleService>();
+builder.Services.AddScoped<IReservationIntentBuilder, ReservationIntentBuilder>();
+builder.Services.AddScoped<ICheckoutQuoteService, CheckoutQuoteService>();
+builder.Services.AddScoped<IEscalationNotifier, EscalationNotifier>();
+builder.Services.AddScoped<IEscalationConfigProvider, EscalationConfigProvider>();
+builder.Services.Configure<ReleaseLinkSettings>(builder.Configuration.GetSection(ReleaseLinkSettings.SectionName));
+builder.Services.AddScoped<AdminActionLinkService>();
+builder.Services.AddScoped<IAdminActionLinkService>(sp => sp.GetRequiredService<AdminActionLinkService>());
+builder.Services.AddScoped<IReleaseLinkService>(sp => sp.GetRequiredService<AdminActionLinkService>());
+builder.Services.AddHttpClient<GoogleCalendarService>(c => c.Timeout = TimeSpan.FromSeconds(30));
+builder.Services.AddScoped<ICalendarService, GoogleCalendarService>();
+builder.Services.AddSingleton(sp =>
+{
+    var configuration = sp.GetRequiredService<IConfiguration>();
+    var connectionString = configuration.GetConnectionString("AzureStorage")
+        ?? configuration["AzureStorage:ConnectionString"]
+        ?? configuration["AzureWebJobsStorage"];
+
+    if (string.IsNullOrWhiteSpace(connectionString))
+        connectionString = "UseDevelopmentStorage=true";
+
+    return new BlobServiceClient(connectionString);
+});
 
 builder.Services.AddHttpClient();
 builder.Services.Configure<WhatsAppWebhookOptions>(builder.Configuration.GetSection(WhatsAppWebhookOptions.SectionName));
@@ -100,6 +171,8 @@ builder.Services.AddScoped<IEmployeeAdminService, EmployeeAdminService>();
 builder.Services.AddScoped<IReservationAdminService, ReservationAdminService>();
 builder.Services.AddScoped<ILeadAdminService, LeadAdminService>();
 builder.Services.AddScoped<IBusinessConfigurationAdminService, BusinessConfigurationAdminService>();
+builder.Services.AddScoped<IIntegrationAdminService, IntegrationAdminService>();
+builder.Services.AddScoped<IWorkingHoursAdminService, WorkingHoursAdminService>();
 builder.Services.AddScoped<IAgentRepository, AgentRepository>();
 builder.Services.AddScoped<IAgentAdminService, AgentAdminService>();
 builder.Services.AddScoped<ICatalogImportAdminService, CatalogImportAdminService>();
@@ -121,6 +194,37 @@ builder.Services.AddScoped<IChatClient>(sp =>
     var logger = sp.GetRequiredService<ILogger<AzureOpenAIChatClient>>();
     return new AzureOpenAIChatClient(client, options.DeploymentName, logger);
 });
+builder.Services.AddScoped<IAgentConfigProvider, AgentConfigProvider>();
+builder.Services.AddSingleton<IFactSourceResolver, ChannelPhoneResolver>();
+builder.Services.AddSingleton<IFactSourceResolver, ChannelEmailResolver>();
+builder.Services.AddSingleton<IFactSourceResolver, EngagementResolver>();
+builder.Services.AddSingleton<IFactHydrator, FactHydrator>();
+builder.Services.AddSingleton<IFlowStageDetector, FlowStageDetector>();
+builder.Services.AddScoped<IConversationVerificationService, ConversationVerificationService>();
+builder.Services.AddScoped<IGuardEvaluator, GuardEvaluator>();
+builder.Services.AddScoped<IToolCapabilityGate, ToolCapabilityGate>();
+builder.Services.AddScoped<IPromptComposer, AgentPromptComposer>();
+builder.Services.AddScoped<IAgentTemplateResolver, AgentTemplateResolver>();
+builder.Services.AddScoped<ITemplateRenderer, PromptTemplateRenderer>();
+builder.Services.AddScoped<IAgentTurnResponseComposer, AgentTurnResponseComposer>();
+builder.Services.AddScoped<IAgentTool, CheckAvailabilityTool>();
+builder.Services.AddScoped<IAgentTool, ResolvePricingTool>();
+builder.Services.AddScoped<IAgentTool, PrepareCheckoutTool>();
+builder.Services.AddScoped<IAgentTool, CreateReservationTool>();
+builder.Services.AddScoped<IAgentTool, AssignPaidSlotTool>();
+builder.Services.AddScoped<IAgentTool, RescheduleReservationTool>();
+builder.Services.AddScoped<IAgentTool, SuspendReservationTool>();
+builder.Services.AddScoped<IAgentTool, VerifyPaymentTool>();
+builder.Services.AddScoped<IAgentTool, EscalateToHumanTool>();
+builder.Services.AddScoped<IAgentTool, GetServiceCatalogTool>();
+builder.Services.AddScoped<IAgentTool, GetCompatibleAddOnsTool>();
+builder.Services.AddScoped<IAgentTool, GetServiceFulfillmentTool>();
+builder.Services.AddScoped<IAgentTool, SetFactTool>();
+builder.Services.AddScoped<IAgentTool, ResetFlowContextTool>();
+builder.Services.AddScoped<IAgentTool, SendMessageSequenceTool>();
+builder.Services.AddScoped<AgentToolRegistry>();
+builder.Services.AddScoped<IAgentConversationService, AgentConversationService>();
+builder.Services.AddScoped<IAgentTestRuntimeFactory, AgentTestRuntimeFactory>();
 
 builder.Services.AddScoped<IConversationAdminService, ConversationAdminService>();
 builder.Services.AddScoped<IPaymentAdminService, PaymentAdminService>();

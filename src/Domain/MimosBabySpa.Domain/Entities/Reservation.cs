@@ -11,7 +11,6 @@ public class Reservation
     public DateTime? ReservationDateTime { get; set; }
     public int? DurationMinutes { get; set; }
     public ReservationStatus Status { get; set; } = ReservationStatus.Draft;
-    public string? CalendarEventId { get; set; }
     public Guid? ConversationId { get; set; }
 
     public string? CustomerNameSnapshot { get; set; }

@@ -22,6 +22,14 @@ internal static class ToolResultHelper
         return JsonSerializer.Serialize(new { ok = true, data, effects }, Options);
     }
 
+    public static string OkWithLlm(object data, object? llm, params string[] effects)
+    {
+        if (effects is null || effects.Length == 0)
+            return JsonSerializer.Serialize(new { ok = true, data, llm }, Options);
+
+        return JsonSerializer.Serialize(new { ok = true, data, llm, effects }, Options);
+    }
+
     public static string Error(string code, string message, string? hint = null, bool recoverable = false) =>
         JsonSerializer.Serialize(new { ok = false, error = new { code, message, hint, recoverable } }, Options);
 

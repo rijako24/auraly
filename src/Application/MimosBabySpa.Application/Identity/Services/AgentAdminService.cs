@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
 using MimosBabySpa.Application.Common.Exceptions;
 using MimosBabySpa.Application.Common.Interfaces;
@@ -21,6 +22,7 @@ public sealed class AgentAdminService : IAgentAdminService
     private readonly IUnitOfWork _unitOfWork;
     private readonly IAuditService _auditService;
     private readonly ICorrelationIdProvider _correlationIdProvider;
+    private readonly IMemoryCache _cache;
     private readonly ILogger<AgentAdminService> _logger;
 
     public AgentAdminService(
@@ -28,12 +30,14 @@ public sealed class AgentAdminService : IAgentAdminService
         IUnitOfWork unitOfWork,
         IAuditService auditService,
         ICorrelationIdProvider correlationIdProvider,
+        IMemoryCache cache,
         ILogger<AgentAdminService> logger)
     {
         _agentRepository = agentRepository;
         _unitOfWork = unitOfWork;
         _auditService = auditService;
         _correlationIdProvider = correlationIdProvider;
+        _cache = cache;
         _logger = logger;
     }
 
@@ -62,6 +66,7 @@ public sealed class AgentAdminService : IAgentAdminService
         agent.UpdatedAt = DateTime.UtcNow;
 
         await _agentRepository.UpdateAsync(agent, ct);
+        _cache.Remove($"agent_config_{agentId}");
 
         await _auditService.LogAsync(
             "Update",

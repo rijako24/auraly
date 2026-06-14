@@ -6,7 +6,6 @@ namespace MimosBabySpa.Domain.Enums;
 /// </summary>
 public enum BusinessConfigurationKey
 {
-    Integrations = 0,
     /// <summary>Obsolete; post-payment messages live in Agents.SettingsJson messageSequences.</summary>
     PaymentConfirmationMessages = 1,
     SchedulingPolicy = 2

@@ -53,13 +53,6 @@ public class SchedulingPolicyProvider : ISchedulingPolicyProvider
                 return AvailabilityParams.Default;
             }
 
-            if (policy.Schedule == null || policy.Schedule.Count == 0)
-            {
-                _logger.LogWarning(
-                    "SchedulingPolicy: schedule vacío para BusinessId={BusinessId}",
-                    businessId);
-            }
-
             return policy;
         }
         catch (JsonException ex)

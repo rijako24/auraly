@@ -21,22 +21,18 @@ public class SchedulingPolicyProviderTests
 
         var policy = await provider.GetAsync(_businessId);
 
-        policy.Schedule.Should().BeNull();
         policy.SlotIntervalMinutes.Should().Be(60);
     }
 
     [Fact]
-    public async Task GetAsync_WhenValidJson_ReturnsScheduleByDay()
+    public async Task GetAsync_WhenValidJson_ReturnsSchedulingRules()
     {
         const string json = """
             {
               "slotIntervalMinutes": 30,
               "bufferBetweenAppointmentsMinutes": 15,
               "requireEmployee": false,
-              "schedule": {
-                "monday": [{"open":"08:00","close":"12:00"},{"open":"14:00","close":"18:00"}],
-                "sunday": []
-              }
+              "employeeStrategy": "most_available"
             }
             """;
 
@@ -52,11 +48,7 @@ public class SchedulingPolicyProviderTests
         policy.SlotIntervalMinutes.Should().Be(30);
         policy.BufferBetweenAppointmentsMinutes.Should().Be(15);
         policy.RequireEmployee.Should().BeFalse();
-        policy.Schedule.Should().ContainKey("monday");
-        policy.Schedule!["monday"].Should().HaveCount(2);
-        policy.Schedule!["monday"][0].Open.Should().Be("08:00");
-        policy.Schedule!["monday"][0].Close.Should().Be("12:00");
-        policy.Schedule!["sunday"].Should().BeEmpty();
+        policy.EmployeeStrategy.Should().Be("most_available");
     }
 
     [Fact]
@@ -71,7 +63,7 @@ public class SchedulingPolicyProviderTests
 
         var policy = await provider.GetAsync(_businessId);
 
-        policy.Schedule.Should().BeNull();
+        policy.SlotIntervalMinutes.Should().Be(60);
     }
 
     private SchedulingPolicyProvider CreateProvider(BusinessConfiguration? config)

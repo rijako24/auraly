@@ -1,11 +1,9 @@
 export enum BusinessConfigurationKey {
-  Integrations = 0,
   PaymentConfirmationMessages = 1,
   SchedulingPolicy = 2,
 }
 
 export const BusinessConfigurationKeyLabels: Record<BusinessConfigurationKey, string> = {
-  [BusinessConfigurationKey.Integrations]: "Integraciones",
   [BusinessConfigurationKey.PaymentConfirmationMessages]: "Mensajes de Confirmacion de Pago",
   [BusinessConfigurationKey.SchedulingPolicy]: "Política de Agendamiento",
 };
@@ -38,11 +36,13 @@ export const ReservationStatusColors: Record<ReservationStatus, string> = {
 };
 
 export enum PaymentTransactionStatus {
-  Created = 0,
-  Confirmed = 1,
-  Failed = 2,
-  Refunded = 3,
-  Expired = 4,
+  Created = "Created",
+  Confirmed = "Confirmed",
+  Failed = "Failed",
+  Refunded = "Refunded",
+  Expired = "Expired",
+  Abandoned = "Abandoned",
+  Superseded = "Superseded",
 }
 
 export const PaymentStatusLabels: Record<PaymentTransactionStatus, string> = {
@@ -51,6 +51,8 @@ export const PaymentStatusLabels: Record<PaymentTransactionStatus, string> = {
   [PaymentTransactionStatus.Failed]: "Fallido",
   [PaymentTransactionStatus.Refunded]: "Reembolsado",
   [PaymentTransactionStatus.Expired]: "Expirado",
+  [PaymentTransactionStatus.Abandoned]: "Abandonado",
+  [PaymentTransactionStatus.Superseded]: "Reemplazado",
 };
 
 export const PaymentStatusColors: Record<PaymentTransactionStatus, string> = {
@@ -59,11 +61,13 @@ export const PaymentStatusColors: Record<PaymentTransactionStatus, string> = {
   [PaymentTransactionStatus.Failed]: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300",
   [PaymentTransactionStatus.Refunded]: "bg-cyan-100 text-cyan-800 dark:bg-cyan-900 dark:text-cyan-300",
   [PaymentTransactionStatus.Expired]: "bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-300",
+  [PaymentTransactionStatus.Abandoned]: "bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-300",
+  [PaymentTransactionStatus.Superseded]: "bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-300",
 };
 
 export enum PaymentTransactionSource {
-  Automated = 0,
-  Manual = 1,
+  Automated = "Automated",
+  Manual = "Manual",
 }
 
 export const PaymentSourceLabels: Record<PaymentTransactionSource, string> = {

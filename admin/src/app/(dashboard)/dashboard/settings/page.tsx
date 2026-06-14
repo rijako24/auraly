@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Building2, Bell, User, Settings, Sparkles } from "lucide-react";
+import { Building2, Bell, Plug, User, Settings, Sparkles } from "lucide-react";
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -18,6 +18,12 @@ const SETTINGS_CARDS = [
     description: "Horarios, política de reserva, pagos e integraciones (operativo)",
     href: "/dashboard/settings/business",
     icon: Building2,
+  },
+  {
+    title: "Integraciones",
+    description: "Google Calendar y Wompi para el negocio seleccionado",
+    href: "/dashboard/settings/integrations",
+    icon: Plug,
   },
   {
     title: "Configuración del Sistema",

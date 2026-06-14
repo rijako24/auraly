@@ -16,13 +16,16 @@ namespace MimosBabySpa.Application.Services;
 public class EmployeeAssignmentService : IEmployeeAssignmentService
 {
     private readonly IUnitOfWork _unitOfWork;
+    private readonly IWorkingHoursService _workingHoursService;
     private readonly ILogger<EmployeeAssignmentService> _logger;
 
     public EmployeeAssignmentService(
         IUnitOfWork unitOfWork,
+        IWorkingHoursService workingHoursService,
         ILogger<EmployeeAssignmentService> logger)
     {
         _unitOfWork = unitOfWork;
+        _workingHoursService = workingHoursService;
         _logger = logger;
     }
 
@@ -130,11 +133,40 @@ public class EmployeeAssignmentService : IEmployeeAssignmentService
 
             if (!hasOverlap)
             {
-                availableEmployees.Add(employee);
+                var worksAtRequestedTime = await WorksAtRequestedTimeAsync(
+                    businessId,
+                    employee.EmployeeId,
+                    startTime,
+                    endTime,
+                    cancellationToken);
+
+                if (worksAtRequestedTime)
+                    availableEmployees.Add(employee);
             }
         }
 
         return availableEmployees;
+    }
+
+    private async Task<bool> WorksAtRequestedTimeAsync(
+        Guid businessId,
+        Guid employeeId,
+        DateTime startTime,
+        DateTime endTime,
+        CancellationToken cancellationToken)
+    {
+        var blocks = await _workingHoursService.GetEffectiveWorkingHoursAsync(
+            businessId,
+            employeeId,
+            DateOnly.FromDateTime(startTime),
+            cancellationToken);
+
+        var start = startTime.TimeOfDay;
+        var end = endTime.TimeOfDay;
+        return blocks.Any(block =>
+            block.IsValid() &&
+            block.OpenTime <= start &&
+            block.CloseTime >= end);
     }
 
     /// <summary>

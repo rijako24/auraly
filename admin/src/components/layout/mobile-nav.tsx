@@ -82,7 +82,7 @@ export function MobileNav() {
                 <p className="px-2 mb-2 text-xs font-medium text-muted-foreground">
                   {group.label}
                 </p>
-                <div className="space-y-0.5">
+                <div className="space-y-0.5 pl-4 pr-1">
                   {group.items.map((item) => {
                     if (!("href" in item)) return null;
                     const Icon = item.icon;

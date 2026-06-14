@@ -1,0 +1,48 @@
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using MimosBabySpa.Application.Identity.DTOs;
+using MimosBabySpa.Application.Identity.Interfaces;
+using MimosBabySpa.WebAPI.Authorization;
+using MimosBabySpa.WebAPI.Extensions;
+
+namespace MimosBabySpa.WebAPI.Controllers;
+
+[ApiController]
+[Route("api/businesses/{businessId:guid}/integrations")]
+[Authorize]
+public class IntegrationsController : ControllerBase
+{
+    private readonly IIntegrationAdminService _service;
+
+    public IntegrationsController(IIntegrationAdminService service)
+    {
+        _service = service;
+    }
+
+    [HttpGet]
+    [PermissionAuthorize("business_config.read")]
+    public async Task<ActionResult<IntegrationSettingsDto>> Get(Guid businessId, CancellationToken ct)
+    {
+        return Ok(await _service.GetSettingsAsync(User.GetTenantId(), businessId, ct));
+    }
+
+    [HttpPut("google-calendar")]
+    [PermissionAuthorize("business_config.update")]
+    public async Task<ActionResult<IntegrationSettingsDto>> UpdateGoogleCalendar(
+        Guid businessId,
+        [FromBody] UpdateGoogleCalendarIntegrationRequest request,
+        CancellationToken ct)
+    {
+        return Ok(await _service.UpdateGoogleCalendarAsync(User.GetTenantId(), businessId, request, ct));
+    }
+
+    [HttpPut("wompi")]
+    [PermissionAuthorize("business_config.update")]
+    public async Task<ActionResult<IntegrationSettingsDto>> UpdateWompi(
+        Guid businessId,
+        [FromBody] UpdateWompiIntegrationRequest request,
+        CancellationToken ct)
+    {
+        return Ok(await _service.UpdateWompiAsync(User.GetTenantId(), businessId, request, ct));
+    }
+}

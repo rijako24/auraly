@@ -31,6 +31,11 @@ public class ApplicationDbContext : DbContext
     public DbSet<ServiceResourceUsage> ServiceResourceUsages { get; set; }
     public DbSet<Employee> Employees { get; set; }
     public DbSet<EmployeeService> EmployeeServices { get; set; }
+    public DbSet<BusinessWorkingHour> BusinessWorkingHours { get; set; }
+    public DbSet<EmployeeWorkingHour> EmployeeWorkingHours { get; set; }
+    public DbSet<EmployeeScheduleException> EmployeeScheduleExceptions { get; set; }
+    public DbSet<IntegrationConnection> IntegrationConnections { get; set; }
+    public DbSet<ReservationIntegrationEvent> ReservationIntegrationEvents { get; set; }
     public DbSet<ConversationStateEntity> ConversationStates { get; set; }
     public DbSet<PaymentTransaction> PaymentTransactions { get; set; }
     public DbSet<Enrollment> Enrollments { get; set; }
@@ -223,7 +228,6 @@ public class ApplicationDbContext : DbContext
         {
             entity.HasKey(e => e.ReservationId);
             entity.Property(e => e.Status).HasConversion<int>();
-            entity.Property(e => e.CalendarEventId).HasMaxLength(500);
             entity.Property(e => e.CustomerNameSnapshot).HasMaxLength(100);
             entity.Property(e => e.CustomerEmailSnapshot).HasMaxLength(200);
             entity.Property(e => e.CustomerPhoneSnapshot).HasMaxLength(50);
@@ -266,6 +270,94 @@ public class ApplicationDbContext : DbContext
                   .OnDelete(DeleteBehavior.Restrict);
             entity.HasIndex(e => e.BusinessId);
             entity.HasIndex(e => new { e.BusinessId, e.ResourceName }).IsUnique(); // Un recurso único por nombre por negocio
+        });
+
+        modelBuilder.Entity<BusinessWorkingHour>(entity =>
+        {
+            entity.HasKey(e => e.BusinessWorkingHourId);
+            entity.Property(e => e.DayOfWeek).HasConversion<int>();
+            entity.Property(e => e.OpenTime).IsRequired();
+            entity.Property(e => e.CloseTime).IsRequired();
+            entity.HasOne(e => e.Business)
+                  .WithMany()
+                  .HasForeignKey(e => e.BusinessId)
+                  .OnDelete(DeleteBehavior.Restrict);
+            entity.HasIndex(e => new { e.BusinessId, e.DayOfWeek, e.OpenTime });
+        });
+
+        modelBuilder.Entity<EmployeeWorkingHour>(entity =>
+        {
+            entity.HasKey(e => e.EmployeeWorkingHourId);
+            entity.Property(e => e.DayOfWeek).HasConversion<int>();
+            entity.Property(e => e.OpenTime).IsRequired();
+            entity.Property(e => e.CloseTime).IsRequired();
+            entity.HasOne(e => e.Business)
+                  .WithMany()
+                  .HasForeignKey(e => e.BusinessId)
+                  .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.Employee)
+                  .WithMany()
+                  .HasForeignKey(e => e.EmployeeId)
+                  .OnDelete(DeleteBehavior.Cascade);
+            entity.HasIndex(e => new { e.BusinessId, e.EmployeeId, e.DayOfWeek, e.OpenTime });
+            entity.HasIndex(e => e.EmployeeId);
+        });
+
+        modelBuilder.Entity<EmployeeScheduleException>(entity =>
+        {
+            entity.HasKey(e => e.EmployeeScheduleExceptionId);
+            entity.Property(e => e.Reason).HasMaxLength(500);
+            entity.HasOne(e => e.Business)
+                  .WithMany()
+                  .HasForeignKey(e => e.BusinessId)
+                  .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.Employee)
+                  .WithMany()
+                  .HasForeignKey(e => e.EmployeeId)
+                  .OnDelete(DeleteBehavior.Cascade);
+            entity.HasIndex(e => new { e.BusinessId, e.EmployeeId, e.Date });
+        });
+
+        modelBuilder.Entity<IntegrationConnection>(entity =>
+        {
+            entity.HasKey(e => e.IntegrationConnectionId);
+            entity.Property(e => e.Provider).HasConversion<int>();
+            entity.Property(e => e.Capability).HasConversion<int>();
+            entity.Property(e => e.Name).IsRequired().HasMaxLength(200);
+            entity.Property(e => e.AccountIdentifier).HasMaxLength(300);
+            entity.Property(e => e.SettingsJson).IsRequired().HasColumnType("NVARCHAR(MAX)");
+            entity.Property(e => e.SecretsJson).HasColumnType("NVARCHAR(MAX)");
+            entity.Property(e => e.LastError).HasMaxLength(4000);
+            entity.HasOne(e => e.Business)
+                  .WithMany()
+                  .HasForeignKey(e => e.BusinessId)
+                  .OnDelete(DeleteBehavior.Restrict);
+            entity.HasIndex(e => new { e.BusinessId, e.Provider, e.Capability }).IsUnique();
+            entity.HasIndex(e => e.BusinessId);
+        });
+
+        modelBuilder.Entity<ReservationIntegrationEvent>(entity =>
+        {
+            entity.HasKey(e => e.ReservationIntegrationEventId);
+            entity.Property(e => e.Provider).HasConversion<int>();
+            entity.Property(e => e.Capability).HasConversion<int>();
+            entity.Property(e => e.Status).HasConversion<int>();
+            entity.Property(e => e.ExternalEventId).HasMaxLength(500);
+            entity.Property(e => e.LastError).HasMaxLength(4000);
+            entity.HasOne(e => e.Business)
+                  .WithMany()
+                  .HasForeignKey(e => e.BusinessId)
+                  .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.Reservation)
+                  .WithMany()
+                  .HasForeignKey(e => e.ReservationId)
+                  .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(e => e.IntegrationConnection)
+                  .WithMany()
+                  .HasForeignKey(e => e.IntegrationConnectionId)
+                  .OnDelete(DeleteBehavior.Restrict);
+            entity.HasIndex(e => new { e.ReservationId, e.IntegrationConnectionId }).IsUnique();
+            entity.HasIndex(e => e.BusinessId);
         });
 
         // BusinessAttachment configuration

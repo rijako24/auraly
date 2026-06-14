@@ -7,4 +7,8 @@ public record LeadDto(
     string Status,
     DateTime Timestamp,
     string? CustomerName,
-    string? Notes);
+    string? Notes,
+    Guid? ConversationId = null,
+    string? ConversationStatus = null,
+    string? CurrentStageName = null,
+    DateTime? LastActivityAt = null);

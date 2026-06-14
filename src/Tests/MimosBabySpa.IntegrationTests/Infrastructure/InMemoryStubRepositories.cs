@@ -115,12 +115,6 @@ public class InMemoryBusinessConfigurationRepository : IBusinessConfigurationRep
             new()
             {
                 BusinessId = businessId,
-                Key = BusinessConfigurationKey.Integrations,
-                Value = """{"googleCalendar":{"enabled":false,"calendarId":"primary"}}"""
-            },
-            new()
-            {
-                BusinessId = businessId,
                 Key = BusinessConfigurationKey.SchedulingPolicy,
                 Value = """
                     {

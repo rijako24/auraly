@@ -9,6 +9,7 @@ import {
   LayoutDashboard,
   MessageSquare,
   Package,
+  Plug,
   Settings,
   Shield,
   Sparkles,
@@ -55,4 +56,5 @@ export const navigation: NavEntry[] = [
   { name: "Auditoría", href: "/dashboard/audit-logs", icon: FileSearch, permission: "audit_logs.read" },
   { type: "separator", label: "Configuración" },
   { name: "Configuración", href: "/dashboard/settings", icon: Settings, permission: "business_config.read" },
+  { name: "Integraciones", href: "/dashboard/settings/integrations", icon: Plug, permission: "business_config.read" },
 ];

@@ -146,6 +146,52 @@ export interface Employee {
   services?: Service[];
 }
 
+export interface WorkingHour {
+  workingHourId?: string | null;
+  dayOfWeek: number;
+  openTime: string;
+  closeTime: string;
+  isActive: boolean;
+}
+
+export interface EmployeeWorkingHours {
+  employeeId: string;
+  usesBusinessFallback: boolean;
+  workingHours: WorkingHour[];
+}
+
+export interface GoogleCalendarIntegration {
+  isEnabled: boolean;
+  calendarId: string;
+  timeZone: string;
+  scopes: string | null;
+  hasClientId: boolean;
+  hasClientSecret: boolean;
+  hasRefreshToken: boolean;
+  lastError: string | null;
+  lastSyncAt: string | null;
+}
+
+export interface WompiIntegration {
+  isEnabled: boolean;
+  useSandbox: boolean;
+  sandboxBaseUrl: string;
+  productionBaseUrl: string;
+  requestTimeoutSeconds: number;
+  checkoutBaseUrl: string;
+  hasPrivateKey: boolean;
+  hasPublicKey: boolean;
+  hasEventsSecret: boolean;
+  hasIntegritySecret: boolean;
+  lastError: string | null;
+  lastSyncAt: string | null;
+}
+
+export interface IntegrationSettings {
+  googleCalendar: GoogleCalendarIntegration;
+  wompi: WompiIntegration;
+}
+
 export interface EmployeeService {
   employeeServiceId: string;
   employeeId: string;
@@ -163,7 +209,6 @@ export interface Reservation {
   reservationDateTime: string | null;
   durationMinutes: number | null;
   status: ReservationStatus;
-  calendarEventId: string | null;
   conversationId: string | null;
   createdAt: string;
   updatedAt: string | null;
@@ -227,6 +272,10 @@ export interface Lead {
   timestamp: string;
   customerName: string | null;
   notes: string | null;
+  conversationId?: string | null;
+  conversationStatus?: ConversationLifecycleStatus | null;
+  currentStageName?: string | null;
+  lastActivityAt?: string | null;
   business?: Business;
 }
 

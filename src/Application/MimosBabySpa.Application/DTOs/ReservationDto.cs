@@ -13,7 +13,6 @@ public class ReservationDto
     public DateTime? ReservationDateTime { get; set; }
     public int? DurationMinutes { get; set; }
     public ReservationStatus Status { get; set; }
-    public string? CalendarEventId { get; set; }
     public Guid? ConversationId { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime? UpdatedAt { get; set; }

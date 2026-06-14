@@ -27,9 +27,13 @@
     <Build Include="Tables\BusinessConfigurations.sql" />
     <Build Include="Tables\BusinessAttachments.sql" />
     <Build Include="Tables\BusinessResources.sql" />
+    <Build Include="Tables\BusinessWorkingHours.sql" />
     <Build Include="Tables\ServiceCategories.sql" />
     <Build Include="Tables\Services.sql" />
     <Build Include="Tables\Employees.sql" />
+    <Build Include="Tables\EmployeeWorkingHours.sql" />
+    <Build Include="Tables\EmployeeScheduleExceptions.sql" />
+    <Build Include="Tables\IntegrationConnections.sql" />
     <Build Include="Tables\Conversations.sql" />
     <Build Include="Tables\ConversationContexts.sql" />
     <Build Include="Tables\ConversationStates.sql" />
@@ -37,6 +41,7 @@
     <Build Include="Tables\Leads.sql" />
     <Build Include="Tables\CustomerMemory.sql" />
     <Build Include="Tables\Reservations.sql" />
+    <Build Include="Tables\ReservationIntegrationEvents.sql" />
     <Build Include="Tables\ReservationAddOns.sql" />
     <Build Include="Tables\ServiceAddOnRules.sql" />
     <Build Include="Tables\ServiceBundleItems.sql" />

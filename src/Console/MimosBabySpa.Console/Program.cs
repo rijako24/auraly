@@ -37,14 +37,6 @@ var configuration = new ConfigurationBuilder()
     .AddJsonFile("appSettings.json", optional: true, reloadOnChange: true)
     .Build();
 
-if (args is ["migrate-integrations"])
-{
-    var connectionString = configuration.GetConnectionString("DefaultConnection")
-        ?? throw new InvalidOperationException("DefaultConnection no configurado");
-    await MimosBabySpa.Console.IntegrationsDataMigration.RunAsync(configuration, connectionString);
-    return;
-}
-
 if (args is ["backfill-customer-memory"])
 {
     var backfillServices = new ServiceCollection();
@@ -106,6 +98,7 @@ services.AddScoped<IBusinessIdentificationService, BusinessIdentificationService
 services.AddScoped<IBusinessConfigurationService, BusinessConfigurationService>();
 services.AddScoped<IWhatsAppWebhookParserService, WhatsAppWebhookParserService>();
 services.AddScoped<IEmployeeAssignmentService, EmployeeAssignmentService>();
+services.AddScoped<IWorkingHoursService, WorkingHoursService>();
 services.AddScoped<IAvailabilityService, AvailabilityService>();
 services.AddScoped<ServiceNameResolver>();
 services.AddScoped<ReservationPricingResolver>();
@@ -243,7 +236,7 @@ const string agentIdStr = "7105A9D5-D4E4-4BBA-9F3A-DBB34E0B1B86";
 var agentId = Guid.Parse(agentIdStr);
 
 // Simula el teléfono del cliente (clave de sesión)
-const string userPhone = "+12345679864";
+const string userPhone = "+12345679870";
 
 while (true)
 {

@@ -5,6 +5,7 @@ import { useState } from "react";
 import { ArrowLeft, ArrowRight, Save } from "lucide-react";
 import { toast } from "sonner";
 
+import { AgentTestChat } from "@/components/agents/agent-test-chat";
 import { AgentSettingsEditor, type AgentEditorSection } from "@/components/agents/agent-settings-editor";
 import { CatalogImportStep } from "@/components/agents/catalog-import-step";
 import { Button } from "@/components/ui/button";
@@ -156,7 +157,15 @@ export function AgentSetupWizard({
         ))}
       </div>
 
-      {renderStep()}
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
+        <div className="min-w-0">{renderStep()}</div>
+        <AgentTestChat
+          agent={agent}
+          hasUnsavedChanges={dirty}
+          compact
+          className="xl:sticky xl:top-4 xl:self-start"
+        />
+      </div>
 
       <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-4">
         <div className="flex gap-2">

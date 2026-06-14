@@ -44,7 +44,10 @@ export interface DataTableProps<TData, TValue> {
   searchKey?: string;
   searchPlaceholder?: string;
   isLoading?: boolean;
+  page?: number;
+  pageSize?: number;
   pageCount?: number;
+  totalItems?: number;
   onPaginationChange?: (page: number, pageSize: number) => void;
   onSearch?: (value: string) => void;
   bulkActions?: {
@@ -68,7 +71,10 @@ export function DataTable<TData, TValue>({
   searchKey,
   searchPlaceholder = "Buscar...",
   isLoading = false,
+  page,
+  pageSize,
   pageCount: controlledPageCount,
+  totalItems,
   onPaginationChange,
   onSearch,
   bulkActions = [],
@@ -85,6 +91,10 @@ export function DataTable<TData, TValue>({
   const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>([]);
   const [columnVisibility, setColumnVisibility] = React.useState<VisibilityState>({});
   const [rowSelection, setRowSelection] = React.useState<Record<string, boolean>>({});
+  const [pagination, setPagination] = React.useState({
+    pageIndex: Math.max((page ?? 1) - 1, 0),
+    pageSize: pageSize ?? 20,
+  });
   const [searchValue, setSearchValue] = React.useState("");
   const [internalViewMode, setViewMode] = React.useState<ViewMode>(viewMode ?? "table");
   const [facetedFilterValues, setFacetedFilterValues] = React.useState<
@@ -93,6 +103,21 @@ export function DataTable<TData, TValue>({
 
   const effectiveViewMode = viewMode ?? internalViewMode;
   const handleViewModeChange = onViewModeChange ?? setViewMode;
+
+  React.useEffect(() => {
+    if (!onPaginationChange) return;
+
+    setPagination((old) => {
+      const next = {
+        pageIndex: Math.max((page ?? old.pageIndex + 1) - 1, 0),
+        pageSize: pageSize ?? old.pageSize,
+      };
+
+      return old.pageIndex === next.pageIndex && old.pageSize === next.pageSize
+        ? old
+        : next;
+    });
+  }, [onPaginationChange, page, pageSize]);
 
   const columnsWithSelection = React.useMemo<ColumnDef<TData, TValue>[]>(() => {
     if (!enableRowSelection) return columns;
@@ -147,6 +172,15 @@ export function DataTable<TData, TValue>({
     columns: columnsWithSelection,
     getCoreRowModel: getCoreRowModel(),
     getPaginationRowModel: onPaginationChange ? undefined : getPaginationRowModel(),
+    onPaginationChange: (updater) => {
+      setPagination((old) => {
+        const next = typeof updater === "function" ? updater(old) : updater;
+        if (next.pageIndex !== old.pageIndex || next.pageSize !== old.pageSize) {
+          onPaginationChange?.(next.pageIndex + 1, next.pageSize);
+        }
+        return next;
+      });
+    },
     onSortingChange: setSorting,
     getSortedRowModel: getSortedRowModel(),
     onColumnFiltersChange: setColumnFilters,
@@ -158,6 +192,7 @@ export function DataTable<TData, TValue>({
       columnFilters,
       columnVisibility,
       rowSelection,
+      pagination,
     },
     manualPagination: !!onPaginationChange,
     pageCount: controlledPageCount ?? -1,
@@ -167,6 +202,13 @@ export function DataTable<TData, TValue>({
   const handleSearch = (value: string) => {
     setSearchValue(value);
     onSearch?.(value);
+    if (onPaginationChange) {
+      setPagination((old) => {
+        const next = { ...old, pageIndex: 0 };
+        onPaginationChange(1, next.pageSize);
+        return next;
+      });
+    }
     if (!onSearch && searchKey) {
       table.getColumn(searchKey)?.setFilterValue(value);
     }
@@ -313,7 +355,7 @@ export function DataTable<TData, TValue>({
               pageIndex={table.getState().pagination.pageIndex}
               pageSize={table.getState().pagination.pageSize}
               pageCount={table.getPageCount()}
-              totalItems={table.getFilteredRowModel().rows.length}
+              totalItems={totalItems ?? table.getFilteredRowModel().rows.length}
               onPageChange={table.setPageIndex}
               onPageSizeChange={table.setPageSize}
             />

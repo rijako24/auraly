@@ -1,7 +1,8 @@
 -- ============================================================
 -- Script: SeedSchedulingPolicy
--- Política de agendamiento (Key=2) para negocios activos.
--- Horarios Mimos: lun–vie 8–12 / 14–18, sáb 8–13, dom cerrado.
+-- Politica de agendamiento (Key=2) para negocios activos.
+-- Solo reglas globales; los horarios viven en BusinessWorkingHours
+-- y EmployeeWorkingHours.
 -- Idempotente (MERGE por BusinessId + Key).
 -- ============================================================
 
@@ -12,16 +13,7 @@ DECLARE @SchedulingPolicyValue NVARCHAR(MAX) = N'{
   "slotIntervalMinutes": 60,
   "bufferBetweenAppointmentsMinutes": 0,
   "requireEmployee": true,
-  "employeeStrategy": "least_versatile",
-  "schedule": {
-    "monday":    [{"open":"08:00","close":"12:00"},{"open":"14:00","close":"18:00"}],
-    "tuesday":   [{"open":"08:00","close":"12:00"},{"open":"14:00","close":"18:00"}],
-    "wednesday": [{"open":"08:00","close":"12:00"},{"open":"14:00","close":"18:00"}],
-    "thursday":  [{"open":"08:00","close":"12:00"},{"open":"14:00","close":"18:00"}],
-    "friday":    [{"open":"08:00","close":"12:00"},{"open":"14:00","close":"18:00"}],
-    "saturday":  [{"open":"08:00","close":"13:00"}],
-    "sunday":    []
-  }
+  "employeeStrategy": "least_versatile"
 }';
 
 MERGE dbo.BusinessConfigurations AS target
@@ -34,7 +26,7 @@ USING (
 WHEN MATCHED THEN
     UPDATE SET
         [Value] = @SchedulingPolicyValue,
-        [Description] = N'Política de agendamiento: horarios por día, intervalo de slots y reglas de empleado',
+        [Description] = N'Politica de agendamiento: intervalo de slots, buffer y reglas de empleado',
         UpdatedAt = GETUTCDATE(),
         IsActive = 1
 WHEN NOT MATCHED THEN
@@ -44,10 +36,10 @@ WHEN NOT MATCHED THEN
         src.BusinessId,
         2,
         @SchedulingPolicyValue,
-        N'Política de agendamiento: horarios por día, intervalo de slots y reglas de empleado',
+        N'Politica de agendamiento: intervalo de slots, buffer y reglas de empleado',
         1,
         GETUTCDATE()
     );
 
-PRINT N'SeedSchedulingPolicy: Key=2 (SchedulingPolicy) aplicada a negocios activos.';
+PRINT N'SeedSchedulingPolicy: Key=2 (SchedulingPolicy) aplicada a negocios activos sin horarios.';
 GO

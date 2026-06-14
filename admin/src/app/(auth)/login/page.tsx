@@ -74,7 +74,7 @@ function LoginForm() {
                 id="username"
                 type="text"
                 placeholder="tu_usuario"
-                className="border-[#101828] bg-white pl-10 text-[#151515] placeholder:text-[#667085]"
+                className="border-[#101828] bg-white pl-10 text-[#151515] placeholder:text-[#667085] [--autofill-background:#fff] [--autofill-foreground:#151515]"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 required
@@ -92,7 +92,7 @@ function LoginForm() {
                 id="password"
                 type={showPassword ? "text" : "password"}
                 placeholder="••••••••"
-                className="border-[#101828] bg-white pl-10 pr-10 text-[#151515] placeholder:text-[#667085]"
+                className="border-[#101828] bg-white pl-10 pr-10 text-[#151515] placeholder:text-[#667085] [--autofill-background:#fff] [--autofill-foreground:#151515]"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required

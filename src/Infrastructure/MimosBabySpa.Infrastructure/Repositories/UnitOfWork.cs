@@ -22,6 +22,11 @@ public class UnitOfWork : IUnitOfWork
     private IBusinessResourceRepository? _businessResources;
     private IEmployeeRepository? _employees;
     private IEmployeeServiceRepository? _employeeServices;
+    private IBusinessWorkingHourRepository? _businessWorkingHours;
+    private IEmployeeWorkingHourRepository? _employeeWorkingHours;
+    private IEmployeeScheduleExceptionRepository? _employeeScheduleExceptions;
+    private IIntegrationConnectionRepository? _integrationConnections;
+    private IReservationIntegrationEventRepository? _reservationIntegrationEvents;
     private IConversationStateRepository? _conversationStates;
     private IServiceAddOnRuleRepository? _serviceAddOnRules;
     private IReservationAddOnRepository? _reservationAddOns;
@@ -94,6 +99,21 @@ public class UnitOfWork : IUnitOfWork
 
     public IEmployeeServiceRepository EmployeeServices =>
         _employeeServices ??= new EmployeeServiceRepository(_context);
+
+    public IBusinessWorkingHourRepository BusinessWorkingHours =>
+        _businessWorkingHours ??= new BusinessWorkingHourRepository(_context);
+
+    public IEmployeeWorkingHourRepository EmployeeWorkingHours =>
+        _employeeWorkingHours ??= new EmployeeWorkingHourRepository(_context);
+
+    public IEmployeeScheduleExceptionRepository EmployeeScheduleExceptions =>
+        _employeeScheduleExceptions ??= new EmployeeScheduleExceptionRepository(_context);
+
+    public IIntegrationConnectionRepository IntegrationConnections =>
+        _integrationConnections ??= new IntegrationConnectionRepository(_context);
+
+    public IReservationIntegrationEventRepository ReservationIntegrationEvents =>
+        _reservationIntegrationEvents ??= new ReservationIntegrationEventRepository(_context);
 
     public IConversationStateRepository ConversationStates =>
         _conversationStates ??= new ConversationStateRepository(_context);

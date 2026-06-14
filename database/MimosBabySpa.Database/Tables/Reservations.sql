@@ -7,7 +7,6 @@ CREATE TABLE [dbo].[Reservations] (
     [ReservationDateTime] DATETIME2 NULL,
     [DurationMinutes] INT NULL,
     [Status] INT NOT NULL,
-    [CalendarEventId] NVARCHAR(500) NULL,
     [CustomerNameSnapshot] NVARCHAR(100) NULL,
     [CustomerEmailSnapshot] NVARCHAR(200) NULL,
     [CustomerPhoneSnapshot] NVARCHAR(50) NULL,

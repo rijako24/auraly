@@ -10,6 +10,7 @@ export { paymentsApi } from "./payments";
 export { usersApi } from "./users";
 export { rolesApi } from "./roles";
 export { configurationsApi } from "./configurations";
+export { integrationsApi } from "./integrations";
 export { auditLogsApi } from "./audit-logs";
 export { authApi } from "./auth";
 export { dashboardApi } from "./dashboard";

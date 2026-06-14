@@ -48,6 +48,16 @@ public class FakeConversationService : IConversationService
         Guid conversationId, string? lastMessage) =>
         Task.CompletedTask;
 
+    public Task UpdateConversationAsync(Conversation conversation, CancellationToken ct = default)
+    {
+        var index = _conversations.FindIndex(c => c.ConversationId == conversation.ConversationId);
+        if (index >= 0)
+            _conversations[index] = conversation;
+        else
+            _conversations.Add(conversation);
+        return Task.CompletedTask;
+    }
+
     public Task<Conversation?> GetConversationByIdAsync(Guid conversationId) =>
         Task.FromResult(_conversations.FirstOrDefault(c => c.ConversationId == conversationId));
 

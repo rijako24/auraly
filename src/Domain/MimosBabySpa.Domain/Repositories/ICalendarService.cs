@@ -5,7 +5,6 @@ public interface ICalendarService
     Task<string> CreateEventAsync(Guid businessId, CalendarEvent calendarEvent, CancellationToken cancellationToken = default);
     Task UpdateEventAsync(Guid businessId, string eventId, CalendarEvent calendarEvent, CancellationToken cancellationToken = default);
     Task DeleteEventAsync(Guid businessId, string eventId, CancellationToken cancellationToken = default);
-    Task<bool> IsAvailableAsync(Guid businessId, DateTime startDateTime, DateTime endDateTime, CancellationToken cancellationToken = default);
 }
 
 public class CalendarEvent

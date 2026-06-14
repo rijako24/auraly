@@ -1,6 +1,6 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { leadsApi } from "@/services/api";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 import type { PagedRequest } from "@/types/api";
@@ -26,6 +26,7 @@ export function useLeads(
     queryFn: () =>
       leadsApi.list({ ...params, businessId: businessId! }),
     enabled: !!businessId,
+    placeholderData: keepPreviousData,
   });
 }
 

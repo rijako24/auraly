@@ -1,7 +1,8 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { paymentsApi } from "@/services/api";
+import { useBusinessContextStore } from "@/stores/business-context-store";
 import type { PagedRequest } from "@/types/api";
 
 export const paymentKeys = {
@@ -13,10 +14,14 @@ export const paymentKeys = {
   detail: (id: string) => [...paymentKeys.details(), id] as const,
 };
 
-export function usePayments(params?: Partial<PagedRequest> & { businessId?: string; status?: string }) {
+export function usePayments(params?: Partial<PagedRequest> & { status?: string }) {
+  const businessId = useBusinessContextStore((s) => s.selectedBusinessId);
+
   return useQuery({
-    queryKey: paymentKeys.list(params),
-    queryFn: () => paymentsApi.list(params),
+    queryKey: paymentKeys.list({ ...params, businessId: businessId ?? undefined }),
+    queryFn: () => paymentsApi.list({ ...params, businessId: businessId! }),
+    enabled: !!businessId,
+    placeholderData: keepPreviousData,
   });
 }
 

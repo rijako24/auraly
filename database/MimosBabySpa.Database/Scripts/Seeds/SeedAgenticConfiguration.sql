@@ -166,8 +166,8 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       {
         "id": "scheduling",
         "name": "Agenda",
-        "goal": "Definir la ruta de atencion del servicio elegido: agenda con disponibilidad u horario fijo de inscripcion.",
-        "hint": "Primero llama get_service_fulfillment con el servicio exacto seleccionado. Si devuelve fulfillment_kind=enrollment, usa el horario fijo del catalogo y deja que el flujo cierre internamente esta etapa. Si devuelve fulfillment_kind=reservation y faltan fecha u hora, continua desde la eleccion del cliente y pregunta para que dia y hora le gustaria agendar, en una sola pregunta cercana orientada a revisar disponibilidad. Si ya tienes fecha y hora, llama check_availability y registra desired_date, desired_time y fulfillment_ready=reservation. Si get_service_fulfillment devuelve error de horario no configurado, responde con la informacion oficial disponible y ofrece escalar a humano.",
+        "goal": "Guiar al cliente hacia el siguiente paso de agenda o inscripcion segun la ruta oficial del servicio elegido.",
+        "hint": "Primero llama get_service_fulfillment con el servicio exacto seleccionado. Si la ruta resuelta es inscripcion, usa el horario fijo del catalogo y deja que el flujo cierre internamente esta etapa. Si la ruta resuelta es agenda y faltan datos para revisar la agenda, continua desde la eleccion del cliente y pide solo el siguiente dato necesario en una pregunta cercana. Si ya tienes una fecha, puedes llamar check_availability con esa fecha para mostrar horarios disponibles; si tambien tienes hora, llama check_availability con fecha y hora. Si get_service_fulfillment devuelve error de horario no configurado, responde con la informacion oficial disponible y ofrece escalar a humano.",
         "allowedTools": ["get_service_fulfillment", "check_availability", "set_fact", "reschedule_reservation", "suspend_reservation", "escalate_to_human"],
         "afterTool": [
           {
@@ -176,6 +176,13 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
             "setFacts": {
               "fixed_schedule_label": "{{data.fixed_schedule_label}}",
               "fulfillment_ready": "enrollment"
+            }
+          },
+          {
+            "tool": "check_availability",
+            "when": { "path": "data.verbal_status", "equals": "horario_disponible_no_reservado" },
+            "setFacts": {
+              "fulfillment_ready": "reservation"
             }
           }
         ],
@@ -186,7 +193,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         "id": "customer_data",
         "name": "Datos del cliente",
         "goal": "Obten el nombre del cliente (papa o mama) y la fecha de nacimiento del bebe.",
-        "hint": "Confirma brevemente la seleccion en una linea segun fulfillment_ready: fecha/hora si reservation; horario de inscripcion si enrollment. Luego, UNA pregunta por mensaje: (1) si falta el nombre del cliente, pregunta a nombre de quien hacemos el registro; (2) si falta la fecha de nacimiento del bebe, pidela. Si un dato ya esta en ESTADO ACTUAL, no lo repreguntes. No pidas ambos datos en el mismo mensaje.",
+        "hint": "Confirma brevemente la seleccion ya definida: fecha y hora agendada, u horario oficial de inscripcion si aplica. Luego, UNA pregunta por mensaje: (1) si falta el nombre del cliente, pregunta a nombre de quien hacemos el registro; (2) si falta la fecha de nacimiento del bebe, pidela. Si un dato ya esta en ESTADO ACTUAL, no lo repreguntes. No pidas ambos datos en el mismo mensaje.",
         "allowedTools": ["set_fact", "reschedule_reservation", "suspend_reservation", "escalate_to_human"],
         "advanceWhenFacts": ["customer_name", "baby_birth_date"]
       },
@@ -194,7 +201,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         "id": "finalization",
         "name": "Cierre",
         "goal": "Cierra la reserva: resumen, pago o confirmacion verbal, registro de cita y mensajes post-reserva.",
-        "hint": "1) Objetivo: cerrar solo la solicitud actual con resumen, pago o confirmacion segun checkout. 2) Si aun no se mostro el resumen y ya estan los datos requeridos, llama prepare_checkout con el servicio exacto del catalogo; la herramienta resuelve precio, plantilla, monto y link. 3) Si hay link/resumen pendiente y el cliente solo pide informacion normal, responde sin cambiar la solicitud. 4) Si hay link/resumen pendiente y el cliente pide agregar o cambiar complementos sin nombrar uno exacto, llama get_compatible_add_ons y pide cual desea; si cambia servicio o complemento exacto, actualiza los facts correspondientes y reconstruye el resumen/link con prepare_checkout. 5) Premisa de avance: cuando el cliente elige una opcion concreta de una lista recien presentada, esa eleccion autoriza el siguiente paso; registra el nombre exacto de esa opcion como service, llama prepare_checkout y entrega el resumen/link resultante. 6) Si el cliente pide una categoria o servicio no exacto, llama get_service_catalog y ofrece opciones exactas; cuando elija una, aplica la premisa de avance. 7) Si quiere empezar otra solicitud distinta, pregunta si reemplaza la actual o la deja sin efecto; si decide desistir, llama reset_flow_context con reason=start_new_request o customer_abandoned y checkout_action=abandon. 8) Si prepare_checkout devuelve payment_required=true, entrega el resumen/link y espera confirmacion automatica del webhook; no llames create_reservation. 9) Si prepare_checkout devuelve payment_required=false y checkout_kind=Reservation, pregunta si confirma la reserva; cuando confirme verbalmente, llama create_reservation. 10) Si fulfillment_ready=reservation y falta o cambia fecha/hora, resuelve disponibilidad con check_availability antes de prepare_checkout. Si fulfillment_ready=enrollment, el pago confirma la inscripcion y el webhook enviara la secuencia configurada; no llames check_availability ni create_reservation.",
+        "hint": "1) Objetivo: cerrar solo la solicitud actual con resumen, pago o confirmacion segun checkout. 2) Si aun no se mostro el resumen y ya estan los datos requeridos, llama prepare_checkout con el servicio exacto del catalogo; la herramienta resuelve precio, plantilla, monto y link. 3) Si hay link/resumen pendiente y el cliente solo pide informacion normal, responde sin cambiar la solicitud. 4) Si hay link/resumen pendiente y el cliente pide agregar o cambiar complementos sin nombrar uno exacto, llama get_compatible_add_ons y pide cual desea; si cambia servicio o complemento exacto, actualiza los facts correspondientes y reconstruye el resumen/link con prepare_checkout. 5) Premisa de avance: cuando el cliente elige una opcion concreta de una lista recien presentada, esa eleccion autoriza el siguiente paso; registra el nombre exacto de esa opcion como service, llama prepare_checkout y entrega el resumen/link resultante. 6) Si el cliente pide una categoria o servicio no exacto, llama get_service_catalog y ofrece opciones exactas; cuando elija una, aplica la premisa de avance. 7) Si quiere empezar otra solicitud distinta, pregunta si reemplaza la actual o la deja sin efecto; si decide desistir, llama reset_flow_context con reason=start_new_request o customer_abandoned y checkout_action=abandon. 8) Si prepare_checkout entrega enlace de pago, comparte el resumen/link y espera la confirmacion automatica del webhook. 9) Si prepare_checkout entrega un cierre sin pago, pregunta si confirma con esa informacion; cuando confirme verbalmente, llama create_reservation. 10) Si falta o cambia fecha/hora antes del resumen, llama check_availability antes de prepare_checkout. Para servicios con horario oficial de inscripcion, prepara el checkout con ese horario y espera la confirmacion automatica del webhook.",
         "allowedTools": [
           "prepare_checkout",
           "create_reservation",
@@ -264,7 +271,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
     },
     {
       "key": "fulfillment_ready", "role": "checkout.fulfillment_ready", "label": "ruta de cumplimiento resuelta",
-      "type": "string", "required": false, "source": "user",
+      "type": "string", "required": false, "source": "system",
       "aliases": ["ruta lista", "cumplimiento listo"]
     },
     {

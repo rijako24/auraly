@@ -6,6 +6,7 @@ import { useParams } from "next/navigation";
 import { ArrowLeft, Save } from "lucide-react";
 import { toast } from "sonner";
 
+import { AgentTestChat } from "@/components/agents/agent-test-chat";
 import { AgentSettingsEditor } from "@/components/agents/agent-settings-editor";
 import { Button } from "@/components/ui/button";
 import { PageError } from "@/components/ui/page-error";
@@ -76,13 +77,23 @@ export default function AgentConfigPage() {
         </Button>
       </div>
 
-      <AgentSettingsEditor
-        value={settings}
-        onChange={(next) => {
-          setSettings(next);
-          setDirty(true);
-        }}
-      />
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
+        <div className="min-w-0">
+          <AgentSettingsEditor
+            value={settings}
+            onChange={(next) => {
+              setSettings(next);
+              setDirty(true);
+            }}
+          />
+        </div>
+        <AgentTestChat
+          agent={agent}
+          hasUnsavedChanges={dirty}
+          compact
+          className="xl:sticky xl:top-4 xl:self-start"
+        />
+      </div>
     </div>
   );
 }
