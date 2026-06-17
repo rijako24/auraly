@@ -194,7 +194,7 @@ public sealed class PrepareCheckoutTool : IAgentTool
             if (!validation.IsValid)
             {
                 return (null, ToolResultHelper.Error(
-                    "invalid_add_ons",
+                    validation.ErrorCode ?? "invalid_add_ons",
                     validation.ErrorMessage ?? "Invalid add-on selection.",
                     validation.Hint));
             }
@@ -252,7 +252,7 @@ public sealed class PrepareCheckoutTool : IAgentTool
             service.ServiceName,
             service.ServiceCategory?.Name,
             service.DurationMinutes > 0 ? service.DurationMinutes : 60,
-            pricing.LineItems.Select(li => new CheckoutQuoteLineItem(li.Name, li.Price)).ToList(),
+            pricing.LineItems.Select(li => new CheckoutQuoteLineItem(li.Name, li.Price, li.IncludeInCheckoutTotal)).ToList(),
             totalCents,
             payableCents,
             currency,
@@ -385,7 +385,11 @@ public sealed class PrepareCheckoutTool : IAgentTool
             ["line_items"] = quote.LineItems.Select(li => (object)new Dictionary<string, object?>
             {
                 ["name"] = li.Name,
-                ["price"] = li.Price.ToString("N0", CultureInfo.InvariantCulture)
+                ["price"] = li.Price.ToString("N0", CultureInfo.InvariantCulture),
+                ["include_in_checkout_total"] = li.IncludeInCheckoutTotal,
+                ["checkout_note"] = li.IncludeInCheckoutTotal
+                    ? string.Empty
+                    : " (valor informativo; no incluido en el anticipo)"
             }).ToList(),
             ["service_price"] = (quote.LineItems.FirstOrDefault()?.Price ?? quote.TotalCents / 100m)
                 .ToString("N0", CultureInfo.InvariantCulture),
@@ -394,7 +398,11 @@ public sealed class PrepareCheckoutTool : IAgentTool
                 .Select(li => (object)new Dictionary<string, object?>
                 {
                     ["name"] = li.Name,
-                    ["price"] = li.Price.ToString("N0", CultureInfo.InvariantCulture)
+                    ["price"] = li.Price.ToString("N0", CultureInfo.InvariantCulture),
+                    ["include_in_checkout_total"] = li.IncludeInCheckoutTotal,
+                    ["checkout_note"] = li.IncludeInCheckoutTotal
+                        ? string.Empty
+                        : " (valor informativo; no incluido en el anticipo)"
                 })
                 .ToList(),
             ["deposit"] = (quote.PayableCents / 100m).ToString("N0", CultureInfo.InvariantCulture),

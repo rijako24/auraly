@@ -83,7 +83,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
     {
       "key": "session.engagement", "role": "session.engagement",
       "label": "contexto de engagement", "type": "string",
-      "required": false, "source": "session", "persistsAcrossConversations": false
+      "required": false, "source": "session", "scope": "ephemeral"
     },
     {
       "key": "occasion", "role": "order.occasion", "label": "ocasión",
@@ -117,8 +117,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
     },
     {
       "key": "customer_name", "role": "customer.name", "label": "nombre del cliente",
-      "type": "string", "required": false, "source": "user",
-      "persistsAcrossConversations": true,
+      "type": "string", "required": false, "source": "user", "scope": "customer",
       "aliases": ["nombre", "cliente"]
     },
     {

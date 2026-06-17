@@ -116,6 +116,7 @@ public sealed class CatalogImportAdminService : ICatalogImportAdminService
                 Description = line.Description ?? string.Empty,
                 DurationMinutes = line.DurationMinutes > 0 ? line.DurationMinutes : 60,
                 Price = line.Price,
+                IncludeInCheckoutTotal = line.IncludeInCheckoutTotal,
                 CategoryId = categoryId,
                 Tier = ParseTier(line.Tier),
                 ServiceType = ParseServiceType(line.ServiceType),

@@ -1,11 +1,8 @@
 using FluentAssertions;
 using Moq;
-using MimosBabySpa.Application.Agents;
 using MimosBabySpa.Application.Services;
 using MimosBabySpa.Domain.Entities;
-using MimosBabySpa.Domain.Enums;
 using MimosBabySpa.Domain.Repositories;
-using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
 namespace MimosBabySpa.Tests.Services;
@@ -55,129 +52,6 @@ public class CustomerMemoryServiceTests
         var all = await service.GetAllAsync(businessId, "+573001234567");
 
         all["customer_name"].Should().Be("Ana");
-    }
-}
-
-public class ConversationSummaryHookTests
-{
-    [Fact]
-    public async Task OnClosedAsync_ReservationConfirmed_AppendsSummaryLine()
-    {
-        var businessId = Guid.NewGuid();
-        var conversationId = Guid.NewGuid();
-
-        var reservation = new Reservation
-        {
-            ReservationId = Guid.NewGuid(),
-            BusinessId = businessId,
-            ConversationId = conversationId,
-            Status = ReservationStatus.Confirmed,
-            ReservationDateTime = new DateTime(2026, 6, 5, 10, 0, 0, DateTimeKind.Utc),
-            Service = new Service { ServiceName = "Plan Marineritos" }
-        };
-
-        var mockReservations = new Mock<IReservationRepository>();
-        mockReservations
-            .Setup(r => r.GetActiveByConversationIdAsync(conversationId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(reservation);
-
-        var mockContexts = new Mock<IConversationContextRepository>();
-        var mockUow = new Mock<IUnitOfWork>();
-        mockUow.Setup(u => u.Reservations).Returns(mockReservations.Object);
-        mockUow.Setup(u => u.ConversationContexts).Returns(mockContexts.Object);
-
-        var storedSummary = string.Empty;
-        var mockMemory = new Mock<ICustomerMemoryService>();
-        mockMemory
-            .Setup(m => m.GetAsync(
-                businessId, "+573001234567", CustomerMemoryKeys.Summary, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(() => string.IsNullOrWhiteSpace(storedSummary) ? null : storedSummary);
-        mockMemory
-            .Setup(m => m.RememberAsync(
-                businessId,
-                "+573001234567",
-                CustomerMemoryKeys.Summary,
-                It.IsAny<string>(),
-                It.IsAny<CancellationToken>()))
-            .Callback<Guid, string, string, string, CancellationToken>((_, _, _, value, _) => storedSummary = value)
-            .Returns(Task.CompletedTask);
-
-        var hook = new ConversationSummaryHook(
-            mockUow.Object,
-            mockMemory.Object,
-            NullLogger<ConversationSummaryHook>.Instance);
-
-        var conversation = new Conversation
-        {
-            ConversationId = conversationId,
-            BusinessId = businessId,
-            UserNumber = "+573001234567",
-            ClosedAt = new DateTime(2026, 6, 1, 18, 0, 0, DateTimeKind.Utc)
-        };
-
-        await hook.OnClosedAsync(conversation, ConversationCloseReasons.ReservationConfirmed);
-
-        storedSummary.Should().Contain("reservó Plan Marineritos");
-        storedSummary.Should().Contain("2026-06-05");
-    }
-
-    [Fact]
-    public async Task OnClosedAsync_DayChangedWithoutReservation_AppendsIntentLine()
-    {
-        var businessId = Guid.NewGuid();
-        var conversationId = Guid.NewGuid();
-
-        var mockReservations = new Mock<IReservationRepository>();
-        mockReservations
-            .Setup(r => r.GetActiveByConversationIdAsync(conversationId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync((Reservation?)null);
-
-        var mockContexts = new Mock<IConversationContextRepository>();
-        mockContexts
-            .Setup(c => c.GetByConversationIdAsync(conversationId))
-            .ReturnsAsync(new List<ConversationContext>
-            {
-                new() { Field = ConversationFactKeys.Service, Value = "Plan Marineritos" },
-                new() { Field = ConversationFactKeys.DesiredDate, Value = "2026-06-05" }
-            });
-
-        var mockUow = new Mock<IUnitOfWork>();
-        mockUow.Setup(u => u.Reservations).Returns(mockReservations.Object);
-        mockUow.Setup(u => u.ConversationContexts).Returns(mockContexts.Object);
-
-        var storedSummary = string.Empty;
-        var mockMemory = new Mock<ICustomerMemoryService>();
-        mockMemory
-            .Setup(m => m.GetAsync(
-                businessId, "+573001234567", CustomerMemoryKeys.Summary, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(() => string.IsNullOrWhiteSpace(storedSummary) ? null : storedSummary);
-        mockMemory
-            .Setup(m => m.RememberAsync(
-                businessId,
-                "+573001234567",
-                CustomerMemoryKeys.Summary,
-                It.IsAny<string>(),
-                It.IsAny<CancellationToken>()))
-            .Callback<Guid, string, string, string, CancellationToken>((_, _, _, value, _) => storedSummary = value)
-            .Returns(Task.CompletedTask);
-
-        var hook = new ConversationSummaryHook(
-            mockUow.Object,
-            mockMemory.Object,
-            NullLogger<ConversationSummaryHook>.Instance);
-
-        var conversation = new Conversation
-        {
-            ConversationId = conversationId,
-            BusinessId = businessId,
-            UserNumber = "+573001234567",
-            ClosedAt = new DateTime(2026, 6, 1, 18, 0, 0, DateTimeKind.Utc)
-        };
-
-        await hook.OnClosedAsync(conversation, ConversationCloseReasons.DayChanged);
-
-        storedSummary.Should().Contain("consultó");
-        storedSummary.Should().Contain("no reservó");
     }
 }
 

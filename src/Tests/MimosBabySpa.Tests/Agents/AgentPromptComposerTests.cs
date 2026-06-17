@@ -659,20 +659,4 @@ public class AgentPromptComposerTests
         result.Should().Contain("2026-05-28");
     }
 
-    [Fact]
-    public void BuildCustomerMemoryBlock_WhenSummaryPresent_IncludesMemorySection()
-    {
-        var session = new AgentToolContext
-        {
-            Conversation = new Conversation(),
-            ConversationState = new ConversationState(),
-            CustomerMemorySummary = "2026-06-01: reservó Plan Marineritos para 2026-06-05 10:00."
-        };
-
-        var block = AgentPromptComposer.BuildCustomerMemoryBlock(session);
-
-        block.Should().Contain("## MEMORIA DEL CLIENTE");
-        block.Should().Contain("Plan Marineritos");
-        block.Should().Contain("NO repitas reservas pasadas");
-    }
 }

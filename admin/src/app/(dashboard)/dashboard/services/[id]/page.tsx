@@ -63,6 +63,9 @@ export default function ServiceDetailPage() {
         <Badge variant={service.isActive ? "default" : "secondary"}>
           {service.isActive ? "Activo" : "Inactivo"}
         </Badge>
+        {!service.includeInCheckoutTotal && (
+          <Badge variant="secondary">No suma al total</Badge>
+        )}
       </div>
 
       {service.description && (
@@ -121,6 +124,12 @@ export default function ServiceDetailPage() {
                     Precio
                   </p>
                   <p>{formatCurrency(service.price)}</p>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">
+                    Checkout
+                  </p>
+                  <p>{service.includeInCheckoutTotal ? "Suma al total" : "No suma al total"}</p>
                 </div>
                 <div>
                   <p className="text-sm font-medium text-muted-foreground">

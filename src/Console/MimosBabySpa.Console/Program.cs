@@ -134,7 +134,7 @@ services.AddScoped<ILocalizationService, LocalizationService>();
 services.AddScoped<IConversationStateManager, ConversationStateManager>();
 services.AddScoped<IConversationFactsService, ConversationFactsService>();
 services.AddScoped<ICustomerMemoryService, CustomerMemoryService>();
-services.AddScoped<IConversationClosedHook, ConversationSummaryHook>();
+services.AddScoped<IRequestContextService, RequestContextService>();
 services.AddScoped<ICustomerMemoryBackfillService, CustomerMemoryBackfillService>();
 services.AddScoped<IReservationLifecycleService, ReservationLifecycleService>();
 services.AddScoped<ICustomerReservationResolver, CustomerReservationResolver>();
@@ -162,6 +162,7 @@ services.AddScoped<IMediaUrlResolver, ConsoleMediaUrlResolver>();
 services.AddScoped<IOutboundMessageDispatcher, OutboundMessageDispatcher>();
 services.AddScoped<IMessageSequenceResolver, MessageSequenceResolver>();
 services.AddScoped<IActiveAgentConfigResolver, ActiveAgentConfigResolver>();
+services.AddScoped<IReservationCreatedNotificationDispatcher, ReservationCreatedNotificationDispatcher>();
 
 services.AddHttpClient();
 services.AddHttpClient<GoogleCalendarService>(c => c.Timeout = TimeSpan.FromSeconds(30));
@@ -236,7 +237,7 @@ const string agentIdStr = "7105A9D5-D4E4-4BBA-9F3A-DBB34E0B1B86";
 var agentId = Guid.Parse(agentIdStr);
 
 // Simula el teléfono del cliente (clave de sesión)
-const string userPhone = "+12345679870";
+const string userPhone = "+12345679881";
 
 while (true)
 {

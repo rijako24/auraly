@@ -1,4 +1,5 @@
 using System.Text.Json;
+using MimosBabySpa.Application.Agents.Configuration;
 using MimosBabySpa.Application.Agents.Facts;
 using MimosBabySpa.Application.Agents.Composition;
 using MimosBabySpa.Application.Agents.Tools;
@@ -107,7 +108,7 @@ public sealed class AgentTestMockTool : IAgentTool
     {
         TryGetString(arguments, "reason", out var reason);
         var persistentKeys = (ctx.Config?.FactSchema ?? [])
-            .Where(f => f.PersistsAcrossConversations)
+            .Where(f => f.ShouldRememberAcrossRequests())
             .Select(f => f.Key)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 

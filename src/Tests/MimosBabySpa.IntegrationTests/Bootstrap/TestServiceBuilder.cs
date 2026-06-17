@@ -8,6 +8,7 @@ using MimosBabySpa.Application.Agents.Gating;
 using MimosBabySpa.Application.Agents.Templates;
 using MimosBabySpa.Application.Agents.Tools;
 using MimosBabySpa.Application.Agents.Tools.Impl;
+using MimosBabySpa.Application.Billing;
 using MimosBabySpa.Application.BusinessRules;
 using MimosBabySpa.Application.Configuration;
 using MimosBabySpa.Application.LLM;
@@ -62,14 +63,15 @@ public static class TestServiceBuilder
         services.AddSingleton<IBusinessClock>(new FakeBusinessClock());
         services.AddSingleton<ITemporalReferenceBuilder, TemporalReferenceBuilder>();
         services.AddSingleton<ISchedulingPolicyProvider, FakeSchedulingPolicyProvider>();
+        services.AddSingleton<IUsageBillingService, NoOpUsageBillingService>();
 
         services.AddSingleton<IConversationStateRepository>(unitOfWork.ConversationStates);
         services.AddSingleton<IPaymentTransactionRepository>(unitOfWork.PaymentTransactions);
         services.AddSingleton<IPaymentLinkService, FakePaymentLinkService>();
         services.AddSingleton<IConversationStateManager, ConversationStateManager>();
         services.AddSingleton<ICustomerMemoryService, CustomerMemoryService>();
-        services.AddSingleton<IConversationClosedHook, ConversationSummaryHook>();
         services.AddSingleton<IConversationFactsService, ConversationFactsService>();
+        services.AddSingleton<IRequestContextService, RequestContextService>();
         services.AddSingleton<IReservationLifecycleService, ReservationLifecycleService>();
         services.AddSingleton<ICustomerReservationResolver, CustomerReservationResolver>();
         services.AddSingleton<IPaymentLifecycleService, PaymentLifecycleService>();
@@ -91,6 +93,8 @@ public static class TestServiceBuilder
         services.AddSingleton<IConversationReleaseService, ConversationReleaseService>();
         services.AddSingleton<IEscalationNotifier, EscalationNotifier>();
         services.AddSingleton<IEscalationConfigProvider, EscalationConfigProvider>();
+        services.AddSingleton<IMessageSequenceResolver, NoOpMessageSequenceResolver>();
+        services.AddSingleton<IReservationCreatedNotificationDispatcher, NoOpReservationCreatedNotificationDispatcher>();
 
         services.AddSingleton<ServiceNameResolver>();
         services.AddSingleton<IAddOnCatalogService, AddOnCatalogService>();
@@ -115,13 +119,19 @@ public static class TestServiceBuilder
                     sp.GetRequiredService<IReservationIntentBuilder>(),
                     sp.GetRequiredService<IBusinessRuleEngine>(),
                     sp.GetRequiredService<IAvailabilityService>(),
-                    sp.GetRequiredService<ISchedulingPolicyProvider>(),
-                    sp.GetRequiredService<IConversationLifecycleService>()),
+                    sp.GetRequiredService<ISchedulingPolicyProvider>()),
                 new EscalateToHumanTool(sp.GetRequiredService<IEscalationNotifier>()),
+                new GetCustomerReservationsTool(sp.GetRequiredService<IReservationLifecycleService>()),
                 new GetCompatibleAddOnsTool(sp.GetRequiredService<IAddOnCatalogService>()),
                 new GetServiceFulfillmentTool(
                     sp.GetRequiredService<IUnitOfWork>(),
                     sp.GetRequiredService<ServiceNameResolver>()),
+                new PrepareReservationChangeTool(
+                    sp.GetRequiredService<IReservationService>(),
+                    sp.GetRequiredService<ICustomerReservationResolver>()),
+                new ConfirmReservationChangeTool(
+                    sp.GetRequiredService<IReservationService>(),
+                    sp.GetRequiredService<ICustomerReservationResolver>()),
                 new SetFactTool(
                     sp.GetRequiredService<IConversationFactsService>(),
                     sp.GetRequiredService<IAddOnCatalogService>(),
@@ -141,5 +151,57 @@ public static class TestServiceBuilder
         services.AddSingleton<IAgentTurnResponseComposer, AgentTurnResponseComposer>();
 
         services.AddSingleton<IAgentConversationService, AgentConversationService>();
+    }
+
+    private sealed class NoOpUsageBillingService : IUsageBillingService
+    {
+        public Task<UsageGateResult> CanProcessAsync(Guid businessId, CancellationToken ct = default) =>
+            Task.FromResult(new UsageGateResult(
+                true,
+                "allowed",
+                "Allowed in integration tests.",
+                Snapshot: null));
+
+        public Task<UsageChargeResult> ChargeAsync(UsageChargeRequest request, CancellationToken ct = default) =>
+            Task.FromResult(new UsageChargeResult(
+                Charged: false,
+                CreditsCharged: 0,
+                EstimatedCostCop: 0,
+                Snapshot: null));
+
+        public Task<BusinessUsageSnapshot?> GetCurrentUsageAsync(Guid businessId, CancellationToken ct = default) =>
+            Task.FromResult<BusinessUsageSnapshot?>(null);
+
+        public Task<IReadOnlyList<UsagePlanDto>> GetPlansAsync(CancellationToken ct = default) =>
+            Task.FromResult<IReadOnlyList<UsagePlanDto>>([]);
+    }
+
+    private sealed class NoOpMessageSequenceResolver : IMessageSequenceResolver
+    {
+        public Task<IReadOnlyList<OutboundMessage>> ResolveAsync(
+            Guid businessId,
+            string sequenceName,
+            MimosBabySpa.Application.Agents.Configuration.MessageSequenceCatalog catalog,
+            MessageSequenceContext context,
+            CancellationToken ct = default) =>
+            Task.FromResult<IReadOnlyList<OutboundMessage>>([]);
+    }
+
+    private sealed class NoOpReservationCreatedNotificationDispatcher : IReservationCreatedNotificationDispatcher
+    {
+        public Task SendAsync(
+            Guid businessId,
+            MimosBabySpa.Domain.Entities.Reservation reservation,
+            AgentConfig config,
+            IReadOnlyDictionary<string, string>? custom = null,
+            CancellationToken ct = default) =>
+            Task.CompletedTask;
+
+        public Task SendForActiveAgentAsync(
+            Guid businessId,
+            MimosBabySpa.Domain.Entities.Reservation reservation,
+            IReadOnlyDictionary<string, string>? custom = null,
+            CancellationToken ct = default) =>
+            Task.CompletedTask;
     }
 }

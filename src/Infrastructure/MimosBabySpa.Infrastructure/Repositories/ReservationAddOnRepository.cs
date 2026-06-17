@@ -20,7 +20,10 @@ public class ReservationAddOnRepository : IReservationAddOnRepository
     }
 
     public async Task<IReadOnlyList<ReservationAddOn>> GetByReservationIdAsync(Guid reservationId) =>
-        await _context.ReservationAddOns.Where(a => a.ReservationId == reservationId).ToListAsync();
+        await _context.ReservationAddOns
+            .Include(a => a.AddOnService)
+            .Where(a => a.ReservationId == reservationId)
+            .ToListAsync();
 
     public Task DeleteAsync(ReservationAddOn addOn)
     {

@@ -14,6 +14,9 @@ public sealed class AgentToolContext
     public Guid ConversationId { get; init; }
     public DateOnly BusinessToday { get; init; }
     public DateTimeOffset BusinessNow { get; init; }
+    public bool BusinessDayRollover { get; init; }
+    public DateOnly? PreviousBusinessDay { get; init; }
+    public IReadOnlyList<string> RolloverClearedFacts { get; init; } = [];
     public string ChannelPhone { get; init; } = string.Empty;
     public IReadOnlyList<string> EscalationContacts { get; init; } = [];
     public int CurrentToolIteration { get; set; }
@@ -23,9 +26,6 @@ public sealed class AgentToolContext
     public ConversationState ConversationState { get; init; } = null!;
     public Conversation Conversation { get; init; } = null!;
     public Dictionary<string, string> Facts { get; init; } = new(StringComparer.OrdinalIgnoreCase);
-
-    /// <summary>Resumen rodante de episodios anteriores (CustomerMemory.customer_summary).</summary>
-    public string? CustomerMemorySummary { get; set; }
 
     /// <summary>
     /// Citas confirmadas o en espera del cliente en este turno (conversación actual o teléfono del canal).

@@ -30,9 +30,9 @@ public class InMemoryServiceRepository : IServiceRepository
     {
         _store = new List<Service>
         {
-            new() { ServiceId = Guid.NewGuid(), BusinessId = businessId, ServiceName = "Plan Marineritos",      DurationMinutes = 60, Price = 80,  IsActive = true, CategoryId = TestCategoryIds.Plan, ServiceCategory = PlanCategory, Tier = ServiceTier.Base,    CreatedAt = DateTime.UtcNow },
-            new() { ServiceId = Guid.NewGuid(), BusinessId = businessId, ServiceName = "Plan Post Vacunas",    DurationMinutes = 60, Price = 90,  IsActive = true, CategoryId = TestCategoryIds.Plan, ServiceCategory = PlanCategory, Tier = ServiceTier.Premium, CreatedAt = DateTime.UtcNow },
-            new() { ServiceId = Guid.NewGuid(), BusinessId = businessId, ServiceName = "Plan Aventuras Marinas", DurationMinutes = 75, Price = 100, IsActive = true, CategoryId = TestCategoryIds.Plan, ServiceCategory = PlanCategory, Tier = ServiceTier.Deluxe, CreatedAt = DateTime.UtcNow },
+            new() { ServiceId = Guid.NewGuid(), BusinessId = businessId, ServiceName = "Plan Marineritos",      DurationMinutes = 60, Price = 125000, IsActive = true, CategoryId = TestCategoryIds.Plan, ServiceCategory = PlanCategory, Tier = ServiceTier.Base,    CreatedAt = DateTime.UtcNow },
+            new() { ServiceId = Guid.NewGuid(), BusinessId = businessId, ServiceName = "Plan Suaves Mimos - Post Vacunas", DurationMinutes = 45, Price = 95000, IsActive = true, CategoryId = TestCategoryIds.Plan, ServiceCategory = PlanCategory, Tier = ServiceTier.Premium, CreatedAt = DateTime.UtcNow },
+            new() { ServiceId = Guid.NewGuid(), BusinessId = businessId, ServiceName = "Plan Aventuras Marinas", DurationMinutes = 45, Price = 100000, IsActive = true, CategoryId = TestCategoryIds.Plan, ServiceCategory = PlanCategory, Tier = ServiceTier.Deluxe, CreatedAt = DateTime.UtcNow },
             new() { ServiceId = Guid.Parse("dddddddd-dddd-dddd-dddd-dddddddddddd"), BusinessId = businessId, ServiceName = "Plan Deluxe", DurationMinutes = 90, Price = 120, IsActive = true, CategoryId = TestCategoryIds.Plan, ServiceCategory = PlanCategory, Tier = ServiceTier.Deluxe, CreatedAt = DateTime.UtcNow },
             new() { ServiceId = Guid.Parse("cccccccc-cccc-cccc-cccc-cccccccccccc"), BusinessId = businessId, ServiceName = "Masaje Extra 15m", DurationMinutes = 15, Price = 20, IsActive = true, CategoryId = TestCategoryIds.Plan, ServiceCategory = PlanCategory, Tier = ServiceTier.Base, ServiceType = ServiceType.AddOn, CreatedAt = DateTime.UtcNow }
         };
@@ -275,6 +275,7 @@ public class InMemoryConversationContextRepository : IConversationContextReposit
         if (existing is not null)
         {
             existing.Value = value;
+            existing.UpdatedAt = DateTime.UtcNow;
             return Task.FromResult(existing);
         }
 
@@ -283,7 +284,8 @@ public class InMemoryConversationContextRepository : IConversationContextReposit
             ConversationContextId = Guid.NewGuid(),
             ConversationId = conversationId,
             Field = field,
-            Value = value
+            Value = value,
+            CreatedAt = DateTime.UtcNow
         };
         _store.Add(created);
         return Task.FromResult(created);

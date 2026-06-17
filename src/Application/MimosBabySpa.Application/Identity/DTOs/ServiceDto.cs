@@ -9,6 +9,7 @@ public record ServiceDto(
     string Description,
     int DurationMinutes,
     decimal Price,
+    bool IncludeInCheckoutTotal,
     bool IsActive,
     Guid CategoryId,
     string CategoryName,

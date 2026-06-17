@@ -51,3 +51,25 @@ public static class WompiWebhookOutcomes
     public const string ReservationCreated = "reservation_created";
     public const string SlotUnavailableAfterPayment = "slot_unavailable_after_payment";
 }
+
+/// <summary>
+/// Disparadores internos del motor para notificaciones outbound.
+/// Fuente: Agents.SettingsJson -> notifications.
+/// </summary>
+public sealed class NotificationDefinitions
+{
+    public ReservationCreatedNotificationConfig ReservationCreated { get; set; } = new();
+}
+
+/// <summary>
+/// Notificacion interna enviada cuando una tool crea una reserva confirmada.
+/// Reutiliza messageSequences, pero permite destinatarios distintos al cliente.
+/// </summary>
+public sealed class ReservationCreatedNotificationConfig
+{
+    public bool Enabled { get; set; }
+
+    public IReadOnlyList<string> Recipients { get; set; } = [];
+
+    public string? SendMessageSequence { get; set; }
+}

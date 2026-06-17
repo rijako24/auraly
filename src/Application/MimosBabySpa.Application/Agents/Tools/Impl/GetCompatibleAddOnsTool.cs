@@ -57,7 +57,8 @@ public sealed class GetCompatibleAddOnsTool : IAgentTool
             {
                 name = a.AddOnName,
                 description = a.AddOnDescription,
-                price = a.AddOnPrice
+                price = a.AddOnPrice,
+                include_in_checkout_total = a.IncludeInCheckoutTotal
             })
         });
     }

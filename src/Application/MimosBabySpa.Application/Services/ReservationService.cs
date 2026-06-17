@@ -13,6 +13,8 @@ public class ReservationService : IReservationService
     private readonly IUnitOfWork _unitOfWork;
     private readonly ICalendarService _calendarService;
     private readonly IEmployeeAssignmentService _employeeAssignmentService;
+    private readonly IAddOnCatalogService _addOnCatalog;
+    private readonly ServiceNameResolver _serviceNameResolver;
     private readonly ILogger<ReservationService> _logger;
 
     public ReservationService(
@@ -20,11 +22,15 @@ public class ReservationService : IReservationService
         ICalendarService calendarService,
         IIntegrationsConfigProvider integrationsProvider,
         IEmployeeAssignmentService employeeAssignmentService,
+        IAddOnCatalogService addOnCatalog,
+        ServiceNameResolver serviceNameResolver,
         ILogger<ReservationService> logger)
     {
         _unitOfWork = unitOfWork;
         _calendarService = calendarService;
         _employeeAssignmentService = employeeAssignmentService;
+        _addOnCatalog = addOnCatalog;
+        _serviceNameResolver = serviceNameResolver;
         _logger = logger;
     }
 
@@ -262,6 +268,221 @@ public class ReservationService : IReservationService
         return true;
     }
 
+    public async Task<UpdateReservationChangeResult> UpdateReservationAsync(
+        UpdateReservationChangeRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var reservation = await _unitOfWork.Reservations.GetByIdAsync(request.ReservationId);
+        if (reservation is null)
+        {
+            return UpdateReservationChangeResult.Fail(
+                "reservation_not_found",
+                "Reservation was not found.",
+                null,
+                request.ReservationId);
+        }
+
+        if (reservation.Status is ReservationStatus.Cancelled or ReservationStatus.Completed)
+        {
+            return UpdateReservationChangeResult.Fail(
+                "reservation_not_manageable",
+                "Reservation can no longer be changed.",
+                "Only upcoming confirmed or on-hold reservations can be changed.",
+                request.ReservationId);
+        }
+
+        var currentService = reservation.Service
+            ?? (reservation.ServiceId.HasValue
+                ? await _unitOfWork.Services.GetByIdAsync(reservation.ServiceId.Value)
+                : null);
+        if (currentService is null)
+        {
+            return UpdateReservationChangeResult.Fail(
+                "service_not_found",
+                "The reservation has no service assigned.",
+                "Escalate to a human to review this reservation.",
+                request.ReservationId);
+        }
+
+        var targetService = currentService;
+        if (!string.IsNullOrWhiteSpace(request.ServiceName))
+        {
+            var canonical = await _serviceNameResolver.ResolveAsync(
+                reservation.BusinessId,
+                request.ServiceName,
+                cancellationToken);
+            if (string.IsNullOrWhiteSpace(canonical))
+            {
+                return UpdateReservationChangeResult.Fail(
+                    "service_not_found",
+                    $"Service '{request.ServiceName}' was not found in this business catalog.",
+                    "Use get_service_catalog and ask the customer to choose an exact service.",
+                    request.ReservationId);
+            }
+
+            targetService = await _unitOfWork.Services.GetByBusinessIdAndNameAsync(reservation.BusinessId, canonical);
+            if (targetService is null)
+            {
+                return UpdateReservationChangeResult.Fail(
+                    "service_not_found",
+                    $"Service '{canonical}' was not found in this business catalog.",
+                    "Use get_service_catalog and ask the customer to choose an exact service.",
+                    request.ReservationId);
+            }
+        }
+
+        var targetDateTime = reservation.ReservationDateTime;
+        if (request.Date.HasValue || request.Time.HasValue)
+        {
+            if (!request.Date.HasValue && !reservation.ReservationDateTime.HasValue)
+            {
+                return UpdateReservationChangeResult.Fail(
+                    "date_required",
+                    "A date is required to change the reservation time.",
+                    "Ask for the desired date.",
+                    request.ReservationId);
+            }
+
+            if (!request.Time.HasValue && !reservation.ReservationDateTime.HasValue)
+            {
+                return UpdateReservationChangeResult.Fail(
+                    "time_required",
+                    "A time is required to change the reservation date.",
+                    "Ask for the desired time.",
+                    request.ReservationId);
+            }
+
+            var date = request.Date ?? DateOnly.FromDateTime(reservation.ReservationDateTime!.Value);
+            var time = request.Time ?? TimeOnly.FromDateTime(reservation.ReservationDateTime!.Value);
+            targetDateTime = date.ToDateTime(time);
+        }
+
+        if (!targetDateTime.HasValue)
+        {
+            return UpdateReservationChangeResult.Fail(
+                "datetime_required",
+                "Reservation date and time are required before applying this change.",
+                "Ask for date and time.",
+                request.ReservationId);
+        }
+
+        var targetDuration = targetService.DurationMinutes > 0 ? targetService.DurationMinutes : 60;
+        var serviceChanged = reservation.ServiceId != targetService.ServiceId;
+        var dateTimeChanged = reservation.ReservationDateTime != targetDateTime;
+        var mustReassignEmployee = serviceChanged || dateTimeChanged || reservation.EmployeeId is null;
+        Employee? targetEmployee = reservation.Employee;
+
+        if (mustReassignEmployee)
+        {
+            targetEmployee = await _employeeAssignmentService.FindBestAvailableEmployeeAsync(
+                reservation.BusinessId,
+                targetService.ServiceId,
+                targetDateTime.Value,
+                targetDateTime.Value.AddMinutes(targetDuration),
+                cancellationToken,
+                preferredEmployeeId: serviceChanged ? null : reservation.EmployeeId);
+
+            if (targetEmployee is null)
+            {
+                return UpdateReservationChangeResult.Fail(
+                    "slot_unavailable",
+                    "No employee is available for the requested service and time.",
+                    "Call check_availability or ask for another date/time.",
+                    request.ReservationId);
+            }
+        }
+
+        var currentAddOnsCsv = await BuildCurrentAddOnsCsvAsync(reservation.ReservationId, cancellationToken);
+        var targetAddOnsCsv = BuildTargetAddOnsCsv(
+            currentAddOnsCsv,
+            request.AddOnsCsv,
+            request.AddOnsMode);
+
+        if (!string.IsNullOrWhiteSpace(targetAddOnsCsv))
+        {
+            var validation = await _addOnCatalog.ValidateAsync(
+                reservation.BusinessId,
+                targetService.ServiceName,
+                targetAddOnsCsv,
+                cancellationToken);
+            if (!validation.IsValid)
+            {
+                return UpdateReservationChangeResult.Fail(
+                    validation.ErrorCode ?? "invalid_add_ons",
+                    validation.ErrorMessage ?? "Invalid add-on selection.",
+                    validation.Hint,
+                    request.ReservationId);
+            }
+
+            targetAddOnsCsv = validation.NormalizedCsv;
+        }
+
+        var newTotal = await ResolveReservationTotalAsync(
+            reservation.BusinessId,
+            targetService.ServiceName,
+            targetAddOnsCsv,
+            cancellationToken);
+        var targetAddOnNames = SplitCsv(targetAddOnsCsv).ToList();
+
+        if (!request.Apply)
+        {
+            return new UpdateReservationChangeResult(
+                true,
+                null,
+                null,
+                null,
+                reservation.ReservationId,
+                targetService.ServiceName,
+                DateOnly.FromDateTime(targetDateTime.Value),
+                TimeOnly.FromDateTime(targetDateTime.Value),
+                targetEmployee?.Name ?? reservation.Employee?.Name,
+                targetDuration,
+                targetAddOnNames,
+                newTotal,
+                "No additional online payment is required for reservation changes after payment; any remaining balance is handled at the venue.",
+                Applied: false);
+        }
+
+        reservation.ServiceId = targetService.ServiceId;
+        reservation.ReservationDateTime = targetDateTime;
+        reservation.DurationMinutes = targetDuration;
+        if (targetEmployee is not null)
+            reservation.EmployeeId = targetEmployee.EmployeeId;
+        if (reservation.Status == ReservationStatus.OnHold)
+            reservation.Status = ReservationStatus.Confirmed;
+        reservation.UpdatedAt = DateTime.UtcNow;
+
+        await _unitOfWork.Reservations.UpdateAsync(reservation);
+        await SyncReservationAddOnsAsync(reservation, targetAddOnsCsv, cancellationToken);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+        await SyncReservationToCalendarAsync(
+            reservation,
+            targetService.ServiceName,
+            new Dictionary<string, string>
+            {
+                [ReservationBusinessAttributeKeys.SelectedAddOns] = targetAddOnsCsv ?? string.Empty
+            },
+            cancellationToken);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+        return new UpdateReservationChangeResult(
+            true,
+            null,
+            null,
+            null,
+            reservation.ReservationId,
+            targetService.ServiceName,
+            DateOnly.FromDateTime(targetDateTime.Value),
+            TimeOnly.FromDateTime(targetDateTime.Value),
+            targetEmployee?.Name ?? reservation.Employee?.Name,
+            targetDuration,
+            targetAddOnNames,
+            newTotal,
+            "No additional online payment is required for reservation changes after payment; any remaining balance is handled at the venue.",
+            Applied: true);
+    }
+
     private async Task SyncReservationToCalendarAsync(
         Reservation reservation,
         string serviceName,
@@ -339,6 +560,129 @@ public class ReservationService : IReservationService
             await _unitOfWork.ReservationIntegrationEvents.UpdateAsync(integrationEvent, cancellationToken);
 
         await _unitOfWork.IntegrationConnections.UpdateAsync(connection, cancellationToken);
+    }
+
+    private async Task<string?> BuildCurrentAddOnsCsvAsync(
+        Guid reservationId,
+        CancellationToken cancellationToken)
+    {
+        var addOns = await _unitOfWork.ReservationAddOns.GetByReservationIdAsync(reservationId);
+        if (addOns.Count == 0)
+            return null;
+
+        var names = new List<string>();
+        foreach (var addOn in addOns)
+        {
+            var service = addOn.AddOnService
+                ?? await _unitOfWork.Services.GetByIdAsync(addOn.AddOnServiceId);
+            if (!string.IsNullOrWhiteSpace(service?.ServiceName))
+                names.Add(service.ServiceName);
+        }
+
+        return names.Count == 0 ? null : string.Join(", ", names);
+    }
+
+    private async Task<decimal> ResolveReservationTotalAsync(
+        Guid businessId,
+        string serviceName,
+        string? addOnsCsv,
+        CancellationToken cancellationToken)
+    {
+        var service = await _unitOfWork.Services.GetByBusinessIdAndNameAsync(businessId, serviceName);
+        var total = service?.IncludeInCheckoutTotal == false ? 0m : service?.Price ?? 0m;
+
+        foreach (var addOnName in SplitCsv(addOnsCsv))
+        {
+            var addOn = await _unitOfWork.Services.GetByBusinessIdAndNameAsync(businessId, addOnName);
+            if (addOn?.IncludeInCheckoutTotal != false)
+                total += addOn?.Price ?? 0m;
+        }
+
+        return total;
+    }
+
+    private async Task SyncReservationAddOnsAsync(
+        Reservation reservation,
+        string? addOnsCsv,
+        CancellationToken cancellationToken)
+    {
+        var existing = await _unitOfWork.ReservationAddOns.GetByReservationIdAsync(reservation.ReservationId);
+        foreach (var addOn in existing)
+            await _unitOfWork.ReservationAddOns.DeleteAsync(addOn);
+
+        foreach (var addOnName in SplitCsv(addOnsCsv))
+        {
+            var addOnService = await _unitOfWork.Services.GetByBusinessIdAndNameAsync(
+                reservation.BusinessId,
+                addOnName);
+            if (addOnService is null)
+                continue;
+
+            await _unitOfWork.ReservationAddOns.AddAsync(new ReservationAddOn
+            {
+                ReservationAddOnId = Guid.NewGuid(),
+                ReservationId = reservation.ReservationId,
+                AddOnServiceId = addOnService.ServiceId,
+                PriceSnapshot = addOnService.Price
+            });
+        }
+
+        reservation.AddOns.Clear();
+    }
+
+    private static string? BuildTargetAddOnsCsv(
+        string? currentCsv,
+        string? requestedCsv,
+        string? mode)
+    {
+        if (string.IsNullOrWhiteSpace(requestedCsv))
+            return currentCsv;
+
+        var normalizedMode = string.IsNullOrWhiteSpace(mode)
+            ? "add"
+            : mode.Trim().ToLowerInvariant();
+
+        if (normalizedMode == "replace")
+            return NormalizeCsv(requestedCsv);
+
+        var current = SplitCsv(currentCsv).ToList();
+        var requested = SplitCsv(requestedCsv).ToList();
+
+        if (normalizedMode == "remove")
+        {
+            current.RemoveAll(existing =>
+                requested.Any(remove => string.Equals(existing, remove, StringComparison.OrdinalIgnoreCase)));
+            return current.Count == 0 ? null : string.Join(", ", current);
+        }
+
+        foreach (var addOn in requested)
+        {
+            if (!current.Any(existing => string.Equals(existing, addOn, StringComparison.OrdinalIgnoreCase)))
+                current.Add(addOn);
+        }
+
+        return current.Count == 0 ? null : string.Join(", ", current);
+    }
+
+    private static string? NormalizeCsv(string? csv)
+    {
+        var parts = SplitCsv(csv).ToList();
+        return parts.Count == 0 ? null : string.Join(", ", parts);
+    }
+
+    private static IEnumerable<string> SplitCsv(string? csv)
+    {
+        if (string.IsNullOrWhiteSpace(csv)
+            || string.Equals(csv.Trim(), "ninguno", StringComparison.OrdinalIgnoreCase))
+        {
+            yield break;
+        }
+
+        foreach (var part in csv.Split([',', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (!string.Equals(part, "ninguno", StringComparison.OrdinalIgnoreCase))
+                yield return part;
+        }
     }
 
     private static CalendarEvent BuildCalendarEvent(

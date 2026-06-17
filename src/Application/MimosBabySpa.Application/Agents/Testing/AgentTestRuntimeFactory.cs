@@ -87,6 +87,9 @@ public sealed class AgentTestRuntimeFactory : IAgentTestRuntimeFactory
     {
         var memoryFacts = initialFacts ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var testFactsService = new AgentTestConversationFactsService(_factsService, memoryFacts);
+        var requestContext = new RequestContextService(
+            testFactsService,
+            _serviceProvider.GetRequiredService<ILogger<RequestContextService>>());
         var testTools = BuildTestTools(log, memoryFacts);
 
         var registry = new AgentToolRegistry(testTools, _registryLogger);
@@ -104,6 +107,7 @@ public sealed class AgentTestRuntimeFactory : IAgentTestRuntimeFactory
             _temporalReferenceBuilder,
             testFactsService,
             _customerMemory,
+            requestContext,
             _reservationLifecycle,
             _paymentLifecycle,
             _conversationService,
@@ -114,6 +118,8 @@ public sealed class AgentTestRuntimeFactory : IAgentTestRuntimeFactory
             _flowStageDetector,
             _factHydrator,
             usageBilling,
+            _serviceProvider.GetRequiredService<IMessageSequenceResolver>(),
+            _serviceProvider.GetRequiredService<IReservationCreatedNotificationDispatcher>(),
             _conversationLogger);
     }
 

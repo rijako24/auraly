@@ -84,7 +84,12 @@ public sealed class ResolvePricingTool : IAgentTool
             total = result.TotalDisplay,
             total_cents = (long)(result.Total * 100),
             currency = ResolveCurrency(ctx),
-            line_items = result.LineItems.Select(li => new { name = li.Name, price = li.Price })
+            line_items = result.LineItems.Select(li => new
+            {
+                name = li.Name,
+                price = li.Price,
+                include_in_checkout_total = li.IncludeInCheckoutTotal
+            })
         });
     }
 

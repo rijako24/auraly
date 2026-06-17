@@ -37,6 +37,7 @@ export default function NewServicePage() {
   const [price, setPrice] = useState("");
   const [tier, setTier] = useState<string>(String(ServiceTier.Base));
   const [serviceType, setServiceType] = useState<string>(String(ServiceType.Standard));
+  const [includeInCheckoutTotal, setIncludeInCheckoutTotal] = useState(true);
   const [isActive, setIsActive] = useState(true);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
@@ -45,11 +46,11 @@ export default function NewServicePage() {
     if (!serviceName.trim()) newErrors.serviceName = "El nombre es requerido";
     if (!categoryId) newErrors.categoryId = "Seleccione una categoría";
     const duration = parseInt(durationMinutes, 10);
-    if (!durationMinutes || isNaN(duration) || duration <= 0) {
+    if (!durationMinutes || isNaN(duration) || duration < 0) {
       newErrors.durationMinutes = "Duración inválida (minutos)";
     }
     const priceNum = parseInt(price, 10);
-    if (!price || isNaN(priceNum) || priceNum <= 0) {
+    if (!price || isNaN(priceNum) || priceNum < 0) {
       newErrors.price = "Precio invalido en COP";
     }
     setErrors(newErrors);
@@ -67,6 +68,7 @@ export default function NewServicePage() {
       categoryId,
       durationMinutes: parseInt(durationMinutes, 10),
       price: parseInt(price, 10),
+      includeInCheckoutTotal,
       tier: Number(tier),
       serviceType: Number(serviceType),
       isActive,
@@ -167,7 +169,7 @@ export default function NewServicePage() {
                 <Input
                   id="durationMinutes"
                   type="number"
-                  min={1}
+                  min={0}
                   value={durationMinutes}
                   onChange={(e) => setDurationMinutes(e.target.value)}
                   placeholder="60"
@@ -241,6 +243,15 @@ export default function NewServicePage() {
                 />
                 <Label htmlFor="isActive">Activo</Label>
               </div>
+            </div>
+
+            <div className="flex items-center gap-2 rounded-md border p-3">
+              <Switch
+                id="includeInCheckoutTotal"
+                checked={includeInCheckoutTotal}
+                onCheckedChange={setIncludeInCheckoutTotal}
+              />
+              <Label htmlFor="includeInCheckoutTotal">Suma al total del checkout</Label>
             </div>
           </CardContent>
         </Card>

@@ -10,14 +10,14 @@ namespace MimosBabySpa.Application.Agents.Tools.Impl;
 /// </summary>
 public sealed class ResetFlowContextTool : IAgentTool
 {
-    private readonly IConversationFactsService _facts;
+    private readonly IRequestContextService _requestContext;
     private readonly IPaymentLifecycleService _payments;
 
     public ResetFlowContextTool(
-        IConversationFactsService facts,
+        IRequestContextService requestContext,
         IPaymentLifecycleService payments)
     {
-        _facts = facts;
+        _requestContext = requestContext;
         _payments = payments;
     }
 
@@ -25,7 +25,7 @@ public sealed class ResetFlowContextTool : IAgentTool
 
     public string Description =>
         "Reinicia la solicitud actual limpiando los facts no persistentes y verificaciones del flujo. " +
-        "Conserva los facts marcados como persistsAcrossConversations=true. " +
+        "Conserva los facts con scope=customer. " +
         "Puede abandonar un checkout/link pendiente si checkout_action='abandon'.";
 
     public string ParametersSchema => """
@@ -88,28 +88,20 @@ public sealed class ResetFlowContextTool : IAgentTool
             }
         }
 
-        var persistentKeys = (ctx.Config?.FactSchema ?? [])
-            .Where(f => f.PersistsAcrossConversations)
-            .Select(f => f.Key)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
-
-        var clearedFacts = await _facts.ClearNonPersistentAsync(
+        var cleanup = await _requestContext.CompleteAsync(
             ctx.ConversationId,
-            persistentKeys,
+            ctx.Config ?? new AgentConfig(),
+            ctx.ConversationState,
+            ctx.Facts,
+            reason.Trim(),
             cancellationToken);
-
-        foreach (var key in clearedFacts)
-            ctx.Facts.Remove(key);
-
-        ctx.ConversationState.Verifications.Clear();
-        ctx.ConversationState.StageFactSnapshots.Clear();
 
         return ToolResultHelper.Ok(new
         {
             reason,
             checkout_action = checkoutAction,
-            cleared_facts = clearedFacts,
-            preserved_facts = persistentKeys,
+            cleared_facts = cleanup.ClearedFacts,
+            preserved_facts = cleanup.PreservedFacts,
             abandoned_payment_transaction_id = abandonedPaymentId,
             previous_payment_status = previousPaymentStatus?.ToString()
         });

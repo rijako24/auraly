@@ -17,6 +17,7 @@ public class Service
     public string Description { get; set; } = string.Empty;
     public int DurationMinutes { get; set; }
     public decimal Price { get; set; }
+    public bool IncludeInCheckoutTotal { get; set; } = true;
     public bool IsActive { get; set; } = true;
     public DateTime CreatedAt { get; set; }
     public DateTime? UpdatedAt { get; set; }

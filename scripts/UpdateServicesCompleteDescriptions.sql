@@ -14,9 +14,9 @@ PRINT '';
 -- =================================================================
 UPDATE Services
 SET 
-    Price = 55000,
+    Price = 125000,
     Description = '📋 DESCRIPCIÓN:
-Sesión de hidroterapia especializada para bebés de 0 a 12 meses. Una experiencia acuática diseñada para estimular el desarrollo motor y sensorial del bebé en un ambiente seguro y relajante.
+Plan integral de Baby Spa con estimulación temprana, hidroterapia y masaje infantil.
 
 👶 EDADES RECOMENDADAS:
 0 a 12 meses (ideal desde el primer mes de vida)
@@ -47,7 +47,7 @@ Sesión de hidroterapia especializada para bebés de 0 a 12 meses. Una experienc
 • No debe tener fiebre ni enfermedades contagiosas
 • Traer pañal de agua o pañal normal
 • Se recomienda baño previo en casa',
-    DurationMinutes = 30,
+    DurationMinutes = 60,
     UpdatedAt = GETDATE()
 WHERE ServiceName LIKE '%Marinerito%';
 
@@ -58,9 +58,9 @@ PRINT '✅ Plan Marineritos actualizado';
 -- =================================================================
 UPDATE Services
 SET 
-    Price = 65000,
+    Price = 100000,
     Description = '📋 DESCRIPCIÓN:
-Sesión avanzada de estimulación acuática para bebés de 1 a 3 años. Combina natación temprana, juegos acuáticos interactivos y ejercicios de fortalecimiento en un ambiente divertido y educativo.
+Plan de Baby Spa con hidroterapia y masaje infantil.
 
 👶 EDADES RECOMENDADAS:
 12 a 36 meses (bebés que ya sostienen cabeza y tronco)
@@ -103,9 +103,10 @@ PRINT '✅ Plan Aventuras Marinas actualizado';
 -- =================================================================
 UPDATE Services
 SET 
-    Price = 50000,
+    ServiceName = 'Plan Suaves Mimos - Post Vacunas',
+    Price = 95000,
     Description = '📋 DESCRIPCIÓN:
-Sesión integral de spa para bebés que combina hidroterapia suave con masaje especializado. Perfecto para bebés que necesitan relajación, alivio de molestias o simplemente un momento de conexión especial con sus padres.
+Plan post vacunas con hidroterapia relajante y masaje infantil. No se toca la zona de punción.
 
 👶 EDADES RECOMENDADAS:
 0 a 24 meses
@@ -138,9 +139,9 @@ Sesión integral de spa para bebés que combina hidroterapia suave con masaje es
 • No apto para bebés con fiebre
 • Traer ropa cómoda para el bebé
 • Se recomienda alimentación ligera 1 hora antes',
-    DurationMinutes = 60,
+    DurationMinutes = 45,
     UpdatedAt = GETDATE()
-WHERE ServiceName LIKE '%Suaves Mimos%';
+WHERE ServiceName LIKE '%Suaves Mimos%' OR ServiceName LIKE '%Post Vacunas%';
 
 PRINT '✅ Plan Suaves Mimos actualizado';
 
@@ -208,9 +209,9 @@ ORDER BY ServiceName;
 
 PRINT '';
 PRINT '📊 RESUMEN:';
-PRINT '   • Plan Marineritos: 30 min - $55,000 COP';
-PRINT '   • Plan Aventuras Marinas: 45 min - $65,000 COP';
-PRINT '   • Plan Suaves Mimos: 60 min - $50,000 COP';
+PRINT '   • Plan Marineritos: 60 min - $125,000 COP';
+PRINT '   • Plan Aventuras Marinas: 45 min - $100,000 COP';
+PRINT '   • Plan Suaves Mimos - Post Vacunas: 45 min - $95,000 COP';
 PRINT '   • Clase Grupal: 60 min - $40,000 COP';
 PRINT '';
 PRINT '✨ Todos los servicios ahora tienen:';

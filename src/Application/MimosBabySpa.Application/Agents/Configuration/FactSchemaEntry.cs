@@ -22,7 +22,23 @@ public sealed class FactSchemaEntry
     /// <summary>user | channel | system</summary>
     public string Source { get; init; } = "user";
 
-    public bool PersistsAcrossConversations { get; init; }
+    /// <summary>
+    /// customer: stable customer/baby data kept across requests.
+    /// request: current request data, cleared when the request completes.
+    /// ephemeral: derived/verification-like data, recalculated frequently.
+    /// If omitted, the engine infers request for user/channel facts and ephemeral for system/session facts.
+    /// </summary>
+    public string? Scope { get; init; }
+
+    /// <summary>
+    /// Optional retention window for this fact. When elapsed, the fact is ignored/cleared.
+    /// </summary>
+    public int? RetentionDays { get; init; }
+
+    /// <summary>
+    /// Clears this fact when the business day changes, even if retention has not elapsed.
+    /// </summary>
+    public bool ExpireOnBusinessDayChange { get; init; }
 
     /// <summary>
     /// eager  → el LLM debe capturar este dato en cuanto el cliente lo mencione, sin esperar su etapa.

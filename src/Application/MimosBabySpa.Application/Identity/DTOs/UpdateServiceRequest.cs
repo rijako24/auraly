@@ -7,6 +7,7 @@ public record UpdateServiceRequest(
     string? Description,
     int? DurationMinutes,
     decimal? Price,
+    bool? IncludeInCheckoutTotal,
     bool? IsActive,
     Guid? CategoryId,
     ServiceTier? Tier,

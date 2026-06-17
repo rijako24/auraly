@@ -1,4 +1,5 @@
 using MimosBabySpa.Application.Agents;
+using MimosBabySpa.Application.Agents.Configuration;
 using MimosBabySpa.Domain.Repositories;
 using Microsoft.Extensions.Logging;
 
@@ -70,7 +71,7 @@ public sealed class CustomerMemoryBackfillService : ICustomerMemoryBackfillServi
                     var config = await _agentConfigProvider.GetConfigAsync(activeAgent.AgentId, ct);
                     var persistentKeys = new HashSet<string>(
                         config.FactSchema
-                            .Where(e => e.PersistsAcrossConversations)
+                            .Where(e => e.ShouldRememberAcrossRequests())
                             .Select(e => e.Key),
                         StringComparer.OrdinalIgnoreCase);
 

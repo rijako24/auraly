@@ -16,8 +16,18 @@ public sealed class ConversationFactsService : IConversationFactsService
 
     public async Task<IReadOnlyDictionary<string, string>> GetAllAsync(Guid conversationId, CancellationToken ct = default)
     {
+        var records = await GetAllRecordsAsync(conversationId, ct);
+        return records.ToDictionary(c => c.Key, c => c.Value, StringComparer.OrdinalIgnoreCase);
+    }
+
+    public async Task<IReadOnlyList<ConversationFactRecord>> GetAllRecordsAsync(
+        Guid conversationId,
+        CancellationToken ct = default)
+    {
         var contexts = await _unitOfWork.ConversationContexts.GetByConversationIdAsync(conversationId);
-        return contexts.ToDictionary(c => c.Field, c => c.Value, StringComparer.OrdinalIgnoreCase);
+        return contexts
+            .Select(c => new ConversationFactRecord(c.Field, c.Value, c.CreatedAt, c.UpdatedAt))
+            .ToList();
     }
 
     public async Task<string?> GetAsync(Guid conversationId, string key, CancellationToken ct = default)
@@ -31,7 +41,7 @@ public sealed class ConversationFactsService : IConversationFactsService
         Guid businessId,
         string key,
         string value,
-        bool persistsAcrossConversations = false,
+        bool rememberAcrossRequests = false,
         CancellationToken ct = default)
     {
         await _unitOfWork.ConversationContexts.CreateOrUpdateAsync(conversationId, key, value);
@@ -52,7 +62,7 @@ public sealed class ConversationFactsService : IConversationFactsService
                 await _unitOfWork.Conversations.UpdateAsync(conversation);
             }
 
-            if (persistsAcrossConversations)
+            if (rememberAcrossRequests)
             {
                 await _customerMemory.RememberAsync(
                     businessId, conversation.UserNumber, key, value, ct);
@@ -81,5 +91,28 @@ public sealed class ConversationFactsService : IConversationFactsService
         await _unitOfWork.ConversationContexts.DeleteFieldsAsync(conversationId, fieldsToDelete, ct);
         await _unitOfWork.SaveChangesAsync(ct);
         return fieldsToDelete;
+    }
+
+    public async Task<IReadOnlyList<string>> ClearFieldsAsync(
+        Guid conversationId,
+        IReadOnlyCollection<string> fields,
+        CancellationToken ct = default)
+    {
+        if (fields.Count == 0)
+            return [];
+
+        var contexts = await _unitOfWork.ConversationContexts.GetByConversationIdAsync(conversationId);
+        var existingFields = contexts
+            .Select(c => c.Field)
+            .Where(field => fields.Contains(field, StringComparer.OrdinalIgnoreCase))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (existingFields.Count == 0)
+            return [];
+
+        await _unitOfWork.ConversationContexts.DeleteFieldsAsync(conversationId, existingFields, ct);
+        await _unitOfWork.SaveChangesAsync(ct);
+        return existingFields;
     }
 }

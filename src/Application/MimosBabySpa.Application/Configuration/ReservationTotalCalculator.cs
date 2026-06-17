@@ -22,7 +22,7 @@ public static class ReservationTotalCalculator
         {
             var rule = addOnRules.FirstOrDefault(r =>
                 string.Equals(r.AddOnName, name, StringComparison.OrdinalIgnoreCase));
-            if (rule != null)
+            if (rule != null && rule.IncludeInCheckoutTotal)
                 total += rule.AddOnPrice;
         }
 

@@ -103,6 +103,144 @@ public class AddOnCatalogServiceTests
         result.NormalizedCsv.Should().Be("Decoración Sencilla");
     }
 
+    [Fact]
+    public async Task ValidateAsync_WhenSelectionMatchesMultipleCompatibleAddOns_ReturnsAmbiguous()
+    {
+        var planMarineritos = CreateService(_planMarineritosId, "Plan Marineritos");
+        var fotosDigitales = CreateAddOn(Guid.NewGuid(), "Fotos digitales");
+        var fotosVideo = CreateAddOn(Guid.NewGuid(), "Fotos digitales con video");
+        var rules = new List<ServiceAddOnRule>
+        {
+            new()
+            {
+                BusinessId = _businessId,
+                AddOnServiceId = fotosDigitales.ServiceId,
+                AddOnService = fotosDigitales,
+                DisplayOrder = 1
+            },
+            new()
+            {
+                BusinessId = _businessId,
+                AddOnServiceId = fotosVideo.ServiceId,
+                AddOnService = fotosVideo,
+                DisplayOrder = 2
+            }
+        };
+
+        var sut = CreateSut(planMarineritos, rules);
+
+        var result = await sut.ValidateAsync(_businessId, "Plan Marineritos", "fotos");
+
+        result.IsValid.Should().BeFalse();
+        result.ErrorCode.Should().Be("ambiguous_add_ons");
+        result.Hint.Should().Contain("opcion especifica");
+        result.ErrorMessage.Should().Contain("Fotos digitales");
+        result.ErrorMessage.Should().Contain("Fotos digitales con video");
+    }
+
+    [Fact]
+    public async Task ValidateAsync_WhenPartialSelectionMatchesSingleCompatibleAddOn_NormalizesIt()
+    {
+        var planMarineritos = CreateService(_planMarineritosId, "Plan Marineritos");
+        var fotosDigitales = CreateAddOn(Guid.NewGuid(), "Fotos digitales");
+        var decoracion = CreateAddOn(_decoracionId, "DecoraciÃ³n Sencilla");
+        var rules = new List<ServiceAddOnRule>
+        {
+            new()
+            {
+                BusinessId = _businessId,
+                AddOnServiceId = fotosDigitales.ServiceId,
+                AddOnService = fotosDigitales,
+                DisplayOrder = 1
+            },
+            new()
+            {
+                BusinessId = _businessId,
+                AddOnServiceId = decoracion.ServiceId,
+                AddOnService = decoracion,
+                DisplayOrder = 2
+            }
+        };
+
+        var sut = CreateSut(planMarineritos, rules);
+
+        var result = await sut.ValidateAsync(_businessId, "Plan Marineritos", "fotos");
+
+        result.IsValid.Should().BeTrue();
+        result.NormalizedCsv.Should().Be("Fotos digitales");
+    }
+
+    [Fact]
+    public async Task ValidateAsync_WhenMultipleSelectionsBelongToSameGroup_ReturnsDuplicateGroup()
+    {
+        var planMarineritos = CreateService(_planMarineritosId, "Plan Marineritos");
+        var fotosDigitales = CreateAddOn(Guid.NewGuid(), "Fotos digitales");
+        var fotosVideo = CreateAddOn(Guid.NewGuid(), "Fotos digitales con video");
+        var rules = new List<ServiceAddOnRule>
+        {
+            new()
+            {
+                BusinessId = _businessId,
+                AddOnServiceId = fotosDigitales.ServiceId,
+                AddOnService = fotosDigitales,
+                DisplayOrder = 1
+            },
+            new()
+            {
+                BusinessId = _businessId,
+                AddOnServiceId = fotosVideo.ServiceId,
+                AddOnService = fotosVideo,
+                DisplayOrder = 2
+            }
+        };
+
+        var sut = CreateSut(planMarineritos, rules);
+
+        var result = await sut.ValidateAsync(
+            _businessId,
+            "Plan Marineritos",
+            "Fotos digitales, Fotos digitales con video");
+
+        result.IsValid.Should().BeFalse();
+        result.ErrorCode.Should().Be("duplicate_add_on_group");
+        result.Hint.Should().Contain("una sola opcion por grupo");
+    }
+
+    [Fact]
+    public async Task ValidateAsync_WhenMultipleSelectionsBelongToDifferentGroups_NormalizesThem()
+    {
+        var planMarineritos = CreateService(_planMarineritosId, "Plan Marineritos");
+        var fotosDigitales = CreateAddOn(Guid.NewGuid(), "Fotos digitales");
+        var decoracion = CreateAddOn(_decoracionId, "DecoraciÃ³n Sencilla");
+        var rules = new List<ServiceAddOnRule>
+        {
+            new()
+            {
+                BusinessId = _businessId,
+                AddOnServiceId = fotosDigitales.ServiceId,
+                AddOnService = fotosDigitales,
+                DisplayOrder = 1
+            },
+            new()
+            {
+                BusinessId = _businessId,
+                AddOnServiceId = decoracion.ServiceId,
+                AddOnService = decoracion,
+                DisplayOrder = 2
+            }
+        };
+
+        var sut = CreateSut(planMarineritos, rules);
+
+        var result = await sut.ValidateAsync(
+            _businessId,
+            "Plan Marineritos",
+            "Fotos digitales, DecoraciÃ³n Sencilla");
+
+        result.IsValid.Should().BeTrue();
+        result.NormalizedCsv.Should().Be("Fotos digitales, DecoraciÃ³n Sencilla");
+    }
+
     private AddOnCatalogService CreateSut(Service selectedService, List<ServiceAddOnRule> rules)
     {
         var allServices = new List<Service> { selectedService };

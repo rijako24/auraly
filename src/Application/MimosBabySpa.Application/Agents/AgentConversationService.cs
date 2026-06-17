@@ -40,6 +40,7 @@ public sealed class AgentConversationService : IAgentConversationService
     private readonly ITemporalReferenceBuilder _temporalReferenceBuilder;
     private readonly IConversationFactsService _factsService;
     private readonly ICustomerMemoryService _customerMemory;
+    private readonly IRequestContextService _requestContext;
     private readonly IReservationLifecycleService _reservationLifecycle;
     private readonly IPaymentLifecycleService _paymentLifecycle;
     private readonly IConversationService _conversationService;
@@ -50,6 +51,8 @@ public sealed class AgentConversationService : IAgentConversationService
     private readonly IFlowStageDetector _flowStageDetector;
     private readonly IFactHydrator _factHydrator;
     private readonly IUsageBillingService _usageBilling;
+    private readonly IMessageSequenceResolver _sequenceResolver;
+    private readonly IReservationCreatedNotificationDispatcher _reservationNotificationDispatcher;
     private readonly ILogger<AgentConversationService> _logger;
 
     public AgentConversationService(
@@ -63,6 +66,7 @@ public sealed class AgentConversationService : IAgentConversationService
         ITemporalReferenceBuilder temporalReferenceBuilder,
         IConversationFactsService factsService,
         ICustomerMemoryService customerMemory,
+        IRequestContextService requestContext,
         IReservationLifecycleService reservationLifecycle,
         IPaymentLifecycleService paymentLifecycle,
         IConversationService conversationService,
@@ -73,6 +77,8 @@ public sealed class AgentConversationService : IAgentConversationService
         IFlowStageDetector flowStageDetector,
         IFactHydrator factHydrator,
         IUsageBillingService usageBilling,
+        IMessageSequenceResolver sequenceResolver,
+        IReservationCreatedNotificationDispatcher reservationNotificationDispatcher,
         ILogger<AgentConversationService> logger)
     {
         _configProvider = configProvider;
@@ -85,6 +91,7 @@ public sealed class AgentConversationService : IAgentConversationService
         _temporalReferenceBuilder = temporalReferenceBuilder;
         _factsService = factsService;
         _customerMemory = customerMemory;
+        _requestContext = requestContext;
         _reservationLifecycle = reservationLifecycle;
         _paymentLifecycle = paymentLifecycle;
         _conversationService = conversationService;
@@ -95,6 +102,8 @@ public sealed class AgentConversationService : IAgentConversationService
         _flowStageDetector = flowStageDetector;
         _factHydrator = factHydrator;
         _usageBilling = usageBilling;
+        _sequenceResolver = sequenceResolver;
+        _reservationNotificationDispatcher = reservationNotificationDispatcher;
         _logger = logger;
     }
 
@@ -234,12 +243,20 @@ public sealed class AgentConversationService : IAgentConversationService
 
             // FinishReason=ToolCalls → ejecutar y acumular resultados
             messages.Add(result.AssistantMessage);
+            var directOutboundRequested = false;
 
             foreach (var toolCall in result.ToolCalls)
             {
                 toolCtx.CurrentToolIteration = iteration;
                 var outcome = await ExecuteToolCallAsync(toolCall, toolCtx, ct);
+                if (toolCall.FunctionName.Equals("send_message_sequence", StringComparison.OrdinalIgnoreCase)
+                    && !outcome.IsError)
+                {
+                    directOutboundRequested = true;
+                }
+
                 await ApplyAfterToolRulesAsync(config, toolCall, outcome, toolCtx, ct);
+                await SendReservationCreatedNotificationsAsync(config, outcome, toolCtx, ct);
 
                 turn.RecordToolOutcome(outcome);
                 messages.Add(ChatMessage.Tool(
@@ -255,7 +272,7 @@ public sealed class AgentConversationService : IAgentConversationService
                 }
             }
 
-            if (turn.OutboundMessages.Count > 0)
+            if (directOutboundRequested && turn.OutboundMessages.Count > 0)
             {
                 _logger.LogInformation(
                     "Conv {ConvId}: salida directa al usuario encolada ({Count} mensajes) — turno completo sin texto del LLM",
@@ -392,6 +409,8 @@ public sealed class AgentConversationService : IAgentConversationService
             if (!IsAfterToolRuleMatch(outcome.RawJson, rule.When))
                 continue;
 
+            await EnqueueAfterToolSequenceAsync(config, currentStage, rule, ctx, ct);
+
             foreach (var (key, valueTemplate) in EnumerateAfterToolFactActions(rule))
             {
                 if (ctx.Facts.TryGetValue(key, out var existing)
@@ -412,7 +431,7 @@ public sealed class AgentConversationService : IAgentConversationService
                     ctx.BusinessId,
                     key,
                     value,
-                    schemaEntry?.PersistsAcrossConversations ?? false,
+                    schemaEntry?.ShouldRememberAcrossRequests() ?? false,
                     ct);
 
                 ctx.Facts[key] = value;
@@ -426,6 +445,95 @@ public sealed class AgentConversationService : IAgentConversationService
             }
         }
     }
+
+    private async Task EnqueueAfterToolSequenceAsync(
+        AgentConfig config,
+        AgentFlowStage currentStage,
+        MimosBabySpa.Application.Agents.Configuration.StageAfterToolRule rule,
+        AgentToolContext ctx,
+        CancellationToken ct)
+    {
+        var sequenceName = rule.SendMessageSequence?.Trim();
+        if (string.IsNullOrWhiteSpace(sequenceName))
+            return;
+
+        if (ctx.Turn is null)
+        {
+            _logger.LogWarning(
+                "Conv {ConvId}: afterTool sequence '{Sequence}' skipped because turn context is unavailable",
+                ctx.ConversationId,
+                sequenceName);
+            return;
+        }
+
+        if (!config.MessageSequences.ContainsKey(sequenceName))
+        {
+            _logger.LogWarning(
+                "Conv {ConvId}: afterTool sequence '{Sequence}' on stage '{Stage}' is not configured",
+                ctx.ConversationId,
+                sequenceName,
+                currentStage.Id);
+            return;
+        }
+
+        var sentFactKey = BuildSequenceSentFactKey(sequenceName);
+        if (rule.SendOncePerConversation
+            && ctx.Facts.TryGetValue(sentFactKey, out var sent)
+            && string.Equals(sent, "true", StringComparison.OrdinalIgnoreCase))
+        {
+            _logger.LogDebug(
+                "Conv {ConvId}: afterTool sequence '{Sequence}' on stage '{Stage}' skipped because it was already sent",
+                ctx.ConversationId,
+                sequenceName,
+                currentStage.Id);
+            return;
+        }
+
+        if (!ctx.Turn.TryMarkSequenceEnqueued(sequenceName))
+            return;
+
+        var messages = await _sequenceResolver.ResolveAsync(
+            ctx.BusinessId,
+            sequenceName,
+            config.MessageSequences,
+            new MessageSequenceContext { Custom = ctx.Facts },
+            ct);
+
+        if (messages.Count == 0)
+        {
+            _logger.LogWarning(
+                "Conv {ConvId}: afterTool sequence '{Sequence}' on stage '{Stage}' resolved to zero messages",
+                ctx.ConversationId,
+                sequenceName,
+                currentStage.Id);
+            return;
+        }
+
+        ctx.Turn.EnqueueOutbound(messages);
+
+        if (rule.SendOncePerConversation)
+        {
+            await _factsService.SetAsync(
+                ctx.ConversationId,
+                ctx.BusinessId,
+                sentFactKey,
+                "true",
+                rememberAcrossRequests: false,
+                ct);
+
+            ctx.Facts[sentFactKey] = "true";
+        }
+
+        _logger.LogInformation(
+            "Conv {ConvId}: afterTool sequence '{Sequence}' on stage '{Stage}' queued ({Count} messages)",
+            ctx.ConversationId,
+            sequenceName,
+            currentStage.Id,
+            messages.Count);
+    }
+
+    private static string BuildSequenceSentFactKey(string sequenceName) =>
+        $"system.sequence.{sequenceName}.sent";
 
     private static IEnumerable<KeyValuePair<string, string>> EnumerateAfterToolFactActions(
         MimosBabySpa.Application.Agents.Configuration.StageAfterToolRule rule)
@@ -479,7 +587,14 @@ public sealed class AgentConversationService : IAgentConversationService
             if (!TryGetJsonPath(doc.RootElement, condition.Path, out var value))
                 return false;
 
-            return JsonElementEquals(value, condition.Expected);
+            if (!string.IsNullOrWhiteSpace(condition.NotExpected)
+                && JsonElementEquals(value, condition.NotExpected))
+            {
+                return false;
+            }
+
+            return string.IsNullOrWhiteSpace(condition.Expected)
+                || JsonElementEquals(value, condition.Expected);
         }
         catch
         {
@@ -529,6 +644,63 @@ public sealed class AgentConversationService : IAgentConversationService
             _ => value.GetRawText()
         };
 
+    private async Task SendReservationCreatedNotificationsAsync(
+        AgentConfig config,
+        ToolExecutionOutcome outcome,
+        AgentToolContext ctx,
+        CancellationToken ct)
+    {
+        if (outcome.IsError || !outcome.HasEffect(ToolSideEffectNames.ReservationCreated))
+            return;
+
+        var reservation = ctx.SingleManageableReservation
+            ?? TryBuildReservationFromToolResult(ctx, outcome.RawJson);
+
+        if (reservation is null)
+        {
+            _logger.LogWarning(
+                "Conv {ConvId}: reservation notification skipped because reservation_id was not available",
+                ctx.ConversationId);
+            return;
+        }
+
+        await _reservationNotificationDispatcher.SendAsync(
+            ctx.BusinessId,
+            reservation,
+            config,
+            ctx.Facts,
+            ct);
+    }
+
+    private static Domain.Entities.Reservation? TryBuildReservationFromToolResult(
+        AgentToolContext ctx,
+        string rawJson)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(rawJson);
+            var root = doc.RootElement;
+            if (!root.TryGetProperty("data", out var data)
+                || !data.TryGetProperty("reservation_id", out var idElement)
+                || idElement.ValueKind != JsonValueKind.String
+                || !Guid.TryParse(idElement.GetString(), out var reservationId))
+            {
+                return null;
+            }
+
+            return new Domain.Entities.Reservation
+            {
+                ReservationId = reservationId,
+                BusinessId = ctx.BusinessId,
+                ConversationId = ctx.ConversationId
+            };
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     private async Task<AgentTurnResult> FinalizeTurnAsync(
         Guid conversationId,
         string userMessage,
@@ -545,6 +717,16 @@ public sealed class AgentConversationService : IAgentConversationService
             turn.FragmentEntries);
 
         UpdateStageSnapshots(config, session);
+        if (turn.ReservationCreated)
+        {
+            await _requestContext.CompleteAsync(
+                conversationId,
+                config,
+                session.ConversationState,
+                session.Facts,
+                "reservation_created",
+                ct);
+        }
         await PersistCurrentStageNameAsync(config, session, ct);
         await PersistTurnAsync(conversationId, userMessage, finalResponse, session.ConversationState, turn.ReservationCreated, ct);
         await _usageBilling.ChargeAsync(new UsageChargeRequest(
@@ -684,12 +866,21 @@ public sealed class AgentConversationService : IAgentConversationService
         string? channelPhone,
         CancellationToken ct)
     {
-        var facts = await _factsService.GetAllAsync(conversationId, ct);
         var conversation = await _conversationService.GetConversationByIdAsync(conversationId)
             ?? throw new InvalidOperationException($"Conversation {conversationId} not found.");
 
         var clockSnapshot = await _businessClock.GetSnapshotAsync(config.BusinessId, ct);
         var resolvedPhone = channelPhone?.Trim() ?? conversation.UserNumber;
+        var factRecords = await _factsService.GetAllRecordsAsync(conversationId, ct);
+        var mutableFacts = factRecords.ToDictionary(r => r.Key, r => r.Value, StringComparer.OrdinalIgnoreCase);
+
+        var rollover = await _requestContext.ApplyRetentionAsync(
+            conversation,
+            config,
+            state,
+            mutableFacts,
+            clockSnapshot,
+            ct);
 
         var reservationSession = await _reservationLifecycle.ResolveForSessionAsync(
             conversationId,
@@ -699,19 +890,28 @@ public sealed class AgentConversationService : IAgentConversationService
             ct);
         var activePayment = await _paymentLifecycle.GetActiveByConversationAsync(conversationId, ct);
 
-        var mutableFacts = new Dictionary<string, string>(facts, StringComparer.OrdinalIgnoreCase);
+        var durable = await _customerMemory.GetAllRecordsAsync(config.BusinessId, conversation.UserNumber, ct);
+        var durableByKey = durable
+            .GroupBy(d => d.Key, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.OrderByDescending(d => d.UpdatedAt).First(), StringComparer.OrdinalIgnoreCase);
 
-        var durable = await _customerMemory.GetAllAsync(config.BusinessId, conversation.UserNumber, ct);
-        foreach (var entry in config.FactSchema.Where(e => e.PersistsAcrossConversations))
+        foreach (var entry in config.FactSchema.Where(e => e.ShouldRememberAcrossRequests()))
         {
-            if (!durable.TryGetValue(entry.Key, out var durableValue)
-                || string.IsNullOrWhiteSpace(durableValue))
+            if (!durableByKey.TryGetValue(entry.Key, out var durableValue)
+                || string.IsNullOrWhiteSpace(durableValue.Value))
+            {
+                continue;
+            }
+
+            var retention = entry.Retention();
+            if (retention.HasValue
+                && durableValue.UpdatedAt.Add(retention.Value) < clockSnapshot.Now.UtcDateTime)
             {
                 continue;
             }
 
             if (!mutableFacts.TryGetValue(entry.Key, out var current) || string.IsNullOrWhiteSpace(current))
-                mutableFacts[entry.Key] = durableValue;
+                mutableFacts[entry.Key] = durableValue.Value;
         }
 
         // Hidratar facts de fuente=channel/session antes de construir el contexto
@@ -728,16 +928,15 @@ public sealed class AgentConversationService : IAgentConversationService
             ConversationId = conversationId,
             BusinessToday = clockSnapshot.Today,
             BusinessNow = clockSnapshot.Now,
+            BusinessDayRollover = rollover.BusinessDayChanged,
+            PreviousBusinessDay = rollover.PreviousBusinessDay,
+            RolloverClearedFacts = rollover.ClearedFacts,
             ChannelPhone = resolvedPhone,
             EscalationContacts = config.EscalationContacts,
             Config = config,
             ConversationState = state,
             Conversation = conversation,
             Facts = mutableFacts,
-            CustomerMemorySummary = durable.TryGetValue(CustomerMemoryKeys.Summary, out var summary)
-                && !string.IsNullOrWhiteSpace(summary)
-                    ? summary.Trim()
-                    : null,
             ManageableReservations = reservationSession.ManageableReservations,
             ActivePayment = activePayment
         };
@@ -781,7 +980,7 @@ public sealed class AgentConversationService : IAgentConversationService
                     session.BusinessId,
                     factKey,
                     factValue,
-                    schemaEntry?.PersistsAcrossConversations ?? false,
+                    schemaEntry?.ShouldRememberAcrossRequests() ?? false,
                     ct);
                 session.Facts[factKey] = factValue;
 

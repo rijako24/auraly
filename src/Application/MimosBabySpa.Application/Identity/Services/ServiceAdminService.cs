@@ -94,6 +94,7 @@ public class ServiceAdminService : IServiceAdminService
             Description = request.Description ?? string.Empty,
             DurationMinutes = request.DurationMinutes,
             Price = request.Price,
+            IncludeInCheckoutTotal = request.IncludeInCheckoutTotal,
             IsActive = true,
             CategoryId = request.CategoryId,
             Tier = request.Tier,
@@ -126,6 +127,7 @@ public class ServiceAdminService : IServiceAdminService
         if (request.Description is not null) service.Description = request.Description;
         if (request.DurationMinutes.HasValue) service.DurationMinutes = request.DurationMinutes.Value;
         if (request.Price.HasValue) service.Price = request.Price.Value;
+        if (request.IncludeInCheckoutTotal.HasValue) service.IncludeInCheckoutTotal = request.IncludeInCheckoutTotal.Value;
         if (request.IsActive.HasValue) service.IsActive = request.IsActive.Value;
         if (request.CategoryId.HasValue) service.CategoryId = request.CategoryId.Value;
         if (request.Tier.HasValue) service.Tier = request.Tier.Value;
@@ -166,7 +168,7 @@ public class ServiceAdminService : IServiceAdminService
 
     private static ServiceDto MapToDto(Service s) => new(
         s.ServiceId, s.BusinessId, s.ServiceName, s.Description, s.DurationMinutes,
-        s.Price, s.IsActive, s.CategoryId, s.ServiceCategory.Name, s.Tier, s.ServiceType,
+        s.Price, s.IncludeInCheckoutTotal, s.IsActive, s.CategoryId, s.ServiceCategory.Name, s.Tier, s.ServiceType,
         s.FulfillmentKind, s.FixedScheduleLabel, s.CreatedAt);
 
     private static ServiceCategoryDto MapCategoryToDto(ServiceCategory c) => new(

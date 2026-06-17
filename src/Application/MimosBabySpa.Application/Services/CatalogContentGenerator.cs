@@ -71,6 +71,7 @@ public class CatalogContentGenerator : ICatalogContentGenerator
                     AddOnName                 = r.AddOnService.ServiceName,
                     AddOnDescription          = r.AddOnService.Description,
                     AddOnPrice                = r.AddOnService.Price,
+                    IncludeInCheckoutTotal    = r.AddOnService.IncludeInCheckoutTotal,
                     DisplayOrder              = r.DisplayOrder,
                     CompatibleWithServiceName = r.CompatibleService?.ServiceName,
                     CompatibleCategoryId      = r.CompatibleService?.CategoryId,

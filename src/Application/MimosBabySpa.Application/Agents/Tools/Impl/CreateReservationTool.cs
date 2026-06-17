@@ -16,22 +16,19 @@ public sealed class CreateReservationTool : IAgentTool
     private readonly IBusinessRuleEngine _rules;
     private readonly IAvailabilityService _availability;
     private readonly ISchedulingPolicyProvider _schedulingPolicy;
-    private readonly IConversationLifecycleService _lifecycle;
 
     public CreateReservationTool(
         IReservationService reservations,
         IReservationIntentBuilder intentBuilder,
         IBusinessRuleEngine rules,
         IAvailabilityService availability,
-        ISchedulingPolicyProvider schedulingPolicy,
-        IConversationLifecycleService lifecycle)
+        ISchedulingPolicyProvider schedulingPolicy)
     {
         _reservations = reservations;
         _intentBuilder = intentBuilder;
         _rules = rules;
         _availability = availability;
         _schedulingPolicy = schedulingPolicy;
-        _lifecycle = lifecycle;
     }
 
     public string Name => "create_reservation";
@@ -174,9 +171,6 @@ public sealed class CreateReservationTool : IAgentTool
                 CustomAttributesJson = intent.CustomAttributesJson
             }
         ];
-
-        await _lifecycle.CloseAsync(
-            ctx.ConversationId, ConversationCloseReasons.ReservationConfirmed, cancellationToken);
 
         return BuildSuccessResult(
             response.ReservationId,
