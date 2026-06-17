@@ -28,6 +28,9 @@
 :r .\Migrations\MigrateConversationCurrentStageName.sql
 :r .\Migrations\MigrateWorkingHoursFromSchedulingPolicy.sql
 :r .\Migrations\MigrateIntegrationsToConnections.sql
+:r .\Migrations\MigrateServiceCheckoutTotalPolicy.sql
+:r .\Migrations\MigrateBabySpaPlanPrices2026.sql
+:r .\Migrations\MigrateIniciacionJardinService2026.sql
 :r .\Seeds\SeedAdminUser.sql
 :r .\Seeds\SeedAgentPermissions.sql
 :r .\Seeds\SeedSqlAppLoginPermissions.sql
@@ -43,6 +46,7 @@
 :r .\Seeds\SeedDefaultResources.sql
 :r .\Seeds\SeedWorkshopSchedulesInCatalog.sql
 :r .\Seeds\SeedDefaultEmployees.sql
+:r .\Seeds\SeedPlanAddOns.sql
 :r .\Seeds\CleanupDefaultTestServices.sql
 
 PRINT 'Post-deployment scripts executed successfully.';

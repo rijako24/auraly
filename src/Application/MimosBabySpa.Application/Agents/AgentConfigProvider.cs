@@ -63,6 +63,7 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
             EscalationContacts = settings.EscalationContacts ?? [],
             MessageSequences = settings.MessageSequences ?? new MessageSequenceCatalog(),
             Webhooks = settings.Webhooks ?? new WebhookDefinitions(),
+            Notifications = settings.Notifications ?? new NotificationDefinitions(),
             Checkout = settings.Checkout ?? new CheckoutDefinitions()
         };
 
@@ -145,8 +146,17 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
                     {
                         _logger.LogWarning(
                             "AgentConfig {AgentId}: stage '{Stage}' afterTool setFacts references unknown fact '{Key}'",
-                            config.AgentId, stage.Id, factKey);
+                        config.AgentId, stage.Id, factKey);
                     }
+                }
+
+                var sequenceName = rule.SendMessageSequence;
+                if (!string.IsNullOrWhiteSpace(sequenceName)
+                    && !config.MessageSequences.ContainsKey(sequenceName))
+                {
+                    _logger.LogWarning(
+                        "AgentConfig {AgentId}: stage '{Stage}' afterTool references unknown sequence '{Sequence}'",
+                        config.AgentId, stage.Id, sequenceName);
                 }
 
                 if (string.IsNullOrWhiteSpace(rule.When.Path))
@@ -191,6 +201,7 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
         }
 
         ValidateMessageSequences(config);
+        ValidateNotifications(config);
         ValidateTemplates(config);
     }
 
@@ -275,6 +286,37 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
         }
     }
 
+    private void ValidateNotifications(AgentConfig config)
+    {
+        var reservationCreated = config.Notifications.ReservationCreated;
+        if (!reservationCreated.Enabled)
+            return;
+
+        if (reservationCreated.Recipients.Count == 0)
+        {
+            _logger.LogWarning(
+                "AgentConfig {AgentId}: notifications.reservationCreated is enabled but recipients is empty",
+                config.AgentId);
+        }
+
+        var sequenceName = reservationCreated.SendMessageSequence;
+        if (string.IsNullOrWhiteSpace(sequenceName))
+        {
+            _logger.LogWarning(
+                "AgentConfig {AgentId}: notifications.reservationCreated is enabled but sendMessageSequence is empty",
+                config.AgentId);
+            return;
+        }
+
+        if (!config.MessageSequences.ContainsKey(sequenceName))
+        {
+            _logger.LogWarning(
+                "AgentConfig {AgentId}: notifications.reservationCreated references unknown sequence '{Sequence}'",
+                config.AgentId,
+                sequenceName);
+        }
+    }
+
     private static AgentSettings ParseSettings(string? settingsJson)
     {
         if (string.IsNullOrWhiteSpace(settingsJson))
@@ -310,6 +352,7 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
         public EscalationSettings? Escalation { get; set; }
         public MessageSequenceCatalog? MessageSequences { get; set; }
         public WebhookDefinitions? Webhooks { get; set; }
+        public NotificationDefinitions? Notifications { get; set; }
         public CheckoutDefinitions? Checkout { get; set; }
         public IReadOnlyList<string>? EscalationContacts =>
             Escalation?.Contacts ?? [];

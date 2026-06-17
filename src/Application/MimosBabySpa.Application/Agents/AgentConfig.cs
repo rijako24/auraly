@@ -91,5 +91,11 @@ public sealed class AgentConfig
     /// </summary>
     public WebhookDefinitions Webhooks { get; init; } = new();
 
+    /// <summary>
+    /// Notificaciones internas disparadas por eventos del motor.
+    /// Fuente: SettingsJson -> notifications.
+    /// </summary>
+    public NotificationDefinitions Notifications { get; init; } = new();
+
     public CheckoutDefinitions Checkout { get; init; } = new();
 }

@@ -31,10 +31,6 @@ public sealed class AgentPromptComposer : IPromptComposer
         if (!string.IsNullOrWhiteSpace(basePrompt))
             blocks.Add(basePrompt.Trim());
 
-        var memoryBlock = BuildCustomerMemoryBlock(input.Session);
-        if (!string.IsNullOrWhiteSpace(memoryBlock))
-            blocks.Add(memoryBlock);
-
         // DetectCurrentStage: llamada única y cacheada para todo el Compose
         var currentStage = _flowStageDetector.DetectCurrentStage(input.Config.Flow, input.Session);
 
@@ -49,6 +45,10 @@ public sealed class AgentPromptComposer : IPromptComposer
         var turnPolicyBlock = BuildTurnPolicyBlock(input.History);
         if (!string.IsNullOrWhiteSpace(turnPolicyBlock))
             blocks.Add(turnPolicyBlock);
+
+        var rolloverBlock = BuildBusinessDayRolloverBlock(input.Config, input.Session);
+        if (!string.IsNullOrWhiteSpace(rolloverBlock))
+            blocks.Add(rolloverBlock);
 
         var stateBlock = BuildStateFactsBlock(input.Config, input.Session, input.LatestPayment);
         if (!string.IsNullOrWhiteSpace(stateBlock))
@@ -73,19 +73,6 @@ public sealed class AgentPromptComposer : IPromptComposer
         return string.Join($"{Environment.NewLine}{Environment.NewLine}", blocks);
     }
 
-    internal static string BuildCustomerMemoryBlock(AgentToolContext? session)
-    {
-        if (session is null || string.IsNullOrWhiteSpace(session.CustomerMemorySummary))
-            return string.Empty;
-
-        return string.Join(Environment.NewLine, new[]
-        {
-            "## MEMORIA DEL CLIENTE (visitas anteriores)",
-            session.CustomerMemorySummary.Trim(),
-            "- Úsalo solo como contexto; NO repitas reservas pasadas como si fueran nuevas."
-        });
-    }
-
     internal static string BuildTurnPolicyBlock(IEnumerable<Message> history)
     {
         if (history.Any(m => IsBotSender(m.Sender)))
@@ -97,6 +84,40 @@ public sealed class AgentPromptComposer : IPromptComposer
             "- Esta sera la primera respuesta visible del bot en la conversacion.",
             "- La respuesta final al cliente debe iniciar con un saludo breve, aunque hayas usado herramientas antes de responder."
         });
+    }
+
+    internal static string BuildBusinessDayRolloverBlock(AgentConfig config, AgentToolContext? session)
+    {
+        if (session?.BusinessDayRollover != true)
+            return string.Empty;
+
+        var requestFacts = config.FactSchema
+            .Where(f => f.EffectiveScope().Equals(FactScopes.Request, StringComparison.OrdinalIgnoreCase))
+            .Where(f => session.Facts.TryGetValue(f.Key, out var value) && !string.IsNullOrWhiteSpace(value))
+            .Select(f => string.IsNullOrWhiteSpace(f.Label) ? f.Key : f.Label)
+            .ToList();
+
+        var lines = new List<string>
+        {
+            "## RETOMA DE DIA",
+            "- Es el mismo hilo del cliente; no saludes como conversacion nueva.",
+            "- Responde con una retoma breve y natural antes de continuar.",
+            "- Usa ESTADO ACTUAL para no repreguntar datos que ya siguen vigentes."
+        };
+
+        if (session.PreviousBusinessDay.HasValue)
+            lines.Add($"- ultimo_dia_activo: {session.PreviousBusinessDay.Value:yyyy-MM-dd}");
+
+        if (requestFacts.Count > 0)
+            lines.Add($"- datos_de_solicitud_vigentes: {string.Join(", ", requestFacts)}");
+
+        if (session.RolloverClearedFacts.Count > 0)
+        {
+            lines.Add($"- datos_vencidos_o_recalculables: {string.Join(", ", session.RolloverClearedFacts)}");
+            lines.Add("- Si falta fecha u hora despues de la limpieza, pide solo ese dato antes de revisar agenda.");
+        }
+
+        return string.Join(Environment.NewLine, lines);
     }
 
     internal static string BuildStateFactsBlock(
@@ -144,7 +165,8 @@ public sealed class AgentPromptComposer : IPromptComposer
             {
                 if (renderedKeys.Contains(key)
                     || string.IsNullOrWhiteSpace(value)
-                    || systemKeys.Contains(key))
+                    || systemKeys.Contains(key)
+                    || key.StartsWith("system.", StringComparison.OrdinalIgnoreCase))
                 {
                     continue;
                 }
@@ -158,7 +180,7 @@ public sealed class AgentPromptComposer : IPromptComposer
                 blocks.Add(string.Join(Environment.NewLine, factsLines));
             }
 
-            // ── ESTADO RESERVA ─────────────────────────────────────────────────
+            // ── SEÑAL DE RESERVAS GESTIONABLES ────────────────────────────────
             var reservationBlock = BuildReservationContextBlock(session);
             if (!string.IsNullOrWhiteSpace(reservationBlock))
                 blocks.Add(reservationBlock);
@@ -202,49 +224,23 @@ public sealed class AgentPromptComposer : IPromptComposer
         return session.ManageableReservations.Count switch
         {
             0 => string.Empty,
-            1 => BuildSingleReservationBlock(session.ManageableReservations[0]),
-            _ => BuildMultipleReservationsBlock(session.ManageableReservations)
+            1 => string.Join(Environment.NewLine, new[]
+            {
+                "## RESERVAS GESTIONABLES",
+                "- hay_reservas_gestionables: true",
+                "- cantidad: 1",
+                "- si el cliente pide cambiar servicio, horario o complementos, llama get_customer_reservations antes de preparar cambios.",
+                "- no uses este indicador para iniciar cambios si el cliente solo pide informacion o quiere una reserva nueva."
+            }),
+            _ => string.Join(Environment.NewLine, new[]
+            {
+                "## RESERVAS GESTIONABLES",
+                "- hay_reservas_gestionables: true",
+                $"- cantidad: {session.ManageableReservations.Count}",
+                "- si el cliente pide cambiar servicio, horario o complementos, llama get_customer_reservations y pregunta cual cita por fecha/servicio.",
+                "- no pidas UUID al cliente."
+            })
         };
-    }
-
-    private static string BuildSingleReservationBlock(Reservation r)
-    {
-        var lines = new List<string> { "## ESTADO RESERVA", $"- estado: {r.Status}" };
-
-        var serviceName = r.Service?.ServiceName ?? r.GetServiceName();
-        if (!string.IsNullOrWhiteSpace(serviceName))
-            lines.Add($"- servicio: {serviceName}");
-
-        if (r.ReservationDateTime is not null)
-        {
-            lines.Add($"- fecha_confirmada: {DateOnly.FromDateTime(r.ReservationDateTime.Value):yyyy-MM-dd}");
-            lines.Add($"- hora_confirmada: {TimeOnly.FromDateTime(r.ReservationDateTime.Value):HH:mm}");
-        }
-
-        if (r.ReservationId != Guid.Empty)
-            lines.Add($"- id_reserva: {r.ReservationId}");
-
-        lines.Add("- gestion: reagendar o cancelar usando las tools; no pidas UUID al cliente.");
-        return string.Join(Environment.NewLine, lines);
-    }
-
-    private static string BuildMultipleReservationsBlock(IReadOnlyList<Reservation> reservations)
-    {
-        var lines = new List<string>
-        {
-            "## RESERVAS DEL CLIENTE",
-            "- varias_citas: true",
-            "- accion: pregunta cuál cita (fecha y servicio); nunca pidas UUID al cliente."
-        };
-
-        var index = 1;
-        foreach (var r in reservations)
-        {
-            lines.Add($"- cita_{index}: {CustomerReservationResolver.FormatReservationLine(r)}");
-            index++;
-        }
-
-        return string.Join(Environment.NewLine, lines);
     }
 
     private static string BuildPendingCheckoutBlock(PaymentTransaction? payment)

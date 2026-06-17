@@ -12,4 +12,5 @@ public record CreateServiceRequest(
     ServiceTier Tier = ServiceTier.Base,
     ServiceType ServiceType = ServiceType.Standard,
     ServiceFulfillmentKind FulfillmentKind = ServiceFulfillmentKind.Reservation,
-    string? FixedScheduleLabel = null);
+    string? FixedScheduleLabel = null,
+    bool IncludeInCheckoutTotal = true);

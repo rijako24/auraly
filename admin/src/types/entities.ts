@@ -85,6 +85,7 @@ export interface Service {
   description: string;
   durationMinutes: number;
   price: number;
+  includeInCheckoutTotal: boolean;
   isActive: boolean;
   categoryId: string;
   categoryName?: string;

@@ -41,4 +41,4 @@ public sealed record CheckoutQuote(
     DateTime IssuedAtUtc,
     DateTime ExpiresAtUtc);
 
-public sealed record CheckoutQuoteLineItem(string Name, decimal Price);
+public sealed record CheckoutQuoteLineItem(string Name, decimal Price, bool IncludeInCheckoutTotal = true);

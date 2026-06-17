@@ -26,12 +26,26 @@ public sealed class ResetFlowContextToolTests
             Status = PaymentTransactionStatus.Created
         };
 
-        var facts = new Mock<IConversationFactsService>();
-        facts.Setup(f => f.ClearNonPersistentAsync(
+        var requestContext = new Mock<IRequestContextService>();
+        requestContext.Setup(r => r.CompleteAsync(
                 conversationId,
-                It.Is<IReadOnlyCollection<string>>(keys => keys.Contains("customer_name")),
+                It.IsAny<AgentConfig>(),
+                It.IsAny<ConversationStateModel>(),
+                It.IsAny<IDictionary<string, string>>(),
+                "start_new_request",
                 It.IsAny<CancellationToken>()))
-            .ReturnsAsync(["service", "desired_date"]);
+            .Callback<Guid, AgentConfig, ConversationStateModel, IDictionary<string, string>?, string, CancellationToken>(
+                (_, _, state, facts, _, _) =>
+                {
+                    facts!.Remove("service");
+                    facts.Remove("desired_date");
+                    state.Verifications.Clear();
+                    state.StageFactSnapshots.Clear();
+                })
+            .ReturnsAsync(new RequestContextCleanupResult(
+                "start_new_request",
+                ["service", "desired_date"],
+                ["customer_name"]));
 
         var payments = new Mock<IPaymentLifecycleService>();
         payments.Setup(p => p.GetActiveByConversationAsync(conversationId, It.IsAny<CancellationToken>()))
@@ -40,7 +54,7 @@ public sealed class ResetFlowContextToolTests
             .Callback(() => payment.Status = PaymentTransactionStatus.Abandoned)
             .Returns(Task.CompletedTask);
 
-        var tool = new ResetFlowContextTool(facts.Object, payments.Object);
+        var tool = new ResetFlowContextTool(requestContext.Object, payments.Object);
         var ctx = new AgentToolContext
         {
             ConversationId = conversationId,
@@ -49,8 +63,8 @@ public sealed class ResetFlowContextToolTests
             {
                 FactSchema =
                 [
-                    new FactSchemaEntry { Key = "customer_name", PersistsAcrossConversations = true },
-                    new FactSchemaEntry { Key = "service", PersistsAcrossConversations = false }
+                    new FactSchemaEntry { Key = "customer_name", Scope = FactScopes.Customer },
+                    new FactSchemaEntry { Key = "service", Scope = FactScopes.Request }
                 ]
             },
             Facts = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)

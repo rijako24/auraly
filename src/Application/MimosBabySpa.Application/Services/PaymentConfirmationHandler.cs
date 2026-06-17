@@ -20,11 +20,12 @@ public class PaymentConfirmationHandler : IPaymentConfirmationHandler
     private readonly IPaymentLifecycleService _paymentLifecycle;
     private readonly IReservationService _reservationService;
     private readonly IActiveAgentConfigResolver _activeAgentConfig;
+    private readonly IRequestContextService _requestContext;
     private readonly IMessageSequenceResolver _sequenceResolver;
     private readonly IOutboundMessageDispatcher _outboundDispatcher;
+    private readonly IReservationCreatedNotificationDispatcher _reservationNotificationDispatcher;
     private readonly IAvailabilityService _availabilityService;
     private readonly ISchedulingPolicyProvider _schedulingPolicy;
-    private readonly IConversationLifecycleService _lifecycle;
     private readonly ILogger<PaymentConfirmationHandler> _logger;
 
     public PaymentConfirmationHandler(
@@ -33,11 +34,12 @@ public class PaymentConfirmationHandler : IPaymentConfirmationHandler
         IPaymentLifecycleService paymentLifecycle,
         IReservationService reservationService,
         IActiveAgentConfigResolver activeAgentConfig,
+        IRequestContextService requestContext,
         IMessageSequenceResolver sequenceResolver,
         IOutboundMessageDispatcher outboundDispatcher,
+        IReservationCreatedNotificationDispatcher reservationNotificationDispatcher,
         IAvailabilityService availabilityService,
         ISchedulingPolicyProvider schedulingPolicy,
-        IConversationLifecycleService lifecycle,
         ILogger<PaymentConfirmationHandler> logger)
     {
         _unitOfWork = unitOfWork;
@@ -45,11 +47,12 @@ public class PaymentConfirmationHandler : IPaymentConfirmationHandler
         _paymentLifecycle = paymentLifecycle;
         _reservationService = reservationService;
         _activeAgentConfig = activeAgentConfig;
+        _requestContext = requestContext;
         _sequenceResolver = sequenceResolver;
         _outboundDispatcher = outboundDispatcher;
+        _reservationNotificationDispatcher = reservationNotificationDispatcher;
         _availabilityService = availabilityService;
         _schedulingPolicy = schedulingPolicy;
-        _lifecycle = lifecycle;
         _logger = logger;
     }
 
@@ -213,7 +216,19 @@ public class PaymentConfirmationHandler : IPaymentConfirmationHandler
 
                 state.Owner = ConversationOwner.Bot;
                 state.ConsecutiveDegradedTurns = 0;
+                await CompleteRequestContextAsync(
+                    state.BusinessId,
+                    paymentTx.ConversationId,
+                    state,
+                    "payment_reservation_confirmed",
+                    ct);
                 await _stateManager.SaveStateAsync(paymentTx.ConversationId, state, ct);
+
+                await _reservationNotificationDispatcher.SendForActiveAgentAsync(
+                    state.BusinessId,
+                    reservation,
+                    custom: null,
+                    ct);
 
                 await SendWebhookSequenceAsync(
                     state.BusinessId,
@@ -223,8 +238,6 @@ public class PaymentConfirmationHandler : IPaymentConfirmationHandler
                     custom: null,
                     ct);
 
-                await _lifecycle.CloseAsync(
-                    paymentTx.ConversationId, ConversationCloseReasons.ReservationConfirmed, ct);
                 outcome = PaymentConfirmationOutcome.Ok();
             }
             catch (Exception ex)
@@ -345,6 +358,12 @@ public class PaymentConfirmationHandler : IPaymentConfirmationHandler
         {
             state.Owner = ConversationOwner.Bot;
             state.ConsecutiveDegradedTurns = 0;
+            await CompleteRequestContextAsync(
+                paymentTx.BusinessId,
+                paymentTx.ConversationId,
+                state,
+                "payment_enrollment_confirmed",
+                ct);
             await _stateManager.SaveStateAsync(paymentTx.ConversationId, state, ct);
         }
 
@@ -379,7 +398,34 @@ public class PaymentConfirmationHandler : IPaymentConfirmationHandler
             custom,
             ct);
 
-        await _lifecycle.CloseAsync(paymentTx.ConversationId, ConversationCloseReasons.ReservationConfirmed, ct);
+    }
+
+    private async Task CompleteRequestContextAsync(
+        Guid businessId,
+        Guid conversationId,
+        ConversationState? state,
+        string reason,
+        CancellationToken ct)
+    {
+        if (state is null)
+            return;
+
+        var config = await _activeAgentConfig.GetActiveConfigAsync(businessId, ct);
+        if (config is null)
+        {
+            _logger.LogWarning(
+                "Webhook cleanup: no active agent config for BusinessId={BusinessId}",
+                businessId);
+            return;
+        }
+
+        await _requestContext.CompleteAsync(
+            conversationId,
+            config,
+            state,
+            inMemoryFacts: null,
+            reason,
+            ct);
     }
 
     private static string ResolveOutcome(PaymentTransaction payment, string legacyFallback) =>

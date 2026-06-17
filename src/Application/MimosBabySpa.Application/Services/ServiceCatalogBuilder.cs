@@ -97,7 +97,8 @@ public static class ServiceCatalogBuilder
             foreach (var rule in compatibleAddOns)
             {
                 var addOnPrice = rule.AddOnPrice.ToString("N0", CultureInfo.InvariantCulture);
-                sb.AppendLine($"    - **{rule.AddOnName}**: {rule.AddOnDescription} - ${addOnPrice}");
+                var checkoutPolicy = rule.IncludeInCheckoutTotal ? string.Empty : " (precio informativo; no suma al total del checkout)";
+                sb.AppendLine($"    - **{rule.AddOnName}**: {rule.AddOnDescription} - ${addOnPrice}{checkoutPolicy}");
             }
         }
     }

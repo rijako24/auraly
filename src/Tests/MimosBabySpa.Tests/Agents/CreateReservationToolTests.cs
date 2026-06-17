@@ -22,7 +22,6 @@ public class CreateReservationToolTests
     private readonly Mock<IBusinessRuleEngine> _rules = new();
     private readonly Mock<IAvailabilityService> _availability = new();
     private readonly Mock<ISchedulingPolicyProvider> _schedulingPolicy = new();
-    private readonly Mock<IConversationLifecycleService> _lifecycle = new();
     private readonly CreateReservationTool _tool;
 
     public CreateReservationToolTests()
@@ -48,8 +47,7 @@ public class CreateReservationToolTests
             _intentBuilder.Object,
             _rules.Object,
             _availability.Object,
-            _schedulingPolicy.Object,
-            _lifecycle.Object);
+            _schedulingPolicy.Object);
     }
 
     [Fact]

@@ -9,6 +9,7 @@ public class AddOnRuleInfo
     public string AddOnName { get; set; } = string.Empty;
     public string AddOnDescription { get; set; } = string.Empty;
     public decimal AddOnPrice { get; set; }
+    public bool IncludeInCheckoutTotal { get; set; } = true;
     public int DisplayOrder { get; set; }
 
     /// <summary>

@@ -125,6 +125,53 @@ public class FakeReservationService : IReservationService
         return Task.FromResult(true);
     }
 
+    public Task<UpdateReservationChangeResult> UpdateReservationAsync(
+        UpdateReservationChangeRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var r = _reservationsCreated.FirstOrDefault(x => x.ReservationId == request.ReservationId);
+        if (r is null)
+        {
+            return Task.FromResult(UpdateReservationChangeResult.Fail(
+                "reservation_not_found",
+                "Reservation was not found.",
+                null,
+                request.ReservationId));
+        }
+
+        var dateTime = r.ReservationDateTime;
+        if (request.Date.HasValue || request.Time.HasValue)
+        {
+            var date = request.Date ?? DateOnly.FromDateTime(dateTime ?? DateTime.UtcNow);
+            var time = request.Time ?? TimeOnly.FromDateTime(dateTime ?? DateTime.UtcNow);
+            dateTime = date.ToDateTime(time);
+        }
+
+        var addOns = ParseAddOnNames(request.AddOnsCsv);
+        if (request.Apply)
+        {
+            r.ServiceName = request.ServiceName ?? r.ServiceName;
+            r.ReservationDateTime = dateTime;
+            r.UpdatedAt = DateTime.UtcNow;
+        }
+
+        return Task.FromResult(new UpdateReservationChangeResult(
+            true,
+            null,
+            null,
+            null,
+            request.ReservationId,
+            request.ServiceName ?? r.ServiceName,
+            dateTime.HasValue ? DateOnly.FromDateTime(dateTime.Value) : null,
+            dateTime.HasValue ? TimeOnly.FromDateTime(dateTime.Value) : null,
+            r.EmployeeName,
+            r.DurationMinutes,
+            addOns,
+            0m,
+            "No additional online payment is required for reservation changes after payment; any remaining balance is handled at the venue.",
+            request.Apply));
+    }
+
     private static IReadOnlyList<string> ParseAddOnNames(string? csv)
     {
         if (string.IsNullOrWhiteSpace(csv))

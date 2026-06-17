@@ -1,4 +1,3 @@
-using MimosBabySpa.Application.Time;
 using MimosBabySpa.Domain.Entities;
 using MimosBabySpa.Domain.Enums;
 using MimosBabySpa.Domain.Repositories;
@@ -22,18 +21,15 @@ public interface IConversationLifecycleService
 public sealed class ConversationLifecycleService : IConversationLifecycleService
 {
     private readonly IUnitOfWork _unitOfWork;
-    private readonly IBusinessClock _businessClock;
     private readonly IEnumerable<IConversationClosedHook> _closedHooks;
     private readonly ILogger<ConversationLifecycleService> _logger;
 
     public ConversationLifecycleService(
         IUnitOfWork unitOfWork,
-        IBusinessClock businessClock,
         IEnumerable<IConversationClosedHook> closedHooks,
         ILogger<ConversationLifecycleService> logger)
     {
         _unitOfWork = unitOfWork;
-        _businessClock = businessClock;
         _closedHooks = closedHooks;
         _logger = logger;
     }
@@ -46,16 +42,6 @@ public sealed class ConversationLifecycleService : IConversationLifecycleService
     {
         var lead = await _unitOfWork.Leads.GetByBusinessIdAndUserNumberAsync(businessId, userNumber);
         var active = await _unitOfWork.Conversations.GetActiveByBusinessIdAndUserNumberAsync(businessId, userNumber, ct);
-        var clock = await _businessClock.GetSnapshotAsync(businessId, ct);
-
-        if (active is not null && HasDayChanged(active.LastActivityAt, clock))
-        {
-            _logger.LogInformation(
-                "Closing conversation {ConvId} for {UserNumber}: business day changed",
-                active.ConversationId, userNumber);
-            await CloseInternalAsync(active, ConversationCloseReasons.DayChanged, ct);
-            active = null;
-        }
 
         if (active is not null)
             return active;
@@ -141,10 +127,4 @@ public sealed class ConversationLifecycleService : IConversationLifecycleService
         }
     }
 
-    private static bool HasDayChanged(DateTime lastActivityUtc, BusinessClockSnapshot clock)
-    {
-        var lastBusinessDay = DateOnly.FromDateTime(
-            TimeZoneInfo.ConvertTimeFromUtc(lastActivityUtc, clock.TimeZone));
-        return clock.Today > lastBusinessDay;
-    }
 }

@@ -125,10 +125,11 @@ var host = new HostBuilder()
         services.AddScoped<IOutboundMessageDispatcher, OutboundMessageDispatcher>();
         services.AddScoped<IMessageSequenceResolver, MessageSequenceResolver>();
         services.AddScoped<IActiveAgentConfigResolver, ActiveAgentConfigResolver>();
+        services.AddScoped<IReservationCreatedNotificationDispatcher, ReservationCreatedNotificationDispatcher>();
 
         services.AddScoped<IConversationFactsService, ConversationFactsService>();
         services.AddScoped<ICustomerMemoryService, CustomerMemoryService>();
-        services.AddScoped<IConversationClosedHook, ConversationSummaryHook>();
+        services.AddScoped<IRequestContextService, RequestContextService>();
         services.AddScoped<IReservationLifecycleService, ReservationLifecycleService>();
         services.AddScoped<ICustomerReservationResolver, CustomerReservationResolver>();
         services.AddScoped<IPaymentLifecycleService, PaymentLifecycleService>();
@@ -179,6 +180,9 @@ var host = new HostBuilder()
         services.AddScoped<IAgentTool, AssignPaidSlotTool>();
         services.AddScoped<IAgentTool, RescheduleReservationTool>();
         services.AddScoped<IAgentTool, SuspendReservationTool>();
+        services.AddScoped<IAgentTool, GetCustomerReservationsTool>();
+        services.AddScoped<IAgentTool, PrepareReservationChangeTool>();
+        services.AddScoped<IAgentTool, ConfirmReservationChangeTool>();
         services.AddScoped<IAgentTool, VerifyPaymentTool>();
         services.AddScoped<IAgentTool, EscalateToHumanTool>();
         services.AddScoped<IAgentTool, GetServiceCatalogTool>();

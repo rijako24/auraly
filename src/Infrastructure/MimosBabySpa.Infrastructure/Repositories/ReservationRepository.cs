@@ -125,6 +125,7 @@ public class ReservationRepository : IReservationRepository
             .Include(r => r.Service)
             .Include(r => r.Employee)
             .Include(r => r.AddOns)
+                .ThenInclude(a => a.AddOnService)
             .Where(r => r.ConversationId == conversationId
                 && r.Status == Domain.Enums.ReservationStatus.Confirmed)
             .OrderByDescending(r => r.UpdatedAt ?? r.CreatedAt)
@@ -143,6 +144,7 @@ public class ReservationRepository : IReservationRepository
             .Include(r => r.Service)
             .Include(r => r.Employee)
             .Include(r => r.AddOns)
+                .ThenInclude(a => a.AddOnService)
             .Where(r => r.BusinessId == businessId
                 && r.CustomerPhoneSnapshot != null
                 && r.CustomerPhoneSnapshot.Trim() == phone

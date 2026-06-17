@@ -7,6 +7,7 @@ public sealed class CatalogImportServiceLineDto
     public int DurationMinutes { get; init; } = 60;
     /// <summary>Precio en pesos COP (entero o decimal).</summary>
     public decimal Price { get; init; }
+    public bool IncludeInCheckoutTotal { get; init; } = true;
     public string CategoryName { get; init; } = "General";
     public string ServiceType { get; init; } = "Standard";
     public string Tier { get; init; } = "Base";

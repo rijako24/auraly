@@ -34,4 +34,12 @@ public interface IReservationService
     /// Cambia fecha y hora de una reserva existente. Verificar disponibilidad antes de llamar.
     /// </summary>
     Task<bool> RescheduleAsync(Guid reservationId, DateOnly newDate, TimeOnly newTime, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Prepara o aplica cambios sobre una reserva confirmada del cliente.
+    /// Valida servicio, horario, empleado disponible y add-ons compatibles antes de persistir.
+    /// </summary>
+    Task<UpdateReservationChangeResult> UpdateReservationAsync(
+        UpdateReservationChangeRequest request,
+        CancellationToken cancellationToken = default);
 }

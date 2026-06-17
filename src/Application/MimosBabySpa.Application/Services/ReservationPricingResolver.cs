@@ -57,7 +57,7 @@ public class ReservationPricingResolver
                 var entity = await _unitOfWork.Services.GetByBusinessIdAndNameAsync(businessId, canonical);
                 if (entity == null) continue;
 
-                lineItems.Add(new PricingLineItem(entity.ServiceName, entity.Price));
+                lineItems.Add(new PricingLineItem(entity.ServiceName, entity.Price, entity.IncludeInCheckoutTotal));
                 resolvedForKey.Add(FormatItem(entity.ServiceName, entity.Price));
             }
 
@@ -67,7 +67,7 @@ public class ReservationPricingResolver
 
         if (lineItems.Count == 0) return null;
 
-        var total = lineItems.Sum(li => li.Price);
+        var total = lineItems.Where(li => li.IncludeInCheckoutTotal).Sum(li => li.Price);
         return new PricingResult(lineItems, formattedByKey, total);
     }
 
@@ -88,7 +88,7 @@ public class ReservationPricingResolver
     }
 }
 
-public sealed record PricingLineItem(string Name, decimal Price);
+public sealed record PricingLineItem(string Name, decimal Price, bool IncludeInCheckoutTotal = true);
 
 public sealed record PricingResult(
     IReadOnlyList<PricingLineItem> LineItems,

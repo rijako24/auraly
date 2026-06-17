@@ -305,7 +305,7 @@ public sealed class SetFactTool : IAgentTool
 
                 return ToolResultHelper.Error(
 
-                    ToolErrorCodes.InvalidAddOns,
+                    validation.ErrorCode ?? ToolErrorCodes.InvalidAddOns,
 
                     validation.ErrorMessage ?? "Invalid add-on selection.",
 
@@ -327,7 +327,7 @@ public sealed class SetFactTool : IAgentTool
 
         await _factsService.SetAsync(ctx.ConversationId, ctx.BusinessId, key, value,
 
-            schemaEntry?.PersistsAcrossConversations ?? false, cancellationToken);
+            schemaEntry?.ShouldRememberAcrossRequests() ?? false, cancellationToken);
 
         ctx.Facts[key] = value;
 

@@ -16,6 +16,10 @@ public sealed class StageAfterToolRule
     public ToolSetFactAction SetFact { get; init; } = new();
 
     public Dictionary<string, string> SetFacts { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+
+    public string? SendMessageSequence { get; init; }
+
+    public bool SendOncePerConversation { get; init; }
 }
 
 public sealed class ToolResultCondition
@@ -24,6 +28,9 @@ public sealed class ToolResultCondition
 
     [JsonPropertyName("equals")]
     public string? Expected { get; init; }
+
+    [JsonPropertyName("notEquals")]
+    public string? NotExpected { get; init; }
 }
 
 public sealed class ToolSetFactAction

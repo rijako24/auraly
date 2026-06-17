@@ -75,6 +75,17 @@ public sealed class CustomerReservationResolver : ICustomerReservationResolver
                     "This reservation does not belong to the current customer channel."));
         }
 
+        if (reservation.Status is not (Domain.Enums.ReservationStatus.Confirmed or Domain.Enums.ReservationStatus.OnHold)
+            || (reservation.ReservationDateTime.HasValue
+                && DateOnly.FromDateTime(reservation.ReservationDateTime.Value) < ctx.BusinessToday))
+        {
+            return ReservationResolveResult.Fail(
+                ToolResultHelper.Error(
+                    "reservation_not_manageable",
+                    "This reservation is not an upcoming manageable reservation.",
+                    "Use get_customer_reservations to list current manageable reservations."));
+        }
+
         return ReservationResolveResult.Ok(reservation);
     }
 

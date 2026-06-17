@@ -63,7 +63,14 @@ export default function ServicesPage() {
       {
         accessorKey: "price",
         header: "Precio",
-        cell: ({ row }) => formatCurrency(row.original.price),
+        cell: ({ row }) => (
+          <div className="flex flex-col">
+            <span>{formatCurrency(row.original.price)}</span>
+            {!row.original.includeInCheckoutTotal && (
+              <span className="text-xs text-muted-foreground">No suma al total</span>
+            )}
+          </div>
+        ),
       },
       {
         accessorKey: "tier",
@@ -183,6 +190,9 @@ export default function ServicesPage() {
           <span className="text-muted-foreground">{item.durationMinutes} min</span>
         </div>
         <div className="mt-2 flex gap-1">
+          {!item.includeInCheckoutTotal && (
+            <Badge variant="secondary">No suma al total</Badge>
+          )}
           <Badge variant="outline" className={cn("text-xs", ServiceTypeColors[item.serviceType as keyof typeof ServiceTypeColors])}>
             {ServiceTypeLabels[item.serviceType as keyof typeof ServiceTypeLabels] ?? "—"}
           </Badge>

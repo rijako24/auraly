@@ -14,8 +14,17 @@ public sealed class CustomerMemoryService : ICustomerMemoryService
     public async Task<IReadOnlyDictionary<string, string>> GetAllAsync(
         Guid businessId, string userNumber, CancellationToken ct = default)
     {
+        var rows = await GetAllRecordsAsync(businessId, userNumber, ct);
+        return rows.ToDictionary(r => r.Key, r => r.Value, StringComparer.OrdinalIgnoreCase);
+    }
+
+    public async Task<IReadOnlyList<CustomerMemoryFactRecord>> GetAllRecordsAsync(
+        Guid businessId, string userNumber, CancellationToken ct = default)
+    {
         var rows = await _unitOfWork.CustomerMemory.GetByBusinessAndUserNumberAsync(businessId, userNumber, ct);
-        return rows.ToDictionary(r => r.Field, r => r.Value, StringComparer.OrdinalIgnoreCase);
+        return rows
+            .Select(r => new CustomerMemoryFactRecord(r.Field, r.Value, r.UpdatedAt))
+            .ToList();
     }
 
     public async Task<string?> GetAsync(

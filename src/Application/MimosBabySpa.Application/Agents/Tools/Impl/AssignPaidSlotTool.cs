@@ -22,7 +22,6 @@ public sealed class AssignPaidSlotTool : IAgentTool
     private readonly ISchedulingPolicyProvider _schedulingPolicy;
     private readonly IUnitOfWork _unitOfWork;
     private readonly IConversationVerificationService _verifications;
-    private readonly IConversationLifecycleService _lifecycle;
 
     public AssignPaidSlotTool(
         IPaymentLifecycleService paymentLifecycle,
@@ -30,8 +29,7 @@ public sealed class AssignPaidSlotTool : IAgentTool
         IAvailabilityService availability,
         ISchedulingPolicyProvider schedulingPolicy,
         IUnitOfWork unitOfWork,
-        IConversationVerificationService verifications,
-        IConversationLifecycleService lifecycle)
+        IConversationVerificationService verifications)
     {
         _paymentLifecycle = paymentLifecycle;
         _reservations = reservations;
@@ -39,7 +37,6 @@ public sealed class AssignPaidSlotTool : IAgentTool
         _schedulingPolicy = schedulingPolicy;
         _unitOfWork = unitOfWork;
         _verifications = verifications;
-        _lifecycle = lifecycle;
     }
 
     public string Name => "assign_paid_slot";
@@ -198,8 +195,6 @@ public sealed class AssignPaidSlotTool : IAgentTool
         }
 
         await _paymentLifecycle.LinkReservationAsync(payment, response.ReservationId, cancellationToken);
-        await _lifecycle.CloseAsync(
-            ctx.ConversationId, ConversationCloseReasons.ReservationConfirmed, cancellationToken);
 
         return ToolResultHelper.Ok(new
         {

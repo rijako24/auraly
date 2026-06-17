@@ -23,11 +23,12 @@ public sealed record AddOnValidationResult(
     bool IsValid,
     string? NormalizedCsv,
     string? ErrorMessage,
-    string? Hint)
+    string? Hint,
+    string? ErrorCode = null)
 {
     public static AddOnValidationResult Ok(string? normalizedCsv) =>
         new(true, normalizedCsv, null, null);
 
-    public static AddOnValidationResult Fail(string message, string? hint = null) =>
-        new(false, null, message, hint);
+    public static AddOnValidationResult Fail(string message, string? hint = null, string? errorCode = null) =>
+        new(false, null, message, hint, errorCode);
 }
