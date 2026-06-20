@@ -11,7 +11,7 @@ import { AgentSettingsEditor } from "@/components/agents/agent-settings-editor";
 import { Button } from "@/components/ui/button";
 import { PageError } from "@/components/ui/page-error";
 import { PageLoading } from "@/components/ui/page-loading";
-import { useAgent, useUpdateAgentSettings } from "@/hooks/use-agents";
+import { useAgent, useAgents, useUpdateAgentSettings } from "@/hooks/use-agents";
 import {
   parseAgentSettingsFromAgent,
   type AgentSettings,
@@ -21,6 +21,7 @@ export default function AgentConfigPage() {
   const params = useParams();
   const agentId = params.agentId as string;
   const { data: agent, isLoading, isError, refetch } = useAgent(agentId);
+  const { data: agents } = useAgents();
   const updateMutation = useUpdateAgentSettings(agentId);
   const [settings, setSettings] = useState<AgentSettings | null>(null);
   const [dirty, setDirty] = useState(false);
@@ -81,6 +82,10 @@ export default function AgentConfigPage() {
         <div className="min-w-0">
           <AgentSettingsEditor
             value={settings}
+            availableAgents={(agents ?? []).map((item) => ({
+              agentId: item.agentId,
+              name: item.name,
+            }))}
             onChange={(next) => {
               setSettings(next);
               setDirty(true);

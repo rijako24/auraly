@@ -29,11 +29,13 @@ public class IntegrationsConfigProvider : IIntegrationsConfigProvider
         return new IntegrationsConfiguration
         {
             GoogleCalendar = BuildGoogleCalendar(connections.FirstOrDefault(c =>
-                c.Provider == IntegrationProvider.GoogleCalendar &&
-                c.Capability == IntegrationCapability.Calendar)),
+                c.ConnectionType == ConnectionType.Integration &&
+                c.Provider == (int)IntegrationProvider.GoogleCalendar &&
+                c.Capability == (int)IntegrationCapability.Calendar)),
             Wompi = BuildWompi(connections.FirstOrDefault(c =>
-                c.Provider == IntegrationProvider.Wompi &&
-                c.Capability == IntegrationCapability.Payments))
+                c.ConnectionType == ConnectionType.Integration &&
+                c.Provider == (int)IntegrationProvider.Wompi &&
+                c.Capability == (int)IntegrationCapability.Payments))
         };
     }
 
@@ -65,14 +67,16 @@ public class IntegrationsConfigProvider : IIntegrationsConfigProvider
 
         var settings = ParseJson(connection.SettingsJson);
         var secrets = ParseJson(connection.SecretsJson);
+        var mode = NormalizeWompiMode(GetString(settings, "mode", "test"));
+        var modeSecrets = GetObject(secrets, mode);
 
         return new WompiIntegration
         {
-            PrivateKey = GetString(secrets, "privateKey"),
-            PublicKey = GetString(secrets, "publicKey"),
-            EventsSecret = GetString(secrets, "eventsSecret"),
-            IntegritySecret = GetString(secrets, "integritySecret"),
-            UseSandbox = GetBool(settings, "useSandbox", true),
+            Mode = mode,
+            PrivateKey = GetString(modeSecrets, "privateKey", GetString(secrets, "privateKey")),
+            PublicKey = GetString(modeSecrets, "publicKey", GetString(secrets, "publicKey")),
+            EventsSecret = GetString(modeSecrets, "eventsSecret", GetString(secrets, "eventsSecret")),
+            IntegritySecret = GetString(modeSecrets, "integritySecret", GetString(secrets, "integritySecret")),
             SandboxBaseUrl = GetString(settings, "sandboxBaseUrl", "https://sandbox.wompi.co/v1"),
             ProductionBaseUrl = GetString(settings, "productionBaseUrl", "https://production.wompi.co/v1"),
             RequestTimeoutSeconds = GetInt(settings, "requestTimeoutSeconds", 30),
@@ -134,5 +138,24 @@ public class IntegrationsConfigProvider : IIntegrationsConfigProvider
             return number;
 
         return int.TryParse(value.ToString(), out var parsed) ? parsed : fallback;
+    }
+
+    private static Dictionary<string, JsonElement> GetObject(Dictionary<string, JsonElement> values, string key)
+    {
+        if (!values.TryGetValue(key, out var value) || value.ValueKind != JsonValueKind.Object)
+            return new Dictionary<string, JsonElement>(StringComparer.OrdinalIgnoreCase);
+
+        return value.EnumerateObject()
+            .ToDictionary(
+                p => p.Name,
+                p => p.Value.Clone(),
+                StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static string NormalizeWompiMode(string? mode)
+    {
+        return string.Equals(mode, "production", StringComparison.OrdinalIgnoreCase)
+            ? "production"
+            : "test";
     }
 }

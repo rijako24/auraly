@@ -10,7 +10,7 @@ namespace MimosBabySpa.IntegrationTests.Scenarios.Definitions;
 
 public class AddOnOfferingScenario : TestScenario
 {
-    public override string Id          => "test_oferta_addons";
+    public override string Id          => "test_escalamiento_addons";
     public override string Description => "Plan Deluxe: bot muestra disponibilidad y servicios extras juntos; usuario confirma con extra.";
     public override CalendarMode CalendarMode     => CalendarMode.Available;
     public override ReservationMode ReservationMode => ReservationMode.AlwaysSucceed;

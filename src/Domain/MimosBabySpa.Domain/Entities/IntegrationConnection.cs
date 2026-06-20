@@ -6,8 +6,9 @@ public class IntegrationConnection
 {
     public Guid IntegrationConnectionId { get; set; }
     public Guid BusinessId { get; set; }
-    public IntegrationProvider Provider { get; set; }
-    public IntegrationCapability Capability { get; set; }
+    public ConnectionType ConnectionType { get; set; } = ConnectionType.Integration;
+    public int Provider { get; set; }
+    public int Capability { get; set; }
     public string Name { get; set; } = string.Empty;
     public string? AccountIdentifier { get; set; }
     public string SettingsJson { get; set; } = "{}";

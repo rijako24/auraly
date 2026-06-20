@@ -1,6 +1,7 @@
 using MimosBabySpa.Domain.Entities;
 using MimosBabySpa.Domain.Enums;
 using MimosBabySpa.Domain.Repositories;
+using MimosBabySpa.Application.Agents;
 using MimosBabySpa.Application.Services;
 
 namespace MimosBabySpa.IntegrationTests.Infrastructure;
@@ -559,6 +560,8 @@ public class NoOpWhatsAppService : IWhatsAppService
 {
     public Task AcknowledgeMessageAsync(string phoneNumberId, string accessToken, string whatsAppMessageId) => Task.CompletedTask;
     public Task SendTextMessageAsync(Guid businessId, string to, string message) => Task.CompletedTask;
+    public Task<string?> SendButtonMessageAsync(Guid businessId, string to, string message, IReadOnlyList<OutboundButton> buttons) =>
+        Task.FromResult<string?>(Guid.NewGuid().ToString("N"));
     public Task SendImageMessageAsync(Guid businessId, string to, string imageUrl, string? caption = null) => Task.CompletedTask;
     public Task SendDocumentMessageAsync(Guid businessId, string to, string documentUrl, string? caption = null, string? filename = null) => Task.CompletedTask;
     public Task<bool> VerifyWebhookAsync(string mode, string token, string challenge) => Task.FromResult(true);

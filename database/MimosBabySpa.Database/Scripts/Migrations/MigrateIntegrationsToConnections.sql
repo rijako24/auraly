@@ -73,7 +73,7 @@ WHEN NOT MATCHED THEN
         JSON_VALUE([Value], '$.wompi.publicKey') AS PublicKey,
         JSON_VALUE([Value], '$.wompi.eventsSecret') AS EventsSecret,
         JSON_VALUE([Value], '$.wompi.integritySecret') AS IntegritySecret,
-        COALESCE(JSON_VALUE([Value], '$.wompi.useSandbox'), N'true') AS UseSandbox,
+        COALESCE(NULLIF(JSON_VALUE([Value], '$.wompi.mode'), N''), N'test') AS Mode,
         COALESCE(NULLIF(JSON_VALUE([Value], '$.wompi.sandboxBaseUrl'), N''), N'https://sandbox.wompi.co/v1') AS SandboxBaseUrl,
         COALESCE(NULLIF(JSON_VALUE([Value], '$.wompi.productionBaseUrl'), N''), N'https://production.wompi.co/v1') AS ProductionBaseUrl,
         COALESCE(TRY_CONVERT(INT, JSON_VALUE([Value], '$.wompi.requestTimeoutSeconds')), 30) AS RequestTimeoutSeconds,
@@ -87,10 +87,10 @@ WompiRows AS (
         CAST(1 AS INT) AS Provider,
         CAST(1 AS INT) AS Capability,
         N'Wompi' AS [Name],
-        NULLIF(PublicKey, N'') AS AccountIdentifier,
+        CAST(NULL AS NVARCHAR(300)) AS AccountIdentifier,
         JSON_QUERY((
             SELECT
-                CASE WHEN LOWER(UseSandbox) = N'true' THEN CAST(1 AS BIT) ELSE CAST(0 AS BIT) END AS useSandbox,
+                CASE WHEN LOWER(Mode) = N'production' THEN N'production' ELSE N'test' END AS mode,
                 SandboxBaseUrl AS sandboxBaseUrl,
                 ProductionBaseUrl AS productionBaseUrl,
                 RequestTimeoutSeconds AS requestTimeoutSeconds,
@@ -99,10 +99,22 @@ WompiRows AS (
         )) AS SettingsJson,
         JSON_QUERY((
             SELECT
-                PrivateKey AS privateKey,
-                PublicKey AS publicKey,
-                EventsSecret AS eventsSecret,
-                IntegritySecret AS integritySecret
+                JSON_QUERY(CASE WHEN LOWER(Mode) = N'production' THEN NULL ELSE (
+                    SELECT
+                        PrivateKey AS privateKey,
+                        PublicKey AS publicKey,
+                        EventsSecret AS eventsSecret,
+                        IntegritySecret AS integritySecret
+                    FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
+                ) END) AS test,
+                JSON_QUERY(CASE WHEN LOWER(Mode) = N'production' THEN (
+                    SELECT
+                        PrivateKey AS privateKey,
+                        PublicKey AS publicKey,
+                        EventsSecret AS eventsSecret,
+                        IntegritySecret AS integritySecret
+                    FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
+                ) ELSE NULL END) AS production
             FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
         )) AS SecretsJson,
         CASE WHEN NULLIF(PrivateKey, N'') IS NOT NULL THEN 1 ELSE 0 END AS IsEnabled
@@ -128,6 +140,75 @@ WHEN MATCHED THEN
 WHEN NOT MATCHED THEN
     INSERT (IntegrationConnectionId, BusinessId, Provider, Capability, [Name], AccountIdentifier, SettingsJson, SecretsJson, IsEnabled, CreatedAt)
     VALUES (NEWID(), src.BusinessId, src.Provider, src.Capability, src.[Name], src.AccountIdentifier, src.SettingsJson, src.SecretsJson, src.IsEnabled, GETUTCDATE());
+
+;WITH WompiConnection AS (
+    SELECT
+        IntegrationConnectionId,
+        CASE
+            WHEN LOWER(JSON_VALUE(SettingsJson, '$.mode')) = N'production' THEN N'production'
+            WHEN LOWER(JSON_VALUE(SettingsJson, '$.' + N'use' + N'Sandbox')) = N'false' THEN N'production'
+            ELSE N'test'
+        END AS Mode,
+        COALESCE(NULLIF(JSON_VALUE(SettingsJson, '$.sandboxBaseUrl'), N''), N'https://sandbox.wompi.co/v1') AS SandboxBaseUrl,
+        COALESCE(NULLIF(JSON_VALUE(SettingsJson, '$.productionBaseUrl'), N''), N'https://production.wompi.co/v1') AS ProductionBaseUrl,
+        COALESCE(TRY_CONVERT(INT, JSON_VALUE(SettingsJson, '$.requestTimeoutSeconds')), 30) AS RequestTimeoutSeconds,
+        COALESCE(NULLIF(JSON_VALUE(SettingsJson, '$.checkoutBaseUrl'), N''), N'https://checkout.wompi.co/l/') AS CheckoutBaseUrl,
+        SecretsJson
+    FROM dbo.IntegrationConnections
+    WHERE ConnectionType = 0
+      AND Provider = 1
+      AND Capability = 1
+),
+WompiNormalized AS (
+    SELECT
+        IntegrationConnectionId,
+        JSON_QUERY((
+            SELECT
+                Mode AS mode,
+                SandboxBaseUrl AS sandboxBaseUrl,
+                ProductionBaseUrl AS productionBaseUrl,
+                RequestTimeoutSeconds AS requestTimeoutSeconds,
+                CheckoutBaseUrl AS checkoutBaseUrl
+            FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
+        )) AS SettingsJson,
+        JSON_QUERY((
+            SELECT
+                JSON_QUERY(CASE
+                    WHEN JSON_VALUE(SecretsJson, '$.test.privateKey') IS NOT NULL THEN JSON_QUERY(SecretsJson, '$.test')
+                    WHEN Mode = N'test' THEN (
+                        SELECT
+                            JSON_VALUE(SecretsJson, '$.privateKey') AS privateKey,
+                            JSON_VALUE(SecretsJson, '$.publicKey') AS publicKey,
+                            JSON_VALUE(SecretsJson, '$.eventsSecret') AS eventsSecret,
+                            JSON_VALUE(SecretsJson, '$.integritySecret') AS integritySecret
+                        FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
+                    )
+                    ELSE NULL
+                END) AS test,
+                JSON_QUERY(CASE
+                    WHEN JSON_VALUE(SecretsJson, '$.production.privateKey') IS NOT NULL THEN JSON_QUERY(SecretsJson, '$.production')
+                    WHEN Mode = N'production' THEN (
+                        SELECT
+                            JSON_VALUE(SecretsJson, '$.privateKey') AS privateKey,
+                            JSON_VALUE(SecretsJson, '$.publicKey') AS publicKey,
+                            JSON_VALUE(SecretsJson, '$.eventsSecret') AS eventsSecret,
+                            JSON_VALUE(SecretsJson, '$.integritySecret') AS integritySecret
+                        FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
+                    )
+                    ELSE NULL
+                END) AS production
+            FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
+        )) AS SecretsJson
+    FROM WompiConnection
+)
+UPDATE target
+SET AccountIdentifier = NULL,
+    SettingsJson = src.SettingsJson,
+    SecretsJson = src.SecretsJson,
+    UpdatedAt = GETUTCDATE()
+FROM dbo.IntegrationConnections AS target
+JOIN WompiNormalized AS src
+  ON src.IntegrationConnectionId = target.IntegrationConnectionId;
 
 DELETE FROM dbo.BusinessConfigurations
 WHERE [Key] = 0;

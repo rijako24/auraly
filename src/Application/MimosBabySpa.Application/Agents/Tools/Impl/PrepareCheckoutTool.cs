@@ -20,9 +20,7 @@ public sealed class PrepareCheckoutTool : IAgentTool
 {
     private readonly ReservationPricingResolver _pricing;
     private readonly IAddOnCatalogService _addOnCatalog;
-    private readonly IPaymentLinkService _paymentLinks;
-    private readonly IPaymentLifecycleService _paymentLifecycle;
-    private readonly ICheckoutQuoteService _quotes;
+    private readonly ICheckoutPaymentCoordinator _checkoutPayments;
     private readonly IConversationVerificationService _verifications;
     private readonly IUnitOfWork _unitOfWork;
     private readonly ServiceNameResolver _serviceNameResolver;
@@ -30,18 +28,14 @@ public sealed class PrepareCheckoutTool : IAgentTool
     public PrepareCheckoutTool(
         ReservationPricingResolver pricing,
         IAddOnCatalogService addOnCatalog,
-        IPaymentLinkService paymentLinks,
-        IPaymentLifecycleService paymentLifecycle,
-        ICheckoutQuoteService quotes,
+        ICheckoutPaymentCoordinator checkoutPayments,
         IConversationVerificationService verifications,
         IUnitOfWork unitOfWork,
         ServiceNameResolver serviceNameResolver)
     {
         _pricing = pricing;
         _addOnCatalog = addOnCatalog;
-        _paymentLinks = paymentLinks;
-        _paymentLifecycle = paymentLifecycle;
-        _quotes = quotes;
+        _checkoutPayments = checkoutPayments;
         _verifications = verifications;
         _unitOfWork = unitOfWork;
         _serviceNameResolver = serviceNameResolver;
@@ -102,7 +96,7 @@ public sealed class PrepareCheckoutTool : IAgentTool
             if (snapshotResult.Error is not null)
                 return snapshotResult.Error;
 
-            var linkResult = await EnsurePaymentLinkAsync(
+            var linkResult = await _checkoutPayments.EnsurePaymentLinkAsync(
                 ctx,
                 quote,
                 paymentPhone,
@@ -110,8 +104,8 @@ public sealed class PrepareCheckoutTool : IAgentTool
                 snapshotResult.ReservationSnapshot,
                 cancellationToken);
 
-            if (linkResult.Error is not null)
-                return linkResult.Error;
+            if (!linkResult.Success)
+                return ToolResultHelper.Error("payment_link_failed", linkResult.ErrorMessage ?? "Failed to generate payment link.");
 
             linkUrl = linkResult.LinkUrl;
             payment = linkResult.Payment;
@@ -298,72 +292,6 @@ public sealed class PrepareCheckoutTool : IAgentTool
             return totalCents * Math.Clamp(payment.Percentage ?? 0, 0, 100) / 100;
 
         return 0;
-    }
-
-    private async Task<(string? LinkUrl, PaymentTransaction? Payment, string? Error)> EnsurePaymentLinkAsync(
-        AgentToolContext ctx,
-        CheckoutQuote quote,
-        string phone,
-        string checkoutSnapshotJson,
-        ReservationIntentSnapshot? reservationSnapshot,
-        CancellationToken cancellationToken)
-    {
-        var activePayment = ctx.ActivePayment
-            ?? await _paymentLifecycle.GetActiveByConversationAsync(ctx.ConversationId, cancellationToken);
-        var quoteHash = _quotes.ComputeHash(quote);
-
-        if (activePayment?.LinkUrl is not null
-            && activePayment.ExpiresAt.HasValue
-            && activePayment.ExpiresAt.Value > DateTime.UtcNow
-            && activePayment.CheckoutKind == quote.CheckoutKind
-            && string.Equals(activePayment.QuoteHash, quoteHash, StringComparison.Ordinal))
-        {
-            ctx.ActivePayment = activePayment;
-            return (activePayment.LinkUrl, activePayment, null);
-        }
-
-        PaymentTransaction? supersededPayment = null;
-        if (activePayment is not null && activePayment.Status == PaymentTransactionStatus.Created)
-            supersededPayment = activePayment;
-
-        var result = await _paymentLinks.GenerateAnticipoLinkAsync(
-            new PaymentLinkRequest(
-                ctx.BusinessId,
-                ctx.ConversationId,
-                phone,
-                quote.ServiceName,
-                quote.PayableCents,
-                quote.Currency,
-                ExpirationMinutes: 60),
-            cancellationToken);
-
-        if (!result.Success)
-        {
-            return (null, null, ToolResultHelper.Error(
-                "payment_link_failed",
-                result.ErrorMessage ?? "Failed to generate payment link."));
-        }
-
-        var payment = await _paymentLifecycle.CreatePendingCheckoutAsync(
-            ctx.BusinessId,
-            ctx.ConversationId,
-            quote.CheckoutKind,
-            checkoutSnapshotJson,
-            quoteHash,
-            quote.ConfirmationOutcome,
-            result.PaymentReferenceId!,
-            result.PaymentLinkUrl!,
-            quote.PayableCents,
-            quote.Currency,
-            result.ExpiresAt ?? DateTime.UtcNow.AddHours(1),
-            reservationSnapshot,
-            cancellationToken);
-
-        if (supersededPayment is not null)
-            await _paymentLifecycle.MarkSupersededAsync(supersededPayment, payment.PaymentTransactionId, cancellationToken);
-
-        ctx.ActivePayment = payment;
-        return (payment.LinkUrl, payment, null);
     }
 
     private static Dictionary<string, object?> BuildTemplateData(

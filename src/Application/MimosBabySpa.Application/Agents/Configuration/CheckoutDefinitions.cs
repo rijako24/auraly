@@ -25,6 +25,7 @@ public sealed class CheckoutModeDefinition
     public string? TemplateWithPayment { get; set; }
     public string? TemplateNoPayment { get; set; }
     public string? ConfirmationOutcome { get; set; }
+    public OrderCheckoutShippingDefinition Shipping { get; set; } = new();
     // Optional legacy/advanced overrides. Normal tenant seeds should rely on engine defaults by checkout mode.
     public Dictionary<string, string> RequiredFactRoles { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public Dictionary<string, string> SystemFactBindings { get; set; } = new(StringComparer.OrdinalIgnoreCase);
@@ -35,6 +36,14 @@ public sealed class CheckoutPaymentDefinition
 {
     public string Type { get; set; } = string.Empty;
     public int? Percentage { get; set; }
+}
+
+public sealed class OrderCheckoutShippingDefinition
+{
+    public bool Enabled { get; set; }
+    public string? LocalCity { get; set; }
+    public decimal LocalCost { get; set; }
+    public decimal NationalCost { get; set; }
 }
 
 public sealed record CheckoutModeBindings(
@@ -49,6 +58,7 @@ public static class CheckoutModeBindingDefaults
         var defaults = checkoutKind switch
         {
             CheckoutKind.Enrollment => EnrollmentDefaults(),
+            CheckoutKind.Order => OrderDefaults(),
             _ => ReservationDefaults()
         };
 
@@ -102,6 +112,28 @@ public static class CheckoutModeBindingDefaults
             CommonTemplateBindings(new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {
                 ["fixed_schedule"] = "checkout.fixed_schedule"
+            }));
+
+    private static CheckoutModeBindings OrderDefaults() =>
+        new(
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["city"] = "shipping.city",
+                ["delivery_address"] = "shipping.address",
+                ["payment_phone"] = "customer.phone"
+            },
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["city"] = "shipping.city",
+                ["delivery_address"] = "shipping.address",
+                ["payer_name"] = "customer.name",
+                ["payment_phone"] = "customer.phone",
+                ["payer_email"] = "customer.email"
+            },
+            CommonTemplateBindings(new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["city"] = "shipping.city",
+                ["delivery_address"] = "shipping.address"
             }));
 
     private static Dictionary<string, string> CommonTemplateBindings(Dictionary<string, string> modeBindings)

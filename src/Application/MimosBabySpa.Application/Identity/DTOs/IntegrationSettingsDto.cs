@@ -2,7 +2,8 @@ namespace MimosBabySpa.Application.Identity.DTOs;
 
 public record IntegrationSettingsDto(
     GoogleCalendarIntegrationDto GoogleCalendar,
-    WompiIntegrationDto Wompi);
+    WompiIntegrationDto Wompi,
+    SiigoCommerceIntegrationDto SiigoCommerce);
 
 public record GoogleCalendarIntegrationDto(
     bool IsEnabled,
@@ -17,7 +18,7 @@ public record GoogleCalendarIntegrationDto(
 
 public record WompiIntegrationDto(
     bool IsEnabled,
-    bool UseSandbox,
+    string Mode,
     string SandboxBaseUrl,
     string ProductionBaseUrl,
     int RequestTimeoutSeconds,
@@ -40,7 +41,7 @@ public record UpdateGoogleCalendarIntegrationRequest(
 
 public record UpdateWompiIntegrationRequest(
     bool IsEnabled,
-    bool UseSandbox,
+    string Mode,
     string SandboxBaseUrl,
     string ProductionBaseUrl,
     int RequestTimeoutSeconds,
@@ -49,3 +50,51 @@ public record UpdateWompiIntegrationRequest(
     string? PublicKey,
     string? EventsSecret,
     string? IntegritySecret);
+
+public record SiigoCommerceIntegrationDto(
+    bool IsEnabled,
+    string BaseUrl,
+    string PartnerId,
+    int RequestTimeoutSeconds,
+    int DefaultPageSize,
+    bool CacheProducts,
+    int PriceListPosition,
+    int DocumentId,
+    int PaymentTypeId,
+    int? SellerId,
+    int? CostCenterId,
+    bool StampSend,
+    bool MailSend,
+    string DefaultCurrencyCode,
+    IReadOnlyList<int> DefaultTaxIds,
+    string DefaultCustomerPersonType,
+    string DefaultCustomerIdType,
+    string DefaultCustomerIdentification,
+    int DefaultCustomerBranchOffice,
+    bool HasUsername,
+    bool HasAccessKey,
+    string? LastError,
+    DateTime? LastSyncAt);
+
+public record UpdateSiigoCommerceIntegrationRequest(
+    bool IsEnabled,
+    string BaseUrl,
+    string PartnerId,
+    int RequestTimeoutSeconds,
+    int DefaultPageSize,
+    bool CacheProducts,
+    int PriceListPosition,
+    int DocumentId,
+    int PaymentTypeId,
+    int? SellerId,
+    int? CostCenterId,
+    bool StampSend,
+    bool MailSend,
+    string DefaultCurrencyCode,
+    IReadOnlyList<int>? DefaultTaxIds,
+    string DefaultCustomerPersonType,
+    string DefaultCustomerIdType,
+    string DefaultCustomerIdentification,
+    int DefaultCustomerBranchOffice,
+    string? Username,
+    string? AccessKey);

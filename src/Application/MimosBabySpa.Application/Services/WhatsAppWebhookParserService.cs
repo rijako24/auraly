@@ -47,7 +47,21 @@ public class WhatsAppWebhookParserService : IWhatsAppWebhookParserService
                     {
                         UserNumber = message.From,
                         MessageText = message.Text.Body,
-                        CustomerName = customerName
+                        CustomerName = customerName,
+                        ProviderMessageId = message.Id,
+                        ReplyToProviderMessageId = message.Context?.Id
+                    });
+                }
+                else if (message.Type == "interactive" && message.Interactive?.ButtonReply != null)
+                {
+                    result.Add(new IncomingMessage
+                    {
+                        UserNumber = message.From,
+                        MessageText = message.Interactive.ButtonReply.Title,
+                        CustomerName = customerName,
+                        ProviderMessageId = message.Id,
+                        ReplyToProviderMessageId = message.Context?.Id,
+                        InteractivePayload = message.Interactive.ButtonReply.Id
                     });
                 }
                 // Mensaje de voz (voice) o audio - transcribir
@@ -89,7 +103,9 @@ public class WhatsAppWebhookParserService : IWhatsAppWebhookParserService
                             {
                                 UserNumber = message.From,
                                 MessageText = transcribedText,
-                                CustomerName = customerName
+                                CustomerName = customerName,
+                                ProviderMessageId = message.Id,
+                                ReplyToProviderMessageId = message.Context?.Id
                             });
 
                             _logger.LogInformation("Audio transcrito para {UserNumber}: {Transcription}",

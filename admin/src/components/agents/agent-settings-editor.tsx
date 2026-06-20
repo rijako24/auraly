@@ -27,17 +27,19 @@ export type AgentEditorSection =
   | "flow"
   | "facts"
   | "tools"
+  | "external"
   | "safety"
   | "advanced";
 
 interface AgentSettingsEditorProps {
   value: AgentSettings;
   onChange: (next: AgentSettings) => void;
+  availableAgents?: Array<{ agentId: string; name: string }>;
   /** Modo wizard: muestra solo una sección sin pestañas. */
   section?: AgentEditorSection;
 }
 
-export function AgentSettingsEditor({ value, onChange, section }: AgentSettingsEditorProps) {
+export function AgentSettingsEditor({ value, onChange, availableAgents = [], section }: AgentSettingsEditorProps) {
   const [selectedStageId, setSelectedStageId] = useState<string | null>(
     value.flow?.stages[0]?.id ?? null
   );
@@ -107,6 +109,7 @@ export function AgentSettingsEditor({ value, onChange, section }: AgentSettingsE
         <TabsTrigger value="flow">Flujo</TabsTrigger>
         <TabsTrigger value="facts">Datos (facts)</TabsTrigger>
         <TabsTrigger value="tools">Tools y guards</TabsTrigger>
+        <TabsTrigger value="external">Externos</TabsTrigger>
         <TabsTrigger value="safety">Seguridad</TabsTrigger>
         <TabsTrigger value="advanced">JSON</TabsTrigger>
       </TabsList>
@@ -372,6 +375,14 @@ export function AgentSettingsEditor({ value, onChange, section }: AgentSettingsE
         />
       </TabsContent>
 
+      <TabsContent value="external">
+        <ExternalEscalationsEditor
+          value={value}
+          availableAgents={availableAgents}
+          onChange={patch}
+        />
+      </TabsContent>
+
       <TabsContent value="safety" className="space-y-4">
         <Card>
           <CardHeader>
@@ -533,6 +544,245 @@ function FactSchemaEditor({
             </div>
           </div>
         ))}
+      </CardContent>
+    </Card>
+  );
+}
+
+function ExternalEscalationsEditor({
+  value,
+  availableAgents,
+  onChange,
+}: {
+  value: AgentSettings;
+  availableAgents: Array<{ agentId: string; name: string }>;
+  onChange: (partial: Partial<AgentSettings>) => void;
+}) {
+  const externalEscalations = value.externalEscalations ?? { enabled: false, events: {} };
+  const events = externalEscalations.events ?? {};
+  const eventNames = Object.keys(events);
+
+  const patchExternal = (nextEvents: typeof events, enabled = externalEscalations.enabled ?? true) =>
+    onChange({
+      externalEscalations: {
+        ...externalEscalations,
+        enabled,
+        events: nextEvents,
+      },
+    });
+
+  const addEvent = () => {
+    const name = eventNames.includes("order_paid")
+      ? `external_event_${eventNames.length + 1}`
+      : "order_paid";
+    patchExternal({
+      ...events,
+      [name]: {
+        enabled: true,
+        strategy: "sequential",
+        attemptTimeoutMinutes: 5,
+        attemptCodePrefix: "PED",
+        sendMessageSequence: "",
+        contacts: [],
+      },
+    }, true);
+  };
+
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between">
+        <div>
+          <CardTitle className="text-base">Escalaciones externas</CardTitle>
+          <CardDescription>Contactos externos y agente que procesa sus respuestas</CardDescription>
+        </div>
+        <Button type="button" variant="outline" size="sm" onClick={addEvent}>
+          <Plus className="mr-1 h-4 w-4" />
+          Evento
+        </Button>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="flex items-center gap-2">
+          <Checkbox
+            checked={externalEscalations.enabled === true}
+            onCheckedChange={(checked) => patchExternal(events, checked === true)}
+          />
+          <Label>Habilitado</Label>
+        </div>
+
+        {eventNames.map((eventName) => {
+          const event = events[eventName] ?? {};
+          const contacts = event.contacts ?? [];
+          const updateEvent = (nextEvent: typeof event, nextName = eventName) => {
+            const next = { ...events };
+            delete next[eventName];
+            next[nextName] = nextEvent;
+            patchExternal(next, externalEscalations.enabled ?? true);
+          };
+
+          return (
+            <div key={eventName} className="space-y-3 rounded-md border p-3">
+              <div className="grid gap-2 sm:grid-cols-4">
+                <div className="space-y-1">
+                  <Label>Evento</Label>
+                  <Input value={eventName} onChange={(e) => updateEvent(event, e.target.value)} />
+                </div>
+                <div className="space-y-1">
+                  <Label>Secuencia</Label>
+                  <Input
+                    value={event.sendMessageSequence ?? ""}
+                    onChange={(e) => updateEvent({ ...event, sendMessageSequence: e.target.value })}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label>Timeout min</Label>
+                  <Input
+                    type="number"
+                    min={1}
+                    value={event.attemptTimeoutMinutes ?? 5}
+                    onChange={(e) => updateEvent({ ...event, attemptTimeoutMinutes: parseInt(e.target.value, 10) })}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label>Prefijo</Label>
+                  <Input
+                    value={event.attemptCodePrefix ?? "EXT"}
+                    onChange={(e) => updateEvent({ ...event, attemptCodePrefix: e.target.value })}
+                  />
+                </div>
+              </div>
+
+              <div className="grid gap-2 sm:grid-cols-2">
+                <div className="space-y-1">
+                  <Label>Evento al llamar</Label>
+                  <Input
+                    placeholder="delivery_called"
+                    value={event.attemptSentNotificationEvent ?? ""}
+                    onChange={(e) =>
+                      updateEvent({ ...event, attemptSentNotificationEvent: e.target.value })
+                    }
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label>Evento al aceptar</Label>
+                  <Input
+                    placeholder="delivery_confirmed"
+                    value={event.acceptedNotificationEvent ?? ""}
+                    onChange={(e) =>
+                      updateEvent({ ...event, acceptedNotificationEvent: e.target.value })
+                    }
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <Label>Contactos</Label>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() =>
+                      updateEvent({
+                        ...event,
+                        contacts: [
+                          ...contacts,
+                          {
+                            key: `contacto_${contacts.length + 1}`,
+                            name: "",
+                            role: "",
+                            phone: "",
+                            priority: contacts.length + 1,
+                            inboundAgentId: availableAgents[0]?.agentId ?? "",
+                          },
+                        ],
+                      })
+                    }
+                  >
+                    <Plus className="mr-1 h-4 w-4" />
+                    Contacto
+                  </Button>
+                </div>
+
+                {contacts.map((contact, index) => (
+                  <div key={index} className="grid gap-2 rounded-md border p-3 sm:grid-cols-6">
+                    <Input
+                      placeholder="key"
+                      value={contact.key}
+                      onChange={(e) => {
+                        const next = [...contacts];
+                        next[index] = { ...contact, key: e.target.value };
+                        updateEvent({ ...event, contacts: next });
+                      }}
+                    />
+                    <Input
+                      placeholder="nombre"
+                      value={contact.name ?? ""}
+                      onChange={(e) => {
+                        const next = [...contacts];
+                        next[index] = { ...contact, name: e.target.value };
+                        updateEvent({ ...event, contacts: next });
+                      }}
+                    />
+                    <Input
+                      placeholder="rol"
+                      value={contact.role ?? ""}
+                      onChange={(e) => {
+                        const next = [...contacts];
+                        next[index] = { ...contact, role: e.target.value };
+                        updateEvent({ ...event, contacts: next });
+                      }}
+                    />
+                    <Input
+                      placeholder="+57..."
+                      value={contact.phone}
+                      onChange={(e) => {
+                        const next = [...contacts];
+                        next[index] = { ...contact, phone: e.target.value };
+                        updateEvent({ ...event, contacts: next });
+                      }}
+                    />
+                    <select
+                      className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+                      value={contact.inboundAgentId ?? ""}
+                      onChange={(e) => {
+                        const next = [...contacts];
+                        next[index] = { ...contact, inboundAgentId: e.target.value };
+                        updateEvent({ ...event, contacts: next });
+                      }}
+                    >
+                      <option value="">Agente</option>
+                      {availableAgents.map((agent) => (
+                        <option key={agent.agentId} value={agent.agentId}>
+                          {agent.name}
+                        </option>
+                      ))}
+                    </select>
+                    <div className="flex gap-2">
+                      <Input
+                        type="number"
+                        min={1}
+                        value={contact.priority ?? index + 1}
+                        onChange={(e) => {
+                          const next = [...contacts];
+                          next[index] = { ...contact, priority: parseInt(e.target.value, 10) };
+                          updateEvent({ ...event, contacts: next });
+                        }}
+                      />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => updateEvent({ ...event, contacts: contacts.filter((_, i) => i !== index) })}
+                      >
+                        <Trash2 className="h-4 w-4 text-destructive" />
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })}
       </CardContent>
     </Card>
   );

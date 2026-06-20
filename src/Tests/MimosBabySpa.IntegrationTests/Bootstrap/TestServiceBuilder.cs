@@ -203,5 +203,13 @@ public static class TestServiceBuilder
             IReadOnlyDictionary<string, string>? custom = null,
             CancellationToken ct = default) =>
             Task.CompletedTask;
+
+        public Task SendEventAsync(
+            Guid businessId,
+            AgentConfig config,
+            string eventName,
+            IReadOnlyDictionary<string, string> custom,
+            CancellationToken ct = default) =>
+            Task.CompletedTask;
     }
 }

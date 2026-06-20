@@ -173,6 +173,10 @@ public class WhatsAppWebhookFunction
                 var userNumber = allMessages.First().UserNumber;
                 var customerName = allMessages.First().CustomerName;
                 var combinedMessage = string.Join("\n", allMessages.Select(m => m.MessageText));
+                var inboundMetadata = new MimosBabySpa.Application.Agents.AgentInboundMetadata(
+                    allMessages.LastOrDefault(m => !string.IsNullOrWhiteSpace(m.ProviderMessageId))?.ProviderMessageId,
+                    allMessages.LastOrDefault(m => !string.IsNullOrWhiteSpace(m.ReplyToProviderMessageId))?.ReplyToProviderMessageId,
+                    allMessages.LastOrDefault(m => !string.IsNullOrWhiteSpace(m.InteractivePayload))?.InteractivePayload);
 
                 // Log si se combinaron múltiples mensajes
                 if (allMessages.Count > 1)
@@ -187,7 +191,8 @@ public class WhatsAppWebhookFunction
                         businessContext.BusinessId,
                         userNumber,
                         combinedMessage,
-                        customerName
+                        customerName,
+                        inboundMetadata
                     );
 
                     await _deduplicationService.MarkProcessedAsync(

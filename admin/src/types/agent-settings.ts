@@ -48,11 +48,19 @@ export interface CheckoutPaymentDefinition {
   percentage?: number;
 }
 
+export interface OrderCheckoutShippingDefinition {
+  enabled?: boolean;
+  localCity?: string;
+  localCost?: number;
+  nationalCost?: number;
+}
+
 export interface CheckoutModeDefinition {
   payment?: CheckoutPaymentDefinition;
   templateWithPayment?: string;
   templateNoPayment?: string;
   confirmationOutcome?: string;
+  shipping?: OrderCheckoutShippingDefinition;
   requiredFactRoles?: Record<string, string>;
   systemFactBindings?: Record<string, string>;
   templateFactBindings?: Record<string, string>;
@@ -61,6 +69,59 @@ export interface CheckoutModeDefinition {
 export interface CheckoutDefinitions {
   categoryModes?: Record<string, string>;
   modes?: Record<string, CheckoutModeDefinition>;
+}
+
+export interface MessageSequenceButton {
+  id: string;
+  title: string;
+}
+
+export interface MessageSequenceStep {
+  body?: string;
+  attachmentId?: string;
+  buttons?: MessageSequenceButton[];
+}
+
+export interface MessageSequence {
+  messages: MessageSequenceStep[];
+}
+
+export interface ExternalEscalationContact {
+  key: string;
+  name?: string;
+  role?: string;
+  phone: string;
+  priority?: number;
+  inboundAgentId?: string;
+}
+
+export interface ExternalEscalationEvent {
+  enabled?: boolean;
+  strategy?: string;
+  attemptTimeoutMinutes?: number;
+  attemptCodePrefix?: string;
+  sendMessageSequence?: string;
+  attemptSentNotificationEvent?: string;
+  acceptedNotificationEvent?: string;
+  contacts?: ExternalEscalationContact[];
+}
+
+export interface ExternalEscalationDefinitions {
+  enabled?: boolean;
+  events?: Record<string, ExternalEscalationEvent>;
+}
+
+export interface EventNotificationConfig {
+  enabled?: boolean;
+  recipients?: string[];
+  sendMessageSequence?: string | null;
+}
+
+export type AgentNotificationDefinitions = Record<string, EventNotificationConfig>;
+
+export interface AgentCommerceSettings {
+  enabled?: boolean;
+  provider?: "Local" | "Siigo" | "CustomHttp";
 }
 
 export interface AgentSettings {
@@ -77,7 +138,11 @@ export interface AgentSettings {
   factSchema?: FactSchemaEntry[];
   guards?: Record<string, GuardDefinition>;
   templates?: Record<string, string>;
+  messageSequences?: Record<string, MessageSequence>;
+  externalEscalations?: ExternalEscalationDefinitions;
+  notifications?: AgentNotificationDefinitions;
   checkout?: CheckoutDefinitions;
+  commerce?: AgentCommerceSettings;
 }
 
 export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
@@ -94,7 +159,11 @@ export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
   factSchema: [],
   guards: {},
   templates: {},
+  messageSequences: {},
+  externalEscalations: { enabled: false, events: {} },
+  notifications: {},
   checkout: { categoryModes: {}, modes: {} },
+  commerce: { enabled: false, provider: "Local" },
 };
 
 export function parseAgentSettingsFromAgent(agent: {
@@ -126,5 +195,9 @@ export function parseAgentSettings(raw: unknown): AgentSettings {
     enabledTools: s.enabledTools ?? [],
     killSwitchPhrases: s.killSwitchPhrases ?? [],
     escalation: s.escalation ?? { contacts: [] },
+    messageSequences: s.messageSequences ?? {},
+    externalEscalations: s.externalEscalations ?? { enabled: false, events: {} },
+    notifications: s.notifications ?? {},
+    commerce: s.commerce ?? { enabled: false, provider: "Local" },
   };
 }

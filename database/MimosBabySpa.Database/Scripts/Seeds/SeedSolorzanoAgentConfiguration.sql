@@ -1,38 +1,278 @@
 -- =============================================================================
 -- SeedSolorzanoAgentConfiguration.sql
 --
--- Configuración del agente Camila (Vinos Artesanales Solórzano) para el motor
--- agentic. Solo actualiza Agents.SettingsJson — sin cambios de código.
---
--- Idempotente. Requisito: negocio y agente Camila ya existen en dbo.Agents.
+-- Configuracion completa del agente Camila (Vinos Artesanales Solorzano) para
+-- el motor agentic actual. Idempotente.
 -- =============================================================================
 
 SET NOCOUNT ON;
 
 DECLARE @BusinessId UNIQUEIDENTIFIER = 'FCEE3BA9-E6BF-43E2-8C1A-560CB724688B';
-DECLARE @AgentId      UNIQUEIDENTIFIER = 'B0EE3BA9-E6BF-43E2-8C1A-560CB724688B';
+DECLARE @AgentId    UNIQUEIDENTIFIER = 'B0EE3BA9-E6BF-43E2-8C1A-560CB724688B';
+DECLARE @MimosBusinessId UNIQUEIDENTIFIER = '22222222-2222-2222-2222-222222222222';
 
 IF NOT EXISTS (SELECT 1 FROM dbo.Businesses WHERE BusinessId = @BusinessId)
 BEGIN
-    PRINT N'SeedSolorzanoAgentConfiguration: negocio Solórzano no encontrado — omitiendo.';
+    PRINT N'SeedSolorzanoAgentConfiguration: negocio Solorzano no encontrado; omitiendo.';
     RETURN;
 END
 
-IF NOT EXISTS (SELECT 1 FROM dbo.Agents WHERE AgentId = @AgentId)
+IF NOT EXISTS (SELECT 1 FROM dbo.Agents WHERE AgentId = @AgentId AND BusinessId = @BusinessId)
 BEGIN
-    PRINT N'SeedSolorzanoAgentConfiguration: agente Camila no encontrado — omitiendo.';
+    PRINT N'SeedSolorzanoAgentConfiguration: agente Camila no encontrado para Solorzano; omitiendo.';
     RETURN;
 END
+
+DECLARE @SourceWompiConnectionId UNIQUEIDENTIFIER;
+DECLARE @ExistingSolorzanoWompiId UNIQUEIDENTIFIER;
+
+SELECT @ExistingSolorzanoWompiId = IntegrationConnectionId
+FROM dbo.IntegrationConnections
+WHERE BusinessId = @BusinessId
+  AND ConnectionType = 0
+  AND Provider = 1
+  AND Capability = 1
+  AND IsEnabled = 1
+  AND NULLIF(SecretsJson, N'{}') IS NOT NULL;
+
+SELECT @SourceWompiConnectionId = IntegrationConnectionId
+FROM dbo.IntegrationConnections
+WHERE BusinessId = @MimosBusinessId
+  AND ConnectionType = 0
+  AND Provider = 1
+  AND Capability = 1
+  AND IsEnabled = 1
+  AND NULLIF(SecretsJson, N'{}') IS NOT NULL;
+
+IF @ExistingSolorzanoWompiId IS NOT NULL
+BEGIN
+    PRINT N'SeedSolorzanoAgentConfiguration: Wompi propio de Solorzano preservado.';
+END
+ELSE IF @SourceWompiConnectionId IS NOT NULL
+BEGIN
+    MERGE dbo.IntegrationConnections AS target
+    USING (
+        SELECT
+            @BusinessId AS BusinessId,
+            ConnectionType,
+            Provider,
+            Capability,
+            [Name],
+            AccountIdentifier,
+            SettingsJson,
+            SecretsJson,
+            IsEnabled
+        FROM dbo.IntegrationConnections
+        WHERE IntegrationConnectionId = @SourceWompiConnectionId
+    ) AS source
+       ON target.BusinessId = source.BusinessId
+      AND target.ConnectionType = source.ConnectionType
+      AND target.Provider = source.Provider
+      AND target.Capability = source.Capability
+    WHEN MATCHED THEN
+        UPDATE SET
+            [Name] = source.[Name],
+            AccountIdentifier = source.AccountIdentifier,
+            SettingsJson = source.SettingsJson,
+            SecretsJson = source.SecretsJson,
+            IsEnabled = source.IsEnabled,
+            UpdatedAt = GETUTCDATE()
+    WHEN NOT MATCHED THEN
+        INSERT (IntegrationConnectionId, BusinessId, ConnectionType, Provider, Capability, [Name],
+                AccountIdentifier, SettingsJson, SecretsJson, IsEnabled, CreatedAt)
+        VALUES (NEWID(), source.BusinessId, source.ConnectionType, source.Provider, source.Capability, source.[Name],
+                source.AccountIdentifier, source.SettingsJson, source.SecretsJson, source.IsEnabled, GETUTCDATE());
+
+    PRINT N'SeedSolorzanoAgentConfiguration: Wompi copiado desde Mimos para Solorzano.';
+END
+ELSE
+BEGIN
+    PRINT N'SeedSolorzanoAgentConfiguration: Wompi de Mimos no encontrado; omitiendo copia para Solorzano.';
+END
+
+DECLARE @LocalCommerceConnectionId UNIQUEIDENTIFIER;
+
+SELECT @LocalCommerceConnectionId = IntegrationConnectionId
+FROM dbo.IntegrationConnections
+WHERE BusinessId = @BusinessId
+  AND ConnectionType = 1
+  AND Provider = 0
+  AND Capability = 0;
+
+IF @LocalCommerceConnectionId IS NULL
+BEGIN
+    SET @LocalCommerceConnectionId = NEWID();
+    INSERT INTO dbo.IntegrationConnections
+        (IntegrationConnectionId, BusinessId, ConnectionType, Provider, Capability, [Name],
+         AccountIdentifier, SettingsJson, SecretsJson, IsEnabled, CreatedAt)
+    VALUES
+        (@LocalCommerceConnectionId, @BusinessId, 1, 0, 0, N'Comercio local',
+         N'local', N'{"currency":"COP","manageStock":false}', NULL, 1, GETUTCDATE());
+END
+ELSE
+BEGIN
+    UPDATE dbo.IntegrationConnections
+    SET [Name] = N'Comercio local',
+        AccountIdentifier = N'local',
+        SettingsJson = N'{"currency":"COP","manageStock":false}',
+        SecretsJson = NULL,
+        IsEnabled = 1,
+        UpdatedAt = GETUTCDATE()
+    WHERE IntegrationConnectionId = @LocalCommerceConnectionId;
+END
+
+DECLARE @MigratedProducts TABLE
+(
+    ProductId UNIQUEIDENTIFIER NOT NULL,
+    Sku NVARCHAR(100) NULL,
+    [Name] NVARCHAR(250) NOT NULL,
+    [Description] NVARCHAR(MAX) NULL,
+    CategoryName NVARCHAR(150) NULL,
+    UnitPrice DECIMAL(18, 2) NOT NULL,
+    Currency NVARCHAR(10) NOT NULL,
+    StockQuantity DECIMAL(18, 2) NULL,
+    DisplayOrder INT NOT NULL
+);
+
+INSERT INTO @MigratedProducts
+    (ProductId, Sku, [Name], [Description], CategoryName, UnitPrice, Currency, StockQuantity, DisplayOrder)
+SELECT
+    NEWID(),
+    LEFT(NULLIF(LTRIM(RTRIM(s.ServiceName)), N''), 100),
+    s.ServiceName,
+    NULLIF(s.Description, N''),
+    COALESCE(sc.Name, N'Vinos artesanales'),
+    s.Price,
+    N'COP',
+    NULL,
+    ROW_NUMBER() OVER (ORDER BY s.ServiceName)
+FROM dbo.Services s
+LEFT JOIN dbo.ServiceCategories sc ON sc.ServiceCategoryId = s.CategoryId
+WHERE s.BusinessId = @BusinessId
+  AND s.IsActive = 1
+  AND (
+      s.ServiceName LIKE N'%Vino%'
+      OR s.ServiceName LIKE N'%Promo%'
+      OR sc.Name LIKE N'%Vino%'
+      OR sc.Name LIKE N'%Promo%'
+  )
+  AND s.ServiceName NOT LIKE N'%Foto%';
+
+MERGE dbo.Products AS target
+USING @MigratedProducts AS source
+   ON target.BusinessId = @BusinessId
+  AND target.Sku = source.Sku
+WHEN MATCHED THEN
+    UPDATE SET
+        IntegrationConnectionId = @LocalCommerceConnectionId,
+        ExternalProductId = NULL,
+        Source = 0,
+        [Name] = source.[Name],
+        [Description] = source.[Description],
+        CategoryName = source.CategoryName,
+        UnitPrice = source.UnitPrice,
+        Currency = source.Currency,
+        ManageStock = 0,
+        StockQuantity = source.StockQuantity,
+        IsActive = 1,
+        RawPayloadJson = NULL,
+        UpdatedAt = GETUTCDATE()
+WHEN NOT MATCHED THEN
+    INSERT (ProductId, BusinessId, IntegrationConnectionId, ExternalProductId, Source, Sku, [Name],
+            [Description], CategoryName, UnitPrice, Currency, ManageStock, StockQuantity,
+            IsActive, RawPayloadJson, LastSyncedAt, CreatedAt)
+    VALUES (source.ProductId, @BusinessId, @LocalCommerceConnectionId, NULL, 0, source.Sku, source.[Name],
+            source.[Description], source.CategoryName, source.UnitPrice, source.Currency, 0, source.StockQuantity,
+            1, NULL, NULL, GETUTCDATE());
+
+UPDATE dbo.Products
+SET IntegrationConnectionId = @LocalCommerceConnectionId,
+    IsActive = 1,
+    UpdatedAt = GETUTCDATE()
+WHERE BusinessId = @BusinessId
+  AND Source = 0
+  AND (
+      [Name] LIKE N'%Vino%'
+      OR [Name] LIKE N'%Promo%'
+      OR CategoryName LIKE N'%Vino%'
+      OR CategoryName LIKE N'%Promo%'
+  )
+  AND [Name] NOT LIKE N'%Foto%';
+
+DELETE FROM dbo.Products
+WHERE BusinessId = @BusinessId
+  AND Source = 0
+  AND (
+      [Name] LIKE N'%Foto%'
+      OR CategoryName = N'Plan'
+      OR (
+          [Name] NOT LIKE N'%Vino%'
+          AND [Name] NOT LIKE N'%Promo%'
+          AND ISNULL(CategoryName, N'') NOT LIKE N'%Vino%'
+          AND ISNULL(CategoryName, N'') NOT LIKE N'%Promo%'
+      )
+  );
+
+DELETE es
+FROM dbo.EmployeeServices es
+INNER JOIN dbo.Services s ON s.ServiceId = es.ServiceId
+WHERE s.BusinessId = @BusinessId;
+
+DELETE sru
+FROM dbo.ServiceResourceUsages sru
+INNER JOIN dbo.Services s ON s.ServiceId = sru.ServiceId
+WHERE s.BusinessId = @BusinessId;
+
+DELETE sbi
+FROM dbo.ServiceBundleItems sbi
+INNER JOIN dbo.Services s ON s.ServiceId = sbi.BundleServiceId OR s.ServiceId = sbi.IncludedServiceId
+WHERE s.BusinessId = @BusinessId;
+
+DELETE sar
+FROM dbo.ServiceAddOnRules sar
+INNER JOIN dbo.Services s ON s.ServiceId = sar.AddOnServiceId OR s.ServiceId = sar.CompatibleServiceId
+WHERE s.BusinessId = @BusinessId;
+
+DELETE ra
+FROM dbo.ReservationAddOns ra
+INNER JOIN dbo.Services s ON s.ServiceId = ra.AddOnServiceId
+WHERE s.BusinessId = @BusinessId;
+
+UPDATE pt
+SET Snapshot_ServiceId = NULL
+FROM dbo.PaymentTransactions pt
+INNER JOIN dbo.Services s ON s.ServiceId = pt.Snapshot_ServiceId
+WHERE s.BusinessId = @BusinessId;
+
+UPDATE r
+SET ServiceId = NULL,
+    UpdatedAt = GETUTCDATE()
+FROM dbo.Reservations r
+WHERE r.BusinessId = @BusinessId
+  AND r.ServiceId IS NOT NULL;
+
+DELETE e
+FROM dbo.Enrollments e
+INNER JOIN dbo.Services s ON s.ServiceId = e.ServiceId
+WHERE s.BusinessId = @BusinessId;
+
+DELETE FROM dbo.Services
+WHERE BusinessId = @BusinessId;
 
 DECLARE @SystemPrompt NVARCHAR(MAX) = N'';
 
 DECLARE @SettingsJson NVARCHAR(MAX) = N'{
   "model": "gpt-4.1-mini",
-  "temperature": 0.7,
+  "temperature": 0.68,
   "maxToolIterations": 8,
+  "historyWindowSize": 24,
   "consecutiveErrorEscalationThreshold": 3,
-  "persona": "## ROL E IDENTIDAD\n\nEres **Camila**, asesora comercial de **Vinos Artesanales Solórzano**.\nAtiendes por WhatsApp como una mujer real: cercana, amable y con experiencia.\nTu objetivo es escuchar al cliente, entender la ocasión y recomendar el vino ideal,\nllevando la conversación hacia la compra de forma natural y sin presión.\n\n**Información clave del producto:**\n- Ninguno de nuestros vinos es elaborado a base de uva.\n- Todos nuestros vinos artesanales tienen 12 grados de alcohol (12°).\n\n## ESTILO DE ATENCIÓN (HUMANO Y NATURAL)\n\n- Hablas con naturalidad, como una persona real atendiendo un chat.\n- No suenas técnica ni robótica.\n- No repites información innecesaria.\n- No das discursos largos.\n- Si el cliente envía varios mensajes cortos seguidos, interprétalos como una sola intención.\n- Responde una sola vez, con claridad y cercanía.\n- En mensajes seguidos de la misma sesión no reinicies la conversación ni repitas saludo. Si retomas una conversación después de una pausa o sesión previa, saluda con cercanía antes de continuar.\n\n**Ejemplo de inicio natural:**\n\"Hola 😊\nSoy Camila, con gusto te ayudo.\nCuéntame, ¿el vino lo buscas para regalar o para compartir?\"\n\n## LÉXICO DE PEDIDOS\n\n- Habla de **pedido**, **confirmar pedido** y **coordinar envío**.\n- **Nunca** uses reservar, reserva, agendar, cita ni slot.\n- **No repitas** el resumen completo si el cliente ya confirmó; solo actualiza lo que cambie.\n\n## REGLA FINAL\n\nMantén siempre un tono humano, cercano y confiable.\nPrioriza productos disponibles.\nHaz **como máximo una pregunta** por mensaje cuando necesites un dato del cliente.",
-  "policies": "## REGLAS DE OPERACIÓN\n\n- Responde SIEMPRE en español.\n- Para precios y productos activos llama **get_service_catalog**; no inventes precios ni disponibilidad.\n- Los productos agotados no aparecen en el catálogo: no los ofrezcas; si preguntan, indica que regresan en aproximadamente 2 meses.\n\n## CATÁLOGO OFICIAL 2026 (referencia; precios vigentes en get_service_catalog)\n\nVino Dulce 750 ml — $50.000 | Base Corozo. Suave y dulce, ideal para celebraciones.\nVino Semidulce 750 ml — $50.000 | Base Corozo. Equilibrado y fácil de tomar.\nVino Semiseco 750 ml — $50.000 | Base Corozo. Más elegante y menos dulce. (Agotado temporalmente)\nVino de Mango 750 ml — $60.000 | Refrescante y tropical.\nVino Premium 750 ml — $70.000 | Base Corozo y miel de abeja. Orgánico, 100% natural. (Agotado temporalmente)\nVino Dulce 207 ml — $22.000 | Presentación personal.\nVino Semidulce 207 ml — $22.000 | Presentación personal. (Agotado temporalmente)\n\n## DISPONIBILIDAD\n\nDisponibles: Dulce 750 ml, Dulce 207 ml, Semidulce 750 ml, Semidulce 207 ml, Mango 750 ml, Mango 207 ml.\nAgotados (~2 meses): Semiseco 750 ml, Semidulce 207 ml, Premium 750 ml.\n\n## PROMOCIÓN VIGENTE\n\nPromo mes de las Madres: 2 botellas de Vino Dulce 750 ml por $80.000. Válida hasta el 31/05/2026.\n- \"Promo\" y \"promoción\" significan lo mismo.\n- Si piden \"una promo\", \"la promo\" o \"la promoción\", es el pack Promo Mes de las Madres (2 botellas Dulce 750 ml).\n- No vuelvas a preguntar cuántas unidades incluye; solo confirma si desean una o más promociones.\n- Menciona la promo solo cuando encaje naturalmente.\n\n## DETALLE PARA REGALO\n\nTodos los vinos pueden entregarse con tula de tela para regalo, incluida en el valor del producto.\n\n## DOMICILIOS Y ENVÍOS\n\nValledupar: domicilio desde $6.000 en zona urbana (informa si cambia).\nEnvíos nacionales: $80.000 por Servientrega. De 1 a 12 botellas de 750 ml. Incluye caja de seguridad.\nDatos necesarios para envío: dirección, celular, nombre (opcional).\n\n## MÉTODOS DE PAGO\n\nBancolombia: Cuenta de ahorros 52400003658 — NIT 901533664 CORSOL GROUP SAS\nLlave Bancolombia: @solorzano4089 — Jorge Solórzano\nNequi / Daviplata: 3004442469 — Jorge Solórzano\nEfectivo: pago contraentrega.\n\n## DISTRIBUIDORES\n\nPedido mínimo: 12 unidades. Margen: 25%. Si el cliente es distribuidor o pide mayorista, usa escalate_to_human.\n\n## TOMA DE PEDIDOS (PASO A PASO)\n\nGuía la compra con calma, pidiendo **un solo dato por mensaje**:\n1) Vino y cantidad\n2) Ciudad\n3) Dirección\n4) Celular\n5) Nombre (opcional)\n\nSi piden promo, asume el pack y continúa el proceso.\nConfirma cada paso con naturalidad.\n\n## CIERRE DE PEDIDO\n\n- Presenta el resumen **una sola vez**, de inmediato y **sin preguntar** si el cliente quiere verlo.\n- Usa el formato de la plantilla **checkout_no_deposit** (sección templates): mismos campos y una sola pregunta al final (método de pago).\n- **Una sola pregunta por mensaje**; no combines resumen + confirmación + pago en el mismo turno salvo la pregunta de cierre de la plantilla.\n- El **primer resumen debe incluir siempre**: producto, cantidad, precio unitario, subtotal, costo de envío y **TOTAL a pagar**. Llama resolve_pricing antes de mostrar cifras.\n- **No preguntes** método de pago ni transferencia/efectivo hasta haber mostrado el total en el resumen.\n- Si el cliente elige promo o \"sin promo\", **no repitas** el resumen entero: confirma la opción en una frase y pasa a pago.\n- Tras elegir método de pago (set_fact payment_method), cierra así:\n  - Transferencia (Bancolombia/Nequi/Daviplata): indica datos, pide comprobante y confirma que al recibirlo coordinan despacho.\n  - Efectivo/contraentrega: confirma pedido y que contactarán para la entrega.\n- **No escales a humano** en pedido normal.\n- Solo escalate_to_human: cliente lo pide, queja grave, o distribuidor/mayorista.\n\n## PROMO Y 2 BOTELLAS DULCE 750\n\n- Si piden exactamente 2 botellas Vino Dulce 750 ml, **ofrece la promo** ($80.000) vs sueltas ($100.000) **antes** de set_fact.\n- Si eligen promo: service=Promo Mes de las Madres, quantity=1 (1 promo = 2 botellas).\n- Si eligen sueltas: service=Vino Dulce 750 ml, quantity=2.",
+  "commerce": {
+    "enabled": true,
+    "provider": "Local"
+  },
+  "persona": "Eres Camila, asesora comercial de Vinos Artesanales Solorzano por WhatsApp. Atiendes en espanol con tono humano, cercano y confiable, guiando la compra sin presion.\n\nResponde claro y breve. Para datos, opciones, resumen, envio o pago, usa listas cortas con campos claros.",
+  "policies": "## PRODUCTO\n\n- Ninguno de los vinos artesanales Solorzano es elaborado a base de uva.\n- Todos los vinos artesanales Solorzano tienen 12 grados de alcohol.",
   "killSwitchPhrases": [
     "quiero hablar con un humano",
     "quiero hablar con una persona",
@@ -40,119 +280,324 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
     "operador",
     "hablar con alguien",
     "hablar con ustedes",
+    "asesor humano",
     "estoy muy molest",
     "queja formal",
     "voy a demandar",
     "soy distribuidor",
+    "soy mayorista",
     "pedido mayorista",
-    "soy mayorista"
+    "compra mayorista",
+    "quiero revender"
   ],
-  "templates": {
-    "checkout_no_deposit": "📋 *Resumen de tu pedido*\n- Producto: {{service_name}}\n- Cantidad: {{quantity}}\n- Precio unitario: ${{unit_price}}\n- Subtotal: ${{subtotal}}\n- Envío ({{shipping_label}}): ${{shipping_cost}}\n- *TOTAL: ${{total}}* {{currency}}\n\n- Ciudad: {{city}}\n- Dirección: {{delivery_address}}\n- Celular: {{delivery_phone}}\n{{#if customer_name}}\n- Nombre: {{customer_name}}\n{{/if}}\n\n¿Cómo prefieres pagar: transferencia (Bancolombia / Nequi / Daviplata) o efectivo contra entrega?"
+  "messageSequences": {
+    "order_paid_customer": {
+      "messages": [
+        {
+          "body": "Gracias por tu compra, {customer_name}. Recibimos el pago del pedido {order_number} por ${total} {currency}. Ya estamos coordinando el domicilio y te avisaremos si necesitamos algo adicional."
+        }
+      ]
+    },
+    "delivery_order_paid": {
+      "messages": [
+        {
+          "body": "Nuevo pedido para domicilio\n\nCodigo: {attempt_code}\nPedido: {order_number}\nCliente: {customer_name}\nTelefono: {customer_phone}\nCiudad: {city}\nDireccion: {delivery_address}\nItems: {items}\nTotal: ${total} {currency}\n\nPuedes tomarlo?",
+          "buttons": [
+            { "id": "external_escalation:accept:{external_escalation_id}", "title": "Aceptar {attempt_code}" },
+            { "id": "external_escalation:decline:{external_escalation_id}", "title": "No {attempt_code}" }
+          ]
+        }
+      ]
+    },
+    "admin_order_paid": {
+      "messages": [
+        {
+          "body": "Nuevo pedido pagado\n\nPedido: {order_number}\nCliente: {customer_name}\nTelefono: {customer_phone}\nCiudad: {city}\nDireccion: {delivery_address}\nItems: {items}\nTotal: ${total} {currency}\nEstado domicilio: en asignacion"
+        }
+      ]
+    },
+    "admin_delivery_called": {
+      "messages": [
+        {
+          "body": "Domicilio llamado\n\nPedido: {order_number}\nCodigo: {attempt_code}\nContacto: {contact_name} ({contact_phone})\nCiudad: {city}\nDireccion: {delivery_address}\nTotal: ${total} {currency}"
+        }
+      ]
+    },
+    "admin_delivery_confirmed": {
+      "messages": [
+        {
+          "body": "Domicilio confirmado\n\nPedido: {order_number}\nCodigo: {attempt_code}\nDomiciliario: {contact_name} ({contact_phone})\nCliente: {customer_name}\nTelefono cliente: {customer_phone}\nDireccion: {delivery_address}"
+        }
+      ]
+    }
   },
   "flow": {
     "stageDetection": "automatic",
     "stages": [
       {
         "id": "discovery",
-        "name": "Seleccion de producto",
-        "goal": "Recomendar vinos del catálogo; registrar producto y cantidad.",
-        "hint": "Llama get_service_catalog. Máximo 1-3 opciones con precio. Si piden 2× Vino Dulce 750 ml, ofrece promo vs sueltas antes de registrar. Promo: set_fact service=Promo Mes de las Madres, quantity=número de promos. Vino suelto: set_fact service (nombre exacto del catálogo) y quantity. Un dato faltante por turno.",
-        "allowedTools": ["get_service_catalog", "set_fact", "escalate_to_human"],
-        "advanceWhenFacts": ["service", "quantity"]
+        "name": "Descubrimiento y recomendacion",
+        "goal": "Entender si el vino es para regalo o para compartir, recomendar opciones disponibles y construir el carrito hasta que el cliente finalice la compra.",
+        "hint": "Si el mensaje del cliente es solo un saludo, saluda breve, presentate y pregunta si el vino lo busca para regalar o para compartir. En ese turno responde solo el saludo y la pregunta de ocasion. Cuando el cliente responda la ocasion, pida opciones, precios, promo o un producto, llama search_products antes de dar precios o disponibilidad y muestra 1 a 3 opciones activas en la misma respuesta. Para ocasion regalar/compartir usa una busqueda amplia: query vino, limit 3. Recomienda con lenguaje cercano y menciona la tula de regalo cuando encaje. Cierra con una invitacion suave a elegir una opcion. Cuando el cliente seleccione una opcion ya mostrada por numero, precio, tamano, sabor, nombre parcial o descripcion, resuelve cual producto corresponde en el ultimo resultado de search_products y conserva su product_id como producto elegido; en ese turno usa el catalogo ya mostrado, no vuelvas a buscar. La cantidad siempre debe estar expresada por el cliente antes de agregar al carrito. Si el cliente eligio producto pero no dijo cantidad, pregunta cuantas unidades quiere llevar. Cuando ya tengas producto elegido y cantidad, llama add_order_item con el product_id exacto del producto elegido y quantity. Representa el carrito con el draft y sus items. Despues de agregar cada item, pregunta si quiere agregar algo mas a la compra. Cuando el cliente diga claramente que ya no quiere agregar mas y exista al menos un item en el carrito, llama set_fact order_finalized=true y avanza a datos de entrega. Si el carrito esta vacio, ayuda a elegir un producto primero. Si pregunta por algo fuera del catalogo activo, ofrece opciones activas.",
+        "allowedTools": ["search_products", "add_order_item", "set_fact"],
+        "advanceWhenFacts": ["order_finalized"]
       },
       {
-        "id": "shipping_data",
-        "name": "Datos de envio",
-        "goal": "Recoger ciudad, dirección, celular y nombre (opcional) — un solo dato por mensaje.",
-        "hint": "Registra con set_fact **en el mismo turno** en que el cliente da el dato: city al confirmar ciudad, delivery_address al dar dirección, delivery_phone al dar celular. **Una sola pregunta** por mensaje. Si rechaza nombre, **no** llames set_fact customer_name (es opcional). Envío: Valledupar desde $6.000 urbano; nacional Servientrega $80.000 (1-12 botellas 750 ml). No menciones envío hasta tener city.",
-        "allowedTools": ["set_fact", "escalate_to_human"],
-        "advanceWhenFacts": ["city", "delivery_address", "delivery_phone"]
+        "id": "order_data",
+        "name": "Datos del pedido",
+        "goal": "Recoger ciudad, direccion, celular y nombre opcional para coordinar envio.",
+        "hint": "Cuando falte city, delivery_address o delivery_phone, pide los datos faltantes juntos en una lista titulada Datos del pedido. Incluye estos campos cuando falten: Ciudad, Direccion de entrega, Celular de contacto, Nombre de quien recibe (opcional). Cuando el cliente responda, registra todos los datos que entregue con set_fact en el mismo turno. Si despues de registrar quedan datos requeridos pendientes, pide los faltantes juntos en lista.",
+        "allowedTools": ["set_fact"],
+        "advanceWhenFacts": ["city", "delivery_address", "delivery_phone"],
+        "reentryOnFactChanged": ["city", "delivery_address", "delivery_phone"]
       },
       {
-        "id": "finalization",
-        "name": "Cierre",
-        "goal": "Un resumen, confirmación, método de pago y cierre del pedido.",
-        "hint": "Fase A (primer resumen): llama resolve_pricing; calcula subtotal = precio unitario × quantity; envío según city (Valledupar $6.000; nacional $80.000); total = subtotal + envío. **Muestra el resumen de inmediato** con el formato de la plantilla checkout_no_deposit (templates): rellena service_name, quantity, unit_price, subtotal, shipping_label, shipping_cost, total, city, delivery_address, delivery_phone y customer_name si existe. **No preguntes** si desea ver el resumen. La plantilla ya cierra con **una sola pregunta** (método de pago); no agregues otra pregunta en el mismo mensaje. **Nunca** des resumen sin total ni preguntes transferencia/efectivo antes del total. Fase B (confirma o promo/sin promo): NO repitas resumen completo; 1-2 frases y, si falta, método de pago en **un solo mensaje**. Fase C (elige pago): set_fact payment_method; instrucciones según policies. Prohibido: reservar, agendar, cita, escalate_to_human, set_fact customer_name vacío. Solo resolve_pricing de nuevo si cambió service o quantity.",
-        "allowedTools": ["resolve_pricing", "set_fact"],
+        "id": "summary",
+        "name": "Resumen y total",
+        "goal": "Mostrar resumen del pedido con total y link de pago por el 100%.",
+        "hint": "Llama prepare_order_checkout cuando ya existan items y datos de entrega. La herramienta genera el resumen oficial, calcula envio segun checkout.modes.order.shipping y crea link de pago por el 100%. Muestra el resumen/link generado y espera confirmacion automatica del webhook. Si prepare_order_checkout falla por configuracion de pago, link de pago o un error no recuperable, responde breve y llama escalate_to_human en ese mismo turno con la razon y el ultimo mensaje relevante. No uses tools de reserva ni confirmes pedido antes del pago.",
+        "allowedTools": ["prepare_order_checkout", "get_order_draft", "set_fact", "escalate_to_human"],
+        "advanceWhenFacts": [],
+        "reentryOnFactChanged": ["order_finalized", "city", "delivery_address"]
+      },
+      {
+        "id": "payment",
+        "name": "Metodo de pago",
+        "goal": "Acompanar el pago online del pedido.",
+        "hint": "El pedido se confirma solo cuando Wompi confirme el pago. Si el cliente dice transferencia, Bancolombia, Nequi, Daviplata, efectivo, contraentrega o que quiere pagar, acompana el pago con el link de Wompi ya generado; si aun no hay link vigente, llama prepare_order_checkout. Si pregunta por estado del pago, llama verify_payment. No entregues cuentas bancarias ni datos de pago manual. No llames create_order para cerrar pedidos pagados.",
+        "allowedTools": ["prepare_order_checkout", "verify_payment", "get_order_draft", "escalate_to_human"],
         "advanceWhenFacts": []
       }
     ]
   },
+  "globalActions": [
+    {
+      "id": "human_handoff",
+      "priority": 100,
+      "goal": "Escalar a humano cuando el cliente lo pida, haya queja grave, distribuidor/mayorista o una situacion fuera del flujo normal.",
+      "hint": "Responde con una frase corta y cordial. Para distribuidor, menciona minimo 12 unidades y margen 25%. Luego llama escalate_to_human.",
+      "allowedTools": ["escalate_to_human"]
+    },
+    {
+      "id": "restart_order",
+      "priority": 70,
+      "goal": "Reiniciar el pedido actual si el cliente cambia completamente de producto o quiere empezar de nuevo.",
+      "hint": "Usa reset_flow_context solo cuando el cliente indique claramente que quiere cambiar el pedido completo. Conserva datos persistentes del cliente.",
+      "allowedTools": ["reset_flow_context", "set_fact"]
+    }
+  ],
   "factSchema": [
     {
-      "key": "session.engagement", "role": "session.engagement",
-      "label": "contexto de engagement", "type": "string",
-      "required": false, "source": "session", "scope": "ephemeral"
+      "key": "session.engagement",
+      "role": "session.engagement",
+      "label": "contexto de engagement",
+      "type": "string",
+      "required": false,
+      "source": "session",
+      "scope": "ephemeral"
     },
     {
-      "key": "occasion", "role": "order.occasion", "label": "ocasión",
-      "type": "string", "required": false, "source": "user",
-      "aliases": ["regalo", "compartir", "celebracion", "celebración"]
+      "key": "occasion",
+      "role": "order.occasion",
+      "label": "ocasion del vino",
+      "type": "string",
+      "required": false,
+      "source": "user",
+      "scope": "request",
+      "captureMode": "eager",
+      "aliases": ["regalo", "compartir", "celebracion", "ocasion", "detalle"]
     },
     {
-      "key": "service", "role": "order.product", "label": "producto principal",
-      "type": "string", "required": true, "source": "user",
-      "aliases": ["vino", "producto", "promo", "promoción", "promoción"]
+      "key": "order_finalized",
+      "role": "order.finalized",
+      "label": "cliente finalizo el carrito",
+      "type": "string",
+      "required": true,
+      "source": "user",
+      "scope": "request",
+      "captureMode": "onDemand",
+      "aliases": ["finalizar", "cerrar_pedido", "no_agregar_mas", "nada_mas", "listo"]
     },
     {
-      "key": "quantity", "role": "order.quantity", "label": "cantidad",
-      "type": "string", "required": true, "source": "user",
-      "aliases": ["cantidad", "unidades", "botellas"]
+      "key": "gift_wrap",
+      "role": "order.gift_wrap",
+      "label": "tula de regalo",
+      "type": "string",
+      "required": false,
+      "source": "user",
+      "scope": "request",
+      "captureMode": "eager",
+      "aliases": ["regalo", "tula", "empaque", "detalle"]
     },
     {
-      "key": "city", "role": "shipping.city", "label": "ciudad",
-      "type": "string", "required": true, "source": "user",
-      "aliases": ["ciudad", "municipio"]
+      "key": "city",
+      "role": "shipping.city",
+      "label": "ciudad de entrega",
+      "type": "string",
+      "required": true,
+      "source": "user",
+      "scope": "request",
+      "captureMode": "eager",
+      "aliases": ["ciudad", "municipio", "destino"]
     },
     {
-      "key": "delivery_address", "role": "shipping.address", "label": "dirección de entrega",
-      "type": "string", "required": true, "source": "user",
-      "aliases": ["direccion", "dirección", "domicilio", "barrio"]
+      "key": "delivery_address",
+      "role": "shipping.address",
+      "label": "direccion de entrega",
+      "type": "string",
+      "required": true,
+      "source": "user",
+      "scope": "request",
+      "captureMode": "eager",
+      "aliases": ["direccion", "domicilio", "barrio", "direccion de entrega"]
     },
     {
-      "key": "delivery_phone", "role": "shipping.phone", "label": "celular de entrega",
-      "type": "phone", "required": true, "source": "user",
-      "aliases": ["telefono", "teléfono", "celular", "whatsapp", "numero", "número"]
+      "key": "delivery_phone",
+      "role": "customer.phone",
+      "label": "celular de entrega",
+      "type": "phone",
+      "required": true,
+      "source": "user",
+      "scope": "customer",
+      "captureMode": "eager",
+      "aliases": ["telefono", "celular", "whatsapp", "numero", "contacto"]
     },
     {
-      "key": "customer_name", "role": "customer.name", "label": "nombre del cliente",
-      "type": "string", "required": false, "source": "user", "scope": "customer",
-      "aliases": ["nombre", "cliente"]
+      "key": "customer_name",
+      "role": "customer.name",
+      "label": "nombre del cliente",
+      "type": "string",
+      "required": false,
+      "source": "user",
+      "scope": "customer",
+      "captureMode": "eager",
+      "aliases": ["nombre", "cliente", "recibe", "destinatario"]
     },
     {
-      "key": "payment_method", "role": "order.payment_method", "label": "método de pago",
-      "type": "string", "required": false, "source": "user",
-      "aliases": ["pago", "forma de pago", "bancolombia", "nequi", "daviplata", "efectivo", "contraentrega"]
+      "key": "shipping_cost",
+      "role": "shipping.cost",
+      "label": "costo de envio",
+      "type": "number",
+      "required": false,
+      "source": "system",
+      "scope": "request"
     },
     {
-      "key": "order_confirmed", "role": "order.confirmed", "label": "pedido confirmado",
-      "type": "string", "required": false, "source": "user",
-      "aliases": ["confirmado", "si confirmo", "de acuerdo"]
+      "key": "order_confirmed",
+      "role": "order.confirmed",
+      "label": "pedido confirmado",
+      "type": "string",
+      "required": false,
+      "source": "user",
+      "scope": "request",
+      "aliases": ["confirmado", "confirmo", "si confirmo", "de acuerdo", "listo"]
     }
   ],
   "guards": {},
   "enabledTools": [
     "set_fact",
-    "get_service_catalog",
-    "resolve_pricing",
+    "search_products",
+    "add_order_item",
+    "remove_order_item",
+    "get_order_draft",
+    "prepare_order_checkout",
+    "verify_payment",
+    "create_order",
+    "reset_flow_context",
     "escalate_to_human"
   ],
   "escalation": {
-    "contacts": ["+573004442469"]
+    "contacts": ["+573005942096"]
+  },
+  "notifications": {
+    "reservation_created": {
+      "enabled": false,
+      "recipients": [],
+      "sendMessageSequence": null
+    },
+    "order_paid": {
+      "enabled": true,
+      "recipients": ["+573005942096"],
+      "sendMessageSequence": "admin_order_paid"
+    },
+    "delivery_called": {
+      "enabled": true,
+      "recipients": ["+573005942096"],
+      "sendMessageSequence": "admin_delivery_called"
+    },
+    "delivery_confirmed": {
+      "enabled": true,
+      "recipients": ["+573005942096"],
+      "sendMessageSequence": "admin_delivery_confirmed"
+    }
+  },
+  "webhooks": {
+    "wompi": {
+      "order_paid": {
+        "sendMessageSequence": "order_paid_customer"
+      }
+    }
+  },
+  "externalEscalations": {
+    "enabled": true,
+    "events": {
+      "order_paid": {
+        "enabled": true,
+        "strategy": "sequential",
+        "attemptTimeoutMinutes": 5,
+        "attemptCodePrefix": "PED",
+        "sendMessageSequence": "delivery_order_paid",
+        "attemptSentNotificationEvent": "delivery_called",
+        "acceptedNotificationEvent": "delivery_confirmed",
+        "contacts": [
+          {
+            "key": "domicilio_solorzano",
+            "name": "Domicilio Solorzano",
+            "role": "delivery",
+            "phone": "+573042052007",
+            "priority": 1,
+            "inboundAgentId": "B0EE3BA9-E6BF-43E2-8C1A-560CB724688B"
+          }
+        ]
+      }
+    }
+  },
+  "checkout": {
+    "currency": "COP",
+    "modes": {
+      "order": {
+        "payment": { "type": "full", "percentage": 100 },
+        "templateWithPayment": "order_checkout_with_payment",
+        "confirmationOutcome": "order_paid",
+        "shipping": {
+          "enabled": true,
+          "localCity": "Valledupar",
+          "localCost": 6000,
+          "nationalCost": 80000
+        }
+      }
+    }
+  },
+  "templates": {
+    "order_checkout_with_payment": "*Resumen de tu pedido*\n{{#each line_items}}\n- {{name}} x{{quantity}}: ${{line_total}}\n{{/each}}\n- Envio: ${{shipping_cost}}\n- *Total a pagar: ${{total}} {{currency}}*\n\nEntrega:\n- Ciudad: {{city}}\n- Direccion: {{delivery_address}}\n- Celular: {{customer_phone}}\n{{#if customer_name}}\n- Nombre: {{customer_name}}\n{{/if}}\n\nPuedes pagar de forma segura en este enlace:\n{{link_url}}\n\nCuando el pago sea aprobado, te confirmaremos la compra automaticamente."
   }
 }';
+
+IF ISJSON(@SettingsJson) <> 1
+BEGIN
+    THROW 51000, 'SeedSolorzanoAgentConfiguration: SettingsJson invalido.', 1;
+END
 
 UPDATE dbo.Agents
 SET SettingsJson         = @SettingsJson,
     SystemPromptMarkdown = @SystemPrompt,
     Model                = N'gpt-4.1-mini',
-    Temperature          = 0.7,
+    Temperature          = 0.68,
     MaxToolIterations    = 8,
-    Description          = N'Asesora comercial Vinos Artesanales Solórzano: venta por WhatsApp con pedido y domicilio.',
+    Description          = N'Asesora comercial Vinos Artesanales Solorzano: venta por WhatsApp con pedido, envio y pago.',
     IsActive             = 1,
     UpdatedAt            = GETUTCDATE()
 WHERE AgentId = @AgentId;
 
-PRINT N'SeedSolorzanoAgentConfiguration: Camila actualizada para negocio ' + CAST(@BusinessId AS NVARCHAR(36));
+PRINT N'SeedSolorzanoAgentConfiguration: Camila reconfigurada para negocio ' + CAST(@BusinessId AS NVARCHAR(36));
 GO

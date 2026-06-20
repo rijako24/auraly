@@ -19,6 +19,19 @@ public class IntegrationConnectionRepository : IIntegrationConnectionRepository
     {
         return await _context.IntegrationConnections
             .Where(c => c.BusinessId == businessId)
+            .OrderBy(c => c.ConnectionType)
+            .ThenBy(c => c.Provider)
+            .ThenBy(c => c.Capability)
+            .ToListAsync(ct);
+    }
+
+    public async Task<IReadOnlyList<IntegrationConnection>> GetByBusinessConnectionTypeAsync(
+        Guid businessId,
+        ConnectionType connectionType,
+        CancellationToken ct = default)
+    {
+        return await _context.IntegrationConnections
+            .Where(c => c.BusinessId == businessId && c.ConnectionType == connectionType)
             .OrderBy(c => c.Provider)
             .ThenBy(c => c.Capability)
             .ToListAsync(ct);
@@ -33,8 +46,24 @@ public class IntegrationConnectionRepository : IIntegrationConnectionRepository
         return await _context.IntegrationConnections
             .FirstOrDefaultAsync(c =>
                 c.BusinessId == businessId &&
-                c.Provider == provider &&
-                c.Capability == capability,
+                c.ConnectionType == ConnectionType.Integration &&
+                c.Provider == (int)provider &&
+                c.Capability == (int)capability,
+                ct);
+    }
+
+    public async Task<IntegrationConnection?> GetCommerceConnectionAsync(
+        Guid businessId,
+        CommerceProvider provider,
+        CommerceCapability capability = CommerceCapability.CatalogAndOrders,
+        CancellationToken ct = default)
+    {
+        return await _context.IntegrationConnections
+            .FirstOrDefaultAsync(c =>
+                c.BusinessId == businessId &&
+                c.ConnectionType == ConnectionType.Commerce &&
+                c.Provider == (int)provider &&
+                c.Capability == (int)capability,
                 ct);
     }
 

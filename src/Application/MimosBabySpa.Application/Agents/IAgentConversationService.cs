@@ -15,5 +15,11 @@ public interface IAgentConversationService
         Guid conversationId,
         string userMessage,
         string? channelPhone = null,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default,
+        AgentInboundMetadata? inboundMetadata = null);
 }
+
+public sealed record AgentInboundMetadata(
+    string? ProviderMessageId,
+    string? ReplyToProviderMessageId,
+    string? InteractivePayload);

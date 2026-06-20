@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging;
 using MimosBabySpa.Application.Services;
+using MimosBabySpa.Application.Agents;
 
 namespace MimosBabySpa.Console.Services;
 
@@ -28,6 +29,15 @@ public class ConsoleWhatsAppService : IWhatsAppService
         System.Console.WriteLine(message);
         System.Console.WriteLine();
         return Task.CompletedTask;
+    }
+
+    public Task<string?> SendButtonMessageAsync(Guid businessId, string to, string message, IReadOnlyList<OutboundButton> buttons)
+    {
+        _logger.LogInformation("WhatsApp botones mock a {To}: {Message} | {Buttons}",
+            to,
+            message,
+            string.Join(", ", buttons.Select(b => $"{b.Title}:{b.Id}")));
+        return Task.FromResult<string?>(Guid.NewGuid().ToString("N"));
     }
 
     public Task SendImageMessageAsync(Guid businessId, string to, string imageUrl, string? caption = null)

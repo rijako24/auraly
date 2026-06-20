@@ -8,7 +8,10 @@ public sealed record OutboundMessage(
     string? Body,
     string? MediaUrl,
     string MediaType = "text",
-    string? Filename = null);
+    string? Filename = null,
+    IReadOnlyList<OutboundButton>? Buttons = null);
+
+public sealed record OutboundButton(string Id, string Title);
 
 /// <summary>
 /// Contexto opcional para resolver placeholders de secuencias (reserva, pago, etc.).

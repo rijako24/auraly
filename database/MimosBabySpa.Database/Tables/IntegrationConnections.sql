@@ -1,6 +1,7 @@
 CREATE TABLE [dbo].[IntegrationConnections] (
     [IntegrationConnectionId] UNIQUEIDENTIFIER NOT NULL PRIMARY KEY DEFAULT NEWID(),
     [BusinessId] UNIQUEIDENTIFIER NOT NULL,
+    [ConnectionType] INT NOT NULL DEFAULT 0,
     [Provider] INT NOT NULL,
     [Capability] INT NOT NULL,
     [Name] NVARCHAR(200) NOT NULL,
@@ -15,14 +16,13 @@ CREATE TABLE [dbo].[IntegrationConnections] (
     CONSTRAINT [FK_IntegrationConnections_Businesses] FOREIGN KEY ([BusinessId])
         REFERENCES [dbo].[Businesses] ([BusinessId])
         ON DELETE NO ACTION,
-    CONSTRAINT [CK_IntegrationConnections_Provider] CHECK ([Provider] IN (0, 1)),
-    CONSTRAINT [CK_IntegrationConnections_Capability] CHECK ([Capability] IN (0, 1))
+    CONSTRAINT [CK_IntegrationConnections_ConnectionType] CHECK ([ConnectionType] IN (0, 1))
 );
 
 GO
 
-CREATE UNIQUE INDEX [IX_IntegrationConnections_BusinessId_Provider_Capability]
-    ON [dbo].[IntegrationConnections] ([BusinessId], [Provider], [Capability]);
+CREATE UNIQUE INDEX [IX_IntegrationConnections_BusinessId_Type_Provider_Capability]
+    ON [dbo].[IntegrationConnections] ([BusinessId], [ConnectionType], [Provider], [Capability]);
 
 GO
 

@@ -12,6 +12,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { PageError } from "@/components/ui/page-error";
 import { PageLoading } from "@/components/ui/page-loading";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import {
   useIntegrationSettings,
@@ -37,7 +44,7 @@ export default function IntegrationsSettingsPage() {
   });
   const [wompi, setWompi] = useState({
     isEnabled: false,
-    useSandbox: true,
+    mode: "test" as "test" | "production",
     sandboxBaseUrl: "https://sandbox.wompi.co/v1",
     productionBaseUrl: "https://production.wompi.co/v1",
     requestTimeoutSeconds: 30,
@@ -63,7 +70,7 @@ export default function IntegrationsSettingsPage() {
     setWompi((current) => ({
       ...current,
       isEnabled: data.wompi.isEnabled,
-      useSandbox: data.wompi.useSandbox,
+      mode: data.wompi.mode,
       sandboxBaseUrl: data.wompi.sandboxBaseUrl,
       productionBaseUrl: data.wompi.productionBaseUrl,
       requestTimeoutSeconds: data.wompi.requestTimeoutSeconds,
@@ -195,12 +202,23 @@ export default function IntegrationsSettingsPage() {
               checked={wompi.isEnabled}
               onCheckedChange={(isEnabled) => setWompi({ ...wompi, isEnabled })}
             />
-            <ToggleRow
-              label="Sandbox"
-              checked={wompi.useSandbox}
-              onCheckedChange={(useSandbox) => setWompi({ ...wompi, useSandbox })}
-            />
-            <Field label="Sandbox API">
+            <Field label="Modo">
+              <Select
+                value={wompi.mode}
+                onValueChange={(mode) =>
+                  setWompi({ ...wompi, mode: mode as "test" | "production" })
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="test">Pruebas</SelectItem>
+                  <SelectItem value="production">Produccion</SelectItem>
+                </SelectContent>
+              </Select>
+            </Field>
+            <Field label="Pruebas API">
               <Input
                 value={wompi.sandboxBaseUrl}
                 onChange={(event) => setWompi({ ...wompi, sandboxBaseUrl: event.target.value })}
@@ -262,7 +280,7 @@ export default function IntegrationsSettingsPage() {
               onClick={() =>
                 updateWompi.mutate({
                   isEnabled: wompi.isEnabled,
-                  useSandbox: wompi.useSandbox,
+                  mode: wompi.mode,
                   sandboxBaseUrl: wompi.sandboxBaseUrl,
                   productionBaseUrl: wompi.productionBaseUrl,
                   requestTimeoutSeconds: wompi.requestTimeoutSeconds,

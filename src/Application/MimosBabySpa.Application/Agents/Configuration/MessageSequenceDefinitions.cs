@@ -24,6 +24,15 @@ public sealed class MessageSequenceStep
     public string? Body { get; set; }
 
     public Guid? AttachmentId { get; set; }
+
+    public List<MessageSequenceButton> Buttons { get; set; } = [];
+}
+
+public sealed class MessageSequenceButton
+{
+    public string Id { get; set; } = string.Empty;
+
+    public string Title { get; set; } = string.Empty;
 }
 
 /// <summary>
@@ -56,16 +65,57 @@ public static class WompiWebhookOutcomes
 /// Disparadores internos del motor para notificaciones outbound.
 /// Fuente: Agents.SettingsJson -> notifications.
 /// </summary>
-public sealed class NotificationDefinitions
+public sealed class NotificationDefinitions : Dictionary<string, EventNotificationConfig>
 {
-    public ReservationCreatedNotificationConfig ReservationCreated { get; set; } = new();
+    public NotificationDefinitions()
+        : base(StringComparer.OrdinalIgnoreCase)
+    {
+    }
 }
 
-/// <summary>
-/// Notificacion interna enviada cuando una tool crea una reserva confirmada.
-/// Reutiliza messageSequences, pero permite destinatarios distintos al cliente.
-/// </summary>
-public sealed class ReservationCreatedNotificationConfig
+public sealed class ExternalEscalationDefinitions
+{
+    public bool Enabled { get; set; }
+
+    public Dictionary<string, ExternalEscalationEventDefinition> Events { get; set; } =
+        new(StringComparer.OrdinalIgnoreCase);
+}
+
+public sealed class ExternalEscalationEventDefinition
+{
+    public bool Enabled { get; set; }
+
+    public string Strategy { get; set; } = "sequential";
+
+    public int AttemptTimeoutMinutes { get; set; } = 5;
+
+    public string AttemptCodePrefix { get; set; } = "EXT";
+
+    public string? SendMessageSequence { get; set; }
+
+    public string? AttemptSentNotificationEvent { get; set; }
+
+    public string? AcceptedNotificationEvent { get; set; }
+
+    public IReadOnlyList<ExternalEscalationContactDefinition> Contacts { get; set; } = [];
+}
+
+public sealed class ExternalEscalationContactDefinition
+{
+    public string Key { get; set; } = string.Empty;
+
+    public string Name { get; set; } = string.Empty;
+
+    public string Role { get; set; } = string.Empty;
+
+    public string Phone { get; set; } = string.Empty;
+
+    public int Priority { get; set; }
+
+    public Guid? InboundAgentId { get; set; }
+}
+
+public sealed class EventNotificationConfig
 {
     public bool Enabled { get; set; }
 

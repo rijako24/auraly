@@ -27,8 +27,11 @@ public sealed class ReservationLifecycleService : IReservationLifecycleService
         CancellationToken ct = default)
     {
         var byConversation = await GetActiveAsync(conversationId, ct);
-        if (byConversation is not null)
+        if (byConversation is not null
+            && ReservationTemporalFormatter.IsManageableOnBusinessDay(byConversation, businessToday))
+        {
             return CustomerReservationSession.From([byConversation]);
+        }
 
         if (string.IsNullOrWhiteSpace(channelPhone))
             return CustomerReservationSession.None;

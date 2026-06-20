@@ -175,7 +175,7 @@ export interface GoogleCalendarIntegration {
 
 export interface WompiIntegration {
   isEnabled: boolean;
-  useSandbox: boolean;
+  mode: "test" | "production";
   sandboxBaseUrl: string;
   productionBaseUrl: string;
   requestTimeoutSeconds: number;
@@ -284,6 +284,7 @@ export interface PaymentTransaction {
   paymentTransactionId: string;
   businessId: string;
   conversationId: string;
+  reservationId: string | null;
   paymentReferenceId: string;
   providerTransactionId: string | null;
   amountInCents: number;

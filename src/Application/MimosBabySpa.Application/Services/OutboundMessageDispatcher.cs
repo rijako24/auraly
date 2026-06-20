@@ -101,6 +101,16 @@ public sealed class OutboundMessageDispatcher : IOutboundMessageDispatcher
         if (string.IsNullOrWhiteSpace(message.Body) && string.IsNullOrWhiteSpace(message.MediaUrl))
             return;
 
+        if (message.Buttons is { Count: > 0 } buttons)
+        {
+            await _whatsAppService.SendButtonMessageAsync(
+                businessId,
+                phone,
+                message.Body ?? string.Empty,
+                buttons);
+            return;
+        }
+
         if (string.IsNullOrWhiteSpace(message.MediaUrl))
         {
             await _whatsAppService.SendTextMessageAsync(businessId, phone, message.Body!);

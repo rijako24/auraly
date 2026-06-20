@@ -1,4 +1,4 @@
-using Microsoft.Azure.Functions.Worker;
+﻿using Microsoft.Azure.Functions.Worker;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -16,6 +16,7 @@ using Microsoft.Extensions.Options;
 
 using MimosBabySpa.Application.BusinessRules;
 using MimosBabySpa.Application.Billing;
+using MimosBabySpa.Application.Commerce;
 using MimosBabySpa.Application.Configuration;
 using MimosBabySpa.Application.StateManagement;
 
@@ -29,6 +30,7 @@ using MimosBabySpa.Application.Agents.Tools.Impl;
 using MimosBabySpa.Application.LLM;
 using MimosBabySpa.Application.Agents.Templates;
 using MimosBabySpa.Application.Time;
+using MimosBabySpa.Infrastructure.Commerce;
 using MimosBabySpa.Infrastructure.LLM;
 
 var host = new HostBuilder()
@@ -74,6 +76,11 @@ var host = new HostBuilder()
         services.AddScoped<ICatalogContentGenerator, CatalogContentGenerator>();
         services.AddScoped<IAddOnCatalogService, AddOnCatalogService>();
         services.AddScoped<IUsageBillingService, UsageBillingService>();
+        services.AddScoped<ICommerceService, CommerceService>();
+        services.AddScoped<ICommerceAdapter, LocalCommerceAdapter>();
+        services.AddHttpClient<SiigoCommerceAdapter>();
+        services.AddScoped<ICommerceAdapter>(sp => sp.GetRequiredService<SiigoCommerceAdapter>());
+        services.AddScoped<ICommerceAdapterFactory, CommerceAdapterFactory>();
 
         // OpenAI Clients
         services.Configure<OpenAITextModelOptions>(configuration.GetSection(OpenAITextModelOptions.SectionName));
@@ -135,6 +142,11 @@ var host = new HostBuilder()
         services.AddScoped<IPaymentLifecycleService, PaymentLifecycleService>();
         services.AddScoped<IReservationIntentBuilder, ReservationIntentBuilder>();
         services.AddScoped<ICheckoutQuoteService, CheckoutQuoteService>();
+        services.AddScoped<ICheckoutPaymentCoordinator, CheckoutPaymentCoordinator>();
+        services.AddScoped<IPaidCheckoutFulfillmentRegistry, PaidCheckoutFulfillmentRegistry>();
+        services.AddScoped<IPaidCheckoutFulfillmentHandler, ReservationPaidCheckoutFulfillmentHandler>();
+        services.AddScoped<IPaidCheckoutFulfillmentHandler, EnrollmentPaidCheckoutFulfillmentHandler>();
+        services.AddScoped<IPaidCheckoutFulfillmentHandler, OrderPaidCheckoutFulfillmentHandler>();
 
         // Webhook signature validation (Wompi)
         services.AddSingleton<IWompiWebhookSignatureValidator, WompiWebhookSignatureValidator>();
@@ -146,8 +158,10 @@ var host = new HostBuilder()
         services.AddScoped<IAdminActionLinkService>(sp => sp.GetRequiredService<AdminActionLinkService>());
         services.AddScoped<IReleaseLinkService>(sp => sp.GetRequiredService<AdminActionLinkService>());
         services.AddScoped<IConversationReleaseService, ConversationReleaseService>();
+        services.AddScoped<IExternalEscalationRouter, ExternalEscalationRouter>();
+        services.AddScoped<IExternalEscalationService, ExternalEscalationService>();
 
-        // ── AGENTIC ENGINE (Function Calling) ─────────────────────────────────────
+        // -- AGENTIC ENGINE (Function Calling) -------------------------------------
         services.AddScoped<IChatClient>(sp =>
         {
             var textClient = sp.GetRequiredKeyedService<OpenAIClient>("Text");
@@ -176,9 +190,9 @@ var host = new HostBuilder()
         services.AddScoped<IAgentTool, CheckAvailabilityTool>();
         services.AddScoped<IAgentTool, ResolvePricingTool>();
         services.AddScoped<IAgentTool, PrepareCheckoutTool>();
+        services.AddScoped<IAgentTool, PrepareOrderCheckoutTool>();
         services.AddScoped<IAgentTool, CreateReservationTool>();
         services.AddScoped<IAgentTool, AssignPaidSlotTool>();
-        services.AddScoped<IAgentTool, RescheduleReservationTool>();
         services.AddScoped<IAgentTool, SuspendReservationTool>();
         services.AddScoped<IAgentTool, GetCustomerReservationsTool>();
         services.AddScoped<IAgentTool, PrepareReservationChangeTool>();
@@ -188,6 +202,14 @@ var host = new HostBuilder()
         services.AddScoped<IAgentTool, GetServiceCatalogTool>();
         services.AddScoped<IAgentTool, GetCompatibleAddOnsTool>();
         services.AddScoped<IAgentTool, GetServiceFulfillmentTool>();
+        services.AddScoped<IAgentTool, SearchProductsTool>();
+        services.AddScoped<IAgentTool, AddOrderItemTool>();
+        services.AddScoped<IAgentTool, RemoveOrderItemTool>();
+        services.AddScoped<IAgentTool, GetOrderDraftTool>();
+        services.AddScoped<IAgentTool, CreateOrderTool>();
+        services.AddScoped<IAgentTool, ResolveExternalEscalationTool>();
+        services.AddScoped<IAgentTool, AcceptExternalEscalationTool>();
+        services.AddScoped<IAgentTool, DeclineExternalEscalationTool>();
         services.AddScoped<IAgentTool, SetFactTool>();
         services.AddScoped<IAgentTool, ResetFlowContextTool>();
         services.AddScoped<IAgentTool, SendMessageSequenceTool>();
@@ -198,7 +220,7 @@ var host = new HostBuilder()
         // WhatsAppMessageProcessorService (usa AgentConversationService)
         services.AddScoped<IWhatsAppMessageProcessorService, WhatsAppMessageProcessorService>();
 
-        // ── Infrastructure Services - WhatsApp ─────────────────────────────────────
+        // -- Infrastructure Services - WhatsApp -------------------------------------
         services.AddHttpClient();
         services.Configure<WhatsAppWebhookOptions>(configuration.GetSection(WhatsAppWebhookOptions.SectionName));
         services.AddScoped<IWhatsAppCredentialResolver, WhatsAppCredentialResolver>();
@@ -243,3 +265,4 @@ var host = new HostBuilder()
     .Build();
 
 host.Run();
+

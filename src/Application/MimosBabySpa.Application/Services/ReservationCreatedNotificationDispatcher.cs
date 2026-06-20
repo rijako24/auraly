@@ -18,6 +18,13 @@ public interface IReservationCreatedNotificationDispatcher
         Reservation reservation,
         IReadOnlyDictionary<string, string>? custom = null,
         CancellationToken ct = default);
+
+    Task SendEventAsync(
+        Guid businessId,
+        AgentConfig config,
+        string eventName,
+        IReadOnlyDictionary<string, string> custom,
+        CancellationToken ct = default);
 }
 
 public sealed class ReservationCreatedNotificationDispatcher : IReservationCreatedNotificationDispatcher
@@ -64,7 +71,9 @@ public sealed class ReservationCreatedNotificationDispatcher : IReservationCreat
         IReadOnlyDictionary<string, string>? custom = null,
         CancellationToken ct = default)
     {
-        var notification = config.Notifications.ReservationCreated;
+        if (!config.Notifications.TryGetValue("reservation_created", out var notification))
+            return;
+
         if (!notification.Enabled)
             return;
 
@@ -134,6 +143,72 @@ public sealed class ReservationCreatedNotificationDispatcher : IReservationCreat
 
         _logger.LogInformation(
             "Reservation notification: sequence '{Sequence}' sent to {Count} recipient(s) for BusinessId={BusinessId}",
+            sequenceName,
+            recipients.Count,
+            businessId);
+    }
+
+    public async Task SendEventAsync(
+        Guid businessId,
+        AgentConfig config,
+        string eventName,
+        IReadOnlyDictionary<string, string> custom,
+        CancellationToken ct = default)
+    {
+        if (!config.Notifications.TryGetValue(eventName, out var notification) || !notification.Enabled)
+            return;
+
+        var sequenceName = notification.SendMessageSequence?.Trim();
+        if (string.IsNullOrWhiteSpace(sequenceName))
+        {
+            _logger.LogWarning(
+                "Event notification: event '{Event}' enabled but sendMessageSequence is empty for BusinessId={BusinessId}",
+                eventName,
+                businessId);
+            return;
+        }
+
+        if (!config.MessageSequences.ContainsKey(sequenceName))
+        {
+            _logger.LogWarning(
+                "Event notification: sequence '{Sequence}' is not configured for event '{Event}' BusinessId={BusinessId}",
+                sequenceName,
+                eventName,
+                businessId);
+            return;
+        }
+
+        var recipients = notification.Recipients
+            .Select(r => r.Trim())
+            .Where(r => !string.IsNullOrWhiteSpace(r))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (recipients.Count == 0)
+        {
+            _logger.LogWarning(
+                "Event notification: event '{Event}' enabled but recipients is empty for BusinessId={BusinessId}",
+                eventName,
+                businessId);
+            return;
+        }
+
+        var messages = await _sequenceResolver.ResolveAsync(
+            businessId,
+            sequenceName,
+            config.MessageSequences,
+            new MessageSequenceContext { Custom = custom },
+            ct);
+
+        if (messages.Count == 0)
+            return;
+
+        foreach (var recipient in recipients)
+            await _outboundDispatcher.SendAllAsync(businessId, recipient, messages, conversationId: null, ct);
+
+        _logger.LogInformation(
+            "Event notification: event '{Event}' sequence '{Sequence}' sent to {Count} recipient(s) for BusinessId={BusinessId}",
+            eventName,
             sequenceName,
             recipients.Count,
             businessId);

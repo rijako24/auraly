@@ -240,6 +240,96 @@ public class ToolCapabilityGateTests
         result.IsAllowed.Should().BeTrue();
     }
 
+    [Fact]
+    public async Task EvaluateAsync_GlobalActionTool_BypassesStageWhitelist()
+    {
+        var suspendTool = new SuspendReservationTool(
+            Mock.Of<IReservationService>(),
+            Mock.Of<ICustomerReservationResolver>());
+
+        var ctx = CreateContext();
+        ctx.Config = new AgentConfig
+        {
+            AgentId = Guid.NewGuid(),
+            BusinessId = Guid.NewGuid(),
+            EnabledToolNames = ["set_fact", "suspend_reservation"],
+            Flow = new AgentFlowDefinition
+            {
+                StageDetection = "automatic",
+                Stages =
+                [
+                    new AgentFlowStage
+                    {
+                        Id = "customer_data",
+                        Goal = "Pedir datos",
+                        Hint = "Pide datos del cliente.",
+                        AllowedTools = ["set_fact"]
+                    }
+                ]
+            },
+            GlobalActions =
+            [
+                new AgentGlobalAction
+                {
+                    Id = "manage_existing_reservation",
+                    AllowedTools = ["suspend_reservation"]
+                }
+            ]
+        };
+
+        using var args = JsonDocument.Parse("{}");
+        var result = await _gate.EvaluateAsync(suspendTool, args.RootElement, ctx, CancellationToken.None);
+
+        result.IsAllowed.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_NonGlobalTool_StillRespectsStageWhitelist()
+    {
+        var checkAvailabilityTool = new CheckAvailabilityTool(
+            Mock.Of<IAvailabilityService>(),
+            Mock.Of<ISchedulingPolicyProvider>(),
+            Mock.Of<IEmployeeAssignmentService>(),
+            Mock.Of<IUnitOfWork>(),
+            _verifications);
+
+        var ctx = CreateContext();
+        ctx.Config = new AgentConfig
+        {
+            AgentId = Guid.NewGuid(),
+            BusinessId = Guid.NewGuid(),
+            EnabledToolNames = ["set_fact", "check_availability", "suspend_reservation"],
+            Flow = new AgentFlowDefinition
+            {
+                StageDetection = "automatic",
+                Stages =
+                [
+                    new AgentFlowStage
+                    {
+                        Id = "customer_data",
+                        Goal = "Pedir datos",
+                        Hint = "Pide datos del cliente.",
+                        AllowedTools = ["set_fact"]
+                    }
+                ]
+            },
+            GlobalActions =
+            [
+                new AgentGlobalAction
+                {
+                    Id = "manage_existing_reservation",
+                    AllowedTools = ["suspend_reservation"]
+                }
+            ]
+        };
+
+        using var args = JsonDocument.Parse("""{"service":"Plan Marineritos","date":"2026-05-27"}""");
+        var result = await _gate.EvaluateAsync(checkAvailabilityTool, args.RootElement, ctx, CancellationToken.None);
+
+        result.IsAllowed.Should().BeFalse();
+        result.Code.Should().Be("stage_action_pending");
+    }
+
     /// <summary>
     /// Config con guards declarativos equivalentes a lo que Mimi configura en producción.
     /// Los tests validan el comportamiento del GuardEvaluator con guards explícitos,

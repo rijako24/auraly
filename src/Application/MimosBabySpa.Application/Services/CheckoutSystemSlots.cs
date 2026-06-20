@@ -8,4 +8,6 @@ public static class CheckoutSystemSlots
     public const string ReservationDate = "reservation_date";
     public const string ReservationTime = "reservation_time";
     public const string FixedSchedule = "fixed_schedule";
+    public const string City = "city";
+    public const string DeliveryAddress = "delivery_address";
 }

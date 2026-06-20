@@ -13,7 +13,7 @@ export interface UpdateGoogleCalendarIntegration {
 
 export interface UpdateWompiIntegration {
   isEnabled: boolean;
-  useSandbox: boolean;
+  mode: "test" | "production";
   sandboxBaseUrl: string;
   productionBaseUrl: string;
   requestTimeoutSeconds: number;

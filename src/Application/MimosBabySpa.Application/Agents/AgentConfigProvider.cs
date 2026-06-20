@@ -1,5 +1,7 @@
 using MimosBabySpa.Application.Agents.Configuration;
+using MimosBabySpa.Application.Commerce;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
 using MimosBabySpa.Domain.Repositories;
@@ -49,6 +51,7 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
             Persona = settings.Persona?.Trim() ?? string.Empty,
             Policies = settings.Policies?.Trim() ?? string.Empty,
             Flow = settings.Flow ?? new AgentFlowDefinition(),
+            GlobalActions = settings.GlobalActions ?? [],
             FactSchema = settings.FactSchema ?? [],
             Guards = settings.Guards ?? new Dictionary<string, GuardDefinition>(StringComparer.OrdinalIgnoreCase),
             Templates = settings.Templates ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
@@ -64,7 +67,9 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
             MessageSequences = settings.MessageSequences ?? new MessageSequenceCatalog(),
             Webhooks = settings.Webhooks ?? new WebhookDefinitions(),
             Notifications = settings.Notifications ?? new NotificationDefinitions(),
-            Checkout = settings.Checkout ?? new CheckoutDefinitions()
+            ExternalEscalations = settings.ExternalEscalations ?? new ExternalEscalationDefinitions(),
+            Checkout = settings.Checkout ?? new CheckoutDefinitions(),
+            Commerce = settings.Commerce ?? new CommerceConfig()
         };
 
         if (config.EnabledToolNames.Count == 0)
@@ -178,6 +183,26 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
             }
         }
 
+        foreach (var action in config.GlobalActions)
+        {
+            if (string.IsNullOrWhiteSpace(action.Id))
+            {
+                _logger.LogWarning(
+                    "AgentConfig {AgentId}: globalAction has empty id",
+                    config.AgentId);
+            }
+
+            foreach (var toolName in action.AllowedTools)
+            {
+                if (!config.EnabledToolNames.Contains(toolName, StringComparer.OrdinalIgnoreCase))
+                {
+                    _logger.LogWarning(
+                        "AgentConfig {AgentId}: globalAction '{Action}' allowedTools references '{Tool}' which is not in enabledTools",
+                        config.AgentId, action.Id, toolName);
+                }
+            }
+        }
+
         var enabledCapabilities = BuildEnabledCapabilities(config);
 
         // Verificar que los guards solo referencian capabilities habilitadas
@@ -202,6 +227,7 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
 
         ValidateMessageSequences(config);
         ValidateNotifications(config);
+        ValidateExternalEscalations(config);
         ValidateTemplates(config);
     }
 
@@ -225,6 +251,8 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
         else if (toolName.Equals("escalate_to_human", StringComparison.OrdinalIgnoreCase))
             yield return Tools.ToolCapabilities.HumanEscalate;
         else if (toolName.Equals("prepare_checkout", StringComparison.OrdinalIgnoreCase))
+            yield return Tools.ToolCapabilities.CheckoutPrepare;
+        else if (toolName.Equals("prepare_order_checkout", StringComparison.OrdinalIgnoreCase))
             yield return Tools.ToolCapabilities.CheckoutPrepare;
         else if (toolName.Equals("create_reservation", StringComparison.OrdinalIgnoreCase))
             yield return Tools.ToolCapabilities.ReservationCreate;
@@ -288,34 +316,120 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
 
     private void ValidateNotifications(AgentConfig config)
     {
-        var reservationCreated = config.Notifications.ReservationCreated;
-        if (!reservationCreated.Enabled)
-            return;
+        foreach (var (eventName, notification) in config.Notifications)
+            if (notification.Enabled)
+                ValidateNotification(
+                    config,
+                    $"notifications['{eventName}']",
+                    notification.Recipients,
+                    notification.SendMessageSequence);
+    }
 
-        if (reservationCreated.Recipients.Count == 0)
+    private void ValidateNotification(
+        AgentConfig config,
+        string path,
+        IReadOnlyList<string> recipients,
+        string? sequenceName)
+    {
+        if (recipients.Count == 0)
         {
             _logger.LogWarning(
-                "AgentConfig {AgentId}: notifications.reservationCreated is enabled but recipients is empty",
-                config.AgentId);
+                "AgentConfig {AgentId}: {Path} is enabled but recipients is empty",
+                config.AgentId,
+                path);
         }
 
-        var sequenceName = reservationCreated.SendMessageSequence;
         if (string.IsNullOrWhiteSpace(sequenceName))
         {
             _logger.LogWarning(
-                "AgentConfig {AgentId}: notifications.reservationCreated is enabled but sendMessageSequence is empty",
-                config.AgentId);
+                "AgentConfig {AgentId}: {Path} is enabled but sendMessageSequence is empty",
+                config.AgentId,
+                path);
             return;
         }
 
         if (!config.MessageSequences.ContainsKey(sequenceName))
         {
             _logger.LogWarning(
-                "AgentConfig {AgentId}: notifications.reservationCreated references unknown sequence '{Sequence}'",
+                "AgentConfig {AgentId}: {Path} references unknown sequence '{Sequence}'",
                 config.AgentId,
+                path,
                 sequenceName);
         }
     }
+
+    private void ValidateExternalEscalations(AgentConfig config)
+    {
+        if (!config.ExternalEscalations.Enabled)
+            return;
+
+        foreach (var (eventName, definition) in config.ExternalEscalations.Events)
+        {
+            if (!definition.Enabled)
+                continue;
+
+            if (string.IsNullOrWhiteSpace(definition.SendMessageSequence))
+            {
+                _logger.LogWarning(
+                    "AgentConfig {AgentId}: externalEscalations.events['{Event}'] enabled but sendMessageSequence is empty",
+                    config.AgentId,
+                    eventName);
+            }
+            else if (!config.MessageSequences.ContainsKey(definition.SendMessageSequence))
+            {
+                _logger.LogWarning(
+                    "AgentConfig {AgentId}: externalEscalations.events['{Event}'] references unknown sequence '{Sequence}'",
+                    config.AgentId,
+                    eventName,
+                    definition.SendMessageSequence);
+            }
+
+            ValidateExternalEscalationNotificationEvent(
+                config,
+                eventName,
+                "attemptSentNotificationEvent",
+                definition.AttemptSentNotificationEvent);
+            ValidateExternalEscalationNotificationEvent(
+                config,
+                eventName,
+                "acceptedNotificationEvent",
+                definition.AcceptedNotificationEvent);
+
+            foreach (var contact in definition.Contacts)
+            {
+                if (string.IsNullOrWhiteSpace(contact.Key)
+                    || string.IsNullOrWhiteSpace(contact.Phone)
+                    || contact.InboundAgentId is null)
+                {
+                    _logger.LogWarning(
+                        "AgentConfig {AgentId}: external escalation contact for event '{Event}' is missing key, phone or inboundAgentId",
+                        config.AgentId,
+                        eventName);
+                }
+            }
+        }
+    }
+
+    private void ValidateExternalEscalationNotificationEvent(
+        AgentConfig config,
+        string externalEventName,
+        string propertyName,
+        string? notificationEventName)
+    {
+        if (string.IsNullOrWhiteSpace(notificationEventName))
+            return;
+
+        if (!config.Notifications.ContainsKey(notificationEventName))
+        {
+            _logger.LogWarning(
+                "AgentConfig {AgentId}: externalEscalations.events['{ExternalEvent}'].{Property} references unknown notification event '{NotificationEvent}'",
+                config.AgentId,
+                externalEventName,
+                propertyName,
+                notificationEventName);
+        }
+    }
+
 
     private static AgentSettings ParseSettings(string? settingsJson)
     {
@@ -325,7 +439,11 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
         try
         {
             return JsonSerializer.Deserialize<AgentSettings>(settingsJson,
-                new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
+                new JsonSerializerOptions
+                {
+                    PropertyNameCaseInsensitive = true,
+                    Converters = { new JsonStringEnumConverter() }
+                })
                 ?? new AgentSettings();
         }
         catch
@@ -339,6 +457,7 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
         public string? Persona { get; set; }
         public string? Policies { get; set; }
         public AgentFlowDefinition? Flow { get; set; }
+        public IReadOnlyList<AgentGlobalAction>? GlobalActions { get; set; }
         public IReadOnlyList<FactSchemaEntry>? FactSchema { get; set; }
         public Dictionary<string, GuardDefinition>? Guards { get; set; }
         public Dictionary<string, string>? Templates { get; set; }
@@ -353,7 +472,9 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
         public MessageSequenceCatalog? MessageSequences { get; set; }
         public WebhookDefinitions? Webhooks { get; set; }
         public NotificationDefinitions? Notifications { get; set; }
+        public ExternalEscalationDefinitions? ExternalEscalations { get; set; }
         public CheckoutDefinitions? Checkout { get; set; }
+        public CommerceConfig? Commerce { get; set; }
         public IReadOnlyList<string>? EscalationContacts =>
             Escalation?.Contacts ?? [];
     }

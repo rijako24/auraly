@@ -33,7 +33,7 @@ public sealed class CustomerReservationResolver : ICustomerReservationResolver
             return await ResolveExplicitAsync(ctx, explicitId, ct);
         }
 
-        var resolvedFromContext = ResolveFromList(ctx.ManageableReservations);
+        var resolvedFromContext = ResolveFromList(ctx.ManageableReservations, ctx.BusinessToday);
         if (resolvedFromContext is not null)
             return resolvedFromContext;
 
@@ -44,7 +44,7 @@ public sealed class CustomerReservationResolver : ICustomerReservationResolver
             ctx.BusinessToday,
             ct);
 
-        var resolvedFromSession = ResolveFromList(session.ManageableReservations);
+        var resolvedFromSession = ResolveFromList(session.ManageableReservations, ctx.BusinessToday);
         if (resolvedFromSession is not null)
             return resolvedFromSession;
 
@@ -97,17 +97,23 @@ public sealed class CustomerReservationResolver : ICustomerReservationResolver
         return string.Equals(snapshotPhone.Trim(), channelPhone.Trim(), StringComparison.OrdinalIgnoreCase);
     }
 
-    private static ReservationResolveResult? ResolveFromList(IReadOnlyList<Domain.Entities.Reservation> reservations) =>
+    private static ReservationResolveResult? ResolveFromList(
+        IReadOnlyList<Domain.Entities.Reservation> reservations,
+        DateOnly businessToday) =>
         reservations.Count switch
         {
             0 => null,
             1 => ReservationResolveResult.Ok(reservations[0]),
-            _ => ReservationResolveResult.Fail(BuildMultipleReservationsError(reservations))
+            _ => ReservationResolveResult.Fail(BuildMultipleReservationsError(reservations, businessToday))
         };
 
-    private static string BuildMultipleReservationsError(IReadOnlyList<Domain.Entities.Reservation> reservations)
+    private static string BuildMultipleReservationsError(
+        IReadOnlyList<Domain.Entities.Reservation> reservations,
+        DateOnly businessToday)
     {
-        var lines = reservations.Select(FormatReservationLine).ToList();
+        var lines = reservations
+            .Select(r => ReservationTemporalFormatter.FormatLine(r, businessToday))
+            .ToList();
         var detail = string.Join("; ", lines);
 
         return ToolResultHelper.Error(
@@ -116,14 +122,6 @@ public sealed class CustomerReservationResolver : ICustomerReservationResolver
             "Ask which appointment they mean using date and service — never ask the customer for a UUID. Use reservation_id from tool context when retrying.");
     }
 
-    internal static string FormatReservationLine(Domain.Entities.Reservation r)
-    {
-        var service = r.Service?.ServiceName ?? r.GetServiceName() ?? "servicio";
-        if (!r.ReservationDateTime.HasValue)
-            return $"{service} (id_reserva={r.ReservationId})";
-
-        var date = DateOnly.FromDateTime(r.ReservationDateTime.Value).ToString("yyyy-MM-dd");
-        var time = TimeOnly.FromDateTime(r.ReservationDateTime.Value).ToString("HH:mm");
-        return $"{date} {time} {service} (id_reserva={r.ReservationId})";
-    }
+    internal static string FormatReservationLine(Domain.Entities.Reservation reservation, DateOnly businessToday) =>
+        ReservationTemporalFormatter.FormatLine(reservation, businessToday);
 }

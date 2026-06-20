@@ -32,11 +32,11 @@ public class GoogleCalendarIntegration
 /// </summary>
 public class WompiIntegration
 {
+    public string Mode { get; set; } = "test";
     public string PrivateKey { get; set; } = string.Empty;
     public string PublicKey { get; set; } = string.Empty;
     public string EventsSecret { get; set; } = string.Empty;
     public string IntegritySecret { get; set; } = string.Empty;
-    public bool UseSandbox { get; set; } = true;
     public string SandboxBaseUrl { get; set; } = "https://sandbox.wompi.co/v1";
     public string ProductionBaseUrl { get; set; } = "https://production.wompi.co/v1";
     public int RequestTimeoutSeconds { get; set; } = 30;
@@ -47,9 +47,10 @@ public class WompiIntegration
     /// </summary>
     public string GetBaseUrl()
     {
-        var url = UseSandbox ? SandboxBaseUrl : ProductionBaseUrl;
+        var isTest = !string.Equals(Mode, "production", StringComparison.OrdinalIgnoreCase);
+        var url = isTest ? SandboxBaseUrl : ProductionBaseUrl;
         if (string.IsNullOrWhiteSpace(url))
-            return UseSandbox ? "https://sandbox.wompi.co/v1" : "https://production.wompi.co/v1";
+            return isTest ? "https://sandbox.wompi.co/v1" : "https://production.wompi.co/v1";
         return url.TrimEnd('/');
     }
 }

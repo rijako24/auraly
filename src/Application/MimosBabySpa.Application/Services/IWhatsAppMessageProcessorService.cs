@@ -1,4 +1,5 @@
 using MimosBabySpa.Application.DTOs;
+using MimosBabySpa.Application.Agents;
 
 namespace MimosBabySpa.Application.Services;
 
@@ -16,5 +17,10 @@ public interface IWhatsAppMessageProcessorService
     /// <summary>
     /// Procesa un mensaje entrante de WhatsApp (texto)
     /// </summary>
-    Task ProcessIncomingMessageAsync(Guid businessId, string userNumber, string messageText, string? customerName = null);
+    Task ProcessIncomingMessageAsync(
+        Guid businessId,
+        string userNumber,
+        string messageText,
+        string? customerName = null,
+        AgentInboundMetadata? inboundMetadata = null);
 }

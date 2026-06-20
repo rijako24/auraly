@@ -4,6 +4,7 @@ public record PaymentTransactionDto(
     Guid PaymentTransactionId,
     Guid BusinessId,
     Guid ConversationId,
+    Guid? ReservationId,
     string PaymentReferenceId,
     string? ProviderTransactionId,
     long AmountInCents,

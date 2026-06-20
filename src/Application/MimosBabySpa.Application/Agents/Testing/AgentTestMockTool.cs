@@ -49,12 +49,12 @@ public sealed class AgentTestMockTool : IAgentTool
             "set_fact" => ExecuteSetFact(arguments, ctx),
             "reset_flow_context" => ExecuteResetFlowContext(arguments, ctx),
             "prepare_checkout" => ExecutePrepareCheckout(arguments, ctx),
+            "prepare_order_checkout" => ExecutePrepareOrderCheckout(arguments, ctx),
             "create_reservation" => ExecuteCreateReservation(arguments, ctx),
             "assign_paid_slot" => ExecuteAssignPaidSlot(arguments, ctx),
             "escalate_to_human" => ExecuteEscalation(arguments, ctx),
             "verify_payment" => ExecuteVerifyPayment(arguments, ctx),
             "send_message_sequence" => ExecuteSendMessageSequence(arguments, ctx),
-            "reschedule_reservation" => ExecuteReservationMutation(arguments, "reservation_reschedule_requested"),
             "suspend_reservation" => ExecuteReservationMutation(arguments, "reservation_suspend_requested"),
             _ => ToolResultHelper.Error("test_tool_not_supported", $"Tool '{Name}' is not supported in test mode.")
         };
@@ -170,6 +170,40 @@ public sealed class AgentTestMockTool : IAgentTool
             payment_link = link,
             link_url = link,
             is_booking_confirmed = false,
+            test_mode = true
+        });
+    }
+
+    private string ExecutePrepareOrderCheckout(JsonElement arguments, AgentToolContext ctx)
+    {
+        var paymentId = Guid.NewGuid();
+        var link = $"https://checkout.test/order/{paymentId:N}";
+        ctx.ActivePayment = new PaymentTransaction
+        {
+            PaymentTransactionId = paymentId,
+            BusinessId = ctx.BusinessId,
+            ConversationId = ctx.ConversationId,
+            PaymentReferenceId = $"test_order_{paymentId:N}",
+            LinkUrl = link,
+            Status = PaymentTransactionStatus.Created,
+            Source = PaymentTransactionSource.Automated,
+            AmountInCents = 100000,
+            Currency = "COP",
+            CheckoutKind = CheckoutKind.Order,
+            CreatedAt = DateTime.UtcNow,
+            ExpiresAt = DateTime.UtcNow.AddHours(1)
+        };
+
+        _log.Add("order_payment_link_requested", Name, new { link, persisted = false });
+        return ToolResultHelper.Ok(new
+        {
+            checkout_token = (string?)null,
+            checkout_kind = "Order",
+            template_id = "test_order_checkout",
+            payment_required = true,
+            payment_transaction_id = paymentId,
+            payment_link = link,
+            is_order_confirmed = false,
             test_mode = true
         });
     }

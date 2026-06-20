@@ -226,48 +226,6 @@ public class ReservationService : IReservationService
         return true;
     }
 
-    public async Task<bool> RescheduleAsync(Guid reservationId, DateOnly newDate, TimeOnly newTime, CancellationToken cancellationToken = default)
-    {
-        var reservation = await _unitOfWork.Reservations.GetByIdAsync(reservationId);
-        if (reservation == null || reservation.Status == ReservationStatus.Cancelled || !reservation.ServiceId.HasValue)
-            return false;
-
-        var service = reservation.Service ?? await _unitOfWork.Services.GetByIdAsync(reservation.ServiceId.Value);
-        if (service == null)
-            return false;
-
-        var duration = service.DurationMinutes > 0 ? service.DurationMinutes : 60;
-        var reservationDateTime = newDate.ToDateTime(newTime);
-        var employee = await _employeeAssignmentService.FindBestAvailableEmployeeAsync(
-            reservation.BusinessId,
-            service.ServiceId,
-            reservationDateTime,
-            reservationDateTime.AddMinutes(duration),
-            cancellationToken);
-
-        if (employee == null)
-            return false;
-
-        if (reservation.Status == ReservationStatus.OnHold)
-            reservation.Status = ReservationStatus.Confirmed;
-
-        reservation.ReservationDateTime = reservationDateTime;
-        reservation.DurationMinutes = duration;
-        reservation.EmployeeId = employee.EmployeeId;
-        reservation.UpdatedAt = DateTime.UtcNow;
-        await _unitOfWork.Reservations.UpdateAsync(reservation);
-        await _unitOfWork.SaveChangesAsync(cancellationToken);
-
-        await SyncReservationToCalendarAsync(
-            reservation,
-            service.ServiceName,
-            new Dictionary<string, string>(),
-            cancellationToken);
-        await _unitOfWork.SaveChangesAsync(cancellationToken);
-
-        return true;
-    }
-
     public async Task<UpdateReservationChangeResult> UpdateReservationAsync(
         UpdateReservationChangeRequest request,
         CancellationToken cancellationToken = default)

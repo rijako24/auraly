@@ -70,6 +70,9 @@ public sealed class ToolCapabilityGate : IToolCapabilityGate
         if (stage.AllowedTools.Contains(tool.Name, StringComparer.OrdinalIgnoreCase))
             return null;
 
+        if (IsAllowedByGlobalAction(tool, config))
+            return null;
+
         var remediation = !string.IsNullOrWhiteSpace(stage.Hint)
             ? stage.Hint.Trim()
             : $"Continua con la etapa actual usando una de estas acciones: {string.Join(", ", stage.AllowedTools)}.";
@@ -80,4 +83,8 @@ public sealed class ToolCapabilityGate : IToolCapabilityGate
             $"Etapa '{stage.Id}': {stage.Goal}",
             remediation);
     }
+
+    private static bool IsAllowedByGlobalAction(IAgentTool tool, AgentConfig config) =>
+        config.GlobalActions.Any(action =>
+            action.AllowedTools.Contains(tool.Name, StringComparer.OrdinalIgnoreCase));
 }

@@ -62,6 +62,10 @@ public sealed class AgentPromptComposer : IPromptComposer
         if (!string.IsNullOrWhiteSpace(reentryBlock))
             blocks.Add(reentryBlock);
 
+        var globalActionsBlock = BuildGlobalActionsBlock(input.Config);
+        if (!string.IsNullOrWhiteSpace(globalActionsBlock))
+            blocks.Add(globalActionsBlock);
+
         var actionsBlock = BuildActionsBlock(input);
         if (!string.IsNullOrWhiteSpace(actionsBlock))
             blocks.Add(actionsBlock);
@@ -71,6 +75,32 @@ public sealed class AgentPromptComposer : IPromptComposer
             blocks.Add(triggersBlock);
 
         return string.Join($"{Environment.NewLine}{Environment.NewLine}", blocks);
+    }
+
+    internal static string BuildGlobalActionsBlock(AgentConfig config)
+    {
+        if (config.GlobalActions.Count == 0)
+            return string.Empty;
+
+        var lines = new List<string>
+        {
+            "## ACCIONES TRANSVERSALES",
+            "- Estas acciones pueden usarse cuando apliquen, aunque la etapa actual tenga otro objetivo."
+        };
+
+        foreach (var action in config.GlobalActions
+                     .OrderByDescending(a => a.Priority)
+                     .ThenBy(a => a.Id, StringComparer.OrdinalIgnoreCase))
+        {
+            var label = string.IsNullOrWhiteSpace(action.Id) ? "accion" : action.Id.Trim();
+            lines.Add($"- {label}: {action.Goal.Trim()}");
+            if (action.AllowedTools.Count > 0)
+                lines.Add($"  herramientas: {string.Join(", ", action.AllowedTools)}");
+            if (!string.IsNullOrWhiteSpace(action.Hint))
+                lines.Add($"  orientacion: {action.Hint.Trim()}");
+        }
+
+        return string.Join(Environment.NewLine, lines);
     }
 
     internal static string BuildTurnPolicyBlock(IEnumerable<Message> history)

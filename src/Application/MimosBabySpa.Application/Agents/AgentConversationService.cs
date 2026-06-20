@@ -112,7 +112,8 @@ public sealed class AgentConversationService : IAgentConversationService
         Guid conversationId,
         string userMessage,
         string? channelPhone = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        AgentInboundMetadata? inboundMetadata = null)
     {
         var config = await _configProvider.GetConfigAsync(agentId, cancellationToken);
         var usageGate = await _usageBilling.CanProcessAsync(config.BusinessId, cancellationToken);
@@ -127,8 +128,9 @@ public sealed class AgentConversationService : IAgentConversationService
         var state = await _stateManager.GetOrCreateStateAsync(
             conversationId, config.BusinessId, channelPhone ?? string.Empty, cancellationToken);
 
+        var clockSnapshot = await _businessClock.GetSnapshotAsync(config.BusinessId, cancellationToken);
         var session = await LoadTurnSessionAsync(
-            config, state, conversationId, channelPhone, cancellationToken);
+            config, state, conversationId, channelPhone, inboundMetadata, clockSnapshot, cancellationToken);
 
         // Capa 1 — corto-circuito sin LLM
         if (state.Owner == ConversationOwner.Human)
@@ -155,7 +157,6 @@ public sealed class AgentConversationService : IAgentConversationService
             config.BusinessId, session.Conversation.UserNumber, history, cancellationToken);
         session.Facts["session.engagement"] = engagementKey;
 
-        var clockSnapshot = await _businessClock.GetSnapshotAsync(config.BusinessId, cancellationToken);
         var temporal = _temporalReferenceBuilder.Build(clockSnapshot);
         var latestPayment = await _paymentLifecycle.GetLatestByConversationAsync(conversationId, cancellationToken);
         var enabledTools = _toolRegistry.GetToolsForAgent(config.EnabledToolNames).ToList();
@@ -864,12 +865,13 @@ public sealed class AgentConversationService : IAgentConversationService
         ConversationState state,
         Guid conversationId,
         string? channelPhone,
+        AgentInboundMetadata? inboundMetadata,
+        BusinessClockSnapshot clockSnapshot,
         CancellationToken ct)
     {
         var conversation = await _conversationService.GetConversationByIdAsync(conversationId)
             ?? throw new InvalidOperationException($"Conversation {conversationId} not found.");
 
-        var clockSnapshot = await _businessClock.GetSnapshotAsync(config.BusinessId, ct);
         var resolvedPhone = channelPhone?.Trim() ?? conversation.UserNumber;
         var factRecords = await _factsService.GetAllRecordsAsync(conversationId, ct);
         var mutableFacts = factRecords.ToDictionary(r => r.Key, r => r.Value, StringComparer.OrdinalIgnoreCase);
@@ -932,6 +934,9 @@ public sealed class AgentConversationService : IAgentConversationService
             PreviousBusinessDay = rollover.PreviousBusinessDay,
             RolloverClearedFacts = rollover.ClearedFacts,
             ChannelPhone = resolvedPhone,
+            ProviderMessageId = inboundMetadata?.ProviderMessageId,
+            ReplyToProviderMessageId = inboundMetadata?.ReplyToProviderMessageId,
+            InteractivePayload = inboundMetadata?.InteractivePayload,
             EscalationContacts = config.EscalationContacts,
             Config = config,
             ConversationState = state,

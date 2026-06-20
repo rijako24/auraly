@@ -34,6 +34,7 @@
     <Build Include="Tables\EmployeeWorkingHours.sql" />
     <Build Include="Tables\EmployeeScheduleExceptions.sql" />
     <Build Include="Tables\IntegrationConnections.sql" />
+    <Build Include="Tables\Products.sql" />
     <Build Include="Tables\Conversations.sql" />
     <Build Include="Tables\ConversationContexts.sql" />
     <Build Include="Tables\ConversationStates.sql" />
@@ -42,6 +43,10 @@
     <Build Include="Tables\CustomerMemory.sql" />
     <Build Include="Tables\Reservations.sql" />
     <Build Include="Tables\ReservationIntegrationEvents.sql" />
+    <Build Include="Tables\Orders.sql" />
+    <Build Include="Tables\OrderItems.sql" />
+    <Build Include="Tables\OrderConnectionEvents.sql" />
+    <Build Include="Tables\ExternalEscalationAttempts.sql" />
     <Build Include="Tables\ReservationAddOns.sql" />
     <Build Include="Tables\ServiceAddOnRules.sql" />
     <Build Include="Tables\ServiceBundleItems.sql" />

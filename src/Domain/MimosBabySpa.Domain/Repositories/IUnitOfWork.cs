@@ -23,9 +23,14 @@ public interface IUnitOfWork : IDisposable
     IEmployeeScheduleExceptionRepository EmployeeScheduleExceptions { get; }
     IIntegrationConnectionRepository IntegrationConnections { get; }
     IReservationIntegrationEventRepository ReservationIntegrationEvents { get; }
+    IExternalEscalationAttemptRepository ExternalEscalationAttempts { get; }
     IConversationStateRepository ConversationStates { get; }
     IServiceAddOnRuleRepository ServiceAddOnRules { get; }
     IReservationAddOnRepository ReservationAddOns { get; }
+    IProductRepository Products { get; }
+    IOrderRepository Orders { get; }
+    IOrderItemRepository OrderItems { get; }
+    IOrderConnectionEventRepository OrderConnectionEvents { get; }
 
     IPaymentTransactionRepository PaymentTransactions { get; }
     IEnrollmentRepository Enrollments { get; }

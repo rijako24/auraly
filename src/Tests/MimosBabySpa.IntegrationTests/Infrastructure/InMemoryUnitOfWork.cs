@@ -1,4 +1,5 @@
 using MimosBabySpa.Domain.Entities;
+using MimosBabySpa.Domain.Enums;
 using MimosBabySpa.Domain.Repositories;
 
 namespace MimosBabySpa.IntegrationTests.Infrastructure;
@@ -30,9 +31,14 @@ public class InMemoryUnitOfWork : IUnitOfWork
     public IEmployeeScheduleExceptionRepository EmployeeScheduleExceptions { get; }
     public IIntegrationConnectionRepository IntegrationConnections { get; }
     public IReservationIntegrationEventRepository ReservationIntegrationEvents { get; }
+    public IExternalEscalationAttemptRepository ExternalEscalationAttempts { get; }
     public ILeadRepository Leads { get; }
     public IServiceAddOnRuleRepository ServiceAddOnRules { get; }
     public IReservationAddOnRepository ReservationAddOns { get; }
+    public IProductRepository Products { get; }
+    public IOrderRepository Orders { get; }
+    public IOrderItemRepository OrderItems { get; }
+    public IOrderConnectionEventRepository OrderConnectionEvents { get; }
     public IPaymentTransactionRepository PaymentTransactions { get; }
     public IEnrollmentRepository Enrollments { get; }
     public IAppUserRepository AppUsers => throw new NotImplementedException();
@@ -77,9 +83,14 @@ public class InMemoryUnitOfWork : IUnitOfWork
         EmployeeScheduleExceptions = new InMemoryEmployeeScheduleExceptionRepository();
         IntegrationConnections = new InMemoryIntegrationConnectionRepository();
         ReservationIntegrationEvents = new InMemoryReservationIntegrationEventRepository();
+        ExternalEscalationAttempts = new InMemoryExternalEscalationAttemptRepository();
         Leads                = new InMemoryLeadRepository();
         ServiceAddOnRules    = new InMemoryServiceAddOnRuleRepository(businessId);
         ReservationAddOns    = new InMemoryReservationAddOnRepository();
+        Products             = new InMemoryProductRepository();
+        Orders               = new InMemoryOrderRepository();
+        OrderItems           = new InMemoryOrderItemRepository();
+        OrderConnectionEvents = new InMemoryOrderConnectionEventRepository();
         SubscriptionPlans    = new InMemorySubscriptionPlanRepository();
         BusinessSubscriptions = new InMemoryBusinessSubscriptionRepository(businessId);
         BusinessUsagePeriods = new InMemoryBusinessUsagePeriodRepository(businessId);
@@ -310,13 +321,33 @@ internal sealed class InMemoryIntegrationConnectionRepository : IIntegrationConn
     public Task<IReadOnlyList<IntegrationConnection>> GetByBusinessIdAsync(Guid businessId, CancellationToken ct = default) =>
         Task.FromResult<IReadOnlyList<IntegrationConnection>>(_connections.Where(c => c.BusinessId == businessId).ToList());
 
+    public Task<IReadOnlyList<IntegrationConnection>> GetByBusinessConnectionTypeAsync(
+        Guid businessId,
+        ConnectionType connectionType,
+        CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<IntegrationConnection>>(
+            _connections.Where(c => c.BusinessId == businessId && c.ConnectionType == connectionType).ToList());
+
     public Task<IntegrationConnection?> GetByBusinessProviderCapabilityAsync(
         Guid businessId,
-        Domain.Enums.IntegrationProvider provider,
-        Domain.Enums.IntegrationCapability capability,
+        IntegrationProvider provider,
+        IntegrationCapability capability,
         CancellationToken ct = default) =>
         Task.FromResult(_connections.FirstOrDefault(c =>
-            c.BusinessId == businessId && c.Provider == provider && c.Capability == capability));
+            c.BusinessId == businessId &&
+            c.Provider == (int)provider &&
+            c.Capability == (int)capability));
+
+    public Task<IntegrationConnection?> GetCommerceConnectionAsync(
+        Guid businessId,
+        CommerceProvider provider,
+        CommerceCapability capability = CommerceCapability.CatalogAndOrders,
+        CancellationToken ct = default) =>
+        Task.FromResult(_connections.FirstOrDefault(c =>
+            c.BusinessId == businessId &&
+            c.ConnectionType == ConnectionType.Commerce &&
+            c.Provider == (int)provider &&
+            c.Capability == (int)capability));
 
     public Task<IntegrationConnection> CreateAsync(IntegrationConnection connection, CancellationToken ct = default)
     {
@@ -346,4 +377,193 @@ internal sealed class InMemoryReservationIntegrationEventRepository : IReservati
 
     public Task<ReservationIntegrationEvent> UpdateAsync(ReservationIntegrationEvent integrationEvent, CancellationToken ct = default) =>
         Task.FromResult(integrationEvent);
+}
+
+internal sealed class InMemoryExternalEscalationAttemptRepository : IExternalEscalationAttemptRepository
+{
+    private readonly List<ExternalEscalationAttempt> _escalations = [];
+
+    public Task<ExternalEscalationAttempt?> GetByIdAsync(Guid attemptId, CancellationToken ct = default) =>
+        Task.FromResult(_escalations.FirstOrDefault(o => o.ExternalEscalationAttemptId == attemptId));
+
+    public Task<ExternalEscalationAttempt?> GetByAttemptCodeAsync(Guid businessId, string attemptCode, string phone, CancellationToken ct = default) =>
+        Task.FromResult(_escalations.FirstOrDefault(o =>
+            o.BusinessId == businessId &&
+            o.AttemptCode == attemptCode &&
+            o.ContactPhoneSnapshot == phone));
+
+    public Task<ExternalEscalationAttempt?> GetByWhatsAppMessageIdAsync(Guid businessId, string whatsAppMessageId, string phone, CancellationToken ct = default) =>
+        Task.FromResult(_escalations.FirstOrDefault(o =>
+            o.BusinessId == businessId &&
+            o.WhatsAppMessageId == whatsAppMessageId &&
+            o.ContactPhoneSnapshot == phone));
+
+    public Task<IReadOnlyList<ExternalEscalationAttempt>> GetPendingByContactPhoneAsync(Guid businessId, string phone, CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<ExternalEscalationAttempt>>(
+            _escalations.Where(o => o.BusinessId == businessId &&
+                               o.ContactPhoneSnapshot == phone &&
+                               o.Status == ExternalEscalationAttemptStatus.Pending)
+                   .ToList());
+
+    public Task<IReadOnlyList<ExternalEscalationAttempt>> GetExpiredPendingAttemptsAsync(DateTime utcNow, CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<ExternalEscalationAttempt>>(
+            _escalations.Where(o => o.Status == ExternalEscalationAttemptStatus.Pending && o.ExpiresAt <= utcNow).ToList());
+
+    public Task<int> CountAttemptsAsync(Guid businessId, string eventName, string targetType, Guid targetId, CancellationToken ct = default) =>
+        Task.FromResult(_escalations.Count(o =>
+            o.BusinessId == businessId &&
+            o.EventName == eventName &&
+            o.TargetType == targetType &&
+            o.TargetId == targetId));
+
+    public Task<bool> HasAcceptedForTargetAsync(Guid businessId, string eventName, string targetType, Guid targetId, CancellationToken ct = default) =>
+        Task.FromResult(_escalations.Any(o =>
+            o.BusinessId == businessId &&
+            o.EventName == eventName &&
+            o.TargetType == targetType &&
+            o.TargetId == targetId &&
+            o.Status == ExternalEscalationAttemptStatus.Accepted));
+
+    public Task<ExternalEscalationAttempt> AddAsync(ExternalEscalationAttempt attempt, CancellationToken ct = default)
+    {
+        _escalations.Add(attempt);
+        return Task.FromResult(attempt);
+    }
+
+    public Task<ExternalEscalationAttempt> UpdateAsync(ExternalEscalationAttempt attempt, CancellationToken ct = default) =>
+        Task.FromResult(attempt);
+
+    public Task CancelPendingForTargetAsync(Guid businessId, string eventName, string targetType, Guid targetId, Guid exceptOfferId, CancellationToken ct = default)
+    {
+        foreach (var attempt in _escalations.Where(o =>
+                     o.BusinessId == businessId &&
+                     o.EventName == eventName &&
+                     o.TargetType == targetType &&
+                     o.TargetId == targetId &&
+                     o.ExternalEscalationAttemptId != exceptOfferId &&
+                     o.Status == ExternalEscalationAttemptStatus.Pending))
+        {
+            attempt.Status = ExternalEscalationAttemptStatus.Cancelled;
+            attempt.CancelledAt = DateTime.UtcNow;
+        }
+
+        return Task.CompletedTask;
+    }
+}
+
+internal sealed class InMemoryProductRepository : IProductRepository
+{
+    private readonly List<Product> _products = [];
+
+    public Task<IReadOnlyList<Product>> SearchAsync(Guid businessId, string? query, string? category, int limit, CancellationToken ct = default)
+    {
+        var results = _products.Where(p => p.BusinessId == businessId);
+
+        if (!string.IsNullOrWhiteSpace(query))
+        {
+            results = results.Where(p =>
+                p.Name.Contains(query, StringComparison.OrdinalIgnoreCase) ||
+                (p.Description?.Contains(query, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                (p.Sku?.Contains(query, StringComparison.OrdinalIgnoreCase) ?? false));
+        }
+
+        if (!string.IsNullOrWhiteSpace(category))
+        {
+            results = results.Where(p => string.Equals(p.CategoryName, category, StringComparison.OrdinalIgnoreCase));
+        }
+
+        return Task.FromResult<IReadOnlyList<Product>>(results.Take(limit).ToList());
+    }
+
+    public Task<Product?> GetByIdAsync(Guid businessId, Guid productId, CancellationToken ct = default) =>
+        Task.FromResult(_products.FirstOrDefault(p => p.BusinessId == businessId && p.ProductId == productId));
+
+    public Task<Product?> GetByExternalIdAsync(Guid businessId, Guid integrationConnectionId, string externalProductId, CancellationToken ct = default) =>
+        Task.FromResult(_products.FirstOrDefault(p =>
+            p.BusinessId == businessId &&
+            p.IntegrationConnectionId == integrationConnectionId &&
+            p.ExternalProductId == externalProductId));
+
+    public Task<Product> CreateAsync(Product product, CancellationToken ct = default)
+    {
+        _products.Add(product);
+        return Task.FromResult(product);
+    }
+
+    public Task<Product> UpdateAsync(Product product, CancellationToken ct = default) =>
+        Task.FromResult(product);
+}
+
+internal sealed class InMemoryOrderRepository : IOrderRepository
+{
+    private readonly List<Order> _orders = [];
+
+    public Task<Order?> GetByIdAsync(Guid businessId, Guid orderId, CancellationToken ct = default) =>
+        Task.FromResult(_orders.FirstOrDefault(o => o.BusinessId == businessId && o.OrderId == orderId));
+
+    public Task<Order?> GetByPaymentTransactionIdAsync(Guid businessId, Guid paymentTransactionId, CancellationToken ct = default) =>
+        Task.FromResult(_orders.FirstOrDefault(o => o.BusinessId == businessId && o.PaymentTransactionId == paymentTransactionId));
+
+    public Task<Order?> GetActiveDraftByConversationAsync(Guid businessId, Guid conversationId, CancellationToken ct = default) =>
+        Task.FromResult(_orders.FirstOrDefault(o =>
+            o.BusinessId == businessId &&
+            o.ConversationId == conversationId &&
+            (o.Status == OrderStatus.Draft || o.Status == OrderStatus.AwaitingPayment)));
+
+    public Task<IReadOnlyList<Order>> GetByConversationAsync(Guid businessId, Guid conversationId, CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<Order>>(
+            _orders.Where(o => o.BusinessId == businessId && o.ConversationId == conversationId).ToList());
+
+    public Task<Order> CreateAsync(Order order, CancellationToken ct = default)
+    {
+        _orders.Add(order);
+        return Task.FromResult(order);
+    }
+
+    public Task<Order> UpdateAsync(Order order, CancellationToken ct = default) =>
+        Task.FromResult(order);
+}
+
+internal sealed class InMemoryOrderItemRepository : IOrderItemRepository
+{
+    private readonly List<OrderItem> _items = [];
+
+    public Task<IReadOnlyList<OrderItem>> GetByOrderIdAsync(Guid businessId, Guid orderId, CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<OrderItem>>(
+            _items.Where(i => i.BusinessId == businessId && i.OrderId == orderId).ToList());
+
+    public Task<OrderItem?> GetByIdAsync(Guid businessId, Guid orderItemId, CancellationToken ct = default) =>
+        Task.FromResult(_items.FirstOrDefault(i => i.BusinessId == businessId && i.OrderItemId == orderItemId));
+
+    public Task<OrderItem> CreateAsync(OrderItem item, CancellationToken ct = default)
+    {
+        _items.Add(item);
+        return Task.FromResult(item);
+    }
+
+    public Task<OrderItem> UpdateAsync(OrderItem item, CancellationToken ct = default) =>
+        Task.FromResult(item);
+
+    public Task DeleteAsync(OrderItem item, CancellationToken ct = default)
+    {
+        _items.Remove(item);
+        return Task.CompletedTask;
+    }
+}
+
+internal sealed class InMemoryOrderConnectionEventRepository : IOrderConnectionEventRepository
+{
+    private readonly List<OrderConnectionEvent> _events = [];
+
+    public Task<OrderConnectionEvent?> GetByOrderConnectionAsync(Guid orderId, Guid integrationConnectionId, CancellationToken ct = default) =>
+        Task.FromResult(_events.FirstOrDefault(e => e.OrderId == orderId && e.IntegrationConnectionId == integrationConnectionId));
+
+    public Task<OrderConnectionEvent> CreateAsync(OrderConnectionEvent entity, CancellationToken ct = default)
+    {
+        _events.Add(entity);
+        return Task.FromResult(entity);
+    }
+
+    public Task<OrderConnectionEvent> UpdateAsync(OrderConnectionEvent entity, CancellationToken ct = default) =>
+        Task.FromResult(entity);
 }

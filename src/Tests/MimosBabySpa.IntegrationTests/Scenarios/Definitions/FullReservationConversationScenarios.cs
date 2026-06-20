@@ -150,7 +150,7 @@ public class FullReservationStyle5DateCorrectionsScenario : TestScenario
 public class FullReservationStyle6WithAddOnScenario : TestScenario
 {
     public override string Id => "full_6_with_addon";
-    public override string Description => "Plan Deluxe con add-on: valida oferta y selección.";
+    public override string Description => "Plan Deluxe con add-on: valida escalamiento y selección.";
     public override bool ExpectReservationCreated => true;
     public override bool ExpectAvailabilityChecked => true;
     public override IReadOnlyList<string> RulesToValidate =>

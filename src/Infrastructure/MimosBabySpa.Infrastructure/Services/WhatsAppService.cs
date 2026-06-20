@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using MimosBabySpa.Application.Agents;
 using MimosBabySpa.Application.DTOs;
 using MimosBabySpa.Application.Services;
 using MimosBabySpa.Infrastructure.Configuration;
@@ -97,6 +98,67 @@ public class WhatsAppService : IWhatsAppService
         response.EnsureSuccessStatusCode();
 
         _logger.LogInformation("Mensaje enviado a {To}", to);
+    }
+
+    public async Task<string?> SendButtonMessageAsync(
+        Guid businessId,
+        string to,
+        string message,
+        IReadOnlyList<OutboundButton> buttons)
+    {
+        if (buttons.Count == 0)
+        {
+            await SendTextMessageAsync(businessId, to, message);
+            return null;
+        }
+
+        var credentials = await ResolveCredentialsAsync(businessId);
+        var payload = new
+        {
+            messaging_product = "whatsapp",
+            to,
+            type = "interactive",
+            interactive = new
+            {
+                type = "button",
+                body = new { text = message },
+                action = new
+                {
+                    buttons = buttons.Take(3).Select(button => new
+                    {
+                        type = "reply",
+                        reply = new
+                        {
+                            id = Truncate(button.Id, 256),
+                            title = Truncate(button.Title, 20)
+                        }
+                    }).ToArray()
+                }
+            }
+        };
+
+        var json = JsonSerializer.Serialize(payload);
+        var content = new StringContent(json, Encoding.UTF8, "application/json");
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"{credentials.PhoneNumberId}/messages")
+        {
+            Content = content
+        };
+        request.Headers.Add("Authorization", $"Bearer {credentials.AccessToken}");
+
+        var response = await _httpClient.SendAsync(request);
+        var responseBody = await response.Content.ReadAsStringAsync();
+
+        if (!response.IsSuccessStatusCode)
+        {
+            _logger.LogError(
+                "WhatsApp API rechazÃ³ mensaje con botones: Status={Status}, Response={Response}",
+                response.StatusCode, responseBody);
+            response.EnsureSuccessStatusCode();
+        }
+
+        _logger.LogInformation("Mensaje con botones enviado a {To}", to);
+        return TryReadSentMessageId(responseBody);
     }
 
     public async Task SendImageMessageAsync(Guid businessId, string to, string imageUrl, string? caption = null)
@@ -216,5 +278,34 @@ public class WhatsAppService : IWhatsAppService
             throw new InvalidOperationException($"No hay credenciales WhatsApp configuradas para el negocio {businessId}");
 
         return credentials;
+    }
+
+    private static string Truncate(string value, int maxLength) =>
+        value.Length <= maxLength ? value : value[..maxLength];
+
+    private static string? TryReadSentMessageId(string responseBody)
+    {
+        if (string.IsNullOrWhiteSpace(responseBody))
+            return null;
+
+        try
+        {
+            using var doc = JsonDocument.Parse(responseBody);
+            var messages = doc.RootElement.TryGetProperty("messages", out var messagesElement)
+                ? messagesElement
+                : default;
+
+            if (messages.ValueKind != JsonValueKind.Array || messages.GetArrayLength() == 0)
+                return null;
+
+            var first = messages[0];
+            return first.TryGetProperty("id", out var idElement)
+                ? idElement.GetString()
+                : null;
+        }
+        catch
+        {
+            return null;
+        }
     }
 }

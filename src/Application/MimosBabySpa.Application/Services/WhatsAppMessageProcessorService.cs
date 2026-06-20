@@ -18,6 +18,7 @@ public class WhatsAppMessageProcessorService : IWhatsAppMessageProcessorService
     private readonly IAgentRepository _agentRepository;
     private readonly IBlobStorageService _blobStorageService;
     private readonly IOutboundMessageDispatcher _outboundDispatcher;
+    private readonly IExternalEscalationRouter _externalEscalationRouter;
     private readonly ILogger<WhatsAppMessageProcessorService> _logger;
 
     public WhatsAppMessageProcessorService(
@@ -30,6 +31,7 @@ public class WhatsAppMessageProcessorService : IWhatsAppMessageProcessorService
         IAgentRepository agentRepository,
         IBlobStorageService blobStorageService,
         IOutboundMessageDispatcher outboundDispatcher,
+        IExternalEscalationRouter externalEscalationRouter,
         ILogger<WhatsAppMessageProcessorService> logger)
     {
         _conversationService = conversationService;
@@ -41,6 +43,7 @@ public class WhatsAppMessageProcessorService : IWhatsAppMessageProcessorService
         _agentRepository = agentRepository;
         _blobStorageService = blobStorageService;
         _outboundDispatcher = outboundDispatcher;
+        _externalEscalationRouter = externalEscalationRouter;
         _logger = logger;
     }
 
@@ -66,15 +69,20 @@ public class WhatsAppMessageProcessorService : IWhatsAppMessageProcessorService
         Guid businessId,
         string userNumber,
         string messageText,
-        string? customerName = null)
+        string? customerName = null,
+        AgentInboundMetadata? inboundMetadata = null)
     {
         _logger.LogDebug(
             "Procesando mensaje de {UserNumber} en negocio {BusinessId}: {Message}",
             userNumber, businessId, messageText);
 
+        var externalRoute = await _externalEscalationRouter.ResolveAsync(businessId, userNumber);
+
         // 1. Obtener/crear conversación y lead
         var conversation = await _conversationService.GetOrCreateConversationAsync(businessId, userNumber, customerName);
-        var lead = await _leadService.GetOrCreateLeadAsync(businessId, userNumber, customerName);
+        Lead? lead = null;
+        if (externalRoute is null)
+            lead = await _leadService.GetOrCreateLeadAsync(businessId, userNumber, customerName);
 
         // ── Capa 1: handover humano — corto-circuito ─────────────────────────
         var state = await _stateManager.GetStateByConversationIdAsync(conversation.ConversationId);
@@ -88,8 +96,14 @@ public class WhatsAppMessageProcessorService : IWhatsAppMessageProcessorService
         }
 
         // 2. Resolver agente activo para el negocio
-        var agent = await ResolveActiveAgentAsync(businessId);
-        if (agent is null)
+        var agentId = externalRoute?.AgentId;
+        if (agentId is null)
+        {
+            var agent = await ResolveActiveAgentAsync(businessId);
+            agentId = agent?.AgentId;
+        }
+
+        if (agentId is null)
         {
             _logger.LogWarning("No hay agente activo para negocio {BusinessId}. Mensaje ignorado.", businessId);
             return;
@@ -97,10 +111,11 @@ public class WhatsAppMessageProcessorService : IWhatsAppMessageProcessorService
 
         // 3. Procesar con el motor agentico
         var result = await _agentService.ProcessMessageAsync(
-            agent.AgentId,
+            agentId.Value,
             conversation.ConversationId,
             messageText,
-            userNumber);
+            userNumber,
+            inboundMetadata: inboundMetadata);
 
         if (!result.Success)
         {
@@ -110,7 +125,8 @@ public class WhatsAppMessageProcessorService : IWhatsAppMessageProcessorService
         }
 
         // 4. Actualizar lead y enviar al canal
-        await UpdateLeadStatusAsync(lead, result.ReservationCreated);
+        if (lead is not null)
+            await UpdateLeadStatusAsync(lead, result.ReservationCreated);
 
         if (!string.IsNullOrWhiteSpace(result.Response))
             await SendResponseAsync(userNumber, result.Response, conversation);

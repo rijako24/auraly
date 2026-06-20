@@ -1,4 +1,5 @@
 using MimosBabySpa.Application.Agents.Configuration;
+using MimosBabySpa.Application.Commerce;
 
 namespace MimosBabySpa.Application.Agents;
 
@@ -20,6 +21,9 @@ public sealed class AgentConfig
 
     /// <summary>Flujo conversacional estructurado por etapas.</summary>
     public AgentFlowDefinition Flow { get; init; } = new();
+
+    /// <summary>Acciones transversales disponibles sin depender de la etapa activa.</summary>
+    public IReadOnlyList<AgentGlobalAction> GlobalActions { get; init; } = [];
 
     /// <summary>Schema de facts rastreados por este agente.</summary>
     public IReadOnlyList<FactSchemaEntry> FactSchema { get; init; } = [];
@@ -97,5 +101,9 @@ public sealed class AgentConfig
     /// </summary>
     public NotificationDefinitions Notifications { get; init; } = new();
 
+    public ExternalEscalationDefinitions ExternalEscalations { get; init; } = new();
+
     public CheckoutDefinitions Checkout { get; init; } = new();
+
+    public CommerceConfig Commerce { get; init; } = new();
 }

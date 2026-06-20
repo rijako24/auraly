@@ -27,9 +27,14 @@ public class UnitOfWork : IUnitOfWork
     private IEmployeeScheduleExceptionRepository? _employeeScheduleExceptions;
     private IIntegrationConnectionRepository? _integrationConnections;
     private IReservationIntegrationEventRepository? _reservationIntegrationEvents;
+    private IExternalEscalationAttemptRepository? _externalEscalationAttempts;
     private IConversationStateRepository? _conversationStates;
     private IServiceAddOnRuleRepository? _serviceAddOnRules;
     private IReservationAddOnRepository? _reservationAddOns;
+    private IProductRepository? _products;
+    private IOrderRepository? _orders;
+    private IOrderItemRepository? _orderItems;
+    private IOrderConnectionEventRepository? _orderConnectionEvents;
     private IPaymentTransactionRepository? _paymentTransactions;
     private IEnrollmentRepository? _enrollments;
     private IAppUserRepository? _appUsers;
@@ -115,6 +120,9 @@ public class UnitOfWork : IUnitOfWork
     public IReservationIntegrationEventRepository ReservationIntegrationEvents =>
         _reservationIntegrationEvents ??= new ReservationIntegrationEventRepository(_context);
 
+    public IExternalEscalationAttemptRepository ExternalEscalationAttempts =>
+        _externalEscalationAttempts ??= new ExternalEscalationAttemptRepository(_context);
+
     public IConversationStateRepository ConversationStates =>
         _conversationStates ??= new ConversationStateRepository(_context);
 
@@ -123,6 +131,18 @@ public class UnitOfWork : IUnitOfWork
 
     public IReservationAddOnRepository ReservationAddOns =>
         _reservationAddOns ??= new ReservationAddOnRepository(_context);
+
+    public IProductRepository Products =>
+        _products ??= new ProductRepository(_context);
+
+    public IOrderRepository Orders =>
+        _orders ??= new OrderRepository(_context);
+
+    public IOrderItemRepository OrderItems =>
+        _orderItems ??= new OrderItemRepository(_context);
+
+    public IOrderConnectionEventRepository OrderConnectionEvents =>
+        _orderConnectionEvents ??= new OrderConnectionEventRepository(_context);
 
     public IPaymentTransactionRepository PaymentTransactions =>
         _paymentTransactions ??= new PaymentTransactionRepository(_context);

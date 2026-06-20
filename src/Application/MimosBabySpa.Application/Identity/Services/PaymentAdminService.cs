@@ -41,6 +41,7 @@ public class PaymentAdminService : IPaymentAdminService
     private static PaymentTransactionDto MapToDto(PaymentTransaction t) =>
         new(
             t.PaymentTransactionId, t.BusinessId, t.ConversationId,
+            t.ReservationId,
             t.PaymentReferenceId, t.ProviderTransactionId, t.AmountInCents,
             t.Currency, t.Status.ToString(), t.Source.ToString(),
             t.CreatedAt, t.ConfirmedAt);

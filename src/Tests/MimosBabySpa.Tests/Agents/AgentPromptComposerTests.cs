@@ -61,6 +61,7 @@ public class AgentPromptComposerTests
         result.Should().Contain("## CONTEXTO TEMPORAL");
         result.Should().Contain("2026-05-21");
         result.Should().Contain("mañana → 2026-05-22");
+        result.Should().Contain("la autoridad temporal de este turno es este bloque");
         result.Should().Contain("Eres Mimi");
     }
 
@@ -444,6 +445,39 @@ public class AgentPromptComposerTests
     }
 
     // ── BuildEagerCaptureBlock ────────────────────────────────────────────────
+
+    [Fact]
+    public void Compose_WithGlobalActions_RendersTransversalActionsBlock()
+    {
+        var config = new AgentConfig
+        {
+            AgentId = DefaultConfig.AgentId,
+            BusinessId = DefaultConfig.BusinessId,
+            Name = "Mimi",
+            Persona = DefaultConfig.Persona,
+            GlobalActions =
+            [
+                new AgentGlobalAction
+                {
+                    Id = "manage_existing_reservation",
+                    Priority = 900,
+                    Goal = "Gestionar reservas existentes.",
+                    Hint = "Usa get_customer_reservations antes de modificar.",
+                    AllowedTools = ["get_customer_reservations", "confirm_reservation_change"]
+                }
+            ]
+        };
+
+        var result = Compose(config, [], new AgentToolContext
+        {
+            Conversation = new Conversation(),
+            Facts = []
+        });
+
+        result.Should().Contain("## ACCIONES TRANSVERSALES");
+        result.Should().Contain("manage_existing_reservation");
+        result.Should().Contain("get_customer_reservations, confirm_reservation_change");
+    }
 
     [Fact]
     public void Compose_WithEagerFactsMissing_EmitsEagerCaptureBlock()

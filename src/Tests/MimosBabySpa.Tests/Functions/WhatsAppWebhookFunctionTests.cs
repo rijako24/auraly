@@ -8,6 +8,7 @@ using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Extensions.Logging;
 using Moq;
 using MimosBabySpa.API.Functions;
+using MimosBabySpa.Application.Agents;
 using MimosBabySpa.Application.DTOs;
 using MimosBabySpa.Application.Services;
 using DomainMessage = MimosBabySpa.Domain.Entities.Message;
@@ -167,7 +168,12 @@ public class WhatsAppWebhookFunctionTests
             .ReturnsAsync(new[] { incomingMessage });
 
         _mockMessageProcessorService
-            .Setup(x => x.ProcessIncomingMessageAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()))
+            .Setup(x => x.ProcessIncomingMessageAsync(
+                It.IsAny<Guid>(),
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<AgentInboundMetadata?>()))
             .Returns(Task.CompletedTask);
 
         // Act
@@ -183,7 +189,8 @@ public class WhatsAppWebhookFunctionTests
             businessId, 
             userNumber, 
             messageText, 
-            customerName), Times.Once);
+            customerName,
+            It.IsAny<AgentInboundMetadata?>()), Times.Once);
         _mockDeduplicationService.Verify(x => x.MarkProcessedAsync(
             businessId,
             "whatsapp",
@@ -262,7 +269,12 @@ public class WhatsAppWebhookFunctionTests
             x => x.ExtractAllMessagesFromEntryAsync(It.IsAny<Entry>(), It.IsAny<Guid>()),
             Times.Never);
         _mockMessageProcessorService.Verify(
-            x => x.ProcessIncomingMessageAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>()),
+            x => x.ProcessIncomingMessageAsync(
+                It.IsAny<Guid>(),
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<string?>(),
+                It.IsAny<AgentInboundMetadata?>()),
             Times.Never);
     }
 
@@ -334,7 +346,12 @@ public class WhatsAppWebhookFunctionTests
             .ReturnsAsync(new[] { incomingMessage });
 
         _mockMessageProcessorService
-            .Setup(x => x.ProcessIncomingMessageAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()))
+            .Setup(x => x.ProcessIncomingMessageAsync(
+                It.IsAny<Guid>(),
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<AgentInboundMetadata?>()))
             .Returns(Task.CompletedTask);
 
         // Act
@@ -347,7 +364,8 @@ public class WhatsAppWebhookFunctionTests
             businessId, 
             userNumber, 
             messageText, 
-            null), Times.Once);
+            null,
+            It.IsAny<AgentInboundMetadata?>()), Times.Once);
     }
 
     [Fact]

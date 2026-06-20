@@ -1,9 +1,10 @@
-using Microsoft.EntityFrameworkCore;
+﻿using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Console;
 using MimosBabySpa.Application.Services;
+using MimosBabySpa.Application.Commerce;
 using MimosBabySpa.Domain.Repositories;
 using MimosBabySpa.Infrastructure.Data;
 using MimosBabySpa.Infrastructure.Repositories;
@@ -27,6 +28,7 @@ using MimosBabySpa.Application.StateManagement;
 using MimosBabySpa.Application.Agents.Templates;
 using MimosBabySpa.Application.Time;
 using MimosBabySpa.Infrastructure.LLM;
+using MimosBabySpa.Infrastructure.Commerce;
 
 Console.OutputEncoding = System.Text.Encoding.UTF8;
 Console.InputEncoding = System.Text.Encoding.UTF8;
@@ -78,7 +80,7 @@ services.AddLogging(builder =>
 services.AddDbContext<ApplicationDbContext>(options =>
     options.UseSqlServer(configuration.GetConnectionString("DefaultConnection")));
 
-// ── Core Repositories ──────────────────────────────────────────────────────────
+// â”€â”€ Core Repositories â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 services.AddScoped<IUnitOfWork, UnitOfWork>();
 services.AddScoped<IConversationRepository, ConversationRepository>();
 services.AddScoped<IConversationStateRepository, ConversationStateRepository>();
@@ -88,7 +90,7 @@ services.AddScoped<IReservationRepository, ReservationRepository>();
 services.AddScoped<IPaymentTransactionRepository, PaymentTransactionRepository>();
 services.AddScoped<MimosBabySpa.Domain.Repositories.IAgentRepository, AgentRepository>();
 
-// ── Application Services ───────────────────────────────────────────────────────
+// â”€â”€ Application Services â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 services.AddScoped<IConversationService, ConversationService>();
 services.AddScoped<IConversationLifecycleService, ConversationLifecycleService>();
 services.AddScoped<IMessageService, MessageService>();
@@ -107,8 +109,13 @@ services.AddSingleton<ITemporalReferenceBuilder, TemporalReferenceBuilder>();
 services.AddScoped<ICatalogContentGenerator, CatalogContentGenerator>();
 services.AddScoped<IAddOnCatalogService, AddOnCatalogService>();
 services.AddScoped<IUsageBillingService, UsageBillingService>();
+services.AddScoped<ICommerceService, CommerceService>();
+services.AddScoped<ICommerceAdapter, LocalCommerceAdapter>();
+services.AddHttpClient<SiigoCommerceAdapter>();
+services.AddScoped<ICommerceAdapter>(sp => sp.GetRequiredService<SiigoCommerceAdapter>());
+services.AddScoped<ICommerceAdapterFactory, CommerceAdapterFactory>();
 
-// ── OpenAI Clients ─────────────────────────────────────────────────────────────
+// â”€â”€ OpenAI Clients â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 services.Configure<OpenAITextModelOptions>(configuration.GetSection(OpenAITextModelOptions.SectionName));
 services.Configure<OpenAIAudioModelOptions>(configuration.GetSection(OpenAIAudioModelOptions.SectionName));
 
@@ -128,7 +135,7 @@ services.AddKeyedSingleton<OpenAIClient>("Audio", (sp, _) =>
     return new OpenAIClient(new Uri(opts.Endpoint), new Azure.AzureKeyCredential(opts.ApiKey));
 });
 
-// ── Supporting Infrastructure ──────────────────────────────────────────────────
+// â”€â”€ Supporting Infrastructure â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 services.AddMemoryCache();
 services.AddScoped<ILocalizationService, LocalizationService>();
 services.AddScoped<IConversationStateManager, ConversationStateManager>();
@@ -141,6 +148,7 @@ services.AddScoped<ICustomerReservationResolver, CustomerReservationResolver>();
 services.AddScoped<IPaymentLifecycleService, PaymentLifecycleService>();
 services.AddScoped<IReservationIntentBuilder, ReservationIntentBuilder>();
 services.AddScoped<ICheckoutQuoteService, CheckoutQuoteService>();
+services.AddScoped<ICheckoutPaymentCoordinator, CheckoutPaymentCoordinator>();
 services.AddScoped<IEscalationNotifier, EscalationNotifier>();
 services.AddScoped<IEscalationConfigProvider, EscalationConfigProvider>();
 services.AddScoped<AdminActionLinkService>();
@@ -158,20 +166,27 @@ services.AddScoped<IBlobStorageService>(sp =>
 services.AddScoped<IIntegrationsConfigProvider, IntegrationsConfigProvider>();
 services.AddScoped<ISchedulingPolicyProvider, SchedulingPolicyProvider>();
 services.AddScoped<IPaymentLinkService, WompiPaymentLinkService>();
+services.AddScoped<IPaymentConfirmationHandler, PaymentConfirmationHandler>();
+services.AddScoped<IPaidCheckoutFulfillmentRegistry, PaidCheckoutFulfillmentRegistry>();
+services.AddScoped<IPaidCheckoutFulfillmentHandler, ReservationPaidCheckoutFulfillmentHandler>();
+services.AddScoped<IPaidCheckoutFulfillmentHandler, EnrollmentPaidCheckoutFulfillmentHandler>();
+services.AddScoped<IPaidCheckoutFulfillmentHandler, OrderPaidCheckoutFulfillmentHandler>();
 services.AddScoped<IMediaUrlResolver, ConsoleMediaUrlResolver>();
 services.AddScoped<IOutboundMessageDispatcher, OutboundMessageDispatcher>();
 services.AddScoped<IMessageSequenceResolver, MessageSequenceResolver>();
 services.AddScoped<IActiveAgentConfigResolver, ActiveAgentConfigResolver>();
 services.AddScoped<IReservationCreatedNotificationDispatcher, ReservationCreatedNotificationDispatcher>();
+services.AddScoped<IExternalEscalationRouter, ExternalEscalationRouter>();
+services.AddScoped<IExternalEscalationService, ExternalEscalationService>();
 
 services.AddHttpClient();
 services.AddHttpClient<GoogleCalendarService>(c => c.Timeout = TimeSpan.FromSeconds(30));
 services.AddScoped<ICalendarService, GoogleCalendarService>();
 
-// ── Business Rules Engine ──────────────────────────────────────────────────────
+// â”€â”€ Business Rules Engine â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 services.AddScoped<IBusinessRuleEngine, BusinessRuleEngine>();
 
-// ── Agentic Engine (Function Calling) ─────────────────────────────────────────
+// â”€â”€ Agentic Engine (Function Calling) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 services.AddScoped<MimosBabySpa.Application.LLM.IChatClient>(sp =>
 {
     var textClient = sp.GetRequiredKeyedService<OpenAIClient>("Text");
@@ -200,9 +215,9 @@ services.AddScoped<IAgentTurnResponseComposer, AgentTurnResponseComposer>();
 services.AddScoped<IAgentTool, CheckAvailabilityTool>();
 services.AddScoped<IAgentTool, ResolvePricingTool>();
 services.AddScoped<IAgentTool, PrepareCheckoutTool>();
+services.AddScoped<IAgentTool, PrepareOrderCheckoutTool>();
 services.AddScoped<IAgentTool, CreateReservationTool>();
 services.AddScoped<IAgentTool, AssignPaidSlotTool>();
-services.AddScoped<IAgentTool, RescheduleReservationTool>();
 services.AddScoped<IAgentTool, SuspendReservationTool>();
 services.AddScoped<IAgentTool, VerifyPaymentTool>();
 services.AddScoped<IAgentTool, EscalateToHumanTool>();
@@ -212,37 +227,50 @@ services.AddScoped<IAgentTool, GetServiceFulfillmentTool>();
 services.AddScoped<IAgentTool, SetFactTool>();
 services.AddScoped<IAgentTool, ResetFlowContextTool>();
 services.AddScoped<IAgentTool, SendMessageSequenceTool>();
+services.AddScoped<IAgentTool, SearchProductsTool>();
+services.AddScoped<IAgentTool, AddOrderItemTool>();
+services.AddScoped<IAgentTool, RemoveOrderItemTool>();
+services.AddScoped<IAgentTool, GetOrderDraftTool>();
+services.AddScoped<IAgentTool, CreateOrderTool>();
+services.AddScoped<IAgentTool, ResolveExternalEscalationTool>();
+services.AddScoped<IAgentTool, AcceptExternalEscalationTool>();
+services.AddScoped<IAgentTool, DeclineExternalEscalationTool>();
 
 services.AddScoped<AgentToolRegistry>();
 services.AddScoped<IAgentConversationService, AgentConversationService>();
 
-// ── Build ──────────────────────────────────────────────────────────────────────
+// Build
 var serviceProvider = services.BuildServiceProvider();
 
-// ── Console UI ─────────────────────────────────────────────────────────────────
+// Console UI
 Console.OutputEncoding = System.Text.Encoding.UTF8;
 Console.InputEncoding = System.Text.Encoding.UTF8;
 
-Console.WriteLine("════════════════════════════════════════════════════════");
-Console.WriteLine("  Mimos Baby Spa — Simulador Agentic Engine (FC)");
-Console.WriteLine("════════════════════════════════════════════════════════");
+const string solorzanoBusinessIdStr = "FCEE3BA9-E6BF-43E2-8C1A-560CB724688B";
+const string solorzanoAgentIdStr = "B0EE3BA9-E6BF-43E2-8C1A-560CB724688B";
+const string solorzanoAgentPhone = "+573005942096";
+const string solorzanoAgentName = "Camila";
+
+var solorzanoBusinessId = Guid.Parse(solorzanoBusinessIdStr);
+var agentId = Guid.Parse(solorzanoAgentIdStr);
+
+Console.WriteLine("========================================================");
+Console.WriteLine("  Vinos Artesanales Solorzano - Simulador Agentic Engine (FC)");
+Console.WriteLine("========================================================");
 Console.WriteLine();
-Console.WriteLine("  Agente  : Mimi Bot (+573194823017)");
+Console.WriteLine($"  Negocio : Vinos Artesanales Solorzano ({solorzanoBusinessIdStr})");
+Console.WriteLine($"  Agente  : {solorzanoAgentName} ({solorzanoAgentPhone})");
 Console.WriteLine("  Escribe  'exit' para salir");
-Console.WriteLine("  Escribe  'reset' para reiniciar la sesión");
+Console.WriteLine("  Escribe  'reset' para reiniciar la sesion");
 Console.WriteLine();
 
-// AgentId del Mimi Bot — resuelto directamente de la BD.
-const string agentIdStr = "7105A9D5-D4E4-4BBA-9F3A-DBB34E0B1B86";
-var agentId = Guid.Parse(agentIdStr);
-
-// Simula el teléfono del cliente (clave de sesión)
-const string userPhone = "+12345679881";
+// Simula el telefono del cliente (clave de sesion).
+var userPhone = CreateTestUserPhone();
 
 while (true)
 {
     Console.ForegroundColor = ConsoleColor.Cyan;
-    Console.Write("Tú: ");
+    Console.Write("Tu: ");
     Console.ResetColor();
 
     var input = Console.ReadLine();
@@ -254,14 +282,15 @@ while (true)
         input.Equals("quit", StringComparison.OrdinalIgnoreCase) ||
         input.Equals("salir", StringComparison.OrdinalIgnoreCase))
     {
-        Console.WriteLine("¡Hasta luego!");
+        Console.WriteLine("Hasta luego!");
         break;
     }
 
     if (input.Equals("reset", StringComparison.OrdinalIgnoreCase))
     {
+        userPhone = CreateTestUserPhone();
         Console.ForegroundColor = ConsoleColor.Yellow;
-        Console.WriteLine("[sesión reiniciada — escribe tu siguiente mensaje]");
+        Console.WriteLine("[sesion reiniciada - escribe tu siguiente mensaje]");
         Console.ResetColor();
         Console.WriteLine();
         continue;
@@ -278,7 +307,16 @@ while (true)
         if (agentEntity == null)
         {
             Console.ForegroundColor = ConsoleColor.Red;
-            Console.WriteLine($"✗ Agente {agentId} no encontrado en la base de datos.");
+            Console.WriteLine($"ERROR: Agente {agentId} no encontrado en la base de datos.");
+            Console.ResetColor();
+            Console.WriteLine();
+            continue;
+        }
+
+        if (agentEntity.BusinessId != solorzanoBusinessId)
+        {
+            Console.ForegroundColor = ConsoleColor.Red;
+            Console.WriteLine($"ERROR: El agente {agentId} no pertenece al negocio de vinos configurado.");
             Console.ResetColor();
             Console.WriteLine();
             continue;
@@ -294,7 +332,7 @@ while (true)
             userPhone);
 
         Console.ForegroundColor = ConsoleColor.Green;
-        Console.Write("Mimi: ");
+        Console.Write("Camila: ");
         Console.ResetColor();
 
         if (!string.IsNullOrWhiteSpace(result.Response))
@@ -332,7 +370,7 @@ while (true)
         if (result.EscalatedToHuman)
         {
             Console.ForegroundColor = ConsoleColor.Yellow;
-            Console.WriteLine("  ⚠  Conversación transferida a agente humano.");
+            Console.WriteLine("  Conversacion transferida a agente humano.");
             Console.ResetColor();
             Console.WriteLine();
         }
@@ -340,10 +378,16 @@ while (true)
     catch (Exception ex)
     {
         Console.ForegroundColor = ConsoleColor.Red;
-        Console.WriteLine($"✗ Error: {ex.Message}");
+        Console.WriteLine($"ERROR: {ex.Message}");
         if (ex.InnerException is not null)
             Console.WriteLine($"  Causa: {ex.InnerException.Message}");
         Console.ResetColor();
         Console.WriteLine();
     }
 }
+
+static string CreateTestUserPhone()
+{
+    return $"+1555{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() % 10000000:0000000}";
+}
+

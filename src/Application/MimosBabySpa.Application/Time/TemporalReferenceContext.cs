@@ -40,9 +40,14 @@ public sealed class TemporalReferenceContext
 
         sb.AppendLine();
         sb.AppendLine(
-            "Convierte siempre fechas relativas usando estas anclas antes de llamar " +
-            "`check_availability`, `create_reservation` o `reschedule_reservation`. " +
-            "Formato de hora en tools: **HH:mm** (24h).");
+            "Convierte siempre fechas relativas usando estas anclas antes de ejecutar acciones " +
+            "que dependan de fecha u hora. Usa **YYYY-MM-DD** para fechas y **HH:mm** (24h) para horas.");
+        sb.AppendLine(
+            "Para describir reservas existentes, calcula la etiqueta actual desde la fecha absoluta " +
+            "de la reserva y la fecha local de este turno.");
+        sb.AppendLine(
+            "Las expresiones relativas del historial pertenecen al dia en que fueron escritas; " +
+            "la autoridad temporal de este turno es este bloque.");
 
         return sb.ToString().TrimEnd();
     }

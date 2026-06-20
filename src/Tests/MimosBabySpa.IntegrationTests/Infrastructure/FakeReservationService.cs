@@ -116,15 +116,6 @@ public class FakeReservationService : IReservationService
         return Task.FromResult(r != null);
     }
 
-    public Task<bool> RescheduleAsync(Guid reservationId, DateOnly newDate, TimeOnly newTime, CancellationToken cancellationToken = default)
-    {
-        var r = _reservationsCreated.FirstOrDefault(x => x.ReservationId == reservationId);
-        if (r == null) return Task.FromResult(false);
-        r.ReservationDateTime = newDate.ToDateTime(newTime);
-        r.UpdatedAt = DateTime.UtcNow;
-        return Task.FromResult(true);
-    }
-
     public Task<UpdateReservationChangeResult> UpdateReservationAsync(
         UpdateReservationChangeRequest request,
         CancellationToken cancellationToken = default)

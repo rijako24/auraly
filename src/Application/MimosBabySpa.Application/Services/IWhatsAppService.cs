@@ -1,5 +1,7 @@
 namespace MimosBabySpa.Application.Services;
 
+using MimosBabySpa.Application.Agents;
+
 public interface IWhatsAppService
 {
     /// <summary>
@@ -10,6 +12,7 @@ public interface IWhatsAppService
     Task AcknowledgeMessageAsync(string phoneNumberId, string accessToken, string whatsAppMessageId);
 
     Task SendTextMessageAsync(Guid businessId, string to, string message);
+    Task<string?> SendButtonMessageAsync(Guid businessId, string to, string message, IReadOnlyList<OutboundButton> buttons);
     Task SendImageMessageAsync(Guid businessId, string to, string imageUrl, string? caption = null);
     Task SendDocumentMessageAsync(Guid businessId, string to, string documentUrl, string? caption = null, string? filename = null);
     Task<bool> VerifyWebhookAsync(string mode, string token, string challenge);

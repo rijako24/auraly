@@ -7,6 +7,7 @@ namespace MimosBabySpa.Infrastructure.Configuration;
 public class WompiSettings
 {
     public const string SectionName = "Wompi";
+    public string Mode { get; set; } = "test";
 
     /// <summary>
     /// Clave privada de Wompi (prv_test_xxx para sandbox, prv_prod_xxx para producción).
@@ -32,8 +33,6 @@ public class WompiSettings
     /// <summary>
     /// true = sandbox, false = producción.
     /// </summary>
-    public bool UseSandbox { get; set; } = true;
-
     /// <summary>
     /// URL base de la API en sandbox. Por defecto: https://sandbox.wompi.co/v1
     /// </summary>
@@ -45,7 +44,7 @@ public class WompiSettings
     public string ProductionBaseUrl { get; set; } = "https://production.wompi.co/v1";
 
     /// <summary>
-    /// URL base de la API. Si se especifica, tiene prioridad sobre UseSandbox y las URLs por defecto.
+    /// URL base de la API. Si se especifica, tiene prioridad sobre Mode y las URLs por defecto.
     /// </summary>
     public string? BaseUrl { get; set; }
 
@@ -64,9 +63,10 @@ public class WompiSettings
     {
         if (!string.IsNullOrWhiteSpace(BaseUrl))
             return BaseUrl.TrimEnd('/');
-        var url = UseSandbox ? SandboxBaseUrl : ProductionBaseUrl;
+        var isTest = !string.Equals(Mode, "production", StringComparison.OrdinalIgnoreCase);
+        var url = isTest ? SandboxBaseUrl : ProductionBaseUrl;
         if (string.IsNullOrWhiteSpace(url))
-            return UseSandbox ? "https://sandbox.wompi.co/v1" : "https://production.wompi.co/v1";
+            return isTest ? "https://sandbox.wompi.co/v1" : "https://production.wompi.co/v1";
         return url.TrimEnd('/');
     }
 }

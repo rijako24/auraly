@@ -30,23 +30,28 @@
 :r .\Migrations\MigrateIntegrationsToConnections.sql
 :r .\Migrations\MigrateServiceCheckoutTotalPolicy.sql
 :r .\Migrations\MigrateBabySpaPlanPrices2026.sql
-:r .\Migrations\MigrateIniciacionJardinService2026.sql
+:r .\Migrations\MigrateExternalEscalationAttempts.sql
+:r .\Migrations\MigrateOrderCheckoutPayments.sql
 :r .\Seeds\SeedAdminUser.sql
 :r .\Seeds\SeedAgentPermissions.sql
 :r .\Seeds\SeedSqlAppLoginPermissions.sql
-:r .\Seeds\SeedServiceCategoriesForNewBusinesses.sql
 :r .\Seeds\SeedDevBusiness.sql
+:r .\Seeds\SeedServiceCategoriesForNewBusinesses.sql
+:r .\Migrations\MigrateIniciacionJardinService2026.sql
 :r .\Seeds\SeedBillingPlans.sql
+:r .\Seeds\SeedRadaConcept.sql
 :r .\Seeds\SeedSchedulingPolicy.sql
 :r .\Seeds\SeedBusinessWorkingHours.sql
 :r .\Seeds\CleanupObsoleteBookingPolicy.sql
 :r .\Seeds\SeedAgenticConfiguration.sql
-:r .\Seeds\SeedSolorzanoAgentConfiguration.sql
+:r .\Seeds\SeedSolorzanoWhatsAppNumber.sql
+:r .\Seeds\SeedRadaConceptWhatsAppNumber.sql
 :r .\Migrations\MigrateAuditAgentTemplates.sql
 :r .\Seeds\SeedDefaultResources.sql
 :r .\Seeds\SeedWorkshopSchedulesInCatalog.sql
 :r .\Seeds\SeedDefaultEmployees.sql
 :r .\Seeds\SeedPlanAddOns.sql
 :r .\Seeds\CleanupDefaultTestServices.sql
+:r .\Seeds\SeedSolorzanoAgentConfiguration.sql
 
 PRINT 'Post-deployment scripts executed successfully.';

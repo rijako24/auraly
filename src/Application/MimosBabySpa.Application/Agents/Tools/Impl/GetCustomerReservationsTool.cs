@@ -46,7 +46,8 @@ public sealed class GetCustomerReservationsTool : IAgentTool
         }, new
         {
             count = session.ManageableReservations.Count,
-            reservations = session.ManageableReservations.Select(r => CustomerReservationResolver.FormatReservationLine(r))
+            reservations = session.ManageableReservations.Select(r =>
+                ReservationTemporalFormatter.FormatLine(r, ctx.BusinessToday))
         });
     }
 

@@ -68,7 +68,8 @@ public sealed class MessageSequenceResolver : IMessageSequenceResolver
                 if (string.IsNullOrWhiteSpace(body) && string.IsNullOrWhiteSpace(mediaUrl))
                     continue;
 
-                result.Add(new OutboundMessage(body, mediaUrl, mediaType, filename));
+                var buttons = ResolveButtons(step.Buttons, reservation, context.Payment, context.Custom, services, addOnRules);
+                result.Add(new OutboundMessage(body, mediaUrl, mediaType, filename, buttons));
             }
             catch (Exception ex)
             {
@@ -81,6 +82,26 @@ public sealed class MessageSequenceResolver : IMessageSequenceResolver
         }
 
         return result;
+    }
+
+    private static IReadOnlyList<OutboundButton> ResolveButtons(
+        IReadOnlyList<MessageSequenceButton> buttons,
+        Reservation? reservation,
+        PaymentSequenceContext? payment,
+        IReadOnlyDictionary<string, string> custom,
+        List<ServiceInfo> services,
+        List<AddOnRuleInfo> addOnRules)
+    {
+        if (buttons.Count == 0)
+            return [];
+
+        return buttons
+            .Select(button => new OutboundButton(
+                ResolvePlaceholders(button.Id, reservation, payment, custom, services, addOnRules) ?? string.Empty,
+                ResolvePlaceholders(button.Title, reservation, payment, custom, services, addOnRules) ?? string.Empty))
+            .Where(button => !string.IsNullOrWhiteSpace(button.Id) && !string.IsNullOrWhiteSpace(button.Title))
+            .Take(3)
+            .ToList();
     }
 
     private async Task<Reservation?> LoadReservationAsync(Reservation? reservation, CancellationToken ct)

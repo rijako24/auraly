@@ -19,7 +19,7 @@ public sealed class GetCompatibleAddOnsTool : IAgentTool
     public string Name => "get_compatible_add_ons";
 
     public string Description =>
-        "Returns the add-ons compatible with the selected service. If count is 0, there are no compatible add-ons to offer.";
+        "Returns the add-ons compatible with the selected service. If count is 0, there are no compatible add-ons to attempt.";
 
     public string ParametersSchema => """
         {
