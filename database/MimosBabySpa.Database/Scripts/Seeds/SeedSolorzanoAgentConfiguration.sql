@@ -554,7 +554,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
             "key": "domicilio_solorzano",
             "name": "Domicilio Solorzano",
             "role": "delivery",
-            "phone": "+573042052007",
+            "phone": "+573205387559",
             "priority": 1,
             "inboundAgentId": "B0EE3BA9-E6BF-43E2-8C1A-560CB724688B"
           }
