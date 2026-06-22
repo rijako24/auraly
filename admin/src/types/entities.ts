@@ -1,13 +1,17 @@
 import {
-  BusinessConfigurationKey,
   ConversationStateEnum,
   ConversationLifecycleStatus,
   LeadStatus,
+  OrderFulfillmentMode,
+  OrderSource,
+  OrderStatus,
   PaymentTransactionSource,
   PaymentTransactionStatus,
   ReservationStatus,
   ServiceTier,
   ServiceType,
+  PromotionBenefitType,
+  PromotionItemType,
   SystemConfigurationKey,
 } from "./enums";
 
@@ -37,16 +41,6 @@ export interface Business {
   tenant?: Tenant;
 }
 
-export interface BusinessConfiguration {
-  businessConfigurationId: string;
-  businessId: string;
-  key: BusinessConfigurationKey;
-  value: string;
-  description: string | null;
-  isActive: boolean;
-  createdAt: string;
-  updatedAt: string | null;
-}
 
 export interface BusinessResource {
   businessResourceId: string;
@@ -78,6 +72,46 @@ export interface BusinessAttachment {
   createdAt: string;
 }
 
+
+export interface PromotionCondition {
+  promotionConditionId?: string | null;
+  itemType: PromotionItemType;
+  productId?: string | null;
+  serviceId?: string | null;
+  categoryName?: string | null;
+  minQuantity: number;
+  minSubtotal?: number | null;
+}
+
+export interface PromotionBenefit {
+  promotionBenefitId?: string | null;
+  benefitType: PromotionBenefitType;
+  targetItemType: PromotionItemType;
+  productId?: string | null;
+  serviceId?: string | null;
+  categoryName?: string | null;
+  discountPercentage?: number | null;
+  discountAmount?: number | null;
+  fixedUnitPrice?: number | null;
+  appliesToQuantity?: number | null;
+}
+
+export interface Promotion {
+  promotionId: string;
+  businessId: string;
+  name: string;
+  description?: string | null;
+  isActive: boolean;
+  startsAtUtc?: string | null;
+  endsAtUtc?: string | null;
+  priority: number;
+  isCombinable: boolean;
+  couponCode?: string | null;
+  conditions: PromotionCondition[];
+  benefits: PromotionBenefit[];
+  createdAt: string;
+  updatedAt?: string | null;
+}
 export interface Service {
   serviceId: string;
   businessId: string;
@@ -298,6 +332,66 @@ export interface PaymentTransaction {
   conversation?: Conversation;
 }
 
+export interface Order {
+  orderId: string;
+  businessId: string;
+  agentId: string | null;
+  conversationId: string | null;
+  integrationConnectionId: string | null;
+  paymentTransactionId: string | null;
+  source: OrderSource;
+  fulfillmentMode: OrderFulfillmentMode;
+  status: OrderStatus;
+  customerName: string | null;
+  customerEmail: string | null;
+  customerPhone: string | null;
+  customerDocument: string | null;
+  deliveryAddress: string | null;
+  notes: string | null;
+  currency: string;
+  subtotal: number;
+  discountTotal: number;
+  taxTotal: number;
+  total: number;
+  customerConfirmed: boolean;
+  externalOrderId: string | null;
+  externalDocumentNumber: string | null;
+  externalStatus: string | null;
+  customAttributesJson: string | null;
+  createdAt: string;
+  updatedAt: string | null;
+  items: OrderItem[];
+}
+
+export interface OrderItem {
+  orderItemId: string;
+  orderId: string;
+  businessId: string;
+  productId: string | null;
+  integrationConnectionId: string | null;
+  externalProductId: string | null;
+  sku: string | null;
+  productName: string;
+  description: string | null;
+  quantity: number;
+  unitPrice: number;
+  discountAmount: number;
+  taxAmount: number;
+  lineTotal: number;
+  createdAt: string;
+  updatedAt: string | null;
+}
+
+export interface OrderSummary {
+  totalOrders: number;
+  totalAmount: number;
+  draftCount: number;
+  awaitingPaymentCount: number;
+  confirmedCount: number;
+  syncedCount: number;
+  cancelledCount: number;
+}
+
 export interface AppUser {
   userId: string;
   tenantId: string;
@@ -393,3 +487,5 @@ export interface Agent {
   settingsJson: string | null;
   settings: Record<string, unknown> | null;
 }
+
+

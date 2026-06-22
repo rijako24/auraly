@@ -24,6 +24,12 @@ export interface UpdateWompiIntegration {
   integritySecret?: string | null;
 }
 
+export type OperationalMode = "test" | "production";
+
+export interface UpdateOperationalMode {
+  mode: OperationalMode;
+}
+
 export const integrationsApi = {
   getSettings: (businessId: string) =>
     apiClient.get<IntegrationSettings>(`/businesses/${businessId}/integrations`),
@@ -38,6 +44,11 @@ export const integrationsApi = {
   updateWompi: (businessId: string, data: UpdateWompiIntegration) =>
     apiClient.put<IntegrationSettings>(
       `/businesses/${businessId}/integrations/wompi`,
+      data
+    ),
+  updateOperationalMode: (businessId: string, data: UpdateOperationalMode) =>
+    apiClient.put<IntegrationSettings>(
+      `/businesses/${businessId}/integrations/operational-mode`,
       data
     ),
 };

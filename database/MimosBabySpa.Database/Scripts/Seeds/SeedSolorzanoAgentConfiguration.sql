@@ -338,7 +338,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         "id": "discovery",
         "name": "Descubrimiento y recomendacion",
         "goal": "Entender si el vino es para regalo o para compartir, recomendar opciones disponibles y construir el carrito hasta que el cliente finalice la compra.",
-        "hint": "Si el mensaje del cliente es solo un saludo, saluda breve, presentate y pregunta si el vino lo busca para regalar o para compartir. En ese turno responde solo el saludo y la pregunta de ocasion. Cuando el cliente responda la ocasion, pida opciones, precios, promo o un producto, llama search_products antes de dar precios o disponibilidad y muestra 1 a 3 opciones activas en la misma respuesta. Para ocasion regalar/compartir usa una busqueda amplia: query vino, limit 3. Recomienda con lenguaje cercano y menciona la tula de regalo cuando encaje. Cierra con una invitacion suave a elegir una opcion. Cuando el cliente seleccione una opcion ya mostrada por numero, precio, tamano, sabor, nombre parcial o descripcion, resuelve cual producto corresponde en el ultimo resultado de search_products y conserva su product_id como producto elegido; en ese turno usa el catalogo ya mostrado, no vuelvas a buscar. La cantidad siempre debe estar expresada por el cliente antes de agregar al carrito. Si el cliente eligio producto pero no dijo cantidad, pregunta cuantas unidades quiere llevar. Cuando ya tengas producto elegido y cantidad, llama add_order_item con el product_id exacto del producto elegido y quantity. Representa el carrito con el draft y sus items. Despues de agregar cada item, pregunta si quiere agregar algo mas a la compra. Cuando el cliente diga claramente que ya no quiere agregar mas y exista al menos un item en el carrito, llama set_fact order_finalized=true y avanza a datos de entrega. Si el carrito esta vacio, ayuda a elegir un producto primero. Si pregunta por algo fuera del catalogo activo, ofrece opciones activas.",
+        "hint": "Si el mensaje del cliente es solo un saludo, saluda breve, presentate y pregunta si el vino lo busca para regalar o para compartir. En ese turno responde solo el saludo y la pregunta de ocasion. Cuando el cliente responda la ocasion, pida opciones, precios, promo o un producto, llama search_products antes de dar precios o disponibilidad y muestra 1 a 3 opciones activas en la misma respuesta. Para ocasion regalar/compartir usa una busqueda amplia: query vino, limit 3. Recomienda con lenguaje cercano y menciona la tula de regalo cuando encaje. Cierra con una invitacion suave a elegir una opcion. Cuando el cliente seleccione una opcion ya mostrada por numero, precio, tamano, sabor, nombre parcial o descripcion, resuelve cual producto corresponde en el ultimo resultado de search_products, conserva su product_id como producto elegido y continua con ese producto en los siguientes turnos. Si el cliente responde despues con una cantidad, interpreta esa cantidad para el producto elegido previamente y llama add_order_item con el product_id conservado y quantity. Si hay una sola coincidencia razonable por precio, numero, tamano, sabor, nombre parcial o descripcion, infierela y avanza. Si hay varias coincidencias razonables, haz una pregunta corta de aclaracion antes de agregar al carrito. La cantidad siempre debe estar expresada por el cliente antes de agregar al carrito. Cuando el producto este elegido y falte cantidad, pregunta cuantas unidades quiere llevar. Cuando ya tengas producto elegido y cantidad, llama add_order_item con el product_id exacto del producto elegido y quantity. Representa el carrito con el draft y sus items. Despues de agregar cada item, pregunta si quiere agregar algo mas a la compra. Cuando el cliente diga claramente que ya no quiere agregar mas y exista al menos un item en el carrito, llama set_fact order_finalized=true y avanza a datos de entrega. Si el carrito esta vacio, ayuda a elegir un producto primero. Si pregunta por algo fuera del catalogo activo, ofrece opciones activas.",
         "allowedTools": ["search_products", "add_order_item", "set_fact"],
         "advanceWhenFacts": ["order_finalized"]
       },
@@ -377,6 +377,13 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "goal": "Escalar a humano cuando el cliente lo pida, haya queja grave, distribuidor/mayorista o una situacion fuera del flujo normal.",
       "hint": "Responde con una frase corta y cordial. Para distribuidor, menciona minimo 12 unidades y margen 25%. Luego llama escalate_to_human.",
       "allowedTools": ["escalate_to_human"]
+    },
+    {
+      "id": "modify_current_order",
+      "priority": 90,
+      "goal": "Modificar el carrito actual cuando el cliente, despues de decir que no agregaba mas o despues de recibir el resumen/link, pida agregar otro producto.",
+      "hint": "Si el cliente quiere agregar otro vino al pedido actual, usa search_products si necesitas resolver el producto y luego add_order_item con cantidad. Despues muestra el carrito actualizado con get_order_draft. Si ya habia link de pago o ya estan los datos de entrega, vuelve a llamar prepare_order_checkout para generar un resumen/link actualizado; no le digas que use un link anterior.",
+      "allowedTools": ["search_products", "add_order_item", "get_order_draft", "prepare_order_checkout"]
     },
     {
       "id": "restart_order",
@@ -507,7 +514,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
     "escalate_to_human"
   ],
   "escalation": {
-    "contacts": ["+573005942096"]
+    "contacts": ["+573205387559"]
   },
   "notifications": {
     "reservation_created": {
@@ -517,17 +524,17 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
     },
     "order_paid": {
       "enabled": true,
-      "recipients": ["+573005942096"],
+      "recipients": ["+573205387559"],
       "sendMessageSequence": "admin_order_paid"
     },
     "delivery_called": {
       "enabled": true,
-      "recipients": ["+573005942096"],
+      "recipients": ["+573205387559"],
       "sendMessageSequence": "admin_delivery_called"
     },
     "delivery_confirmed": {
       "enabled": true,
-      "recipients": ["+573005942096"],
+      "recipients": ["+573205387559"],
       "sendMessageSequence": "admin_delivery_confirmed"
     }
   },
@@ -556,7 +563,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
             "role": "delivery",
             "phone": "+573205387559",
             "priority": 1,
-            "inboundAgentId": "B0EE3BA9-E6BF-43E2-8C1A-560CB724688B"
+            "inboundAgentId": "D0EE3BA9-E6BF-43E2-8C1A-560CB724688B"
           }
         ]
       }

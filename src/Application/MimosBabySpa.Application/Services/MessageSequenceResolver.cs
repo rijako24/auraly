@@ -52,6 +52,14 @@ public sealed class MessageSequenceResolver : IMessageSequenceResolver
         {
             try
             {
+                if (string.Equals(step.Type, "whatsapp_template", StringComparison.OrdinalIgnoreCase))
+                {
+                    var template = ResolveTemplate(step, reservation, context.Payment, context.Custom, services, addOnRules);
+                    if (template is not null)
+                        result.Add(new OutboundMessage(null, null, "template", Template: template, Buttons: ResolveButtons(step.Buttons, reservation, context.Payment, context.Custom, services, addOnRules)));
+                    continue;
+                }
+
                 var body = ResolvePlaceholders(step.Body, reservation, context.Payment, context.Custom, services, addOnRules);
                 string? mediaUrl = null;
                 string mediaType = "text";
@@ -82,6 +90,27 @@ public sealed class MessageSequenceResolver : IMessageSequenceResolver
         }
 
         return result;
+    }
+
+    private static WhatsAppTemplateMessage? ResolveTemplate(
+        MessageSequenceStep step,
+        Reservation? reservation,
+        PaymentSequenceContext? payment,
+        IReadOnlyDictionary<string, string> custom,
+        List<ServiceInfo> services,
+        List<AddOnRuleInfo> addOnRules)
+    {
+        if (string.IsNullOrWhiteSpace(step.TemplateName))
+            return null;
+
+        var parameters = step.BodyParameters
+            .Select(p => ResolvePlaceholders(p, reservation, payment, custom, services, addOnRules) ?? string.Empty)
+            .ToList();
+
+        return new WhatsAppTemplateMessage(
+            step.TemplateName.Trim(),
+            string.IsNullOrWhiteSpace(step.Language) ? "es_CO" : step.Language.Trim(),
+            parameters);
     }
 
     private static IReadOnlyList<OutboundButton> ResolveButtons(

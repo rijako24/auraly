@@ -15,6 +15,11 @@ public interface IIntegrationAdminService
         Guid businessId,
         UpdateWompiIntegrationRequest request,
         CancellationToken ct = default);
+    Task<IntegrationSettingsDto> UpdateOperationalModeAsync(
+        Guid tenantId,
+        Guid businessId,
+        UpdateOperationalModeRequest request,
+        CancellationToken ct = default);
     Task<IntegrationSettingsDto> UpdateSiigoCommerceAsync(
         Guid tenantId,
         Guid businessId,

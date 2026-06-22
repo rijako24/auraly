@@ -63,7 +63,7 @@ public sealed class ExternalEscalationRouter : IExternalEscalationRouter
     }
 
     internal static string NormalizePhone(string phone) =>
-        phone.Trim().Replace(" ", string.Empty).Replace("-", string.Empty);
+        new(phone.Where(char.IsDigit).ToArray());
 }
 
 public sealed class ExternalEscalationService : IExternalEscalationService
@@ -221,7 +221,7 @@ public sealed class ExternalEscalationService : IExternalEscalationService
     {
         var attempt = await _unitOfWork.ExternalEscalationAttempts.GetByIdAsync(attemptId, ct);
         if (!IsUsableAttempt(attempt, businessId, contactPhone))
-            return new ExternalEscalationActionResult(false, attempt, "La escalamiento ya no esta disponible.", false);
+            return new ExternalEscalationActionResult(false, attempt, "El escalamiento ya no esta disponible.", false);
 
         if (await _unitOfWork.ExternalEscalationAttempts.HasAcceptedForTargetAsync(
                 attempt!.BusinessId,

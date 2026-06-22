@@ -6,7 +6,7 @@ export const businessesApi = {
   list: (params?: Partial<PagedRequest>) =>
     apiClient.get<PagedResponse<Business>>(
       "/businesses",
-      withPagedDefaults(params)
+      withPagedDefaults({ pageSize: 500, ...(params ?? {}) })
     ),
   getById: (id: string) => apiClient.get<Business>(`/businesses/${id}`),
   create: (data: Partial<Business>) =>
@@ -21,3 +21,4 @@ export const businessesApi = {
       workingHours,
     }),
 };
+

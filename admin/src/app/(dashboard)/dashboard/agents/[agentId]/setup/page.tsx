@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 
+import { AgentOperationalModeControl } from "@/components/agents/agent-operational-mode-control";
 import { AgentSetupWizard } from "@/components/agents/agent-setup-wizard";
 import { Button } from "@/components/ui/button";
 import { PageError } from "@/components/ui/page-error";
@@ -59,6 +60,8 @@ export default function AgentSetupPage() {
           <code className="text-xs">SettingsJson</code>)
         </p>
       </div>
+
+      <AgentOperationalModeControl businessId={agent.businessId} />
 
       <AgentSetupWizard
         agent={agent}

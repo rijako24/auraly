@@ -6,6 +6,7 @@ using MimosBabySpa.Application.Agents;
 using MimosBabySpa.Application.Agents.Configuration;
 using MimosBabySpa.Application.Agents.Tools.Impl;
 using MimosBabySpa.Application.Services;
+using MimosBabySpa.Application.Promotions;
 using MimosBabySpa.Domain.Entities;
 using MimosBabySpa.Domain.Repositories;
 using Xunit;
@@ -120,8 +121,17 @@ public class ResolvePricingToolTests
         unitOfWork.SetupGet(u => u.Services).Returns(serviceRepo.Object);
 
         var nameResolver = new ServiceNameResolver(unitOfWork.Object, NullLogger<ServiceNameResolver>.Instance);
-        var pricing = new ReservationPricingResolver(unitOfWork.Object, nameResolver, NullLogger<ReservationPricingResolver>.Instance);
+        var promotions = new Mock<IPromotionPricingService>();
+        promotions.Setup(p => p.EvaluateAsync(
+                businessId,
+                It.IsAny<IReadOnlyList<PromotionPricingItem>>(),
+                It.IsAny<DateTime?>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync((Guid _, IReadOnlyList<PromotionPricingItem> items, DateTime? _, CancellationToken _) =>
+                PromotionPricingResult.Empty(items));
+        var pricing = new ReservationPricingResolver(unitOfWork.Object, nameResolver, NullLogger<ReservationPricingResolver>.Instance, promotions.Object);
         addOnCatalog = new Mock<IAddOnCatalogService>();
         return new ResolvePricingTool(pricing, addOnCatalog.Object);
     }
 }
+

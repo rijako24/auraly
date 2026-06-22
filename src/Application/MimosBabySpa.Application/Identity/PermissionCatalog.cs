@@ -27,6 +27,10 @@ public static class PermissionCatalog
         ("Services", "Create", "services.create", "Crear servicios"),
         ("Services", "Update", "services.update", "Actualizar servicios"),
         ("Services", "Delete", "services.delete", "Eliminar servicios"),
+        ("Promotions", "Read", "promotions.read", "Ver promociones"),
+        ("Promotions", "Create", "promotions.create", "Crear promociones"),
+        ("Promotions", "Update", "promotions.update", "Actualizar promociones"),
+        ("Promotions", "Delete", "promotions.delete", "Desactivar promociones"),
         ("Employees", "Read", "employees.read", "Ver empleados"),
         ("Employees", "Create", "employees.create", "Crear empleados"),
         ("Employees", "Update", "employees.update", "Actualizar empleados"),
@@ -41,6 +45,7 @@ public static class PermissionCatalog
         ("Leads", "Update", "leads.update", "Actualizar leads"),
         ("Leads", "Export", "leads.export", "Exportar leads"),
         ("Conversations", "Read", "conversations.read", "Ver conversaciones"),
+        ("Orders", "Read", "orders.read", "Ver pedidos"),
         ("Payments", "Read", "payments.read", "Ver transacciones de pago"),
         ("BusinessConfig", "Read", "business_config.read", "Ver configuración"),
         ("BusinessConfig", "Update", "business_config.update", "Actualizar configuración"),
@@ -48,3 +53,4 @@ public static class PermissionCatalog
         ("Dashboard", "Read", "dashboard.read", "Ver dashboard"),
     };
 }
+

@@ -5,6 +5,7 @@ public class BusinessWhatsAppNumber
     public Guid BusinessWhatsAppNumberId { get; set; }
     public Guid BusinessId { get; set; }
     public string PhoneNumber { get; set; } = string.Empty;
+    public string? WhatsAppBusinessAccountId { get; set; }
     public string WhatsAppPhoneNumberId { get; set; } = string.Empty;
     public string WhatsAppAccessToken { get; set; } = string.Empty;
 

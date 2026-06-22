@@ -46,6 +46,16 @@ public class IntegrationsController : ControllerBase
         return Ok(await _service.UpdateWompiAsync(User.GetTenantId(), businessId, request, ct));
     }
 
+    [HttpPut("operational-mode")]
+    [PermissionAuthorize("business_config.update")]
+    public async Task<ActionResult<IntegrationSettingsDto>> UpdateOperationalMode(
+        Guid businessId,
+        [FromBody] UpdateOperationalModeRequest request,
+        CancellationToken ct)
+    {
+        return Ok(await _service.UpdateOperationalModeAsync(User.GetTenantId(), businessId, request, ct));
+    }
+
     [HttpPut("commerce/siigo")]
     [PermissionAuthorize("business_config.update")]
     public async Task<ActionResult<IntegrationSettingsDto>> UpdateSiigoCommerce(

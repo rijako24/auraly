@@ -12,12 +12,12 @@ import { Input } from "@/components/ui/input";
 import { PageError } from "@/components/ui/page-error";
 import { PageLoading } from "@/components/ui/page-loading";
 import { Textarea } from "@/components/ui/textarea";
-import { configurationsApi } from "@/services/api";
+import { systemConfigurationsApi } from "@/services/api";
 
 export default function SystemSettingsPage() {
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ["system-configurations"],
-    queryFn: () => configurationsApi.listSystemConfigurations({ page: 1, pageSize: 100 }),
+    queryFn: () => systemConfigurationsApi.listSystemConfigurations({ page: 1, pageSize: 100 }),
   });
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
@@ -35,7 +35,7 @@ export default function SystemSettingsPage() {
   const saveEdit = async () => {
     if (!editingId) return;
     try {
-      await configurationsApi.updateSystemConfiguration(editingId, { value: editValue });
+      await systemConfigurationsApi.updateSystemConfiguration(editingId, { value: editValue });
       await refetch();
       toast.success("Configuracion actualizada");
       cancelEdit();
@@ -115,3 +115,4 @@ export default function SystemSettingsPage() {
     </div>
   );
 }
+

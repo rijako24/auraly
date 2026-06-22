@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { MessageCircle, Settings2, Sparkles } from "lucide-react";
 
+import { AgentOperationalModeControl } from "@/components/agents/agent-operational-mode-control";
 import { AgentTestChat } from "@/components/agents/agent-test-chat";
 import { PageError } from "@/components/ui/page-error";
 import { PageLoading } from "@/components/ui/page-loading";
@@ -47,6 +48,7 @@ export default function AgentsPage() {
           agentic (<code className="text-xs">SettingsJson</code>).
         </p>
       </div>
+      <AgentOperationalModeControl businessId={businessId} />
 
       {(agents ?? []).length === 0 ? (
         <Card>

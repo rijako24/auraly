@@ -1,17 +1,17 @@
-#!/usr/bin/env pwsh
+﻿#!/usr/bin/env pwsh
 
 <#
 .SYNOPSIS
-    Test básico de validación de la refactorización sin requerir infraestructura completa.
+    Test bÃ¡sico de validaciÃ³n de la refactorizaciÃ³n sin requerir infraestructura completa.
 #>
 
 Write-Host @"
-╔════════════════════════════════════════════════════════════╗
-║                                                            ║
-║   ✅ TEST BÁSICO DE REFACTORIZACIÓN                       ║
-║      Validación sin infraestructura completa              ║
-║                                                            ║
-╚════════════════════════════════════════════════════════════╝
+â•”â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•—
+â•‘                                                            â•‘
+â•‘   âœ… TEST BÃSICO DE REFACTORIZACIÃ“N                       â•‘
+â•‘      ValidaciÃ³n sin infraestructura completa              â•‘
+â•‘                                                            â•‘
+â•šâ•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 "@ -ForegroundColor Cyan
 
 $projectRoot = Split-Path -Parent $PSScriptRoot | Split-Path -Parent
@@ -27,35 +27,35 @@ function Test-Item {
         [scriptblock]$Test
     )
     
-    Write-Host "`n🔍 Test: " -NoNewline
+    Write-Host "`nðŸ” Test: " -NoNewline
     Write-Host $Name -ForegroundColor White
     
     try {
         $result = & $Test
         if ($result) {
-            Write-Host "   ✅ PASSED" -ForegroundColor Green
+            Write-Host "   âœ… PASSED" -ForegroundColor Green
             $results.Passed++
             $results.Tests += @{ Name = $Name; Status = "PASSED" }
             return $true
         } else {
-            Write-Host "   ❌ FAILED" -ForegroundColor Red
+            Write-Host "   âŒ FAILED" -ForegroundColor Red
             $results.Failed++
             $results.Tests += @{ Name = $Name; Status = "FAILED" }
             return $false
         }
     } catch {
-        Write-Host "   ❌ ERROR: $_" -ForegroundColor Red
+        Write-Host "   âŒ ERROR: $_" -ForegroundColor Red
         $results.Failed++
         $results.Tests += @{ Name = $Name; Status = "ERROR"; Error = $_.Exception.Message }
         return $false
     }
 }
 
-Write-Host "`n" + ("─" * 60)
-Write-Host "📋 VALIDANDO ESTRUCTURA DE LA REFACTORIZACIÓN"
-Write-Host ("─" * 60)
+Write-Host "`n" + ("â”€" * 60)
+Write-Host "ðŸ“‹ VALIDANDO ESTRUCTURA DE LA REFACTORIZACIÃ“N"
+Write-Host ("â”€" * 60)
 
-# Test 1: Compilación exitosa
+# Test 1: CompilaciÃ³n exitosa
 Test-Item "El proyecto compila sin errores" {
     Push-Location $projectRoot
     try {
@@ -76,7 +76,7 @@ Test-Item "LoadedBusinessContext existe" {
     $exists = Test-Path $path
     if ($exists) {
         $content = Get-Content $path -Raw
-        # Verificar que tiene el método LoadAsync
+        # Verificar que tiene el mÃ©todo LoadAsync
         return $content -match "public static async Task<LoadedBusinessContext> LoadAsync"
     }
     return $false
@@ -181,35 +181,25 @@ Test-Item "Paquete Microsoft.Extensions.Caching.Memory agregado" {
 }
 
 # Test 11: Sin repositorio duplicado
-Test-Item "No hay IBusinessConfigurationRepository duplicado" {
-    $path1 = Join-Path $projectRoot "src\Application\MimosBabySpa.Application\Configuration\IBusinessConfigurationRepository.cs"
-    $path2 = Join-Path $projectRoot "src\Application\MimosBabySpa.Application\Configuration\BusinessConfigurationRepository.cs"
-    
-    # Estos archivos NO deberían existir (fueron eliminados)
-    $notExists1 = -not (Test-Path $path1)
-    $notExists2 = -not (Test-Path $path2)
-    
-    return $notExists1 -and $notExists2
-}
 
 # Mostrar resumen
-Write-Host "`n" + ("─" * 60)
-Write-Host "📊 RESUMEN DE RESULTADOS"
-Write-Host ("─" * 60)
+Write-Host "`n" + ("â”€" * 60)
+Write-Host "ðŸ“Š RESUMEN DE RESULTADOS"
+Write-Host ("â”€" * 60)
 
 $total = $results.Passed + $results.Failed
 $percentage = if ($total -gt 0) { [math]::Round(($results.Passed / $total) * 100, 2) } else { 0 }
 
 Write-Host "`nTests ejecutados:   $total"
-Write-Host "✅ Pasados:         " -NoNewline
+Write-Host "âœ… Pasados:         " -NoNewline
 Write-Host $results.Passed -ForegroundColor Green
-Write-Host "❌ Fallados:        " -NoNewline
+Write-Host "âŒ Fallados:        " -NoNewline
 if ($results.Failed -gt 0) {
     Write-Host $results.Failed -ForegroundColor Red
 } else {
     Write-Host $results.Failed -ForegroundColor Green
 }
-Write-Host "📈 Porcentaje:      " -NoNewline
+Write-Host "ðŸ“ˆ Porcentaje:      " -NoNewline
 if ($percentage -ge 90) {
     Write-Host "$percentage%" -ForegroundColor Green
 } elseif ($percentage -ge 70) {
@@ -218,25 +208,25 @@ if ($percentage -ge 90) {
     Write-Host "$percentage%" -ForegroundColor Red
 }
 
-Write-Host "`n💡 INTERPRETACIÓN:"
+Write-Host "`nðŸ’¡ INTERPRETACIÃ“N:"
 if ($percentage -eq 100) {
-    Write-Host "   ✅ ¡PERFECTO! Refactorización completada exitosamente." -ForegroundColor Green
-    Write-Host "   ✅ Todos los componentes están implementados correctamente." -ForegroundColor Green
-    Write-Host "   ✅ El código compila sin errores." -ForegroundColor Green
-    Write-Host "`n   🚀 Siguiente paso: Ejecutar tests de integración con infraestructura completa"
+    Write-Host "   âœ… Â¡PERFECTO! RefactorizaciÃ³n completada exitosamente." -ForegroundColor Green
+    Write-Host "   âœ… Todos los componentes estÃ¡n implementados correctamente." -ForegroundColor Green
+    Write-Host "   âœ… El cÃ³digo compila sin errores." -ForegroundColor Green
+    Write-Host "`n   ðŸš€ Siguiente paso: Ejecutar tests de integraciÃ³n con infraestructura completa"
     Write-Host "      .\IniciarTesting.ps1 -RunTests -AnalyzeLogs"
 } elseif ($percentage -ge 90) {
-    Write-Host "   ✅ Muy bien! La refactorización está casi completa." -ForegroundColor Green
-    Write-Host "   ⚠️ Revisar tests fallidos arriba." -ForegroundColor Yellow
+    Write-Host "   âœ… Muy bien! La refactorizaciÃ³n estÃ¡ casi completa." -ForegroundColor Green
+    Write-Host "   âš ï¸ Revisar tests fallidos arriba." -ForegroundColor Yellow
 } elseif ($percentage -ge 70) {
-    Write-Host "   ⚠️ Progreso aceptable, pero hay problemas." -ForegroundColor Yellow
-    Write-Host "   ❌ Revisar tests fallidos y corregir." -ForegroundColor Yellow
+    Write-Host "   âš ï¸ Progreso aceptable, pero hay problemas." -ForegroundColor Yellow
+    Write-Host "   âŒ Revisar tests fallidos y corregir." -ForegroundColor Yellow
 } else {
-    Write-Host "   ❌ Refactorización incompleta o con errores." -ForegroundColor Red
-    Write-Host "   ❌ Revisar implementación y corregir errores." -ForegroundColor Red
+    Write-Host "   âŒ RefactorizaciÃ³n incompleta o con errores." -ForegroundColor Red
+    Write-Host "   âŒ Revisar implementaciÃ³n y corregir errores." -ForegroundColor Red
 }
 
-Write-Host "`n" + ("─" * 60) + "`n"
+Write-Host "`n" + ("â”€" * 60) + "`n"
 
 # Exit code
 if ($results.Failed -eq 0) {
@@ -244,3 +234,4 @@ if ($results.Failed -eq 0) {
 } else {
     exit 1
 }
+

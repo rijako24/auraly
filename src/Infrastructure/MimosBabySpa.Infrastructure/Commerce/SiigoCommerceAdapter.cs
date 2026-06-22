@@ -280,6 +280,10 @@ public sealed class SiigoCommerceAdapter : ICommerceAdapter
             currency,
             product.AvailableQuantity,
             product.Active && (!product.StockControl || (product.AvailableQuantity ?? 0) > 0),
+            null,
+            null,
+            null,
+            null,
             raw);
     }
 

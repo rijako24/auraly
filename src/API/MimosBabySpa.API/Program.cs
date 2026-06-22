@@ -1,14 +1,16 @@
-﻿using Microsoft.Azure.Functions.Worker;
+using Microsoft.Azure.Functions.Worker;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using MimosBabySpa.Application.Services;
+using MimosBabySpa.Application.Promotions;
 using MimosBabySpa.Domain.Repositories;
 using MimosBabySpa.Infrastructure.Data;
 using MimosBabySpa.Infrastructure.Repositories;
 using MimosBabySpa.Infrastructure.Services;
+using MimosBabySpa.API.Services;
 using MimosBabySpa.Infrastructure.Configuration;
 using Azure.Storage.Blobs;
 using Azure.AI.OpenAI;
@@ -63,14 +65,15 @@ var host = new HostBuilder()
         services.AddScoped<ILeadService, LeadService>();
         services.AddScoped<IReservationService, ReservationService>();
         services.AddScoped<IBusinessIdentificationService, BusinessIdentificationService>();
-        services.AddScoped<IBusinessConfigurationService, BusinessConfigurationService>();
         services.AddScoped<IWhatsAppWebhookParserService, WhatsAppWebhookParserService>();
         services.AddScoped<IInboundMessageDeduplicationService, InboundMessageDeduplicationService>();
+        services.AddSingleton<IWhatsAppInboundQueueService, WhatsAppInboundQueueService>();
         services.AddScoped<IEmployeeAssignmentService, EmployeeAssignmentService>();
         services.AddScoped<IWorkingHoursService, WorkingHoursService>();
         services.AddScoped<IAvailabilityService, AvailabilityService>();
         services.AddScoped<ServiceNameResolver>();
         services.AddScoped<ReservationPricingResolver>();
+        services.AddScoped<IPromotionPricingService, PromotionPricingService>();
         services.AddScoped<IBusinessClock, BusinessClock>();
         services.AddSingleton<ITemporalReferenceBuilder, TemporalReferenceBuilder>();
         services.AddScoped<ICatalogContentGenerator, CatalogContentGenerator>();
@@ -105,7 +108,7 @@ var host = new HostBuilder()
             return new OpenAIClient(new Uri(options.Endpoint), new Azure.AzureKeyCredential(options.ApiKey));
         });
 
-        // AI Service (solo transcripción de audio con Whisper)
+        // AI Service (solo transcripci�n de audio con Whisper)
         services.AddScoped<IAIService>(sp =>
         {
             var audioClient = sp.GetRequiredKeyedService<OpenAIClient>("Audio");
@@ -160,6 +163,9 @@ var host = new HostBuilder()
         services.AddScoped<IConversationReleaseService, ConversationReleaseService>();
         services.AddScoped<IExternalEscalationRouter, ExternalEscalationRouter>();
         services.AddScoped<IExternalEscalationService, ExternalEscalationService>();
+        services.AddScoped<ITimedProcess, PaymentLinkPollingProcess>();
+        services.AddScoped<ITimedProcess, ExternalEscalationExpirationProcess>();
+        services.AddScoped<ITimedProcess, ReservationAutomationProcess>();
 
         // -- AGENTIC ENGINE (Function Calling) -------------------------------------
         services.AddScoped<IChatClient>(sp =>
@@ -195,6 +201,7 @@ var host = new HostBuilder()
         services.AddScoped<IAgentTool, AssignPaidSlotTool>();
         services.AddScoped<IAgentTool, SuspendReservationTool>();
         services.AddScoped<IAgentTool, GetCustomerReservationsTool>();
+        services.AddScoped<IAgentTool, ConfirmReservationAttendanceTool>();
         services.AddScoped<IAgentTool, PrepareReservationChangeTool>();
         services.AddScoped<IAgentTool, ConfirmReservationChangeTool>();
         services.AddScoped<IAgentTool, VerifyPaymentTool>();
@@ -265,4 +272,7 @@ var host = new HostBuilder()
     .Build();
 
 host.Run();
+
+
+
 

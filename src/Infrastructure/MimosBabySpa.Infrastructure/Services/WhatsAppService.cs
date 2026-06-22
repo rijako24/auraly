@@ -62,10 +62,11 @@ public class WhatsAppService : IWhatsAppService
             request.Headers.Add("Authorization", $"Bearer {accessToken}");
 
             var response = await _httpClient.SendAsync(request);
+            var responseBody = await response.Content.ReadAsStringAsync();
             if (!response.IsSuccessStatusCode)
                 _logger.LogWarning(
-                    "Acknowledge falló para MessageId={MessageId}: {Status}",
-                    whatsAppMessageId, response.StatusCode);
+                    "Acknowledge falló para PhoneNumberId={PhoneNumberId}, MessageId={MessageId}: Status={Status}, Response={Response}",
+                    phoneNumberId, whatsAppMessageId, response.StatusCode, responseBody);
         }
         catch (Exception ex)
         {
@@ -95,7 +96,19 @@ public class WhatsAppService : IWhatsAppService
         request.Headers.Add("Authorization", $"Bearer {credentials.AccessToken}");
 
         var response = await _httpClient.SendAsync(request);
-        response.EnsureSuccessStatusCode();
+        var responseBody = await response.Content.ReadAsStringAsync();
+
+        if (!response.IsSuccessStatusCode)
+        {
+            _logger.LogError(
+                "WhatsApp API rechazó mensaje de texto: Status={Status}, Response={Response}, To={To}, PhoneNumberId={PhoneNumberId}, MessageLength={MessageLength}",
+                response.StatusCode,
+                responseBody,
+                to,
+                credentials.PhoneNumberId,
+                message?.Length ?? 0);
+            response.EnsureSuccessStatusCode();
+        }
 
         _logger.LogInformation("Mensaje enviado a {To}", to);
     }
@@ -158,6 +171,93 @@ public class WhatsAppService : IWhatsAppService
         }
 
         _logger.LogInformation("Mensaje con botones enviado a {To}", to);
+        return TryReadSentMessageId(responseBody);
+    }
+
+    public async Task<string?> SendTemplateMessageAsync(
+        Guid businessId,
+        string to,
+        string templateName,
+        string languageCode,
+        IReadOnlyList<string> bodyParameters,
+        IReadOnlyList<OutboundButton>? buttons = null)
+    {
+        var credentials = await ResolveCredentialsAsync(businessId);
+        var components = new List<object>();
+
+        if (bodyParameters.Count > 0)
+        {
+            components.Add(new
+            {
+                type = "body",
+                parameters = bodyParameters.Select(value => new
+                {
+                    type = "text",
+                    text = value
+                }).ToArray()
+            });
+        }
+
+        if (buttons is { Count: > 0 })
+        {
+            var index = 0;
+            foreach (var button in buttons.Take(3))
+            {
+                components.Add(new
+                {
+                    type = "button",
+                    sub_type = "quick_reply",
+                    index = index.ToString(),
+                    parameters = new[]
+                    {
+                        new
+                        {
+                            type = "payload",
+                            payload = Truncate(button.Id, 256)
+                        }
+                    }
+                });
+                index++;
+            }
+        }
+
+        var payload = new
+        {
+            messaging_product = "whatsapp",
+            to,
+            type = "template",
+            template = new
+            {
+                name = templateName,
+                language = new { code = languageCode },
+                components = components.ToArray()
+            }
+        };
+
+        var json = JsonSerializer.Serialize(payload);
+        var content = new StringContent(json, Encoding.UTF8, "application/json");
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"{credentials.PhoneNumberId}/messages")
+        {
+            Content = content
+        };
+        request.Headers.Add("Authorization", $"Bearer {credentials.AccessToken}");
+
+        var response = await _httpClient.SendAsync(request);
+        var responseBody = await response.Content.ReadAsStringAsync();
+
+        if (!response.IsSuccessStatusCode)
+        {
+            _logger.LogError(
+                "WhatsApp API rechazo template: Status={Status}, Response={Response}, To={To}, Template={Template}",
+                response.StatusCode,
+                responseBody,
+                to,
+                templateName);
+            response.EnsureSuccessStatusCode();
+        }
+
+        _logger.LogInformation("Template WhatsApp {Template} enviado a {To}", templateName, to);
         return TryReadSentMessageId(responseBody);
     }
 

@@ -461,3 +461,4 @@ public sealed class PrepareCheckoutTool : IAgentTool
         return (JsonSerializer.Serialize(snapshot), reservationSnapshot, null);
     }
 }
+

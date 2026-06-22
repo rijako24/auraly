@@ -1,11 +1,11 @@
-using Microsoft.Extensions.Logging;
+﻿using Microsoft.Extensions.Logging;
 using MimosBabySpa.Domain.Repositories;
 
 namespace MimosBabySpa.Application.BusinessRules;
 
 /// <summary>
-/// Implementación del Business Rule Engine.
-/// Encapsula todas las reglas de negocio específicas del dominio.
+/// ImplementaciÃ³n del Business Rule Engine.
+/// Encapsula todas las reglas de negocio especÃ­ficas del dominio.
 /// </summary>
 public class BusinessRuleEngine : IBusinessRuleEngine
 {
@@ -37,7 +37,7 @@ public class BusinessRuleEngine : IBusinessRuleEngine
                 if (service == null)
                 {
                     result.IsValid = false;
-                    result.Reason = $"El servicio '{serviceName}' no existe en el catálogo";
+                    result.Reason = $"El servicio '{serviceName}' no existe en el catÃ¡logo";
                     result.ErrorCode = "SERVICE_NOT_FOUND";
                     return result;
                 }
@@ -45,7 +45,7 @@ public class BusinessRuleEngine : IBusinessRuleEngine
                 if (!service.IsActive)
                 {
                     result.IsValid = false;
-                    result.Reason = $"El servicio '{serviceName}' no está disponible actualmente";
+                    result.Reason = $"El servicio '{serviceName}' no estÃ¡ disponible actualmente";
                     result.ErrorCode = "SERVICE_INACTIVE";
                     return result;
                 }
@@ -64,15 +64,15 @@ public class BusinessRuleEngine : IBusinessRuleEngine
             if (desiredDate > maxAdvanceDate)
             {
                 result.Warnings.Add(
-                    "La fecha seleccionada es en más de 3 meses. Considera que las políticas pueden cambiar");
+                    "La fecha seleccionada es en mÃ¡s de 3 meses. Considera que las polÃ­ticas pueden cambiar");
             }
 
             var hour = desiredTime.Hour;
             if (hour < 8 || hour >= 20)
-                result.Warnings.Add("El horario seleccionado puede estar fuera del horario de atención habitual");
+                result.Warnings.Add("El horario seleccionado puede estar fuera del horario de atenciÃ³n habitual");
 
             if (desiredDate.DayOfWeek == DayOfWeek.Sunday)
-                result.Warnings.Add("El día seleccionado es domingo. Verifica que el negocio esté abierto");
+                result.Warnings.Add("El dÃ­a seleccionado es domingo. Verifica que el negocio estÃ© abierto");
 
             return result;
         }
@@ -99,10 +99,10 @@ public class BusinessRuleEngine : IBusinessRuleEngine
         try
         {
             // Buscar historial del cliente
-            // En una implementación real, aquí se consultaría el perfil del cliente
-            // y se determinarían beneficios (cliente frecuente, promociones, etc.)
+            // En una implementaciÃ³n real, aquÃ­ se consultarÃ­a el perfil del cliente
+            // y se determinarÃ­an beneficios (cliente frecuente, promociones, etc.)
             
-            // Por ahora, retornar contexto vacío
+            // Por ahora, retornar contexto vacÃ­o
             _logger.LogDebug(
                 "Contexto de negocio obtenido para cliente {Phone}",
                 phone);
@@ -126,16 +126,16 @@ public class BusinessRuleEngine : IBusinessRuleEngine
         try
         {
             // IMPORTANTE: Las validaciones deben venir de AttributeDefinition configurado
-            // NO hardcodear validaciones específicas aquí
+            // NO hardcodear validaciones especÃ­ficas aquÃ­
             
-            // TODO: Obtener AttributeDefinition desde BusinessConfigurationProvider
-            // y validar según:
+            // TODO: Obtener AttributeDefinition desde configuration provider
+            // y validar segÃºn:
             // - definition.Type (Number, Text, Date, etc.)
             // - definition.ValidationPattern (regex)
             // - definition.AllowedValues (lista)
             
             _logger.LogDebug(
-                "Validación genérica de atributo: {AttributeName} = {Value}",
+                "ValidaciÃ³n genÃ©rica de atributo: {AttributeName} = {Value}",
                 attributeName, attributeValue);
 
             return result;
@@ -153,3 +153,4 @@ public class BusinessRuleEngine : IBusinessRuleEngine
         }
     }
 }
+

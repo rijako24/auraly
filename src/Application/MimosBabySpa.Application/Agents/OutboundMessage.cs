@@ -9,9 +9,15 @@ public sealed record OutboundMessage(
     string? MediaUrl,
     string MediaType = "text",
     string? Filename = null,
-    IReadOnlyList<OutboundButton>? Buttons = null);
+    IReadOnlyList<OutboundButton>? Buttons = null,
+    WhatsAppTemplateMessage? Template = null);
 
 public sealed record OutboundButton(string Id, string Title);
+
+public sealed record WhatsAppTemplateMessage(
+    string Name,
+    string LanguageCode,
+    IReadOnlyList<string> BodyParameters);
 
 /// <summary>
 /// Contexto opcional para resolver placeholders de secuencias (reserva, pago, etc.).

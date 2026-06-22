@@ -7,7 +7,6 @@ public interface IUnitOfWork : IDisposable
     ILeadRepository Leads { get; }
     IBusinessRepository Businesses { get; }
     IBusinessWhatsAppNumberRepository BusinessWhatsAppNumbers { get; }
-    IBusinessConfigurationRepository BusinessConfigurations { get; }
     ISystemConfigurationRepository SystemConfigurations { get; }
     IConversationContextRepository ConversationContexts { get; }
     ICustomerMemoryRepository CustomerMemory { get; }
@@ -21,6 +20,9 @@ public interface IUnitOfWork : IDisposable
     IBusinessWorkingHourRepository BusinessWorkingHours { get; }
     IEmployeeWorkingHourRepository EmployeeWorkingHours { get; }
     IEmployeeScheduleExceptionRepository EmployeeScheduleExceptions { get; }
+    IBusinessSchedulingSettingsRepository BusinessSchedulingSettings { get; }
+    IScheduledAutomationJobRepository ScheduledAutomationJobs { get; }
+    IReservationAttendanceResponseRepository ReservationAttendanceResponses { get; }
     IIntegrationConnectionRepository IntegrationConnections { get; }
     IReservationIntegrationEventRepository ReservationIntegrationEvents { get; }
     IExternalEscalationAttemptRepository ExternalEscalationAttempts { get; }
@@ -28,6 +30,7 @@ public interface IUnitOfWork : IDisposable
     IServiceAddOnRuleRepository ServiceAddOnRules { get; }
     IReservationAddOnRepository ReservationAddOns { get; }
     IProductRepository Products { get; }
+    IPromotionRepository Promotions { get; }
     IOrderRepository Orders { get; }
     IOrderItemRepository OrderItems { get; }
     IOrderConnectionEventRepository OrderConnectionEvents { get; }
@@ -55,3 +58,4 @@ public interface IUnitOfWork : IDisposable
 
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }
+

@@ -1,13 +1,3 @@
-export enum BusinessConfigurationKey {
-  PaymentConfirmationMessages = 1,
-  SchedulingPolicy = 2,
-}
-
-export const BusinessConfigurationKeyLabels: Record<BusinessConfigurationKey, string> = {
-  [BusinessConfigurationKey.PaymentConfirmationMessages]: "Mensajes de Confirmacion de Pago",
-  [BusinessConfigurationKey.SchedulingPolicy]: "Política de Agendamiento",
-};
-
 export enum ReservationStatus {
   Pending = 0,
   Confirmed = 1,
@@ -73,6 +63,64 @@ export enum PaymentTransactionSource {
 export const PaymentSourceLabels: Record<PaymentTransactionSource, string> = {
   [PaymentTransactionSource.Automated]: "Automático",
   [PaymentTransactionSource.Manual]: "Manual",
+};
+
+export enum OrderStatus {
+  Draft = "Draft",
+  PendingConfirmation = "PendingConfirmation",
+  Confirmed = "Confirmed",
+  SyncPending = "SyncPending",
+  Synced = "Synced",
+  SyncFailed = "SyncFailed",
+  Cancelled = "Cancelled",
+  AwaitingPayment = "AwaitingPayment",
+  Expired = "Expired",
+}
+
+export const OrderStatusLabels: Record<OrderStatus, string> = {
+  [OrderStatus.Draft]: "Borrador",
+  [OrderStatus.PendingConfirmation]: "Pendiente",
+  [OrderStatus.Confirmed]: "Confirmado",
+  [OrderStatus.SyncPending]: "Por sincronizar",
+  [OrderStatus.Synced]: "Sincronizado",
+  [OrderStatus.SyncFailed]: "Fallo sync",
+  [OrderStatus.Cancelled]: "Cancelado",
+  [OrderStatus.AwaitingPayment]: "Esperando pago",
+  [OrderStatus.Expired]: "Expirado",
+};
+
+export const OrderStatusColors: Record<OrderStatus, string> = {
+  [OrderStatus.Draft]: "bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-300",
+  [OrderStatus.PendingConfirmation]: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300",
+  [OrderStatus.Confirmed]: "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300",
+  [OrderStatus.SyncPending]: "bg-cyan-100 text-cyan-800 dark:bg-cyan-900 dark:text-cyan-300",
+  [OrderStatus.Synced]: "bg-teal-100 text-teal-800 dark:bg-teal-900 dark:text-teal-300",
+  [OrderStatus.SyncFailed]: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300",
+  [OrderStatus.Cancelled]: "bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-300",
+  [OrderStatus.AwaitingPayment]: "bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-300",
+  [OrderStatus.Expired]: "bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-300",
+};
+
+export enum OrderSource {
+  Bot = "Bot",
+  Admin = "Admin",
+  Api = "Api",
+}
+
+export const OrderSourceLabels: Record<OrderSource, string> = {
+  [OrderSource.Bot]: "Bot",
+  [OrderSource.Admin]: "Admin",
+  [OrderSource.Api]: "API",
+};
+
+export enum OrderFulfillmentMode {
+  Local = "Local",
+  External = "External",
+}
+
+export const OrderFulfillmentModeLabels: Record<OrderFulfillmentMode, string> = {
+  [OrderFulfillmentMode.Local]: "Local",
+  [OrderFulfillmentMode.External]: "Externo",
 };
 
 export enum ServiceType {
@@ -263,3 +311,40 @@ export const LeadStatusColors: Record<LeadStatus, string> = {
   [LeadStatus.Contacted]: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300",
   [LeadStatus.Closed]: "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300",
 };
+
+export enum PromotionItemType {
+  Any = 0,
+  Product = 1,
+  Service = 2,
+  ProductCategory = 3,
+  ServiceCategory = 4,
+  AnyProduct = 5,
+  AnyService = 6,
+}
+
+export const PromotionItemTypeLabels: Record<PromotionItemType, string> = {
+  [PromotionItemType.Any]: "Cualquier item",
+  [PromotionItemType.Product]: "Producto",
+  [PromotionItemType.Service]: "Servicio",
+  [PromotionItemType.ProductCategory]: "Categoria producto",
+  [PromotionItemType.ServiceCategory]: "Categoria servicio",
+  [PromotionItemType.AnyProduct]: "Cualquier producto",
+  [PromotionItemType.AnyService]: "Cualquier servicio",
+};
+
+export enum PromotionBenefitType {
+  PercentageDiscount = 0,
+  AmountDiscount = 1,
+  FixedUnitPrice = 2,
+  FreeItem = 3,
+}
+
+export const PromotionBenefitTypeLabels: Record<PromotionBenefitType, string> = {
+  [PromotionBenefitType.PercentageDiscount]: "Porcentaje",
+  [PromotionBenefitType.AmountDiscount]: "Valor fijo",
+  [PromotionBenefitType.FixedUnitPrice]: "Precio fijo",
+  [PromotionBenefitType.FreeItem]: "Gratis",
+};
+
+
+

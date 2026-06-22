@@ -20,6 +20,12 @@ public interface IReservationRepository
     Task<IReadOnlyList<Reservation>> GetRecentByBusinessIdAsync(
         Guid businessId, int limit, CancellationToken ct = default);
 
+    Task<IReadOnlyList<Reservation>> GetUpcomingConfirmedByBusinessIdAsync(
+        Guid businessId,
+        DateTime fromLocal,
+        DateTime toLocal,
+        CancellationToken ct = default);
+
     /// <summary>
     /// Gets top services by reservation count and estimated revenue (Service.Price) for dashboard.
     /// </summary>

@@ -1,5 +1,6 @@
 import type { LucideIcon } from "lucide-react";
 import {
+  BadgePercent,
   BarChart3,
   Building2,
   Calendar,
@@ -12,6 +13,7 @@ import {
   Plug,
   Settings,
   Shield,
+  ShoppingCart,
   Sparkles,
   Store,
   UserCog,
@@ -39,6 +41,7 @@ export const navigation: NavEntry[] = [
   { name: "Analytics", href: "/dashboard/analytics", icon: BarChart3, permission: "dashboard.read" },
   { type: "separator", label: "Negocio" },
   { name: "Servicios", href: "/dashboard/services", icon: Package, permission: "services.read" },
+  { name: "Promociones", href: "/dashboard/promotions", icon: BadgePercent, permission: "promotions.read" },
   { name: "Empleados", href: "/dashboard/employees", icon: Users, permission: "employees.read" },
   { type: "separator", label: "Operaciones" },
   { name: "Reservaciones", href: "/dashboard/reservations", icon: CalendarDays, permission: "reservations.read" },
@@ -47,6 +50,7 @@ export const navigation: NavEntry[] = [
   { name: "Conversaciones", href: "/dashboard/conversations", icon: MessageSquare, permission: "conversations.read" },
   { name: "Leads", href: "/dashboard/leads", icon: UserPlus, permission: "leads.read" },
   { type: "separator", label: "Finanzas" },
+  { name: "Pedidos", href: "/dashboard/orders", icon: ShoppingCart, permission: "orders.read" },
   { name: "Pagos", href: "/dashboard/payments", icon: CreditCard, permission: "payments.read" },
   { type: "separator", label: "Administración" },
   { name: "Tenants", href: "/dashboard/tenants", icon: Building2, permission: "tenants.read" },
@@ -58,3 +62,4 @@ export const navigation: NavEntry[] = [
   { name: "Configuración", href: "/dashboard/settings", icon: Settings, permission: "business_config.read" },
   { name: "Integraciones", href: "/dashboard/settings/integrations", icon: Plug, permission: "business_config.read" },
 ];
+

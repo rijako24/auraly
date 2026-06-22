@@ -21,6 +21,14 @@ public class AgentRepository : IAgentRepository
             .Include(a => a.AgentType)
             .FirstOrDefaultAsync(a => a.AgentId == agentId, ct);
 
+    public async Task<IReadOnlyList<Agent>> GetActiveAsync(CancellationToken ct = default) =>
+        await _db.Agents
+            .Include(a => a.AgentType)
+            .Where(a => a.IsActive)
+            .OrderBy(a => a.BusinessId)
+            .ThenBy(a => a.Name)
+            .ToListAsync(ct);
+
     public async Task<IReadOnlyList<Agent>> GetByBusinessAsync(Guid businessId, CancellationToken ct = default) =>
         await _db.Agents
             .Include(a => a.AgentType)

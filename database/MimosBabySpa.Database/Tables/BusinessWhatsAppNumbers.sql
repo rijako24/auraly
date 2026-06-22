@@ -3,6 +3,7 @@ CREATE TABLE [dbo].[BusinessWhatsAppNumbers] (
     [BusinessId]               UNIQUEIDENTIFIER NOT NULL,
     [AgentId]                  UNIQUEIDENTIFIER NULL,
     [PhoneNumber]              NVARCHAR(20)     NOT NULL,
+    [WhatsAppBusinessAccountId] NVARCHAR(100)    NULL,
     [WhatsAppPhoneNumberId]    NVARCHAR(100)    NOT NULL,
     [WhatsAppAccessToken]      NVARCHAR(500)    NOT NULL,
     [IsActive]                 BIT              NOT NULL DEFAULT 1,

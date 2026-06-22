@@ -10,10 +10,15 @@ namespace MimosBabySpa.Application.Configuration;
 /// </summary>
 public class ServiceInfo
 {
+    public Guid ServiceId { get; set; }
     public string Name { get; set; } = string.Empty;
     public string Description { get; set; } = string.Empty;
     public int DurationMinutes { get; set; }
     public decimal Price { get; set; }
+    public decimal? EffectivePrice { get; set; }
+    public decimal? DiscountAmount { get; set; }
+    public string? PromotionName { get; set; }
+    public string? PromotionSummary { get; set; }
     public bool IsActive { get; set; }
 
     /// <summary>
@@ -64,3 +69,4 @@ public class ServiceInfo
 
     public Dictionary<string, string> Metadata { get; set; } = new();
 }
+

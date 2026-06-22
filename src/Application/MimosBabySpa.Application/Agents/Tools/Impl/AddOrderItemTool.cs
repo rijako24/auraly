@@ -1,13 +1,19 @@
 using System.Text.Json;
 using MimosBabySpa.Application.Commerce;
+using MimosBabySpa.Application.Services;
 
 namespace MimosBabySpa.Application.Agents.Tools.Impl;
 
 public sealed class AddOrderItemTool : IAgentTool
 {
     private readonly ICommerceService _commerce;
+    private readonly IConversationFactsService _factsService;
 
-    public AddOrderItemTool(ICommerceService commerce) => _commerce = commerce;
+    public AddOrderItemTool(ICommerceService commerce, IConversationFactsService factsService)
+    {
+        _commerce = commerce;
+        _factsService = factsService;
+    }
 
     public string Name => "add_order_item";
     public IReadOnlyList<string> Capabilities => [ToolCapabilities.OrderDraftUpdate];
@@ -75,6 +81,7 @@ public sealed class AddOrderItemTool : IAgentTool
                 ctx,
                 new AddOrderItemRequest(productId, externalId, sku, name, quantity, unitPrice),
                 cancellationToken);
+            await ClearOrderFinalizedFactAsync(ctx, cancellationToken);
         }
         catch (InvalidOperationException ex) when (ex.Message.Contains("Product not found", StringComparison.OrdinalIgnoreCase))
         {
@@ -86,6 +93,13 @@ public sealed class AddOrderItemTool : IAgentTool
         }
 
         return ToolResultHelper.Ok(new { order = draft });
+    }
+
+    private async Task ClearOrderFinalizedFactAsync(AgentToolContext ctx, CancellationToken cancellationToken)
+    {
+        var cleared = await _factsService.ClearFieldsAsync(ctx.ConversationId, ["order_finalized"], cancellationToken);
+        if (cleared.Count > 0)
+            ctx.Facts.Remove("order_finalized");
     }
 
     private static bool TryGetDecimal(JsonElement args, string name, out decimal value)

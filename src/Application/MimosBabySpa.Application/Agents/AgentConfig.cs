@@ -103,6 +103,8 @@ public sealed class AgentConfig
 
     public ExternalEscalationDefinitions ExternalEscalations { get; init; } = new();
 
+    public ReservationAutomationDefinitions ReservationAutomations { get; init; } = new();
+
     public CheckoutDefinitions Checkout { get; init; } = new();
 
     public CommerceConfig Commerce { get; init; } = new();

@@ -11,7 +11,6 @@ public class UnitOfWork : IUnitOfWork
     private ILeadRepository? _leads;
     private IBusinessRepository? _businesses;
     private IBusinessWhatsAppNumberRepository? _businessWhatsAppNumbers;
-    private IBusinessConfigurationRepository? _businessConfigurations;
     private ISystemConfigurationRepository? _systemConfigurations;
     private IConversationContextRepository? _conversationContexts;
     private ICustomerMemoryRepository? _customerMemory;
@@ -25,6 +24,9 @@ public class UnitOfWork : IUnitOfWork
     private IBusinessWorkingHourRepository? _businessWorkingHours;
     private IEmployeeWorkingHourRepository? _employeeWorkingHours;
     private IEmployeeScheduleExceptionRepository? _employeeScheduleExceptions;
+    private IBusinessSchedulingSettingsRepository? _businessSchedulingSettings;
+    private IScheduledAutomationJobRepository? _scheduledAutomationJobs;
+    private IReservationAttendanceResponseRepository? _reservationAttendanceResponses;
     private IIntegrationConnectionRepository? _integrationConnections;
     private IReservationIntegrationEventRepository? _reservationIntegrationEvents;
     private IExternalEscalationAttemptRepository? _externalEscalationAttempts;
@@ -32,6 +34,7 @@ public class UnitOfWork : IUnitOfWork
     private IServiceAddOnRuleRepository? _serviceAddOnRules;
     private IReservationAddOnRepository? _reservationAddOns;
     private IProductRepository? _products;
+    private IPromotionRepository? _promotions;
     private IOrderRepository? _orders;
     private IOrderItemRepository? _orderItems;
     private IOrderConnectionEventRepository? _orderConnectionEvents;
@@ -72,9 +75,6 @@ public class UnitOfWork : IUnitOfWork
     public IBusinessWhatsAppNumberRepository BusinessWhatsAppNumbers =>
         _businessWhatsAppNumbers ??= new BusinessWhatsAppNumberRepository(_context);
 
-    public IBusinessConfigurationRepository BusinessConfigurations =>
-        _businessConfigurations ??= new BusinessConfigurationRepository(_context);
-
     public ISystemConfigurationRepository SystemConfigurations =>
         _systemConfigurations ??= new SystemConfigurationRepository(_context);
 
@@ -114,6 +114,15 @@ public class UnitOfWork : IUnitOfWork
     public IEmployeeScheduleExceptionRepository EmployeeScheduleExceptions =>
         _employeeScheduleExceptions ??= new EmployeeScheduleExceptionRepository(_context);
 
+    public IBusinessSchedulingSettingsRepository BusinessSchedulingSettings =>
+        _businessSchedulingSettings ??= new BusinessSchedulingSettingsRepository(_context);
+
+    public IScheduledAutomationJobRepository ScheduledAutomationJobs =>
+        _scheduledAutomationJobs ??= new ScheduledAutomationJobRepository(_context);
+
+    public IReservationAttendanceResponseRepository ReservationAttendanceResponses =>
+        _reservationAttendanceResponses ??= new ReservationAttendanceResponseRepository(_context);
+
     public IIntegrationConnectionRepository IntegrationConnections =>
         _integrationConnections ??= new IntegrationConnectionRepository(_context);
 
@@ -134,6 +143,9 @@ public class UnitOfWork : IUnitOfWork
 
     public IProductRepository Products =>
         _products ??= new ProductRepository(_context);
+
+    public IPromotionRepository Promotions =>
+        _promotions ??= new PromotionRepository(_context);
 
     public IOrderRepository Orders =>
         _orders ??= new OrderRepository(_context);
@@ -233,3 +245,5 @@ public class UnitOfWork : IUnitOfWork
         _context.Dispose();
     }
 }
+
+

@@ -68,8 +68,15 @@ public static class ServiceCatalogBuilder
     private static void AppendService(StringBuilder sb, ServiceInfo svc, IReadOnlyList<AddOnRuleInfo> addOnRules)
     {
         var price = svc.Price.ToString("N0", CultureInfo.InvariantCulture);
+        var effectivePrice = svc.EffectivePrice?.ToString("N0", CultureInfo.InvariantCulture);
         var duration = $"{svc.DurationMinutes} min";
-        sb.AppendLine($"- **{svc.Name}**: {svc.Description} - ${price} ({duration})");
+        var priceText = svc.EffectivePrice.HasValue && svc.EffectivePrice.Value < svc.Price
+            ? $"${effectivePrice} precio promocional (antes ${price})"
+            : $"${price}";
+        sb.AppendLine($"- **{svc.Name}**: {svc.Description} - {priceText} ({duration})");
+
+        if (!string.IsNullOrWhiteSpace(svc.PromotionSummary))
+            sb.AppendLine($"  - Promocion: {svc.PromotionSummary}");
 
         if (svc.FulfillmentKind == ServiceFulfillmentKind.Enrollment
             && !string.IsNullOrWhiteSpace(svc.FixedScheduleLabel))
@@ -120,3 +127,4 @@ public static class ServiceCatalogBuilder
         return string.Equals(rule.CompatibleWithServiceName, svc.Name, StringComparison.OrdinalIgnoreCase);
     }
 }
+

@@ -25,6 +25,9 @@ public class BusinessesController : ControllerBase
     public async Task<ActionResult<PagedResponse<BusinessDto>>> GetAll(
         [FromQuery] PagedRequest request, CancellationToken ct)
     {
+        if (User.HasPermission("tenants.read"))
+            return Ok(await _businessService.GetPagedAsync(request, ct));
+
         return Ok(await _businessService.GetPagedByTenantAsync(User.GetTenantId(), request, ct));
     }
 
@@ -60,3 +63,4 @@ public class BusinessesController : ControllerBase
         return NoContent();
     }
 }
+

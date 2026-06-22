@@ -1,8 +1,8 @@
-namespace MimosBabySpa.Application.Configuration;
+﻿namespace MimosBabySpa.Application.Configuration;
 
 /// <summary>
-/// Configuración de integraciones externas por negocio (Google Calendar, Wompi, Blob Storage, etc.).
-/// Fuente única: IIntegrationsConfigProvider lee desde BusinessConfiguration (Key=Integrations).
+/// ConfiguraciÃ³n de integraciones externas por negocio (Google Calendar, Wompi, Blob Storage, etc.).
+/// Fuente Ãºnica: IIntegrationsConfigProvider lee desde IntegrationConnections.
 /// </summary>
 public class IntegrationsConfiguration
 {
@@ -11,7 +11,7 @@ public class IntegrationsConfiguration
 }
 
 /// <summary>
-/// Configuración de sincronización con Google Calendar.
+/// ConfiguraciÃ³n de sincronizaciÃ³n con Google Calendar.
 /// Cuando Enabled=true, las reservas se guardan en el calendario de Google.
 /// </summary>
 public class GoogleCalendarIntegration
@@ -27,8 +27,8 @@ public class GoogleCalendarIntegration
 }
 
 /// <summary>
-/// Configuración de integración con Wompi (links de pago).
-/// Si PrivateKey está vacío, no se generan links de pago.
+/// ConfiguraciÃ³n de integraciÃ³n con Wompi (links de pago).
+/// Si PrivateKey estÃ¡ vacÃ­o, no se generan links de pago.
 /// </summary>
 public class WompiIntegration
 {
@@ -43,7 +43,7 @@ public class WompiIntegration
     public string CheckoutBaseUrl { get; set; } = "https://checkout.wompi.co/l/";
 
     /// <summary>
-    /// Obtiene la URL base de la API según configuración.
+    /// Obtiene la URL base de la API segÃºn configuraciÃ³n.
     /// </summary>
     public string GetBaseUrl()
     {
@@ -54,3 +54,4 @@ public class WompiIntegration
         return url.TrimEnd('/');
     }
 }
+

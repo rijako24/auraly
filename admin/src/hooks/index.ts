@@ -3,6 +3,7 @@ export { useEmployees, useEmployee } from "./use-employees";
 export { useReservations, useReservation } from "./use-reservations";
 export { useLeads, useLead } from "./use-leads";
 export { useConversations, useConversation, useConversationWithMessages } from "./use-conversations";
+export { useOrders, useOrder, useOrderSummary } from "./use-orders";
 export { usePayments, usePayment } from "./use-payments";
 export { useTenants, useTenant } from "./use-tenants";
 export { useBusinesses, useBusiness } from "./use-businesses";

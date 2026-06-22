@@ -11,7 +11,6 @@ public class BusinessContext
     /// Null only when the number has no agent assigned yet.
     /// </summary>
     public Guid? AgentId { get; set; }
-
-    public BusinessConfigurationDto Configuration { get; set; } = new();
     public BusinessWhatsAppNumberDto WhatsAppNumber { get; set; } = null!;
 }
+

@@ -119,6 +119,41 @@ public class IntegrationAdminService : IIntegrationAdminService
         return await GetSettingsAsync(tenantId, businessId, ct);
     }
 
+    public async Task<IntegrationSettingsDto> UpdateOperationalModeAsync(
+        Guid tenantId,
+        Guid businessId,
+        UpdateOperationalModeRequest request,
+        CancellationToken ct = default)
+    {
+        await EnsureBusinessBelongsToTenantAsync(tenantId, businessId, ct);
+
+        var mode = NormalizeWompiMode(request.Mode);
+        var connection = await GetOrCreateAsync(
+            businessId,
+            IntegrationProvider.Wompi,
+            IntegrationCapability.Payments,
+            "Wompi",
+            ct);
+
+        var settings = ReadJson(connection.SettingsJson);
+
+        connection.Name = "Wompi";
+        connection.AccountIdentifier = null;
+        connection.SettingsJson = Serialize(new
+        {
+            mode,
+            sandboxBaseUrl = Get(settings, "sandboxBaseUrl", "https://sandbox.wompi.co/v1"),
+            productionBaseUrl = Get(settings, "productionBaseUrl", "https://production.wompi.co/v1"),
+            requestTimeoutSeconds = GetInt(settings, "requestTimeoutSeconds", 30),
+            checkoutBaseUrl = Get(settings, "checkoutBaseUrl", "https://checkout.wompi.co/l/")
+        });
+        connection.UpdatedAt = DateTime.UtcNow;
+
+        await _unitOfWork.IntegrationConnections.UpdateAsync(connection, ct);
+        await _unitOfWork.SaveChangesAsync(ct);
+        return await GetSettingsAsync(tenantId, businessId, ct);
+    }
+
     public async Task<IntegrationSettingsDto> UpdateSiigoCommerceAsync(
         Guid tenantId,
         Guid businessId,

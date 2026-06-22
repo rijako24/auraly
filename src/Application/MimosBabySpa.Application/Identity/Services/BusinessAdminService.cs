@@ -51,6 +51,13 @@ public class BusinessAdminService : IBusinessAdminService
             items.Select(MapToDto).ToList(), totalCount, request.Page, request.PageSize);
     }
 
+    public async Task<PagedResponse<BusinessDto>> GetPagedAsync(PagedRequest request, CancellationToken ct)
+    {
+        var (items, totalCount) = await _unitOfWork.Businesses.GetPagedAsync(
+            request.Page, request.PageSize, request.Search, ct);
+        return new PagedResponse<BusinessDto>(
+            items.Select(MapToDto).ToList(), totalCount, request.Page, request.PageSize);
+    }
     public async Task<BusinessDto> CreateAsync(Guid tenantId, CreateBusinessRequest request, CancellationToken ct)
     {
         var business = new Business
@@ -119,3 +126,4 @@ public class BusinessAdminService : IBusinessAdminService
         b.BusinessId, b.TenantId, b.Name, b.Description, b.Address,
         b.Phone, b.Email, b.Website, b.LogoUrl, b.IsActive, b.CreatedAt);
 }
+

@@ -30,6 +30,9 @@ public class WhatsAppCredentialResolver : IWhatsAppCredentialResolver
             return null;
         }
 
-        return new WhatsAppCredentials(active.WhatsAppPhoneNumberId, active.WhatsAppAccessToken);
+        return new WhatsAppCredentials(
+            active.WhatsAppPhoneNumberId,
+            active.WhatsAppAccessToken,
+            active.WhatsAppBusinessAccountId);
     }
 }

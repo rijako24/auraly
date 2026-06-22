@@ -1,13 +1,13 @@
-using Microsoft.Extensions.Logging;
+﻿using Microsoft.Extensions.Logging;
 using MimosBabySpa.Domain.Repositories;
 
 namespace MimosBabySpa.Application.Services;
 
 /// <summary>
-/// Envía notificaciones de escalado a admins vía WhatsApp.
+/// EnvÃ­a notificaciones de escalado a admins vÃ­a WhatsApp.
 ///
-/// Los contactos se reciben como parámetro — no se lee ninguna clave de
-/// BusinessConfigurations. El nodo Escalate en el flow JSON es quien los provee.
+/// Los contactos se reciben como parÃ¡metro â€” no se lee ninguna clave de
+/// configuraciones legacy. El nodo Escalate en el flow JSON es quien los provee.
 /// </summary>
 public class EscalationNotifier : IEscalationNotifier
 {
@@ -39,7 +39,7 @@ public class EscalationNotifier : IEscalationNotifier
         }
 
         var lastMsg = string.IsNullOrWhiteSpace(notification.LastUserMessage)
-            ? "—"
+            ? "â€”"
             : notification.LastUserMessage.Length > 80
                 ? notification.LastUserMessage[..80] + "..."
                 : notification.LastUserMessage;
@@ -50,15 +50,15 @@ public class EscalationNotifier : IEscalationNotifier
             : null;
 
         var sb = new System.Text.StringBuilder();
-        sb.Append("⚠️ Conversación requiere asistencia humana\n");
+        sb.Append("âš ï¸ ConversaciÃ³n requiere asistencia humana\n");
         sb.Append($"Motivo: {notification.Reason}\n");
         sb.Append($"Cliente: {notification.CustomerPhone}\n");
-        sb.Append($"Conversación: {notification.ConversationId}\n\n");
-        sb.Append($"Último mensaje del cliente: {lastMsg}");
+        sb.Append($"ConversaciÃ³n: {notification.ConversationId}\n\n");
+        sb.Append($"Ãšltimo mensaje del cliente: {lastMsg}");
         if (confirmPaymentUrl != null)
-            sb.Append($"\n\n✅ Confirmar pago recibido:\n{confirmPaymentUrl}");
+            sb.Append($"\n\nâœ… Confirmar pago recibido:\n{confirmPaymentUrl}");
         if (releaseUrl != null)
-            sb.Append($"\n\n📎 Devolver al bot:\n{releaseUrl}");
+            sb.Append($"\n\nðŸ“Ž Devolver al bot:\n{releaseUrl}");
 
         var message = sb.ToString();
         var notifiedCount = 0;
@@ -70,14 +70,15 @@ public class EscalationNotifier : IEscalationNotifier
                 var normalized = number.Replace("+", "").Replace(" ", "").Trim();
                 await _whatsAppService.SendTextMessageAsync(businessId, normalized, message);
                 notifiedCount++;
-                _logger.LogInformation("Notificación de escalado enviada a {Number}", number);
+                _logger.LogInformation("NotificaciÃ³n de escalado enviada a {Number}", number);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error enviando notificación de escalado a {Number}", number);
+                _logger.LogError(ex, "Error enviando notificaciÃ³n de escalado a {Number}", number);
             }
         }
 
         return notifiedCount > 0;
     }
 }
+

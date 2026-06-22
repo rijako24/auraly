@@ -68,6 +68,7 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
             Webhooks = settings.Webhooks ?? new WebhookDefinitions(),
             Notifications = settings.Notifications ?? new NotificationDefinitions(),
             ExternalEscalations = settings.ExternalEscalations ?? new ExternalEscalationDefinitions(),
+            ReservationAutomations = settings.ReservationAutomations ?? new ReservationAutomationDefinitions(),
             Checkout = settings.Checkout ?? new CheckoutDefinitions(),
             Commerce = settings.Commerce ?? new CommerceConfig()
         };
@@ -227,6 +228,7 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
 
         ValidateMessageSequences(config);
         ValidateNotifications(config);
+        ValidateReservationAutomations(config);
         ValidateExternalEscalations(config);
         ValidateTemplates(config);
     }
@@ -358,6 +360,39 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
         }
     }
 
+    private void ValidateReservationAutomations(AgentConfig config)
+    {
+        ValidateReservationAutomation(config, "reservationAutomations.confirmation", config.ReservationAutomations.Confirmation);
+        ValidateReservationAutomation(config, "reservationAutomations.reminder", config.ReservationAutomations.Reminder);
+    }
+
+    private void ValidateReservationAutomation(
+        AgentConfig config,
+        string path,
+        ReservationAutomationConfig? automation)
+    {
+        if (automation is null || !automation.Enabled)
+            return;
+
+        if (string.IsNullOrWhiteSpace(automation.SendMessageSequence))
+        {
+            _logger.LogWarning(
+                "AgentConfig {AgentId}: {Path} is enabled but sendMessageSequence is empty",
+                config.AgentId,
+                path);
+            return;
+        }
+
+        if (!config.MessageSequences.ContainsKey(automation.SendMessageSequence))
+        {
+            _logger.LogWarning(
+                "AgentConfig {AgentId}: {Path} references unknown sequence '{Sequence}'",
+                config.AgentId,
+                path,
+                automation.SendMessageSequence);
+        }
+    }
+
     private void ValidateExternalEscalations(AgentConfig config)
     {
         if (!config.ExternalEscalations.Enabled)
@@ -473,6 +508,7 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
         public WebhookDefinitions? Webhooks { get; set; }
         public NotificationDefinitions? Notifications { get; set; }
         public ExternalEscalationDefinitions? ExternalEscalations { get; set; }
+        public ReservationAutomationDefinitions? ReservationAutomations { get; set; }
         public CheckoutDefinitions? Checkout { get; set; }
         public CommerceConfig? Commerce { get; set; }
         public IReadOnlyList<string>? EscalationContacts =>

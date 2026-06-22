@@ -51,6 +51,8 @@ public record UpdateWompiIntegrationRequest(
     string? EventsSecret,
     string? IntegritySecret);
 
+public record UpdateOperationalModeRequest(string Mode);
+
 public record SiigoCommerceIntegrationDto(
     bool IsEnabled,
     string BaseUrl,

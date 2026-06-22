@@ -23,8 +23,8 @@ public class Business
     // Navigation properties
     public virtual Tenant Tenant { get; set; } = null!;
     public virtual ICollection<BusinessWhatsAppNumber> WhatsAppNumbers { get; set; } = new List<BusinessWhatsAppNumber>();
-    public virtual ICollection<BusinessConfiguration> Configurations { get; set; } = new List<BusinessConfiguration>();
     public virtual ICollection<Conversation> Conversations { get; set; } = new List<Conversation>();
     public virtual ICollection<Lead> Leads { get; set; } = new List<Lead>();
     public virtual ICollection<Reservation> Reservations { get; set; } = new List<Reservation>();
 }
+

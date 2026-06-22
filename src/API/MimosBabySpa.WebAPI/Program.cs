@@ -28,6 +28,7 @@ using MimosBabySpa.Application.Identity.Interfaces;
 using MimosBabySpa.Application.Identity.Services;
 using MimosBabySpa.Application.LLM;
 using MimosBabySpa.Application.Services;
+using MimosBabySpa.Application.Promotions;
 using MimosBabySpa.Application.StateManagement;
 using MimosBabySpa.Application.Time;
 using MimosBabySpa.Domain.Repositories;
@@ -111,6 +112,7 @@ builder.Services.AddScoped<IAvailabilityService, AvailabilityService>();
 builder.Services.AddScoped<IBusinessRuleEngine, BusinessRuleEngine>();
 builder.Services.AddScoped<ServiceNameResolver>();
 builder.Services.AddScoped<ReservationPricingResolver>();
+builder.Services.AddScoped<IPromotionPricingService, PromotionPricingService>();
 builder.Services.AddScoped<IBusinessClock, BusinessClock>();
 builder.Services.AddSingleton<ITemporalReferenceBuilder, TemporalReferenceBuilder>();
 builder.Services.AddScoped<ICatalogContentGenerator, CatalogContentGenerator>();
@@ -183,10 +185,10 @@ builder.Services.AddScoped<IAuditService, AuditService>();
 builder.Services.AddScoped<ITenantService, TenantService>();
 builder.Services.AddScoped<IBusinessAdminService, BusinessAdminService>();
 builder.Services.AddScoped<IServiceAdminService, ServiceAdminService>();
+builder.Services.AddScoped<IPromotionAdminService, PromotionAdminService>();
 builder.Services.AddScoped<IEmployeeAdminService, EmployeeAdminService>();
 builder.Services.AddScoped<IReservationAdminService, ReservationAdminService>();
 builder.Services.AddScoped<ILeadAdminService, LeadAdminService>();
-builder.Services.AddScoped<IBusinessConfigurationAdminService, BusinessConfigurationAdminService>();
 builder.Services.AddScoped<IIntegrationAdminService, IntegrationAdminService>();
 builder.Services.AddScoped<IWorkingHoursAdminService, WorkingHoursAdminService>();
 builder.Services.AddScoped<IAgentRepository, AgentRepository>();
@@ -231,6 +233,7 @@ builder.Services.AddScoped<IAgentTool, CreateReservationTool>();
 builder.Services.AddScoped<IAgentTool, AssignPaidSlotTool>();
 builder.Services.AddScoped<IAgentTool, SuspendReservationTool>();
 builder.Services.AddScoped<IAgentTool, GetCustomerReservationsTool>();
+builder.Services.AddScoped<IAgentTool, ConfirmReservationAttendanceTool>();
 builder.Services.AddScoped<IAgentTool, PrepareReservationChangeTool>();
 builder.Services.AddScoped<IAgentTool, ConfirmReservationChangeTool>();
 builder.Services.AddScoped<IAgentTool, VerifyPaymentTool>();
@@ -254,6 +257,7 @@ builder.Services.AddScoped<IAgentConversationService, AgentConversationService>(
 builder.Services.AddScoped<IAgentTestRuntimeFactory, AgentTestRuntimeFactory>();
 
 builder.Services.AddScoped<IConversationAdminService, ConversationAdminService>();
+builder.Services.AddScoped<IOrderAdminService, OrderAdminService>();
 builder.Services.AddScoped<IPaymentAdminService, PaymentAdminService>();
 builder.Services.AddScoped<IDashboardService, DashboardService>();
 
@@ -332,3 +336,6 @@ using (var scope = app.Services.CreateScope())
 }
 
 app.Run();
+
+
+

@@ -186,7 +186,7 @@ export function AgentSetupWizard({
           ) : (
             <Button type="button" onClick={handleSave} disabled={saving || !dirty}>
               <Save className="mr-1 h-4 w-4" />
-              {saving ? "Guardando…" : "Publicar configuración"}
+              {saving ? "Guardando..." : "Guardar configuracion"}
             </Button>
           )}
         </div>

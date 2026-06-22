@@ -99,7 +99,22 @@ public sealed class OutboundMessageDispatcher : IOutboundMessageDispatcher
         CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(message.Body) && string.IsNullOrWhiteSpace(message.MediaUrl))
+        {
+            if (message.Template is null)
+                return;
+        }
+
+        if (message.Template is not null)
+        {
+            await _whatsAppService.SendTemplateMessageAsync(
+                businessId,
+                phone,
+                message.Template.Name,
+                message.Template.LanguageCode,
+                message.Template.BodyParameters,
+                message.Buttons);
             return;
+        }
 
         if (message.Buttons is { Count: > 0 } buttons)
         {

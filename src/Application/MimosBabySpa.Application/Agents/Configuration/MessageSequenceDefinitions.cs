@@ -21,11 +21,19 @@ public sealed class MessageSequence
 /// </summary>
 public sealed class MessageSequenceStep
 {
+    public string Type { get; set; } = "text";
+
     public string? Body { get; set; }
 
     public Guid? AttachmentId { get; set; }
 
     public List<MessageSequenceButton> Buttons { get; set; } = [];
+
+    public string? TemplateName { get; set; }
+
+    public string? Language { get; set; }
+
+    public List<string> BodyParameters { get; set; } = [];
 }
 
 public sealed class MessageSequenceButton

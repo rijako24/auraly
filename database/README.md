@@ -1,35 +1,35 @@
-# Proyecto de Base de Datos - Mimos Baby Spa
+﻿# Proyecto de Base de Datos - Mimos Baby Spa
 
-Este proyecto contiene la definición completa de la base de datos SQL Server para la aplicación Mimos Baby Spa. **Es la única fuente de verdad del esquema**; ya no se usan migraciones de Entity Framework.
+Este proyecto contiene la definiciÃ³n completa de la base de datos SQL Server para la aplicaciÃ³n Mimos Baby Spa. **Es la Ãºnica fuente de verdad del esquema**; ya no se usan migraciones de Entity Framework.
 
-## 📁 Estructura
+## ðŸ“ Estructura
 
 ```
 database/
-├── MimosBabySpa.Database.sln          # Solución de Visual Studio
-├── MimosBabySpa.Database/
-│   ├── MimosBabySpa.Database.sqlproj  # Proyecto de base de datos
-│   ├── Tables/                         # Scripts de tablas (28 tablas)
-│   │   ├── Tenants.sql
-│   │   ├── Businesses.sql
-│   │   ├── AppUsers.sql
-│   │   ├── AppRoles.sql
-│   │   ├── Conversations.sql
-│   │   ├── Messages.sql
-│   │   ├── Leads.sql
-│   ├── Scripts/                        # Scripts de despliegue
-│   │   ├── CreateDatabase.ps1         # Crear base de datos
-│   │   ├── Deploy.ps1                 # Despliegue completo
-│   │   ├── Publish.ps1                 # Publicar esquema
-│   │   ├── PreDeployment.sql           # Scripts pre-despliegue
-│   │   └── PostDeployment.sql          # Scripts post-despliegue
-│   └── README.md                       # Documentación del proyecto
-└── DEPLOY.md                           # Guía completa de despliegue
+â”œâ”€â”€ MimosBabySpa.Database.sln          # SoluciÃ³n de Visual Studio
+â”œâ”€â”€ MimosBabySpa.Database/
+â”‚   â”œâ”€â”€ MimosBabySpa.Database.sqlproj  # Proyecto de base de datos
+â”‚   â”œâ”€â”€ Tables/                         # Scripts de tablas (28 tablas)
+â”‚   â”‚   â”œâ”€â”€ Tenants.sql
+â”‚   â”‚   â”œâ”€â”€ Businesses.sql
+â”‚   â”‚   â”œâ”€â”€ AppUsers.sql
+â”‚   â”‚   â”œâ”€â”€ AppRoles.sql
+â”‚   â”‚   â”œâ”€â”€ Conversations.sql
+â”‚   â”‚   â”œâ”€â”€ Messages.sql
+â”‚   â”‚   â”œâ”€â”€ Leads.sql
+â”‚   â”œâ”€â”€ Scripts/                        # Scripts de despliegue
+â”‚   â”‚   â”œâ”€â”€ CreateDatabase.ps1         # Crear base de datos
+â”‚   â”‚   â”œâ”€â”€ Deploy.ps1                 # Despliegue completo
+â”‚   â”‚   â”œâ”€â”€ Publish.ps1                 # Publicar esquema
+â”‚   â”‚   â”œâ”€â”€ PreDeployment.sql           # Scripts pre-despliegue
+â”‚   â”‚   â””â”€â”€ PostDeployment.sql          # Scripts post-despliegue
+â”‚   â””â”€â”€ README.md                       # DocumentaciÃ³n del proyecto
+â””â”€â”€ DEPLOY.md                           # GuÃ­a completa de despliegue
 ```
 
-## 🚀 Inicio Rápido
+## ðŸš€ Inicio RÃ¡pido
 
-### Despliegue Automático (Recomendado)
+### Despliegue AutomÃ¡tico (Recomendado)
 
 ```powershell
 cd database\MimosBabySpa.Database\Scripts
@@ -50,35 +50,36 @@ cd database\MimosBabySpa.Database\Scripts
 .\Publish.ps1 -ServerInstance "localhost" -DatabaseName "MimosBabySpa"
 ```
 
-## 📊 Esquema de Base de Datos
+## ðŸ“Š Esquema de Base de Datos
 
 ### Tablas (28 en total)
 
-**Multitenancy y negocio:** Tenants, Businesses, BusinessWhatsAppNumbers, BusinessConfigurations, BusinessResources, SystemConfigurations
+**Multitenancy y negocio:** Tenants, Businesses, BusinessWhatsAppNumbers, BusinessResources, SystemConfigurations
 
 **Conversaciones:** Conversations, ConversationContexts, ConversationStates, Messages, Leads
 
 **Servicios y reservas:** Services, ServiceAddOnRules, ServiceBundleItems, ServiceResourceUsages, Employees, EmployeeServices, Reservations, ReservationAddOns
 
-**Identidad y auditoría:** AppUsers, AppRoles, Permissions, UserRoles, RolePermissions, UserExternalLogins, RefreshTokens, AuditLogs
+**Identidad y auditorÃ­a:** AppUsers, AppRoles, Permissions, UserRoles, RolePermissions, UserExternalLogins, RefreshTokens, AuditLogs
 
 **Pagos:** PaymentTransactions
 
-## 📖 Documentación
+## ðŸ“– DocumentaciÃ³n
 
-- **[DEPLOY.md](DEPLOY.md)**: Guía completa de despliegue con todas las opciones
-- **[MimosBabySpa.Database/README.md](MimosBabySpa.Database/README.md)**: Documentación técnica del proyecto
+- **[DEPLOY.md](DEPLOY.md)**: GuÃ­a completa de despliegue con todas las opciones
+- **[MimosBabySpa.Database/README.md](MimosBabySpa.Database/README.md)**: DocumentaciÃ³n tÃ©cnica del proyecto
 
-## 🔧 Requisitos
+## ðŸ”§ Requisitos
 
 - SQL Server 2019 o superior
 - SQL Server Data Tools (SSDT) o Visual Studio con carga de trabajo de base de datos
 - PowerShell 5.1 o superior
 
-## 📝 Notas
+## ðŸ“ Notas
 
-- **Ya no se usan migraciones de EF** – El esquema se gestiona exclusivamente desde este proyecto
-- Este proyecto está en una solución separada para facilitar el despliegue independiente
+- **Ya no se usan migraciones de EF** â€“ El esquema se gestiona exclusivamente desde este proyecto
+- Este proyecto estÃ¡ en una soluciÃ³n separada para facilitar el despliegue independiente
 - Los scripts de PowerShell incluyen manejo de errores y validaciones
-- El proyecto usa DACPAC para despliegues incrementales y comparación de esquemas
+- El proyecto usa DACPAC para despliegues incrementales y comparaciÃ³n de esquemas
 - Los cambios de esquema se hacen editando los archivos en `Tables/` y desplegando con `Deploy.ps1`
+

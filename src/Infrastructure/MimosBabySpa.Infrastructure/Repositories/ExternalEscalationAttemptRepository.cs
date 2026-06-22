@@ -140,5 +140,5 @@ public sealed class ExternalEscalationAttemptRepository : IExternalEscalationAtt
     }
 
     private static string NormalizePhone(string phone) =>
-        phone.Trim().Replace(" ", string.Empty).Replace("-", string.Empty);
+        new(phone.Where(char.IsDigit).ToArray());
 }

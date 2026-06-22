@@ -40,6 +40,23 @@ public class ConsoleWhatsAppService : IWhatsAppService
         return Task.FromResult<string?>(Guid.NewGuid().ToString("N"));
     }
 
+    public Task<string?> SendTemplateMessageAsync(
+        Guid businessId,
+        string to,
+        string templateName,
+        string languageCode,
+        IReadOnlyList<string> bodyParameters,
+        IReadOnlyList<OutboundButton>? buttons = null)
+    {
+        _logger.LogInformation(
+            "WhatsApp template mock a {To}: {Template} ({Language}) | Params={Params}",
+            to,
+            templateName,
+            languageCode,
+            string.Join(", ", bodyParameters));
+        return Task.FromResult<string?>(Guid.NewGuid().ToString("N"));
+    }
+
     public Task SendImageMessageAsync(Guid businessId, string to, string imageUrl, string? caption = null)
     {
         System.Console.WriteLine();

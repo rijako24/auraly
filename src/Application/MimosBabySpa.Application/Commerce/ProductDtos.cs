@@ -17,6 +17,10 @@ public sealed record ProductReference(
     string Currency,
     decimal? StockQuantity,
     bool IsAvailable,
+    decimal? EffectiveUnitPrice = null,
+    decimal? DiscountAmount = null,
+    string? PromotionName = null,
+    string? PromotionSummary = null,
     string? RawPayloadJson = null);
 
 public sealed record ProductSearchResult(

@@ -24,11 +24,10 @@ ELSE
     SELECT @TenantId = [TenantId] FROM [dbo].[Tenants] WHERE [Email] = N'admin@mimosbabyspa.com';
 
 -- 2. Negocio por defecto
-IF NOT EXISTS (SELECT 1 FROM [dbo].[Businesses] WHERE [TenantId] = @TenantId AND [Name] = N'Mimos Baby Spa Principal')
-BEGIN
-    INSERT INTO [dbo].[Businesses] ([BusinessId], [TenantId], [Name], [Description], [Address], [Phone], [Email], [Website], [IsActive], [CreatedAt])
-    VALUES (NEWID(), @TenantId, N'Mimos Baby Spa Principal', N'Negocio principal', N'Por definir', N'+57 300 000 0000', N'admin@mimosbabyspa.com', N'https://mimosbabyspa.com', 1, GETUTCDATE());
-END
+-- SeedDevBusiness.sql crea el negocio canonico con BusinessId estable
+-- 22222222-2222-2222-2222-222222222222. No crear un negocio aqui con NEWID(),
+-- porque duplica "Mimos Baby Spa Principal" en cada ambiente donde no exista
+-- ese registro bajo el tenant admin@mimosbabyspa.com.
 
 -- 3. Permisos
 DECLARE @Perms TABLE (Module NVARCHAR(50), Action NVARCHAR(50), Resource NVARCHAR(100), Description NVARCHAR(500));
@@ -56,6 +55,10 @@ INSERT INTO @Perms VALUES
 (N'Services', N'Create', N'services.create', N'Crear servicios'),
 (N'Services', N'Update', N'services.update', N'Actualizar servicios'),
 (N'Services', N'Delete', N'services.delete', N'Eliminar servicios'),
+(N'Promotions', N'Read', N'promotions.read', N'Ver promociones'),
+(N'Promotions', N'Create', N'promotions.create', N'Crear promociones'),
+(N'Promotions', N'Update', N'promotions.update', N'Actualizar promociones'),
+(N'Promotions', N'Delete', N'promotions.delete', N'Desactivar promociones'),
 (N'Employees', N'Read', N'employees.read', N'Ver empleados'),
 (N'Employees', N'Create', N'employees.create', N'Crear empleados'),
 (N'Employees', N'Update', N'employees.update', N'Actualizar empleados'),
@@ -116,3 +119,4 @@ ELSE
 
 SET NOCOUNT OFF;
 GO
+

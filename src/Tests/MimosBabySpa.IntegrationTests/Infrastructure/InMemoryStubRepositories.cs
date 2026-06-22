@@ -93,6 +93,9 @@ public class InMemoryBusinessRepository : IBusinessRepository
     public Task<Business> CreateAsync(Business business) => Task.FromResult(business);
     public Task<Business> UpdateAsync(Business business) => Task.FromResult(business);
 
+    public Task<(IReadOnlyList<Business> Items, int TotalCount)> GetPagedAsync(int page, int pageSize, string? search, CancellationToken ct = default) =>
+        Task.FromResult<(IReadOnlyList<Business> Items, int TotalCount)>((new List<Business> { _business }, 1));
+
     public Task<IReadOnlyList<Business>> GetByTenantIdAsync(Guid tenantId, CancellationToken ct = default) =>
         throw new NotImplementedException();
 
@@ -102,73 +105,6 @@ public class InMemoryBusinessRepository : IBusinessRepository
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// BusinessConfiguration Repository — returns empty config
-// ─────────────────────────────────────────────────────────────────────────────
-
-public class InMemoryBusinessConfigurationRepository : IBusinessConfigurationRepository
-{
-    private readonly List<BusinessConfiguration> _configs;
-
-    public InMemoryBusinessConfigurationRepository(Guid businessId)
-    {
-        _configs = new List<BusinessConfiguration>
-        {
-            new()
-            {
-                BusinessId = businessId,
-                Key = BusinessConfigurationKey.SchedulingPolicy,
-                Value = """
-                    {
-                      "slotIntervalMinutes": 60,
-                      "bufferBetweenAppointmentsMinutes": 0,
-                      "requireEmployee": true,
-                      "schedule": {
-                        "monday": [{"open":"08:00","close":"18:00"}],
-                        "tuesday": [{"open":"08:00","close":"18:00"}],
-                        "wednesday": [{"open":"08:00","close":"18:00"}],
-                        "thursday": [{"open":"08:00","close":"18:00"}],
-                        "friday": [{"open":"08:00","close":"18:00"}],
-                        "saturday": [{"open":"08:00","close":"18:00"}],
-                        "sunday": []
-                      }
-                    }
-                    """
-            }
-        };
-    }
-
-    public Task<IEnumerable<BusinessConfiguration>> GetByBusinessIdAsync(Guid businessId) =>
-        Task.FromResult<IEnumerable<BusinessConfiguration>>(_configs);
-
-    public Task<BusinessConfiguration?> GetByBusinessIdAndKeyAsync(Guid businessId, BusinessConfigurationKey key)
-    {
-        var config = _configs.FirstOrDefault(c => c.BusinessId == businessId && c.Key == key);
-        return Task.FromResult(config);
-    }
-
-    public Task<IEnumerable<BusinessConfiguration>> GetActiveByBusinessIdAsync(Guid businessId) =>
-        Task.FromResult<IEnumerable<BusinessConfiguration>>(_configs);
-
-    public Task<BusinessConfiguration> CreateAsync(BusinessConfiguration configuration)
-    {
-        _configs.Add(configuration);
-        return Task.FromResult(configuration);
-    }
-
-    public Task<BusinessConfiguration> UpdateAsync(BusinessConfiguration configuration)
-    {
-        // simplistic update
-        var existing = _configs.FirstOrDefault(c => c.Key == configuration.Key);
-        if (existing != null) _configs.Remove(existing);
-        _configs.Add(configuration);
-        return Task.FromResult(configuration);
-    }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// SystemConfiguration Repository
-// ─────────────────────────────────────────────────────────────────────────────
-
 public class InMemorySystemConfigurationRepository : ISystemConfigurationRepository
 {
     public Task<SystemConfiguration?> GetByKeyAsync(SystemConfigurationKey key) =>
@@ -253,9 +189,109 @@ public class InMemoryReservationRepository : IReservationRepository
         Guid businessId, int count, CancellationToken ct = default) =>
         throw new NotImplementedException();
 
+    public Task<IReadOnlyList<Reservation>> GetUpcomingConfirmedByBusinessIdAsync(
+        Guid businessId,
+        DateTime fromLocal,
+        DateTime toLocal,
+        CancellationToken ct = default)
+    {
+        var list = _store
+            .Where(r => r.BusinessId == businessId
+                && r.Status == ReservationStatus.Confirmed
+                && r.ReservationDateTime.HasValue
+                && r.ReservationDateTime.Value >= fromLocal
+                && r.ReservationDateTime.Value <= toLocal)
+            .OrderBy(r => r.ReservationDateTime)
+            .ToList();
+        return Task.FromResult<IReadOnlyList<Reservation>>(list);
+    }
+
     public Task<IReadOnlyList<(Guid ServiceId, string ServiceName, int TotalReservations, decimal Revenue)>> GetTopServicesByBusinessIdAsync(
         Guid businessId, int top, DateTime? from, DateTime? to, CancellationToken ct = default) =>
         throw new NotImplementedException();
+}
+
+public sealed class InMemoryBusinessSchedulingSettingsRepository : IBusinessSchedulingSettingsRepository
+{
+    private readonly BusinessSchedulingSettings _settings;
+
+    public InMemoryBusinessSchedulingSettingsRepository(Guid businessId)
+    {
+        _settings = new BusinessSchedulingSettings
+        {
+            BusinessSchedulingSettingsId = Guid.NewGuid(),
+            BusinessId = businessId,
+            SlotIntervalMinutes = 60,
+            BufferBetweenAppointmentsMinutes = 0,
+            RequireEmployee = true,
+            EmployeeStrategy = "least_versatile",
+            CreatedAt = DateTime.UtcNow
+        };
+    }
+
+    public Task<BusinessSchedulingSettings?> GetByBusinessIdAsync(Guid businessId, CancellationToken ct = default) =>
+        Task.FromResult<BusinessSchedulingSettings?>(_settings.BusinessId == businessId ? _settings : null);
+
+    public Task<BusinessSchedulingSettings> AddAsync(BusinessSchedulingSettings settings, CancellationToken ct = default) =>
+        Task.FromResult(settings);
+
+    public Task<BusinessSchedulingSettings> UpdateAsync(BusinessSchedulingSettings settings, CancellationToken ct = default) =>
+        Task.FromResult(settings);
+}
+
+public sealed class InMemoryScheduledAutomationJobRepository : IScheduledAutomationJobRepository
+{
+    private readonly List<ScheduledAutomationJob> _store = [];
+
+    public Task<Dictionary<string, ScheduledAutomationJob>> GetByDeduplicationKeysAsync(IReadOnlyCollection<string> keys, CancellationToken ct = default)
+    {
+        var set = keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return Task.FromResult(_store
+            .Where(j => set.Contains(j.DeduplicationKey))
+            .ToDictionary(j => j.DeduplicationKey, StringComparer.OrdinalIgnoreCase));
+    }
+
+    public Task<IReadOnlyList<ScheduledAutomationJob>> GetDueAsync(DateTime utcNow, int limit, CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<ScheduledAutomationJob>>(_store
+            .Where(j => j.ScheduledAtUtc <= utcNow && j.Status == ScheduledAutomationJobStatus.Pending)
+            .OrderBy(j => j.ScheduledAtUtc)
+            .Take(limit)
+            .ToList());
+
+    public Task<ScheduledAutomationJob?> GetByIdAsync(Guid jobId, CancellationToken ct = default) =>
+        Task.FromResult(_store.FirstOrDefault(j => j.ScheduledAutomationJobId == jobId));
+
+    public Task<ScheduledAutomationJob?> GetLatestByReservationAndTypeAsync(Guid businessId, Guid reservationId, ScheduledAutomationJobType jobType, CancellationToken ct = default) =>
+        Task.FromResult(_store
+            .Where(j => j.BusinessId == businessId && j.ReservationId == reservationId && j.JobType == jobType)
+            .OrderByDescending(j => j.CreatedAt)
+            .FirstOrDefault());
+
+    public Task<ScheduledAutomationJob> AddAsync(ScheduledAutomationJob job, CancellationToken ct = default)
+    {
+        _store.Add(job);
+        return Task.FromResult(job);
+    }
+
+    public Task<ScheduledAutomationJob> UpdateAsync(ScheduledAutomationJob job, CancellationToken ct = default) =>
+        Task.FromResult(job);
+}
+
+public sealed class InMemoryReservationAttendanceResponseRepository : IReservationAttendanceResponseRepository
+{
+    private readonly List<ReservationAttendanceResponse> _store = [];
+
+    public Task<ReservationAttendanceResponse?> GetLatestByReservationAsync(Guid businessId, Guid reservationId, CancellationToken ct = default) =>
+        Task.FromResult(_store
+            .Where(r => r.BusinessId == businessId && r.ReservationId == reservationId)
+            .OrderByDescending(r => r.RespondedAtUtc)
+            .FirstOrDefault());
+
+    public Task<ReservationAttendanceResponse> AddAsync(ReservationAttendanceResponse response, CancellationToken ct = default)
+    {
+        _store.Add(response);
+        return Task.FromResult(response);
+    }
 }
 
 public class InMemoryConversationContextRepository : IConversationContextRepository
@@ -562,8 +598,47 @@ public class NoOpWhatsAppService : IWhatsAppService
     public Task SendTextMessageAsync(Guid businessId, string to, string message) => Task.CompletedTask;
     public Task<string?> SendButtonMessageAsync(Guid businessId, string to, string message, IReadOnlyList<OutboundButton> buttons) =>
         Task.FromResult<string?>(Guid.NewGuid().ToString("N"));
+    public Task<string?> SendTemplateMessageAsync(Guid businessId, string to, string templateName, string languageCode, IReadOnlyList<string> bodyParameters, IReadOnlyList<OutboundButton>? buttons = null) =>
+        Task.FromResult<string?>(Guid.NewGuid().ToString("N"));
     public Task SendImageMessageAsync(Guid businessId, string to, string imageUrl, string? caption = null) => Task.CompletedTask;
     public Task SendDocumentMessageAsync(Guid businessId, string to, string documentUrl, string? caption = null, string? filename = null) => Task.CompletedTask;
     public Task<bool> VerifyWebhookAsync(string mode, string token, string challenge) => Task.FromResult(true);
     public Task<Stream> DownloadMediaAsync(Guid businessId, string mediaId) => Task.FromResult<Stream>(Stream.Null);
 }
+
+public sealed class InMemoryPromotionRepository : IPromotionRepository
+{
+    private readonly List<Promotion> _store = [];
+
+    public Task<Promotion?> GetByIdAsync(Guid businessId, Guid promotionId, CancellationToken ct = default) =>
+        Task.FromResult(_store.FirstOrDefault(p => p.BusinessId == businessId && p.PromotionId == promotionId));
+
+    public Task<IReadOnlyList<Promotion>> GetActiveByBusinessIdAsync(Guid businessId, DateTime utcNow, CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<Promotion>>(_store
+            .Where(p => p.BusinessId == businessId && p.IsActive)
+            .ToList());
+
+    public Task<(IReadOnlyList<Promotion> Items, int TotalCount)> GetPagedByBusinessIdAsync(
+        Guid businessId,
+        int page,
+        int pageSize,
+        string? search,
+        CancellationToken ct = default)
+    {
+        var items = _store.Where(p => p.BusinessId == businessId).ToList();
+        return Task.FromResult<(IReadOnlyList<Promotion> Items, int TotalCount)>(
+            (items.Skip(Math.Max(0, page - 1) * pageSize).Take(pageSize).ToList(), items.Count));
+    }
+
+    public Task<Promotion> CreateAsync(Promotion promotion, CancellationToken ct = default)
+    {
+        _store.Add(promotion);
+        return Task.FromResult(promotion);
+    }
+
+    public Task<Promotion> UpdateAsync(Promotion promotion, CancellationToken ct = default) =>
+        Task.FromResult(promotion);
+}
+
+
+

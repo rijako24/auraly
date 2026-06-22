@@ -133,6 +133,30 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         { "body": "Estos son los terminos y condiciones:", "attachmentId": "9b2fd590-a2cb-5d8d-a687-493efd0b66a2" }
       ]
     },
+    "reservation_confirmation_request": {
+      "messages": [
+        {
+          "type": "whatsapp_template",
+          "templateName": "reservation_confirmation_request",
+          "language": "es_CO",
+          "bodyParameters": ["{CustomerName}", "{Service}", "{Date}", "{Time}"],
+          "buttons": [
+            { "id": "reservation_attendance:confirm:{job_id}", "title": "Confirmar" },
+            { "id": "reservation_attendance:reschedule:{job_id}", "title": "Reprogramar" }
+          ]
+        }
+      ]
+    },
+    "reservation_reminder": {
+      "messages": [
+        {
+          "type": "whatsapp_template",
+          "templateName": "reservation_reminder",
+          "language": "es_CO",
+          "bodyParameters": ["{CustomerName}", "{Service}", "{Date}", "{Time}"]
+        }
+      ]
+    },
     "enrollment_confirmed": {
       "messages": [
         { "body": "Recibimos tu pago de ${amount} {currency}. Tu inscripcion a {Service} quedo registrada en el horario: {fixed_schedule}." },
@@ -163,6 +187,18 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "enabled": true,
       "recipients": ["573042052007"],
       "sendMessageSequence": "internal_reservation_created"
+    }
+  },
+  "reservationAutomations": {
+    "confirmation": {
+      "enabled": true,
+      "trigger": { "type": "relative", "hoursBefore": 24 },
+      "sendMessageSequence": "reservation_confirmation_request"
+    },
+    "reminder": {
+      "enabled": true,
+      "trigger": { "type": "fixedLocalTime", "daysBefore": 0, "time": "08:00" },
+      "sendMessageSequence": "reservation_reminder"
     }
   },
   "checkout": {
@@ -294,9 +330,9 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
     {
       "id": "manage_existing_reservation",
       "priority": 900,
-      "goal": "Gestionar reservas existentes cuando el cliente quiera cambiar, reagendar, agregar o quitar complementos, cambiar servicio o suspender una reserva ya creada.",
-      "hint": "Usa esta ruta antes del flujo de reserva nueva. Primero identifica la reserva con get_customer_reservations cuando haga falta. Para cambios de servicio, fecha, hora o complementos, usa prepare_reservation_change y aplica con confirm_reservation_change solo despues de confirmacion clara. Para cambios de una reserva ya pagada, no generes nuevo checkout; cualquier saldo restante se maneja en el local. Si hay varias reservas, pregunta cual por fecha y servicio; nunca pidas UUID al cliente. Usa suspend_reservation solo cuando la intencion de suspender o cancelar sea clara, o despues de confirmacion explicita.",
-      "allowedTools": ["get_customer_reservations", "prepare_reservation_change", "confirm_reservation_change", "suspend_reservation"]
+      "goal": "Gestionar reservas existentes cuando el cliente quiera confirmar asistencia, cambiar, reagendar, agregar o quitar complementos, cambiar servicio o suspender una reserva ya creada.",
+      "hint": "Usa esta ruta antes del flujo de reserva nueva. Si el cliente confirma que asistira, usa confirm_reservation_attendance. Primero identifica la reserva con get_customer_reservations cuando haga falta. Para cambios de servicio, fecha, hora o complementos, usa prepare_reservation_change y aplica con confirm_reservation_change solo despues de confirmacion clara. Para cambios de una reserva ya pagada, no generes nuevo checkout; cualquier saldo restante se maneja en el local. Si hay varias reservas, pregunta cual por fecha y servicio; nunca pidas UUID al cliente. Usa suspend_reservation solo cuando la intencion de suspender o cancelar sea clara, o despues de confirmacion explicita.",
+      "allowedTools": ["get_customer_reservations", "confirm_reservation_attendance", "prepare_reservation_change", "confirm_reservation_change", "suspend_reservation"]
     }
   ],
   "factSchema": [
@@ -396,6 +432,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
     "assign_paid_slot",
     "suspend_reservation",
     "get_customer_reservations",
+    "confirm_reservation_attendance",
     "prepare_reservation_change",
     "confirm_reservation_change",
     "verify_payment",

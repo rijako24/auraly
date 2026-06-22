@@ -88,6 +88,10 @@ public sealed class ResolvePricingTool : IAgentTool
             {
                 name = li.Name,
                 price = li.Price,
+                base_price = li.BasePrice ?? li.Price,
+                discount_amount = li.DiscountAmount,
+                promotion_name = li.PromotionName,
+                promotion_summary = li.PromotionSummary,
                 include_in_checkout_total = li.IncludeInCheckoutTotal
             })
         });
@@ -107,3 +111,4 @@ public sealed class ResolvePricingTool : IAgentTool
         return items;
     }
 }
+

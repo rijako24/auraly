@@ -6,6 +6,7 @@ import { useParams } from "next/navigation";
 import { ArrowLeft, Save } from "lucide-react";
 import { toast } from "sonner";
 
+import { AgentOperationalModeControl } from "@/components/agents/agent-operational-mode-control";
 import { AgentTestChat } from "@/components/agents/agent-test-chat";
 import { AgentSettingsEditor } from "@/components/agents/agent-settings-editor";
 import { Button } from "@/components/ui/button";
@@ -77,6 +78,8 @@ export default function AgentConfigPage() {
           {updateMutation.isPending ? "Guardando…" : "Guardar"}
         </Button>
       </div>
+
+      <AgentOperationalModeControl businessId={agent.businessId} />
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
         <div className="min-w-0">

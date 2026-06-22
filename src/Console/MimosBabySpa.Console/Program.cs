@@ -1,4 +1,4 @@
-﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -80,7 +80,7 @@ services.AddLogging(builder =>
 services.AddDbContext<ApplicationDbContext>(options =>
     options.UseSqlServer(configuration.GetConnectionString("DefaultConnection")));
 
-// â”€â”€ Core Repositories â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Core Repositories ──────────────────────────────────────────────────────────
 services.AddScoped<IUnitOfWork, UnitOfWork>();
 services.AddScoped<IConversationRepository, ConversationRepository>();
 services.AddScoped<IConversationStateRepository, ConversationStateRepository>();
@@ -90,14 +90,13 @@ services.AddScoped<IReservationRepository, ReservationRepository>();
 services.AddScoped<IPaymentTransactionRepository, PaymentTransactionRepository>();
 services.AddScoped<MimosBabySpa.Domain.Repositories.IAgentRepository, AgentRepository>();
 
-// â”€â”€ Application Services â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Application Services ───────────────────────────────────────────────────────
 services.AddScoped<IConversationService, ConversationService>();
 services.AddScoped<IConversationLifecycleService, ConversationLifecycleService>();
 services.AddScoped<IMessageService, MessageService>();
 services.AddScoped<ILeadService, LeadService>();
 services.AddScoped<IReservationService, ReservationService>();
 services.AddScoped<IBusinessIdentificationService, BusinessIdentificationService>();
-services.AddScoped<IBusinessConfigurationService, BusinessConfigurationService>();
 services.AddScoped<IWhatsAppWebhookParserService, WhatsAppWebhookParserService>();
 services.AddScoped<IEmployeeAssignmentService, EmployeeAssignmentService>();
 services.AddScoped<IWorkingHoursService, WorkingHoursService>();
@@ -115,7 +114,7 @@ services.AddHttpClient<SiigoCommerceAdapter>();
 services.AddScoped<ICommerceAdapter>(sp => sp.GetRequiredService<SiigoCommerceAdapter>());
 services.AddScoped<ICommerceAdapterFactory, CommerceAdapterFactory>();
 
-// â”€â”€ OpenAI Clients â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── OpenAI Clients ─────────────────────────────────────────────────────────────
 services.Configure<OpenAITextModelOptions>(configuration.GetSection(OpenAITextModelOptions.SectionName));
 services.Configure<OpenAIAudioModelOptions>(configuration.GetSection(OpenAIAudioModelOptions.SectionName));
 
@@ -135,7 +134,7 @@ services.AddKeyedSingleton<OpenAIClient>("Audio", (sp, _) =>
     return new OpenAIClient(new Uri(opts.Endpoint), new Azure.AzureKeyCredential(opts.ApiKey));
 });
 
-// â”€â”€ Supporting Infrastructure â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Supporting Infrastructure ──────────────────────────────────────────────────
 services.AddMemoryCache();
 services.AddScoped<ILocalizationService, LocalizationService>();
 services.AddScoped<IConversationStateManager, ConversationStateManager>();
@@ -183,10 +182,10 @@ services.AddHttpClient();
 services.AddHttpClient<GoogleCalendarService>(c => c.Timeout = TimeSpan.FromSeconds(30));
 services.AddScoped<ICalendarService, GoogleCalendarService>();
 
-// â”€â”€ Business Rules Engine â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Business Rules Engine ──────────────────────────────────────────────────────
 services.AddScoped<IBusinessRuleEngine, BusinessRuleEngine>();
 
-// â”€â”€ Agentic Engine (Function Calling) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Agentic Engine (Function Calling) ─────────────────────────────────────────
 services.AddScoped<MimosBabySpa.Application.LLM.IChatClient>(sp =>
 {
     var textClient = sp.GetRequiredKeyedService<OpenAIClient>("Text");
@@ -219,6 +218,10 @@ services.AddScoped<IAgentTool, PrepareOrderCheckoutTool>();
 services.AddScoped<IAgentTool, CreateReservationTool>();
 services.AddScoped<IAgentTool, AssignPaidSlotTool>();
 services.AddScoped<IAgentTool, SuspendReservationTool>();
+services.AddScoped<IAgentTool, GetCustomerReservationsTool>();
+services.AddScoped<IAgentTool, ConfirmReservationAttendanceTool>();
+services.AddScoped<IAgentTool, PrepareReservationChangeTool>();
+services.AddScoped<IAgentTool, ConfirmReservationChangeTool>();
 services.AddScoped<IAgentTool, VerifyPaymentTool>();
 services.AddScoped<IAgentTool, EscalateToHumanTool>();
 services.AddScoped<IAgentTool, GetServiceCatalogTool>();
@@ -390,4 +393,5 @@ static string CreateTestUserPhone()
 {
     return $"+1555{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() % 10000000:0000000}";
 }
+
 

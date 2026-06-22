@@ -1,4 +1,4 @@
--- =============================================================================
+﻿-- =============================================================================
 -- PostDeployment.sql
 --
 -- Hook SSDT que se ejecuta despues de publicar el dacpac.
@@ -11,8 +11,8 @@
 --      PromptSections, KnowledgeSources, link a WhatsApp)
 --   3. Categorias de servicio iniciales para negocios sin catalogo
 --   4. Recursos y empleados de prueba para el negocio dev
---   5. Negocio dev (tenant 2222, attachments, configuraciones de pago)
---   6. Política de agendamiento (horarios por día de la semana)
+--   5. Negocio dev (tenant 2222, attachments y datos base)
+--   6. Politica de agendamiento (settings y horarios por dia de la semana)
 --
 -- Todos los seeds son idempotentes (MERGE / IF NOT EXISTS) y seguros de
 -- re-ejecutar en cada publish.
@@ -26,8 +26,7 @@
 :r .\Migrations\MigratePaymentSupersession.sql
 :r .\Migrations\MigrateFlowStageSnapshots.sql
 :r .\Migrations\MigrateConversationCurrentStageName.sql
-:r .\Migrations\MigrateWorkingHoursFromSchedulingPolicy.sql
-:r .\Migrations\MigrateIntegrationsToConnections.sql
+:r .\Migrations\MigrateSchedulingPolicyToSettings.sql
 :r .\Migrations\MigrateServiceCheckoutTotalPolicy.sql
 :r .\Migrations\MigrateBabySpaPlanPrices2026.sql
 :r .\Migrations\MigrateExternalEscalationAttempts.sql
@@ -40,12 +39,11 @@
 :r .\Migrations\MigrateIniciacionJardinService2026.sql
 :r .\Seeds\SeedBillingPlans.sql
 :r .\Seeds\SeedRadaConcept.sql
-:r .\Seeds\SeedSchedulingPolicy.sql
 :r .\Seeds\SeedBusinessWorkingHours.sql
-:r .\Seeds\CleanupObsoleteBookingPolicy.sql
 :r .\Seeds\SeedAgenticConfiguration.sql
 :r .\Seeds\SeedSolorzanoWhatsAppNumber.sql
 :r .\Seeds\SeedRadaConceptWhatsAppNumber.sql
+:r .\Seeds\SeedSolorzanoDeliveryAgent.sql
 :r .\Migrations\MigrateAuditAgentTemplates.sql
 :r .\Seeds\SeedDefaultResources.sql
 :r .\Seeds\SeedWorkshopSchedulesInCatalog.sql
@@ -55,3 +53,4 @@
 :r .\Seeds\SeedSolorzanoAgentConfiguration.sql
 
 PRINT 'Post-deployment scripts executed successfully.';
+

@@ -18,7 +18,6 @@ public class InMemoryUnitOfWork : IUnitOfWork
     public IBusinessAttachmentRepository BusinessAttachments { get; }
     public IBusinessRepository Businesses { get; }
     public IBusinessWhatsAppNumberRepository BusinessWhatsAppNumbers => throw new NotImplementedException();
-    public IBusinessConfigurationRepository BusinessConfigurations { get; }
     public ISystemConfigurationRepository SystemConfigurations { get; }
     public IConversationContextRepository ConversationContexts { get; }
     public ICustomerMemoryRepository CustomerMemory { get; }
@@ -29,6 +28,9 @@ public class InMemoryUnitOfWork : IUnitOfWork
     public IBusinessWorkingHourRepository BusinessWorkingHours { get; }
     public IEmployeeWorkingHourRepository EmployeeWorkingHours { get; }
     public IEmployeeScheduleExceptionRepository EmployeeScheduleExceptions { get; }
+    public IBusinessSchedulingSettingsRepository BusinessSchedulingSettings { get; }
+    public IScheduledAutomationJobRepository ScheduledAutomationJobs { get; }
+    public IReservationAttendanceResponseRepository ReservationAttendanceResponses { get; }
     public IIntegrationConnectionRepository IntegrationConnections { get; }
     public IReservationIntegrationEventRepository ReservationIntegrationEvents { get; }
     public IExternalEscalationAttemptRepository ExternalEscalationAttempts { get; }
@@ -36,6 +38,7 @@ public class InMemoryUnitOfWork : IUnitOfWork
     public IServiceAddOnRuleRepository ServiceAddOnRules { get; }
     public IReservationAddOnRepository ReservationAddOns { get; }
     public IProductRepository Products { get; }
+    public IPromotionRepository Promotions { get; }
     public IOrderRepository Orders { get; }
     public IOrderItemRepository OrderItems { get; }
     public IOrderConnectionEventRepository OrderConnectionEvents { get; }
@@ -68,7 +71,6 @@ public class InMemoryUnitOfWork : IUnitOfWork
         ServiceCategories    = new InMemoryServiceCategoryRepository(businessId);
         BusinessAttachments  = new InMemoryBusinessAttachmentRepository();
         Businesses           = new InMemoryBusinessRepository(businessId);
-        BusinessConfigurations = new InMemoryBusinessConfigurationRepository(businessId);
         SystemConfigurations = new InMemorySystemConfigurationRepository();
         ConversationContexts   = new InMemoryConversationContextRepository();
         CustomerMemory         = new InMemoryCustomerMemoryRepository();
@@ -81,6 +83,9 @@ public class InMemoryUnitOfWork : IUnitOfWork
         BusinessWorkingHours = new InMemoryBusinessWorkingHourRepository(businessId);
         EmployeeWorkingHours = new InMemoryEmployeeWorkingHourRepository();
         EmployeeScheduleExceptions = new InMemoryEmployeeScheduleExceptionRepository();
+        BusinessSchedulingSettings = new InMemoryBusinessSchedulingSettingsRepository(businessId);
+        ScheduledAutomationJobs = new InMemoryScheduledAutomationJobRepository();
+        ReservationAttendanceResponses = new InMemoryReservationAttendanceResponseRepository();
         IntegrationConnections = new InMemoryIntegrationConnectionRepository();
         ReservationIntegrationEvents = new InMemoryReservationIntegrationEventRepository();
         ExternalEscalationAttempts = new InMemoryExternalEscalationAttemptRepository();
@@ -88,6 +93,7 @@ public class InMemoryUnitOfWork : IUnitOfWork
         ServiceAddOnRules    = new InMemoryServiceAddOnRuleRepository(businessId);
         ReservationAddOns    = new InMemoryReservationAddOnRepository();
         Products             = new InMemoryProductRepository();
+        Promotions           = new InMemoryPromotionRepository();
         Orders               = new InMemoryOrderRepository();
         OrderItems           = new InMemoryOrderItemRepository();
         OrderConnectionEvents = new InMemoryOrderConnectionEventRepository();
@@ -390,18 +396,18 @@ internal sealed class InMemoryExternalEscalationAttemptRepository : IExternalEsc
         Task.FromResult(_escalations.FirstOrDefault(o =>
             o.BusinessId == businessId &&
             o.AttemptCode == attemptCode &&
-            o.ContactPhoneSnapshot == phone));
+            NormalizePhone(o.ContactPhoneSnapshot) == NormalizePhone(phone)));
 
     public Task<ExternalEscalationAttempt?> GetByWhatsAppMessageIdAsync(Guid businessId, string whatsAppMessageId, string phone, CancellationToken ct = default) =>
         Task.FromResult(_escalations.FirstOrDefault(o =>
             o.BusinessId == businessId &&
             o.WhatsAppMessageId == whatsAppMessageId &&
-            o.ContactPhoneSnapshot == phone));
+            NormalizePhone(o.ContactPhoneSnapshot) == NormalizePhone(phone)));
 
     public Task<IReadOnlyList<ExternalEscalationAttempt>> GetPendingByContactPhoneAsync(Guid businessId, string phone, CancellationToken ct = default) =>
         Task.FromResult<IReadOnlyList<ExternalEscalationAttempt>>(
             _escalations.Where(o => o.BusinessId == businessId &&
-                               o.ContactPhoneSnapshot == phone &&
+                               NormalizePhone(o.ContactPhoneSnapshot) == NormalizePhone(phone) &&
                                o.Status == ExternalEscalationAttemptStatus.Pending)
                    .ToList());
 
@@ -449,6 +455,9 @@ internal sealed class InMemoryExternalEscalationAttemptRepository : IExternalEsc
 
         return Task.CompletedTask;
     }
+
+    private static string NormalizePhone(string phone) =>
+        new(phone.Where(char.IsDigit).ToArray());
 }
 
 internal sealed class InMemoryProductRepository : IProductRepository
@@ -508,11 +517,50 @@ internal sealed class InMemoryOrderRepository : IOrderRepository
         Task.FromResult(_orders.FirstOrDefault(o =>
             o.BusinessId == businessId &&
             o.ConversationId == conversationId &&
-            (o.Status == OrderStatus.Draft || o.Status == OrderStatus.AwaitingPayment)));
+            (o.Status == OrderStatus.Draft || o.Status == OrderStatus.PendingConfirmation || o.Status == OrderStatus.AwaitingPayment)));
 
     public Task<IReadOnlyList<Order>> GetByConversationAsync(Guid businessId, Guid conversationId, CancellationToken ct = default) =>
         Task.FromResult<IReadOnlyList<Order>>(
             _orders.Where(o => o.BusinessId == businessId && o.ConversationId == conversationId).ToList());
+
+    public Task<(IReadOnlyList<Order> Items, int TotalCount)> GetPagedByBusinessIdAsync(
+        Guid businessId,
+        int page,
+        int pageSize,
+        string? search,
+        string? customer,
+        DateTime? createdFrom,
+        DateTime? createdTo,
+        OrderStatus? status,
+        CancellationToken ct = default)
+    {
+        var query = _orders.Where(o => o.BusinessId == businessId);
+        if (status.HasValue)
+            query = query.Where(o => o.Status == status.Value);
+        var list = query.ToList();
+        return Task.FromResult<(IReadOnlyList<Order> Items, int TotalCount)>(
+            (list.Skip(Math.Max(0, page - 1) * pageSize).Take(pageSize).ToList(), list.Count));
+    }
+
+    public Task<(int TotalOrders, decimal TotalAmount, int DraftCount, int AwaitingPaymentCount, int ConfirmedCount, int SyncedCount, int CancelledCount)> GetSummaryByBusinessIdAsync(
+        Guid businessId,
+        string? search,
+        string? customer,
+        DateTime? createdFrom,
+        DateTime? createdTo,
+        OrderStatus? status,
+        CancellationToken ct = default)
+    {
+        var orders = _orders.Where(o => o.BusinessId == businessId).ToList();
+        return Task.FromResult((
+            orders.Count,
+            orders.Sum(o => o.Total),
+            orders.Count(o => o.Status == OrderStatus.Draft),
+            orders.Count(o => o.Status == OrderStatus.AwaitingPayment),
+            orders.Count(o => o.Status == OrderStatus.Confirmed),
+            orders.Count(o => o.Status == OrderStatus.Synced),
+            orders.Count(o => o.Status == OrderStatus.Cancelled)));
+    }
 
     public Task<Order> CreateAsync(Order order, CancellationToken ct = default)
     {
@@ -567,3 +615,6 @@ internal sealed class InMemoryOrderConnectionEventRepository : IOrderConnectionE
     public Task<OrderConnectionEvent> UpdateAsync(OrderConnectionEvent entity, CancellationToken ct = default) =>
         Task.FromResult(entity);
 }
+
+
+

@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using MimosBabySpa.Application.Agents;
+using MimosBabySpa.Application.Promotions;
 using MimosBabySpa.Domain.Entities;
 using MimosBabySpa.Domain.Enums;
 using MimosBabySpa.Domain.Repositories;
@@ -12,18 +13,24 @@ public sealed class CommerceService : ICommerceService
 {
     private readonly IUnitOfWork _unitOfWork;
     private readonly ICommerceAdapterFactory _adapterFactory;
+    private readonly IPromotionPricingService _promotions;
 
-    public CommerceService(IUnitOfWork unitOfWork, ICommerceAdapterFactory adapterFactory)
+    public CommerceService(
+        IUnitOfWork unitOfWork,
+        ICommerceAdapterFactory adapterFactory,
+        IPromotionPricingService promotions)
     {
         _unitOfWork = unitOfWork;
         _adapterFactory = adapterFactory;
+        _promotions = promotions;
     }
 
     public async Task<ProductSearchResult> SearchProductsAsync(AgentToolContext ctx, ProductSearchRequest request, CancellationToken ct = default)
     {
         var adapterContext = await BuildContextAsync(ctx, ct);
         var adapter = _adapterFactory.Resolve(adapterContext.Provider);
-        return await adapter.SearchProductsAsync(request, adapterContext, ct);
+        var result = await adapter.SearchProductsAsync(request, adapterContext, ct);
+        return await EnrichProductPromotionsAsync(ctx.BusinessId, result, ct);
     }
 
     public async Task<OrderSnapshot> AddItemAsync(AgentToolContext ctx, AddOrderItemRequest request, CancellationToken ct = default)
@@ -119,6 +126,10 @@ public sealed class CommerceService : ICommerceService
             product.Currency,
             product.StockQuantity,
             !product.ManageStock || (product.StockQuantity ?? 0) > 0,
+            null,
+            null,
+            null,
+            null,
             product.RawPayloadJson);
 
     private static Product? FindBestProductMatch(IReadOnlyList<Product> products, string input)
@@ -294,11 +305,74 @@ public sealed class CommerceService : ICommerceService
     private async Task RecalculateAsync(Order order, CancellationToken ct)
     {
         var items = await _unitOfWork.OrderItems.GetByOrderIdAsync(order.BusinessId, order.OrderId, ct);
-        order.Subtotal = items.Sum(i => i.LineTotal);
-        order.DiscountTotal = items.Sum(i => i.DiscountAmount);
+        var pricing = await _promotions.EvaluateAsync(
+            order.BusinessId,
+            items.Select(i => new PromotionPricingItem(
+                i.OrderItemId.ToString("N"),
+                PromotionItemType.Product,
+                i.ProductId,
+                null,
+                i.ProductNameSnapshot,
+                null,
+                i.UnitPrice,
+                i.Quantity)).ToList(),
+            ct: ct);
+
+        foreach (var item in items)
+        {
+            var priced = pricing.Items.FirstOrDefault(i => i.Item.Key == item.OrderItemId.ToString("N"));
+            if (priced is null)
+                continue;
+
+            item.LineTotal = priced.LineSubtotal;
+            item.DiscountAmount = priced.DiscountAmount;
+            item.UpdatedAt = DateTime.UtcNow;
+            await _unitOfWork.OrderItems.UpdateAsync(item, ct);
+        }
+
+        order.Subtotal = pricing.Subtotal;
+        order.DiscountTotal = pricing.DiscountTotal;
         order.TaxTotal = items.Sum(i => i.TaxAmount);
         order.Total = order.Subtotal - order.DiscountTotal + order.TaxTotal;
         await _unitOfWork.Orders.UpdateAsync(order, ct);
+    }
+
+    private async Task<ProductSearchResult> EnrichProductPromotionsAsync(
+        Guid businessId,
+        ProductSearchResult result,
+        CancellationToken ct)
+    {
+        if (result.Products.Count == 0)
+            return result;
+
+        var pricing = await _promotions.EvaluateAsync(
+            businessId,
+            result.Products.Select((p, index) => new PromotionPricingItem(
+                index.ToString(CultureInfo.InvariantCulture),
+                PromotionItemType.Product,
+                p.ProductId,
+                null,
+                p.Name,
+                p.CategoryName,
+                p.UnitPrice,
+                1)).ToList(),
+            ct: ct);
+
+        var products = result.Products.Select((product, index) =>
+        {
+            var priced = pricing.Items.FirstOrDefault(i => i.Item.Key == index.ToString(CultureInfo.InvariantCulture));
+            return priced is null || !priced.HasPromotion
+                ? product
+                : product with
+                {
+                    EffectiveUnitPrice = priced.EffectiveUnitPrice,
+                    DiscountAmount = priced.DiscountAmount,
+                    PromotionName = priced.PromotionName,
+                    PromotionSummary = priced.PromotionSummary
+                };
+        }).ToList();
+
+        return result with { Products = products };
     }
 
     private async Task<OrderConnectionEvent> GetOrCreateEventAsync(Order order, CommerceAdapterContext ctx, CancellationToken ct)

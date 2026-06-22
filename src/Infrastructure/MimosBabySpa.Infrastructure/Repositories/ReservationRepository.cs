@@ -74,6 +74,26 @@ public class ReservationRepository : IReservationRepository
             .ToListAsync(ct);
     }
 
+    public async Task<IReadOnlyList<Reservation>> GetUpcomingConfirmedByBusinessIdAsync(
+        Guid businessId,
+        DateTime fromLocal,
+        DateTime toLocal,
+        CancellationToken ct = default)
+    {
+        return await _context.Reservations
+            .Include(r => r.Service)
+            .Include(r => r.Employee)
+            .Include(r => r.AddOns)
+                .ThenInclude(a => a.AddOnService)
+            .Where(r => r.BusinessId == businessId
+                && r.Status == Domain.Enums.ReservationStatus.Confirmed
+                && r.ReservationDateTime.HasValue
+                && r.ReservationDateTime.Value >= fromLocal
+                && r.ReservationDateTime.Value <= toLocal)
+            .OrderBy(r => r.ReservationDateTime)
+            .ToListAsync(ct);
+    }
+
     public async Task<IReadOnlyList<(Guid ServiceId, string ServiceName, int TotalReservations, decimal Revenue)>> GetTopServicesByBusinessIdAsync(
         Guid businessId, int limit, DateTime? from, DateTime? to, CancellationToken ct)
     {

@@ -1,9 +1,7 @@
-using FluentAssertions;
+﻿using FluentAssertions;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
-using MimosBabySpa.Application.Configuration;
 using MimosBabySpa.Domain.Entities;
-using MimosBabySpa.Domain.Enums;
 using MimosBabySpa.Domain.Repositories;
 using MimosBabySpa.Infrastructure.Configuration;
 using Xunit;
@@ -15,7 +13,7 @@ public class SchedulingPolicyProviderTests
     private readonly Guid _businessId = Guid.Parse("22222222-2222-2222-2222-222222222222");
 
     [Fact]
-    public async Task GetAsync_WhenConfigMissing_ReturnsDefault()
+    public async Task GetAsync_WhenSettingsMissing_ReturnsDefault()
     {
         var provider = CreateProvider(null);
 
@@ -25,22 +23,15 @@ public class SchedulingPolicyProviderTests
     }
 
     [Fact]
-    public async Task GetAsync_WhenValidJson_ReturnsSchedulingRules()
+    public async Task GetAsync_WhenSettingsExist_ReturnsSchedulingRules()
     {
-        const string json = """
-            {
-              "slotIntervalMinutes": 30,
-              "bufferBetweenAppointmentsMinutes": 15,
-              "requireEmployee": false,
-              "employeeStrategy": "most_available"
-            }
-            """;
-
-        var provider = CreateProvider(new BusinessConfiguration
+        var provider = CreateProvider(new BusinessSchedulingSettings
         {
             BusinessId = _businessId,
-            Key = BusinessConfigurationKey.SchedulingPolicy,
-            Value = json
+            SlotIntervalMinutes = 30,
+            BufferBetweenAppointmentsMinutes = 15,
+            RequireEmployee = false,
+            EmployeeStrategy = "most_available"
         });
 
         var policy = await provider.GetAsync(_businessId);
@@ -51,29 +42,14 @@ public class SchedulingPolicyProviderTests
         policy.EmployeeStrategy.Should().Be("most_available");
     }
 
-    [Fact]
-    public async Task GetAsync_WhenInvalidJson_ReturnsDefault()
+    private SchedulingPolicyProvider CreateProvider(BusinessSchedulingSettings? settings)
     {
-        var provider = CreateProvider(new BusinessConfiguration
-        {
-            BusinessId = _businessId,
-            Key = BusinessConfigurationKey.SchedulingPolicy,
-            Value = "{ not valid json"
-        });
-
-        var policy = await provider.GetAsync(_businessId);
-
-        policy.SlotIntervalMinutes.Should().Be(60);
-    }
-
-    private SchedulingPolicyProvider CreateProvider(BusinessConfiguration? config)
-    {
-        var repo = new Mock<IBusinessConfigurationRepository>();
-        repo.Setup(r => r.GetByBusinessIdAndKeyAsync(_businessId, BusinessConfigurationKey.SchedulingPolicy))
-            .ReturnsAsync(config);
+        var repo = new Mock<IBusinessSchedulingSettingsRepository>();
+        repo.Setup(r => r.GetByBusinessIdAsync(_businessId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(settings);
 
         var unitOfWork = new Mock<IUnitOfWork>();
-        unitOfWork.Setup(u => u.BusinessConfigurations).Returns(repo.Object);
+        unitOfWork.Setup(u => u.BusinessSchedulingSettings).Returns(repo.Object);
 
         return new SchedulingPolicyProvider(unitOfWork.Object, NullLogger<SchedulingPolicyProvider>.Instance);
     }
