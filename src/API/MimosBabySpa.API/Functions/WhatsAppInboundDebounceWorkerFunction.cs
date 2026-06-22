@@ -5,7 +5,7 @@ using MimosBabySpa.Application.Agents;
 using MimosBabySpa.Application.DTOs;
 using MimosBabySpa.Application.Services;
 using MimosBabySpa.Domain.Entities;
-using MimosBabySpa.API.Services;
+using MimosBabySpa.Infrastructure.Services;
 
 namespace MimosBabySpa.API.Functions;
 
@@ -190,5 +190,6 @@ public sealed class WhatsAppInboundDebounceWorkerFunction
         return allMessages;
     }
 }
+
 
 

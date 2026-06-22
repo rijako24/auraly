@@ -8,7 +8,16 @@ CREATE TABLE [dbo].[Orders] (
     [Source] INT NOT NULL DEFAULT 0,
     [FulfillmentMode] INT NOT NULL DEFAULT 0,
     [Status] INT NOT NULL DEFAULT 0,
-    [CustomerNameSnapshot] NVARCHAR(150) NULL,
+    [DeliveryAssignmentStatus] INT NOT NULL DEFAULT 0,
+    [DeliveryExternalEscalationAttemptId] UNIQUEIDENTIFIER NULL,
+    [DeliveryAssigneeKeySnapshot] NVARCHAR(100) NULL,
+    [DeliveryAssigneeNameSnapshot] NVARCHAR(200) NULL,
+    [DeliveryAssigneeRoleSnapshot] NVARCHAR(100) NULL,
+    [DeliveryAssigneePhoneSnapshot] NVARCHAR(50) NULL,
+    [DeliveryAssignmentRequestedAt] DATETIME2 NULL,
+    [DeliveryAssignmentAcceptedAt] DATETIME2 NULL,
+    [DeliveryAssignmentDeclinedAt] DATETIME2 NULL,
+    [DeliveryAssignmentTimedOutAt] DATETIME2 NULL,    [CustomerNameSnapshot] NVARCHAR(150) NULL,
     [CustomerEmailSnapshot] NVARCHAR(200) NULL,
     [CustomerPhoneSnapshot] NVARCHAR(50) NULL,
     [CustomerDocumentSnapshot] NVARCHAR(80) NULL,
@@ -44,7 +53,8 @@ CREATE TABLE [dbo].[Orders] (
         ON DELETE NO ACTION,
     CONSTRAINT [CK_Orders_Source] CHECK ([Source] IN (0, 1, 2)),
     CONSTRAINT [CK_Orders_FulfillmentMode] CHECK ([FulfillmentMode] IN (0, 1)),
-    CONSTRAINT [CK_Orders_Status] CHECK ([Status] IN (0, 1, 2, 3, 4, 5, 6, 7, 91))
+    CONSTRAINT [CK_Orders_Status] CHECK ([Status] IN (0, 1, 2, 3, 4, 5, 6, 7, 91)),
+    CONSTRAINT [CK_Orders_DeliveryAssignmentStatus] CHECK ([DeliveryAssignmentStatus] IN (0, 1, 2, 3, 4))
 );
 
 GO
@@ -66,4 +76,7 @@ GO
 CREATE UNIQUE INDEX [UX_Orders_BusinessId_IdempotencyKey]
     ON [dbo].[Orders] ([BusinessId], [IdempotencyKey])
     WHERE [IdempotencyKey] IS NOT NULL;
+GO
+
+CREATE INDEX [IX_Orders_BusinessId_DeliveryAssignmentStatus] ON [dbo].[Orders] ([BusinessId], [DeliveryAssignmentStatus]);
 GO

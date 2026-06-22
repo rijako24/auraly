@@ -1,10 +1,12 @@
 using System.ComponentModel.DataAnnotations;
-using System.Net;
-using System.Net.Mail;
 using System.Text;
+using System.Text.Json;
+using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
+using MimosBabySpa.Application.DTOs;
+using MimosBabySpa.Application.Services;
 using MimosBabySpa.WebAPI.Configuration;
 
 namespace MimosBabySpa.WebAPI.Controllers;
@@ -13,14 +15,27 @@ namespace MimosBabySpa.WebAPI.Controllers;
 [Route("api/demo-requests")]
 public sealed class DemoRequestsController : ControllerBase
 {
+    private const string DemoProvider = "web-demo";
+    private static readonly TimeSpan DebounceDelay = TimeSpan.FromSeconds(3);
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true
+    };
+
     private readonly DemoRequestOptions _options;
+    private readonly IInboundMessageDeduplicationService _deduplicationService;
+    private readonly IWhatsAppInboundQueueService _inboundQueueService;
     private readonly ILogger<DemoRequestsController> _logger;
 
     public DemoRequestsController(
         IOptions<DemoRequestOptions> options,
+        IInboundMessageDeduplicationService deduplicationService,
+        IWhatsAppInboundQueueService inboundQueueService,
         ILogger<DemoRequestsController> logger)
     {
         _options = options.Value;
+        _deduplicationService = deduplicationService;
+        _inboundQueueService = inboundQueueService;
         _logger = logger;
     }
 
@@ -28,78 +43,147 @@ public sealed class DemoRequestsController : ControllerBase
     [AllowAnonymous]
     public async Task<IActionResult> Create([FromBody] DemoRequest request, CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(_options.RecipientEmail))
-            return Problem("DemoRequests:RecipientEmail no esta configurado.", statusCode: StatusCodes.Status500InternalServerError);
+        if (_options.BusinessId == Guid.Empty)
+            return Problem("DemoRequests:BusinessId no esta configurado.", statusCode: StatusCodes.Status500InternalServerError);
 
-        if (string.IsNullOrWhiteSpace(_options.Smtp.Host) ||
-            string.IsNullOrWhiteSpace(_options.Smtp.FromEmail))
+        var phone = NormalizeWhatsAppNumber(request.Phone);
+        if (phone is null)
         {
-            _logger.LogWarning(
-                "Demo request received but SMTP is not configured. Recipient: {RecipientEmail}. Request: {@Request}",
-                _options.RecipientEmail,
-                request);
-
-            return Problem("El correo de demos no esta configurado todavia.", statusCode: StatusCodes.Status503ServiceUnavailable);
+            ModelState.AddModelError(nameof(request.Phone), "El WhatsApp debe incluir indicativo de pais o un celular colombiano valido.");
+            return ValidationProblem(ModelState);
         }
 
-        using var message = BuildMessage(request);
-        using var client = new SmtpClient(_options.Smtp.Host, _options.Smtp.Port)
+        var now = DateTime.UtcNow;
+        var dueAtUtc = now.Add(DebounceDelay);
+        var providerMessageId = $"demo-request:{_options.BusinessId:N}:{Guid.NewGuid():N}";
+        var requestSummary = BuildRequestSummary(request, phone);
+        var rawEntryJson = JsonSerializer.Serialize(
+            BuildSyntheticEntry(providerMessageId, phone, request.Name, requestSummary),
+            JsonOptions);
+
+        var isNew = await _deduplicationService.TryRecordReceivedAsync(
+            _options.BusinessId,
+            DemoProvider,
+            providerMessageId,
+            phone,
+            request.Name,
+            rawEntryJson,
+            now,
+            dueAtUtc,
+            ct);
+
+        await _inboundQueueService.ScheduleDebounceAsync(
+            _options.BusinessId,
+            DemoProvider,
+            phone,
+            providerMessageId,
+            dueAtUtc,
+            ct);
+
+        if (isNew)
         {
-            EnableSsl = _options.Smtp.EnableSsl
-        };
+            await _deduplicationService.MarkQueuedAsync(
+                _options.BusinessId,
+                DemoProvider,
+                providerMessageId,
+                dueAtUtc,
+                ct);
+        }
 
-        if (!string.IsNullOrWhiteSpace(_options.Smtp.Username))
-            client.Credentials = new NetworkCredential(_options.Smtp.Username, _options.Smtp.Password);
+        _logger.LogInformation(
+            "Demo request queued as inbound message {ProviderMessageId} for {Phone}",
+            providerMessageId,
+            phone);
 
-        await client.SendMailAsync(message, ct);
-
-        return Accepted(new { message = "Solicitud de demo enviada." });
+        return Accepted(new
+        {
+            message = "Solicitud de demo recibida. Aly procesara la conversacion por WhatsApp.",
+            requestId = providerMessageId
+        });
     }
 
-    private MailMessage BuildMessage(DemoRequest request)
+    private static Entry BuildSyntheticEntry(
+        string providerMessageId,
+        string phone,
+        string? customerName,
+        string messageText)
     {
-        var fromName = string.IsNullOrWhiteSpace(_options.Smtp.FromName)
-            ? "AURALY"
-            : _options.Smtp.FromName.Trim();
-
-        var message = new MailMessage
+        return new Entry
         {
-            From = new MailAddress(_options.Smtp.FromEmail.Trim(), fromName),
-            Subject = $"Nueva demo AURALY - {request.Email.Trim()}",
-            Body = BuildBody(request),
-            BodyEncoding = Encoding.UTF8,
-            SubjectEncoding = Encoding.UTF8,
-            IsBodyHtml = false
+            Id = providerMessageId,
+            Changes =
+            [
+                new Change
+                {
+                    Field = "messages",
+                    Value = new Value
+                    {
+                        Contacts =
+                        [
+                            new Contact
+                            {
+                                Profile = new Profile
+                                {
+                                    Name = ValueOrDefault(customerName, string.Empty)
+                                }
+                            }
+                        ],
+                        Messages =
+                        [
+                            new Message
+                            {
+                                Id = providerMessageId,
+                                From = phone,
+                                Type = "text",
+                                Text = new TextMessage
+                                {
+                                    Body = messageText
+                                }
+                            }
+                        ]
+                    }
+                }
+            ]
         };
-
-        message.To.Add(_options.RecipientEmail.Trim());
-        message.ReplyToList.Add(new MailAddress(request.Email.Trim()));
-
-        return message;
     }
 
-    private static string BuildBody(DemoRequest request)
+    private static string BuildRequestSummary(DemoRequest request, string normalizedPhone)
     {
         var builder = new StringBuilder();
-        builder.AppendLine("Nueva solicitud de demo desde la landing de AURALY");
+        builder.AppendLine("Solicitud de demo desde la landing de AURALY");
         builder.AppendLine();
-        builder.AppendLine($"Email: {request.Email.Trim()}");
+        builder.AppendLine($"WhatsApp: {normalizedPhone}");
         builder.AppendLine($"Nombre: {ValueOrDash(request.Name)}");
         builder.AppendLine($"Empresa: {ValueOrDash(request.Company)}");
-        builder.AppendLine($"WhatsApp: {ValueOrDash(request.Phone)}");
+        builder.AppendLine($"Email: {ValueOrDash(request.Email)}");
         builder.AppendLine();
         builder.AppendLine("Mensaje:");
         builder.AppendLine(ValueOrDash(request.Message));
         return builder.ToString();
     }
 
+    private static string ValueOrDefault(string? value, string fallback) =>
+        string.IsNullOrWhiteSpace(value) ? fallback : value.Trim();
+
     private static string ValueOrDash(string? value) =>
         string.IsNullOrWhiteSpace(value) ? "-" : value.Trim();
+
+    private static string? NormalizeWhatsAppNumber(string value)
+    {
+        var digits = Regex.Replace(value.Trim(), "[^0-9]", string.Empty);
+        if (digits.StartsWith("00", StringComparison.Ordinal))
+            digits = digits[2..];
+
+        if (digits.Length == 10 && digits.StartsWith("3", StringComparison.Ordinal))
+            digits = "57" + digits;
+
+        return digits.Length is >= 8 and <= 15 ? digits : null;
+    }
 }
 
 public sealed record DemoRequest(
-    [property: EmailAddress, Required, MaxLength(200)] string Email,
+    [property: Required, MaxLength(60)] string Phone,
+    [property: EmailAddress, MaxLength(200)] string? Email,
     [property: MaxLength(120)] string? Name,
     [property: MaxLength(160)] string? Company,
-    [property: MaxLength(60)] string? Phone,
     [property: MaxLength(1000)] string? Message);

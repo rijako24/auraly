@@ -1,4 +1,4 @@
--- =============================================================================
+﻿-- =============================================================================
 -- SeedSolorzanoWhatsAppNumber.sql
 --
 -- Configura el numero de WhatsApp de Vinos Artesanales Solorzano y lo enlaza
@@ -13,6 +13,7 @@ DECLARE @SolorzanoBusinessId UNIQUEIDENTIFIER = 'FCEE3BA9-E6BF-43E2-8C1A-560CB72
 DECLARE @SolorzanoAgentId    UNIQUEIDENTIFIER = 'B0EE3BA9-E6BF-43E2-8C1A-560CB724688B';
 DECLARE @PhoneNumber         NVARCHAR(20) = N'+573005942096';
 DECLARE @WhatsAppPhoneId     NVARCHAR(100) = N'1149544704907546';
+DECLARE @WhatsAppBusinessAccountId NVARCHAR(100) = N'2562841327443156';
 DECLARE @AccessToken         NVARCHAR(500);
 
 IF NOT EXISTS (SELECT 1 FROM dbo.Businesses WHERE BusinessId = @SolorzanoBusinessId)
@@ -68,6 +69,7 @@ BEGIN
             AgentId,
             PhoneNumber,
             WhatsAppPhoneNumberId,
+            WhatsAppBusinessAccountId,
             WhatsAppAccessToken,
             IsActive,
             CreatedAt
@@ -78,6 +80,7 @@ BEGIN
             @SolorzanoAgentId,
             @PhoneNumber,
             @WhatsAppPhoneId,
+            @WhatsAppBusinessAccountId,
             @AccessToken,
             1,
             GETUTCDATE()
@@ -90,6 +93,7 @@ BEGIN
             AgentId               = @SolorzanoAgentId,
             PhoneNumber           = @PhoneNumber,
             WhatsAppPhoneNumberId = @WhatsAppPhoneId,
+            WhatsAppBusinessAccountId = @WhatsAppBusinessAccountId,
             WhatsAppAccessToken   = @AccessToken,
             IsActive              = 1
         WHERE BusinessWhatsAppNumberId = @ExistingWhatsAppNumberId;
@@ -180,3 +184,4 @@ BEGIN
 END
 
 GO
+

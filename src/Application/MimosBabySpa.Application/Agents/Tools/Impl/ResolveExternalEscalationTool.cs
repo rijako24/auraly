@@ -50,7 +50,15 @@ public sealed class ResolveExternalEscalationTool : IAgentTool
                 {
                     external_escalation_id = o.ExternalEscalationAttemptId,
                     attempt_code = o.AttemptCode,
-                    event_name = o.EventName
+                    event_name = o.EventName,
+                    target_type = o.TargetType,
+                    target_id = o.TargetId,
+                    order_number = ReadCustomValue(o.CustomPayloadJson, "order_number"),
+                    customer_name = ReadCustomValue(o.CustomPayloadJson, "customer_name"),
+                    customer_phone = ReadCustomValue(o.CustomPayloadJson, "customer_phone"),
+                    delivery_address = ReadCustomValue(o.CustomPayloadJson, "delivery_address"),
+                    total = ReadCustomValue(o.CustomPayloadJson, "total"),
+                    currency = ReadCustomValue(o.CustomPayloadJson, "currency")
                 }).ToList()
             });
         }
@@ -63,7 +71,31 @@ public sealed class ResolveExternalEscalationTool : IAgentTool
             attempt_code = result.Attempt.AttemptCode,
             event_name = result.Attempt.EventName,
             target_type = result.Attempt.TargetType,
-            target_id = result.Attempt.TargetId
+            target_id = result.Attempt.TargetId,
+            order_number = ReadCustomValue(result.Attempt.CustomPayloadJson, "order_number"),
+            customer_name = ReadCustomValue(result.Attempt.CustomPayloadJson, "customer_name"),
+            customer_phone = ReadCustomValue(result.Attempt.CustomPayloadJson, "customer_phone"),
+            delivery_address = ReadCustomValue(result.Attempt.CustomPayloadJson, "delivery_address"),
+            total = ReadCustomValue(result.Attempt.CustomPayloadJson, "total"),
+            currency = ReadCustomValue(result.Attempt.CustomPayloadJson, "currency")
         });
+    }
+
+    private static string? ReadCustomValue(string? json, string key)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+            return null;
+
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            return doc.RootElement.TryGetProperty(key, out var value)
+                ? value.GetString()
+                : null;
+        }
+        catch
+        {
+            return null;
+        }
     }
 }

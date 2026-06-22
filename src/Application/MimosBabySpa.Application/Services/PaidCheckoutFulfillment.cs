@@ -177,7 +177,7 @@ public sealed class ReservationPaidCheckoutFulfillmentHandler : IPaidCheckoutFul
         var outcome = ResolveOutcome(payment, WompiWebhookOutcomes.ReservationCreated);
         return new PaidCheckoutFulfillmentResult(
             outcome,
-            outcome,
+            "order_created",
             "reservation",
             reservation.ReservationId,
             reservation.CustomerPhoneSnapshot,
@@ -368,7 +368,7 @@ public sealed class OrderPaidCheckoutFulfillmentHandler : IPaidCheckoutFulfillme
 
         return new PaidCheckoutFulfillmentResult(
             outcome,
-            outcome,
+            "order_created",
             "order",
             order.OrderId,
             order.CustomerPhoneSnapshot,

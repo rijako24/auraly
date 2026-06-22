@@ -298,35 +298,47 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         }
       ]
     },
-    "delivery_order_paid": {
+    "delivery_request": {
       "messages": [
         {
-          "body": "Nuevo pedido para domicilio\n\nCodigo: {attempt_code}\nPedido: {order_number}\nCliente: {customer_name}\nTelefono: {customer_phone}\nCiudad: {city}\nDireccion: {delivery_address}\nItems: {items}\nTotal: ${total} {currency}\n\nPuedes tomarlo?",
+          "type": "whatsapp_template",
+          "templateName": "delivery_request",
+          "language": "es_CO",
+          "bodyParameters": ["{business_name}", "{attempt_code}", "{order_number}", "{customer_name}", "{customer_phone}", "{city}", "{delivery_address}", "{items}", "{total}", "{currency}"],
           "buttons": [
-            { "id": "external_escalation:accept:{external_escalation_id}", "title": "Aceptar {attempt_code}" },
-            { "id": "external_escalation:decline:{external_escalation_id}", "title": "No {attempt_code}" }
+            { "id": "external_escalation:accept:{external_escalation_id}", "title": "Aceptar" },
+            { "id": "external_escalation:decline:{external_escalation_id}", "title": "No tomar" }
           ]
         }
       ]
     },
-    "admin_order_paid": {
+    "order_created": {
       "messages": [
         {
-          "body": "Nuevo pedido pagado\n\nPedido: {order_number}\nCliente: {customer_name}\nTelefono: {customer_phone}\nCiudad: {city}\nDireccion: {delivery_address}\nItems: {items}\nTotal: ${total} {currency}\nEstado domicilio: en asignacion"
+          "type": "whatsapp_template",
+          "templateName": "order_created",
+          "language": "es_CO",
+          "bodyParameters": ["{order_number}", "{customer_name}", "{customer_phone}", "{city}", "{delivery_address}", "{items}", "{total}", "{currency}"]
         }
       ]
     },
-    "admin_delivery_called": {
+    "delivery_requested": {
       "messages": [
         {
-          "body": "Domicilio llamado\n\nPedido: {order_number}\nCodigo: {attempt_code}\nContacto: {contact_name} ({contact_phone})\nCiudad: {city}\nDireccion: {delivery_address}\nTotal: ${total} {currency}"
+          "type": "whatsapp_template",
+          "templateName": "delivery_requested",
+          "language": "es_CO",
+          "bodyParameters": ["{order_number}", "{attempt_code}", "{contact_name}", "{contact_phone}", "{city}", "{delivery_address}", "{total}", "{currency}"]
         }
       ]
     },
-    "admin_delivery_confirmed": {
+    "delivery_confirmed": {
       "messages": [
         {
-          "body": "Domicilio confirmado\n\nPedido: {order_number}\nCodigo: {attempt_code}\nDomiciliario: {contact_name} ({contact_phone})\nCliente: {customer_name}\nTelefono cliente: {customer_phone}\nDireccion: {delivery_address}"
+          "type": "whatsapp_template",
+          "templateName": "delivery_confirmed",
+          "language": "es_CO",
+          "bodyParameters": ["{order_number}", "{attempt_code}", "{contact_name}", "{contact_phone}", "{customer_name}", "{customer_phone}", "{delivery_address}"]
         }
       ]
     }
@@ -522,20 +534,20 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "recipients": [],
       "sendMessageSequence": null
     },
-    "order_paid": {
+    "order_created": {
       "enabled": true,
       "recipients": ["+573205387559"],
-      "sendMessageSequence": "admin_order_paid"
+      "sendMessageSequence": "order_created"
     },
-    "delivery_called": {
+    "delivery_requested": {
       "enabled": true,
       "recipients": ["+573205387559"],
-      "sendMessageSequence": "admin_delivery_called"
+      "sendMessageSequence": "delivery_requested"
     },
     "delivery_confirmed": {
       "enabled": true,
       "recipients": ["+573205387559"],
-      "sendMessageSequence": "admin_delivery_confirmed"
+      "sendMessageSequence": "delivery_confirmed"
     }
   },
   "webhooks": {
@@ -548,13 +560,13 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
   "externalEscalations": {
     "enabled": true,
     "events": {
-      "order_paid": {
+      "order_created": {
         "enabled": true,
         "strategy": "sequential",
         "attemptTimeoutMinutes": 5,
         "attemptCodePrefix": "PED",
-        "sendMessageSequence": "delivery_order_paid",
-        "attemptSentNotificationEvent": "delivery_called",
+        "sendMessageSequence": "delivery_request",
+        "attemptSentNotificationEvent": "delivery_requested",
         "acceptedNotificationEvent": "delivery_confirmed",
         "contacts": [
           {
@@ -608,3 +620,4 @@ WHERE AgentId = @AgentId;
 
 PRINT N'SeedSolorzanoAgentConfiguration: Camila reconfigurada para negocio ' + CAST(@BusinessId AS NVARCHAR(36));
 GO
+

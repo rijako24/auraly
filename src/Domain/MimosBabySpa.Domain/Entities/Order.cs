@@ -13,6 +13,16 @@ public class Order
     public OrderSource Source { get; set; } = OrderSource.Bot;
     public OrderFulfillmentMode FulfillmentMode { get; set; } = OrderFulfillmentMode.Local;
     public OrderStatus Status { get; set; } = OrderStatus.Draft;
+    public DeliveryAssignmentStatus DeliveryAssignmentStatus { get; set; } = DeliveryAssignmentStatus.NotRequested;
+    public Guid? DeliveryExternalEscalationAttemptId { get; set; }
+    public string? DeliveryAssigneeKeySnapshot { get; set; }
+    public string? DeliveryAssigneeNameSnapshot { get; set; }
+    public string? DeliveryAssigneeRoleSnapshot { get; set; }
+    public string? DeliveryAssigneePhoneSnapshot { get; set; }
+    public DateTime? DeliveryAssignmentRequestedAt { get; set; }
+    public DateTime? DeliveryAssignmentAcceptedAt { get; set; }
+    public DateTime? DeliveryAssignmentDeclinedAt { get; set; }
+    public DateTime? DeliveryAssignmentTimedOutAt { get; set; }
     public string? CustomerNameSnapshot { get; set; }
     public string? CustomerEmailSnapshot { get; set; }
     public string? CustomerPhoneSnapshot { get; set; }

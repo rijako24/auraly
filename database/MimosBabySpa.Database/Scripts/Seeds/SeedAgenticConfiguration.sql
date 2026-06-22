@@ -169,9 +169,14 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         { "body": "Lo sentimos, el horario de las {Time} ya no esta disponible porque otro cliente lo reserve primero. Tu pago esta seguro. Quieres elegir otro horario? Opciones: {slots}." }
       ]
     },
-    "internal_reservation_created": {
+    "reservation_created": {
       "messages": [
-        { "body": "*Nueva reserva creada*\n- Cliente: {CustomerName}\n- Servicio: {Service}\n- Fecha: {Date}\n- Hora: {Time}\n- Total: ${Total}" }
+        {
+          "type": "whatsapp_template",
+          "templateName": "reservation_created",
+          "language": "es_CO",
+          "bodyParameters": ["{CustomerName}", "{Service}", "{Date}", "{Time}", "{Total}"]
+        }
       ]
     }
   },
@@ -186,7 +191,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
     "reservation_created": {
       "enabled": true,
       "recipients": ["573042052007"],
-      "sendMessageSequence": "internal_reservation_created"
+      "sendMessageSequence": "reservation_created"
     }
   },
   "reservationAutomations": {
@@ -490,9 +495,10 @@ END
 
 -- -- Vincular WhatsApp del negocio al agente ----------------------------------
 UPDATE dbo.BusinessWhatsAppNumbers
-SET AgentId = @AgentId
+SET AgentId = @AgentId,
+    WhatsAppBusinessAccountId = COALESCE(NULLIF(WhatsAppBusinessAccountId, N''), N'2562841327443156')
 WHERE BusinessId = @BusinessId
-  AND (AgentId IS NULL OR AgentId <> @AgentId);
+  AND (AgentId IS NULL OR AgentId <> @AgentId OR WhatsAppBusinessAccountId IS NULL OR LTRIM(RTRIM(WhatsAppBusinessAccountId)) = N'');
 
 PRINT N'SeedAgenticConfiguration: Mimi Bot configured for business ' + CAST(@BusinessId AS NVARCHAR(36));
 GO

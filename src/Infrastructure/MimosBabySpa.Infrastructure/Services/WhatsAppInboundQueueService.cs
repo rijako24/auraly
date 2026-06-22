@@ -3,7 +3,7 @@ using Azure.Messaging.ServiceBus;
 using Microsoft.Extensions.Configuration;
 using MimosBabySpa.Application.Services;
 
-namespace MimosBabySpa.API.Services;
+namespace MimosBabySpa.Infrastructure.Services;
 
 public sealed class WhatsAppInboundQueueService : IWhatsAppInboundQueueService, IAsyncDisposable
 {
@@ -65,6 +65,3 @@ public sealed class WhatsAppInboundQueueService : IWhatsAppInboundQueueService, 
         return _sender;
     }
 }
-
-
-

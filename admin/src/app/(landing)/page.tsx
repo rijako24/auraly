@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import Link from "next/link";
 import Image from "next/image";
@@ -111,10 +111,10 @@ const PLANS = [
 ];
 
 const OUTCOMES = [
-  { icon: Clock3, title: "Responde y califica", text: "Atiende preguntas, detecta intencion de compra y captura datos utiles sin dejar el chat esperando." },
-  { icon: CalendarCheck, title: "Agenda con reglas", text: "Consulta disponibilidad, toma datos y confirma reservas respetando horarios, sedes y politicas." },
-  { icon: CreditCard, title: "Cobra sin salir del chat", text: "Genera resumen, link de pago y seguimiento para que la venta no se enfrie." },
-  { icon: BarChart3, title: "Mide consumo y margen", text: "Controla creditos, costos de IA y limites operativos antes de que el canal se vuelva caro." },
+  { icon: Clock3, title: "Atiende 24/7", text: "Responde al instante fuera de horario, baja tiempos de espera y mantiene conversaciones activas cuando tu equipo no esta conectado." },
+  { icon: CalendarCheck, title: "Agenda demos y citas", text: "Consulta disponibilidad, captura datos clave y lleva al cliente al siguiente paso sin romper el flujo de WhatsApp." },
+  { icon: CreditCard, title: "Maximiza ventas", text: "Califica leads, recomienda servicios, recupera conversaciones y activa pagos o seguimientos para mejorar conversion." },
+  { icon: BarChart3, title: "Aprende del negocio", text: "Usa catalogo, politicas, preguntas frecuentes, tono de marca e integraciones para responder con contexto real." },
 ];
 
 const AGENTS = [
@@ -169,9 +169,9 @@ const AGENTS = [
 ];
 
 const DIFFERENTIATORS = [
-  ["Vertical primero", "No empieza como constructor generico. AURALY viene pensado para WhatsApp, ventas, reservas y pagos."],
-  ["Humano cuando importa", "El agente sabe pausar, escalar y entregar contexto para que tu equipo intervenga sin perder la conversacion."],
-  ["Costo visible", "Cada plan tiene creditos y limites claros para proteger margen, no solo promesas de automatizacion."],
+  ["Problema claro", "AURALY resuelve chats perdidos, respuestas lentas, leads sin seguimiento, agendas manuales y equipos saturados por tareas repetitivas."],
+  ["Configurable de punta a punta", "Aly adapta tono, servicios, objeciones, horarios, reglas de agenda, datos a capturar, plantillas y escalamiento humano."],
+  ["Operacion medible", "Cada conversacion deja historial, estado, consumo y contexto para optimizar ventas, soporte y recuperacion."],
 ];
 
 const FAQ = [
@@ -228,7 +228,7 @@ export default function LandingPage() {
 
       setForm({ name: "", email: "", company: "", phone: "", message: "" });
       setStatus("success");
-      setStatusMessage("Listo. Recibimos tu solicitud y te contactaremos pronto.");
+      setStatusMessage("Listo. Aly iniciara la conversacion por WhatsApp para coordinar tu demo.");
     } catch (error) {
       setStatus("error");
       setStatusMessage(error instanceof Error ? error.message : "No se pudo enviar la solicitud.");
@@ -277,10 +277,10 @@ export default function LandingPage() {
         <div className="max-w-3xl">
           <Badge className="mb-5 bg-[#69D9D0] text-[#07161A] hover:bg-[#69D9D0]">Para negocios que venden por WhatsApp</Badge>
           <h1 className="text-5xl font-semibold leading-[1.02] tracking-normal sm:text-6xl lg:text-7xl">
-            Convierte chats en ventas, reservas y pagos medibles.
+            Empleados digitales para vender, agendar y atender 24/7.
           </h1>
           <p className="mt-6 max-w-2xl text-lg leading-8 text-black/70">
-            AURALY atiende, califica, cotiza y agenda desde WhatsApp con contexto de tu negocio. Tu equipo conserva el control; la IA ejecuta lo repetitivo y deja trazabilidad de consumo, margen y resultados.
+            AURALY crea empleados digitales configurables que responden, califican, recomiendan, agendan demos o citas, cobran y hacen seguimiento desde WhatsApp. Aly es nuestra asesora digital: entiende la necesidad, explica que hacemos y lleva la conversacion hasta una demo agendada.
           </p>
           <div className="mt-8 flex flex-col gap-3 sm:flex-row">
             <Button size="lg" asChild className="bg-[#151515] text-white hover:bg-black">
@@ -334,8 +334,8 @@ export default function LandingPage() {
       <section id="producto" className="border-y border-black/10 bg-white py-20">
         <div className="mx-auto max-w-7xl px-4">
           <div className="max-w-2xl">
-            <Badge variant="outline" className="mb-4 border-[#1A5860]/30 bg-white text-[#1A5860] hover:bg-white">Sistema comercial completo</Badge>
-            <h2 className="text-3xl font-semibold sm:text-5xl">No es un chatbot generico. Es una capa operativa para vender mejor por mensajeria.</h2>
+            <Badge variant="outline" className="mb-4 border-[#1A5860]/30 bg-white text-[#1A5860] hover:bg-white">Empleados digitales configurables</Badge>
+            <h2 className="text-3xl font-semibold sm:text-5xl">No es un chatbot generico. Es un empleado digital entrenado para operar ventas, agenda, soporte y seguimiento.</h2>
           </div>
           <div className="mt-10 grid gap-4 md:grid-cols-2 lg:grid-cols-4">
             {OUTCOMES.map((item) => {
@@ -522,14 +522,14 @@ export default function LandingPage() {
           <div>
             <Sparkles className="mb-5 h-8 w-8 text-[#1A5860]" />
             <h2 className="text-3xl font-semibold sm:text-5xl">Revisemos tu flujo actual de WhatsApp.</h2>
-            <p className="mt-4 max-w-2xl text-lg text-black/65">En la demo mapeamos preguntas frecuentes, datos que necesitas capturar, reglas de agenda, pagos, handoff humano y limites de consumo.</p>
+            <p className="mt-4 max-w-2xl text-lg text-black/65">Al solicitarla, Aly inicia la conversacion por WhatsApp, entiende tu cuello de botella y te guia hasta coordinar la demo con nuestro equipo.</p>
           </div>
           <form onSubmit={submit} className="grid gap-3 rounded-lg border border-black/10 bg-[#f7f8f2] p-4">
             <div className="grid gap-3 sm:grid-cols-2">
               <Input value={form.name} onChange={(event) => updateForm("name", event.target.value)} placeholder="Nombre" className="bg-white text-[#151515] placeholder:text-black/45" />
-              <Input type="email" value={form.email} onChange={(event) => updateForm("email", event.target.value)} placeholder="Correo" required className="bg-white text-[#151515] placeholder:text-black/45" />
+              <Input type="email" value={form.email} onChange={(event) => updateForm("email", event.target.value)} placeholder="Correo (opcional)" className="bg-white text-[#151515] placeholder:text-black/45" />
               <Input value={form.company} onChange={(event) => updateForm("company", event.target.value)} placeholder="Empresa" className="bg-white text-[#151515] placeholder:text-black/45" />
-              <Input value={form.phone} onChange={(event) => updateForm("phone", event.target.value)} placeholder="WhatsApp" className="bg-white text-[#151515] placeholder:text-black/45" />
+              <Input value={form.phone} onChange={(event) => updateForm("phone", event.target.value)} placeholder="WhatsApp" required className="bg-white text-[#151515] placeholder:text-black/45" />
             </div>
             <Textarea value={form.message} onChange={(event) => updateForm("message", event.target.value)} placeholder="Cuentame que quieres automatizar" className="min-h-24 bg-white text-[#151515] placeholder:text-black/45" />
             {statusMessage && (
@@ -558,3 +558,4 @@ export default function LandingPage() {
     </main>
   );
 }
+

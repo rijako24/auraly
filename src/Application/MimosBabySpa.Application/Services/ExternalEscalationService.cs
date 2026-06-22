@@ -152,6 +152,7 @@ public sealed class ExternalEscalationService : IExternalEscalationService
         };
 
         await _unitOfWork.ExternalEscalationAttempts.AddAsync(attempt, ct);
+        await MarkOrderDeliveryPendingAsync(attempt, now, ct);
         await _unitOfWork.SaveChangesAsync(ct);
 
         var sentMessageId = await SendEscalationMessagesAsync(config, definition, attempt, request.Custom, ct);
@@ -237,9 +238,11 @@ public sealed class ExternalEscalationService : IExternalEscalationService
             return new ExternalEscalationActionResult(false, attempt, "Ese pedido ya fue tomado por otro contacto.", false);
         }
 
+        var now = DateTime.UtcNow;
         attempt.Status = ExternalEscalationAttemptStatus.Accepted;
-        attempt.AcceptedAt = DateTime.UtcNow;
+        attempt.AcceptedAt = now;
         await _unitOfWork.ExternalEscalationAttempts.UpdateAsync(attempt, ct);
+        await MarkOrderDeliveryAcceptedAsync(attempt, now, ct);
         await _unitOfWork.ExternalEscalationAttempts.CancelPendingForTargetAsync(
             attempt.BusinessId,
             attempt.EventName,
@@ -270,9 +273,11 @@ public sealed class ExternalEscalationService : IExternalEscalationService
         if (!IsUsableAttempt(attempt, businessId, contactPhone))
             return new ExternalEscalationActionResult(false, attempt, "El escalamiento ya no esta disponible.", false);
 
+        var now = DateTime.UtcNow;
         attempt!.Status = ExternalEscalationAttemptStatus.Declined;
-        attempt.DeclinedAt = DateTime.UtcNow;
+        attempt.DeclinedAt = now;
         await _unitOfWork.ExternalEscalationAttempts.UpdateAsync(attempt, ct);
+        await MarkOrderDeliveryDeclinedAsync(attempt, now, ct);
         await _unitOfWork.SaveChangesAsync(ct);
 
         var next = await EscalateNextAsync(
@@ -296,9 +301,11 @@ public sealed class ExternalEscalationService : IExternalEscalationService
         var expired = await _unitOfWork.ExternalEscalationAttempts.GetExpiredPendingAttemptsAsync(DateTime.UtcNow, ct);
         foreach (var attempt in expired)
         {
+            var now = DateTime.UtcNow;
             attempt.Status = ExternalEscalationAttemptStatus.TimedOut;
-            attempt.TimedOutAt = DateTime.UtcNow;
+            attempt.TimedOutAt = now;
             await _unitOfWork.ExternalEscalationAttempts.UpdateAsync(attempt, ct);
+            await MarkOrderDeliveryTimedOutAsync(attempt, now, ct);
             await _unitOfWork.SaveChangesAsync(ct);
 
             await EscalateNextAsync(
@@ -312,6 +319,86 @@ public sealed class ExternalEscalationService : IExternalEscalationService
         }
     }
 
+    private async Task MarkOrderDeliveryPendingAsync(ExternalEscalationAttempt attempt, DateTime now, CancellationToken ct)
+    {
+        var order = await GetTargetOrderAsync(attempt, ct);
+        if (order is null)
+            return;
+
+        order.DeliveryAssignmentStatus = DeliveryAssignmentStatus.Pending;
+        order.DeliveryExternalEscalationAttemptId = attempt.ExternalEscalationAttemptId;
+        order.DeliveryAssigneeKeySnapshot = attempt.ContactKey;
+        order.DeliveryAssigneeNameSnapshot = attempt.ContactNameSnapshot;
+        order.DeliveryAssigneeRoleSnapshot = attempt.ContactRoleSnapshot;
+        order.DeliveryAssigneePhoneSnapshot = attempt.ContactPhoneSnapshot;
+        order.DeliveryAssignmentRequestedAt = now;
+        order.DeliveryAssignmentAcceptedAt = null;
+        order.DeliveryAssignmentDeclinedAt = null;
+        order.DeliveryAssignmentTimedOutAt = null;
+        order.UpdatedAt = now;
+        await _unitOfWork.Orders.UpdateAsync(order, ct);
+    }
+
+    private async Task MarkOrderDeliveryAcceptedAsync(ExternalEscalationAttempt attempt, DateTime now, CancellationToken ct)
+    {
+        var order = await GetTargetOrderAsync(attempt, ct);
+        if (order is null)
+            return;
+
+        order.DeliveryAssignmentStatus = DeliveryAssignmentStatus.Accepted;
+        order.DeliveryExternalEscalationAttemptId = attempt.ExternalEscalationAttemptId;
+        order.DeliveryAssigneeKeySnapshot = attempt.ContactKey;
+        order.DeliveryAssigneeNameSnapshot = attempt.ContactNameSnapshot;
+        order.DeliveryAssigneeRoleSnapshot = attempt.ContactRoleSnapshot;
+        order.DeliveryAssigneePhoneSnapshot = attempt.ContactPhoneSnapshot;
+        order.DeliveryAssignmentAcceptedAt = now;
+        order.DeliveryAssignmentDeclinedAt = null;
+        order.DeliveryAssignmentTimedOutAt = null;
+        order.UpdatedAt = now;
+        await _unitOfWork.Orders.UpdateAsync(order, ct);
+    }
+
+    private async Task MarkOrderDeliveryDeclinedAsync(ExternalEscalationAttempt attempt, DateTime now, CancellationToken ct)
+    {
+        var order = await GetTargetOrderAsync(attempt, ct);
+        if (order is null)
+            return;
+
+        order.DeliveryAssignmentStatus = DeliveryAssignmentStatus.Declined;
+        order.DeliveryExternalEscalationAttemptId = attempt.ExternalEscalationAttemptId;
+        order.DeliveryAssigneeKeySnapshot = attempt.ContactKey;
+        order.DeliveryAssigneeNameSnapshot = attempt.ContactNameSnapshot;
+        order.DeliveryAssigneeRoleSnapshot = attempt.ContactRoleSnapshot;
+        order.DeliveryAssigneePhoneSnapshot = attempt.ContactPhoneSnapshot;
+        order.DeliveryAssignmentDeclinedAt = now;
+        order.DeliveryAssignmentTimedOutAt = null;
+        order.UpdatedAt = now;
+        await _unitOfWork.Orders.UpdateAsync(order, ct);
+    }
+
+    private async Task MarkOrderDeliveryTimedOutAsync(ExternalEscalationAttempt attempt, DateTime now, CancellationToken ct)
+    {
+        var order = await GetTargetOrderAsync(attempt, ct);
+        if (order is null)
+            return;
+
+        order.DeliveryAssignmentStatus = DeliveryAssignmentStatus.TimedOut;
+        order.DeliveryExternalEscalationAttemptId = attempt.ExternalEscalationAttemptId;
+        order.DeliveryAssigneeKeySnapshot = attempt.ContactKey;
+        order.DeliveryAssigneeNameSnapshot = attempt.ContactNameSnapshot;
+        order.DeliveryAssigneeRoleSnapshot = attempt.ContactRoleSnapshot;
+        order.DeliveryAssigneePhoneSnapshot = attempt.ContactPhoneSnapshot;
+        order.DeliveryAssignmentTimedOutAt = now;
+        order.UpdatedAt = now;
+        await _unitOfWork.Orders.UpdateAsync(order, ct);
+    }
+
+    private async Task<Order?> GetTargetOrderAsync(ExternalEscalationAttempt attempt, CancellationToken ct)
+    {
+        return attempt.TargetType.Equals("order", StringComparison.OrdinalIgnoreCase)
+            ? await _unitOfWork.Orders.GetByIdAsync(attempt.BusinessId, attempt.TargetId, ct)
+            : null;
+    }
     private async Task<string?> SendEscalationMessagesAsync(
         AgentConfig config,
         ExternalEscalationEventDefinition definition,
@@ -322,8 +409,10 @@ public sealed class ExternalEscalationService : IExternalEscalationService
         if (string.IsNullOrWhiteSpace(definition.SendMessageSequence))
             return null;
 
+        var business = await _unitOfWork.Businesses.GetByIdAsync(config.BusinessId);
         var context = new Dictionary<string, string>(custom, StringComparer.OrdinalIgnoreCase)
         {
+            ["business_name"] = business?.Name ?? string.Empty,
             ["external_escalation_id"] = attempt.ExternalEscalationAttemptId.ToString(),
             ["attempt_code"] = attempt.AttemptCode,
             ["contact_name"] = attempt.ContactNameSnapshot,
@@ -346,6 +435,18 @@ public sealed class ExternalEscalationService : IExternalEscalationService
         string? sentMessageId = null;
         foreach (var message in messages)
         {
+            if (message.Template is not null)
+            {
+                sentMessageId ??= await _whatsApp.SendTemplateMessageAsync(
+                    config.BusinessId,
+                    attempt.ContactPhoneSnapshot,
+                    message.Template.Name,
+                    message.Template.LanguageCode,
+                    message.Template.BodyParameters,
+                    message.Buttons);
+                continue;
+            }
+
             if (message.Buttons is { Count: > 0 } buttons)
             {
                 sentMessageId ??= await _whatsApp.SendButtonMessageAsync(
@@ -499,3 +600,4 @@ public sealed class ExternalEscalationService : IExternalEscalationService
         }
     }
 }
+

@@ -42,6 +42,9 @@ public sealed class DeclineExternalEscalationTool : IAgentTool
             escalated_next = result.EscalatedNext,
             external_escalation_id = result.Attempt?.ExternalEscalationAttemptId,
             attempt_code = result.Attempt?.AttemptCode,
+            event_name = result.Attempt?.EventName,
+            target_type = result.Attempt?.TargetType,
+            target_id = result.Attempt?.TargetId,
             message = result.Message
         });
     }

@@ -101,6 +101,8 @@ builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<IUsageBillingService, UsageBillingService>();
 builder.Services.AddScoped<IMessageService, MessageService>();
 builder.Services.AddScoped<IOutboundMessageDispatcher, OutboundMessageDispatcher>();
+builder.Services.AddScoped<IInboundMessageDeduplicationService, InboundMessageDeduplicationService>();
+builder.Services.AddSingleton<IWhatsAppInboundQueueService, WhatsAppInboundQueueService>();
 builder.Services.AddScoped<IWorkingHoursService, WorkingHoursService>();
 builder.Services.AddScoped<IConversationService, ConversationService>();
 builder.Services.AddScoped<IConversationLifecycleService, ConversationLifecycleService>();
@@ -336,6 +338,7 @@ using (var scope = app.Services.CreateScope())
 }
 
 app.Run();
+
 
 
 

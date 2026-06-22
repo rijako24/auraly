@@ -10,7 +10,6 @@ using MimosBabySpa.Domain.Repositories;
 using MimosBabySpa.Infrastructure.Data;
 using MimosBabySpa.Infrastructure.Repositories;
 using MimosBabySpa.Infrastructure.Services;
-using MimosBabySpa.API.Services;
 using MimosBabySpa.Infrastructure.Configuration;
 using Azure.Storage.Blobs;
 using Azure.AI.OpenAI;
@@ -272,6 +271,7 @@ var host = new HostBuilder()
     .Build();
 
 host.Run();
+
 
 
 

@@ -1,4 +1,4 @@
-﻿-- =============================================================================
+-- =============================================================================
 -- PostDeployment.sql
 --
 -- Hook SSDT que se ejecuta despues de publicar el dacpac.
@@ -31,6 +31,7 @@
 :r .\Migrations\MigrateBabySpaPlanPrices2026.sql
 :r .\Migrations\MigrateExternalEscalationAttempts.sql
 :r .\Migrations\MigrateOrderCheckoutPayments.sql
+:r .\Migrations\MigrateOrderDeliveryAssignment.sql
 :r .\Seeds\SeedAdminUser.sql
 :r .\Seeds\SeedAgentPermissions.sql
 :r .\Seeds\SeedSqlAppLoginPermissions.sql
@@ -39,6 +40,7 @@
 :r .\Migrations\MigrateIniciacionJardinService2026.sql
 :r .\Seeds\SeedBillingPlans.sql
 :r .\Seeds\SeedRadaConcept.sql
+:r .\Seeds\SeedAuraly.sql
 :r .\Seeds\SeedBusinessWorkingHours.sql
 :r .\Seeds\SeedAgenticConfiguration.sql
 :r .\Seeds\SeedSolorzanoWhatsAppNumber.sql
@@ -53,4 +55,5 @@
 :r .\Seeds\SeedSolorzanoAgentConfiguration.sql
 
 PRINT 'Post-deployment scripts executed successfully.';
+
 
