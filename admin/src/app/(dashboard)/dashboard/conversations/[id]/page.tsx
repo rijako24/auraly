@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { ArrowLeft, Clock, MessageSquare } from "lucide-react";
+import { toast } from "sonner";
 
 import { ChatContainer } from "@/components/chat/chat-container";
 import { Badge } from "@/components/ui/badge";
@@ -22,6 +23,15 @@ import {
   getConversationStageStyle,
 } from "@/types/enums";
 
+function getErrorMessage(error: unknown) {
+  if (error && typeof error === "object" && "message" in error) {
+    const message = (error as { message?: unknown }).message;
+    if (typeof message === "string" && message.trim()) return message;
+  }
+
+  return "No se pudo enviar el mensaje.";
+}
+
 export default function ConversationDetailPage() {
   const params = useParams();
   const id = params.id as string;
@@ -38,12 +48,18 @@ export default function ConversationDetailPage() {
   const stageColor = getConversationStageColor();
   const stageStyle = getConversationStageStyle(conversation.currentStageName);
 
-  const handleSendMessage = (message: string) => {
-    sendWebMessage.mutate({ conversationId: id, message });
+  const handleSendMessage = async (message: string) => {
+    try {
+      await sendWebMessage.mutateAsync({ conversationId: id, message });
+      toast.success("Mensaje enviado");
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+      throw error;
+    }
   };
 
   return (
-    <div className="-m-4 flex h-[calc(100vh-5.5rem)] flex-col overflow-hidden lg:-m-6 lg:h-[calc(100vh-5.5rem)]">
+    <div className="-m-4 flex h-[calc(100dvh-5.5rem)] flex-col overflow-hidden lg:-m-6 lg:h-[calc(100dvh-5.5rem)]">
       <div className="flex shrink-0 items-center gap-4 border-b border-border bg-background px-4 py-3">
         <Button variant="ghost" size="icon" asChild>
           <Link href="/dashboard/conversations">
@@ -56,7 +72,11 @@ export default function ConversationDetailPage() {
             {conversation.userNumber}
           </p>
         </div>
-        <Badge variant="secondary" style={stageStyle} className={cn("shrink-0 font-medium shadow-sm", stageColor)}>
+        <Badge
+          variant="secondary"
+          style={stageStyle}
+          className={cn("shrink-0 font-medium shadow-sm", stageColor)}
+        >
           {stageLabel}
         </Badge>
       </div>
@@ -82,7 +102,11 @@ export default function ConversationDetailPage() {
                 <div className="space-y-2 text-sm">
                   <div className="flex justify-between gap-2">
                     <span className="text-muted-foreground">Etapa</span>
-                    <Badge variant="secondary" style={stageStyle} className={cn("text-xs font-medium shadow-sm", stageColor)}>
+                    <Badge
+                      variant="secondary"
+                      style={stageStyle}
+                      className={cn("text-xs font-medium shadow-sm", stageColor)}
+                    >
                       {stageLabel}
                     </Badge>
                   </div>

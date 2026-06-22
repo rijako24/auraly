@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using MimosBabySpa.Application.Common.Exceptions;
 using MimosBabySpa.Application.Agents;
 using MimosBabySpa.Application.DTOs;
 using MimosBabySpa.Application.Services;
@@ -107,7 +108,7 @@ public class WhatsAppService : IWhatsAppService
                 to,
                 credentials.PhoneNumberId,
                 message?.Length ?? 0);
-            response.EnsureSuccessStatusCode();
+            throw new DomainValidationException("WhatsApp", BuildWhatsAppDeliveryErrorMessage(responseBody));
         }
 
         _logger.LogInformation("Mensaje enviado a {To}", to);
@@ -167,7 +168,7 @@ public class WhatsAppService : IWhatsAppService
             _logger.LogError(
                 "WhatsApp API rechazÃ³ mensaje con botones: Status={Status}, Response={Response}",
                 response.StatusCode, responseBody);
-            response.EnsureSuccessStatusCode();
+            throw new DomainValidationException("WhatsApp", BuildWhatsAppDeliveryErrorMessage(responseBody));
         }
 
         _logger.LogInformation("Mensaje con botones enviado a {To}", to);
@@ -254,7 +255,7 @@ public class WhatsAppService : IWhatsAppService
                 responseBody,
                 to,
                 templateName);
-            response.EnsureSuccessStatusCode();
+            throw new DomainValidationException("WhatsApp", BuildWhatsAppDeliveryErrorMessage(responseBody));
         }
 
         _logger.LogInformation("Template WhatsApp {Template} enviado a {To}", templateName, to);
@@ -325,7 +326,7 @@ public class WhatsAppService : IWhatsAppService
             _logger.LogError(
                 "WhatsApp API rechazó el documento: Status={Status}, Response={Response}",
                 response.StatusCode, responseBody);
-            response.EnsureSuccessStatusCode();
+            throw new DomainValidationException("WhatsApp", BuildWhatsAppDeliveryErrorMessage(responseBody));
         }
 
         _logger.LogInformation(
@@ -371,6 +372,30 @@ public class WhatsAppService : IWhatsAppService
         return Task.FromResult(token == _verifyToken);
     }
 
+    private static string BuildWhatsAppDeliveryErrorMessage(string responseBody)
+    {
+        if (responseBody.Contains("131047", StringComparison.OrdinalIgnoreCase)
+            || responseBody.Contains("24 hour", StringComparison.OrdinalIgnoreCase)
+            || responseBody.Contains("outside the allowed window", StringComparison.OrdinalIgnoreCase)
+            || responseBody.Contains("outside the customer service window", StringComparison.OrdinalIgnoreCase))
+        {
+            return "WhatsApp rechazo el mensaje porque la conversacion esta fuera de la ventana de atencion de 24 horas. Para reabrirla se debe enviar una plantilla aprobada.";
+        }
+
+        if (responseBody.Contains("access token", StringComparison.OrdinalIgnoreCase)
+            || responseBody.Contains("OAuth", StringComparison.OrdinalIgnoreCase))
+        {
+            return "WhatsApp rechazo el mensaje por un problema con el token de acceso configurado.";
+        }
+
+        if (responseBody.Contains("recipient", StringComparison.OrdinalIgnoreCase)
+            || responseBody.Contains("phone number", StringComparison.OrdinalIgnoreCase))
+        {
+            return "WhatsApp rechazo el mensaje. Revisa que el numero del cliente y el numero de WhatsApp del negocio esten configurados correctamente.";
+        }
+
+        return "WhatsApp rechazo el mensaje. Revisa la configuracion del canal y vuelve a intentar.";
+    }
     private async Task<WhatsAppCredentials> ResolveCredentialsAsync(Guid businessId)
     {
         var credentials = await _credentialResolver.ResolveAsync(businessId);
@@ -409,3 +434,5 @@ public class WhatsAppService : IWhatsAppService
         }
     }
 }
+
+

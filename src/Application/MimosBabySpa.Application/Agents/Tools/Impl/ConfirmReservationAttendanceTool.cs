@@ -73,7 +73,9 @@ public sealed class ConfirmReservationAttendanceTool : IAgentTool
         {
             var resolved = await _reservationResolver.ResolveAsync(ctx, reservationIdStr, cancellationToken);
             if (!resolved.Success)
-                return resolved.ErrorJson;
+                return resolved.ErrorJson ?? ToolResultHelper.Error("reservation_not_found", "No reservation was found.", recoverable: true);
+            if (resolved.Reservation is null)
+                return ToolResultHelper.Error("reservation_not_found", "No reservation was found.", recoverable: true);
             reservation = resolved.Reservation;
         }
 
@@ -119,3 +121,5 @@ public sealed class ConfirmReservationAttendanceTool : IAgentTool
         return null;
     }
 }
+
+

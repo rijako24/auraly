@@ -11,35 +11,35 @@ interface ChatBubbleProps {
 }
 
 export function ChatBubble({ message }: ChatBubbleProps) {
-  const isUser = message.sender.toLowerCase() === "user";
+  const isBot = message.sender.toLowerCase() === "bot";
 
   return (
     <div
       className={cn(
         "flex gap-3",
-        isUser ? "flex-row-reverse" : "flex-row"
+        isBot ? "flex-row-reverse" : "flex-row"
       )}
     >
       <Avatar className="h-8 w-8 flex-shrink-0">
         <AvatarFallback
           className={cn(
             "text-xs",
-            isUser ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
+            isBot ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
           )}
         >
-          {isUser ? <User className="h-4 w-4" /> : <Sparkles className="h-4 w-4" />}
+          {isBot ? <Sparkles className="h-4 w-4" /> : <User className="h-4 w-4" />}
         </AvatarFallback>
       </Avatar>
       <div
         className={cn(
           "flex max-w-[80%] flex-col gap-0.5",
-          isUser ? "items-end" : "items-start"
+          isBot ? "items-end" : "items-start"
         )}
       >
         <div
           className={cn(
             "rounded-2xl px-4 py-2.5 text-sm shadow-sm",
-            isUser
+            isBot
               ? "rounded-tr-md bg-primary text-primary-foreground"
               : "rounded-tl-md bg-muted text-foreground"
           )}

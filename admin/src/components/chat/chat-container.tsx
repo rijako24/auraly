@@ -11,7 +11,7 @@ import { ChatBubble } from "./chat-bubble";
 
 interface ChatContainerProps {
   messages: Message[];
-  onSendMessage: (text: string) => void;
+  onSendMessage: (text: string) => void | Promise<void>;
   placeholder?: string;
   disabled?: boolean;
 }
@@ -29,33 +29,40 @@ export function ChatContainer({
     scrollRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const input = inputRef.current;
     const text = input?.value?.trim();
     if (text && !disabled && input) {
-      onSendMessage(text);
-      input.value = "";
+      try {
+        await onSendMessage(text);
+        if (inputRef.current) {
+          inputRef.current.value = "";
+          inputRef.current.focus();
+        }
+      } catch {
+        input.focus();
+      }
     }
   };
 
   return (
     <div className="flex h-full w-full flex-1 flex-col">
-      <ScrollArea className="min-h-0 flex-1 overflow-y-auto px-4">
-        <div className="flex min-h-full flex-col gap-4 py-4">
+      <ScrollArea className="min-h-0 flex-1 overflow-y-auto px-3 sm:px-4">
+        <div className="flex min-h-full flex-col gap-3 py-4 sm:gap-4">
           {messages.map((msg) => (
             <ChatBubble key={msg.messageId} message={msg} />
           ))}
           <div ref={scrollRef} aria-hidden />
         </div>
       </ScrollArea>
-      <div className="flex-shrink-0 border-t border-border bg-background p-3">
+      <div className="flex-shrink-0 border-t border-border bg-background p-2 sm:p-3">
         <form onSubmit={handleSubmit} className="flex items-center gap-2">
           <Button
             type="button"
             variant="ghost"
             size="icon"
-            className="flex-shrink-0"
+            className="hidden flex-shrink-0 sm:inline-flex"
             disabled={disabled}
           >
             <Paperclip className="h-5 w-5" />
@@ -64,12 +71,12 @@ export function ChatContainer({
             ref={inputRef}
             placeholder={placeholder}
             disabled={disabled}
-            className={cn("flex-1")}
+            className={cn("h-11 flex-1")}
           />
           <Button
             type="submit"
             size="icon"
-            className="flex-shrink-0"
+            className="h-11 w-11 flex-shrink-0"
             disabled={disabled}
           >
             <Send className="h-5 w-5" />
@@ -79,3 +86,4 @@ export function ChatContainer({
     </div>
   );
 }
+

@@ -20,7 +20,7 @@ public class ReservationRepository : IReservationRepository
         return await _context.Reservations
             .Include(r => r.Business)
             .Include(r => r.Service)
-                .ThenInclude(s => s.ResourceUsages)
+                .ThenInclude(s => s!.ResourceUsages)
                     .ThenInclude(ru => ru.BusinessResource)
             .Include(r => r.Employee)
             .FirstOrDefaultAsync(r => r.ReservationId == reservationId);
@@ -54,8 +54,8 @@ public class ReservationRepository : IReservationRepository
         {
             var s = search.Trim().ToLower();
             query = query.Where(r =>
-                r.Service.ServiceName.ToLower().Contains(s) ||
-                r.Employee.Name.ToLower().Contains(s));
+                (r.Service != null && r.Service.ServiceName.ToLower().Contains(s)) ||
+                (r.Employee != null && r.Employee.Name.ToLower().Contains(s)));
         }
 
         return await query.OrderByDescending(r => r.ReservationDateTime).ToPagedListAsync(page, pageSize, ct);
@@ -129,7 +129,7 @@ public class ReservationRepository : IReservationRepository
     {
         return await _context.Reservations
             .Include(r => r.Service)
-                .ThenInclude(s => s.ResourceUsages)
+                .ThenInclude(s => s!.ResourceUsages)
                     .ThenInclude(ru => ru.BusinessResource)
             .Include(r => r.Employee)
             .Where(r => r.BusinessId == businessId &&
@@ -233,3 +233,4 @@ public class ReservationRepository : IReservationRepository
             });
     }
 }
+

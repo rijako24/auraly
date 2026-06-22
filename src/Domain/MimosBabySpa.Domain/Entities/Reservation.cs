@@ -10,7 +10,7 @@ public class Reservation
     public Guid? EmployeeId { get; set; }
     public DateTime? ReservationDateTime { get; set; }
     public int? DurationMinutes { get; set; }
-    public ReservationStatus Status { get; set; } = ReservationStatus.Draft;
+    public ReservationStatus Status { get; set; } = ReservationStatus.Pending;
     public Guid? ConversationId { get; set; }
 
     public string? CustomerNameSnapshot { get; set; }
@@ -36,3 +36,5 @@ public class Reservation
 
     public string? GetServiceName() => Service?.ServiceName;
 }
+
+
