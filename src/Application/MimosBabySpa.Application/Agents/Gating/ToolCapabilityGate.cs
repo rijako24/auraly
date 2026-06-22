@@ -1,5 +1,6 @@
 using System.Text.Json;
 using MimosBabySpa.Application.Agents.Composition;
+using MimosBabySpa.Domain.Catalog;
 using MimosBabySpa.Application.Agents.Configuration;
 using MimosBabySpa.Application.Agents.Tools;
 
@@ -70,6 +71,9 @@ public sealed class ToolCapabilityGate : IToolCapabilityGate
         if (stage.AllowedTools.Contains(tool.Name, StringComparer.OrdinalIgnoreCase))
             return null;
 
+        if (IsOrderModificationTool(tool) && IsOrderModificationIntent(ctx.LatestUserMessage))
+            return null;
+
         if (IsAllowedByGlobalAction(tool, config))
             return null;
 
@@ -87,4 +91,38 @@ public sealed class ToolCapabilityGate : IToolCapabilityGate
     private static bool IsAllowedByGlobalAction(IAgentTool tool, AgentConfig config) =>
         config.GlobalActions.Any(action =>
             action.AllowedTools.Contains(tool.Name, StringComparer.OrdinalIgnoreCase));
+
+    private static bool IsOrderModificationTool(IAgentTool tool) =>
+        tool.Name.Equals("search_products", StringComparison.OrdinalIgnoreCase)
+        || tool.Name.Equals("add_order_item", StringComparison.OrdinalIgnoreCase)
+        || tool.Name.Equals("remove_order_item", StringComparison.OrdinalIgnoreCase)
+        || tool.Name.Equals("get_order_draft", StringComparison.OrdinalIgnoreCase)
+        || tool.Name.Equals("prepare_order_checkout", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsOrderModificationIntent(string? message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+            return false;
+
+        var normalized = CatalogSearchText.NormalizeCompact(message);
+        string[] triggers =
+        [
+            "agregar",
+            "anadir",
+            "adicionar",
+            "otroproducto",
+            "quitar",
+            "sacar",
+            "remover",
+            "eliminar",
+            "borrar",
+            "modificar",
+            "cambiar",
+            "pedido",
+            "carrito",
+            "opciones"
+        ];
+
+        return triggers.Any(normalized.Contains);
+    }
 }

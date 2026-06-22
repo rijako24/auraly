@@ -1,5 +1,6 @@
 using System.Text.Json;
 using MimosBabySpa.Application.Commerce;
+using MimosBabySpa.Domain.Catalog;
 using MimosBabySpa.Application.Services;
 
 namespace MimosBabySpa.Application.Agents.Tools.Impl;
@@ -19,7 +20,8 @@ public sealed class AddOrderItemTool : IAgentTool
     public IReadOnlyList<string> Capabilities => [ToolCapabilities.OrderDraftUpdate];
     public string Description =>
         "Adds a catalog product and quantity to the current conversation order draft. " +
-        "Use the product_id returned by search_products.";
+        "Use the product_id returned by search_products when available. " +
+        "If the customer only provides quantity after a product was selected, call it with quantity.";
     public string ParametersSchema => """
         {
           "type": "object",
@@ -60,10 +62,31 @@ public sealed class AddOrderItemTool : IAgentTool
         var externalId = ToolResultHelper.TryGetString(arguments, "external_product_id", out var ext) ? ext : null;
         var sku = ToolResultHelper.TryGetString(arguments, "sku", out var s) ? s : null;
         var name = ToolResultHelper.TryGetString(arguments, "name", out var n) ? n : null;
-        if (productId is null && string.IsNullOrWhiteSpace(name) && !string.IsNullOrWhiteSpace(rawProductId))
-            name = rawProductId.Replace('-', ' ');
         if (!TryGetDecimal(arguments, "quantity", out var quantity))
             return ToolResultHelper.MissingPrerequisites(["quantity"]);
+        decimal? unitPrice = TryGetDecimal(arguments, "unit_price", out var price) ? price : null;
+        IReadOnlyList<ProductCandidate> ambiguous = [];
+        if (productId is null
+            && TryResolveRememberedProduct(ctx, rawProductId, externalId, sku, name, quantity, out var remembered, out ambiguous))
+        {
+            productId = remembered.ProductId;
+            externalId = remembered.ExternalProductId;
+            sku = remembered.Sku;
+            name = remembered.Name;
+            unitPrice ??= remembered.UnitPrice;
+        }
+        else if (productId is null && ambiguous.Count > 0)
+        {
+            return ToolResultHelper.Error(
+                "product_ambiguous",
+                "The product selection is ambiguous.",
+                ProductSelectionMemory.BuildClarificationHint(ambiguous),
+                recoverable: true);
+        }
+
+        if (productId is null && string.IsNullOrWhiteSpace(name) && IsMeaningfulProductText(rawProductId))
+            name = rawProductId!.Replace('-', ' ');
+
         if (productId is null
             && string.IsNullOrWhiteSpace(externalId)
             && string.IsNullOrWhiteSpace(sku)
@@ -72,7 +95,6 @@ public sealed class AddOrderItemTool : IAgentTool
             return ToolResultHelper.MissingPrerequisites(["product_id"]);
         }
 
-        decimal? unitPrice = TryGetDecimal(arguments, "unit_price", out var price) ? price : null;
 
         OrderSnapshot draft;
         try
@@ -81,19 +103,104 @@ public sealed class AddOrderItemTool : IAgentTool
                 ctx,
                 new AddOrderItemRequest(productId, externalId, sku, name, quantity, unitPrice),
                 cancellationToken);
+            await ProductSelectionMemory.ClearSelectedAsync(_factsService, ctx, cancellationToken);
             await ClearOrderFinalizedFactAsync(ctx, cancellationToken);
         }
         catch (InvalidOperationException ex) when (ex.Message.Contains("Product not found", StringComparison.OrdinalIgnoreCase))
         {
+            var hint = ProductSelectionMemory.TryGetLastSearch(ctx, out var lastSearch)
+                ? ProductSelectionMemory.BuildClarificationHint(lastSearch.Products)
+                : "Use the product_id, external_product_id, or sku returned by search_products. If missing, call search_products again.";
+
             return ToolResultHelper.Error(
                 "product_not_found",
                 "The product could not be resolved in the catalog.",
-                "Use the product_id, external_product_id, or sku returned by search_products. If missing, call search_products again.",
+                hint,
                 recoverable: true);
         }
 
         return ToolResultHelper.Ok(new { order = draft });
     }
+
+    private static bool TryResolveRememberedProduct(
+        AgentToolContext ctx,
+        string? rawProductId,
+        string? externalId,
+        string? sku,
+        string? name,
+        decimal quantity,
+        out ProductCandidate candidate,
+        out IReadOnlyList<ProductCandidate> ambiguous)
+    {
+        candidate = default!;
+        ambiguous = [];
+
+        if (ProductSelectionMemory.TryGetSelected(ctx, out var selected))
+        {
+            candidate = selected;
+            return true;
+        }
+
+        var allowIndex = IsExplicitIndexSelection(rawProductId, ctx.LatestUserMessage);
+        var selector = allowIndex ? rawProductId : FirstMeaningfulSelector(rawProductId, externalId, sku, name, ctx.LatestUserMessage);
+        if (ProductSelectionMemory.TryResolveFromLastSearch(ctx, selector, allowIndex, out var resolved, out var matches))
+        {
+            candidate = resolved;
+            return true;
+        }
+
+        if (matches.Count > 1)
+        {
+            ambiguous = matches;
+            return false;
+        }
+
+        if (IsQuantityOnly(ctx.LatestUserMessage, quantity)
+            && ProductSelectionMemory.TryGetLastSearch(ctx, out var lastSearch))
+        {
+            if (lastSearch.Products.Count > 1)
+            {
+                ambiguous = lastSearch.Products;
+            }
+        }
+
+        return false;
+    }
+
+    private static string? FirstMeaningfulSelector(params string?[] values) =>
+        values.FirstOrDefault(IsMeaningfulProductText);
+
+    private static bool IsMeaningfulProductText(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return false;
+
+        var trimmed = value.Trim();
+        if (decimal.TryParse(trimmed, out _))
+            return false;
+
+        return true;
+    }
+
+    private static bool IsExplicitIndexSelection(string? rawProductId, string? latestUserMessage)
+    {
+        if (string.IsNullOrWhiteSpace(rawProductId)
+            || !int.TryParse(rawProductId.Trim(), out _)
+            || string.IsNullOrWhiteSpace(latestUserMessage))
+        {
+            return false;
+        }
+
+        var normalized = CatalogSearchText.NormalizeCompact(latestUserMessage);
+        return normalized.Contains("opcion")
+               || normalized.Contains("numero")
+               || latestUserMessage.Contains("#", StringComparison.Ordinal);
+    }
+    private static bool IsQuantityOnly(string? latestUserMessage, decimal quantity) =>
+        !string.IsNullOrWhiteSpace(latestUserMessage)
+        && decimal.TryParse(latestUserMessage.Trim(), out var parsed)
+        && parsed == quantity;
+
 
     private async Task ClearOrderFinalizedFactAsync(AgentToolContext ctx, CancellationToken cancellationToken)
     {

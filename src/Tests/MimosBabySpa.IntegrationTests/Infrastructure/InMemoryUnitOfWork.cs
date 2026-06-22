@@ -1,3 +1,4 @@
+using MimosBabySpa.Domain.Catalog;
 using MimosBabySpa.Domain.Entities;
 using MimosBabySpa.Domain.Enums;
 using MimosBabySpa.Domain.Repositories;
@@ -466,19 +467,17 @@ internal sealed class InMemoryProductRepository : IProductRepository
 
     public Task<IReadOnlyList<Product>> SearchAsync(Guid businessId, string? query, string? category, int limit, CancellationToken ct = default)
     {
-        var results = _products.Where(p => p.BusinessId == businessId);
+        var results = _products.Where(p => p.BusinessId == businessId && p.IsActive);
 
         if (!string.IsNullOrWhiteSpace(query))
         {
             results = results.Where(p =>
-                p.Name.Contains(query, StringComparison.OrdinalIgnoreCase) ||
-                (p.Description?.Contains(query, StringComparison.OrdinalIgnoreCase) ?? false) ||
-                (p.Sku?.Contains(query, StringComparison.OrdinalIgnoreCase) ?? false));
+                CatalogSearchText.ContainsAllTerms(query, p.Name, p.Description, p.Sku, p.CategoryName));
         }
 
         if (!string.IsNullOrWhiteSpace(category))
         {
-            results = results.Where(p => string.Equals(p.CategoryName, category, StringComparison.OrdinalIgnoreCase));
+            results = results.Where(p => CatalogSearchText.ContainsAllTerms(category, p.CategoryName));
         }
 
         return Task.FromResult<IReadOnlyList<Product>>(results.Take(limit).ToList());

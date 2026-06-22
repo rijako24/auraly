@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using MimosBabySpa.Domain.Catalog;
 using MimosBabySpa.Domain.Entities;
 using MimosBabySpa.Domain.Repositories;
 using MimosBabySpa.Infrastructure.Data;
@@ -25,18 +26,24 @@ public sealed class ProductRepository : IProductRepository
 
         if (!string.IsNullOrWhiteSpace(category))
         {
-            var normalizedCategory = category.Trim();
-            products = products.Where(p => p.CategoryName != null && p.CategoryName.Contains(normalizedCategory));
+            foreach (var term in CatalogSearchText.GetSearchTerms(category))
+            {
+                var searchTerm = term;
+                products = products.Where(p => p.CategoryName != null && p.CategoryName.Contains(searchTerm));
+            }
         }
 
         if (!string.IsNullOrWhiteSpace(query))
         {
-            var normalizedQuery = query.Trim();
-            products = products.Where(p =>
-                p.Name.Contains(normalizedQuery) ||
-                (p.Sku != null && p.Sku.Contains(normalizedQuery)) ||
-                (p.Description != null && p.Description.Contains(normalizedQuery)) ||
-                (p.CategoryName != null && p.CategoryName.Contains(normalizedQuery)));
+            foreach (var term in CatalogSearchText.GetSearchTerms(query))
+            {
+                var searchTerm = term;
+                products = products.Where(p =>
+                    p.Name.Contains(searchTerm) ||
+                    (p.Sku != null && p.Sku.Contains(searchTerm)) ||
+                    (p.Description != null && p.Description.Contains(searchTerm)) ||
+                    (p.CategoryName != null && p.CategoryName.Contains(searchTerm)));
+            }
         }
 
         return await products

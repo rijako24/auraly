@@ -1,8 +1,8 @@
 using System.Globalization;
-using System.Text;
 using System.Text.Json;
 using MimosBabySpa.Application.Agents;
 using MimosBabySpa.Application.Promotions;
+using MimosBabySpa.Domain.Catalog;
 using MimosBabySpa.Domain.Entities;
 using MimosBabySpa.Domain.Enums;
 using MimosBabySpa.Domain.Repositories;
@@ -134,38 +134,20 @@ public sealed class CommerceService : ICommerceService
 
     private static Product? FindBestProductMatch(IReadOnlyList<Product> products, string input)
     {
-        var normalizedInput = NormalizeCatalogText(input);
+        var normalizedInput = CatalogSearchText.NormalizeCompact(input);
         if (string.IsNullOrWhiteSpace(normalizedInput))
             return null;
 
         var exact = products.FirstOrDefault(p =>
-            NormalizeCatalogText(p.Name) == normalizedInput ||
-            NormalizeCatalogText(p.Sku) == normalizedInput);
+            CatalogSearchText.NormalizeCompact(p.Name) == normalizedInput ||
+            CatalogSearchText.NormalizeCompact(p.Sku) == normalizedInput);
         if (exact is not null)
             return exact;
 
         return products.FirstOrDefault(p =>
-            NormalizeCatalogText(p.Name).Contains(normalizedInput, StringComparison.Ordinal) ||
-            normalizedInput.Contains(NormalizeCatalogText(p.Name), StringComparison.Ordinal) ||
-            (!string.IsNullOrWhiteSpace(p.Sku) && NormalizeCatalogText(p.Sku).Contains(normalizedInput, StringComparison.Ordinal)));
-    }
-
-    private static string NormalizeCatalogText(string? value)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-            return string.Empty;
-
-        var normalized = value.Normalize(NormalizationForm.FormD);
-        var builder = new StringBuilder(normalized.Length);
-        foreach (var ch in normalized)
-        {
-            if (CharUnicodeInfo.GetUnicodeCategory(ch) == UnicodeCategory.NonSpacingMark)
-                continue;
-            if (char.IsLetterOrDigit(ch))
-                builder.Append(char.ToLowerInvariant(ch));
-        }
-
-        return builder.ToString();
+            CatalogSearchText.NormalizeCompact(p.Name).Contains(normalizedInput, StringComparison.Ordinal) ||
+            normalizedInput.Contains(CatalogSearchText.NormalizeCompact(p.Name), StringComparison.Ordinal) ||
+            (!string.IsNullOrWhiteSpace(p.Sku) && CatalogSearchText.NormalizeCompact(p.Sku).Contains(normalizedInput, StringComparison.Ordinal)));
     }
 
     public async Task<OrderSnapshot> RemoveItemAsync(AgentToolContext ctx, Guid orderItemId, CancellationToken ct = default)
@@ -178,6 +160,34 @@ public sealed class CommerceService : ICommerceService
             throw new InvalidOperationException("Order item does not belong to the active draft.");
 
         await _unitOfWork.OrderItems.DeleteAsync(item, ct);
+        await RecalculateAsync(order, ct);
+        order.UpdatedAt = DateTime.UtcNow;
+        await _unitOfWork.SaveChangesAsync(ct);
+
+        return await BuildSnapshotAsync(order, ct);
+    }
+
+    public async Task<OrderSnapshot> UpdateItemQuantityAsync(
+        AgentToolContext ctx,
+        Guid orderItemId,
+        decimal quantity,
+        CancellationToken ct = default)
+    {
+        if (quantity <= 0)
+            return await RemoveItemAsync(ctx, orderItemId, ct);
+
+        var order = await _unitOfWork.Orders.GetActiveDraftByConversationAsync(ctx.BusinessId, ctx.ConversationId, ct)
+            ?? throw new InvalidOperationException("No active order draft found.");
+        var item = await _unitOfWork.OrderItems.GetByIdAsync(ctx.BusinessId, orderItemId, ct)
+            ?? throw new InvalidOperationException("Order item not found.");
+        if (item.OrderId != order.OrderId)
+            throw new InvalidOperationException("Order item does not belong to the active draft.");
+
+        item.Quantity = quantity;
+        item.LineTotal = quantity * item.UnitPrice;
+        item.UpdatedAt = DateTime.UtcNow;
+        await _unitOfWork.OrderItems.UpdateAsync(item, ct);
+
         await RecalculateAsync(order, ct);
         order.UpdatedAt = DateTime.UtcNow;
         await _unitOfWork.SaveChangesAsync(ct);
@@ -451,3 +461,4 @@ public sealed class CommerceService : ICommerceService
     private static string? GetFact(AgentToolContext ctx, string key) =>
         ctx.Facts.TryGetValue(key, out var value) ? value : null;
 }
+

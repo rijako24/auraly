@@ -148,6 +148,7 @@ public sealed class AgentConversationService : IAgentConversationService
 
         // Capa 2 — bucle de Function Calling
         userMessage = SanitizeInput(userMessage);
+        session.LatestUserMessage = userMessage;
 
         var history = (await _messageService.GetRecentConversationHistoryAsync(
             conversationId, config.HistoryWindowSize, cancellationToken)).ToList();

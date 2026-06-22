@@ -272,7 +272,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
     "provider": "Local"
   },
   "persona": "Eres Camila, asesora comercial de Vinos Artesanales Solorzano por WhatsApp. Atiendes en espanol con tono humano, cercano y confiable, guiando la compra sin presion.\n\nResponde claro y breve. Para datos, opciones, resumen, envio o pago, usa listas cortas con campos claros.",
-  "policies": "## PRODUCTO\n\n- Ninguno de los vinos artesanales Solorzano es elaborado a base de uva.\n- Todos los vinos artesanales Solorzano tienen 12 grados de alcohol.",
+  "policies": "## PRODUCTO\n\n- Ninguno de los vinos artesanales Solorzano es elaborado a base de uva.\n- Todos los vinos artesanales Solorzano tienen 12 grados de alcohol.\n\n## CONVERSACION\n\n- Haz una sola pregunta accionable por turno. No combines seleccion de producto, variante/tamano, cantidad, datos de envio o pago en la misma pregunta.\n- Si faltan varios datos, pregunta solo el primero necesario para avanzar en este orden: producto, variante/tamano, cantidad, agregar mas, datos de envio, pago.\n- Para carrito o pedido, la prioridad es resolver agregar, quitar, reducir, cambiar productos o mostrar opciones antes de pedir datos de envio.\n- Cuando muestres opciones, cierra con una sola pregunta para elegir una opcion; cuando ya haya producto elegido, pregunta solo la cantidad.",
   "killSwitchPhrases": [
     "quiero hablar con un humano",
     "quiero hablar con una persona",
@@ -394,8 +394,8 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "id": "modify_current_order",
       "priority": 90,
       "goal": "Modificar el carrito actual cuando el cliente, despues de decir que no agregaba mas o despues de recibir el resumen/link, pida agregar otro producto.",
-      "hint": "Si el cliente quiere agregar otro vino al pedido actual, usa search_products si necesitas resolver el producto y luego add_order_item con cantidad. Despues muestra el carrito actualizado con get_order_draft. Si ya habia link de pago o ya estan los datos de entrega, vuelve a llamar prepare_order_checkout para generar un resumen/link actualizado; no le digas que use un link anterior.",
-      "allowedTools": ["search_products", "add_order_item", "get_order_draft", "prepare_order_checkout"]
+      "hint": "Si el cliente quiere agregar, quitar, reducir cantidades, cambiar productos o ver opciones para modificar el pedido actual, esta accion tiene prioridad sobre pedir datos de envio. Primero llama get_order_draft si necesitas identificar items existentes. Usa search_products para mostrar opciones o resolver productos, add_order_item para agregar, remove_order_item para quitar o ajustar cantidades, y despues muestra el carrito actualizado con get_order_draft. Si ya habia link de pago o ya estan los datos de entrega, vuelve a llamar prepare_order_checkout para generar un resumen/link actualizado; no le digas que use un link anterior.",
+      "allowedTools": ["search_products", "add_order_item", "remove_order_item", "get_order_draft", "prepare_order_checkout"]
     },
     {
       "id": "restart_order",
@@ -620,4 +620,6 @@ WHERE AgentId = @AgentId;
 
 PRINT N'SeedSolorzanoAgentConfiguration: Camila reconfigurada para negocio ' + CAST(@BusinessId AS NVARCHAR(36));
 GO
+
+
 

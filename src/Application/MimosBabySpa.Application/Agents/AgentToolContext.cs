@@ -18,6 +18,7 @@ public sealed class AgentToolContext
     public DateOnly? PreviousBusinessDay { get; init; }
     public IReadOnlyList<string> RolloverClearedFacts { get; init; } = [];
     public string ChannelPhone { get; init; } = string.Empty;
+    public string LatestUserMessage { get; set; } = string.Empty;
     public string? ProviderMessageId { get; init; }
     public string? ReplyToProviderMessageId { get; init; }
     public string? InteractivePayload { get; init; }
