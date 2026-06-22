@@ -392,13 +392,19 @@ export function AgentSettingsEditor({ value, onChange, availableAgents = [], sec
           <CardContent>
             <Textarea
               className="min-h-[120px]"
-              value={(value.killSwitchPhrases ?? []).join("\n")}
+              value={(value.escalations?.human?.killSwitchPhrases ?? []).join("\n")}
               onChange={(e) =>
                 patch({
-                  killSwitchPhrases: e.target.value
-                    .split("\n")
-                    .map((s) => s.trim())
-                    .filter(Boolean),
+                  escalations: {
+                    ...value.escalations,
+                    human: {
+                      ...value.escalations?.human,
+                      killSwitchPhrases: e.target.value
+                        .split("\n")
+                        .map((s) => s.trim())
+                        .filter(Boolean),
+                    },
+                  },
                 })
               }
             />
@@ -411,14 +417,18 @@ export function AgentSettingsEditor({ value, onChange, availableAgents = [], sec
           <CardContent className="space-y-2">
             <Label>Contactos WhatsApp (uno por línea)</Label>
             <Textarea
-              value={(value.escalation?.contacts ?? []).join("\n")}
+              value={(value.escalations?.human?.contacts ?? []).join("\n")}
               onChange={(e) =>
                 patch({
-                  escalation: {
-                    contacts: e.target.value
-                      .split("\n")
-                      .map((s) => s.trim())
-                      .filter(Boolean),
+                  escalations: {
+                    ...value.escalations,
+                    human: {
+                      ...value.escalations?.human,
+                      contacts: e.target.value
+                        .split("\n")
+                        .map((s) => s.trim())
+                        .filter(Boolean),
+                    },
                   },
                 })
               }
@@ -558,16 +568,19 @@ function ExternalEscalationsEditor({
   availableAgents: Array<{ agentId: string; name: string }>;
   onChange: (partial: Partial<AgentSettings>) => void;
 }) {
-  const externalEscalations = value.externalEscalations ?? { enabled: false, events: {} };
+  const externalEscalations = value.escalations?.external ?? { enabled: false, events: {} };
   const events = externalEscalations.events ?? {};
   const eventNames = Object.keys(events);
 
   const patchExternal = (nextEvents: typeof events, enabled = externalEscalations.enabled ?? true) =>
     onChange({
-      externalEscalations: {
-        ...externalEscalations,
-        enabled,
-        events: nextEvents,
+      escalations: {
+        ...value.escalations,
+        external: {
+          ...externalEscalations,
+          enabled,
+          events: nextEvents,
+        },
       },
     });
 
@@ -693,6 +706,7 @@ function ExternalEscalationsEditor({
                             phone: "",
                             priority: contacts.length + 1,
                             inboundAgentId: availableAgents[0]?.agentId ?? "",
+                            pickupAddress: "",
                           },
                         ],
                       })
@@ -704,7 +718,7 @@ function ExternalEscalationsEditor({
                 </div>
 
                 {contacts.map((contact, index) => (
-                  <div key={index} className="grid gap-2 rounded-md border p-3 sm:grid-cols-6">
+                  <div key={index} className="grid gap-2 rounded-md border p-3 sm:grid-cols-2 lg:grid-cols-7">
                     <Input
                       placeholder="key"
                       value={contact.key}
@@ -738,6 +752,15 @@ function ExternalEscalationsEditor({
                       onChange={(e) => {
                         const next = [...contacts];
                         next[index] = { ...contact, phone: e.target.value };
+                        updateEvent({ ...event, contacts: next });
+                      }}
+                    />
+                    <Input
+                      placeholder="direccion recogida"
+                      value={contact.pickupAddress ?? ""}
+                      onChange={(e) => {
+                        const next = [...contacts];
+                        next[index] = { ...contact, pickupAddress: e.target.value };
                         updateEvent({ ...event, contacts: next });
                       }}
                     />

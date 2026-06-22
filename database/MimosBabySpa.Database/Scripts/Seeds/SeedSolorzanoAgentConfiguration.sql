@@ -272,29 +272,19 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
     "provider": "Local"
   },
   "persona": "Eres Camila, asesora comercial de Vinos Artesanales Solorzano por WhatsApp. Atiendes en espanol con tono humano, cercano y confiable, guiando la compra sin presion.\n\nResponde claro y breve. Para datos, opciones, resumen, envio o pago, usa listas cortas con campos claros.",
-  "policies": "## PRODUCTO\n\n- Ninguno de los vinos artesanales Solorzano es elaborado a base de uva.\n- Todos los vinos artesanales Solorzano tienen 12 grados de alcohol.\n\n## CONVERSACION\n\n- Haz una sola pregunta accionable por turno. No combines seleccion de producto, variante/tamano, cantidad, datos de envio o pago en la misma pregunta.\n- Si faltan varios datos, pregunta solo el primero necesario para avanzar en este orden: producto, variante/tamano, cantidad, agregar mas, datos de envio, pago.\n- Para carrito o pedido, la prioridad es resolver agregar, quitar, reducir, cambiar productos o mostrar opciones antes de pedir datos de envio.\n- Cuando muestres opciones, cierra con una sola pregunta para elegir una opcion; cuando ya haya producto elegido, pregunta solo la cantidad.",
-  "killSwitchPhrases": [
-    "quiero hablar con un humano",
-    "quiero hablar con una persona",
-    "agente real",
-    "operador",
-    "hablar con alguien",
-    "hablar con ustedes",
-    "asesor humano",
-    "estoy muy molest",
-    "queja formal",
-    "voy a demandar",
-    "soy distribuidor",
-    "soy mayorista",
-    "pedido mayorista",
-    "compra mayorista",
-    "quiero revender"
-  ],
+  "policies": "## PRODUCTO\n\n- Usa search_products como fuente para presentaciones, tamanos, sabores, precios, promociones y disponibilidad.\n- Comunica que los vinos artesanales Solorzano no son elaborados a base de uva y tienen 12 grados de alcohol cuando sea relevante.\n\n## CONVERSACION\n\n- Sigue la etapa actual del flujo y realiza una sola accion conversacional por turno.\n- Usa la pregunta de cierre definida por la etapa activa.\n- Registra con set_fact los datos claros que el cliente entregue para avanzar el flujo.",
   "messageSequences": {
     "order_paid_customer": {
       "messages": [
         {
           "body": "Gracias por tu compra, {customer_name}. Recibimos el pago del pedido {order_number} por ${total} {currency}. Ya estamos coordinando el domicilio y te avisaremos si necesitamos algo adicional."
+        }
+      ]
+    },
+    "order_created_customer": {
+      "messages": [
+        {
+          "body": "Gracias por preferirnos. Tu pedido quedo confirmado y ya estamos coordinando el domicilio. Te avisaremos si necesitamos algo adicional."
         }
       ]
     },
@@ -304,7 +294,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
           "type": "whatsapp_template",
           "templateName": "delivery_request",
           "language": "es_CO",
-          "bodyParameters": ["{business_name}", "{attempt_code}", "{order_number}", "Vinos Artesanales Solorzano", "Calle 16 # 9-35, Centro, Valledupar", "{customer_name}", "{customer_phone}", "{city}", "{delivery_address}", "{items}", "{total}", "{currency}", "{payment_method}"],
+          "bodyParameters": ["{business_name}", "{attempt_code}", "{order_number}", "{pickup_contact_name}", "{pickup_address}", "{customer_name}", "{customer_phone}", "{city}", "{delivery_address}", "{items}", "{total}", "{currency}", "{payment_method}"],
           "buttons": [
             { "id": "external_escalation:accept:{external_escalation_id}", "title": "Aceptar" },
             { "id": "external_escalation:decline:{external_escalation_id}", "title": "No tomar" }
@@ -350,7 +340,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         "id": "discovery",
         "name": "Descubrimiento y recomendacion",
         "goal": "Entender si el vino es para regalo o para compartir, recomendar opciones disponibles y construir el carrito hasta que el cliente finalice la compra.",
-        "hint": "Si el mensaje del cliente es solo un saludo, saluda breve, presentate y pregunta si el vino lo busca para regalar o para compartir. En ese turno responde solo el saludo y la pregunta de ocasion. Cuando el cliente responda la ocasion, pida opciones, precios, promo o un producto, llama search_products antes de dar precios o disponibilidad y muestra 1 a 3 opciones activas en la misma respuesta. Para ocasion regalar/compartir usa una busqueda amplia: query vino, limit 3. Recomienda con lenguaje cercano y menciona la tula de regalo cuando encaje. Cierra con una invitacion suave a elegir una opcion. Cuando el cliente seleccione una opcion ya mostrada por numero, precio, tamano, sabor, nombre parcial o descripcion, resuelve cual producto corresponde en el ultimo resultado de search_products, conserva su product_id como producto elegido y continua con ese producto en los siguientes turnos. Si el cliente responde despues con una cantidad, interpreta esa cantidad para el producto elegido previamente y llama add_order_item con el product_id conservado y quantity. Si hay una sola coincidencia razonable por precio, numero, tamano, sabor, nombre parcial o descripcion, infierela y avanza. Si hay varias coincidencias razonables, haz una pregunta corta de aclaracion antes de agregar al carrito. La cantidad siempre debe estar expresada por el cliente antes de agregar al carrito. Cuando el producto este elegido y falte cantidad, pregunta cuantas unidades quiere llevar. Cuando ya tengas producto elegido y cantidad, llama add_order_item con el product_id exacto del producto elegido y quantity. Representa el carrito con el draft y sus items. Despues de agregar cada item, pregunta si quiere agregar algo mas a la compra. Cuando el cliente diga claramente que ya no quiere agregar mas y exista al menos un item en el carrito, llama set_fact order_finalized=true y avanza a datos de entrega. Si el carrito esta vacio, ayuda a elegir un producto primero. Si pregunta por algo fuera del catalogo activo, ofrece opciones activas.",
+        "hint": "Si el cliente saluda, responde breve y pregunta si el vino es para regalar o compartir. Para opciones, precios, promos, tamanos, presentaciones o sabores, llama search_products antes de responder y muestra solo productos activos devueltos por la herramienta. Para ocasion regalar/compartir usa query vino, limit 3. Si el cliente selecciona por numero, precio, tamano, sabor, nombre parcial o descripcion, resuelve contra el ultimo search_products; si hay una sola coincidencia razonable, avanza, y si hay varias, pide una aclaracion corta. Agrega al carrito solo cuando producto y cantidad esten claros. Despues de add_order_item exitoso, muestra el carrito y cierra con esta pregunta: Quieres agregar algo mas a la compra? Si el cliente responde que no, nada mas, continuar, finalizar o equivalente, y existe al menos un item en el carrito, llama set_fact order_finalized=true. Si el carrito esta vacio, ayuda a elegir un producto primero.",
         "allowedTools": ["search_products", "add_order_item", "set_fact"],
         "advanceWhenFacts": ["order_finalized"]
       },
@@ -358,7 +348,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         "id": "order_data",
         "name": "Datos del pedido",
         "goal": "Recoger ciudad, direccion de entrega, celular y nombre de quien recibe para coordinar envio.",
-        "hint": "Cuando falte city, delivery_address, delivery_phone o customer_name, pide los datos faltantes juntos en una lista titulada Datos del pedido. Incluye estos campos cuando falten: Ciudad, Direccion de entrega, Celular de contacto, Nombre de quien recibe. Cuando el cliente responda, registra todos los datos que entregue con set_fact en el mismo turno. Si despues de registrar quedan datos requeridos pendientes, pide los faltantes juntos en lista. No avances a pago hasta tener nombre de quien recibe.",
+        "hint": "Pide en una sola lista los datos del pedido que falten: Ciudad, Direccion de entrega, Celular de contacto y Nombre de quien recibe. Cuando el cliente responda, registra con set_fact todos los datos que entregue en ese turno. Si todavia falta algun dato requerido, pide solo los faltantes juntos.",
         "allowedTools": ["set_fact"],
         "advanceWhenFacts": ["city", "delivery_address", "delivery_phone", "customer_name"],
         "reentryOnFactChanged": ["city", "delivery_address", "delivery_phone", "customer_name"]
@@ -367,7 +357,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         "id": "payment_method",
         "name": "Metodo de pago",
         "goal": "Preguntar si el cliente pagara en efectivo o por transferencia despues de confirmar los datos de envio.",
-        "hint": "Cuando ya existan items y datos completos de entrega, pregunta una sola cosa: si pagara en efectivo o por transferencia. Si responde efectivo, registra payment_method=efectivo. Si responde transferencia, registra payment_method=transferencia y entiende que transferencia significa enviar link de pago. No generes resumen ni link antes de guardar el metodo de pago.",
+        "hint": "Cuando ya existan items y datos completos de entrega, pregunta una sola cosa: si pagara en efectivo o por transferencia. Si responde efectivo, registra payment_method=efectivo. Si responde transferencia, registra payment_method=transferencia y entiende que transferencia significa enviar link de pago. Genera resumen o link despues de guardar el metodo de pago.",
         "allowedTools": ["set_fact", "get_order_draft"],
         "advanceWhenFacts": ["payment_method"]
       },
@@ -375,8 +365,8 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         "id": "summary",
         "name": "Resumen y confirmacion",
         "goal": "Mostrar el resumen segun metodo de pago: efectivo con confirmacion verbal, transferencia con link de pago.",
-        "hint": "Si payment_method=efectivo y aun no se mostro resumen final, llama prepare_order_checkout con payment_method=efectivo o payment_required=false para calcular envio, total y renderizar el resumen sin link. Muestra el resumen generado y en ese mismo mensaje pide confirmacion verbal del pedido. Si el cliente confirma claramente ese resumen, llama create_order con customer_confirmed=true, customer_name, customer_phone y delivery_address; luego responde agradeciendo: Gracias por preferirnos, tu pedido va en camino y estaremos atentos al domicilio. Si payment_method=transferencia, llama prepare_order_checkout cuando ya existan items y datos de entrega; la herramienta genera el resumen oficial, calcula envio y crea link de pago por el 100%. Muestra el resumen/link generado y espera confirmacion automatica del webhook. Si prepare_order_checkout falla por configuracion de pago, link de pago o un error no recuperable, responde breve y llama escalate_to_human en ese mismo turno con la razon y el ultimo mensaje relevante. No confirmes pedidos por transferencia antes de que Wompi confirme el pago.",
-        "allowedTools": ["prepare_order_checkout", "create_order", "get_order_draft", "set_fact", "verify_payment", "escalate_to_human"],
+        "hint": "Si payment_method=efectivo y aun no se mostro resumen final, llama prepare_order_checkout con payment_method=efectivo o payment_required=false para calcular envio, total y renderizar el resumen sin link. Muestra el resumen generado y en ese mismo mensaje pide confirmacion verbal del pedido. Si el cliente confirma claramente ese resumen, llama create_order con customer_confirmed=true, customer_name, customer_phone y delivery_address; cuando create_order confirme el pedido, llama send_message_sequence con sequence=order_created_customer. Si payment_method=transferencia, llama prepare_order_checkout cuando ya existan items y datos de entrega; la herramienta genera el resumen oficial, calcula envio y crea link de pago por el 100%. Muestra el resumen/link generado y espera confirmacion automatica del webhook. Si prepare_order_checkout falla por configuracion de pago, link de pago o un error no recuperable, responde breve y llama escalate_to_human en ese mismo turno con la razon y el ultimo mensaje relevante. Para transferencia, confirma el pedido cuando Wompi confirme el pago.",
+        "allowedTools": ["prepare_order_checkout", "create_order", "send_message_sequence", "get_order_draft", "set_fact", "verify_payment", "escalate_to_human"],
         "advanceWhenFacts": [],
         "reentryOnFactChanged": ["order_finalized", "city", "delivery_address", "delivery_phone", "customer_name", "payment_method"]
       },
@@ -384,7 +374,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         "id": "payment",
         "name": "Seguimiento de pago",
         "goal": "Acompanar solo pedidos con transferencia con link de pago pendiente.",
-        "hint": "Usa esta etapa solo cuando payment_method=transferencia. Si el cliente pregunta por estado del pago, llama verify_payment. Si aun no hay link vigente, llama prepare_order_checkout. No entregues cuentas bancarias ni datos de pago manual. Si payment_method=efectivo, vuelve al resumen y espera confirmacion verbal para create_order.",
+        "hint": "Usa esta etapa solo cuando payment_method=transferencia. Si el cliente pregunta por estado del pago, llama verify_payment. Si aun no hay link vigente, llama prepare_order_checkout. Para pagos por transferencia, usa el link vigente generado por prepare_order_checkout. Si payment_method=efectivo, vuelve al resumen y espera confirmacion verbal para create_order.",
         "allowedTools": ["prepare_order_checkout", "verify_payment", "get_order_draft", "create_order", "escalate_to_human"],
         "advanceWhenFacts": []
       }
@@ -402,7 +392,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "id": "modify_current_order",
       "priority": 90,
       "goal": "Modificar el carrito actual cuando el cliente, despues de decir que no agregaba mas o despues de recibir el resumen/link, pida agregar otro producto.",
-      "hint": "Si el cliente quiere agregar, quitar, reducir cantidades, cambiar productos o ver opciones para modificar el pedido actual, esta accion tiene prioridad sobre pedir datos de envio. Primero llama get_order_draft si necesitas identificar items existentes. Usa search_products para mostrar opciones o resolver productos, add_order_item para agregar, remove_order_item para quitar o ajustar cantidades, y despues muestra el carrito actualizado con get_order_draft. Si ya habia link de pago o ya estan los datos de entrega, vuelve a calcular el resumen segun payment_method: transferencia con prepare_order_checkout y efectivo con prepare_order_checkout payment_required=false; no le digas que use un link anterior.",
+      "hint": "Si el cliente quiere agregar, quitar, reducir cantidades, cambiar productos o ver opciones para modificar el pedido actual, esta accion tiene prioridad sobre pedir datos de envio. Primero llama get_order_draft si necesitas identificar items existentes. Usa search_products para mostrar opciones o resolver productos, add_order_item para agregar, remove_order_item para quitar o ajustar cantidades, y despues muestra el carrito actualizado con get_order_draft. Si pide otro tamano, otra presentacion, otro sabor u opciones parecidas, llama search_products antes de responder; menciona solo alternativas devueltas por la herramienta. Si ya habia link de pago o ya estan los datos de entrega, vuelve a calcular el resumen segun payment_method: transferencia con prepare_order_checkout y efectivo con prepare_order_checkout payment_required=false; presenta el resumen o link actualizado.",
       "allowedTools": ["search_products", "add_order_item", "remove_order_item", "get_order_draft", "prepare_order_checkout", "create_order", "set_fact"]
     },
     {
@@ -540,12 +530,10 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
     "prepare_order_checkout",
     "verify_payment",
     "create_order",
+    "send_message_sequence",
     "reset_flow_context",
     "escalate_to_human"
   ],
-  "escalation": {
-    "contacts": ["+573205387559"]
-  },
   "notifications": {
     "reservation_created": {
       "enabled": false,
@@ -575,7 +563,25 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       }
     }
   },
-  "externalEscalations": {
+  "escalations": {
+    "human": { "contacts": ["+573205387559"], "killSwitchPhrases": [
+"quiero hablar con un humano",
+    "quiero hablar con una persona",
+    "agente real",
+    "operador",
+    "hablar con alguien",
+    "hablar con ustedes",
+    "asesor humano",
+    "estoy muy molest",
+    "queja formal",
+    "voy a demandar",
+    "soy distribuidor",
+    "soy mayorista",
+    "pedido mayorista",
+    "compra mayorista",
+    "quiero revender"
+    ] },
+    "external": {
     "enabled": true,
     "events": {
       "order_created": {
@@ -593,10 +599,12 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
             "role": "delivery",
             "phone": "+573205387559",
             "priority": 1,
-            "inboundAgentId": "D0EE3BA9-E6BF-43E2-8C1A-560CB724688B"
+            "inboundAgentId": "D0EE3BA9-E6BF-43E2-8C1A-560CB724688B",
+            "pickupAddress": "Calle 16 # 9-35, Centro, Valledupar"
           }
         ]
       }
+    }
     }
   },
   "checkout": {

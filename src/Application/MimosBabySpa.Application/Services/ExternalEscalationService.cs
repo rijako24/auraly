@@ -42,10 +42,10 @@ public sealed class ExternalEscalationRouter : IExternalEscalationRouter
         foreach (var agent in businessAgents.Where(a => a.IsActive))
         {
             var config = await configProvider.GetConfigAsync(agent.AgentId, ct);
-            if (!config.ExternalEscalations.Enabled)
+            if (!config.Escalations.External.Enabled)
                 continue;
 
-            foreach (var (eventName, definition) in config.ExternalEscalations.Events)
+            foreach (var (eventName, definition) in config.Escalations.External.Events)
             {
                 if (!definition.Enabled)
                     continue;
@@ -96,8 +96,8 @@ public sealed class ExternalEscalationService : IExternalEscalationService
     public async Task<ExternalEscalationSendResult> EscalateNextAsync(ExternalEscalationRequest request, CancellationToken ct = default)
     {
         var config = await _configProvider.GetConfigAsync(request.SourceAgentId, ct);
-        if (!config.ExternalEscalations.Enabled
-            || !config.ExternalEscalations.Events.TryGetValue(request.EventName, out var definition)
+        if (!config.Escalations.External.Enabled
+            || !config.Escalations.External.Events.TryGetValue(request.EventName, out var definition)
             || !definition.Enabled)
         {
             return new ExternalEscalationSendResult(false, null, "external_escalation_not_configured");
@@ -130,6 +130,8 @@ public sealed class ExternalEscalationService : IExternalEscalationService
         if (contact is null)
             return new ExternalEscalationSendResult(false, null, "no_more_contacts");
 
+        var customPayload = BuildCustomPayload(request.Custom, contact);
+
         var now = DateTime.UtcNow;
         var attempt = new ExternalEscalationAttempt
         {
@@ -145,7 +147,7 @@ public sealed class ExternalEscalationService : IExternalEscalationService
             ContactPhoneSnapshot = ExternalEscalationRouter.NormalizePhone(contact.Phone),
             InboundAgentIdSnapshot = contact.InboundAgentId!.Value,
             AttemptCode = BuildAttemptCode(definition, request.TargetId),
-            CustomPayloadJson = JsonSerializer.Serialize(request.Custom),
+            CustomPayloadJson = JsonSerializer.Serialize(customPayload),
             Status = ExternalEscalationAttemptStatus.Pending,
             EscalatedAt = now,
             ExpiresAt = now.AddMinutes(Math.Max(1, definition.AttemptTimeoutMinutes))
@@ -155,7 +157,7 @@ public sealed class ExternalEscalationService : IExternalEscalationService
         await MarkOrderDeliveryPendingAsync(attempt, now, ct);
         await _unitOfWork.SaveChangesAsync(ct);
 
-        var sentMessageId = await SendEscalationMessagesAsync(config, definition, attempt, request.Custom, ct);
+        var sentMessageId = await SendEscalationMessagesAsync(config, definition, attempt, customPayload, ct);
         if (!string.IsNullOrWhiteSpace(sentMessageId))
         {
             attempt.WhatsAppMessageId = sentMessageId;
@@ -167,7 +169,7 @@ public sealed class ExternalEscalationService : IExternalEscalationService
             config,
             definition.AttemptSentNotificationEvent,
             attempt,
-            request.Custom,
+            customPayload,
             ct);
 
         return new ExternalEscalationSendResult(true, attempt.AttemptCode, null);
@@ -253,7 +255,7 @@ public sealed class ExternalEscalationService : IExternalEscalationService
         await _unitOfWork.SaveChangesAsync(ct);
 
         var config = await _configProvider.GetConfigAsync(attempt.SourceAgentId, ct);
-        var notificationEvent = config.ExternalEscalations.Events.TryGetValue(attempt.EventName, out var definition)
+        var notificationEvent = config.Escalations.External.Events.TryGetValue(attempt.EventName, out var definition)
             ? definition.AcceptedNotificationEvent
             : null;
 
@@ -413,6 +415,7 @@ public sealed class ExternalEscalationService : IExternalEscalationService
         var context = new Dictionary<string, string>(custom, StringComparer.OrdinalIgnoreCase)
         {
             ["business_name"] = business?.Name ?? string.Empty,
+            ["pickup_contact_name"] = business?.Name ?? string.Empty,
             ["external_escalation_id"] = attempt.ExternalEscalationAttemptId.ToString(),
             ["attempt_code"] = attempt.AttemptCode,
             ["contact_name"] = attempt.ContactNameSnapshot,
@@ -487,6 +490,18 @@ public sealed class ExternalEscalationService : IExternalEscalationService
         };
     }
 
+    private static IReadOnlyDictionary<string, string> BuildCustomPayload(
+        IReadOnlyDictionary<string, string> custom,
+        ExternalEscalationContactDefinition contact)
+    {
+        var payload = new Dictionary<string, string>(custom, StringComparer.OrdinalIgnoreCase);
+
+
+        if (!string.IsNullOrWhiteSpace(contact.PickupAddress))
+            payload["pickup_address"] = contact.PickupAddress.Trim();
+
+        return payload;
+    }
     private static string BuildAttemptCode(ExternalEscalationEventDefinition definition, Guid targetId)
     {
         var prefix = string.IsNullOrWhiteSpace(definition.AttemptCodePrefix)

@@ -77,11 +77,6 @@ public sealed class AgentConfig
     /// </summary>
     public int ConsecutiveErrorEscalationThreshold { get; init; } = 3;
 
-    /// <summary>
-    /// Contactos WhatsApp a notificar en escalaciones (e.g. ["+573001234567"]).
-    /// Leídos de Agent.SettingsJson → escalation.contacts[].
-    /// </summary>
-    public IReadOnlyList<string> EscalationContacts { get; init; } = [];
 
     /// <summary>
     /// Catálogo de secuencias outbound nombradas (texto + adjuntos).
@@ -101,7 +96,11 @@ public sealed class AgentConfig
     /// </summary>
     public NotificationDefinitions Notifications { get; init; } = new();
 
-    public ExternalEscalationDefinitions ExternalEscalations { get; init; } = new();
+    /// <summary>
+    /// Configuracion unificada de escalaciones.
+    /// Fuente: SettingsJson -> escalations.
+    /// </summary>
+    public EscalationDefinitions Escalations { get; init; } = new();
 
     public ReservationAutomationDefinitions ReservationAutomations { get; init; } = new();
 

@@ -89,6 +89,20 @@ public sealed class ExternalEscalationDefinitions
         new(StringComparer.OrdinalIgnoreCase);
 }
 
+public sealed class EscalationDefinitions
+{
+    public HumanEscalationDefinitions Human { get; set; } = new();
+
+    public ExternalEscalationDefinitions External { get; set; } = new();
+}
+
+public sealed class HumanEscalationDefinitions
+{
+    public IReadOnlyList<string> Contacts { get; set; } = [];
+
+    public IReadOnlyList<string> KillSwitchPhrases { get; set; } = [];
+}
+
 public sealed class ExternalEscalationEventDefinition
 {
     public bool Enabled { get; set; }
@@ -121,6 +135,9 @@ public sealed class ExternalEscalationContactDefinition
     public int Priority { get; set; }
 
     public Guid? InboundAgentId { get; set; }
+
+
+    public string PickupAddress { get; set; } = string.Empty;
 }
 
 public sealed class EventNotificationConfig

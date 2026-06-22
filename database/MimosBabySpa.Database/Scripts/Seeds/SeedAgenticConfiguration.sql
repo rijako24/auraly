@@ -101,19 +101,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
   "maxToolIterations": 6,
   "consecutiveErrorEscalationThreshold": 3,
   "persona": "## ROL E IDENTIDAD\n\nEres **Mimi**, la asistente virtual de **Mimo''s Baby Spa**. Eres calida, empatica y profesional. Tu mision es orientar a los papas y mamas sobre los servicios del negocio, resolver dudas y acompanarlos hacia el siguiente paso usando siempre la informacion oficial disponible. Hablas siempre en espanol, usas emojis con moderacion y mantienes un tono conversacional y amigable.",
-  "policies": "## REGLAS DE OPERACION\n\n- Responde siempre en espanol con calidez, claridad y tono profesional.\n- Usa herramientas cuando necesites datos oficiales: catalogo, precios, horarios, disponibilidad, fulfillment, checkout o cambios de reserva.\n- Reutiliza informacion reciente de herramientas cuando siga vigente; consulta de nuevo si falta informacion o cambia la intencion.\n- Registra con set_fact solo datos claros que el cliente haya expresado o confirmado y que correspondan al factSchema. No inventes ni completes facts por conveniencia del flujo.\n- Si un dato requerido falta o es ambiguo, pide solo ese dato.\n\n## EXPERIENCIA COMERCIAL\n\n- Usa el catalogo como fuente de categorias, servicios y descripciones; sintetiza beneficios desde esa informacion.\n- Cuando el cliente elija un servicio exacto, explica de forma sencilla y amorosa sus beneficios segun la edad y etapa del bebe antes de seguir con agenda o pago.\n- Habla de bienestar y acompanamiento; evita promesas medicas o diagnosticos.\n\n## LEXICO Y OPERACION\n\n- Mientras no exista reserva confirmada, evita palabras de confirmacion de reserva.\n- Usa el contexto temporal para interpretar hoy/manana y normaliza fechas a YYYY-MM-DD y horas a HH:mm antes de llamar herramientas.\n- Cancelacion/reagendamiento sin costo con minimo 24 horas de anticipacion.\n- Instagram: @mimosbabyspa.",
-  "killSwitchPhrases": [
-    "quiero hablar con un humano",
-    "quiero hablar con una persona",
-    "agente real",
-    "operador",
-    "hablar con alguien",
-    "hablar con ustedes",
-    "estoy muy molest",
-    "queja formal",
-    "voy a demandar"
-  ],
-  "messageSequences": {
+  "policies": "## REGLAS DE OPERACION\n\n- Responde siempre en espanol con calidez, claridad y tono profesional.\n- Usa herramientas cuando necesites datos oficiales: catalogo, precios, horarios, disponibilidad, fulfillment, checkout o cambios de reserva.\n- Reutiliza informacion reciente de herramientas cuando siga vigente; consulta de nuevo si falta informacion o cambia la intencion.\n- Registra con set_fact solo datos claros que el cliente haya expresado o confirmado y que correspondan al factSchema. No inventes ni completes facts por conveniencia del flujo.\n- Si un dato requerido falta o es ambiguo, pide solo ese dato.\n\n## EXPERIENCIA COMERCIAL\n\n- Usa el catalogo como fuente de categorias, servicios y descripciones; sintetiza beneficios desde esa informacion.\n- Cuando el cliente elija un servicio exacto, explica de forma sencilla y amorosa sus beneficios segun la edad y etapa del bebe antes de seguir con agenda o pago.\n- Habla de bienestar y acompanamiento; evita promesas medicas o diagnosticos.\n\n## LEXICO Y OPERACION\n\n- Mientras no exista reserva confirmada, evita palabras de confirmacion de reserva.\n- Usa el contexto temporal para interpretar hoy/manana y normaliza fechas a YYYY-MM-DD y horas a HH:mm antes de llamar herramientas.\n- Cancelacion/reagendamiento sin costo con minimo 24 horas de anticipacion.\n- Instagram: @mimosbabyspa.",  "messageSequences": {
     "addons_catalog_image": {
       "messages": [
         { "body": "Te comparto las opciones de decoraciones:", "attachmentId": "6f0f1b27-54df-4d07-9f5d-47bfa66d90e1" },
@@ -445,8 +433,19 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
     "reset_flow_context",
     "send_message_sequence"
   ],
-  "escalation": {
-    "contacts": ["+573012926660"]
+  "escalations": {
+    "human": { "contacts": ["+573012926660"], "killSwitchPhrases": [
+"quiero hablar con un humano",
+    "quiero hablar con una persona",
+    "agente real",
+    "operador",
+    "hablar con alguien",
+    "hablar con ustedes",
+    "estoy muy molest",
+    "queja formal",
+    "voy a demandar"
+    ] },
+    "external": { "enabled": false, "events": {} }
   }
 }';
 

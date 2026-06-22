@@ -1,7 +1,8 @@
 /** Espejo declarativo de Agents.SettingsJson (motor agentic). */
 
-export interface AgentEscalationSettings {
+export interface AgentHumanEscalationSettings {
   contacts?: string[];
+  killSwitchPhrases?: string[];
 }
 
 export interface AgentFlowStageVariant {
@@ -93,6 +94,7 @@ export interface ExternalEscalationContact {
   phone: string;
   priority?: number;
   inboundAgentId?: string;
+  pickupAddress?: string;
 }
 
 export interface ExternalEscalationEvent {
@@ -109,6 +111,11 @@ export interface ExternalEscalationEvent {
 export interface ExternalEscalationDefinitions {
   enabled?: boolean;
   events?: Record<string, ExternalEscalationEvent>;
+}
+
+export interface AgentEscalationsSettings {
+  human?: AgentHumanEscalationSettings;
+  external?: ExternalEscalationDefinitions;
 }
 
 export interface EventNotificationConfig {
@@ -131,15 +138,13 @@ export interface AgentSettings {
   consecutiveErrorEscalationThreshold?: number;
   persona?: string;
   policies?: string;
-  killSwitchPhrases?: string[];
   enabledTools?: string[];
-  escalation?: AgentEscalationSettings;
+  escalations?: AgentEscalationsSettings;
   flow?: AgentFlowDefinition;
   factSchema?: FactSchemaEntry[];
   guards?: Record<string, GuardDefinition>;
   templates?: Record<string, string>;
   messageSequences?: Record<string, MessageSequence>;
-  externalEscalations?: ExternalEscalationDefinitions;
   notifications?: AgentNotificationDefinitions;
   checkout?: CheckoutDefinitions;
   commerce?: AgentCommerceSettings;
@@ -152,15 +157,13 @@ export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
   consecutiveErrorEscalationThreshold: 3,
   persona: "",
   policies: "",
-  killSwitchPhrases: [],
   enabledTools: [],
-  escalation: { contacts: [] },
+  escalations: { human: { contacts: [], killSwitchPhrases: [] }, external: { enabled: false, events: {} } },
   flow: { stageDetection: "automatic", stages: [] },
   factSchema: [],
   guards: {},
   templates: {},
   messageSequences: {},
-  externalEscalations: { enabled: false, events: {} },
   notifications: {},
   checkout: { categoryModes: {}, modes: {} },
   commerce: { enabled: false, provider: "Local" },
@@ -193,10 +196,8 @@ export function parseAgentSettings(raw: unknown): AgentSettings {
     factSchema: s.factSchema ?? [],
     guards: s.guards ?? {},
     enabledTools: s.enabledTools ?? [],
-    killSwitchPhrases: s.killSwitchPhrases ?? [],
-    escalation: s.escalation ?? { contacts: [] },
+    escalations: s.escalations ?? { human: { contacts: [], killSwitchPhrases: [] }, external: { enabled: false, events: {} } },
     messageSequences: s.messageSequences ?? {},
-    externalEscalations: s.externalEscalations ?? { enabled: false, events: {} },
     notifications: s.notifications ?? {},
     commerce: s.commerce ?? { enabled: false, provider: "Local" },
   };

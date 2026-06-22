@@ -65,6 +65,11 @@ public sealed class AddOrderItemTool : IAgentTool
         if (!TryGetDecimal(arguments, "quantity", out var quantity))
             return ToolResultHelper.MissingPrerequisites(["quantity"]);
         decimal? unitPrice = TryGetDecimal(arguments, "unit_price", out var price) ? price : null;
+        if (productId.HasValue && !WasProductIdReturnedByLastSearch(ctx, productId.Value))
+        {
+            productId = null;
+            rawProductId = null;
+        }
         IReadOnlyList<ProductCandidate> ambiguous = [];
         if (productId is null
             && TryResolveRememberedProduct(ctx, rawProductId, externalId, sku, name, quantity, out var remembered, out ambiguous))
@@ -143,7 +148,7 @@ public sealed class AddOrderItemTool : IAgentTool
 
         var allowIndex = IsExplicitIndexSelection(rawProductId, ctx.LatestUserMessage);
         var selector = allowIndex ? rawProductId : FirstMeaningfulSelector(rawProductId, externalId, sku, name, ctx.LatestUserMessage);
-        if (ProductSelectionMemory.TryResolveFromLastSearch(ctx, selector, allowIndex, out var resolved, out var matches))
+        if (ProductSelectionMemory.TryResolveFromLastSearch(ctx, selector, allowIndex, quantity, out var resolved, out var matches))
         {
             candidate = resolved;
             return true;
@@ -165,6 +170,14 @@ public sealed class AddOrderItemTool : IAgentTool
         }
 
         return false;
+    }
+
+    private static bool WasProductIdReturnedByLastSearch(AgentToolContext ctx, Guid productId)
+    {
+        if (!ProductSelectionMemory.TryGetLastSearch(ctx, out var lastSearch))
+            return true;
+
+        return lastSearch.Products.Any(candidate => candidate.ProductId == productId);
     }
 
     private static string? FirstMeaningfulSelector(params string?[] values) =>

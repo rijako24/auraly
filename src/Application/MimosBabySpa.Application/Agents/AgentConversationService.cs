@@ -938,7 +938,7 @@ public sealed class AgentConversationService : IAgentConversationService
             ProviderMessageId = inboundMetadata?.ProviderMessageId,
             ReplyToProviderMessageId = inboundMetadata?.ReplyToProviderMessageId,
             InteractivePayload = inboundMetadata?.InteractivePayload,
-            EscalationContacts = config.EscalationContacts,
+            EscalationContacts = config.Escalations.Human.Contacts,
             Config = config,
             ConversationState = state,
             Conversation = conversation,

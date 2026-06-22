@@ -11,7 +11,7 @@ public class Agent
 
     /// <summary>
     /// JSON with engine params, messages and escalation configuration.
-    /// Structure: { engine: {...}, messages: {...}, escalation: {...} }
+    /// Structure includes SettingsJson escalations: { human: {...}, external: {...} }.
     /// </summary>
     public string? SettingsJson { get; set; }
 

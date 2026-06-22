@@ -53,6 +53,7 @@ internal static class ProductSelectionMemory
         AgentToolContext ctx,
         string? selector,
         bool allowIndex,
+        decimal? quantityToIgnore,
         out ProductCandidate candidate,
         out IReadOnlyList<ProductCandidate> matches)
     {
@@ -62,7 +63,7 @@ internal static class ProductSelectionMemory
         if (!TryGetLastSearch(ctx, out var search) || search.Products.Count == 0)
             return false;
 
-        matches = FindMatches(search.Products, selector, allowIndex);
+        matches = FindMatches(search.Products, selector, allowIndex, quantityToIgnore);
         if (matches.Count != 1)
             return false;
 
@@ -141,14 +142,15 @@ internal static class ProductSelectionMemory
             return candidates[0];
 
         var selector = string.Join(' ', new[] { userMessage, query }.Where(v => !string.IsNullOrWhiteSpace(v)));
-        var matches = FindMatches(candidates, selector, allowIndex: false);
+        var matches = FindMatches(candidates, selector, allowIndex: false, quantityToIgnore: null);
         return matches.Count == 1 ? matches[0] : null;
     }
 
     private static IReadOnlyList<ProductCandidate> FindMatches(
         IReadOnlyList<ProductCandidate> candidates,
         string? selector,
-        bool allowIndex)
+        bool allowIndex,
+        decimal? quantityToIgnore)
     {
         if (string.IsNullOrWhiteSpace(selector))
             return [];
@@ -174,13 +176,54 @@ internal static class ProductSelectionMemory
         if (priceMatches.Count > 0)
             return priceMatches;
 
-        var terms = CatalogSearchText.GetSearchTerms(trimmed);
+        var terms = GetSelectionTerms(trimmed, quantityToIgnore);
+        if (terms.Count == 0)
+            return [];
+        terms = KeepTermsPresentInAnyCandidate(terms, candidates);
         if (terms.Count == 0)
             return [];
 
         return candidates
-            .Where(c => CatalogSearchText.ContainsAllTerms(trimmed, c.Name, c.Description, c.Sku, c.CategoryName))
+            .Where(c => ContainsAllTerms(terms, c.Name, c.Description, c.Sku, c.CategoryName))
             .ToList();
+    }
+
+    private static IReadOnlyList<string> GetSelectionTerms(string selector, decimal? quantityToIgnore)
+    {
+        var ignoredQuantity = quantityToIgnore.HasValue
+            ? decimal.Truncate(quantityToIgnore.Value).ToString(CultureInfo.InvariantCulture)
+            : null;
+
+        return CatalogSearchText.GetSearchTerms(selector)
+            .Where(term => ignoredQuantity is null || !term.Equals(ignoredQuantity, StringComparison.Ordinal))
+            .ToList();
+    }
+
+    private static IReadOnlyList<string> KeepTermsPresentInAnyCandidate(
+        IReadOnlyList<string> terms,
+        IReadOnlyList<ProductCandidate> candidates) =>
+        terms
+            .Where(term => candidates.Any(candidate => ContainsTerm(term,
+                candidate.Name,
+                candidate.Description,
+                candidate.Sku,
+                candidate.CategoryName)))
+            .ToList();
+
+    private static bool ContainsTerm(string term, params string?[] values)
+    {
+        var searchableTerms = CatalogSearchText.GetSearchTerms(
+            string.Join(' ', values.Where(v => !string.IsNullOrWhiteSpace(v))));
+
+        return searchableTerms.Any(searchable => searchable.Contains(term, StringComparison.Ordinal));
+    }
+
+    private static bool ContainsAllTerms(IReadOnlyList<string> terms, params string?[] values)
+    {
+        var searchableTerms = CatalogSearchText.GetSearchTerms(
+            string.Join(' ', values.Where(v => !string.IsNullOrWhiteSpace(v))));
+
+        return terms.All(term => searchableTerms.Any(searchable => searchable.Contains(term, StringComparison.Ordinal)));
     }
 
     private static bool IsExactIdentifierMatch(ProductCandidate candidate, string selector)

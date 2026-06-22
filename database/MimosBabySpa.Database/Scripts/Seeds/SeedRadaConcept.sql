@@ -180,18 +180,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
   "historyWindowSize": 24,
   "consecutiveErrorEscalationThreshold": 3,
   "persona": "Eres el asistente comercial de Rada Concept por WhatsApp. Atiendes en espanol con tono cercano, elegante y profesional. Ayudas a entender el servicio adecuado y guias hacia una cita de asesoria sin presionar.\n\nResponde claro y breve. Usa listas cortas para explicar servicios, opciones, horarios o resumen de cita.",
-  "policies": "## MARCA\n\n- Rada Concept crea espacios funcionales y esteticos para vivienda, mobiliario, remodelaciones y proyectos comerciales.\n- La cotizacion se define despues de entender el proyecto en una asesoria.",
-  "killSwitchPhrases": [
-    "quiero hablar con un humano",
-    "quiero hablar con una persona",
-    "agente real",
-    "operador",
-    "hablar con alguien",
-    "hablar con ustedes",
-    "asesor humano",
-    "queja formal"
-  ],
-  "templates": {
+  "policies": "## MARCA\n\n- Rada Concept crea espacios funcionales y esteticos para vivienda, mobiliario, remodelaciones y proyectos comerciales.\n- La cotizacion se define despues de entender el proyecto en una asesoria.",  "templates": {
     "availability_slots": "{{#if intro_message}}\n{{intro_message}}\n\n{{/if}}\n*Horarios disponibles para {{date_formatted}}* ({{service_name}})\n\n{{#each slots}}\n- {{this}}\n{{/each}}\n\nCual prefieres?"
   },
   "messageSequences": {},
@@ -362,8 +351,18 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
     "reset_flow_context",
     "escalate_to_human"
   ],
-  "escalation": {
-    "contacts": ["+573007047440"]
+  "escalations": {
+    "human": { "contacts": ["+573007047440"], "killSwitchPhrases": [
+"quiero hablar con un humano",
+    "quiero hablar con una persona",
+    "agente real",
+    "operador",
+    "hablar con alguien",
+    "hablar con ustedes",
+    "asesor humano",
+    "queja formal"
+    ] },
+    "external": { "enabled": false, "events": {} }
   },
   "notifications": {
     "reservation_created": {

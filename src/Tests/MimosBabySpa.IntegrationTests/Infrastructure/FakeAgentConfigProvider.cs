@@ -43,7 +43,7 @@ public class FakeAgentConfigProvider : IAgentConfigProvider
                 "verify_payment",
                 "escalate_to_human"
             ],
-            EscalationContacts = []
+            Escalations = new MimosBabySpa.Application.Agents.Configuration.EscalationDefinitions()
         };
         return Task.FromResult(config);
     }

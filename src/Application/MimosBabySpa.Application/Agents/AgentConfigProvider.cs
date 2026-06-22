@@ -56,18 +56,17 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
             Guards = settings.Guards ?? new Dictionary<string, GuardDefinition>(StringComparer.OrdinalIgnoreCase),
             Templates = settings.Templates ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
             SystemPrompt = agent.SystemPromptMarkdown?.Trim() ?? string.Empty,
-            KillSwitchPhrases = settings.KillSwitchPhrases ?? [],
+            KillSwitchPhrases = settings.Escalations?.Human?.KillSwitchPhrases ?? [],
             Model = settings.Model ?? "gpt-4.1-mini",
             Temperature = settings.Temperature ?? 0.7f,
             MaxToolIterations = settings.MaxToolIterations ?? 6,
             HistoryWindowSize = settings.HistoryWindowSize ?? 20,
             ConsecutiveErrorEscalationThreshold = settings.ConsecutiveErrorEscalationThreshold ?? 3,
             EnabledToolNames = settings.EnabledTools ?? [],
-            EscalationContacts = settings.EscalationContacts ?? [],
             MessageSequences = settings.MessageSequences ?? new MessageSequenceCatalog(),
             Webhooks = settings.Webhooks ?? new WebhookDefinitions(),
             Notifications = settings.Notifications ?? new NotificationDefinitions(),
-            ExternalEscalations = settings.ExternalEscalations ?? new ExternalEscalationDefinitions(),
+            Escalations = settings.Escalations ?? new EscalationDefinitions(),
             ReservationAutomations = settings.ReservationAutomations ?? new ReservationAutomationDefinitions(),
             Checkout = settings.Checkout ?? new CheckoutDefinitions(),
             Commerce = settings.Commerce ?? new CommerceConfig()
@@ -395,10 +394,10 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
 
     private void ValidateExternalEscalations(AgentConfig config)
     {
-        if (!config.ExternalEscalations.Enabled)
+        if (!config.Escalations.External.Enabled)
             return;
 
-        foreach (var (eventName, definition) in config.ExternalEscalations.Events)
+        foreach (var (eventName, definition) in config.Escalations.External.Events)
         {
             if (!definition.Enabled)
                 continue;
@@ -406,14 +405,14 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
             if (string.IsNullOrWhiteSpace(definition.SendMessageSequence))
             {
                 _logger.LogWarning(
-                    "AgentConfig {AgentId}: externalEscalations.events['{Event}'] enabled but sendMessageSequence is empty",
+                    "AgentConfig {AgentId}: escalations.external.events['{Event}'] enabled but sendMessageSequence is empty",
                     config.AgentId,
                     eventName);
             }
             else if (!config.MessageSequences.ContainsKey(definition.SendMessageSequence))
             {
                 _logger.LogWarning(
-                    "AgentConfig {AgentId}: externalEscalations.events['{Event}'] references unknown sequence '{Sequence}'",
+                    "AgentConfig {AgentId}: escalations.external.events['{Event}'] references unknown sequence '{Sequence}'",
                     config.AgentId,
                     eventName,
                     definition.SendMessageSequence);
@@ -457,7 +456,7 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
         if (!config.Notifications.ContainsKey(notificationEventName))
         {
             _logger.LogWarning(
-                "AgentConfig {AgentId}: externalEscalations.events['{ExternalEvent}'].{Property} references unknown notification event '{NotificationEvent}'",
+                "AgentConfig {AgentId}: escalations.external.events['{ExternalEvent}'].{Property} references unknown notification event '{NotificationEvent}'",
                 config.AgentId,
                 externalEventName,
                 propertyName,
@@ -502,21 +501,13 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
         public int? HistoryWindowSize { get; set; }
         public int? ConsecutiveErrorEscalationThreshold { get; set; }
         public IReadOnlyList<string>? EnabledTools { get; set; }
-        public IReadOnlyList<string>? KillSwitchPhrases { get; set; }
-        public EscalationSettings? Escalation { get; set; }
+        public EscalationDefinitions? Escalations { get; set; }
         public MessageSequenceCatalog? MessageSequences { get; set; }
         public WebhookDefinitions? Webhooks { get; set; }
         public NotificationDefinitions? Notifications { get; set; }
-        public ExternalEscalationDefinitions? ExternalEscalations { get; set; }
         public ReservationAutomationDefinitions? ReservationAutomations { get; set; }
         public CheckoutDefinitions? Checkout { get; set; }
         public CommerceConfig? Commerce { get; set; }
-        public IReadOnlyList<string>? EscalationContacts =>
-            Escalation?.Contacts ?? [];
     }
 
-    private sealed class EscalationSettings
-    {
-        public IReadOnlyList<string>? Contacts { get; set; }
-    }
 }

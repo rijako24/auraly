@@ -68,6 +68,7 @@ public sealed class SearchProductsTool : IAgentTool
                     ctx,
                     ctx.LatestUserMessage,
                     allowIndex: false,
+                    quantityToIgnore: null,
                     out var previousSelection,
                     out var previousMatches))
             {
