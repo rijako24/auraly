@@ -421,6 +421,15 @@ public sealed class OrderPaidCheckoutFulfillmentHandler : IPaidCheckoutFulfillme
                         ? value.GetString() ?? string.Empty
                         : value.GetRawText();
             }
+
+            if (root.TryGetProperty("facts", out var facts) && facts.ValueKind == JsonValueKind.Object)
+            {
+                foreach (var fact in facts.EnumerateObject())
+                {
+                    if (fact.Value.ValueKind == JsonValueKind.String)
+                        custom.TryAdd(fact.Name, fact.Value.GetString() ?? string.Empty);
+                }
+            }
         }
         catch (JsonException)
         {

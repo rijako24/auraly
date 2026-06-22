@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.Json;
 using MimosBabySpa.Application.Agents;
+using MimosBabySpa.Application.Agents.Configuration;
 using MimosBabySpa.Application.Promotions;
 using MimosBabySpa.Domain.Catalog;
 using MimosBabySpa.Domain.Entities;
@@ -266,6 +267,51 @@ public sealed class CommerceService : ICommerceService
         return await BuildSnapshotAsync(order, ct);
     }
 
+
+    private static void ApplyOrderCheckoutMetadata(AgentToolContext ctx, Order order)
+    {
+        var checkoutMode = ctx.Config?.Checkout.ResolveMode("order");
+        var shipping = checkoutMode?.Shipping ?? new MimosBabySpa.Application.Agents.Configuration.OrderCheckoutShippingDefinition();
+        var city = GetFact(ctx, "city");
+        var shippingCost = ResolveShippingCost(shipping, city);
+        var currency = ctx.Config?.Checkout.Currency;
+
+        if (!string.IsNullOrWhiteSpace(currency))
+            order.Currency = currency.Trim().ToUpperInvariant();
+
+        order.Total = order.Subtotal - order.DiscountTotal + order.TaxTotal + shippingCost;
+        order.CustomAttributesJson = BuildOrderCustomAttributes(ctx.Facts, city, shippingCost);
+    }
+
+    private static decimal ResolveShippingCost(MimosBabySpa.Application.Agents.Configuration.OrderCheckoutShippingDefinition shipping, string? city)
+    {
+        if (!shipping.Enabled)
+            return 0m;
+
+        if (!string.IsNullOrWhiteSpace(city)
+            && !string.IsNullOrWhiteSpace(shipping.LocalCity)
+            && city.Trim().Equals(shipping.LocalCity.Trim(), StringComparison.OrdinalIgnoreCase))
+        {
+            return shipping.LocalCost;
+        }
+
+        return shipping.NationalCost;
+    }
+
+    private static string BuildOrderCustomAttributes(
+        IReadOnlyDictionary<string, string> facts,
+        string? city,
+        decimal shippingCost)
+    {
+        var custom = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["city"] = city,
+            ["shipping_cost"] = shippingCost,
+            ["facts"] = facts
+        };
+        return JsonSerializer.Serialize(custom);
+    }
+
     private async Task<CommerceAdapterContext> BuildContextAsync(AgentToolContext ctx, CancellationToken ct)
     {
         var provider = ctx.Config?.Commerce.Provider ?? CommerceProvider.Local;
@@ -461,4 +507,8 @@ public sealed class CommerceService : ICommerceService
     private static string? GetFact(AgentToolContext ctx, string key) =>
         ctx.Facts.TryGetValue(key, out var value) ? value : null;
 }
+
+
+
+
 

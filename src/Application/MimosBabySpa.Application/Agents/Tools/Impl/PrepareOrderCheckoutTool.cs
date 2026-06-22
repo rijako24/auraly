@@ -32,7 +32,7 @@ public sealed class PrepareOrderCheckoutTool : IAgentTool
     public IReadOnlyList<string> Capabilities => [ToolCapabilities.CheckoutPrepare];
 
     public string Description =>
-        "Prepares the current order draft checkout, renders the configured order summary and creates a 100% payment link.";
+        "Prepares the current order draft checkout, renders the configured order summary and creates a payment link only when required.";
 
     public string ParametersSchema => """
         {
@@ -43,7 +43,9 @@ public sealed class PrepareOrderCheckoutTool : IAgentTool
             "customer_phone": { "type": "string" },
             "customer_document": { "type": "string" },
             "delivery_address": { "type": "string" },
-            "notes": { "type": "string" }
+            "notes": { "type": "string" },
+            "payment_method": { "type": "string" },
+            "payment_required": { "type": "boolean" }
           }
         }
         """;
@@ -77,11 +79,17 @@ public sealed class PrepareOrderCheckoutTool : IAgentTool
                 "Add SettingsJson.checkout.modes.order.");
         }
 
-        if (string.IsNullOrWhiteSpace(checkoutMode.TemplateWithPayment))
-            return ToolResultHelper.Error("checkout_template_missing", "Order checkout requires templateWithPayment.");
+        var paymentMethod = Get(arguments, "payment_method") ?? GetFact(ctx, "payment_method");
+        var paymentRequired = ResolvePaymentRequired(arguments, paymentMethod);
+        var templateId = paymentRequired ? checkoutMode.TemplateWithPayment : checkoutMode.TemplateNoPayment;
 
-        if (string.IsNullOrWhiteSpace(checkoutMode.ConfirmationOutcome))
-            return ToolResultHelper.Error("checkout_outcome_missing", "Order checkout requires confirmationOutcome.");
+        if (string.IsNullOrWhiteSpace(templateId))
+            return ToolResultHelper.Error("checkout_template_missing", paymentRequired
+                ? "Order checkout requires templateWithPayment."
+                : "Order checkout without online payment requires templateNoPayment.");
+
+        if (paymentRequired && string.IsNullOrWhiteSpace(checkoutMode.ConfirmationOutcome))
+            return ToolResultHelper.Error("checkout_outcome_missing", "Order checkout with online payment requires confirmationOutcome.");
 
         var roles = new FactRoleIndex(ctx.Config?.FactSchema ?? []);
         var bindings = CheckoutModeBindingDefaults.Resolve(CheckoutKind.Order, checkoutMode);
@@ -121,7 +129,7 @@ public sealed class PrepareOrderCheckoutTool : IAgentTool
         order.Currency = currency;
         order.Total = orderTotal;
         order.CustomerConfirmed = false;
-        order.Status = OrderStatus.AwaitingPayment;
+        order.Status = paymentRequired ? OrderStatus.AwaitingPayment : OrderStatus.PendingConfirmation;
         order.UpdatedAt = DateTime.UtcNow;
         order.CustomAttributesJson = BuildOrderCustomAttributes(ctx.Facts, city, shippingCost);
         await _unitOfWork.Orders.UpdateAsync(order, cancellationToken);
@@ -131,29 +139,38 @@ public sealed class PrepareOrderCheckoutTool : IAgentTool
         if (payableCents <= 0)
             return ToolResultHelper.Error("invalid_order_total", "Order total must be greater than zero to generate payment.");
 
-        var quote = BuildQuote(ctx, checkoutMode, order, items, shippingCost, payableCents, currency);
+        var quote = BuildQuote(ctx, checkoutMode, order, items, shippingCost, payableCents, currency, templateId!, paymentRequired);
         var templateData = BuildTemplateData(order, items, shippingCost, currency, city, deliveryAddress, payerName, payerEmail, paymentPhone, ctx.Facts);
         var checkoutSnapshotJson = BuildCheckoutSnapshot(order, items, shippingCost, city, deliveryAddress, payerName, payerEmail, paymentPhone, ctx.Facts);
 
-        var linkResult = await _checkoutPayments.EnsurePaymentLinkAsync(
-            ctx,
-            quote,
-            paymentPhone,
-            checkoutSnapshotJson,
-            reservationSnapshot: null,
-            cancellationToken);
-        if (!linkResult.Success)
-            return ToolResultHelper.Error("payment_link_failed", linkResult.ErrorMessage ?? "Failed to generate payment link.");
-
-        if (linkResult.Payment is not null && order.PaymentTransactionId != linkResult.Payment.PaymentTransactionId)
+        string? paymentLink = null;
+        Guid? paymentTransactionId = null;
+        if (paymentRequired)
         {
-            order.PaymentTransactionId = linkResult.Payment.PaymentTransactionId;
-            order.UpdatedAt = DateTime.UtcNow;
-            await _unitOfWork.Orders.UpdateAsync(order, cancellationToken);
-            await _unitOfWork.SaveChangesAsync(cancellationToken);
+            var linkResult = await _checkoutPayments.EnsurePaymentLinkAsync(
+                ctx,
+                quote,
+                paymentPhone,
+                checkoutSnapshotJson,
+                reservationSnapshot: null,
+                cancellationToken);
+            if (!linkResult.Success)
+                return ToolResultHelper.Error("payment_link_failed", linkResult.ErrorMessage ?? "Failed to generate payment link.");
+
+            if (linkResult.Payment is not null && order.PaymentTransactionId != linkResult.Payment.PaymentTransactionId)
+            {
+                order.PaymentTransactionId = linkResult.Payment.PaymentTransactionId;
+                order.UpdatedAt = DateTime.UtcNow;
+                await _unitOfWork.Orders.UpdateAsync(order, cancellationToken);
+                await _unitOfWork.SaveChangesAsync(cancellationToken);
+            }
+
+            paymentLink = linkResult.LinkUrl;
+            paymentTransactionId = linkResult.Payment?.PaymentTransactionId;
+            templateData["link_url"] = linkResult.LinkUrl;
         }
 
-        templateData["link_url"] = linkResult.LinkUrl;
+        templateData["payment_method"] = paymentRequired ? "transferencia" : "efectivo";
 
         var checkoutToken = ctx.Turn.RegisterFragment(
             "CHECKOUT",
@@ -173,9 +190,9 @@ public sealed class PrepareOrderCheckoutTool : IAgentTool
             checkout_token = checkoutToken,
             checkout_kind = quote.CheckoutKind.ToString(),
             template_id = quote.TemplateId,
-            payment_required = true,
-            payment_transaction_id = linkResult.Payment?.PaymentTransactionId,
-            payment_link = linkResult.LinkUrl,
+            payment_required = paymentRequired,
+            payment_transaction_id = paymentTransactionId,
+            payment_link = paymentLink,
             order_id = order.OrderId,
             order_status = order.Status.ToString(),
             is_order_confirmed = false
@@ -189,7 +206,9 @@ public sealed class PrepareOrderCheckoutTool : IAgentTool
         IReadOnlyList<OrderItem> items,
         decimal shippingCost,
         long payableCents,
-        string currency)
+        string currency,
+        string templateId,
+        bool paymentRequired)
     {
         var lineItems = items
             .Select(i => new CheckoutQuoteLineItem($"{i.ProductNameSnapshot} x{i.Quantity:N0}", i.LineTotal))
@@ -209,9 +228,9 @@ public sealed class PrepareOrderCheckoutTool : IAgentTool
             payableCents,
             payableCents,
             currency,
-            mode.Payment.Type,
-            mode.TemplateWithPayment!,
-            mode.ConfirmationOutcome!,
+            paymentRequired ? mode.Payment.Type : "none",
+            templateId,
+            paymentRequired ? mode.ConfirmationOutcome! : string.Empty,
             new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
             new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
             new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
@@ -393,7 +412,24 @@ public sealed class PrepareOrderCheckoutTool : IAgentTool
     private static string? GetFact(AgentToolContext ctx, string key) =>
         ctx.Facts.TryGetValue(key, out var value) ? value : null;
 
+
+    private static bool ResolvePaymentRequired(JsonElement args, string? paymentMethod)
+    {
+        if (ToolResultHelper.TryGetBool(args, "payment_required", out var required))
+            return required;
+
+        if (string.IsNullOrWhiteSpace(paymentMethod))
+            return true;
+
+        var normalized = paymentMethod.Trim().ToLowerInvariant();
+        return !(normalized.Contains("efectivo", StringComparison.Ordinal)
+            || normalized.Contains("contraentrega", StringComparison.Ordinal)
+            || normalized.Contains("contra entrega", StringComparison.Ordinal));
+    }
+
     private static string ShortId(Guid id) => id.ToString("N")[..8].ToUpperInvariant();
 
     private static string Money(decimal amount) => amount.ToString("N0", CultureInfo.InvariantCulture);
 }
+
+

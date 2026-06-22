@@ -304,7 +304,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
           "type": "whatsapp_template",
           "templateName": "delivery_request",
           "language": "es_CO",
-          "bodyParameters": ["{business_name}", "{attempt_code}", "{order_number}", "{customer_name}", "{customer_phone}", "{city}", "{delivery_address}", "{items}", "{total}", "{currency}"],
+          "bodyParameters": ["{business_name}", "{attempt_code}", "{order_number}", "Vinos Artesanales Solorzano", "Calle 16 # 9-35, Centro, Valledupar", "{customer_name}", "{customer_phone}", "{city}", "{delivery_address}", "{items}", "{total}", "{currency}", "{payment_method}"],
           "buttons": [
             { "id": "external_escalation:accept:{external_escalation_id}", "title": "Aceptar" },
             { "id": "external_escalation:decline:{external_escalation_id}", "title": "No tomar" }
@@ -357,27 +357,35 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       {
         "id": "order_data",
         "name": "Datos del pedido",
-        "goal": "Recoger ciudad, direccion, celular y nombre opcional para coordinar envio.",
-        "hint": "Cuando falte city, delivery_address o delivery_phone, pide los datos faltantes juntos en una lista titulada Datos del pedido. Incluye estos campos cuando falten: Ciudad, Direccion de entrega, Celular de contacto, Nombre de quien recibe (opcional). Cuando el cliente responda, registra todos los datos que entregue con set_fact en el mismo turno. Si despues de registrar quedan datos requeridos pendientes, pide los faltantes juntos en lista.",
+        "goal": "Recoger ciudad, direccion de entrega, celular y nombre de quien recibe para coordinar envio.",
+        "hint": "Cuando falte city, delivery_address, delivery_phone o customer_name, pide los datos faltantes juntos en una lista titulada Datos del pedido. Incluye estos campos cuando falten: Ciudad, Direccion de entrega, Celular de contacto, Nombre de quien recibe. Cuando el cliente responda, registra todos los datos que entregue con set_fact en el mismo turno. Si despues de registrar quedan datos requeridos pendientes, pide los faltantes juntos en lista. No avances a pago hasta tener nombre de quien recibe.",
         "allowedTools": ["set_fact"],
-        "advanceWhenFacts": ["city", "delivery_address", "delivery_phone"],
-        "reentryOnFactChanged": ["city", "delivery_address", "delivery_phone"]
+        "advanceWhenFacts": ["city", "delivery_address", "delivery_phone", "customer_name"],
+        "reentryOnFactChanged": ["city", "delivery_address", "delivery_phone", "customer_name"]
+      },
+      {
+        "id": "payment_method",
+        "name": "Metodo de pago",
+        "goal": "Preguntar si el cliente pagara en efectivo o por transferencia despues de confirmar los datos de envio.",
+        "hint": "Cuando ya existan items y datos completos de entrega, pregunta una sola cosa: si pagara en efectivo o por transferencia. Si responde efectivo, registra payment_method=efectivo. Si responde transferencia, registra payment_method=transferencia y entiende que transferencia significa enviar link de pago. No generes resumen ni link antes de guardar el metodo de pago.",
+        "allowedTools": ["set_fact", "get_order_draft"],
+        "advanceWhenFacts": ["payment_method"]
       },
       {
         "id": "summary",
-        "name": "Resumen y total",
-        "goal": "Mostrar resumen del pedido con total y link de pago por el 100%.",
-        "hint": "Llama prepare_order_checkout cuando ya existan items y datos de entrega. La herramienta genera el resumen oficial, calcula envio segun checkout.modes.order.shipping y crea link de pago por el 100%. Muestra el resumen/link generado y espera confirmacion automatica del webhook. Si prepare_order_checkout falla por configuracion de pago, link de pago o un error no recuperable, responde breve y llama escalate_to_human en ese mismo turno con la razon y el ultimo mensaje relevante. No uses tools de reserva ni confirmes pedido antes del pago.",
-        "allowedTools": ["prepare_order_checkout", "get_order_draft", "set_fact", "escalate_to_human"],
+        "name": "Resumen y confirmacion",
+        "goal": "Mostrar el resumen segun metodo de pago: efectivo con confirmacion verbal, transferencia con link de pago.",
+        "hint": "Si payment_method=efectivo y aun no se mostro resumen final, llama prepare_order_checkout con payment_method=efectivo o payment_required=false para calcular envio, total y renderizar el resumen sin link. Muestra el resumen generado y en ese mismo mensaje pide confirmacion verbal del pedido. Si el cliente confirma claramente ese resumen, llama create_order con customer_confirmed=true, customer_name, customer_phone y delivery_address; luego responde agradeciendo: Gracias por preferirnos, tu pedido va en camino y estaremos atentos al domicilio. Si payment_method=transferencia, llama prepare_order_checkout cuando ya existan items y datos de entrega; la herramienta genera el resumen oficial, calcula envio y crea link de pago por el 100%. Muestra el resumen/link generado y espera confirmacion automatica del webhook. Si prepare_order_checkout falla por configuracion de pago, link de pago o un error no recuperable, responde breve y llama escalate_to_human en ese mismo turno con la razon y el ultimo mensaje relevante. No confirmes pedidos por transferencia antes de que Wompi confirme el pago.",
+        "allowedTools": ["prepare_order_checkout", "create_order", "get_order_draft", "set_fact", "verify_payment", "escalate_to_human"],
         "advanceWhenFacts": [],
-        "reentryOnFactChanged": ["order_finalized", "city", "delivery_address"]
+        "reentryOnFactChanged": ["order_finalized", "city", "delivery_address", "delivery_phone", "customer_name", "payment_method"]
       },
       {
         "id": "payment",
-        "name": "Metodo de pago",
-        "goal": "Acompanar el pago online del pedido.",
-        "hint": "El pedido se confirma solo cuando Wompi confirme el pago. Si el cliente dice transferencia, Bancolombia, Nequi, Daviplata, efectivo, contraentrega o que quiere pagar, acompana el pago con el link de Wompi ya generado; si aun no hay link vigente, llama prepare_order_checkout. Si pregunta por estado del pago, llama verify_payment. No entregues cuentas bancarias ni datos de pago manual. No llames create_order para cerrar pedidos pagados.",
-        "allowedTools": ["prepare_order_checkout", "verify_payment", "get_order_draft", "escalate_to_human"],
+        "name": "Seguimiento de pago",
+        "goal": "Acompanar solo pedidos con transferencia con link de pago pendiente.",
+        "hint": "Usa esta etapa solo cuando payment_method=transferencia. Si el cliente pregunta por estado del pago, llama verify_payment. Si aun no hay link vigente, llama prepare_order_checkout. No entregues cuentas bancarias ni datos de pago manual. Si payment_method=efectivo, vuelve al resumen y espera confirmacion verbal para create_order.",
+        "allowedTools": ["prepare_order_checkout", "verify_payment", "get_order_draft", "create_order", "escalate_to_human"],
         "advanceWhenFacts": []
       }
     ]
@@ -394,8 +402,8 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "id": "modify_current_order",
       "priority": 90,
       "goal": "Modificar el carrito actual cuando el cliente, despues de decir que no agregaba mas o despues de recibir el resumen/link, pida agregar otro producto.",
-      "hint": "Si el cliente quiere agregar, quitar, reducir cantidades, cambiar productos o ver opciones para modificar el pedido actual, esta accion tiene prioridad sobre pedir datos de envio. Primero llama get_order_draft si necesitas identificar items existentes. Usa search_products para mostrar opciones o resolver productos, add_order_item para agregar, remove_order_item para quitar o ajustar cantidades, y despues muestra el carrito actualizado con get_order_draft. Si ya habia link de pago o ya estan los datos de entrega, vuelve a llamar prepare_order_checkout para generar un resumen/link actualizado; no le digas que use un link anterior.",
-      "allowedTools": ["search_products", "add_order_item", "remove_order_item", "get_order_draft", "prepare_order_checkout"]
+      "hint": "Si el cliente quiere agregar, quitar, reducir cantidades, cambiar productos o ver opciones para modificar el pedido actual, esta accion tiene prioridad sobre pedir datos de envio. Primero llama get_order_draft si necesitas identificar items existentes. Usa search_products para mostrar opciones o resolver productos, add_order_item para agregar, remove_order_item para quitar o ajustar cantidades, y despues muestra el carrito actualizado con get_order_draft. Si ya habia link de pago o ya estan los datos de entrega, vuelve a calcular el resumen segun payment_method: transferencia con prepare_order_checkout y efectivo con prepare_order_checkout payment_required=false; no le digas que use un link anterior.",
+      "allowedTools": ["search_products", "add_order_item", "remove_order_item", "get_order_draft", "prepare_order_checkout", "create_order", "set_fact"]
     },
     {
       "id": "restart_order",
@@ -486,13 +494,23 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "role": "customer.name",
       "label": "nombre del cliente",
       "type": "string",
-      "required": false,
+      "required": true,
       "source": "user",
       "scope": "customer",
       "captureMode": "eager",
-      "aliases": ["nombre", "cliente", "recibe", "destinatario"]
+      "aliases": ["nombre", "cliente", "recibe", "destinatario", "nombre de quien recibe"]
     },
     {
+      "key": "payment_method",
+      "role": "payment.method",
+      "label": "metodo de pago",
+      "type": "string",
+      "required": true,
+      "source": "user",
+      "scope": "request",
+      "captureMode": "eager",
+      "aliases": ["efectivo", "contraentrega", "transferencia", "link", "wompi", "nequi", "daviplata", "bancolombia"]
+    },    {
       "key": "shipping_cost",
       "role": "shipping.cost",
       "label": "costo de envio",
@@ -587,6 +605,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "order": {
         "payment": { "type": "full", "percentage": 100 },
         "templateWithPayment": "order_checkout_with_payment",
+        "templateNoPayment": "order_checkout_no_payment",
         "confirmationOutcome": "order_paid",
         "shipping": {
           "enabled": true,
@@ -598,7 +617,8 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
     }
   },
   "templates": {
-    "order_checkout_with_payment": "*Resumen de tu pedido*\n{{#each line_items}}\n- {{name}} x{{quantity}}: ${{line_total}}\n{{/each}}\n- Envio: ${{shipping_cost}}\n- *Total a pagar: ${{total}} {{currency}}*\n\nEntrega:\n- Ciudad: {{city}}\n- Direccion: {{delivery_address}}\n- Celular: {{customer_phone}}\n{{#if customer_name}}\n- Nombre: {{customer_name}}\n{{/if}}\n\nPuedes pagar de forma segura en este enlace:\n{{link_url}}\n\nCuando el pago sea aprobado, te confirmaremos la compra automaticamente."
+    "order_checkout_with_payment": "*Resumen de tu pedido*\n{{#each line_items}}\n- {{name}} x{{quantity}}: ${{line_total}}\n{{/each}}\n- Envio: ${{shipping_cost}}\n- *Total a pagar: ${{total}} {{currency}}*\n\nEntrega:\n- Ciudad: {{city}}\n- Direccion: {{delivery_address}}\n- Celular: {{customer_phone}}\n{{#if customer_name}}\n- Nombre: {{customer_name}}\n{{/if}}\n\nMetodo de pago: transferencia (link de pago)\n\nPuedes pagar de forma segura en este enlace:\n{{link_url}}\n\nCuando el pago sea aprobado, te confirmaremos la compra automaticamente.",
+    "order_checkout_no_payment": "*Resumen de tu pedido*\n{{#each line_items}}\n- {{name}} x{{quantity}}: ${{line_total}}\n{{/each}}\n- Envio: ${{shipping_cost}}\n- *Total a pagar: ${{total}} {{currency}}*\n\nEntrega:\n- Ciudad: {{city}}\n- Direccion: {{delivery_address}}\n- Celular: {{customer_phone}}\n{{#if customer_name}}\n- Nombre: {{customer_name}}\n{{/if}}\n\nMetodo de pago: efectivo al recibir\n\nConfirmas tu pedido con esta informacion?"
   }
 }';
 
