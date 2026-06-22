@@ -24,6 +24,7 @@ using MimosBabySpa.Application.Agents.Tools;
 using MimosBabySpa.Application.Agents.Tools.Impl;
 using MimosBabySpa.Application.BusinessRules;
 using MimosBabySpa.Application.Configuration;
+using MimosBabySpa.Application.Promotions;
 using MimosBabySpa.Application.StateManagement;
 using MimosBabySpa.Application.Agents.Templates;
 using MimosBabySpa.Application.Time;
@@ -103,6 +104,7 @@ services.AddScoped<IWorkingHoursService, WorkingHoursService>();
 services.AddScoped<IAvailabilityService, AvailabilityService>();
 services.AddScoped<ServiceNameResolver>();
 services.AddScoped<ReservationPricingResolver>();
+services.AddScoped<IPromotionPricingService, PromotionPricingService>();
 services.AddScoped<IBusinessClock, BusinessClock>();
 services.AddSingleton<ITemporalReferenceBuilder, TemporalReferenceBuilder>();
 services.AddScoped<ICatalogContentGenerator, CatalogContentGenerator>();
@@ -393,5 +395,4 @@ static string CreateTestUserPhone()
 {
     return $"+1555{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() % 10000000:0000000}";
 }
-
 
