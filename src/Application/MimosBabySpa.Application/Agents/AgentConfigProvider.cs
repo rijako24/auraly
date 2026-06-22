@@ -122,6 +122,7 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
                 }
             }
 
+
             if (stage.AutoSetOnSkip.Count > 0 && string.IsNullOrWhiteSpace(stage.SkipWhen))
             {
                 _logger.LogWarning(
@@ -257,6 +258,8 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
             yield return Tools.ToolCapabilities.CheckoutPrepare;
         else if (toolName.Equals("create_reservation", StringComparison.OrdinalIgnoreCase))
             yield return Tools.ToolCapabilities.ReservationCreate;
+        else if (toolName.Equals("create_order", StringComparison.OrdinalIgnoreCase))
+            yield return Tools.ToolCapabilities.OrderCreate;
         else if (toolName.Equals("assign_paid_slot", StringComparison.OrdinalIgnoreCase))
             yield return Tools.ToolCapabilities.PaidSlotAssign;
     }

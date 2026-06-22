@@ -38,10 +38,9 @@ public interface IAgentTool
     string? DefaultTemplate => null;
 
     /// <summary>
-    /// Eventos semánticos universales que disparan esta tool.
-    /// El compositor los traduce a un bloque "## CUÁNDO USAR {Name}" en el prompt.
+    /// Eventos semánticos universales expuestos por la tool para capas de configuración o telemetría.
+    /// La política conversacional debe venir de la configuración del tenant, por ejemplo globalActions o stages.
     /// Ejemplos: "customer_frustration", "consecutive_errors", "out_of_scope_request".
-    /// Tenants pueden filtrar / sobrescribir vía config.
     /// </summary>
     IReadOnlyList<string> SemanticTriggers => [];
 

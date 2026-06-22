@@ -1,4 +1,5 @@
 using System.Text.Json;
+using MimosBabySpa.Application.Agents.Gating;
 using MimosBabySpa.Application.Commerce;
 using MimosBabySpa.Domain.Catalog;
 using MimosBabySpa.Application.Services;
@@ -19,7 +20,8 @@ public sealed class AddOrderItemTool : IAgentTool
     public string Name => "add_order_item";
     public IReadOnlyList<string> Capabilities => [ToolCapabilities.OrderDraftUpdate];
     public string Description =>
-        "Adds a catalog product and quantity to the current conversation order draft. " +
+        "Adds a catalog product and an explicit customer-provided quantity to the current conversation order draft. " +
+        "Do not infer quantity or default to 1; if the customer selected a product without saying how many units, ask for quantity first. " +
         "Use the product_id returned by search_products when available. " +
         "If the customer only provides quantity after a product was selected, call it with quantity.";
     public string ParametersSchema => """
@@ -42,7 +44,7 @@ public sealed class AddOrderItemTool : IAgentTool
               "type": "string",
               "description": "Display name from search_products. Prefer product_id for catalog products."
             },
-            "quantity": { "type": "number" },
+            "quantity": { "type": "number", "description": "Explicit quantity stated by the customer. Do not infer or default to 1." },
             "unit_price": { "type": "number" }
           },
           "required": ["quantity"]
@@ -109,7 +111,8 @@ public sealed class AddOrderItemTool : IAgentTool
                 new AddOrderItemRequest(productId, externalId, sku, name, quantity, unitPrice),
                 cancellationToken);
             await ProductSelectionMemory.ClearSelectedAsync(_factsService, ctx, cancellationToken);
-            await ClearOrderFinalizedFactAsync(ctx, cancellationToken);
+            var clearedFacts = await ClearOrderFinalizedFactAsync(ctx, cancellationToken);
+            await ClearDerivedFlowCheckpointsAsync(ctx, clearedFacts, cancellationToken);
         }
         catch (InvalidOperationException ex) when (ex.Message.Contains("Product not found", StringComparison.OrdinalIgnoreCase))
         {
@@ -215,11 +218,26 @@ public sealed class AddOrderItemTool : IAgentTool
         && parsed == quantity;
 
 
-    private async Task ClearOrderFinalizedFactAsync(AgentToolContext ctx, CancellationToken cancellationToken)
+    private async Task<IReadOnlyList<string>> ClearOrderFinalizedFactAsync(AgentToolContext ctx, CancellationToken cancellationToken)
     {
         var cleared = await _factsService.ClearFieldsAsync(ctx.ConversationId, ["order_finalized"], cancellationToken);
         if (cleared.Count > 0)
             ctx.Facts.Remove("order_finalized");
+        return cleared;
+    }
+
+    private async Task ClearDerivedFlowCheckpointsAsync(
+        AgentToolContext ctx,
+        IReadOnlyCollection<string> changedFactKeys,
+        CancellationToken cancellationToken)
+    {
+        var factsToClear = FlowCheckpointInvalidation.GetDerivedAdvanceFactsToClear(ctx, changedFactKeys);
+        if (factsToClear.Count > 0)
+        {
+            var cleared = await _factsService.ClearFieldsAsync(ctx.ConversationId, factsToClear, cancellationToken);
+            foreach (var factKey in cleared)
+                ctx.Facts.Remove(factKey);
+        }
     }
 
     private static bool TryGetDecimal(JsonElement args, string name, out decimal value)

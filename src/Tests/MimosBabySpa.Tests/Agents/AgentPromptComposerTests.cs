@@ -140,6 +140,10 @@ public class AgentPromptComposerTests
         result.Should().Contain("edad del bebé (meses): 5");
         result.Should().Contain("plan / servicio: Plan Marineritos");
         result.Should().Contain("complementos: Decoración Sencilla");
+        result.Should().NotContain("## RESERVAS GESTIONABLES");
+        result.Should().NotContain("hay_reservas_gestionables");
+        result.Should().NotContain("get_customer_reservations");
+        result.Should().NotContain("si el cliente pide cambiar servicio");
     }
 
     [Fact]
@@ -160,7 +164,7 @@ public class AgentPromptComposerTests
     }
 
     [Fact]
-    public void Compose_WithPendingPayment_ShowsGranularPaymentState()
+    public void Compose_WithPendingPayment_ShowsCompactPaymentStateOnly()
     {
         var payment = new PaymentTransaction
         {
@@ -179,9 +183,9 @@ public class AgentPromptComposerTests
 
         result.Should().Contain("pago: link generado");
         result.Should().Contain("COP $67,500");
-        result.Should().Contain("## CHECKOUT PENDIENTE");
-        result.Should().Contain("hay_link_pendiente: true");
-        result.Should().Contain("link_actual: https://pay.example/link");
+        result.Should().NotContain("## CHECKOUT PENDIENTE");
+        result.Should().NotContain("hay_link_pendiente: true");
+        result.Should().NotContain("link_actual: https://pay.example/link");
         result.Should().NotContain("si el cliente cambia servicio");
         result.Should().NotContain("prepare_checkout");
     }
@@ -203,6 +207,32 @@ public class AgentPromptComposerTests
             payment);
 
         result.Should().Contain("pago: confirmado");
+    }
+
+    [Fact]
+    public void Compose_WithConfirmedPaymentRequiringReschedule_DoesNotRenderOperationalPaymentBlock()
+    {
+        var paymentId = Guid.NewGuid();
+        var payment = new PaymentTransaction
+        {
+            PaymentTransactionId = paymentId,
+            Status = PaymentTransactionStatus.Confirmed,
+            RequiresRescheduling = true,
+            AmountInCents = 6750000,
+            Currency = "COP"
+        };
+
+        var result = Compose(
+            DefaultConfig,
+            [],
+            new AgentToolContext { Conversation = new Conversation(), Facts = [] },
+            payment);
+
+        result.Should().Contain("pago: confirmado");
+        result.Should().NotContain("## ESTADO PAGO");
+        result.Should().NotContain("pago_confirmado_sin_slot: true");
+        result.Should().NotContain($"payment_transaction_id: {paymentId}");
+        result.Should().NotContain("assign_paid_slot");
     }
 
     [Fact]
@@ -504,6 +534,8 @@ public class AgentPromptComposerTests
         var result = Compose(config, [], session);
 
         result.Should().Contain("## CAPTURA INMEDIATA");
+        result.Should().Contain("Usa set_fact solo para datos expresados o confirmados por el cliente");
+        result.Should().Contain("No guardes inferencias, objetivos internos del flujo ni marcadores de estado");
         result.Should().Contain("nombre del bebé (baby_name)");
         result.Should().Contain("edad del bebé (baby_age_months)");
         result.Should().NotContain("plan (service)");

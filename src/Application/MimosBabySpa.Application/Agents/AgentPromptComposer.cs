@@ -70,10 +70,6 @@ public sealed class AgentPromptComposer : IPromptComposer
         if (!string.IsNullOrWhiteSpace(actionsBlock))
             blocks.Add(actionsBlock);
 
-        var triggersBlock = BuildSemanticTriggersBlock(input.EnabledTools, input.Config);
-        if (!string.IsNullOrWhiteSpace(triggersBlock))
-            blocks.Add(triggersBlock);
-
         return string.Join($"{Environment.NewLine}{Environment.NewLine}", blocks);
     }
 
@@ -209,30 +205,6 @@ public sealed class AgentPromptComposer : IPromptComposer
                 factsLines.Add("- No vuelvas a llamar set_fact para un dato ya listado arriba con el mismo valor.");
                 blocks.Add(string.Join(Environment.NewLine, factsLines));
             }
-
-            // ── SEÑAL DE RESERVAS GESTIONABLES ────────────────────────────────
-            var reservationBlock = BuildReservationContextBlock(session);
-            if (!string.IsNullOrWhiteSpace(reservationBlock))
-                blocks.Add(reservationBlock);
-
-            // ── ESTADO PAGO: pago confirmado sin slot ─────────────────────────
-            if (paymentForContext?.RequiresRescheduling == true
-                && paymentForContext.Status == PaymentTransactionStatus.Confirmed
-                && !paymentForContext.ReservationId.HasValue)
-            {
-                var paySpecial = new List<string>
-                {
-                    "## ESTADO PAGO",
-                    "- pago_confirmado_sin_slot: true",
-                    $"- payment_transaction_id: {paymentForContext.PaymentTransactionId}",
-                    "- accion_requerida: cuando el cliente confirme nuevo horario, llama assign_paid_slot"
-                };
-                blocks.Add(string.Join(Environment.NewLine, paySpecial));
-            }
-
-            var pendingCheckoutBlock = BuildPendingCheckoutBlock(paymentForContext);
-            if (!string.IsNullOrWhiteSpace(pendingCheckoutBlock))
-                blocks.Add(pendingCheckoutBlock);
         }
 
         // ── POLÍTICA DE PAGO ──────────────────────────────────────────────────
@@ -247,49 +219,6 @@ public sealed class AgentPromptComposer : IPromptComposer
         return blocks.Count == 0
             ? string.Empty
             : string.Join($"{Environment.NewLine}{Environment.NewLine}", blocks);
-    }
-
-    internal static string BuildReservationContextBlock(AgentToolContext session)
-    {
-        return session.ManageableReservations.Count switch
-        {
-            0 => string.Empty,
-            1 => string.Join(Environment.NewLine, new[]
-            {
-                "## RESERVAS GESTIONABLES",
-                "- hay_reservas_gestionables: true",
-                "- cantidad: 1",
-                "- si el cliente pide cambiar servicio, horario o complementos, llama get_customer_reservations antes de preparar cambios.",
-                "- no uses este indicador para iniciar cambios si el cliente solo pide informacion o quiere una reserva nueva."
-            }),
-            _ => string.Join(Environment.NewLine, new[]
-            {
-                "## RESERVAS GESTIONABLES",
-                "- hay_reservas_gestionables: true",
-                $"- cantidad: {session.ManageableReservations.Count}",
-                "- si el cliente pide cambiar servicio, horario o complementos, llama get_customer_reservations y pregunta cual cita por fecha/servicio.",
-                "- no pidas UUID al cliente."
-            })
-        };
-    }
-
-    private static string BuildPendingCheckoutBlock(PaymentTransaction? payment)
-    {
-        if (payment?.Status != PaymentTransactionStatus.Created)
-            return string.Empty;
-
-        var lines = new List<string>
-        {
-            "## CHECKOUT PENDIENTE",
-            "- hay_link_pendiente: true",
-            $"- checkout_kind: {payment.CheckoutKind}",
-            $"- monto_pendiente: {payment.Currency} ${(payment.AmountInCents / 100m).ToString("N0", System.Globalization.CultureInfo.InvariantCulture)}"
-        };
-
-        if (!string.IsNullOrWhiteSpace(payment.LinkUrl))
-            lines.Add($"- link_actual: {payment.LinkUrl}");
-
-        return string.Join(Environment.NewLine, lines);
     }
 
     private static IEnumerable<string> DescribeFacts(AgentConfig config, IReadOnlyList<string> factKeys)
@@ -329,7 +258,9 @@ public sealed class AgentPromptComposer : IPromptComposer
         var lines = new List<string>
         {
             "## CAPTURA INMEDIATA",
-            "Si el cliente menciona alguno de los siguientes datos antes de que los solicites, persístalo de inmediato con set_fact:"
+            "Si el cliente menciona alguno de los siguientes datos antes de que los solicites, persístalo de inmediato con set_fact:",
+            "- Usa set_fact solo para datos expresados o confirmados por el cliente.",
+            "- No guardes inferencias, objetivos internos del flujo ni marcadores de estado que el cliente no haya expresado."
         };
 
         foreach (var entry in eagerMissing)
@@ -452,41 +383,6 @@ public sealed class AgentPromptComposer : IPromptComposer
                 lines.Add($"- facts_pendientes: {string.Join(", ", missingFacts)}");
                 lines.Add($"- datos_pendientes_para_avanzar: {string.Join(", ", DescribeFacts(config, missingFacts))}");
             }
-        }
-
-        return string.Join(Environment.NewLine, lines);
-    }
-
-    /// <summary>
-    /// Emite un bloque describiendo las condiciones semánticas que disparan tools especiales.
-    /// Solo se incluye para tools que tienen SemanticTriggers definidos y están habilitadas.
-    /// </summary>
-    internal static string BuildSemanticTriggersBlock(
-        IReadOnlyList<IAgentTool> enabledTools,
-        AgentConfig config)
-    {
-        var triggeredTools = enabledTools
-            .Where(t => t.SemanticTriggers.Count > 0
-                && config.EnabledToolNames.Contains(t.Name, StringComparer.OrdinalIgnoreCase))
-            .ToList();
-
-        if (triggeredTools.Count == 0)
-            return string.Empty;
-
-        var lines = new List<string> { "## CUÁNDO USAR HERRAMIENTAS ESPECIALES" };
-
-        foreach (var tool in triggeredTools)
-        {
-            var conditions = tool.SemanticTriggers.Select(t => t switch
-            {
-                "customer_frustration"  => "el cliente expresa frustración o enojo",
-                "consecutive_errors"    => "hay 2 o más errores consecutivos sin resolución",
-                "out_of_scope_request"  => "el cliente pide algo fuera del alcance del bot",
-                "explicit_human_request"=> "el cliente pide explícitamente hablar con un humano",
-                _                       => t
-            });
-
-            lines.Add($"- `{tool.Name}`: Úsalo cuando {string.Join(", o cuando ", conditions)}.");
         }
 
         return string.Join(Environment.NewLine, lines);

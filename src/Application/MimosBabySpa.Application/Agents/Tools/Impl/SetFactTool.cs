@@ -333,6 +333,7 @@ public sealed class SetFactTool : IAgentTool
 
 
 
+        await ClearDerivedFlowCheckpointsAsync(ctx, key, cancellationToken);
         if (key.Equals(ConversationFactKeys.CustomerName, StringComparison.OrdinalIgnoreCase))
 
             ctx.Conversation.CustomerName = value;
@@ -374,6 +375,20 @@ public sealed class SetFactTool : IAgentTool
     }
 
 
+
+    private async Task ClearDerivedFlowCheckpointsAsync(
+        AgentToolContext ctx,
+        string changedFactKey,
+        CancellationToken cancellationToken)
+    {
+        var factsToClear = FlowCheckpointInvalidation.GetDerivedAdvanceFactsToClear(ctx, [changedFactKey]);
+        if (factsToClear.Count == 0)
+            return;
+
+        var cleared = await _factsService.ClearFieldsAsync(ctx.ConversationId, factsToClear, cancellationToken);
+        foreach (var factKey in cleared)
+            ctx.Facts.Remove(factKey);
+    }
 
     private Task TryRecordCustomerIdentifiedAsync(AgentToolContext ctx)
 
@@ -518,5 +533,4 @@ public sealed class SetFactTool : IAgentTool
     }
 
 }
-
 

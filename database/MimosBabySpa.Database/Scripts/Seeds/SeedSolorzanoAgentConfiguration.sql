@@ -340,7 +340,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         "id": "discovery",
         "name": "Descubrimiento y recomendacion",
         "goal": "Entender si el vino es para regalo o para compartir, recomendar opciones disponibles y construir el carrito hasta que el cliente finalice la compra.",
-        "hint": "Si el cliente saluda, responde breve y pregunta si el vino es para regalar o compartir. Para opciones, precios, promos, tamanos, presentaciones o sabores, llama search_products antes de responder y muestra solo productos activos devueltos por la herramienta. Para ocasion regalar/compartir usa query vino, limit 3. Si el cliente selecciona por numero, precio, tamano, sabor, nombre parcial o descripcion, resuelve contra el ultimo search_products; si hay una sola coincidencia razonable, avanza, y si hay varias, pide una aclaracion corta. Agrega al carrito solo cuando producto y cantidad esten claros. Despues de add_order_item exitoso, muestra el carrito y cierra con esta pregunta: Quieres agregar algo mas a la compra? Si el cliente responde que no, nada mas, continuar, finalizar o equivalente, y existe al menos un item en el carrito, llama set_fact order_finalized=true. Si el carrito esta vacio, ayuda a elegir un producto primero.",
+        "hint": "En saludos, responde breve y pregunta si busca vino para regalar o compartir. Cuando el cliente exprese una ocasion real como regalo, compartir, celebracion o detalle, registra occasion. Para recomendaciones por ocasion, opciones, precios, promos, tamanos, presentaciones o sabores, llama search_products antes de responder; usa query vino, limit 3 cuando la ocasion sea general. Muestra productos activos devueltos por la herramienta. Si el cliente selecciona por numero, precio, tamano, sabor, nombre parcial o descripcion, resuelve contra el ultimo search_products; si hay una coincidencia razonable pero falta cantidad, pregunta cuantas unidades quiere. Agrega al carrito solo cuando producto y cantidad expresa esten claros. Despues de add_order_item exitoso, muestra el carrito y pregunta: Quieres agregar algo mas a la compra? Si responde no/nada mas/continuar/finalizar y existe al menos un item, llama set_fact order_finalized=true; si el carrito esta vacio, ayuda a elegir un producto primero.",
         "allowedTools": ["search_products", "add_order_item", "set_fact"],
         "advanceWhenFacts": ["order_finalized"]
       },
@@ -356,26 +356,33 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       {
         "id": "payment_method",
         "name": "Metodo de pago",
-        "goal": "Preguntar si el cliente pagara en efectivo o por transferencia despues de confirmar los datos de envio.",
-        "hint": "Cuando ya existan items y datos completos de entrega, pregunta una sola cosa: si pagara en efectivo o por transferencia. Si responde efectivo, registra payment_method=efectivo. Si responde transferencia, registra payment_method=transferencia y entiende que transferencia significa enviar link de pago. Genera resumen o link despues de guardar el metodo de pago.",
+        "goal": "Preguntar si el cliente pagara en efectivo al recibir o por transferencia con link despues de confirmar los datos de envio.",
+        "hint": "Cuando ya existan items y datos completos de entrega, pregunta una sola cosa con estas dos opciones: efectivo al recibir o transferencia con link de pago. Si responde efectivo, registra payment_method=efectivo. Si responde transferencia o link de pago, registra payment_method=transferencia. Despues de guardar el metodo de pago, continua al resumen.",
         "allowedTools": ["set_fact", "get_order_draft"],
         "advanceWhenFacts": ["payment_method"]
       },
       {
         "id": "summary",
-        "name": "Resumen y confirmacion",
-        "goal": "Mostrar el resumen segun metodo de pago: efectivo con confirmacion verbal, transferencia con link de pago.",
-        "hint": "Si payment_method=efectivo y aun no se mostro resumen final, llama prepare_order_checkout con payment_method=efectivo o payment_required=false para calcular envio, total y renderizar el resumen sin link. Muestra el resumen generado y en ese mismo mensaje pide confirmacion verbal del pedido. Si el cliente confirma claramente ese resumen, llama create_order con customer_confirmed=true, customer_name, customer_phone y delivery_address; cuando create_order confirme el pedido, llama send_message_sequence con sequence=order_created_customer. Si payment_method=transferencia, llama prepare_order_checkout cuando ya existan items y datos de entrega; la herramienta genera el resumen oficial, calcula envio y crea link de pago por el 100%. Muestra el resumen/link generado y espera confirmacion automatica del webhook. Si prepare_order_checkout falla por configuracion de pago, link de pago o un error no recuperable, responde breve y llama escalate_to_human en ese mismo turno con la razon y el ultimo mensaje relevante. Para transferencia, confirma el pedido cuando Wompi confirme el pago.",
-        "allowedTools": ["prepare_order_checkout", "create_order", "send_message_sequence", "get_order_draft", "set_fact", "verify_payment", "escalate_to_human"],
-        "advanceWhenFacts": [],
-        "reentryOnFactChanged": ["order_finalized", "city", "delivery_address", "delivery_phone", "customer_name", "payment_method"]
+        "name": "Resumen del pedido",
+        "goal": "Preparar y mostrar el resumen oficial del pedido segun el metodo de pago configurado.",
+        "hint": "Cuando ya existan items, datos de entrega y metodo de pago, llama prepare_order_checkout una sola vez para calcular envio, total y renderizar el resumen oficial. Si devuelve resumen sin link, muestra el resumen y pide confirmacion verbal. Si devuelve link de pago, muestra el resumen/link y espera confirmacion automatica del webhook. Si falla por configuracion de pago, link de pago o error no recuperable, responde breve y llama escalate_to_human en ese mismo turno.",
+        "allowedTools": ["prepare_order_checkout", "get_order_draft", "escalate_to_human"],
+        "advanceWhenFacts": ["order_checkout_presented"],
+        "reentryOnFactChanged": ["order_finalized", "city", "delivery_address", "delivery_phone", "customer_name", "payment_method"],
+        "afterTool": [
+          {
+            "tool": "prepare_order_checkout",
+            "when": { "path": "ok", "equals": "true" },
+            "setFacts": { "order_checkout_presented": "true" }
+          }
+        ]
       },
       {
-        "id": "payment",
-        "name": "Seguimiento de pago",
-        "goal": "Acompanar solo pedidos con transferencia con link de pago pendiente.",
-        "hint": "Usa esta etapa solo cuando payment_method=transferencia. Si el cliente pregunta por estado del pago, llama verify_payment. Si aun no hay link vigente, llama prepare_order_checkout. Para pagos por transferencia, usa el link vigente generado por prepare_order_checkout. Si payment_method=efectivo, vuelve al resumen y espera confirmacion verbal para create_order.",
-        "allowedTools": ["prepare_order_checkout", "verify_payment", "get_order_draft", "create_order", "escalate_to_human"],
+        "id": "order_confirmation",
+        "name": "Confirmacion del pedido",
+        "goal": "Confirmar el pedido ya resumido o acompanar el pago pendiente segun el metodo elegido.",
+        "hint": "Si payment_method=efectivo y el cliente confirma claramente el resumen, llama create_order con customer_confirmed=true, customer_name, customer_phone y delivery_address; cuando create_order confirme el pedido, llama send_message_sequence con sequence=order_created_customer. Si payment_method=transferencia, no crees el pedido por confirmacion verbal; si el cliente pregunta por el pago, llama verify_payment y espera la confirmacion automatica del webhook. Si el cliente corrige datos, metodo de pago o carrito, actualiza el dato correspondiente y vuelve al resumen recalculado.",
+        "allowedTools": ["create_order", "send_message_sequence", "verify_payment", "get_order_draft", "set_fact", "escalate_to_human"],
         "advanceWhenFacts": []
       }
     ]
@@ -392,8 +399,8 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "id": "modify_current_order",
       "priority": 90,
       "goal": "Modificar el carrito actual cuando el cliente, despues de decir que no agregaba mas o despues de recibir el resumen/link, pida agregar otro producto.",
-      "hint": "Si el cliente quiere agregar, quitar, reducir cantidades, cambiar productos o ver opciones para modificar el pedido actual, esta accion tiene prioridad sobre pedir datos de envio. Primero llama get_order_draft si necesitas identificar items existentes. Usa search_products para mostrar opciones o resolver productos, add_order_item para agregar, remove_order_item para quitar o ajustar cantidades, y despues muestra el carrito actualizado con get_order_draft. Si pide otro tamano, otra presentacion, otro sabor u opciones parecidas, llama search_products antes de responder; menciona solo alternativas devueltas por la herramienta. Si ya habia link de pago o ya estan los datos de entrega, vuelve a calcular el resumen segun payment_method: transferencia con prepare_order_checkout y efectivo con prepare_order_checkout payment_required=false; presenta el resumen o link actualizado.",
-      "allowedTools": ["search_products", "add_order_item", "remove_order_item", "get_order_draft", "prepare_order_checkout", "create_order", "set_fact"]
+      "hint": "Si el cliente quiere agregar, quitar, reducir cantidades, cambiar productos o ver opciones para modificar el pedido actual, esta accion tiene prioridad sobre pedir datos de envio. Primero llama get_order_draft si necesitas identificar items existentes. Usa search_products para mostrar opciones o resolver productos. Para agregar, llama add_order_item solo cuando el producto y la cantidad expresa esten claros; si falta cantidad, pregunta cuantas unidades quiere. Usa remove_order_item para quitar o ajustar cantidades, y despues muestra el carrito actualizado con get_order_draft. Si pide otro tamano, otra presentacion, otro sabor u opciones parecidas, llama search_products antes de responder; menciona solo alternativas devueltas por la herramienta. Despues de modificar el carrito, vuelve al siguiente paso del flujo: datos de envio si faltan, metodo de pago si aun no existe, o resumen si ya estaba definido.",
+      "allowedTools": ["search_products", "add_order_item", "remove_order_item", "get_order_draft", "set_fact"]
     },
     {
       "id": "restart_order",
@@ -499,8 +506,18 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "source": "user",
       "scope": "request",
       "captureMode": "eager",
-      "aliases": ["efectivo", "contraentrega", "transferencia", "link", "wompi", "nequi", "daviplata", "bancolombia"]
-    },    {
+      "aliases": ["efectivo", "transferencia"]
+    },
+    {
+      "key": "order_checkout_presented",
+      "role": "order.checkout_presented",
+      "label": "resumen presentado",
+      "type": "string",
+      "required": false,
+      "source": "system",
+      "scope": "request"
+    },
+    {
       "key": "shipping_cost",
       "role": "shipping.cost",
       "label": "costo de envio",
@@ -508,19 +525,16 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "required": false,
       "source": "system",
       "scope": "request"
-    },
-    {
-      "key": "order_confirmed",
-      "role": "order.confirmed",
-      "label": "pedido confirmado",
-      "type": "string",
-      "required": false,
-      "source": "user",
-      "scope": "request",
-      "aliases": ["confirmado", "confirmo", "si confirmo", "de acuerdo", "listo"]
     }
   ],
-  "guards": {},
+  "guards": {
+    "capability:commerce.order_create": {
+      "requires": [
+        "verification:checkout_no_payment_prepared",
+        "state:no_pending_checkout"
+      ]
+    }
+  },
   "enabledTools": [
     "set_fact",
     "search_products",
@@ -612,6 +626,18 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
     "modes": {
       "order": {
         "payment": { "type": "full", "percentage": 100 },
+        "paymentMethods": {
+          "efectivo": {
+            "label": "efectivo al recibir",
+            "paymentRequired": false,
+            "aliases": ["efectivo"]
+          },
+          "transferencia": {
+            "label": "transferencia con link de pago",
+            "paymentRequired": true,
+            "aliases": ["transferencia", "link de pago"]
+          }
+        },
         "templateWithPayment": "order_checkout_with_payment",
         "templateNoPayment": "order_checkout_no_payment",
         "confirmationOutcome": "order_paid",

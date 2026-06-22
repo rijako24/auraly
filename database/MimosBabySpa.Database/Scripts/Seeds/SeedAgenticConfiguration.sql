@@ -321,6 +321,13 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "allowedTools": ["escalate_to_human"]
     },
     {
+      "id": "complete_paid_slot_assignment",
+      "priority": 950,
+      "goal": "Completar la asignacion de horario cuando un pago confirmado quedo sin reserva porque el horario original ya no estaba disponible y el cliente elige otra fecha u hora.",
+      "hint": "Usa esta ruta solo cuando la conversacion venga de un aviso de pago seguro con horario no disponible, o cuando el cliente este eligiendo nuevo horario para un pago ya confirmado. No generes nuevo checkout ni pidas nuevo pago. Primero valida el horario con check_availability usando el servicio original; si esta disponible, llama assign_paid_slot con date y time. Si no esta disponible, ofrece los horarios devueltos por check_availability.",
+      "allowedTools": ["check_availability", "assign_paid_slot", "set_fact"]
+    },
+    {
       "id": "manage_existing_reservation",
       "priority": 900,
       "goal": "Gestionar reservas existentes cuando el cliente quiera confirmar asistencia, cambiar, reagendar, agregar o quitar complementos, cambiar servicio o suspender una reserva ya creada.",

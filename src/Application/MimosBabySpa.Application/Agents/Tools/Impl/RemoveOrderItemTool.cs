@@ -1,14 +1,21 @@
 using System.Text.Json;
+using MimosBabySpa.Application.Agents.Gating;
 using MimosBabySpa.Application.Commerce;
 using MimosBabySpa.Domain.Catalog;
+using MimosBabySpa.Application.Services;
 
 namespace MimosBabySpa.Application.Agents.Tools.Impl;
 
 public sealed class RemoveOrderItemTool : IAgentTool
 {
     private readonly ICommerceService _commerce;
+    private readonly IConversationFactsService _factsService;
 
-    public RemoveOrderItemTool(ICommerceService commerce) => _commerce = commerce;
+    public RemoveOrderItemTool(ICommerceService commerce, IConversationFactsService factsService)
+    {
+        _commerce = commerce;
+        _factsService = factsService;
+    }
 
     public string Name => "remove_order_item";
     public IReadOnlyList<string> Capabilities => [ToolCapabilities.OrderDraftUpdate];
@@ -64,6 +71,9 @@ public sealed class RemoveOrderItemTool : IAgentTool
         {
             updated = await _commerce.RemoveItemAsync(ctx, item.OrderItemId, cancellationToken);
         }
+
+        var clearedFacts = await ClearOrderFinalizedFactAsync(ctx, cancellationToken);
+        await ClearDerivedFlowCheckpointsAsync(ctx, clearedFacts, cancellationToken);
 
         return ToolResultHelper.Ok(new { order = updated });
     }
@@ -155,6 +165,28 @@ public sealed class RemoveOrderItemTool : IAgentTool
     {
         var options = items.Take(5).Select(i => $"{i.OrderItemId}: {i.ProductName} x{i.Quantity}");
         return "Pregunta cual item del pedido quiere modificar: " + string.Join("; ", options) + ".";
+    }
+
+    private async Task<IReadOnlyList<string>> ClearOrderFinalizedFactAsync(AgentToolContext ctx, CancellationToken cancellationToken)
+    {
+        var cleared = await _factsService.ClearFieldsAsync(ctx.ConversationId, ["order_finalized"], cancellationToken);
+        if (cleared.Count > 0)
+            ctx.Facts.Remove("order_finalized");
+        return cleared;
+    }
+
+    private async Task ClearDerivedFlowCheckpointsAsync(
+        AgentToolContext ctx,
+        IReadOnlyCollection<string> changedFactKeys,
+        CancellationToken cancellationToken)
+    {
+        var factsToClear = FlowCheckpointInvalidation.GetDerivedAdvanceFactsToClear(ctx, changedFactKeys);
+        if (factsToClear.Count > 0)
+        {
+            var cleared = await _factsService.ClearFieldsAsync(ctx.ConversationId, factsToClear, cancellationToken);
+            foreach (var factKey in cleared)
+                ctx.Facts.Remove(factKey);
+        }
     }
 
     private static bool TryGetDecimal(JsonElement args, string name, out decimal value)

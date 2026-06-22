@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text;
 using System.Text.Json;
 using MimosBabySpa.Application.Agents.Configuration;
 using MimosBabySpa.Application.Agents.Facts;
@@ -79,8 +80,16 @@ public sealed class PrepareOrderCheckoutTool : IAgentTool
                 "Add SettingsJson.checkout.modes.order.");
         }
 
-        var paymentMethod = Get(arguments, "payment_method") ?? GetFact(ctx, "payment_method");
-        var paymentRequired = ResolvePaymentRequired(arguments, paymentMethod);
+        var paymentMethodInput = Get(arguments, "payment_method") ?? GetFact(ctx, "payment_method");
+        var paymentSelection = ResolvePaymentSelection(checkoutMode, arguments, paymentMethodInput);
+        if (paymentSelection.MissingPaymentMethod)
+            return ToolResultHelper.MissingPrerequisites(["payment_method"]);
+
+        if (paymentSelection.Error is not null)
+            return paymentSelection.Error;
+
+        var paymentMethod = paymentSelection.MethodLabel;
+        var paymentRequired = paymentSelection.PaymentRequired;
         var templateId = paymentRequired ? checkoutMode.TemplateWithPayment : checkoutMode.TemplateNoPayment;
 
         if (string.IsNullOrWhiteSpace(templateId))
@@ -170,7 +179,7 @@ public sealed class PrepareOrderCheckoutTool : IAgentTool
             templateData["link_url"] = linkResult.LinkUrl;
         }
 
-        templateData["payment_method"] = paymentRequired ? "transferencia" : "efectivo";
+        templateData["payment_method"] = paymentMethod;
 
         var checkoutToken = ctx.Turn.RegisterFragment(
             "CHECKOUT",
@@ -179,11 +188,21 @@ public sealed class PrepareOrderCheckoutTool : IAgentTool
             FragmentRenderMode.Exclusive);
         ctx.Turn.MarkCheckoutPrepared();
 
+        var checkoutDependencies = BuildVerificationDependencies(bindings.RequiredFactRoles, roles, ctx.Facts, paymentMethodInput);
         _verifications.Record(
             ctx,
             VerificationFactTypes.CheckoutPrepared,
-            BuildVerificationDependencies(bindings.RequiredFactRoles, roles, ctx.Facts),
+            checkoutDependencies,
             ttl: null);
+
+        if (!paymentRequired)
+        {
+            _verifications.Record(
+                ctx,
+                VerificationFactTypes.CheckoutNoPaymentPrepared,
+                checkoutDependencies,
+                ttl: null);
+        }
 
         return ToolResultHelper.Ok(new
         {
@@ -375,7 +394,8 @@ public sealed class PrepareOrderCheckoutTool : IAgentTool
     private static IReadOnlyDictionary<string, string> BuildVerificationDependencies(
         IReadOnlyDictionary<string, string> required,
         FactRoleIndex roles,
-        IReadOnlyDictionary<string, string> facts)
+        IReadOnlyDictionary<string, string> facts,
+        string? paymentMethod)
     {
         var dependencies = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var binding in required.Values)
@@ -384,6 +404,9 @@ public sealed class PrepareOrderCheckoutTool : IAgentTool
             if (!string.IsNullOrWhiteSpace(key))
                 dependencies[key] = facts.TryGetValue(key, out var value) ? value : string.Empty;
         }
+
+        if (!string.IsNullOrWhiteSpace(paymentMethod))
+            dependencies["payment_method"] = paymentMethod.Trim();
 
         return dependencies;
     }
@@ -412,19 +435,113 @@ public sealed class PrepareOrderCheckoutTool : IAgentTool
     private static string? GetFact(AgentToolContext ctx, string key) =>
         ctx.Facts.TryGetValue(key, out var value) ? value : null;
 
+    private sealed record PaymentSelection(
+        bool MissingPaymentMethod,
+        string? Error,
+        string MethodLabel,
+        bool PaymentRequired);
 
-    private static bool ResolvePaymentRequired(JsonElement args, string? paymentMethod)
+    private static PaymentSelection ResolvePaymentSelection(
+        CheckoutModeDefinition mode,
+        JsonElement args,
+        string? rawPaymentMethod)
+    {
+        if (mode.PaymentMethods.Count > 0)
+        {
+            if (string.IsNullOrWhiteSpace(rawPaymentMethod))
+                return new PaymentSelection(true, null, string.Empty, false);
+
+            var configured = ResolveConfiguredPaymentMethod(mode, rawPaymentMethod);
+            if (configured is null)
+            {
+                var options = DescribeConfiguredPaymentMethods(mode);
+                return new PaymentSelection(
+                    false,
+                    ToolResultHelper.Error(
+                        "invalid_payment_method",
+                        "Payment method is not configured for this checkout mode.",
+                        string.IsNullOrWhiteSpace(options)
+                            ? "Ask the customer for a configured payment method."
+                            : $"Ask the customer to choose one of the configured payment methods: {options}.",
+                        recoverable: true),
+                    string.Empty,
+                    false);
+            }
+
+            return new PaymentSelection(
+                false,
+                null,
+                PaymentMethodLabel(configured.Value.Key, configured.Value.Method),
+                configured.Value.Method.PaymentRequired);
+        }
+
+        var paymentRequired = ResolvePaymentRequired(args, mode);
+        var methodLabel = !string.IsNullOrWhiteSpace(rawPaymentMethod)
+            ? rawPaymentMethod.Trim()
+            : paymentRequired
+                ? "online"
+                : "offline";
+
+        return new PaymentSelection(false, null, methodLabel, paymentRequired);
+    }
+
+    private static (string Key, OrderCheckoutPaymentMethodDefinition Method)? ResolveConfiguredPaymentMethod(
+        CheckoutModeDefinition mode,
+        string rawPaymentMethod)
+    {
+        var normalizedInput = NormalizePaymentMethodToken(rawPaymentMethod);
+        if (string.IsNullOrWhiteSpace(normalizedInput))
+            return null;
+
+        foreach (var (key, method) in mode.PaymentMethods)
+        {
+            if (normalizedInput.Equals(NormalizePaymentMethodToken(key), StringComparison.OrdinalIgnoreCase)
+                || normalizedInput.Equals(NormalizePaymentMethodToken(method.Label), StringComparison.OrdinalIgnoreCase)
+                || (method.Aliases?.Any(alias => normalizedInput.Equals(NormalizePaymentMethodToken(alias), StringComparison.OrdinalIgnoreCase)) ?? false))
+            {
+                return (key, method);
+            }
+        }
+
+        return null;
+    }
+
+    private static string DescribeConfiguredPaymentMethods(CheckoutModeDefinition mode) =>
+        string.Join(", ", mode.PaymentMethods.Select(kvp => PaymentMethodLabel(kvp.Key, kvp.Value)));
+
+    private static string PaymentMethodLabel(string key, OrderCheckoutPaymentMethodDefinition method) =>
+        string.IsNullOrWhiteSpace(method.Label) ? key : method.Label.Trim();
+
+    private static bool ResolvePaymentRequired(JsonElement args, CheckoutModeDefinition mode)
     {
         if (ToolResultHelper.TryGetBool(args, "payment_required", out var required))
             return required;
 
-        if (string.IsNullOrWhiteSpace(paymentMethod))
-            return true;
+        var hasPaymentTemplate = !string.IsNullOrWhiteSpace(mode.TemplateWithPayment);
+        var hasNoPaymentTemplate = !string.IsNullOrWhiteSpace(mode.TemplateNoPayment);
+        if (!hasPaymentTemplate && hasNoPaymentTemplate)
+            return false;
 
-        var normalized = paymentMethod.Trim().ToLowerInvariant();
-        return !(normalized.Contains("efectivo", StringComparison.Ordinal)
-            || normalized.Contains("contraentrega", StringComparison.Ordinal)
-            || normalized.Contains("contra entrega", StringComparison.Ordinal));
+        return true;
+    }
+
+    private static string NormalizePaymentMethodToken(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return string.Empty;
+
+        var decomposed = value.Trim().Normalize(NormalizationForm.FormD);
+        var builder = new StringBuilder(decomposed.Length);
+        foreach (var ch in decomposed)
+        {
+            if (CharUnicodeInfo.GetUnicodeCategory(ch) == UnicodeCategory.NonSpacingMark)
+                continue;
+
+            if (char.IsLetterOrDigit(ch))
+                builder.Append(char.ToLowerInvariant(ch));
+        }
+
+        return builder.ToString();
     }
 
     private static string ShortId(Guid id) => id.ToString("N")[..8].ToUpperInvariant();

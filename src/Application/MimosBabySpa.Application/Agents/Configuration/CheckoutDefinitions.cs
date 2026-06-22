@@ -22,6 +22,7 @@ public sealed class CheckoutDefinitions
 public sealed class CheckoutModeDefinition
 {
     public CheckoutPaymentDefinition Payment { get; set; } = new();
+    public Dictionary<string, OrderCheckoutPaymentMethodDefinition> PaymentMethods { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public string? TemplateWithPayment { get; set; }
     public string? TemplateNoPayment { get; set; }
     public string? ConfirmationOutcome { get; set; }
@@ -36,6 +37,13 @@ public sealed class CheckoutPaymentDefinition
 {
     public string Type { get; set; } = string.Empty;
     public int? Percentage { get; set; }
+}
+
+public sealed class OrderCheckoutPaymentMethodDefinition
+{
+    public string? Label { get; set; }
+    public bool PaymentRequired { get; set; }
+    public List<string> Aliases { get; set; } = [];
 }
 
 public sealed class OrderCheckoutShippingDefinition

@@ -17,16 +17,16 @@ internal static class TurnContextPaymentFormatter
                 $"- pago: confirmado ({FormatAmount(payment.AmountInCents, payment.Currency)})",
 
             PaymentTransactionStatus.Created when IsExpired(payment) =>
-                "- pago: link expirado; regenerar con prepare_checkout",
+                "- pago: link expirado",
 
             PaymentTransactionStatus.Created =>
                 $"- pago: link generado ({FormatAmount(payment.AmountInCents, payment.Currency)}, expira {FormatExpiry(payment.ExpiresAt)})",
 
             PaymentTransactionStatus.Failed =>
-                "- pago: fallido; regenerar con prepare_checkout",
+                "- pago: fallido",
 
             PaymentTransactionStatus.Expired =>
-                "- pago: link expirado; regenerar con prepare_checkout",
+                "- pago: link expirado",
 
             _ => null
         };

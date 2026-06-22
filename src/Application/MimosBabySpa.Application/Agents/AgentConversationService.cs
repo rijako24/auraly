@@ -245,18 +245,15 @@ public sealed class AgentConversationService : IAgentConversationService
 
             // FinishReason=ToolCalls → ejecutar y acumular resultados
             messages.Add(result.AssistantMessage);
-            var directOutboundRequested = false;
+            var userOutput = UserOutputCompletionState.None;
 
             foreach (var toolCall in result.ToolCalls)
             {
                 toolCtx.CurrentToolIteration = iteration;
-                var outcome = await ExecuteToolCallAsync(toolCall, toolCtx, ct);
-                if (toolCall.FunctionName.Equals("send_message_sequence", StringComparison.OrdinalIgnoreCase)
-                    && !outcome.IsError)
-                {
-                    directOutboundRequested = true;
-                }
+                var outboundCountBeforeTool = turn.OutboundMessages.Count;
 
+                var fragmentCountBeforeTool = turn.FragmentEntries.Count;
+                var outcome = await ExecuteToolCallAsync(toolCall, toolCtx, ct);
                 await ApplyAfterToolRulesAsync(config, toolCall, outcome, toolCtx, ct);
                 await SendReservationCreatedNotificationsAsync(config, outcome, toolCtx, ct);
 
@@ -266,6 +263,20 @@ public sealed class AgentConversationService : IAgentConversationService
                     toolCall.FunctionName,
                     BuildLlmVisibleToolResult(outcome.RawJson)));
 
+                if (turn.OutboundMessages.Count > outboundCountBeforeTool)
+                    userOutput = userOutput with { OutboundMessagesQueued = true };
+
+                if (HasStageChanged(config, toolCtx, lastStageId) && turn.FragmentEntries.Count > fragmentCountBeforeTool)
+                {
+                    userOutput = userOutput with { StageAdvancedWithFragment = true };
+                    lastStageId = _flowStageDetector.DetectCurrentStage(config.Flow, toolCtx)?.Id;
+                    _logger.LogInformation(
+                        "Conv {ConvId}: stage advanced to '{Stage}' after fragment output; waiting for next customer turn",
+                        conversationId,
+                        lastStageId ?? "(none)");
+                    break;
+                }
+
                 if (turn.ShouldAutoEscalate)
                 {
                     _logger.LogWarning("Conv {ConvId}: {N} consecutive tool errors — auto-escalating",
@@ -273,21 +284,42 @@ public sealed class AgentConversationService : IAgentConversationService
                     return AgentLoopOutcome.AutoEscalate("consecutive_tool_errors");
                 }
             }
-
-            if (directOutboundRequested && turn.OutboundMessages.Count > 0)
-            {
-                _logger.LogInformation(
-                    "Conv {ConvId}: salida directa al usuario encolada ({Count} mensajes) — turno completo sin texto del LLM",
-                    conversationId, turn.OutboundMessages.Count);
+            if (ShouldCompleteTurnForUserOutput(userOutput, turn, conversationId))
                 return AgentLoopOutcome.Completed(string.Empty);
-            }
-
             RefreshSystemPromptIfStageChanged(config, messages, compositionInput, ref lastStageId);
         }
 
         return AgentLoopOutcome.Failed("Max iterations exceeded without final response.");
     }
 
+    private bool ShouldCompleteTurnForUserOutput(
+        UserOutputCompletionState userOutput,
+        AgentTurnExecution turn,
+        Guid conversationId)
+    {
+        if (userOutput.StageAdvancedWithFragment)
+            return true;
+
+        if (!userOutput.OutboundMessagesQueued || turn.OutboundMessages.Count == 0)
+            return false;
+
+        _logger.LogInformation(
+            "Conv {ConvId}: salida directa al usuario encolada ({Count} mensajes) — turno completo sin texto del LLM",
+            conversationId, turn.OutboundMessages.Count);
+        return true;
+    }
+
+    private readonly record struct UserOutputCompletionState(
+        bool OutboundMessagesQueued,
+        bool StageAdvancedWithFragment)
+    {
+        public static UserOutputCompletionState None { get; } = new(false, false);
+    }
+    private bool HasStageChanged(AgentConfig config, AgentToolContext toolCtx, string? lastStageId)
+    {
+        var currentStageId = _flowStageDetector.DetectCurrentStage(config.Flow, toolCtx)?.Id;
+        return !string.Equals(currentStageId, lastStageId, StringComparison.OrdinalIgnoreCase);
+    }
     /// <summary>
     /// Tras ejecutar tools, la etapa activa puede haber avanzado. Recompone el system prompt
     /// para que el LLM reciba goal, hint y acciones_permitidas actualizados en la siguiente iteración.

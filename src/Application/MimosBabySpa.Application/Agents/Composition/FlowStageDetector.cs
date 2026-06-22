@@ -89,7 +89,6 @@ public sealed class FlowStageDetector : IFlowStageDetector
 
         return true;
     }
-
     private static bool HasFact(AgentToolContext? session, string factKey)
     {
         if (session is null)

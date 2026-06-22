@@ -89,7 +89,7 @@ public sealed class GuardEvaluator : IGuardEvaluator
             return new ToolAvailabilityResult(
                 false,
                 "No confirmed payment pending slot assignment.",
-                "Only use this action when pago_confirmado_sin_slot is active.");
+                "Only use this action when a confirmed payment is pending slot assignment.");
         }
 
         if (requirement.Equals("flag:verbal_confirmation", StringComparison.OrdinalIgnoreCase))
