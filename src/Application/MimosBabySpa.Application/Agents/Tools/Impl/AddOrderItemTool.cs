@@ -20,10 +20,10 @@ public sealed class AddOrderItemTool : IAgentTool
     public string Name => "add_order_item";
     public IReadOnlyList<string> Capabilities => [ToolCapabilities.OrderDraftUpdate];
     public string Description =>
-        "Adds a catalog product and an explicit customer-provided quantity to the current conversation order draft. " +
+        "Adds a catalog product and an explicit additional customer-provided quantity to the current conversation order draft. " +
         "Do not infer quantity or default to 1; if the customer selected a product without saying how many units, ask for quantity first. " +
-        "Use the product_id returned by search_products when available. " +
-        "If the customer only provides quantity after a product was selected, call it with quantity.";
+        "Use update_order_item_quantity, not this tool, when the customer wants to change an existing cart item to an exact total quantity. " +
+        "Use the product_id returned by search_products when available.";
     public string ParametersSchema => """
         {
           "type": "object",
@@ -215,6 +215,7 @@ public sealed class AddOrderItemTool : IAgentTool
         !string.IsNullOrWhiteSpace(latestUserMessage)
         && decimal.TryParse(latestUserMessage.Trim(), out var parsed)
         && parsed == quantity;
+
 
     private static bool TryGetDecimal(JsonElement args, string name, out decimal value)
     {

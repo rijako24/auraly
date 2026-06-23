@@ -72,8 +72,8 @@ IF COL_LENGTH('dbo.Conversations', 'CustomerEmail') IS NULL
     ALTER TABLE dbo.Conversations ADD [CustomerEmail] NVARCHAR(200) NULL;
 
 -- ── ConversationContexts: valor más largo + índice único ───────────────────
-IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('dbo.ConversationContexts') AND name = 'Value' AND max_length < 4000)
-    ALTER TABLE dbo.ConversationContexts ALTER COLUMN [Value] NVARCHAR(2000) NOT NULL;
+IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('dbo.ConversationContexts') AND name = 'Value' AND max_length <> -1)
+    ALTER TABLE dbo.ConversationContexts ALTER COLUMN [Value] NVARCHAR(MAX) NOT NULL;
 
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_ConversationContexts_ConversationId_Field' AND object_id = OBJECT_ID('dbo.ConversationContexts'))
     CREATE UNIQUE INDEX [IX_ConversationContexts_ConversationId_Field]

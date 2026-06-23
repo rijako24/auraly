@@ -66,6 +66,41 @@ public class AddOrderItemToolTests
         capturedRequest.Quantity.Should().Be(2m);
     }
 
+    [Fact]
+    public async Task ExecuteAsync_WhenExistingProductAndAdditiveWording_AddsQuantity()
+    {
+        var ctx = CreateContext();
+        var productId = Guid.NewGuid();
+        AddOrderItemRequest? capturedRequest = null;
+
+        _commerce
+            .Setup(c => c.AddItemAsync(ctx, It.IsAny<AddOrderItemRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<AgentToolContext, AddOrderItemRequest, CancellationToken>((_, request, _) => capturedRequest = request)
+            .ReturnsAsync(new OrderSnapshot(
+                Guid.NewGuid(),
+                OrderStatus.Draft,
+                "COP",
+                300000m,
+                0m,
+                0m,
+                300000m,
+                []));
+        _facts
+            .Setup(f => f.ClearFieldsAsync(ctx.ConversationId, It.IsAny<IReadOnlyCollection<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
+
+        var tool = new AddOrderItemTool(_commerce.Object, _facts.Object);
+        ctx.LatestUserMessage = "quiero agregar 3 mas";
+        using var args = JsonDocument.Parse($$"""{"product_id":"{{productId}}","quantity":3}""");
+
+        var json = await tool.ExecuteAsync(args.RootElement, ctx, CancellationToken.None);
+
+        json.Should().Contain("\"ok\":true");
+        capturedRequest.Should().NotBeNull();
+        capturedRequest!.ProductId.Should().Be(productId);
+        capturedRequest.Quantity.Should().Be(3m);
+        _commerce.Verify(c => c.UpdateItemQuantityAsync(ctx, It.IsAny<Guid>(), It.IsAny<decimal>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
     private static ProductReference Product(Guid productId, string name, decimal unitPrice) =>
         new(
             productId,

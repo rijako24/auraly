@@ -164,7 +164,7 @@ public class ApplicationDbContext : DbContext
         {
             entity.HasKey(e => e.ConversationContextId);
             entity.Property(e => e.Field).IsRequired().HasMaxLength(100);
-            entity.Property(e => e.Value).IsRequired().HasMaxLength(2000);
+            entity.Property(e => e.Value).IsRequired().HasColumnType("nvarchar(max)");
             entity.HasOne(e => e.Conversation)
                   .WithMany(c => c.Contexts)
                   .HasForeignKey(e => e.ConversationId)

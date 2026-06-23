@@ -47,6 +47,24 @@ public sealed class CommerceService : ICommerceService
 
         var order = await GetOrCreateDraftAsync(ctx, adapterContext, ct);
         var unitPrice = request.UnitPrice ?? product.UnitPrice;
+        var existingItems = await _unitOfWork.OrderItems.GetByOrderIdAsync(ctx.BusinessId, order.OrderId, ct);
+        var existingItem = existingItems.FirstOrDefault(item => IsSameOrderProduct(item, product));
+        if (existingItem is not null)
+        {
+            existingItem.Quantity += request.Quantity;
+            existingItem.UnitPrice = unitPrice;
+            existingItem.LineTotal = existingItem.Quantity * unitPrice;
+            existingItem.UpdatedAt = DateTime.UtcNow;
+            await _unitOfWork.OrderItems.UpdateAsync(existingItem, ct);
+
+            order.Status = OrderStatus.Draft;
+            order.UpdatedAt = DateTime.UtcNow;
+            await RecalculateAsync(order, ct);
+            await _unitOfWork.SaveChangesAsync(ct);
+
+            return await BuildSnapshotAsync(order, ct);
+        }
+
         var item = new OrderItem
         {
             OrderItemId = Guid.NewGuid(),
@@ -76,6 +94,23 @@ public sealed class CommerceService : ICommerceService
         await _unitOfWork.SaveChangesAsync(ct);
 
         return await BuildSnapshotAsync(order, ct);
+    }
+
+    private static bool IsSameOrderProduct(OrderItem item, ProductReference product)
+    {
+        if (product.ProductId.HasValue && item.ProductId == product.ProductId)
+            return true;
+
+        if (!string.IsNullOrWhiteSpace(product.ExternalProductId)
+            && item.ExternalProductId?.Equals(product.ExternalProductId, StringComparison.OrdinalIgnoreCase) == true)
+            return true;
+
+        if (!string.IsNullOrWhiteSpace(product.Sku)
+            && item.Sku?.Equals(product.Sku, StringComparison.OrdinalIgnoreCase) == true)
+            return true;
+
+        return CatalogSearchText.NormalizeCompact(item.ProductNameSnapshot)
+               == CatalogSearchText.NormalizeCompact(product.Name);
     }
 
     private async Task<ProductReference?> FindCachedProductAsync(

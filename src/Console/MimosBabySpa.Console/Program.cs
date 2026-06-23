@@ -235,6 +235,7 @@ services.AddScoped<IAgentTool, SendMessageSequenceTool>();
 services.AddScoped<IAgentTool, SearchProductsTool>();
 services.AddScoped<IAgentTool, AddOrderItemTool>();
 services.AddScoped<IAgentTool, RemoveOrderItemTool>();
+services.AddScoped<IAgentTool, UpdateOrderItemQuantityTool>();
 services.AddScoped<IAgentTool, GetOrderDraftTool>();
 services.AddScoped<IAgentTool, CreateOrderTool>();
 services.AddScoped<IAgentTool, ResolveExternalEscalationTool>();
@@ -251,16 +252,18 @@ var serviceProvider = services.BuildServiceProvider();
 Console.OutputEncoding = System.Text.Encoding.UTF8;
 Console.InputEncoding = System.Text.Encoding.UTF8;
 
-const string mimosBusinessIdStr = "22222222-2222-2222-2222-222222222222";
-const string mimosBusinessName = "Mimos Baby Spa Principal";
-const string mimosAgentName = "Mimi Bot";
-const string mimosLegacyAgentName = "Mimo Bot";
-const string mimosAgentDisplayName = "Mimi";
+const string mimosBusinessIdStr = "FCEE3BA9-E6BF-43E2-8C1A-560CB724688B";
+const string mimosBusinessName = "Vinos Artesanales Solorzano";
+const string mimosAgentIdStr = "B0EE3BA9-E6BF-43E2-8C1A-560CB724688B";
+const string mimosAgentName = "Camila";
+const string mimosLegacyAgentName = "Camila";
+const string mimosAgentDisplayName = "Camila";
 
 var mimosBusinessId = Guid.Parse(mimosBusinessIdStr);
+var mimosAgentId = Guid.Parse(mimosAgentIdStr);
 
 Console.WriteLine("========================================================");
-Console.WriteLine("  Mimos Baby Spa - Simulador Agentic Engine (FC)");
+Console.WriteLine("  Vinos Artesanales Solorzano - Simulador Agentic Engine (FC)");
 Console.WriteLine("========================================================");
 Console.WriteLine();
 Console.WriteLine($"  Negocio : {mimosBusinessName} ({mimosBusinessIdStr})");
@@ -310,7 +313,8 @@ while (true)
 
         var businessAgents = await agentRepo.GetByBusinessAsync(mimosBusinessId);
         var agentEntity = businessAgents.FirstOrDefault(a =>
-            a.Name.Equals(mimosAgentName, StringComparison.OrdinalIgnoreCase)
+            a.AgentId == mimosAgentId
+            || a.Name.Equals(mimosAgentName, StringComparison.OrdinalIgnoreCase)
             || a.Name.Equals(mimosLegacyAgentName, StringComparison.OrdinalIgnoreCase));
 
         if (agentEntity == null)
@@ -325,7 +329,7 @@ while (true)
         if (agentEntity.BusinessId != mimosBusinessId)
         {
             Console.ForegroundColor = ConsoleColor.Red;
-            Console.WriteLine($"ERROR: El agente {agentEntity.AgentId} no pertenece al negocio de Mimos configurado.");
+            Console.WriteLine($"ERROR: El agente {agentEntity.AgentId} no pertenece al negocio configurado.");
             Console.ResetColor();
             Console.WriteLine();
             continue;

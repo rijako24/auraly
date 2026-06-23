@@ -249,6 +249,7 @@ builder.Services.AddScoped<IAgentTool, SendMessageSequenceTool>();
 builder.Services.AddScoped<IAgentTool, SearchProductsTool>();
 builder.Services.AddScoped<IAgentTool, AddOrderItemTool>();
 builder.Services.AddScoped<IAgentTool, RemoveOrderItemTool>();
+builder.Services.AddScoped<IAgentTool, UpdateOrderItemQuantityTool>();
 builder.Services.AddScoped<IAgentTool, GetOrderDraftTool>();
 builder.Services.AddScoped<IAgentTool, CreateOrderTool>();
 builder.Services.AddScoped<IAgentTool, ResolveExternalEscalationTool>();

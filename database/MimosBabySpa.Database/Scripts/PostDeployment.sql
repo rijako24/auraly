@@ -32,6 +32,7 @@
 :r .\Migrations\MigrateExternalEscalationAttempts.sql
 :r .\Migrations\MigrateOrderCheckoutPayments.sql
 :r .\Migrations\MigrateOrderDeliveryAssignment.sql
+:r .\Migrations\AlterConversationContextsValueToMax.sql
 :r .\Seeds\SeedAdminUser.sql
 :r .\Seeds\SeedAgentPermissions.sql
 :r .\Seeds\SeedSqlAppLoginPermissions.sql
@@ -41,6 +42,7 @@
 :r .\Seeds\SeedBillingPlans.sql
 :r .\Seeds\SeedRadaConcept.sql
 :r .\Seeds\SeedAuraly.sql
+:r .\Seeds\SeedLuisPetitBarber.sql
 :r .\Seeds\SeedBusinessWorkingHours.sql
 :r .\Seeds\SeedAgenticConfiguration.sql
 :r .\Seeds\SeedSolorzanoWhatsAppNumber.sql

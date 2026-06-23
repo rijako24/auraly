@@ -2,7 +2,7 @@ CREATE TABLE [dbo].[ConversationContexts] (
     [ConversationContextId] UNIQUEIDENTIFIER NOT NULL PRIMARY KEY DEFAULT NEWID(),
     [ConversationId] UNIQUEIDENTIFIER NOT NULL,
     [Field] NVARCHAR(100) NOT NULL,
-    [Value] NVARCHAR(2000) NOT NULL,
+    [Value] NVARCHAR(MAX) NOT NULL,
     [CreatedAt] DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
     [UpdatedAt] DATETIME2 NULL,
     CONSTRAINT [FK_ConversationContexts_Conversations] FOREIGN KEY ([ConversationId])

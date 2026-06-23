@@ -6,41 +6,47 @@ using MimosBabySpa.Application.Services;
 
 namespace MimosBabySpa.Application.Agents.Tools.Impl;
 
-public sealed class RemoveOrderItemTool : IAgentTool
+public sealed class UpdateOrderItemQuantityTool : IAgentTool
 {
     private readonly ICommerceService _commerce;
     private readonly IConversationFactsService _factsService;
 
-    public RemoveOrderItemTool(ICommerceService commerce, IConversationFactsService factsService)
+    public UpdateOrderItemQuantityTool(ICommerceService commerce, IConversationFactsService factsService)
     {
         _commerce = commerce;
         _factsService = factsService;
     }
 
-    public string Name => "remove_order_item";
+    public string Name => "update_order_item_quantity";
     public IReadOnlyList<string> Capabilities => [ToolCapabilities.OrderDraftUpdate];
     public string Description =>
-        "Removes an item from the current conversation order draft, or reduces it when an explicit desired remaining quantity is provided. " +
-        "Use update_order_item_quantity when the customer wants to set or increase an existing item to an exact total quantity. " +
-        "Use order_item_id from get_order_draft when available; otherwise provide product_id, sku, name, or a clear product reference.";
+        "Sets an existing order draft item to an explicit final quantity requested by the customer. " +
+        "Use this when the customer says they want to change, update, leave, or carry a total number of units for an item already in the cart. " +
+        "Call get_order_draft first when the current cart contents or order_item_id are unknown. " +
+        "Do not use this to add another product or additional units; use add_order_item for additions.";
     public string ParametersSchema => """
         {
           "type": "object",
           "properties": {
-            "order_item_id": { "type": "string" },
-            "product_id": { "type": "string" },
+            "order_item_id": { "type": "string", "description": "order_item_id from get_order_draft." },
+            "product_id": { "type": "string", "description": "Catalog product_id when order_item_id is unavailable." },
             "sku": { "type": "string" },
             "name": { "type": "string" },
             "quantity": {
               "type": "number",
-              "description": "Desired remaining quantity. Use 0 or omit to remove the item completely."
+              "minimum": 0,
+              "description": "Exact final quantity the item should have after the update. Use 0 only when the customer wants none left."
             }
-          }
+          },
+          "required": ["quantity"]
         }
         """;
 
     public async Task<string> ExecuteAsync(JsonElement arguments, AgentToolContext ctx, CancellationToken cancellationToken = default)
     {
+        if (!TryGetDecimal(arguments, "quantity", out var quantity))
+            return ToolResultHelper.MissingPrerequisites(["quantity"]);
+
         var draft = await _commerce.GetDraftAsync(ctx, cancellationToken);
         if (draft.Items.Count == 0)
             return ToolResultHelper.Error("empty_order", "The order draft has no items.", "Help the customer choose a product first.", recoverable: true);
@@ -59,20 +65,7 @@ public sealed class RemoveOrderItemTool : IAgentTool
             return ToolResultHelper.MissingPrerequisites(["order_item_id"]);
         }
 
-        var desiredQuantity = TryGetDecimal(arguments, "quantity", out var explicitQuantity)
-            ? explicitQuantity
-            : (decimal?)null;
-
-        OrderSnapshot updated;
-        if (desiredQuantity.HasValue)
-        {
-            updated = await _commerce.UpdateItemQuantityAsync(ctx, item.OrderItemId, desiredQuantity.Value, cancellationToken);
-        }
-        else
-        {
-            updated = await _commerce.RemoveItemAsync(ctx, item.OrderItemId, cancellationToken);
-        }
-
+        var updated = await _commerce.UpdateItemQuantityAsync(ctx, item.OrderItemId, quantity, cancellationToken);
         await OrderDraftFactInvalidation.ClearOrderFinalizedAsync(_factsService, ctx, cancellationToken);
 
         return ToolResultHelper.Ok(new { order = updated });
@@ -145,7 +138,6 @@ public sealed class RemoveOrderItemTool : IAgentTool
 
     private static string? FirstMeaningfulSelector(params string?[] values) =>
         values.FirstOrDefault(v => !string.IsNullOrWhiteSpace(v) && !decimal.TryParse(v.Trim(), out _));
-
 
     private static string BuildClarificationHint(IReadOnlyList<OrderItemSnapshot> items)
     {

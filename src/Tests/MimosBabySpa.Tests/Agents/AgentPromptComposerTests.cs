@@ -75,14 +75,14 @@ public class AgentPromptComposerTests
     }
 
     [Fact]
-    public void Compose_WhenNoBotHistory_IncludesFirstVisibleResponsePolicy()
+    public void Compose_WhenNoBotHistory_DoesNotPushGreetingOrQuestion()
     {
         var result = Compose(DefaultConfig, []);
 
         result.Should().Contain("## POLITICA DEL TURNO");
         result.Should().Contain("primera respuesta visible");
-        result.Should().Contain("saludo breve");
-        result.Should().Contain("una sola pregunta abierta de ayuda");
+        result.Should().NotContain("saludo breve");
+        result.Should().NotContain("pregunta abierta");
     }
 
     [Fact]
