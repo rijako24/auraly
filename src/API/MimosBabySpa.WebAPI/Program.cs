@@ -135,7 +135,7 @@ builder.Services.AddScoped<IPaidCheckoutFulfillmentHandler, OrderPaidCheckoutFul
 builder.Services.AddScoped<IMediaUrlResolver, BlobMediaUrlResolver>();
 builder.Services.AddScoped<IMessageSequenceResolver, MessageSequenceResolver>();
 builder.Services.AddScoped<IActiveAgentConfigResolver, ActiveAgentConfigResolver>();
-builder.Services.AddScoped<IReservationCreatedNotificationDispatcher, ReservationCreatedNotificationDispatcher>();
+builder.Services.AddScoped<IEventNotificationDispatcher, EventNotificationDispatcher>();
 builder.Services.AddScoped<IExternalEscalationRouter, ExternalEscalationRouter>();
 builder.Services.AddScoped<IExternalEscalationService, ExternalEscalationService>();
 builder.Services.AddScoped<IConversationFactsService, ConversationFactsService>();

@@ -228,18 +228,18 @@ public sealed class AgentTestMockTool : IAgentTool
             persisted = false
         });
 
-        ctx.ManageableReservations =
-        [
-            new Reservation
-            {
-                ReservationId = reservationId,
-                BusinessId = ctx.BusinessId,
-                ConversationId = ctx.ConversationId,
-                Status = ReservationStatus.Confirmed,
-                CustomerNameSnapshot = customerName,
-                CustomerPhoneSnapshot = customerPhone
-            }
-        ];
+        var reservation = new Reservation
+        {
+            ReservationId = reservationId,
+            BusinessId = ctx.BusinessId,
+            ConversationId = ctx.ConversationId,
+            Status = ReservationStatus.Confirmed,
+            CustomerNameSnapshot = customerName,
+            CustomerPhoneSnapshot = customerPhone
+        };
+
+        ctx.ManageableReservations = [reservation];
+        ctx.NotificationContexts[ReservationCreated] = new MessageSequenceContext { Reservation = reservation };
 
         return ToolResultHelper.Ok(new
         {
@@ -268,6 +268,19 @@ public sealed class AgentTestMockTool : IAgentTool
             paymentTransactionId = ctx.ActivePayment?.PaymentTransactionId,
             persisted = false
         });
+
+        var reservation = new Reservation
+        {
+            ReservationId = reservationId,
+            BusinessId = ctx.BusinessId,
+            ConversationId = ctx.ConversationId,
+            Status = ReservationStatus.Confirmed,
+            CustomerNameSnapshot = ctx.Facts.GetValueOrDefault(ConversationFactKeys.CustomerName),
+            CustomerPhoneSnapshot = ConversationContactPhone.Resolve(ctx.Facts, ctx.ChannelPhone)
+        };
+
+        ctx.ManageableReservations = [reservation];
+        ctx.NotificationContexts[ReservationCreated] = new MessageSequenceContext { Reservation = reservation };
 
         return ToolResultHelper.Ok(new
         {

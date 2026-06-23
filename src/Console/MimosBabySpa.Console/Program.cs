@@ -176,7 +176,7 @@ services.AddScoped<IMediaUrlResolver, ConsoleMediaUrlResolver>();
 services.AddScoped<IOutboundMessageDispatcher, OutboundMessageDispatcher>();
 services.AddScoped<IMessageSequenceResolver, MessageSequenceResolver>();
 services.AddScoped<IActiveAgentConfigResolver, ActiveAgentConfigResolver>();
-services.AddScoped<IReservationCreatedNotificationDispatcher, ReservationCreatedNotificationDispatcher>();
+services.AddScoped<IEventNotificationDispatcher, EventNotificationDispatcher>();
 services.AddScoped<IExternalEscalationRouter, ExternalEscalationRouter>();
 services.AddScoped<IExternalEscalationService, ExternalEscalationService>();
 

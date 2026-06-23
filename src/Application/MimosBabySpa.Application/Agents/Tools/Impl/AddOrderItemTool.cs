@@ -111,8 +111,7 @@ public sealed class AddOrderItemTool : IAgentTool
                 new AddOrderItemRequest(productId, externalId, sku, name, quantity, unitPrice),
                 cancellationToken);
             await ProductSelectionMemory.ClearSelectedAsync(_factsService, ctx, cancellationToken);
-            var clearedFacts = await ClearOrderFinalizedFactAsync(ctx, cancellationToken);
-            await ClearDerivedFlowCheckpointsAsync(ctx, clearedFacts, cancellationToken);
+            await OrderDraftFactInvalidation.ClearOrderFinalizedAsync(_factsService, ctx, cancellationToken);
         }
         catch (InvalidOperationException ex) when (ex.Message.Contains("Product not found", StringComparison.OrdinalIgnoreCase))
         {
@@ -216,29 +215,6 @@ public sealed class AddOrderItemTool : IAgentTool
         !string.IsNullOrWhiteSpace(latestUserMessage)
         && decimal.TryParse(latestUserMessage.Trim(), out var parsed)
         && parsed == quantity;
-
-
-    private async Task<IReadOnlyList<string>> ClearOrderFinalizedFactAsync(AgentToolContext ctx, CancellationToken cancellationToken)
-    {
-        var cleared = await _factsService.ClearFieldsAsync(ctx.ConversationId, ["order_finalized"], cancellationToken);
-        if (cleared.Count > 0)
-            ctx.Facts.Remove("order_finalized");
-        return cleared;
-    }
-
-    private async Task ClearDerivedFlowCheckpointsAsync(
-        AgentToolContext ctx,
-        IReadOnlyCollection<string> changedFactKeys,
-        CancellationToken cancellationToken)
-    {
-        var factsToClear = FlowCheckpointInvalidation.GetDerivedAdvanceFactsToClear(ctx, changedFactKeys);
-        if (factsToClear.Count > 0)
-        {
-            var cleared = await _factsService.ClearFieldsAsync(ctx.ConversationId, factsToClear, cancellationToken);
-            foreach (var factKey in cleared)
-                ctx.Facts.Remove(factKey);
-        }
-    }
 
     private static bool TryGetDecimal(JsonElement args, string name, out decimal value)
     {

@@ -157,20 +157,20 @@ public sealed class CreateReservationTool : IAgentTool
                 intent.CustomAttributesJson),
             cancellationToken);
 
-        ctx.ManageableReservations =
-        [
-            new Domain.Entities.Reservation
-            {
-                ReservationId = response.ReservationId,
-                BusinessId = ctx.BusinessId,
-                ConversationId = ctx.ConversationId,
-                Status = ReservationStatus.Confirmed,
-                ReservationDateTime = date.ToDateTime(time),
-                CustomerNameSnapshot = customerName,
-                CustomerPhoneSnapshot = customerPhone,
-                CustomAttributesJson = intent.CustomAttributesJson
-            }
-        ];
+        var reservation = new Domain.Entities.Reservation
+        {
+            ReservationId = response.ReservationId,
+            BusinessId = ctx.BusinessId,
+            ConversationId = ctx.ConversationId,
+            Status = ReservationStatus.Confirmed,
+            ReservationDateTime = date.ToDateTime(time),
+            CustomerNameSnapshot = customerName,
+            CustomerPhoneSnapshot = customerPhone,
+            CustomAttributesJson = intent.CustomAttributesJson
+        };
+
+        ctx.ManageableReservations = [reservation];
+        ctx.NotificationContexts[ReservationCreated] = new MessageSequenceContext { Reservation = reservation };
 
         return BuildSuccessResult(
             response.ReservationId,

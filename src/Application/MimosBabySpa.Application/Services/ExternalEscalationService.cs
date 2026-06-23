@@ -74,7 +74,7 @@ public sealed class ExternalEscalationService : IExternalEscalationService
     private readonly IAgentConfigProvider _configProvider;
     private readonly IMessageSequenceResolver _sequenceResolver;
     private readonly IWhatsAppService _whatsApp;
-    private readonly IReservationCreatedNotificationDispatcher _notificationDispatcher;
+    private readonly IEventNotificationDispatcher _notificationDispatcher;
     private readonly ILogger<ExternalEscalationService> _logger;
 
     public ExternalEscalationService(
@@ -82,7 +82,7 @@ public sealed class ExternalEscalationService : IExternalEscalationService
         IAgentConfigProvider configProvider,
         IMessageSequenceResolver sequenceResolver,
         IWhatsAppService whatsApp,
-        IReservationCreatedNotificationDispatcher notificationDispatcher,
+        IEventNotificationDispatcher notificationDispatcher,
         ILogger<ExternalEscalationService> logger)
     {
         _unitOfWork = unitOfWork;

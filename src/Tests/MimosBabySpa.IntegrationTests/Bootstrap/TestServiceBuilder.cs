@@ -94,7 +94,7 @@ public static class TestServiceBuilder
         services.AddSingleton<IEscalationNotifier, EscalationNotifier>();
         services.AddSingleton<IEscalationConfigProvider, EscalationConfigProvider>();
         services.AddSingleton<IMessageSequenceResolver, NoOpMessageSequenceResolver>();
-        services.AddSingleton<IReservationCreatedNotificationDispatcher, NoOpReservationCreatedNotificationDispatcher>();
+        services.AddSingleton<IEventNotificationDispatcher, NoOpEventNotificationDispatcher>();
 
         services.AddSingleton<ServiceNameResolver>();
         services.AddSingleton<IAddOnCatalogService, AddOnCatalogService>();
@@ -187,19 +187,12 @@ public static class TestServiceBuilder
             Task.FromResult<IReadOnlyList<OutboundMessage>>([]);
     }
 
-    private sealed class NoOpReservationCreatedNotificationDispatcher : IReservationCreatedNotificationDispatcher
+    private sealed class NoOpEventNotificationDispatcher : IEventNotificationDispatcher
     {
-        public Task SendAsync(
+        public Task SendEventAsync(
             Guid businessId,
-            MimosBabySpa.Domain.Entities.Reservation reservation,
             AgentConfig config,
-            IReadOnlyDictionary<string, string>? custom = null,
-            CancellationToken ct = default) =>
-            Task.CompletedTask;
-
-        public Task SendForActiveAgentAsync(
-            Guid businessId,
-            MimosBabySpa.Domain.Entities.Reservation reservation,
+            string eventName,
             IReadOnlyDictionary<string, string>? custom = null,
             CancellationToken ct = default) =>
             Task.CompletedTask;
@@ -208,7 +201,14 @@ public static class TestServiceBuilder
             Guid businessId,
             AgentConfig config,
             string eventName,
-            IReadOnlyDictionary<string, string> custom,
+            MessageSequenceContext context,
+            CancellationToken ct = default) =>
+            Task.CompletedTask;
+
+        public Task SendEventForActiveAgentAsync(
+            Guid businessId,
+            string eventName,
+            MessageSequenceContext context,
             CancellationToken ct = default) =>
             Task.CompletedTask;
     }

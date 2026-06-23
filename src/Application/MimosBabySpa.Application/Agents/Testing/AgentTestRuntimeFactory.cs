@@ -119,7 +119,7 @@ public sealed class AgentTestRuntimeFactory : IAgentTestRuntimeFactory
             _factHydrator,
             usageBilling,
             _serviceProvider.GetRequiredService<IMessageSequenceResolver>(),
-            _serviceProvider.GetRequiredService<IReservationCreatedNotificationDispatcher>(),
+            _serviceProvider.GetRequiredService<IEventNotificationDispatcher>(),
             _conversationLogger);
     }
 

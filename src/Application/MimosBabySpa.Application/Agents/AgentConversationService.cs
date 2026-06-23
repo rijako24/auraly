@@ -52,7 +52,7 @@ public sealed class AgentConversationService : IAgentConversationService
     private readonly IFactHydrator _factHydrator;
     private readonly IUsageBillingService _usageBilling;
     private readonly IMessageSequenceResolver _sequenceResolver;
-    private readonly IReservationCreatedNotificationDispatcher _reservationNotificationDispatcher;
+    private readonly IEventNotificationDispatcher _eventNotificationDispatcher;
     private readonly ILogger<AgentConversationService> _logger;
 
     public AgentConversationService(
@@ -78,7 +78,7 @@ public sealed class AgentConversationService : IAgentConversationService
         IFactHydrator factHydrator,
         IUsageBillingService usageBilling,
         IMessageSequenceResolver sequenceResolver,
-        IReservationCreatedNotificationDispatcher reservationNotificationDispatcher,
+        IEventNotificationDispatcher eventNotificationDispatcher,
         ILogger<AgentConversationService> logger)
     {
         _configProvider = configProvider;
@@ -103,7 +103,7 @@ public sealed class AgentConversationService : IAgentConversationService
         _factHydrator = factHydrator;
         _usageBilling = usageBilling;
         _sequenceResolver = sequenceResolver;
-        _reservationNotificationDispatcher = reservationNotificationDispatcher;
+        _eventNotificationDispatcher = eventNotificationDispatcher;
         _logger = logger;
     }
 
@@ -253,9 +253,15 @@ public sealed class AgentConversationService : IAgentConversationService
                 var outboundCountBeforeTool = turn.OutboundMessages.Count;
 
                 var fragmentCountBeforeTool = turn.FragmentEntries.Count;
+                var factsBeforeTool = SnapshotFacts(toolCtx);
                 var outcome = await ExecuteToolCallAsync(toolCall, toolCtx, ct);
+                if (!outcome.IsError)
+                {
+                    var changedFactKeys = GetChangedFactKeys(factsBeforeTool, toolCtx.Facts);
+                    await ApplyReentryInvalidationAsync(toolCtx, changedFactKeys, ct);
+                }
                 await ApplyAfterToolRulesAsync(config, toolCall, outcome, toolCtx, ct);
-                await SendReservationCreatedNotificationsAsync(config, outcome, toolCtx, ct);
+                await DispatchToolEffectNotificationsAsync(config, outcome, toolCtx, ct);
 
                 turn.RecordToolOutcome(outcome);
                 messages.Add(ChatMessage.Tool(
@@ -445,38 +451,113 @@ public sealed class AgentConversationService : IAgentConversationService
 
             await EnqueueAfterToolSequenceAsync(config, currentStage, rule, ctx, ct);
 
-            foreach (var (key, valueTemplate) in EnumerateAfterToolFactActions(rule))
+            var factActions = ResolveAfterToolFactActions(config, rule, outcome.RawJson, ctx).ToList();
+            await ApplyReentryInvalidationAsync(ctx, factActions.Select(action => action.Key).ToList(), ct);
+
+            foreach (var action in factActions)
             {
-                if (ctx.Facts.TryGetValue(key, out var existing)
-                    && !string.IsNullOrWhiteSpace(existing))
-                {
-                    continue;
-                }
-
-                var value = ResolveAfterToolValue(outcome.RawJson, valueTemplate);
-                if (string.IsNullOrWhiteSpace(value))
-                    continue;
-
-                var schemaEntry = config.FactSchema.FirstOrDefault(e =>
-                    e.Key.Equals(key, StringComparison.OrdinalIgnoreCase));
-
                 await _factsService.SetAsync(
                     ctx.ConversationId,
                     ctx.BusinessId,
-                    key,
-                    value,
-                    schemaEntry?.ShouldRememberAcrossRequests() ?? false,
+                    action.Key,
+                    action.Value,
+                    action.RememberAcrossRequests,
                     ct);
 
-                ctx.Facts[key] = value;
+                ctx.Facts[action.Key] = action.Value;
 
                 _logger.LogInformation(
                     "Conv {ConvId}: afterTool rule on stage '{Stage}' set {Key}={Value}",
                     ctx.ConversationId,
                     currentStage.Id,
-                    key,
-                    value);
+                    action.Key,
+                    action.Value);
             }
+        }
+    }
+
+    private async Task ApplyReentryInvalidationAsync(
+        AgentToolContext ctx,
+        IReadOnlyCollection<string> changedFactKeys,
+        CancellationToken ct)
+    {
+        if (changedFactKeys.Count == 0)
+            return;
+
+        var factsToClear = FlowCheckpointInvalidation.GetDerivedAdvanceFactsToClear(ctx, changedFactKeys);
+        if (factsToClear.Count == 0)
+            return;
+
+        var cleared = await _factsService.ClearFieldsAsync(ctx.ConversationId, factsToClear, ct);
+        foreach (var factKey in cleared)
+            ctx.Facts.Remove(factKey);
+
+        if (cleared.Count > 0)
+        {
+            _logger.LogInformation(
+                "Conv {ConvId}: reentry invalidation cleared derived checkpoints [{Facts}] after changes [{ChangedFacts}]",
+                ctx.ConversationId,
+                string.Join(", ", cleared),
+                string.Join(", ", changedFactKeys));
+        }
+    }
+
+    private static Dictionary<string, string> SnapshotFacts(AgentToolContext ctx) =>
+        new(ctx.Facts, StringComparer.OrdinalIgnoreCase);
+
+    private static List<string> GetChangedFactKeys(
+        IReadOnlyDictionary<string, string> before,
+        IReadOnlyDictionary<string, string> after)
+    {
+        var keys = before.Keys
+            .Concat(after.Keys)
+            .Distinct(StringComparer.OrdinalIgnoreCase);
+
+        var changed = new List<string>();
+        foreach (var key in keys)
+        {
+            before.TryGetValue(key, out var previous);
+            after.TryGetValue(key, out var current);
+            if (!FactValuesEqual(previous, current))
+                changed.Add(key);
+        }
+
+        return changed;
+    }
+
+    private static bool FactValuesEqual(string? left, string? right) =>
+        string.Equals(left?.Trim(), right?.Trim(), StringComparison.OrdinalIgnoreCase);
+
+    private readonly record struct AfterToolFactAction(
+        string Key,
+        string Value,
+        bool RememberAcrossRequests);
+
+    private static IEnumerable<AfterToolFactAction> ResolveAfterToolFactActions(
+        AgentConfig config,
+        MimosBabySpa.Application.Agents.Configuration.StageAfterToolRule rule,
+        string outcomeJson,
+        AgentToolContext ctx)
+    {
+        foreach (var (key, valueTemplate) in EnumerateAfterToolFactActions(rule))
+        {
+            if (ctx.Facts.TryGetValue(key, out var existing)
+                && !string.IsNullOrWhiteSpace(existing))
+            {
+                continue;
+            }
+
+            var value = ResolveAfterToolValue(outcomeJson, valueTemplate);
+            if (string.IsNullOrWhiteSpace(value))
+                continue;
+
+            var schemaEntry = config.FactSchema.FirstOrDefault(e =>
+                e.Key.Equals(key, StringComparison.OrdinalIgnoreCase));
+
+            yield return new AfterToolFactAction(
+                key,
+                value,
+                schemaEntry?.ShouldRememberAcrossRequests() ?? false);
         }
     }
 
@@ -678,63 +759,48 @@ public sealed class AgentConversationService : IAgentConversationService
             _ => value.GetRawText()
         };
 
-    private async Task SendReservationCreatedNotificationsAsync(
+    private async Task DispatchToolEffectNotificationsAsync(
         AgentConfig config,
         ToolExecutionOutcome outcome,
         AgentToolContext ctx,
         CancellationToken ct)
     {
-        if (outcome.IsError || !outcome.HasEffect(ToolSideEffectNames.ReservationCreated))
+        if (outcome.IsError || outcome.SideEffects.Count == 0)
             return;
 
-        var reservation = ctx.SingleManageableReservation
-            ?? TryBuildReservationFromToolResult(ctx, outcome.RawJson);
+        var notificationEvents = outcome.SideEffects
+            .Where(effect => !string.IsNullOrWhiteSpace(effect))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Where(effect => config.Notifications.TryGetValue(effect, out var notification) && notification.Enabled)
+            .ToList();
 
-        if (reservation is null)
+        var custom = SnapshotFacts(ctx);
+        foreach (var eventName in notificationEvents)
         {
-            _logger.LogWarning(
-                "Conv {ConvId}: reservation notification skipped because reservation_id was not available",
-                ctx.ConversationId);
-            return;
+            var context = ResolveToolEffectNotificationContext(ctx, eventName, custom);
+            await _eventNotificationDispatcher.SendEventAsync(
+                ctx.BusinessId,
+                config,
+                eventName,
+                context,
+                ct);
         }
-
-        await _reservationNotificationDispatcher.SendAsync(
-            ctx.BusinessId,
-            reservation,
-            config,
-            ctx.Facts,
-            ct);
     }
 
-    private static Domain.Entities.Reservation? TryBuildReservationFromToolResult(
+    private static MessageSequenceContext ResolveToolEffectNotificationContext(
         AgentToolContext ctx,
-        string rawJson)
+        string eventName,
+        IReadOnlyDictionary<string, string> custom)
     {
-        try
-        {
-            using var doc = JsonDocument.Parse(rawJson);
-            var root = doc.RootElement;
-            if (!root.TryGetProperty("data", out var data)
-                || !data.TryGetProperty("reservation_id", out var idElement)
-                || idElement.ValueKind != JsonValueKind.String
-                || !Guid.TryParse(idElement.GetString(), out var reservationId))
-            {
-                return null;
-            }
+        if (!ctx.NotificationContexts.TryGetValue(eventName, out var context))
+            return new MessageSequenceContext { Custom = custom };
 
-            return new Domain.Entities.Reservation
-            {
-                ReservationId = reservationId,
-                BusinessId = ctx.BusinessId,
-                ConversationId = ctx.ConversationId
-            };
-        }
-        catch
-        {
-            return null;
-        }
+        var mergedCustom = new Dictionary<string, string>(custom, StringComparer.OrdinalIgnoreCase);
+        foreach (var (key, value) in context.Custom)
+            mergedCustom[key] = value;
+
+        return context with { Custom = mergedCustom };
     }
-
     private async Task<AgentTurnResult> FinalizeTurnAsync(
         Guid conversationId,
         string userMessage,

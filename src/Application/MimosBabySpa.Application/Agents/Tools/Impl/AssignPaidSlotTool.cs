@@ -196,6 +196,25 @@ public sealed class AssignPaidSlotTool : IAgentTool
 
         await _paymentLifecycle.LinkReservationAsync(payment, response.ReservationId, cancellationToken);
 
+        var reservation = new Reservation
+        {
+            ReservationId = response.ReservationId,
+            BusinessId = ctx.BusinessId,
+            ServiceId = snapshot.ServiceId,
+            Service = service,
+            ConversationId = ctx.ConversationId,
+            Status = ReservationStatus.Confirmed,
+            ReservationDateTime = newDateTime,
+            DurationMinutes = snapshot.DurationMinutes,
+            CustomerNameSnapshot = snapshot.CustomerName,
+            CustomerEmailSnapshot = snapshot.CustomerEmail,
+            CustomerPhoneSnapshot = snapshot.CustomerPhone,
+            CustomAttributesJson = snapshot.CustomAttributesJson
+        };
+
+        ctx.ManageableReservations = [reservation];
+        ctx.NotificationContexts[ReservationCreated] = new MessageSequenceContext { Reservation = reservation };
+
         return ToolResultHelper.Ok(new
         {
             reservation_id = response.ReservationId,

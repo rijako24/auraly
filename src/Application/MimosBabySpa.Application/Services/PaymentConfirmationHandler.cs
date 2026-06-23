@@ -17,7 +17,7 @@ public class PaymentConfirmationHandler : IPaymentConfirmationHandler
     private readonly IRequestContextService _requestContext;
     private readonly IMessageSequenceResolver _sequenceResolver;
     private readonly IOutboundMessageDispatcher _outboundDispatcher;
-    private readonly IReservationCreatedNotificationDispatcher _notificationDispatcher;
+    private readonly IEventNotificationDispatcher _notificationDispatcher;
     private readonly IExternalEscalationService _externalEscalations;
     private readonly IPaidCheckoutFulfillmentRegistry _fulfillmentRegistry;
     private readonly ILogger<PaymentConfirmationHandler> _logger;
@@ -30,7 +30,7 @@ public class PaymentConfirmationHandler : IPaymentConfirmationHandler
         IRequestContextService requestContext,
         IMessageSequenceResolver sequenceResolver,
         IOutboundMessageDispatcher outboundDispatcher,
-        IReservationCreatedNotificationDispatcher notificationDispatcher,
+        IEventNotificationDispatcher notificationDispatcher,
         IExternalEscalationService externalEscalations,
         IPaidCheckoutFulfillmentRegistry fulfillmentRegistry,
         ILogger<PaymentConfirmationHandler> logger)
@@ -132,11 +132,15 @@ public class PaymentConfirmationHandler : IPaymentConfirmationHandler
 
             if (result.ReservationNotification is not null)
             {
-                await _notificationDispatcher.SendAsync(
+                await _notificationDispatcher.SendEventAsync(
                     payment.BusinessId,
-                    result.ReservationNotification,
                     config,
-                    result.CustomPayload,
+                    ToolSideEffectNames.ReservationCreated,
+                    new MessageSequenceContext
+                    {
+                        Reservation = result.ReservationNotification,
+                        Custom = result.CustomPayload
+                    },
                     ct);
             }
 

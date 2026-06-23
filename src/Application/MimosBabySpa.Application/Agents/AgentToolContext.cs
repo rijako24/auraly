@@ -31,6 +31,8 @@ public sealed class AgentToolContext
     public Conversation Conversation { get; init; } = null!;
     public Dictionary<string, string> Facts { get; init; } = new(StringComparer.OrdinalIgnoreCase);
 
+    public Dictionary<string, MessageSequenceContext> NotificationContexts { get; } = new(StringComparer.OrdinalIgnoreCase);
+
     /// <summary>
     /// Citas confirmadas o en espera del cliente en este turno (conversación actual o teléfono del canal).
     /// </summary>

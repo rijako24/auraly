@@ -107,7 +107,7 @@ var host = new HostBuilder()
             return new OpenAIClient(new Uri(options.Endpoint), new Azure.AzureKeyCredential(options.ApiKey));
         });
 
-        // AI Service (solo transcripción de audio con Whisper)
+        // AI Service (solo transcripciï¿½n de audio con Whisper)
         services.AddScoped<IAIService>(sp =>
         {
             var audioClient = sp.GetRequiredKeyedService<OpenAIClient>("Audio");
@@ -134,7 +134,7 @@ var host = new HostBuilder()
         services.AddScoped<IOutboundMessageDispatcher, OutboundMessageDispatcher>();
         services.AddScoped<IMessageSequenceResolver, MessageSequenceResolver>();
         services.AddScoped<IActiveAgentConfigResolver, ActiveAgentConfigResolver>();
-        services.AddScoped<IReservationCreatedNotificationDispatcher, ReservationCreatedNotificationDispatcher>();
+        services.AddScoped<IEventNotificationDispatcher, EventNotificationDispatcher>();
 
         services.AddScoped<IConversationFactsService, ConversationFactsService>();
         services.AddScoped<ICustomerMemoryService, CustomerMemoryService>();

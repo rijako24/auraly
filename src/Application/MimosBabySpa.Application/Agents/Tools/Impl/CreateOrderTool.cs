@@ -12,13 +12,13 @@ public sealed class CreateOrderTool : IAgentTool
 {
     private readonly ICommerceService _commerce;
     private readonly IUnitOfWork _unitOfWork;
-    private readonly IReservationCreatedNotificationDispatcher _notificationDispatcher;
+    private readonly IEventNotificationDispatcher _notificationDispatcher;
     private readonly IExternalEscalationService _externalEscalations;
 
     public CreateOrderTool(
         ICommerceService commerce,
         IUnitOfWork unitOfWork,
-        IReservationCreatedNotificationDispatcher notificationDispatcher,
+        IEventNotificationDispatcher notificationDispatcher,
         IExternalEscalationService externalEscalations)
     {
         _commerce = commerce;

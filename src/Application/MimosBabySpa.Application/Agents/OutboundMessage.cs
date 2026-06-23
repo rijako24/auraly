@@ -22,7 +22,7 @@ public sealed record WhatsAppTemplateMessage(
 /// <summary>
 /// Contexto opcional para resolver placeholders de secuencias (reserva, pago, etc.).
 /// </summary>
-public sealed class MessageSequenceContext
+public sealed record MessageSequenceContext
 {
     public Domain.Entities.Reservation? Reservation { get; init; }
 
