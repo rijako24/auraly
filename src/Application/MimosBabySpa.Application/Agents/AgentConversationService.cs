@@ -309,8 +309,16 @@ public sealed class AgentConversationService : IAgentConversationService
         if (!userOutput.OutboundMessagesQueued || turn.OutboundMessages.Count == 0)
             return false;
 
+        if (!turn.DirectOutboundRequested)
+        {
+            _logger.LogDebug(
+                "Conv {ConvId}: salida outbound diferida encolada ({Count} mensajes); continua el LLM para respuesta principal",
+                conversationId, turn.OutboundMessages.Count);
+            return false;
+        }
+
         _logger.LogInformation(
-            "Conv {ConvId}: salida directa al usuario encolada ({Count} mensajes) — turno completo sin texto del LLM",
+            "Conv {ConvId}: salida directa al usuario encolada ({Count} mensajes) - turno completo sin texto del LLM",
             conversationId, turn.OutboundMessages.Count);
         return true;
     }

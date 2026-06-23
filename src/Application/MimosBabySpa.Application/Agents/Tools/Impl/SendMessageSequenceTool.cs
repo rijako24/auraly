@@ -94,6 +94,7 @@ public sealed class SendMessageSequenceTool : IAgentTool
         }
 
         ctx.Turn.EnqueueOutbound(messages);
+        ctx.Turn.MarkDirectOutboundRequested();
 
         return ToolResultHelper.Ok(new
         {

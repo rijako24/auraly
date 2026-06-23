@@ -251,20 +251,20 @@ var serviceProvider = services.BuildServiceProvider();
 Console.OutputEncoding = System.Text.Encoding.UTF8;
 Console.InputEncoding = System.Text.Encoding.UTF8;
 
-const string solorzanoBusinessIdStr = "FCEE3BA9-E6BF-43E2-8C1A-560CB724688B";
-const string solorzanoAgentIdStr = "B0EE3BA9-E6BF-43E2-8C1A-560CB724688B";
-const string solorzanoAgentPhone = "+573005942096";
-const string solorzanoAgentName = "Camila";
+const string mimosBusinessIdStr = "22222222-2222-2222-2222-222222222222";
+const string mimosBusinessName = "Mimos Baby Spa Principal";
+const string mimosAgentName = "Mimi Bot";
+const string mimosLegacyAgentName = "Mimo Bot";
+const string mimosAgentDisplayName = "Mimi";
 
-var solorzanoBusinessId = Guid.Parse(solorzanoBusinessIdStr);
-var agentId = Guid.Parse(solorzanoAgentIdStr);
+var mimosBusinessId = Guid.Parse(mimosBusinessIdStr);
 
 Console.WriteLine("========================================================");
-Console.WriteLine("  Vinos Artesanales Solorzano - Simulador Agentic Engine (FC)");
+Console.WriteLine("  Mimos Baby Spa - Simulador Agentic Engine (FC)");
 Console.WriteLine("========================================================");
 Console.WriteLine();
-Console.WriteLine($"  Negocio : Vinos Artesanales Solorzano ({solorzanoBusinessIdStr})");
-Console.WriteLine($"  Agente  : {solorzanoAgentName} ({solorzanoAgentPhone})");
+Console.WriteLine($"  Negocio : {mimosBusinessName} ({mimosBusinessIdStr})");
+Console.WriteLine($"  Agente  : {mimosAgentName}");
 Console.WriteLine("  Escribe  'exit' para salir");
 Console.WriteLine("  Escribe  'reset' para reiniciar la sesion");
 Console.WriteLine();
@@ -308,20 +308,24 @@ while (true)
         var conversationService = scope.ServiceProvider.GetRequiredService<IConversationService>();
         var agentService = scope.ServiceProvider.GetRequiredService<IAgentConversationService>();
 
-        var agentEntity = await agentRepo.GetByIdAsync(agentId);
+        var businessAgents = await agentRepo.GetByBusinessAsync(mimosBusinessId);
+        var agentEntity = businessAgents.FirstOrDefault(a =>
+            a.Name.Equals(mimosAgentName, StringComparison.OrdinalIgnoreCase)
+            || a.Name.Equals(mimosLegacyAgentName, StringComparison.OrdinalIgnoreCase));
+
         if (agentEntity == null)
         {
             Console.ForegroundColor = ConsoleColor.Red;
-            Console.WriteLine($"ERROR: Agente {agentId} no encontrado en la base de datos.");
+            Console.WriteLine($"ERROR: Agente '{mimosAgentName}' no encontrado para el negocio {mimosBusinessId}.");
             Console.ResetColor();
             Console.WriteLine();
             continue;
         }
 
-        if (agentEntity.BusinessId != solorzanoBusinessId)
+        if (agentEntity.BusinessId != mimosBusinessId)
         {
             Console.ForegroundColor = ConsoleColor.Red;
-            Console.WriteLine($"ERROR: El agente {agentId} no pertenece al negocio de vinos configurado.");
+            Console.WriteLine($"ERROR: El agente {agentEntity.AgentId} no pertenece al negocio de Mimos configurado.");
             Console.ResetColor();
             Console.WriteLine();
             continue;
@@ -331,13 +335,13 @@ while (true)
             agentEntity.BusinessId, userPhone, customerName: null);
 
         var result = await agentService.ProcessMessageAsync(
-            agentId,
+            agentEntity.AgentId,
             conversation.ConversationId,
             input,
             userPhone);
 
         Console.ForegroundColor = ConsoleColor.Green;
-        Console.Write("Camila: ");
+        Console.Write($"{mimosAgentDisplayName}: ");
         Console.ResetColor();
 
         if (!string.IsNullOrWhiteSpace(result.Response))

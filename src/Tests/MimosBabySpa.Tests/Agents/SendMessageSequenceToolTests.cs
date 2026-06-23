@@ -58,6 +58,7 @@ public sealed class SendMessageSequenceToolTests
 
         json.Should().Contain("\"ok\":true");
         ctx.Turn!.OutboundMessages.Should().HaveCount(1);
+        ctx.Turn.DirectOutboundRequested.Should().BeTrue();
     }
 
     [Fact]
@@ -89,6 +90,17 @@ public sealed class SendMessageSequenceToolTests
         ctx.Turn!.OutboundMessages.Should().HaveCount(1);
     }
 
+
+    [Fact]
+    public void EnqueueOutbound_ByDefault_RemainsDeferred()
+    {
+        var ctx = CreateContext(new MessageSequenceCatalog());
+
+        ctx.Turn!.EnqueueOutbound([new OutboundMessage("Doc", null)]);
+
+        ctx.Turn.OutboundMessages.Should().HaveCount(1);
+        ctx.Turn.DirectOutboundRequested.Should().BeFalse();
+    }
     private static AgentToolContext CreateContext(MessageSequenceCatalog catalog)
     {
         var turn = new AgentTurnExecution(errorEscalationThreshold: 3);

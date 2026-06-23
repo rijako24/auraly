@@ -82,6 +82,7 @@ public class AgentPromptComposerTests
         result.Should().Contain("## POLITICA DEL TURNO");
         result.Should().Contain("primera respuesta visible");
         result.Should().Contain("saludo breve");
+        result.Should().Contain("una sola pregunta abierta de ayuda");
     }
 
     [Fact]
@@ -380,7 +381,11 @@ public class AgentPromptComposerTests
         result.Should().Contain("CÃ“MO ABRES LA CONVERSACIÃ“N");
         result.Should().Contain("etapa: discovery");
         result.Should().NotContain("etapa: greeting");
-        result.Should().Contain("facts_pendientes: baby_name, baby_age_months, service");
+        result.Should().Contain("criterio_de_avance: la etapa se completa cuando estén presentes estos datos del flujo");
+        result.Should().Contain("datos_para_completar_etapa: baby_name (baby_name), baby_age_months (baby_age_months), service (service)");
+        result.Should().Contain("usa estos datos como próximos datos útiles solo cuando la intención actual los requiera");
+        result.Should().NotContain("si el cliente solo saluda");
+        result.Should().NotContain("facts_pendientes");
         result.Should().NotContain("el sistema te llevarÃ¡ automÃ¡ticamente al siguiente paso");
     }
 
@@ -417,7 +422,9 @@ public class AgentPromptComposerTests
 
         var result = Compose(config, [], session);
 
-        result.Should().Contain("facts_pendientes: service");
+        result.Should().Contain("criterio_de_avance: la etapa se completa cuando estén presentes estos datos del flujo");
+        result.Should().Contain("datos_para_completar_etapa: service (service)");
+        result.Should().NotContain("facts_pendientes");
         result.Should().NotContain("el sistema te llevarÃ¡ automÃ¡ticamente al siguiente paso");
     }
 
@@ -534,8 +541,8 @@ public class AgentPromptComposerTests
         var result = Compose(config, [], session);
 
         result.Should().Contain("## CAPTURA INMEDIATA");
-        result.Should().Contain("Usa set_fact solo para datos expresados o confirmados por el cliente");
-        result.Should().Contain("No guardes inferencias, objetivos internos del flujo ni marcadores de estado");
+        result.Should().Contain("Guarda únicamente datos expresados o confirmados por el cliente");
+        result.Should().Contain("Mantén objetivos internos y marcadores de estado fuera de facts de usuario");
         result.Should().Contain("nombre del bebÃ© (baby_name)");
         result.Should().Contain("edad del bebÃ© (baby_age_months)");
         result.Should().NotContain("plan (service)");

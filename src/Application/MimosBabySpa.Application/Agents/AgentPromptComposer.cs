@@ -108,7 +108,7 @@ public sealed class AgentPromptComposer : IPromptComposer
         {
             "## POLITICA DEL TURNO",
             "- Esta sera la primera respuesta visible del bot en la conversacion.",
-            "- La respuesta final al cliente debe iniciar con un saludo breve, aunque hayas usado herramientas antes de responder."
+            "- Responde con un saludo breve y una sola pregunta abierta de ayuda."
         });
     }
 
@@ -259,8 +259,8 @@ public sealed class AgentPromptComposer : IPromptComposer
         {
             "## CAPTURA INMEDIATA",
             "Si el cliente menciona alguno de los siguientes datos antes de que los solicites, persÃ­stalo de inmediato con set_fact:",
-            "- Usa set_fact solo para datos expresados o confirmados por el cliente.",
-            "- No guardes inferencias, objetivos internos del flujo ni marcadores de estado que el cliente no haya expresado."
+            "- Guarda únicamente datos expresados o confirmados por el cliente.",
+            "- Mantén objetivos internos y marcadores de estado fuera de facts de usuario."
         };
 
         foreach (var entry in eagerMissing)
@@ -380,8 +380,9 @@ public sealed class AgentPromptComposer : IPromptComposer
 
             if (missingFacts.Count > 0)
             {
-                lines.Add($"- facts_pendientes: {string.Join(", ", missingFacts)}");
-                lines.Add($"- datos_pendientes_para_avanzar: {string.Join(", ", DescribeFacts(config, missingFacts))}");
+                lines.Add("- criterio_de_avance: la etapa se completa cuando estén presentes estos datos del flujo.");
+                lines.Add($"- datos_para_completar_etapa: {string.Join(", ", DescribeFacts(config, missingFacts))}");
+                lines.Add("- acción: usa estos datos como próximos datos útiles solo cuando la intención actual los requiera.");
             }
         }
 

@@ -30,6 +30,7 @@ internal sealed class AgentTurnExecution
     public int ConsecutiveToolErrors { get; private set; }
     public bool EscalatedToHuman { get; private set; }
     public bool ReservationCreated { get; private set; }
+    public bool DirectOutboundRequested { get; private set; }
     public bool CheckoutPrepared { get; private set; }
 
     public IReadOnlyList<TurnFragmentEntry> FragmentEntries =>
@@ -99,6 +100,8 @@ internal sealed class AgentTurnExecution
     /// <summary>Encola mensajes outbound para envío tras la respuesta principal del turno.</summary>
     public void EnqueueOutbound(IEnumerable<OutboundMessage> messages) =>
         _outboundMessages.AddRange(messages);
+
+    public void MarkDirectOutboundRequested() => DirectOutboundRequested = true;
 
     /// <summary>Evita encolar la misma secuencia dos veces en un turno.</summary>
     public bool TryMarkSequenceEnqueued(string sequenceName) =>
