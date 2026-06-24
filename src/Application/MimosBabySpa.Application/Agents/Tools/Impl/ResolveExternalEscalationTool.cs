@@ -3,20 +3,27 @@ using MimosBabySpa.Application.Services;
 
 namespace MimosBabySpa.Application.Agents.Tools.Impl;
 
-public sealed class ResolveExternalEscalationTool : IAgentTool
+public class ResolveExternalEscalationTool : IAgentTool
 {
     private readonly IExternalEscalationService _escalations;
+    private readonly string _name;
 
     public ResolveExternalEscalationTool(IExternalEscalationService attempts)
+        : this(attempts, "resolve_external_escalation")
     {
-        _escalations = attempts;
     }
 
-    public string Name => "resolve_external_escalation";
+    protected ResolveExternalEscalationTool(IExternalEscalationService attempts, string name)
+    {
+        _escalations = attempts;
+        _name = name;
+    }
+
+    public string Name => _name;
 
     public string Description =>
-        "Resolves which external escalation attempt the current contact message refers to. " +
-        "Uses WhatsApp button payload, quoted message id, attempt code, or the only open attempt for this contact.";
+        "Resolves which external interaction the current contact message refers to. " +
+        "Uses WhatsApp button payload, quoted message id, attempt code, or the only open interaction for this contact.";
 
     public string ParametersSchema => """
         {
@@ -46,20 +53,9 @@ public sealed class ResolveExternalEscalationTool : IAgentTool
             {
                 resolution = result.Resolution,
                 error = result.Error,
-                pending_attempts = result.PendingAttempts.Select(o => new
-                {
-                    external_escalation_id = o.ExternalEscalationAttemptId,
-                    attempt_code = o.AttemptCode,
-                    event_name = o.EventName,
-                    target_type = o.TargetType,
-                    target_id = o.TargetId,
-                    order_number = ReadCustomValue(o.CustomPayloadJson, "order_number"),
-                    customer_name = ReadCustomValue(o.CustomPayloadJson, "customer_name"),
-                    customer_phone = ReadCustomValue(o.CustomPayloadJson, "customer_phone"),
-                    delivery_address = ReadCustomValue(o.CustomPayloadJson, "delivery_address"),
-                    total = ReadCustomValue(o.CustomPayloadJson, "total"),
-                    currency = ReadCustomValue(o.CustomPayloadJson, "currency")
-                }).ToList()
+                requested_action = result.RequestedAction,
+                pending_interactions = result.PendingAttempts.Select(ToInteractionPayload).ToList(),
+                pending_attempts = result.PendingAttempts.Select(ToInteractionPayload).ToList()
             });
         }
 
@@ -67,35 +63,51 @@ public sealed class ResolveExternalEscalationTool : IAgentTool
         {
             resolution = "resolved",
             requested_action = result.RequestedAction,
+            interaction = ToInteractionPayload(result.Attempt),
+            external_interaction_id = result.Attempt.ExternalEscalationAttemptId,
             external_escalation_id = result.Attempt.ExternalEscalationAttemptId,
             attempt_code = result.Attempt.AttemptCode,
             event_name = result.Attempt.EventName,
             target_type = result.Attempt.TargetType,
             target_id = result.Attempt.TargetId,
-            order_number = ReadCustomValue(result.Attempt.CustomPayloadJson, "order_number"),
-            customer_name = ReadCustomValue(result.Attempt.CustomPayloadJson, "customer_name"),
-            customer_phone = ReadCustomValue(result.Attempt.CustomPayloadJson, "customer_phone"),
-            delivery_address = ReadCustomValue(result.Attempt.CustomPayloadJson, "delivery_address"),
-            total = ReadCustomValue(result.Attempt.CustomPayloadJson, "total"),
-            currency = ReadCustomValue(result.Attempt.CustomPayloadJson, "currency")
+            custom_payload = ReadCustomPayload(result.Attempt.CustomPayloadJson)
         });
     }
 
-    private static string? ReadCustomValue(string? json, string key)
+    private static object ToInteractionPayload(Domain.Entities.ExternalEscalationAttempt attempt) => new
+    {
+        external_interaction_id = attempt.ExternalEscalationAttemptId,
+        external_escalation_id = attempt.ExternalEscalationAttemptId,
+        attempt_code = attempt.AttemptCode,
+        event_name = attempt.EventName,
+        target_type = attempt.TargetType,
+        target_id = attempt.TargetId,
+        contact_key = attempt.ContactKey,
+        contact_name = attempt.ContactNameSnapshot,
+        contact_role = attempt.ContactRoleSnapshot,
+        custom_payload = ReadCustomPayload(attempt.CustomPayloadJson)
+    };
+
+    private static IReadOnlyDictionary<string, string> ReadCustomPayload(string? json)
     {
         if (string.IsNullOrWhiteSpace(json))
-            return null;
+            return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
         try
         {
-            using var doc = JsonDocument.Parse(json);
-            return doc.RootElement.TryGetProperty(key, out var value)
-                ? value.GetString()
-                : null;
+            return JsonSerializer.Deserialize<Dictionary<string, string>>(json)
+                ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         }
         catch
         {
-            return null;
+            return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         }
+    }
+}
+public sealed class ResolveExternalInteractionTool : ResolveExternalEscalationTool
+{
+    public ResolveExternalInteractionTool(IExternalEscalationService attempts)
+        : base(attempts, "resolve_external_interaction")
+    {
     }
 }

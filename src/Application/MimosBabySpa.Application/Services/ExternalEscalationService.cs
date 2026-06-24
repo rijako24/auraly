@@ -1,5 +1,5 @@
-using System.Text.RegularExpressions;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 using MimosBabySpa.Application.Agents;
 using MimosBabySpa.Application.Agents.Configuration;
@@ -75,6 +75,7 @@ public sealed class ExternalEscalationService : IExternalEscalationService
     private readonly IMessageSequenceResolver _sequenceResolver;
     private readonly IWhatsAppService _whatsApp;
     private readonly IEventNotificationDispatcher _notificationDispatcher;
+    private readonly IEnumerable<IExternalEscalationTargetHandler> _targetHandlers;
     private readonly ILogger<ExternalEscalationService> _logger;
 
     public ExternalEscalationService(
@@ -83,6 +84,7 @@ public sealed class ExternalEscalationService : IExternalEscalationService
         IMessageSequenceResolver sequenceResolver,
         IWhatsAppService whatsApp,
         IEventNotificationDispatcher notificationDispatcher,
+        IEnumerable<IExternalEscalationTargetHandler> targetHandlers,
         ILogger<ExternalEscalationService> logger)
     {
         _unitOfWork = unitOfWork;
@@ -90,6 +92,7 @@ public sealed class ExternalEscalationService : IExternalEscalationService
         _sequenceResolver = sequenceResolver;
         _whatsApp = whatsApp;
         _notificationDispatcher = notificationDispatcher;
+        _targetHandlers = targetHandlers;
         _logger = logger;
     }
 
@@ -100,7 +103,7 @@ public sealed class ExternalEscalationService : IExternalEscalationService
             || !config.Escalations.External.Events.TryGetValue(request.EventName, out var definition)
             || !definition.Enabled)
         {
-            return new ExternalEscalationSendResult(false, null, "external_escalation_not_configured");
+            return new ExternalEscalationSendResult(false, null, "external_interaction_not_configured");
         }
 
         if (await _unitOfWork.ExternalEscalationAttempts.HasAcceptedForTargetAsync(
@@ -110,7 +113,7 @@ public sealed class ExternalEscalationService : IExternalEscalationService
                 request.TargetId,
                 ct))
         {
-            return new ExternalEscalationSendResult(false, null, "target_already_accepted");
+            return new ExternalEscalationSendResult(false, null, "target_already_completed");
         }
 
         var attempts = await _unitOfWork.ExternalEscalationAttempts.CountAttemptsAsync(
@@ -131,7 +134,6 @@ public sealed class ExternalEscalationService : IExternalEscalationService
             return new ExternalEscalationSendResult(false, null, "no_more_contacts");
 
         var customPayload = BuildCustomPayload(request.Custom, contact);
-
         var now = DateTime.UtcNow;
         var attempt = new ExternalEscalationAttempt
         {
@@ -154,7 +156,7 @@ public sealed class ExternalEscalationService : IExternalEscalationService
         };
 
         await _unitOfWork.ExternalEscalationAttempts.AddAsync(attempt, ct);
-        await MarkOrderDeliveryPendingAsync(attempt, now, ct);
+        await DispatchSentAsync(attempt, customPayload, ct);
         await _unitOfWork.SaveChangesAsync(ct);
 
         var sentMessageId = await SendEscalationMessagesAsync(config, definition, attempt, customPayload, ct);
@@ -172,7 +174,7 @@ public sealed class ExternalEscalationService : IExternalEscalationService
             customPayload,
             ct);
 
-        return new ExternalEscalationSendResult(true, attempt.AttemptCode, null);
+        return new ExternalEscalationSendResult(true, attempt.AttemptCode, null, attempt.ExternalEscalationAttemptId);
     }
 
     public async Task<ExternalEscalationResolution> ResolveAttemptAsync(
@@ -198,7 +200,7 @@ public sealed class ExternalEscalationService : IExternalEscalationService
                 contactPhone,
                 ct);
             if (byReply is not null)
-                return new ExternalEscalationResolution("resolved", byReply, [], null);
+                return new ExternalEscalationResolution("resolved", byReply, [], null, null);
         }
 
         var code = TryExtractAttemptCode(messageText);
@@ -206,25 +208,36 @@ public sealed class ExternalEscalationService : IExternalEscalationService
         {
             var byCode = await _unitOfWork.ExternalEscalationAttempts.GetByAttemptCodeAsync(businessId, code, contactPhone, ct);
             if (byCode is not null)
-                return new ExternalEscalationResolution("resolved", byCode, [], null);
+                return new ExternalEscalationResolution("resolved", byCode, [], null, null);
         }
 
         var open = await _unitOfWork.ExternalEscalationAttempts.GetPendingByContactPhoneAsync(businessId, contactPhone, ct);
         if (open.Count == 1)
-            return new ExternalEscalationResolution("resolved", open[0], open, null);
+            return new ExternalEscalationResolution("resolved", open[0], open, null, null);
 
         return new ExternalEscalationResolution(
             open.Count == 0 ? "not_found" : "ambiguous",
             null,
             open,
-            open.Count == 0 ? "No pending attempts were found for this contact." : "Multiple pending attempts require an attempt code.");
+            open.Count == 0 ? "No pending external interactions were found for this contact." : "Multiple pending external interactions require a code or quoted message.");
     }
 
-    public async Task<ExternalEscalationActionResult> AcceptAsync(Guid businessId, Guid attemptId, string contactPhone, CancellationToken ct = default)
+    public async Task<ExternalEscalationActionResult> CompleteAsync(
+        Guid businessId,
+        Guid attemptId,
+        string contactPhone,
+        string outcomeKey,
+        string? responseText,
+        IReadOnlyDictionary<string, string>? responsePayload = null,
+        CancellationToken ct = default)
     {
         var attempt = await _unitOfWork.ExternalEscalationAttempts.GetByIdAsync(attemptId, ct);
         if (!IsUsableAttempt(attempt, businessId, contactPhone))
-            return new ExternalEscalationActionResult(false, attempt, "El escalamiento ya no esta disponible.", false);
+            return new ExternalEscalationActionResult(false, attempt, "La interaccion ya no esta disponible.", false);
+
+        var normalizedOutcome = NormalizeOutcome(outcomeKey);
+        if (IsDeclineOutcome(normalizedOutcome))
+            return await DeclineAsync(businessId, attemptId, contactPhone, responseText, responsePayload, ct);
 
         if (await _unitOfWork.ExternalEscalationAttempts.HasAcceptedForTargetAsync(
                 attempt!.BusinessId,
@@ -237,14 +250,25 @@ public sealed class ExternalEscalationService : IExternalEscalationService
             attempt.CancelledAt = DateTime.UtcNow;
             await _unitOfWork.ExternalEscalationAttempts.UpdateAsync(attempt, ct);
             await _unitOfWork.SaveChangesAsync(ct);
-            return new ExternalEscalationActionResult(false, attempt, "Ese pedido ya fue tomado por otro contacto.", false);
+            return new ExternalEscalationActionResult(false, attempt, "La interaccion ya fue completada por otro contacto.", false);
         }
 
         var now = DateTime.UtcNow;
+        var payload = MergePayload(ReadCustomPayload(attempt.CustomPayloadJson), responsePayload);
+        if (!string.IsNullOrWhiteSpace(responseText))
+            payload["response_text"] = responseText.Trim();
+        payload["outcome_key"] = normalizedOutcome;
+
         attempt.Status = ExternalEscalationAttemptStatus.Accepted;
         attempt.AcceptedAt = now;
+        attempt.CompletedAt = now;
+        attempt.OutcomeKey = normalizedOutcome;
+        attempt.ResponseText = string.IsNullOrWhiteSpace(responseText) ? null : responseText.Trim();
+        attempt.ResponsePayloadJson = JsonSerializer.Serialize(payload);
         await _unitOfWork.ExternalEscalationAttempts.UpdateAsync(attempt, ct);
-        await MarkOrderDeliveryAcceptedAsync(attempt, now, ct);
+
+        var completion = new ExternalEscalationCompletion(normalizedOutcome, responseText, payload);
+        await DispatchCompletedAsync(attempt, completion, ct);
         await _unitOfWork.ExternalEscalationAttempts.CancelPendingForTargetAsync(
             attempt.BusinessId,
             attempt.EventName,
@@ -256,30 +280,55 @@ public sealed class ExternalEscalationService : IExternalEscalationService
 
         var config = await _configProvider.GetConfigAsync(attempt.SourceAgentId, ct);
         var notificationEvent = config.Escalations.External.Events.TryGetValue(attempt.EventName, out var definition)
-            ? definition.AcceptedNotificationEvent
+            ? definition.CompletedNotificationEvent ?? definition.AcceptedNotificationEvent
             : null;
 
-        await TrySendNotificationEventAsync(
-            config,
-            notificationEvent,
-            attempt,
-            ReadCustomPayload(attempt.CustomPayloadJson),
-            ct);
+        await TrySendNotificationEventAsync(config, notificationEvent, attempt, payload, ct);
 
-        return new ExternalEscalationActionResult(true, attempt, $"Listo, aceptaste {attempt.AttemptCode}.", false);
+        return new ExternalEscalationActionResult(
+            true,
+            attempt,
+            "Interaccion completada.",
+            false,
+            normalizedOutcome,
+            responseText,
+            payload);
     }
 
-    public async Task<ExternalEscalationActionResult> DeclineAsync(Guid businessId, Guid attemptId, string contactPhone, CancellationToken ct = default)
+    public Task<ExternalEscalationActionResult> AcceptAsync(Guid businessId, Guid attemptId, string contactPhone, CancellationToken ct = default) =>
+        CompleteAsync(businessId, attemptId, contactPhone, "accepted", null, null, ct);
+
+    public Task<ExternalEscalationActionResult> DeclineAsync(Guid businessId, Guid attemptId, string contactPhone, CancellationToken ct = default) =>
+        DeclineAsync(businessId, attemptId, contactPhone, null, null, ct);
+
+    private async Task<ExternalEscalationActionResult> DeclineAsync(
+        Guid businessId,
+        Guid attemptId,
+        string contactPhone,
+        string? responseText,
+        IReadOnlyDictionary<string, string>? responsePayload,
+        CancellationToken ct)
     {
         var attempt = await _unitOfWork.ExternalEscalationAttempts.GetByIdAsync(attemptId, ct);
         if (!IsUsableAttempt(attempt, businessId, contactPhone))
-            return new ExternalEscalationActionResult(false, attempt, "El escalamiento ya no esta disponible.", false);
+            return new ExternalEscalationActionResult(false, attempt, "La interaccion ya no esta disponible.", false);
 
         var now = DateTime.UtcNow;
-        attempt!.Status = ExternalEscalationAttemptStatus.Declined;
+        var basePayload = ReadCustomPayload(attempt!.CustomPayloadJson);
+        var completionPayload = MergePayload(basePayload, responsePayload);
+        if (!string.IsNullOrWhiteSpace(responseText))
+            completionPayload["response_text"] = responseText.Trim();
+        completionPayload["outcome_key"] = "declined";
+
+        attempt.Status = ExternalEscalationAttemptStatus.Declined;
         attempt.DeclinedAt = now;
+        attempt.CompletedAt = now;
+        attempt.OutcomeKey = "declined";
+        attempt.ResponseText = string.IsNullOrWhiteSpace(responseText) ? null : responseText.Trim();
+        attempt.ResponsePayloadJson = JsonSerializer.Serialize(completionPayload);
         await _unitOfWork.ExternalEscalationAttempts.UpdateAsync(attempt, ct);
-        await MarkOrderDeliveryDeclinedAsync(attempt, now, ct);
+
+        await DispatchDeclinedAsync(attempt, completionPayload, ct);
         await _unitOfWork.SaveChangesAsync(ct);
 
         var next = await EscalateNextAsync(
@@ -288,14 +337,20 @@ public sealed class ExternalEscalationService : IExternalEscalationService
                 attempt.EventName,
                 attempt.TargetType,
                 attempt.TargetId,
-                ReadCustomPayload(attempt.CustomPayloadJson)),
+                basePayload),
             ct);
+
+        if (!next.Sent && string.Equals(next.Error, "no_more_contacts", StringComparison.OrdinalIgnoreCase))
+            await NotifyContactsExhaustedAsync(attempt, ct);
 
         return new ExternalEscalationActionResult(
             true,
             attempt,
-            next.Sent ? "Listo, queda rechazado. Voy a ofrecerlo al siguiente contacto." : "Listo, queda rechazado.",
-            next.Sent);
+            next.Sent ? "Interaccion rechazada; se envio al siguiente contacto." : "Interaccion rechazada.",
+            next.Sent,
+            "declined",
+            responseText,
+            completionPayload);
     }
 
     public async Task ProcessExpiredAttemptsAsync(CancellationToken ct = default)
@@ -307,100 +362,25 @@ public sealed class ExternalEscalationService : IExternalEscalationService
             attempt.Status = ExternalEscalationAttemptStatus.TimedOut;
             attempt.TimedOutAt = now;
             await _unitOfWork.ExternalEscalationAttempts.UpdateAsync(attempt, ct);
-            await MarkOrderDeliveryTimedOutAsync(attempt, now, ct);
+
+            var payload = ReadCustomPayload(attempt.CustomPayloadJson);
+            await DispatchTimedOutAsync(attempt, payload, ct);
             await _unitOfWork.SaveChangesAsync(ct);
 
-            await EscalateNextAsync(
+            var next = await EscalateNextAsync(
                 new ExternalEscalationRequest(
                     attempt.SourceAgentId,
                     attempt.EventName,
                     attempt.TargetType,
                     attempt.TargetId,
-                    ReadCustomPayload(attempt.CustomPayloadJson)),
+                    payload),
                 ct);
+
+            if (!next.Sent && string.Equals(next.Error, "no_more_contacts", StringComparison.OrdinalIgnoreCase))
+                await NotifyContactsExhaustedAsync(attempt, ct);
         }
     }
 
-    private async Task MarkOrderDeliveryPendingAsync(ExternalEscalationAttempt attempt, DateTime now, CancellationToken ct)
-    {
-        var order = await GetTargetOrderAsync(attempt, ct);
-        if (order is null)
-            return;
-
-        order.DeliveryAssignmentStatus = DeliveryAssignmentStatus.Pending;
-        order.DeliveryExternalEscalationAttemptId = attempt.ExternalEscalationAttemptId;
-        order.DeliveryAssigneeKeySnapshot = attempt.ContactKey;
-        order.DeliveryAssigneeNameSnapshot = attempt.ContactNameSnapshot;
-        order.DeliveryAssigneeRoleSnapshot = attempt.ContactRoleSnapshot;
-        order.DeliveryAssigneePhoneSnapshot = attempt.ContactPhoneSnapshot;
-        order.DeliveryAssignmentRequestedAt = now;
-        order.DeliveryAssignmentAcceptedAt = null;
-        order.DeliveryAssignmentDeclinedAt = null;
-        order.DeliveryAssignmentTimedOutAt = null;
-        order.UpdatedAt = now;
-        await _unitOfWork.Orders.UpdateAsync(order, ct);
-    }
-
-    private async Task MarkOrderDeliveryAcceptedAsync(ExternalEscalationAttempt attempt, DateTime now, CancellationToken ct)
-    {
-        var order = await GetTargetOrderAsync(attempt, ct);
-        if (order is null)
-            return;
-
-        order.DeliveryAssignmentStatus = DeliveryAssignmentStatus.Accepted;
-        order.DeliveryExternalEscalationAttemptId = attempt.ExternalEscalationAttemptId;
-        order.DeliveryAssigneeKeySnapshot = attempt.ContactKey;
-        order.DeliveryAssigneeNameSnapshot = attempt.ContactNameSnapshot;
-        order.DeliveryAssigneeRoleSnapshot = attempt.ContactRoleSnapshot;
-        order.DeliveryAssigneePhoneSnapshot = attempt.ContactPhoneSnapshot;
-        order.DeliveryAssignmentAcceptedAt = now;
-        order.DeliveryAssignmentDeclinedAt = null;
-        order.DeliveryAssignmentTimedOutAt = null;
-        order.UpdatedAt = now;
-        await _unitOfWork.Orders.UpdateAsync(order, ct);
-    }
-
-    private async Task MarkOrderDeliveryDeclinedAsync(ExternalEscalationAttempt attempt, DateTime now, CancellationToken ct)
-    {
-        var order = await GetTargetOrderAsync(attempt, ct);
-        if (order is null)
-            return;
-
-        order.DeliveryAssignmentStatus = DeliveryAssignmentStatus.Declined;
-        order.DeliveryExternalEscalationAttemptId = attempt.ExternalEscalationAttemptId;
-        order.DeliveryAssigneeKeySnapshot = attempt.ContactKey;
-        order.DeliveryAssigneeNameSnapshot = attempt.ContactNameSnapshot;
-        order.DeliveryAssigneeRoleSnapshot = attempt.ContactRoleSnapshot;
-        order.DeliveryAssigneePhoneSnapshot = attempt.ContactPhoneSnapshot;
-        order.DeliveryAssignmentDeclinedAt = now;
-        order.DeliveryAssignmentTimedOutAt = null;
-        order.UpdatedAt = now;
-        await _unitOfWork.Orders.UpdateAsync(order, ct);
-    }
-
-    private async Task MarkOrderDeliveryTimedOutAsync(ExternalEscalationAttempt attempt, DateTime now, CancellationToken ct)
-    {
-        var order = await GetTargetOrderAsync(attempt, ct);
-        if (order is null)
-            return;
-
-        order.DeliveryAssignmentStatus = DeliveryAssignmentStatus.TimedOut;
-        order.DeliveryExternalEscalationAttemptId = attempt.ExternalEscalationAttemptId;
-        order.DeliveryAssigneeKeySnapshot = attempt.ContactKey;
-        order.DeliveryAssigneeNameSnapshot = attempt.ContactNameSnapshot;
-        order.DeliveryAssigneeRoleSnapshot = attempt.ContactRoleSnapshot;
-        order.DeliveryAssigneePhoneSnapshot = attempt.ContactPhoneSnapshot;
-        order.DeliveryAssignmentTimedOutAt = now;
-        order.UpdatedAt = now;
-        await _unitOfWork.Orders.UpdateAsync(order, ct);
-    }
-
-    private async Task<Order?> GetTargetOrderAsync(ExternalEscalationAttempt attempt, CancellationToken ct)
-    {
-        return attempt.TargetType.Equals("order", StringComparison.OrdinalIgnoreCase)
-            ? await _unitOfWork.Orders.GetByIdAsync(attempt.BusinessId, attempt.TargetId, ct)
-            : null;
-    }
     private async Task<string?> SendEscalationMessagesAsync(
         AgentConfig config,
         ExternalEscalationEventDefinition definition,
@@ -417,6 +397,7 @@ public sealed class ExternalEscalationService : IExternalEscalationService
             ["business_name"] = business?.Name ?? string.Empty,
             ["pickup_contact_name"] = business?.Name ?? string.Empty,
             ["external_escalation_id"] = attempt.ExternalEscalationAttemptId.ToString(),
+            ["external_interaction_id"] = attempt.ExternalEscalationAttemptId.ToString(),
             ["attempt_code"] = attempt.AttemptCode,
             ["contact_name"] = attempt.ContactNameSnapshot,
             ["contact_role"] = attempt.ContactRoleSnapshot
@@ -432,8 +413,6 @@ public sealed class ExternalEscalationService : IExternalEscalationService
         if (messages.Count == 0)
             return null;
 
-        var first = EnsureDefaultButtons(messages[0], attempt);
-        messages[0] = first;
 
         string? sentMessageId = null;
         foreach (var message in messages)
@@ -475,41 +454,17 @@ public sealed class ExternalEscalationService : IExternalEscalationService
         return sentMessageId;
     }
 
-    private static OutboundMessage EnsureDefaultButtons(OutboundMessage message, ExternalEscalationAttempt attempt)
+
+    private async Task NotifyContactsExhaustedAsync(ExternalEscalationAttempt attempt, CancellationToken ct)
     {
-        if (message.Buttons is { Count: > 0 })
-            return message;
+        var config = await _configProvider.GetConfigAsync(attempt.SourceAgentId, ct);
+        var notificationEvent = config.Escalations.External.Events.TryGetValue(attempt.EventName, out var definition)
+            ? definition.ExhaustedNotificationEvent
+            : null;
 
-        return message with
-        {
-            Buttons =
-            [
-                new OutboundButton(BuildPayload("accept", attempt.ExternalEscalationAttemptId), $"Aceptar {attempt.AttemptCode}"),
-                new OutboundButton(BuildPayload("decline", attempt.ExternalEscalationAttemptId), $"No {attempt.AttemptCode}")
-            ]
-        };
-    }
-
-    private static IReadOnlyDictionary<string, string> BuildCustomPayload(
-        IReadOnlyDictionary<string, string> custom,
-        ExternalEscalationContactDefinition contact)
-    {
-        var payload = new Dictionary<string, string>(custom, StringComparer.OrdinalIgnoreCase);
-
-
-        if (!string.IsNullOrWhiteSpace(contact.PickupAddress))
-            payload["pickup_address"] = contact.PickupAddress.Trim();
-
-        return payload;
-    }
-    private static string BuildAttemptCode(ExternalEscalationEventDefinition definition, Guid targetId)
-    {
-        var prefix = string.IsNullOrWhiteSpace(definition.AttemptCodePrefix)
-            ? "EXT"
-            : Regex.Replace(definition.AttemptCodePrefix.Trim().ToUpperInvariant(), "[^A-Z0-9]", string.Empty);
-
-        var number = Math.Abs(targetId.GetHashCode()) % 100000;
-        return $"{prefix}-{number:00000}";
+        var payload = ReadCustomPayload(attempt.CustomPayloadJson);
+        await DispatchExhaustedAsync(attempt, payload, ct);
+        await TrySendNotificationEventAsync(config, notificationEvent, attempt, payload, ct);
     }
 
     private async Task TrySendNotificationEventAsync(
@@ -535,12 +490,45 @@ public sealed class ExternalEscalationService : IExternalEscalationService
         {
             _logger.LogWarning(
                 ex,
-                "External escalation notification '{Event}' failed for AttemptId={AttemptId} BusinessId={BusinessId}",
+                "External interaction notification '{Event}' failed for AttemptId={AttemptId} BusinessId={BusinessId}",
                 notificationEvent,
                 attempt.ExternalEscalationAttemptId,
                 config.BusinessId);
         }
     }
+
+    private async Task DispatchSentAsync(ExternalEscalationAttempt attempt, IReadOnlyDictionary<string, string> payload, CancellationToken ct)
+    {
+        foreach (var handler in ResolveHandlers(attempt))
+            await handler.OnAttemptSentAsync(attempt, payload, ct);
+    }
+
+    private async Task DispatchCompletedAsync(ExternalEscalationAttempt attempt, ExternalEscalationCompletion completion, CancellationToken ct)
+    {
+        foreach (var handler in ResolveHandlers(attempt))
+            await handler.OnAttemptCompletedAsync(attempt, completion, ct);
+    }
+
+    private async Task DispatchDeclinedAsync(ExternalEscalationAttempt attempt, IReadOnlyDictionary<string, string> payload, CancellationToken ct)
+    {
+        foreach (var handler in ResolveHandlers(attempt))
+            await handler.OnAttemptDeclinedAsync(attempt, payload, ct);
+    }
+
+    private async Task DispatchTimedOutAsync(ExternalEscalationAttempt attempt, IReadOnlyDictionary<string, string> payload, CancellationToken ct)
+    {
+        foreach (var handler in ResolveHandlers(attempt))
+            await handler.OnAttemptTimedOutAsync(attempt, payload, ct);
+    }
+
+    private async Task DispatchExhaustedAsync(ExternalEscalationAttempt attempt, IReadOnlyDictionary<string, string> payload, CancellationToken ct)
+    {
+        foreach (var handler in ResolveHandlers(attempt))
+            await handler.OnAttemptsExhaustedAsync(attempt, payload, ct);
+    }
+
+    private IEnumerable<IExternalEscalationTargetHandler> ResolveHandlers(ExternalEscalationAttempt attempt) =>
+        _targetHandlers.Where(handler => handler.CanHandle(attempt.EventName, attempt.TargetType));
 
     private static Dictionary<string, string> BuildNotificationPayload(
         ExternalEscalationAttempt attempt,
@@ -549,6 +537,7 @@ public sealed class ExternalEscalationService : IExternalEscalationService
         var payload = new Dictionary<string, string>(custom, StringComparer.OrdinalIgnoreCase)
         {
             ["external_escalation_id"] = attempt.ExternalEscalationAttemptId.ToString(),
+            ["external_interaction_id"] = attempt.ExternalEscalationAttemptId.ToString(),
             ["external_event_name"] = attempt.EventName,
             ["target_type"] = attempt.TargetType,
             ["target_id"] = attempt.TargetId.ToString(),
@@ -561,13 +550,31 @@ public sealed class ExternalEscalationService : IExternalEscalationService
         };
 
         if (attempt.AcceptedAt is DateTime acceptedAt)
-            payload["accepted_at_utc"] = acceptedAt.ToString("O");
+            payload["completed_at_utc"] = acceptedAt.ToString("O");
 
         return payload;
     }
 
-    private static string BuildPayload(string action, Guid attemptId) =>
-        $"external_escalation:{action}:{attemptId:N}";
+    private static IReadOnlyDictionary<string, string> BuildCustomPayload(
+        IReadOnlyDictionary<string, string> custom,
+        ExternalEscalationContactDefinition contact)
+    {
+        var payload = new Dictionary<string, string>(custom, StringComparer.OrdinalIgnoreCase);
+        if (!string.IsNullOrWhiteSpace(contact.PickupAddress))
+            payload["pickup_address"] = contact.PickupAddress.Trim();
+
+        return payload;
+    }
+
+    private static string BuildAttemptCode(ExternalEscalationEventDefinition definition, Guid targetId)
+    {
+        var prefix = string.IsNullOrWhiteSpace(definition.AttemptCodePrefix)
+            ? "EXT"
+            : Regex.Replace(definition.AttemptCodePrefix.Trim().ToUpperInvariant(), "[^A-Z0-9]", string.Empty);
+
+        var number = Math.Abs(targetId.GetHashCode()) % 100000;
+        return $"{prefix}-{number:00000}";
+    }
 
     internal static bool TryParseEscalationPayload(string? payload, out Guid attemptId, out string? action)
     {
@@ -578,10 +585,12 @@ public sealed class ExternalEscalationService : IExternalEscalationService
             return false;
 
         var parts = payload.Split(':', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        if (parts.Length != 3 || !parts[0].Equals("external_escalation", StringComparison.OrdinalIgnoreCase))
+        if (parts.Length != 3
+            || (!parts[0].Equals("external_interaction", StringComparison.OrdinalIgnoreCase)
+                && !parts[0].Equals("external_escalation", StringComparison.OrdinalIgnoreCase)))
             return false;
 
-        action = parts[1].ToLowerInvariant();
+        action = NormalizeOutcome(parts[1]);
         return Guid.TryParseExact(parts[2], "N", out attemptId)
             || Guid.TryParse(parts[2], out attemptId);
     }
@@ -598,6 +607,43 @@ public sealed class ExternalEscalationService : IExternalEscalationService
         && attempt.Status == ExternalEscalationAttemptStatus.Pending
         && attempt.ExpiresAt > DateTime.UtcNow
         && attempt.ContactPhoneSnapshot.Equals(ExternalEscalationRouter.NormalizePhone(contactPhone), StringComparison.OrdinalIgnoreCase);
+
+    private static Dictionary<string, string> MergePayload(
+        IReadOnlyDictionary<string, string> basePayload,
+        IReadOnlyDictionary<string, string>? responsePayload)
+    {
+        var merged = new Dictionary<string, string>(basePayload, StringComparer.OrdinalIgnoreCase);
+        if (responsePayload is null)
+            return merged;
+
+        foreach (var (key, value) in responsePayload)
+        {
+            if (!string.IsNullOrWhiteSpace(key))
+                merged[key] = value ?? string.Empty;
+        }
+
+        return merged;
+    }
+
+    private static bool IsDeclineOutcome(string outcomeKey) =>
+        outcomeKey.Equals("declined", StringComparison.OrdinalIgnoreCase)
+        || outcomeKey.Equals("rejected", StringComparison.OrdinalIgnoreCase);
+
+    private static string NormalizeOutcome(string? outcomeKey)
+    {
+        if (string.IsNullOrWhiteSpace(outcomeKey))
+            return "completed";
+
+        var value = outcomeKey.Trim().ToLowerInvariant();
+        return value switch
+        {
+            "accept" => "accepted",
+            "accepted" => "accepted",
+            "decline" => "declined",
+            "declined" => "declined",
+            _ => value
+        };
+    }
 
     private static IReadOnlyDictionary<string, string> ReadCustomPayload(string? json)
     {

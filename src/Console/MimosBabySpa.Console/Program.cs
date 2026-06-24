@@ -179,6 +179,7 @@ services.AddScoped<IActiveAgentConfigResolver, ActiveAgentConfigResolver>();
 services.AddScoped<IEventNotificationDispatcher, EventNotificationDispatcher>();
 services.AddScoped<IExternalEscalationRouter, ExternalEscalationRouter>();
 services.AddScoped<IExternalEscalationService, ExternalEscalationService>();
+services.AddScoped<IExternalEscalationTargetHandler, OrderDeliveryExternalEscalationHandler>();
 
 services.AddHttpClient();
 services.AddHttpClient<GoogleCalendarService>(c => c.Timeout = TimeSpan.FromSeconds(30));
@@ -238,7 +239,10 @@ services.AddScoped<IAgentTool, RemoveOrderItemTool>();
 services.AddScoped<IAgentTool, UpdateOrderItemQuantityTool>();
 services.AddScoped<IAgentTool, GetOrderDraftTool>();
 services.AddScoped<IAgentTool, CreateOrderTool>();
+services.AddScoped<IAgentTool, StartExternalInteractionTool>();
 services.AddScoped<IAgentTool, ResolveExternalEscalationTool>();
+services.AddScoped<IAgentTool, ResolveExternalInteractionTool>();
+services.AddScoped<IAgentTool, CompleteExternalInteractionTool>();
 services.AddScoped<IAgentTool, AcceptExternalEscalationTool>();
 services.AddScoped<IAgentTool, DeclineExternalEscalationTool>();
 
@@ -403,4 +407,6 @@ static string CreateTestUserPhone()
 {
     return $"+1555{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() % 10000000:0000000}";
 }
+
+
 

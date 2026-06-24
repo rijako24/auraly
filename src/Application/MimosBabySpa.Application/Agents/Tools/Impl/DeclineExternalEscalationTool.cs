@@ -14,14 +14,14 @@ public sealed class DeclineExternalEscalationTool : IAgentTool
 
     public string Name => "decline_external_escalation";
 
-    public string Description =>
-        "Declines a resolved external escalation attempt for the current contact and escalates the same target to the next configured contact.";
+    public string Description => "Compatibility wrapper that completes a resolved external interaction with outcome_key=declined and escalates the same target to the next configured contact.";
 
     public string ParametersSchema => """
         {
           "type": "object",
           "properties": {
-            "external_escalation_id": { "type": "string" }
+            "external_escalation_id": { "type": "string" },
+            "external_interaction_id": { "type": "string" }
           }
         }
         """;
@@ -30,36 +30,48 @@ public sealed class DeclineExternalEscalationTool : IAgentTool
     {
         var attemptId = ResolveAttemptId(arguments, ctx);
         if (attemptId is null)
-            return ToolResultHelper.Error("external_escalation_required", "external_escalation_id is required.");
+            return ToolResultHelper.Error("external_interaction_required", "external_interaction_id is required.");
 
         var result = await _escalations.DeclineAsync(ctx.BusinessId, attemptId.Value, ctx.ChannelPhone, cancellationToken);
         if (!result.Success)
-            return ToolResultHelper.Error("external_escalation_not_available", result.Message);
+            return ToolResultHelper.Error("external_interaction_not_available", result.Message);
 
         return ToolResultHelper.Ok(new
         {
+            completed = true,
             declined = true,
             escalated_next = result.EscalatedNext,
+            external_interaction_id = result.Attempt?.ExternalEscalationAttemptId,
             external_escalation_id = result.Attempt?.ExternalEscalationAttemptId,
             attempt_code = result.Attempt?.AttemptCode,
             event_name = result.Attempt?.EventName,
             target_type = result.Attempt?.TargetType,
             target_id = result.Attempt?.TargetId,
-            message = result.Message
+            outcome_key = result.OutcomeKey,
+            payload = result.Payload
         });
     }
 
     private static Guid? ResolveAttemptId(JsonElement arguments, AgentToolContext ctx)
     {
-        if (ToolResultHelper.TryGetString(arguments, "external_escalation_id", out var fromArgs)
-            && Guid.TryParse(fromArgs, out var parsed))
+        if (ToolResultHelper.TryGetString(arguments, "external_interaction_id", out var interactionId)
+            && Guid.TryParse(interactionId, out var parsed))
         {
             return parsed;
         }
 
-        return ctx.Facts.TryGetValue("external_escalation_id", out var fact)
-            && Guid.TryParse(fact, out parsed)
+        if (ToolResultHelper.TryGetString(arguments, "external_escalation_id", out var escalationId)
+            && Guid.TryParse(escalationId, out parsed))
+        {
+            return parsed;
+        }
+
+        return ctx.Facts.TryGetValue("external_interaction_id", out var interactionFact)
+            && Guid.TryParse(interactionFact, out parsed)
             ? parsed
-            : null;
+            : ctx.Facts.TryGetValue("external_escalation_id", out var escalationFact)
+                && Guid.TryParse(escalationFact, out parsed)
+                ? parsed
+                : null;
     }
 }

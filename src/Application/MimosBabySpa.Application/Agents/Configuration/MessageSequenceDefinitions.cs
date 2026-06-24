@@ -119,6 +119,10 @@ public sealed class ExternalEscalationEventDefinition
 
     public string? AcceptedNotificationEvent { get; set; }
 
+    public string? CompletedNotificationEvent { get; set; }
+
+    public string? ExhaustedNotificationEvent { get; set; }
+
     public IReadOnlyList<ExternalEscalationContactDefinition> Contacts { get; set; } = [];
 }
 
@@ -148,3 +152,5 @@ public sealed class EventNotificationConfig
 
     public string? SendMessageSequence { get; set; }
 }
+
+

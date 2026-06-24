@@ -17,6 +17,15 @@ public interface IExternalEscalationService
         string? replyToProviderMessageId,
         CancellationToken ct = default);
 
+    Task<ExternalEscalationActionResult> CompleteAsync(
+        Guid businessId,
+        Guid attemptId,
+        string contactPhone,
+        string outcomeKey,
+        string? responseText,
+        IReadOnlyDictionary<string, string>? responsePayload = null,
+        CancellationToken ct = default);
+
     Task<ExternalEscalationActionResult> AcceptAsync(Guid businessId, Guid attemptId, string contactPhone, CancellationToken ct = default);
 
     Task<ExternalEscalationActionResult> DeclineAsync(Guid businessId, Guid attemptId, string contactPhone, CancellationToken ct = default);

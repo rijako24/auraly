@@ -12,7 +12,7 @@ public sealed record ExternalEscalationRequest(
     Guid TargetId,
     IReadOnlyDictionary<string, string> Custom);
 
-public sealed record ExternalEscalationSendResult(bool Sent, string? Code, string? Error);
+public sealed record ExternalEscalationSendResult(bool Sent, string? Code, string? Error, Guid? InteractionId = null);
 
 public sealed record ExternalEscalationResolution(
     string Resolution,
@@ -21,7 +21,14 @@ public sealed record ExternalEscalationResolution(
     string? Error,
     string? RequestedAction = null);
 
-public sealed record ExternalEscalationActionResult(bool Success, ExternalEscalationAttempt? Attempt, string Message, bool EscalatedNext);
+public sealed record ExternalEscalationActionResult(
+    bool Success,
+    ExternalEscalationAttempt? Attempt,
+    string Message,
+    bool EscalatedNext,
+    string? OutcomeKey = null,
+    string? ResponseText = null,
+    IReadOnlyDictionary<string, string>? Payload = null);
 
 internal sealed record ExternalEscalationContactMatch(
     Guid SourceAgentId,

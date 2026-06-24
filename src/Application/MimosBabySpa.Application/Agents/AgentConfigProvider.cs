@@ -431,6 +431,16 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
                 eventName,
                 "acceptedNotificationEvent",
                 definition.AcceptedNotificationEvent);
+            ValidateExternalEscalationNotificationEvent(
+                config,
+                eventName,
+                "completedNotificationEvent",
+                definition.CompletedNotificationEvent);
+            ValidateExternalEscalationNotificationEvent(
+                config,
+                eventName,
+                "exhaustedNotificationEvent",
+                definition.ExhaustedNotificationEvent);
 
             foreach (var contact in definition.Contacts)
             {
@@ -514,3 +524,5 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
     }
 
 }
+
+

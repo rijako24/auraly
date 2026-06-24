@@ -27,9 +27,7 @@ export function BusinessContextProvider({
     if (!data) return;
 
     const items = Array.isArray(data) ? data : data.items ?? [];
-    if (items.length > 0) {
-      setBusinesses(items);
-    }
+    setBusinesses(items);
   }, [data, setBusinesses]);
 
   if (!isAuthenticated) return null;

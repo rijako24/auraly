@@ -22,6 +22,10 @@ BEGIN
         [DeclinedAt]              DATETIME2        NULL,
         [TimedOutAt]              DATETIME2        NULL,
         [CancelledAt]             DATETIME2        NULL,
+        [CompletedAt]             DATETIME2        NULL,
+        [OutcomeKey]              NVARCHAR(100)    NULL,
+        [ResponseText]            NVARCHAR(MAX)    NULL,
+        [ResponsePayloadJson]     NVARCHAR(MAX)    NULL,
         CONSTRAINT [FK_ExternalEscalationAttempts_Businesses] FOREIGN KEY ([BusinessId])
             REFERENCES [dbo].[Businesses] ([BusinessId]),
         CONSTRAINT [FK_ExternalEscalationAttempts_SourceAgents] FOREIGN KEY ([SourceAgentId])
@@ -43,4 +47,31 @@ IF OBJECT_ID(N'[dbo].[ExternalEscalationAttempts]', N'U') IS NOT NULL
 BEGIN
     ALTER TABLE [dbo].[ExternalEscalationAttempts]
         ADD [CustomPayloadJson] NVARCHAR(MAX) NULL;
+END;
+IF OBJECT_ID(N'[dbo].[ExternalEscalationAttempts]', N'U') IS NOT NULL
+   AND COL_LENGTH(N'[dbo].[ExternalEscalationAttempts]', N'CompletedAt') IS NULL
+BEGIN
+    ALTER TABLE [dbo].[ExternalEscalationAttempts]
+        ADD [CompletedAt] DATETIME2 NULL;
+END;
+
+IF OBJECT_ID(N'[dbo].[ExternalEscalationAttempts]', N'U') IS NOT NULL
+   AND COL_LENGTH(N'[dbo].[ExternalEscalationAttempts]', N'OutcomeKey') IS NULL
+BEGIN
+    ALTER TABLE [dbo].[ExternalEscalationAttempts]
+        ADD [OutcomeKey] NVARCHAR(100) NULL;
+END;
+
+IF OBJECT_ID(N'[dbo].[ExternalEscalationAttempts]', N'U') IS NOT NULL
+   AND COL_LENGTH(N'[dbo].[ExternalEscalationAttempts]', N'ResponseText') IS NULL
+BEGIN
+    ALTER TABLE [dbo].[ExternalEscalationAttempts]
+        ADD [ResponseText] NVARCHAR(MAX) NULL;
+END;
+
+IF OBJECT_ID(N'[dbo].[ExternalEscalationAttempts]', N'U') IS NOT NULL
+   AND COL_LENGTH(N'[dbo].[ExternalEscalationAttempts]', N'ResponsePayloadJson') IS NULL
+BEGIN
+    ALTER TABLE [dbo].[ExternalEscalationAttempts]
+        ADD [ResponsePayloadJson] NVARCHAR(MAX) NULL;
 END;

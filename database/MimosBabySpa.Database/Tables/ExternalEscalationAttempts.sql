@@ -20,6 +20,10 @@ CREATE TABLE [dbo].[ExternalEscalationAttempts] (
     [DeclinedAt]              DATETIME2        NULL,
     [TimedOutAt]              DATETIME2        NULL,
     [CancelledAt]             DATETIME2        NULL,
+    [CompletedAt]             DATETIME2        NULL,
+    [OutcomeKey]              NVARCHAR(100)    NULL,
+    [ResponseText]            NVARCHAR(MAX)    NULL,
+    [ResponsePayloadJson]     NVARCHAR(MAX)    NULL,
     CONSTRAINT [FK_ExternalEscalationAttempts_Businesses] FOREIGN KEY ([BusinessId])
         REFERENCES [dbo].[Businesses] ([BusinessId])
         ON DELETE NO ACTION,

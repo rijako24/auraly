@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Check, ChevronsUpDown, Building2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -22,6 +23,7 @@ import { useBusinessContextStore } from "@/stores/business-context-store";
 
 export function BusinessSwitcher() {
   const [open, setOpen] = useState(false);
+  const queryClient = useQueryClient();
   const { businesses, selectedBusinessId, selectBusiness } =
     useBusinessContextStore();
 
@@ -59,9 +61,14 @@ export function BusinessSwitcher() {
               {businesses.map((business) => (
                 <CommandItem
                   key={business.businessId}
-                  value={business.name}
+                  value={`${business.name} ${business.businessId}`}
                   onSelect={() => {
-                    selectBusiness(business.businessId);
+                    if (business.businessId !== selectedBusinessId) {
+                      selectBusiness(business.businessId);
+                      queryClient.removeQueries({
+                        predicate: (query) => query.queryKey[0] !== "businesses",
+                      });
+                    }
                     setOpen(false);
                   }}
                 >

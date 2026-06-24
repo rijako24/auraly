@@ -768,6 +768,9 @@ public class ApplicationDbContext : DbContext
             entity.Property(e => e.AttemptCode).IsRequired().HasMaxLength(50);
             entity.Property(e => e.CustomPayloadJson).HasColumnType("NVARCHAR(MAX)");
             entity.Property(e => e.WhatsAppMessageId).HasMaxLength(128);
+            entity.Property(e => e.OutcomeKey).HasMaxLength(100);
+            entity.Property(e => e.ResponseText).HasColumnType("NVARCHAR(MAX)");
+            entity.Property(e => e.ResponsePayloadJson).HasColumnType("NVARCHAR(MAX)");
             entity.HasOne(e => e.Business)
                 .WithMany()
                 .HasForeignKey(e => e.BusinessId)

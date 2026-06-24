@@ -138,6 +138,7 @@ builder.Services.AddScoped<IActiveAgentConfigResolver, ActiveAgentConfigResolver
 builder.Services.AddScoped<IEventNotificationDispatcher, EventNotificationDispatcher>();
 builder.Services.AddScoped<IExternalEscalationRouter, ExternalEscalationRouter>();
 builder.Services.AddScoped<IExternalEscalationService, ExternalEscalationService>();
+builder.Services.AddScoped<IExternalEscalationTargetHandler, OrderDeliveryExternalEscalationHandler>();
 builder.Services.AddScoped<IConversationFactsService, ConversationFactsService>();
 builder.Services.AddScoped<ICustomerMemoryService, CustomerMemoryService>();
 builder.Services.AddScoped<IRequestContextService, RequestContextService>();
@@ -252,7 +253,10 @@ builder.Services.AddScoped<IAgentTool, RemoveOrderItemTool>();
 builder.Services.AddScoped<IAgentTool, UpdateOrderItemQuantityTool>();
 builder.Services.AddScoped<IAgentTool, GetOrderDraftTool>();
 builder.Services.AddScoped<IAgentTool, CreateOrderTool>();
+builder.Services.AddScoped<IAgentTool, StartExternalInteractionTool>();
 builder.Services.AddScoped<IAgentTool, ResolveExternalEscalationTool>();
+builder.Services.AddScoped<IAgentTool, ResolveExternalInteractionTool>();
+builder.Services.AddScoped<IAgentTool, CompleteExternalInteractionTool>();
 builder.Services.AddScoped<IAgentTool, AcceptExternalEscalationTool>();
 builder.Services.AddScoped<IAgentTool, DeclineExternalEscalationTool>();
 builder.Services.AddScoped<AgentToolRegistry>();

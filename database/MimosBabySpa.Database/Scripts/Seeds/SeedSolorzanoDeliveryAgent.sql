@@ -53,14 +53,14 @@ DECLARE @SolorzanoDeliverySettingsJson NVARCHAR(MAX) = N'{
         "id": "delivery_assignment",
         "name": "Gestion de domicilio",
         "goal": "Resolver si el domiciliario acepta o rechaza un pedido pendiente.",
-        "hint": "En cada mensaje del domiciliario, primero llama resolve_external_escalation con message_text. Si la herramienta devuelve requested_action=accept y external_escalation_id, llama accept_external_escalation. Si devuelve requested_action=decline y external_escalation_id, llama decline_external_escalation. Si hay un pedido resuelto pero no hay accion clara, responde con una pregunta corta para que confirme si lo toma o no, mencionando el attempt_code. Si no hay pedidos pendientes, responde que no tiene domicilios pendientes.",
-        "allowedTools": ["resolve_external_escalation", "accept_external_escalation", "decline_external_escalation"],
+        "hint": "En cada mensaje del contacto, primero llama resolve_external_interaction con message_text. Cuando la herramienta identifique varias interacciones pendientes, solicita cual quiere gestionar y muestra los attempt_code disponibles. Cuando el mensaje venga citado, traiga codigo o la herramienta resuelva una sola interaccion, usa esa interaccion como referencia. Cuando el mensaje indique que el contacto toma o confirma la solicitud, llama complete_external_interaction con outcome_key=accepted. Cuando indique rechazo, llama complete_external_interaction con outcome_key=declined. Cuando la interaccion este identificada y la intencion del mensaje no sea clara, solicita una confirmacion breve mencionando attempt_code. Cuando no haya pendientes, informa que no tiene solicitudes pendientes. Despues de completar, responde usando los datos estructurados devueltos por la tool y el contexto del mensaje original.",
+        "allowedTools": ["resolve_external_interaction", "complete_external_interaction", "accept_external_escalation", "decline_external_escalation"],
         "advanceWhenFacts": []
       }
     ]
   },
   "enabledTools": [
-    "resolve_external_escalation",
+    "resolve_external_interaction",
     "accept_external_escalation",
     "decline_external_escalation"
   ],
@@ -110,3 +110,6 @@ BEGIN
 END
 
 PRINT N'SeedSolorzanoDeliveryAgent: agente de domicilios configurado para negocio ' + CAST(@SolorzanoDeliveryBusinessId AS NVARCHAR(36));
+
+
+

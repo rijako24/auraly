@@ -331,18 +331,17 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
             "{customer_phone}",
             "{city}",
             "{delivery_address}",
-            "{items}",
             "{total}",
             "{currency}",
             "{payment_method}"
           ],
           "buttons": [
             {
-              "id": "external_escalation:accept:{external_escalation_id}",
+              "id": "external_interaction:accepted:{external_interaction_id}",
               "title": "Aceptar"
             },
             {
-              "id": "external_escalation:decline:{external_escalation_id}",
+              "id": "external_interaction:declined:{external_interaction_id}",
               "title": "No tomar"
             }
           ]
@@ -401,6 +400,26 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
             "{customer_name}",
             "{customer_phone}",
             "{delivery_address}"
+          ]
+        }
+      ]
+    },
+    "delivery_unavailable": {
+      "messages": [
+        {
+          "type": "whatsapp_template",
+          "templateName": "delivery_unavailable",
+          "language": "es_CO",
+          "bodyParameters": [
+            "{order_number}",
+            "{customer_name}",
+            "{customer_phone}",
+            "{city}",
+            "{delivery_address}",
+            "{items}",
+            "{total}",
+            "{currency}",
+            "{attempt_code}"
           ]
         }
       ]
@@ -776,6 +795,14 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         "+573012926660"
       ],
       "sendMessageSequence": "delivery_confirmed"
+    },
+    "delivery_unavailable": {
+      "enabled": true,
+      "recipients": [
+        "+573004442469",
+        "+573012926660"
+      ],
+      "sendMessageSequence": "delivery_unavailable"
     }
   },
   "webhooks": {
@@ -814,11 +841,12 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         "order_created": {
           "enabled": true,
           "strategy": "sequential",
-          "attemptTimeoutMinutes": 5,
+          "attemptTimeoutMinutes": 15,
           "attemptCodePrefix": "PED",
           "sendMessageSequence": "delivery_request",
           "attemptSentNotificationEvent": "delivery_requested",
           "acceptedNotificationEvent": "delivery_confirmed",
+          "exhaustedNotificationEvent": "delivery_unavailable",
           "contacts": [
             {
               "key": "domicilio_solorzano",
@@ -897,3 +925,4 @@ WHERE AgentId = @AgentId;
 
 PRINT N'SeedSolorzanoAgentConfiguration: Camila reconfigurada para negocio ' + CAST(@BusinessId AS NVARCHAR(36));
 GO
+

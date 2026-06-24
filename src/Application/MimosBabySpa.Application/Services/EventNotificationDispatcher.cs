@@ -1,5 +1,7 @@
+using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 using MimosBabySpa.Application.Agents;
+using MimosBabySpa.Domain.Repositories;
 
 namespace MimosBabySpa.Application.Services;
 
@@ -31,17 +33,20 @@ public sealed class EventNotificationDispatcher : IEventNotificationDispatcher
     private readonly IActiveAgentConfigResolver _activeAgentConfig;
     private readonly IMessageSequenceResolver _sequenceResolver;
     private readonly IOutboundMessageDispatcher _outboundDispatcher;
+    private readonly IUnitOfWork _unitOfWork;
     private readonly ILogger<EventNotificationDispatcher> _logger;
 
     public EventNotificationDispatcher(
         IActiveAgentConfigResolver activeAgentConfig,
         IMessageSequenceResolver sequenceResolver,
         IOutboundMessageDispatcher outboundDispatcher,
+        IUnitOfWork unitOfWork,
         ILogger<EventNotificationDispatcher> logger)
     {
         _activeAgentConfig = activeAgentConfig;
         _sequenceResolver = sequenceResolver;
         _outboundDispatcher = outboundDispatcher;
+        _unitOfWork = unitOfWork;
         _logger = logger;
     }
 
@@ -110,11 +115,7 @@ public sealed class EventNotificationDispatcher : IEventNotificationDispatcher
             return;
         }
 
-        var recipients = notification.Recipients
-            .Select(r => r.Trim())
-            .Where(r => !string.IsNullOrWhiteSpace(r))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
+        var recipients = await ResolveRecipientsAsync(notification.Recipients, context.Custom);
 
         if (recipients.Count == 0)
         {
@@ -143,7 +144,7 @@ public sealed class EventNotificationDispatcher : IEventNotificationDispatcher
         }
 
         foreach (var recipient in recipients)
-            await _outboundDispatcher.SendAllAsync(businessId, recipient, messages, conversationId: null, ct);
+            await _outboundDispatcher.SendAllAsync(businessId, recipient.Phone, messages, recipient.ConversationId, ct);
 
         _logger.LogInformation(
             "Event notification: event '{Event}' sequence '{Sequence}' sent to {Count} recipient(s) for BusinessId={BusinessId}",
@@ -152,4 +153,54 @@ public sealed class EventNotificationDispatcher : IEventNotificationDispatcher
             recipients.Count,
             businessId);
     }
+    private async Task<IReadOnlyList<NotificationRecipient>> ResolveRecipientsAsync(
+        IReadOnlyList<string> configuredRecipients,
+        IReadOnlyDictionary<string, string> custom)
+    {
+        var sourceConversationId = TryReadGuid(custom, "source_conversation_id");
+        var recipients = new List<NotificationRecipient>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var configured in configuredRecipients)
+        {
+            var raw = configured?.Trim();
+            if (string.IsNullOrWhiteSpace(raw))
+                continue;
+
+            var phone = ResolveCustomPlaceholders(raw, custom).Trim();
+            if (string.IsNullOrWhiteSpace(phone) || phone.Contains('{') || phone.Contains('}'))
+                continue;
+
+            if (seen.Add(phone))
+                recipients.Add(new NotificationRecipient(phone, null));
+        }
+
+        if (recipients.Count == 0 && sourceConversationId is Guid conversationId)
+        {
+            var conversation = await _unitOfWork.Conversations.GetByIdAsync(conversationId);
+            if (conversation is not null && !string.IsNullOrWhiteSpace(conversation.UserNumber) && seen.Add(conversation.UserNumber))
+                recipients.Add(new NotificationRecipient(conversation.UserNumber.Trim(), conversation.ConversationId));
+        }
+
+        return recipients;
+    }
+
+    private static string ResolveCustomPlaceholders(string value, IReadOnlyDictionary<string, string> custom)
+    {
+        return Regex.Replace(value, "\\{(?<key>[^{}]+)\\}", match =>
+        {
+            var key = match.Groups["key"].Value.Trim();
+            return custom.TryGetValue(key, out var resolved) ? resolved : string.Empty;
+        });
+    }
+
+    private static Guid? TryReadGuid(IReadOnlyDictionary<string, string> custom, string key)
+    {
+        return custom.TryGetValue(key, out var value) && Guid.TryParse(value, out var parsed)
+            ? parsed
+            : null;
+    }
+
+    private sealed record NotificationRecipient(string Phone, Guid? ConversationId);
 }
+

@@ -25,6 +25,10 @@ public class ExternalEscalationAttempt
     public DateTime? DeclinedAt { get; set; }
     public DateTime? TimedOutAt { get; set; }
     public DateTime? CancelledAt { get; set; }
+    public DateTime? CompletedAt { get; set; }
+    public string? OutcomeKey { get; set; }
+    public string? ResponseText { get; set; }
+    public string? ResponsePayloadJson { get; set; }
 
     public virtual Business Business { get; set; } = null!;
     public virtual Agent SourceAgent { get; set; } = null!;

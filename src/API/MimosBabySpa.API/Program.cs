@@ -162,6 +162,7 @@ var host = new HostBuilder()
         services.AddScoped<IConversationReleaseService, ConversationReleaseService>();
         services.AddScoped<IExternalEscalationRouter, ExternalEscalationRouter>();
         services.AddScoped<IExternalEscalationService, ExternalEscalationService>();
+        services.AddScoped<IExternalEscalationTargetHandler, OrderDeliveryExternalEscalationHandler>();
         services.AddScoped<ITimedProcess, PaymentLinkPollingProcess>();
         services.AddScoped<ITimedProcess, ExternalEscalationExpirationProcess>();
         services.AddScoped<ITimedProcess, ReservationAutomationProcess>();
@@ -214,7 +215,10 @@ var host = new HostBuilder()
         services.AddScoped<IAgentTool, UpdateOrderItemQuantityTool>();
         services.AddScoped<IAgentTool, GetOrderDraftTool>();
         services.AddScoped<IAgentTool, CreateOrderTool>();
+        services.AddScoped<IAgentTool, StartExternalInteractionTool>();
         services.AddScoped<IAgentTool, ResolveExternalEscalationTool>();
+        services.AddScoped<IAgentTool, ResolveExternalInteractionTool>();
+        services.AddScoped<IAgentTool, CompleteExternalInteractionTool>();
         services.AddScoped<IAgentTool, AcceptExternalEscalationTool>();
         services.AddScoped<IAgentTool, DeclineExternalEscalationTool>();
         services.AddScoped<IAgentTool, SetFactTool>();
@@ -272,6 +276,8 @@ var host = new HostBuilder()
     .Build();
 
 host.Run();
+
+
 
 
 
