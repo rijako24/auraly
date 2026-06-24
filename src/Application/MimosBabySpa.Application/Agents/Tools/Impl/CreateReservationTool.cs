@@ -170,7 +170,7 @@ public sealed class CreateReservationTool : IAgentTool
         };
 
         ctx.ManageableReservations = [reservation];
-        ctx.NotificationContexts[ReservationCreated] = new MessageSequenceContext { Reservation = reservation };
+        ctx.NotificationContexts["reservation_created"] = new MessageSequenceContext { Reservation = reservation };
 
         return BuildSuccessResult(
             response.ReservationId,
@@ -228,7 +228,14 @@ public sealed class CreateReservationTool : IAgentTool
         IReadOnlyList<string>? addOnNames = null,
         bool idempotentReplay = false)
     {
-        return ToolResultHelper.Ok(new
+        var effects = idempotentReplay
+            ? Array.Empty<string>()
+            : [ToolSideEffectNames.RequestCompleted];
+        var events = idempotentReplay
+            ? Array.Empty<string>()
+            : ["reservation_created"];
+
+        return ToolResultHelper.OkWithEvents(new
         {
             reservation_id = reservationId,
             service,
@@ -241,7 +248,7 @@ public sealed class CreateReservationTool : IAgentTool
             duration_minutes = durationMinutes,
             add_ons = addOnNames,
             idempotent_replay = idempotentReplay
-        }, idempotentReplay ? [] : [ReservationCreated]);
+        }, effects, events);
     }
 
     private static string? Coalesce(JsonElement args, string property, string? fallback)

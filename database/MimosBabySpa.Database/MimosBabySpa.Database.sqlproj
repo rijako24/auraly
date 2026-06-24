@@ -49,6 +49,8 @@
     <Build Include="Tables\ScheduledAutomationJobs.sql" />
     <Build Include="Tables\ReservationAttendanceResponses.sql" />
     <Build Include="Tables\Orders.sql" />
+    <Build Include="Tables\OrderDrafts.sql" />
+    <Build Include="Tables\OrderDraftItems.sql" />
     <Build Include="Tables\OrderItems.sql" />
     <Build Include="Tables\OrderConnectionEvents.sql" />
     <Build Include="Tables\PromotionApplications.sql" />

@@ -19,20 +19,19 @@ public class CommerceServiceTests
         var businessId = Guid.NewGuid();
         var conversationId = Guid.NewGuid();
         var productId = Guid.NewGuid();
-        var orderId = Guid.NewGuid();
-        var orderItemId = Guid.NewGuid();
-        var order = new Order
+        var orderDraftId = Guid.NewGuid();
+        var orderDraftItemId = Guid.NewGuid();
+        var draft = new OrderDraft
         {
-            OrderId = orderId,
+            OrderDraftId = orderDraftId,
             BusinessId = businessId,
             ConversationId = conversationId,
-            Status = OrderStatus.Draft,
             Currency = "COP"
         };
-        var existingItem = new OrderItem
+        var existingItem = new OrderDraftItem
         {
-            OrderItemId = orderItemId,
-            OrderId = orderId,
+            OrderDraftItemId = orderDraftItemId,
+            OrderDraftId = orderDraftId,
             BusinessId = businessId,
             ProductId = productId,
             Sku = "Vino de Mango 750 ml",
@@ -43,25 +42,25 @@ public class CommerceServiceTests
         };
 
         var unitOfWork = new Mock<IUnitOfWork>();
-        var orders = new Mock<IOrderRepository>();
-        var orderItems = new Mock<IOrderItemRepository>();
+        var orderDrafts = new Mock<IOrderDraftRepository>();
+        var orderDraftItems = new Mock<IOrderDraftItemRepository>();
         var integrationConnections = new Mock<IIntegrationConnectionRepository>();
         var adapterFactory = new Mock<ICommerceAdapterFactory>();
         var adapter = new Mock<ICommerceAdapter>();
         var promotions = new Mock<IPromotionPricingService>();
 
-        unitOfWork.SetupGet(u => u.Orders).Returns(orders.Object);
-        unitOfWork.SetupGet(u => u.OrderItems).Returns(orderItems.Object);
+        unitOfWork.SetupGet(u => u.OrderDrafts).Returns(orderDrafts.Object);
+        unitOfWork.SetupGet(u => u.OrderDraftItems).Returns(orderDraftItems.Object);
         unitOfWork.SetupGet(u => u.IntegrationConnections).Returns(integrationConnections.Object);
         unitOfWork.Setup(u => u.SaveChangesAsync(It.IsAny<CancellationToken>())).ReturnsAsync(1);
         integrationConnections
             .Setup(r => r.GetCommerceConnectionAsync(businessId, CommerceProvider.Local, CommerceCapability.CatalogAndOrders, It.IsAny<CancellationToken>()))
             .ReturnsAsync((IntegrationConnection?)null);
-        orders
-            .Setup(r => r.GetActiveDraftByConversationAsync(businessId, conversationId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(order);
-        orderItems
-            .Setup(r => r.GetByOrderIdAsync(businessId, orderId, It.IsAny<CancellationToken>()))
+        orderDrafts
+            .Setup(r => r.GetActiveDraftsByConversationAsync(businessId, conversationId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([draft]);
+        orderDraftItems
+            .Setup(r => r.GetByDraftIdAsync(businessId, orderDraftId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(() => [existingItem]);
         adapterFactory
             .Setup(f => f.Resolve(CommerceProvider.Local))
@@ -107,7 +106,7 @@ public class CommerceServiceTests
         snapshot.Items.Should().ContainSingle();
         snapshot.Items[0].Quantity.Should().Be(5m);
         snapshot.Total.Should().Be(300000m);
-        orderItems.Verify(r => r.CreateAsync(It.IsAny<OrderItem>(), It.IsAny<CancellationToken>()), Times.Never);
-        orderItems.Verify(r => r.UpdateAsync(existingItem, It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+        orderDraftItems.Verify(r => r.CreateAsync(It.IsAny<OrderDraftItem>(), It.IsAny<CancellationToken>()), Times.Never);
+        orderDraftItems.Verify(r => r.UpdateAsync(existingItem, It.IsAny<CancellationToken>()), Times.AtLeastOnce);
     }
 }

@@ -74,6 +74,58 @@ public class UpdateOrderItemQuantityToolTests
         _commerce.Verify(c => c.UpdateItemQuantityAsync(ctx, orderItemId, 3m, It.IsAny<CancellationToken>()), Times.Once);
     }
 
+    [Fact]
+    public async Task ExecuteAsync_WithPartialName_DoesNotMatchDulceInsideSemidulce()
+    {
+        var ctx = CreateContext();
+        var semidulceItemId = Guid.NewGuid();
+        var dulceItemId = Guid.NewGuid();
+        var draft = WineSnapshot(semidulceItemId, dulceItemId);
+        var updated = WineSnapshot(semidulceItemId, dulceItemId, dulceQuantity: 2m);
+
+        _commerce
+            .Setup(c => c.GetDraftAsync(ctx, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(draft);
+        _commerce
+            .Setup(c => c.UpdateItemQuantityAsync(ctx, dulceItemId, 2m, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(updated);
+        _facts
+            .Setup(f => f.ClearFieldsAsync(ctx.ConversationId, It.IsAny<IReadOnlyCollection<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
+
+        var tool = new UpdateOrderItemQuantityTool(_commerce.Object, _facts.Object);
+        using var args = JsonDocument.Parse("""{"name":"Vino Dulce 750 ml","quantity":2}""");
+
+        var json = await tool.ExecuteAsync(args.RootElement, ctx, CancellationToken.None);
+
+        json.Should().Contain("\"ok\":true");
+        _commerce.Verify(c => c.UpdateItemQuantityAsync(ctx, dulceItemId, 2m, It.IsAny<CancellationToken>()), Times.Once);
+        _commerce.Verify(c => c.UpdateItemQuantityAsync(ctx, semidulceItemId, It.IsAny<decimal>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WithoutSelector_DoesNotInferFromLatestMessageWhenCartHasMultipleItems()
+    {
+        var ctx = CreateContext();
+        ctx.LatestUserMessage = "deja 2 unidades del Vino Dulce 750 ml";
+        var semidulceItemId = Guid.NewGuid();
+        var dulceItemId = Guid.NewGuid();
+        var draft = WineSnapshot(semidulceItemId, dulceItemId);
+
+        _commerce
+            .Setup(c => c.GetDraftAsync(ctx, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(draft);
+
+        var tool = new UpdateOrderItemQuantityTool(_commerce.Object, _facts.Object);
+        using var args = JsonDocument.Parse("""{"quantity":2}""");
+
+        var json = await tool.ExecuteAsync(args.RootElement, ctx, CancellationToken.None);
+
+        json.Should().Contain("\"ok\":false");
+        json.Should().Contain("order_item_id");
+        _commerce.Verify(c => c.UpdateItemQuantityAsync(ctx, It.IsAny<Guid>(), It.IsAny<decimal>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
     private static OrderSnapshot Snapshot(Guid orderItemId, Guid productId, decimal quantity, decimal total) =>
         new(
             Guid.NewGuid(),
@@ -84,6 +136,19 @@ public class UpdateOrderItemQuantityToolTests
             0m,
             total,
             [new OrderItemSnapshot(orderItemId, productId, null, "Vino de Mango 750 ml", "Vino de Mango 750 ml", quantity, 60000m, total)]);
+
+    private static OrderSnapshot WineSnapshot(Guid semidulceItemId, Guid dulceItemId, decimal dulceQuantity = 1m)
+    {
+        var semidulceProductId = Guid.NewGuid();
+        var dulceProductId = Guid.NewGuid();
+        var items = new List<OrderItemSnapshot>
+        {
+            new(semidulceItemId, semidulceProductId, null, null, "Vino Semidulce 750 ml", 1m, 60000m, 60000m),
+            new(dulceItemId, dulceProductId, null, null, "Vino Dulce 750 ml en base de Corozo", dulceQuantity, 60000m, dulceQuantity * 60000m)
+        };
+        var total = items.Sum(i => i.LineTotal);
+        return new(Guid.NewGuid(), OrderStatus.Draft, "COP", total, 0m, 0m, total, items);
+    }
 
     private static AgentToolContext CreateContext() => new()
     {

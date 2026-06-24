@@ -213,9 +213,9 @@ public sealed class AssignPaidSlotTool : IAgentTool
         };
 
         ctx.ManageableReservations = [reservation];
-        ctx.NotificationContexts[ReservationCreated] = new MessageSequenceContext { Reservation = reservation };
+        ctx.NotificationContexts["reservation_created"] = new MessageSequenceContext { Reservation = reservation };
 
-        return ToolResultHelper.Ok(new
+        return ToolResultHelper.OkWithEvents(new
         {
             reservation_id = response.ReservationId,
             payment_transaction_id = payment.PaymentTransactionId,
@@ -225,7 +225,7 @@ public sealed class AssignPaidSlotTool : IAgentTool
             customer_name = snapshot.CustomerName,
             status = ReservationStatus.Confirmed.ToString(),
             is_booking_confirmed = true
-        }, ReservationCreated);
+        }, [ToolSideEffectNames.RequestCompleted], ["reservation_created"]);
     }
 
     private static string? Coalesce(JsonElement args, string property, string? fallback)

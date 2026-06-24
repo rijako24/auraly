@@ -1,4 +1,4 @@
-using FluentAssertions;
+﻿using FluentAssertions;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using MimosBabySpa.Application.Services;
@@ -36,9 +36,7 @@ public sealed class ReservationLifecycleServiceTests
         var unitOfWork = new Mock<IUnitOfWork>();
         unitOfWork.SetupGet(u => u.Reservations).Returns(reservations.Object);
 
-        var service = new ReservationLifecycleService(
-            unitOfWork.Object,
-            NullLogger<ReservationLifecycleService>.Instance);
+        var service = new ReservationLifecycleService(unitOfWork.Object);
 
         var result = await service.ResolveForSessionAsync(
             conversationId,
@@ -75,9 +73,7 @@ public sealed class ReservationLifecycleServiceTests
         var unitOfWork = new Mock<IUnitOfWork>();
         unitOfWork.SetupGet(u => u.Reservations).Returns(reservations.Object);
 
-        var service = new ReservationLifecycleService(
-            unitOfWork.Object,
-            NullLogger<ReservationLifecycleService>.Instance);
+        var service = new ReservationLifecycleService(unitOfWork.Object);
 
         var result = await service.ResolveForSessionAsync(
             conversationId,

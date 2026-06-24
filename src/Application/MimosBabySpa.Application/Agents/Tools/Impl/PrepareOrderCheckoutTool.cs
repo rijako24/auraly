@@ -59,14 +59,14 @@ public sealed class PrepareOrderCheckoutTool : IAgentTool
         if (ctx.Turn is null)
             return ToolResultHelper.Error("internal_error", "Turn context is not available for template rendering.");
 
-        var order = await _unitOfWork.Orders.GetActiveDraftByConversationAsync(
+        var order = await _unitOfWork.OrderDrafts.GetActiveByConversationAsync(
             ctx.BusinessId,
             ctx.ConversationId,
             cancellationToken);
         if (order is null)
             return ToolResultHelper.Error("order_draft_missing", "No active order draft was found.");
 
-        var items = await _unitOfWork.OrderItems.GetByOrderIdAsync(ctx.BusinessId, order.OrderId, cancellationToken);
+        var items = await _unitOfWork.OrderDraftItems.GetByDraftIdAsync(ctx.BusinessId, order.OrderDraftId, cancellationToken);
         if (items.Count == 0)
             return ToolResultHelper.MissingPrerequisites(["order_items"]);
 
@@ -138,10 +138,9 @@ public sealed class PrepareOrderCheckoutTool : IAgentTool
         order.Currency = currency;
         order.Total = orderTotal;
         order.CustomerConfirmed = false;
-        order.Status = paymentRequired ? OrderStatus.AwaitingPayment : OrderStatus.PendingConfirmation;
         order.UpdatedAt = DateTime.UtcNow;
         order.CustomAttributesJson = BuildOrderCustomAttributes(ctx.Facts, city, shippingCost);
-        await _unitOfWork.Orders.UpdateAsync(order, cancellationToken);
+        await _unitOfWork.OrderDrafts.UpdateAsync(order, cancellationToken);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
         var payableCents = (long)Math.Round(orderTotal * 100m, MidpointRounding.AwayFromZero);
@@ -170,7 +169,7 @@ public sealed class PrepareOrderCheckoutTool : IAgentTool
             {
                 order.PaymentTransactionId = linkResult.Payment.PaymentTransactionId;
                 order.UpdatedAt = DateTime.UtcNow;
-                await _unitOfWork.Orders.UpdateAsync(order, cancellationToken);
+                await _unitOfWork.OrderDrafts.UpdateAsync(order, cancellationToken);
                 await _unitOfWork.SaveChangesAsync(cancellationToken);
             }
 
@@ -212,8 +211,8 @@ public sealed class PrepareOrderCheckoutTool : IAgentTool
             payment_required = paymentRequired,
             payment_transaction_id = paymentTransactionId,
             payment_link = paymentLink,
-            order_id = order.OrderId,
-            order_status = order.Status.ToString(),
+            order_draft_id = order.OrderDraftId,
+            order_status = "Draft",
             is_order_confirmed = false
         });
     }
@@ -221,8 +220,8 @@ public sealed class PrepareOrderCheckoutTool : IAgentTool
     private static CheckoutQuote BuildQuote(
         AgentToolContext ctx,
         CheckoutModeDefinition mode,
-        Order order,
-        IReadOnlyList<OrderItem> items,
+        OrderDraft order,
+        IReadOnlyList<OrderDraftItem> items,
         decimal shippingCost,
         long payableCents,
         string currency,
@@ -240,7 +239,7 @@ public sealed class PrepareOrderCheckoutTool : IAgentTool
             ctx.ConversationId,
             CheckoutKind.Order,
             Guid.Empty,
-            $"Pedido {ShortId(order.OrderId)}",
+            $"Pedido {ShortId(order.OrderDraftId)}",
             "Order",
             0,
             lineItems,
@@ -258,8 +257,8 @@ public sealed class PrepareOrderCheckoutTool : IAgentTool
     }
 
     private static Dictionary<string, object?> BuildTemplateData(
-        Order order,
-        IReadOnlyList<OrderItem> items,
+        OrderDraft order,
+        IReadOnlyList<OrderDraftItem> items,
         decimal shippingCost,
         string currency,
         string? city,
@@ -271,8 +270,8 @@ public sealed class PrepareOrderCheckoutTool : IAgentTool
     {
         var data = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
         {
-            ["order_id"] = order.OrderId,
-            ["order_number"] = ShortId(order.OrderId),
+            ["order_draft_id"] = order.OrderDraftId,
+            ["order_number"] = ShortId(order.OrderDraftId),
             ["subtotal"] = Money(order.Subtotal),
             ["shipping_cost"] = Money(shippingCost),
             ["total"] = Money(order.Total),
@@ -299,8 +298,8 @@ public sealed class PrepareOrderCheckoutTool : IAgentTool
     }
 
     private static string BuildCheckoutSnapshot(
-        Order order,
-        IReadOnlyList<OrderItem> items,
+        OrderDraft order,
+        IReadOnlyList<OrderDraftItem> items,
         decimal shippingCost,
         string? city,
         string? deliveryAddress,
@@ -312,8 +311,8 @@ public sealed class PrepareOrderCheckoutTool : IAgentTool
         var snapshot = new
         {
             kind = CheckoutKind.Order.ToString(),
-            order_id = order.OrderId,
-            order_number = ShortId(order.OrderId),
+            order_draft_id = order.OrderDraftId,
+            order_number = ShortId(order.OrderDraftId),
             subtotal = order.Subtotal,
             shipping_cost = shippingCost,
             total = order.Total,
@@ -325,7 +324,7 @@ public sealed class PrepareOrderCheckoutTool : IAgentTool
             delivery_address = deliveryAddress,
             line_items = items.Select(i => new
             {
-                order_item_id = i.OrderItemId,
+                order_item_id = i.OrderDraftItemId,
                 product_id = i.ProductId,
                 sku = i.Sku,
                 name = i.ProductNameSnapshot,

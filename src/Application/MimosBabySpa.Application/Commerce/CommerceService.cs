@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using System.Text.Json;
 using MimosBabySpa.Application.Agents;
 using MimosBabySpa.Application.Agents.Configuration;
@@ -28,7 +28,7 @@ public sealed class CommerceService : ICommerceService
 
     public async Task<ProductSearchResult> SearchProductsAsync(AgentToolContext ctx, ProductSearchRequest request, CancellationToken ct = default)
     {
-        var adapterContext = await BuildContextAsync(ctx, ct);
+        var adapterContext = await BuildContextAsync(ctx.BusinessId, ctx.AgentId, ctx.ConversationId, ctx.Config, ct);
         var adapter = _adapterFactory.Resolve(adapterContext.Provider);
         var result = await adapter.SearchProductsAsync(request, adapterContext, ct);
         return await EnrichProductPromotionsAsync(ctx.BusinessId, result, ct);
@@ -39,15 +39,15 @@ public sealed class CommerceService : ICommerceService
         if (request.Quantity <= 0)
             throw new InvalidOperationException("Quantity must be greater than zero.");
 
-        var adapterContext = await BuildContextAsync(ctx, ct);
+        var adapterContext = await BuildContextAsync(ctx.BusinessId, ctx.AgentId, ctx.ConversationId, ctx.Config, ct);
         var adapter = _adapterFactory.Resolve(adapterContext.Provider);
         var product = await adapter.GetProductAsync(request, adapterContext, ct)
             ?? await FindCachedProductAsync(request, adapterContext, ct)
             ?? throw new InvalidOperationException("Product not found.");
 
-        var order = await GetOrCreateDraftAsync(ctx, adapterContext, ct);
+        var draft = await GetOrCreateDraftAsync(ctx, adapterContext, ct);
         var unitPrice = request.UnitPrice ?? product.UnitPrice;
-        var existingItems = await _unitOfWork.OrderItems.GetByOrderIdAsync(ctx.BusinessId, order.OrderId, ct);
+        var existingItems = await _unitOfWork.OrderDraftItems.GetByDraftIdAsync(ctx.BusinessId, draft.OrderDraftId, ct);
         var existingItem = existingItems.FirstOrDefault(item => IsSameOrderProduct(item, product));
         if (existingItem is not null)
         {
@@ -55,20 +55,19 @@ public sealed class CommerceService : ICommerceService
             existingItem.UnitPrice = unitPrice;
             existingItem.LineTotal = existingItem.Quantity * unitPrice;
             existingItem.UpdatedAt = DateTime.UtcNow;
-            await _unitOfWork.OrderItems.UpdateAsync(existingItem, ct);
+            await _unitOfWork.OrderDraftItems.UpdateAsync(existingItem, ct);
 
-            order.Status = OrderStatus.Draft;
-            order.UpdatedAt = DateTime.UtcNow;
-            await RecalculateAsync(order, ct);
+            draft.UpdatedAt = DateTime.UtcNow;
+            await RecalculateAsync(draft, ct);
             await _unitOfWork.SaveChangesAsync(ct);
 
-            return await BuildSnapshotAsync(order, ct);
+            return await BuildSnapshotAsync(draft, ct);
         }
 
-        var item = new OrderItem
+        var item = new OrderDraftItem
         {
-            OrderItemId = Guid.NewGuid(),
-            OrderId = order.OrderId,
+            OrderDraftItemId = Guid.NewGuid(),
+            OrderDraftId = draft.OrderDraftId,
             BusinessId = ctx.BusinessId,
             ProductId = product.ProductId,
             IntegrationConnectionId = adapterContext.Connection?.IntegrationConnectionId,
@@ -85,18 +84,175 @@ public sealed class CommerceService : ICommerceService
             CreatedAt = DateTime.UtcNow
         };
 
-        await _unitOfWork.OrderItems.CreateAsync(item, ct);
+        await _unitOfWork.OrderDraftItems.CreateAsync(item, ct);
         await _unitOfWork.SaveChangesAsync(ct);
 
-        order.Status = OrderStatus.Draft;
-        order.UpdatedAt = DateTime.UtcNow;
-        await RecalculateAsync(order, ct);
+        draft.UpdatedAt = DateTime.UtcNow;
+        await RecalculateAsync(draft, ct);
         await _unitOfWork.SaveChangesAsync(ct);
 
+        return await BuildSnapshotAsync(draft, ct);
+    }
+
+    public async Task<OrderSnapshot> RemoveItemAsync(AgentToolContext ctx, Guid orderItemId, CancellationToken ct = default)
+    {
+        var draft = await GetActiveDraftAsync(ctx, ct)
+            ?? throw new InvalidOperationException("No active order draft found.");
+        var item = await _unitOfWork.OrderDraftItems.GetByIdAsync(ctx.BusinessId, orderItemId, ct)
+            ?? throw new InvalidOperationException("Order item not found.");
+        if (item.OrderDraftId != draft.OrderDraftId)
+            throw new InvalidOperationException("Order item does not belong to the active draft.");
+
+        await _unitOfWork.OrderDraftItems.DeleteAsync(item, ct);
+        await RecalculateAsync(draft, ct);
+        draft.UpdatedAt = DateTime.UtcNow;
+        await _unitOfWork.SaveChangesAsync(ct);
+
+        return await BuildSnapshotAsync(draft, ct);
+    }
+
+    public async Task<OrderSnapshot> UpdateItemQuantityAsync(
+        AgentToolContext ctx,
+        Guid orderItemId,
+        decimal quantity,
+        CancellationToken ct = default)
+    {
+        if (quantity <= 0)
+            return await RemoveItemAsync(ctx, orderItemId, ct);
+
+        var draft = await GetActiveDraftAsync(ctx, ct)
+            ?? throw new InvalidOperationException("No active order draft found.");
+        var item = await _unitOfWork.OrderDraftItems.GetByIdAsync(ctx.BusinessId, orderItemId, ct)
+            ?? throw new InvalidOperationException("Order item not found.");
+        if (item.OrderDraftId != draft.OrderDraftId)
+            throw new InvalidOperationException("Order item does not belong to the active draft.");
+
+        item.Quantity = quantity;
+        item.LineTotal = quantity * item.UnitPrice;
+        item.UpdatedAt = DateTime.UtcNow;
+        await _unitOfWork.OrderDraftItems.UpdateAsync(item, ct);
+
+        await RecalculateAsync(draft, ct);
+        draft.UpdatedAt = DateTime.UtcNow;
+        await _unitOfWork.SaveChangesAsync(ct);
+
+        return await BuildSnapshotAsync(draft, ct);
+    }
+
+    public async Task<OrderSnapshot> GetDraftAsync(AgentToolContext ctx, CancellationToken ct = default)
+    {
+        var draft = await GetActiveDraftAsync(ctx, ct);
+        return draft is null ? EmptyDraftSnapshot() : await BuildSnapshotAsync(draft, ct);
+    }
+
+    public async Task<OrderSnapshot> CreateOrderAsync(AgentToolContext ctx, CreateOrderRequest request, CancellationToken ct = default)
+    {
+        var draft = await GetActiveDraftAsync(ctx, ct)
+            ?? throw new InvalidOperationException("No active order draft found.");
+
+        ApplyCustomerData(ctx, draft, request);
+        if (!request.CustomerConfirmed)
+        {
+            draft.CustomerConfirmed = false;
+            draft.UpdatedAt = DateTime.UtcNow;
+            await _unitOfWork.OrderDrafts.UpdateAsync(draft, ct);
+            await _unitOfWork.SaveChangesAsync(ct);
+            return await BuildSnapshotAsync(draft, ct);
+        }
+
+        var adapterContext = await BuildContextAsync(ctx.BusinessId, ctx.AgentId, ctx.ConversationId, ctx.Config, ct);
+        var order = await ConvertDraftToOrderAsync(draft, adapterContext, customerConfirmed: true, ct);
+        await SyncExternalOrderIfNeededAsync(order, adapterContext, ct);
+        await _unitOfWork.SaveChangesAsync(ct);
         return await BuildSnapshotAsync(order, ct);
     }
 
-    private static bool IsSameOrderProduct(OrderItem item, ProductReference product)
+    public async Task<OrderSnapshot> ConfirmPaidOrderAsync(Guid businessId, Guid paymentTransactionId, AgentConfig config, CancellationToken ct = default)
+    {
+        var existing = await _unitOfWork.Orders.GetByPaymentTransactionIdAsync(businessId, paymentTransactionId, ct);
+        if (existing is not null)
+        {
+            existing.CustomerConfirmed = true;
+            if (existing.Status is OrderStatus.PendingConfirmation or OrderStatus.AwaitingPayment)
+                existing.Status = OrderStatus.Confirmed;
+            existing.UpdatedAt = DateTime.UtcNow;
+            await _unitOfWork.Orders.UpdateAsync(existing, ct);
+            await _unitOfWork.SaveChangesAsync(ct);
+            return await BuildSnapshotAsync(existing, ct);
+        }
+
+        var draft = await _unitOfWork.OrderDrafts.GetByPaymentTransactionIdAsync(businessId, paymentTransactionId, ct)
+            ?? throw new InvalidOperationException("Order draft not found for paid checkout.");
+        var adapterContext = await BuildContextAsync(draft.BusinessId, draft.AgentId, draft.ConversationId, config, ct);
+        var order = await ConvertDraftToOrderAsync(draft, adapterContext, customerConfirmed: true, ct);
+        order.PaymentTransactionId = paymentTransactionId;
+        order.Status = OrderStatus.Confirmed;
+        await SyncExternalOrderIfNeededAsync(order, adapterContext, ct);
+        await _unitOfWork.SaveChangesAsync(ct);
+        return await BuildSnapshotAsync(order, ct);
+    }
+
+    private async Task<ProductReference?> FindCachedProductAsync(
+        AddOrderItemRequest request,
+        CommerceAdapterContext ctx,
+        CancellationToken ct)
+    {
+        Product? product = null;
+
+        if (request.ProductId.HasValue)
+            product = await _unitOfWork.Products.GetByIdAsync(ctx.BusinessId, request.ProductId.Value, ct);
+
+        if (product is null && !string.IsNullOrWhiteSpace(request.ExternalProductId) && ctx.Connection is not null)
+            product = await _unitOfWork.Products.GetByExternalIdAsync(ctx.BusinessId, ctx.Connection.IntegrationConnectionId, request.ExternalProductId, ct);
+
+        if (product is null && !string.IsNullOrWhiteSpace(request.Sku))
+            product = await FindCachedProductBySkuAsync(ctx.BusinessId, ctx.Connection?.IntegrationConnectionId, request.Sku, ct);
+
+        if (product is null && !string.IsNullOrWhiteSpace(request.Name))
+            product = await FindCachedProductByNameAsync(ctx.BusinessId, request.Name, ct);
+
+        return product is null
+            ? null
+            : new ProductReference(
+                product.ProductId,
+                product.ExternalProductId,
+                product.Sku,
+                product.Name,
+                product.Description,
+                product.CategoryName,
+                product.UnitPrice,
+                product.Currency,
+                product.StockQuantity,
+                product.IsActive,
+                RawPayloadJson: product.RawPayloadJson);
+    }
+
+    private async Task<Product?> FindCachedProductBySkuAsync(Guid businessId, Guid? connectionId, string sku, CancellationToken ct)
+    {
+        var products = await _unitOfWork.Products.SearchAsync(businessId, sku, null, 50, ct);
+        return products.FirstOrDefault(p =>
+            p.IsActive &&
+            (!connectionId.HasValue || p.IntegrationConnectionId == connectionId) &&
+            !string.IsNullOrWhiteSpace(p.Sku) &&
+            p.Sku.Equals(sku, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private async Task<Product?> FindCachedProductByNameAsync(Guid businessId, string name, CancellationToken ct)
+    {
+        var products = await _unitOfWork.Products.SearchAsync(businessId, name, null, 50, ct);
+        var normalizedInput = CatalogSearchText.NormalizeCompact(name);
+        var active = products.Where(p => p.IsActive).ToList();
+        var exact = active.FirstOrDefault(p => CatalogSearchText.NormalizeCompact(p.Name) == normalizedInput);
+        if (exact is not null)
+            return exact;
+
+        return active.FirstOrDefault(p =>
+            CatalogSearchText.NormalizeCompact(p.Name).Contains(normalizedInput, StringComparison.Ordinal) ||
+            normalizedInput.Contains(CatalogSearchText.NormalizeCompact(p.Name), StringComparison.Ordinal) ||
+            (!string.IsNullOrWhiteSpace(p.Sku) && CatalogSearchText.NormalizeCompact(p.Sku).Contains(normalizedInput, StringComparison.Ordinal)));
+    }
+
+    private static bool IsSameOrderProduct(OrderDraftItem item, ProductReference product)
     {
         if (product.ProductId.HasValue && item.ProductId == product.ProductId)
             return true;
@@ -113,248 +269,19 @@ public sealed class CommerceService : ICommerceService
                == CatalogSearchText.NormalizeCompact(product.Name);
     }
 
-    private async Task<ProductReference?> FindCachedProductAsync(
-        AddOrderItemRequest request,
-        CommerceAdapterContext ctx,
+    private async Task<CommerceAdapterContext> BuildContextAsync(
+        Guid businessId,
+        Guid? agentId,
+        Guid conversationId,
+        AgentConfig? config,
         CancellationToken ct)
     {
-        Product? product = null;
-
-        if (request.ProductId.HasValue)
-            product = await _unitOfWork.Products.GetByIdAsync(ctx.BusinessId, request.ProductId.Value, ct);
-
-        if (product is null
-            && !string.IsNullOrWhiteSpace(request.ExternalProductId)
-            && ctx.Connection is not null)
-        {
-            product = await _unitOfWork.Products.GetByExternalIdAsync(
-                ctx.BusinessId,
-                ctx.Connection.IntegrationConnectionId,
-                request.ExternalProductId,
-                ct);
-        }
-
-        if (product is null && !string.IsNullOrWhiteSpace(request.Sku))
-        {
-            var matches = await _unitOfWork.Products.SearchAsync(ctx.BusinessId, request.Sku, null, 10, ct);
-            product = matches.FirstOrDefault(p =>
-                string.Equals(p.Sku, request.Sku, StringComparison.OrdinalIgnoreCase));
-        }
-
-        if (product is null && !string.IsNullOrWhiteSpace(request.Name))
-        {
-            var matches = await _unitOfWork.Products.SearchAsync(ctx.BusinessId, null, null, 50, ct);
-            product = FindBestProductMatch(matches, request.Name);
-        }
-
-        return product is null ? null : MapCachedProduct(product);
-    }
-
-    private static ProductReference MapCachedProduct(Product product) =>
-        new(
-            product.ProductId,
-            product.ExternalProductId,
-            product.Sku,
-            product.Name,
-            product.Description,
-            product.CategoryName,
-            product.UnitPrice,
-            product.Currency,
-            product.StockQuantity,
-            !product.ManageStock || (product.StockQuantity ?? 0) > 0,
-            null,
-            null,
-            null,
-            null,
-            product.RawPayloadJson);
-
-    private static Product? FindBestProductMatch(IReadOnlyList<Product> products, string input)
-    {
-        var normalizedInput = CatalogSearchText.NormalizeCompact(input);
-        if (string.IsNullOrWhiteSpace(normalizedInput))
-            return null;
-
-        var exact = products.FirstOrDefault(p =>
-            CatalogSearchText.NormalizeCompact(p.Name) == normalizedInput ||
-            CatalogSearchText.NormalizeCompact(p.Sku) == normalizedInput);
-        if (exact is not null)
-            return exact;
-
-        return products.FirstOrDefault(p =>
-            CatalogSearchText.NormalizeCompact(p.Name).Contains(normalizedInput, StringComparison.Ordinal) ||
-            normalizedInput.Contains(CatalogSearchText.NormalizeCompact(p.Name), StringComparison.Ordinal) ||
-            (!string.IsNullOrWhiteSpace(p.Sku) && CatalogSearchText.NormalizeCompact(p.Sku).Contains(normalizedInput, StringComparison.Ordinal)));
-    }
-
-    public async Task<OrderSnapshot> RemoveItemAsync(AgentToolContext ctx, Guid orderItemId, CancellationToken ct = default)
-    {
-        var order = await _unitOfWork.Orders.GetActiveDraftByConversationAsync(ctx.BusinessId, ctx.ConversationId, ct)
-            ?? throw new InvalidOperationException("No active order draft found.");
-        var item = await _unitOfWork.OrderItems.GetByIdAsync(ctx.BusinessId, orderItemId, ct)
-            ?? throw new InvalidOperationException("Order item not found.");
-        if (item.OrderId != order.OrderId)
-            throw new InvalidOperationException("Order item does not belong to the active draft.");
-
-        await _unitOfWork.OrderItems.DeleteAsync(item, ct);
-        await RecalculateAsync(order, ct);
-        order.UpdatedAt = DateTime.UtcNow;
-        await _unitOfWork.SaveChangesAsync(ct);
-
-        return await BuildSnapshotAsync(order, ct);
-    }
-
-    public async Task<OrderSnapshot> UpdateItemQuantityAsync(
-        AgentToolContext ctx,
-        Guid orderItemId,
-        decimal quantity,
-        CancellationToken ct = default)
-    {
-        if (quantity <= 0)
-            return await RemoveItemAsync(ctx, orderItemId, ct);
-
-        var order = await _unitOfWork.Orders.GetActiveDraftByConversationAsync(ctx.BusinessId, ctx.ConversationId, ct)
-            ?? throw new InvalidOperationException("No active order draft found.");
-        var item = await _unitOfWork.OrderItems.GetByIdAsync(ctx.BusinessId, orderItemId, ct)
-            ?? throw new InvalidOperationException("Order item not found.");
-        if (item.OrderId != order.OrderId)
-            throw new InvalidOperationException("Order item does not belong to the active draft.");
-
-        item.Quantity = quantity;
-        item.LineTotal = quantity * item.UnitPrice;
-        item.UpdatedAt = DateTime.UtcNow;
-        await _unitOfWork.OrderItems.UpdateAsync(item, ct);
-
-        await RecalculateAsync(order, ct);
-        order.UpdatedAt = DateTime.UtcNow;
-        await _unitOfWork.SaveChangesAsync(ct);
-
-        return await BuildSnapshotAsync(order, ct);
-    }
-
-    public async Task<OrderSnapshot> GetDraftAsync(AgentToolContext ctx, CancellationToken ct = default)
-    {
-        var order = await _unitOfWork.Orders.GetActiveDraftByConversationAsync(ctx.BusinessId, ctx.ConversationId, ct)
-            ?? await GetOrCreateDraftAsync(ctx, await BuildContextAsync(ctx, ct), ct);
-        await _unitOfWork.SaveChangesAsync(ct);
-        return await BuildSnapshotAsync(order, ct);
-    }
-
-    public async Task<OrderSnapshot> CreateOrderAsync(AgentToolContext ctx, CreateOrderRequest request, CancellationToken ct = default)
-    {
-        var adapterContext = await BuildContextAsync(ctx, ct);
-        var order = await _unitOfWork.Orders.GetActiveDraftByConversationAsync(ctx.BusinessId, ctx.ConversationId, ct)
-            ?? throw new InvalidOperationException("No active order draft found.");
-        var items = await _unitOfWork.OrderItems.GetByOrderIdAsync(ctx.BusinessId, order.OrderId, ct);
-        if (items.Count == 0)
-            throw new InvalidOperationException("Order has no items.");
-
-        order.CustomerNameSnapshot = Coalesce(request.CustomerName, order.CustomerNameSnapshot, ctx.Conversation.CustomerName);
-        order.CustomerEmailSnapshot = Coalesce(request.CustomerEmail, order.CustomerEmailSnapshot, ctx.Conversation.CustomerEmail);
-        order.CustomerPhoneSnapshot = Coalesce(request.CustomerPhone, order.CustomerPhoneSnapshot, ConversationContactPhone.Resolve(ctx.Facts, ctx.ChannelPhone));
-        order.CustomerDocumentSnapshot = Coalesce(request.CustomerDocument, order.CustomerDocumentSnapshot, GetFact(ctx, "customer_document"));
-        order.DeliveryAddressSnapshot = Coalesce(request.DeliveryAddress, order.DeliveryAddressSnapshot, GetFact(ctx, "delivery_address"));
-        order.Notes = Coalesce(request.Notes, order.Notes, null);
-        order.CustomerConfirmed = request.CustomerConfirmed;
-
-        if (!request.CustomerConfirmed)
-        {
-            order.Status = OrderStatus.PendingConfirmation;
-            order.UpdatedAt = DateTime.UtcNow;
-            await _unitOfWork.Orders.UpdateAsync(order, ct);
-            await _unitOfWork.SaveChangesAsync(ct);
-            return await BuildSnapshotAsync(order, ct);
-        }
-
-        if (!string.IsNullOrWhiteSpace(order.ExternalOrderId))
-            return await BuildSnapshotAsync(order, ct);
-
-        order.Status = adapterContext.Provider == CommerceProvider.Local ? OrderStatus.Confirmed : OrderStatus.SyncPending;
-        order.UpdatedAt = DateTime.UtcNow;
-        await _unitOfWork.Orders.UpdateAsync(order, ct);
-
-        if (adapterContext.Provider != CommerceProvider.Local)
-        {
-            var adapter = _adapterFactory.Resolve(adapterContext.Provider);
-            var evt = await GetOrCreateEventAsync(order, adapterContext, ct);
-            try
-            {
-                var result = await adapter.CreateOrderAsync(order, items, adapterContext, ct);
-                order.ExternalOrderId = result.ExternalOrderId;
-                order.ExternalDocumentNumber = result.ExternalDocumentNumber;
-                order.ExternalStatus = result.ExternalStatus;
-                order.Status = OrderStatus.Synced;
-                evt.ExternalEventId = result.ExternalOrderId;
-                evt.Status = IntegrationEventStatus.Synced;
-                evt.ResponseJson = result.ResponseJson;
-                evt.LastError = null;
-                evt.UpdatedAt = DateTime.UtcNow;
-            }
-            catch (Exception ex)
-            {
-                order.Status = OrderStatus.SyncFailed;
-                evt.Status = IntegrationEventStatus.Failed;
-                evt.LastError = ex.Message;
-                evt.UpdatedAt = DateTime.UtcNow;
-            }
-        }
-
-        await _unitOfWork.SaveChangesAsync(ct);
-        return await BuildSnapshotAsync(order, ct);
-    }
-
-
-    private static void ApplyOrderCheckoutMetadata(AgentToolContext ctx, Order order)
-    {
-        var checkoutMode = ctx.Config?.Checkout.ResolveMode("order");
-        var shipping = checkoutMode?.Shipping ?? new MimosBabySpa.Application.Agents.Configuration.OrderCheckoutShippingDefinition();
-        var city = GetFact(ctx, "city");
-        var shippingCost = ResolveShippingCost(shipping, city);
-        var currency = ctx.Config?.Checkout.Currency;
-
-        if (!string.IsNullOrWhiteSpace(currency))
-            order.Currency = currency.Trim().ToUpperInvariant();
-
-        order.Total = order.Subtotal - order.DiscountTotal + order.TaxTotal + shippingCost;
-        order.CustomAttributesJson = BuildOrderCustomAttributes(ctx.Facts, city, shippingCost);
-    }
-
-    private static decimal ResolveShippingCost(MimosBabySpa.Application.Agents.Configuration.OrderCheckoutShippingDefinition shipping, string? city)
-    {
-        if (!shipping.Enabled)
-            return 0m;
-
-        if (!string.IsNullOrWhiteSpace(city)
-            && !string.IsNullOrWhiteSpace(shipping.LocalCity)
-            && city.Trim().Equals(shipping.LocalCity.Trim(), StringComparison.OrdinalIgnoreCase))
-        {
-            return shipping.LocalCost;
-        }
-
-        return shipping.NationalCost;
-    }
-
-    private static string BuildOrderCustomAttributes(
-        IReadOnlyDictionary<string, string> facts,
-        string? city,
-        decimal shippingCost)
-    {
-        var custom = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
-        {
-            ["city"] = city,
-            ["shipping_cost"] = shippingCost,
-            ["facts"] = facts
-        };
-        return JsonSerializer.Serialize(custom);
-    }
-
-    private async Task<CommerceAdapterContext> BuildContextAsync(AgentToolContext ctx, CancellationToken ct)
-    {
-        var provider = ctx.Config?.Commerce.Provider ?? CommerceProvider.Local;
-        if (ctx.Config?.Commerce.Enabled != true)
+        var provider = config?.Commerce.Provider ?? CommerceProvider.Local;
+        if (config?.Commerce.Enabled != true)
             provider = CommerceProvider.Local;
 
         var connection = await _unitOfWork.IntegrationConnections.GetCommerceConnectionAsync(
-            ctx.BusinessId,
+            businessId,
             provider,
             CommerceCapability.CatalogAndOrders,
             ct);
@@ -364,42 +291,60 @@ public sealed class CommerceService : ICommerceService
         if (connection is not null && !connection.IsEnabled)
             throw new InvalidOperationException($"Commerce connection '{provider}' is disabled.");
 
-        return new CommerceAdapterContext(ctx.BusinessId, ctx.AgentId, ctx.ConversationId, provider, connection);
+        return new CommerceAdapterContext(businessId, agentId ?? Guid.Empty, conversationId, provider, connection);
     }
 
-    private async Task<Order> GetOrCreateDraftAsync(AgentToolContext ctx, CommerceAdapterContext adapterContext, CancellationToken ct)
+    private async Task<OrderDraft?> GetActiveDraftAsync(AgentToolContext ctx, CancellationToken ct)
     {
-        var existing = await _unitOfWork.Orders.GetActiveDraftByConversationAsync(ctx.BusinessId, ctx.ConversationId, ct);
+        var activeDrafts = await _unitOfWork.OrderDrafts.GetActiveDraftsByConversationAsync(
+            ctx.BusinessId,
+            ctx.ConversationId,
+            ct);
+
+        var current = activeDrafts.FirstOrDefault();
+        if (activeDrafts.Count <= 1)
+            return current;
+
+        foreach (var stale in activeDrafts.Skip(1))
+        {
+            await _unitOfWork.OrderDrafts.DeleteAsync(stale, ct);
+        }
+
+        await _unitOfWork.SaveChangesAsync(ct);
+        return current;
+    }
+
+    private async Task<OrderDraft> GetOrCreateDraftAsync(AgentToolContext ctx, CommerceAdapterContext adapterContext, CancellationToken ct)
+    {
+        var existing = await GetActiveDraftAsync(ctx, ct);
         if (existing is not null)
             return existing;
 
-        var order = new Order
+        var draft = new OrderDraft
         {
-            OrderId = Guid.NewGuid(),
+            OrderDraftId = Guid.NewGuid(),
             BusinessId = ctx.BusinessId,
             AgentId = ctx.AgentId,
             ConversationId = ctx.ConversationId,
             IntegrationConnectionId = adapterContext.Connection?.IntegrationConnectionId,
             Source = OrderSource.Bot,
             FulfillmentMode = adapterContext.Provider == CommerceProvider.Local ? OrderFulfillmentMode.Local : OrderFulfillmentMode.External,
-            Status = OrderStatus.Draft,
             Currency = GetConnectionCurrency(adapterContext.Connection) ?? "COP",
-            IdempotencyKey = $"{ctx.BusinessId:N}:{ctx.ConversationId:N}:{DateTime.UtcNow:yyyyMMddHHmmss}",
             CreatedAt = DateTime.UtcNow
         };
 
-        await _unitOfWork.Orders.CreateAsync(order, ct);
+        await _unitOfWork.OrderDrafts.CreateAsync(draft, ct);
         await _unitOfWork.SaveChangesAsync(ct);
-        return order;
+        return draft;
     }
 
-    private async Task RecalculateAsync(Order order, CancellationToken ct)
+    private async Task RecalculateAsync(OrderDraft draft, CancellationToken ct)
     {
-        var items = await _unitOfWork.OrderItems.GetByOrderIdAsync(order.BusinessId, order.OrderId, ct);
+        var items = await _unitOfWork.OrderDraftItems.GetByDraftIdAsync(draft.BusinessId, draft.OrderDraftId, ct);
         var pricing = await _promotions.EvaluateAsync(
-            order.BusinessId,
+            draft.BusinessId,
             items.Select(i => new PromotionPricingItem(
-                i.OrderItemId.ToString("N"),
+                i.OrderDraftItemId.ToString("N"),
                 PromotionItemType.Product,
                 i.ProductId,
                 null,
@@ -411,27 +356,24 @@ public sealed class CommerceService : ICommerceService
 
         foreach (var item in items)
         {
-            var priced = pricing.Items.FirstOrDefault(i => i.Item.Key == item.OrderItemId.ToString("N"));
+            var priced = pricing.Items.FirstOrDefault(i => i.Item.Key == item.OrderDraftItemId.ToString("N"));
             if (priced is null)
                 continue;
 
             item.LineTotal = priced.LineSubtotal;
             item.DiscountAmount = priced.DiscountAmount;
             item.UpdatedAt = DateTime.UtcNow;
-            await _unitOfWork.OrderItems.UpdateAsync(item, ct);
+            await _unitOfWork.OrderDraftItems.UpdateAsync(item, ct);
         }
 
-        order.Subtotal = pricing.Subtotal;
-        order.DiscountTotal = pricing.DiscountTotal;
-        order.TaxTotal = items.Sum(i => i.TaxAmount);
-        order.Total = order.Subtotal - order.DiscountTotal + order.TaxTotal;
-        await _unitOfWork.Orders.UpdateAsync(order, ct);
+        draft.Subtotal = pricing.Subtotal;
+        draft.DiscountTotal = pricing.DiscountTotal;
+        draft.TaxTotal = items.Sum(i => i.TaxAmount);
+        draft.Total = draft.Subtotal - draft.DiscountTotal + draft.TaxTotal;
+        await _unitOfWork.OrderDrafts.UpdateAsync(draft, ct);
     }
 
-    private async Task<ProductSearchResult> EnrichProductPromotionsAsync(
-        Guid businessId,
-        ProductSearchResult result,
-        CancellationToken ct)
+    private async Task<ProductSearchResult> EnrichProductPromotionsAsync(Guid businessId, ProductSearchResult result, CancellationToken ct)
     {
         if (result.Products.Count == 0)
             return result;
@@ -466,6 +408,116 @@ public sealed class CommerceService : ICommerceService
         return result with { Products = products };
     }
 
+    private void ApplyCustomerData(AgentToolContext ctx, OrderDraft draft, CreateOrderRequest request)
+    {
+        draft.CustomerNameSnapshot = Coalesce(request.CustomerName, draft.CustomerNameSnapshot, ctx.Conversation.CustomerName);
+        draft.CustomerEmailSnapshot = Coalesce(request.CustomerEmail, draft.CustomerEmailSnapshot, ctx.Conversation.CustomerEmail);
+        draft.CustomerPhoneSnapshot = Coalesce(request.CustomerPhone, draft.CustomerPhoneSnapshot, ConversationContactPhone.Resolve(ctx.Facts, ctx.ChannelPhone));
+        draft.CustomerDocumentSnapshot = Coalesce(request.CustomerDocument, draft.CustomerDocumentSnapshot, GetFact(ctx, "customer_document"));
+        draft.DeliveryAddressSnapshot = Coalesce(request.DeliveryAddress, draft.DeliveryAddressSnapshot, GetFact(ctx, "delivery_address"));
+        draft.Notes = Coalesce(request.Notes, draft.Notes, null);
+        draft.CustomerConfirmed = request.CustomerConfirmed;
+        ApplyOrderCheckoutMetadata(ctx, draft);
+    }
+
+    private async Task<Order> ConvertDraftToOrderAsync(OrderDraft draft, CommerceAdapterContext adapterContext, bool customerConfirmed, CancellationToken ct)
+    {
+        var draftItems = await _unitOfWork.OrderDraftItems.GetByDraftIdAsync(draft.BusinessId, draft.OrderDraftId, ct);
+        if (draftItems.Count == 0)
+            throw new InvalidOperationException("Order has no items.");
+
+        var order = new Order
+        {
+            OrderId = Guid.NewGuid(),
+            BusinessId = draft.BusinessId,
+            AgentId = draft.AgentId,
+            ConversationId = draft.ConversationId,
+            IntegrationConnectionId = draft.IntegrationConnectionId,
+            PaymentTransactionId = draft.PaymentTransactionId,
+            Source = draft.Source,
+            FulfillmentMode = draft.FulfillmentMode,
+            Status = customerConfirmed
+                ? adapterContext.Provider == CommerceProvider.Local ? OrderStatus.Confirmed : OrderStatus.SyncPending
+                : OrderStatus.PendingConfirmation,
+            CustomerNameSnapshot = draft.CustomerNameSnapshot,
+            CustomerEmailSnapshot = draft.CustomerEmailSnapshot,
+            CustomerPhoneSnapshot = draft.CustomerPhoneSnapshot,
+            CustomerDocumentSnapshot = draft.CustomerDocumentSnapshot,
+            DeliveryAddressSnapshot = draft.DeliveryAddressSnapshot,
+            Notes = draft.Notes,
+            Currency = draft.Currency,
+            Subtotal = draft.Subtotal,
+            DiscountTotal = draft.DiscountTotal,
+            TaxTotal = draft.TaxTotal,
+            Total = draft.Total,
+            CustomerConfirmed = customerConfirmed,
+            IdempotencyKey = $"{draft.BusinessId:N}:{draft.ConversationId:N}:{DateTime.UtcNow:yyyyMMddHHmmss}",
+            CustomAttributesJson = draft.CustomAttributesJson,
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        };
+
+        await _unitOfWork.Orders.CreateAsync(order, ct);
+        foreach (var draftItem in draftItems)
+        {
+            await _unitOfWork.OrderItems.CreateAsync(new OrderItem
+            {
+                OrderItemId = Guid.NewGuid(),
+                OrderId = order.OrderId,
+                BusinessId = draftItem.BusinessId,
+                ProductId = draftItem.ProductId,
+                IntegrationConnectionId = draftItem.IntegrationConnectionId,
+                ExternalProductId = draftItem.ExternalProductId,
+                Sku = draftItem.Sku,
+                ProductNameSnapshot = draftItem.ProductNameSnapshot,
+                DescriptionSnapshot = draftItem.DescriptionSnapshot,
+                Quantity = draftItem.Quantity,
+                UnitPrice = draftItem.UnitPrice,
+                DiscountAmount = draftItem.DiscountAmount,
+                TaxAmount = draftItem.TaxAmount,
+                LineTotal = draftItem.LineTotal,
+                RawPayloadJson = draftItem.RawPayloadJson,
+                CreatedAt = DateTime.UtcNow
+            }, ct);
+        }
+        await _unitOfWork.OrderDrafts.DeleteAsync(draft, ct);
+        await _unitOfWork.SaveChangesAsync(ct);
+        return order;
+    }
+
+    private async Task SyncExternalOrderIfNeededAsync(Order order, CommerceAdapterContext adapterContext, CancellationToken ct)
+    {
+        if (adapterContext.Provider == CommerceProvider.Local || !string.IsNullOrWhiteSpace(order.ExternalOrderId))
+            return;
+
+        var items = await _unitOfWork.OrderItems.GetByOrderIdAsync(order.BusinessId, order.OrderId, ct);
+        var adapter = _adapterFactory.Resolve(adapterContext.Provider);
+        var evt = await GetOrCreateEventAsync(order, adapterContext, ct);
+        try
+        {
+            var result = await adapter.CreateOrderAsync(order, items, adapterContext, ct);
+            order.ExternalOrderId = result.ExternalOrderId;
+            order.ExternalDocumentNumber = result.ExternalDocumentNumber;
+            order.ExternalStatus = result.ExternalStatus;
+            order.Status = OrderStatus.Synced;
+            evt.ExternalEventId = result.ExternalOrderId;
+            evt.Status = IntegrationEventStatus.Synced;
+            evt.ResponseJson = result.ResponseJson;
+            evt.LastError = null;
+            evt.UpdatedAt = DateTime.UtcNow;
+        }
+        catch (Exception ex)
+        {
+            order.Status = OrderStatus.SyncFailed;
+            evt.Status = IntegrationEventStatus.Failed;
+            evt.LastError = ex.Message;
+            evt.UpdatedAt = DateTime.UtcNow;
+        }
+
+        order.UpdatedAt = DateTime.UtcNow;
+        await _unitOfWork.Orders.UpdateAsync(order, ct);
+    }
+
     private async Task<OrderConnectionEvent> GetOrCreateEventAsync(Order order, CommerceAdapterContext ctx, CancellationToken ct)
     {
         var connection = ctx.Connection ?? throw new InvalidOperationException("External order requires a connection.");
@@ -487,6 +539,44 @@ public sealed class CommerceService : ICommerceService
         };
         await _unitOfWork.OrderConnectionEvents.CreateAsync(evt, ct);
         return evt;
+    }
+
+    private static void ApplyOrderCheckoutMetadata(AgentToolContext ctx, OrderDraft draft)
+    {
+        var checkoutMode = ctx.Config?.Checkout.ResolveMode("order");
+        var shipping = checkoutMode?.Shipping ?? new OrderCheckoutShippingDefinition();
+        var city = GetFact(ctx, "city");
+        var shippingCost = ResolveShippingCost(shipping, city);
+        var currency = ctx.Config?.Checkout.Currency;
+
+        if (!string.IsNullOrWhiteSpace(currency))
+            draft.Currency = currency.Trim().ToUpperInvariant();
+
+        draft.Total = draft.Subtotal - draft.DiscountTotal + draft.TaxTotal + shippingCost;
+        draft.CustomAttributesJson = BuildOrderCustomAttributes(ctx.Facts, city, shippingCost);
+    }
+
+    private async Task<OrderSnapshot> BuildSnapshotAsync(OrderDraft draft, CancellationToken ct)
+    {
+        var items = await _unitOfWork.OrderDraftItems.GetByDraftIdAsync(draft.BusinessId, draft.OrderDraftId, ct);
+        return new OrderSnapshot(
+            draft.OrderDraftId,
+            OrderStatus.Draft,
+            draft.Currency,
+            draft.Subtotal,
+            draft.DiscountTotal,
+            draft.TaxTotal,
+            draft.Total,
+            items.Select(i => new OrderItemSnapshot(
+                i.OrderDraftItemId,
+                i.ProductId,
+                i.ExternalProductId,
+                i.Sku,
+                i.ProductNameSnapshot,
+                i.Quantity,
+                i.UnitPrice,
+                i.LineTotal)).ToList(),
+            draft.PaymentTransactionId);
     }
 
     private async Task<OrderSnapshot> BuildSnapshotAsync(Order order, CancellationToken ct)
@@ -515,35 +605,56 @@ public sealed class CommerceService : ICommerceService
             order.ExternalStatus);
     }
 
+    private static OrderSnapshot EmptyDraftSnapshot() =>
+        new(Guid.Empty, OrderStatus.Draft, "COP", 0, 0, 0, 0, []);
+
+    private static decimal ResolveShippingCost(OrderCheckoutShippingDefinition shipping, string? city)
+    {
+        if (!shipping.Enabled)
+            return 0m;
+
+        if (!string.IsNullOrWhiteSpace(city)
+            && !string.IsNullOrWhiteSpace(shipping.LocalCity)
+            && city.Trim().Equals(shipping.LocalCity.Trim(), StringComparison.OrdinalIgnoreCase))
+        {
+            return shipping.LocalCost;
+        }
+
+        return shipping.NationalCost;
+    }
+
+    private static string BuildOrderCustomAttributes(IReadOnlyDictionary<string, string> facts, string? city, decimal shippingCost)
+    {
+        var custom = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["city"] = city,
+            ["shipping_cost"] = shippingCost,
+            ["facts"] = facts
+        };
+        return JsonSerializer.Serialize(custom);
+    }
+
     private static string? GetConnectionCurrency(IntegrationConnection? connection)
     {
         if (connection is null || string.IsNullOrWhiteSpace(connection.SettingsJson))
             return null;
+
         try
         {
             using var doc = JsonDocument.Parse(connection.SettingsJson);
-            if (doc.RootElement.TryGetProperty("order", out var order)
-                && order.TryGetProperty("defaultCurrencyCode", out var currency)
-                && currency.ValueKind == JsonValueKind.String)
-            {
+            if (doc.RootElement.TryGetProperty("currency", out var currency) && currency.ValueKind == JsonValueKind.String)
                 return currency.GetString();
-            }
         }
-        catch
+        catch (JsonException)
         {
-            return null;
         }
+
         return null;
     }
 
+    private static string? GetFact(AgentToolContext ctx, string key) =>
+        ctx.Facts.TryGetValue(key, out var value) && !string.IsNullOrWhiteSpace(value) ? value : null;
+
     private static string? Coalesce(params string?[] values) =>
         values.FirstOrDefault(v => !string.IsNullOrWhiteSpace(v))?.Trim();
-
-    private static string? GetFact(AgentToolContext ctx, string key) =>
-        ctx.Facts.TryGetValue(key, out var value) ? value : null;
 }
-
-
-
-
-

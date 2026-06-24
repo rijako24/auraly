@@ -8,6 +8,7 @@ public interface IOrderRepository
     Task<Order?> GetByIdAsync(Guid businessId, Guid orderId, CancellationToken ct = default);
     Task<Order?> GetByPaymentTransactionIdAsync(Guid businessId, Guid paymentTransactionId, CancellationToken ct = default);
     Task<Order?> GetActiveDraftByConversationAsync(Guid businessId, Guid conversationId, CancellationToken ct = default);
+    Task<IReadOnlyList<Order>> GetActiveDraftsByConversationAsync(Guid businessId, Guid conversationId, CancellationToken ct = default);
     Task<IReadOnlyList<Order>> GetByConversationAsync(Guid businessId, Guid conversationId, CancellationToken ct = default);
     Task<(IReadOnlyList<Order> Items, int TotalCount)> GetPagedByBusinessIdAsync(
         Guid businessId,

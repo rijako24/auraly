@@ -22,6 +22,9 @@ public sealed class FactSchemaEntry
     /// <summary>user | channel | system</summary>
     public string Source { get; init; } = "user";
 
+    /// <summary>Valor por defecto usado por el hidratador cuando el fact no existe.</summary>
+    public string? DefaultValue { get; init; }
+
     /// <summary>
     /// customer: stable customer/baby data kept across requests.
     /// request: current request data, cleared when the request completes.

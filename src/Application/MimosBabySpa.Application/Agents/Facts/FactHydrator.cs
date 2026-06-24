@@ -4,9 +4,9 @@ namespace MimosBabySpa.Application.Agents.Facts;
 
 /// <summary>
 /// Orquestador del hidratador de facts.
-/// Delega la resolución de cada fact a los IFactSourceResolver registrados.
+/// Delega la resolucion de cada fact a los IFactSourceResolver registrados.
 ///
-/// Añadir soporte para nuevas fuentes (CRM, ERP, BI) = registrar un nuevo IFactSourceResolver en DI.
+/// Anadir soporte para nuevas fuentes (CRM, ERP, BI) = registrar un nuevo IFactSourceResolver en DI.
 /// Sin tocar esta clase.
 /// </summary>
 public sealed class FactHydrator : IFactHydrator
@@ -27,7 +27,7 @@ public sealed class FactHydrator : IFactHydrator
     {
         foreach (var entry in factSchema)
         {
-            // Solo hidratar facts de fuente no-usuario y sin valor actual
+            // Solo hidratar facts de fuente no-usuario y sin valor actual.
             if (entry.Source.Equals("user", StringComparison.OrdinalIgnoreCase))
                 continue;
 
@@ -38,15 +38,20 @@ public sealed class FactHydrator : IFactHydrator
             }
 
             var resolvers = _resolversBySource[entry.Source];
+            var hydrated = false;
             foreach (var resolver in resolvers)
             {
                 var resolved = resolver.Resolve(entry, context);
-                if (!string.IsNullOrWhiteSpace(resolved))
-                {
-                    facts[entry.Key] = resolved.Trim();
-                    break;
-                }
+                if (string.IsNullOrWhiteSpace(resolved))
+                    continue;
+
+                facts[entry.Key] = resolved.Trim();
+                hydrated = true;
+                break;
             }
+
+            if (!hydrated && !string.IsNullOrWhiteSpace(entry.DefaultValue))
+                facts[entry.Key] = entry.DefaultValue.Trim();
         }
     }
 }

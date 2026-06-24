@@ -4,12 +4,6 @@ namespace MimosBabySpa.Application.Agents;
 
 /// <summary>
 /// Estado acumulado de un turno del agente.
-///
-/// Reemplaza las variables mutables dispersas del bucle:
-///   totalTokens, toolCallCount, escalated, reservationCreated, ConsecutiveToolErrors.
-///
-/// Toda actualización del estado del turno ocurre a través de este objeto,
-/// centralizando la lógica de auto-escalación y side-effects.
 /// </summary>
 internal sealed class AgentTurnExecution
 {
@@ -29,7 +23,7 @@ internal sealed class AgentTurnExecution
     public int ToolCallCount { get; private set; }
     public int ConsecutiveToolErrors { get; private set; }
     public bool EscalatedToHuman { get; private set; }
-    public bool ReservationCreated { get; private set; }
+    public bool RequestCompleted { get; private set; }
     public bool DirectOutboundRequested { get; private set; }
     public bool CheckoutPrepared { get; private set; }
 
@@ -61,8 +55,8 @@ internal sealed class AgentTurnExecution
 
         ConsecutiveToolErrors = 0;
 
-        if (outcome.HasEffect(ToolSideEffectNames.ReservationCreated))
-            ReservationCreated = true;
+        if (outcome.HasEffect(ToolSideEffectNames.RequestCompleted))
+            RequestCompleted = true;
 
         if (outcome.HasEffect(ToolSideEffectNames.EscalatedToHuman))
             EscalatedToHuman = true;
@@ -97,13 +91,11 @@ internal sealed class AgentTurnExecution
 
     public void MarkCheckoutPrepared() => CheckoutPrepared = true;
 
-    /// <summary>Encola mensajes outbound para envío tras la respuesta principal del turno.</summary>
     public void EnqueueOutbound(IEnumerable<OutboundMessage> messages) =>
         _outboundMessages.AddRange(messages);
 
     public void MarkDirectOutboundRequested() => DirectOutboundRequested = true;
 
-    /// <summary>Evita encolar la misma secuencia dos veces en un turno.</summary>
     public bool TryMarkSequenceEnqueued(string sequenceName) =>
         _enqueuedSequences.Add(sequenceName);
 
@@ -111,7 +103,7 @@ internal sealed class AgentTurnExecution
         AgentTurnResult.Ok(
             response,
             EscalatedToHuman,
-            ReservationCreated,
+            RequestCompleted,
             TotalTokens,
             ToolCallCount,
             OutboundMessages);

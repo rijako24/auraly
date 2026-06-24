@@ -31,6 +31,8 @@ public interface IUnitOfWork : IDisposable
     IReservationAddOnRepository ReservationAddOns { get; }
     IProductRepository Products { get; }
     IPromotionRepository Promotions { get; }
+    IOrderDraftRepository OrderDrafts { get; }
+    IOrderDraftItemRepository OrderDraftItems { get; }
     IOrderRepository Orders { get; }
     IOrderItemRepository OrderItems { get; }
     IOrderConnectionEventRepository OrderConnectionEvents { get; }

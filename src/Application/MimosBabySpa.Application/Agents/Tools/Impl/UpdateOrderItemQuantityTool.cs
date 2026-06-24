@@ -1,7 +1,6 @@
 using System.Text.Json;
 using MimosBabySpa.Application.Agents.Gating;
 using MimosBabySpa.Application.Commerce;
-using MimosBabySpa.Domain.Catalog;
 using MimosBabySpa.Application.Services;
 
 namespace MimosBabySpa.Application.Agents.Tools.Impl;
@@ -30,6 +29,7 @@ public sealed class UpdateOrderItemQuantityTool : IAgentTool
           "properties": {
             "order_item_id": { "type": "string", "description": "order_item_id from get_order_draft." },
             "product_id": { "type": "string", "description": "Catalog product_id when order_item_id is unavailable." },
+            "external_product_id": { "type": "string" },
             "sku": { "type": "string" },
             "name": { "type": "string" },
             "quantity": {
@@ -51,7 +51,7 @@ public sealed class UpdateOrderItemQuantityTool : IAgentTool
         if (draft.Items.Count == 0)
             return ToolResultHelper.Error("empty_order", "The order draft has no items.", "Help the customer choose a product first.", recoverable: true);
 
-        if (!TryResolveItem(arguments, ctx, draft, out var item, out var ambiguous))
+        if (!OrderItemSelectionResolver.TryResolve(arguments, draft, out var item, out var ambiguous))
         {
             if (ambiguous.Count > 1)
             {
@@ -70,74 +70,6 @@ public sealed class UpdateOrderItemQuantityTool : IAgentTool
 
         return ToolResultHelper.Ok(new { order = updated });
     }
-
-    private static bool TryResolveItem(
-        JsonElement arguments,
-        AgentToolContext ctx,
-        OrderSnapshot draft,
-        out OrderItemSnapshot item,
-        out IReadOnlyList<OrderItemSnapshot> ambiguous)
-    {
-        item = default!;
-        ambiguous = [];
-
-        var rawOrderItemId = ToolResultHelper.TryGetString(arguments, "order_item_id", out var oid) ? oid : null;
-        if (Guid.TryParse(rawOrderItemId, out var parsedOrderItemId))
-        {
-            var byId = draft.Items.FirstOrDefault(i => i.OrderItemId == parsedOrderItemId);
-            if (byId is not null)
-            {
-                item = byId;
-                return true;
-            }
-        }
-
-        var productId = ToolResultHelper.TryGetString(arguments, "product_id", out var pid) ? pid : null;
-        var sku = ToolResultHelper.TryGetString(arguments, "sku", out var s) ? s : null;
-        var name = ToolResultHelper.TryGetString(arguments, "name", out var n) ? n : null;
-        var selector = FirstMeaningfulSelector(rawOrderItemId, productId, sku, name, ctx.LatestUserMessage);
-        if (string.IsNullOrWhiteSpace(selector))
-            return false;
-
-        var matches = FindMatches(draft.Items, selector).DistinctBy(i => i.OrderItemId).ToList();
-        if (matches.Count == 1)
-        {
-            item = matches[0];
-            return true;
-        }
-
-        ambiguous = matches;
-        return false;
-    }
-
-    private static IEnumerable<OrderItemSnapshot> FindMatches(IReadOnlyList<OrderItemSnapshot> items, string selector)
-    {
-        if (Guid.TryParse(selector, out var parsedProductId))
-        {
-            foreach (var item in items.Where(i => i.ProductId == parsedProductId))
-                yield return item;
-            yield break;
-        }
-
-        foreach (var item in items.Where(i => !string.IsNullOrWhiteSpace(i.Sku)
-                                              && i.Sku.Equals(selector, StringComparison.OrdinalIgnoreCase)))
-        {
-            yield return item;
-        }
-
-        foreach (var item in items.Where(i => CatalogSearchText.NormalizeCompact(i.ProductName) == CatalogSearchText.NormalizeCompact(selector)))
-        {
-            yield return item;
-        }
-
-        foreach (var item in items.Where(i => CatalogSearchText.ContainsAllTerms(selector, i.ProductName, i.Sku)))
-        {
-            yield return item;
-        }
-    }
-
-    private static string? FirstMeaningfulSelector(params string?[] values) =>
-        values.FirstOrDefault(v => !string.IsNullOrWhiteSpace(v) && !decimal.TryParse(v.Trim(), out _));
 
     private static string BuildClarificationHint(IReadOnlyList<OrderItemSnapshot> items)
     {

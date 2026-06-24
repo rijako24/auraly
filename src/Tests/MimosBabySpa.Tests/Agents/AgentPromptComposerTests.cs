@@ -353,6 +353,12 @@ public class AgentPromptComposerTests
             BusinessId = DefaultConfig.BusinessId,
             Name = "Mimi",
             Persona = "## ROL\nEres Mimi.\n\n## CÓMO ABRES LA CONVERSACIÓN\n- En tu primer mensaje: saludo.\n- Si conoces el nombre del cliente, salúdalo por nombre.",
+            FactSchema =
+            [
+                new FactSchemaEntry { Key = "baby_name", Source = "user" },
+                new FactSchemaEntry { Key = "baby_age_months", Source = "user" },
+                new FactSchemaEntry { Key = "service", Source = "user" }
+            ],
             Flow = new AgentFlowDefinition
             {
                 StageDetection = "automatic",
@@ -381,9 +387,9 @@ public class AgentPromptComposerTests
         result.Should().Contain("CÓMO ABRES LA CONVERSACIÓN");
         result.Should().Contain("etapa: discovery");
         result.Should().NotContain("etapa: greeting");
-        result.Should().Contain("criterio_de_avance: la etapa se completa cuando est�n presentes estos datos del flujo");
+        result.Should().Contain("criterio_de_avance: la etapa se completa cuando estén presentes estos datos del flujo");
         result.Should().Contain("datos_para_completar_etapa: baby_name (baby_name), baby_age_months (baby_age_months), service (service)");
-        result.Should().Contain("usa estos datos como pr�ximos datos �tiles solo cuando la intenci�n actual los requiera");
+        result.Should().Contain("usa estos datos como próximos datos útiles solo cuando la intención actual los requiera");
         result.Should().NotContain("si el cliente solo saluda");
         result.Should().NotContain("facts_pendientes");
         result.Should().NotContain("el sistema te llevará automáticamente al siguiente paso");
@@ -398,6 +404,10 @@ public class AgentPromptComposerTests
             BusinessId = DefaultConfig.BusinessId,
             Name = "Mimi",
             Persona = DefaultConfig.Persona,
+            FactSchema =
+            [
+                new FactSchemaEntry { Key = "service", Source = "user" }
+            ],
             Flow = new AgentFlowDefinition
             {
                 StageDetection = "automatic",
@@ -422,7 +432,7 @@ public class AgentPromptComposerTests
 
         var result = Compose(config, [], session);
 
-        result.Should().Contain("criterio_de_avance: la etapa se completa cuando est�n presentes estos datos del flujo");
+        result.Should().Contain("criterio_de_avance: la etapa se completa cuando estén presentes estos datos del flujo");
         result.Should().Contain("datos_para_completar_etapa: service (service)");
         result.Should().NotContain("facts_pendientes");
         result.Should().NotContain("el sistema te llevará automáticamente al siguiente paso");
@@ -541,8 +551,8 @@ public class AgentPromptComposerTests
         var result = Compose(config, [], session);
 
         result.Should().Contain("## CAPTURA INMEDIATA");
-        result.Should().Contain("Guarda �nicamente datos expresados o confirmados por el cliente");
-        result.Should().Contain("Mant�n objetivos internos y marcadores de estado fuera de facts de usuario");
+        result.Should().Contain("Guarda únicamente datos expresados o confirmados por el cliente");
+        result.Should().Contain("Mantén objetivos internos y marcadores de estado fuera de facts de usuario");
         result.Should().Contain("nombre del bebé (baby_name)");
         result.Should().Contain("edad del bebé (baby_age_months)");
         result.Should().NotContain("plan (service)");

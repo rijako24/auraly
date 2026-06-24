@@ -4,6 +4,7 @@ using System.Text.Json.Serialization;
 using Microsoft.Extensions.Logging;
 using MimosBabySpa.Application.Agents;
 using MimosBabySpa.Application.Agents.Configuration;
+using MimosBabySpa.Application.Commerce;
 using MimosBabySpa.Application.Configuration;
 using MimosBabySpa.Application.DTOs;
 using MimosBabySpa.Application.StateManagement;
@@ -325,10 +326,12 @@ public sealed class EnrollmentPaidCheckoutFulfillmentHandler : IPaidCheckoutFulf
 public sealed class OrderPaidCheckoutFulfillmentHandler : IPaidCheckoutFulfillmentHandler
 {
     private readonly IUnitOfWork _unitOfWork;
+    private readonly ICommerceService _commerce;
 
-    public OrderPaidCheckoutFulfillmentHandler(IUnitOfWork unitOfWork)
+    public OrderPaidCheckoutFulfillmentHandler(IUnitOfWork unitOfWork, ICommerceService commerce)
     {
         _unitOfWork = unitOfWork;
+        _commerce = commerce;
     }
 
     public CheckoutKind Kind => CheckoutKind.Order;
@@ -349,10 +352,19 @@ public sealed class OrderPaidCheckoutFulfillmentHandler : IPaidCheckoutFulfillme
         CancellationToken ct = default)
     {
         var order = await _unitOfWork.Orders.GetByPaymentTransactionIdAsync(
+            payment.BusinessId,
+            payment.PaymentTransactionId,
+            ct);
+        if (order is null)
+        {
+            await _commerce.ConfirmPaidOrderAsync(payment.BusinessId, payment.PaymentTransactionId, config, ct);
+            order = await _unitOfWork.Orders.GetByPaymentTransactionIdAsync(
                 payment.BusinessId,
                 payment.PaymentTransactionId,
                 ct)
-            ?? throw new InvalidOperationException("Order not found for paid checkout.");
+                ?? throw new InvalidOperationException("Order not found for paid checkout.");
+        }
+
         var items = await _unitOfWork.OrderItems.GetByOrderIdAsync(payment.BusinessId, order.OrderId, ct);
         if (items.Count == 0)
             throw new InvalidOperationException("Paid order has no items.");

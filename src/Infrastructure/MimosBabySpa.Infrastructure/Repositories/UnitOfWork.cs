@@ -35,6 +35,8 @@ public class UnitOfWork : IUnitOfWork
     private IReservationAddOnRepository? _reservationAddOns;
     private IProductRepository? _products;
     private IPromotionRepository? _promotions;
+    private IOrderDraftRepository? _orderDrafts;
+    private IOrderDraftItemRepository? _orderDraftItems;
     private IOrderRepository? _orders;
     private IOrderItemRepository? _orderItems;
     private IOrderConnectionEventRepository? _orderConnectionEvents;
@@ -146,6 +148,12 @@ public class UnitOfWork : IUnitOfWork
 
     public IPromotionRepository Promotions =>
         _promotions ??= new PromotionRepository(_context);
+
+    public IOrderDraftRepository OrderDrafts =>
+        _orderDrafts ??= new OrderDraftRepository(_context);
+
+    public IOrderDraftItemRepository OrderDraftItems =>
+        _orderDraftItems ??= new OrderDraftItemRepository(_context);
 
     public IOrderRepository Orders =>
         _orders ??= new OrderRepository(_context);

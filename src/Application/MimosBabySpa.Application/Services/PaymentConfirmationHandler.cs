@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging;
 using MimosBabySpa.Application.Agents;
+using MimosBabySpa.Application.Agents.Configuration;
 using MimosBabySpa.Application.StateManagement;
 using MimosBabySpa.Domain.Entities;
 using MimosBabySpa.Domain.Enums;
@@ -135,7 +136,7 @@ public class PaymentConfirmationHandler : IPaymentConfirmationHandler
                 await _notificationDispatcher.SendEventAsync(
                     payment.BusinessId,
                     config,
-                    ToolSideEffectNames.ReservationCreated,
+                    WompiWebhookOutcomes.ReservationCreated,
                     new MessageSequenceContext
                     {
                         Reservation = result.ReservationNotification,

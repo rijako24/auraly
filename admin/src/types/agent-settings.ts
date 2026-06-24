@@ -36,6 +36,7 @@ export interface FactSchemaEntry {
   required?: boolean;
   source?: string;
   persistsAcrossConversations?: boolean;
+  defaultValue?: string;
   captureMode?: string;
   aliases?: string[];
 }

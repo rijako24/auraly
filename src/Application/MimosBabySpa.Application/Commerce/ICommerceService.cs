@@ -1,4 +1,5 @@
 using MimosBabySpa.Application.Agents;
+using MimosBabySpa.Application.Agents.Configuration;
 
 namespace MimosBabySpa.Application.Commerce;
 
@@ -10,4 +11,5 @@ public interface ICommerceService
     Task<OrderSnapshot> UpdateItemQuantityAsync(AgentToolContext ctx, Guid orderItemId, decimal quantity, CancellationToken ct = default);
     Task<OrderSnapshot> GetDraftAsync(AgentToolContext ctx, CancellationToken ct = default);
     Task<OrderSnapshot> CreateOrderAsync(AgentToolContext ctx, CreateOrderRequest request, CancellationToken ct = default);
+    Task<OrderSnapshot> ConfirmPaidOrderAsync(Guid businessId, Guid paymentTransactionId, AgentConfig config, CancellationToken ct = default);
 }

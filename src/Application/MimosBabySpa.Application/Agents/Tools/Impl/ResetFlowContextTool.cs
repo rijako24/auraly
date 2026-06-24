@@ -2,6 +2,7 @@ using System.Text.Json;
 using MimosBabySpa.Application.Services;
 using MimosBabySpa.Domain.Entities;
 using MimosBabySpa.Domain.Enums;
+using MimosBabySpa.Domain.Repositories;
 
 namespace MimosBabySpa.Application.Agents.Tools.Impl;
 
@@ -12,13 +13,16 @@ public sealed class ResetFlowContextTool : IAgentTool
 {
     private readonly IRequestContextService _requestContext;
     private readonly IPaymentLifecycleService _payments;
+    private readonly IUnitOfWork _unitOfWork;
 
     public ResetFlowContextTool(
         IRequestContextService requestContext,
-        IPaymentLifecycleService payments)
+        IPaymentLifecycleService payments,
+        IUnitOfWork unitOfWork)
     {
         _requestContext = requestContext;
         _payments = payments;
+        _unitOfWork = unitOfWork;
     }
 
     public string Name => "reset_flow_context";
@@ -71,6 +75,8 @@ public sealed class ResetFlowContextTool : IAgentTool
 
         PaymentTransactionStatus? previousPaymentStatus = null;
         Guid? abandonedPaymentId = null;
+        Guid? deletedOrderDraftId = null;
+
         if (checkoutAction.Equals("abandon", StringComparison.OrdinalIgnoreCase))
         {
             var activePayment = ctx.ActivePayment
@@ -88,6 +94,22 @@ public sealed class ResetFlowContextTool : IAgentTool
             }
         }
 
+        if (ctx.BusinessId != Guid.Empty && ctx.ConversationId != Guid.Empty)
+        {
+            var activeDrafts = await _unitOfWork.OrderDrafts.GetActiveDraftsByConversationAsync(
+                ctx.BusinessId,
+                ctx.ConversationId,
+                cancellationToken);
+
+            foreach (var activeDraft in activeDrafts)
+            {
+                deletedOrderDraftId ??= activeDraft.OrderDraftId;
+                await _unitOfWork.OrderDrafts.DeleteAsync(activeDraft, cancellationToken);
+            }
+            if (deletedOrderDraftId.HasValue)
+                await _unitOfWork.SaveChangesAsync(cancellationToken);
+        }
+
         var cleanup = await _requestContext.CompleteAsync(
             ctx.ConversationId,
             ctx.Config ?? new AgentConfig(),
@@ -103,7 +125,8 @@ public sealed class ResetFlowContextTool : IAgentTool
             cleared_facts = cleanup.ClearedFacts,
             preserved_facts = cleanup.PreservedFacts,
             abandoned_payment_transaction_id = abandonedPaymentId,
-            previous_payment_status = previousPaymentStatus?.ToString()
+            previous_payment_status = previousPaymentStatus?.ToString(),
+            deleted_order_draft_id = deletedOrderDraftId
         });
     }
 }

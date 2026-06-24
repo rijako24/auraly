@@ -22,15 +22,18 @@ public sealed class OrderRepository : IOrderRepository
             .Include(o => o.Items)
             .FirstOrDefaultAsync(o => o.BusinessId == businessId && o.PaymentTransactionId == paymentTransactionId, ct);
 
-    public Task<Order?> GetActiveDraftByConversationAsync(Guid businessId, Guid conversationId, CancellationToken ct = default) =>
-        _context.Orders
+    public async Task<Order?> GetActiveDraftByConversationAsync(Guid businessId, Guid conversationId, CancellationToken ct = default) =>
+        (await GetActiveDraftsByConversationAsync(businessId, conversationId, ct)).FirstOrDefault();
+
+    public async Task<IReadOnlyList<Order>> GetActiveDraftsByConversationAsync(Guid businessId, Guid conversationId, CancellationToken ct = default) =>
+        await _context.Orders
             .Include(o => o.Items)
             .Where(o => o.BusinessId == businessId && o.ConversationId == conversationId)
             .Where(o => o.Status == OrderStatus.Draft
                 || o.Status == OrderStatus.PendingConfirmation
                 || o.Status == OrderStatus.AwaitingPayment)
             .OrderByDescending(o => o.CreatedAt)
-            .FirstOrDefaultAsync(ct);
+            .ToListAsync(ct);
 
     public async Task<IReadOnlyList<Order>> GetByConversationAsync(Guid businessId, Guid conversationId, CancellationToken ct = default) =>
         await _context.Orders

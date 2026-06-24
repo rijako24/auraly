@@ -126,7 +126,7 @@ public class WhatsAppMessageProcessorService : IWhatsAppMessageProcessorService
 
         // 4. Actualizar lead y enviar al canal
         if (lead is not null)
-            await UpdateLeadStatusAsync(lead, result.ReservationCreated);
+            await UpdateLeadStatusAsync(lead, result.RequestCompleted);
 
         if (!string.IsNullOrWhiteSpace(result.Response))
             await SendResponseAsync(userNumber, result.Response, conversation);
@@ -187,9 +187,9 @@ public class WhatsAppMessageProcessorService : IWhatsAppMessageProcessorService
         return $"plan-{normalized}.jpg";
     }
 
-    private async Task UpdateLeadStatusAsync(Lead lead, bool reservationCreated)
+    private async Task UpdateLeadStatusAsync(Lead lead, bool requestCompleted)
     {
-        var newStatus = reservationCreated ? "Closed" : "Contacted";
+        var newStatus = requestCompleted ? "Closed" : "Contacted";
 
         if (newStatus != lead.Status)
         {

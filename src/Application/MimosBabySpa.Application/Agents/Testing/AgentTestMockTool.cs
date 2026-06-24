@@ -239,7 +239,7 @@ public sealed class AgentTestMockTool : IAgentTool
         };
 
         ctx.ManageableReservations = [reservation];
-        ctx.NotificationContexts[ReservationCreated] = new MessageSequenceContext { Reservation = reservation };
+        ctx.NotificationContexts["reservation_created"] = new MessageSequenceContext { Reservation = reservation };
 
         return ToolResultHelper.Ok(new
         {
@@ -251,7 +251,7 @@ public sealed class AgentTestMockTool : IAgentTool
             status = ReservationStatus.Confirmed.ToString(),
             is_booking_confirmed = true,
             test_mode = true
-        }, ReservationCreated);
+        }, ToolSideEffectNames.RequestCompleted);
     }
 
     private string ExecuteAssignPaidSlot(JsonElement arguments, AgentToolContext ctx)
@@ -280,7 +280,7 @@ public sealed class AgentTestMockTool : IAgentTool
         };
 
         ctx.ManageableReservations = [reservation];
-        ctx.NotificationContexts[ReservationCreated] = new MessageSequenceContext { Reservation = reservation };
+        ctx.NotificationContexts["reservation_created"] = new MessageSequenceContext { Reservation = reservation };
 
         return ToolResultHelper.Ok(new
         {
@@ -291,7 +291,7 @@ public sealed class AgentTestMockTool : IAgentTool
             status = ReservationStatus.Confirmed.ToString(),
             is_booking_confirmed = true,
             test_mode = true
-        }, ReservationCreated);
+        }, ToolSideEffectNames.RequestCompleted);
     }
 
     private string ExecuteEscalation(JsonElement arguments, AgentToolContext ctx)

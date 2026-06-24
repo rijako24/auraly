@@ -773,10 +773,10 @@ public sealed class AgentConversationService : IAgentConversationService
         AgentToolContext ctx,
         CancellationToken ct)
     {
-        if (outcome.IsError || outcome.SideEffects.Count == 0)
+        if (outcome.IsError || outcome.Events.Count == 0)
             return;
 
-        var notificationEvents = outcome.SideEffects
+        var notificationEvents = outcome.Events
             .Where(effect => !string.IsNullOrWhiteSpace(effect))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .Where(effect => config.Notifications.TryGetValue(effect, out var notification) && notification.Enabled)
@@ -825,18 +825,18 @@ public sealed class AgentConversationService : IAgentConversationService
             turn.FragmentEntries);
 
         UpdateStageSnapshots(config, session);
-        if (turn.ReservationCreated)
+        if (turn.RequestCompleted)
         {
             await _requestContext.CompleteAsync(
                 conversationId,
                 config,
                 session.ConversationState,
                 session.Facts,
-                "reservation_created",
+                ToolSideEffectNames.RequestCompleted,
                 ct);
         }
         await PersistCurrentStageNameAsync(config, session, ct);
-        await PersistTurnAsync(conversationId, userMessage, finalResponse, session.ConversationState, turn.ReservationCreated, ct);
+        await PersistTurnAsync(conversationId, userMessage, finalResponse, session.ConversationState, ct);
         await _usageBilling.ChargeAsync(new UsageChargeRequest(
             config.BusinessId,
             config.AgentId,
@@ -852,7 +852,7 @@ public sealed class AgentConversationService : IAgentConversationService
             {
                 final_response = !string.IsNullOrWhiteSpace(finalResponse),
                 escalated = turn.EscalatedToHuman,
-                reservation_created = turn.ReservationCreated
+                request_completed = turn.RequestCompleted
             })), ct);
 
         _logger.LogInformation(
@@ -885,7 +885,7 @@ public sealed class AgentConversationService : IAgentConversationService
         }
 
         const string escalateMsg = "Te estamos comunicando con un agente humano. En breve te atenderán.";
-        await PersistTurnAsync(session.ConversationId, userMessage, escalateMsg, session.ConversationState, reservationCreated: false, ct);
+        await PersistTurnAsync(session.ConversationId, userMessage, escalateMsg, session.ConversationState, ct);
 
         await _usageBilling.ChargeAsync(new UsageChargeRequest(
             config.BusinessId,
@@ -906,7 +906,6 @@ public sealed class AgentConversationService : IAgentConversationService
         string userMessage,
         string botResponse,
         ConversationState state,
-        bool reservationCreated,
         CancellationToken ct)
     {
         await _messageService.SaveMessageAsync(conversationId, "user", userMessage);

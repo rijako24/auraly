@@ -9,6 +9,7 @@ SET NOCOUNT ON;
 
 DECLARE @BusinessId UNIQUEIDENTIFIER = 'FCEE3BA9-E6BF-43E2-8C1A-560CB724688B';
 DECLARE @AgentId    UNIQUEIDENTIFIER = 'B0EE3BA9-E6BF-43E2-8C1A-560CB724688B';
+DECLARE @WinePricesAttachmentId UNIQUEIDENTIFIER = 'C2A32E8B-6DB7-4D54-9C1C-06FCB7451C23';
 DECLARE @MimosBusinessId UNIQUEIDENTIFIER = '22222222-2222-2222-2222-222222222222';
 
 IF NOT EXISTS (SELECT 1 FROM dbo.Businesses WHERE BusinessId = @BusinessId)
@@ -259,6 +260,25 @@ WHERE s.BusinessId = @BusinessId;
 DELETE FROM dbo.Services
 WHERE BusinessId = @BusinessId;
 
+IF NOT EXISTS (SELECT 1 FROM dbo.BusinessAttachments WHERE BusinessAttachmentId = @WinePricesAttachmentId)
+BEGIN
+    INSERT INTO dbo.BusinessAttachments
+        (BusinessAttachmentId, BusinessId, BlobPath, MediaType, Filename, Description, IsActive, CreatedAt)
+    VALUES
+        (@WinePricesAttachmentId, @BusinessId, N'Precios-vinos.jpeg', N'image', N'Precios-vinos.jpeg', N'Imagen de precios de vinos artesanales Solorzano', 1, GETUTCDATE());
+END
+ELSE
+BEGIN
+    UPDATE dbo.BusinessAttachments
+    SET BusinessId = @BusinessId,
+        BlobPath = N'Precios-vinos.jpeg',
+        MediaType = N'image',
+        Filename = N'Precios-vinos.jpeg',
+        Description = N'Imagen de precios de vinos artesanales Solorzano',
+        IsActive = 1
+    WHERE BusinessAttachmentId = @WinePricesAttachmentId;
+END
+
 DECLARE @SystemPrompt NVARCHAR(MAX) = N'';
 
 DECLARE @SettingsJson NVARCHAR(MAX) = N'{
@@ -271,9 +291,16 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
     "enabled": true,
     "provider": "Local"
   },
-  "persona": "Eres Camila, asesora comercial de Vinos Artesanales Solorzano por WhatsApp. Atiendes en espanol con tono humano, cercano y confiable, guiando la compra sin presion.\n\nResponde claro y breve. Para datos, opciones, resumen, envio o pago, usa listas cortas con campos claros.",
-  "policies": "## PRODUCTO\n\n- Usa search_products como fuente para presentaciones, tamanos, sabores, precios, promociones y disponibilidad.\n- Comunica que los vinos artesanales Solorzano no son elaborados a base de uva y tienen 12 grados de alcohol cuando sea relevante.\n\n## CONVERSACION\n\n- Sigue la etapa actual del flujo y realiza una sola accion conversacional por turno.\n- Usa la pregunta de cierre definida por la etapa activa.\n- Registra con set_fact los datos claros que el cliente entregue para avanzar el flujo.",
+  "persona": "Eres el asistente comercial de Vinos Artesanales Solorzano. Atiendes en espanol con tono humano, cercano y confiable, guiando la compra sin presion.\n\nResponde claro y breve. Para datos, opciones, resumen, envio o pago, usa listas cortas con campos claros.",
+  "policies": "## PRODUCTO\n\n- Comunica que los vinos artesanales Solorzano no son elaborados a base de uva y tienen 12 grados de alcohol cuando sea relevante.",
   "messageSequences": {
+    "wine_prices_image": {
+      "messages": [
+        {
+          "attachmentId": "C2A32E8B-6DB7-4D54-9C1C-06FCB7451C23"
+        }
+      ]
+    },
     "order_paid_customer": {
       "messages": [
         {
@@ -385,12 +412,23 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       {
         "id": "discovery",
         "name": "Descubrimiento y recomendacion",
-        "goal": "Entender si el vino es para regalo o para compartir, recomendar opciones disponibles y construir el carrito hasta que el cliente finalice la compra.",
-        "hint": "En saludos, presentate y pregunta si busca vino para regalar o compartir. Cuando el cliente exprese una ocasion real como regalo, compartir, celebracion o detalle, registra occasion. Para recomendaciones por ocasion, opciones, precios, promos, tamanos, presentaciones o sabores, llama search_products antes de responder; usa query vino, limit 3 cuando la ocasion sea general. Muestra productos activos devueltos por la herramienta. Si el cliente selecciona por numero, precio, tamano, sabor, nombre parcial o descripcion, resuelve contra el ultimo search_products; si hay una coincidencia razonable pero falta cantidad, pregunta cuantas unidades quiere. Agrega al carrito solo cuando producto y cantidad expresa esten claros. Despues de add_order_item exitoso, muestra el carrito y pregunta: Quieres agregar algo mas a la compra? Si responde con una negacion y existe al menos un item, llama set_fact order_finalized=true; si el carrito esta vacio, ayuda a elegir un producto primero.",
+        "goal": "Dar la bienvenida, presentar el catalogo inicial sin precios y construir el carrito hasta que el cliente finalice la compra.",
+        "hint": "En saludos o informacion inicial, primero llama search_products con query vino y limit 10. Responde dando la bienvenida a Vinos Artesanales Solorzano e indica: somos productores de vinos elaborados con fruta seleccionada de nuestra region. Luego presenta hasta 10 productos activos devueltos por search_products sin mencionar precios, y cierra exactamente con: Que vino te gustaria degustar el dia de hoy?. Para recomendaciones por ocasion, opciones, precios, promos, tamanos, presentaciones o sabores, llama search_products antes de responder; usa query vino, limit 5 cuando la ocasion sea general. Si el cliente selecciona por numero, precio, tamano, sabor, nombre parcial o descripcion, resuelve contra el ultimo search_products; si hay una coincidencia razonable pero falta cantidad, pregunta cuantas unidades quiere. Agrega al carrito solo cuando producto y cantidad expresa esten claros. Despues de add_order_item exitoso, muestra el carrito y pregunta: Quieres agregar algo mas a la compra? Si responde con una negacion y existe al menos un item, llama set_fact order_finalized=true; si el carrito esta vacio, ayuda a elegir un producto primero.",
         "allowedTools": [
           "search_products",
           "add_order_item",
           "set_fact"
+        ],
+        "afterTool": [
+          {
+            "tool": "search_products",
+            "when": {
+              "path": "ok",
+              "equals": "true"
+            },
+            "sendMessageSequence": "wine_prices_image",
+            "sendOncePerConversation": true
+          }
         ],
         "advanceWhenFacts": [
           "order_finalized"
@@ -399,8 +437,8 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       {
         "id": "order_data",
         "name": "Datos del pedido",
-        "goal": "Recoger ciudad, direccion de entrega, celular y nombre de quien recibe para coordinar envio.",
-        "hint": "Pide en una sola lista los datos del pedido que falten: Ciudad, Direccion de entrega, Celular de contacto y Nombre de quien recibe. Cuando el cliente responda, registra con set_fact todos los datos que entregue en ese turno. Si todavia falta algun dato requerido, pide solo los faltantes juntos.",
+        "goal": "Recoger direccion de entrega, celular y nombre de quien recibe para coordinar envio. La ciudad por defecto es Valledupar.",
+        "hint": "Pide en una sola lista solo los datos de usuario que falten: Direccion de entrega, Celular de contacto y Nombre de quien recibe. No pidas ciudad si ya existe por defecto; usa Valledupar como ciudad local salvo que el cliente indique otra. Cuando el cliente responda, registra con set_fact todos los datos que entregue en ese turno. Si todavia falta algun dato requerido, pide solo los faltantes juntos.",
         "allowedTools": [
           "set_fact"
         ],
@@ -586,7 +624,8 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "label": "ciudad de entrega",
       "type": "string",
       "required": true,
-      "source": "user",
+      "source": "system",
+      "defaultValue": "Valledupar",
       "scope": "request",
       "captureMode": "eager",
       "aliases": [
@@ -709,28 +748,32 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
     "reservation_created": {
       "enabled": false,
       "recipients": [
-        "+573004442469"
+        "+573004442469",
+        "+573012926660"
       ],
       "sendMessageSequence": null
     },
     "order_created": {
       "enabled": true,
       "recipients": [
-        "+573004442469"
+        "+573004442469",
+        "+573012926660"
       ],
       "sendMessageSequence": "order_created"
     },
     "delivery_requested": {
       "enabled": true,
       "recipients": [
-        "+573004442469"
+        "+573004442469",
+        "+573012926660"
       ],
       "sendMessageSequence": "delivery_requested"
     },
     "delivery_confirmed": {
       "enabled": true,
       "recipients": [
-        "+573004442469"
+        "+573004442469",
+        "+573012926660"
       ],
       "sendMessageSequence": "delivery_confirmed"
     }
@@ -781,7 +824,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
               "key": "domicilio_solorzano",
               "name": "Domicilio Solorzano",
               "role": "delivery",
-              "phone": "+573012926660",
+              "phone": "+573042052007",
               "priority": 1,
               "inboundAgentId": "D0EE3BA9-E6BF-43E2-8C1A-560CB724688B",
               "pickupAddress": "Calle 16 # 9-35, Centro, Valledupar"
@@ -854,6 +897,3 @@ WHERE AgentId = @AgentId;
 
 PRINT N'SeedSolorzanoAgentConfiguration: Camila reconfigurada para negocio ' + CAST(@BusinessId AS NVARCHAR(36));
 GO
-
-
-

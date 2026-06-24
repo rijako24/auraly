@@ -373,7 +373,12 @@ public sealed class AgentPromptComposer : IPromptComposer
 
         if (session is not null && currentStage.AdvanceWhenFacts.Count > 0)
         {
+            var userFactKeys = config.FactSchema
+                .Where(f => f.Source.Equals("user", StringComparison.OrdinalIgnoreCase))
+                .Select(f => f.Key)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
             var missingFacts = currentStage.AdvanceWhenFacts
+                .Where(userFactKeys.Contains)
                 .Where(f => !session.Facts.TryGetValue(f, out var v) || string.IsNullOrWhiteSpace(v))
                 .ToList();
 

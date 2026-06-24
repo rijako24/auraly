@@ -8,6 +8,7 @@ using MimosBabySpa.Application.Agents.Tools.Impl;
 using MimosBabySpa.Application.Services;
 using MimosBabySpa.Domain.Entities;
 using MimosBabySpa.Domain.Enums;
+using MimosBabySpa.Domain.Repositories;
 using ConversationStateModel = MimosBabySpa.Domain.Models.ConversationState;
 using Xunit;
 
@@ -19,11 +20,18 @@ public sealed class ResetFlowContextToolTests
     public async Task ExecuteAsync_ClearsNonPersistentFactsAndAbandonsActiveCheckout()
     {
         var conversationId = Guid.NewGuid();
+        var businessId = Guid.NewGuid();
         var payment = new PaymentTransaction
         {
             PaymentTransactionId = Guid.NewGuid(),
             ConversationId = conversationId,
             Status = PaymentTransactionStatus.Created
+        };
+        var draft = new OrderDraft
+        {
+            OrderDraftId = Guid.NewGuid(),
+            BusinessId = businessId,
+            ConversationId = conversationId
         };
 
         var requestContext = new Mock<IRequestContextService>();
@@ -54,9 +62,19 @@ public sealed class ResetFlowContextToolTests
             .Callback(() => payment.Status = PaymentTransactionStatus.Abandoned)
             .Returns(Task.CompletedTask);
 
-        var tool = new ResetFlowContextTool(requestContext.Object, payments.Object);
+        var unitOfWork = new Mock<IUnitOfWork>();
+        var orderDrafts = new Mock<IOrderDraftRepository>();
+        unitOfWork.SetupGet(u => u.OrderDrafts).Returns(orderDrafts.Object);
+        unitOfWork.Setup(u => u.SaveChangesAsync(It.IsAny<CancellationToken>())).ReturnsAsync(1);
+        orderDrafts.Setup(o => o.GetActiveDraftsByConversationAsync(businessId, conversationId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([draft]);
+        orderDrafts.Setup(o => o.DeleteAsync(draft, It.IsAny<CancellationToken>()))
+            .Returns(Task.FromResult(draft));
+
+        var tool = new ResetFlowContextTool(requestContext.Object, payments.Object, unitOfWork.Object);
         var ctx = new AgentToolContext
         {
+            BusinessId = businessId,
             ConversationId = conversationId,
             ActivePayment = payment,
             Config = new AgentConfig
@@ -91,5 +109,6 @@ public sealed class ResetFlowContextToolTests
         ctx.Facts.Should().NotContainKey("desired_date");
         ctx.ConversationState.Verifications.Should().BeEmpty();
         ctx.ConversationState.StageFactSnapshots.Should().BeEmpty();
+        orderDrafts.Verify(o => o.DeleteAsync(draft, It.IsAny<CancellationToken>()), Times.Once);
     }
 }

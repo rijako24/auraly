@@ -65,7 +65,9 @@ public sealed class CreateOrderTool : IAgentTool
         if (isConfirmed)
             await NotifyOrderCreatedAsync(ctx, order.OrderId, cancellationToken);
 
-        return ToolResultHelper.Ok(new { order, is_order_confirmed = isConfirmed });
+        return isConfirmed
+            ? ToolResultHelper.Ok(new { order, is_order_confirmed = true }, ToolSideEffectNames.RequestCompleted)
+            : ToolResultHelper.Ok(new { order, is_order_confirmed = false });
     }
 
     private async Task NotifyOrderCreatedAsync(AgentToolContext ctx, Guid orderId, CancellationToken ct)

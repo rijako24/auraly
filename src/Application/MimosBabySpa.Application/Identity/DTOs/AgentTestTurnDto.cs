@@ -24,7 +24,7 @@ public sealed class AgentTestTurnResponse
     public string Response { get; set; } = string.Empty;
     public string? ErrorMessage { get; set; }
     public bool EscalatedToHuman { get; set; }
-    public bool ReservationCreated { get; set; }
+    public bool RequestCompleted { get; set; }
     public int TotalTokens { get; set; }
     public int ToolCallCount { get; set; }
     public IReadOnlyDictionary<string, string> Facts { get; set; } =

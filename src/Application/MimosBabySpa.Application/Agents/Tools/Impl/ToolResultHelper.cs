@@ -22,6 +22,19 @@ internal static class ToolResultHelper
         return JsonSerializer.Serialize(new { ok = true, data, effects }, Options);
     }
 
+    public static string OkWithEvents(object data, string[] effects, string[] events)
+    {
+        var hasEffects = effects.Length > 0;
+        var hasEvents = events.Length > 0;
+        return (hasEffects, hasEvents) switch
+        {
+            (false, false) => JsonSerializer.Serialize(new { ok = true, data }, Options),
+            (true, false) => JsonSerializer.Serialize(new { ok = true, data, effects }, Options),
+            (false, true) => JsonSerializer.Serialize(new { ok = true, data, events }, Options),
+            _ => JsonSerializer.Serialize(new { ok = true, data, effects, events }, Options)
+        };
+    }
+
     public static string OkWithLlm(object data, object? llm, params string[] effects)
     {
         if (effects is null || effects.Length == 0)
@@ -42,7 +55,7 @@ internal static class ToolResultHelper
     public static bool TryGetString(JsonElement args, string property, out string value)
     {
         value = string.Empty;
-        if (!args.TryGetProperty(property, out var el)) return false;
+        if (!args.TryGetProperty(property, out var el) || el.ValueKind != JsonValueKind.String) return false;
         value = el.GetString() ?? string.Empty;
         return !string.IsNullOrWhiteSpace(value);
     }

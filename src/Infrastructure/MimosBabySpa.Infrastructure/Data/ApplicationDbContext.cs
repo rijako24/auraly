@@ -43,6 +43,8 @@ public class ApplicationDbContext : DbContext
     public DbSet<PromotionCondition> PromotionConditions { get; set; }
     public DbSet<PromotionBenefit> PromotionBenefits { get; set; }
     public DbSet<PromotionApplication> PromotionApplications { get; set; }
+    public DbSet<OrderDraft> OrderDrafts { get; set; }
+    public DbSet<OrderDraftItem> OrderDraftItems { get; set; }
     public DbSet<Order> Orders { get; set; }
     public DbSet<OrderItem> OrderItems { get; set; }
     public DbSet<OrderConnectionEvent> OrderConnectionEvents { get; set; }
@@ -221,7 +223,6 @@ public class ApplicationDbContext : DbContext
         modelBuilder.Entity<Reservation>(entity =>
         {
             entity.HasKey(e => e.ReservationId);
-            entity.Property(e => e.Status).HasConversion<int>();
             entity.Property(e => e.CustomerNameSnapshot).HasMaxLength(100);
             entity.Property(e => e.CustomerEmailSnapshot).HasMaxLength(200);
             entity.Property(e => e.CustomerPhoneSnapshot).HasMaxLength(50);
@@ -327,7 +328,6 @@ public class ApplicationDbContext : DbContext
         {
             entity.HasKey(e => e.ScheduledAutomationJobId);
             entity.Property(e => e.JobType).HasConversion<int>();
-            entity.Property(e => e.Status).HasConversion<int>();
             entity.Property(e => e.DeduplicationKey).IsRequired().HasMaxLength(300);
             entity.Property(e => e.PayloadJson).IsRequired().HasColumnType("NVARCHAR(MAX)");
             entity.Property(e => e.WhatsAppMessageId).HasMaxLength(200);
@@ -592,6 +592,87 @@ public class ApplicationDbContext : DbContext
                 .HasFilter("[IdempotencyKey] IS NOT NULL");
         });
 
+        modelBuilder.Entity<OrderDraft>(entity =>
+        {
+            entity.HasKey(e => e.OrderDraftId);
+            entity.Property(e => e.Source).HasConversion<int>();
+            entity.Property(e => e.FulfillmentMode).HasConversion<int>();
+            entity.Property(e => e.CustomerNameSnapshot).HasMaxLength(150);
+            entity.Property(e => e.CustomerEmailSnapshot).HasMaxLength(200);
+            entity.Property(e => e.CustomerPhoneSnapshot).HasMaxLength(50);
+            entity.Property(e => e.CustomerDocumentSnapshot).HasMaxLength(80);
+            entity.Property(e => e.DeliveryAddressSnapshot).HasMaxLength(500);
+            entity.Property(e => e.Currency).IsRequired().HasMaxLength(10);
+            entity.Property(e => e.Subtotal).HasPrecision(18, 2);
+            entity.Property(e => e.DiscountTotal).HasPrecision(18, 2);
+            entity.Property(e => e.TaxTotal).HasPrecision(18, 2);
+            entity.Property(e => e.Total).HasPrecision(18, 2);
+            entity.Property(e => e.CustomAttributesJson).HasColumnType("NVARCHAR(MAX)");
+            entity.HasOne(e => e.Business)
+                .WithMany()
+                .HasForeignKey(e => e.BusinessId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.Agent)
+                .WithMany()
+                .HasForeignKey(e => e.AgentId)
+                .OnDelete(DeleteBehavior.SetNull)
+                .IsRequired(false);
+            entity.HasOne(e => e.Conversation)
+                .WithMany()
+                .HasForeignKey(e => e.ConversationId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(e => e.IntegrationConnection)
+                .WithMany()
+                .HasForeignKey(e => e.IntegrationConnectionId)
+                .OnDelete(DeleteBehavior.Restrict)
+                .IsRequired(false);
+            entity.HasOne(e => e.PaymentTransaction)
+                .WithMany()
+                .HasForeignKey(e => e.PaymentTransactionId)
+                .OnDelete(DeleteBehavior.Restrict)
+                .IsRequired(false);
+            entity.HasIndex(e => e.BusinessId);
+            entity.HasIndex(e => new { e.BusinessId, e.ConversationId }).IsUnique();
+            entity.HasIndex(e => e.PaymentTransactionId)
+                .IsUnique()
+                .HasFilter("[PaymentTransactionId] IS NOT NULL");
+        });
+
+        modelBuilder.Entity<OrderDraftItem>(entity =>
+        {
+            entity.HasKey(e => e.OrderDraftItemId);
+            entity.Property(e => e.ExternalProductId).HasMaxLength(300);
+            entity.Property(e => e.Sku).HasMaxLength(100);
+            entity.Property(e => e.ProductNameSnapshot).IsRequired().HasMaxLength(250);
+            entity.Property(e => e.Quantity).HasPrecision(18, 2);
+            entity.Property(e => e.UnitPrice).HasPrecision(18, 2);
+            entity.Property(e => e.DiscountAmount).HasPrecision(18, 2);
+            entity.Property(e => e.TaxAmount).HasPrecision(18, 2);
+            entity.Property(e => e.LineTotal).HasPrecision(18, 2);
+            entity.Property(e => e.RawPayloadJson).HasColumnType("NVARCHAR(MAX)");
+            entity.HasOne(e => e.OrderDraft)
+                .WithMany(d => d.Items)
+                .HasForeignKey(e => e.OrderDraftId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(e => e.Business)
+                .WithMany()
+                .HasForeignKey(e => e.BusinessId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.Product)
+                .WithMany()
+                .HasForeignKey(e => e.ProductId)
+                .OnDelete(DeleteBehavior.Restrict)
+                .IsRequired(false);
+            entity.HasOne(e => e.IntegrationConnection)
+                .WithMany()
+                .HasForeignKey(e => e.IntegrationConnectionId)
+                .OnDelete(DeleteBehavior.Restrict)
+                .IsRequired(false);
+            entity.HasIndex(e => e.OrderDraftId);
+            entity.HasIndex(e => e.BusinessId);
+            entity.HasIndex(e => e.ProductId);
+            entity.HasIndex(e => new { e.BusinessId, e.ExternalProductId });
+        });
         modelBuilder.Entity<OrderItem>(entity =>
         {
             entity.HasKey(e => e.OrderItemId);
@@ -632,7 +713,6 @@ public class ApplicationDbContext : DbContext
         {
             entity.HasKey(e => e.OrderConnectionEventId);
             entity.Property(e => e.ConnectionType).HasConversion<int>().HasDefaultValue(ConnectionType.Commerce);
-            entity.Property(e => e.Status).HasConversion<int>();
             entity.Property(e => e.ExternalEventId).HasMaxLength(500);
             entity.Property(e => e.LastError).HasMaxLength(4000);
             entity.Property(e => e.RequestJson).HasColumnType("NVARCHAR(MAX)");
@@ -658,7 +738,6 @@ public class ApplicationDbContext : DbContext
             entity.HasKey(e => e.ReservationIntegrationEventId);
             entity.Property(e => e.Provider).HasConversion<int>();
             entity.Property(e => e.Capability).HasConversion<int>();
-            entity.Property(e => e.Status).HasConversion<int>();
             entity.Property(e => e.ExternalEventId).HasMaxLength(500);
             entity.Property(e => e.LastError).HasMaxLength(4000);
             entity.HasOne(e => e.Business)
@@ -689,7 +768,6 @@ public class ApplicationDbContext : DbContext
             entity.Property(e => e.AttemptCode).IsRequired().HasMaxLength(50);
             entity.Property(e => e.CustomPayloadJson).HasColumnType("NVARCHAR(MAX)");
             entity.Property(e => e.WhatsAppMessageId).HasMaxLength(128);
-            entity.Property(e => e.Status).HasConversion<int>();
             entity.HasOne(e => e.Business)
                 .WithMany()
                 .HasForeignKey(e => e.BusinessId)
@@ -905,7 +983,6 @@ public class ApplicationDbContext : DbContext
             entity.Property(e => e.PaymentReferenceId).IsRequired().HasMaxLength(200);
             entity.Property(e => e.ProviderTransactionId).HasMaxLength(200);
             entity.Property(e => e.Currency).IsRequired().HasMaxLength(10);
-            entity.Property(e => e.Status).HasConversion<int>();
             entity.Property(e => e.Source).HasConversion<int>();
             entity.Property(e => e.Source).HasConversion<int>().HasDefaultValue(Domain.Enums.PaymentTransactionSource.Automated);
             entity.Property(e => e.WebhookPayloadJson).HasColumnType("NVARCHAR(MAX)");
@@ -977,7 +1054,6 @@ public class ApplicationDbContext : DbContext
             entity.Property(e => e.CustomerPhone).IsRequired().HasMaxLength(50);
             entity.Property(e => e.CustomerEmail).HasMaxLength(200);
             entity.Property(e => e.FixedScheduleLabel).HasMaxLength(500);
-            entity.Property(e => e.Status).HasConversion<int>();
             entity.Property(e => e.CustomAttributesJson).HasColumnType("NVARCHAR(MAX)");
             entity.Property(e => e.CreatedAt).IsRequired();
             entity.HasOne(e => e.Business)
@@ -1157,7 +1233,6 @@ public class ApplicationDbContext : DbContext
         modelBuilder.Entity<BusinessSubscription>(entity =>
         {
             entity.HasKey(e => e.BusinessSubscriptionId);
-            entity.Property(e => e.Status).HasConversion<int>();
             entity.Property(e => e.PlanCodeSnapshot).IsRequired().HasMaxLength(50);
             entity.Property(e => e.PlanNameSnapshot).IsRequired().HasMaxLength(100);
             entity.Property(e => e.MonthlyPriceCop).HasPrecision(18, 2);
@@ -1179,7 +1254,6 @@ public class ApplicationDbContext : DbContext
         modelBuilder.Entity<BusinessUsagePeriod>(entity =>
         {
             entity.HasKey(e => e.BusinessUsagePeriodId);
-            entity.Property(e => e.Status).HasConversion<int>();
             entity.Property(e => e.VariableCostLimitCop).HasPrecision(18, 2);
             entity.Property(e => e.VariableCostExtraCop).HasPrecision(18, 2);
             entity.Property(e => e.VariableCostUsedCop).HasPrecision(18, 2);

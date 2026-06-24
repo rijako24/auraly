@@ -40,6 +40,8 @@ public class InMemoryUnitOfWork : IUnitOfWork
     public IReservationAddOnRepository ReservationAddOns { get; }
     public IProductRepository Products { get; }
     public IPromotionRepository Promotions { get; }
+    public IOrderDraftRepository OrderDrafts { get; }
+    public IOrderDraftItemRepository OrderDraftItems { get; }
     public IOrderRepository Orders { get; }
     public IOrderItemRepository OrderItems { get; }
     public IOrderConnectionEventRepository OrderConnectionEvents { get; }
@@ -95,6 +97,8 @@ public class InMemoryUnitOfWork : IUnitOfWork
         ReservationAddOns    = new InMemoryReservationAddOnRepository();
         Products             = new InMemoryProductRepository();
         Promotions           = new InMemoryPromotionRepository();
+        OrderDrafts          = new InMemoryOrderDraftRepository();
+        OrderDraftItems      = new InMemoryOrderDraftItemRepository();
         Orders               = new InMemoryOrderRepository();
         OrderItems           = new InMemoryOrderItemRepository();
         OrderConnectionEvents = new InMemoryOrderConnectionEventRepository();
@@ -513,10 +517,19 @@ internal sealed class InMemoryOrderRepository : IOrderRepository
         Task.FromResult(_orders.FirstOrDefault(o => o.BusinessId == businessId && o.PaymentTransactionId == paymentTransactionId));
 
     public Task<Order?> GetActiveDraftByConversationAsync(Guid businessId, Guid conversationId, CancellationToken ct = default) =>
-        Task.FromResult(_orders.FirstOrDefault(o =>
-            o.BusinessId == businessId &&
-            o.ConversationId == conversationId &&
-            (o.Status == OrderStatus.Draft || o.Status == OrderStatus.PendingConfirmation || o.Status == OrderStatus.AwaitingPayment)));
+        Task.FromResult(GetActiveDrafts(businessId, conversationId).FirstOrDefault());
+
+    public Task<IReadOnlyList<Order>> GetActiveDraftsByConversationAsync(Guid businessId, Guid conversationId, CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<Order>>(GetActiveDrafts(businessId, conversationId));
+
+    private List<Order> GetActiveDrafts(Guid businessId, Guid conversationId) =>
+        _orders
+            .Where(o =>
+                o.BusinessId == businessId &&
+                o.ConversationId == conversationId &&
+                (o.Status == OrderStatus.Draft || o.Status == OrderStatus.PendingConfirmation || o.Status == OrderStatus.AwaitingPayment))
+            .OrderByDescending(o => o.CreatedAt)
+            .ToList();
 
     public Task<IReadOnlyList<Order>> GetByConversationAsync(Guid businessId, Guid conversationId, CancellationToken ct = default) =>
         Task.FromResult<IReadOnlyList<Order>>(
@@ -598,6 +611,67 @@ internal sealed class InMemoryOrderItemRepository : IOrderItemRepository
     }
 }
 
+internal sealed class InMemoryOrderDraftRepository : IOrderDraftRepository
+{
+    private readonly List<OrderDraft> _drafts = [];
+
+    public Task<OrderDraft?> GetActiveByConversationAsync(Guid businessId, Guid conversationId, CancellationToken ct = default) =>
+        Task.FromResult(_drafts
+            .Where(d => d.BusinessId == businessId && d.ConversationId == conversationId)
+            .OrderByDescending(d => d.CreatedAt)
+            .FirstOrDefault());
+
+    public Task<OrderDraft?> GetByPaymentTransactionIdAsync(Guid businessId, Guid paymentTransactionId, CancellationToken ct = default) =>
+        Task.FromResult(_drafts.FirstOrDefault(d => d.BusinessId == businessId && d.PaymentTransactionId == paymentTransactionId));
+
+    public Task<IReadOnlyList<OrderDraft>> GetActiveDraftsByConversationAsync(Guid businessId, Guid conversationId, CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<OrderDraft>>(_drafts
+            .Where(d => d.BusinessId == businessId && d.ConversationId == conversationId)
+            .OrderByDescending(d => d.CreatedAt)
+            .ToList());
+
+    public Task<OrderDraft> CreateAsync(OrderDraft draft, CancellationToken ct = default)
+    {
+        _drafts.Add(draft);
+        return Task.FromResult(draft);
+    }
+
+    public Task<OrderDraft> UpdateAsync(OrderDraft draft, CancellationToken ct = default) =>
+        Task.FromResult(draft);
+
+    public Task DeleteAsync(OrderDraft draft, CancellationToken ct = default)
+    {
+        _drafts.Remove(draft);
+        return Task.CompletedTask;
+    }
+}
+
+internal sealed class InMemoryOrderDraftItemRepository : IOrderDraftItemRepository
+{
+    private readonly List<OrderDraftItem> _items = [];
+
+    public Task<IReadOnlyList<OrderDraftItem>> GetByDraftIdAsync(Guid businessId, Guid orderDraftId, CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<OrderDraftItem>>(
+            _items.Where(i => i.BusinessId == businessId && i.OrderDraftId == orderDraftId).ToList());
+
+    public Task<OrderDraftItem?> GetByIdAsync(Guid businessId, Guid orderDraftItemId, CancellationToken ct = default) =>
+        Task.FromResult(_items.FirstOrDefault(i => i.BusinessId == businessId && i.OrderDraftItemId == orderDraftItemId));
+
+    public Task<OrderDraftItem> CreateAsync(OrderDraftItem item, CancellationToken ct = default)
+    {
+        _items.Add(item);
+        return Task.FromResult(item);
+    }
+
+    public Task<OrderDraftItem> UpdateAsync(OrderDraftItem item, CancellationToken ct = default) =>
+        Task.FromResult(item);
+
+    public Task DeleteAsync(OrderDraftItem item, CancellationToken ct = default)
+    {
+        _items.Remove(item);
+        return Task.CompletedTask;
+    }
+}
 internal sealed class InMemoryOrderConnectionEventRepository : IOrderConnectionEventRepository
 {
     private readonly List<OrderConnectionEvent> _events = [];
@@ -614,6 +688,3 @@ internal sealed class InMemoryOrderConnectionEventRepository : IOrderConnectionE
     public Task<OrderConnectionEvent> UpdateAsync(OrderConnectionEvent entity, CancellationToken ct = default) =>
         Task.FromResult(entity);
 }
-
-
-
