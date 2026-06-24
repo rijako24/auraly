@@ -13,6 +13,7 @@ export const catalogApi = {
     const res = await fetch(`/api/businesses/${businessId}/catalog/extract`, {
       method: "POST",
       credentials: "include",
+      headers: { "X-Business-Id": businessId },
       body: formData,
     });
 

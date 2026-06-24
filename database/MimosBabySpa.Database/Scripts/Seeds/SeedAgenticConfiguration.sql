@@ -198,15 +198,26 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
     "currency": "COP",
     "modes": {
       "reservation": {
-        "payment": { "type": "deposit", "percentage": 50 },
-        "templateWithPayment": "checkout_with_deposit",
-        "templateNoPayment": "checkout_no_deposit",
-        "confirmationOutcome": "reservation_created"
+        "paymentMethods": {
+          "transferencia": {
+            "label": "transferencia con link de pago",
+            "aliases": ["transferencia", "link de pago"],
+            "payment": { "percentage": 50 },
+            "template": "checkout_with_deposit",
+            "confirmationOutcome": "reservation_created"
+          }
+        }
       },
       "enrollment": {
-        "payment": { "type": "full", "percentage": 100 },
-        "templateWithPayment": "checkout_enrollment_with_payment",
-        "confirmationOutcome": "enrollment_paid"
+        "paymentMethods": {
+          "transferencia": {
+            "label": "transferencia con link de pago",
+            "aliases": ["transferencia", "link de pago"],
+            "payment": { "percentage": 100 },
+            "template": "checkout_enrollment_with_payment",
+            "confirmationOutcome": "enrollment_paid"
+          }
+        }
       }
     }
   },

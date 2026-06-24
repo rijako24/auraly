@@ -321,8 +321,10 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
           "type": "whatsapp_template",
           "templateName": "delivery_request",
           "language": "es_CO",
+          "headerParameters": [
+            "{business_name}"
+          ],
           "bodyParameters": [
-            "{business_name}",
             "{attempt_code}",
             "{order_number}",
             "{pickup_contact_name}",
@@ -866,30 +868,27 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
     "currency": "COP",
     "modes": {
       "order": {
-        "payment": {
-          "type": "full",
-          "percentage": 100
-        },
         "paymentMethods": {
           "efectivo": {
             "label": "efectivo al recibir",
-            "paymentRequired": false,
             "aliases": [
               "efectivo"
-            ]
+            ],
+            "template": "order_checkout_no_payment"
           },
           "transferencia": {
             "label": "transferencia con link de pago",
-            "paymentRequired": true,
             "aliases": [
               "transferencia",
               "link de pago"
-            ]
+            ],
+            "payment": {
+              "percentage": 100
+            },
+            "template": "order_checkout_with_payment",
+            "confirmationOutcome": "order_paid"
           }
         },
-        "templateWithPayment": "order_checkout_with_payment",
-        "templateNoPayment": "order_checkout_no_payment",
-        "confirmationOutcome": "order_paid",
         "shipping": {
           "enabled": true,
           "localCity": "Valledupar",

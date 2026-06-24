@@ -17,6 +17,7 @@ public sealed record OutboundButton(string Id, string Title);
 public sealed record WhatsAppTemplateMessage(
     string Name,
     string LanguageCode,
+    IReadOnlyList<string> HeaderParameters,
     IReadOnlyList<string> BodyParameters);
 
 /// <summary>

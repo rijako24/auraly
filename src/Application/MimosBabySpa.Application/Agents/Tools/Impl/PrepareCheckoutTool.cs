@@ -54,7 +54,8 @@ public sealed class PrepareCheckoutTool : IAgentTool
           "type": "object",
           "properties": {
             "service": { "type": "string", "description": "Exact service name from the catalog. Optional when booking.service fact is already set." },
-            "add_ons": { "type": "string", "description": "Comma-separated add-on names, optional." }
+            "add_ons": { "type": "string", "description": "Comma-separated add-on names, optional." },
+            "payment_method": { "type": "string", "description": "Configured payment method key or alias. Optional when the checkout mode has a single method." }
           }
         }
         """;
@@ -218,24 +219,13 @@ public sealed class PrepareCheckoutTool : IAgentTool
 
         var totalCents = (long)(pricing.Total * 100);
         var currency = string.IsNullOrWhiteSpace(checkout.Currency) ? "COP" : checkout.Currency.Trim().ToUpperInvariant();
+        var paymentMethodInput = Get(arguments, "payment_method") ?? GetFact(ctx, "payment_method");
+        var paymentSelection = CheckoutPaymentSelectionResolver.Resolve(checkoutMode, checkoutKindText, totalCents, paymentMethodInput);
+        if (paymentSelection.MissingPaymentMethod)
+            return (null, ToolResultHelper.MissingPrerequisites(["payment_method"]));
 
-        var payableCents = ResolvePayableCents(totalCents, checkoutMode.Payment);
-        var templateId = payableCents > 0 ? checkoutMode.TemplateWithPayment : checkoutMode.TemplateNoPayment;
-        if (string.IsNullOrWhiteSpace(templateId))
-        {
-            return (null, ToolResultHelper.Error(
-                "checkout_template_missing",
-                $"Checkout mode '{checkoutKindText}' has no template configured for this payment case.",
-                "Set templateWithPayment or templateNoPayment in SettingsJson.checkout.modes."));
-        }
-
-        if (payableCents > 0 && string.IsNullOrWhiteSpace(checkoutMode.ConfirmationOutcome))
-        {
-            return (null, ToolResultHelper.Error(
-                "checkout_outcome_missing",
-                $"Checkout mode '{checkoutKindText}' requires confirmationOutcome for paid checkouts.",
-                "Set confirmationOutcome in SettingsJson.checkout.modes."));
-        }
+        if (paymentSelection.Error is not null)
+            return (null, ToolError(paymentSelection.Error));
 
         var bindings = CheckoutModeBindingDefaults.Resolve(checkoutKind, checkoutMode);
         var quote = new CheckoutQuote(
@@ -248,11 +238,13 @@ public sealed class PrepareCheckoutTool : IAgentTool
             service.DurationMinutes > 0 ? service.DurationMinutes : 60,
             pricing.LineItems.Select(li => new CheckoutQuoteLineItem(li.Name, li.Price, li.IncludeInCheckoutTotal)).ToList(),
             totalCents,
-            payableCents,
+            paymentSelection.PayableCents,
             currency,
-            checkoutMode.Payment.Type,
-            templateId,
-            checkoutMode.ConfirmationOutcome ?? string.Empty,
+            paymentSelection.MethodKey,
+            paymentSelection.MethodLabel,
+            paymentSelection.PaymentPercentage,
+            paymentSelection.TemplateId,
+            paymentSelection.ConfirmationOutcome,
             new Dictionary<string, string>(bindings.RequiredFactRoles, StringComparer.OrdinalIgnoreCase),
             new Dictionary<string, string>(bindings.SystemFactBindings, StringComparer.OrdinalIgnoreCase),
             new Dictionary<string, string>(bindings.TemplateFactBindings, StringComparer.OrdinalIgnoreCase),
@@ -275,25 +267,6 @@ public sealed class PrepareCheckoutTool : IAgentTool
             ? CheckoutKind.Enrollment
             : CheckoutKind.Reservation;
 
-    private static long ResolvePayableCents(
-        long totalCents,
-        CheckoutPaymentDefinition payment)
-    {
-        if (payment.Type.Equals("none", StringComparison.OrdinalIgnoreCase))
-            return 0;
-
-        if (payment.Type.Equals("full", StringComparison.OrdinalIgnoreCase))
-            return totalCents;
-
-        if (payment.Type.Equals("percentage", StringComparison.OrdinalIgnoreCase))
-            return totalCents * Math.Clamp(payment.Percentage ?? 0, 0, 100) / 100;
-
-        if (payment.Type.Equals("deposit", StringComparison.OrdinalIgnoreCase))
-            return totalCents * Math.Clamp(payment.Percentage ?? 0, 0, 100) / 100;
-
-        return 0;
-    }
-
     private static Dictionary<string, object?> BuildTemplateData(
         CheckoutQuote quote,
         FactRoleIndex roles,
@@ -309,7 +282,9 @@ public sealed class PrepareCheckoutTool : IAgentTool
             ["payable"] = (quote.PayableCents / 100m).ToString("N0", CultureInfo.InvariantCulture),
             ["payable_cents"] = quote.PayableCents,
             ["currency"] = quote.Currency,
-            ["payment_type"] = quote.PaymentType,
+            ["payment_method"] = quote.PaymentMethodKey,
+            ["payment_method_label"] = quote.PaymentMethodLabel,
+            ["payment_percentage"] = quote.PaymentPercentage,
             ["line_items"] = quote.LineItems.Select(li => (object)new Dictionary<string, object?>
             {
                 ["name"] = li.Name,
@@ -399,6 +374,15 @@ public sealed class PrepareCheckoutTool : IAgentTool
             : null;
     }
 
+    private static string? Get(JsonElement args, string property) =>
+        ToolResultHelper.TryGetString(args, property, out var value) ? value : null;
+
+    private static string? GetFact(AgentToolContext ctx, string key) =>
+        ctx.Facts.TryGetValue(key, out var value) ? value : null;
+
+    private static string ToolError(CheckoutPaymentSelectionError error) =>
+        ToolResultHelper.Error(error.Code, error.Message, error.Hint, error.Recoverable);
+
     private static string? ResolveBinding(
         FactRoleIndex roles,
         IReadOnlyDictionary<string, string> facts,
@@ -431,6 +415,9 @@ public sealed class PrepareCheckoutTool : IAgentTool
             fixed_schedule = system.GetValueOrDefault(CheckoutSystemSlots.FixedSchedule),
             reservation_date = system.GetValueOrDefault(CheckoutSystemSlots.ReservationDate),
             reservation_time = system.GetValueOrDefault(CheckoutSystemSlots.ReservationTime),
+            payment_method = quote.PaymentMethodKey,
+            payment_method_label = quote.PaymentMethodLabel,
+            payment_percentage = quote.PaymentPercentage,
             facts = ctx.Facts
         };
 

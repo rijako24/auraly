@@ -103,14 +103,19 @@ public sealed class MessageSequenceResolver : IMessageSequenceResolver
         if (string.IsNullOrWhiteSpace(step.TemplateName))
             return null;
 
-        var parameters = step.BodyParameters
+        var headerParameters = step.HeaderParameters
+            .Select(p => ResolvePlaceholders(p, reservation, payment, custom, services, addOnRules) ?? string.Empty)
+            .ToList();
+
+        var bodyParameters = step.BodyParameters
             .Select(p => ResolvePlaceholders(p, reservation, payment, custom, services, addOnRules) ?? string.Empty)
             .ToList();
 
         return new WhatsAppTemplateMessage(
             step.TemplateName.Trim(),
             string.IsNullOrWhiteSpace(step.Language) ? "es_CO" : step.Language.Trim(),
-            parameters);
+            headerParameters,
+            bodyParameters);
     }
 
     private static IReadOnlyList<OutboundButton> ResolveButtons(

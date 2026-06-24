@@ -49,10 +49,12 @@ async function proxy(
   const url = `${BACKEND_URL}/${path}${searchParams ? `?${searchParams}` : ""}`;
 
   const accessToken = request.cookies.get(AUTH_COOKIE_NAMES.accessToken)?.value;
+  const businessId = request.headers.get("X-Business-Id");
 
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     ...(accessToken && { Authorization: `Bearer ${accessToken}` }),
+    ...(businessId && { "X-Business-Id": businessId }),
   };
 
   let body: string | undefined;

@@ -1,6 +1,7 @@
 import type { ApiError } from "@/types/api";
 
 const API_BASE = "/api";
+const SELECTED_BUSINESS_STORAGE_KEY = "selected_business_id";
 
 let isRefreshing = false;
 let refreshSubscribers: Array<() => void> = [];
@@ -12,6 +13,24 @@ function onTokenRefreshed() {
 
 function addRefreshSubscriber(cb: () => void) {
   refreshSubscribers.push(cb);
+}
+
+function getSelectedBusinessId(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return localStorage.getItem(SELECTED_BUSINESS_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function buildJsonHeaders(): HeadersInit {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  const businessId = getSelectedBusinessId();
+  if (businessId) headers["X-Business-Id"] = businessId;
+  return headers;
 }
 
 class ApiClient {
@@ -60,7 +79,7 @@ class ApiClient {
       const res = await fetch(`${API_BASE}/auth/refresh`, {
         method: "POST",
         credentials: "include",
-        headers: { "Content-Type": "application/json" },
+        headers: buildJsonHeaders(),
       });
       return res.ok;
     } catch {
@@ -126,7 +145,7 @@ class ApiClient {
     const url = this.buildUrl(path, params);
     const response = await this.fetchWithRetry(url, {
       method: "GET",
-      headers: { "Content-Type": "application/json" },
+      headers: buildJsonHeaders(),
     });
     return this.handleResponse<T>(response);
   }
@@ -134,7 +153,7 @@ class ApiClient {
   async post<T>(path: string, body?: unknown): Promise<T> {
     const response = await this.fetchWithRetry(this.buildUrl(path), {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: buildJsonHeaders(),
       body: body ? JSON.stringify(body) : undefined,
     });
     return this.handleResponse<T>(response);
@@ -143,7 +162,7 @@ class ApiClient {
   async put<T>(path: string, body?: unknown): Promise<T> {
     const response = await this.fetchWithRetry(this.buildUrl(path), {
       method: "PUT",
-      headers: { "Content-Type": "application/json" },
+      headers: buildJsonHeaders(),
       body: body ? JSON.stringify(body) : undefined,
     });
     return this.handleResponse<T>(response);
@@ -152,7 +171,7 @@ class ApiClient {
   async patch<T>(path: string, body?: unknown): Promise<T> {
     const response = await this.fetchWithRetry(this.buildUrl(path), {
       method: "PATCH",
-      headers: { "Content-Type": "application/json" },
+      headers: buildJsonHeaders(),
       body: body ? JSON.stringify(body) : undefined,
     });
     return this.handleResponse<T>(response);
@@ -161,7 +180,7 @@ class ApiClient {
   async delete<T = void>(path: string): Promise<T> {
     const response = await this.fetchWithRetry(this.buildUrl(path), {
       method: "DELETE",
-      headers: { "Content-Type": "application/json" },
+      headers: buildJsonHeaders(),
     });
     return this.handleResponse<T>(response);
   }

@@ -282,10 +282,15 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
     "currency": "COP",
     "modes": {
       "reservation": {
-        "payment": { "type": "deposit", "percentage": 50 },
-        "templateWithPayment": "checkout_with_deposit",
-        "templateNoPayment": "checkout_no_deposit",
-        "confirmationOutcome": "reservation_created"
+        "paymentMethods": {
+          "transferencia": {
+            "label": "transferencia con link de pago",
+            "aliases": ["transferencia", "link de pago"],
+            "payment": { "percentage": 50 },
+            "template": "checkout_with_deposit",
+            "confirmationOutcome": "reservation_created"
+          }
+        }
       }
     }
   },

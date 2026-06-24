@@ -598,7 +598,7 @@ public class NoOpWhatsAppService : IWhatsAppService
     public Task SendTextMessageAsync(Guid businessId, string to, string message) => Task.CompletedTask;
     public Task<string?> SendButtonMessageAsync(Guid businessId, string to, string message, IReadOnlyList<OutboundButton> buttons) =>
         Task.FromResult<string?>(Guid.NewGuid().ToString("N"));
-    public Task<string?> SendTemplateMessageAsync(Guid businessId, string to, string templateName, string languageCode, IReadOnlyList<string> bodyParameters, IReadOnlyList<OutboundButton>? buttons = null) =>
+    public Task<string?> SendTemplateMessageAsync(Guid businessId, string to, string templateName, string languageCode, IReadOnlyList<string> headerParameters, IReadOnlyList<string> bodyParameters, IReadOnlyList<OutboundButton>? buttons = null) =>
         Task.FromResult<string?>(Guid.NewGuid().ToString("N"));
     public Task SendImageMessageAsync(Guid businessId, string to, string imageUrl, string? caption = null) => Task.CompletedTask;
     public Task SendDocumentMessageAsync(Guid businessId, string to, string documentUrl, string? caption = null, string? filename = null) => Task.CompletedTask;

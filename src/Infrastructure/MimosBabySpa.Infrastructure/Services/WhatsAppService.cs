@@ -180,11 +180,25 @@ public class WhatsAppService : IWhatsAppService
         string to,
         string templateName,
         string languageCode,
+        IReadOnlyList<string> headerParameters,
         IReadOnlyList<string> bodyParameters,
         IReadOnlyList<OutboundButton>? buttons = null)
     {
         var credentials = await ResolveCredentialsAsync(businessId);
         var components = new List<object>();
+
+        if (headerParameters.Count > 0)
+        {
+            components.Add(new
+            {
+                type = "header",
+                parameters = headerParameters.Select(value => new
+                {
+                    type = "text",
+                    text = value
+                }).ToArray()
+            });
+        }
 
         if (bodyParameters.Count > 0)
         {

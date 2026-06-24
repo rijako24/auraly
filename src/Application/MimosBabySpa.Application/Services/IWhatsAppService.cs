@@ -18,6 +18,7 @@ public interface IWhatsAppService
         string to,
         string templateName,
         string languageCode,
+        IReadOnlyList<string> headerParameters,
         IReadOnlyList<string> bodyParameters,
         IReadOnlyList<OutboundButton>? buttons = null);
     Task SendImageMessageAsync(Guid businessId, string to, string imageUrl, string? caption = null);

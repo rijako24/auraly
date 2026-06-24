@@ -33,6 +33,8 @@ public sealed class MessageSequenceStep
 
     public string? Language { get; set; }
 
+    public List<string> HeaderParameters { get; set; } = [];
+
     public List<string> BodyParameters { get; set; } = [];
 }
 

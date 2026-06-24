@@ -45,14 +45,16 @@ public class ConsoleWhatsAppService : IWhatsAppService
         string to,
         string templateName,
         string languageCode,
+        IReadOnlyList<string> headerParameters,
         IReadOnlyList<string> bodyParameters,
         IReadOnlyList<OutboundButton>? buttons = null)
     {
         _logger.LogInformation(
-            "WhatsApp template mock a {To}: {Template} ({Language}) | Params={Params}",
+            "WhatsApp template mock a {To}: {Template} ({Language}) | HeaderParams={HeaderParams} | BodyParams={BodyParams}",
             to,
             templateName,
             languageCode,
+            string.Join(", ", headerParameters),
             string.Join(", ", bodyParameters));
         return Task.FromResult<string?>(Guid.NewGuid().ToString("N"));
     }

@@ -111,6 +111,7 @@ public sealed class OutboundMessageDispatcher : IOutboundMessageDispatcher
                 phone,
                 message.Template.Name,
                 message.Template.LanguageCode,
+                message.Template.HeaderParameters,
                 message.Template.BodyParameters,
                 message.Buttons);
             return;

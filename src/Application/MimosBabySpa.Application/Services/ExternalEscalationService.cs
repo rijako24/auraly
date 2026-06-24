@@ -424,6 +424,7 @@ public sealed class ExternalEscalationService : IExternalEscalationService
                     attempt.ContactPhoneSnapshot,
                     message.Template.Name,
                     message.Template.LanguageCode,
+                    message.Template.HeaderParameters,
                     message.Template.BodyParameters,
                     message.Buttons);
                 continue;

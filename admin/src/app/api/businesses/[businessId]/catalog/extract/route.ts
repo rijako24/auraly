@@ -9,6 +9,7 @@ export async function POST(
   { params }: { params: { businessId: string } }
 ) {
   const accessToken = request.cookies.get(AUTH_COOKIE_NAMES.accessToken)?.value;
+  const businessHeader = request.headers.get("X-Business-Id") ?? params.businessId;
   const formData = await request.formData();
 
   const url = `${BACKEND_URL}/businesses/${params.businessId}/catalog/extract`;
@@ -18,6 +19,7 @@ export async function POST(
       method: "POST",
       headers: {
         ...(accessToken && { Authorization: `Bearer ${accessToken}` }),
+        "X-Business-Id": businessHeader,
       },
       body: formData,
     });

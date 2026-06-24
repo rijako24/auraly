@@ -14,6 +14,7 @@ export function BusinessContextProvider({
   children: ReactNode;
 }) {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const tenantId = useAuthStore((s) => s.user?.tenantId);
   const { setBusinesses, isLoaded } = useBusinessContextStore();
 
   const { data, isLoading, isError, refetch } = useQuery({
@@ -27,8 +28,12 @@ export function BusinessContextProvider({
     if (!data) return;
 
     const items = Array.isArray(data) ? data : data.items ?? [];
-    setBusinesses(items);
-  }, [data, setBusinesses]);
+    const tenantBusinesses = tenantId
+      ? items.filter((business) => business.tenantId === tenantId)
+      : items;
+
+    setBusinesses(tenantBusinesses);
+  }, [data, setBusinesses, tenantId]);
 
   if (!isAuthenticated) return null;
 

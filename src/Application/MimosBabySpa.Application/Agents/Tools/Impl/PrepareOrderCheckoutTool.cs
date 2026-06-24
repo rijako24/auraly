@@ -1,5 +1,4 @@
 using System.Globalization;
-using System.Text;
 using System.Text.Json;
 using MimosBabySpa.Application.Agents.Configuration;
 using MimosBabySpa.Application.Agents.Facts;
@@ -45,8 +44,7 @@ public sealed class PrepareOrderCheckoutTool : IAgentTool
             "customer_document": { "type": "string" },
             "delivery_address": { "type": "string" },
             "notes": { "type": "string" },
-            "payment_method": { "type": "string" },
-            "payment_required": { "type": "boolean" }
+            "payment_method": { "type": "string" }
           }
         }
         """;
@@ -81,24 +79,6 @@ public sealed class PrepareOrderCheckoutTool : IAgentTool
         }
 
         var paymentMethodInput = Get(arguments, "payment_method") ?? GetFact(ctx, "payment_method");
-        var paymentSelection = ResolvePaymentSelection(checkoutMode, arguments, paymentMethodInput);
-        if (paymentSelection.MissingPaymentMethod)
-            return ToolResultHelper.MissingPrerequisites(["payment_method"]);
-
-        if (paymentSelection.Error is not null)
-            return paymentSelection.Error;
-
-        var paymentMethod = paymentSelection.MethodLabel;
-        var paymentRequired = paymentSelection.PaymentRequired;
-        var templateId = paymentRequired ? checkoutMode.TemplateWithPayment : checkoutMode.TemplateNoPayment;
-
-        if (string.IsNullOrWhiteSpace(templateId))
-            return ToolResultHelper.Error("checkout_template_missing", paymentRequired
-                ? "Order checkout requires templateWithPayment."
-                : "Order checkout without online payment requires templateNoPayment.");
-
-        if (paymentRequired && string.IsNullOrWhiteSpace(checkoutMode.ConfirmationOutcome))
-            return ToolResultHelper.Error("checkout_outcome_missing", "Order checkout with online payment requires confirmationOutcome.");
 
         var roles = new FactRoleIndex(ctx.Config?.FactSchema ?? []);
         var bindings = CheckoutModeBindingDefaults.Resolve(CheckoutKind.Order, checkoutMode);
@@ -127,6 +107,17 @@ public sealed class PrepareOrderCheckoutTool : IAgentTool
 
         var shippingCost = ResolveShippingCost(checkoutMode.Shipping, city);
         var orderTotal = order.Subtotal - order.DiscountTotal + order.TaxTotal + shippingCost;
+        var totalCents = (long)Math.Round(orderTotal * 100m, MidpointRounding.AwayFromZero);
+        if (totalCents <= 0)
+            return ToolResultHelper.Error("invalid_order_total", "Order total must be greater than zero.");
+
+        var paymentSelection = CheckoutPaymentSelectionResolver.Resolve(checkoutMode, "order", totalCents, paymentMethodInput);
+        if (paymentSelection.MissingPaymentMethod)
+            return ToolResultHelper.MissingPrerequisites(["payment_method"]);
+
+        if (paymentSelection.Error is not null)
+            return ToolError(paymentSelection.Error);
+
         var currency = string.IsNullOrWhiteSpace(checkout.Currency) ? "COP" : checkout.Currency.Trim().ToUpperInvariant();
 
         order.CustomerNameSnapshot = payerName;
@@ -143,17 +134,13 @@ public sealed class PrepareOrderCheckoutTool : IAgentTool
         await _unitOfWork.OrderDrafts.UpdateAsync(order, cancellationToken);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
-        var payableCents = (long)Math.Round(orderTotal * 100m, MidpointRounding.AwayFromZero);
-        if (payableCents <= 0)
-            return ToolResultHelper.Error("invalid_order_total", "Order total must be greater than zero to generate payment.");
-
-        var quote = BuildQuote(ctx, checkoutMode, order, items, shippingCost, payableCents, currency, templateId!, paymentRequired);
+        var quote = BuildQuote(ctx, order, items, shippingCost, totalCents, paymentSelection, currency);
         var templateData = BuildTemplateData(order, items, shippingCost, currency, city, deliveryAddress, payerName, payerEmail, paymentPhone, ctx.Facts);
-        var checkoutSnapshotJson = BuildCheckoutSnapshot(order, items, shippingCost, city, deliveryAddress, payerName, payerEmail, paymentPhone, ctx.Facts);
+        var checkoutSnapshotJson = BuildCheckoutSnapshot(order, items, shippingCost, city, deliveryAddress, payerName, payerEmail, paymentPhone, paymentSelection, ctx.Facts);
 
         string? paymentLink = null;
         Guid? paymentTransactionId = null;
-        if (paymentRequired)
+        if (quote.PayableCents > 0)
         {
             var linkResult = await _checkoutPayments.EnsurePaymentLinkAsync(
                 ctx,
@@ -178,7 +165,9 @@ public sealed class PrepareOrderCheckoutTool : IAgentTool
             templateData["link_url"] = linkResult.LinkUrl;
         }
 
-        templateData["payment_method"] = paymentMethod;
+        templateData["payment_method"] = paymentSelection.MethodKey;
+        templateData["payment_method_label"] = paymentSelection.MethodLabel;
+        templateData["payment_percentage"] = paymentSelection.PaymentPercentage;
 
         var checkoutToken = ctx.Turn.RegisterFragment(
             "CHECKOUT",
@@ -187,14 +176,14 @@ public sealed class PrepareOrderCheckoutTool : IAgentTool
             FragmentRenderMode.Exclusive);
         ctx.Turn.MarkCheckoutPrepared();
 
-        var checkoutDependencies = BuildVerificationDependencies(bindings.RequiredFactRoles, roles, ctx.Facts, paymentMethodInput);
+        var checkoutDependencies = BuildVerificationDependencies(bindings.RequiredFactRoles, roles, ctx.Facts, paymentSelection.MethodKey);
         _verifications.Record(
             ctx,
             VerificationFactTypes.CheckoutPrepared,
             checkoutDependencies,
             ttl: null);
 
-        if (!paymentRequired)
+        if (quote.PayableCents <= 0)
         {
             _verifications.Record(
                 ctx,
@@ -208,7 +197,7 @@ public sealed class PrepareOrderCheckoutTool : IAgentTool
             checkout_token = checkoutToken,
             checkout_kind = quote.CheckoutKind.ToString(),
             template_id = quote.TemplateId,
-            payment_required = paymentRequired,
+            payment_required = quote.PayableCents > 0,
             payment_transaction_id = paymentTransactionId,
             payment_link = paymentLink,
             order_draft_id = order.OrderDraftId,
@@ -219,14 +208,12 @@ public sealed class PrepareOrderCheckoutTool : IAgentTool
 
     private static CheckoutQuote BuildQuote(
         AgentToolContext ctx,
-        CheckoutModeDefinition mode,
         OrderDraft order,
         IReadOnlyList<OrderDraftItem> items,
         decimal shippingCost,
-        long payableCents,
-        string currency,
-        string templateId,
-        bool paymentRequired)
+        long totalCents,
+        CheckoutPaymentSelection paymentSelection,
+        string currency)
     {
         var lineItems = items
             .Select(i => new CheckoutQuoteLineItem($"{i.ProductNameSnapshot} x{i.Quantity:N0}", i.LineTotal))
@@ -243,12 +230,14 @@ public sealed class PrepareOrderCheckoutTool : IAgentTool
             "Order",
             0,
             lineItems,
-            payableCents,
-            payableCents,
+            totalCents,
+            paymentSelection.PayableCents,
             currency,
-            paymentRequired ? mode.Payment.Type : "none",
-            templateId,
-            paymentRequired ? mode.ConfirmationOutcome! : string.Empty,
+            paymentSelection.MethodKey,
+            paymentSelection.MethodLabel,
+            paymentSelection.PaymentPercentage,
+            paymentSelection.TemplateId,
+            paymentSelection.ConfirmationOutcome,
             new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
             new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
             new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
@@ -306,6 +295,7 @@ public sealed class PrepareOrderCheckoutTool : IAgentTool
         string? customerName,
         string? customerEmail,
         string customerPhone,
+        CheckoutPaymentSelection paymentSelection,
         IReadOnlyDictionary<string, string> facts)
     {
         var snapshot = new
@@ -320,6 +310,9 @@ public sealed class PrepareOrderCheckoutTool : IAgentTool
             payer_name = customerName,
             payer_email = customerEmail,
             payment_phone = customerPhone,
+            payment_method = paymentSelection.MethodKey,
+            payment_method_label = paymentSelection.MethodLabel,
+            payment_percentage = paymentSelection.PaymentPercentage,
             city,
             delivery_address = deliveryAddress,
             line_items = items.Select(i => new
@@ -434,114 +427,8 @@ public sealed class PrepareOrderCheckoutTool : IAgentTool
     private static string? GetFact(AgentToolContext ctx, string key) =>
         ctx.Facts.TryGetValue(key, out var value) ? value : null;
 
-    private sealed record PaymentSelection(
-        bool MissingPaymentMethod,
-        string? Error,
-        string MethodLabel,
-        bool PaymentRequired);
-
-    private static PaymentSelection ResolvePaymentSelection(
-        CheckoutModeDefinition mode,
-        JsonElement args,
-        string? rawPaymentMethod)
-    {
-        if (mode.PaymentMethods.Count > 0)
-        {
-            if (string.IsNullOrWhiteSpace(rawPaymentMethod))
-                return new PaymentSelection(true, null, string.Empty, false);
-
-            var configured = ResolveConfiguredPaymentMethod(mode, rawPaymentMethod);
-            if (configured is null)
-            {
-                var options = DescribeConfiguredPaymentMethods(mode);
-                return new PaymentSelection(
-                    false,
-                    ToolResultHelper.Error(
-                        "invalid_payment_method",
-                        "Payment method is not configured for this checkout mode.",
-                        string.IsNullOrWhiteSpace(options)
-                            ? "Ask the customer for a configured payment method."
-                            : $"Ask the customer to choose one of the configured payment methods: {options}.",
-                        recoverable: true),
-                    string.Empty,
-                    false);
-            }
-
-            return new PaymentSelection(
-                false,
-                null,
-                PaymentMethodLabel(configured.Value.Key, configured.Value.Method),
-                configured.Value.Method.PaymentRequired);
-        }
-
-        var paymentRequired = ResolvePaymentRequired(args, mode);
-        var methodLabel = !string.IsNullOrWhiteSpace(rawPaymentMethod)
-            ? rawPaymentMethod.Trim()
-            : paymentRequired
-                ? "online"
-                : "offline";
-
-        return new PaymentSelection(false, null, methodLabel, paymentRequired);
-    }
-
-    private static (string Key, OrderCheckoutPaymentMethodDefinition Method)? ResolveConfiguredPaymentMethod(
-        CheckoutModeDefinition mode,
-        string rawPaymentMethod)
-    {
-        var normalizedInput = NormalizePaymentMethodToken(rawPaymentMethod);
-        if (string.IsNullOrWhiteSpace(normalizedInput))
-            return null;
-
-        foreach (var (key, method) in mode.PaymentMethods)
-        {
-            if (normalizedInput.Equals(NormalizePaymentMethodToken(key), StringComparison.OrdinalIgnoreCase)
-                || normalizedInput.Equals(NormalizePaymentMethodToken(method.Label), StringComparison.OrdinalIgnoreCase)
-                || (method.Aliases?.Any(alias => normalizedInput.Equals(NormalizePaymentMethodToken(alias), StringComparison.OrdinalIgnoreCase)) ?? false))
-            {
-                return (key, method);
-            }
-        }
-
-        return null;
-    }
-
-    private static string DescribeConfiguredPaymentMethods(CheckoutModeDefinition mode) =>
-        string.Join(", ", mode.PaymentMethods.Select(kvp => PaymentMethodLabel(kvp.Key, kvp.Value)));
-
-    private static string PaymentMethodLabel(string key, OrderCheckoutPaymentMethodDefinition method) =>
-        string.IsNullOrWhiteSpace(method.Label) ? key : method.Label.Trim();
-
-    private static bool ResolvePaymentRequired(JsonElement args, CheckoutModeDefinition mode)
-    {
-        if (ToolResultHelper.TryGetBool(args, "payment_required", out var required))
-            return required;
-
-        var hasPaymentTemplate = !string.IsNullOrWhiteSpace(mode.TemplateWithPayment);
-        var hasNoPaymentTemplate = !string.IsNullOrWhiteSpace(mode.TemplateNoPayment);
-        if (!hasPaymentTemplate && hasNoPaymentTemplate)
-            return false;
-
-        return true;
-    }
-
-    private static string NormalizePaymentMethodToken(string? value)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-            return string.Empty;
-
-        var decomposed = value.Trim().Normalize(NormalizationForm.FormD);
-        var builder = new StringBuilder(decomposed.Length);
-        foreach (var ch in decomposed)
-        {
-            if (CharUnicodeInfo.GetUnicodeCategory(ch) == UnicodeCategory.NonSpacingMark)
-                continue;
-
-            if (char.IsLetterOrDigit(ch))
-                builder.Append(char.ToLowerInvariant(ch));
-        }
-
-        return builder.ToString();
-    }
+    private static string ToolError(CheckoutPaymentSelectionError error) =>
+        ToolResultHelper.Error(error.Code, error.Message, error.Hint, error.Recoverable);
 
     private static string ShortId(Guid id) => id.ToString("N")[..8].ToUpperInvariant();
 
