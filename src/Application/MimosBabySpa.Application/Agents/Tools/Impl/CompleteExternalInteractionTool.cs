@@ -22,7 +22,6 @@ public sealed class CompleteExternalInteractionTool : IAgentTool
           "type": "object",
           "properties": {
             "external_interaction_id": { "type": "string" },
-            "external_escalation_id": { "type": "string" },
             "outcome_key": { "type": "string" },
             "response_text": { "type": "string" },
             "response_payload": {
@@ -65,7 +64,6 @@ public sealed class CompleteExternalInteractionTool : IAgentTool
     {
         completed = true,
         external_interaction_id = result.Attempt?.ExternalEscalationAttemptId,
-        external_escalation_id = result.Attempt?.ExternalEscalationAttemptId,
         attempt_code = result.Attempt?.AttemptCode,
         event_name = result.Attempt?.EventName,
         target_type = result.Attempt?.TargetType,
@@ -83,19 +81,10 @@ public sealed class CompleteExternalInteractionTool : IAgentTool
             return parsed;
         }
 
-        if (ToolResultHelper.TryGetString(arguments, "external_escalation_id", out var escalationId)
-            && Guid.TryParse(escalationId, out parsed))
-        {
-            return parsed;
-        }
-
         return ctx.Facts.TryGetValue("external_interaction_id", out var interactionFact)
             && Guid.TryParse(interactionFact, out parsed)
             ? parsed
-            : ctx.Facts.TryGetValue("external_escalation_id", out var escalationFact)
-                && Guid.TryParse(escalationFact, out parsed)
-                ? parsed
-                : null;
+            : null;
     }
     private static IReadOnlyDictionary<string, string>? ReadResponsePayload(JsonElement arguments)
     {

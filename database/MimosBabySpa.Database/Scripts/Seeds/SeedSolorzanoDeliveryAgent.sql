@@ -53,16 +53,15 @@ DECLARE @SolorzanoDeliverySettingsJson NVARCHAR(MAX) = N'{
         "id": "delivery_assignment",
         "name": "Gestion de domicilio",
         "goal": "Resolver si el domiciliario acepta o rechaza un pedido pendiente.",
-        "hint": "En cada mensaje del contacto, primero llama resolve_external_interaction con message_text. Cuando la herramienta identifique varias interacciones pendientes, solicita cual quiere gestionar y muestra los attempt_code disponibles. Cuando el mensaje venga citado, traiga codigo o la herramienta resuelva una sola interaccion, usa esa interaccion como referencia. Cuando el mensaje indique que el contacto toma o confirma la solicitud, llama complete_external_interaction con outcome_key=accepted. Cuando indique rechazo, llama complete_external_interaction con outcome_key=declined. Cuando la interaccion este identificada y la intencion del mensaje no sea clara, solicita una confirmacion breve mencionando attempt_code. Cuando no haya pendientes, informa que no tiene solicitudes pendientes. Despues de completar, responde usando los datos estructurados devueltos por la tool y el contexto del mensaje original.",
-        "allowedTools": ["resolve_external_interaction", "complete_external_interaction", "accept_external_escalation", "decline_external_escalation"],
+        "hint": "En cada mensaje del contacto, primero llama resolve_external_interaction con message_text. Cuando la herramienta identifique varias interacciones pendientes, solicita cual quiere gestionar y muestra los attempt_code disponibles. Cuando el mensaje venga citado, traiga codigo, boton o la herramienta resuelva una sola interaccion, usa esa interaccion como referencia. Cuando requested_action sea accepted o el mensaje indique que el contacto toma o confirma la solicitud, llama complete_external_interaction con outcome_key=accepted. Cuando requested_action sea declined o el mensaje indique rechazo, llama complete_external_interaction con outcome_key=declined. Cuando la interaccion este identificada y la intencion del mensaje no sea clara, solicita una confirmacion breve mencionando attempt_code. Cuando no haya pendientes, informa que no tiene solicitudes pendientes. Despues de completar, responde usando los datos estructurados devueltos por la tool y el contexto del mensaje original.",
+        "allowedTools": ["resolve_external_interaction", "complete_external_interaction"],
         "advanceWhenFacts": []
       }
     ]
   },
   "enabledTools": [
     "resolve_external_interaction",
-    "accept_external_escalation",
-    "decline_external_escalation"
+    "complete_external_interaction"
   ],
   "guards": {},
   "notifications": {},
@@ -110,6 +109,3 @@ BEGIN
 END
 
 PRINT N'SeedSolorzanoDeliveryAgent: agente de domicilios configurado para negocio ' + CAST(@SolorzanoDeliveryBusinessId AS NVARCHAR(36));
-
-
-

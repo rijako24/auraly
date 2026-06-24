@@ -34,6 +34,7 @@ public class ApplicationDbContext : DbContext
     public DbSet<EmployeeWorkingHour> EmployeeWorkingHours { get; set; }
     public DbSet<EmployeeScheduleException> EmployeeScheduleExceptions { get; set; }
     public DbSet<BusinessSchedulingSettings> BusinessSchedulingSettings { get; set; }
+    public DbSet<BusinessAvailabilityBlock> BusinessAvailabilityBlocks { get; set; }
     public DbSet<ScheduledAutomationJob> ScheduledAutomationJobs { get; set; }
     public DbSet<ReservationAttendanceResponse> ReservationAttendanceResponses { get; set; }
     public DbSet<IntegrationConnection> IntegrationConnections { get; set; }
@@ -71,6 +72,8 @@ public class ApplicationDbContext : DbContext
     // Agentic engine
     public DbSet<AgentType> AgentTypes { get; set; }
     public DbSet<Agent> Agents { get; set; }
+    public DbSet<AgentTemplate> AgentTemplates { get; set; }
+    public DbSet<BusinessInboundContact> BusinessInboundContacts { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -324,6 +327,26 @@ public class ApplicationDbContext : DbContext
             entity.HasIndex(e => e.BusinessId).IsUnique();
         });
 
+        modelBuilder.Entity<BusinessAvailabilityBlock>(entity =>
+        {
+            entity.HasKey(e => e.BusinessAvailabilityBlockId);
+            entity.Property(e => e.Date).HasColumnType("date");
+            entity.Property(e => e.StartTime).HasColumnType("time");
+            entity.Property(e => e.EndTime).HasColumnType("time");
+            entity.Property(e => e.Reason).HasMaxLength(500);
+            entity.Property(e => e.Source).IsRequired().HasMaxLength(50).HasDefaultValue("operations");
+            entity.HasOne(e => e.Business)
+                .WithMany()
+                .HasForeignKey(e => e.BusinessId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(e => e.Employee)
+                .WithMany()
+                .HasForeignKey(e => e.EmployeeId)
+                .OnDelete(DeleteBehavior.Restrict)
+                .IsRequired(false);
+            entity.HasIndex(e => new { e.BusinessId, e.Date });
+            entity.HasIndex(e => new { e.BusinessId, e.EmployeeId, e.Date });
+        });
         modelBuilder.Entity<ScheduledAutomationJob>(entity =>
         {
             entity.HasKey(e => e.ScheduledAutomationJobId);
@@ -765,6 +788,8 @@ public class ApplicationDbContext : DbContext
             entity.Property(e => e.ContactNameSnapshot).IsRequired().HasMaxLength(200);
             entity.Property(e => e.ContactRoleSnapshot).IsRequired().HasMaxLength(100);
             entity.Property(e => e.ContactPhoneSnapshot).IsRequired().HasMaxLength(50);
+            entity.Property(e => e.ContactTypeSnapshot).HasMaxLength(50);
+            entity.Property(e => e.PickupAddressSnapshot).HasMaxLength(500);
             entity.Property(e => e.AttemptCode).IsRequired().HasMaxLength(50);
             entity.Property(e => e.CustomPayloadJson).HasColumnType("NVARCHAR(MAX)");
             entity.Property(e => e.WhatsAppMessageId).HasMaxLength(128);
@@ -1321,11 +1346,52 @@ public class ApplicationDbContext : DbContext
             entity.Property(e => e.Description).HasMaxLength(500);
         });
 
+        modelBuilder.Entity<AgentTemplate>(entity =>
+        {
+            entity.HasKey(e => e.AgentTemplateId);
+            entity.Property(e => e.Key).IsRequired().HasMaxLength(100);
+            entity.Property(e => e.Name).IsRequired().HasMaxLength(200);
+            entity.Property(e => e.Kind).IsRequired().HasMaxLength(50);
+            entity.Property(e => e.Description).HasMaxLength(500);
+            entity.Property(e => e.SettingsJson).HasColumnType("NVARCHAR(MAX)");
+            entity.Property(e => e.SystemPromptMarkdown).HasColumnType("NVARCHAR(MAX)");
+            entity.HasIndex(e => e.Key).IsUnique();
+            entity.HasIndex(e => e.Kind);
+        });
+
+        modelBuilder.Entity<BusinessInboundContact>(entity =>
+        {
+            entity.HasKey(e => e.BusinessInboundContactId);
+            entity.Property(e => e.Type).IsRequired().HasMaxLength(50);
+            entity.Property(e => e.Key).IsRequired().HasMaxLength(100);
+            entity.Property(e => e.Name).IsRequired().HasMaxLength(200);
+            entity.Property(e => e.Role).HasMaxLength(100);
+            entity.Property(e => e.PhoneNumber).IsRequired().HasMaxLength(50);
+            entity.Property(e => e.PhoneNormalized).IsRequired().HasMaxLength(50);
+            entity.Property(e => e.CapabilitiesJson).HasColumnType("NVARCHAR(MAX)");
+            entity.HasOne(e => e.Business)
+                .WithMany()
+                .HasForeignKey(e => e.BusinessId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.InboundAgent)
+                .WithMany()
+                .HasForeignKey(e => e.InboundAgentId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.Employee)
+                .WithMany()
+                .HasForeignKey(e => e.EmployeeId)
+                .OnDelete(DeleteBehavior.SetNull)
+                .IsRequired(false);
+            entity.HasIndex(e => new { e.BusinessId, e.PhoneNormalized }).IsUnique();
+            entity.HasIndex(e => new { e.BusinessId, e.Type });
+            entity.HasIndex(e => e.InboundAgentId);
+        });
         modelBuilder.Entity<Agent>(entity =>
         {
             entity.HasKey(e => e.AgentId);
             entity.Property(e => e.Name).IsRequired().HasMaxLength(200);
             entity.Property(e => e.Description).HasMaxLength(500);
+            entity.Property(e => e.Kind).IsRequired().HasMaxLength(50).HasDefaultValue("customer");
             entity.Property(e => e.SettingsJson).HasColumnType("NVARCHAR(MAX)");
             entity.Property(e => e.SystemPromptMarkdown).HasColumnType("NVARCHAR(MAX)");
             entity.HasOne(e => e.Business)
@@ -1342,6 +1408,3 @@ public class ApplicationDbContext : DbContext
 
     }
 }
-
-
-

@@ -474,12 +474,31 @@ export interface SystemConfiguration {
   isActive: boolean;
 }
 
+export interface BusinessInboundContact {
+  businessInboundContactId: string;
+  businessId: string;
+  type: string;
+  key: string;
+  name: string;
+  role: string;
+  phoneNumber: string;
+  phoneNormalized: string;
+  inboundAgentId: string;
+  inboundAgentName: string;
+  employeeId: string | null;
+  capabilitiesJson: string | null;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string | null;
+}
+
 export interface Agent {
   agentId: string;
   businessId: string;
   agentTypeId: string;
   agentTypeName: string;
-  name: string;
+    kind: string;
+name: string;
   description: string | null;
   isActive: boolean;
   createdAt: string;

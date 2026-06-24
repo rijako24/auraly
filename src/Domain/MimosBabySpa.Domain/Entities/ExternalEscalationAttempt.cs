@@ -15,6 +15,9 @@ public class ExternalEscalationAttempt
     public string ContactRoleSnapshot { get; set; } = string.Empty;
     public string ContactPhoneSnapshot { get; set; } = string.Empty;
     public Guid InboundAgentIdSnapshot { get; set; }
+    public Guid? BusinessInboundContactIdSnapshot { get; set; }
+    public string? ContactTypeSnapshot { get; set; }
+    public string? PickupAddressSnapshot { get; set; }
     public string AttemptCode { get; set; } = string.Empty;
     public string? CustomPayloadJson { get; set; }
     public string? WhatsAppMessageId { get; set; }

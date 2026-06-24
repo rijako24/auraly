@@ -89,23 +89,23 @@ export interface MessageSequence {
 }
 
 export interface ExternalEscalationContact {
-  key: string;
-  name?: string;
-  role?: string;
-  phone: string;
+  businessInboundContactId?: string;
   priority?: number;
-  inboundAgentId?: string;
+  retryEnabled?: boolean;
   pickupAddress?: string;
 }
 
 export interface ExternalEscalationEvent {
   enabled?: boolean;
-  strategy?: string;
+  contactType?: string;
+  pickupAddress?: string;
   attemptTimeoutMinutes?: number;
   attemptCodePrefix?: string;
   sendMessageSequence?: string;
   attemptSentNotificationEvent?: string;
   acceptedNotificationEvent?: string;
+  completedNotificationEvent?: string;
+  exhaustedNotificationEvent?: string;
   contacts?: ExternalEscalationContact[];
 }
 

@@ -108,14 +108,15 @@ public sealed class HumanEscalationDefinitions
 public sealed class ExternalEscalationEventDefinition
 {
     public bool Enabled { get; set; }
-
-    public string Strategy { get; set; } = "sequential";
-
     public int AttemptTimeoutMinutes { get; set; } = 5;
 
     public string AttemptCodePrefix { get; set; } = "EXT";
 
     public string? SendMessageSequence { get; set; }
+
+    public string ContactType { get; set; } = string.Empty;
+
+    public string PickupAddress { get; set; } = string.Empty;
 
     public string? AttemptSentNotificationEvent { get; set; }
 
@@ -130,18 +131,11 @@ public sealed class ExternalEscalationEventDefinition
 
 public sealed class ExternalEscalationContactDefinition
 {
-    public string Key { get; set; } = string.Empty;
-
-    public string Name { get; set; } = string.Empty;
-
-    public string Role { get; set; } = string.Empty;
-
-    public string Phone { get; set; } = string.Empty;
-
     public int Priority { get; set; }
 
-    public Guid? InboundAgentId { get; set; }
+    public Guid? BusinessInboundContactId { get; set; }
 
+    public bool RetryEnabled { get; set; } = true;
 
     public string PickupAddress { get; set; } = string.Empty;
 }
@@ -154,5 +148,3 @@ public sealed class EventNotificationConfig
 
     public string? SendMessageSequence { get; set; }
 }
-
-

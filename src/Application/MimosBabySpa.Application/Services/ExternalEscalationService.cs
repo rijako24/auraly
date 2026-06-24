@@ -9,57 +9,22 @@ using MimosBabySpa.Domain.Repositories;
 
 namespace MimosBabySpa.Application.Services;
 
-public sealed class ExternalEscalationRouter : IExternalEscalationRouter
+public sealed class BusinessInboundContactRouter : IBusinessInboundContactRouter
 {
-    private readonly IAgentRepository _agents;
-    private readonly IAgentConfigProvider _configProvider;
+    private readonly IUnitOfWork _unitOfWork;
 
-    public ExternalEscalationRouter(IAgentRepository agents, IAgentConfigProvider configProvider)
+    public BusinessInboundContactRouter(IUnitOfWork unitOfWork)
     {
-        _agents = agents;
-        _configProvider = configProvider;
+        _unitOfWork = unitOfWork;
     }
 
-    public async Task<ExternalEscalationRoute?> ResolveAsync(Guid businessId, string phone, CancellationToken ct = default)
+    public async Task<BusinessInboundContactRoute?> ResolveAsync(Guid businessId, string phone, CancellationToken ct = default)
     {
-        var match = await FindContactAsync(_agents, _configProvider, businessId, phone, ct);
-        if (match?.Contact.InboundAgentId is not Guid inboundAgentId)
+        var inboundContact = await _unitOfWork.BusinessInboundContacts.GetActiveByPhoneAsync(businessId, phone, ct);
+        if (inboundContact is null)
             return null;
 
-        return new ExternalEscalationRoute(inboundAgentId, match.Contact.Key.Trim(), NormalizePhone(match.Contact.Phone));
-    }
-
-    internal static async Task<ExternalEscalationContactMatch?> FindContactAsync(
-        IAgentRepository agents,
-        IAgentConfigProvider configProvider,
-        Guid businessId,
-        string phone,
-        CancellationToken ct)
-    {
-        var normalized = NormalizePhone(phone);
-        var businessAgents = await agents.GetByBusinessAsync(businessId, ct);
-
-        foreach (var agent in businessAgents.Where(a => a.IsActive))
-        {
-            var config = await configProvider.GetConfigAsync(agent.AgentId, ct);
-            if (!config.Escalations.External.Enabled)
-                continue;
-
-            foreach (var (eventName, definition) in config.Escalations.External.Events)
-            {
-                if (!definition.Enabled)
-                    continue;
-
-                var contact = definition.Contacts.FirstOrDefault(c =>
-                    !string.IsNullOrWhiteSpace(c.Phone)
-                    && NormalizePhone(c.Phone).Equals(normalized, StringComparison.OrdinalIgnoreCase));
-
-                if (contact is not null)
-                    return new ExternalEscalationContactMatch(agent.AgentId, businessId, eventName, contact);
-            }
-        }
-
-        return null;
+        return new BusinessInboundContactRoute(inboundContact.InboundAgentId, inboundContact.Key.Trim(), NormalizePhone(inboundContact.PhoneNumber));
     }
 
     internal static string NormalizePhone(string phone) =>
@@ -116,24 +81,28 @@ public sealed class ExternalEscalationService : IExternalEscalationService
             return new ExternalEscalationSendResult(false, null, "target_already_completed");
         }
 
-        var attempts = await _unitOfWork.ExternalEscalationAttempts.CountAttemptsAsync(
+        var previousAttempts = await _unitOfWork.ExternalEscalationAttempts.GetAttemptsForTargetAsync(
             config.BusinessId,
             request.EventName,
             request.TargetType,
             request.TargetId,
             ct);
 
-        var contact = definition.Contacts
-            .Where(c => c.InboundAgentId.HasValue && !string.IsNullOrWhiteSpace(c.Phone) && !string.IsNullOrWhiteSpace(c.Key))
+        var attemptedContactIds = previousAttempts
+            .Where(a => a.BusinessInboundContactIdSnapshot.HasValue)
+            .Select(a => a.BusinessInboundContactIdSnapshot!.Value)
+            .ToHashSet();
+        var contact = (await ResolveEscalationContactsAsync(config.BusinessId, definition, ct))
+            .Where(c => previousAttempts.Count == 0 || c.RetryEnabled)
+            .Where(c => c.BusinessInboundContactId is Guid id && !attemptedContactIds.Contains(id))
             .OrderBy(c => c.Priority)
             .ThenBy(c => c.Key)
-            .Skip(attempts)
             .FirstOrDefault();
 
         if (contact is null)
             return new ExternalEscalationSendResult(false, null, "no_more_contacts");
 
-        var customPayload = BuildCustomPayload(request.Custom, contact);
+        var customPayload = BuildCustomPayload(request.Custom, definition, contact);
         var now = DateTime.UtcNow;
         var attempt = new ExternalEscalationAttempt
         {
@@ -146,8 +115,11 @@ public sealed class ExternalEscalationService : IExternalEscalationService
             ContactKey = contact.Key.Trim(),
             ContactNameSnapshot = contact.Name.Trim(),
             ContactRoleSnapshot = contact.Role.Trim(),
-            ContactPhoneSnapshot = ExternalEscalationRouter.NormalizePhone(contact.Phone),
-            InboundAgentIdSnapshot = contact.InboundAgentId!.Value,
+            ContactPhoneSnapshot = BusinessInboundContactRouter.NormalizePhone(contact.Phone),
+            InboundAgentIdSnapshot = contact.InboundAgentId,
+            BusinessInboundContactIdSnapshot = contact.BusinessInboundContactId,
+            ContactTypeSnapshot = string.IsNullOrWhiteSpace(contact.Type) ? null : contact.Type.Trim(),
+            PickupAddressSnapshot = customPayload.TryGetValue("pickup_address", out var pickupAddress) && !string.IsNullOrWhiteSpace(pickupAddress) ? pickupAddress.Trim() : null,
             AttemptCode = BuildAttemptCode(definition, request.TargetId),
             CustomPayloadJson = JsonSerializer.Serialize(customPayload),
             Status = ExternalEscalationAttemptStatus.Pending,
@@ -295,12 +267,6 @@ public sealed class ExternalEscalationService : IExternalEscalationService
             payload);
     }
 
-    public Task<ExternalEscalationActionResult> AcceptAsync(Guid businessId, Guid attemptId, string contactPhone, CancellationToken ct = default) =>
-        CompleteAsync(businessId, attemptId, contactPhone, "accepted", null, null, ct);
-
-    public Task<ExternalEscalationActionResult> DeclineAsync(Guid businessId, Guid attemptId, string contactPhone, CancellationToken ct = default) =>
-        DeclineAsync(businessId, attemptId, contactPhone, null, null, ct);
-
     private async Task<ExternalEscalationActionResult> DeclineAsync(
         Guid businessId,
         Guid attemptId,
@@ -381,6 +347,81 @@ public sealed class ExternalEscalationService : IExternalEscalationService
         }
     }
 
+    private async Task<IReadOnlyList<ResolvedEscalationContact>> ResolveEscalationContactsAsync(
+        Guid businessId,
+        ExternalEscalationEventDefinition definition,
+        CancellationToken ct)
+    {
+        var contacts = new List<ResolvedEscalationContact>();
+        var contactType = definition.ContactType?.Trim() ?? string.Empty;
+        var configuredContactIds = new HashSet<Guid>();
+        var hasRetryByType = false;
+        var maxConfiguredPriority = 0;
+
+        foreach (var configured in definition.Contacts.OrderBy(c => c.Priority))
+        {
+            maxConfiguredPriority = Math.Max(maxConfiguredPriority, configured.Priority);
+            if (configured.RetryEnabled)
+                hasRetryByType = true;
+
+            if (configured.BusinessInboundContactId is not Guid businessInboundContactId)
+                continue;
+
+            var inboundContact = await _unitOfWork.BusinessInboundContacts.GetByIdAsync(businessInboundContactId, ct);
+            if (inboundContact is null
+                || !inboundContact.IsActive
+                || inboundContact.BusinessId != businessId
+                || inboundContact.InboundAgent is null
+                || !inboundContact.InboundAgent.IsActive
+                || inboundContact.InboundAgent.BusinessId != businessId)
+            {
+                continue;
+            }
+
+            if (!string.IsNullOrWhiteSpace(contactType)
+                && !inboundContact.Type.Equals(contactType, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            configuredContactIds.Add(inboundContact.BusinessInboundContactId);
+            contacts.Add(new ResolvedEscalationContact(
+                inboundContact.BusinessInboundContactId,
+                inboundContact.Type,
+                inboundContact.Key,
+                inboundContact.Name,
+                string.IsNullOrWhiteSpace(inboundContact.Role) ? inboundContact.Type : inboundContact.Role,
+                inboundContact.PhoneNumber,
+                inboundContact.InboundAgentId,
+                configured.Priority,
+                configured.RetryEnabled,
+                configured.PickupAddress));
+        }
+
+        if (!string.IsNullOrWhiteSpace(contactType) && (contacts.Count == 0 || hasRetryByType))
+        {
+            var inboundContacts = await _unitOfWork.BusinessInboundContacts.GetActiveByBusinessAndTypeAsync(businessId, contactType, ct);
+            var retryPriority = maxConfiguredPriority + 1000;
+
+            foreach (var inboundContact in inboundContacts.Where(c => !configuredContactIds.Contains(c.BusinessInboundContactId)))
+            {
+                contacts.Add(new ResolvedEscalationContact(
+                    inboundContact.BusinessInboundContactId,
+                    inboundContact.Type,
+                    inboundContact.Key,
+                    inboundContact.Name,
+                    string.IsNullOrWhiteSpace(inboundContact.Role) ? inboundContact.Type : inboundContact.Role,
+                    inboundContact.PhoneNumber,
+                    inboundContact.InboundAgentId,
+                    retryPriority++,
+                    true,
+                    null));
+            }
+        }
+
+        return contacts;
+    }
+
     private async Task<string?> SendEscalationMessagesAsync(
         AgentConfig config,
         ExternalEscalationEventDefinition definition,
@@ -396,11 +437,13 @@ public sealed class ExternalEscalationService : IExternalEscalationService
         {
             ["business_name"] = business?.Name ?? string.Empty,
             ["pickup_contact_name"] = business?.Name ?? string.Empty,
-            ["external_escalation_id"] = attempt.ExternalEscalationAttemptId.ToString(),
             ["external_interaction_id"] = attempt.ExternalEscalationAttemptId.ToString(),
             ["attempt_code"] = attempt.AttemptCode,
             ["contact_name"] = attempt.ContactNameSnapshot,
-            ["contact_role"] = attempt.ContactRoleSnapshot
+            ["contact_role"] = attempt.ContactRoleSnapshot,
+            ["contact_type"] = attempt.ContactTypeSnapshot ?? string.Empty,
+            ["business_inbound_contact_id"] = attempt.BusinessInboundContactIdSnapshot?.ToString() ?? string.Empty,
+            ["pickup_address"] = attempt.PickupAddressSnapshot ?? string.Empty
         };
 
         var messages = (await _sequenceResolver.ResolveAsync(
@@ -455,6 +498,18 @@ public sealed class ExternalEscalationService : IExternalEscalationService
         return sentMessageId;
     }
 
+
+    private sealed record ResolvedEscalationContact(
+        Guid? BusinessInboundContactId,
+        string Type,
+        string Key,
+        string Name,
+        string Role,
+        string Phone,
+        Guid InboundAgentId,
+        int Priority,
+        bool RetryEnabled,
+        string? PickupAddress);
 
     private async Task NotifyContactsExhaustedAsync(ExternalEscalationAttempt attempt, CancellationToken ct)
     {
@@ -537,7 +592,6 @@ public sealed class ExternalEscalationService : IExternalEscalationService
     {
         var payload = new Dictionary<string, string>(custom, StringComparer.OrdinalIgnoreCase)
         {
-            ["external_escalation_id"] = attempt.ExternalEscalationAttemptId.ToString(),
             ["external_interaction_id"] = attempt.ExternalEscalationAttemptId.ToString(),
             ["external_event_name"] = attempt.EventName,
             ["target_type"] = attempt.TargetType,
@@ -547,6 +601,9 @@ public sealed class ExternalEscalationService : IExternalEscalationService
             ["contact_name"] = attempt.ContactNameSnapshot,
             ["contact_role"] = attempt.ContactRoleSnapshot,
             ["contact_phone"] = attempt.ContactPhoneSnapshot,
+            ["contact_type"] = attempt.ContactTypeSnapshot ?? string.Empty,
+            ["business_inbound_contact_id"] = attempt.BusinessInboundContactIdSnapshot?.ToString() ?? string.Empty,
+            ["pickup_address"] = attempt.PickupAddressSnapshot ?? string.Empty,
             ["escalated_at_utc"] = attempt.EscalatedAt.ToString("O")
         };
 
@@ -558,11 +615,16 @@ public sealed class ExternalEscalationService : IExternalEscalationService
 
     private static IReadOnlyDictionary<string, string> BuildCustomPayload(
         IReadOnlyDictionary<string, string> custom,
-        ExternalEscalationContactDefinition contact)
+        ExternalEscalationEventDefinition definition,
+        ResolvedEscalationContact contact)
     {
         var payload = new Dictionary<string, string>(custom, StringComparer.OrdinalIgnoreCase);
-        if (!string.IsNullOrWhiteSpace(contact.PickupAddress))
-            payload["pickup_address"] = contact.PickupAddress.Trim();
+        var pickupAddress = !string.IsNullOrWhiteSpace(definition.PickupAddress)
+            ? definition.PickupAddress
+            : contact.PickupAddress;
+
+        if (!string.IsNullOrWhiteSpace(pickupAddress))
+            payload["pickup_address"] = pickupAddress.Trim();
 
         return payload;
     }
@@ -587,8 +649,7 @@ public sealed class ExternalEscalationService : IExternalEscalationService
 
         var parts = payload.Split(':', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         if (parts.Length != 3
-            || (!parts[0].Equals("external_interaction", StringComparison.OrdinalIgnoreCase)
-                && !parts[0].Equals("external_escalation", StringComparison.OrdinalIgnoreCase)))
+            || !parts[0].Equals("external_interaction", StringComparison.OrdinalIgnoreCase))
             return false;
 
         action = NormalizeOutcome(parts[1]);
@@ -607,7 +668,7 @@ public sealed class ExternalEscalationService : IExternalEscalationService
         && attempt.BusinessId == businessId
         && attempt.Status == ExternalEscalationAttemptStatus.Pending
         && attempt.ExpiresAt > DateTime.UtcNow
-        && attempt.ContactPhoneSnapshot.Equals(ExternalEscalationRouter.NormalizePhone(contactPhone), StringComparison.OrdinalIgnoreCase);
+        && attempt.ContactPhoneSnapshot.Equals(BusinessInboundContactRouter.NormalizePhone(contactPhone), StringComparison.OrdinalIgnoreCase);
 
     private static Dictionary<string, string> MergePayload(
         IReadOnlyDictionary<string, string> basePayload,
@@ -662,4 +723,3 @@ public sealed class ExternalEscalationService : IExternalEscalationService
         }
     }
 }
-

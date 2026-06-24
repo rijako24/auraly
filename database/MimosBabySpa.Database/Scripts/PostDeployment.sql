@@ -27,9 +27,11 @@
 :r .\Migrations\MigrateFlowStageSnapshots.sql
 :r .\Migrations\MigrateConversationCurrentStageName.sql
 :r .\Migrations\MigrateSchedulingPolicyToSettings.sql
+:r .\Migrations\MigrateBusinessAvailabilityBlocks.sql
 :r .\Migrations\MigrateServiceCheckoutTotalPolicy.sql
 :r .\Migrations\MigrateBabySpaPlanPrices2026.sql
 :r .\Migrations\MigrateExternalEscalationAttempts.sql
+:r .\Migrations\MigrateAgentTemplatesAndInboundContacts.sql
 :r .\Migrations\MigrateOrderCheckoutPayments.sql
 :r .\Migrations\MigrateOrderDeliveryAssignment.sql
 :r .\Migrations\AlterConversationContextsValueToMax.sql
@@ -48,6 +50,9 @@
 :r .\Seeds\SeedSolorzanoWhatsAppNumber.sql
 :r .\Seeds\SeedRadaConceptWhatsAppNumber.sql
 :r .\Seeds\SeedSolorzanoDeliveryAgent.sql
+GO
+:r .\Seeds\SeedSystemAgentTemplatesAndInboundContacts.sql
+GO
 :r .\Migrations\MigrateAuditAgentTemplates.sql
 :r .\Seeds\SeedDefaultResources.sql
 :r .\Seeds\SeedWorkshopSchedulesInCatalog.sql
@@ -55,7 +60,7 @@
 :r .\Seeds\SeedPlanAddOns.sql
 :r .\Seeds\CleanupDefaultTestServices.sql
 :r .\Seeds\SeedSolorzanoAgentConfiguration.sql
+GO
 
 PRINT 'Post-deployment scripts executed successfully.';
-
 

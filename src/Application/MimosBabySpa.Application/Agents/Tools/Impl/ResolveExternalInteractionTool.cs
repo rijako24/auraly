@@ -3,23 +3,16 @@ using MimosBabySpa.Application.Services;
 
 namespace MimosBabySpa.Application.Agents.Tools.Impl;
 
-public class ResolveExternalEscalationTool : IAgentTool
+public sealed class ResolveExternalInteractionTool : IAgentTool
 {
-    private readonly IExternalEscalationService _escalations;
-    private readonly string _name;
+    private readonly IExternalEscalationService _interactions;
 
-    public ResolveExternalEscalationTool(IExternalEscalationService attempts)
-        : this(attempts, "resolve_external_escalation")
+    public ResolveExternalInteractionTool(IExternalEscalationService interactions)
     {
+        _interactions = interactions;
     }
 
-    protected ResolveExternalEscalationTool(IExternalEscalationService attempts, string name)
-    {
-        _escalations = attempts;
-        _name = name;
-    }
-
-    public string Name => _name;
+    public string Name => "resolve_external_interaction";
 
     public string Description =>
         "Resolves which external interaction the current contact message refers to. " +
@@ -39,7 +32,7 @@ public class ResolveExternalEscalationTool : IAgentTool
         ToolResultHelper.TryGetString(arguments, "message_text", out var text);
         text ??= ctx.ConversationState.LastUserMessage ?? string.Empty;
 
-        var result = await _escalations.ResolveAttemptAsync(
+        var result = await _interactions.ResolveAttemptAsync(
             ctx.BusinessId,
             ctx.ChannelPhone,
             text,
@@ -54,8 +47,7 @@ public class ResolveExternalEscalationTool : IAgentTool
                 resolution = result.Resolution,
                 error = result.Error,
                 requested_action = result.RequestedAction,
-                pending_interactions = result.PendingAttempts.Select(ToInteractionPayload).ToList(),
-                pending_attempts = result.PendingAttempts.Select(ToInteractionPayload).ToList()
+                pending_interactions = result.PendingAttempts.Select(ToInteractionPayload).ToList()
             });
         }
 
@@ -65,7 +57,6 @@ public class ResolveExternalEscalationTool : IAgentTool
             requested_action = result.RequestedAction,
             interaction = ToInteractionPayload(result.Attempt),
             external_interaction_id = result.Attempt.ExternalEscalationAttemptId,
-            external_escalation_id = result.Attempt.ExternalEscalationAttemptId,
             attempt_code = result.Attempt.AttemptCode,
             event_name = result.Attempt.EventName,
             target_type = result.Attempt.TargetType,
@@ -77,7 +68,6 @@ public class ResolveExternalEscalationTool : IAgentTool
     private static object ToInteractionPayload(Domain.Entities.ExternalEscalationAttempt attempt) => new
     {
         external_interaction_id = attempt.ExternalEscalationAttemptId,
-        external_escalation_id = attempt.ExternalEscalationAttemptId,
         attempt_code = attempt.AttemptCode,
         event_name = attempt.EventName,
         target_type = attempt.TargetType,
@@ -102,12 +92,5 @@ public class ResolveExternalEscalationTool : IAgentTool
         {
             return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         }
-    }
-}
-public sealed class ResolveExternalInteractionTool : ResolveExternalEscalationTool
-{
-    public ResolveExternalInteractionTool(IExternalEscalationService attempts)
-        : base(attempts, "resolve_external_interaction")
-    {
     }
 }

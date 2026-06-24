@@ -177,7 +177,7 @@ services.AddScoped<IOutboundMessageDispatcher, OutboundMessageDispatcher>();
 services.AddScoped<IMessageSequenceResolver, MessageSequenceResolver>();
 services.AddScoped<IActiveAgentConfigResolver, ActiveAgentConfigResolver>();
 services.AddScoped<IEventNotificationDispatcher, EventNotificationDispatcher>();
-services.AddScoped<IExternalEscalationRouter, ExternalEscalationRouter>();
+services.AddScoped<IBusinessInboundContactRouter, BusinessInboundContactRouter>();
 services.AddScoped<IExternalEscalationService, ExternalEscalationService>();
 services.AddScoped<IExternalEscalationTargetHandler, OrderDeliveryExternalEscalationHandler>();
 
@@ -240,11 +240,13 @@ services.AddScoped<IAgentTool, UpdateOrderItemQuantityTool>();
 services.AddScoped<IAgentTool, GetOrderDraftTool>();
 services.AddScoped<IAgentTool, CreateOrderTool>();
 services.AddScoped<IAgentTool, StartExternalInteractionTool>();
-services.AddScoped<IAgentTool, ResolveExternalEscalationTool>();
 services.AddScoped<IAgentTool, ResolveExternalInteractionTool>();
 services.AddScoped<IAgentTool, CompleteExternalInteractionTool>();
-services.AddScoped<IAgentTool, AcceptExternalEscalationTool>();
-services.AddScoped<IAgentTool, DeclineExternalEscalationTool>();
+services.AddScoped<IAgentTool, OperationsGetReservationsTool>();
+services.AddScoped<IAgentTool, OperationsBlockAvailabilityTool>();
+services.AddScoped<IAgentTool, OperationsRequestRescheduleTool>();
+services.AddScoped<IAgentTool, OperationsBusinessMetricsTool>();
+services.AddScoped<IAgentTool, OperationsCustomerHistoryTool>();
 
 services.AddScoped<AgentToolRegistry>();
 services.AddScoped<IAgentConversationService, AgentConversationService>();
@@ -407,6 +409,3 @@ static string CreateTestUserPhone()
 {
     return $"+1555{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() % 10000000:0000000}";
 }
-
-
-

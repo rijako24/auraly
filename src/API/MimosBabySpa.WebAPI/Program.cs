@@ -136,7 +136,7 @@ builder.Services.AddScoped<IMediaUrlResolver, BlobMediaUrlResolver>();
 builder.Services.AddScoped<IMessageSequenceResolver, MessageSequenceResolver>();
 builder.Services.AddScoped<IActiveAgentConfigResolver, ActiveAgentConfigResolver>();
 builder.Services.AddScoped<IEventNotificationDispatcher, EventNotificationDispatcher>();
-builder.Services.AddScoped<IExternalEscalationRouter, ExternalEscalationRouter>();
+builder.Services.AddScoped<IBusinessInboundContactRouter, BusinessInboundContactRouter>();
 builder.Services.AddScoped<IExternalEscalationService, ExternalEscalationService>();
 builder.Services.AddScoped<IExternalEscalationTargetHandler, OrderDeliveryExternalEscalationHandler>();
 builder.Services.AddScoped<IConversationFactsService, ConversationFactsService>();
@@ -254,11 +254,13 @@ builder.Services.AddScoped<IAgentTool, UpdateOrderItemQuantityTool>();
 builder.Services.AddScoped<IAgentTool, GetOrderDraftTool>();
 builder.Services.AddScoped<IAgentTool, CreateOrderTool>();
 builder.Services.AddScoped<IAgentTool, StartExternalInteractionTool>();
-builder.Services.AddScoped<IAgentTool, ResolveExternalEscalationTool>();
 builder.Services.AddScoped<IAgentTool, ResolveExternalInteractionTool>();
 builder.Services.AddScoped<IAgentTool, CompleteExternalInteractionTool>();
-builder.Services.AddScoped<IAgentTool, AcceptExternalEscalationTool>();
-builder.Services.AddScoped<IAgentTool, DeclineExternalEscalationTool>();
+builder.Services.AddScoped<IAgentTool, OperationsGetReservationsTool>();
+builder.Services.AddScoped<IAgentTool, OperationsBlockAvailabilityTool>();
+builder.Services.AddScoped<IAgentTool, OperationsRequestRescheduleTool>();
+builder.Services.AddScoped<IAgentTool, OperationsBusinessMetricsTool>();
+builder.Services.AddScoped<IAgentTool, OperationsCustomerHistoryTool>();
 builder.Services.AddScoped<AgentToolRegistry>();
 builder.Services.AddScoped<IAgentConversationService, AgentConversationService>();
 builder.Services.AddScoped<IAgentTestRuntimeFactory, AgentTestRuntimeFactory>();
@@ -343,7 +345,3 @@ using (var scope = app.Services.CreateScope())
 }
 
 app.Run();
-
-
-
-

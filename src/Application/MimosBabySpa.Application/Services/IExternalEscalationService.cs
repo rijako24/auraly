@@ -1,8 +1,8 @@
 namespace MimosBabySpa.Application.Services;
 
-public interface IExternalEscalationRouter
+public interface IBusinessInboundContactRouter
 {
-    Task<ExternalEscalationRoute?> ResolveAsync(Guid businessId, string phone, CancellationToken ct = default);
+    Task<BusinessInboundContactRoute?> ResolveAsync(Guid businessId, string phone, CancellationToken ct = default);
 }
 
 public interface IExternalEscalationService
@@ -25,10 +25,6 @@ public interface IExternalEscalationService
         string? responseText,
         IReadOnlyDictionary<string, string>? responsePayload = null,
         CancellationToken ct = default);
-
-    Task<ExternalEscalationActionResult> AcceptAsync(Guid businessId, Guid attemptId, string contactPhone, CancellationToken ct = default);
-
-    Task<ExternalEscalationActionResult> DeclineAsync(Guid businessId, Guid attemptId, string contactPhone, CancellationToken ct = default);
 
     Task ProcessExpiredAttemptsAsync(CancellationToken ct = default);
 }

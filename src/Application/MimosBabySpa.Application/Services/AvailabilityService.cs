@@ -188,14 +188,10 @@ public class AvailabilityService : IAvailabilityService
         }
         else
         {
-            var businessBlocks = await _unitOfWork.BusinessWorkingHours.GetByBusinessIdAsync(businessId, cancellationToken);
-            blocks.AddRange(businessBlocks
-                .Where(h => h.DayOfWeek == date.DayOfWeek)
-                .Select(h => new TimeBlock
-                {
-                    Open = h.OpenTime.ToString(@"hh\:mm"),
-                    Close = h.CloseTime.ToString(@"hh\:mm")
-                }));
+            blocks.AddRange(await _workingHoursService.GetEffectiveBusinessWorkingHoursAsync(
+                businessId,
+                DateOnly.FromDateTime(date),
+                cancellationToken));
         }
 
         if (blocks.Count == 0)

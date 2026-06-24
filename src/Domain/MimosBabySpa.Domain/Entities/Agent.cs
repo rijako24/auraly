@@ -5,8 +5,10 @@ public class Agent
     public Guid AgentId { get; set; }
     public Guid BusinessId { get; set; }
     public Guid AgentTypeId { get; set; }
+    public Guid? AgentTemplateId { get; set; }
     public string Name { get; set; } = string.Empty;
     public string? Description { get; set; }
+    public string Kind { get; set; } = "customer";
     public bool IsActive { get; set; } = true;
 
     /// <summary>
@@ -25,4 +27,5 @@ public class Agent
 
     public virtual Business Business { get; set; } = null!;
     public virtual AgentType AgentType { get; set; } = null!;
+    public virtual AgentTemplate? AgentTemplate { get; set; }
 }

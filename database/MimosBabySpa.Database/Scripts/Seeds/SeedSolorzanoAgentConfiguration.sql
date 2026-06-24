@@ -5,6 +5,8 @@
 -- el motor agentic actual. Idempotente.
 -- =============================================================================
 
+SET QUOTED_IDENTIFIER ON;
+SET ANSI_NULLS ON;
 SET NOCOUNT ON;
 
 DECLARE @BusinessId UNIQUEIDENTIFIER = 'FCEE3BA9-E6BF-43E2-8C1A-560CB724688B';
@@ -842,7 +844,8 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "events": {
         "order_created": {
           "enabled": true,
-          "strategy": "sequential",
+          "contactType": "delivery",
+          "pickupAddress": "Calle 16 # 9-35, Centro, Valledupar",
           "attemptTimeoutMinutes": 15,
           "attemptCodePrefix": "PED",
           "sendMessageSequence": "delivery_request",
@@ -851,13 +854,9 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
           "exhaustedNotificationEvent": "delivery_unavailable",
           "contacts": [
             {
-              "key": "domicilio_solorzano",
-              "name": "Domicilio Solorzano",
-              "role": "delivery",
-              "phone": "+573042052007",
+              "businessInboundContactId": "E0EE3BA9-E6BF-43E2-8C1A-560CB724688B",
               "priority": 1,
-              "inboundAgentId": "D0EE3BA9-E6BF-43E2-8C1A-560CB724688B",
-              "pickupAddress": "Calle 16 # 9-35, Centro, Valledupar"
+              "retryEnabled": true
             }
           ]
         }

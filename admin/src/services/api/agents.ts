@@ -1,5 +1,5 @@
 import { apiClient } from "./client";
-import type { Agent } from "@/types/entities";
+import type { Agent, BusinessInboundContact } from "@/types/entities";
 import type { AgentSettings } from "@/types/agent-settings";
 
 export interface AgentTestChatMessage {
@@ -15,6 +15,17 @@ export interface AgentTestTurnRequest {
   history: AgentTestChatMessage[];
 }
 
+export interface BusinessInboundContactPayload {
+  type: string;
+  key?: string;
+  name: string;
+  role?: string;
+  phoneNumber: string;
+  inboundAgentId: string;
+  employeeId?: string | null;
+  capabilitiesJson?: string | null;
+  isActive?: boolean;
+}
 export interface AgentTestTurnResponse {
   success: boolean;
   response: string;
@@ -41,6 +52,15 @@ export interface AgentTestTurnResponse {
 export const agentsApi = {
   listByBusiness: (businessId: string) =>
     apiClient.get<Agent[]>(`/businesses/${businessId}/agents`),
+
+  listInboundContactsByBusiness: (businessId: string, includeInactive = false) =>
+    apiClient.get<BusinessInboundContact[]>(`/businesses/${businessId}/inbound-contacts`, includeInactive ? { includeInactive } : undefined),
+  createInboundContact: (businessId: string, data: BusinessInboundContactPayload) =>
+    apiClient.post<BusinessInboundContact>(`/businesses/${businessId}/inbound-contacts`, data),
+  updateInboundContact: (businessId: string, contactId: string, data: Partial<BusinessInboundContactPayload>) =>
+    apiClient.put<BusinessInboundContact>(`/businesses/${businessId}/inbound-contacts/${contactId}`, data),
+  deleteInboundContact: (businessId: string, contactId: string) =>
+    apiClient.delete(`/businesses/${businessId}/inbound-contacts/${contactId}`),
 
   getById: (agentId: string) => apiClient.get<Agent>(`/agents/${agentId}`),
 

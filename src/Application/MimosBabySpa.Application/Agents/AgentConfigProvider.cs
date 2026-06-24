@@ -444,12 +444,10 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
 
             foreach (var contact in definition.Contacts)
             {
-                if (string.IsNullOrWhiteSpace(contact.Key)
-                    || string.IsNullOrWhiteSpace(contact.Phone)
-                    || contact.InboundAgentId is null)
+                if (!contact.BusinessInboundContactId.HasValue)
                 {
                     _logger.LogWarning(
-                        "AgentConfig {AgentId}: external escalation contact for event '{Event}' is missing key, phone or inboundAgentId",
+                        "AgentConfig {AgentId}: external escalation contact for event '{Event}' must reference businessInboundContactId",
                         config.AgentId,
                         eventName);
                 }
@@ -524,5 +522,3 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
     }
 
 }
-
-

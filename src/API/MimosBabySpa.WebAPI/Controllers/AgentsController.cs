@@ -30,6 +30,47 @@ public class AgentsController : ControllerBase
     public async Task<ActionResult<IReadOnlyList<AgentDto>>> GetByBusiness(Guid businessId, CancellationToken ct) =>
         Ok(await _service.GetByBusinessIdAsync(User.GetTenantId(), businessId, ct));
 
+    [HttpGet("api/businesses/{businessId:guid}/inbound-contacts")]
+    [PermissionAuthorize("agents.read")]
+    public async Task<ActionResult<IReadOnlyList<BusinessInboundContactDto>>> GetInboundContactsByBusiness(
+        Guid businessId,
+        [FromQuery] bool includeInactive,
+        CancellationToken ct) =>
+        Ok(await _service.GetInboundContactsByBusinessIdAsync(User.GetTenantId(), businessId, includeInactive, ct));
+
+    [HttpGet("api/businesses/{businessId:guid}/inbound-contacts/{contactId:guid}")]
+    [PermissionAuthorize("agents.read")]
+    public async Task<ActionResult<BusinessInboundContactDto>> GetInboundContactById(Guid businessId, Guid contactId, CancellationToken ct) =>
+        Ok(await _service.GetInboundContactByIdAsync(User.GetTenantId(), businessId, contactId, ct));
+
+    [HttpPost("api/businesses/{businessId:guid}/inbound-contacts")]
+    [PermissionAuthorize("agents.update")]
+    public async Task<ActionResult<BusinessInboundContactDto>> CreateInboundContact(
+        Guid businessId,
+        [FromBody] CreateBusinessInboundContactRequest request,
+        CancellationToken ct)
+    {
+        var result = await _service.CreateInboundContactAsync(User.GetTenantId(), businessId, request, ct);
+        return CreatedAtAction(nameof(GetInboundContactById), new { businessId, contactId = result.BusinessInboundContactId }, result);
+    }
+
+    [HttpPut("api/businesses/{businessId:guid}/inbound-contacts/{contactId:guid}")]
+    [PermissionAuthorize("agents.update")]
+    public async Task<ActionResult<BusinessInboundContactDto>> UpdateInboundContact(
+        Guid businessId,
+        Guid contactId,
+        [FromBody] UpdateBusinessInboundContactRequest request,
+        CancellationToken ct) =>
+        Ok(await _service.UpdateInboundContactAsync(User.GetTenantId(), businessId, contactId, request, ct));
+
+    [HttpDelete("api/businesses/{businessId:guid}/inbound-contacts/{contactId:guid}")]
+    [PermissionAuthorize("agents.update")]
+    public async Task<IActionResult> DeactivateInboundContact(Guid businessId, Guid contactId, CancellationToken ct)
+    {
+        await _service.DeactivateInboundContactAsync(User.GetTenantId(), businessId, contactId, ct);
+        return NoContent();
+    }
+
     [HttpGet("api/agents/{agentId:guid}")]
     [PermissionAuthorize("agents.read")]
     public async Task<ActionResult<AgentDto>> GetById(Guid agentId, CancellationToken ct) =>

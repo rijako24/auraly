@@ -9,4 +9,9 @@ public interface IWorkingHoursService
         Guid employeeId,
         DateOnly date,
         CancellationToken ct = default);
+
+    Task<IReadOnlyList<TimeBlock>> GetEffectiveBusinessWorkingHoursAsync(
+        Guid businessId,
+        DateOnly date,
+        CancellationToken ct = default);
 }

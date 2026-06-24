@@ -25,6 +25,7 @@ public class UnitOfWork : IUnitOfWork
     private IEmployeeWorkingHourRepository? _employeeWorkingHours;
     private IEmployeeScheduleExceptionRepository? _employeeScheduleExceptions;
     private IBusinessSchedulingSettingsRepository? _businessSchedulingSettings;
+    private IBusinessAvailabilityBlockRepository? _businessAvailabilityBlocks;
     private IScheduledAutomationJobRepository? _scheduledAutomationJobs;
     private IReservationAttendanceResponseRepository? _reservationAttendanceResponses;
     private IIntegrationConnectionRepository? _integrationConnections;
@@ -56,6 +57,8 @@ public class UnitOfWork : IUnitOfWork
     private IBusinessUsagePeriodRepository? _businessUsagePeriods;
     private IUsageLedgerRepository? _usageLedger;
     private IUsageCostRateRepository? _usageCostRates;
+    private IAgentTemplateRepository? _agentTemplates;
+    private IBusinessInboundContactRepository? _businessInboundContacts;
 
     public UnitOfWork(ApplicationDbContext context)
     {
@@ -118,6 +121,10 @@ public class UnitOfWork : IUnitOfWork
 
     public IBusinessSchedulingSettingsRepository BusinessSchedulingSettings =>
         _businessSchedulingSettings ??= new BusinessSchedulingSettingsRepository(_context);
+
+
+    public IBusinessAvailabilityBlockRepository BusinessAvailabilityBlocks =>
+        _businessAvailabilityBlocks ??= new BusinessAvailabilityBlockRepository(_context);
 
     public IScheduledAutomationJobRepository ScheduledAutomationJobs =>
         _scheduledAutomationJobs ??= new ScheduledAutomationJobRepository(_context);
@@ -212,6 +219,12 @@ public class UnitOfWork : IUnitOfWork
     public IUsageCostRateRepository UsageCostRates =>
         _usageCostRates ??= new UsageCostRateRepository(_context);
 
+    public IAgentTemplateRepository AgentTemplates =>
+        _agentTemplates ??= new AgentTemplateRepository(_context);
+
+    public IBusinessInboundContactRepository BusinessInboundContacts =>
+        _businessInboundContacts ??= new BusinessInboundContactRepository(_context);
+
     public async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {
         return await _context.SaveChangesAsync(cancellationToken);
@@ -253,5 +266,3 @@ public class UnitOfWork : IUnitOfWork
         _context.Dispose();
     }
 }
-
-

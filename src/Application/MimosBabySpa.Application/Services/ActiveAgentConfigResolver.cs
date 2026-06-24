@@ -26,8 +26,7 @@ public sealed class ActiveAgentConfigResolver : IActiveAgentConfigResolver
 
     public async Task<AgentConfig?> GetActiveConfigAsync(Guid businessId, CancellationToken ct = default)
     {
-        var agents = await _agentRepository.GetByBusinessAsync(businessId, ct);
-        var active = agents.FirstOrDefault();
+        var active = await _agentRepository.GetActiveCustomerByBusinessAsync(businessId, ct);
         if (active is null)
             return null;
 

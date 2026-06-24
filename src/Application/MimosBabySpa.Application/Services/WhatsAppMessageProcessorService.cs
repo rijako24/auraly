@@ -18,7 +18,7 @@ public class WhatsAppMessageProcessorService : IWhatsAppMessageProcessorService
     private readonly IAgentRepository _agentRepository;
     private readonly IBlobStorageService _blobStorageService;
     private readonly IOutboundMessageDispatcher _outboundDispatcher;
-    private readonly IExternalEscalationRouter _externalEscalationRouter;
+    private readonly IBusinessInboundContactRouter _businessInboundContactRouter;
     private readonly ILogger<WhatsAppMessageProcessorService> _logger;
 
     public WhatsAppMessageProcessorService(
@@ -31,7 +31,7 @@ public class WhatsAppMessageProcessorService : IWhatsAppMessageProcessorService
         IAgentRepository agentRepository,
         IBlobStorageService blobStorageService,
         IOutboundMessageDispatcher outboundDispatcher,
-        IExternalEscalationRouter externalEscalationRouter,
+        IBusinessInboundContactRouter businessInboundContactRouter,
         ILogger<WhatsAppMessageProcessorService> logger)
     {
         _conversationService = conversationService;
@@ -43,7 +43,7 @@ public class WhatsAppMessageProcessorService : IWhatsAppMessageProcessorService
         _agentRepository = agentRepository;
         _blobStorageService = blobStorageService;
         _outboundDispatcher = outboundDispatcher;
-        _externalEscalationRouter = externalEscalationRouter;
+        _businessInboundContactRouter = businessInboundContactRouter;
         _logger = logger;
     }
 
@@ -60,7 +60,7 @@ public class WhatsAppMessageProcessorService : IWhatsAppMessageProcessorService
     ///   - Owner=Human → guarda mensaje y detiene procesamiento del bot.
     ///
     /// Orden:
-    ///   1. Obtener/crear conversación y lead.
+    ///   1. Obtener/crear conversación; solo clientes externos generan lead.
     ///   2. Chequeo Owner=Human.
     ///   3. Resolver agente activo y delegar a AgentConversationService.
     ///   4. Actualizar lead y enviar respuesta al canal.
@@ -76,12 +76,12 @@ public class WhatsAppMessageProcessorService : IWhatsAppMessageProcessorService
             "Procesando mensaje de {UserNumber} en negocio {BusinessId}: {Message}",
             userNumber, businessId, messageText);
 
-        var externalRoute = await _externalEscalationRouter.ResolveAsync(businessId, userNumber);
+        var inboundRoute = await _businessInboundContactRouter.ResolveAsync(businessId, userNumber);
 
-        // 1. Obtener/crear conversación y lead
+        // 1. Obtener/crear conversación; los contactos inbound no generan lead de cliente
         var conversation = await _conversationService.GetOrCreateConversationAsync(businessId, userNumber, customerName);
         Lead? lead = null;
-        if (externalRoute is null)
+        if (inboundRoute is null)
             lead = await _leadService.GetOrCreateLeadAsync(businessId, userNumber, customerName);
 
         // ── Capa 1: handover humano — corto-circuito ─────────────────────────
@@ -96,7 +96,7 @@ public class WhatsAppMessageProcessorService : IWhatsAppMessageProcessorService
         }
 
         // 2. Resolver agente activo para el negocio
-        var agentId = externalRoute?.AgentId;
+        var agentId = inboundRoute?.AgentId;
         if (agentId is null)
         {
             var agent = await ResolveActiveAgentAsync(businessId);
@@ -143,11 +143,8 @@ public class WhatsAppMessageProcessorService : IWhatsAppMessageProcessorService
 
     // ── Helpers ──────────────────────────────────────────────────────────────
 
-    private async Task<Agent?> ResolveActiveAgentAsync(Guid businessId)
-    {
-        var agents = await _agentRepository.GetByBusinessAsync(businessId);
-        return agents.FirstOrDefault(a => a.IsActive);
-    }
+    private Task<Agent?> ResolveActiveAgentAsync(Guid businessId) =>
+        _agentRepository.GetActiveCustomerByBusinessAsync(businessId);
 
     private async Task SendResponseAsync(string userNumber, string response, Conversation conversation)
     {

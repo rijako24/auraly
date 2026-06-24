@@ -30,6 +30,7 @@ public class InMemoryUnitOfWork : IUnitOfWork
     public IEmployeeWorkingHourRepository EmployeeWorkingHours { get; }
     public IEmployeeScheduleExceptionRepository EmployeeScheduleExceptions { get; }
     public IBusinessSchedulingSettingsRepository BusinessSchedulingSettings { get; }
+    public IBusinessAvailabilityBlockRepository BusinessAvailabilityBlocks => throw new NotImplementedException();
     public IScheduledAutomationJobRepository ScheduledAutomationJobs { get; }
     public IReservationAttendanceResponseRepository ReservationAttendanceResponses { get; }
     public IIntegrationConnectionRepository IntegrationConnections { get; }
@@ -61,8 +62,10 @@ public class InMemoryUnitOfWork : IUnitOfWork
     public IBusinessUsagePeriodRepository BusinessUsagePeriods { get; }
     public IUsageLedgerRepository UsageLedger { get; }
     public IUsageCostRateRepository UsageCostRates { get; }
+    public IAgentTemplateRepository AgentTemplates => throw new NotImplementedException();
+    public IBusinessInboundContactRepository BusinessInboundContacts => throw new NotImplementedException();
 
-    private readonly Guid _businessId;
+private readonly Guid _businessId;
 
     public InMemoryUnitOfWork(Guid businessId)
     {
@@ -427,6 +430,19 @@ internal sealed class InMemoryExternalEscalationAttemptRepository : IExternalEsc
             o.TargetType == targetType &&
             o.TargetId == targetId));
 
+    public Task<IReadOnlyList<ExternalEscalationAttempt>> GetAttemptsForTargetAsync(
+        Guid businessId,
+        string eventName,
+        string targetType,
+        Guid targetId,
+        CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<ExternalEscalationAttempt>>(_escalations
+            .Where(o => o.BusinessId == businessId
+                && o.EventName == eventName
+                && o.TargetType == targetType
+                && o.TargetId == targetId)
+            .OrderBy(o => o.EscalatedAt)
+            .ToList());
     public Task<bool> HasAcceptedForTargetAsync(Guid businessId, string eventName, string targetType, Guid targetId, CancellationToken ct = default) =>
         Task.FromResult(_escalations.Any(o =>
             o.BusinessId == businessId &&

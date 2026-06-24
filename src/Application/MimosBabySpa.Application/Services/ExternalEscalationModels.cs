@@ -3,7 +3,7 @@ using MimosBabySpa.Domain.Entities;
 
 namespace MimosBabySpa.Application.Services;
 
-public sealed record ExternalEscalationRoute(Guid AgentId, string ContactKey, string ContactPhone);
+public sealed record BusinessInboundContactRoute(Guid AgentId, string ContactKey, string ContactPhone);
 
 public sealed record ExternalEscalationRequest(
     Guid SourceAgentId,
@@ -29,9 +29,3 @@ public sealed record ExternalEscalationActionResult(
     string? OutcomeKey = null,
     string? ResponseText = null,
     IReadOnlyDictionary<string, string>? Payload = null);
-
-internal sealed record ExternalEscalationContactMatch(
-    Guid SourceAgentId,
-    Guid BusinessId,
-    string EventName,
-    ExternalEscalationContactDefinition Contact);

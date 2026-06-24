@@ -74,7 +74,6 @@ public sealed class StartExternalInteractionTool : IAgentTool
             target_type = targetType,
             target_id = targetId,
             external_interaction_id = result.InteractionId,
-            external_escalation_id = result.InteractionId,
             attempt_code = result.Code
         });
     }
@@ -87,4 +86,3 @@ public sealed class StartExternalInteractionTool : IAgentTool
                 : ctx.ConversationId;
     }
 }
-

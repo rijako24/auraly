@@ -58,8 +58,7 @@ public sealed class CustomerMemoryBackfillService : ICustomerMemoryBackfillServi
                     ct.ThrowIfCancellationRequested();
                     businessesProcessed++;
 
-                    var agents = await _agentRepository.GetByBusinessAsync(business.BusinessId);
-                    var activeAgent = agents.FirstOrDefault(a => a.IsActive);
+                    var activeAgent = await _agentRepository.GetActiveCustomerByBusinessAsync(business.BusinessId, ct);
                     if (activeAgent is null)
                     {
                         _logger.LogWarning(

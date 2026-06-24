@@ -160,7 +160,7 @@ var host = new HostBuilder()
         services.AddScoped<IAdminActionLinkService>(sp => sp.GetRequiredService<AdminActionLinkService>());
         services.AddScoped<IReleaseLinkService>(sp => sp.GetRequiredService<AdminActionLinkService>());
         services.AddScoped<IConversationReleaseService, ConversationReleaseService>();
-        services.AddScoped<IExternalEscalationRouter, ExternalEscalationRouter>();
+        services.AddScoped<IBusinessInboundContactRouter, BusinessInboundContactRouter>();
         services.AddScoped<IExternalEscalationService, ExternalEscalationService>();
         services.AddScoped<IExternalEscalationTargetHandler, OrderDeliveryExternalEscalationHandler>();
         services.AddScoped<ITimedProcess, PaymentLinkPollingProcess>();
@@ -216,11 +216,13 @@ var host = new HostBuilder()
         services.AddScoped<IAgentTool, GetOrderDraftTool>();
         services.AddScoped<IAgentTool, CreateOrderTool>();
         services.AddScoped<IAgentTool, StartExternalInteractionTool>();
-        services.AddScoped<IAgentTool, ResolveExternalEscalationTool>();
         services.AddScoped<IAgentTool, ResolveExternalInteractionTool>();
         services.AddScoped<IAgentTool, CompleteExternalInteractionTool>();
-        services.AddScoped<IAgentTool, AcceptExternalEscalationTool>();
-        services.AddScoped<IAgentTool, DeclineExternalEscalationTool>();
+        services.AddScoped<IAgentTool, OperationsGetReservationsTool>();
+        services.AddScoped<IAgentTool, OperationsBlockAvailabilityTool>();
+        services.AddScoped<IAgentTool, OperationsRequestRescheduleTool>();
+        services.AddScoped<IAgentTool, OperationsBusinessMetricsTool>();
+        services.AddScoped<IAgentTool, OperationsCustomerHistoryTool>();
         services.AddScoped<IAgentTool, SetFactTool>();
         services.AddScoped<IAgentTool, ResetFlowContextTool>();
         services.AddScoped<IAgentTool, SendMessageSequenceTool>();
@@ -276,10 +278,3 @@ var host = new HostBuilder()
     .Build();
 
 host.Run();
-
-
-
-
-
-
-

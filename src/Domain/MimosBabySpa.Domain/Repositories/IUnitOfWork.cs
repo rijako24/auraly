@@ -21,6 +21,7 @@ public interface IUnitOfWork : IDisposable
     IEmployeeWorkingHourRepository EmployeeWorkingHours { get; }
     IEmployeeScheduleExceptionRepository EmployeeScheduleExceptions { get; }
     IBusinessSchedulingSettingsRepository BusinessSchedulingSettings { get; }
+    IBusinessAvailabilityBlockRepository BusinessAvailabilityBlocks { get; }
     IScheduledAutomationJobRepository ScheduledAutomationJobs { get; }
     IReservationAttendanceResponseRepository ReservationAttendanceResponses { get; }
     IIntegrationConnectionRepository IntegrationConnections { get; }
@@ -53,6 +54,8 @@ public interface IUnitOfWork : IDisposable
     IBusinessUsagePeriodRepository BusinessUsagePeriods { get; }
     IUsageLedgerRepository UsageLedger { get; }
     IUsageCostRateRepository UsageCostRates { get; }
+    IAgentTemplateRepository AgentTemplates { get; }
+    IBusinessInboundContactRepository BusinessInboundContacts { get; }
 
     Task ExecuteInTransactionAsync(Func<Task> action, CancellationToken cancellationToken = default);
 
@@ -60,4 +63,3 @@ public interface IUnitOfWork : IDisposable
 
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }
-

@@ -87,6 +87,21 @@ public sealed class ExternalEscalationAttemptRepository : IExternalEscalationAtt
             && o.TargetId == targetId,
             ct);
 
+    public async Task<IReadOnlyList<ExternalEscalationAttempt>> GetAttemptsForTargetAsync(
+        Guid businessId,
+        string eventName,
+        string targetType,
+        Guid targetId,
+        CancellationToken ct = default)
+    {
+        return await _context.ExternalEscalationAttempts
+            .Where(o => o.BusinessId == businessId
+                && o.EventName == eventName
+                && o.TargetType == targetType
+                && o.TargetId == targetId)
+            .OrderBy(o => o.EscalatedAt)
+            .ToListAsync(ct);
+    }
     public Task<bool> HasAcceptedForTargetAsync(
         Guid businessId,
         string eventName,

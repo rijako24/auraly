@@ -47,6 +47,7 @@ export const navigation: NavEntry[] = [
   { name: "Reservaciones", href: "/dashboard/reservations", icon: CalendarDays, permission: "reservations.read" },
   { name: "Calendario", href: "/dashboard/reservations/calendar", icon: Calendar, permission: "reservations.read" },
   { name: "Agente IA", href: "/dashboard/agents", icon: Sparkles, permission: "agents.read" },
+  { name: "Contactos inbound", href: "/dashboard/agents/inbound-contacts", icon: UserCog, permission: "agents.read" },
   { name: "Conversaciones", href: "/dashboard/conversations", icon: MessageSquare, permission: "conversations.read" },
   { name: "Leads", href: "/dashboard/leads", icon: UserPlus, permission: "leads.read" },
   { type: "separator", label: "Finanzas" },

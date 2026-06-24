@@ -14,6 +14,7 @@ import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { AGENT_TOOLS_CATALOG } from "@/lib/agent-tools-catalog";
+import type { BusinessInboundContact } from "@/types/entities";
 import type {
   AgentFlowStage,
   AgentSettings,
@@ -34,12 +35,12 @@ export type AgentEditorSection =
 interface AgentSettingsEditorProps {
   value: AgentSettings;
   onChange: (next: AgentSettings) => void;
-  availableAgents?: Array<{ agentId: string; name: string }>;
+  availableInboundContacts?: BusinessInboundContact[];
   /** Modo wizard: muestra solo una sección sin pestañas. */
   section?: AgentEditorSection;
 }
 
-export function AgentSettingsEditor({ value, onChange, availableAgents = [], section }: AgentSettingsEditorProps) {
+export function AgentSettingsEditor({ value, onChange, availableInboundContacts = [], section }: AgentSettingsEditorProps) {
   const [selectedStageId, setSelectedStageId] = useState<string | null>(
     value.flow?.stages[0]?.id ?? null
   );
@@ -378,7 +379,7 @@ export function AgentSettingsEditor({ value, onChange, availableAgents = [], sec
       <TabsContent value="external">
         <ExternalEscalationsEditor
           value={value}
-          availableAgents={availableAgents}
+          availableInboundContacts={availableInboundContacts}
           onChange={patch}
         />
       </TabsContent>
@@ -561,11 +562,11 @@ function FactSchemaEditor({
 
 function ExternalEscalationsEditor({
   value,
-  availableAgents,
+  availableInboundContacts,
   onChange,
 }: {
   value: AgentSettings;
-  availableAgents: Array<{ agentId: string; name: string }>;
+  availableInboundContacts: BusinessInboundContact[];
   onChange: (partial: Partial<AgentSettings>) => void;
 }) {
   const externalEscalations = value.escalations?.external ?? { enabled: false, events: {} };
@@ -585,20 +586,29 @@ function ExternalEscalationsEditor({
     });
 
   const addEvent = () => {
-    const name = eventNames.includes("order_paid")
+    const name = eventNames.includes("order_created")
       ? `external_event_${eventNames.length + 1}`
-      : "order_paid";
+      : "order_created";
     patchExternal({
       ...events,
       [name]: {
         enabled: true,
-        strategy: "sequential",
-        attemptTimeoutMinutes: 5,
+        contactType: "delivery",
+        pickupAddress: "",
+        attemptTimeoutMinutes: 15,
         attemptCodePrefix: "PED",
         sendMessageSequence: "",
+        attemptSentNotificationEvent: "",
+        acceptedNotificationEvent: "",
+        exhaustedNotificationEvent: "",
         contacts: [],
       },
     }, true);
+  };
+
+  const contactLabel = (contact: BusinessInboundContact) => {
+    const agent = contact.inboundAgentName ? ` -> ${contact.inboundAgentName}` : "";
+    return `${contact.name} (${contact.type}) ${contact.phoneNumber}${agent}`;
   };
 
   return (
@@ -606,7 +616,7 @@ function ExternalEscalationsEditor({
       <CardHeader className="flex flex-row items-center justify-between">
         <div>
           <CardTitle className="text-base">Escalaciones externas</CardTitle>
-          <CardDescription>Contactos externos y agente que procesa sus respuestas</CardDescription>
+          <CardDescription>Eventos que envian una interaccion a contactos inbound configurados</CardDescription>
         </div>
         <Button type="button" variant="outline" size="sm" onClick={addEvent}>
           <Plus className="mr-1 h-4 w-4" />
@@ -625,6 +635,10 @@ function ExternalEscalationsEditor({
         {eventNames.map((eventName) => {
           const event = events[eventName] ?? {};
           const contacts = event.contacts ?? [];
+          const eventContactType = (event.contactType ?? "").trim().toLowerCase();
+          const matchingContacts = availableInboundContacts.filter((contact) =>
+            !eventContactType || contact.type.toLowerCase() === eventContactType
+          );
           const updateEvent = (nextEvent: typeof event, nextName = eventName) => {
             const next = { ...events };
             delete next[eventName];
@@ -634,16 +648,32 @@ function ExternalEscalationsEditor({
 
           return (
             <div key={eventName} className="space-y-3 rounded-md border p-3">
-              <div className="grid gap-2 sm:grid-cols-4">
+              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
                 <div className="space-y-1">
                   <Label>Evento</Label>
                   <Input value={eventName} onChange={(e) => updateEvent(event, e.target.value)} />
                 </div>
                 <div className="space-y-1">
+                  <Label>Tipo contacto</Label>
+                  <Input
+                    placeholder="delivery"
+                    value={event.contactType ?? ""}
+                    onChange={(e) => updateEvent({ ...event, contactType: e.target.value })}
+                  />
+                </div>
+                <div className="space-y-1">
                   <Label>Secuencia</Label>
                   <Input
+                    placeholder="delivery_request"
                     value={event.sendMessageSequence ?? ""}
                     onChange={(e) => updateEvent({ ...event, sendMessageSequence: e.target.value })}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label>Prefijo</Label>
+                  <Input
+                    value={event.attemptCodePrefix ?? "EXT"}
+                    onChange={(e) => updateEvent({ ...event, attemptCodePrefix: e.target.value })}
                   />
                 </div>
                 <div className="space-y-1">
@@ -655,20 +685,21 @@ function ExternalEscalationsEditor({
                     onChange={(e) => updateEvent({ ...event, attemptTimeoutMinutes: parseInt(e.target.value, 10) })}
                   />
                 </div>
-                <div className="space-y-1">
-                  <Label>Prefijo</Label>
+                <div className="space-y-1 sm:col-span-2 lg:col-span-3">
+                  <Label>Direccion de recogida</Label>
                   <Input
-                    value={event.attemptCodePrefix ?? "EXT"}
-                    onChange={(e) => updateEvent({ ...event, attemptCodePrefix: e.target.value })}
+                    placeholder="Calle 16 # 9-35, Centro, Valledupar"
+                    value={event.pickupAddress ?? ""}
+                    onChange={(e) => updateEvent({ ...event, pickupAddress: e.target.value })}
                   />
                 </div>
               </div>
 
-              <div className="grid gap-2 sm:grid-cols-2">
+              <div className="grid gap-2 sm:grid-cols-3">
                 <div className="space-y-1">
-                  <Label>Evento al llamar</Label>
+                  <Label>Evento intento</Label>
                   <Input
-                    placeholder="delivery_called"
+                    placeholder="delivery_requested"
                     value={event.attemptSentNotificationEvent ?? ""}
                     onChange={(e) =>
                       updateEvent({ ...event, attemptSentNotificationEvent: e.target.value })
@@ -676,7 +707,7 @@ function ExternalEscalationsEditor({
                   />
                 </div>
                 <div className="space-y-1">
-                  <Label>Evento al aceptar</Label>
+                  <Label>Evento aceptado</Label>
                   <Input
                     placeholder="delivery_confirmed"
                     value={event.acceptedNotificationEvent ?? ""}
@@ -685,32 +716,47 @@ function ExternalEscalationsEditor({
                     }
                   />
                 </div>
+                <div className="space-y-1">
+                  <Label>Evento agotado</Label>
+                  <Input
+                    placeholder="delivery_unavailable"
+                    value={event.exhaustedNotificationEvent ?? ""}
+                    onChange={(e) =>
+                      updateEvent({ ...event, exhaustedNotificationEvent: e.target.value })
+                    }
+                  />
+                </div>
               </div>
 
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <Label>Contactos</Label>
+                  <Label>Contactos inbound</Label>
                   <Button
                     type="button"
                     variant="outline"
                     size="sm"
-                    onClick={() =>
+                    onClick={() => {
+                      const selectedIds = new Set(
+                        contacts
+                          .map((contact) => contact.businessInboundContactId)
+                          .filter(Boolean)
+                      );
+                      const firstAvailable = matchingContacts.find(
+                        (contact) => !selectedIds.has(contact.businessInboundContactId)
+                      );
                       updateEvent({
                         ...event,
                         contacts: [
                           ...contacts,
                           {
-                            key: `contacto_${contacts.length + 1}`,
-                            name: "",
-                            role: "",
-                            phone: "",
+                            businessInboundContactId: firstAvailable?.businessInboundContactId ?? "",
                             priority: contacts.length + 1,
-                            inboundAgentId: availableAgents[0]?.agentId ?? "",
+                            retryEnabled: true,
                             pickupAddress: "",
                           },
                         ],
-                      })
-                    }
+                      });
+                    }}
                   >
                     <Plus className="mr-1 h-4 w-4" />
                     Contacto
@@ -718,76 +764,51 @@ function ExternalEscalationsEditor({
                 </div>
 
                 {contacts.map((contact, index) => (
-                  <div key={index} className="grid gap-2 rounded-md border p-3 sm:grid-cols-2 lg:grid-cols-7">
-                    <Input
-                      placeholder="key"
-                      value={contact.key}
-                      onChange={(e) => {
-                        const next = [...contacts];
-                        next[index] = { ...contact, key: e.target.value };
-                        updateEvent({ ...event, contacts: next });
-                      }}
-                    />
-                    <Input
-                      placeholder="nombre"
-                      value={contact.name ?? ""}
-                      onChange={(e) => {
-                        const next = [...contacts];
-                        next[index] = { ...contact, name: e.target.value };
-                        updateEvent({ ...event, contacts: next });
-                      }}
-                    />
-                    <Input
-                      placeholder="rol"
-                      value={contact.role ?? ""}
-                      onChange={(e) => {
-                        const next = [...contacts];
-                        next[index] = { ...contact, role: e.target.value };
-                        updateEvent({ ...event, contacts: next });
-                      }}
-                    />
-                    <Input
-                      placeholder="+57..."
-                      value={contact.phone}
-                      onChange={(e) => {
-                        const next = [...contacts];
-                        next[index] = { ...contact, phone: e.target.value };
-                        updateEvent({ ...event, contacts: next });
-                      }}
-                    />
-                    <Input
-                      placeholder="direccion recogida"
-                      value={contact.pickupAddress ?? ""}
-                      onChange={(e) => {
-                        const next = [...contacts];
-                        next[index] = { ...contact, pickupAddress: e.target.value };
-                        updateEvent({ ...event, contacts: next });
-                      }}
-                    />
+                  <div key={index} className="grid gap-2 rounded-md border p-3 sm:grid-cols-2 lg:grid-cols-5">
                     <select
-                      className="h-9 rounded-md border border-input bg-background px-3 text-sm"
-                      value={contact.inboundAgentId ?? ""}
+                      className="h-9 rounded-md border border-input bg-background px-3 text-sm lg:col-span-2"
+                      value={contact.businessInboundContactId ?? ""}
                       onChange={(e) => {
                         const next = [...contacts];
-                        next[index] = { ...contact, inboundAgentId: e.target.value };
+                        next[index] = { ...contact, businessInboundContactId: e.target.value };
                         updateEvent({ ...event, contacts: next });
                       }}
                     >
-                      <option value="">Agente</option>
-                      {availableAgents.map((agent) => (
-                        <option key={agent.agentId} value={agent.agentId}>
-                          {agent.name}
+                      <option value="">Contacto inbound</option>
+                      {matchingContacts.map((item) => (
+                        <option key={item.businessInboundContactId} value={item.businessInboundContactId}>
+                          {contactLabel(item)}
                         </option>
                       ))}
                     </select>
+                    <Input
+                      type="number"
+                      min={1}
+                      value={contact.priority ?? index + 1}
+                      onChange={(e) => {
+                        const next = [...contacts];
+                        next[index] = { ...contact, priority: parseInt(e.target.value, 10) };
+                        updateEvent({ ...event, contacts: next });
+                      }}
+                    />
+                    <label className="flex h-9 items-center gap-2 rounded-md border px-3 text-sm">
+                      <Checkbox
+                        checked={contact.retryEnabled !== false}
+                        onCheckedChange={(checked) => {
+                          const next = [...contacts];
+                          next[index] = { ...contact, retryEnabled: checked === true };
+                          updateEvent({ ...event, contacts: next });
+                        }}
+                      />
+                      Reintenta
+                    </label>
                     <div className="flex gap-2">
                       <Input
-                        type="number"
-                        min={1}
-                        value={contact.priority ?? index + 1}
+                        placeholder="direccion override"
+                        value={contact.pickupAddress ?? ""}
                         onChange={(e) => {
                           const next = [...contacts];
-                          next[index] = { ...contact, priority: parseInt(e.target.value, 10) };
+                          next[index] = { ...contact, pickupAddress: e.target.value };
                           updateEvent({ ...event, contacts: next });
                         }}
                       />
@@ -802,6 +823,12 @@ function ExternalEscalationsEditor({
                     </div>
                   </div>
                 ))}
+
+                {matchingContacts.length === 0 && (
+                  <p className="text-xs text-muted-foreground">
+                    No hay contactos inbound activos para este tipo en el negocio seleccionado.
+                  </p>
+                )}
               </div>
             </div>
           );

@@ -22,12 +22,15 @@
     <Build Include="Tables\AppUsers.sql" />
     <Build Include="Tables\AppRoles.sql" />
     <Build Include="Tables\AgentTypes.sql" />
+    <Build Include="Tables\AgentTemplates.sql" />
     <Build Include="Tables\Agents.sql" />
+    <Build Include="Tables\BusinessInboundContacts.sql" />
     <Build Include="Tables\BusinessWhatsAppNumbers.sql" />
     <Build Include="Tables\BusinessAttachments.sql" />
     <Build Include="Tables\BusinessResources.sql" />
     <Build Include="Tables\BusinessWorkingHours.sql" />
     <Build Include="Tables\BusinessSchedulingSettings.sql" />
+    <Build Include="Tables\BusinessAvailabilityBlocks.sql" />
     <Build Include="Tables\ServiceCategories.sql" />
     <Build Include="Tables\Services.sql" />
     <Build Include="Tables\Employees.sql" />
@@ -79,4 +82,3 @@
     <PreDeploy Include="Scripts\PreDeployment.sql" />
   </ItemGroup>
 </Project>
-
