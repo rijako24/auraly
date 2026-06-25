@@ -55,6 +55,8 @@ public interface IPaymentTransactionRepository
     /// </summary>
     Task SaveAsync(PaymentTransaction transaction, CancellationToken ct = default);
 
+    Task DeleteAsync(PaymentTransaction transaction, CancellationToken ct = default);
+
     Task<PaymentTransaction?> GetActiveByConversationIdAsync(Guid conversationId, CancellationToken ct = default);
 
     Task<PaymentTransaction?> GetActiveByReservationIdAsync(Guid reservationId, CancellationToken ct = default);

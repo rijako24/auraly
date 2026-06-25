@@ -53,6 +53,24 @@ export function useConversationWithMessages(id: string | null) {
   });
 }
 
+export function useUpdateConversationOwner() {
+  const queryClient = useQueryClient();
+  const businessId = useBusinessContextStore((s) => s.selectedBusinessId);
+
+  return useMutation({
+    mutationFn: ({ conversationId, owner }: { conversationId: string; owner: "Bot" | "Human" }) =>
+      conversationsApi.updateOwner(conversationId, owner),
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: conversationKeys.detail(variables.conversationId) });
+      queryClient.invalidateQueries({ queryKey: conversationKeys.messages(variables.conversationId) });
+      queryClient.invalidateQueries({ queryKey: conversationKeys.lists() });
+      if (businessId) {
+        queryClient.invalidateQueries({ queryKey: conversationKeys.list(businessId) });
+      }
+    },
+  });
+}
+
 export function useSendWebConversationMessage() {
   const queryClient = useQueryClient();
   const businessId = useBusinessContextStore((s) => s.selectedBusinessId);

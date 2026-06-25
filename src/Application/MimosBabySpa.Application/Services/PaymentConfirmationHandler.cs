@@ -54,7 +54,8 @@ public class PaymentConfirmationHandler : IPaymentConfirmationHandler
         string providerTransactionId,
         long amountInCents,
         string webhookPayload,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        PaymentTransactionSource? sourceOverride = null)
     {
         PaymentConfirmationOutcome? outcome = null;
 
@@ -122,11 +123,10 @@ public class PaymentConfirmationHandler : IPaymentConfirmationHandler
             }
 
             if (payment.Status != PaymentTransactionStatus.Confirmed)
-                await _paymentLifecycle.MarkConfirmedAsync(payment, providerTransactionId, webhookPayload, ct);
+                await _paymentLifecycle.MarkConfirmedAsync(payment, providerTransactionId, webhookPayload, ct, sourceOverride);
 
             var result = await fulfillment.FulfillAsync(payment, state, config, ct);
 
-            state.Owner = ConversationOwner.Bot;
             state.ConsecutiveDegradedTurns = 0;
             await CompleteRequestContextAsync(payment.BusinessId, payment.ConversationId, config, state, result.CompletionReason, ct);
             await _stateManager.SaveStateAsync(payment.ConversationId, state, ct);

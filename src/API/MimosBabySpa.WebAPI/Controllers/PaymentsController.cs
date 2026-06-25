@@ -41,4 +41,17 @@ public class PaymentsController : ControllerBase
     {
         return Ok(await _service.GetByIdAsync(User.GetTenantId(), paymentTransactionId, ct));
     }
+
+    [HttpPost("{paymentTransactionId:guid}/confirm-manual")]
+    [PermissionAuthorize("payments.confirm_manual")]
+    public async Task<ActionResult<PaymentTransactionDto>> ConfirmManual(
+        Guid paymentTransactionId,
+        CancellationToken ct)
+    {
+        return Ok(await _service.ConfirmManualAsync(
+            User.GetTenantId(),
+            User.GetUserId(),
+            paymentTransactionId,
+            ct));
+    }
 }

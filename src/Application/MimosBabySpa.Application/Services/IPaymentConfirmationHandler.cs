@@ -1,3 +1,5 @@
+using MimosBabySpa.Domain.Enums;
+
 namespace MimosBabySpa.Application.Services;
 
 /// <summary>
@@ -11,7 +13,8 @@ public interface IPaymentConfirmationHandler
         string providerTransactionId,
         long amountInCents,
         string webhookPayload,
-        CancellationToken ct = default);
+        CancellationToken ct = default,
+        PaymentTransactionSource? sourceOverride = null);
 }
 
 public record PaymentConfirmationResult(bool Success, string? ErrorMessage);

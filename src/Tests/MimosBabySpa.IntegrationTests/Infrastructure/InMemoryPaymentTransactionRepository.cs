@@ -31,6 +31,11 @@ public class InMemoryPaymentTransactionRepository : IPaymentTransactionRepositor
         return Task.CompletedTask;
     }
 
+    public Task DeleteAsync(PaymentTransaction transaction, CancellationToken ct = default)
+    {
+        _store.RemoveAll(t => t.PaymentTransactionId == transaction.PaymentTransactionId);
+        return Task.CompletedTask;
+    }
     public Task<PaymentTransaction?> GetActiveByConversationIdAsync(Guid conversationId, CancellationToken ct = default) =>
         Task.FromResult(_store
             .Where(t => t.ConversationId == conversationId

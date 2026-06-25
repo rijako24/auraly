@@ -1,4 +1,4 @@
-﻿# Contexto rapido para Codex - Talkio AI / Mimos Baby Spa
+# Contexto rapido para Codex - Talkio AI / Mimos Baby Spa
 
 Este archivo reemplaza las bitacoras antiguas de arquitectura/refactor. Usalo como primer punto de lectura para ahorrar tokens; si hay duda, valida contra el codigo actual.
 
@@ -36,7 +36,7 @@ Azure Functions actuales en `src/API/MimosBabySpa.API/Functions`:
 - `WhatsAppWebhookFunction`: recibe mensajes/eventos de WhatsApp.
 - `WompiWebhookFunction`: recibe confirmaciones/eventos de pago.
 - `PaymentLinkPollerFunction`: consulta links de pago pendientes.
-- `ConfirmManualPaymentFunction`: confirma pagos manuales.
+- Confirmacion manual de pagos: accion autenticada en admin (`POST /api/payments/{id}/confirm-manual`).
 - `ReleaseConversationFunction`: libera conversaciones escaladas a humano.
 
 La DI principal esta en `src/API/MimosBabySpa.API/Program.cs`. Antes de asumir que un servicio existe, confirmar ahi o en el proyecto WebAPI si se trabaja esa superficie.

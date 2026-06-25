@@ -27,6 +27,7 @@ internal sealed class OrderDeliveryAssignmentResolver
     {
         var attemptCode = ExtractAttemptCode(query);
         var attempts = new List<ExternalEscalationAttempt>();
+        var skipQueryFilter = false;
 
         if (!string.IsNullOrWhiteSpace(attemptCode))
         {
@@ -37,12 +38,14 @@ internal sealed class OrderDeliveryAssignmentResolver
                 ct);
             if (byCode is not null)
                 attempts.Add(byCode);
+            skipQueryFilter = true;
         }
         else if (TryParseExternalInteractionPayload(ctx.InteractivePayload, out var payloadAttemptId))
         {
             var byPayload = await _unitOfWork.ExternalEscalationAttempts.GetByIdAsync(payloadAttemptId, ct);
             if (BelongsToContactOrderAssignment(byPayload, ctx))
                 attempts.Add(byPayload!);
+            skipQueryFilter = true;
         }
         else if (!string.IsNullOrWhiteSpace(ctx.ReplyToProviderMessageId))
         {
@@ -53,6 +56,7 @@ internal sealed class OrderDeliveryAssignmentResolver
                 ct);
             if (byReply is not null)
                 attempts.Add(byReply);
+            skipQueryFilter = true;
         }
         else
         {
@@ -80,6 +84,7 @@ internal sealed class OrderDeliveryAssignmentResolver
 
             var custom = ReadCustomPayload(attempt.CustomPayloadJson);
             if (!string.IsNullOrWhiteSpace(normalizedQuery)
+                && !skipQueryFilter
                 && string.IsNullOrWhiteSpace(attemptCode)
                 && !MatchesQuery(order, attempt, custom, normalizedQuery))
             {

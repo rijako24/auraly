@@ -1,6 +1,6 @@
 "use client";
 
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { paymentsApi } from "@/services/api";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 import type { PagedRequest } from "@/types/api";
@@ -30,5 +30,16 @@ export function usePayment(id: string) {
     queryKey: paymentKeys.detail(id),
     queryFn: () => paymentsApi.getById(id),
     enabled: !!id,
+  });
+}
+export function useConfirmManualPayment() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (id: string) => paymentsApi.confirmManual(id),
+    onSuccess: (payment) => {
+      queryClient.invalidateQueries({ queryKey: paymentKeys.lists() });
+      queryClient.setQueryData(paymentKeys.detail(payment.paymentTransactionId), payment);
+    },
   });
 }

@@ -56,7 +56,6 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
             Guards = settings.Guards ?? new Dictionary<string, GuardDefinition>(StringComparer.OrdinalIgnoreCase),
             Templates = settings.Templates ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
             SystemPrompt = agent.SystemPromptMarkdown?.Trim() ?? string.Empty,
-            KillSwitchPhrases = settings.Escalations?.Human?.KillSwitchPhrases ?? [],
             Model = settings.Model ?? "gpt-4.1-mini",
             Temperature = settings.Temperature ?? 0.7f,
             MaxToolIterations = settings.MaxToolIterations ?? 6,

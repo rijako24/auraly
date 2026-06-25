@@ -57,6 +57,7 @@ public class PaymentTransactionRepository : IPaymentTransactionRepository
         {
             existing.ProviderTransactionId = transaction.ProviderTransactionId;
             existing.Status = transaction.Status;
+            existing.Source = transaction.Source;
             existing.ConfirmedAt = transaction.ConfirmedAt;
             existing.WebhookPayloadJson = transaction.WebhookPayloadJson;
             existing.CheckoutKind = transaction.CheckoutKind;
@@ -91,6 +92,17 @@ public class PaymentTransactionRepository : IPaymentTransactionRepository
         await _context.SaveChangesAsync(ct);
     }
 
+    public async Task DeleteAsync(PaymentTransaction transaction, CancellationToken ct = default)
+    {
+        var existing = await _context.PaymentTransactions
+            .FirstOrDefaultAsync(t => t.PaymentTransactionId == transaction.PaymentTransactionId, ct);
+
+        if (existing is null)
+            return;
+
+        _context.PaymentTransactions.Remove(existing);
+        await _context.SaveChangesAsync(ct);
+    }
     public async Task<PaymentTransaction?> GetByIdAsync(Guid paymentTransactionId, CancellationToken ct = default)
     {
         return await _context.PaymentTransactions
@@ -137,6 +149,9 @@ public class PaymentTransactionRepository : IPaymentTransactionRepository
 
         if (status.HasValue)
             query = query.Where(t => t.Status == status.Value);
+        else
+            query = query.Where(t => t.Status != PaymentTransactionStatus.Abandoned
+                && t.Status != PaymentTransactionStatus.Superseded);
 
         if (!string.IsNullOrWhiteSpace(search))
         {

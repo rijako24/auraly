@@ -30,7 +30,7 @@ public sealed class ResetFlowContextTool : IAgentTool
     public string Description =>
         "Reinicia la solicitud actual limpiando los facts no persistentes y verificaciones del flujo. " +
         "Conserva los facts con scope=customer. " +
-        "Puede abandonar un checkout/link pendiente si checkout_action='abandon'.";
+        "Puede descartar un checkout/link pendiente si checkout_action='abandon'.";
 
     public string ParametersSchema => """
         {
@@ -74,9 +74,10 @@ public sealed class ResetFlowContextTool : IAgentTool
         }
 
         PaymentTransactionStatus? previousPaymentStatus = null;
-        Guid? abandonedPaymentId = null;
+        Guid? discardedPaymentId = null;
         Guid? deletedOrderDraftId = null;
 
+        PaymentTransaction? pendingPaymentToDiscard = null;
         if (checkoutAction.Equals("abandon", StringComparison.OrdinalIgnoreCase))
         {
             var activePayment = ctx.ActivePayment
@@ -86,11 +87,7 @@ public sealed class ResetFlowContextTool : IAgentTool
             {
                 previousPaymentStatus = activePayment.Status;
                 if (activePayment.Status == PaymentTransactionStatus.Created)
-                {
-                    await _payments.MarkAbandonedAsync(activePayment, cancellationToken);
-                    abandonedPaymentId = activePayment.PaymentTransactionId;
-                    ctx.ActivePayment = null;
-                }
+                    pendingPaymentToDiscard = activePayment;
             }
         }
 
@@ -110,6 +107,13 @@ public sealed class ResetFlowContextTool : IAgentTool
                 await _unitOfWork.SaveChangesAsync(cancellationToken);
         }
 
+        if (pendingPaymentToDiscard is not null)
+        {
+            await _payments.DiscardPendingAsync(pendingPaymentToDiscard, cancellationToken);
+            discardedPaymentId = pendingPaymentToDiscard.PaymentTransactionId;
+            ctx.ActivePayment = null;
+        }
+
         var cleanup = await _requestContext.CompleteAsync(
             ctx.ConversationId,
             ctx.Config ?? new AgentConfig(),
@@ -124,7 +128,7 @@ public sealed class ResetFlowContextTool : IAgentTool
             checkout_action = checkoutAction,
             cleared_facts = cleanup.ClearedFacts,
             preserved_facts = cleanup.PreservedFacts,
-            abandoned_payment_transaction_id = abandonedPaymentId,
+            discarded_payment_transaction_id = discardedPaymentId,
             previous_payment_status = previousPaymentStatus?.ToString(),
             deleted_order_draft_id = deletedOrderDraftId
         });

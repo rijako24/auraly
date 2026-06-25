@@ -12,4 +12,7 @@ public interface IPaymentAdminService
 
     Task<PaymentTransactionDto> GetByIdAsync(
         Guid tenantId, Guid paymentTransactionId, CancellationToken ct = default);
+
+    Task<PaymentTransactionDto> ConfirmManualAsync(
+        Guid tenantId, Guid adminUserId, Guid paymentTransactionId, CancellationToken ct = default);
 }

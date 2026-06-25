@@ -66,6 +66,7 @@ public sealed class AgentPromptComposer : IPromptComposer
         if (!string.IsNullOrWhiteSpace(globalActionsBlock))
             blocks.Add(globalActionsBlock);
 
+
         var actionsBlock = BuildActionsBlock(input);
         if (!string.IsNullOrWhiteSpace(actionsBlock))
             blocks.Add(actionsBlock);
@@ -98,7 +99,6 @@ public sealed class AgentPromptComposer : IPromptComposer
 
         return string.Join(Environment.NewLine, lines);
     }
-
     internal static string BuildTurnPolicyBlock(IEnumerable<Message> history)
     {
         if (history.Any(m => IsBotSender(m.Sender)))

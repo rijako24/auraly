@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import { ChatContainer } from "@/components/chat/chat-container";
 import { ConversationList } from "@/components/chat/conversation-list";
 import { PageError } from "@/components/ui/page-error";
@@ -22,6 +23,7 @@ import {
   useConversations,
   useConversationWithMessages,
   useSendWebConversationMessage,
+  useUpdateConversationOwner,
 } from "@/hooks/use-conversations";
 
 function getErrorMessage(error: unknown) {
@@ -40,6 +42,7 @@ export default function ConversationsPage() {
   const { data: conversationsData, isLoading, isError, refetch } = useConversations();
   const { data: selectedConversation } = useConversationWithMessages(selectedId);
   const sendWebMessage = useSendWebConversationMessage();
+  const updateOwner = useUpdateConversationOwner();
 
   const conversations = useMemo(() => {
     const items = conversationsData?.items ?? [];
@@ -56,6 +59,7 @@ export default function ConversationsPage() {
   const stageLabel = getConversationStageLabel(selectedConversation?.currentStageName);
   const stageColor = getConversationStageColor();
   const stageStyle = getConversationStageStyle(selectedConversation?.currentStageName);
+  const botEnabled = selectedConversation?.botEnabled ?? selectedConversation?.owner !== "Human";
 
   useEffect(() => {
     if (!isMobile && !selectedId && conversations.length > 0) {
@@ -80,6 +84,21 @@ export default function ConversationsPage() {
     } catch (error) {
       toast.error(getErrorMessage(error));
       throw error;
+    }
+  };
+
+  const handleBotEnabledChange = async (checked: boolean) => {
+    if (!selectedConversation) return;
+
+    const owner = checked ? "Bot" : "Human";
+    try {
+      await updateOwner.mutateAsync({
+        conversationId: selectedConversation.conversationId,
+        owner,
+      });
+      toast.success(checked ? "Bot activado" : "Bot desactivado");
+    } catch (error) {
+      toast.error("No se pudo actualizar el bot.");
     }
   };
 
@@ -150,6 +169,17 @@ export default function ConversationsPage() {
               >
                 {stageLabel}
               </Badge>
+              <div className="flex flex-shrink-0 items-center gap-2">
+                <span className="hidden text-xs font-medium text-muted-foreground sm:inline">
+                  {botEnabled ? "Bot activo" : "Humano"}
+                </span>
+                <Switch
+                  checked={botEnabled}
+                  disabled={updateOwner.isPending}
+                  onCheckedChange={handleBotEnabledChange}
+                  aria-label={botEnabled ? "Desactivar bot" : "Activar bot"}
+                />
+              </div>
             </div>
             <div className="flex min-h-0 min-w-0 flex-1">
               <ChatContainer

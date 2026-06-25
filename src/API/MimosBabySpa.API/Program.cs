@@ -156,9 +156,7 @@ var host = new HostBuilder()
         // Escalation y release (handover a humano)
         services.AddScoped<IEscalationNotifier, EscalationNotifier>();
         services.AddScoped<IEscalationConfigProvider, EscalationConfigProvider>();
-        services.AddScoped<AdminActionLinkService>();
-        services.AddScoped<IAdminActionLinkService>(sp => sp.GetRequiredService<AdminActionLinkService>());
-        services.AddScoped<IReleaseLinkService>(sp => sp.GetRequiredService<AdminActionLinkService>());
+        services.AddScoped<IReleaseLinkService, ReleaseLinkService>();
         services.AddScoped<IConversationReleaseService, ConversationReleaseService>();
         services.AddScoped<IBusinessInboundContactRouter, BusinessInboundContactRouter>();
         services.AddScoped<IExternalEscalationService, ExternalEscalationService>();

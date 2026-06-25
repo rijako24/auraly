@@ -47,6 +47,7 @@ public static class PermissionCatalog
         ("Conversations", "Read", "conversations.read", "Ver conversaciones"),
         ("Orders", "Read", "orders.read", "Ver pedidos"),
         ("Payments", "Read", "payments.read", "Ver transacciones de pago"),
+        ("Payments", "ConfirmManual", "payments.confirm_manual", "Confirmar pagos manualmente"),
         ("BusinessConfig", "Read", "business_config.read", "Ver configuración"),
         ("BusinessConfig", "Update", "business_config.update", "Actualizar configuración"),
         ("AuditLogs", "Read", "audit_logs.read", "Ver logs de auditoría"),

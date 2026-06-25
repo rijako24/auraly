@@ -32,11 +32,11 @@ public interface IPaymentLifecycleService
         DateTime expiresAt,
         ReservationIntentSnapshot? reservationSnapshot = null,
         CancellationToken ct = default);
-    Task MarkConfirmedAsync(PaymentTransaction payment, string? providerTransactionId, string? webhookPayload, CancellationToken ct = default);
+    Task MarkConfirmedAsync(PaymentTransaction payment, string? providerTransactionId, string? webhookPayload, CancellationToken ct = default, PaymentTransactionSource? sourceOverride = null);
     Task MarkRequiresReschedulingAsync(PaymentTransaction payment, CancellationToken ct = default);
     Task LinkReservationAsync(PaymentTransaction payment, Guid reservationId, CancellationToken ct = default);
     Task MarkSupersededAsync(PaymentTransaction payment, Guid supersededByPaymentTransactionId, CancellationToken ct = default);
-    Task MarkAbandonedAsync(PaymentTransaction payment, CancellationToken ct = default);
+    Task DiscardPendingAsync(PaymentTransaction payment, CancellationToken ct = default);
 
     Task<PaymentTransaction?> GetLatestByConversationAsync(Guid conversationId, CancellationToken ct = default);
     Task<PaymentTransaction?> GetPendingReschedulingByConversationAsync(Guid conversationId, CancellationToken ct = default);

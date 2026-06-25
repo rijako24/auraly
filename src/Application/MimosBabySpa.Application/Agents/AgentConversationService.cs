@@ -21,7 +21,7 @@ namespace MimosBabySpa.Application.Agents;
 /// Orquestador del agente. Único punto de entrada para procesar un turno de conversación.
 ///
 /// Responsabilidades (por capa):
-///   1. Guardrails de corto-circuito (Owner=Human, kill-switch) — sin llamar al LLM.
+///   1. Guardrails de corto-circuito (Owner=Human desde UI) — sin llamar al LLM.
 ///   2. Bucle nativo de Function Calling con límite de iteraciones y auto-escalación.
 ///   3. Persistencia del turno y propagación de side-effects al canal.
 ///
@@ -139,12 +139,6 @@ public sealed class AgentConversationService : IAgentConversationService
             return AgentTurnResult.Ok(string.Empty);
         }
 
-        if (IsKillSwitchPhrase(userMessage, config.KillSwitchPhrases))
-        {
-            _logger.LogInformation("Conv {ConvId}: kill-switch triggered", conversationId);
-            return await EscalateAndPersistAsync(
-                config, session, userMessage, "kill_switch_phrase", cancellationToken);
-        }
 
         // Capa 2 — bucle de Function Calling
         userMessage = SanitizeInput(userMessage);
@@ -1164,14 +1158,6 @@ public sealed class AgentConversationService : IAgentConversationService
         turn.OutboundMessages.Count == 0 &&
         turn.FragmentEntries.Count == 0;
 
-    private static bool IsKillSwitchPhrase(string message, IReadOnlyList<string> configuredPhrases)
-    {
-        if (configuredPhrases.Count == 0)
-            return false;
-
-        var lower = message.ToLowerInvariant();
-        return configuredPhrases.Any(phrase => lower.Contains(phrase.ToLowerInvariant()));
-    }
 
     private static string SanitizeInput(string message) =>
         message.Length > 4000 ? message[..4000].Trim() : message.Trim();

@@ -47,12 +47,6 @@ public sealed class AgentConfig
                 : $"{Persona.Trim()}{Environment.NewLine}{Environment.NewLine}{Policies.Trim()}"
             : SystemPrompt.Trim();
 
-    /// <summary>
-    /// Frases que disparan escalación inmediata a humano sin pasar por el LLM.
-    /// Evaluación case-insensitive, por contención parcial.
-    /// Vacío = kill-switch desactivado.
-    /// </summary>
-    public IReadOnlyList<string> KillSwitchPhrases { get; init; } = [];
 
     /// <summary>Deployment o model name de Azure OpenAI.</summary>
     public string Model { get; init; } = string.Empty;

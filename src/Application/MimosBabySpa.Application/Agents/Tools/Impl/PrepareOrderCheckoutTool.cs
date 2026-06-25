@@ -170,18 +170,26 @@ public sealed class PrepareOrderCheckoutTool : IAgentTool
         }
         else
         {
-            var transition = await _checkoutPayments.AbandonActiveCheckoutAsync(
+            if (order.PaymentTransactionId.HasValue)
+            {
+                var linkedPayment = await _unitOfWork.PaymentTransactions.GetByIdAsync(
+                    order.PaymentTransactionId.Value,
+                    cancellationToken);
+                if (linkedPayment?.Status == PaymentTransactionStatus.Created
+                    && linkedPayment.CheckoutKind == quote.CheckoutKind)
+                {
+                    order.PaymentTransactionId = null;
+                    order.UpdatedAt = DateTime.UtcNow;
+                    await _unitOfWork.OrderDrafts.UpdateAsync(order, cancellationToken);
+                    await _unitOfWork.SaveChangesAsync(cancellationToken);
+                    ctx.ActivePayment ??= linkedPayment;
+                }
+            }
+
+            await _checkoutPayments.DiscardActiveCheckoutAsync(
                 ctx,
                 quote.CheckoutKind,
                 cancellationToken);
-            if (transition.AbandonedPayment is not null
-                && order.PaymentTransactionId == transition.AbandonedPayment.PaymentTransactionId)
-            {
-                order.PaymentTransactionId = null;
-                order.UpdatedAt = DateTime.UtcNow;
-                await _unitOfWork.OrderDrafts.UpdateAsync(order, cancellationToken);
-                await _unitOfWork.SaveChangesAsync(cancellationToken);
-            }
         }
 
         templateData["payment_method"] = paymentSelection.MethodKey;

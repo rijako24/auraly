@@ -260,6 +260,8 @@ export interface ReservationAddOn {
   addOnService?: Service;
 }
 
+export type ConversationOwner = "Bot" | "Human";
+
 export interface Conversation {
   conversationId: string;
   businessId: string;
@@ -274,6 +276,8 @@ export interface Conversation {
   recommendedPlan?: string | null;
   state?: ConversationStateEnum;
   status?: ConversationLifecycleStatus;
+  owner?: ConversationOwner;
+  botEnabled?: boolean;
   openedAt?: string;
   lastActivityAt?: string;
   closedAt?: string | null;

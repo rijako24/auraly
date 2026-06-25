@@ -1,0 +1,56 @@
+using System.Text.Json;
+using FluentAssertions;
+using MimosBabySpa.Application.Agents;
+using MimosBabySpa.Application.Agents.Tools.Impl;
+using MimosBabySpa.Application.Services;
+using MimosBabySpa.Domain.Entities;
+using MimosBabySpa.Domain.Models;
+using Xunit;
+
+namespace MimosBabySpa.Tests.Agents;
+
+public sealed class EscalateToHumanToolTests
+{
+    [Fact]
+    public async Task ExecuteAsync_NotifiesHumanContactsWithoutDisablingBot()
+    {
+        var notifier = new RecordingEscalationNotifier();
+        var tool = new EscalateToHumanTool(notifier);
+        var state = new ConversationState { Owner = ConversationOwner.Bot };
+        var ctx = new AgentToolContext
+        {
+            BusinessId = Guid.NewGuid(),
+            ConversationId = Guid.NewGuid(),
+            ChannelPhone = "573001112233",
+            ConversationState = state,
+            Conversation = new Conversation(),
+            EscalationContacts = ["573009998888"],
+            Facts = []
+        };
+
+        using var args = JsonDocument.Parse(
+            """{"reason":"explicit_human_request","last_user_message":"Necesito hablar con alguien"}""");
+
+        var raw = await tool.ExecuteAsync(args.RootElement, ctx);
+
+        state.Owner.Should().Be(ConversationOwner.Bot);
+        state.LastEscalatedAt.Should().NotBeNull();
+        notifier.Notifications.Should().ContainSingle();
+        raw.Should().Contain("bot remains active");
+    }
+
+    private sealed class RecordingEscalationNotifier : IEscalationNotifier
+    {
+        public List<EscalationNotification> Notifications { get; } = [];
+
+        public Task<bool> NotifyAsync(
+            Guid businessId,
+            IReadOnlyList<string> contacts,
+            EscalationNotification notification,
+            CancellationToken ct = default)
+        {
+            Notifications.Add(notification);
+            return Task.FromResult(true);
+        }
+    }
+}

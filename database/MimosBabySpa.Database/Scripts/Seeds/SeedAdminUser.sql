@@ -80,7 +80,8 @@ INSERT INTO @Perms VALUES
 (N'BusinessConfig', N'Update', N'business_config.update', N'Actualizar configuración'),
 (N'AuditLogs', N'Read', N'audit_logs.read', N'Ver auditoría'),
 (N'Dashboard', N'Read', N'dashboard.read', N'Ver dashboard'),
-(N'Payments', N'Read', N'payments.read', N'Ver transacciones de pago');
+(N'Payments', N'Read', N'payments.read', N'Ver transacciones de pago'),
+(N'Payments', N'ConfirmManual', N'payments.confirm_manual', N'Confirmar pagos manualmente');
 
 INSERT INTO [dbo].[Permissions] ([PermissionId], [Module], [Action], [Resource], [Description], [CreatedAt])
 SELECT NEWID(), p.Module, p.Action, p.Resource, p.Description, GETUTCDATE()

@@ -8,6 +8,7 @@ import { toast } from "sonner";
 import { ChatContainer } from "@/components/chat/chat-container";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import { PageError } from "@/components/ui/page-error";
 import { PageLoading } from "@/components/ui/page-loading";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -15,6 +16,7 @@ import { Separator } from "@/components/ui/separator";
 import {
   useConversationWithMessages,
   useSendWebConversationMessage,
+  useUpdateConversationOwner,
 } from "@/hooks/use-conversations";
 import { cn, formatDateTime } from "@/lib/utils";
 import {
@@ -38,6 +40,7 @@ export default function ConversationDetailPage() {
   const { data: conversation, isLoading, isError, refetch } =
     useConversationWithMessages(id);
   const sendWebMessage = useSendWebConversationMessage();
+  const updateOwner = useUpdateConversationOwner();
 
   if (isLoading) return <PageLoading cards={2} />;
   if (isError || !conversation) return <PageError onRetry={refetch} />;
@@ -47,6 +50,7 @@ export default function ConversationDetailPage() {
   const stageLabel = getConversationStageLabel(conversation.currentStageName);
   const stageColor = getConversationStageColor();
   const stageStyle = getConversationStageStyle(conversation.currentStageName);
+  const botEnabled = conversation.botEnabled ?? conversation.owner !== "Human";
 
   const handleSendMessage = async (message: string) => {
     try {
@@ -55,6 +59,16 @@ export default function ConversationDetailPage() {
     } catch (error) {
       toast.error(getErrorMessage(error));
       throw error;
+    }
+  };
+
+  const handleBotEnabledChange = async (checked: boolean) => {
+    const owner = checked ? "Bot" : "Human";
+    try {
+      await updateOwner.mutateAsync({ conversationId: id, owner });
+      toast.success(checked ? "Bot activado" : "Bot desactivado");
+    } catch (error) {
+      toast.error("No se pudo actualizar el bot.");
     }
   };
 
@@ -79,6 +93,17 @@ export default function ConversationDetailPage() {
         >
           {stageLabel}
         </Badge>
+        <div className="flex shrink-0 items-center gap-2">
+          <span className="hidden text-xs font-medium text-muted-foreground sm:inline">
+            {botEnabled ? "Bot activo" : "Humano"}
+          </span>
+          <Switch
+            checked={botEnabled}
+            disabled={updateOwner.isPending}
+            onCheckedChange={handleBotEnabledChange}
+            aria-label={botEnabled ? "Desactivar bot" : "Activar bot"}
+          />
+        </div>
       </div>
 
       <div className="flex min-h-0 flex-1">
@@ -109,6 +134,12 @@ export default function ConversationDetailPage() {
                     >
                       {stageLabel}
                     </Badge>
+                  </div>
+                  <div className="flex justify-between gap-2">
+                    <span className="text-muted-foreground">Bot</span>
+                    <span className="font-medium">
+                      {botEnabled ? "Activo" : "Humano"}
+                    </span>
                   </div>
                   <div className="flex justify-between gap-2">
                     <span className="text-muted-foreground">Telefono</span>

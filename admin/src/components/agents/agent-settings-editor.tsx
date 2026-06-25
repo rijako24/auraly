@@ -22,6 +22,14 @@ import type {
   GuardDefinition,
 } from "@/types/agent-settings";
 
+type GlobalAction = NonNullable<AgentSettings["globalActions"]>[number];
+const HUMAN_ESCALATION_GLOBAL_ACTION_ID = "human_escalation";
+const HUMAN_ESCALATION_TOOL = "escalate_to_human";
+const HUMAN_ESCALATION_GOAL = "Notificar al equipo humano sin desactivar el bot.";
+const isHumanEscalationAction = (action: GlobalAction) =>
+  action.id === HUMAN_ESCALATION_GLOBAL_ACTION_ID ||
+  (action.allowedTools ?? []).includes(HUMAN_ESCALATION_TOOL);
+
 export type AgentEditorSection =
   | "identity"
   | "policies"
@@ -29,6 +37,10 @@ export type AgentEditorSection =
   | "facts"
   | "tools"
   | "external"
+  | "messages"
+  | "checkout"
+  | "actions"
+  | "templates"
   | "safety"
   | "advanced";
 
@@ -100,10 +112,37 @@ export function AgentSettingsEditor({ value, onChange, availableInboundContacts 
     return [...set];
   };
 
-  const defaultTab = section ?? "identity";
+  const tabModeProps = section ? { value: section } : { defaultValue: "identity" };
+  const sequenceNames = useMemo(() => Object.keys(value.messageSequences ?? {}), [value.messageSequences]);
+  const humanEscalationAction = useMemo(
+    () => (value.globalActions ?? []).find(isHumanEscalationAction),
+    [value.globalActions]
+  );
+  const setHumanEscalationHint = useCallback(
+    (hint: string) => {
+      const actions = value.globalActions ?? [];
+      const index = actions.findIndex(isHumanEscalationAction);
+      const current = index >= 0 ? actions[index] : undefined;
+      const allowedTools = Array.from(new Set([...(current?.allowedTools ?? []), HUMAN_ESCALATION_TOOL]));
+      const nextAction: GlobalAction = {
+        id: current?.id || HUMAN_ESCALATION_GLOBAL_ACTION_ID,
+        priority: current?.priority ?? 1000,
+        goal: current?.goal?.trim() ? current.goal : HUMAN_ESCALATION_GOAL,
+        ...current,
+        allowedTools,
+        hint,
+      };
+      const nextActions =
+        index >= 0
+          ? actions.map((action, i) => (i === index ? nextAction : action))
+          : [...actions, nextAction];
+      patch({ globalActions: nextActions });
+    },
+    [patch, value.globalActions]
+  );
 
   return (
-    <Tabs value={defaultTab} className="space-y-4">
+    <Tabs {...tabModeProps} className="space-y-4">
       <TabsList className={section ? "hidden" : "flex h-auto flex-wrap gap-1"}>
         <TabsTrigger value="identity">Identidad</TabsTrigger>
         <TabsTrigger value="policies">Políticas</TabsTrigger>
@@ -111,6 +150,10 @@ export function AgentSettingsEditor({ value, onChange, availableInboundContacts 
         <TabsTrigger value="facts">Datos (facts)</TabsTrigger>
         <TabsTrigger value="tools">Tools y guards</TabsTrigger>
         <TabsTrigger value="external">Externos</TabsTrigger>
+        <TabsTrigger value="messages">Mensajes</TabsTrigger>
+        <TabsTrigger value="checkout">Checkout</TabsTrigger>
+        <TabsTrigger value="actions">Acciones</TabsTrigger>
+        <TabsTrigger value="templates">Templates</TabsTrigger>
         <TabsTrigger value="safety">Seguridad</TabsTrigger>
         <TabsTrigger value="advanced">JSON</TabsTrigger>
       </TabsList>
@@ -151,6 +194,19 @@ export function AgentSettingsEditor({ value, onChange, availableInboundContacts 
                 value={value.maxToolIterations ?? 6}
                 onChange={(e) =>
                   patch({ maxToolIterations: parseInt(e.target.value, 10) })
+                }
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="historyWindowSize">Mensajes de historial</Label>
+              <Input
+                id="historyWindowSize"
+                type="number"
+                min={1}
+                max={100}
+                value={value.historyWindowSize ?? 20}
+                onChange={(e) =>
+                  patch({ historyWindowSize: parseInt(e.target.value, 10) })
                 }
               />
             </div>
@@ -264,8 +320,9 @@ export function AgentSettingsEditor({ value, onChange, availableInboundContacts 
                     }
                   />
                 </div>
-                <div className="space-y-2">
-                  <Label>Hint (instrucción al LLM)</Label>
+
+                                <div className="space-y-2">
+                  <Label>Hint (instruccion al LLM)</Label>
                   <Textarea
                     className="min-h-[120px] font-mono text-xs"
                     value={selectedStage.hint ?? ""}
@@ -273,8 +330,7 @@ export function AgentSettingsEditor({ value, onChange, availableInboundContacts 
                       updateStage(selectedStageIndex, { hint: e.target.value })
                     }
                   />
-                </div>
-                <div className="space-y-2">
+                </div><div className="space-y-2">
                   <Label>Tools permitidas</Label>
                   <div className="flex flex-wrap gap-2">
                     {AGENT_TOOLS_CATALOG.map((t) => {
@@ -384,56 +440,84 @@ export function AgentSettingsEditor({ value, onChange, availableInboundContacts 
         />
       </TabsContent>
 
+      <TabsContent value="messages" className="space-y-4">
+        <MessageSequencesEditor
+          sequences={value.messageSequences ?? {}}
+          onChange={(messageSequences) => patch({ messageSequences })}
+        />
+        <NotificationsEditor
+          notifications={value.notifications ?? {}}
+          sequenceNames={sequenceNames}
+          onChange={(notifications) => patch({ notifications })}
+        />
+        <ReservationAutomationsEditor
+          automations={value.reservationAutomations ?? {}}
+          sequenceNames={sequenceNames}
+          onChange={(reservationAutomations) => patch({ reservationAutomations })}
+        />
+        <WompiWebhooksEditor
+          webhooks={value.webhooks ?? { wompi: {} }}
+          sequenceNames={sequenceNames}
+          onChange={(webhooks) => patch({ webhooks })}
+        />
+      </TabsContent>
+
+      <TabsContent value="checkout" className="space-y-4">
+        <CheckoutCommerceEditor
+          value={value}
+          onChange={patch}
+        />
+      </TabsContent>
+
+      <TabsContent value="actions" className="space-y-4">
+        <GlobalActionsEditor
+          actions={value.globalActions ?? []}
+          onChange={(globalActions) => patch({ globalActions })}
+        />
+      </TabsContent>
+
+      <TabsContent value="templates" className="space-y-4">
+        <TemplatesEditor
+          templates={value.templates ?? {}}
+          onChange={(templates) => patch({ templates })}
+        />
+      </TabsContent>
+
       <TabsContent value="safety" className="space-y-4">
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Kill switch</CardTitle>
-            <CardDescription>Una frase por línea</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Textarea
-              className="min-h-[120px]"
-              value={(value.escalations?.human?.killSwitchPhrases ?? []).join("\n")}
-              onChange={(e) =>
-                patch({
-                  escalations: {
-                    ...value.escalations,
-                    human: {
-                      ...value.escalations?.human,
-                      killSwitchPhrases: e.target.value
-                        .split("\n")
-                        .map((s) => s.trim())
-                        .filter(Boolean),
-                    },
-                  },
-                })
-              }
-            />
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
             <CardTitle className="text-base">Escalación</CardTitle>
+            <CardDescription>Define una acción global para avisar a un humano sin desactivar la conversación</CardDescription>
           </CardHeader>
-          <CardContent className="space-y-2">
-            <Label>Contactos WhatsApp (uno por línea)</Label>
-            <Textarea
-              value={(value.escalations?.human?.contacts ?? []).join("\n")}
-              onChange={(e) =>
-                patch({
-                  escalations: {
-                    ...value.escalations,
-                    human: {
-                      ...value.escalations?.human,
-                      contacts: e.target.value
-                        .split("\n")
-                        .map((s) => s.trim())
-                        .filter(Boolean),
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <Label>Cuándo escalar</Label>
+              <Textarea
+                className="min-h-[120px]"
+                value={humanEscalationAction?.hint ?? ""}
+                onChange={(e) => setHumanEscalationHint(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Contactos WhatsApp (uno por línea)</Label>
+              <Textarea
+                value={(value.escalations?.human?.contacts ?? []).join("\n")}
+                onChange={(e) =>
+                  patch({
+                    escalations: {
+                      ...value.escalations,
+                      human: {
+                        ...value.escalations?.human,
+                        contacts: e.target.value
+                          .split("\n")
+                          .map((s) => s.trim())
+                          .filter(Boolean),
+                      },
                     },
-                  },
-                })
-              }
-            />
+                  })
+                }
+              />
+            </div>
             <div className="space-y-2 pt-2">
               <Label>Umbral errores consecutivos</Label>
               <Input
@@ -886,4 +970,88 @@ function GuardsEditor({
       </CardContent>
     </Card>
   );
+}
+
+type MessageSequencesMap = NonNullable<AgentSettings["messageSequences"]>;
+type NotificationsMap = NonNullable<AgentSettings["notifications"]>;
+type WebhookSettings = NonNullable<AgentSettings["webhooks"]>;
+type ReservationAutomations = NonNullable<AgentSettings["reservationAutomations"]>;
+
+const splitLines = (value: string) => value.split("\n").map((s) => s.trim()).filter(Boolean);
+const joinLines = (value?: string[] | null) => (value ?? []).join("\n");
+
+function SequenceOptions({ sequenceNames }: { sequenceNames: string[] }) {
+  return <datalist id="agent-message-sequences">{sequenceNames.map((name) => <option key={name} value={name} />)}</datalist>;
+}
+
+function SequenceNameInput({ value, onChange }: { value?: string | null; onChange: (value: string) => void }) {
+  return <Input list="agent-message-sequences" placeholder="sequence_name" value={value ?? ""} onChange={(e) => onChange(e.target.value)} />;
+}
+
+function MessageSequencesEditor({ sequences, onChange }: { sequences: MessageSequencesMap; onChange: (sequences: MessageSequencesMap) => void }) {
+  return (
+    <Card>
+      <CardHeader><CardTitle className="text-base">Secuencias de mensajes</CardTitle><CardDescription>Catalogo nombrado para WhatsApp, webhooks y notificaciones</CardDescription></CardHeader>
+      <CardContent><JsonEditor value={sequences as unknown as Record<string, unknown>} onChange={(v) => onChange(v as unknown as MessageSequencesMap)} /></CardContent>
+    </Card>
+  );
+}
+
+function NotificationsEditor({ notifications, sequenceNames, onChange }: { notifications: NotificationsMap; sequenceNames: string[]; onChange: (notifications: NotificationsMap) => void }) {
+  const names = Object.keys(notifications);
+  const add = () => {
+    const name = names.includes("event_1") ? `event_${names.length + 1}` : "event_1";
+    onChange({ ...notifications, [name]: { enabled: true, recipients: [], sendMessageSequence: "" } });
+  };
+  const rename = (oldName: string, nextName: string) => {
+    const clean = nextName.trim();
+    if (!clean || clean === oldName) return;
+    const next: NotificationsMap = {};
+    Object.entries(notifications).forEach(([key, item]) => { next[key === oldName ? clean : key] = item; });
+    onChange(next);
+  };
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between"><div><CardTitle className="text-base">Notificaciones por evento</CardTitle><CardDescription>Activa o desactiva cada evento y define a quien se envia</CardDescription></div><Button type="button" variant="outline" size="sm" onClick={add}><Plus className="mr-1 h-4 w-4" />Evento</Button></CardHeader>
+      <CardContent className="space-y-3">
+        <SequenceOptions sequenceNames={sequenceNames} />
+        {names.map((name) => {
+          const item = notifications[name] ?? {};
+          const update = (nextItem: typeof item) => onChange({ ...notifications, [name]: nextItem });
+          return (
+            <div key={name} className="grid gap-3 rounded-md border p-3 lg:grid-cols-[1fr_1fr_160px_44px]">
+              <div className="space-y-1"><Label>Evento</Label><Input value={name} onBlur={(e) => rename(name, e.target.value)} onChange={(e) => rename(name, e.target.value)} /></div>
+              <div className="space-y-1"><Label>Secuencia</Label><SequenceNameInput value={item.sendMessageSequence} onChange={(sendMessageSequence) => update({ ...item, sendMessageSequence })} /></div>
+              <label className="flex h-9 items-center gap-2 self-end rounded-md border px-3 text-sm"><Checkbox checked={item.enabled === true} onCheckedChange={(checked) => update({ ...item, enabled: checked === true })} />Activa</label>
+              <Button type="button" variant="ghost" size="icon" className="self-end" onClick={() => { const next = { ...notifications }; delete next[name]; onChange(next); }}><Trash2 className="h-4 w-4 text-destructive" /></Button>
+              <div className="space-y-1 lg:col-span-4"><Label>Destinatarios WhatsApp (uno por linea)</Label><Textarea value={joinLines(item.recipients)} onChange={(e) => update({ ...item, recipients: splitLines(e.target.value) })} /></div>
+            </div>
+          );
+        })}
+        {names.length === 0 && <p className="text-sm text-muted-foreground">No hay notificaciones configuradas.</p>}
+      </CardContent>
+    </Card>
+  );
+}
+
+function ReservationAutomationsEditor({ automations, onChange }: { automations: ReservationAutomations; sequenceNames: string[]; onChange: (automations: ReservationAutomations) => void }) {
+  return <Card><CardHeader><CardTitle className="text-base">Automatizaciones de reserva</CardTitle></CardHeader><CardContent><JsonEditor value={automations as unknown as Record<string, unknown>} onChange={(v) => onChange(v as unknown as ReservationAutomations)} /></CardContent></Card>;
+}
+
+function WompiWebhooksEditor({ webhooks, onChange }: { webhooks: WebhookSettings; sequenceNames: string[]; onChange: (webhooks: WebhookSettings) => void }) {
+  return <Card><CardHeader><CardTitle className="text-base">Webhooks Wompi</CardTitle><CardDescription>Outcomes de pago que disparan secuencias</CardDescription></CardHeader><CardContent><JsonEditor value={webhooks as unknown as Record<string, unknown>} onChange={(v) => onChange(v as unknown as WebhookSettings)} /></CardContent></Card>;
+}
+
+function CheckoutCommerceEditor({ value, onChange }: { value: AgentSettings; onChange: (partial: Partial<AgentSettings>) => void }) {
+  const commerce = value.commerce ?? { enabled: false, provider: "Local" as const };
+  const checkout = value.checkout ?? { currency: "COP", modes: {} };
+  return <><Card><CardHeader><CardTitle className="text-base">Comercio</CardTitle></CardHeader><CardContent className="grid gap-3 sm:grid-cols-3"><label className="flex h-9 items-center gap-2 rounded-md border px-3 text-sm"><Checkbox checked={commerce.enabled === true} onCheckedChange={(checked) => onChange({ commerce: { ...commerce, enabled: checked === true } })} />Activo</label><select className="h-9 rounded-md border border-input bg-background px-3 text-sm" value={commerce.provider ?? "Local"} onChange={(e) => onChange({ commerce: { ...commerce, provider: e.target.value as "Local" | "Siigo" | "CustomHttp" } })}><option value="Local">Local</option><option value="Siigo">Siigo</option><option value="CustomHttp">CustomHttp</option></select><Input value={checkout.currency ?? "COP"} onChange={(e) => onChange({ checkout: { ...checkout, currency: e.target.value } })} /></CardContent></Card><Card><CardHeader><CardTitle className="text-base">Checkout</CardTitle><CardDescription>Modos, metodos de pago, shipping y bindings</CardDescription></CardHeader><CardContent><JsonEditor value={checkout as unknown as Record<string, unknown>} onChange={(v) => onChange({ checkout: v as unknown as NonNullable<AgentSettings["checkout"]> })} /></CardContent></Card></>;
+}
+
+function GlobalActionsEditor({ actions, onChange }: { actions: GlobalAction[]; onChange: (actions: GlobalAction[]) => void }) {
+  return <Card><CardHeader><CardTitle className="text-base">Acciones globales</CardTitle><CardDescription>Acciones transversales disponibles fuera de la etapa activa</CardDescription></CardHeader><CardContent><JsonEditor value={{ actions } as Record<string, unknown>} onChange={(v) => onChange(((v.actions as GlobalAction[]) ?? []))} /></CardContent></Card>;
+}
+
+function TemplatesEditor({ templates, onChange }: { templates: Record<string, string>; onChange: (templates: Record<string, string>) => void }) {
+  return <Card><CardHeader><CardTitle className="text-base">Templates</CardTitle><CardDescription>Overrides de plantillas del motor</CardDescription></CardHeader><CardContent><JsonEditor value={templates as unknown as Record<string, unknown>} onChange={(v) => onChange(v as Record<string, string>)} /></CardContent></Card>;
 }

@@ -11,18 +11,23 @@ import { CatalogImportStep } from "@/components/agents/catalog-import-step";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
-import type { Agent } from "@/types/entities";
+import type { Agent, BusinessInboundContact } from "@/types/entities";
 import type { AgentSettings } from "@/types/agent-settings";
 
 const STEPS = [
-  { id: "catalog", title: "Catálogo", description: "Importar servicios desde PDF o documento" },
+  { id: "catalog", title: "Catalogo", description: "Importar servicios desde PDF o documento" },
   { id: "identity", title: "Rol e identidad", description: "Persona y modelo del agente" },
-  { id: "policies", title: "Políticas", description: "Reglas operativas" },
-  { id: "facts", title: "Datos (facts)", description: "Qué información rastrea el agente" },
+  { id: "policies", title: "Politicas", description: "Reglas operativas" },
+  { id: "facts", title: "Datos (facts)", description: "Que informacion rastrea el agente" },
   { id: "tools", title: "Tools y guards", description: "Herramientas y precondiciones" },
   { id: "flow", title: "Flujo", description: "Etapas del motor conversacional" },
-  { id: "safety", title: "Seguridad", description: "Kill switch y escalación" },
-  { id: "review", title: "Revisión", description: "Confirmar y guardar" },
+  { id: "messages", title: "Mensajes", description: "Secuencias, notificaciones y webhooks" },
+  { id: "checkout", title: "Checkout", description: "Pagos, comercio y modos de checkout" },
+  { id: "external", title: "Externos", description: "Escalaciones e interacciones inbound" },
+  { id: "actions", title: "Acciones", description: "Acciones transversales del agente" },
+  { id: "templates", title: "Templates", description: "Plantillas del motor" },
+  { id: "safety", title: "Seguridad", description: "Kill switch y escalacion" },
+  { id: "review", title: "Revision", description: "Confirmar y guardar" },
 ] as const;
 
 type StepId = (typeof STEPS)[number]["id"];
@@ -33,6 +38,7 @@ interface AgentSetupWizardProps {
   settings: AgentSettings;
   onSettingsChange: (next: AgentSettings) => void;
   onSave: () => Promise<void>;
+  availableInboundContacts?: BusinessInboundContact[];
   saving: boolean;
   dirty: boolean;
 }
@@ -43,6 +49,7 @@ export function AgentSetupWizard({
   settings,
   onSettingsChange,
   onSave,
+  availableInboundContacts = [],
   saving,
   dirty,
 }: AgentSetupWizardProps) {
@@ -121,6 +128,7 @@ export function AgentSetupWizard({
           <AgentSettingsEditor
             value={settings}
             onChange={onSettingsChange}
+            availableInboundContacts={availableInboundContacts}
             section={current.id as AgentEditorSection}
           />
         );

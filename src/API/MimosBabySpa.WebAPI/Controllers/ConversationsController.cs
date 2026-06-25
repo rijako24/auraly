@@ -63,4 +63,15 @@ public class ConversationsController : ControllerBase
         return Ok(await _service.SendWebMessageAsync(
             User.GetTenantId(), conversationId, request, ct));
     }
+
+    [HttpPatch("{conversationId:guid}/owner")]
+    [PermissionAuthorize("conversations.read")]
+    public async Task<ActionResult<ConversationDto>> UpdateOwner(
+        Guid conversationId,
+        [FromBody] UpdateConversationOwnerRequest request,
+        CancellationToken ct)
+    {
+        return Ok(await _service.UpdateOwnerAsync(
+            User.GetTenantId(), conversationId, request, ct));
+    }
 }

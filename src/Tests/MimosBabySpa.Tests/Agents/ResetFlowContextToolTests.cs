@@ -17,7 +17,7 @@ namespace MimosBabySpa.Tests.Agents;
 public sealed class ResetFlowContextToolTests
 {
     [Fact]
-    public async Task ExecuteAsync_ClearsNonPersistentFactsAndAbandonsActiveCheckout()
+    public async Task ExecuteAsync_ClearsNonPersistentFactsAndDiscardsActiveCheckout()
     {
         var conversationId = Guid.NewGuid();
         var businessId = Guid.NewGuid();
@@ -58,8 +58,7 @@ public sealed class ResetFlowContextToolTests
         var payments = new Mock<IPaymentLifecycleService>();
         payments.Setup(p => p.GetActiveByConversationAsync(conversationId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(payment);
-        payments.Setup(p => p.MarkAbandonedAsync(payment, It.IsAny<CancellationToken>()))
-            .Callback(() => payment.Status = PaymentTransactionStatus.Abandoned)
+        payments.Setup(p => p.DiscardPendingAsync(payment, It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         var unitOfWork = new Mock<IUnitOfWork>();
@@ -102,7 +101,6 @@ public sealed class ResetFlowContextToolTests
         var json = await tool.ExecuteAsync(args.RootElement, ctx, CancellationToken.None);
 
         json.Should().Contain("\"ok\":true");
-        payment.Status.Should().Be(PaymentTransactionStatus.Abandoned);
         ctx.ActivePayment.Should().BeNull();
         ctx.Facts.Should().Contain("customer_name", "Ana");
         ctx.Facts.Should().NotContainKey("service");

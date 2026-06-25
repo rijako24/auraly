@@ -7,7 +7,7 @@ namespace MimosBabySpa.Application.Services;
 
 public interface ICheckoutPaymentCoordinator
 {
-    Task<CheckoutPaymentTransitionResult> AbandonActiveCheckoutAsync(
+    Task<CheckoutPaymentDiscardResult> DiscardActiveCheckoutAsync(
         AgentToolContext ctx,
         CheckoutKind checkoutKind,
         CancellationToken ct = default);
@@ -37,7 +37,7 @@ public sealed class CheckoutPaymentCoordinator : ICheckoutPaymentCoordinator
         _quotes = quotes;
     }
 
-    public async Task<CheckoutPaymentTransitionResult> AbandonActiveCheckoutAsync(
+    public async Task<CheckoutPaymentDiscardResult> DiscardActiveCheckoutAsync(
         AgentToolContext ctx,
         CheckoutKind checkoutKind,
         CancellationToken ct = default)
@@ -49,12 +49,12 @@ public sealed class CheckoutPaymentCoordinator : ICheckoutPaymentCoordinator
             || activePayment.Status != PaymentTransactionStatus.Created
             || activePayment.CheckoutKind != checkoutKind)
         {
-            return CheckoutPaymentTransitionResult.None;
+            return CheckoutPaymentDiscardResult.None;
         }
 
-        await _paymentLifecycle.MarkAbandonedAsync(activePayment, ct);
+        await _paymentLifecycle.DiscardPendingAsync(activePayment, ct);
         ctx.ActivePayment = null;
-        return new CheckoutPaymentTransitionResult(activePayment);
+        return new CheckoutPaymentDiscardResult(activePayment);
     }
 
     public async Task<CheckoutPaymentLinkResult> EnsurePaymentLinkAsync(
@@ -120,9 +120,9 @@ public sealed class CheckoutPaymentCoordinator : ICheckoutPaymentCoordinator
     }
 }
 
-public sealed record CheckoutPaymentTransitionResult(PaymentTransaction? AbandonedPayment)
+public sealed record CheckoutPaymentDiscardResult(PaymentTransaction? DiscardedPayment)
 {
-    public static CheckoutPaymentTransitionResult None { get; } = new((PaymentTransaction?)null);
+    public static CheckoutPaymentDiscardResult None { get; } = new((PaymentTransaction?)null);
 }
 
 public sealed record CheckoutPaymentLinkResult(

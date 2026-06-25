@@ -5,6 +5,7 @@ using MimosBabySpa.Application.Identity.DTOs;
 using MimosBabySpa.Application.Identity.Interfaces;
 using MimosBabySpa.Application.Agents;
 using MimosBabySpa.Application.Services;
+using MimosBabySpa.Application.StateManagement;
 using MimosBabySpa.Domain.Entities;
 using MimosBabySpa.Domain.Enums;
 using MimosBabySpa.Domain.Models;
@@ -16,13 +17,16 @@ public class ConversationAdminService : IConversationAdminService
 {
     private readonly IUnitOfWork _unitOfWork;
     private readonly IServiceProvider _serviceProvider;
+    private readonly IConversationStateManager _stateManager;
 
     public ConversationAdminService(
         IUnitOfWork unitOfWork,
-        IServiceProvider serviceProvider)
+        IServiceProvider serviceProvider,
+        IConversationStateManager stateManager)
     {
         _unitOfWork = unitOfWork;
         _serviceProvider = serviceProvider;
+        _stateManager = stateManager;
     }
 
     public async Task<PagedResponse<ConversationDto>> GetPagedByBusinessIdAsync(
@@ -34,8 +38,9 @@ public class ConversationAdminService : IConversationAdminService
         var (items, totalCount) = await _unitOfWork.Conversations.GetPagedByBusinessIdAsync(
             businessId, request.Page, request.PageSize, request.Search, status, ct);
 
+        var dtos = await Task.WhenAll(items.Select(c => MapToDtoAsync(c, ct)));
         return new PagedResponse<ConversationDto>(
-            items.Select(MapToDto).ToList(), totalCount, request.Page, request.PageSize);
+            dtos.ToList(), totalCount, request.Page, request.PageSize);
     }
 
     public async Task<ConversationDto> GetByIdAsync(Guid tenantId, Guid conversationId, CancellationToken ct)
@@ -44,7 +49,7 @@ public class ConversationAdminService : IConversationAdminService
             ?? throw new NotFoundException(nameof(Conversation), conversationId);
 
         await EnsureBusinessBelongsToTenantAsync(tenantId, conv.BusinessId, ct);
-        return MapToDto(conv);
+        return await MapToDtoAsync(conv, ct);
     }
 
     public async Task<PagedResponse<MessageDto>> GetMessagesByConversationIdAsync(
@@ -87,13 +92,39 @@ public class ConversationAdminService : IConversationAdminService
         return new WebConversationMessageResponse(text, false, false);
     }
 
-    private static ConversationDto MapToDto(Conversation c) =>
+    public async Task<ConversationDto> UpdateOwnerAsync(
+        Guid tenantId, Guid conversationId, UpdateConversationOwnerRequest request, CancellationToken ct = default)
+    {
+        if (!Enum.TryParse<ConversationOwner>(request.Owner, ignoreCase: true, out var owner))
+            throw new DomainValidationException("Owner", "El propietario debe ser Bot o Human.");
+
+        var conv = await _unitOfWork.Conversations.GetByIdAsync(conversationId)
+            ?? throw new NotFoundException(nameof(Conversation), conversationId);
+
+        await EnsureBusinessBelongsToTenantAsync(tenantId, conv.BusinessId, ct);
+
+        var state = await _stateManager.GetOrCreateStateAsync(
+            conversationId, conv.BusinessId, conv.UserNumber, ct);
+        state.Owner = owner;
+        await _stateManager.SaveStateAsync(conversationId, state, ct);
+
+        return MapToDto(conv, state.Owner);
+    }
+
+    private async Task<ConversationDto> MapToDtoAsync(Conversation c, CancellationToken ct)
+    {
+        var state = await _stateManager.GetStateByConversationIdAsync(c.ConversationId, ct);
+        return MapToDto(c, state?.Owner ?? ConversationOwner.Bot);
+    }
+
+    private static ConversationDto MapToDto(Conversation c, ConversationOwner owner) =>
         new(
             c.ConversationId, c.BusinessId, c.UserNumber,
             c.LastMessage, c.Timestamp,
             c.CustomerName, c.CustomerEmail, c.CurrentStageName,
             c.Status.ToString(),
-            c.OpenedAt, c.LastActivityAt, c.ClosedAt, c.CloseReason);
+            c.OpenedAt, c.LastActivityAt, c.ClosedAt, c.CloseReason,
+            owner.ToString(), owner == ConversationOwner.Bot);
 
     private async Task EnsureBusinessBelongsToTenantAsync(Guid tenantId, Guid businessId, CancellationToken ct)
     {

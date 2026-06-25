@@ -152,9 +152,7 @@ services.AddScoped<ICheckoutQuoteService, CheckoutQuoteService>();
 services.AddScoped<ICheckoutPaymentCoordinator, CheckoutPaymentCoordinator>();
 services.AddScoped<IEscalationNotifier, EscalationNotifier>();
 services.AddScoped<IEscalationConfigProvider, EscalationConfigProvider>();
-services.AddScoped<AdminActionLinkService>();
-services.AddScoped<IAdminActionLinkService>(sp => sp.GetRequiredService<AdminActionLinkService>());
-services.AddScoped<IReleaseLinkService>(sp => sp.GetRequiredService<AdminActionLinkService>());
+services.AddScoped<IReleaseLinkService, ReleaseLinkService>();
 services.AddScoped<IConversationReleaseService, ConversationReleaseService>();
 services.Configure<ReleaseLinkSettings>(configuration.GetSection(ReleaseLinkSettings.SectionName));
 

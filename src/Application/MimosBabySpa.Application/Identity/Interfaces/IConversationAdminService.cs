@@ -20,4 +20,8 @@ public interface IConversationAdminService
     Task<WebConversationMessageResponse> SendWebMessageAsync(
         Guid tenantId, Guid conversationId, WebConversationMessageRequest request,
         CancellationToken ct = default);
+
+    Task<ConversationDto> UpdateOwnerAsync(
+        Guid tenantId, Guid conversationId, UpdateConversationOwnerRequest request,
+        CancellationToken ct = default);
 }

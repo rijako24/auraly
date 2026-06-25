@@ -2,7 +2,6 @@
 
 export interface AgentHumanEscalationSettings {
   contacts?: string[];
-  killSwitchPhrases?: string[];
 }
 
 export interface AgentFlowStageVariant {
@@ -28,6 +27,14 @@ export interface AgentFlowDefinition {
   stages: AgentFlowStage[];
 }
 
+export interface AgentGlobalAction {
+  id: string;
+  priority?: number;
+  goal: string;
+  hint?: string;
+  allowedTools?: string[];
+}
+
 export interface FactSchemaEntry {
   key: string;
   role?: string;
@@ -50,6 +57,14 @@ export interface CheckoutPaymentDefinition {
   percentage?: number;
 }
 
+export interface CheckoutPaymentMethodDefinition {
+  label?: string;
+  aliases?: string[];
+  payment?: CheckoutPaymentDefinition | null;
+  template?: string;
+  confirmationOutcome?: string;
+}
+
 export interface OrderCheckoutShippingDefinition {
   enabled?: boolean;
   localCity?: string;
@@ -58,17 +73,21 @@ export interface OrderCheckoutShippingDefinition {
 }
 
 export interface CheckoutModeDefinition {
-  payment?: CheckoutPaymentDefinition;
-  templateWithPayment?: string;
-  templateNoPayment?: string;
-  confirmationOutcome?: string;
+  paymentMethods?: Record<string, CheckoutPaymentMethodDefinition>;
   shipping?: OrderCheckoutShippingDefinition;
   requiredFactRoles?: Record<string, string>;
   systemFactBindings?: Record<string, string>;
   templateFactBindings?: Record<string, string>;
+  /** Legacy shape kept so existing tenant JSON keeps round-tripping. */
+  payment?: CheckoutPaymentDefinition;
+  templateWithPayment?: string;
+  templateNoPayment?: string;
+  confirmationOutcome?: string;
 }
 
 export interface CheckoutDefinitions {
+  currency?: string;
+  /** Legacy mapping kept for older settings. */
   categoryModes?: Record<string, string>;
   modes?: Record<string, CheckoutModeDefinition>;
 }
@@ -79,9 +98,14 @@ export interface MessageSequenceButton {
 }
 
 export interface MessageSequenceStep {
+  type?: string;
   body?: string;
   attachmentId?: string;
   buttons?: MessageSequenceButton[];
+  templateName?: string;
+  language?: string;
+  headerParameters?: string[];
+  bodyParameters?: string[];
 }
 
 export interface MessageSequence {
@@ -119,6 +143,32 @@ export interface AgentEscalationsSettings {
   external?: ExternalEscalationDefinitions;
 }
 
+export interface ReservationAutomationTrigger {
+  type?: string;
+  hoursBefore?: number | null;
+  daysBefore?: number;
+  time?: string | null;
+}
+
+export interface ReservationAutomationConfig {
+  enabled?: boolean;
+  trigger?: ReservationAutomationTrigger;
+  sendMessageSequence?: string | null;
+}
+
+export interface ReservationAutomationDefinitions {
+  confirmation?: ReservationAutomationConfig | null;
+  reminder?: ReservationAutomationConfig | null;
+}
+
+export interface WompiWebhookOutcomeConfig {
+  sendMessageSequence?: string | null;
+}
+
+export interface WebhookDefinitions {
+  wompi?: Record<string, WompiWebhookOutcomeConfig>;
+}
+
 export interface EventNotificationConfig {
   enabled?: boolean;
   recipients?: string[];
@@ -136,17 +186,21 @@ export interface AgentSettings {
   model?: string;
   temperature?: number;
   maxToolIterations?: number;
+  historyWindowSize?: number;
   consecutiveErrorEscalationThreshold?: number;
   persona?: string;
   policies?: string;
   enabledTools?: string[];
   escalations?: AgentEscalationsSettings;
   flow?: AgentFlowDefinition;
+  globalActions?: AgentGlobalAction[];
   factSchema?: FactSchemaEntry[];
   guards?: Record<string, GuardDefinition>;
   templates?: Record<string, string>;
   messageSequences?: Record<string, MessageSequence>;
+  webhooks?: WebhookDefinitions;
   notifications?: AgentNotificationDefinitions;
+  reservationAutomations?: ReservationAutomationDefinitions;
   checkout?: CheckoutDefinitions;
   commerce?: AgentCommerceSettings;
 }
@@ -155,18 +209,22 @@ export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
   model: "gpt-4.1-mini",
   temperature: 0.7,
   maxToolIterations: 6,
+  historyWindowSize: 20,
   consecutiveErrorEscalationThreshold: 3,
   persona: "",
   policies: "",
   enabledTools: [],
-  escalations: { human: { contacts: [], killSwitchPhrases: [] }, external: { enabled: false, events: {} } },
+  escalations: { human: { contacts: [] }, external: { enabled: false, events: {} } },
   flow: { stageDetection: "automatic", stages: [] },
+  globalActions: [],
   factSchema: [],
   guards: {},
   templates: {},
   messageSequences: {},
+  webhooks: { wompi: {} },
   notifications: {},
-  checkout: { categoryModes: {}, modes: {} },
+  reservationAutomations: {},
+  checkout: { currency: "COP", categoryModes: {}, modes: {} },
   commerce: { enabled: false, provider: "Local" },
 };
 
@@ -194,12 +252,15 @@ export function parseAgentSettings(raw: unknown): AgentSettings {
     ...DEFAULT_AGENT_SETTINGS,
     ...s,
     flow: s.flow ?? DEFAULT_AGENT_SETTINGS.flow,
+    globalActions: s.globalActions ?? [],
     factSchema: s.factSchema ?? [],
     guards: s.guards ?? {},
     enabledTools: s.enabledTools ?? [],
-    escalations: s.escalations ?? { human: { contacts: [], killSwitchPhrases: [] }, external: { enabled: false, events: {} } },
+    escalations: s.escalations ?? { human: { contacts: [] }, external: { enabled: false, events: {} } },
     messageSequences: s.messageSequences ?? {},
+    webhooks: s.webhooks ?? { wompi: {} },
     notifications: s.notifications ?? {},
+    reservationAutomations: s.reservationAutomations ?? {},
     commerce: s.commerce ?? { enabled: false, provider: "Local" },
   };
 }

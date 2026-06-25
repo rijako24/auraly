@@ -11,7 +11,7 @@ namespace MimosBabySpa.Tests.Services;
 public sealed class CheckoutPaymentCoordinatorTests
 {
     [Fact]
-    public async Task AbandonActiveCheckoutAsync_WithMatchingCreatedCheckout_AbandonsPaymentAndClearsContext()
+    public async Task DiscardActiveCheckoutAsync_WithMatchingCreatedCheckout_DiscardsPaymentAndClearsContext()
     {
         var payment = new PaymentTransaction
         {
@@ -20,7 +20,7 @@ public sealed class CheckoutPaymentCoordinatorTests
             Status = PaymentTransactionStatus.Created
         };
         var lifecycle = new Mock<IPaymentLifecycleService>();
-        lifecycle.Setup(p => p.MarkAbandonedAsync(payment, It.IsAny<CancellationToken>()))
+        lifecycle.Setup(p => p.DiscardPendingAsync(payment, It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         var coordinator = CreateCoordinator(lifecycle);
         var ctx = new AgentToolContext
@@ -29,15 +29,15 @@ public sealed class CheckoutPaymentCoordinatorTests
             ActivePayment = payment
         };
 
-        var result = await coordinator.AbandonActiveCheckoutAsync(ctx, CheckoutKind.Order, CancellationToken.None);
+        var result = await coordinator.DiscardActiveCheckoutAsync(ctx, CheckoutKind.Order, CancellationToken.None);
 
-        result.AbandonedPayment.Should().BeSameAs(payment);
+        result.DiscardedPayment.Should().BeSameAs(payment);
         ctx.ActivePayment.Should().BeNull();
-        lifecycle.Verify(p => p.MarkAbandonedAsync(payment, It.IsAny<CancellationToken>()), Times.Once);
+        lifecycle.Verify(p => p.DiscardPendingAsync(payment, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
-    public async Task AbandonActiveCheckoutAsync_WithDifferentCheckoutKind_DoesNotAbandonPayment()
+    public async Task DiscardActiveCheckoutAsync_WithDifferentCheckoutKind_DoesNotDiscardPayment()
     {
         var payment = new PaymentTransaction
         {
@@ -53,11 +53,11 @@ public sealed class CheckoutPaymentCoordinatorTests
             ActivePayment = payment
         };
 
-        var result = await coordinator.AbandonActiveCheckoutAsync(ctx, CheckoutKind.Order, CancellationToken.None);
+        var result = await coordinator.DiscardActiveCheckoutAsync(ctx, CheckoutKind.Order, CancellationToken.None);
 
-        result.AbandonedPayment.Should().BeNull();
+        result.DiscardedPayment.Should().BeNull();
         ctx.ActivePayment.Should().BeSameAs(payment);
-        lifecycle.Verify(p => p.MarkAbandonedAsync(It.IsAny<PaymentTransaction>(), It.IsAny<CancellationToken>()), Times.Never);
+        lifecycle.Verify(p => p.DiscardPendingAsync(It.IsAny<PaymentTransaction>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     private static CheckoutPaymentCoordinator CreateCoordinator(Mock<IPaymentLifecycleService> lifecycle) =>

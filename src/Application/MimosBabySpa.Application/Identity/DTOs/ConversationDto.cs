@@ -13,4 +13,6 @@ public record ConversationDto(
     DateTime OpenedAt,
     DateTime LastActivityAt,
     DateTime? ClosedAt,
-    string? CloseReason);
+    string? CloseReason,
+    string Owner,
+    bool BotEnabled);

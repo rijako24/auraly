@@ -1,6 +1,6 @@
 import { apiClient, withPagedDefaults } from "./client";
 import type { PagedResponse, PagedRequest } from "@/types/api";
-import type { Conversation, Message } from "@/types/entities";
+import type { Conversation, ConversationOwner, Message } from "@/types/entities";
 
 export interface WebConversationMessageResponse {
   response: string;
@@ -45,4 +45,6 @@ export const conversationsApi = {
       `/conversations/${conversationId}/messages/web`,
       { message }
     ),
+  updateOwner: (conversationId: string, owner: ConversationOwner) =>
+    apiClient.patch<Conversation>(`/conversations/${conversationId}/owner`, { owner }),
 };

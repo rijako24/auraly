@@ -114,12 +114,14 @@ public sealed class PaymentLifecycleService : IPaymentLifecycleService
     }
 
     public async Task MarkConfirmedAsync(
-        PaymentTransaction payment, string? providerTransactionId, string? webhookPayload, CancellationToken ct = default)
+        PaymentTransaction payment, string? providerTransactionId, string? webhookPayload, CancellationToken ct = default, PaymentTransactionSource? sourceOverride = null)
     {
         payment.ProviderTransactionId = providerTransactionId;
         payment.Status = PaymentTransactionStatus.Confirmed;
         payment.ConfirmedAt = DateTime.UtcNow;
         payment.WebhookPayloadJson = webhookPayload;
+        if (sourceOverride.HasValue)
+            payment.Source = sourceOverride.Value;
         await _payments.SaveAsync(payment, ct);
     }
 
@@ -145,8 +147,17 @@ public sealed class PaymentLifecycleService : IPaymentLifecycleService
         await _payments.SaveAsync(payment, ct);
     }
 
-    public async Task MarkAbandonedAsync(PaymentTransaction payment, CancellationToken ct = default)
+    public async Task DiscardPendingAsync(PaymentTransaction payment, CancellationToken ct = default)
     {
+        if (payment.Status != PaymentTransactionStatus.Created)
+            return;
+
+        if (string.IsNullOrWhiteSpace(payment.LinkUrl))
+        {
+            await _payments.DeleteAsync(payment, ct);
+            return;
+        }
+
         payment.Status = PaymentTransactionStatus.Abandoned;
         payment.SupersededAt = DateTime.UtcNow;
         payment.SupersededByPaymentTransactionId = null;

@@ -10,7 +10,7 @@ import { AgentSetupWizard } from "@/components/agents/agent-setup-wizard";
 import { Button } from "@/components/ui/button";
 import { PageError } from "@/components/ui/page-error";
 import { PageLoading } from "@/components/ui/page-loading";
-import { useAgent, useUpdateAgentSettings } from "@/hooks/use-agents";
+import { useAgent, useBusinessInboundContacts, useUpdateAgentSettings } from "@/hooks/use-agents";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 import {
   parseAgentSettingsFromAgent,
@@ -22,6 +22,7 @@ export default function AgentSetupPage() {
   const agentId = params.agentId as string;
   const businessId = useBusinessContextStore((s) => s.selectedBusinessId);
   const { data: agent, isLoading, isError, refetch } = useAgent(agentId);
+  const { data: inboundContacts } = useBusinessInboundContacts();
   const updateMutation = useUpdateAgentSettings(agentId);
   const [settings, setSettings] = useState<AgentSettings | null>(null);
   const [dirty, setDirty] = useState(false);
@@ -71,6 +72,7 @@ export default function AgentSetupPage() {
           setSettings(next);
           setDirty(true);
         }}
+        availableInboundContacts={inboundContacts ?? []}
         onSave={async () => {
           await updateMutation.mutateAsync(settings);
           setDirty(false);

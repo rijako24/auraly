@@ -101,8 +101,6 @@ public sealed class EscalationDefinitions
 public sealed class HumanEscalationDefinitions
 {
     public IReadOnlyList<string> Contacts { get; set; } = [];
-
-    public IReadOnlyList<string> KillSwitchPhrases { get; set; } = [];
 }
 
 public sealed class ExternalEscalationEventDefinition

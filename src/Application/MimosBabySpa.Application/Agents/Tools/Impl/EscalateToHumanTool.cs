@@ -2,7 +2,6 @@ using System.Text.Json;
 
 using MimosBabySpa.Application.Services;
 
-using MimosBabySpa.Domain.Models;
 
 using static MimosBabySpa.Application.Agents.ToolSideEffectNames;
 
@@ -39,7 +38,7 @@ public sealed class EscalateToHumanTool : IAgentTool
     ];
 
     public string Description =>
-        "Marks the conversation as owned by a human agent and notifies configured escalation contacts.";
+        "Notifies configured human escalation contacts without disabling the bot or changing conversation ownership.";
 
 
 
@@ -79,10 +78,6 @@ public sealed class EscalateToHumanTool : IAgentTool
 
         ToolResultHelper.TryGetString(arguments, "last_user_message", out var lastUserMessage);
 
-
-
-        ctx.ConversationState.Owner = ConversationOwner.Human;
-
         ctx.ConversationState.LastEscalatedAt = DateTime.UtcNow;
 
 
@@ -107,9 +102,7 @@ public sealed class EscalateToHumanTool : IAgentTool
 
                     Reason: reason ?? "agent_request",
 
-                    LastUserMessage: lastUserMessage,
-
-                    PaymentReferenceId: ctx.ActivePayment?.PaymentReferenceId);
+                    LastUserMessage: lastUserMessage);
 
 
 
@@ -123,7 +116,7 @@ public sealed class EscalateToHumanTool : IAgentTool
 
             {
 
-                // Fallo de notificación no revierte Owner=Human
+                // Fallo de notificacion no debe romper el turno del bot.
 
             }
 
@@ -139,7 +132,7 @@ public sealed class EscalateToHumanTool : IAgentTool
 
             reason,
 
-            message = "The conversation has been transferred to a human agent."
+            message = "Human escalation contacts have been notified; the bot remains active."
 
         }, EscalatedToHuman);
 

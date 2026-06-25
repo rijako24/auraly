@@ -119,7 +119,7 @@ public sealed class PrepareCheckoutTool : IAgentTool
         }
         else
         {
-            await _checkoutPayments.AbandonActiveCheckoutAsync(ctx, quote.CheckoutKind, cancellationToken);
+            await _checkoutPayments.DiscardActiveCheckoutAsync(ctx, quote.CheckoutKind, cancellationToken);
         }
 
         var checkoutToken = ctx.Turn.RegisterFragment(

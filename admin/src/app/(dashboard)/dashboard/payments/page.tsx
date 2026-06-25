@@ -4,23 +4,45 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import type { ColumnDef } from "@tanstack/react-table";
 import { MoreHorizontal, Eye, DollarSign, CreditCard, XCircle, CheckCircle } from "lucide-react";
+import { toast } from "sonner";
 
 import { DataTable } from "@/components/tables/data-table";
 import { StatCard } from "@/components/cards/stat-card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { PageLoading } from "@/components/ui/page-loading";
 import { PageError } from "@/components/ui/page-error";
 import { PaymentTransactionStatus, PaymentStatusLabels, PaymentStatusColors, PaymentSourceLabels } from "@/types/enums";
 import type { PaymentTransaction } from "@/types/entities";
 import { formatCurrencyFromCents, formatDateTime, cn } from "@/lib/utils";
-import { usePayments } from "@/hooks/use-payments";
+import { useConfirmManualPayment, usePayments } from "@/hooks/use-payments";
+import { useAuthStore } from "@/stores/auth-store";
+
+function getErrorMessage(error: unknown) {
+  if (error && typeof error === "object" && "message" in error) {
+    const message = (error as { message?: unknown }).message;
+    if (typeof message === "string") return message;
+  }
+  return "No se pudo confirmar el pago";
+}
 
 export default function PaymentsPage() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [search, setSearch] = useState("");
+  const [confirmPayment, setConfirmPayment] = useState<PaymentTransaction | null>(null);
+  const user = useAuthStore((s) => s.user);
+  const canConfirmManual = user?.permissions?.includes("payments.confirm_manual") ?? false;
+  const confirmManual = useConfirmManualPayment();
   const { data, isLoading, isError, refetch } = usePayments({
     page,
     pageSize,
@@ -90,15 +112,21 @@ export default function PaymentsPage() {
               <DropdownMenuItem asChild>
                 <Link href={`/dashboard/payments/${payment.paymentTransactionId}`}>
                   <Eye className="mr-2 h-4 w-4" />
-                  Ver Detalle
+                  Ver detalle
                 </Link>
               </DropdownMenuItem>
+              {canConfirmManual && payment.status === PaymentTransactionStatus.Created && (
+                <DropdownMenuItem onSelect={() => setConfirmPayment(payment)}>
+                  <CheckCircle className="mr-2 h-4 w-4" />
+                  Confirmar manualmente
+                </DropdownMenuItem>
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
         );
       },
     },
-  ], []);
+  ], [canConfirmManual]);
 
   const facetedFilters = useMemo(() => [
     {
@@ -112,6 +140,17 @@ export default function PaymentsPage() {
       options: Object.entries(PaymentSourceLabels).map(([value, label]) => ({ label, value: String(value) })),
     },
   ], []);
+
+  const handleConfirmManual = async () => {
+    if (!confirmPayment) return;
+    try {
+      await confirmManual.mutateAsync(confirmPayment.paymentTransactionId);
+      toast.success("Pago confirmado manualmente");
+      setConfirmPayment(null);
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    }
+  };
 
   if (isLoading) return <PageLoading />;
   if (isError) return <PageError onRetry={refetch} />;
@@ -148,6 +187,39 @@ export default function PaymentsPage() {
           setPage(1);
         }}
       />
+
+      <Dialog open={!!confirmPayment} onOpenChange={(open) => !open && setConfirmPayment(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Confirmar pago manualmente</DialogTitle>
+            <DialogDescription>
+              Usa esta accion solo si verificaste el pago fuera del proveedor automatico.
+            </DialogDescription>
+          </DialogHeader>
+          {confirmPayment && (
+            <div className="space-y-3 rounded-md border bg-muted/30 p-4 text-sm">
+              <div className="flex items-center justify-between gap-4">
+                <span className="text-muted-foreground">Referencia</span>
+                <span className="break-all font-mono">{confirmPayment.paymentReferenceId}</span>
+              </div>
+              <div className="flex items-center justify-between gap-4">
+                <span className="text-muted-foreground">Monto</span>
+                <span className="font-medium">
+                  {formatCurrencyFromCents(confirmPayment.amountInCents, confirmPayment.currency)}
+                </span>
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setConfirmPayment(null)} disabled={confirmManual.isPending}>
+              Cancelar
+            </Button>
+            <Button onClick={handleConfirmManual} disabled={confirmManual.isPending}>
+              {confirmManual.isPending ? "Confirmando..." : "Confirmar pago"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

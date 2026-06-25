@@ -525,6 +525,36 @@ public class AgentPromptComposerTests
         result.Should().Contain("manage_existing_reservation");
         result.Should().Contain("get_customer_reservations, confirm_reservation_change");
     }
+    [Fact]
+    public void Compose_WithHumanEscalationGlobalAction_RendersViaGlobalActions()
+    {
+        var config = new AgentConfig
+        {
+            AgentId = DefaultConfig.AgentId,
+            BusinessId = DefaultConfig.BusinessId,
+            Name = "Mimi",
+            Persona = DefaultConfig.Persona,
+            GlobalActions =
+            [
+                new AgentGlobalAction
+                {
+                    Id = "human_escalation",
+                    Priority = 1000,
+                    Goal = "Notificar al equipo humano sin desactivar el bot.",
+                    Hint = "Escala cuando el cliente pida hablar con una persona o cuando el caso sea sensible.",
+                    AllowedTools = ["escalate_to_human"]
+                }
+            ]
+        };
+
+        var result = Compose(config, []);
+
+        result.Should().Contain("## ACCIONES TRANSVERSALES");
+        result.Should().Contain("human_escalation");
+        result.Should().Contain("Escala cuando el cliente pida hablar con una persona");
+        result.Should().Contain("escalate_to_human");
+        result.Should().NotContain("## ESCALACION A HUMANO");
+    }
 
     [Fact]
     public void Compose_WithEagerFactsMissing_EmitsEagerCaptureBlock()

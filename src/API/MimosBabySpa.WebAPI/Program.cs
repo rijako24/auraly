@@ -151,9 +151,7 @@ builder.Services.AddScoped<ICheckoutPaymentCoordinator, CheckoutPaymentCoordinat
 builder.Services.AddScoped<IEscalationNotifier, EscalationNotifier>();
 builder.Services.AddScoped<IEscalationConfigProvider, EscalationConfigProvider>();
 builder.Services.Configure<ReleaseLinkSettings>(builder.Configuration.GetSection(ReleaseLinkSettings.SectionName));
-builder.Services.AddScoped<AdminActionLinkService>();
-builder.Services.AddScoped<IAdminActionLinkService>(sp => sp.GetRequiredService<AdminActionLinkService>());
-builder.Services.AddScoped<IReleaseLinkService>(sp => sp.GetRequiredService<AdminActionLinkService>());
+builder.Services.AddScoped<IReleaseLinkService, ReleaseLinkService>();
 builder.Services.AddHttpClient<GoogleCalendarService>(c => c.Timeout = TimeSpan.FromSeconds(30));
 builder.Services.AddScoped<ICalendarService, GoogleCalendarService>();
 builder.Services.AddSingleton(sp =>

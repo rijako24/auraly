@@ -1,4 +1,4 @@
-﻿namespace MimosBabySpa.Application.Services;
+namespace MimosBabySpa.Application.Services;
 
 /// <summary>
 /// Notificador de escalado a humano. Responsabilidad Ãºnica: enviar WhatsApp a admins.
@@ -21,13 +21,11 @@ public interface IEscalationNotifier
 
 /// <summary>
 /// Datos de la notificaciÃ³n de escalado.
-/// PaymentReferenceId: cuando se escala por error de link de pago, permite al admin confirmar el pago manualmente.
 /// </summary>
 public record EscalationNotification(
     Guid ConversationId,
     string CustomerPhone,
     string Reason,
-    string? LastUserMessage = null,
-    string? PaymentReferenceId = null);
+    string? LastUserMessage = null);
 
 

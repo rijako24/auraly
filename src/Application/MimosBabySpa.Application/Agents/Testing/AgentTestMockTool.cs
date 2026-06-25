@@ -311,7 +311,7 @@ public sealed class AgentTestMockTool : IAgentTool
         {
             escalated = true,
             reason,
-            message = "The conversation would be transferred to a human agent in production.",
+            message = "Human escalation contacts would be notified in production; the bot remains active.",
             test_mode = true
         }, EscalatedToHuman);
     }
