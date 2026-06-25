@@ -492,20 +492,25 @@ public sealed class AgentConversationService : IAgentConversationService
         if (changedFactKeys.Count == 0)
             return;
 
-        var factsToClear = FlowCheckpointInvalidation.GetDerivedAdvanceFactsToClear(ctx, changedFactKeys);
-        if (factsToClear.Count == 0)
-            return;
+        var invalidation = FlowCheckpointInvalidation.GetInvalidations(ctx, changedFactKeys);
+        foreach (var stageId in invalidation.StageSnapshotsToReset)
+            ctx.ConversationState.StageFactSnapshots.Remove(stageId);
 
-        var cleared = await _factsService.ClearFieldsAsync(ctx.ConversationId, factsToClear, ct);
-        foreach (var factKey in cleared)
-            ctx.Facts.Remove(factKey);
+        IReadOnlyList<string> cleared = [];
+        if (invalidation.FactsToClear.Count > 0)
+        {
+            cleared = await _factsService.ClearFieldsAsync(ctx.ConversationId, invalidation.FactsToClear, ct);
+            foreach (var factKey in cleared)
+                ctx.Facts.Remove(factKey);
+        }
 
-        if (cleared.Count > 0)
+        if (cleared.Count > 0 || invalidation.StageSnapshotsToReset.Count > 0)
         {
             _logger.LogInformation(
-                "Conv {ConvId}: reentry invalidation cleared derived checkpoints [{Facts}] after changes [{ChangedFacts}]",
+                "Conv {ConvId}: reentry invalidation cleared derived checkpoints [{Facts}] and stage snapshots [{Stages}] after changes [{ChangedFacts}]",
                 ctx.ConversationId,
                 string.Join(", ", cleared),
+                string.Join(", ", invalidation.StageSnapshotsToReset),
                 string.Join(", ", changedFactKeys));
         }
     }

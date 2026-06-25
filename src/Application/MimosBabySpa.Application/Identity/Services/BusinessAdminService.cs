@@ -28,11 +28,13 @@ public class BusinessAdminService : IBusinessAdminService
         _logger = logger;
     }
 
-    public async Task<BusinessDto> GetByIdAsync(Guid businessId, CancellationToken ct)
+    public async Task<BusinessDto> GetByIdAsync(
+        Guid tenantId,
+        bool canAccessAllTenants,
+        Guid businessId,
+        CancellationToken ct)
     {
-        var business = await _unitOfWork.Businesses.GetByIdAsync(businessId)
-            ?? throw new NotFoundException(nameof(Business), businessId);
-
+        var business = await GetBusinessForScopeAsync(tenantId, canAccessAllTenants, businessId);
         return MapToDto(business);
     }
 
@@ -58,6 +60,7 @@ public class BusinessAdminService : IBusinessAdminService
         return new PagedResponse<BusinessDto>(
             items.Select(MapToDto).ToList(), totalCount, request.Page, request.PageSize);
     }
+
     public async Task<BusinessDto> CreateAsync(Guid tenantId, CreateBusinessRequest request, CancellationToken ct)
     {
         var business = new Business
@@ -85,11 +88,14 @@ public class BusinessAdminService : IBusinessAdminService
         return MapToDto(business);
     }
 
-    public async Task<BusinessDto> UpdateAsync(Guid businessId, UpdateBusinessRequest request, CancellationToken ct)
+    public async Task<BusinessDto> UpdateAsync(
+        Guid tenantId,
+        bool canAccessAllTenants,
+        Guid businessId,
+        UpdateBusinessRequest request,
+        CancellationToken ct)
     {
-        var business = await _unitOfWork.Businesses.GetByIdAsync(businessId)
-            ?? throw new NotFoundException(nameof(Business), businessId);
-
+        var business = await GetBusinessForScopeAsync(tenantId, canAccessAllTenants, businessId);
         var oldState = MapToDto(business);
 
         if (request.Name is not null) business.Name = request.Name;
@@ -109,10 +115,13 @@ public class BusinessAdminService : IBusinessAdminService
         return MapToDto(business);
     }
 
-    public async Task DeactivateAsync(Guid businessId, CancellationToken ct)
+    public async Task DeactivateAsync(
+        Guid tenantId,
+        bool canAccessAllTenants,
+        Guid businessId,
+        CancellationToken ct)
     {
-        var business = await _unitOfWork.Businesses.GetByIdAsync(businessId)
-            ?? throw new NotFoundException(nameof(Business), businessId);
+        var business = await GetBusinessForScopeAsync(tenantId, canAccessAllTenants, businessId);
 
         business.IsActive = false;
         business.UpdatedAt = DateTime.UtcNow;
@@ -122,8 +131,21 @@ public class BusinessAdminService : IBusinessAdminService
         await _auditService.LogAsync("Deactivate", "Business", businessId.ToString(), null, null, ct);
     }
 
+    private async Task<Business> GetBusinessForScopeAsync(
+        Guid tenantId,
+        bool canAccessAllTenants,
+        Guid businessId)
+    {
+        var business = await _unitOfWork.Businesses.GetByIdAsync(businessId)
+            ?? throw new NotFoundException(nameof(Business), businessId);
+
+        if (!canAccessAllTenants && business.TenantId != tenantId)
+            throw new NotFoundException(nameof(Business), businessId);
+
+        return business;
+    }
+
     private static BusinessDto MapToDto(Business b) => new(
         b.BusinessId, b.TenantId, b.Name, b.Description, b.Address,
         b.Phone, b.Email, b.Website, b.LogoUrl, b.IsActive, b.CreatedAt);
 }
-

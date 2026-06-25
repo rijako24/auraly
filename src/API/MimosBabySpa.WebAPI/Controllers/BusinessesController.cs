@@ -35,7 +35,8 @@ public class BusinessesController : ControllerBase
     [PermissionAuthorize("businesses.read")]
     public async Task<ActionResult<BusinessDto>> GetById(Guid businessId, CancellationToken ct)
     {
-        return Ok(await _businessService.GetByIdAsync(businessId, ct));
+        return Ok(await _businessService.GetByIdAsync(
+            User.GetTenantId(), User.HasPermission("tenants.read"), businessId, ct));
     }
 
     [HttpPost]
@@ -52,15 +53,16 @@ public class BusinessesController : ControllerBase
     public async Task<ActionResult<BusinessDto>> Update(
         Guid businessId, [FromBody] UpdateBusinessRequest request, CancellationToken ct)
     {
-        return Ok(await _businessService.UpdateAsync(businessId, request, ct));
+        return Ok(await _businessService.UpdateAsync(
+            User.GetTenantId(), User.HasPermission("tenants.read"), businessId, request, ct));
     }
 
     [HttpDelete("{businessId:guid}")]
     [PermissionAuthorize("businesses.delete")]
     public async Task<IActionResult> Deactivate(Guid businessId, CancellationToken ct)
     {
-        await _businessService.DeactivateAsync(businessId, ct);
+        await _businessService.DeactivateAsync(
+            User.GetTenantId(), User.HasPermission("tenants.read"), businessId, ct);
         return NoContent();
     }
 }
-

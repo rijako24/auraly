@@ -15,15 +15,18 @@ public sealed class PrepareOrderCheckoutTool : IAgentTool
 {
     private readonly IUnitOfWork _unitOfWork;
     private readonly ICheckoutPaymentCoordinator _checkoutPayments;
+    private readonly IConversationFactsService _factsService;
     private readonly IConversationVerificationService _verifications;
 
     public PrepareOrderCheckoutTool(
         IUnitOfWork unitOfWork,
         ICheckoutPaymentCoordinator checkoutPayments,
+        IConversationFactsService factsService,
         IConversationVerificationService verifications)
     {
         _unitOfWork = unitOfWork;
         _checkoutPayments = checkoutPayments;
+        _factsService = factsService;
         _verifications = verifications;
     }
 
@@ -78,9 +81,8 @@ public sealed class PrepareOrderCheckoutTool : IAgentTool
                 "Add SettingsJson.checkout.modes.order.");
         }
 
-        var paymentMethodInput = Get(arguments, "payment_method") ?? GetFact(ctx, "payment_method");
-
         var roles = new FactRoleIndex(ctx.Config?.FactSchema ?? []);
+        var paymentMethodInput = Get(arguments, "payment_method") ?? CheckoutPaymentFact.Get(ctx, roles);
         var bindings = CheckoutModeBindingDefaults.Resolve(CheckoutKind.Order, checkoutMode);
         var missing = FindMissingRequiredFacts(bindings.RequiredFactRoles, roles, ctx.Facts, arguments);
         if (missing.Count > 0)
@@ -117,6 +119,8 @@ public sealed class PrepareOrderCheckoutTool : IAgentTool
 
         if (paymentSelection.Error is not null)
             return ToolError(paymentSelection.Error);
+
+        await CheckoutPaymentFact.PersistSelectionAsync(_factsService, ctx, roles, paymentSelection, cancellationToken);
 
         var currency = string.IsNullOrWhiteSpace(checkout.Currency) ? "COP" : checkout.Currency.Trim().ToUpperInvariant();
 
@@ -163,6 +167,21 @@ public sealed class PrepareOrderCheckoutTool : IAgentTool
             paymentLink = linkResult.LinkUrl;
             paymentTransactionId = linkResult.Payment?.PaymentTransactionId;
             templateData["link_url"] = linkResult.LinkUrl;
+        }
+        else
+        {
+            var transition = await _checkoutPayments.AbandonActiveCheckoutAsync(
+                ctx,
+                quote.CheckoutKind,
+                cancellationToken);
+            if (transition.AbandonedPayment is not null
+                && order.PaymentTransactionId == transition.AbandonedPayment.PaymentTransactionId)
+            {
+                order.PaymentTransactionId = null;
+                order.UpdatedAt = DateTime.UtcNow;
+                await _unitOfWork.OrderDrafts.UpdateAsync(order, cancellationToken);
+                await _unitOfWork.SaveChangesAsync(cancellationToken);
+            }
         }
 
         templateData["payment_method"] = paymentSelection.MethodKey;
@@ -397,8 +416,7 @@ public sealed class PrepareOrderCheckoutTool : IAgentTool
                 dependencies[key] = facts.TryGetValue(key, out var value) ? value : string.Empty;
         }
 
-        if (!string.IsNullOrWhiteSpace(paymentMethod))
-            dependencies["payment_method"] = paymentMethod.Trim();
+        CheckoutPaymentFact.AddDependency(dependencies, roles, paymentMethod);
 
         return dependencies;
     }
@@ -434,5 +452,3 @@ public sealed class PrepareOrderCheckoutTool : IAgentTool
 
     private static string Money(decimal amount) => amount.ToString("N0", CultureInfo.InvariantCulture);
 }
-
-

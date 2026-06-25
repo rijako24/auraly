@@ -7,6 +7,11 @@ namespace MimosBabySpa.Application.Services;
 
 public interface ICheckoutPaymentCoordinator
 {
+    Task<CheckoutPaymentTransitionResult> AbandonActiveCheckoutAsync(
+        AgentToolContext ctx,
+        CheckoutKind checkoutKind,
+        CancellationToken ct = default);
+
     Task<CheckoutPaymentLinkResult> EnsurePaymentLinkAsync(
         AgentToolContext ctx,
         CheckoutQuote quote,
@@ -30,6 +35,26 @@ public sealed class CheckoutPaymentCoordinator : ICheckoutPaymentCoordinator
         _paymentLinks = paymentLinks;
         _paymentLifecycle = paymentLifecycle;
         _quotes = quotes;
+    }
+
+    public async Task<CheckoutPaymentTransitionResult> AbandonActiveCheckoutAsync(
+        AgentToolContext ctx,
+        CheckoutKind checkoutKind,
+        CancellationToken ct = default)
+    {
+        var activePayment = ctx.ActivePayment
+            ?? await _paymentLifecycle.GetActiveByConversationAsync(ctx.ConversationId, ct);
+
+        if (activePayment is null
+            || activePayment.Status != PaymentTransactionStatus.Created
+            || activePayment.CheckoutKind != checkoutKind)
+        {
+            return CheckoutPaymentTransitionResult.None;
+        }
+
+        await _paymentLifecycle.MarkAbandonedAsync(activePayment, ct);
+        ctx.ActivePayment = null;
+        return new CheckoutPaymentTransitionResult(activePayment);
     }
 
     public async Task<CheckoutPaymentLinkResult> EnsurePaymentLinkAsync(
@@ -93,6 +118,11 @@ public sealed class CheckoutPaymentCoordinator : ICheckoutPaymentCoordinator
         ctx.ActivePayment = payment;
         return CheckoutPaymentLinkResult.Ok(payment.LinkUrl!, payment);
     }
+}
+
+public sealed record CheckoutPaymentTransitionResult(PaymentTransaction? AbandonedPayment)
+{
+    public static CheckoutPaymentTransitionResult None { get; } = new((PaymentTransaction?)null);
 }
 
 public sealed record CheckoutPaymentLinkResult(

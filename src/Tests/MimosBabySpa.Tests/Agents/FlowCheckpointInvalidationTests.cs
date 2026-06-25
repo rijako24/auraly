@@ -42,6 +42,39 @@ public sealed class FlowCheckpointInvalidationTests
     }
 
     [Fact]
+    public void GetInvalidations_WhenReentryFactChanged_ReturnsDerivedFactsAndStageSnapshots()
+    {
+        var ctx = new AgentToolContext
+        {
+            Config = new AgentConfig
+            {
+                FactSchema =
+                [
+                    new FactSchemaEntry { Key = "payment_method", Source = "user" },
+                    new FactSchemaEntry { Key = "order_checkout_presented", Source = "system" }
+                ],
+                Flow = new AgentFlowDefinition
+                {
+                    Stages =
+                    [
+                        new AgentFlowStage
+                        {
+                            Id = "summary",
+                            AdvanceWhenFacts = ["order_checkout_presented"],
+                            ReentryOnFactChanged = ["payment_method"]
+                        }
+                    ]
+                }
+            }
+        };
+
+        var result = FlowCheckpointInvalidation.GetInvalidations(ctx, ["payment_method"]);
+
+        result.FactsToClear.Should().Equal("order_checkout_presented");
+        result.StageSnapshotsToReset.Should().Equal("summary");
+    }
+
+    [Fact]
     public void GetDerivedAdvanceFactsToClear_WhenChangedFactIsNotAReentryDependency_ReturnsEmpty()
     {
         var ctx = new AgentToolContext
@@ -71,6 +104,7 @@ public sealed class FlowCheckpointInvalidationTests
 
         result.Should().BeEmpty();
     }
+
     [Fact]
     public void GetDerivedAdvanceFactsToClear_MatchesChangedFactsIgnoringCase()
     {

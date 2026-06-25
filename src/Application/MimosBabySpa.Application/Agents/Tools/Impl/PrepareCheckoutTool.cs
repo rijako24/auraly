@@ -21,6 +21,7 @@ public sealed class PrepareCheckoutTool : IAgentTool
     private readonly ReservationPricingResolver _pricing;
     private readonly IAddOnCatalogService _addOnCatalog;
     private readonly ICheckoutPaymentCoordinator _checkoutPayments;
+    private readonly IConversationFactsService _factsService;
     private readonly IConversationVerificationService _verifications;
     private readonly IUnitOfWork _unitOfWork;
     private readonly ServiceNameResolver _serviceNameResolver;
@@ -29,6 +30,7 @@ public sealed class PrepareCheckoutTool : IAgentTool
         ReservationPricingResolver pricing,
         IAddOnCatalogService addOnCatalog,
         ICheckoutPaymentCoordinator checkoutPayments,
+        IConversationFactsService factsService,
         IConversationVerificationService verifications,
         IUnitOfWork unitOfWork,
         ServiceNameResolver serviceNameResolver)
@@ -36,6 +38,7 @@ public sealed class PrepareCheckoutTool : IAgentTool
         _pricing = pricing;
         _addOnCatalog = addOnCatalog;
         _checkoutPayments = checkoutPayments;
+        _factsService = factsService;
         _verifications = verifications;
         _unitOfWork = unitOfWork;
         _serviceNameResolver = serviceNameResolver;
@@ -78,6 +81,8 @@ public sealed class PrepareCheckoutTool : IAgentTool
         if (missing.Count > 0)
             return ToolResultHelper.MissingPrerequisites([.. missing]);
 
+        await CheckoutPaymentFact.PersistSelectionAsync(_factsService, ctx, roles, quote, cancellationToken);
+
         var templateData = BuildTemplateData(quote, roles, ctx.Facts);
         string? linkUrl = null;
         PaymentTransaction? payment = null;
@@ -111,6 +116,10 @@ public sealed class PrepareCheckoutTool : IAgentTool
             linkUrl = linkResult.LinkUrl;
             payment = linkResult.Payment;
             templateData["link_url"] = linkUrl;
+        }
+        else
+        {
+            await _checkoutPayments.AbandonActiveCheckoutAsync(ctx, quote.CheckoutKind, cancellationToken);
         }
 
         var checkoutToken = ctx.Turn.RegisterFragment(
@@ -219,7 +228,7 @@ public sealed class PrepareCheckoutTool : IAgentTool
 
         var totalCents = (long)(pricing.Total * 100);
         var currency = string.IsNullOrWhiteSpace(checkout.Currency) ? "COP" : checkout.Currency.Trim().ToUpperInvariant();
-        var paymentMethodInput = Get(arguments, "payment_method") ?? GetFact(ctx, "payment_method");
+        var paymentMethodInput = Get(arguments, "payment_method") ?? CheckoutPaymentFact.Get(ctx, roles);
         var paymentSelection = CheckoutPaymentSelectionResolver.Resolve(checkoutMode, checkoutKindText, totalCents, paymentMethodInput);
         if (paymentSelection.MissingPaymentMethod)
             return (null, ToolResultHelper.MissingPrerequisites(["payment_method"]));
@@ -360,6 +369,7 @@ public sealed class PrepareCheckoutTool : IAgentTool
             dependencies[key] = facts.TryGetValue(key, out var value) ? value : string.Empty;
         }
 
+        CheckoutPaymentFact.AddDependency(dependencies, roles, quote.PaymentMethodKey);
         return dependencies;
     }
 
@@ -376,9 +386,6 @@ public sealed class PrepareCheckoutTool : IAgentTool
 
     private static string? Get(JsonElement args, string property) =>
         ToolResultHelper.TryGetString(args, property, out var value) ? value : null;
-
-    private static string? GetFact(AgentToolContext ctx, string key) =>
-        ctx.Facts.TryGetValue(key, out var value) ? value : null;
 
     private static string ToolError(CheckoutPaymentSelectionError error) =>
         ToolResultHelper.Error(error.Code, error.Message, error.Hint, error.Recoverable);
@@ -448,4 +455,3 @@ public sealed class PrepareCheckoutTool : IAgentTool
         return (JsonSerializer.Serialize(snapshot), reservationSnapshot, null);
     }
 }
-

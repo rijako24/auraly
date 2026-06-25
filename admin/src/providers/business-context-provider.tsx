@@ -14,7 +14,7 @@ export function BusinessContextProvider({
   children: ReactNode;
 }) {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
-  const tenantId = useAuthStore((s) => s.user?.tenantId);
+  const user = useAuthStore((s) => s.user);
   const { setBusinesses, isLoaded } = useBusinessContextStore();
 
   const { data, isLoading, isError, refetch } = useQuery({
@@ -28,12 +28,16 @@ export function BusinessContextProvider({
     if (!data) return;
 
     const items = Array.isArray(data) ? data : data.items ?? [];
-    const tenantBusinesses = tenantId
-      ? items.filter((business) => business.tenantId === tenantId)
-      : items;
+    const canAccessAllTenants =
+      user?.permissions.includes("tenants.read") ||
+      user?.roles.includes("SuperAdmin");
+    const tenantBusinesses =
+      user?.tenantId && !canAccessAllTenants
+        ? items.filter((business) => business.tenantId === user.tenantId)
+        : items;
 
     setBusinesses(tenantBusinesses);
-  }, [data, setBusinesses, tenantId]);
+  }, [data, setBusinesses, user?.permissions, user?.roles, user?.tenantId]);
 
   if (!isAuthenticated) return null;
 
@@ -49,7 +53,7 @@ export function BusinessContextProvider({
     return (
       <div className="flex h-screen items-center justify-center p-8">
         <PageError
-          message="No se pudieron cargar los negocios. Verifica tu conexión."
+          message="No se pudieron cargar los negocios. Verifica tu conexion."
           onRetry={refetch}
         />
       </div>
