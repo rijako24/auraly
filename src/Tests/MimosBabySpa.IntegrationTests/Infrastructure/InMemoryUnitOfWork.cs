@@ -412,6 +412,19 @@ internal sealed class InMemoryExternalEscalationAttemptRepository : IExternalEsc
             o.WhatsAppMessageId == whatsAppMessageId &&
             NormalizePhone(o.ContactPhoneSnapshot) == NormalizePhone(phone)));
 
+    public Task<ExternalEscalationAttempt?> GetLatestByAttemptCodeForContactAsync(Guid businessId, string attemptCode, string phone, CancellationToken ct = default) =>
+        Task.FromResult(_escalations
+            .Where(o => o.BusinessId == businessId && o.AttemptCode == attemptCode && o.ContactPhoneSnapshot == NormalizePhone(phone))
+            .OrderByDescending(o => o.EscalatedAt)
+            .FirstOrDefault());
+
+    public Task<IReadOnlyList<ExternalEscalationAttempt>> GetRecentByContactPhoneAsync(Guid businessId, string phone, int limit, bool includeCompleted = false, CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<ExternalEscalationAttempt>>(_escalations
+            .Where(o => o.BusinessId == businessId && o.ContactPhoneSnapshot == NormalizePhone(phone))
+            .Where(o => includeCompleted || o.Status == ExternalEscalationAttemptStatus.Pending)
+            .OrderByDescending(o => o.EscalatedAt)
+            .Take(Math.Clamp(limit, 1, 20))
+            .ToList());
     public Task<IReadOnlyList<ExternalEscalationAttempt>> GetPendingByContactPhoneAsync(Guid businessId, string phone, CancellationToken ct = default) =>
         Task.FromResult<IReadOnlyList<ExternalEscalationAttempt>>(
             _escalations.Where(o => o.BusinessId == businessId &&

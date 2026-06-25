@@ -217,6 +217,9 @@ var host = new HostBuilder()
         services.AddScoped<IAgentTool, CreateOrderTool>();
         services.AddScoped<IAgentTool, StartExternalInteractionTool>();
         services.AddScoped<IAgentTool, ResolveExternalInteractionTool>();
+        services.AddScoped<IAgentTool, SearchOrderTool>();
+        services.AddScoped<IAgentTool, AcceptOrderDeliveryTool>();
+        services.AddScoped<IAgentTool, RejectOrderDeliveryTool>();
         services.AddScoped<IAgentTool, CompleteExternalInteractionTool>();
         services.AddScoped<IAgentTool, OperationsGetReservationsTool>();
         services.AddScoped<IAgentTool, OperationsBlockAvailabilityTool>();

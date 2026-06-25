@@ -64,6 +64,18 @@ public class WhatsAppWebhookParserService : IWhatsAppWebhookParserService
                         InteractivePayload = message.Interactive.ButtonReply.Id
                     });
                 }
+                else if (message.Type == "button" && message.Button != null)
+                {
+                    result.Add(new IncomingMessage
+                    {
+                        UserNumber = message.From,
+                        MessageText = message.Button.Text,
+                        CustomerName = customerName,
+                        ProviderMessageId = message.Id,
+                        ReplyToProviderMessageId = message.Context?.Id,
+                        InteractivePayload = message.Button.Payload
+                    });
+                }
                 // Mensaje de voz (voice) o audio - transcribir
                 else if ((message.Type == "voice" && message.Voice != null) ||
                          (message.Type == "audio" && message.Audio != null))

@@ -53,15 +53,16 @@ DECLARE @SolorzanoDeliverySettingsJson NVARCHAR(MAX) = N'{
         "id": "delivery_assignment",
         "name": "Gestion de domicilio",
         "goal": "Resolver si el domiciliario acepta o rechaza un pedido pendiente.",
-        "hint": "En cada mensaje del contacto, primero llama resolve_external_interaction con message_text. Cuando la herramienta identifique varias interacciones pendientes, solicita cual quiere gestionar y muestra los attempt_code disponibles. Cuando el mensaje venga citado, traiga codigo, boton o la herramienta resuelva una sola interaccion, usa esa interaccion como referencia. Cuando requested_action sea accepted o el mensaje indique que el contacto toma o confirma la solicitud, llama complete_external_interaction con outcome_key=accepted. Cuando requested_action sea declined o el mensaje indique rechazo, llama complete_external_interaction con outcome_key=declined. Cuando la interaccion este identificada y la intencion del mensaje no sea clara, solicita una confirmacion breve mencionando attempt_code. Cuando no haya pendientes, informa que no tiene solicitudes pendientes. Despues de completar, responde usando los datos estructurados devueltos por la tool y el contexto del mensaje original.",
-        "allowedTools": ["resolve_external_interaction", "complete_external_interaction"],
+        "hint": "En cada mensaje del contacto, primero llama search_order con el texto recibido, codigo PED si aparece o datos del pedido. Cuando encuentre varias ordenes pendientes, solicita cual quiere gestionar y muestra los assignment_code disponibles. Cuando el contacto acepte, confirme o diga que toma el pedido, llama accept_order_delivery con attempt_code u order_number. Cuando rechace o diga que no puede tomarlo, llama reject_order_delivery. Si el pedido esta vencido o no disponible, responde breve indicando que ya no puede confirmarse automaticamente y que espere nueva asignacion o coordinacion operativa. Despues de aceptar o rechazar, responde usando los datos estructurados devueltos por la tool.",
+        "allowedTools": ["search_order", "accept_order_delivery", "reject_order_delivery"],
         "advanceWhenFacts": []
       }
     ]
   },
   "enabledTools": [
-    "resolve_external_interaction",
-    "complete_external_interaction"
+    "search_order",
+    "accept_order_delivery",
+    "reject_order_delivery"
   ],
   "guards": {},
   "notifications": {},

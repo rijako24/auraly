@@ -386,6 +386,26 @@ public sealed class ExternalEscalationServiceTests
                 a.Status == ExternalEscalationAttemptStatus.Pending));
         }
 
+        public Task<ExternalEscalationAttempt?> GetLatestByAttemptCodeForContactAsync(Guid businessId, string attemptCode, string phone, CancellationToken ct = default)
+        {
+            var normalized = NormalizePhone(phone);
+            return Task.FromResult(Items
+                .Where(a => a.BusinessId == businessId && a.AttemptCode == attemptCode && a.ContactPhoneSnapshot == normalized)
+                .OrderByDescending(a => a.EscalatedAt)
+                .FirstOrDefault());
+        }
+
+        public Task<IReadOnlyList<ExternalEscalationAttempt>> GetRecentByContactPhoneAsync(Guid businessId, string phone, int limit, bool includeCompleted = false, CancellationToken ct = default)
+        {
+            var normalized = NormalizePhone(phone);
+            return Task.FromResult<IReadOnlyList<ExternalEscalationAttempt>>(Items
+                .Where(a => a.BusinessId == businessId && a.ContactPhoneSnapshot == normalized)
+                .Where(a => includeCompleted || a.Status == ExternalEscalationAttemptStatus.Pending)
+                .OrderByDescending(a => a.EscalatedAt)
+                .Take(Math.Clamp(limit, 1, 20))
+                .ToList());
+        }
+
         public Task<IReadOnlyList<ExternalEscalationAttempt>> GetPendingByContactPhoneAsync(Guid businessId, string phone, CancellationToken ct = default)
         {
             var normalized = NormalizePhone(phone);

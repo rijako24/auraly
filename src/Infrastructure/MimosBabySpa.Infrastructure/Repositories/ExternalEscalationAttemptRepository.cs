@@ -50,6 +50,40 @@ public sealed class ExternalEscalationAttemptRepository : IExternalEscalationAtt
             .FirstOrDefaultAsync(ct);
     }
 
+    public Task<ExternalEscalationAttempt?> GetLatestByAttemptCodeForContactAsync(
+        Guid businessId,
+        string attemptCode,
+        string phone,
+        CancellationToken ct = default)
+    {
+        var normalized = NormalizePhone(phone);
+        return _context.ExternalEscalationAttempts
+            .Where(o => o.BusinessId == businessId
+                && o.AttemptCode == attemptCode
+                && o.ContactPhoneSnapshot == normalized)
+            .OrderByDescending(o => o.EscalatedAt)
+            .FirstOrDefaultAsync(ct);
+    }
+
+    public async Task<IReadOnlyList<ExternalEscalationAttempt>> GetRecentByContactPhoneAsync(
+        Guid businessId,
+        string phone,
+        int limit,
+        bool includeCompleted = false,
+        CancellationToken ct = default)
+    {
+        var normalized = NormalizePhone(phone);
+        var query = _context.ExternalEscalationAttempts
+            .Where(o => o.BusinessId == businessId && o.ContactPhoneSnapshot == normalized);
+
+        if (!includeCompleted)
+            query = query.Where(o => o.Status == ExternalEscalationAttemptStatus.Pending);
+
+        return await query
+            .OrderByDescending(o => o.EscalatedAt)
+            .Take(Math.Clamp(limit, 1, 20))
+            .ToListAsync(ct);
+    }
     public async Task<IReadOnlyList<ExternalEscalationAttempt>> GetPendingByContactPhoneAsync(
         Guid businessId,
         string phone,
@@ -63,6 +97,7 @@ public sealed class ExternalEscalationAttemptRepository : IExternalEscalationAtt
             .OrderByDescending(o => o.EscalatedAt)
             .ToListAsync(ct);
     }
+
 
     public async Task<IReadOnlyList<ExternalEscalationAttempt>> GetExpiredPendingAttemptsAsync(
         DateTime utcNow,

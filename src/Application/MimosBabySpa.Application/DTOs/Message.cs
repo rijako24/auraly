@@ -12,6 +12,7 @@ public class Message
     public AudioMessage? Audio { get; set; }
     public VoiceMessage? Voice { get; set; }
     public InteractiveMessage? Interactive { get; set; }
+    public ButtonMessage? Button { get; set; }
     public MessageContext? Context { get; set; }
     public string Type { get; set; } = string.Empty;
 }
@@ -28,6 +29,12 @@ public class ButtonReply
 {
     public string Id { get; set; } = string.Empty;
     public string Title { get; set; } = string.Empty;
+}
+
+public class ButtonMessage
+{
+    public string Text { get; set; } = string.Empty;
+    public string Payload { get; set; } = string.Empty;
 }
 
 public class MessageContext
