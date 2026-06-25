@@ -39,9 +39,9 @@ export default function AgentConfigPage() {
     try {
       await updateMutation.mutateAsync(settings);
       setDirty(false);
-      toast.success("Configuración del agente guardada");
+      toast.success("ConfiguraciÃ³n del agente guardada");
     } catch {
-      toast.error("No se pudo guardar la configuración");
+      toast.error("No se pudo guardar la configuraciÃ³n");
     }
   };
 
@@ -69,7 +69,7 @@ export default function AgentConfigPage() {
           </div>
           <h1 className="text-2xl font-semibold tracking-tight">{agent.name}</h1>
           <p className="text-sm text-muted-foreground">
-            Motor agentic — edición de <code className="text-xs">SettingsJson</code>
+            Motor agentic â€” ediciÃ³n de <code className="text-xs">SettingsJson</code>
           </p>
         </div>
         <Button
@@ -77,7 +77,7 @@ export default function AgentConfigPage() {
           disabled={!dirty || updateMutation.isPending}
         >
           <Save className="mr-2 h-4 w-4" />
-          {updateMutation.isPending ? "Guardando…" : "Guardar"}
+          {updateMutation.isPending ? "Guardandoâ€¦" : "Guardar"}
         </Button>
       </div>
 
