@@ -45,6 +45,7 @@
 :r .\Seeds\SeedRadaConcept.sql
 :r .\Seeds\SeedAuraly.sql
 :r .\Seeds\SeedLuisPetitBarber.sql
+:r .\Seeds\SeedSolorzanoBusinessIdentity.sql
 :r .\Seeds\SeedBusinessWorkingHours.sql
 :r .\Seeds\SeedAgenticConfiguration.sql
 :r .\Seeds\SeedSolorzanoWhatsAppNumber.sql
