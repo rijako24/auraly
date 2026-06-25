@@ -26,6 +26,7 @@ import type { PaymentTransaction } from "@/types/entities";
 import { formatCurrencyFromCents, formatDateTime, cn } from "@/lib/utils";
 import { useConfirmManualPayment, usePayments } from "@/hooks/use-payments";
 import { useAuthStore } from "@/stores/auth-store";
+import { useBusinessContextStore } from "@/stores/business-context-store";
 
 function getErrorMessage(error: unknown) {
   if (error && typeof error === "object" && "message" in error) {
@@ -36,6 +37,7 @@ function getErrorMessage(error: unknown) {
 }
 
 export default function PaymentsPage() {
+  const selectedBusinessId = useBusinessContextStore((s) => s.selectedBusinessId);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [search, setSearch] = useState("");
@@ -151,6 +153,10 @@ export default function PaymentsPage() {
       toast.error(getErrorMessage(error));
     }
   };
+
+  if (!selectedBusinessId) {
+    return <PageError message="Selecciona un negocio para ver los pagos." />;
+  }
 
   if (isLoading) return <PageLoading />;
   if (isError) return <PageError onRetry={refetch} />;

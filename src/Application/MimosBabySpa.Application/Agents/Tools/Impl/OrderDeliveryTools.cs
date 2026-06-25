@@ -414,7 +414,9 @@ public sealed class RejectOrderDeliveryTool : IAgentTool
 
     public string Name => "reject_order_delivery";
 
-    public string Description => "Rejects a delivery order assigned to the current delivery contact so it can be reassigned or escalated.";
+    public string Description =>
+        "Rejects a delivery order assigned to the current delivery contact so it can be reassigned or escalated. " +
+        "Do not ask for a rejection reason; a clear rejection is enough.";
 
     public string ParametersSchema => """
         {

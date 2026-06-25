@@ -36,6 +36,7 @@ import {
 } from "@/components/ui/select";
 import { useOrders, useOrderSummary } from "@/hooks/use-orders";
 import { cn, formatCurrency, formatDateTime, truncate } from "@/lib/utils";
+import { useBusinessContextStore } from "@/stores/business-context-store";
 import {
   OrderFulfillmentModeLabels,
   OrderSourceLabels,
@@ -46,6 +47,7 @@ import {
 import type { Order } from "@/types/entities";
 
 export default function OrdersPage() {
+  const selectedBusinessId = useBusinessContextStore((s) => s.selectedBusinessId);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [search, setSearch] = useState("");
@@ -181,6 +183,10 @@ export default function OrdersPage() {
     setStatus("all");
     setPage(1);
   };
+
+  if (!selectedBusinessId) {
+    return <PageError message="Selecciona un negocio para ver los pedidos." />;
+  }
 
   if (isLoading) return <PageLoading />;
   if (isError || isSummaryError) {

@@ -289,7 +289,7 @@ export interface Conversation {
 export interface Message {
   messageId: string;
   conversationId: string;
-  sender: "User" | "Bot";
+  sender: "User" | "Bot" | "user" | "bot";
   messageText: string;
   timestamp: string;
 }

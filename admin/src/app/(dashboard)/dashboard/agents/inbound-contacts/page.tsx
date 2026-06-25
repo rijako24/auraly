@@ -42,6 +42,7 @@ import {
   useDeleteBusinessInboundContact,
   useUpdateBusinessInboundContact,
 } from "@/hooks/use-agents";
+import { useBusinessContextStore } from "@/stores/business-context-store";
 import type { BusinessInboundContact, Agent } from "@/types/entities";
 import type { BusinessInboundContactPayload } from "@/services/api/agents";
 
@@ -99,6 +100,7 @@ function toPayload(form: ContactFormState): BusinessInboundContactPayload {
 }
 
 export default function InboundContactsPage() {
+  const selectedBusinessId = useBusinessContextStore((s) => s.selectedBusinessId);
   const [viewMode, setViewMode] = useState<"table" | "card" | "list">("table");
   const [editing, setEditing] = useState<BusinessInboundContact | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -254,6 +256,10 @@ export default function InboundContactsPage() {
     ],
     [deleteContact, updateContact]
   );
+
+  if (!selectedBusinessId) {
+    return <PageError message="Selecciona un negocio para administrar contactos inbound." />;
+  }
 
   if (contactsQuery.isLoading || agentsQuery.isLoading) return <PageLoading cards={0} />;
   if (contactsQuery.isError || agentsQuery.isError) {

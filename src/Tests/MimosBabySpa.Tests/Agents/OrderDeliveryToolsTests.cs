@@ -59,6 +59,41 @@ public sealed class OrderDeliveryToolsTests
         externalEscalations.VerifyAll();
     }
 
+    [Fact]
+    public async Task RejectOrderDelivery_WhenReplyQuotesAssignment_CompletesOrderWithoutAskingReason()
+    {
+        var fixture = CreateFixture();
+        fixture.Context.LatestUserMessage = "rechazo";
+        var externalEscalations = new Mock<IExternalEscalationService>();
+        externalEscalations
+            .Setup(s => s.CompleteAsync(
+                fixture.Context.BusinessId,
+                fixture.Attempt.ExternalEscalationAttemptId,
+                fixture.Context.ChannelPhone,
+                "declined",
+                "rechazo",
+                It.Is<IReadOnlyDictionary<string, string>>(p =>
+                    p["order_id"] == fixture.Attempt.TargetId.ToString() &&
+                    p["order_number"] == "ORD-9001"),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ExternalEscalationActionResult(
+                true,
+                fixture.Attempt,
+                "Interaccion rechazada; se envio al siguiente contacto.",
+                true,
+                "declined",
+                "rechazo"));
+
+        var tool = new RejectOrderDeliveryTool(fixture.UnitOfWork.Object, externalEscalations.Object);
+        using var args = JsonDocument.Parse("{}");
+
+        var json = await tool.ExecuteAsync(args.RootElement, fixture.Context, CancellationToken.None);
+
+        json.Should().Contain("\"rejected\":true");
+        json.Should().Contain("\"next_contact_requested\":true");
+        externalEscalations.VerifyAll();
+    }
+
     private static OrderDeliveryFixture CreateFixture()
     {
         var businessId = Guid.NewGuid();

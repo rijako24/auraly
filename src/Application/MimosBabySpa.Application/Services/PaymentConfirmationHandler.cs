@@ -175,7 +175,10 @@ public class PaymentConfirmationHandler : IPaymentConfirmationHandler
         PaidCheckoutFulfillmentResult result,
         CancellationToken ct)
     {
-        var phone = result.CustomerPhone?.Trim();
+        var conversation = await _unitOfWork.Conversations.GetByIdAsync(payment.ConversationId);
+        var phone = !string.IsNullOrWhiteSpace(conversation?.UserNumber)
+            ? conversation.UserNumber.Trim()
+            : result.CustomerPhone?.Trim();
         if (string.IsNullOrWhiteSpace(phone))
         {
             _logger.LogDebug("Webhook outbound: telefono vacio, no se envia secuencia");

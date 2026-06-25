@@ -1,4 +1,4 @@
-ï»¿"use client";
+"use client";
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
@@ -39,14 +39,16 @@ export default function AgentConfigPage() {
     try {
       await updateMutation.mutateAsync(settings);
       setDirty(false);
-      toast.success("ConfiguraciÃ³n del agente guardada");
+      toast.success("Configuración del agente guardada");
     } catch {
-      toast.error("No se pudo guardar la configuraciÃ³n");
+      toast.error("No se pudo guardar la configuración");
     }
   };
 
-  if (isLoading || !settings) return <PageLoading />;
-  if (isError || !agent) return <PageError onRetry={() => refetch()} />;
+  if (isError) return <PageError onRetry={() => refetch()} />;
+  if (isLoading) return <PageLoading />;
+  if (!agent) return <PageError onRetry={() => refetch()} />;
+  if (!settings) return <PageLoading />;
 
   return (
     <div className="space-y-6">
@@ -67,7 +69,7 @@ export default function AgentConfigPage() {
           </div>
           <h1 className="text-2xl font-semibold tracking-tight">{agent.name}</h1>
           <p className="text-sm text-muted-foreground">
-            Motor agentic â€” ediciÃ³n de <code className="text-xs">SettingsJson</code>
+            Motor agentic — edición de <code className="text-xs">SettingsJson</code>
           </p>
         </div>
         <Button
@@ -75,7 +77,7 @@ export default function AgentConfigPage() {
           disabled={!dirty || updateMutation.isPending}
         >
           <Save className="mr-2 h-4 w-4" />
-          {updateMutation.isPending ? "Guardandoâ€¦" : "Guardar"}
+          {updateMutation.isPending ? "Guardando…" : "Guardar"}
         </Button>
       </div>
 

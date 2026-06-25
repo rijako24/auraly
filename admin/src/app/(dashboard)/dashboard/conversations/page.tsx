@@ -25,6 +25,7 @@ import {
   useSendWebConversationMessage,
   useUpdateConversationOwner,
 } from "@/hooks/use-conversations";
+import { useBusinessContextStore } from "@/stores/business-context-store";
 
 function getErrorMessage(error: unknown) {
   if (error && typeof error === "object" && "message" in error) {
@@ -36,6 +37,7 @@ function getErrorMessage(error: unknown) {
 }
 
 export default function ConversationsPage() {
+  const selectedBusinessId = useBusinessContextStore((s) => s.selectedBusinessId);
   const isMobile = useMediaQuery("(max-width: 768px)");
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -101,6 +103,10 @@ export default function ConversationsPage() {
       toast.error("No se pudo actualizar el bot.");
     }
   };
+
+  if (!selectedBusinessId) {
+    return <PageError message="Selecciona un negocio para ver las conversaciones." />;
+  }
 
   if (isLoading) return <PageLoading cards={0} />;
   if (isError) return <PageError onRetry={refetch} />;

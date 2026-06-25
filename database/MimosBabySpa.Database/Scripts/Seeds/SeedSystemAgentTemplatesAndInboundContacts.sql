@@ -24,7 +24,7 @@ DECLARE @DeliverySettingsJson NVARCHAR(MAX) = N'{
         "id": "delivery_assignment",
         "name": "Gestion de domicilio",
         "goal": "Resolver si el domiciliario acepta o rechaza una solicitud pendiente.",
-        "hint": "En cada mensaje del contacto, primero llama search_order con el texto recibido, codigo PED si aparece o datos del pedido. Cuando encuentre varias ordenes pendientes, solicita cual quiere gestionar y muestra los assignment_code disponibles. Cuando el contacto acepte, confirme o diga que toma el pedido, llama accept_order_delivery con attempt_code u order_number. Cuando rechace o diga que no puede tomarlo, llama reject_order_delivery. Si el pedido esta vencido o no disponible, responde breve indicando que ya no puede confirmarse automaticamente y que espere nueva asignacion o coordinacion operativa. Despues de aceptar o rechazar, responde usando los datos estructurados devueltos por la tool.",
+        "hint": "Si el mensaje viene citado/respondiendo a una solicitud de domicilio, la cita identifica el pedido: si el contacto acepta/confirma/toma el pedido, llama accept_order_delivery; si rechaza o dice que no puede tomarlo, llama reject_order_delivery. No pidas confirmacion ni motivo en esos casos. Usa search_order solo cuando no haya cita ni payload interactivo, cuando necesites resolver por codigo PED/datos del pedido, o cuando haya varias ordenes pendientes; si hay ambiguedad, pide elegir mostrando assignment_code. Si el pedido esta vencido o no disponible, responde breve indicando que ya no puede gestionarse automaticamente. Tras aceptar agradece la confirmacion; tras rechazar indica que se registro el rechazo y se contactara al siguiente domiciliario si aplica.",
         "allowedTools": ["search_order", "accept_order_delivery", "reject_order_delivery"],
         "advanceWhenFacts": []
       }
@@ -203,7 +203,8 @@ DECLARE @Contacts TABLE (
 );
 
 INSERT INTO @Contacts VALUES
-    ('E0EE3BA9-E6BF-43E2-8C1A-560CB724688B', @SolorzanoBusinessId, N'delivery', N'domicilio_solorzano', N'Domicilio Solorzano', N'delivery', N'+573042052007', N'573042052007', @SolorzanoDeliveryAgentId, N'{"scope":"delivery"}'),
+    ('E2EE3BA9-E6BF-43E2-8C1A-560CB724688B', @SolorzanoBusinessId, N'delivery', N'supervoy', N'SuperVoy', N'delivery', N'+573023823535', N'573023823535', @SolorzanoDeliveryAgentId, N'{"scope":"delivery"}'),
+    ('E3EE3BA9-E6BF-43E2-8C1A-560CB724688B', @SolorzanoBusinessId, N'delivery', N'urbana_flash', N'Urbana Flash', N'delivery', N'+573006704013', N'573006704013', @SolorzanoDeliveryAgentId, N'{"scope":"delivery"}'),
     ('E1EE3BA9-E6BF-43E2-8C1A-560CB724688B', @SolorzanoBusinessId, N'operations', N'operaciones_solorzano', N'Operaciones Solorzano', N'operations', N'+573004442469', N'573004442469', @SolorzanoOperationsAgentId, N'{"scope":"operations"}'),
     ('22222222-2222-2222-2222-2222222220B1', @MimosBusinessId, N'operations', N'operaciones_mimos', N'Operaciones Mimos', N'operations', N'+573012926660', N'573012926660', @MimosOperationsAgentId, N'{"scope":"operations"}'),
     ('BABA0000-0000-0000-0000-0000000000B1', @LuisBusinessId, N'operations', N'operaciones_luis_petit', N'Operaciones Luis Petit', N'operations', N'+573042052007', N'573042052007', @LuisOperationsAgentId, N'{"scope":"operations"}');
@@ -232,6 +233,12 @@ WHEN NOT MATCHED THEN
             InboundAgentId, CapabilitiesJson, IsActive, CreatedAt)
     VALUES (source.BusinessInboundContactId, source.BusinessId, source.[Type], source.[Key], source.[Name], source.[Role], source.PhoneNumber, source.PhoneNormalized,
             source.InboundAgentId, source.CapabilitiesJson, 1, GETUTCDATE());
+
+DELETE FROM dbo.BusinessInboundContacts
+WHERE BusinessId = @SolorzanoBusinessId
+  AND BusinessInboundContactId = 'E0EE3BA9-E6BF-43E2-8C1A-560CB724688B'
+  AND [Type] = N'delivery'
+  AND PhoneNormalized = N'573042052007';
 
 PRINT N'SeedSystemAgentTemplatesAndInboundContacts: templates y contactos inbound configurados.';
 

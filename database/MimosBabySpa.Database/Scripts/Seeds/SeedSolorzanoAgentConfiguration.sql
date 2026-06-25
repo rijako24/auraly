@@ -1,4 +1,4 @@
--- =============================================================================
+﻿-- =============================================================================
 -- SeedSolorzanoAgentConfiguration.sql
 --
 -- Configuracion completa del agente Camila (Vinos Artesanales Solorzano) para
@@ -124,7 +124,7 @@ BEGIN
     WHERE IntegrationConnectionId = @LocalCommerceConnectionId;
 END
 
-DECLARE @MigratedProducts TABLE
+DECLARE @SolorzanoProducts TABLE
 (
     ProductId UNIQUEIDENTIFIER NOT NULL,
     Sku NVARCHAR(100) NULL,
@@ -137,32 +137,37 @@ DECLARE @MigratedProducts TABLE
     DisplayOrder INT NOT NULL
 );
 
-INSERT INTO @MigratedProducts
+INSERT INTO @SolorzanoProducts
     (ProductId, Sku, [Name], [Description], CategoryName, UnitPrice, Currency, StockQuantity, DisplayOrder)
-SELECT
-    NEWID(),
-    LEFT(NULLIF(LTRIM(RTRIM(s.ServiceName)), N''), 100),
-    s.ServiceName,
-    NULLIF(s.Description, N''),
-    COALESCE(sc.Name, N'Vinos artesanales'),
-    s.Price,
-    N'COP',
-    NULL,
-    ROW_NUMBER() OVER (ORDER BY s.ServiceName)
-FROM dbo.Services s
-LEFT JOIN dbo.ServiceCategories sc ON sc.ServiceCategoryId = s.CategoryId
-WHERE s.BusinessId = @BusinessId
-  AND s.IsActive = 1
-  AND (
-      s.ServiceName LIKE N'%Vino%'
-      OR s.ServiceName LIKE N'%Promo%'
-      OR sc.Name LIKE N'%Vino%'
-      OR sc.Name LIKE N'%Promo%'
-  )
-  AND s.ServiceName NOT LIKE N'%Foto%';
+VALUES
+    ('100E3BA9-E6BF-43E2-8C1A-560CB724688B', N'SOL-DULCE-750',     N'Dulce 750ML',     N'Vino artesanal Solorzano dulce, botella 750ML. Producto de fruta seleccionada de la region, 12 grados de alcohol.',     N'Vinos artesanales', 49900, N'COP', NULL, 1),
+    ('101E3BA9-E6BF-43E2-8C1A-560CB724688B', N'SOL-SEMIDULCE-750', N'Semidulce 750ML', N'Vino artesanal Solorzano semidulce, botella 750ML. Producto de fruta seleccionada de la region, 12 grados de alcohol.', N'Vinos artesanales', 49900, N'COP', NULL, 2),
+    ('102E3BA9-E6BF-43E2-8C1A-560CB724688B', N'SOL-SEMISECO-750',  N'Semiseco 750ML',  N'Vino artesanal Solorzano semiseco, botella 750ML. Producto de fruta seleccionada de la region, 12 grados de alcohol.',  N'Vinos artesanales', 49900, N'COP', NULL, 3),
+    ('103E3BA9-E6BF-43E2-8C1A-560CB724688B', N'SOL-MANGO-750',     N'Mango 750ML',     N'Vino artesanal Solorzano sabor mango, botella 750ML. Producto de fruta seleccionada de la region, 12 grados de alcohol.', N'Vinos artesanales', 59900, N'COP', NULL, 4),
+    ('104E3BA9-E6BF-43E2-8C1A-560CB724688B', N'SOL-PREMIUM-750',   N'Premium 750ML',   N'Vino artesanal Solorzano premium, botella 750ML. Producto de fruta seleccionada de la region, 12 grados de alcohol.',   N'Vinos artesanales', 69900, N'COP', NULL, 5),
+    ('105E3BA9-E6BF-43E2-8C1A-560CB724688B', N'SOL-DULCE-207',     N'Dulce 207ML',     N'Vino artesanal Solorzano dulce, botella 207ML. Producto de fruta seleccionada de la region, 12 grados de alcohol.',     N'Vinos artesanales', 22000, N'COP', NULL, 6),
+    ('106E3BA9-E6BF-43E2-8C1A-560CB724688B', N'SOL-SEMIDULCE-207', N'Semidulce 207ML', N'Vino artesanal Solorzano semidulce, botella 207ML. Producto de fruta seleccionada de la region, 12 grados de alcohol.', N'Vinos artesanales', 22000, N'COP', NULL, 7);
+
+UPDATE odi
+SET ProductId = NULL,
+    UpdatedAt = GETUTCDATE()
+FROM dbo.OrderDraftItems odi
+LEFT JOIN @SolorzanoProducts sp ON sp.ProductId = odi.ProductId
+WHERE odi.BusinessId = @BusinessId
+  AND odi.ProductId IS NOT NULL
+  AND sp.ProductId IS NULL;
+
+UPDATE oi
+SET ProductId = NULL,
+    UpdatedAt = GETUTCDATE()
+FROM dbo.OrderItems oi
+LEFT JOIN @SolorzanoProducts sp ON sp.ProductId = oi.ProductId
+WHERE oi.BusinessId = @BusinessId
+  AND oi.ProductId IS NOT NULL
+  AND sp.ProductId IS NULL;
 
 MERGE dbo.Products AS target
-USING @MigratedProducts AS source
+USING @SolorzanoProducts AS source
    ON target.BusinessId = @BusinessId
   AND target.Sku = source.Sku
 WHEN MATCHED THEN
@@ -188,34 +193,16 @@ WHEN NOT MATCHED THEN
             source.[Description], source.CategoryName, source.UnitPrice, source.Currency, 0, source.StockQuantity,
             1, NULL, NULL, GETUTCDATE());
 
-UPDATE dbo.Products
-SET IntegrationConnectionId = @LocalCommerceConnectionId,
-    IsActive = 1,
-    UpdatedAt = GETUTCDATE()
-WHERE BusinessId = @BusinessId
-  AND Source = 0
-  AND (
-      [Name] LIKE N'%Vino%'
-      OR [Name] LIKE N'%Promo%'
-      OR CategoryName LIKE N'%Vino%'
-      OR CategoryName LIKE N'%Promo%'
-  )
-  AND [Name] NOT LIKE N'%Foto%';
-
 DELETE FROM dbo.Products
 WHERE BusinessId = @BusinessId
   AND Source = 0
-  AND (
-      [Name] LIKE N'%Foto%'
-      OR CategoryName = N'Plan'
-      OR (
-          [Name] NOT LIKE N'%Vino%'
-          AND [Name] NOT LIKE N'%Promo%'
-          AND ISNULL(CategoryName, N'') NOT LIKE N'%Vino%'
-          AND ISNULL(CategoryName, N'') NOT LIKE N'%Promo%'
-      )
+  AND NOT EXISTS (
+      SELECT 1
+      FROM @SolorzanoProducts sp
+      WHERE sp.Sku = dbo.Products.Sku
   );
 
+PRINT N'SeedSolorzanoAgentConfiguration: catalogo Solorzano actualizado con lista de precios Valledupar 2026.';
 DELETE es
 FROM dbo.EmployeeServices es
 INNER JOIN dbo.Services s ON s.ServiceId = es.ServiceId
@@ -771,40 +758,35 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
     "reservation_created": {
       "enabled": false,
       "recipients": [
-        "+573004442469",
-        "+573012926660"
+        "+573004442469"
       ],
       "sendMessageSequence": null
     },
     "order_created": {
       "enabled": true,
       "recipients": [
-        "+573004442469",
-        "+573012926660"
+        "+573004442469"
       ],
       "sendMessageSequence": "order_created"
     },
     "delivery_requested": {
       "enabled": true,
       "recipients": [
-        "+573004442469",
-        "+573012926660"
+        "+573004442469"
       ],
       "sendMessageSequence": "delivery_requested"
     },
     "delivery_confirmed": {
       "enabled": true,
       "recipients": [
-        "+573004442469",
-        "+573012926660"
+        "+573004442469"
       ],
       "sendMessageSequence": "delivery_confirmed"
     },
     "delivery_unavailable": {
       "enabled": true,
       "recipients": [
-        "+573004442469",
-        "+573012926660"
+        "+573004442469"
       ],
       "sendMessageSequence": "delivery_unavailable"
     }
@@ -854,8 +836,13 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
           "exhaustedNotificationEvent": "delivery_unavailable",
           "contacts": [
             {
-              "businessInboundContactId": "E0EE3BA9-E6BF-43E2-8C1A-560CB724688B",
+              "businessInboundContactId": "E2EE3BA9-E6BF-43E2-8C1A-560CB724688B",
               "priority": 1,
+              "retryEnabled": true
+            },
+            {
+              "businessInboundContactId": "E3EE3BA9-E6BF-43E2-8C1A-560CB724688B",
+              "priority": 2,
               "retryEnabled": true
             }
           ]
@@ -923,4 +910,3 @@ WHERE AgentId = @AgentId;
 
 PRINT N'SeedSolorzanoAgentConfiguration: Camila reconfigurada para negocio ' + CAST(@BusinessId AS NVARCHAR(36));
 GO
-

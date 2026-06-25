@@ -41,8 +41,10 @@ export default function AgentSetupPage() {
     );
   }
 
-  if (isLoading || !settings) return <PageLoading />;
-  if (isError || !agent) return <PageError onRetry={() => refetch()} />;
+  if (isError) return <PageError onRetry={() => refetch()} />;
+  if (isLoading) return <PageLoading />;
+  if (!agent) return <PageError onRetry={() => refetch()} />;
+  if (!settings) return <PageLoading />;
 
   return (
     <div className="space-y-6">
