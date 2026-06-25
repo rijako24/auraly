@@ -68,7 +68,7 @@ DECLARE @SolorzanoDeliverySettingsJson NVARCHAR(MAX) = N'{
   "notifications": {},
   "webhooks": {},
   "escalations": {
-    "human": { "contacts": [], "killSwitchPhrases": [] },
+    "human": { "contacts": [] },
     "external": { "enabled": false, "events": {} }
   },
   "checkout": {

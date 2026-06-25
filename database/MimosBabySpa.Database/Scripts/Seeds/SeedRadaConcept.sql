@@ -352,16 +352,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
     "escalate_to_human"
   ],
   "escalations": {
-    "human": { "contacts": ["+573007047440"], "killSwitchPhrases": [
-"quiero hablar con un humano",
-    "quiero hablar con una persona",
-    "agente real",
-    "operador",
-    "hablar con alguien",
-    "hablar con ustedes",
-    "asesor humano",
-    "queja formal"
-    ] },
+    "human": { "contacts": ["+573007047440"] },
     "external": { "enabled": false, "events": {} }
   },
   "notifications": {

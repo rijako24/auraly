@@ -1,14 +1,12 @@
-﻿-- =============================================================================
+-- =============================================================================
 -- SeedSolorzanoWhatsAppNumber.sql
 --
 -- Configura el numero de WhatsApp de Vinos Artesanales Solorzano y lo enlaza
--- con el agente Camila. Usa el token activo de Mimos para no escribir secretos
--- nuevos en el repositorio.
+-- con el agente Camila. Requiere token propio previamente guardado para Solorzano.
 -- =============================================================================
 
 SET NOCOUNT ON;
 
-DECLARE @MimosBusinessId     UNIQUEIDENTIFIER = '22222222-2222-2222-2222-222222222222';
 DECLARE @SolorzanoBusinessId UNIQUEIDENTIFIER = 'FCEE3BA9-E6BF-43E2-8C1A-560CB724688B';
 DECLARE @SolorzanoAgentId    UNIQUEIDENTIFIER = 'B0EE3BA9-E6BF-43E2-8C1A-560CB724688B';
 DECLARE @PhoneNumber         NVARCHAR(20) = N'+573005942096';
@@ -34,19 +32,10 @@ WHERE BusinessId = @SolorzanoBusinessId
   AND NULLIF(LTRIM(RTRIM(WhatsAppAccessToken)), N'') IS NOT NULL
 ORDER BY IsActive DESC, CreatedAt DESC;
 
-IF @AccessToken IS NULL
-BEGIN
-    SELECT TOP (1) @AccessToken = WhatsAppAccessToken
-    FROM dbo.BusinessWhatsAppNumbers
-    WHERE BusinessId = @MimosBusinessId
-      AND IsActive = 1
-      AND NULLIF(LTRIM(RTRIM(WhatsAppAccessToken)), N'') IS NOT NULL
-    ORDER BY CreatedAt DESC;
-END
 
 IF @AccessToken IS NULL
 BEGIN
-    PRINT N'SeedSolorzanoWhatsAppNumber: no se encontro token activo de Mimos; omitiendo numero.';
+    PRINT N'SeedSolorzanoWhatsAppNumber: no se encontro token propio de Solorzano; omitiendo numero.';
 END
 ELSE
 BEGIN
@@ -102,49 +91,23 @@ BEGIN
     PRINT N'SeedSolorzanoWhatsAppNumber: WhatsApp configurado para Solorzano.';
 END
 
-DECLARE @MimosSubscriptionId UNIQUEIDENTIFIER;
+DECLARE @SolorzanoPlanId UNIQUEIDENTIFIER;
 
-SELECT TOP (1) @MimosSubscriptionId = BusinessSubscriptionId
-FROM dbo.BusinessSubscriptions
-WHERE BusinessId = @MimosBusinessId
-  AND Status IN (1, 2, 3)
-ORDER BY CreatedAt DESC;
+SELECT TOP (1) @SolorzanoPlanId = SubscriptionPlanId
+FROM dbo.SubscriptionPlans
+WHERE Code = 'essential'
+  AND IsActive = 1;
 
-IF @MimosSubscriptionId IS NULL
+IF @SolorzanoPlanId IS NULL
 BEGIN
-    PRINT N'SeedSolorzanoWhatsAppNumber: suscripcion activa de Mimos no encontrada; omitiendo copia de plan.';
+    PRINT N'SeedSolorzanoWhatsAppNumber: plan essential no encontrado; omitiendo suscripcion de Solorzano.';
 END
-ELSE IF EXISTS (
+ELSE IF NOT EXISTS (
     SELECT 1
     FROM dbo.BusinessSubscriptions
     WHERE BusinessId = @SolorzanoBusinessId
       AND Status IN (1, 2, 3)
 )
-BEGIN
-    UPDATE target
-    SET SubscriptionPlanId     = source.SubscriptionPlanId,
-        Status                 = source.Status,
-        CurrentPeriodStart     = source.CurrentPeriodStart,
-        CurrentPeriodEnd       = source.CurrentPeriodEnd,
-        PlanCodeSnapshot       = source.PlanCodeSnapshot,
-        PlanNameSnapshot       = source.PlanNameSnapshot,
-        MonthlyPriceCop        = source.MonthlyPriceCop,
-        IncludedCredits        = source.IncludedCredits,
-        MaxVariableCostCop     = source.MaxVariableCostCop,
-        MaxVariableCostPercent = source.MaxVariableCostPercent,
-        ExtraCredits           = source.ExtraCredits,
-        ExtraVariableCostCop   = source.ExtraVariableCostCop,
-        AutoRenew              = source.AutoRenew,
-        UpdatedAt              = SYSUTCDATETIME()
-    FROM dbo.BusinessSubscriptions target
-    CROSS JOIN dbo.BusinessSubscriptions source
-    WHERE source.BusinessSubscriptionId = @MimosSubscriptionId
-      AND target.BusinessId = @SolorzanoBusinessId
-      AND target.Status IN (1, 2, 3);
-
-    PRINT N'SeedSolorzanoWhatsAppNumber: suscripcion de Solorzano alineada con Mimos.';
-END
-ELSE
 BEGIN
     INSERT INTO dbo.BusinessSubscriptions (
         BusinessId,
@@ -165,22 +128,26 @@ BEGIN
     SELECT
         @SolorzanoBusinessId,
         SubscriptionPlanId,
-        Status,
-        CurrentPeriodStart,
-        CurrentPeriodEnd,
-        PlanCodeSnapshot,
-        PlanNameSnapshot,
+        1,
+        DATEFROMPARTS(YEAR(SYSUTCDATETIME()), MONTH(SYSUTCDATETIME()), 1),
+        DATEADD(MONTH, 1, DATEFROMPARTS(YEAR(SYSUTCDATETIME()), MONTH(SYSUTCDATETIME()), 1)),
+        Code,
+        Name,
         MonthlyPriceCop,
         IncludedCredits,
         MaxVariableCostCop,
         MaxVariableCostPercent,
-        ExtraCredits,
-        ExtraVariableCostCop,
-        AutoRenew
-    FROM dbo.BusinessSubscriptions
-    WHERE BusinessSubscriptionId = @MimosSubscriptionId;
+        0,
+        0,
+        1
+    FROM dbo.SubscriptionPlans
+    WHERE SubscriptionPlanId = @SolorzanoPlanId;
 
-    PRINT N'SeedSolorzanoWhatsAppNumber: suscripcion de Mimos copiada a Solorzano.';
+    PRINT N'SeedSolorzanoWhatsAppNumber: suscripcion essential creada para Solorzano.';
+END
+ELSE
+BEGIN
+    PRINT N'SeedSolorzanoWhatsAppNumber: suscripcion propia de Solorzano preservada.';
 END
 
 GO

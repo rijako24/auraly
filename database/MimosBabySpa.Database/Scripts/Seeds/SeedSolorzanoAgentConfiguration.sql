@@ -1,4 +1,4 @@
-﻿-- =============================================================================
+-- =============================================================================
 -- SeedSolorzanoAgentConfiguration.sql
 --
 -- Configuracion completa del agente Camila (Vinos Artesanales Solorzano) para
@@ -12,7 +12,7 @@ SET NOCOUNT ON;
 DECLARE @BusinessId UNIQUEIDENTIFIER = 'FCEE3BA9-E6BF-43E2-8C1A-560CB724688B';
 DECLARE @AgentId    UNIQUEIDENTIFIER = 'B0EE3BA9-E6BF-43E2-8C1A-560CB724688B';
 DECLARE @WinePricesAttachmentId UNIQUEIDENTIFIER = 'C2A32E8B-6DB7-4D54-9C1C-06FCB7451C23';
-DECLARE @MimosBusinessId UNIQUEIDENTIFIER = '22222222-2222-2222-2222-222222222222';
+
 
 IF NOT EXISTS (SELECT 1 FROM dbo.Businesses WHERE BusinessId = @BusinessId)
 BEGIN
@@ -26,72 +26,47 @@ BEGIN
     RETURN;
 END
 
-DECLARE @SourceWompiConnectionId UNIQUEIDENTIFIER;
-DECLARE @ExistingSolorzanoWompiId UNIQUEIDENTIFIER;
+DECLARE @SolorzanoWompiSettingsJson NVARCHAR(MAX) = N'{"mode":"production","sandboxBaseUrl":"https://sandbox.wompi.co/v1","productionBaseUrl":"https://production.wompi.co/v1","requestTimeoutSeconds":30,"checkoutBaseUrl":"https://checkout.wompi.co/l/"}';
+DECLARE @SolorzanoWompiSecretsJson NVARCHAR(MAX) = N'{"production":{"privateKey":"prv_prod_DxUoFd5FmncizjtVeuUqXqc0x1SJsxBX","publicKey":"pub_prod_5baNRvZ1ldAyfSAo0wA2W40LHlNWRkOZ","eventsSecret":"prod_events_1zuOTRdDmUihQsKy2xUim9XjNRPv1yBV","integritySecret":"prod_integrity_ZDf2JpYhsv1L9B6sACF60kFswwy3eKgx"}}';
 
-SELECT @ExistingSolorzanoWompiId = IntegrationConnectionId
-FROM dbo.IntegrationConnections
-WHERE BusinessId = @BusinessId
-  AND ConnectionType = 0
-  AND Provider = 1
-  AND Capability = 1
-  AND IsEnabled = 1
-  AND NULLIF(SecretsJson, N'{}') IS NOT NULL;
-
-SELECT @SourceWompiConnectionId = IntegrationConnectionId
-FROM dbo.IntegrationConnections
-WHERE BusinessId = @MimosBusinessId
-  AND ConnectionType = 0
-  AND Provider = 1
-  AND Capability = 1
-  AND IsEnabled = 1
-  AND NULLIF(SecretsJson, N'{}') IS NOT NULL;
-
-IF @ExistingSolorzanoWompiId IS NOT NULL
+IF ISJSON(@SolorzanoWompiSettingsJson) <> 1 OR ISJSON(@SolorzanoWompiSecretsJson) <> 1
 BEGIN
-    PRINT N'SeedSolorzanoAgentConfiguration: Wompi propio de Solorzano preservado.';
+    THROW 51000, 'SeedSolorzanoAgentConfiguration: Wompi JSON invalido.', 1;
 END
-ELSE IF @SourceWompiConnectionId IS NOT NULL
-BEGIN
-    MERGE dbo.IntegrationConnections AS target
-    USING (
-        SELECT
-            @BusinessId AS BusinessId,
-            ConnectionType,
-            Provider,
-            Capability,
-            [Name],
-            AccountIdentifier,
-            SettingsJson,
-            SecretsJson,
-            IsEnabled
-        FROM dbo.IntegrationConnections
-        WHERE IntegrationConnectionId = @SourceWompiConnectionId
-    ) AS source
-       ON target.BusinessId = source.BusinessId
-      AND target.ConnectionType = source.ConnectionType
-      AND target.Provider = source.Provider
-      AND target.Capability = source.Capability
-    WHEN MATCHED THEN
-        UPDATE SET
-            [Name] = source.[Name],
-            AccountIdentifier = source.AccountIdentifier,
-            SettingsJson = source.SettingsJson,
-            SecretsJson = source.SecretsJson,
-            IsEnabled = source.IsEnabled,
-            UpdatedAt = GETUTCDATE()
-    WHEN NOT MATCHED THEN
-        INSERT (IntegrationConnectionId, BusinessId, ConnectionType, Provider, Capability, [Name],
-                AccountIdentifier, SettingsJson, SecretsJson, IsEnabled, CreatedAt)
-        VALUES (NEWID(), source.BusinessId, source.ConnectionType, source.Provider, source.Capability, source.[Name],
-                source.AccountIdentifier, source.SettingsJson, source.SecretsJson, source.IsEnabled, GETUTCDATE());
 
-    PRINT N'SeedSolorzanoAgentConfiguration: Wompi copiado desde Mimos para Solorzano.';
-END
-ELSE
-BEGIN
-    PRINT N'SeedSolorzanoAgentConfiguration: Wompi de Mimos no encontrado; omitiendo copia para Solorzano.';
-END
+MERGE dbo.IntegrationConnections AS target
+USING (
+    SELECT
+        @BusinessId AS BusinessId,
+        CAST(0 AS INT) AS ConnectionType,
+        CAST(1 AS INT) AS Provider,
+        CAST(1 AS INT) AS Capability,
+        N'Wompi Vinos Solorzano' AS [Name],
+        N'vinos-solorzano-production' AS AccountIdentifier,
+        @SolorzanoWompiSettingsJson AS SettingsJson,
+        @SolorzanoWompiSecretsJson AS SecretsJson,
+        CAST(1 AS BIT) AS IsEnabled
+) AS source
+   ON target.BusinessId = source.BusinessId
+  AND target.ConnectionType = source.ConnectionType
+  AND target.Provider = source.Provider
+  AND target.Capability = source.Capability
+WHEN MATCHED THEN
+    UPDATE SET
+        [Name] = source.[Name],
+        AccountIdentifier = source.AccountIdentifier,
+        SettingsJson = source.SettingsJson,
+        SecretsJson = source.SecretsJson,
+        IsEnabled = source.IsEnabled,
+        LastError = NULL,
+        UpdatedAt = GETUTCDATE()
+WHEN NOT MATCHED THEN
+    INSERT (IntegrationConnectionId, BusinessId, ConnectionType, Provider, Capability, [Name],
+            AccountIdentifier, SettingsJson, SecretsJson, IsEnabled, CreatedAt)
+    VALUES (NEWID(), source.BusinessId, source.ConnectionType, source.Provider, source.Capability, source.[Name],
+            source.AccountIdentifier, source.SettingsJson, source.SecretsJson, source.IsEnabled, GETUTCDATE());
+
+PRINT N'SeedSolorzanoAgentConfiguration: Wompi productivo configurado para Solorzano.';
 
 DECLARE @LocalCommerceConnectionId UNIQUEIDENTIFIER;
 
@@ -799,28 +774,9 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
     }
   },
   "escalations": {
-    "human": {
-      "contacts": [
+    "human": { "contacts": [
         "+573004442469"
-      ],
-      "killSwitchPhrases": [
-        "quiero hablar con un humano",
-        "quiero hablar con una persona",
-        "agente real",
-        "operador",
-        "hablar con alguien",
-        "hablar con ustedes",
-        "asesor humano",
-        "estoy muy molest",
-        "queja formal",
-        "voy a demandar",
-        "soy distribuidor",
-        "soy mayorista",
-        "pedido mayorista",
-        "compra mayorista",
-        "quiero revender"
-      ]
-    },
+      ] },
     "external": {
       "enabled": true,
       "events": {

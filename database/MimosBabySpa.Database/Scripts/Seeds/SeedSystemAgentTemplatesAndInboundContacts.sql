@@ -39,7 +39,7 @@ DECLARE @DeliverySettingsJson NVARCHAR(MAX) = N'{
   "notifications": {},
   "webhooks": {},
   "escalations": {
-    "human": { "contacts": [], "killSwitchPhrases": [] },
+    "human": { "contacts": [] },
     "external": { "enabled": false, "events": {} }
   },
   "checkout": {
@@ -90,7 +90,7 @@ DECLARE @OperationsSettingsJson NVARCHAR(MAX) = N'{
     "availability_slots": "{{#if intro_message}}\n{{intro_message}}\n\n{{/if}}*Horarios disponibles para {{date_formatted}}* ({{service_name}})\n\n{{#each slots}}\n- {{this}}\n{{/each}}\n\nCual prefieres?"
   },
   "escalations": {
-    "human": { "contacts": [], "killSwitchPhrases": [] },
+    "human": { "contacts": [] },
     "external": { "enabled": false, "events": {} }
   },
   "checkout": { "currency": "COP", "modes": {} }

@@ -423,18 +423,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
     "send_message_sequence"
   ],
   "escalations": {
-    "human": { "contacts": ["+573042052007"], "killSwitchPhrases": [
-      "quiero hablar con un humano",
-      "quiero hablar con una persona",
-      "agente real",
-      "operador",
-      "hablar con alguien",
-      "hablar con ustedes",
-      "asesor humano",
-      "estoy muy molest",
-      "queja formal",
-      "voy a demandar"
-    ] },
+    "human": { "contacts": ["+573042052007"] },
     "external": { "enabled": false, "events": {} }
   }
 }';
