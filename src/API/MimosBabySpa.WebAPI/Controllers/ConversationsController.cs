@@ -30,7 +30,7 @@ public class ConversationsController : ControllerBase
         CancellationToken ct)
     {
         return Ok(await _service.GetPagedByBusinessIdAsync(
-            User.GetTenantId(), businessId, request, status, ct));
+            User.GetTenantId(), User.HasPermission("tenants.read"), businessId, request, status, ct));
     }
 
     [HttpGet("{conversationId:guid}")]
@@ -39,7 +39,7 @@ public class ConversationsController : ControllerBase
         Guid conversationId,
         CancellationToken ct)
     {
-        return Ok(await _service.GetByIdAsync(User.GetTenantId(), conversationId, ct));
+        return Ok(await _service.GetByIdAsync(User.GetTenantId(), User.HasPermission("tenants.read"), conversationId, ct));
     }
 
     [HttpGet("{conversationId:guid}/messages")]
@@ -50,7 +50,7 @@ public class ConversationsController : ControllerBase
         CancellationToken ct)
     {
         return Ok(await _service.GetMessagesByConversationIdAsync(
-            User.GetTenantId(), conversationId, request, ct));
+            User.GetTenantId(), User.HasPermission("tenants.read"), conversationId, request, ct));
     }
 
     [HttpPost("{conversationId:guid}/messages/web")]
@@ -61,7 +61,7 @@ public class ConversationsController : ControllerBase
         CancellationToken ct)
     {
         return Ok(await _service.SendWebMessageAsync(
-            User.GetTenantId(), conversationId, request, ct));
+            User.GetTenantId(), User.HasPermission("tenants.read"), conversationId, request, ct));
     }
 
     [HttpPatch("{conversationId:guid}/owner")]
@@ -72,6 +72,6 @@ public class ConversationsController : ControllerBase
         CancellationToken ct)
     {
         return Ok(await _service.UpdateOwnerAsync(
-            User.GetTenantId(), conversationId, request, ct));
+            User.GetTenantId(), User.HasPermission("tenants.read"), conversationId, request, ct));
     }
 }

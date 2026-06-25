@@ -7,21 +7,21 @@ namespace MimosBabySpa.Application.Identity.Interfaces;
 public interface IConversationAdminService
 {
     Task<PagedResponse<ConversationDto>> GetPagedByBusinessIdAsync(
-        Guid tenantId, Guid businessId, PagedRequest request,
+        Guid tenantId, bool canAccessAllTenants, Guid businessId, PagedRequest request,
         ConversationLifecycleStatus? status = null, CancellationToken ct = default);
 
     Task<ConversationDto> GetByIdAsync(
-        Guid tenantId, Guid conversationId, CancellationToken ct = default);
+        Guid tenantId, bool canAccessAllTenants, Guid conversationId, CancellationToken ct = default);
 
     Task<PagedResponse<MessageDto>> GetMessagesByConversationIdAsync(
-        Guid tenantId, Guid conversationId, PagedRequest request,
+        Guid tenantId, bool canAccessAllTenants, Guid conversationId, PagedRequest request,
         CancellationToken ct = default);
 
     Task<WebConversationMessageResponse> SendWebMessageAsync(
-        Guid tenantId, Guid conversationId, WebConversationMessageRequest request,
+        Guid tenantId, bool canAccessAllTenants, Guid conversationId, WebConversationMessageRequest request,
         CancellationToken ct = default);
 
     Task<ConversationDto> UpdateOwnerAsync(
-        Guid tenantId, Guid conversationId, UpdateConversationOwnerRequest request,
+        Guid tenantId, bool canAccessAllTenants, Guid conversationId, UpdateConversationOwnerRequest request,
         CancellationToken ct = default);
 }

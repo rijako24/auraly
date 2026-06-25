@@ -28,7 +28,7 @@ public class AgentsController : ControllerBase
     [HttpGet("api/businesses/{businessId:guid}/agents")]
     [PermissionAuthorize("agents.read")]
     public async Task<ActionResult<IReadOnlyList<AgentDto>>> GetByBusiness(Guid businessId, CancellationToken ct) =>
-        Ok(await _service.GetByBusinessIdAsync(User.GetTenantId(), businessId, ct));
+        Ok(await _service.GetByBusinessIdAsync(User.GetTenantId(), User.HasPermission("tenants.read"), businessId, ct));
 
     [HttpGet("api/businesses/{businessId:guid}/inbound-contacts")]
     [PermissionAuthorize("agents.read")]
@@ -36,12 +36,12 @@ public class AgentsController : ControllerBase
         Guid businessId,
         [FromQuery] bool includeInactive,
         CancellationToken ct) =>
-        Ok(await _service.GetInboundContactsByBusinessIdAsync(User.GetTenantId(), businessId, includeInactive, ct));
+        Ok(await _service.GetInboundContactsByBusinessIdAsync(User.GetTenantId(), User.HasPermission("tenants.read"), businessId, includeInactive, ct));
 
     [HttpGet("api/businesses/{businessId:guid}/inbound-contacts/{contactId:guid}")]
     [PermissionAuthorize("agents.read")]
     public async Task<ActionResult<BusinessInboundContactDto>> GetInboundContactById(Guid businessId, Guid contactId, CancellationToken ct) =>
-        Ok(await _service.GetInboundContactByIdAsync(User.GetTenantId(), businessId, contactId, ct));
+        Ok(await _service.GetInboundContactByIdAsync(User.GetTenantId(), User.HasPermission("tenants.read"), businessId, contactId, ct));
 
     [HttpPost("api/businesses/{businessId:guid}/inbound-contacts")]
     [PermissionAuthorize("agents.update")]
@@ -50,7 +50,7 @@ public class AgentsController : ControllerBase
         [FromBody] CreateBusinessInboundContactRequest request,
         CancellationToken ct)
     {
-        var result = await _service.CreateInboundContactAsync(User.GetTenantId(), businessId, request, ct);
+        var result = await _service.CreateInboundContactAsync(User.GetTenantId(), User.HasPermission("tenants.read"), businessId, request, ct);
         return CreatedAtAction(nameof(GetInboundContactById), new { businessId, contactId = result.BusinessInboundContactId }, result);
     }
 
@@ -61,20 +61,20 @@ public class AgentsController : ControllerBase
         Guid contactId,
         [FromBody] UpdateBusinessInboundContactRequest request,
         CancellationToken ct) =>
-        Ok(await _service.UpdateInboundContactAsync(User.GetTenantId(), businessId, contactId, request, ct));
+        Ok(await _service.UpdateInboundContactAsync(User.GetTenantId(), User.HasPermission("tenants.read"), businessId, contactId, request, ct));
 
     [HttpDelete("api/businesses/{businessId:guid}/inbound-contacts/{contactId:guid}")]
     [PermissionAuthorize("agents.update")]
     public async Task<IActionResult> DeactivateInboundContact(Guid businessId, Guid contactId, CancellationToken ct)
     {
-        await _service.DeactivateInboundContactAsync(User.GetTenantId(), businessId, contactId, ct);
+        await _service.DeactivateInboundContactAsync(User.GetTenantId(), User.HasPermission("tenants.read"), businessId, contactId, ct);
         return NoContent();
     }
 
     [HttpGet("api/agents/{agentId:guid}")]
     [PermissionAuthorize("agents.read")]
     public async Task<ActionResult<AgentDto>> GetById(Guid agentId, CancellationToken ct) =>
-        Ok(await _service.GetByIdAsync(User.GetTenantId(), agentId, ct));
+        Ok(await _service.GetByIdAsync(User.GetTenantId(), User.HasPermission("tenants.read"), agentId, ct));
 
     [HttpPut("api/agents/{agentId:guid}/settings")]
     [PermissionAuthorize("agents.update")]
@@ -82,7 +82,7 @@ public class AgentsController : ControllerBase
         Guid agentId,
         [FromBody] UpdateAgentSettingsRequest request,
         CancellationToken ct) =>
-        Ok(await _service.UpdateSettingsAsync(User.GetTenantId(), agentId, request, ct));
+        Ok(await _service.UpdateSettingsAsync(User.GetTenantId(), User.HasPermission("tenants.read"), agentId, request, ct));
 
     [HttpPost("api/agents/{agentId:guid}/test-turn")]
     [PermissionAuthorize("agents.read")]
@@ -97,7 +97,7 @@ public class AgentsController : ControllerBase
         if (request is null || string.IsNullOrWhiteSpace(request.Message))
             return BadRequest(new { message = "El mensaje de prueba es obligatorio." });
 
-        var agent = await _service.GetByIdAsync(User.GetTenantId(), agentId, ct);
+        var agent = await _service.GetByIdAsync(User.GetTenantId(), User.HasPermission("tenants.read"), agentId, ct);
         var customerPhone = string.IsNullOrWhiteSpace(request.CustomerPhone)
             ? ($"+57000{Guid.NewGuid():N}")[..18]
             : request.CustomerPhone.Trim();

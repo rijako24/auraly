@@ -42,17 +42,17 @@ public sealed class AgentAdminService : IAgentAdminService
     }
 
     public async Task<IReadOnlyList<AgentDto>> GetByBusinessIdAsync(
-        Guid tenantId, Guid businessId, CancellationToken ct = default)
+        Guid tenantId, bool canAccessAllTenants, Guid businessId, CancellationToken ct = default)
     {
-        await EnsureBusinessBelongsToTenantAsync(tenantId, businessId, ct);
+        await EnsureBusinessBelongsToTenantAsync(tenantId, canAccessAllTenants, businessId, ct);
         var agents = await _agentRepository.GetByBusinessAsync(businessId, ct);
         return agents.Select(MapToDto).ToList();
     }
 
     public async Task<IReadOnlyList<BusinessInboundContactDto>> GetInboundContactsByBusinessIdAsync(
-        Guid tenantId, Guid businessId, bool includeInactive = false, CancellationToken ct = default)
+        Guid tenantId, bool canAccessAllTenants, Guid businessId, bool includeInactive = false, CancellationToken ct = default)
     {
-        await EnsureBusinessBelongsToTenantAsync(tenantId, businessId, ct);
+        await EnsureBusinessBelongsToTenantAsync(tenantId, canAccessAllTenants, businessId, ct);
         var contacts = includeInactive
             ? await _unitOfWork.BusinessInboundContacts.GetByBusinessAsync(businessId, includeInactive: true, ct)
             : await _unitOfWork.BusinessInboundContacts.GetActiveByBusinessAsync(businessId, ct);
@@ -60,17 +60,17 @@ public sealed class AgentAdminService : IAgentAdminService
     }
 
     public async Task<BusinessInboundContactDto> GetInboundContactByIdAsync(
-        Guid tenantId, Guid businessId, Guid contactId, CancellationToken ct = default)
+        Guid tenantId, bool canAccessAllTenants, Guid businessId, Guid contactId, CancellationToken ct = default)
     {
-        await EnsureBusinessBelongsToTenantAsync(tenantId, businessId, ct);
+        await EnsureBusinessBelongsToTenantAsync(tenantId, canAccessAllTenants, businessId, ct);
         var contact = await GetInboundContactForBusinessAsync(businessId, contactId, ct);
         return MapToInboundContactDto(contact);
     }
 
     public async Task<BusinessInboundContactDto> CreateInboundContactAsync(
-        Guid tenantId, Guid businessId, CreateBusinessInboundContactRequest request, CancellationToken ct = default)
+        Guid tenantId, bool canAccessAllTenants, Guid businessId, CreateBusinessInboundContactRequest request, CancellationToken ct = default)
     {
-        await EnsureBusinessBelongsToTenantAsync(tenantId, businessId, ct);
+        await EnsureBusinessBelongsToTenantAsync(tenantId, canAccessAllTenants, businessId, ct);
         var type = NormalizeType(request.Type);
         var name = RequireTrimmed(request.Name, "Name", "El nombre del contacto es obligatorio.");
         var role = (request.Role ?? string.Empty).Trim();
@@ -116,9 +116,9 @@ public sealed class AgentAdminService : IAgentAdminService
     }
 
     public async Task<BusinessInboundContactDto> UpdateInboundContactAsync(
-        Guid tenantId, Guid businessId, Guid contactId, UpdateBusinessInboundContactRequest request, CancellationToken ct = default)
+        Guid tenantId, bool canAccessAllTenants, Guid businessId, Guid contactId, UpdateBusinessInboundContactRequest request, CancellationToken ct = default)
     {
-        await EnsureBusinessBelongsToTenantAsync(tenantId, businessId, ct);
+        await EnsureBusinessBelongsToTenantAsync(tenantId, canAccessAllTenants, businessId, ct);
         var contact = await GetInboundContactForBusinessAsync(businessId, contactId, ct);
         var oldState = MapToInboundContactDto(contact);
 
@@ -161,9 +161,9 @@ public sealed class AgentAdminService : IAgentAdminService
         return dto;
     }
 
-    public async Task DeactivateInboundContactAsync(Guid tenantId, Guid businessId, Guid contactId, CancellationToken ct = default)
+    public async Task DeactivateInboundContactAsync(Guid tenantId, bool canAccessAllTenants, Guid businessId, Guid contactId, CancellationToken ct = default)
     {
-        await EnsureBusinessBelongsToTenantAsync(tenantId, businessId, ct);
+        await EnsureBusinessBelongsToTenantAsync(tenantId, canAccessAllTenants, businessId, ct);
         var contact = await GetInboundContactForBusinessAsync(businessId, contactId, ct);
         if (!contact.IsActive)
             return;
@@ -176,16 +176,16 @@ public sealed class AgentAdminService : IAgentAdminService
         await _auditService.LogAsync("Deactivate", nameof(BusinessInboundContact), contactId.ToString(), oldState, MapToInboundContactDto(contact), ct);
     }
 
-    public async Task<AgentDto> GetByIdAsync(Guid tenantId, Guid agentId, CancellationToken ct = default)
+    public async Task<AgentDto> GetByIdAsync(Guid tenantId, bool canAccessAllTenants, Guid agentId, CancellationToken ct = default)
     {
-        var agent = await GetAgentForTenantAsync(tenantId, agentId, ct);
+        var agent = await GetAgentForTenantAsync(tenantId, canAccessAllTenants, agentId, ct);
         return MapToDto(agent);
     }
 
     public async Task<AgentDto> UpdateSettingsAsync(
-        Guid tenantId, Guid agentId, UpdateAgentSettingsRequest request, CancellationToken ct = default)
+        Guid tenantId, bool canAccessAllTenants, Guid agentId, UpdateAgentSettingsRequest request, CancellationToken ct = default)
     {
-        var agent = await GetAgentForTenantAsync(tenantId, agentId, ct);
+        var agent = await GetAgentForTenantAsync(tenantId, canAccessAllTenants, agentId, ct);
         var oldJson = agent.SettingsJson;
 
         var settingsJson = JsonSerializer.Serialize(request.Settings, JsonOptions);
@@ -219,19 +219,19 @@ public sealed class AgentAdminService : IAgentAdminService
         return contact;
     }
 
-    private async Task<Agent> GetAgentForTenantAsync(Guid tenantId, Guid agentId, CancellationToken ct)
+    private async Task<Agent> GetAgentForTenantAsync(Guid tenantId, bool canAccessAllTenants, Guid agentId, CancellationToken ct)
     {
         var agent = await _agentRepository.GetByIdForAdminAsync(agentId, ct)
             ?? throw new NotFoundException(nameof(Agent), agentId);
-        await EnsureBusinessBelongsToTenantAsync(tenantId, agent.BusinessId, ct);
+        await EnsureBusinessBelongsToTenantAsync(tenantId, canAccessAllTenants, agent.BusinessId, ct);
         return agent;
     }
 
-    private async Task EnsureBusinessBelongsToTenantAsync(Guid tenantId, Guid businessId, CancellationToken ct)
+    private async Task EnsureBusinessBelongsToTenantAsync(Guid tenantId, bool canAccessAllTenants, Guid businessId, CancellationToken ct)
     {
         var business = await _unitOfWork.Businesses.GetByIdAsync(businessId)
             ?? throw new NotFoundException(nameof(Business), businessId);
-        if (business.TenantId != tenantId)
+        if (!canAccessAllTenants && business.TenantId != tenantId)
             throw new NotFoundException(nameof(Business), businessId);
     }
 

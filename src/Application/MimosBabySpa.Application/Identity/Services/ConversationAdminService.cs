@@ -30,10 +30,10 @@ public class ConversationAdminService : IConversationAdminService
     }
 
     public async Task<PagedResponse<ConversationDto>> GetPagedByBusinessIdAsync(
-        Guid tenantId, Guid businessId, PagedRequest request,
+        Guid tenantId, bool canAccessAllTenants, Guid businessId, PagedRequest request,
         ConversationLifecycleStatus? status, CancellationToken ct)
     {
-        await EnsureBusinessBelongsToTenantAsync(tenantId, businessId, ct);
+        await EnsureBusinessBelongsToTenantAsync(tenantId, canAccessAllTenants, businessId, ct);
 
         var (items, totalCount) = await _unitOfWork.Conversations.GetPagedByBusinessIdAsync(
             businessId, request.Page, request.PageSize, request.Search, status, ct);
@@ -43,22 +43,22 @@ public class ConversationAdminService : IConversationAdminService
             dtos.ToList(), totalCount, request.Page, request.PageSize);
     }
 
-    public async Task<ConversationDto> GetByIdAsync(Guid tenantId, Guid conversationId, CancellationToken ct)
+    public async Task<ConversationDto> GetByIdAsync(Guid tenantId, bool canAccessAllTenants, Guid conversationId, CancellationToken ct)
     {
         var conv = await _unitOfWork.Conversations.GetByIdAsync(conversationId)
             ?? throw new NotFoundException(nameof(Conversation), conversationId);
 
-        await EnsureBusinessBelongsToTenantAsync(tenantId, conv.BusinessId, ct);
+        await EnsureBusinessBelongsToTenantAsync(tenantId, canAccessAllTenants, conv.BusinessId, ct);
         return await MapToDtoAsync(conv, ct);
     }
 
     public async Task<PagedResponse<MessageDto>> GetMessagesByConversationIdAsync(
-        Guid tenantId, Guid conversationId, PagedRequest request, CancellationToken ct)
+        Guid tenantId, bool canAccessAllTenants, Guid conversationId, PagedRequest request, CancellationToken ct)
     {
         var conv = await _unitOfWork.Conversations.GetByIdAsync(conversationId)
             ?? throw new NotFoundException(nameof(Conversation), conversationId);
 
-        await EnsureBusinessBelongsToTenantAsync(tenantId, conv.BusinessId, ct);
+        await EnsureBusinessBelongsToTenantAsync(tenantId, canAccessAllTenants, conv.BusinessId, ct);
 
         var (items, totalCount) = await _unitOfWork.Messages.GetPagedByConversationIdAsync(
             conversationId, request.Page, request.PageSize, ct);
@@ -69,7 +69,7 @@ public class ConversationAdminService : IConversationAdminService
     }
 
     public async Task<WebConversationMessageResponse> SendWebMessageAsync(
-        Guid tenantId, Guid conversationId, WebConversationMessageRequest request, CancellationToken ct)
+        Guid tenantId, bool canAccessAllTenants, Guid conversationId, WebConversationMessageRequest request, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(request.Message))
             throw new DomainValidationException("Message", "El mensaje no puede estar vacio.");
@@ -77,7 +77,7 @@ public class ConversationAdminService : IConversationAdminService
         var conv = await _unitOfWork.Conversations.GetByIdAsync(conversationId)
             ?? throw new NotFoundException(nameof(Conversation), conversationId);
 
-        await EnsureBusinessBelongsToTenantAsync(tenantId, conv.BusinessId, ct);
+        await EnsureBusinessBelongsToTenantAsync(tenantId, canAccessAllTenants, conv.BusinessId, ct);
 
         var text = request.Message.Trim();
         var outboundMessages = _serviceProvider.GetRequiredService<IOutboundMessageDispatcher>();
@@ -93,7 +93,7 @@ public class ConversationAdminService : IConversationAdminService
     }
 
     public async Task<ConversationDto> UpdateOwnerAsync(
-        Guid tenantId, Guid conversationId, UpdateConversationOwnerRequest request, CancellationToken ct = default)
+        Guid tenantId, bool canAccessAllTenants, Guid conversationId, UpdateConversationOwnerRequest request, CancellationToken ct = default)
     {
         if (!Enum.TryParse<ConversationOwner>(request.Owner, ignoreCase: true, out var owner))
             throw new DomainValidationException("Owner", "El propietario debe ser Bot o Human.");
@@ -101,7 +101,7 @@ public class ConversationAdminService : IConversationAdminService
         var conv = await _unitOfWork.Conversations.GetByIdAsync(conversationId)
             ?? throw new NotFoundException(nameof(Conversation), conversationId);
 
-        await EnsureBusinessBelongsToTenantAsync(tenantId, conv.BusinessId, ct);
+        await EnsureBusinessBelongsToTenantAsync(tenantId, canAccessAllTenants, conv.BusinessId, ct);
 
         var state = await _stateManager.GetOrCreateStateAsync(
             conversationId, conv.BusinessId, conv.UserNumber, ct);
@@ -126,11 +126,11 @@ public class ConversationAdminService : IConversationAdminService
             c.OpenedAt, c.LastActivityAt, c.ClosedAt, c.CloseReason,
             owner.ToString(), owner == ConversationOwner.Bot);
 
-    private async Task EnsureBusinessBelongsToTenantAsync(Guid tenantId, Guid businessId, CancellationToken ct)
+    private async Task EnsureBusinessBelongsToTenantAsync(Guid tenantId, bool canAccessAllTenants, Guid businessId, CancellationToken ct)
     {
         var business = await _unitOfWork.Businesses.GetByIdAsync(businessId)
             ?? throw new NotFoundException(nameof(Business), businessId);
-        if (business.TenantId != tenantId)
+        if (!canAccessAllTenants && business.TenantId != tenantId)
             throw new NotFoundException(nameof(Business), businessId);
     }
 }
