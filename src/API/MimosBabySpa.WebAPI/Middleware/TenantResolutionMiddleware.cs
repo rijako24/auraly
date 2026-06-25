@@ -27,7 +27,8 @@ public class TenantResolutionMiddleware
                 tenantContext.SetTenant(parsedTenantId);
             }
 
-            var subClaim = context.User.FindFirst(JwtRegisteredClaimNames.Sub)?.Value;
+            var subClaim = context.User.FindFirst(JwtRegisteredClaimNames.Sub)?.Value
+                ?? context.User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
             if (Guid.TryParse(subClaim, out var userId))
                 tenantContext.SetUser(userId);
 

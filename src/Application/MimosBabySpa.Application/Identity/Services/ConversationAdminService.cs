@@ -38,9 +38,14 @@ public class ConversationAdminService : IConversationAdminService
         var (items, totalCount) = await _unitOfWork.Conversations.GetPagedByBusinessIdAsync(
             businessId, request.Page, request.PageSize, request.Search, status, ct);
 
-        var dtos = await Task.WhenAll(items.Select(c => MapToDtoAsync(c, ct)));
+        var dtos = new List<ConversationDto>(items.Count);
+        foreach (var item in items)
+        {
+            dtos.Add(await MapToDtoAsync(item, ct));
+        }
+
         return new PagedResponse<ConversationDto>(
-            dtos.ToList(), totalCount, request.Page, request.PageSize);
+            dtos, totalCount, request.Page, request.PageSize);
     }
 
     public async Task<ConversationDto> GetByIdAsync(Guid tenantId, bool canAccessAllTenants, Guid conversationId, CancellationToken ct)
