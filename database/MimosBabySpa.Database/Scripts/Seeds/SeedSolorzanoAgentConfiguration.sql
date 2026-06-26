@@ -749,21 +749,21 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "sendMessageSequence": "order_created"
     },
     "delivery_requested": {
-      "enabled": false,
+      "enabled": true,
       "recipients": [
         "+573004442469"
       ],
       "sendMessageSequence": "delivery_requested"
     },
     "delivery_confirmed": {
-      "enabled": false,
+      "enabled": true,
       "recipients": [
         "+573004442469"
       ],
       "sendMessageSequence": "delivery_confirmed"
     },
     "delivery_unavailable": {
-      "enabled": false,
+      "enabled": true,
       "recipients": [
         "+573004442469"
       ],
@@ -782,10 +782,10 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         "+573004442469"
       ] },
     "external": {
-      "enabled": false,
+      "enabled": true,
       "events": {
         "order_created": {
-          "enabled": false,
+          "enabled": true,
           "contactType": "delivery",
           "pickupAddress": "Centro Comercial Guatapuri, Isla Vino Solorzano (frente a TOTTO)",
           "attemptTimeoutMinutes": 15,
