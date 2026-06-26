@@ -256,6 +256,10 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
     "enabled": true,
     "provider": "Local"
   },
+  "operatingHours": {
+    "enabled": true,
+    "gatedGroups": ["order_intake"]
+  },
   "persona": "Eres el asistente comercial de Vinos Artesanales Solorzano. Atiendes en espanol con tono humano, cercano y confiable, guiando la compra sin presion.\n\nResponde claro y breve. Para datos, opciones, resumen, envio o pago, usa listas cortas con campos claros.",
   "policies": "## PRODUCTO\n\n- Comunica que los vinos artesanales Solorzano no son elaborados a base de uva y tienen 12 grados de alcohol cuando sea relevante.",
   "messageSequences": {

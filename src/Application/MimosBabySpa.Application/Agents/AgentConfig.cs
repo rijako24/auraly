@@ -101,4 +101,6 @@ public sealed class AgentConfig
     public CheckoutDefinitions Checkout { get; init; } = new();
 
     public CommerceConfig Commerce { get; init; } = new();
+
+    public OperatingHoursDefinitions OperatingHours { get; init; } = new();
 }

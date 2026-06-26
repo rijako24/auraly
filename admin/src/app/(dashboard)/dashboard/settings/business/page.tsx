@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { PageError } from "@/components/ui/page-error";
 import { PageLoading } from "@/components/ui/page-loading";
+import { AvailabilityBlocksEditor } from "@/components/settings/availability-blocks-editor";
 import { WorkingHoursEditor } from "@/components/settings/working-hours-editor";
 import { useBusinessWorkingHours, useUpdateBusinessWorkingHours } from "@/hooks/use-working-hours";
 import { useBusinessContextStore } from "@/stores/business-context-store";
@@ -67,6 +68,21 @@ export default function BusinessSettingsPage() {
             <WorkingHoursEditor value={workingHours} onChange={setWorkingHours} />
           </CardContent>
         </Card>
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <CalendarClock className="h-4 w-4" />
+              Bloqueos de disponibilidad
+            </CardTitle>
+            <CardDescription>
+              Cierres o bloqueos puntuales para todo el negocio o un empleado.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <AvailabilityBlocksEditor />
+          </CardContent>
+        </Card>
+
 
         <Card>
           <CardHeader>

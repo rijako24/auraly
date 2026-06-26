@@ -44,6 +44,9 @@ public sealed class AgentToolContext
 
     public PaymentTransaction? ActivePayment { get; set; }
 
+    /// <summary>Politicas efimeras calculadas para el turno actual.</summary>
+    public OperatingHoursTurnContext OperatingHours { get; set; } = OperatingHoursTurnContext.Disabled;
+
     /// <summary>Estado del turno actual (fragmentos, tokens, flags).</summary>
     internal AgentTurnExecution? Turn { get; set; }
 }

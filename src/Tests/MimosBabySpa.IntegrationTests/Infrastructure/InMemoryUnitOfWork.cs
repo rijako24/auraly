@@ -310,6 +310,9 @@ internal sealed class InMemoryEmployeeScheduleExceptionRepository : IEmployeeSch
 {
     private readonly List<EmployeeScheduleException> _exceptions = [];
 
+    public Task<EmployeeScheduleException?> GetByIdAsync(Guid employeeScheduleExceptionId, CancellationToken ct = default) =>
+        Task.FromResult(_exceptions.FirstOrDefault(e => e.EmployeeScheduleExceptionId == employeeScheduleExceptionId));
+
     public Task<IReadOnlyList<EmployeeScheduleException>> GetByEmployeeIdAsync(Guid employeeId, CancellationToken ct = default) =>
         Task.FromResult<IReadOnlyList<EmployeeScheduleException>>(_exceptions.Where(e => e.EmployeeId == employeeId).ToList());
 
@@ -318,6 +321,25 @@ internal sealed class InMemoryEmployeeScheduleExceptionRepository : IEmployeeSch
         var ids = employeeIds.ToHashSet();
         return Task.FromResult<IReadOnlyList<EmployeeScheduleException>>(
             _exceptions.Where(e => ids.Contains(e.EmployeeId) && e.Date == date).ToList());
+    }
+
+    public Task<EmployeeScheduleException> AddAsync(EmployeeScheduleException exception, CancellationToken ct = default)
+    {
+        _exceptions.Add(exception);
+        return Task.FromResult(exception);
+    }
+
+    public Task<EmployeeScheduleException> UpdateAsync(EmployeeScheduleException exception, CancellationToken ct = default)
+    {
+        var index = _exceptions.FindIndex(e => e.EmployeeScheduleExceptionId == exception.EmployeeScheduleExceptionId);
+        if (index >= 0) _exceptions[index] = exception;
+        return Task.FromResult(exception);
+    }
+
+    public Task DeleteAsync(EmployeeScheduleException exception, CancellationToken ct = default)
+    {
+        _exceptions.RemoveAll(e => e.EmployeeScheduleExceptionId == exception.EmployeeScheduleExceptionId);
+        return Task.CompletedTask;
     }
 
     public Task ReplaceForEmployeeAsync(Guid employeeId, IEnumerable<EmployeeScheduleException> exceptions, CancellationToken ct = default)

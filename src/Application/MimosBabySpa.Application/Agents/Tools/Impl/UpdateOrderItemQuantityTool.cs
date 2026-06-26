@@ -18,6 +18,7 @@ public sealed class UpdateOrderItemQuantityTool : IAgentTool
 
     public string Name => "update_order_item_quantity";
     public IReadOnlyList<string> Capabilities => [ToolCapabilities.OrderDraftUpdate];
+    public IReadOnlyList<string> OperatingGroups => [ToolOperatingGroups.OrderIntake];
     public string Description =>
         "Sets an existing order draft item to an explicit final quantity requested by the customer. " +
         "Use this when the customer says they want to change, update, leave, or carry a total number of units for an item already in the cart. " +

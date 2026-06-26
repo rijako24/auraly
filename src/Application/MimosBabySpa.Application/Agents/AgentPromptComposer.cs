@@ -42,6 +42,10 @@ public sealed class AgentPromptComposer : IPromptComposer
         if (!string.IsNullOrWhiteSpace(temporalBlock))
             blocks.Add(temporalBlock);
 
+        var operatingHoursBlock = BuildOperatingHoursBlock(input.Session);
+        if (!string.IsNullOrWhiteSpace(operatingHoursBlock))
+            blocks.Add(operatingHoursBlock);
+
         var turnPolicyBlock = BuildTurnPolicyBlock(input.History);
         if (!string.IsNullOrWhiteSpace(turnPolicyBlock))
             blocks.Add(turnPolicyBlock);
@@ -54,7 +58,7 @@ public sealed class AgentPromptComposer : IPromptComposer
         if (!string.IsNullOrWhiteSpace(stateBlock))
             blocks.Add(stateBlock);
 
-        var flowBlock = BuildFlowBlock(input.Config, input.Session, currentStage);
+        var flowBlock = BuildFlowBlock(input.Config, input.Session, currentStage, input.EnabledTools);
         if (!string.IsNullOrWhiteSpace(flowBlock))
             blocks.Add(flowBlock);
 
@@ -62,7 +66,7 @@ public sealed class AgentPromptComposer : IPromptComposer
         if (!string.IsNullOrWhiteSpace(reentryBlock))
             blocks.Add(reentryBlock);
 
-        var globalActionsBlock = BuildGlobalActionsBlock(input.Config);
+        var globalActionsBlock = BuildGlobalActionsBlock(input.Config, input.EnabledTools);
         if (!string.IsNullOrWhiteSpace(globalActionsBlock))
             blocks.Add(globalActionsBlock);
 
@@ -74,11 +78,12 @@ public sealed class AgentPromptComposer : IPromptComposer
         return string.Join($"{Environment.NewLine}{Environment.NewLine}", blocks);
     }
 
-    internal static string BuildGlobalActionsBlock(AgentConfig config)
+    internal static string BuildGlobalActionsBlock(AgentConfig config, IReadOnlyList<IAgentTool>? effectiveTools = null)
     {
         if (config.GlobalActions.Count == 0)
             return string.Empty;
 
+        var effectiveToolNames = effectiveTools?.Select(t => t.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var lines = new List<string>
         {
             "## ACCIONES TRANSVERSALES",
@@ -91,11 +96,33 @@ public sealed class AgentPromptComposer : IPromptComposer
         {
             var label = string.IsNullOrWhiteSpace(action.Id) ? "accion" : action.Id.Trim();
             lines.Add($"- {label}: {action.Goal.Trim()}");
-            if (action.AllowedTools.Count > 0)
-                lines.Add($"  herramientas: {string.Join(", ", action.AllowedTools)}");
+            var allowedTools = effectiveToolNames is null
+                ? action.AllowedTools
+                : action.AllowedTools.Where(effectiveToolNames.Contains).ToList();
+            if (allowedTools.Count > 0)
+                lines.Add($"  herramientas: {string.Join(", ", allowedTools)}");
             if (!string.IsNullOrWhiteSpace(action.Hint))
                 lines.Add($"  orientacion: {action.Hint.Trim()}");
         }
+
+        return string.Join(Environment.NewLine, lines);
+    }
+    internal static string BuildOperatingHoursBlock(AgentToolContext? session)
+    {
+        var policy = session?.OperatingHours;
+        if (policy is null || !policy.IsEnabled || !policy.IsOutsideOperatingHours || policy.BlockedToolNames.Count == 0)
+            return string.Empty;
+
+        var lines = new List<string>
+        {
+            "## HORARIO OPERATIVO DEL TURNO",
+            "- El negocio esta fuera del horario laboral para algunas acciones protegidas de este agente.",
+            "- No tomes, confirmes ni avances solicitudes que requieran las acciones bloqueadas por horario.",
+            "- Las demas acciones disponibles siguen funcionando normalmente."
+        };
+
+        if (!string.IsNullOrWhiteSpace(policy.NextOperatingWindowText))
+            lines.Add($"- Proximo horario habil: {policy.NextOperatingWindowText}.");
 
         return string.Join(Environment.NewLine, lines);
     }
@@ -342,7 +369,8 @@ public sealed class AgentPromptComposer : IPromptComposer
     private string BuildFlowBlock(
         AgentConfig config,
         AgentToolContext? session,
-        AgentFlowStage? currentStage)
+        AgentFlowStage? currentStage,
+        IReadOnlyList<IAgentTool> effectiveTools)
     {
         if (config.Flow.Stages.Count == 0 || currentStage is null)
             return string.Empty;
@@ -359,7 +387,12 @@ public sealed class AgentPromptComposer : IPromptComposer
         };
 
         if (currentStage.AllowedTools.Count > 0)
-            lines.Add($"- acciones_permitidas: {string.Join(", ", currentStage.AllowedTools)}");
+        {
+            var effectiveToolNames = effectiveTools.Select(t => t.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var allowedTools = currentStage.AllowedTools.Where(effectiveToolNames.Contains).ToList();
+            if (allowedTools.Count > 0)
+                lines.Add($"- acciones_permitidas: {string.Join(", ", allowedTools)}");
+        }
 
         var stageHint = !string.IsNullOrWhiteSpace(variant?.Hint) ? variant!.Hint : currentStage.Hint;
         if (!string.IsNullOrWhiteSpace(stageHint))

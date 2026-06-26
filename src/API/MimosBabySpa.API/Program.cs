@@ -185,6 +185,8 @@ var host = new HostBuilder()
         services.AddScoped<IConversationVerificationService, ConversationVerificationService>();
         services.AddScoped<IGuardEvaluator, GuardEvaluator>();
         services.AddScoped<IToolCapabilityGate, ToolCapabilityGate>();
+        services.AddScoped<IOperatingHoursTurnPolicy, OperatingHoursTurnPolicy>();
+        services.AddScoped<IAgentTurnToolResolver, AgentTurnToolResolver>();
         services.AddScoped<IPromptComposer, AgentPromptComposer>();
 
         services.AddScoped<IAgentTemplateResolver, AgentTemplateResolver>();

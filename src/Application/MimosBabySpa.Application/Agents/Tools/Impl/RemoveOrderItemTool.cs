@@ -18,6 +18,7 @@ public sealed class RemoveOrderItemTool : IAgentTool
 
     public string Name => "remove_order_item";
     public IReadOnlyList<string> Capabilities => [ToolCapabilities.OrderDraftUpdate];
+    public IReadOnlyList<string> OperatingGroups => [ToolOperatingGroups.OrderIntake];
     public string Description =>
         "Removes an item from the current conversation order draft, or reduces it when an explicit desired remaining quantity is provided. " +
         "Use update_order_item_quantity when the customer wants to set or increase an existing item to an exact total quantity. " +

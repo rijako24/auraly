@@ -195,6 +195,44 @@ export interface EmployeeWorkingHours {
   workingHours: WorkingHour[];
 }
 
+export interface BusinessAvailabilityBlock {
+  businessAvailabilityBlockId: string;
+  businessId: string;
+  employeeId: string | null;
+  employeeName?: string | null;
+  date: string;
+  startTime: string | null;
+  endTime: string | null;
+  reason: string;
+  source: string;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string | null;
+}
+
+export type BusinessAvailabilityBlockPayload = Pick<
+  BusinessAvailabilityBlock,
+  "employeeId" | "date" | "startTime" | "endTime" | "reason" | "isActive"
+>;
+
+export interface EmployeeScheduleException {
+  employeeScheduleExceptionId: string;
+  businessId: string;
+  employeeId: string;
+  date: string;
+  openTime: string | null;
+  closeTime: string | null;
+  isClosed: boolean;
+  reason: string | null;
+  createdAt: string;
+  updatedAt: string | null;
+}
+
+export type EmployeeScheduleExceptionPayload = Pick<
+  EmployeeScheduleException,
+  "date" | "openTime" | "closeTime" | "isClosed" | "reason"
+>;
+
 export interface GoogleCalendarIntegration {
   isEnabled: boolean;
   calendarId: string;
@@ -510,5 +548,3 @@ name: string;
   settingsJson: string | null;
   settings: Record<string, unknown> | null;
 }
-
-

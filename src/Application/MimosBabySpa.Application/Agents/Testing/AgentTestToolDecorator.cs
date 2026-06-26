@@ -21,6 +21,7 @@ public sealed class AgentTestToolDecorator : IAgentTool
 
     public string Name => _inner.Name;
     public IReadOnlyList<string> Capabilities => _inner.Capabilities;
+    public IReadOnlyList<string> OperatingGroups => _inner.OperatingGroups;
     public string Description => _inner.Description;
     public string ParametersSchema => _inner.ParametersSchema;
     public string? DefaultTemplateId => _inner.DefaultTemplateId;

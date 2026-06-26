@@ -1,6 +1,6 @@
 import { apiClient, withPagedDefaults } from "./client";
 import type { PagedRequest, PagedResponse } from "@/types/api";
-import type { Business, WorkingHour } from "@/types/entities";
+import type { Business, BusinessAvailabilityBlock, BusinessAvailabilityBlockPayload, WorkingHour } from "@/types/entities";
 
 export const businessesApi = {
   list: (params?: Partial<PagedRequest>) =>
@@ -20,5 +20,12 @@ export const businessesApi = {
     apiClient.put<WorkingHour[]>(`/businesses/${id}/working-hours`, {
       workingHours,
     }),
+  listAvailabilityBlocks: (id: string, params?: { startDate?: string; endDate?: string }) =>
+    apiClient.get<BusinessAvailabilityBlock[]>(`/businesses/${id}/availability-blocks`, params),
+  createAvailabilityBlock: (id: string, data: BusinessAvailabilityBlockPayload) =>
+    apiClient.post<BusinessAvailabilityBlock>(`/businesses/${id}/availability-blocks`, data),
+  updateAvailabilityBlock: (id: string, blockId: string, data: BusinessAvailabilityBlockPayload) =>
+    apiClient.put<BusinessAvailabilityBlock>(`/businesses/${id}/availability-blocks/${blockId}`, data),
+  deleteAvailabilityBlock: (id: string, blockId: string) =>
+    apiClient.delete(`/businesses/${id}/availability-blocks/${blockId}`),
 };
-

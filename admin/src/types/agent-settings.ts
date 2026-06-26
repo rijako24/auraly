@@ -177,6 +177,10 @@ export interface EventNotificationConfig {
 
 export type AgentNotificationDefinitions = Record<string, EventNotificationConfig>;
 
+export interface AgentOperatingHoursSettings {
+  enabled?: boolean;
+  gatedGroups?: string[];
+}
 export interface AgentCommerceSettings {
   enabled?: boolean;
   provider?: "Local" | "Siigo" | "CustomHttp";
@@ -203,6 +207,7 @@ export interface AgentSettings {
   reservationAutomations?: ReservationAutomationDefinitions;
   checkout?: CheckoutDefinitions;
   commerce?: AgentCommerceSettings;
+  operatingHours?: AgentOperatingHoursSettings;
 }
 
 export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
@@ -226,6 +231,7 @@ export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
   reservationAutomations: {},
   checkout: { currency: "COP", categoryModes: {}, modes: {} },
   commerce: { enabled: false, provider: "Local" },
+  operatingHours: { enabled: false, gatedGroups: [] },
 };
 
 export function parseAgentSettingsFromAgent(agent: {
@@ -262,5 +268,6 @@ export function parseAgentSettings(raw: unknown): AgentSettings {
     notifications: s.notifications ?? {},
     reservationAutomations: s.reservationAutomations ?? {},
     commerce: s.commerce ?? { enabled: false, provider: "Local" },
+    operatingHours: s.operatingHours ?? { enabled: false, gatedGroups: [] },
   };
 }

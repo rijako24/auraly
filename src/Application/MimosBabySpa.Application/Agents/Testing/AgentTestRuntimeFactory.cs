@@ -23,6 +23,7 @@ public sealed class AgentTestRuntimeFactory : IAgentTestRuntimeFactory
     private readonly IEscalationConfigProvider _escalationConfig;
     private readonly IBusinessClock _businessClock;
     private readonly ITemporalReferenceBuilder _temporalReferenceBuilder;
+    private readonly IOperatingHoursTurnPolicy _operatingHoursTurnPolicy;
     private readonly IConversationFactsService _factsService;
     private readonly ICustomerMemoryService _customerMemory;
     private readonly IReservationLifecycleService _reservationLifecycle;
@@ -45,6 +46,7 @@ public sealed class AgentTestRuntimeFactory : IAgentTestRuntimeFactory
         IEscalationConfigProvider escalationConfig,
         IBusinessClock businessClock,
         ITemporalReferenceBuilder temporalReferenceBuilder,
+        IOperatingHoursTurnPolicy operatingHoursTurnPolicy,
         IConversationFactsService factsService,
         ICustomerMemoryService customerMemory,
         IReservationLifecycleService reservationLifecycle,
@@ -66,6 +68,7 @@ public sealed class AgentTestRuntimeFactory : IAgentTestRuntimeFactory
         _escalationConfig = escalationConfig;
         _businessClock = businessClock;
         _temporalReferenceBuilder = temporalReferenceBuilder;
+        _operatingHoursTurnPolicy = operatingHoursTurnPolicy;
         _factsService = factsService;
         _customerMemory = customerMemory;
         _reservationLifecycle = reservationLifecycle;
@@ -93,6 +96,7 @@ public sealed class AgentTestRuntimeFactory : IAgentTestRuntimeFactory
         var testTools = BuildTestTools(log, memoryFacts);
 
         var registry = new AgentToolRegistry(testTools, _registryLogger);
+        var turnToolResolver = new AgentTurnToolResolver(registry, _operatingHoursTurnPolicy);
         var usageBilling = new AgentTestUsageBillingService(log);
         var chatClient = ResolveChatClient(log);
 
@@ -105,6 +109,7 @@ public sealed class AgentTestRuntimeFactory : IAgentTestRuntimeFactory
             _escalationConfig,
             _businessClock,
             _temporalReferenceBuilder,
+            turnToolResolver,
             testFactsService,
             _customerMemory,
             requestContext,
@@ -141,7 +146,7 @@ public sealed class AgentTestRuntimeFactory : IAgentTestRuntimeFactory
         Mock("set_fact", "Records a fact in the in-memory test context.", SetFactParametersSchemaBuilder.FallbackSchema, log, memoryFacts, [ToolCapabilities.FactWrite]),
         Mock("reset_flow_context", "Clears the in-memory test context.", BasicSchema, log, memoryFacts),
         Mock("prepare_checkout", "Simulates checkout preparation and payment link generation.", BasicSchema, log, memoryFacts, [ToolCapabilities.CheckoutPrepare]),
-        Mock("prepare_order_checkout", "Simulates order checkout preparation and payment link generation.", BasicSchema, log, memoryFacts, [ToolCapabilities.CheckoutPrepare]),
+        Mock("prepare_order_checkout", "Simulates order checkout preparation and payment link generation.", BasicSchema, log, memoryFacts, [ToolCapabilities.CheckoutPrepare], [ToolOperatingGroups.OrderIntake]),
         Mock("create_reservation", "Simulates reservation creation without persisting.", BasicSchema, log, memoryFacts, [ToolCapabilities.ReservationCreate]),
         Mock("assign_paid_slot", "Simulates assigning a paid slot without persisting.", BasicSchema, log, memoryFacts, [ToolCapabilities.PaidSlotAssign]),
         Mock("suspend_reservation", "Simulates reservation suspension without persisting.", BasicSchema, log, memoryFacts),
@@ -159,8 +164,9 @@ public sealed class AgentTestRuntimeFactory : IAgentTestRuntimeFactory
         string schema,
         AgentTestExecutionLog log,
         IDictionary<string, string> memoryFacts,
-        IReadOnlyList<string>? capabilities = null) =>
-        new AgentTestMockTool(name, description, schema, log, memoryFacts, capabilities);
+        IReadOnlyList<string>? capabilities = null,
+        IReadOnlyList<string>? operatingGroups = null) =>
+        new AgentTestMockTool(name, description, schema, log, memoryFacts, capabilities, operatingGroups);
 
     private const string BasicSchema = """
         {

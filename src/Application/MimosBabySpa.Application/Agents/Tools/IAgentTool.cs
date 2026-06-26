@@ -19,6 +19,12 @@ public interface IAgentTool
     /// </summary>
     IReadOnlyList<string> Capabilities => [];
 
+    /// <summary>
+    /// Grupos operativos de negocio a los que pertenece la tool.
+    /// Se usan para politicas runtime transversales, como bloquear ciertas acciones
+    /// fuera del horario laboral del negocio.
+    /// </summary>
+    IReadOnlyList<string> OperatingGroups => [];
     /// <summary>Descripción técnica de qué hace la tool (no cuándo llamarla).</summary>
     string Description { get; }
 

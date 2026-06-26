@@ -68,7 +68,8 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
             Escalations = settings.Escalations ?? new EscalationDefinitions(),
             ReservationAutomations = settings.ReservationAutomations ?? new ReservationAutomationDefinitions(),
             Checkout = settings.Checkout ?? new CheckoutDefinitions(),
-            Commerce = settings.Commerce ?? new CommerceConfig()
+            Commerce = settings.Commerce ?? new CommerceConfig(),
+            OperatingHours = settings.OperatingHours ?? new OperatingHoursDefinitions()
         };
 
         if (config.EnabledToolNames.Count == 0)
@@ -393,7 +394,6 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
                 automation.SendMessageSequence);
         }
     }
-
     private void ValidateExternalEscalations(AgentConfig config)
     {
         if (!config.Escalations.External.Enabled)
@@ -518,6 +518,7 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
         public ReservationAutomationDefinitions? ReservationAutomations { get; set; }
         public CheckoutDefinitions? Checkout { get; set; }
         public CommerceConfig? Commerce { get; set; }
+        public OperatingHoursDefinitions? OperatingHours { get; set; }
     }
 
 }

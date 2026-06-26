@@ -29,6 +29,7 @@ public sealed class CreateOrderTool : IAgentTool
 
     public string Name => "create_order";
     public IReadOnlyList<string> Capabilities => [ToolCapabilities.OrderCreate];
+    public IReadOnlyList<string> OperatingGroups => [ToolOperatingGroups.OrderIntake];
     public string Description => "Creates the current order locally and, when configured, sends it to the commerce provider.";
     public string ParametersSchema => """
         {

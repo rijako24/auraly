@@ -1,6 +1,13 @@
 import { apiClient, withPagedDefaults } from "./client";
 import type { PagedResponse, PagedRequest } from "@/types/api";
-import type { Employee, EmployeeService, EmployeeWorkingHours, WorkingHour } from "@/types/entities";
+import type {
+  Employee,
+  EmployeeScheduleException,
+  EmployeeScheduleExceptionPayload,
+  EmployeeService,
+  EmployeeWorkingHours,
+  WorkingHour,
+} from "@/types/entities";
 
 export const employeesApi = {
   list: (params?: Partial<PagedRequest> & { businessId?: string }) =>
@@ -28,4 +35,12 @@ export const employeesApi = {
     apiClient.put<EmployeeWorkingHours>(`/employees/${employeeId}/working-hours`, {
       workingHours,
     }),
+  listScheduleExceptions: (employeeId: string) =>
+    apiClient.get<EmployeeScheduleException[]>(`/employees/${employeeId}/schedule-exceptions`),
+  createScheduleException: (employeeId: string, data: EmployeeScheduleExceptionPayload) =>
+    apiClient.post<EmployeeScheduleException>(`/employees/${employeeId}/schedule-exceptions`, data),
+  updateScheduleException: (employeeId: string, exceptionId: string, data: EmployeeScheduleExceptionPayload) =>
+    apiClient.put<EmployeeScheduleException>(`/employees/${employeeId}/schedule-exceptions/${exceptionId}`, data),
+  deleteScheduleException: (employeeId: string, exceptionId: string) =>
+    apiClient.delete(`/employees/${employeeId}/schedule-exceptions/${exceptionId}`),
 };

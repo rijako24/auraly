@@ -34,6 +34,8 @@ public sealed class PrepareOrderCheckoutTool : IAgentTool
 
     public IReadOnlyList<string> Capabilities => [ToolCapabilities.CheckoutPrepare];
 
+    public IReadOnlyList<string> OperatingGroups => [ToolOperatingGroups.OrderIntake];
+
     public string Description =>
         "Prepares the current order draft checkout, renders the configured order summary and creates a payment link only when required.";
 

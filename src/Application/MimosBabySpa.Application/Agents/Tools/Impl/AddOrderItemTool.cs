@@ -19,6 +19,7 @@ public sealed class AddOrderItemTool : IAgentTool
 
     public string Name => "add_order_item";
     public IReadOnlyList<string> Capabilities => [ToolCapabilities.OrderDraftUpdate];
+    public IReadOnlyList<string> OperatingGroups => [ToolOperatingGroups.OrderIntake];
     public string Description =>
         "Adds a catalog product and an explicit additional customer-provided quantity to the current conversation order draft. " +
         "Do not infer quantity or default to 1; if the customer selected a product without saying how many units, ask for quantity first. " +

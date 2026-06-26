@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { PageError } from "@/components/ui/page-error";
 import { PageLoading } from "@/components/ui/page-loading";
+import { ScheduleExceptionsEditor } from "@/components/settings/schedule-exceptions-editor";
 import { WorkingHoursEditor } from "@/components/settings/working-hours-editor";
 import { useEmployee } from "@/hooks/use-employees";
 import { useEmployeeWorkingHours, useUpdateEmployeeWorkingHours } from "@/hooks/use-working-hours";
@@ -126,6 +127,17 @@ export default function EmployeeDetailPage() {
         </CardHeader>
         <CardContent>
           <WorkingHoursEditor value={workingHours} onChange={setWorkingHours} />
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader>
+          <CardTitle>Excepciones</CardTitle>
+          <p className="text-sm text-muted-foreground">
+            Cierres o ajustes puntuales para fechas especificas.
+          </p>
+        </CardHeader>
+        <CardContent>
+          <ScheduleExceptionsEditor employeeId={id} />
         </CardContent>
       </Card>
     </div>

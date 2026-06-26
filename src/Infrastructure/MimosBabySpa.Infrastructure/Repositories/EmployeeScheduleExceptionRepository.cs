@@ -14,6 +14,12 @@ public class EmployeeScheduleExceptionRepository : IEmployeeScheduleExceptionRep
         _context = context;
     }
 
+    public Task<EmployeeScheduleException?> GetByIdAsync(Guid employeeScheduleExceptionId, CancellationToken ct = default)
+    {
+        return _context.EmployeeScheduleExceptions
+            .FirstOrDefaultAsync(e => e.EmployeeScheduleExceptionId == employeeScheduleExceptionId, ct);
+    }
+
     public async Task<IReadOnlyList<EmployeeScheduleException>> GetByEmployeeIdAsync(Guid employeeId, CancellationToken ct = default)
     {
         return await _context.EmployeeScheduleExceptions
@@ -34,6 +40,24 @@ public class EmployeeScheduleExceptionRepository : IEmployeeScheduleExceptionRep
         return await _context.EmployeeScheduleExceptions
             .Where(e => ids.Contains(e.EmployeeId) && e.Date == date)
             .ToListAsync(ct);
+    }
+
+    public Task<EmployeeScheduleException> AddAsync(EmployeeScheduleException exception, CancellationToken ct = default)
+    {
+        _context.EmployeeScheduleExceptions.Add(exception);
+        return Task.FromResult(exception);
+    }
+
+    public Task<EmployeeScheduleException> UpdateAsync(EmployeeScheduleException exception, CancellationToken ct = default)
+    {
+        _context.EmployeeScheduleExceptions.Update(exception);
+        return Task.FromResult(exception);
+    }
+
+    public Task DeleteAsync(EmployeeScheduleException exception, CancellationToken ct = default)
+    {
+        _context.EmployeeScheduleExceptions.Remove(exception);
+        return Task.CompletedTask;
     }
 
     public async Task ReplaceForEmployeeAsync(Guid employeeId, IEnumerable<EmployeeScheduleException> exceptions, CancellationToken ct = default)

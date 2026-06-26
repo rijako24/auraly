@@ -223,6 +223,8 @@ builder.Services.AddSingleton<IFlowStageDetector, FlowStageDetector>();
 builder.Services.AddScoped<IConversationVerificationService, ConversationVerificationService>();
 builder.Services.AddScoped<IGuardEvaluator, GuardEvaluator>();
 builder.Services.AddScoped<IToolCapabilityGate, ToolCapabilityGate>();
+builder.Services.AddScoped<IOperatingHoursTurnPolicy, OperatingHoursTurnPolicy>();
+builder.Services.AddScoped<IAgentTurnToolResolver, AgentTurnToolResolver>();
 builder.Services.AddScoped<IPromptComposer, AgentPromptComposer>();
 builder.Services.AddScoped<IAgentTemplateResolver, AgentTemplateResolver>();
 builder.Services.AddScoped<ITemplateRenderer, PromptTemplateRenderer>();

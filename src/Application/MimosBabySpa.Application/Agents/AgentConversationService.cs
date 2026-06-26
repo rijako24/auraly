@@ -38,6 +38,7 @@ public sealed class AgentConversationService : IAgentConversationService
     private readonly IEscalationConfigProvider _escalationConfig;
     private readonly IBusinessClock _businessClock;
     private readonly ITemporalReferenceBuilder _temporalReferenceBuilder;
+    private readonly IAgentTurnToolResolver _turnToolResolver;
     private readonly IConversationFactsService _factsService;
     private readonly ICustomerMemoryService _customerMemory;
     private readonly IRequestContextService _requestContext;
@@ -64,6 +65,7 @@ public sealed class AgentConversationService : IAgentConversationService
         IEscalationConfigProvider escalationConfig,
         IBusinessClock businessClock,
         ITemporalReferenceBuilder temporalReferenceBuilder,
+        IAgentTurnToolResolver turnToolResolver,
         IConversationFactsService factsService,
         ICustomerMemoryService customerMemory,
         IRequestContextService requestContext,
@@ -89,6 +91,7 @@ public sealed class AgentConversationService : IAgentConversationService
         _escalationConfig = escalationConfig;
         _businessClock = businessClock;
         _temporalReferenceBuilder = temporalReferenceBuilder;
+        _turnToolResolver = turnToolResolver;
         _factsService = factsService;
         _customerMemory = customerMemory;
         _requestContext = requestContext;
@@ -154,7 +157,10 @@ public sealed class AgentConversationService : IAgentConversationService
 
         var temporal = _temporalReferenceBuilder.Build(clockSnapshot);
         var latestPayment = await _paymentLifecycle.GetLatestByConversationAsync(conversationId, cancellationToken);
-        var enabledTools = _toolRegistry.GetToolsForAgent(config.EnabledToolNames).ToList();
+        var turnTools = await _turnToolResolver.ResolveAsync(config, clockSnapshot, cancellationToken);
+        var effectiveTools = turnTools.EffectiveTools;
+        session.OperatingHours = turnTools.OperatingHours;
+
         var compositionInput = new PromptCompositionInput
         {
             Config = config,
@@ -162,7 +168,7 @@ public sealed class AgentConversationService : IAgentConversationService
             Temporal = temporal,
             Session = session,
             LatestPayment = latestPayment,
-            EnabledTools = enabledTools
+            EnabledTools = effectiveTools
         };
         var systemPrompt = _promptComposer.Compose(compositionInput);
         var messages = BuildMessages(systemPrompt, history, userMessage);
@@ -176,7 +182,7 @@ public sealed class AgentConversationService : IAgentConversationService
         {
             AgentLoopOutcome.OutcomeKind.Completed =>
                 await FinalizeTurnAsync(
-                    conversationId, userMessage, loop.Response!, session, turn, config, cancellationToken),
+                    conversationId, userMessage, loop.Response!, session, turn, config, effectiveTools, cancellationToken),
 
             AgentLoopOutcome.OutcomeKind.AutoEscalate =>
                 await EscalateAndPersistAsync(
@@ -197,7 +203,7 @@ public sealed class AgentConversationService : IAgentConversationService
         PromptCompositionInput compositionInput,
         CancellationToken ct)
     {
-        var toolDefinitions = BuildToolDefinitions(config);
+        var toolDefinitions = BuildToolDefinitions(config, compositionInput.EnabledTools);
         var lastStageId = _flowStageDetector.DetectCurrentStage(config.Flow, toolCtx)?.Id;
         var recoveredEmptyToolTurn = false;
 
@@ -381,7 +387,6 @@ public sealed class AgentConversationService : IAgentConversationService
                 return ToolExecutionOutcome.Parse(
                     ToolResultHelper.Error(gate.Code!, gate.Reason!, gate.Remediation));
             }
-
             var rawJson = await tool.ExecuteAsync(argsDoc.RootElement, ctx, ct);
             var outcome = ToolExecutionOutcome.Parse(rawJson);
 
@@ -815,11 +820,12 @@ public sealed class AgentConversationService : IAgentConversationService
         AgentToolContext session,
         AgentTurnExecution turn,
         AgentConfig config,
+        IReadOnlyList<IAgentTool> effectiveTools,
         CancellationToken ct)
     {
         var finalResponse = _turnResponseComposer.Compose(
             config,
-            _toolRegistry.GetToolsForAgent(config.EnabledToolNames).ToList(),
+            effectiveTools,
             botResponse,
             turn.FragmentEntries);
 
@@ -1111,8 +1117,8 @@ public sealed class AgentConversationService : IAgentConversationService
             facts.TryGetValue(cond, out var val) && !string.IsNullOrWhiteSpace(val));
     }
 
-    private IReadOnlyList<ChatToolDefinition> BuildToolDefinitions(AgentConfig config) =>
-        _toolRegistry.GetToolsForAgent(config.EnabledToolNames)
+    private static IReadOnlyList<ChatToolDefinition> BuildToolDefinitions(AgentConfig config, IReadOnlyList<IAgentTool> effectiveTools) =>
+        effectiveTools
             .Select(t => new ChatToolDefinition
             {
                 Name           = t.Name,

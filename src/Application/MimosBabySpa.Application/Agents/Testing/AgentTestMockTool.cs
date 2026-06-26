@@ -21,18 +21,21 @@ public sealed class AgentTestMockTool : IAgentTool
         string parametersSchema,
         AgentTestExecutionLog log,
         IDictionary<string, string> memoryFacts,
-        IReadOnlyList<string>? capabilities = null)
+        IReadOnlyList<string>? capabilities = null,
+        IReadOnlyList<string>? operatingGroups = null)
     {
         Name = name;
         Description = description;
         ParametersSchema = parametersSchema;
         Capabilities = capabilities ?? [];
+        OperatingGroups = operatingGroups ?? [];
         _log = log;
         _memoryFacts = memoryFacts;
     }
 
     public string Name { get; }
     public IReadOnlyList<string> Capabilities { get; }
+    public IReadOnlyList<string> OperatingGroups { get; }
     public string Description { get; }
     public string ParametersSchema { get; }
 
