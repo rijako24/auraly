@@ -777,7 +777,7 @@ public class AgentPromptComposerTests
     }
 
     [Fact]
-    public void Compose_WhenOutsideOperatingHours_NamesBlockedOrderActionsAndForbidsClaimingOrderProgress()
+    public void Compose_WhenOutsideOperatingHours_ReturnsClosedBusinessPrompt()
     {
         var session = new AgentToolContext
         {
@@ -785,17 +785,25 @@ public class AgentPromptComposerTests
             OperatingHours = new OperatingHoursTurnContext(
                 true,
                 true,
-                [ToolOperatingGroups.OrderIntake],
-                ["add_order_item", "create_order"],
-                "viernes 26 de junio de 1:00 p. m. a 9:00 p. m.")
+                "hoy de 1:00 p. m. a 9:00 p. m.")
         };
 
         var result = Compose(DefaultConfig, [], session);
 
-        result.Should().Contain("## HORARIO OPERATIVO DEL TURNO");
-        result.Should().Contain("Acciones bloqueadas por horario: add_order_item, create_order");
-        result.Should().Contain("No digas que agregaste productos");
-        result.Should().Contain("solo puedes tomar pedidos en el proximo horario habil");
+        result.Should().Contain("## DISPONIBILIDAD ACTUAL");
+        result.Should().Contain("fuera de horario laboral");
+        result.Should().Contain("proximo_horario_habil: hoy de 1:00 p. m. a 9:00 p. m.");
+        result.Should().Contain("no repitas literalmente la misma plantilla");
+        result.Should().Contain("agradece el contacto");
+        result.Should().Contain("Si empieza por hoy, no agregues fecha ni dia");
+        result.Should().Contain("Eres Mimi");
+        result.Should().Contain("gestiones operativas");
+        result.Should().Contain("No solicites datos");
+        result.Should().Contain("no termines con preguntas");
+        result.Should().NotContain("comprar");
+        result.Should().NotContain("agendar");
+        result.Should().NotContain("productos");
+        result.Should().NotContain("pedido");
     }
     private sealed class TestTool : IAgentTool
     {

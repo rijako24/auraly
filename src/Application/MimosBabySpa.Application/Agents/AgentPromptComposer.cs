@@ -25,6 +25,10 @@ public sealed class AgentPromptComposer : IPromptComposer
 
     public string Compose(PromptCompositionInput input)
     {
+        var operatingHoursBlock = BuildOperatingHoursBlock(input.Config, input.Session);
+        if (!string.IsNullOrWhiteSpace(operatingHoursBlock))
+            return operatingHoursBlock;
+
         var blocks = new List<string>();
 
         var basePrompt = input.Config.BasePrompt;
@@ -41,10 +45,6 @@ public sealed class AgentPromptComposer : IPromptComposer
         var temporalBlock = input.Temporal.ToPromptBlock();
         if (!string.IsNullOrWhiteSpace(temporalBlock))
             blocks.Add(temporalBlock);
-
-        var operatingHoursBlock = BuildOperatingHoursBlock(input.Session);
-        if (!string.IsNullOrWhiteSpace(operatingHoursBlock))
-            blocks.Add(operatingHoursBlock);
 
         var turnPolicyBlock = BuildTurnPolicyBlock(input.History);
         if (!string.IsNullOrWhiteSpace(turnPolicyBlock))
@@ -107,28 +107,39 @@ public sealed class AgentPromptComposer : IPromptComposer
 
         return string.Join(Environment.NewLine, lines);
     }
-    internal static string BuildOperatingHoursBlock(AgentToolContext? session)
+    internal static string BuildOperatingHoursBlock(AgentConfig config, AgentToolContext? session)
     {
         var policy = session?.OperatingHours;
-        if (policy is null || !policy.IsEnabled || !policy.IsOutsideOperatingHours || policy.BlockedToolNames.Count == 0)
+        if (policy is null || !policy.IsEnforced || !policy.IsOutsideOperatingHours)
             return string.Empty;
+
+        var blocks = new List<string>();
+        var basePrompt = config.BasePrompt;
+        if (!string.IsNullOrWhiteSpace(basePrompt))
+            blocks.Add(basePrompt.Trim());
 
         var lines = new List<string>
         {
-            "## HORARIO OPERATIVO DEL TURNO",
-            "- El negocio esta fuera del horario laboral para algunas acciones protegidas de este agente.",
-            "- No tomes, confirmes ni avances solicitudes que requieran las acciones bloqueadas por horario.",
-            "- Las demas acciones disponibles siguen funcionando normalmente."
+            "## DISPONIBILIDAD ACTUAL",
+            "- El negocio esta fuera de horario laboral en este momento.",
+            "- Responde como el agente de este negocio, con la identidad y tono definidos arriba.",
+            "- Adapta la respuesta al ultimo mensaje del cliente; no repitas literalmente la misma plantilla en todos los turnos.",
+            "- No inicies, confirmes ni avances gestiones operativas del negocio mientras este fuera de horario.",
+            "- Si el cliente solo saluda, saluda y agradece el contacto de forma natural; luego explica brevemente que ahora no estamos disponibles.",
+            "- Si el cliente pide avanzar alguna gestion, explica brevemente que no podemos gestionarla fuera del horario laboral.",
+            "- Si el cliente pregunta por que, responde brevemente que estamos fuera del horario laboral.",
+            "- No solicites datos, no prometas ejecutar acciones y no hables de un tipo de gestion que el cliente no haya mencionado.",
+            "- Responde de forma breve y cerrada: no termines con preguntas ni ofrezcas continuar flujos, catalogos o recomendaciones fuera de horario."
         };
 
-        lines.Add($"- Acciones bloqueadas por horario: {string.Join(", ", policy.BlockedToolNames)}.");
-        lines.Add("- No digas que agregaste productos, preparaste checkout, creaste, tomaste o confirmaste un pedido si eso requiere una accion bloqueada.");
-        lines.Add("- Si el cliente intenta comprar o confirmar un pedido, explica brevemente que solo puedes tomar pedidos en el proximo horario habil.");
-
         if (!string.IsNullOrWhiteSpace(policy.NextOperatingWindowText))
-            lines.Add($"- Proximo horario habil: {policy.NextOperatingWindowText}.");
+        {
+            lines.Insert(1, $"- proximo_horario_habil: {policy.NextOperatingWindowText}.");
+            lines.Insert(2, "- Cuando menciones el proximo horario, usa proximo_horario_habil. Si empieza por hoy, no agregues fecha ni dia.");
+        }
 
-        return string.Join(Environment.NewLine, lines);
+        blocks.Add(string.Join(Environment.NewLine, lines));
+        return string.Join($"{Environment.NewLine}{Environment.NewLine}", blocks);
     }
     internal static string BuildTurnPolicyBlock(IEnumerable<Message> history)
     {

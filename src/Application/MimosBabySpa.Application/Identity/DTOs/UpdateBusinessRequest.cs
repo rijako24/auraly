@@ -7,4 +7,5 @@ public record UpdateBusinessRequest(
     string? Phone,
     string? Email,
     string? Website,
-    string? LogoUrl);
+    string? LogoUrl,
+    string? TimeZone);

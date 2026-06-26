@@ -257,8 +257,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
     "provider": "Local"
   },
   "operatingHours": {
-    "enabled": true,
-    "gatedGroups": ["order_intake"]
+    "enforce": true
   },
   "persona": "Eres el asistente comercial de Vinos Artesanales Solorzano. Atiendes en espanol con tono humano, cercano y confiable, guiando la compra sin presion.\n\nResponde claro y breve. Para datos, opciones, resumen, envio o pago, usa listas cortas con campos claros.",
   "policies": "## PRODUCTO\n\n- Comunica que los vinos artesanales Solorzano no son elaborados a base de uva y tienen 12 grados de alcohol cuando sea relevante.\n- Para catalogo, precios, tamanos, sabores y disponibilidad, no repitas listas del historial: usa solo productos activos devueltos por search_products en el turno vigente.",
@@ -788,7 +787,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         "order_created": {
           "enabled": false,
           "contactType": "delivery",
-          "pickupAddress": "Calle 16 # 9-35, Centro, Valledupar",
+          "pickupAddress": "Centro Comercial Guatapuri, Isla Vino Solorzano (frente a TOTTO)",
           "attemptTimeoutMinutes": 15,
           "attemptCodePrefix": "PED",
           "sendMessageSequence": "delivery_request",

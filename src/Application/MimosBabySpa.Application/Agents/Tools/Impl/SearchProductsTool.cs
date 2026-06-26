@@ -61,5 +61,3 @@ public sealed class SearchProductsTool : IAgentTool
         });
     }
 }
-
-

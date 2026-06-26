@@ -2,7 +2,7 @@
 -- SeedSolorzanoWorkingHours.sql
 --
 -- Configura el horario laboral de Vinos Artesanales Solorzano.
--- Domingo a jueves y sabado, 08:00 a 21:00; viernes, 13:00 a 21:00.
+-- Lunes a jueves, 10:00 a 20:00; viernes y sabado, 10:00 a 21:00; domingo y festivos, 11:00 a 20:00.
 -- =============================================================================
 
 SET NOCOUNT ON;
@@ -18,13 +18,13 @@ END
 DECLARE @Hours TABLE (DayOfWeek INT NOT NULL, OpenTime TIME(0) NOT NULL, CloseTime TIME(0) NOT NULL);
 INSERT INTO @Hours (DayOfWeek, OpenTime, CloseTime)
 VALUES
-(0, CONVERT(TIME(0), '08:00'), CONVERT(TIME(0), '21:00')),
-(1, CONVERT(TIME(0), '08:00'), CONVERT(TIME(0), '21:00')),
-(2, CONVERT(TIME(0), '08:00'), CONVERT(TIME(0), '21:00')),
-(3, CONVERT(TIME(0), '08:00'), CONVERT(TIME(0), '21:00')),
-(4, CONVERT(TIME(0), '08:00'), CONVERT(TIME(0), '21:00')),
-(5, CONVERT(TIME(0), '13:00'), CONVERT(TIME(0), '21:00')),
-(6, CONVERT(TIME(0), '08:00'), CONVERT(TIME(0), '21:00'));
+(0, CONVERT(TIME(0), '11:00'), CONVERT(TIME(0), '20:00')),
+(1, CONVERT(TIME(0), '10:00'), CONVERT(TIME(0), '20:00')),
+(2, CONVERT(TIME(0), '10:00'), CONVERT(TIME(0), '20:00')),
+(3, CONVERT(TIME(0), '10:00'), CONVERT(TIME(0), '20:00')),
+(4, CONVERT(TIME(0), '10:00'), CONVERT(TIME(0), '20:00')),
+(5, CONVERT(TIME(0), '10:00'), CONVERT(TIME(0), '21:00')),
+(6, CONVERT(TIME(0), '10:00'), CONVERT(TIME(0), '21:00'));
 
 MERGE dbo.BusinessWorkingHours AS target
 USING @Hours AS source
@@ -50,5 +50,5 @@ WHERE BusinessId = @SolorzanoBusinessId
         AND h.OpenTime = BusinessWorkingHours.OpenTime
   );
 
-PRINT N'SeedSolorzanoWorkingHours: horarios Solorzano configurados; viernes abre 13:00.';
+PRINT N'SeedSolorzanoWorkingHours: horarios Solorzano configurados segun horario operativo confirmado.';
 GO

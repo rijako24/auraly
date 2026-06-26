@@ -16,6 +16,8 @@ public class Business
     // Logo del negocio
     public string? LogoUrl { get; set; }
 
+    public string TimeZone { get; set; } = "America/Bogota";
+
     public bool IsActive { get; set; } = true;
     public DateTime CreatedAt { get; set; }
     public DateTime? UpdatedAt { get; set; }
@@ -27,4 +29,3 @@ public class Business
     public virtual ICollection<Lead> Leads { get; set; } = new List<Lead>();
     public virtual ICollection<Reservation> Reservations { get; set; } = new List<Reservation>();
 }
-

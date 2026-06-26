@@ -8,6 +8,7 @@ CREATE TABLE [dbo].[Businesses] (
     [Email] NVARCHAR(200) NOT NULL,
     [Website] NVARCHAR(500) NOT NULL,
     [LogoUrl] NVARCHAR(500) NULL,
+    [TimeZone] NVARCHAR(100) NOT NULL CONSTRAINT [DF_Businesses_TimeZone] DEFAULT N'America/Bogota',
     [IsActive] BIT NOT NULL DEFAULT 1,
     [CreatedAt] DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
     [UpdatedAt] DATETIME2 NULL,

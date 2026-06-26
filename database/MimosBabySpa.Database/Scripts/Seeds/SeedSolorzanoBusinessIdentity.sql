@@ -39,11 +39,11 @@ END
 IF NOT EXISTS (SELECT 1 FROM dbo.Businesses WHERE BusinessId = @SolorzanoBusinessId)
 BEGIN
     INSERT INTO dbo.Businesses
-        (BusinessId, TenantId, Name, Description, Address, Phone, Email, Website, IsActive, CreatedAt)
+        (BusinessId, TenantId, Name, Description, Address, Phone, Email, Website, TimeZone, IsActive, CreatedAt)
     VALUES
         (@SolorzanoBusinessId, @EffectiveTenantId, @SolorzanoName, @SolorzanoDescription,
          N'Calle 16 # 9-35, Centro, Valledupar', N'+573004442469',
-         N'admin@vinosartesanales-solorzano.com', N'', 1, GETUTCDATE());
+         N'admin@vinosartesanales-solorzano.com', N'', N'America/Bogota', 1, GETUTCDATE());
 END
 ELSE
 BEGIN
@@ -58,6 +58,7 @@ BEGIN
         Phone = COALESCE(NULLIF(Phone, N''), N'+573004442469'),
         Email = COALESCE(NULLIF(Email, N''), N'admin@vinosartesanales-solorzano.com'),
         Website = COALESCE(Website, N''),
+        TimeZone = N'America/Bogota',
         IsActive = 1,
         UpdatedAt = GETUTCDATE()
     WHERE BusinessId = @SolorzanoBusinessId;

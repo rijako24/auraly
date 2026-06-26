@@ -21,7 +21,11 @@ public static class BusinessTimeZoneResolver
             catch (InvalidTimeZoneException) { }
         }
 
-        return TimeZoneInfo.Utc;
+        return TimeZoneInfo.CreateCustomTimeZone(
+            DefaultIanaTimeZoneId,
+            TimeSpan.FromHours(-5),
+            "Bogota Standard Time",
+            "Bogota Standard Time");
     }
 
     private static IEnumerable<string> EnumerateCandidates(string? timeZoneId)
@@ -44,6 +48,5 @@ public static class BusinessTimeZoneResolver
 
         yield return DefaultIanaTimeZoneId;
         yield return DefaultWindowsTimeZoneId;
-        yield return "UTC";
     }
 }

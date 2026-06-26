@@ -10,5 +10,6 @@ public record BusinessDto(
     string? Email,
     string? Website,
     string? LogoUrl,
+    string TimeZone,
     bool IsActive,
     DateTime CreatedAt);

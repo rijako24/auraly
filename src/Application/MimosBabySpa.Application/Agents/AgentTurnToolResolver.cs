@@ -35,15 +35,14 @@ public sealed class AgentTurnToolResolver : IAgentTurnToolResolver
         CancellationToken ct = default)
     {
         var configuredTools = _toolRegistry.GetToolsForAgent(config.EnabledToolNames);
-        var policyResult = await _operatingHoursPolicy.EvaluateAsync(
-            config,
-            clockSnapshot,
-            configuredTools,
-            ct);
+        var operatingHours = await _operatingHoursPolicy.EvaluateAsync(config, clockSnapshot, ct);
+        var effectiveTools = operatingHours.IsEnforced && operatingHours.IsOutsideOperatingHours
+            ? []
+            : configuredTools;
 
         return new AgentTurnToolSet(
             configuredTools,
-            policyResult.EffectiveTools,
-            policyResult.Context);
+            effectiveTools,
+            operatingHours);
     }
 }

@@ -34,6 +34,7 @@
 :r .\Migrations\MigrateAgentTemplatesAndInboundContacts.sql
 :r .\Migrations\MigrateOrderCheckoutPayments.sql
 :r .\Migrations\MigrateOrderDeliveryAssignment.sql
+:r .\Migrations\MigrateBusinessTimeZone.sql
 :r .\Migrations\AlterConversationContextsValueToMax.sql
 :r .\Seeds\SeedAdminUser.sql
 :r .\Seeds\SeedAgentPermissions.sql
@@ -65,4 +66,3 @@ GO
 GO
 
 PRINT 'Post-deployment scripts executed successfully.';
-

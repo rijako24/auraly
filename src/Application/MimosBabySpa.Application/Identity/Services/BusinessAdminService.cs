@@ -4,6 +4,7 @@ using MimosBabySpa.Application.Common.Exceptions;
 using MimosBabySpa.Application.Common.Interfaces;
 using MimosBabySpa.Application.Identity.DTOs;
 using MimosBabySpa.Application.Identity.Interfaces;
+using MimosBabySpa.Application.Time;
 using MimosBabySpa.Domain.Entities;
 using MimosBabySpa.Domain.Repositories;
 
@@ -73,6 +74,7 @@ public class BusinessAdminService : IBusinessAdminService
             Phone = request.Phone ?? string.Empty,
             Email = request.Email ?? string.Empty,
             Website = request.Website ?? string.Empty,
+            TimeZone = NormalizeTimeZone(request.TimeZone),
             IsActive = true,
             CreatedAt = DateTime.UtcNow
         };
@@ -105,6 +107,7 @@ public class BusinessAdminService : IBusinessAdminService
         if (request.Email is not null) business.Email = request.Email;
         if (request.Website is not null) business.Website = request.Website;
         if (request.LogoUrl is not null) business.LogoUrl = request.LogoUrl;
+        if (request.TimeZone is not null) business.TimeZone = NormalizeTimeZone(request.TimeZone);
 
         business.UpdatedAt = DateTime.UtcNow;
         await _unitOfWork.Businesses.UpdateAsync(business);
@@ -145,7 +148,10 @@ public class BusinessAdminService : IBusinessAdminService
         return business;
     }
 
+    private static string NormalizeTimeZone(string? timeZone) =>
+        string.IsNullOrWhiteSpace(timeZone) ? BusinessClock.DefaultTimeZoneId : timeZone.Trim();
+
     private static BusinessDto MapToDto(Business b) => new(
         b.BusinessId, b.TenantId, b.Name, b.Description, b.Address,
-        b.Phone, b.Email, b.Website, b.LogoUrl, b.IsActive, b.CreatedAt);
+        b.Phone, b.Email, b.Website, b.LogoUrl, b.TimeZone, b.IsActive, b.CreatedAt);
 }

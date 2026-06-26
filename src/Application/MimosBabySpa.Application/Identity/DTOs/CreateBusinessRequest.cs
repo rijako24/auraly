@@ -6,4 +6,5 @@ public record CreateBusinessRequest(
     string? Address,
     string? Phone,
     string? Email,
-    string? Website);
+    string? Website,
+    string? TimeZone = null);

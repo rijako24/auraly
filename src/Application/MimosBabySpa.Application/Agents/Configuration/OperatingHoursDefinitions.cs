@@ -1,11 +1,16 @@
 namespace MimosBabySpa.Application.Agents.Configuration;
 
 /// <summary>
-/// Politica declarativa del agente para limitar grupos operativos fuera del horario laboral del negocio.
+/// Politica declarativa del agente para responder cuando el negocio esta fuera de horario.
 /// </summary>
 public sealed class OperatingHoursDefinitions
 {
-    public bool Enabled { get; set; }
+    public bool Enforce { get; set; }
 
-    public IReadOnlyList<string> GatedGroups { get; set; } = [];
+    // Compatibilidad con SettingsJson existentes que usaban operatingHours.enabled.
+    public bool Enabled
+    {
+        get => Enforce;
+        set => Enforce = value;
+    }
 }
