@@ -13,13 +13,13 @@ param(
     [switch]$SkipAzure = $false,
 
     [Parameter(Mandatory=$false)]
-    [string]$ResourceGroupName = "MimosBabySpa-RG",
+    [string]$ResourceGroupName = "RG-TALKIOAI-DEV",
 
     [Parameter(Mandatory=$false)]
-    [string]$AzureSqlServer = "",
+    [string]$AzureSqlServer = "talkioai.database.windows.net",
 
     [Parameter(Mandatory=$false)]
-    [string]$AzureDatabase = "MimosBabySpa",
+    [string]$AzureDatabase = "auraly-db",
 
     [Parameter(Mandatory=$false)]
     [string]$AzureSqlUsername = "",
@@ -140,7 +140,7 @@ if (-not $SkipAzure) {
 
     if ([string]::IsNullOrEmpty($server)) {
         Write-Host "  Omitiendo Azure: especifica -AzureSqlServer (o usa ResourceGroup para descubrirlo)" -ForegroundColor Yellow
-        Write-Host "  Ejemplo: .\Publish-Both.ps1 -AzureSqlServer 'mimosbabyspa-sql-dev-xxx.database.windows.net' -AzureSqlUsername 'sqladmin' -AzureSqlPassword 'TuPassword'" -ForegroundColor Gray
+        Write-Host "  Ejemplo: .\Publish-Both.ps1 -AzureSqlServer 'talkioai.database.windows.net' -AzureDatabase 'auraly-db' -AzureSqlUsername 'sqladmin' -AzureSqlPassword 'TuPassword'" -ForegroundColor Gray
         $azureOk = $false
     } elseif ([string]::IsNullOrEmpty($user) -or [string]::IsNullOrEmpty($pass)) {
         Write-Host "  Omitiendo Azure: faltan -AzureSqlUsername y -AzureSqlPassword" -ForegroundColor Yellow

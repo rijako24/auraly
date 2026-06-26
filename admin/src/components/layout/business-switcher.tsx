@@ -40,10 +40,10 @@ export function BusinessSwitcher() {
           variant="outline"
           role="combobox"
           aria-expanded={open}
-          className="w-[220px] justify-between"
+          className="min-w-0 flex-1 justify-between px-2 sm:w-[220px] sm:flex-none sm:px-3"
           size="sm"
         >
-          <div className="flex items-center gap-2 truncate">
+          <div className="flex min-w-0 items-center gap-2 truncate">
             <Building2 className="h-4 w-4 shrink-0 text-muted-foreground" />
             <span className="truncate">
               {selectedBusiness?.name ?? "Seleccionar negocio"}
@@ -52,7 +52,7 @@ export function BusinessSwitcher() {
           <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
         </Button>
       </PopoverTrigger>
-      <PopoverContent className="w-[220px] p-0" align="start">
+      <PopoverContent className="w-[min(calc(100vw-1.5rem),22rem)] p-0 sm:w-[220px]" align="start">
         <Command>
           <CommandInput placeholder="Buscar negocio..." />
           <CommandList>

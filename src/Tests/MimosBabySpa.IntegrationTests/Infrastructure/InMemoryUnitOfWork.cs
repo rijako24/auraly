@@ -516,6 +516,25 @@ internal sealed class InMemoryProductRepository : IProductRepository
         return Task.FromResult<IReadOnlyList<Product>>(results.Take(limit).ToList());
     }
 
+    public Task<(IReadOnlyList<Product> Items, int TotalCount)> GetPagedByBusinessIdAsync(
+        Guid businessId,
+        int page,
+        int pageSize,
+        string? search = null,
+        bool includeInactive = false,
+        CancellationToken ct = default)
+    {
+        var query = _products.Where(p => p.BusinessId == businessId);
+        if (!includeInactive)
+            query = query.Where(p => p.IsActive);
+        if (!string.IsNullOrWhiteSpace(search))
+            query = query.Where(p => CatalogSearchText.ContainsAllTerms(search, p.Name, p.Description, p.Sku, p.CategoryName));
+
+        var list = query.OrderBy(p => p.Name).ToList();
+        return Task.FromResult<(IReadOnlyList<Product> Items, int TotalCount)>(
+            (list.Skip(Math.Max(0, page - 1) * pageSize).Take(pageSize).ToList(), list.Count));
+    }
+
     public Task<Product?> GetByIdAsync(Guid businessId, Guid productId, CancellationToken ct = default) =>
         Task.FromResult(_products.FirstOrDefault(p => p.BusinessId == businessId && p.ProductId == productId));
 

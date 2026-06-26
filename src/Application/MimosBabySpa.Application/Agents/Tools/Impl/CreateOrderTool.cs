@@ -49,17 +49,29 @@ public sealed class CreateOrderTool : IAgentTool
     public async Task<string> ExecuteAsync(JsonElement arguments, AgentToolContext ctx, CancellationToken cancellationToken = default)
     {
         var confirmed = ToolResultHelper.TryGetBool(arguments, "customer_confirmed", out var c) && c;
-        var order = await _commerce.CreateOrderAsync(
-            ctx,
-            new CreateOrderRequest(
-                confirmed,
-                Get(arguments, "customer_name"),
-                Get(arguments, "customer_email"),
-                Get(arguments, "customer_phone"),
-                Get(arguments, "customer_document"),
-                Get(arguments, "delivery_address"),
-                Get(arguments, "notes")),
-            cancellationToken);
+        OrderSnapshot order;
+        try
+        {
+            order = await _commerce.CreateOrderAsync(
+                ctx,
+                new CreateOrderRequest(
+                    confirmed,
+                    Get(arguments, "customer_name"),
+                    Get(arguments, "customer_email"),
+                    Get(arguments, "customer_phone"),
+                    Get(arguments, "customer_document"),
+                    Get(arguments, "delivery_address"),
+                    Get(arguments, "notes")),
+                cancellationToken);
+        }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("Product inactive", StringComparison.OrdinalIgnoreCase))
+        {
+            return ToolResultHelper.Error(
+                "product_inactive",
+                "The order contains an inactive product and cannot be confirmed.",
+                "Remove the inactive product from the order and call search_products for active alternatives.",
+                recoverable: true);
+        }
 
         var isConfirmed = order.Status is OrderStatus.Confirmed or OrderStatus.SyncPending or OrderStatus.Synced;
         if (isConfirmed)

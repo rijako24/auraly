@@ -22,7 +22,7 @@ export default function DashboardLayout({
 
   return (
     <AuthSyncProvider>
-      <div className="flex h-screen overflow-hidden bg-background">
+      <div className="flex h-dvh overflow-hidden bg-background">
         {/* Desktop sidebar - hidden on mobile */}
         {!isMobile && <Sidebar />}
 
@@ -32,7 +32,7 @@ export default function DashboardLayout({
         {/* Main content area */}
         <div className="flex flex-1 flex-col min-w-0">
           <Header onMobileMenuClick={handleMobileMenuClick} />
-          <main className="flex-1 overflow-auto p-4 lg:p-6">
+          <main className="min-w-0 flex-1 overflow-auto px-3 py-3 sm:px-4 lg:p-6">
             <BusinessContextProvider>{children}</BusinessContextProvider>
           </main>
         </div>

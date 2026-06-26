@@ -109,4 +109,54 @@ public class CommerceServiceTests
         orderDraftItems.Verify(r => r.CreateAsync(It.IsAny<OrderDraftItem>(), It.IsAny<CancellationToken>()), Times.Never);
         orderDraftItems.Verify(r => r.UpdateAsync(existingItem, It.IsAny<CancellationToken>()), Times.AtLeastOnce);
     }
+    [Fact]
+    public async Task AddItemAsync_WhenProductIsInactive_ThrowsProductInactive()
+    {
+        var businessId = Guid.NewGuid();
+        var conversationId = Guid.NewGuid();
+        var productId = Guid.NewGuid();
+
+        var unitOfWork = new Mock<IUnitOfWork>();
+        var integrationConnections = new Mock<IIntegrationConnectionRepository>();
+        var adapterFactory = new Mock<ICommerceAdapterFactory>();
+        var adapter = new Mock<ICommerceAdapter>();
+        var promotions = new Mock<IPromotionPricingService>();
+
+        unitOfWork.SetupGet(u => u.IntegrationConnections).Returns(integrationConnections.Object);
+        integrationConnections
+            .Setup(r => r.GetCommerceConnectionAsync(businessId, CommerceProvider.Local, CommerceCapability.CatalogAndOrders, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((IntegrationConnection?)null);
+        adapterFactory
+            .Setup(f => f.Resolve(CommerceProvider.Local))
+            .Returns(adapter.Object);
+        adapter
+            .Setup(a => a.GetProductAsync(It.IsAny<AddOrderItemRequest>(), It.IsAny<CommerceAdapterContext>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ProductReference(
+                productId,
+                null,
+                "SOL-MANGO-750",
+                "Mango 750ML",
+                null,
+                "Vinos artesanales",
+                59900m,
+                "COP",
+                null,
+                false)
+            { IsActive = false });
+
+        var service = new CommerceService(unitOfWork.Object, adapterFactory.Object, promotions.Object);
+        var ctx = new AgentToolContext
+        {
+            BusinessId = businessId,
+            ConversationId = conversationId
+        };
+
+        var act = () => service.AddItemAsync(
+            ctx,
+            new AddOrderItemRequest(productId, null, null, null, 1m, null),
+            CancellationToken.None);
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("Product inactive.");
+    }
 }

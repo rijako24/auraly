@@ -36,6 +36,7 @@ public sealed class SiigoCommerceAdapter : ICommerceAdapter
 
         var products = response?.Results ?? [];
         var filtered = Filter(products, request)
+            .Where(p => p.Active)
             .Take(Math.Clamp(request.Limit, 1, 50))
             .Select(p => Map(p, settings.Catalog.PriceListPosition))
             .ToList();
@@ -152,7 +153,7 @@ public sealed class SiigoCommerceAdapter : ICommerceAdapter
                 Currency = reference.Currency,
                 ManageStock = true,
                 StockQuantity = reference.StockQuantity,
-                IsActive = true,
+                IsActive = reference.IsActive,
                 RawPayloadJson = reference.RawPayloadJson,
                 LastSyncedAt = DateTime.UtcNow,
                 CreatedAt = DateTime.UtcNow
@@ -168,6 +169,7 @@ public sealed class SiigoCommerceAdapter : ICommerceAdapter
         existing.UnitPrice = reference.UnitPrice;
         existing.Currency = reference.Currency;
         existing.StockQuantity = reference.StockQuantity;
+        existing.IsActive = reference.IsActive;
         existing.RawPayloadJson = reference.RawPayloadJson;
         existing.LastSyncedAt = DateTime.UtcNow;
         existing.UpdatedAt = DateTime.UtcNow;
@@ -284,7 +286,8 @@ public sealed class SiigoCommerceAdapter : ICommerceAdapter
             null,
             null,
             null,
-            raw);
+            raw)
+        { IsActive = product.Active };
     }
 
     private static IntegrationConnection RequireConnection(CommerceAdapterContext ctx) =>

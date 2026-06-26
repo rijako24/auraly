@@ -4,7 +4,6 @@ import * as React from "react";
 import {
   LayoutGrid,
   LayoutList,
-  List,
   RotateCcw,
   Search,
   Table2,
@@ -101,13 +100,13 @@ export function DataTableToolbar<TData>({
     <div className={cn("flex flex-col gap-4", className)}>
       <div className="flex flex-wrap items-center gap-2">
         {searchKey && onSearch && (
-          <div className="relative flex-1 min-w-[200px] max-w-sm">
+          <div className="relative min-w-0 flex-[1_1_100%] sm:max-w-sm sm:flex-1">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               placeholder={searchPlaceholder}
               value={searchValue}
               onChange={(e) => onSearch(e.target.value)}
-              className="pl-9 h-8"
+              className="h-10 pl-9 sm:h-8"
             />
           </div>
         )}
@@ -128,7 +127,7 @@ export function DataTableToolbar<TData>({
             <Button
               variant={viewMode === "table" ? "secondary" : "ghost"}
               size="sm"
-              className="h-7 px-2"
+              className="h-8 px-2 sm:h-7"
               onClick={() => onViewModeChange("table")}
             >
               <Table2 className="h-4 w-4" />
@@ -137,7 +136,7 @@ export function DataTableToolbar<TData>({
             <Button
               variant={viewMode === "card" ? "secondary" : "ghost"}
               size="sm"
-              className="h-7 px-2"
+              className="h-8 px-2 sm:h-7"
               onClick={() => onViewModeChange("card")}
             >
               <LayoutGrid className="h-4 w-4" />
@@ -146,7 +145,7 @@ export function DataTableToolbar<TData>({
             <Button
               variant={viewMode === "list" ? "secondary" : "ghost"}
               size="sm"
-              className="h-7 px-2"
+              className="h-8 px-2 sm:h-7"
               onClick={() => onViewModeChange("list")}
             >
               <LayoutList className="h-4 w-4" />
@@ -158,7 +157,7 @@ export function DataTableToolbar<TData>({
           (onColumnVisibilityChange || table) && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="outline" size="sm" className="h-8">
+                <Button variant="outline" size="sm" className="h-9 sm:h-8">
                   Columnas
                 </Button>
               </DropdownMenuTrigger>
@@ -186,7 +185,7 @@ export function DataTableToolbar<TData>({
             </DropdownMenu>
           )}
         {hasFilters && onReset && (
-          <Button variant="ghost" size="sm" className="h-8" onClick={onReset}>
+          <Button variant="ghost" size="sm" className="h-9 sm:h-8" onClick={onReset}>
             <RotateCcw className="mr-2 h-4 w-4" />
             Restablecer
           </Button>

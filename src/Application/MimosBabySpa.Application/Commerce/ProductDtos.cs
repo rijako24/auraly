@@ -21,7 +21,10 @@ public sealed record ProductReference(
     decimal? DiscountAmount = null,
     string? PromotionName = null,
     string? PromotionSummary = null,
-    string? RawPayloadJson = null);
+    string? RawPayloadJson = null)
+{
+    public bool IsActive { get; init; } = true;
+}
 
 public sealed record ProductSearchResult(
     IReadOnlyList<ProductReference> Products,

@@ -125,6 +125,14 @@ public sealed class AddOrderItemTool : IAgentTool
                 hint,
                 recoverable: true);
         }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("Product inactive", StringComparison.OrdinalIgnoreCase))
+        {
+            return ToolResultHelper.Error(
+                "product_inactive",
+                "The selected product is inactive and cannot be added to the order.",
+                "Call search_products again and offer only active alternatives.",
+                recoverable: true);
+        }
 
         return ToolResultHelper.Ok(new { order = draft });
     }

@@ -32,20 +32,20 @@ export function ConversationList({
   });
 
   return (
-    <div className="flex h-full flex-col border-r border-border bg-muted/30">
-      <div className="flex-shrink-0 p-3">
+    <div className="flex h-full min-w-0 flex-col border-r border-border bg-muted/30">
+      <div className="flex-shrink-0 p-2.5 sm:p-3">
         <div className="relative">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             placeholder="Buscar conversaciones..."
             value={searchQuery}
             onChange={(e) => onSearchChange(e.target.value)}
-            className="pl-9"
+            className="h-11 pl-9 sm:h-10"
           />
         </div>
       </div>
       <ScrollArea className="flex-1">
-        <div className="space-y-0.5 p-2">
+        <div className="space-y-0.5 p-1.5 sm:p-2">
           {filtered.map((conv) => (
             <ConversationItem
               key={conv.conversationId}

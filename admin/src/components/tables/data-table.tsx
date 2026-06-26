@@ -27,6 +27,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useMediaQuery } from "@/hooks/use-media-query";
 
 import {
   DataTablePagination,
@@ -101,8 +102,11 @@ export function DataTable<TData, TValue>({
     Record<string, Set<string>>
   >({});
 
+  const isMobile = useMediaQuery("(max-width: 640px)");
   const effectiveViewMode = viewMode ?? internalViewMode;
   const handleViewModeChange = onViewModeChange ?? setViewMode;
+  const displayViewMode =
+    isMobile && effectiveViewMode === "table" && cardRenderer ? "card" : effectiveViewMode;
 
   React.useEffect(() => {
     if (!onPaginationChange) return;
@@ -254,7 +258,7 @@ export function DataTable<TData, TValue>({
         facetedFilters={facetedFilters}
         facetedFilterValues={facetedFilterValues}
         onFacetedFilterChange={handleFacetedFilterChange}
-        viewMode={effectiveViewMode}
+        viewMode={displayViewMode}
         onViewModeChange={handleViewModeChange}
         columnVisibility={columnVisibility}
         onColumnVisibilityChange={setColumnVisibility}
@@ -270,7 +274,7 @@ export function DataTable<TData, TValue>({
       </DataTableToolbar>
 
       {hasSelection && bulkActions.length > 0 && (
-        <div className="flex items-center gap-2 rounded-md border bg-muted/50 px-4 py-2">
+        <div className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/50 px-3 py-2 sm:px-4">
           <span className="text-sm font-medium">
             {selectedRows.length} fila(s) seleccionada(s)
           </span>
@@ -293,10 +297,10 @@ export function DataTable<TData, TValue>({
             <Skeleton key={i} className="h-12 w-full" />
           ))}
         </div>
-      ) : effectiveViewMode === "table" ? (
+      ) : displayViewMode === "table" ? (
         <>
-          <div className="rounded-md border">
-            <Table>
+          <div className="w-full overflow-x-auto rounded-md border">
+            <Table className="min-w-[720px]">
               <TableHeader>
                 {table.getHeaderGroups().map((headerGroup) => (
                   <TableRow key={headerGroup.id}>
@@ -361,8 +365,8 @@ export function DataTable<TData, TValue>({
             />
           )}
         </>
-      ) : effectiveViewMode === "card" && cardRenderer ? (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      ) : displayViewMode === "card" && cardRenderer ? (
+        <div className="grid gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3">
           {displayItems.map((item, idx) => (
             <React.Fragment key={idx}>
               {cardRenderer(item)}
@@ -374,7 +378,7 @@ export function DataTable<TData, TValue>({
             </div>
           )}
         </div>
-      ) : effectiveViewMode === "list" && listRenderer ? (
+      ) : displayViewMode === "list" && listRenderer ? (
         <div className="space-y-2">
           {displayItems.map((item, idx) => (
             <React.Fragment key={idx}>
@@ -388,8 +392,8 @@ export function DataTable<TData, TValue>({
           )}
         </div>
       ) : (
-        <div className="rounded-md border">
-          <Table>
+        <div className="w-full overflow-x-auto rounded-md border">
+          <Table className="min-w-[720px]">
             <TableHeader>
               {table.getHeaderGroups().map((headerGroup) => (
                 <TableRow key={headerGroup.id}>

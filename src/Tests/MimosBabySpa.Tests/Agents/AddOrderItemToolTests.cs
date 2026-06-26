@@ -101,6 +101,25 @@ public class AddOrderItemToolTests
         capturedRequest.Quantity.Should().Be(3m);
         _commerce.Verify(c => c.UpdateItemQuantityAsync(ctx, It.IsAny<Guid>(), It.IsAny<decimal>(), It.IsAny<CancellationToken>()), Times.Never);
     }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenProductIsInactive_ReturnsRecoverableError()
+    {
+        var ctx = CreateContext();
+        var productId = Guid.NewGuid();
+
+        _commerce
+            .Setup(c => c.AddItemAsync(ctx, It.IsAny<AddOrderItemRequest>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Product inactive."));
+
+        var tool = new AddOrderItemTool(_commerce.Object, _facts.Object);
+        using var args = JsonDocument.Parse($$"""{"product_id":"{{productId}}","quantity":1}""");
+
+        var json = await tool.ExecuteAsync(args.RootElement, ctx, CancellationToken.None);
+
+        json.Should().Contain("\"ok\":false");
+        json.Should().Contain("product_inactive");
+    }
     private static ProductReference Product(Guid productId, string name, decimal unitPrice) =>
         new(
             productId,

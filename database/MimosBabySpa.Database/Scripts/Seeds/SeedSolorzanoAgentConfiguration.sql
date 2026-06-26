@@ -109,20 +109,21 @@ DECLARE @SolorzanoProducts TABLE
     UnitPrice DECIMAL(18, 2) NOT NULL,
     Currency NVARCHAR(10) NOT NULL,
     StockQuantity DECIMAL(18, 2) NULL,
+    IsActive BIT NOT NULL,
     DisplayOrder INT NOT NULL
 );
 
 INSERT INTO @SolorzanoProducts
-    (ProductId, Sku, [Name], [Description], CategoryName, UnitPrice, Currency, StockQuantity, DisplayOrder)
+    (ProductId, Sku, [Name], [Description], CategoryName, UnitPrice, Currency, StockQuantity, IsActive, DisplayOrder)
 VALUES
-    ('100E3BA9-E6BF-43E2-8C1A-560CB724688B', N'SOL-DULCE-750',     N'Dulce 750ML',     N'Vino artesanal Solorzano dulce, botella 750ML. Producto de fruta seleccionada de la region, 12 grados de alcohol.',     N'Vinos artesanales', 49900, N'COP', NULL, 1),
-    ('101E3BA9-E6BF-43E2-8C1A-560CB724688B', N'SOL-SEMIDULCE-750', N'Semidulce 750ML', N'Vino artesanal Solorzano semidulce, botella 750ML. Producto de fruta seleccionada de la region, 12 grados de alcohol.', N'Vinos artesanales', 49900, N'COP', NULL, 2),
-    ('102E3BA9-E6BF-43E2-8C1A-560CB724688B', N'SOL-SEMISECO-750',  N'Semiseco 750ML',  N'Vino artesanal Solorzano semiseco, botella 750ML. Producto de fruta seleccionada de la region, 12 grados de alcohol.',  N'Vinos artesanales', 49900, N'COP', NULL, 3),
-    ('103E3BA9-E6BF-43E2-8C1A-560CB724688B', N'SOL-MANGO-750',     N'Mango 750ML',     N'Vino artesanal Solorzano sabor mango, botella 750ML. Producto de fruta seleccionada de la region, 12 grados de alcohol.', N'Vinos artesanales', 59900, N'COP', NULL, 4),
-    ('104E3BA9-E6BF-43E2-8C1A-560CB724688B', N'SOL-PREMIUM-750',   N'Premium 750ML',   N'Vino artesanal Solorzano premium, botella 750ML. Producto de fruta seleccionada de la region, 12 grados de alcohol.',   N'Vinos artesanales', 69900, N'COP', NULL, 5),
-    ('105E3BA9-E6BF-43E2-8C1A-560CB724688B', N'SOL-DULCE-207',     N'Dulce 207ML',     N'Vino artesanal Solorzano dulce, botella 207ML. Producto de fruta seleccionada de la region, 12 grados de alcohol.',     N'Vinos artesanales', 22000, N'COP', NULL, 6),
-    ('106E3BA9-E6BF-43E2-8C1A-560CB724688B', N'SOL-SEMIDULCE-207', N'Semidulce 207ML', N'Vino artesanal Solorzano semidulce, botella 207ML. Producto de fruta seleccionada de la region, 12 grados de alcohol.', N'Vinos artesanales', 22000, N'COP', NULL, 7);
-
+    ('100E3BA9-E6BF-43E2-8C1A-560CB724688B', N'SOL-DULCE-750',     N'Dulce 750ML',     N'Vino artesanal Solorzano dulce, botella 750ML. Producto de fruta seleccionada de la region, 12 grados de alcohol.',     N'Vinos artesanales', 49900, N'COP', NULL, 0, 1),
+    ('101E3BA9-E6BF-43E2-8C1A-560CB724688B', N'SOL-SEMIDULCE-750', N'Semidulce 750ML', N'Vino artesanal Solorzano semidulce, botella 750ML. Producto de fruta seleccionada de la region, 12 grados de alcohol.', N'Vinos artesanales', 49900, N'COP', NULL, 0, 2),
+    ('102E3BA9-E6BF-43E2-8C1A-560CB724688B', N'SOL-SEMISECO-750',  N'Semiseco 750ML',  N'Vino artesanal Solorzano semiseco, botella 750ML. Producto de fruta seleccionada de la region, 12 grados de alcohol.',  N'Vinos artesanales', 49900, N'COP', NULL, 0, 3),
+    ('103E3BA9-E6BF-43E2-8C1A-560CB724688B', N'SOL-MANGO-750',     N'Mango 750ML',     N'Vino artesanal sabor mango en botella grande.', N'Vinos artesanales', 59900, N'COP', NULL, 1, 4),
+    ('104E3BA9-E6BF-43E2-8C1A-560CB724688B', N'SOL-PREMIUM-750',   N'Premium 750ML',   N'Vino artesanal Solorzano premium, botella 750ML. Producto de fruta seleccionada de la region, 12 grados de alcohol.',   N'Vinos artesanales', 69900, N'COP', NULL, 0, 5),
+    ('105E3BA9-E6BF-43E2-8C1A-560CB724688B', N'SOL-DULCE-207',     N'Dulce 207ML',     N'Vino artesanal Solorzano dulce, botella 207ML. Producto de fruta seleccionada de la region, 12 grados de alcohol.',     N'Vinos artesanales', 22000, N'COP', NULL, 0, 6),
+    ('106E3BA9-E6BF-43E2-8C1A-560CB724688B', N'SOL-SEMIDULCE-207', N'Semidulce 207ML', N'Vino artesanal Solorzano semidulce, botella 207ML. Producto de fruta seleccionada de la region, 12 grados de alcohol.', N'Vinos artesanales', 22000, N'COP', NULL, 0, 7),
+    ('107E3BA9-E6BF-43E2-8C1A-560CB724688B', N'SOL-MANGO-207',     N'Mango 207ML',     N'Vino artesanal en botella pequena.', N'Vinos artesanales', 25000, N'COP', NULL, 1, 8);
 UPDATE odi
 SET ProductId = NULL,
     UpdatedAt = GETUTCDATE()
@@ -157,7 +158,7 @@ WHEN MATCHED THEN
         Currency = source.Currency,
         ManageStock = 0,
         StockQuantity = source.StockQuantity,
-        IsActive = 1,
+        IsActive = source.IsActive,
         RawPayloadJson = NULL,
         UpdatedAt = GETUTCDATE()
 WHEN NOT MATCHED THEN
@@ -166,7 +167,7 @@ WHEN NOT MATCHED THEN
             IsActive, RawPayloadJson, LastSyncedAt, CreatedAt)
     VALUES (source.ProductId, @BusinessId, @LocalCommerceConnectionId, NULL, 0, source.Sku, source.[Name],
             source.[Description], source.CategoryName, source.UnitPrice, source.Currency, 0, source.StockQuantity,
-            1, NULL, NULL, GETUTCDATE());
+            source.IsActive, NULL, NULL, GETUTCDATE());
 
 DELETE FROM dbo.Products
 WHERE BusinessId = @BusinessId

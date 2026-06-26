@@ -52,6 +52,46 @@ public sealed class ProductRepository : IProductRepository
             .ToListAsync(ct);
     }
 
+    public async Task<(IReadOnlyList<Product> Items, int TotalCount)> GetPagedByBusinessIdAsync(
+        Guid businessId,
+        int page,
+        int pageSize,
+        string? search = null,
+        bool includeInactive = false,
+        CancellationToken ct = default)
+    {
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 100);
+        var query = _context.Products
+            .AsNoTracking()
+            .Where(p => p.BusinessId == businessId);
+
+        if (!includeInactive)
+            query = query.Where(p => p.IsActive);
+
+        if (!string.IsNullOrWhiteSpace(search))
+        {
+            foreach (var term in CatalogSearchText.GetSearchTerms(search))
+            {
+                var searchTerm = term;
+                query = query.Where(p =>
+                    p.Name.Contains(searchTerm) ||
+                    (p.Sku != null && p.Sku.Contains(searchTerm)) ||
+                    (p.Description != null && p.Description.Contains(searchTerm)) ||
+                    (p.CategoryName != null && p.CategoryName.Contains(searchTerm)));
+            }
+        }
+
+        var totalCount = await query.CountAsync(ct);
+        var items = await query
+            .OrderBy(p => p.Name)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .ToListAsync(ct);
+
+        return (items, totalCount);
+    }
+
     public Task<Product?> GetByIdAsync(Guid businessId, Guid productId, CancellationToken ct = default) =>
         _context.Products.FirstOrDefaultAsync(p => p.BusinessId == businessId && p.ProductId == productId, ct);
 

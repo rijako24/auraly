@@ -48,15 +48,15 @@ export function ChatContainer({
 
   return (
     <div className="flex h-full w-full flex-1 flex-col">
-      <ScrollArea className="min-h-0 flex-1 overflow-y-auto px-3 sm:px-4">
-        <div className="flex min-h-full flex-col gap-3 py-4 sm:gap-4">
+      <ScrollArea className="min-h-0 flex-1 overflow-y-auto px-2.5 sm:px-4">
+        <div className="flex min-h-full flex-col gap-3 py-3 sm:gap-4 sm:py-4">
           {messages.map((msg) => (
             <ChatBubble key={msg.messageId} message={msg} />
           ))}
           <div ref={scrollRef} aria-hidden />
         </div>
       </ScrollArea>
-      <div className="flex-shrink-0 border-t border-border bg-background p-2 sm:p-3">
+      <div className="flex-shrink-0 border-t border-border bg-background p-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))] sm:p-3">
         <form onSubmit={handleSubmit} className="flex items-center gap-2">
           <Button
             type="button"

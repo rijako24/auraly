@@ -20,7 +20,7 @@ export function Header({ onMobileMenuClick, className }: HeaderProps) {
   return (
     <header
       className={cn(
-        "sticky top-0 z-40 flex h-14 shrink-0 items-center gap-4 border-b border-border bg-background/95 px-4 backdrop-blur supports-[backdrop-filter]:bg-background/60",
+        "sticky top-0 z-40 flex min-h-14 shrink-0 items-center gap-2 border-b border-border bg-background/95 px-2 py-2 backdrop-blur supports-[backdrop-filter]:bg-background/60 sm:gap-3 sm:px-4 lg:gap-4",
         className
       )}
     >
@@ -28,7 +28,7 @@ export function Header({ onMobileMenuClick, className }: HeaderProps) {
       <Button
         variant="ghost"
         size="icon"
-        className="lg:hidden"
+        className="h-9 w-9 shrink-0 lg:hidden"
         onClick={onMobileMenuClick}
         aria-label="Abrir menú"
       >
@@ -37,9 +37,9 @@ export function Header({ onMobileMenuClick, className }: HeaderProps) {
 
       <BusinessSwitcher />
 
-      <BreadcrumbNav className="flex-1 min-w-0" />
+      <BreadcrumbNav className="hidden min-w-0 flex-1 sm:block" />
 
-      <div className="flex items-center gap-1">
+      <div className="ml-auto flex shrink-0 items-center gap-0.5 sm:gap-1">
         {/* Search - opens command palette */}
         <SearchCommand />
 

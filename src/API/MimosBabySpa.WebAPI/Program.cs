@@ -186,6 +186,7 @@ builder.Services.AddScoped<IAuditService, AuditService>();
 builder.Services.AddScoped<ITenantService, TenantService>();
 builder.Services.AddScoped<IBusinessAdminService, BusinessAdminService>();
 builder.Services.AddScoped<IServiceAdminService, ServiceAdminService>();
+builder.Services.AddScoped<IProductAdminService, ProductAdminService>();
 builder.Services.AddScoped<IPromotionAdminService, PromotionAdminService>();
 builder.Services.AddScoped<IEmployeeAdminService, EmployeeAdminService>();
 builder.Services.AddScoped<IReservationAdminService, ReservationAdminService>();

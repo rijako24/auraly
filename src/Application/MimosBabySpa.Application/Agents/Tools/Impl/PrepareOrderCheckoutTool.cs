@@ -71,6 +71,19 @@ public sealed class PrepareOrderCheckoutTool : IAgentTool
         if (items.Count == 0)
             return ToolResultHelper.MissingPrerequisites(["order_items"]);
 
+        foreach (var productId in items.Select(i => i.ProductId).Where(id => id.HasValue).Select(id => id!.Value).Distinct())
+        {
+            var product = await _unitOfWork.Products.GetByIdAsync(ctx.BusinessId, productId, cancellationToken);
+            if (product is not null && !product.IsActive)
+            {
+                return ToolResultHelper.Error(
+                    "product_inactive",
+                    "The order contains an inactive product and cannot be checked out.",
+                    "Remove the inactive product from the order and call search_products for active alternatives.",
+                    recoverable: true);
+            }
+        }
+
         var checkout = ctx.Config?.Checkout ?? new CheckoutDefinitions();
         var checkoutMode = checkout.ResolveMode("order");
         if (checkoutMode is null)

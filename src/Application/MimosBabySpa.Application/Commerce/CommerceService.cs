@@ -1,4 +1,4 @@
-﻿using System.Globalization;
+using System.Globalization;
 using System.Text.Json;
 using MimosBabySpa.Application.Agents;
 using MimosBabySpa.Application.Agents.Configuration;
@@ -44,6 +44,9 @@ public sealed class CommerceService : ICommerceService
         var product = await adapter.GetProductAsync(request, adapterContext, ct)
             ?? await FindCachedProductAsync(request, adapterContext, ct)
             ?? throw new InvalidOperationException("Product not found.");
+
+        if (!product.IsActive)
+            throw new InvalidOperationException("Product inactive.");
 
         var draft = await GetOrCreateDraftAsync(ctx, adapterContext, ct);
         var unitPrice = request.UnitPrice ?? product.UnitPrice;
@@ -223,8 +226,9 @@ public sealed class CommerceService : ICommerceService
                 product.UnitPrice,
                 product.Currency,
                 product.StockQuantity,
-                product.IsActive,
-                RawPayloadJson: product.RawPayloadJson);
+                product.IsActive && (!product.ManageStock || (product.StockQuantity ?? 0) > 0),
+                RawPayloadJson: product.RawPayloadJson)
+            { IsActive = product.IsActive };
     }
 
     private async Task<Product?> FindCachedProductBySkuAsync(Guid businessId, Guid? connectionId, string sku, CancellationToken ct)
@@ -426,6 +430,8 @@ public sealed class CommerceService : ICommerceService
         if (draftItems.Count == 0)
             throw new InvalidOperationException("Order has no items.");
 
+        await EnsureOrderProductsActiveAsync(draft.BusinessId, draftItems, ct);
+
         var order = new Order
         {
             OrderId = Guid.NewGuid(),
@@ -483,6 +489,16 @@ public sealed class CommerceService : ICommerceService
         await _unitOfWork.OrderDrafts.DeleteAsync(draft, ct);
         await _unitOfWork.SaveChangesAsync(ct);
         return order;
+    }
+
+    private async Task EnsureOrderProductsActiveAsync(Guid businessId, IReadOnlyList<OrderDraftItem> items, CancellationToken ct)
+    {
+        foreach (var productId in items.Select(i => i.ProductId).Where(id => id.HasValue).Select(id => id!.Value).Distinct())
+        {
+            var product = await _unitOfWork.Products.GetByIdAsync(businessId, productId, ct);
+            if (product is not null && !product.IsActive)
+                throw new InvalidOperationException("Product inactive.");
+        }
     }
 
     private async Task SyncExternalOrderIfNeededAsync(Order order, CommerceAdapterContext adapterContext, CancellationToken ct)

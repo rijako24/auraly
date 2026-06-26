@@ -35,13 +35,13 @@ export function ConversationItem({
       type="button"
       onClick={onClick}
       className={cn(
-        "flex w-full items-start gap-3 rounded-lg p-3 text-left transition-colors",
+        "flex w-full items-start gap-3 rounded-lg p-2.5 text-left transition-colors sm:p-3",
         "hover:bg-muted/80 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2",
         isActive && "bg-muted"
       )}
     >
       <div className="relative flex-shrink-0">
-        <Avatar className="h-11 w-11">
+        <Avatar className="h-10 w-10 sm:h-11 sm:w-11">
           <AvatarFallback className="bg-primary/10 text-primary text-sm font-medium">
             {getInitials(displayName)}
           </AvatarFallback>
@@ -76,7 +76,7 @@ export function ConversationItem({
             variant="secondary"
             style={stageStyle}
             className={cn(
-              "text-xs font-medium shadow-sm",
+              "max-w-full truncate text-xs font-medium shadow-sm",
               stageColor
             )}
           >

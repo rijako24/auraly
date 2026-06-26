@@ -114,13 +114,13 @@ export default function ConversationsPage() {
   return (
     <div
       className={cn(
-        "relative flex h-[calc(100dvh-7rem)] overflow-hidden rounded-lg border border-border bg-card",
-        "max-lg:-mx-4 max-lg:h-[calc(100dvh-5.5rem)] max-lg:rounded-none max-lg:border-x-0"
+        "relative flex h-[calc(100dvh-6rem)] overflow-hidden rounded-lg border border-border bg-card",
+        "max-lg:-mx-3 max-lg:h-[calc(100dvh-4.5rem)] max-lg:rounded-none max-lg:border-x-0 sm:max-lg:-mx-4"
       )}
     >
       <div
         className={cn(
-          "flex w-[360px] flex-shrink-0 flex-col overflow-hidden",
+          "flex w-[360px] max-w-full flex-shrink-0 flex-col overflow-hidden",
           isMobile && "absolute inset-0 z-10 w-full",
           isMobile && !showList && "hidden"
         )}
@@ -144,17 +144,17 @@ export default function ConversationsPage() {
       >
         {selectedConversation ? (
           <>
-            <div className="flex flex-shrink-0 items-center gap-3 border-b border-border bg-muted/30 px-3 py-3 sm:px-4">
+            <div className="flex flex-shrink-0 items-center gap-2 border-b border-border bg-muted/30 px-2.5 py-2.5 sm:gap-3 sm:px-4 sm:py-3">
               <Button
                 variant="ghost"
                 size="icon"
-                className="md:hidden"
+                className="h-9 w-9 shrink-0 md:hidden"
                 onClick={handleBackToList}
                 aria-label="Volver a conversaciones"
               >
                 <ArrowLeft className="h-5 w-5" />
               </Button>
-              <Avatar className="h-10 w-10 flex-shrink-0">
+              <Avatar className="h-9 w-9 flex-shrink-0 sm:h-10 sm:w-10">
                 <AvatarFallback className="bg-primary/10 text-sm font-medium text-primary">
                   {getInitials(selectedConversation.customerName ?? selectedConversation.userNumber)}
                 </AvatarFallback>
@@ -175,7 +175,7 @@ export default function ConversationsPage() {
               >
                 {stageLabel}
               </Badge>
-              <div className="flex flex-shrink-0 items-center gap-2">
+              <div className="flex flex-shrink-0 items-center gap-1.5 sm:gap-2">
                 <span className="hidden text-xs font-medium text-muted-foreground sm:inline">
                   {botEnabled ? "Bot activo" : "Humano"}
                 </span>

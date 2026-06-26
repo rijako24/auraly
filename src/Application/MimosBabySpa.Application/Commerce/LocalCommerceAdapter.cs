@@ -67,10 +67,11 @@ public sealed class LocalCommerceAdapter : ICommerceAdapter
             product.UnitPrice,
             product.Currency,
             product.StockQuantity,
-            !product.ManageStock || (product.StockQuantity ?? 0) > 0,
+            product.IsActive && (!product.ManageStock || (product.StockQuantity ?? 0) > 0),
             null,
             null,
             null,
             null,
-            product.RawPayloadJson);
+            product.RawPayloadJson)
+        { IsActive = product.IsActive };
 }

@@ -11,6 +11,14 @@ public interface IProductRepository
         int limit,
         CancellationToken ct = default);
 
+    Task<(IReadOnlyList<Product> Items, int TotalCount)> GetPagedByBusinessIdAsync(
+        Guid businessId,
+        int page,
+        int pageSize,
+        string? search = null,
+        bool includeInactive = false,
+        CancellationToken ct = default);
+
     Task<Product?> GetByIdAsync(Guid businessId, Guid productId, CancellationToken ct = default);
     Task<Product?> GetByExternalIdAsync(Guid businessId, Guid integrationConnectionId, string externalProductId, CancellationToken ct = default);
     Task<Product> CreateAsync(Product product, CancellationToken ct = default);

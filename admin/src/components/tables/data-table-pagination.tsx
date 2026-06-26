@@ -71,13 +71,13 @@ export function DataTablePagination({
   return (
     <div
       className={cn(
-        "flex items-center justify-between gap-4 px-2 py-4",
+        "flex flex-col items-stretch justify-between gap-3 px-1 py-3 sm:flex-row sm:items-center sm:gap-4 sm:px-2 sm:py-4",
         className
       )}
     >
-      <div className="flex flex-1 items-center gap-4">
-        <div className="flex items-center gap-2">
-          <p className="text-sm text-muted-foreground">
+      <div className="flex flex-1 flex-wrap items-center justify-between gap-2 sm:justify-start sm:gap-4">
+        <div className="flex items-center justify-end gap-1 sm:gap-2">
+          <p className="text-xs text-muted-foreground sm:text-sm">
             Filas por página
           </p>
           <Select
@@ -97,16 +97,16 @@ export function DataTablePagination({
           </Select>
         </div>
         {totalItems !== undefined && (
-          <p className="text-sm text-muted-foreground">
+          <p className="text-xs text-muted-foreground sm:text-sm">
             {startItem}-{endItem} de {totalItems}
           </p>
         )}
       </div>
-      <div className="flex items-center gap-2">
+      <div className="flex items-center justify-end gap-1 sm:gap-2">
         <Button
           variant="outline"
           size="icon"
-          className="h-8 w-8"
+          className="hidden h-8 w-8 sm:inline-flex"
           onClick={() => onPageChange(0)}
           disabled={!canPreviousPage}
         >
@@ -123,7 +123,7 @@ export function DataTablePagination({
           <ChevronLeft className="h-4 w-4" />
           <span className="sr-only">Página anterior</span>
         </Button>
-        <div className="flex items-center gap-1">
+        <div className="hidden items-center gap-1 sm:flex">
           {getPageNumbers().map((page, idx) =>
             page === "ellipsis" ? (
               <span key={`ellipsis-${idx}`} className="px-2 text-sm">
@@ -155,7 +155,7 @@ export function DataTablePagination({
         <Button
           variant="outline"
           size="icon"
-          className="h-8 w-8"
+          className="hidden h-8 w-8 sm:inline-flex"
           onClick={() => onPageChange(pageCount - 1)}
           disabled={!canNextPage}
         >

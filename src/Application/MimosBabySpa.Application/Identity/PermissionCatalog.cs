@@ -27,6 +27,8 @@ public static class PermissionCatalog
         ("Services", "Create", "services.create", "Crear servicios"),
         ("Services", "Update", "services.update", "Actualizar servicios"),
         ("Services", "Delete", "services.delete", "Eliminar servicios"),
+        ("Products", "Read", "products.read", "Ver productos"),
+        ("Products", "Update", "products.update", "Activar o inactivar productos"),
         ("Promotions", "Read", "promotions.read", "Ver promociones"),
         ("Promotions", "Create", "promotions.create", "Crear promociones"),
         ("Promotions", "Update", "promotions.update", "Actualizar promociones"),
