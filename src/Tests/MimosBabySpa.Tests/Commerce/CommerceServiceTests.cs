@@ -48,6 +48,9 @@ public class CommerceServiceTests
         var adapterFactory = new Mock<ICommerceAdapterFactory>();
         var adapter = new Mock<ICommerceAdapter>();
         var promotions = new Mock<IPromotionPricingService>();
+        var availability = new Mock<IProductCatalogAvailabilityService>();
+        availability.Setup(a => a.IsSellable(It.IsAny<ProductReference>()))
+            .Returns<ProductReference>(p => p.IsActive && p.IsAvailable);
 
         unitOfWork.SetupGet(u => u.OrderDrafts).Returns(orderDrafts.Object);
         unitOfWork.SetupGet(u => u.OrderDraftItems).Returns(orderDraftItems.Object);
@@ -90,7 +93,7 @@ public class CommerceServiceTests
             .Returns<Guid, IReadOnlyList<PromotionPricingItem>, DateTime?, CancellationToken>((_, items, _, _) =>
                 Task.FromResult(PromotionPricingResult.Empty(items)));
 
-        var service = new CommerceService(unitOfWork.Object, adapterFactory.Object, promotions.Object);
+        var service = new CommerceService(unitOfWork.Object, adapterFactory.Object, promotions.Object, availability.Object);
         var ctx = new AgentToolContext
         {
             BusinessId = businessId,
@@ -121,6 +124,9 @@ public class CommerceServiceTests
         var adapterFactory = new Mock<ICommerceAdapterFactory>();
         var adapter = new Mock<ICommerceAdapter>();
         var promotions = new Mock<IPromotionPricingService>();
+        var availability = new Mock<IProductCatalogAvailabilityService>();
+        availability.Setup(a => a.IsSellable(It.IsAny<ProductReference>()))
+            .Returns<ProductReference>(p => p.IsActive && p.IsAvailable);
 
         unitOfWork.SetupGet(u => u.IntegrationConnections).Returns(integrationConnections.Object);
         integrationConnections
@@ -144,7 +150,7 @@ public class CommerceServiceTests
                 false)
             { IsActive = false });
 
-        var service = new CommerceService(unitOfWork.Object, adapterFactory.Object, promotions.Object);
+        var service = new CommerceService(unitOfWork.Object, adapterFactory.Object, promotions.Object, availability.Object);
         var ctx = new AgentToolContext
         {
             BusinessId = businessId,

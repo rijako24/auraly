@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.Json;
+using MimosBabySpa.Application.Commerce;
 using MimosBabySpa.Application.Agents.Configuration;
 using MimosBabySpa.Application.Agents.Facts;
 using MimosBabySpa.Application.Agents.Gating;
@@ -14,17 +15,20 @@ namespace MimosBabySpa.Application.Agents.Tools.Impl;
 public sealed class PrepareOrderCheckoutTool : IAgentTool
 {
     private readonly IUnitOfWork _unitOfWork;
+    private readonly IProductCatalogAvailabilityService _availability;
     private readonly ICheckoutPaymentCoordinator _checkoutPayments;
     private readonly IConversationFactsService _factsService;
     private readonly IConversationVerificationService _verifications;
 
     public PrepareOrderCheckoutTool(
         IUnitOfWork unitOfWork,
+        IProductCatalogAvailabilityService availability,
         ICheckoutPaymentCoordinator checkoutPayments,
         IConversationFactsService factsService,
         IConversationVerificationService verifications)
     {
         _unitOfWork = unitOfWork;
+        _availability = availability;
         _checkoutPayments = checkoutPayments;
         _factsService = factsService;
         _verifications = verifications;
@@ -72,18 +76,14 @@ public sealed class PrepareOrderCheckoutTool : IAgentTool
         var items = await _unitOfWork.OrderDraftItems.GetByDraftIdAsync(ctx.BusinessId, order.OrderDraftId, cancellationToken);
         if (items.Count == 0)
             return ToolResultHelper.MissingPrerequisites(["order_items"]);
-
-        foreach (var productId in items.Select(i => i.ProductId).Where(id => id.HasValue).Select(id => id!.Value).Distinct())
+        var unavailableItems = await _availability.FindUnavailableDraftItemsAsync(ctx.BusinessId, items, cancellationToken);
+        if (unavailableItems.Count > 0)
         {
-            var product = await _unitOfWork.Products.GetByIdAsync(ctx.BusinessId, productId, cancellationToken);
-            if (product is not null && !product.IsActive)
-            {
-                return ToolResultHelper.Error(
-                    "product_inactive",
-                    "The order contains an inactive product and cannot be checked out.",
-                    "Remove the inactive product from the order and call search_products for active alternatives.",
-                    recoverable: true);
-            }
+            return ToolResultHelper.Error(
+                "product_inactive",
+                "The order contains an unavailable product and cannot be checked out.",
+                "Remove the unavailable product from the order and call search_products for active alternatives.",
+                recoverable: true);
         }
 
         var checkout = ctx.Config?.Checkout ?? new CheckoutDefinitions();

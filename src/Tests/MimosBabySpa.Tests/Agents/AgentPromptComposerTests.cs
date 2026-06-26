@@ -1,8 +1,10 @@
+using System.Text.Json;
 using FluentAssertions;
 using MimosBabySpa.Application.Agents;
 using MimosBabySpa.Application.Agents.Composition;
 using MimosBabySpa.Application.Agents.Configuration;
 using MimosBabySpa.Application.Agents.Gating;
+using MimosBabySpa.Application.Agents.Tools;
 using MimosBabySpa.Application.Time;
 using MimosBabySpa.Domain.Entities;
 using MimosBabySpa.Domain.Enums;
@@ -43,14 +45,16 @@ public class AgentPromptComposerTests
         AgentConfig config,
         IEnumerable<Message> history,
         AgentToolContext? session = null,
-        PaymentTransaction? latestPayment = null) =>
+        PaymentTransaction? latestPayment = null,
+        IReadOnlyList<IAgentTool>? enabledTools = null) =>
         Composer.Compose(new PromptCompositionInput
         {
             Config = config,
             History = history,
             Temporal = DefaultTemporal,
             Session = session,
-            LatestPayment = latestPayment
+            LatestPayment = latestPayment,
+            EnabledTools = enabledTools ?? []
         });
 
     [Fact]
@@ -519,7 +523,7 @@ public class AgentPromptComposerTests
         {
             Conversation = new Conversation(),
             Facts = []
-        });
+        }, enabledTools: [new TestTool("get_customer_reservations"), new TestTool("confirm_reservation_change")]);
 
         result.Should().Contain("## ACCIONES TRANSVERSALES");
         result.Should().Contain("manage_existing_reservation");
@@ -547,7 +551,7 @@ public class AgentPromptComposerTests
             ]
         };
 
-        var result = Compose(config, []);
+        var result = Compose(config, [], enabledTools: [new TestTool("escalate_to_human")]);
 
         result.Should().Contain("## ACCIONES TRANSVERSALES");
         result.Should().Contain("human_escalation");
@@ -772,4 +776,36 @@ public class AgentPromptComposerTests
         result.Should().Contain("2026-05-28");
     }
 
+    [Fact]
+    public void Compose_WhenOutsideOperatingHours_NamesBlockedOrderActionsAndForbidsClaimingOrderProgress()
+    {
+        var session = new AgentToolContext
+        {
+            Conversation = new Conversation(),
+            OperatingHours = new OperatingHoursTurnContext(
+                true,
+                true,
+                [ToolOperatingGroups.OrderIntake],
+                ["add_order_item", "create_order"],
+                "viernes 26 de junio de 1:00 p. m. a 9:00 p. m.")
+        };
+
+        var result = Compose(DefaultConfig, [], session);
+
+        result.Should().Contain("## HORARIO OPERATIVO DEL TURNO");
+        result.Should().Contain("Acciones bloqueadas por horario: add_order_item, create_order");
+        result.Should().Contain("No digas que agregaste productos");
+        result.Should().Contain("solo puedes tomar pedidos en el proximo horario habil");
+    }
+    private sealed class TestTool : IAgentTool
+    {
+        public TestTool(string name) => Name = name;
+
+        public string Name { get; }
+        public string Description => "Test tool";
+        public string ParametersSchema => """{"type":"object"}""";
+
+        public Task<string> ExecuteAsync(JsonElement arguments, AgentToolContext ctx, CancellationToken cancellationToken = default) =>
+            Task.FromResult("{}");
+    }
 }

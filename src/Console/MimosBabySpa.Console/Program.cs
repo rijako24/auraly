@@ -110,6 +110,7 @@ services.AddSingleton<ITemporalReferenceBuilder, TemporalReferenceBuilder>();
 services.AddScoped<ICatalogContentGenerator, CatalogContentGenerator>();
 services.AddScoped<IAddOnCatalogService, AddOnCatalogService>();
 services.AddScoped<IUsageBillingService, UsageBillingService>();
+services.AddScoped<IProductCatalogAvailabilityService, ProductCatalogAvailabilityService>();
 services.AddScoped<ICommerceService, CommerceService>();
 services.AddScoped<ICommerceAdapter, LocalCommerceAdapter>();
 services.AddHttpClient<SiigoCommerceAdapter>();
@@ -206,6 +207,8 @@ services.AddSingleton<IFlowStageDetector, FlowStageDetector>();
 services.AddScoped<IConversationVerificationService, ConversationVerificationService>();
 services.AddScoped<IGuardEvaluator, GuardEvaluator>();
 services.AddScoped<IToolCapabilityGate, ToolCapabilityGate>();
+services.AddScoped<IOperatingHoursTurnPolicy, OperatingHoursTurnPolicy>();
+services.AddScoped<IAgentTurnToolResolver, AgentTurnToolResolver>();
 services.AddScoped<IPromptComposer, AgentPromptComposer>();
 
 services.AddScoped<IAgentTemplateResolver, AgentTemplateResolver>();

@@ -261,7 +261,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
     "gatedGroups": ["order_intake"]
   },
   "persona": "Eres el asistente comercial de Vinos Artesanales Solorzano. Atiendes en espanol con tono humano, cercano y confiable, guiando la compra sin presion.\n\nResponde claro y breve. Para datos, opciones, resumen, envio o pago, usa listas cortas con campos claros.",
-  "policies": "## PRODUCTO\n\n- Comunica que los vinos artesanales Solorzano no son elaborados a base de uva y tienen 12 grados de alcohol cuando sea relevante.",
+  "policies": "## PRODUCTO\n\n- Comunica que los vinos artesanales Solorzano no son elaborados a base de uva y tienen 12 grados de alcohol cuando sea relevante.\n- Para catalogo, precios, tamanos, sabores y disponibilidad, no repitas listas del historial: usa solo productos activos devueltos por search_products en el turno vigente.",
   "messageSequences": {
     "wine_prices_image": {
       "messages": [
@@ -403,7 +403,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         "id": "discovery",
         "name": "Descubrimiento y recomendacion",
         "goal": "Dar la bienvenida, presentar el catalogo inicial sin precios y construir el carrito hasta que el cliente finalice la compra.",
-        "hint": "En saludos o informacion inicial, primero llama search_products con query vino y limit 10. Responde dando la bienvenida a Vinos Artesanales Solorzano e indica: somos productores de vinos elaborados con fruta seleccionada de nuestra region. Luego presenta hasta 10 productos activos devueltos por search_products sin mencionar precios, y cierra exactamente con: Que vino te gustaria degustar el dia de hoy?. Para recomendaciones por ocasion, opciones, precios, promos, tamanos, presentaciones o sabores, llama search_products antes de responder; usa query vino, limit 5 cuando la ocasion sea general. Si el cliente selecciona por numero, precio, tamano, sabor, nombre parcial o descripcion, resuelve contra el ultimo search_products; si hay una coincidencia razonable pero falta cantidad, pregunta cuantas unidades quiere. Agrega al carrito solo cuando producto y cantidad expresa esten claros. Despues de add_order_item exitoso, muestra el carrito y pregunta: Quieres agregar algo mas a la compra? Si responde con una negacion y existe al menos un item, llama set_fact order_finalized=true; si el carrito esta vacio, ayuda a elegir un producto primero.",
+        "hint": "En saludos o informacion inicial, primero llama search_products con query vino y limit 10. Responde dando la bienvenida a Vinos Artesanales Solorzano e indica: somos productores de vinos elaborados con fruta seleccionada de nuestra region. Luego presenta hasta 10 productos activos devueltos por search_products sin mencionar precios, y cierra exactamente con: Que vino te gustaria degustar el dia de hoy?. Para recomendaciones por ocasion, opciones, precios, promos, tamanos, presentaciones o sabores, llama search_products antes de responder; usa query vino, limit 5 cuando la ocasion sea general. Si el cliente selecciona por numero, precio, tamano, sabor, nombre parcial o descripcion, resuelve solo contra productos activos devueltos por search_products en el turno vigente; si no hay resultado vigente o la referencia no aparece, llama search_products antes de responder o agregar. Si hay una coincidencia razonable pero falta cantidad, pregunta cuantas unidades quiere. Agrega al carrito solo cuando producto y cantidad expresa esten claros. Despues de add_order_item exitoso, muestra el carrito y pregunta: Quieres agregar algo mas a la compra? Si responde con una negacion y existe al menos un item, llama set_fact order_finalized=true; si el carrito esta vacio, ayuda a elegir un producto primero.",
         "allowedTools": [
           "search_products",
           "add_order_item",
@@ -523,7 +523,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "id": "modify_current_order",
       "priority": 90,
       "goal": "Modificar el carrito actual cuando el cliente, despues de decir que no agregaba mas o despues de recibir el resumen/link, pida agregar, quitar o cambiar productos/cantidades.",
-      "hint": "Si el cliente quiere agregar, quitar, reducir cantidades, cambiar productos o ver opciones para modificar el pedido actual, esta accion tiene prioridad sobre pedir datos de envio o verificar pago. Si ya hubo resumen o link de pago, primero modifica el carrito y luego genera un resumen/link nuevo. Para cualquier cambio sobre carrito ya existente, llama get_order_draft primero. Para cambiar la cantidad total de un producto ya en carrito (ej: mejor quiero llevar 3, dejalo en 3, cambia a 3), llama update_order_item_quantity con quantity igual a la cantidad final deseada. Para quitar un item completo, llama remove_order_item sin quantity; para reducirlo a una cantidad final menor, llama remove_order_item con quantity igual a la cantidad final deseada. Si hay varios items y la referencia del producto queda ambigua, pregunta una sola vez usando los nombres de los productos del carrito. Para agregar producto nuevo o unidades adicionales (ej: agrega 3 mas), llama add_order_item; si falta producto, llama search_products; si falta cantidad, pregunta solo cuantas unidades. Si pide otro tamano, presentacion, sabor u opciones parecidas, llama search_products antes de responder y menciona solo alternativas devueltas por la herramienta. Despues de add_order_item, remove_order_item o update_order_item_quantity exitoso, llama get_order_draft y muestra el carrito actualizado. Si el carrito quedo vacio, ayuda a elegir producto. Si el carrito tiene items y ya existen city, delivery_address, delivery_phone, customer_name y payment_method, llama set_fact order_finalized=true y luego prepare_order_checkout en el mismo turno para recalcular total y link; presenta el nuevo resumen/link como la version vigente del pedido. Si faltan datos de envio o metodo de pago, pide solo lo faltante.",
+      "hint": "Si el cliente quiere agregar, quitar, reducir cantidades, cambiar productos o ver opciones para modificar el pedido actual, esta accion tiene prioridad sobre pedir datos de envio o verificar pago. Si ya hubo resumen o link de pago, primero modifica el carrito y luego genera un resumen/link nuevo. Para cualquier cambio sobre carrito ya existente, llama get_order_draft primero. Para cambiar la cantidad total de un producto ya en carrito, llama update_order_item_quantity con quantity igual a la cantidad final deseada. Para quitar un item completo, llama remove_order_item sin quantity; para reducirlo a una cantidad final menor, llama remove_order_item con quantity igual a la cantidad final deseada. Si hay varios items y la referencia del producto queda ambigua, pregunta una sola vez usando los nombres de los productos del carrito. Para agregar producto nuevo o unidades adicionales, llama add_order_item solo con producto vigente devuelto por search_products; si falta producto o la referencia viene de una lista anterior, llama search_products; si falta cantidad, pregunta solo cuantas unidades. Si pide otro tamano, presentacion, sabor u opciones parecidas, llama search_products antes de responder y menciona solo alternativas devueltas por la herramienta. Despues de add_order_item, remove_order_item o update_order_item_quantity exitoso, llama get_order_draft y muestra el carrito actualizado. Si el carrito quedo vacio, ayuda a elegir producto. Si el carrito tiene items y ya existen city, delivery_address, delivery_phone, customer_name y payment_method, llama set_fact order_finalized=true y luego prepare_order_checkout en el mismo turno para recalcular total y link; presenta el nuevo resumen/link como la version vigente del pedido. Si faltan datos de envio o metodo de pago, pide solo lo faltante.",
       "allowedTools": [
         "search_products",
         "add_order_item",
@@ -750,21 +750,21 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "sendMessageSequence": "order_created"
     },
     "delivery_requested": {
-      "enabled": true,
+      "enabled": false,
       "recipients": [
         "+573004442469"
       ],
       "sendMessageSequence": "delivery_requested"
     },
     "delivery_confirmed": {
-      "enabled": true,
+      "enabled": false,
       "recipients": [
         "+573004442469"
       ],
       "sendMessageSequence": "delivery_confirmed"
     },
     "delivery_unavailable": {
-      "enabled": true,
+      "enabled": false,
       "recipients": [
         "+573004442469"
       ],
@@ -783,10 +783,10 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         "+573004442469"
       ] },
     "external": {
-      "enabled": true,
+      "enabled": false,
       "events": {
         "order_created": {
-          "enabled": true,
+          "enabled": false,
           "contactType": "delivery",
           "pickupAddress": "Calle 16 # 9-35, Centro, Valledupar",
           "attemptTimeoutMinutes": 15,

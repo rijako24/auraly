@@ -18,10 +18,11 @@ public class AddOrderItemToolTests
     private readonly Mock<IConversationFactsService> _facts = new();
 
     [Fact]
-    public async Task ExecuteAsync_WhenModelSendsStaleProductId_ResolvesFromLastSearchDynamically()
+    public async Task ExecuteAsync_WhenExplicitProductIdProvided_DoesNotReplaceItWithSelectedProduct()
     {
         var ctx = CreateContext();
-        var expectedProductId = Guid.NewGuid();
+        var selectedProductId = Guid.NewGuid();
+        var suppliedProductId = Guid.NewGuid();
         AddOrderItemRequest? capturedRequest = null;
 
         _commerce
@@ -30,9 +31,7 @@ public class AddOrderItemToolTests
                 It.IsAny<ProductSearchRequest>(),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ProductSearchResult([
-                Product(Guid.NewGuid(), "Gift Pack 750 ml", 80000m),
-                Product(expectedProductId, "Tropical Bottle 207 ml", 26000m),
-                Product(Guid.NewGuid(), "Tropical Bottle 750 ml", 60000m)
+                Product(selectedProductId, "Mango 750ML", 59900m)
             ], "local"));
 
         _commerce
@@ -42,27 +41,28 @@ public class AddOrderItemToolTests
                 Guid.NewGuid(),
                 OrderStatus.Draft,
                 "COP",
-                52000m,
+                119800m,
                 0m,
                 0m,
-                52000m,
+                119800m,
                 []));
 
         var searchTool = new SearchProductsTool(_commerce.Object, _facts.Object);
-        ctx.LatestUserMessage = "show me options";
-        using (var searchArgs = JsonDocument.Parse("""{"query":"wine","limit":3}"""))
+        ctx.LatestUserMessage = "quiero mango";
+        using (var searchArgs = JsonDocument.Parse("""{"query":"mango","limit":5}"""))
         {
             await searchTool.ExecuteAsync(searchArgs.RootElement, ctx, CancellationToken.None);
         }
 
         var addTool = new AddOrderItemTool(_commerce.Object, _facts.Object);
-        ctx.LatestUserMessage = "give me 2 of 207 ml";
-        using var addArgs = JsonDocument.Parse($$"""{"product_id":"{{Guid.NewGuid()}}","quantity":2}""");
+        ctx.LatestUserMessage = "agrega 2";
+        using var addArgs = JsonDocument.Parse($$"""{"product_id":"{{suppliedProductId}}","quantity":2}""");
         var json = await addTool.ExecuteAsync(addArgs.RootElement, ctx, CancellationToken.None);
 
         json.Should().Contain("\"ok\":true");
         capturedRequest.Should().NotBeNull();
-        capturedRequest!.ProductId.Should().Be(expectedProductId);
+        capturedRequest!.ProductId.Should().Be(suppliedProductId);
+        capturedRequest.ProductId.Should().NotBe(selectedProductId);
         capturedRequest.Quantity.Should().Be(2m);
     }
 
@@ -120,6 +120,89 @@ public class AddOrderItemToolTests
         json.Should().Contain("\"ok\":false");
         json.Should().Contain("product_inactive");
     }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenQuantityOnlyAfterSingleSelectedProduct_AddsSelectedProduct()
+    {
+        var ctx = CreateContext();
+        var productId = Guid.NewGuid();
+        AddOrderItemRequest? capturedRequest = null;
+
+        _commerce
+            .Setup(c => c.SearchProductsAsync(
+                ctx,
+                It.IsAny<ProductSearchRequest>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ProductSearchResult([
+                Product(productId, "Mango 750ML", 59900m)
+            ], "local"));
+
+        _commerce
+            .Setup(c => c.AddItemAsync(ctx, It.IsAny<AddOrderItemRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<AgentToolContext, AddOrderItemRequest, CancellationToken>((_, request, _) => capturedRequest = request)
+            .ReturnsAsync(new OrderSnapshot(
+                Guid.NewGuid(),
+                OrderStatus.Draft,
+                "COP",
+                119800m,
+                0m,
+                0m,
+                119800m,
+                []));
+
+        var searchTool = new SearchProductsTool(_commerce.Object, _facts.Object);
+        ctx.LatestUserMessage = "quiero mango";
+        using (var searchArgs = JsonDocument.Parse("""{"query":"mango","limit":5}"""))
+        {
+            await searchTool.ExecuteAsync(searchArgs.RootElement, ctx, CancellationToken.None);
+        }
+
+        var addTool = new AddOrderItemTool(_commerce.Object, _facts.Object);
+        ctx.LatestUserMessage = "2";
+        using var addArgs = JsonDocument.Parse("""{"quantity":2}""");
+
+        var json = await addTool.ExecuteAsync(addArgs.RootElement, ctx, CancellationToken.None);
+
+        json.Should().Contain("\"ok\":true");
+        capturedRequest.Should().NotBeNull();
+        capturedRequest!.ProductId.Should().Be(productId);
+        capturedRequest.Quantity.Should().Be(2m);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenQuantityOnlyAndPreviousSearchIsAmbiguous_DoesNotListStaleCandidates()
+    {
+        var ctx = CreateContext();
+        _commerce
+            .Setup(c => c.SearchProductsAsync(
+                ctx,
+                It.IsAny<ProductSearchRequest>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ProductSearchResult([
+                Product(Guid.NewGuid(), "Dulce 750ML", 49900m),
+                Product(Guid.NewGuid(), "Premium 750ML", 69900m)
+            ], "local"));
+
+        var searchTool = new SearchProductsTool(_commerce.Object, _facts.Object);
+        ctx.LatestUserMessage = "que vinos tienes?";
+        using (var searchArgs = JsonDocument.Parse("""{"query":"vino","limit":10}"""))
+        {
+            await searchTool.ExecuteAsync(searchArgs.RootElement, ctx, CancellationToken.None);
+        }
+
+        var addTool = new AddOrderItemTool(_commerce.Object, _facts.Object);
+        ctx.LatestUserMessage = "1";
+        using var addArgs = JsonDocument.Parse("""{"quantity":1}""");
+
+        var json = await addTool.ExecuteAsync(addArgs.RootElement, ctx, CancellationToken.None);
+
+        json.Should().Contain("missing_prerequisites");
+        json.Should().Contain("search_products");
+        json.Should().NotContain("Dulce 750ML");
+        json.Should().NotContain("Premium 750ML");
+        _commerce.Verify(c => c.AddItemAsync(ctx, It.IsAny<AddOrderItemRequest>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
     private static ProductReference Product(Guid productId, string name, decimal unitPrice) =>
         new(
             productId,

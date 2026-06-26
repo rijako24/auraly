@@ -121,6 +121,10 @@ public sealed class AgentPromptComposer : IPromptComposer
             "- Las demas acciones disponibles siguen funcionando normalmente."
         };
 
+        lines.Add($"- Acciones bloqueadas por horario: {string.Join(", ", policy.BlockedToolNames)}.");
+        lines.Add("- No digas que agregaste productos, preparaste checkout, creaste, tomaste o confirmaste un pedido si eso requiere una accion bloqueada.");
+        lines.Add("- Si el cliente intenta comprar o confirmar un pedido, explica brevemente que solo puedes tomar pedidos en el proximo horario habil.");
+
         if (!string.IsNullOrWhiteSpace(policy.NextOperatingWindowText))
             lines.Add($"- Proximo horario habil: {policy.NextOperatingWindowText}.");
 

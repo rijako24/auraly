@@ -2,7 +2,7 @@
 -- SeedSolorzanoWorkingHours.sql
 --
 -- Configura el horario laboral de Vinos Artesanales Solorzano.
--- Domingo a sabado, 08:00 a 21:00.
+-- Domingo a jueves y sabado, 08:00 a 21:00; viernes, 13:00 a 21:00.
 -- =============================================================================
 
 SET NOCOUNT ON;
@@ -23,7 +23,7 @@ VALUES
 (2, CONVERT(TIME(0), '08:00'), CONVERT(TIME(0), '21:00')),
 (3, CONVERT(TIME(0), '08:00'), CONVERT(TIME(0), '21:00')),
 (4, CONVERT(TIME(0), '08:00'), CONVERT(TIME(0), '21:00')),
-(5, CONVERT(TIME(0), '08:00'), CONVERT(TIME(0), '21:00')),
+(5, CONVERT(TIME(0), '13:00'), CONVERT(TIME(0), '21:00')),
 (6, CONVERT(TIME(0), '08:00'), CONVERT(TIME(0), '21:00'));
 
 MERGE dbo.BusinessWorkingHours AS target
@@ -50,5 +50,5 @@ WHERE BusinessId = @SolorzanoBusinessId
         AND h.OpenTime = BusinessWorkingHours.OpenTime
   );
 
-PRINT N'SeedSolorzanoWorkingHours: horarios Solorzano configurados de domingo a sabado 08:00-21:00.';
+PRINT N'SeedSolorzanoWorkingHours: horarios Solorzano configurados; viernes abre 13:00.';
 GO

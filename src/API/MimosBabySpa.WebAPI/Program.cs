@@ -118,6 +118,7 @@ builder.Services.AddScoped<IPromotionPricingService, PromotionPricingService>();
 builder.Services.AddScoped<IBusinessClock, BusinessClock>();
 builder.Services.AddSingleton<ITemporalReferenceBuilder, TemporalReferenceBuilder>();
 builder.Services.AddScoped<ICatalogContentGenerator, CatalogContentGenerator>();
+builder.Services.AddScoped<IProductCatalogAvailabilityService, ProductCatalogAvailabilityService>();
 builder.Services.AddScoped<ICommerceService, CommerceService>();
 builder.Services.AddScoped<ICommerceAdapter, LocalCommerceAdapter>();
 builder.Services.AddHttpClient<SiigoCommerceAdapter>();

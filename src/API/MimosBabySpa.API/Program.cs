@@ -78,6 +78,7 @@ var host = new HostBuilder()
         services.AddScoped<ICatalogContentGenerator, CatalogContentGenerator>();
         services.AddScoped<IAddOnCatalogService, AddOnCatalogService>();
         services.AddScoped<IUsageBillingService, UsageBillingService>();
+        services.AddScoped<IProductCatalogAvailabilityService, ProductCatalogAvailabilityService>();
         services.AddScoped<ICommerceService, CommerceService>();
         services.AddScoped<ICommerceAdapter, LocalCommerceAdapter>();
         services.AddHttpClient<SiigoCommerceAdapter>();

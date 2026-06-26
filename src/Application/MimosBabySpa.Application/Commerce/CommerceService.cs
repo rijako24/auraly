@@ -15,15 +15,18 @@ public sealed class CommerceService : ICommerceService
     private readonly IUnitOfWork _unitOfWork;
     private readonly ICommerceAdapterFactory _adapterFactory;
     private readonly IPromotionPricingService _promotions;
+    private readonly IProductCatalogAvailabilityService _availability;
 
     public CommerceService(
         IUnitOfWork unitOfWork,
         ICommerceAdapterFactory adapterFactory,
-        IPromotionPricingService promotions)
+        IPromotionPricingService promotions,
+        IProductCatalogAvailabilityService availability)
     {
         _unitOfWork = unitOfWork;
         _adapterFactory = adapterFactory;
         _promotions = promotions;
+        _availability = availability;
     }
 
     public async Task<ProductSearchResult> SearchProductsAsync(AgentToolContext ctx, ProductSearchRequest request, CancellationToken ct = default)
@@ -31,7 +34,7 @@ public sealed class CommerceService : ICommerceService
         var adapterContext = await BuildContextAsync(ctx.BusinessId, ctx.AgentId, ctx.ConversationId, ctx.Config, ct);
         var adapter = _adapterFactory.Resolve(adapterContext.Provider);
         var result = await adapter.SearchProductsAsync(request, adapterContext, ct);
-        return await EnrichProductPromotionsAsync(ctx.BusinessId, result, ct);
+        return await EnrichProductPromotionsAsync(ctx.BusinessId, _availability.FilterSellable(result), ct);
     }
 
     public async Task<OrderSnapshot> AddItemAsync(AgentToolContext ctx, AddOrderItemRequest request, CancellationToken ct = default)
@@ -45,7 +48,7 @@ public sealed class CommerceService : ICommerceService
             ?? await FindCachedProductAsync(request, adapterContext, ct)
             ?? throw new InvalidOperationException("Product not found.");
 
-        if (!product.IsActive)
+        if (!_availability.IsSellable(product))
             throw new InvalidOperationException("Product inactive.");
 
         var draft = await GetOrCreateDraftAsync(ctx, adapterContext, ct);
@@ -245,7 +248,7 @@ public sealed class CommerceService : ICommerceService
     {
         var products = await _unitOfWork.Products.SearchAsync(businessId, name, null, 50, ct);
         var normalizedInput = CatalogSearchText.NormalizeCompact(name);
-        var active = products.Where(p => p.IsActive).ToList();
+        var active = products.Where(_availability.IsSellable).ToList();
         var exact = active.FirstOrDefault(p => CatalogSearchText.NormalizeCompact(p.Name) == normalizedInput);
         if (exact is not null)
             return exact;
@@ -430,7 +433,7 @@ public sealed class CommerceService : ICommerceService
         if (draftItems.Count == 0)
             throw new InvalidOperationException("Order has no items.");
 
-        await EnsureOrderProductsActiveAsync(draft.BusinessId, draftItems, ct);
+        await EnsureOrderProductsSellableAsync(draft.BusinessId, draftItems, ct);
 
         var order = new Order
         {
@@ -491,14 +494,11 @@ public sealed class CommerceService : ICommerceService
         return order;
     }
 
-    private async Task EnsureOrderProductsActiveAsync(Guid businessId, IReadOnlyList<OrderDraftItem> items, CancellationToken ct)
+    private async Task EnsureOrderProductsSellableAsync(Guid businessId, IReadOnlyList<OrderDraftItem> items, CancellationToken ct)
     {
-        foreach (var productId in items.Select(i => i.ProductId).Where(id => id.HasValue).Select(id => id!.Value).Distinct())
-        {
-            var product = await _unitOfWork.Products.GetByIdAsync(businessId, productId, ct);
-            if (product is not null && !product.IsActive)
-                throw new InvalidOperationException("Product inactive.");
-        }
+        var unavailable = await _availability.FindUnavailableDraftItemsAsync(businessId, items, ct);
+        if (unavailable.Count > 0)
+            throw new InvalidOperationException("Product inactive.");
     }
 
     private async Task SyncExternalOrderIfNeededAsync(Order order, CommerceAdapterContext adapterContext, CancellationToken ct)
