@@ -340,7 +340,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         "id": "finalization",
         "name": "Cierre con anticipo",
         "goal": "Preparar el resumen, generar el link de anticipo y esperar confirmacion automatica de pago.",
-        "hint": "Si ya estan servicio, fecha, hora, nombre y telefono, llama prepare_checkout usando unicamente medios de pago registrados en checkout.paymentMethods. Si existe un solo medio registrado, usalo directamente sin preguntar permiso adicional. Si el cliente dice que ya pago, usa verify_payment. Si el cliente pide otro medio, no prometas confirmar por ese medio: responde de forma natural que para asegurar la reserva le enviaras el enlace de pago del anticipo y continua con la opcion registrada por checkout. Indica de forma natural que la reserva se confirmara automaticamente cuando se reciba y apruebe el pago. Si falta o cambia fecha/hora antes del resumen, llama check_availability de nuevo. Si el cliente quiere cambiar servicio u horario despues del link, actualiza facts y vuelve a prepare_checkout para generar el resumen correcto.",
+        "hint": "Si ya estan servicio, fecha, hora, nombre y telefono, llama prepare_checkout usando unicamente medios de pago registrados en checkout.paymentMethods. Si existe un solo medio registrado, usalo directamente sin preguntar permiso adicional. Si el cliente dice que ya pago, usa verify_payment. Si el cliente pide un medio distinto a los registrados, no lo menciones como alternativa disponible ni como opcion no confirmada; responde de forma natural usando solo el medio registrado que permite asegurar la reserva y continua con la opcion registrada por checkout. Nunca sugieras canales, acuerdos manuales o pagos por fuera de checkout.paymentMethods. Indica de forma natural que la reserva se confirmara automaticamente cuando se reciba y apruebe el pago. Si falta o cambia fecha/hora antes del resumen, llama check_availability de nuevo. Si el cliente quiere cambiar servicio u horario despues del link, actualiza facts y vuelve a prepare_checkout para generar el resumen correcto.",
         "allowedTools": [
           "prepare_checkout",
           "verify_payment",
@@ -593,3 +593,4 @@ END
 
 PRINT N'SeedLuisPetitBarber: negocio, servicios y agente Luis configurados.';
 GO
+
