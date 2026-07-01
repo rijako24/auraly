@@ -24,6 +24,7 @@ namespace MimosBabySpa.Application.Agents.Tools.Impl;
 
 /// </summary>
 
+[AgentToolMetadata("set_fact", Capabilities = new[] { ToolCapabilities.FactWrite })]
 public sealed class SetFactTool : IAgentTool
 
 {
@@ -35,11 +36,6 @@ public sealed class SetFactTool : IAgentTool
     private readonly IConversationVerificationService _verifications;
 
     private readonly ILeadService _leadService;
-
-    private readonly ServiceNameResolver _serviceNameResolver;
-
-
-
     public SetFactTool(
 
         IConversationFactsService factsService,
@@ -48,9 +44,7 @@ public sealed class SetFactTool : IAgentTool
 
         IConversationVerificationService verifications,
 
-        ILeadService leadService,
-
-        ServiceNameResolver serviceNameResolver)
+        ILeadService leadService)
 
     {
 
@@ -61,9 +55,6 @@ public sealed class SetFactTool : IAgentTool
         _verifications = verifications;
 
         _leadService = leadService;
-
-        _serviceNameResolver = serviceNameResolver;
-
     }
 
 
@@ -218,46 +209,13 @@ public sealed class SetFactTool : IAgentTool
         }
 
         if (key.Equals(ConversationFactKeys.Service, StringComparison.OrdinalIgnoreCase))
-
         {
-
-            var canonicalService = await _serviceNameResolver.ResolveAsync(
-
-                ctx.BusinessId, value, cancellationToken);
-
-            if (canonicalService is null)
-
-            {
-
-                var candidates = await _serviceNameResolver.GetCandidateNamesAsync(
-
-                    ctx.BusinessId, value, ct: cancellationToken);
-
-                var hint = candidates.Count > 0
-
-                    ? $"No guardes un servicio inventado. Usa exactamente uno de estos nombres del catalogo: {string.Join(", ", candidates)}."
-
-                    : "Llama get_service_catalog y usa exactamente un nombre de servicio del catalogo.";
-
-                return ToolResultHelper.Error(
-
-                    ToolErrorCodes.ServiceNotResolved,
-
-                    $"No canonical service was found for '{value}'.",
-
-                    hint,
-
-                    recoverable: true);
-
-            }
-
-            if (canonicalService is not null)
-
-                value = canonicalService;
-
+            return ToolResultHelper.Error(
+                ToolErrorCodes.ServiceSelectionMismatch,
+                "Service selection cannot be stored with set_fact.",
+                "Use resolve_service_selection with the customer's raw wording; it will store booking.service only when the selection is unambiguous.",
+                recoverable: true);
         }
-
-
 
         ctx.Facts.TryGetValue(key, out var previousValue);
 
@@ -519,4 +477,5 @@ public sealed class SetFactTool : IAgentTool
     }
 
 }
+
 

@@ -16,7 +16,6 @@ public sealed record ProductReference(
     decimal UnitPrice,
     string Currency,
     decimal? StockQuantity,
-    bool IsAvailable,
     decimal? EffectiveUnitPrice = null,
     decimal? DiscountAmount = null,
     string? PromotionName = null,

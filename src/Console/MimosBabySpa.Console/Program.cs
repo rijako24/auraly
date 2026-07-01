@@ -47,7 +47,9 @@ if (args is ["backfill-customer-memory"])
     backfillServices.AddLogging(b => b.AddConsole().SetMinimumLevel(LogLevel.Information));
     backfillServices.AddDbContext<ApplicationDbContext>(options =>
         options.UseSqlServer(configuration.GetConnectionString("DefaultConnection")));
+
     backfillServices.AddMemoryCache();
+    backfillServices.AddSingleton<AgentToolMetadataRegistry>();
     backfillServices.AddScoped<IUnitOfWork, UnitOfWork>();
     backfillServices.AddScoped<IAgentRepository, AgentRepository>();
     backfillServices.AddScoped<IAgentConfigProvider, AgentConfigProvider>();
@@ -103,13 +105,14 @@ services.AddScoped<IEmployeeAssignmentService, EmployeeAssignmentService>();
 services.AddScoped<IWorkingHoursService, WorkingHoursService>();
 services.AddScoped<IAvailabilityService, AvailabilityService>();
 services.AddScoped<ServiceNameResolver>();
+services.AddScoped<ServiceSelectionResolver>();
 services.AddScoped<ReservationPricingResolver>();
 services.AddScoped<IPromotionPricingService, PromotionPricingService>();
 services.AddScoped<IBusinessClock, BusinessClock>();
 services.AddSingleton<ITemporalReferenceBuilder, TemporalReferenceBuilder>();
 services.AddScoped<ICatalogContentGenerator, CatalogContentGenerator>();
 services.AddScoped<IAddOnCatalogService, AddOnCatalogService>();
-services.AddScoped<IUsageBillingService, UsageBillingService>();
+services.AddScoped<IUsageBillingService, ConsoleUsageBillingService>();
 services.AddScoped<IProductCatalogAvailabilityService, ProductCatalogAvailabilityService>();
 services.AddScoped<ICommerceService, CommerceService>();
 services.AddScoped<ICommerceAdapter, LocalCommerceAdapter>();
@@ -138,7 +141,9 @@ services.AddKeyedSingleton<OpenAIClient>("Audio", (sp, _) =>
 });
 
 // ── Supporting Infrastructure ──────────────────────────────────────────────────
+
 services.AddMemoryCache();
+services.AddSingleton<AgentToolMetadataRegistry>();
 services.AddScoped<ILocalizationService, LocalizationService>();
 services.AddScoped<IConversationStateManager, ConversationStateManager>();
 services.AddScoped<IConversationFactsService, ConversationFactsService>();
@@ -178,7 +183,7 @@ services.AddScoped<IActiveAgentConfigResolver, ActiveAgentConfigResolver>();
 services.AddScoped<IEventNotificationDispatcher, EventNotificationDispatcher>();
 services.AddScoped<IBusinessInboundContactRouter, BusinessInboundContactRouter>();
 services.AddScoped<IExternalEscalationService, ExternalEscalationService>();
-services.AddScoped<IExternalEscalationTargetHandler, OrderDeliveryExternalEscalationHandler>();
+        services.AddScoped<IExternalEscalationOutcomePublisher, ExternalEscalationOutcomePublisher>();
 
 services.AddHttpClient();
 services.AddHttpClient<GoogleCalendarService>(c => c.Timeout = TimeSpan.FromSeconds(30));
@@ -229,6 +234,7 @@ services.AddScoped<IAgentTool, ConfirmReservationChangeTool>();
 services.AddScoped<IAgentTool, VerifyPaymentTool>();
 services.AddScoped<IAgentTool, EscalateToHumanTool>();
 services.AddScoped<IAgentTool, GetServiceCatalogTool>();
+services.AddScoped<IAgentTool, ResolveServiceSelectionTool>();
 services.AddScoped<IAgentTool, GetCompatibleAddOnsTool>();
 services.AddScoped<IAgentTool, GetServiceFulfillmentTool>();
 services.AddScoped<IAgentTool, SetFactTool>();
@@ -241,8 +247,6 @@ services.AddScoped<IAgentTool, UpdateOrderItemQuantityTool>();
 services.AddScoped<IAgentTool, GetOrderDraftTool>();
 services.AddScoped<IAgentTool, CreateOrderTool>();
 services.AddScoped<IAgentTool, StartExternalInteractionTool>();
-services.AddScoped<IAgentTool, ResolveExternalInteractionTool>();
-services.AddScoped<IAgentTool, CompleteExternalInteractionTool>();
 services.AddScoped<IAgentTool, OperationsGetReservationsTool>();
 services.AddScoped<IAgentTool, OperationsBlockAvailabilityTool>();
 services.AddScoped<IAgentTool, OperationsRequestRescheduleTool>();
@@ -259,18 +263,18 @@ var serviceProvider = services.BuildServiceProvider();
 Console.OutputEncoding = System.Text.Encoding.UTF8;
 Console.InputEncoding = System.Text.Encoding.UTF8;
 
-const string mimosBusinessIdStr = "FCEE3BA9-E6BF-43E2-8C1A-560CB724688B";
-const string mimosBusinessName = "Vinos Artesanales Solorzano";
-const string mimosAgentIdStr = "B0EE3BA9-E6BF-43E2-8C1A-560CB724688B";
-const string mimosAgentName = "Camila";
-const string mimosLegacyAgentName = "Camila";
-const string mimosAgentDisplayName = "Camila";
+const string mimosBusinessIdStr = "BABA0000-0000-0000-0000-000000000001";
+const string mimosBusinessName = "Luis Petit Profesional Barber";
+const string mimosAgentIdStr = "BABA0000-0000-0000-0000-000000000002";
+const string mimosAgentName = "Luis";
+const string mimosLegacyAgentName = "Luis Petit";
+const string mimosAgentDisplayName = "Luis";
 
 var mimosBusinessId = Guid.Parse(mimosBusinessIdStr);
 var mimosAgentId = Guid.Parse(mimosAgentIdStr);
 
 Console.WriteLine("========================================================");
-Console.WriteLine("  Vinos Artesanales Solorzano - Simulador Agentic Engine (FC)");
+Console.WriteLine("  Luis Petit Profesional Barber - Simulador Agentic Engine (FC)");
 Console.WriteLine("========================================================");
 Console.WriteLine();
 Console.WriteLine($"  Negocio : {mimosBusinessName} ({mimosBusinessIdStr})");
@@ -410,3 +414,19 @@ static string CreateTestUserPhone()
 {
     return $"+1555{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() % 10000000:0000000}";
 }
+internal sealed class ConsoleUsageBillingService : IUsageBillingService
+{
+    public Task<UsageGateResult> CanProcessAsync(Guid businessId, CancellationToken ct = default) =>
+        Task.FromResult(new UsageGateResult(true, "console_test_mode", "Allowed in console simulator.", null));
+
+    public Task<UsageChargeResult> ChargeAsync(UsageChargeRequest request, CancellationToken ct = default) =>
+        Task.FromResult(new UsageChargeResult(true, 0, 0, null));
+
+    public Task<BusinessUsageSnapshot?> GetCurrentUsageAsync(Guid businessId, CancellationToken ct = default) =>
+        Task.FromResult<BusinessUsageSnapshot?>(null);
+
+    public Task<IReadOnlyList<UsagePlanDto>> GetPlansAsync(CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<UsagePlanDto>>(Array.Empty<UsagePlanDto>());
+}
+
+

@@ -25,6 +25,7 @@ public class ToolCallInterceptor : IAgentTool
     public string Description => _inner.Description;
     public string ParametersSchema => _inner.ParametersSchema;
     public string? DefaultTemplateId => _inner.DefaultTemplateId;
+    public IReadOnlyList<string> RequiredTemplateIds => _inner.RequiredTemplateIds;
     public string? DefaultTemplate => _inner.DefaultTemplate;
     public IReadOnlyList<string> SemanticTriggers => _inner.SemanticTriggers;
 

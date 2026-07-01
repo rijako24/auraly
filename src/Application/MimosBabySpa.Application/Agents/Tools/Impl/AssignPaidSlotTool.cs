@@ -14,6 +14,7 @@ namespace MimosBabySpa.Application.Agents.Tools.Impl;
 /// <summary>
 /// Asigna un nuevo horario a un pago confirmado que quedó sin reserva (slot tomado tras el pago).
 /// </summary>
+[AgentToolMetadata("assign_paid_slot", Capabilities = new[] { ToolCapabilities.PaidSlotAssign })]
 public sealed class AssignPaidSlotTool : IAgentTool
 {
     private readonly IPaymentLifecycleService _paymentLifecycle;
@@ -235,3 +236,4 @@ public sealed class AssignPaidSlotTool : IAgentTool
         return string.IsNullOrWhiteSpace(fallback) ? null : fallback;
     }
 }
+

@@ -5,13 +5,16 @@ namespace MimosBabySpa.Application.Services;
 public sealed class ExternalEscalationExpirationProcess : ITimedProcess
 {
     private readonly IExternalEscalationService _escalations;
+    private readonly IExternalEscalationOutcomePublisher _outcomes;
     private readonly ILogger<ExternalEscalationExpirationProcess> _logger;
 
     public ExternalEscalationExpirationProcess(
         IExternalEscalationService escalations,
+        IExternalEscalationOutcomePublisher outcomes,
         ILogger<ExternalEscalationExpirationProcess> logger)
     {
         _escalations = escalations;
+        _outcomes = outcomes;
         _logger = logger;
     }
 
@@ -21,7 +24,16 @@ public sealed class ExternalEscalationExpirationProcess : ITimedProcess
     {
         try
         {
-            await _escalations.ProcessExpiredAttemptsAsync(ct);
+            var expiredAttempts = await _escalations.ProcessExpiredAttemptsAsync(ct);
+            foreach (var expired in expiredAttempts)
+            {
+                await _outcomes.PublishAsync(
+                    expired.BusinessId,
+                    expired.AttemptId,
+                    expired.OutcomeKey,
+                    expired.Payload,
+                    ct);
+            }
         }
         catch (Exception ex)
         {

@@ -1,6 +1,5 @@
 using System.Text.Json;
 using FluentAssertions;
-using Microsoft.Extensions.Logging.Abstractions;
 using MimosBabySpa.Application.Agents;
 using MimosBabySpa.Application.Agents.Configuration;
 using MimosBabySpa.Application.Services;
@@ -21,8 +20,7 @@ public sealed class ExternalEscalationServiceTests
     private readonly FakeBusinessInboundContactRepository _contacts = new();
     private readonly Mock<IMessageSequenceResolver> _sequenceResolver = new();
     private readonly Mock<IWhatsAppService> _whatsApp = new();
-    private readonly Mock<IEventNotificationDispatcher> _notifications = new();
-    private readonly RecordingExternalEscalationTargetHandler _targetHandler = new();
+    private readonly Mock<IExternalEscalationOutcomePublisher> _outcomes = new();
 
     public ExternalEscalationServiceTests()
     {
@@ -37,6 +35,15 @@ public sealed class ExternalEscalationServiceTests
 
         _whatsApp
             .Setup(w => w.SendTextMessageAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<string>()))
+            .Returns(Task.CompletedTask);
+
+        _outcomes
+            .Setup(o => o.PublishAsync(
+                It.IsAny<Guid>(),
+                It.IsAny<Guid>(),
+                It.IsAny<string>(),
+                It.IsAny<IReadOnlyDictionary<string, string>?>(),
+                It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
     }
 
@@ -57,27 +64,26 @@ public sealed class ExternalEscalationServiceTests
     }
 
     [Fact]
-    public async Task EscalateNextAsync_UsesConfiguredInboundContactAndPickupAddressFromEvent()
+    public async Task EscalateAsync_UsesConfiguredInboundContactAndPickupAddressFromEvent()
     {
         var contactId = Guid.NewGuid();
         var inboundAgentId = Guid.NewGuid();
-        _contacts.Items.Add(CreateContact(contactId, inboundAgentId, "delivery", "+57 304 205 2007"));
-        var service = CreateService(CreateConfig(contactId, retryEnabled: true));
+        _contacts.Items.Add(CreateContact(contactId, inboundAgentId, "domicilio", "+57 304 205 2007"));
+        var service = CreateService(CreateConfig(contactId));
         MessageSequenceContext? sequenceContext = null;
         _sequenceResolver
             .Setup(r => r.ResolveAsync(
                 _businessId,
-                "delivery_request",
+                "domicilio_request",
                 It.IsAny<MessageSequenceCatalog>(),
                 It.IsAny<MessageSequenceContext>(),
                 It.IsAny<CancellationToken>()))
             .Callback<Guid, string, MessageSequenceCatalog, MessageSequenceContext, CancellationToken>((_, _, _, ctx, _) => sequenceContext = ctx)
             .ReturnsAsync([new OutboundMessage("Solicitud de domicilio", null)]);
 
-        var result = await service.EscalateNextAsync(new ExternalEscalationRequest(
+        var result = await service.EscalateAsync(new ExternalEscalationRequest(
             _sourceAgentId,
             "order_created",
-            "order",
             _targetId,
             new Dictionary<string, string> { ["order_id"] = "ORD-1" }));
 
@@ -86,114 +92,106 @@ public sealed class ExternalEscalationServiceTests
         _attempts.Items.Should().ContainSingle();
         var attempt = _attempts.Items[0];
         attempt.BusinessInboundContactIdSnapshot.Should().Be(contactId);
-        attempt.ContactTypeSnapshot.Should().Be("delivery");
+        attempt.ContactTypeSnapshot.Should().Be("domicilio");
         attempt.InboundAgentIdSnapshot.Should().Be(inboundAgentId);
         attempt.PickupAddressSnapshot.Should().Be("Calle 16 # 9-35, Centro, Valledupar");
         ReadPayload(attempt).Should().Contain("pickup_address", "Calle 16 # 9-35, Centro, Valledupar");
         sequenceContext!.Custom.Should().Contain("business_inbound_contact_id", contactId.ToString());
-        _notifications.Verify(n => n.SendEventAsync(
-            _businessId,
-            It.IsAny<AgentConfig>(),
-            "delivery_requested",
-            It.Is<IReadOnlyDictionary<string, string>>(p =>
-                p["external_interaction_id"] == attempt.ExternalEscalationAttemptId.ToString() &&
-                p["pickup_address"] == "Calle 16 # 9-35, Centro, Valledupar"),
-            It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
-    public async Task EscalateNextAsync_WhenRetryEnabled_RetriesNextActiveContactOfSameType()
+    public async Task EscalateAsync_WhenTargetAlreadyHasAttempt_DoesNotCallAnotherDeliveryContact()
     {
         var firstContactId = Guid.NewGuid();
         var secondContactId = Guid.NewGuid();
-        _contacts.Items.Add(CreateContact(firstContactId, Guid.NewGuid(), "delivery", "+57 300 000 0001", "domi_1"));
-        _contacts.Items.Add(CreateContact(secondContactId, Guid.NewGuid(), "delivery", "+57 300 000 0002", "domi_2"));
+        _contacts.Items.Add(CreateContact(firstContactId, Guid.NewGuid(), "domicilio", "+57 300 000 0001", "domi_1"));
+        _contacts.Items.Add(CreateContact(secondContactId, Guid.NewGuid(), "domicilio", "+57 300 000 0002", "domi_2"));
         _attempts.Items.Add(CreateAttempt(firstContactId, "+57 300 000 0001"));
-        var service = CreateService(CreateConfig(firstContactId, retryEnabled: true));
+        var service = CreateService(CreateConfig(firstContactId));
 
-        var result = await service.EscalateNextAsync(new ExternalEscalationRequest(
+        var result = await service.EscalateAsync(new ExternalEscalationRequest(
             _sourceAgentId,
             "order_created",
-            "order",
-            _targetId,
-            new Dictionary<string, string>()));
-
-        result.Sent.Should().BeTrue();
-        _attempts.Items.Last().BusinessInboundContactIdSnapshot.Should().Be(secondContactId);
-        _attempts.Items.Last().ContactPhoneSnapshot.Should().Be("573000000002");
-    }
-
-    [Fact]
-    public async Task EscalateNextAsync_WhenRetryDisabled_DoesNotRetryOtherContactsOfSameType()
-    {
-        var firstContactId = Guid.NewGuid();
-        var secondContactId = Guid.NewGuid();
-        _contacts.Items.Add(CreateContact(firstContactId, Guid.NewGuid(), "delivery", "+57 300 000 0001", "domi_1"));
-        _contacts.Items.Add(CreateContact(secondContactId, Guid.NewGuid(), "delivery", "+57 300 000 0002", "domi_2"));
-        _attempts.Items.Add(CreateAttempt(firstContactId, "+57 300 000 0001"));
-        var service = CreateService(CreateConfig(firstContactId, retryEnabled: false));
-
-        var result = await service.EscalateNextAsync(new ExternalEscalationRequest(
-            _sourceAgentId,
-            "order_created",
-            "order",
             _targetId,
             new Dictionary<string, string>()));
 
         result.Sent.Should().BeFalse();
-        result.Error.Should().Be("no_more_contacts");
+        result.Error.Should().Be("target_already_escalated");
         _attempts.Items.Should().HaveCount(1);
+        _whatsApp.Verify(w => w.SendTextMessageAsync(It.IsAny<Guid>(), "573000000002", It.IsAny<string>()), Times.Never);
     }
 
     [Fact]
-    public async Task ResolveAttemptAsync_UsesInteractivePayloadAndReturnsRequestedAction()
+    public async Task EscalateToolAsync_ResolvesConfiguredEventFromToolName()
     {
-        var attempt = CreateAttempt(Guid.NewGuid(), "+57 300 000 0001");
-        _attempts.Items.Add(attempt);
-        var service = CreateService(CreateConfig(attempt.BusinessInboundContactIdSnapshot!.Value, retryEnabled: true));
+        var contactId = Guid.NewGuid();
+        _contacts.Items.Add(CreateContact(contactId, Guid.NewGuid(), "domicilio", "+57 304 205 2007"));
+        var service = CreateService(CreateConfig(contactId));
 
-        var result = await service.ResolveAttemptAsync(
-            _businessId,
-            "+57 300 000 0001",
-            "confirmo",
-            $"external_interaction:accepted:{attempt.ExternalEscalationAttemptId:N}",
-            null);
+        var result = await service.EscalateToolAsync(
+            _sourceAgentId,
+            "create_order",
+            _targetId,
+            new Dictionary<string, string>());
 
-        result.Resolution.Should().Be("resolved");
-        result.Attempt.Should().BeSameAs(attempt);
-        result.RequestedAction.Should().Be("accepted");
+        result.Sent.Should().BeTrue();
+        _attempts.Items.Should().ContainSingle();
+        _attempts.Items[0].EventName.Should().Be("order_created");
+        _attempts.Items[0].TargetType.Should().Be("order_created");
     }
-
     [Fact]
-    public async Task CompleteAsync_AcceptsAttempt_CancelsOtherPendingAttemptsAndSendsAcceptedNotification()
+    public async Task CompleteAttemptAsync_MarksAttemptAndPublishesConfiguredOutcome()
     {
         var contactId = Guid.NewGuid();
         var attempt = CreateAttempt(contactId, "+57 300 000 0001");
-        var competingAttempt = CreateAttempt(Guid.NewGuid(), "+57 300 000 0002");
         _attempts.Items.Add(attempt);
-        _attempts.Items.Add(competingAttempt);
-        var service = CreateService(CreateConfig(contactId, retryEnabled: true));
+        var service = CreateService(CreateConfig(contactId));
 
-        var result = await service.CompleteAsync(
+        var result = await service.CompleteAttemptAsync(new ExternalEscalationCompletionRequest(
             _businessId,
             attempt.ExternalEscalationAttemptId,
             "+57 300 000 0001",
-            "accepted",
-            "Lo tomo",
-            new Dictionary<string, string> { ["driver"] = "Luis" });
+            ExternalEscalationOutcomeKeys.Accepted,
+            ExternalEscalationAttemptStatus.Accepted,
+            "acepto",
+            new Dictionary<string, string> { ["order_number"] = "ORD-1" }));
 
         result.Success.Should().BeTrue();
-        result.OutcomeKey.Should().Be("accepted");
         attempt.Status.Should().Be(ExternalEscalationAttemptStatus.Accepted);
+        attempt.OutcomeKey.Should().Be("accepted");
         attempt.CompletedAt.Should().NotBeNull();
-        competingAttempt.Status.Should().Be(ExternalEscalationAttemptStatus.Cancelled);
-        _targetHandler.Completed.Should().ContainSingle(c => c.AttemptId == attempt.ExternalEscalationAttemptId && c.OutcomeKey == "accepted");
-        _notifications.Verify(n => n.SendEventAsync(
+        _outcomes.Verify(o => o.PublishAsync(
             _businessId,
-            It.IsAny<AgentConfig>(),
-            "delivery_confirmed",
-            It.Is<IReadOnlyDictionary<string, string>>(p => p["outcome_key"] == "accepted" && p["driver"] == "Luis"),
+            attempt.ExternalEscalationAttemptId,
+            "accepted",
+            It.Is<IReadOnlyDictionary<string, string>>(p =>
+                p["outcome_key"] == "accepted" &&
+                p["order_number"] == "ORD-1"),
             It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ProcessExpiredAttemptsAsync_MarksTimedOutAndReturnsExpiredAttemptsWithoutRetry()
+    {
+        var contactId = Guid.NewGuid();
+        var secondContactId = Guid.NewGuid();
+        _contacts.Items.Add(CreateContact(contactId, Guid.NewGuid(), "domicilio", "+57 300 000 0001", "domi_1"));
+        _contacts.Items.Add(CreateContact(secondContactId, Guid.NewGuid(), "domicilio", "+57 300 000 0002", "domi_2"));
+        var attempt = CreateAttempt(contactId, "+57 300 000 0001");
+        attempt.ExpiresAt = DateTime.UtcNow.AddMinutes(-1);
+        _attempts.Items.Add(attempt);
+        var service = CreateService(CreateConfig(contactId));
+
+        var expired = await service.ProcessExpiredAttemptsAsync();
+
+        expired.Should().ContainSingle();
+        expired[0].AttemptId.Should().Be(attempt.ExternalEscalationAttemptId);
+        expired[0].Payload.Should().Contain("outcome_key", "timed_out");
+        attempt.Status.Should().Be(ExternalEscalationAttemptStatus.TimedOut);
+        attempt.CompletedAt.Should().NotBeNull();
+        attempt.OutcomeKey.Should().Be("timed_out");
+        _attempts.Items.Should().ContainSingle();
+        _whatsApp.Verify(w => w.SendTextMessageAsync(It.IsAny<Guid>(), "573000000002", It.IsAny<string>()), Times.Never);
     }
 
     private ExternalEscalationService CreateService(AgentConfig config)
@@ -208,9 +206,7 @@ public sealed class ExternalEscalationServiceTests
             configProvider.Object,
             _sequenceResolver.Object,
             _whatsApp.Object,
-            _notifications.Object,
-            [_targetHandler],
-            NullLogger<ExternalEscalationService>.Instance);
+            _outcomes.Object);
     }
 
     private Mock<IUnitOfWork> CreateUnitOfWork()
@@ -228,7 +224,7 @@ public sealed class ExternalEscalationServiceTests
         return unitOfWork;
     }
 
-    private AgentConfig CreateConfig(Guid configuredContactId, bool retryEnabled) => new()
+    private AgentConfig CreateConfig(Guid configuredContactId) => new()
     {
         AgentId = _sourceAgentId,
         BusinessId = _businessId,
@@ -242,21 +238,25 @@ public sealed class ExternalEscalationServiceTests
                     ["order_created"] = new()
                     {
                         Enabled = true,
-                        ContactType = "delivery",
+                        Tool = "create_order",
+                        OutcomeEvents = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                        {
+                            [ExternalEscalationOutcomeKeys.Requested] = "delivery_requested",
+                            [ExternalEscalationOutcomeKeys.Accepted] = "delivery_confirmed",
+                            [ExternalEscalationOutcomeKeys.Declined] = "delivery_unavailable",
+                            [ExternalEscalationOutcomeKeys.TimedOut] = "delivery_unavailable"
+                        },
+                        ContactType = "domicilio",
                         PickupAddress = "Calle 16 # 9-35, Centro, Valledupar",
                         AttemptTimeoutMinutes = 15,
                         AttemptCodePrefix = "PED",
-                        SendMessageSequence = "delivery_request",
-                        AttemptSentNotificationEvent = "delivery_requested",
-                        AcceptedNotificationEvent = "delivery_confirmed",
-                        ExhaustedNotificationEvent = "delivery_unavailable",
+                        SendMessageSequence = "domicilio_request",
                         Contacts =
                         [
                             new ExternalEscalationContactDefinition
                             {
                                 BusinessInboundContactId = configuredContactId,
                                 Priority = 1,
-                                RetryEnabled = retryEnabled
                             }
                         ]
                     }
@@ -294,15 +294,15 @@ public sealed class ExternalEscalationServiceTests
         BusinessId = _businessId,
         SourceAgentId = _sourceAgentId,
         EventName = "order_created",
-        TargetType = "order",
+        TargetType = "order_created",
         TargetId = _targetId,
         ContactKey = "domicilio",
         ContactNameSnapshot = "Domicilio",
-        ContactRoleSnapshot = "delivery",
+        ContactRoleSnapshot = "domicilio",
         ContactPhoneSnapshot = NormalizePhone(phone),
         InboundAgentIdSnapshot = Guid.NewGuid(),
         BusinessInboundContactIdSnapshot = contactId,
-        ContactTypeSnapshot = "delivery",
+        ContactTypeSnapshot = "domicilio",
         AttemptCode = "PED-12345",
         CustomPayloadJson = "{}",
         Status = ExternalEscalationAttemptStatus.Pending,
@@ -424,8 +424,6 @@ public sealed class ExternalEscalationServiceTests
         public Task<IReadOnlyList<ExternalEscalationAttempt>> GetAttemptsForTargetAsync(Guid businessId, string eventName, string targetType, Guid targetId, CancellationToken ct = default) =>
             Task.FromResult<IReadOnlyList<ExternalEscalationAttempt>>(Items.Where(a => a.BusinessId == businessId && a.EventName == eventName && a.TargetType == targetType && a.TargetId == targetId).ToList());
 
-        public Task<bool> HasAcceptedForTargetAsync(Guid businessId, string eventName, string targetType, Guid targetId, CancellationToken ct = default) =>
-            Task.FromResult(Items.Any(a => a.BusinessId == businessId && a.EventName == eventName && a.TargetType == targetType && a.TargetId == targetId && a.Status == ExternalEscalationAttemptStatus.Accepted));
 
         public Task<ExternalEscalationAttempt> AddAsync(ExternalEscalationAttempt attempt, CancellationToken ct = default)
         {
@@ -436,42 +434,7 @@ public sealed class ExternalEscalationServiceTests
         public Task<ExternalEscalationAttempt> UpdateAsync(ExternalEscalationAttempt attempt, CancellationToken ct = default) =>
             Task.FromResult(attempt);
 
-        public Task CancelPendingForTargetAsync(Guid businessId, string eventName, string targetType, Guid targetId, Guid exceptAttemptId, CancellationToken ct = default)
-        {
-            foreach (var attempt in Items.Where(a =>
-                a.BusinessId == businessId &&
-                a.EventName == eventName &&
-                a.TargetType == targetType &&
-                a.TargetId == targetId &&
-                a.ExternalEscalationAttemptId != exceptAttemptId &&
-                a.Status == ExternalEscalationAttemptStatus.Pending))
-            {
-                attempt.Status = ExternalEscalationAttemptStatus.Cancelled;
-                attempt.CancelledAt = DateTime.UtcNow;
-            }
-
-            return Task.CompletedTask;
-        }
-    }
-
-    private sealed class RecordingExternalEscalationTargetHandler : IExternalEscalationTargetHandler
-    {
-        public List<(Guid AttemptId, string OutcomeKey)> Completed { get; } = [];
-
-        public bool CanHandle(string targetType, string eventName) => true;
-
-        public Task OnAttemptSentAsync(ExternalEscalationAttempt attempt, IReadOnlyDictionary<string, string> payload, CancellationToken ct = default) => Task.CompletedTask;
-
-        public Task OnAttemptCompletedAsync(ExternalEscalationAttempt attempt, ExternalEscalationCompletion completion, CancellationToken ct = default)
-        {
-            Completed.Add((attempt.ExternalEscalationAttemptId, completion.OutcomeKey));
-            return Task.CompletedTask;
-        }
-
-        public Task OnAttemptDeclinedAsync(ExternalEscalationAttempt attempt, IReadOnlyDictionary<string, string> payload, CancellationToken ct = default) => Task.CompletedTask;
-
-        public Task OnAttemptTimedOutAsync(ExternalEscalationAttempt attempt, IReadOnlyDictionary<string, string> payload, CancellationToken ct = default) => Task.CompletedTask;
-
-        public Task OnAttemptsExhaustedAsync(ExternalEscalationAttempt attempt, IReadOnlyDictionary<string, string> payload, CancellationToken ct = default) => Task.CompletedTask;
     }
 }
+
+

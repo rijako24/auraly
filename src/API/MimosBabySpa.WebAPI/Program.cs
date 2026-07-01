@@ -52,6 +52,7 @@ builder.Services.AddDbContext<ApplicationDbContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 
 builder.Services.AddMemoryCache();
+builder.Services.AddSingleton<AgentToolMetadataRegistry>();
 builder.Services.AddScoped<ICorrelationIdProvider, CorrelationIdProvider>();
 builder.Services.AddScoped<ITenantContext, TenantContext>();
 
@@ -113,6 +114,7 @@ builder.Services.AddScoped<IEmployeeAssignmentService, EmployeeAssignmentService
 builder.Services.AddScoped<IAvailabilityService, AvailabilityService>();
 builder.Services.AddScoped<IBusinessRuleEngine, BusinessRuleEngine>();
 builder.Services.AddScoped<ServiceNameResolver>();
+builder.Services.AddScoped<ServiceSelectionResolver>();
 builder.Services.AddScoped<ReservationPricingResolver>();
 builder.Services.AddScoped<IPromotionPricingService, PromotionPricingService>();
 builder.Services.AddScoped<IBusinessClock, BusinessClock>();
@@ -139,7 +141,8 @@ builder.Services.AddScoped<IActiveAgentConfigResolver, ActiveAgentConfigResolver
 builder.Services.AddScoped<IEventNotificationDispatcher, EventNotificationDispatcher>();
 builder.Services.AddScoped<IBusinessInboundContactRouter, BusinessInboundContactRouter>();
 builder.Services.AddScoped<IExternalEscalationService, ExternalEscalationService>();
-builder.Services.AddScoped<IExternalEscalationTargetHandler, OrderDeliveryExternalEscalationHandler>();
+        builder.Services.AddScoped<IExternalEscalationOutcomePublisher, ExternalEscalationOutcomePublisher>();
+builder.Services.AddScoped<IInboundMessageBatchProcessor, InboundMessageBatchProcessor>();
 builder.Services.AddScoped<IConversationFactsService, ConversationFactsService>();
 builder.Services.AddScoped<ICustomerMemoryService, CustomerMemoryService>();
 builder.Services.AddScoped<IRequestContextService, RequestContextService>();
@@ -244,6 +247,7 @@ builder.Services.AddScoped<IAgentTool, ConfirmReservationChangeTool>();
 builder.Services.AddScoped<IAgentTool, VerifyPaymentTool>();
 builder.Services.AddScoped<IAgentTool, EscalateToHumanTool>();
 builder.Services.AddScoped<IAgentTool, GetServiceCatalogTool>();
+builder.Services.AddScoped<IAgentTool, ResolveServiceSelectionTool>();
 builder.Services.AddScoped<IAgentTool, GetCompatibleAddOnsTool>();
 builder.Services.AddScoped<IAgentTool, GetServiceFulfillmentTool>();
 builder.Services.AddScoped<IAgentTool, SetFactTool>();
@@ -256,11 +260,9 @@ builder.Services.AddScoped<IAgentTool, UpdateOrderItemQuantityTool>();
 builder.Services.AddScoped<IAgentTool, GetOrderDraftTool>();
 builder.Services.AddScoped<IAgentTool, CreateOrderTool>();
 builder.Services.AddScoped<IAgentTool, StartExternalInteractionTool>();
-builder.Services.AddScoped<IAgentTool, ResolveExternalInteractionTool>();
 builder.Services.AddScoped<IAgentTool, SearchOrderTool>();
-builder.Services.AddScoped<IAgentTool, AcceptOrderDeliveryTool>();
-builder.Services.AddScoped<IAgentTool, RejectOrderDeliveryTool>();
-builder.Services.AddScoped<IAgentTool, CompleteExternalInteractionTool>();
+builder.Services.AddScoped<IAgentTool, AcceptOrderRequestTool>();
+builder.Services.AddScoped<IAgentTool, RejectOrderRequestTool>();
 builder.Services.AddScoped<IAgentTool, OperationsGetReservationsTool>();
 builder.Services.AddScoped<IAgentTool, OperationsBlockAvailabilityTool>();
 builder.Services.AddScoped<IAgentTool, OperationsRequestRescheduleTool>();
@@ -350,3 +352,5 @@ using (var scope = app.Services.CreateScope())
 }
 
 app.Run();
+
+

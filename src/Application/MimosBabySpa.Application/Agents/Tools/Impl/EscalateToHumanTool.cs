@@ -11,6 +11,7 @@ namespace MimosBabySpa.Application.Agents.Tools.Impl;
 
 
 
+[AgentToolMetadata("escalate_to_human", Capabilities = new[] { ToolCapabilities.HumanEscalate })]
 public sealed class EscalateToHumanTool : IAgentTool
 
 {
@@ -139,5 +140,6 @@ public sealed class EscalateToHumanTool : IAgentTool
     }
 
 }
+
 
 

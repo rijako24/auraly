@@ -49,44 +49,27 @@ public class SetFactToolTests
         var unitOfWork = new Mock<IUnitOfWork>();
         unitOfWork.SetupGet(u => u.Services).Returns(_services.Object);
 
-        var serviceNameResolver = new ServiceNameResolver(
-            unitOfWork.Object,
-            NullLogger<ServiceNameResolver>.Instance);
-
         _tool = new SetFactTool(
             _facts.Object,
             _addOnCatalog.Object,
             _verifications,
-            _leadService.Object,
-            serviceNameResolver);
+            _leadService.Object);
     }
 
     [Fact]
-    public async Task ExecuteAsync_ServiceKey_PersistsWithoutAddOnPayload()
+    public async Task ExecuteAsync_ServiceKey_RequiresServiceSelectionTool()
     {
-        var businessId = Guid.NewGuid();
-        _services
-            .Setup(s => s.GetActiveByBusinessIdAsync(businessId))
-            .ReturnsAsync([
-                new Service
-                {
-                    BusinessId = businessId,
-                    ServiceName = "Plan Marineritos",
-                    IsActive = true
-                }
-            ]);
-        var ctx = CreateContext(businessId);
+        var ctx = CreateContext();
 
         using var args = JsonDocument.Parse("""{"key":"service","value":"Plan Marineritos"}""");
         var json = await _tool.ExecuteAsync(args.RootElement, ctx, CancellationToken.None);
 
-        using var doc = JsonDocument.Parse(json);
-        doc.RootElement.GetProperty("ok").GetBoolean().Should().BeTrue();
-        doc.RootElement.GetProperty("data").TryGetProperty("compatible_add_ons", out _).Should().BeFalse();
-        ctx.Facts[ConversationFactKeys.Service].Should().Be("Plan Marineritos");
-        _addOnCatalog.Verify(
-            c => c.GetCompatibleAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
-            Times.Never);
+        json.Should().Contain("service_selection_mismatch");
+        json.Should().Contain("resolve_service_selection");
+        ctx.Facts.Should().NotContainKey(ConversationFactKeys.Service);
+        _facts.Verify(f => f.SetAsync(
+            It.IsAny<Guid>(), It.IsAny<Guid>(), ConversationFactKeys.Service, It.IsAny<string>(),
+            It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -102,87 +85,6 @@ public class SetFactToolTests
         ctx.Facts["baby_age_months"].Should().Be("5");
         _facts.Verify(f => f.SetAsync(
             ctx.ConversationId, ctx.BusinessId, "baby_age_months", "5", It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Once);
-    }
-
-    [Fact]
-    public async Task ExecuteAsync_ServiceKey_NormalizesToCanonicalCatalogName()
-    {
-        var businessId = Guid.NewGuid();
-        _services
-            .Setup(s => s.GetActiveByBusinessIdAsync(businessId))
-            .ReturnsAsync([
-                new Service
-                {
-                    BusinessId = businessId,
-                    ServiceName = "Taller Grupal - 3 dias/semana",
-                    IsActive = true
-                }
-            ]);
-        var ctx = CreateContext(businessId);
-
-        using var args = JsonDocument.Parse("""{"key":"service","value":"Taller Grupal 3 dias/semana"}""");
-        var json = await _tool.ExecuteAsync(args.RootElement, ctx, CancellationToken.None);
-
-        json.Should().Contain("\"ok\":true");
-        ctx.Facts[ConversationFactKeys.Service].Should().Be("Taller Grupal - 3 dias/semana");
-    }
-
-    [Fact]
-    public async Task ExecuteAsync_ServiceKey_WhenNoCanonicalMatch_DoesNotPersist()
-    {
-        var businessId = Guid.NewGuid();
-        _services
-            .Setup(s => s.GetActiveByBusinessIdAsync(businessId))
-            .ReturnsAsync([
-                new Service
-                {
-                    BusinessId = businessId,
-                    ServiceName = "Taller Grupal - 3 dias/semana",
-                    Description = "Programa de estimulacion temprana para bebes.",
-                    IsActive = true
-                }
-            ]);
-        var ctx = CreateContext(businessId);
-
-        using var args = JsonDocument.Parse("""{"key":"service","value":"Spa inventado premium"}""");
-        var json = await _tool.ExecuteAsync(args.RootElement, ctx, CancellationToken.None);
-
-        json.Should().Contain("service_not_resolved");
-        ctx.Facts.Should().NotContainKey(ConversationFactKeys.Service);
-        _facts.Verify(f => f.SetAsync(
-            It.IsAny<Guid>(), It.IsAny<Guid>(), ConversationFactKeys.Service, It.IsAny<string>(),
-            It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Never);
-    }
-
-    [Fact]
-    public async Task ExecuteAsync_ServiceKey_ResolvesDescriptiveWorkshopNameToCanonical()
-    {
-        var businessId = Guid.NewGuid();
-        _services
-            .Setup(s => s.GetActiveByBusinessIdAsync(businessId))
-            .ReturnsAsync([
-                new Service
-                {
-                    BusinessId = businessId,
-                    ServiceName = "Taller Grupal - 3 dias/semana",
-                    Description = "Programa de estimulacion temprana. Talleres grupales Mimos 2026.",
-                    IsActive = true
-                },
-                new Service
-                {
-                    BusinessId = businessId,
-                    ServiceName = "Taller Grupal - 2 dias/semana",
-                    Description = "Programa de estimulacion temprana. Talleres grupales Mimos 2026.",
-                    IsActive = true
-                }
-            ]);
-        var ctx = CreateContext(businessId);
-
-        using var args = JsonDocument.Parse("""{"key":"service","value":"Taller Estimulacion Temprana 3 dias a la semana"}""");
-        var json = await _tool.ExecuteAsync(args.RootElement, ctx, CancellationToken.None);
-
-        json.Should().Contain("\"ok\":true");
-        ctx.Facts[ConversationFactKeys.Service].Should().Be("Taller Grupal - 3 dias/semana");
     }
 
     [Fact]
@@ -416,34 +318,6 @@ public class SetFactToolTests
 
         enumValues.Should().Contain("desired_date");
         enumValues.Should().Contain("desired_time");
-    }
-
-    [Fact]
-    public async Task ExecuteAsync_SameValue_ReturnsUnchangedWithoutPersisting()
-    {
-        var ctx = CreateContext();
-        ctx.Config = CreateMimiLikeSchema();
-        ctx.Facts[ConversationFactKeys.Service] = "Plan Marineritos";
-        _services
-            .Setup(s => s.GetActiveByBusinessIdAsync(ctx.BusinessId))
-            .ReturnsAsync([
-                new Service
-                {
-                    BusinessId = ctx.BusinessId,
-                    ServiceName = "Plan Marineritos",
-                    IsActive = true
-                }
-            ]);
-
-        using var args = JsonDocument.Parse("""{"key":"service","value":"Plan Marineritos"}""");
-        var json = await _tool.ExecuteAsync(args.RootElement, ctx, CancellationToken.None);
-
-        json.Should().Contain("\"unchanged\":true");
-        json.Should().Contain("\"storage\":\"fact_unchanged\"");
-        _facts.Verify(
-            f => f.SetAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<string>(),
-                It.IsAny<bool>(), It.IsAny<CancellationToken>()),
-            Times.Never);
     }
 
     [Fact]

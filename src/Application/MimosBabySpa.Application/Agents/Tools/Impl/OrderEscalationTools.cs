@@ -7,18 +7,18 @@ using MimosBabySpa.Domain.Repositories;
 
 namespace MimosBabySpa.Application.Agents.Tools.Impl;
 
-internal sealed class OrderDeliveryAssignmentResolver
+internal sealed class OrderEscalationResolver
 {
     private static readonly Regex AttemptCodeRegex = new(@"\b[A-Z]{2,10}-\d{4,}\b", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
     private readonly IUnitOfWork _unitOfWork;
 
-    public OrderDeliveryAssignmentResolver(IUnitOfWork unitOfWork)
+    public OrderEscalationResolver(IUnitOfWork unitOfWork)
     {
         _unitOfWork = unitOfWork;
     }
 
-    public async Task<IReadOnlyList<OrderDeliveryAssignment>> SearchAsync(
+    public async Task<IReadOnlyList<OrderEscalation>> SearchAsync(
         AgentToolContext ctx,
         string? query,
         bool includeCompleted,
@@ -40,10 +40,10 @@ internal sealed class OrderDeliveryAssignmentResolver
                 attempts.Add(byCode);
             skipQueryFilter = true;
         }
-        else if (TryParseExternalInteractionPayload(ctx.InteractivePayload, out var payloadAttemptId))
+        else if (TryParseExternalInteractionPayload(ctx.InteractivePayload, out var payloadAttemptId, out _))
         {
             var byPayload = await _unitOfWork.ExternalEscalationAttempts.GetByIdAsync(payloadAttemptId, ct);
-            if (BelongsToContactOrderAssignment(byPayload, ctx))
+            if (BelongsToContactOrderEscalation(byPayload, ctx))
                 attempts.Add(byPayload!);
             skipQueryFilter = true;
         }
@@ -72,9 +72,8 @@ internal sealed class OrderDeliveryAssignmentResolver
             return [];
 
         var normalizedQuery = NormalizeQuery(query);
-        var results = new List<OrderDeliveryAssignment>();
+        var results = new List<OrderEscalation>();
         foreach (var attempt in attempts
-                     .Where(a => IsOrderAssignment(a))
                      .GroupBy(a => a.ExternalEscalationAttemptId)
                      .Select(g => g.First()))
         {
@@ -92,7 +91,7 @@ internal sealed class OrderDeliveryAssignmentResolver
             }
 
             var items = await _unitOfWork.OrderItems.GetByOrderIdAsync(order.BusinessId, order.OrderId, ct);
-            results.Add(new OrderDeliveryAssignment(order, attempt, items, custom));
+            results.Add(new OrderEscalation(order, attempt, items, custom));
         }
 
         return results
@@ -101,7 +100,7 @@ internal sealed class OrderDeliveryAssignmentResolver
             .ToList();
     }
 
-    public async Task<OrderDeliveryAssignmentResolution> ResolveOneAsync(
+    public async Task<OrderEscalationResolution> ResolveOneAsync(
         AgentToolContext ctx,
         JsonElement arguments,
         CancellationToken ct)
@@ -113,15 +112,15 @@ internal sealed class OrderDeliveryAssignmentResolver
             .ToList();
 
         if (matches.Count == 0)
-            return new OrderDeliveryAssignmentResolution("not_found", null, []);
+            return new OrderEscalationResolution("not_found", null, []);
 
         if (actionable.Count == 1)
-            return new OrderDeliveryAssignmentResolution("resolved", actionable[0], matches);
+            return new OrderEscalationResolution("resolved", actionable[0], matches);
 
         if (actionable.Count > 1)
-            return new OrderDeliveryAssignmentResolution("ambiguous", null, actionable);
+            return new OrderEscalationResolution("ambiguous", null, actionable);
 
-        return new OrderDeliveryAssignmentResolution("not_available", null, matches);
+        return new OrderEscalationResolution("not_available", null, matches);
     }
 
     private static string? ReadQuery(JsonElement arguments, AgentToolContext ctx)
@@ -137,15 +136,11 @@ internal sealed class OrderDeliveryAssignmentResolver
             : ctx.ConversationState.LastUserMessage;
     }
 
-    private static bool BelongsToContactOrderAssignment(ExternalEscalationAttempt? attempt, AgentToolContext ctx) =>
+    private static bool BelongsToContactOrderEscalation(ExternalEscalationAttempt? attempt, AgentToolContext ctx) =>
         attempt is not null
         && attempt.BusinessId == ctx.BusinessId
         && attempt.ContactPhoneSnapshot.Equals(NormalizePhone(ctx.ChannelPhone), StringComparison.OrdinalIgnoreCase)
-        && IsOrderAssignment(attempt);
-
-    private static bool IsOrderAssignment(ExternalEscalationAttempt attempt) =>
-        attempt.TargetType.Equals("order", StringComparison.OrdinalIgnoreCase)
-        && attempt.EventName.Equals("order_created", StringComparison.OrdinalIgnoreCase);
+;
 
     private static bool MatchesQuery(
         Order order,
@@ -178,16 +173,27 @@ internal sealed class OrderDeliveryAssignmentResolver
         return match.Success ? match.Value.ToUpperInvariant() : null;
     }
 
-    private static bool TryParseExternalInteractionPayload(string? payload, out Guid attemptId)
+    internal static string? ReadInteractivePayloadOutcome(string? payload) =>
+        TryParseExternalInteractionPayload(payload, out _, out var outcomeKey)
+            ? outcomeKey
+            : null;
+
+    private static bool TryParseExternalInteractionPayload(string? payload, out Guid attemptId, out string? outcomeKey)
     {
         attemptId = Guid.Empty;
+        outcomeKey = null;
         if (string.IsNullOrWhiteSpace(payload))
             return false;
 
         var parts = payload.Split(':', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        return parts.Length == 3
-            && parts[0].Equals("external_interaction", StringComparison.OrdinalIgnoreCase)
-            && (Guid.TryParseExact(parts[2], "N", out attemptId) || Guid.TryParse(parts[2], out attemptId));
+        if (parts.Length != 3 || !parts[0].Equals("external_interaction", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        if (!Guid.TryParseExact(parts[2], "N", out attemptId) && !Guid.TryParse(parts[2], out attemptId))
+            return false;
+
+        outcomeKey = parts[1].Trim();
+        return true;
     }
 
     private static string NormalizeQuery(string? value) => value?.Trim() ?? string.Empty;
@@ -213,20 +219,20 @@ internal sealed class OrderDeliveryAssignmentResolver
     }
 }
 
-internal sealed record OrderDeliveryAssignment(
+internal sealed record OrderEscalation(
     Order Order,
     ExternalEscalationAttempt Attempt,
     IReadOnlyList<OrderItem> Items,
     IReadOnlyDictionary<string, string> CustomPayload);
 
-internal sealed record OrderDeliveryAssignmentResolution(
+internal sealed record OrderEscalationResolution(
     string Status,
-    OrderDeliveryAssignment? Assignment,
-    IReadOnlyList<OrderDeliveryAssignment> Matches);
+    OrderEscalation? Assignment,
+    IReadOnlyList<OrderEscalation> Matches);
 
-internal static class OrderDeliveryToolPayload
+internal static class OrderEscalationToolPayload
 {
-    public static object ToPayload(OrderDeliveryAssignment assignment, DateTime now)
+    public static object ToPayload(OrderEscalation assignment, DateTime now)
     {
         var order = assignment.Order;
         var attempt = assignment.Attempt;
@@ -239,9 +245,8 @@ internal static class OrderDeliveryToolPayload
             order_number = assignment.CustomPayload.TryGetValue("order_number", out var orderNumber)
                 ? orderNumber
                 : order.OrderId.ToString("N")[..8].ToUpperInvariant(),
-            assignment_code = attempt.AttemptCode,
-            assignment_status = attempt.Status.ToString(),
-            delivery_assignment_status = order.DeliveryAssignmentStatus.ToString(),
+            request_code = attempt.AttemptCode,
+            request_status = attempt.Status.ToString(),
             can_accept = canAct,
             can_reject = canAct,
             is_expired = isExpired,
@@ -261,17 +266,17 @@ internal static class OrderDeliveryToolPayload
 
 public sealed class SearchOrderTool : IAgentTool
 {
-    private readonly OrderDeliveryAssignmentResolver _resolver;
+    private readonly OrderEscalationResolver _resolver;
 
     public SearchOrderTool(IUnitOfWork unitOfWork)
     {
-        _resolver = new OrderDeliveryAssignmentResolver(unitOfWork);
+        _resolver = new OrderEscalationResolver(unitOfWork);
     }
 
     public string Name => "search_order";
 
     public string Description =>
-        "Searches delivery orders assigned to the current delivery contact. Use it with PED codes, order numbers, customer data, or when multiple pending orders are possible.";
+        "Searches order requests assigned to the current contact. Use it with PED codes, order numbers, customer data, or when multiple pending requests are possible.";
 
     public string ParametersSchema => """
         {
@@ -299,7 +304,7 @@ public sealed class SearchOrderTool : IAgentTool
         return ToolResultHelper.Ok(new
         {
             count = assignments.Count,
-            orders = assignments.Select(a => OrderDeliveryToolPayload.ToPayload(a, now)).ToList()
+            orders = assignments.Select(a => OrderEscalationToolPayload.ToPayload(a, now)).ToList()
         });
     }
 
@@ -315,20 +320,20 @@ public sealed class SearchOrderTool : IAgentTool
     }
 }
 
-public sealed class AcceptOrderDeliveryTool : IAgentTool
+public sealed class AcceptOrderRequestTool : IAgentTool
 {
-    private readonly OrderDeliveryAssignmentResolver _resolver;
-    private readonly IExternalEscalationService _externalEscalations;
+    private readonly OrderEscalationResolver _resolver;
+    private readonly IExternalEscalationService _escalations;
 
-    public AcceptOrderDeliveryTool(IUnitOfWork unitOfWork, IExternalEscalationService externalEscalations)
+    public AcceptOrderRequestTool(IUnitOfWork unitOfWork, IExternalEscalationService escalations)
     {
-        _resolver = new OrderDeliveryAssignmentResolver(unitOfWork);
-        _externalEscalations = externalEscalations;
+        _resolver = new OrderEscalationResolver(unitOfWork);
+        _escalations = escalations;
     }
 
-    public string Name => "accept_order_delivery";
+    public string Name => "accept_order_request";
 
-    public string Description => "Accepts a delivery order assigned to the current delivery contact.";
+    public string Description => "Accepts an order request assigned to the current contact.";
 
     public string ParametersSchema => """
         {
@@ -343,10 +348,22 @@ public sealed class AcceptOrderDeliveryTool : IAgentTool
         """;
 
     public Task<string> ExecuteAsync(JsonElement arguments, AgentToolContext ctx, CancellationToken cancellationToken = default) =>
-        CompleteAsync(arguments, ctx, "accepted", cancellationToken);
+        AcceptAsync(arguments, ctx, cancellationToken);
 
-    private async Task<string> CompleteAsync(JsonElement arguments, AgentToolContext ctx, string outcomeKey, CancellationToken ct)
+    private async Task<string> AcceptAsync(JsonElement arguments, AgentToolContext ctx, CancellationToken ct)
     {
+        var payloadOutcome = OrderEscalationResolver.ReadInteractivePayloadOutcome(ctx.InteractivePayload);
+
+                if (!string.IsNullOrWhiteSpace(payloadOutcome)
+            && !payloadOutcome.Equals(ExternalEscalationOutcomeKeys.Accepted, StringComparison.OrdinalIgnoreCase))
+        {
+            return ToolResultHelper.Ok(new
+            {
+                accepted = false,
+                reason = "outcome_mismatch"
+            });
+        }
+
         var resolution = await _resolver.ResolveOneAsync(ctx, arguments, ct);
         var now = DateTime.UtcNow;
         if (resolution.Assignment is null)
@@ -354,7 +371,7 @@ public sealed class AcceptOrderDeliveryTool : IAgentTool
             {
                 accepted = false,
                 reason = resolution.Status,
-                orders = resolution.Matches.Select(a => OrderDeliveryToolPayload.ToPayload(a, now)).ToList()
+                orders = resolution.Matches.Select(a => OrderEscalationToolPayload.ToPayload(a, now)).ToList()
             });
 
         var assignment = resolution.Assignment;
@@ -363,7 +380,7 @@ public sealed class AcceptOrderDeliveryTool : IAgentTool
             {
                 accepted = false,
                 reason = "expired",
-                order = OrderDeliveryToolPayload.ToPayload(assignment, now)
+                order = OrderEscalationToolPayload.ToPayload(assignment, now)
             });
 
         ToolResultHelper.TryGetString(arguments, "response_text", out var responseText);
@@ -374,13 +391,15 @@ public sealed class AcceptOrderDeliveryTool : IAgentTool
             ["order_number"] = assignment.CustomPayload.TryGetValue("order_number", out var orderNumber) ? orderNumber : assignment.Order.OrderId.ToString("N")[..8].ToUpperInvariant()
         };
 
-        var result = await _externalEscalations.CompleteAsync(
-            ctx.BusinessId,
-            assignment.Attempt.ExternalEscalationAttemptId,
-            ctx.ChannelPhone,
-            outcomeKey,
-            responseText,
-            payload,
+        var result = await _escalations.CompleteAttemptAsync(
+            new ExternalEscalationCompletionRequest(
+                ctx.BusinessId,
+                assignment.Attempt.ExternalEscalationAttemptId,
+                ctx.ChannelPhone,
+                ExternalEscalationOutcomeKeys.Accepted,
+                ExternalEscalationAttemptStatus.Accepted,
+                responseText,
+                payload),
             ct);
 
         if (!result.Success)
@@ -389,33 +408,33 @@ public sealed class AcceptOrderDeliveryTool : IAgentTool
                 accepted = false,
                 reason = "not_available",
                 message = result.Message,
-                order = OrderDeliveryToolPayload.ToPayload(assignment, now)
+                order = OrderEscalationToolPayload.ToPayload(assignment, now)
             });
 
         return ToolResultHelper.Ok(new
         {
             accepted = true,
-            order = OrderDeliveryToolPayload.ToPayload(assignment, DateTime.UtcNow),
+            order = OrderEscalationToolPayload.ToPayload(assignment with { Attempt = result.Attempt ?? assignment.Attempt }, DateTime.UtcNow),
             outcome_key = result.OutcomeKey
         }, ToolSideEffectNames.RequestCompleted);
     }
 }
 
-public sealed class RejectOrderDeliveryTool : IAgentTool
+public sealed class RejectOrderRequestTool : IAgentTool
 {
-    private readonly OrderDeliveryAssignmentResolver _resolver;
-    private readonly IExternalEscalationService _externalEscalations;
+    private readonly OrderEscalationResolver _resolver;
+    private readonly IExternalEscalationService _escalations;
 
-    public RejectOrderDeliveryTool(IUnitOfWork unitOfWork, IExternalEscalationService externalEscalations)
+    public RejectOrderRequestTool(IUnitOfWork unitOfWork, IExternalEscalationService escalations)
     {
-        _resolver = new OrderDeliveryAssignmentResolver(unitOfWork);
-        _externalEscalations = externalEscalations;
+        _resolver = new OrderEscalationResolver(unitOfWork);
+        _escalations = escalations;
     }
 
-    public string Name => "reject_order_delivery";
+    public string Name => "reject_order_request";
 
     public string Description =>
-        "Rejects a delivery order assigned to the current delivery contact so it can be reassigned or escalated. " +
+        "Rejects an order request assigned to the current contact. " +
         "Do not ask for a rejection reason; a clear rejection is enough.";
 
     public string ParametersSchema => """
@@ -432,6 +451,18 @@ public sealed class RejectOrderDeliveryTool : IAgentTool
 
     public async Task<string> ExecuteAsync(JsonElement arguments, AgentToolContext ctx, CancellationToken cancellationToken = default)
     {
+        var payloadOutcome = OrderEscalationResolver.ReadInteractivePayloadOutcome(ctx.InteractivePayload);
+
+                if (!string.IsNullOrWhiteSpace(payloadOutcome)
+            && !payloadOutcome.Equals(ExternalEscalationOutcomeKeys.Declined, StringComparison.OrdinalIgnoreCase))
+        {
+            return ToolResultHelper.Ok(new
+            {
+                rejected = false,
+                reason = "outcome_mismatch"
+            });
+        }
+
         var resolution = await _resolver.ResolveOneAsync(ctx, arguments, cancellationToken);
         var now = DateTime.UtcNow;
         if (resolution.Assignment is null)
@@ -439,7 +470,7 @@ public sealed class RejectOrderDeliveryTool : IAgentTool
             {
                 rejected = false,
                 reason = resolution.Status,
-                orders = resolution.Matches.Select(a => OrderDeliveryToolPayload.ToPayload(a, now)).ToList()
+                orders = resolution.Matches.Select(a => OrderEscalationToolPayload.ToPayload(a, now)).ToList()
             });
 
         var assignment = resolution.Assignment;
@@ -448,7 +479,7 @@ public sealed class RejectOrderDeliveryTool : IAgentTool
             {
                 rejected = false,
                 reason = "expired",
-                order = OrderDeliveryToolPayload.ToPayload(assignment, now)
+                order = OrderEscalationToolPayload.ToPayload(assignment, now)
             });
 
         ToolResultHelper.TryGetString(arguments, "response_text", out var responseText);
@@ -459,13 +490,15 @@ public sealed class RejectOrderDeliveryTool : IAgentTool
             ["order_number"] = assignment.CustomPayload.TryGetValue("order_number", out var orderNumber) ? orderNumber : assignment.Order.OrderId.ToString("N")[..8].ToUpperInvariant()
         };
 
-        var result = await _externalEscalations.CompleteAsync(
-            ctx.BusinessId,
-            assignment.Attempt.ExternalEscalationAttemptId,
-            ctx.ChannelPhone,
-            "declined",
-            responseText,
-            payload,
+        var result = await _escalations.CompleteAttemptAsync(
+            new ExternalEscalationCompletionRequest(
+                ctx.BusinessId,
+                assignment.Attempt.ExternalEscalationAttemptId,
+                ctx.ChannelPhone,
+                ExternalEscalationOutcomeKeys.Declined,
+                ExternalEscalationAttemptStatus.Declined,
+                responseText,
+                payload),
             cancellationToken);
 
         if (!result.Success)
@@ -474,15 +507,16 @@ public sealed class RejectOrderDeliveryTool : IAgentTool
                 rejected = false,
                 reason = "not_available",
                 message = result.Message,
-                order = OrderDeliveryToolPayload.ToPayload(assignment, now)
+                order = OrderEscalationToolPayload.ToPayload(assignment, now)
             });
 
         return ToolResultHelper.Ok(new
         {
             rejected = true,
-            order = OrderDeliveryToolPayload.ToPayload(assignment, DateTime.UtcNow),
-            outcome_key = result.OutcomeKey,
-            next_contact_requested = result.EscalatedNext
+            order = OrderEscalationToolPayload.ToPayload(assignment with { Attempt = result.Attempt ?? assignment.Attempt }, DateTime.UtcNow),
+            outcome_key = result.OutcomeKey
         }, ToolSideEffectNames.RequestCompleted);
     }
 }
+
+

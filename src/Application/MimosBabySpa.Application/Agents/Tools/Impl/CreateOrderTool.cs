@@ -8,6 +8,7 @@ using MimosBabySpa.Domain.Repositories;
 
 namespace MimosBabySpa.Application.Agents.Tools.Impl;
 
+[AgentToolMetadata("create_order", Capabilities = new[] { ToolCapabilities.OrderCreate })]
 public sealed class CreateOrderTool : IAgentTool
 {
     private readonly ICommerceService _commerce;
@@ -95,11 +96,26 @@ public sealed class CreateOrderTool : IAgentTool
         var items = await _unitOfWork.OrderItems.GetByOrderIdAsync(ctx.BusinessId, orderId, ct);
         var custom = BuildCustomPayload(entity, items);
 
-        await _notificationDispatcher.SendEventAsync(ctx.BusinessId, ctx.Config, "order_created", custom, ct);
-        await _externalEscalations.EscalateNextAsync(
-            new ExternalEscalationRequest(ctx.Config.AgentId, "order_created", "order", orderId, custom),
+        var eventName = ResolveExternalEscalationEventName(ctx.Config);
+        if (string.IsNullOrWhiteSpace(eventName))
+            return;
+
+        await _notificationDispatcher.SendEventAsync(ctx.BusinessId, ctx.Config, eventName, custom, ct);
+        await _externalEscalations.EscalateToolAsync(
+            ctx.Config.AgentId,
+            Name,
+            orderId,
+            custom,
             ct);
     }
+
+    private string? ResolveExternalEscalationEventName(AgentConfig config) =>
+        config.Escalations.External.Events
+            .Where(pair => pair.Value.Enabled)
+            .Where(pair => pair.Value.Tool.Equals(Name, StringComparison.OrdinalIgnoreCase))
+            .OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase)
+            .Select(pair => pair.Key)
+            .FirstOrDefault();
 
     private static Dictionary<string, string> BuildCustomPayload(Order order, IReadOnlyList<OrderItem> items)
     {
@@ -160,3 +176,5 @@ public sealed class CreateOrderTool : IAgentTool
 
     private static string Money(decimal amount) => amount.ToString("N0", CultureInfo.InvariantCulture);
 }
+
+

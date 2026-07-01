@@ -6,6 +6,7 @@ namespace MimosBabySpa.Application.Commerce;
 
 public sealed class LocalCommerceAdapter : ICommerceAdapter
 {
+    private static readonly string Source = CommerceProvider.Local.ToString().ToLowerInvariant();
     private readonly IUnitOfWork _unitOfWork;
 
     public LocalCommerceAdapter(IUnitOfWork unitOfWork) => _unitOfWork = unitOfWork;
@@ -14,10 +15,16 @@ public sealed class LocalCommerceAdapter : ICommerceAdapter
 
     public async Task<ProductSearchResult> SearchProductsAsync(ProductSearchRequest request, CommerceAdapterContext ctx, CancellationToken ct = default)
     {
-        var products = await _unitOfWork.Products.SearchAsync(ctx.BusinessId, request.Query, request.Category, request.Limit, ct);
+        var products = await _unitOfWork.Products.SearchAsync(
+            ctx.BusinessId,
+            request.Query,
+            request.Category,
+            request.Limit,
+            ct,
+            includeInactive: true);
         return new ProductSearchResult(
             products.Select(Map).ToList(),
-            "local",
+            Source,
             false);
     }
 
@@ -53,7 +60,7 @@ public sealed class LocalCommerceAdapter : ICommerceAdapter
 
     public Task<CreateExternalOrderResult> CreateOrderAsync(Order order, IReadOnlyList<OrderItem> items, CommerceAdapterContext ctx, CancellationToken ct = default)
     {
-        return Task.FromResult(new CreateExternalOrderResult(order.OrderId.ToString(), null, "local", "{}"));
+        return Task.FromResult(new CreateExternalOrderResult(order.OrderId.ToString(), null, Source, "{}"));
     }
 
     private static ProductReference Map(Product product) =>
@@ -67,7 +74,6 @@ public sealed class LocalCommerceAdapter : ICommerceAdapter
             product.UnitPrice,
             product.Currency,
             product.StockQuantity,
-            product.IsActive && (!product.ManageStock || (product.StockQuantity ?? 0) > 0),
             null,
             null,
             null,

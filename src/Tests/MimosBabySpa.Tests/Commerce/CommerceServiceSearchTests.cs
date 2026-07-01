@@ -12,7 +12,7 @@ namespace MimosBabySpa.Tests.Commerce;
 public sealed class CommerceServiceSearchTests
 {
     [Fact]
-    public async Task SearchProductsAsync_FiltersAdapterResultsToSellableProductsBeforeReturningToAgent()
+    public async Task SearchProductsAsync_ReturnsInactiveProductsAsUnavailable()
     {
         var businessId = Guid.NewGuid();
         var unitOfWork = new Mock<IUnitOfWork>();
@@ -30,9 +30,9 @@ public sealed class CommerceServiceSearchTests
             .Setup(a => a.SearchProductsAsync(It.IsAny<ProductSearchRequest>(), It.IsAny<CommerceAdapterContext>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ProductSearchResult(
                 [
-                    Product("Mango 750ML", isActive: true, isAvailable: true),
-                    Product("Dulce 750ML", isActive: false, isAvailable: true),
-                    Product("Semidulce 750ML", isActive: true, isAvailable: false)
+                    Product("Mango 750ML", isActive: true),
+                    Product("Dulce 750ML", isActive: false),
+                    Product("Semidulce 750ML", isActive: true, stockQuantity: 0)
                 ],
                 "adapter"));
         promotions
@@ -55,16 +55,20 @@ public sealed class CommerceServiceSearchTests
             new ProductSearchRequest("vino", null, 10),
             CancellationToken.None);
 
-        result.Products.Should().ContainSingle();
+        result.Products.Should().HaveCount(3);
         result.Products[0].Name.Should().Be("Mango 750ML");
+        result.Products[1].Name.Should().Be("Dulce 750ML");
+        result.Products[1].IsActive.Should().BeFalse();
+        result.Products[2].Name.Should().Be("Semidulce 750ML");
+        result.Products[2].IsActive.Should().BeTrue();
         promotions.Verify(p => p.EvaluateAsync(
             businessId,
-            It.Is<IReadOnlyList<PromotionPricingItem>>(items => items.Count == 1),
+            It.Is<IReadOnlyList<PromotionPricingItem>>(items => items.Count == 3),
             It.IsAny<DateTime?>(),
             It.IsAny<CancellationToken>()));
     }
 
-    private static ProductReference Product(string name, bool isActive, bool isAvailable) =>
+    private static ProductReference Product(string name, bool isActive, decimal? stockQuantity = null) =>
         new(
             Guid.NewGuid(),
             null,
@@ -74,7 +78,6 @@ public sealed class CommerceServiceSearchTests
             null,
             1000m,
             "COP",
-            null,
-            isAvailable)
+            stockQuantity)
         { IsActive = isActive };
 }

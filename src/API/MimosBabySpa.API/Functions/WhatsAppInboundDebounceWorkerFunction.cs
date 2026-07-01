@@ -1,7 +1,6 @@
 using System.Text.Json;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;
-using MimosBabySpa.Application.Agents;
 using MimosBabySpa.Application.DTOs;
 using MimosBabySpa.Application.Services;
 using MimosBabySpa.Domain.Entities;
@@ -11,7 +10,6 @@ namespace MimosBabySpa.API.Functions;
 
 public sealed class WhatsAppInboundDebounceWorkerFunction
 {
-    private const string WhatsAppProvider = "whatsapp";
     private static readonly TimeSpan DebounceDelay = TimeSpan.FromSeconds(3);
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -21,20 +19,20 @@ public sealed class WhatsAppInboundDebounceWorkerFunction
     private readonly IInboundMessageDeduplicationService _deduplicationService;
     private readonly IWhatsAppInboundQueueService _queueService;
     private readonly IWhatsAppWebhookParserService _webhookParserService;
-    private readonly IWhatsAppMessageProcessorService _messageProcessorService;
+    private readonly IInboundMessageBatchProcessor _batchProcessor;
     private readonly ILogger<WhatsAppInboundDebounceWorkerFunction> _logger;
 
     public WhatsAppInboundDebounceWorkerFunction(
         IInboundMessageDeduplicationService deduplicationService,
         IWhatsAppInboundQueueService queueService,
         IWhatsAppWebhookParserService webhookParserService,
-        IWhatsAppMessageProcessorService messageProcessorService,
+        IInboundMessageBatchProcessor batchProcessor,
         ILogger<WhatsAppInboundDebounceWorkerFunction> logger)
     {
         _deduplicationService = deduplicationService;
         _queueService = queueService;
         _webhookParserService = webhookParserService;
-        _messageProcessorService = messageProcessorService;
+        _batchProcessor = batchProcessor;
         _logger = logger;
     }
 
@@ -44,7 +42,7 @@ public sealed class WhatsAppInboundDebounceWorkerFunction
         CancellationToken ct)
     {
         var wakeup = JsonSerializer.Deserialize<WhatsAppInboundDebounceMessage>(body, JsonOptions)
-            ?? throw new InvalidOperationException("Mensaje de debounce inbound inválido.");
+            ?? throw new InvalidOperationException("Mensaje de debounce inbound invalido.");
 
         var pending = (await _deduplicationService.GetPendingConversationMessagesAsync(
             wakeup.BusinessId,
@@ -93,56 +91,22 @@ public sealed class WhatsAppInboundDebounceWorkerFunction
         try
         {
             var allMessages = await ParsePendingMessagesAsync(wakeup.BusinessId, pending);
-            if (allMessages.Count == 0)
+            if (allMessages.Count > 0)
             {
-                await _deduplicationService.MarkProcessedAsync(
+                var result = await _batchProcessor.ProcessAsync(
                     wakeup.BusinessId,
-                    wakeup.Provider,
-                    providerMessageIds,
+                    allMessages,
                     ct);
-                return;
+
+                if (allMessages.Count > 1)
+                {
+                    _logger.LogInformation(
+                        "Debounce inbound: procesado lote de {Count} mensajes con {InteractiveCount} mensaje(s) interactivo(s) en negocio {BusinessId}",
+                        result.MessageCount,
+                        result.InteractiveMessageCount,
+                        wakeup.BusinessId);
+                }
             }
-
-            var distinctUserNumbers = allMessages.Select(m => m.UserNumber).Distinct().ToList();
-            if (distinctUserNumbers.Count > 1)
-            {
-                throw new InvalidOperationException(
-                    $"Se detectaron mensajes de múltiples usuarios en un debounce: {string.Join(", ", distinctUserNumbers)}");
-            }
-
-            var userNumber = allMessages.First().UserNumber;
-            var customerName = allMessages.LastOrDefault(m => !string.IsNullOrWhiteSpace(m.CustomerName))?.CustomerName;
-            var combinedMessage = string.Join("\n", allMessages.Select(m => m.MessageText).Where(t => !string.IsNullOrWhiteSpace(t)));
-            var inboundMetadata = new AgentInboundMetadata(
-                allMessages.LastOrDefault(m => !string.IsNullOrWhiteSpace(m.ProviderMessageId))?.ProviderMessageId,
-                allMessages.LastOrDefault(m => !string.IsNullOrWhiteSpace(m.ReplyToProviderMessageId))?.ReplyToProviderMessageId,
-                allMessages.LastOrDefault(m => !string.IsNullOrWhiteSpace(m.InteractivePayload))?.InteractivePayload);
-
-            if (string.IsNullOrWhiteSpace(combinedMessage))
-            {
-                await _deduplicationService.MarkProcessedAsync(
-                    wakeup.BusinessId,
-                    wakeup.Provider,
-                    providerMessageIds,
-                    ct);
-                return;
-            }
-
-            if (allMessages.Count > 1)
-            {
-                _logger.LogInformation(
-                    "Debounce inbound: unificando {Count} mensajes del usuario {UserNumber} en negocio {BusinessId}",
-                    allMessages.Count,
-                    userNumber,
-                    wakeup.BusinessId);
-            }
-
-            await _messageProcessorService.ProcessIncomingMessageAsync(
-                wakeup.BusinessId,
-                userNumber,
-                combinedMessage,
-                customerName,
-                inboundMetadata);
 
             await _deduplicationService.MarkProcessedAsync(
                 wakeup.BusinessId,
@@ -190,6 +154,3 @@ public sealed class WhatsAppInboundDebounceWorkerFunction
         return allMessages;
     }
 }
-
-
-

@@ -12,6 +12,7 @@ using MimosBabySpa.Domain.Repositories;
 
 namespace MimosBabySpa.Application.Agents.Tools.Impl;
 
+[AgentToolMetadata("prepare_order_checkout", Capabilities = new[] { ToolCapabilities.CheckoutPrepare })]
 public sealed class PrepareOrderCheckoutTool : IAgentTool
 {
     private readonly IUnitOfWork _unitOfWork;
@@ -475,3 +476,4 @@ public sealed class PrepareOrderCheckoutTool : IAgentTool
 
     private static string Money(decimal amount) => amount.ToString("N0", CultureInfo.InvariantCulture);
 }
+

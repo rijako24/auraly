@@ -2,7 +2,7 @@
 -- SeedSystemAgentTemplatesAndInboundContacts.sql
 --
 -- Templates del sistema y contactos inbound operativos por negocio.
--- Mantiene separados los agentes de delivery y operations.
+-- Mantiene separados los agentes de domicilio y operations.
 -- =============================================================================
 
 SET NOCOUNT ON;
@@ -21,19 +21,19 @@ DECLARE @DeliverySettingsJson NVARCHAR(MAX) = N'{
     "stageDetection": "automatic",
     "stages": [
       {
-        "id": "delivery_assignment",
+        "id": "order_request",
         "name": "Gestion de domicilio",
         "goal": "Resolver si el domiciliario acepta o rechaza una solicitud pendiente.",
-        "hint": "Si el mensaje viene citado/respondiendo a una solicitud de domicilio, la cita identifica el pedido: si el contacto acepta/confirma/toma el pedido, llama accept_order_delivery; si rechaza o dice que no puede tomarlo, llama reject_order_delivery. No pidas confirmacion ni motivo en esos casos. Usa search_order solo cuando no haya cita ni payload interactivo, cuando necesites resolver por codigo PED/datos del pedido, o cuando haya varias ordenes pendientes; si hay ambiguedad, pide elegir mostrando assignment_code. Si el pedido esta vencido o no disponible, responde breve indicando que ya no puede gestionarse automaticamente. Tras aceptar agradece la confirmacion; tras rechazar indica que se registro el rechazo y se contactara al siguiente domiciliario si aplica.",
-        "allowedTools": ["search_order", "accept_order_delivery", "reject_order_delivery"],
+        "hint": "Si el mensaje viene citado/respondiendo a una solicitud de domicilio, la cita identifica el pedido: si el contacto acepta/confirma/toma el pedido, llama accept_order_request; si rechaza o dice que no puede tomarlo, llama reject_order_request. No pidas confirmacion ni motivo en esos casos. Usa search_order solo cuando no haya cita ni payload interactivo, cuando necesites resolver por codigo PED/datos del pedido, o cuando haya varias ordenes pendientes; si hay ambiguedad, pide elegir mostrando request_code. Si el pedido esta vencido o no disponible, responde breve indicando que ya no puede gestionarse automaticamente. Tras aceptar agradece la confirmacion; tras rechazar indica que se registro el rechazo.",
+        "allowedTools": ["search_order", "accept_order_request", "reject_order_request"],
         "advanceWhenFacts": []
       }
     ]
   },
   "enabledTools": [
     "search_order",
-    "accept_order_delivery",
-    "reject_order_delivery"
+    "accept_order_request",
+    "reject_order_request"
   ],
   "guards": {},
   "notifications": {},
@@ -104,7 +104,7 @@ IF ISJSON(@OperationsSettingsJson) <> 1
 
 MERGE dbo.AgentTemplates AS target
 USING (VALUES
-    (@DeliveryTemplateId, N'system.delivery', N'Agente de domicilios', N'delivery', N'Resuelve interacciones externas con domiciliarios.', @DeliverySettingsJson, N''),
+    (@DeliveryTemplateId, N'system.domicilio', N'Agente de domicilios', N'domicilio', N'Resuelve interacciones externas con domiciliarios.', @DeliverySettingsJson, N''),
     (@OperationsTemplateId, N'system.operations', N'Agente operativo', N'operations', N'Atiende contactos administrativos y operativos del negocio.', @OperationsSettingsJson, N'')
 ) AS source (AgentTemplateId, [Key], [Name], Kind, [Description], SettingsJson, SystemPromptMarkdown)
 ON target.[Key] = source.[Key]
@@ -145,7 +145,7 @@ DECLARE @LuisOperationsAgentId UNIQUEIDENTIFIER = 'BABA0000-0000-0000-0000-00000
 IF EXISTS (SELECT 1 FROM dbo.Agents WHERE AgentId = @SolorzanoDeliveryAgentId)
 BEGIN
     UPDATE dbo.Agents
-    SET Kind = N'delivery',
+    SET Kind = N'domicilio',
         AgentTemplateId = @DeliveryTemplateId,
         SettingsJson = @DeliverySettingsJson,
         SystemPromptMarkdown = N'',
@@ -203,8 +203,7 @@ DECLARE @Contacts TABLE (
 );
 
 INSERT INTO @Contacts VALUES
-    ('E2EE3BA9-E6BF-43E2-8C1A-560CB724688B', @SolorzanoBusinessId, N'delivery', N'supervoy', N'SuperVoy', N'delivery', N'+573023823535', N'573023823535', @SolorzanoDeliveryAgentId, N'{"scope":"delivery"}'),
-    ('E3EE3BA9-E6BF-43E2-8C1A-560CB724688B', @SolorzanoBusinessId, N'delivery', N'urbana_flash', N'Urbana Flash', N'delivery', N'+573006704013', N'573006704013', @SolorzanoDeliveryAgentId, N'{"scope":"delivery"}'),
+    ('E2EE3BA9-E6BF-43E2-8C1A-560CB724688B', @SolorzanoBusinessId, N'domicilio', N'supervoy', N'SuperVoy', N'domicilio', N'+573023823535', N'573023823535', @SolorzanoDeliveryAgentId, N'{"scope":"domicilio"}'),
     ('E1EE3BA9-E6BF-43E2-8C1A-560CB724688B', @SolorzanoBusinessId, N'operations', N'operaciones_solorzano', N'Operaciones Solorzano', N'operations', N'+573004442469', N'573004442469', @SolorzanoOperationsAgentId, N'{"scope":"operations"}'),
     ('22222222-2222-2222-2222-2222222220B1', @MimosBusinessId, N'operations', N'operaciones_mimos', N'Operaciones Mimos', N'operations', N'+573012926660', N'573012926660', @MimosOperationsAgentId, N'{"scope":"operations"}'),
     ('BABA0000-0000-0000-0000-0000000000B1', @LuisBusinessId, N'operations', N'operaciones_luis_petit', N'Operaciones Luis Petit', N'operations', N'+573042052007', N'573042052007', @LuisOperationsAgentId, N'{"scope":"operations"}');
@@ -237,8 +236,14 @@ WHEN NOT MATCHED THEN
 DELETE FROM dbo.BusinessInboundContacts
 WHERE BusinessId = @SolorzanoBusinessId
   AND BusinessInboundContactId = 'E0EE3BA9-E6BF-43E2-8C1A-560CB724688B'
-  AND [Type] = N'delivery'
+  AND [Type] = N'domicilio'
   AND PhoneNormalized = N'573042052007';
+
+DELETE FROM dbo.BusinessInboundContacts
+WHERE BusinessId = @SolorzanoBusinessId
+  AND BusinessInboundContactId = 'E3EE3BA9-E6BF-43E2-8C1A-560CB724688B'
+  AND [Type] = N'domicilio'
+  AND PhoneNormalized = N'573006704013';
 
 PRINT N'SeedSystemAgentTemplatesAndInboundContacts: templates y contactos inbound configurados.';
 

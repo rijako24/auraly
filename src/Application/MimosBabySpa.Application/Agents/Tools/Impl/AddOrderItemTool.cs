@@ -5,6 +5,7 @@ using MimosBabySpa.Application.Services;
 
 namespace MimosBabySpa.Application.Agents.Tools.Impl;
 
+[AgentToolMetadata("add_order_item", Capabilities = new[] { ToolCapabilities.OrderDraftUpdate })]
 public sealed class AddOrderItemTool : IAgentTool
 {
     private readonly ICommerceService _commerce;
@@ -145,3 +146,4 @@ public sealed class AddOrderItemTool : IAgentTool
             && property.TryGetDecimal(out value);
     }
 }
+

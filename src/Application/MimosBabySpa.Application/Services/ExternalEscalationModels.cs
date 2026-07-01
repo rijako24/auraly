@@ -1,31 +1,48 @@
-using MimosBabySpa.Application.Agents.Configuration;
 using MimosBabySpa.Domain.Entities;
+using MimosBabySpa.Domain.Enums;
 
 namespace MimosBabySpa.Application.Services;
 
 public sealed record BusinessInboundContactRoute(Guid AgentId, string ContactKey, string ContactPhone);
 
+public static class ExternalEscalationOutcomeKeys
+{
+    public const string Requested = "requested";
+    public const string Accepted = "accepted";
+    public const string Declined = "declined";
+    public const string TimedOut = "timed_out";
+}
+
 public sealed record ExternalEscalationRequest(
     Guid SourceAgentId,
     string EventName,
-    string TargetType,
     Guid TargetId,
     IReadOnlyDictionary<string, string> Custom);
 
 public sealed record ExternalEscalationSendResult(bool Sent, string? Code, string? Error, Guid? InteractionId = null);
 
-public sealed record ExternalEscalationResolution(
-    string Resolution,
-    ExternalEscalationAttempt? Attempt,
-    IReadOnlyList<ExternalEscalationAttempt> PendingAttempts,
-    string? Error,
-    string? RequestedAction = null);
+public sealed record ExternalEscalationCompletionRequest(
+    Guid BusinessId,
+    Guid AttemptId,
+    string ContactPhone,
+    string OutcomeKey,
+    ExternalEscalationAttemptStatus CompletedStatus,
+    string? ResponseText,
+    IReadOnlyDictionary<string, string>? Payload = null);
 
-public sealed record ExternalEscalationActionResult(
+public sealed record ExternalEscalationCompletionResult(
     bool Success,
     ExternalEscalationAttempt? Attempt,
     string Message,
-    bool EscalatedNext,
     string? OutcomeKey = null,
-    string? ResponseText = null,
     IReadOnlyDictionary<string, string>? Payload = null);
+
+public sealed record ExternalEscalationExpiredAttempt(
+    Guid BusinessId,
+    Guid AttemptId,
+    string EventName,
+    string TargetType,
+    Guid TargetId,
+    string OutcomeKey,
+    IReadOnlyDictionary<string, string> Payload);
+

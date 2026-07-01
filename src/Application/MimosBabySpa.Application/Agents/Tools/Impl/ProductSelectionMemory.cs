@@ -52,8 +52,11 @@ internal static class ProductSelectionMemory
         ctx.Facts[SelectedProductKey] = value;
     }
 
-    private static ProductCandidate? InferSingleCandidate(IReadOnlyList<ProductReference> products) =>
-        products.Count == 1 ? ProductCandidate.From(products[0]) : null;
+    private static ProductCandidate? InferSingleCandidate(IReadOnlyList<ProductReference> products)
+    {
+        var activeProducts = products.Where(product => product.IsActive).ToList();
+        return activeProducts.Count == 1 ? ProductCandidate.From(activeProducts[0]) : null;
+    }
 
     private static bool TryReadCandidate(AgentToolContext ctx, string key, out ProductCandidate candidate)
     {

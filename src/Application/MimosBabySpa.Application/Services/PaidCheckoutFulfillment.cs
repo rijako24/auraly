@@ -51,7 +51,6 @@ public sealed class PaidCheckoutFulfillmentRegistry : IPaidCheckoutFulfillmentRe
 public sealed record PaidCheckoutFulfillmentResult(
     string OutcomeKey,
     string EventName,
-    string TargetType,
     Guid TargetId,
     string? CustomerPhone,
     IReadOnlyDictionary<string, string> CustomPayload,
@@ -128,7 +127,6 @@ public sealed class ReservationPaidCheckoutFulfillmentHandler : IPaidCheckoutFul
             return new PaidCheckoutFulfillmentResult(
                 WompiWebhookOutcomes.SlotUnavailableAfterPayment,
                 WompiWebhookOutcomes.SlotUnavailableAfterPayment,
-                "reservation",
                 stubReservation.ReservationId,
                 stubReservation.CustomerPhoneSnapshot,
                 new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
@@ -166,7 +164,6 @@ public sealed class ReservationPaidCheckoutFulfillmentHandler : IPaidCheckoutFul
             return new PaidCheckoutFulfillmentResult(
                 WompiWebhookOutcomes.SlotUnavailableAfterPayment,
                 WompiWebhookOutcomes.SlotUnavailableAfterPayment,
-                "reservation",
                 stubReservation.ReservationId,
                 stubReservation.CustomerPhoneSnapshot,
                 new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
@@ -179,7 +176,6 @@ public sealed class ReservationPaidCheckoutFulfillmentHandler : IPaidCheckoutFul
         return new PaidCheckoutFulfillmentResult(
             outcome,
             "order_created",
-            "reservation",
             reservation.ReservationId,
             reservation.CustomerPhoneSnapshot,
             new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
@@ -260,7 +256,6 @@ public sealed class EnrollmentPaidCheckoutFulfillmentHandler : IPaidCheckoutFulf
         return new PaidCheckoutFulfillmentResult(
             ResolveOutcome(payment, string.Empty),
             ResolveOutcome(payment, string.Empty),
-            "enrollment",
             payment.PaymentTransactionId,
             snapshot.PaymentPhone,
             custom,
@@ -381,7 +376,6 @@ public sealed class OrderPaidCheckoutFulfillmentHandler : IPaidCheckoutFulfillme
         return new PaidCheckoutFulfillmentResult(
             outcome,
             "order_created",
-            "order",
             order.OrderId,
             order.CustomerPhoneSnapshot,
             custom,

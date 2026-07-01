@@ -478,13 +478,6 @@ internal sealed class InMemoryExternalEscalationAttemptRepository : IExternalEsc
                 && o.TargetId == targetId)
             .OrderBy(o => o.EscalatedAt)
             .ToList());
-    public Task<bool> HasAcceptedForTargetAsync(Guid businessId, string eventName, string targetType, Guid targetId, CancellationToken ct = default) =>
-        Task.FromResult(_escalations.Any(o =>
-            o.BusinessId == businessId &&
-            o.EventName == eventName &&
-            o.TargetType == targetType &&
-            o.TargetId == targetId &&
-            o.Status == ExternalEscalationAttemptStatus.Accepted));
 
     public Task<ExternalEscalationAttempt> AddAsync(ExternalEscalationAttempt attempt, CancellationToken ct = default)
     {
@@ -495,23 +488,6 @@ internal sealed class InMemoryExternalEscalationAttemptRepository : IExternalEsc
     public Task<ExternalEscalationAttempt> UpdateAsync(ExternalEscalationAttempt attempt, CancellationToken ct = default) =>
         Task.FromResult(attempt);
 
-    public Task CancelPendingForTargetAsync(Guid businessId, string eventName, string targetType, Guid targetId, Guid exceptOfferId, CancellationToken ct = default)
-    {
-        foreach (var attempt in _escalations.Where(o =>
-                     o.BusinessId == businessId &&
-                     o.EventName == eventName &&
-                     o.TargetType == targetType &&
-                     o.TargetId == targetId &&
-                     o.ExternalEscalationAttemptId != exceptOfferId &&
-                     o.Status == ExternalEscalationAttemptStatus.Pending))
-        {
-            attempt.Status = ExternalEscalationAttemptStatus.Cancelled;
-            attempt.CancelledAt = DateTime.UtcNow;
-        }
-
-        return Task.CompletedTask;
-    }
-
     private static string NormalizePhone(string phone) =>
         new(phone.Where(char.IsDigit).ToArray());
 }
@@ -520,9 +496,17 @@ internal sealed class InMemoryProductRepository : IProductRepository
 {
     private readonly List<Product> _products = [];
 
-    public Task<IReadOnlyList<Product>> SearchAsync(Guid businessId, string? query, string? category, int limit, CancellationToken ct = default)
+    public Task<IReadOnlyList<Product>> SearchAsync(
+        Guid businessId,
+        string? query,
+        string? category,
+        int limit,
+        CancellationToken ct = default,
+        bool includeInactive = false)
     {
-        var results = _products.Where(p => p.BusinessId == businessId && p.IsActive);
+        var results = _products.Where(p => p.BusinessId == businessId);
+        if (!includeInactive)
+            results = results.Where(p => p.IsActive);
 
         if (!string.IsNullOrWhiteSpace(query))
         {

@@ -50,6 +50,7 @@ public sealed class AgentTestMockTool : IAgentTool
         var result = Name.ToLowerInvariant() switch
         {
             "set_fact" => ExecuteSetFact(arguments, ctx),
+            "resolve_service_selection" => ExecuteResolveServiceSelection(arguments, ctx),
             "reset_flow_context" => ExecuteResetFlowContext(arguments, ctx),
             "prepare_checkout" => ExecutePrepareCheckout(arguments, ctx),
             "prepare_order_checkout" => ExecutePrepareOrderCheckout(arguments, ctx),
@@ -107,6 +108,32 @@ public sealed class AgentTestMockTool : IAgentTool
         });
     }
 
+    private string ExecuteResolveServiceSelection(JsonElement arguments, AgentToolContext ctx)
+    {
+        if (!TryGetString(arguments, "text", out var text))
+            return ToolResultHelper.MissingPrerequisites(["text"]);
+
+        var roleIndex = new FactRoleIndex(ctx.Config?.FactSchema ?? []);
+        var key = roleIndex.KeyByRole("booking.service") ?? ConversationFactKeys.Service;
+        ctx.Facts[key] = text;
+        _memoryFacts[key] = text;
+
+        _log.Add("fact_set", Name, new Dictionary<string, object?>
+        {
+            ["key"] = key,
+            ["value"] = text,
+            ["persisted"] = false
+        });
+
+        return ToolResultHelper.Ok(new
+        {
+            selection_status = "resolved",
+            service = text,
+            key,
+            storage = "fact",
+            test_mode = true
+        });
+    }
     private string ExecuteResetFlowContext(JsonElement arguments, AgentToolContext ctx)
     {
         TryGetString(arguments, "reason", out var reason);

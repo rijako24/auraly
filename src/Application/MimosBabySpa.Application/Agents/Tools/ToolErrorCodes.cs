@@ -15,4 +15,6 @@ public static class ToolErrorCodes
     public const string AmbiguousAddOns = "ambiguous_add_ons";
     public const string DuplicateAddOnGroup = "duplicate_add_on_group";
     public const string ServiceNotResolved = "service_not_resolved";
+    public const string AmbiguousServiceSelection = "ambiguous_service_selection";
+    public const string ServiceSelectionMismatch = "service_selection_mismatch";
 }

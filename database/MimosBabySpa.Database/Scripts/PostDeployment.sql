@@ -33,7 +33,7 @@
 :r .\Migrations\MigrateExternalEscalationAttempts.sql
 :r .\Migrations\MigrateAgentTemplatesAndInboundContacts.sql
 :r .\Migrations\MigrateOrderCheckoutPayments.sql
-:r .\Migrations\MigrateOrderDeliveryAssignment.sql
+:r .\Migrations\MigrateRemoveOrderAssignmentState.sql
 :r .\Migrations\MigrateBusinessTimeZone.sql
 :r .\Migrations\AlterConversationContextsValueToMax.sql
 :r .\Seeds\SeedAdminUser.sql
@@ -52,7 +52,7 @@
 :r .\Seeds\SeedAgenticConfiguration.sql
 :r .\Seeds\SeedSolorzanoWhatsAppNumber.sql
 :r .\Seeds\SeedRadaConceptWhatsAppNumber.sql
-:r .\Seeds\SeedSolorzanoDeliveryAgent.sql
+:r .\Seeds\SeedSolorzanoDomicilioAgent.sql
 GO
 :r .\Seeds\SeedSystemAgentTemplatesAndInboundContacts.sql
 GO

@@ -16,6 +16,7 @@ namespace MimosBabySpa.Application.Agents.Tools.Impl;
 /// Resolves tenant checkout data, renders the configured summary and creates a payment link when needed.
 /// It does not check availability, assign staff, or create reservations.
 /// </summary>
+[AgentToolMetadata("prepare_checkout", Capabilities = new[] { ToolCapabilities.CheckoutPrepare })]
 public sealed class PrepareCheckoutTool : IAgentTool
 {
     private readonly ReservationPricingResolver _pricing;
@@ -455,3 +456,4 @@ public sealed class PrepareCheckoutTool : IAgentTool
         return (JsonSerializer.Serialize(snapshot), reservationSnapshot, null);
     }
 }
+

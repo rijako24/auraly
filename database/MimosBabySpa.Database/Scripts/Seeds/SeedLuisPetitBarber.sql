@@ -203,8 +203,8 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
   "maxToolIterations": 8,
   "historyWindowSize": 24,
   "consecutiveErrorEscalationThreshold": 3,
-  "persona": "Eres Luis, asistente de reservas de Luis Petit Profesional Barber por WhatsApp. Atiendes en espanol con tono elegante, cercano, profesional y puntual. Tu trabajo es ayudar a elegir el servicio correcto, revisar disponibilidad y guiar al cliente hasta pagar el anticipo para asegurar la cita.",
-  "policies": "## MARCA Y ATENCION\n\n- En Luis Petit Profesional Barber, cada servicio es una experiencia personalizada, enfocada en la elegancia y el detalle.\n- Responde siempre en espanol, breve y claro.\n- Ofrece horarios en bloques de una hora.\n- Confirma reservas solo cuando el pago del anticipo este aprobado por el webhook o la herramienta indique reserva confirmada.\n- Para confirmar una reserva se requiere un anticipo del 50% del valor del servicio.\n- Servicio a domicilio inicia desde $100.000 COP y depende de ubicacion, horario y condiciones.\n- Coloracion, keratina y tratamientos especiales inician desde $120.000 COP y pueden variar segun diagnostico, longitud, tecnica y producto.\n- Para una cotizacion exacta de un servicio variable, pide contexto breve y escala a humano cuando haga falta.\n- En cada visita, invita a disfrutar de un ambiente exclusivo, puntualidad garantizada y atencion personalizada de principio a fin.",
+  "persona": "Eres el asistente de reservas de Luis Petit Profesional Barber por WhatsApp. Atiendes en espanol con tono elegante, cercano, profesional y puntual. Tu trabajo es ayudar a elegir el servicio correcto, revisar disponibilidad y guiar al cliente hasta pagar el anticipo para asegurar la cita.",
+  "policies": "## MARCA Y ATENCION\n\n- En Luis Petit Profesional Barber, cada servicio es una experiencia personalizada, enfocada en la elegancia y el detalle.\n La experiencia del negocio se enfoca en atencion personalizada, puntualidad y detalle de principio a fin.",
   "messageSequences": {
     "reservation_confirmed": {
       "messages": [
@@ -306,15 +306,15 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         "id": "discovery",
         "name": "Descubrimiento",
         "goal": "Dar la bienvenida, presentarse, mostrar los servicios devueltos por el catalogo y preguntar por el servicio de interes.",
-        "hint": "En la bienvenida o cuando el cliente salude o pida informacion inicial, llama get_service_catalog y responde presentandote: Hola, soy Luis de Luis Petit Profesional Barber. Luego muestra una lista corta usando solo servicios, precios, duraciones y notas devueltas por get_service_catalog. Cierra exactamente con: En que servicio estas interesado el dia de hoy? Si el cliente ya menciona un servicio claro, registra service con el nombre canonico del catalogo.",
-        "allowedTools": ["get_service_catalog", "set_fact"],
+        "hint": "En la bienvenida o cuando el cliente salude o pida informacion inicial, llama get_service_catalog y responde presentandote: Hola, bienvenido a Luis Petit Profesional Barber. Luego muestra una lista corta usando solo servicios, precios, duraciones y notas devueltas por get_service_catalog. Cuando el cliente indique un servicio, llama resolve_service_selection con el texto literal del cliente. Si la herramienta devuelve selection_status=resolved, continua el flujo. Si devuelve ambiguous o not_found, pregunta cual opcion exacta del catalogo prefiere usando solo los candidatos devueltos o el catalogo. No uses set_fact para registrar service.",
+        "allowedTools": ["get_service_catalog", "resolve_service_selection"],
         "advanceWhenFacts": ["service"]
       },
       {
         "id": "scheduling",
         "name": "Agenda",
         "goal": "Revisar disponibilidad y validar fecha y hora para una reserva por hora.",
-        "hint": "Todos los servicios de Luis Petit se agendan como reserva. Si falta fecha, pregunta: Para que dia deseas el servicio? Si el cliente da dia y hora juntos, registra desired_date y desired_time y llama check_availability con fecha y hora en el mismo turno. Si solo tienes fecha, llama check_availability sin hora para mostrar horarios disponibles. Usa horarios en bloques de una hora. Cuando el cliente elija una hora de los horarios presentados, registra desired_time y llama check_availability con fecha y hora. Si el horario esta disponible, deja avanzar el flujo.",
+        "hint": "Todos los servicios de Luis Petit se agendan como reserva. Si falta fecha, pregunta: Para que dia deseas el servicio? Si el cliente da dia y hora juntos, registra desired_date y desired_time y llama check_availability con fecha y hora en el mismo turno. Si el cliente da fecha pero no da hora, registra desired_date y en ese mismo turno llama obligatoriamente check_availability sin time; responde mostrando solo los horarios devueltos por la herramienta y pregunta cual prefiere. No preguntes una hora preferida antes de consultar disponibilidad del dia. Usa horarios en bloques de una hora. Cuando el cliente elija una hora de los horarios presentados, registra desired_time y llama check_availability con fecha y hora. Si el horario esta disponible, deja avanzar el flujo.",
         "allowedTools": ["check_availability", "set_fact"],
         "afterTool": [
           {
@@ -340,7 +340,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         "id": "finalization",
         "name": "Cierre con anticipo",
         "goal": "Preparar el resumen, generar el link de anticipo y esperar confirmacion automatica de pago.",
-        "hint": "Si ya estan servicio, fecha, hora, nombre y telefono, llama prepare_checkout. Si el cliente dice que ya pago, usa verify_payment. Si falta o cambia fecha/hora antes del resumen, llama check_availability de nuevo. Si el cliente quiere cambiar servicio u horario despues del link, actualiza facts y vuelve a prepare_checkout para generar el resumen correcto.",
+        "hint": "Si ya estan servicio, fecha, hora, nombre y telefono, llama prepare_checkout usando unicamente medios de pago registrados en checkout.paymentMethods. Si existe un solo medio registrado, usalo directamente sin preguntar permiso adicional. Si el cliente dice que ya pago, usa verify_payment. Si el cliente pide otro medio, no prometas confirmar por ese medio: responde de forma natural que para asegurar la reserva le enviaras el enlace de pago del anticipo y continua con la opcion registrada por checkout. Indica de forma natural que la reserva se confirmara automaticamente cuando se reciba y apruebe el pago. Si falta o cambia fecha/hora antes del resumen, llama check_availability de nuevo. Si el cliente quiere cambiar servicio u horario despues del link, actualiza facts y vuelve a prepare_checkout para generar el resumen correcto.",
         "allowedTools": [
           "prepare_checkout",
           "verify_payment",
@@ -380,7 +380,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
   "factSchema": [
     { "key": "session.engagement", "role": "session.engagement", "label": "contexto de engagement", "type": "string", "required": false, "source": "session", "scope": "ephemeral" },
     { "key": "booking_intent", "role": "booking.intent", "label": "intencion de reserva", "type": "string", "required": false, "source": "user", "scope": "request", "captureMode": "eager", "aliases": ["reservar", "cita", "agenda", "servicio", "precio", "corte", "barba", "cejas", "lavado", "domicilio", "tratamiento"] },
-    { "key": "service", "role": "booking.service", "label": "servicio", "type": "string", "required": true, "source": "user", "scope": "request", "captureMode": "eager", "retentionDays": 7, "aliases": ["servicio", "corte", "barba", "cejas", "lavado", "domicilio", "coloracion", "keratina", "tratamiento"] },
+    { "key": "service", "role": "booking.service", "label": "servicio", "type": "string", "required": true, "source": "user", "scope": "request", "captureMode": "eager", "retentionDays": 7, "aliases": ["servicio", "barba", "cejas", "lavado", "domicilio", "coloracion", "keratina", "tratamiento"] },
     { "key": "desired_date", "role": "booking.date", "label": "fecha deseada", "type": "date", "required": true, "source": "user", "scope": "request", "captureMode": "eager", "retentionDays": 7, "aliases": ["fecha", "dia", "cuando", "hoy", "manana"] },
     { "key": "desired_time", "role": "booking.time", "label": "hora deseada", "type": "time", "required": true, "source": "user", "scope": "request", "captureMode": "eager", "retentionDays": 7, "aliases": ["hora", "horario"] },
     { "key": "fulfillment_ready", "role": "checkout.fulfillment_ready", "label": "agenda validada", "type": "string", "required": false, "source": "system", "scope": "ephemeral", "expireOnBusinessDayChange": true },
@@ -408,6 +408,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
   "enabledTools": [
     "set_fact",
     "get_service_catalog",
+    "resolve_service_selection",
     "check_availability",
     "prepare_checkout",
     "create_reservation",
@@ -551,9 +552,9 @@ BEGIN
     BEGIN
         UPDATE target
         SET SubscriptionPlanId     = source.SubscriptionPlanId,
-            Status                 = source.Status,
-            CurrentPeriodStart     = source.CurrentPeriodStart,
-            CurrentPeriodEnd       = source.CurrentPeriodEnd,
+            Status                 = 1,
+            CurrentPeriodStart     = DATEFROMPARTS(YEAR(SYSUTCDATETIME()), MONTH(SYSUTCDATETIME()), 1),
+            CurrentPeriodEnd       = DATEADD(MONTH, 1, DATEFROMPARTS(YEAR(SYSUTCDATETIME()), MONTH(SYSUTCDATETIME()), 1)),
             PlanCodeSnapshot       = source.PlanCodeSnapshot,
             PlanNameSnapshot       = source.PlanNameSnapshot,
             MonthlyPriceCop        = source.MonthlyPriceCop,
@@ -579,7 +580,9 @@ BEGIN
             AutoRenew
         )
         SELECT
-            @BusinessId, SubscriptionPlanId, Status, CurrentPeriodStart, CurrentPeriodEnd,
+            @BusinessId, SubscriptionPlanId, 1,
+            DATEFROMPARTS(YEAR(SYSUTCDATETIME()), MONTH(SYSUTCDATETIME()), 1),
+            DATEADD(MONTH, 1, DATEFROMPARTS(YEAR(SYSUTCDATETIME()), MONTH(SYSUTCDATETIME()), 1)),
             PlanCodeSnapshot, PlanNameSnapshot, MonthlyPriceCop, IncludedCredits,
             MaxVariableCostCop, MaxVariableCostPercent, ExtraCredits, ExtraVariableCostCop,
             AutoRenew

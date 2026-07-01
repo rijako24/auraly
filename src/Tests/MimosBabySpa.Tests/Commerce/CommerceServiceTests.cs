@@ -50,7 +50,7 @@ public class CommerceServiceTests
         var promotions = new Mock<IPromotionPricingService>();
         var availability = new Mock<IProductCatalogAvailabilityService>();
         availability.Setup(a => a.IsSellable(It.IsAny<ProductReference>()))
-            .Returns<ProductReference>(p => p.IsActive && p.IsAvailable);
+            .Returns<ProductReference>(p => p.IsActive && (!p.StockQuantity.HasValue || p.StockQuantity.Value > 0));
 
         unitOfWork.SetupGet(u => u.OrderDrafts).Returns(orderDrafts.Object);
         unitOfWork.SetupGet(u => u.OrderDraftItems).Returns(orderDraftItems.Object);
@@ -82,8 +82,7 @@ public class CommerceServiceTests
                 null,
                 60000m,
                 "COP",
-                null,
-                true));
+                null));
         promotions
             .Setup(p => p.EvaluateAsync(
                 businessId,
@@ -126,7 +125,7 @@ public class CommerceServiceTests
         var promotions = new Mock<IPromotionPricingService>();
         var availability = new Mock<IProductCatalogAvailabilityService>();
         availability.Setup(a => a.IsSellable(It.IsAny<ProductReference>()))
-            .Returns<ProductReference>(p => p.IsActive && p.IsAvailable);
+            .Returns<ProductReference>(p => p.IsActive && (!p.StockQuantity.HasValue || p.StockQuantity.Value > 0));
 
         unitOfWork.SetupGet(u => u.IntegrationConnections).Returns(integrationConnections.Object);
         integrationConnections
@@ -146,8 +145,7 @@ public class CommerceServiceTests
                 "Vinos artesanales",
                 59900m,
                 "COP",
-                null,
-                false)
+                null)
             { IsActive = false });
 
         var service = new CommerceService(unitOfWork.Object, adapterFactory.Object, promotions.Object, availability.Object);

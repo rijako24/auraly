@@ -13,9 +13,9 @@ public sealed class ProductCatalogAvailabilityServiceTests
     public void FilterSellable_RemovesInactiveAndUnavailableProducts()
     {
         var service = new ProductCatalogAvailabilityService(new Mock<IUnitOfWork>().Object);
-        var sellable = Product("Mango 750ML", isActive: true, isAvailable: true);
-        var inactive = Product("Dulce 750ML", isActive: false, isAvailable: true);
-        var unavailable = Product("Semidulce 750ML", isActive: true, isAvailable: false);
+        var sellable = Product("Mango 750ML", isActive: true);
+        var inactive = Product("Dulce 750ML", isActive: false);
+        var unavailable = Product("Semidulce 750ML", isActive: true, stockQuantity: 0);
 
         var result = service.FilterSellable(new ProductSearchResult(
             [sellable, inactive, unavailable],
@@ -24,6 +24,7 @@ public sealed class ProductCatalogAvailabilityServiceTests
         result.Products.Should().ContainSingle();
         result.Products[0].Name.Should().Be("Mango 750ML");
     }
+
 
     [Fact]
     public void IsSellable_ForLocalProduct_RequiresActiveAndAvailableStockWhenManaged()
@@ -36,7 +37,7 @@ public sealed class ProductCatalogAvailabilityServiceTests
         service.IsSellable(new Product { IsActive = false, ManageStock = false }).Should().BeFalse();
     }
 
-    private static ProductReference Product(string name, bool isActive, bool isAvailable) =>
+    private static ProductReference Product(string name, bool isActive, decimal? stockQuantity = null) =>
         new(
             Guid.NewGuid(),
             null,
@@ -46,7 +47,6 @@ public sealed class ProductCatalogAvailabilityServiceTests
             null,
             1000m,
             "COP",
-            null,
-            isAvailable)
+            stockQuantity)
         { IsActive = isActive };
 }

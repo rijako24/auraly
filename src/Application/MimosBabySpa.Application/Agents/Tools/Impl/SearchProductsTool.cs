@@ -4,6 +4,7 @@ using MimosBabySpa.Application.Services;
 
 namespace MimosBabySpa.Application.Agents.Tools.Impl;
 
+[AgentToolMetadata("search_products", Capabilities = new[] { ToolCapabilities.ProductSearch })]
 public sealed class SearchProductsTool : IAgentTool
 {
     private readonly ICommerceService _commerce;
@@ -61,3 +62,4 @@ public sealed class SearchProductsTool : IAgentTool
         });
     }
 }
+

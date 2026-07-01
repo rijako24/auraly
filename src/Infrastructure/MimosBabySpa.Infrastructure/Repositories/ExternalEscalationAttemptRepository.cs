@@ -137,19 +137,6 @@ public sealed class ExternalEscalationAttemptRepository : IExternalEscalationAtt
             .OrderBy(o => o.EscalatedAt)
             .ToListAsync(ct);
     }
-    public Task<bool> HasAcceptedForTargetAsync(
-        Guid businessId,
-        string eventName,
-        string targetType,
-        Guid targetId,
-        CancellationToken ct = default) =>
-        _context.ExternalEscalationAttempts.AnyAsync(o =>
-            o.BusinessId == businessId
-            && o.EventName == eventName
-            && o.TargetType == targetType
-            && o.TargetId == targetId
-            && o.Status == ExternalEscalationAttemptStatus.Accepted,
-            ct);
 
     public Task<ExternalEscalationAttempt> AddAsync(ExternalEscalationAttempt attempt, CancellationToken ct = default)
     {
@@ -163,30 +150,6 @@ public sealed class ExternalEscalationAttemptRepository : IExternalEscalationAtt
         attempt.ContactPhoneSnapshot = NormalizePhone(attempt.ContactPhoneSnapshot);
         _context.ExternalEscalationAttempts.Update(attempt);
         return Task.FromResult(attempt);
-    }
-
-    public async Task CancelPendingForTargetAsync(
-        Guid businessId,
-        string eventName,
-        string targetType,
-        Guid targetId,
-        Guid exceptAttemptId,
-        CancellationToken ct = default)
-    {
-        var open = await _context.ExternalEscalationAttempts
-            .Where(o => o.BusinessId == businessId
-                && o.EventName == eventName
-                && o.TargetType == targetType
-                && o.TargetId == targetId
-                && o.ExternalEscalationAttemptId != exceptAttemptId
-                && o.Status == ExternalEscalationAttemptStatus.Pending)
-            .ToListAsync(ct);
-
-        foreach (var attempt in open)
-        {
-            attempt.Status = ExternalEscalationAttemptStatus.Cancelled;
-            attempt.CancelledAt = DateTime.UtcNow;
-        }
     }
 
     private static string NormalizePhone(string phone) =>

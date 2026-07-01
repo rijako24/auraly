@@ -40,6 +40,9 @@ public interface IAgentTool
     /// <summary>Plantilla por defecto si la tool renderiza output al cliente.</summary>
     string? DefaultTemplateId => null;
 
+    /// <summary>Templates configurables que la tool puede emitir como fragmentos runtime.</summary>
+    IReadOnlyList<string> RequiredTemplateIds => [];
+
     /// <summary>Contenido de la plantilla por defecto.</summary>
     string? DefaultTemplate => null;
 

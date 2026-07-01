@@ -95,6 +95,7 @@ public static class TestServiceBuilder
         services.AddSingleton<IEventNotificationDispatcher, NoOpEventNotificationDispatcher>();
 
         services.AddSingleton<ServiceNameResolver>();
+        services.AddSingleton<ServiceSelectionResolver>();
         services.AddSingleton<IAddOnCatalogService, AddOnCatalogService>();
 
         services.AddSingleton<IChatClient>(fakeChatClient);
@@ -121,6 +122,9 @@ public static class TestServiceBuilder
                 new EscalateToHumanTool(sp.GetRequiredService<IEscalationNotifier>()),
                 new GetCustomerReservationsTool(sp.GetRequiredService<IReservationLifecycleService>()),
                 new GetCompatibleAddOnsTool(sp.GetRequiredService<IAddOnCatalogService>()),
+                new ResolveServiceSelectionTool(
+                    sp.GetRequiredService<ServiceSelectionResolver>(),
+                    sp.GetRequiredService<IConversationFactsService>()),
                 new GetServiceFulfillmentTool(
                     sp.GetRequiredService<IUnitOfWork>(),
                     sp.GetRequiredService<ServiceNameResolver>()),
@@ -134,8 +138,7 @@ public static class TestServiceBuilder
                     sp.GetRequiredService<IConversationFactsService>(),
                     sp.GetRequiredService<IAddOnCatalogService>(),
                     sp.GetRequiredService<IConversationVerificationService>(),
-                    sp.GetRequiredService<ILeadService>(),
-                    sp.GetRequiredService<ServiceNameResolver>()),
+                    sp.GetRequiredService<ILeadService>()),
             ];
 
             var intercepted = rawTools

@@ -5,6 +5,7 @@ using MimosBabySpa.Application.Services;
 
 namespace MimosBabySpa.Application.Agents.Tools.Impl;
 
+[AgentToolMetadata("update_order_item_quantity", Capabilities = new[] { ToolCapabilities.OrderDraftUpdate })]
 public sealed class UpdateOrderItemQuantityTool : IAgentTool
 {
     private readonly ICommerceService _commerce;

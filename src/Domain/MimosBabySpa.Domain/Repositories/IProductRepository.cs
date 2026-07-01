@@ -9,7 +9,8 @@ public interface IProductRepository
         string? query,
         string? category,
         int limit,
-        CancellationToken ct = default);
+        CancellationToken ct = default,
+        bool includeInactive = false);
 
     Task<(IReadOnlyList<Product> Items, int TotalCount)> GetPagedByBusinessIdAsync(
         Guid businessId,

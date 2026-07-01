@@ -144,6 +144,7 @@ public sealed class AgentTestRuntimeFactory : IAgentTestRuntimeFactory
         WrapReadOnly(ActivatorUtilities.CreateInstance<CheckAvailabilityTool>(_serviceProvider), log),
         WrapReadOnly(ActivatorUtilities.CreateInstance<ResolvePricingTool>(_serviceProvider), log),
         Mock("set_fact", "Records a fact in the in-memory test context.", SetFactParametersSchemaBuilder.FallbackSchema, log, memoryFacts, [ToolCapabilities.FactWrite]),
+        Mock("resolve_service_selection", "Resolves and records a service selection in the in-memory test context.", BasicSchema, log, memoryFacts, [ToolCapabilities.FactWrite]),
         Mock("reset_flow_context", "Clears the in-memory test context.", BasicSchema, log, memoryFacts),
         Mock("prepare_checkout", "Simulates checkout preparation and payment link generation.", BasicSchema, log, memoryFacts, [ToolCapabilities.CheckoutPrepare]),
         Mock("prepare_order_checkout", "Simulates order checkout preparation and payment link generation.", BasicSchema, log, memoryFacts, [ToolCapabilities.CheckoutPrepare], [ToolOperatingGroups.OrderIntake]),

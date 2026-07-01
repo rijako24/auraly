@@ -44,7 +44,6 @@ public sealed class PaymentConfirmationHandlerTests
         var result = new PaidCheckoutFulfillmentResult(
             "order_paid",
             "order_created",
-            "order",
             Guid.NewGuid(),
             CustomerPhone: "301292660",
             CustomPayload: new Dictionary<string, string>(),

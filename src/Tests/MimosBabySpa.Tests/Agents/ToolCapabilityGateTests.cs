@@ -6,6 +6,7 @@ using MimosBabySpa.Application.Agents;
 using MimosBabySpa.Application.Agents.Composition;
 using MimosBabySpa.Application.Agents.Configuration;
 using MimosBabySpa.Application.Agents.Gating;
+using MimosBabySpa.Application.Agents.Tools;
 using MimosBabySpa.Application.Agents.Tools.Impl;
 using MimosBabySpa.Application.BusinessRules;
 using MimosBabySpa.Application.Configuration;
@@ -227,10 +228,7 @@ public class ToolCapabilityGateTests
             Mock.Of<IConversationFactsService>(),
             Mock.Of<IAddOnCatalogService>(),
             _verifications,
-            Mock.Of<ILeadService>(),
-            new ServiceNameResolver(
-                Mock.Of<IUnitOfWork>(u => u.Services == Mock.Of<IServiceRepository>()),
-                NullLogger<ServiceNameResolver>.Instance));
+            Mock.Of<ILeadService>());
 
         var ctx = CreateContext();
         using var args = JsonDocument.Parse("""{"key":"service","value":"Plan Marineritos"}""");
@@ -284,6 +282,54 @@ public class ToolCapabilityGateTests
     }
 
     [Fact]
+    public void FilterVisibleTools_StageWhitelist_ExposesOnlyStageAndGlobalActionTools()
+    {
+        var config = new AgentConfig
+        {
+            AgentId = Guid.NewGuid(),
+            BusinessId = Guid.NewGuid(),
+            Flow = new AgentFlowDefinition
+            {
+                Stages =
+                [
+                    new AgentFlowStage
+                    {
+                        Id = "discovery",
+                        Goal = "Construir carrito",
+                        AllowedTools = ["search_products", "add_order_item"]
+                    }
+                ]
+            },
+            GlobalActions =
+            [
+                new AgentGlobalAction
+                {
+                    Id = "restart_order",
+                    AllowedTools = ["reset_flow_context"]
+                }
+            ]
+        };
+
+        var currentStage = config.Flow.Stages[0];
+        IAgentTool[] effectiveTools =
+        [
+            new TestTool("search_products"),
+            new TestTool("add_order_item"),
+            new TestTool("create_order"),
+            new TestTool("send_message_sequence"),
+            new TestTool("reset_flow_context")
+        ];
+
+        var visibleTools = ToolFlowScope.FilterVisibleTools(config, currentStage, effectiveTools);
+
+        visibleTools.Select(t => t.Name).Should().Equal(
+            "search_products",
+            "add_order_item",
+            "reset_flow_context");
+    }
+
+
+    [Fact]
     public async Task EvaluateAsync_NonGlobalTool_StillRespectsStageWhitelist()
     {
         var checkAvailabilityTool = new CheckAvailabilityTool(
@@ -329,6 +375,22 @@ public class ToolCapabilityGateTests
         result.IsAllowed.Should().BeFalse();
         result.Code.Should().Be("stage_action_pending");
     }
+
+    private sealed class TestTool : IAgentTool
+    {
+        public TestTool(string name) => Name = name;
+
+        public string Name { get; }
+        public string Description => Name;
+        public string ParametersSchema => "{}";
+
+        public Task<string> ExecuteAsync(
+            JsonElement arguments,
+            AgentToolContext ctx,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult("{\"ok\":true}");
+    }
+
 
     /// <summary>
     /// Config con guards declarativos equivalentes a lo que Mimi configura en producción.

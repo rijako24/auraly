@@ -1,0 +1,127 @@
+using System.Text.Json;
+using FluentAssertions;
+using Microsoft.Extensions.Logging.Abstractions;
+using Moq;
+using MimosBabySpa.Application.Agents;
+using MimosBabySpa.Application.Agents.Configuration;
+using MimosBabySpa.Application.Agents.Facts;
+using MimosBabySpa.Application.Agents.Tools.Impl;
+using MimosBabySpa.Application.Services;
+using MimosBabySpa.Domain.Entities;
+using MimosBabySpa.Domain.Repositories;
+using ConversationStateModel = MimosBabySpa.Domain.Models.ConversationState;
+using Xunit;
+
+namespace MimosBabySpa.Tests.Agents;
+
+public sealed class ResolveServiceSelectionToolTests
+{
+    private readonly Mock<IConversationFactsService> _facts = new();
+    private readonly Mock<IServiceRepository> _services = new();
+    private readonly ResolveServiceSelectionTool _tool;
+
+    public ResolveServiceSelectionToolTests()
+    {
+        var unitOfWork = new Mock<IUnitOfWork>();
+        unitOfWork.SetupGet(u => u.Services).Returns(_services.Object);
+
+        var resolver = new ServiceSelectionResolver(
+            unitOfWork.Object,
+            NullLogger<ServiceSelectionResolver>.Instance);
+
+        _tool = new ResolveServiceSelectionTool(resolver, _facts.Object);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_AmbiguousSelection_DoesNotPersistService()
+    {
+        var businessId = Guid.NewGuid();
+        SetupServices(businessId,
+            "Corte de adulto",
+            "Corte + barba",
+            "Corte de niño");
+        var ctx = CreateContext(businessId);
+
+        using var args = JsonDocument.Parse("""{"text":"corte"}""");
+        var json = await _tool.ExecuteAsync(args.RootElement, ctx, CancellationToken.None);
+
+        using var doc = JsonDocument.Parse(json);
+        doc.RootElement.GetProperty("ok").GetBoolean().Should().BeTrue();
+        var data = doc.RootElement.GetProperty("data");
+        data.GetProperty("selection_status").GetString().Should().Be("ambiguous");
+        var candidates = data.GetProperty("candidates")
+            .EnumerateArray()
+            .Select(e => e.GetString())
+            .ToList();
+        candidates.Should().Contain(["Corte de adulto", "Corte + barba"]);
+        ctx.Facts.Should().NotContainKey(ConversationFactKeys.Service);
+        _facts.Verify(f => f.SetAsync(
+            It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<string>(),
+            It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_UniqueSelection_PersistsCanonicalService()
+    {
+        var businessId = Guid.NewGuid();
+        SetupServices(businessId,
+            "Corte de adulto",
+            "Corte + barba",
+            "Corte de niño");
+        var ctx = CreateContext(businessId);
+
+        using var args = JsonDocument.Parse("""{"text":"corte adulto"}""");
+        var json = await _tool.ExecuteAsync(args.RootElement, ctx, CancellationToken.None);
+
+        json.Should().Contain("\"selection_status\":\"resolved\"");
+        ctx.Facts[ConversationFactKeys.Service].Should().Be("Corte de adulto");
+        _facts.Verify(f => f.SetAsync(
+            ctx.ConversationId, ctx.BusinessId, ConversationFactKeys.Service, "Corte de adulto",
+            false, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_UsesConfiguredBookingServiceFactKey()
+    {
+        var businessId = Guid.NewGuid();
+        SetupServices(businessId, "Spa Premium");
+        var ctx = CreateContext(businessId);
+        ctx.Config = new AgentConfig
+        {
+            FactSchema =
+            [
+                new FactSchemaEntry { Key = "selected_service", Role = "booking.service", Source = "user" }
+            ]
+        };
+
+        using var args = JsonDocument.Parse("""{"text":"Spa Premium"}""");
+        await _tool.ExecuteAsync(args.RootElement, ctx, CancellationToken.None);
+
+        ctx.Facts["selected_service"].Should().Be("Spa Premium");
+        _facts.Verify(f => f.SetAsync(
+            ctx.ConversationId, ctx.BusinessId, "selected_service", "Spa Premium",
+            false, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    private void SetupServices(Guid businessId, params string[] names)
+    {
+        _services
+            .Setup(s => s.GetActiveByBusinessIdAsync(businessId))
+            .ReturnsAsync(names.Select(name => new Service
+            {
+                BusinessId = businessId,
+                ServiceName = name,
+                Description = string.Empty,
+                IsActive = true
+            }).ToList());
+    }
+
+    private static AgentToolContext CreateContext(Guid businessId) => new()
+    {
+        BusinessId = businessId,
+        ConversationId = Guid.NewGuid(),
+        ConversationState = new ConversationStateModel(),
+        Conversation = new Conversation(),
+        Facts = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+    };
+}

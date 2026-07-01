@@ -1,5 +1,5 @@
 -- =============================================================================
--- SeedSolorzanoDeliveryAgent.sql
+-- SeedSolorzanoDomicilioAgent.sql
 --
 -- Agente inbound para contactos de domicilio de Vinos Artesanales Solorzano.
 -- Atiende respuestas de domiciliarios a escalamientos externos y evita que
@@ -14,7 +14,7 @@ DECLARE @SolorzanoDeliveryAgentTypeId UNIQUEIDENTIFIER;
 
 IF NOT EXISTS (SELECT 1 FROM dbo.Businesses WHERE BusinessId = @SolorzanoDeliveryBusinessId)
 BEGIN
-    PRINT N'SeedSolorzanoDeliveryAgent: negocio Solorzano no encontrado; omitiendo.';
+    PRINT N'SeedSolorzanoDomicilioAgent: negocio Solorzano no encontrado; omitiendo.';
     RETURN;
 END
 
@@ -33,7 +33,7 @@ END
 
 IF @SolorzanoDeliveryAgentTypeId IS NULL
 BEGIN
-    PRINT N'SeedSolorzanoDeliveryAgent: AgentType activo no encontrado; omitiendo.';
+    PRINT N'SeedSolorzanoDomicilioAgent: AgentType activo no encontrado; omitiendo.';
     RETURN;
 END
 
@@ -50,19 +50,19 @@ DECLARE @SolorzanoDeliverySettingsJson NVARCHAR(MAX) = N'{
     "stageDetection": "automatic",
     "stages": [
       {
-        "id": "delivery_assignment",
+        "id": "order_request",
         "name": "Gestion de domicilio",
         "goal": "Resolver si el domiciliario acepta o rechaza un pedido pendiente.",
-        "hint": "Si el mensaje viene citado/respondiendo a una solicitud de domicilio, la cita identifica el pedido: si el contacto acepta/confirma/toma el pedido, llama accept_order_delivery; si rechaza o dice que no puede tomarlo, llama reject_order_delivery. No pidas confirmacion ni motivo en esos casos. Usa search_order solo cuando no haya cita ni payload interactivo, cuando necesites resolver por codigo PED/datos del pedido, o cuando haya varias ordenes pendientes; si hay ambiguedad, pide elegir mostrando assignment_code. Si el pedido esta vencido o no disponible, responde breve indicando que ya no puede gestionarse automaticamente. Tras aceptar agradece la confirmacion; tras rechazar indica que se registro el rechazo y se contactara al siguiente domiciliario si aplica.",
-        "allowedTools": ["search_order", "accept_order_delivery", "reject_order_delivery"],
+        "hint": "Si el mensaje viene citado/respondiendo a una solicitud de domicilio, la cita identifica el pedido: si el contacto acepta/confirma/toma el pedido, llama accept_order_request; si rechaza o dice que no puede tomarlo, llama reject_order_request. No pidas confirmacion ni motivo en esos casos. Usa search_order solo cuando no haya cita ni payload interactivo, cuando necesites resolver por codigo PED/datos del pedido, o cuando haya varias ordenes pendientes; si hay ambiguedad, pide elegir mostrando request_code. Si el pedido esta vencido o no disponible, responde breve indicando que ya no puede gestionarse automaticamente. Tras aceptar agradece la confirmacion; tras rechazar indica que se registro el rechazo.",
+        "allowedTools": ["search_order", "accept_order_request", "reject_order_request"],
         "advanceWhenFacts": []
       }
     ]
   },
   "enabledTools": [
     "search_order",
-    "accept_order_delivery",
-    "reject_order_delivery"
+    "accept_order_request",
+    "reject_order_request"
   ],
   "guards": {},
   "notifications": {},
@@ -79,7 +79,7 @@ DECLARE @SolorzanoDeliverySettingsJson NVARCHAR(MAX) = N'{
 
 IF ISJSON(@SolorzanoDeliverySettingsJson) <> 1
 BEGIN
-    THROW 51000, 'SeedSolorzanoDeliveryAgent: SettingsJson invalido.', 1;
+    THROW 51000, 'SeedSolorzanoDomicilioAgent: SettingsJson invalido.', 1;
 END
 
 IF NOT EXISTS (SELECT 1 FROM dbo.Agents WHERE AgentId = @SolorzanoDeliveryAgentId)
@@ -109,4 +109,4 @@ BEGIN
     WHERE AgentId = @SolorzanoDeliveryAgentId;
 END
 
-PRINT N'SeedSolorzanoDeliveryAgent: agente de domicilios configurado para negocio ' + CAST(@SolorzanoDeliveryBusinessId AS NVARCHAR(36));
+PRINT N'SeedSolorzanoDomicilioAgent: agente de domicilios configurado para negocio ' + CAST(@SolorzanoDeliveryBusinessId AS NVARCHAR(36));

@@ -17,12 +17,16 @@ public sealed class ProductRepository : IProductRepository
         string? query,
         string? category,
         int limit,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        bool includeInactive = false)
     {
         limit = Math.Clamp(limit, 1, 50);
         var products = _context.Products
             .AsNoTracking()
-            .Where(p => p.BusinessId == businessId && p.IsActive);
+            .Where(p => p.BusinessId == businessId);
+
+        if (!includeInactive)
+            products = products.Where(p => p.IsActive);
 
         if (!string.IsNullOrWhiteSpace(category))
         {

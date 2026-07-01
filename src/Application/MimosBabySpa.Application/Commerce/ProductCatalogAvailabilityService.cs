@@ -12,8 +12,9 @@ public sealed class ProductCatalogAvailabilityService : IProductCatalogAvailabil
     public ProductSearchResult FilterSellable(ProductSearchResult result) =>
         result with { Products = result.Products.Where(IsSellable).ToList() };
 
+
     public bool IsSellable(ProductReference product) =>
-        product.IsActive && product.IsAvailable;
+        product.IsActive && (!product.StockQuantity.HasValue || product.StockQuantity.Value > 0);
 
     public bool IsSellable(Product product) =>
         product.IsActive && (!product.ManageStock || (product.StockQuantity ?? 0) > 0);

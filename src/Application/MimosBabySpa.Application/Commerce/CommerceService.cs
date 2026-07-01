@@ -34,7 +34,7 @@ public sealed class CommerceService : ICommerceService
         var adapterContext = await BuildContextAsync(ctx.BusinessId, ctx.AgentId, ctx.ConversationId, ctx.Config, ct);
         var adapter = _adapterFactory.Resolve(adapterContext.Provider);
         var result = await adapter.SearchProductsAsync(request, adapterContext, ct);
-        return await EnrichProductPromotionsAsync(ctx.BusinessId, _availability.FilterSellable(result), ct);
+        return await EnrichProductPromotionsAsync(ctx.BusinessId, result, ct);
     }
 
     public async Task<OrderSnapshot> AddItemAsync(AgentToolContext ctx, AddOrderItemRequest request, CancellationToken ct = default)
@@ -229,7 +229,6 @@ public sealed class CommerceService : ICommerceService
                 product.UnitPrice,
                 product.Currency,
                 product.StockQuantity,
-                product.IsActive && (!product.ManageStock || (product.StockQuantity ?? 0) > 0),
                 RawPayloadJson: product.RawPayloadJson)
             { IsActive = product.IsActive };
     }
@@ -414,6 +413,7 @@ public sealed class CommerceService : ICommerceService
 
         return result with { Products = products };
     }
+
 
     private void ApplyCustomerData(AgentToolContext ctx, OrderDraft draft, CreateOrderRequest request)
     {

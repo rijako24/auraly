@@ -559,11 +559,6 @@ public class ApplicationDbContext : DbContext
             entity.Property(e => e.Source).HasConversion<int>();
             entity.Property(e => e.FulfillmentMode).HasConversion<int>();
             entity.Property(e => e.Status).HasConversion<int>();
-            entity.Property(e => e.DeliveryAssignmentStatus).HasConversion<int>();
-            entity.Property(e => e.DeliveryAssigneeKeySnapshot).HasMaxLength(100);
-            entity.Property(e => e.DeliveryAssigneeNameSnapshot).HasMaxLength(200);
-            entity.Property(e => e.DeliveryAssigneeRoleSnapshot).HasMaxLength(100);
-            entity.Property(e => e.DeliveryAssigneePhoneSnapshot).HasMaxLength(50);
             entity.Property(e => e.CustomerNameSnapshot).HasMaxLength(150);
             entity.Property(e => e.CustomerEmailSnapshot).HasMaxLength(200);
             entity.Property(e => e.CustomerPhoneSnapshot).HasMaxLength(50);

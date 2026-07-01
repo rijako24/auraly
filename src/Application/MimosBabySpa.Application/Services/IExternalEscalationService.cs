@@ -7,24 +7,26 @@ public interface IBusinessInboundContactRouter
 
 public interface IExternalEscalationService
 {
-    Task<ExternalEscalationSendResult> EscalateNextAsync(ExternalEscalationRequest request, CancellationToken ct = default);
+    Task<ExternalEscalationSendResult> EscalateAsync(ExternalEscalationRequest request, CancellationToken ct = default);
 
-    Task<ExternalEscalationResolution> ResolveAttemptAsync(
-        Guid businessId,
-        string contactPhone,
-        string messageText,
-        string? interactivePayload,
-        string? replyToProviderMessageId,
+    Task<ExternalEscalationSendResult> EscalateEventAsync(
+        Guid sourceAgentId,
+        string eventName,
+        Guid targetId,
+        IReadOnlyDictionary<string, string> custom,
         CancellationToken ct = default);
 
-    Task<ExternalEscalationActionResult> CompleteAsync(
-        Guid businessId,
-        Guid attemptId,
-        string contactPhone,
-        string outcomeKey,
-        string? responseText,
-        IReadOnlyDictionary<string, string>? responsePayload = null,
+    Task<ExternalEscalationSendResult> EscalateToolAsync(
+        Guid sourceAgentId,
+        string toolName,
+        Guid targetId,
+        IReadOnlyDictionary<string, string> custom,
         CancellationToken ct = default);
 
-    Task ProcessExpiredAttemptsAsync(CancellationToken ct = default);
+    Task<ExternalEscalationCompletionResult> CompleteAttemptAsync(
+        ExternalEscalationCompletionRequest request,
+        CancellationToken ct = default);
+
+    Task<IReadOnlyList<ExternalEscalationExpiredAttempt>> ProcessExpiredAttemptsAsync(CancellationToken ct = default);
 }
+

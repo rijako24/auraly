@@ -213,8 +213,7 @@ public class AddOrderItemToolTests
             null,
             unitPrice,
             "COP",
-            null,
-            true);
+            null);
 
     private static AgentToolContext CreateContext() => new()
     {

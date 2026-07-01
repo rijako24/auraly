@@ -153,13 +153,11 @@ public class PaymentConfirmationHandler : IPaymentConfirmationHandler
 
             if (result.TriggerExternalEscalation)
             {
-                await _externalEscalations.EscalateNextAsync(
-                    new ExternalEscalationRequest(
-                        config.AgentId,
-                        result.EventName,
-                        result.TargetType,
-                        result.TargetId,
-                        result.CustomPayload),
+                await _externalEscalations.EscalateEventAsync(
+                    config.AgentId,
+                    result.EventName,
+                    result.TargetId,
+                    result.CustomPayload,
                     ct);
             }
 

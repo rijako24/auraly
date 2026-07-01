@@ -22,7 +22,6 @@ public sealed class StartExternalInteractionTool : IAgentTool
           "type": "object",
           "properties": {
             "event_name": { "type": "string" },
-            "target_type": { "type": "string" },
             "target_id": { "type": "string" },
             "question": { "type": "string" },
             "context": { "type": "string" }
@@ -35,11 +34,6 @@ public sealed class StartExternalInteractionTool : IAgentTool
     {
         if (!ToolResultHelper.TryGetString(arguments, "event_name", out var eventName))
             return ToolResultHelper.Error("event_name_required", "event_name is required.");
-
-        var targetType = ToolResultHelper.TryGetString(arguments, "target_type", out var targetTypeArg)
-            ? targetTypeArg
-            : "conversation";
-
         if (ctx.Config is null)
             return ToolResultHelper.Error("agent_config_required", "Agent configuration is required.");
 
@@ -55,11 +49,10 @@ public sealed class StartExternalInteractionTool : IAgentTool
             ["context"] = context ?? string.Empty
         };
 
-        var result = await _interactions.EscalateNextAsync(
+        var result = await _interactions.EscalateAsync(
             new ExternalEscalationRequest(
                 ctx.Config.AgentId,
                 eventName,
-                targetType,
                 targetId,
                 custom),
             cancellationToken);
@@ -71,7 +64,6 @@ public sealed class StartExternalInteractionTool : IAgentTool
         {
             sent = true,
             event_name = eventName,
-            target_type = targetType,
             target_id = targetId,
             external_interaction_id = result.InteractionId,
             attempt_code = result.Code
@@ -86,3 +78,4 @@ public sealed class StartExternalInteractionTool : IAgentTool
                 : ctx.ConversationId;
     }
 }
+

@@ -45,6 +45,7 @@ var host = new HostBuilder()
             options.UseSqlServer(configuration.GetConnectionString("DefaultConnection")));
 
         services.AddMemoryCache();
+        services.AddSingleton<AgentToolMetadataRegistry>();
 
         // Repositories
         services.AddScoped<IUnitOfWork, UnitOfWork>();
@@ -71,6 +72,7 @@ var host = new HostBuilder()
         services.AddScoped<IWorkingHoursService, WorkingHoursService>();
         services.AddScoped<IAvailabilityService, AvailabilityService>();
         services.AddScoped<ServiceNameResolver>();
+services.AddScoped<ServiceSelectionResolver>();
         services.AddScoped<ReservationPricingResolver>();
         services.AddScoped<IPromotionPricingService, PromotionPricingService>();
         services.AddScoped<IBusinessClock, BusinessClock>();
@@ -161,7 +163,8 @@ var host = new HostBuilder()
         services.AddScoped<IConversationReleaseService, ConversationReleaseService>();
         services.AddScoped<IBusinessInboundContactRouter, BusinessInboundContactRouter>();
         services.AddScoped<IExternalEscalationService, ExternalEscalationService>();
-        services.AddScoped<IExternalEscalationTargetHandler, OrderDeliveryExternalEscalationHandler>();
+        services.AddScoped<IExternalEscalationOutcomePublisher, ExternalEscalationOutcomePublisher>();
+        services.AddScoped<IInboundMessageBatchProcessor, InboundMessageBatchProcessor>();
         services.AddScoped<ITimedProcess, PaymentLinkPollingProcess>();
         services.AddScoped<ITimedProcess, ExternalEscalationExpirationProcess>();
         services.AddScoped<ITimedProcess, ReservationAutomationProcess>();
@@ -208,6 +211,7 @@ var host = new HostBuilder()
         services.AddScoped<IAgentTool, VerifyPaymentTool>();
         services.AddScoped<IAgentTool, EscalateToHumanTool>();
         services.AddScoped<IAgentTool, GetServiceCatalogTool>();
+services.AddScoped<IAgentTool, ResolveServiceSelectionTool>();
         services.AddScoped<IAgentTool, GetCompatibleAddOnsTool>();
         services.AddScoped<IAgentTool, GetServiceFulfillmentTool>();
         services.AddScoped<IAgentTool, SearchProductsTool>();
@@ -217,11 +221,9 @@ var host = new HostBuilder()
         services.AddScoped<IAgentTool, GetOrderDraftTool>();
         services.AddScoped<IAgentTool, CreateOrderTool>();
         services.AddScoped<IAgentTool, StartExternalInteractionTool>();
-        services.AddScoped<IAgentTool, ResolveExternalInteractionTool>();
         services.AddScoped<IAgentTool, SearchOrderTool>();
-        services.AddScoped<IAgentTool, AcceptOrderDeliveryTool>();
-        services.AddScoped<IAgentTool, RejectOrderDeliveryTool>();
-        services.AddScoped<IAgentTool, CompleteExternalInteractionTool>();
+        services.AddScoped<IAgentTool, AcceptOrderRequestTool>();
+        services.AddScoped<IAgentTool, RejectOrderRequestTool>();
         services.AddScoped<IAgentTool, OperationsGetReservationsTool>();
         services.AddScoped<IAgentTool, OperationsBlockAvailabilityTool>();
         services.AddScoped<IAgentTool, OperationsRequestRescheduleTool>();
@@ -282,3 +284,5 @@ var host = new HostBuilder()
     .Build();
 
 host.Run();
+
+

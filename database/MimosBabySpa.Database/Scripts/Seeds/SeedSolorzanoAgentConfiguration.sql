@@ -408,17 +408,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
           "add_order_item",
           "set_fact"
         ],
-        "afterTool": [
-          {
-            "tool": "search_products",
-            "when": {
-              "path": "ok",
-              "equals": "true"
-            },
-            "sendMessageSequence": "wine_prices_image",
-            "sendOncePerConversation": true
-          }
-        ],
         "advanceWhenFacts": [
           "order_finalized"
         ]
@@ -785,25 +774,23 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "enabled": true,
       "events": {
         "order_created": {
-          "enabled": true,
-          "contactType": "delivery",
+          "enabled": false,
+          "tool": "create_order",
+          "contactType": "domicilio",
           "pickupAddress": "Centro Comercial Guatapuri, Isla Vino Solorzano (frente a TOTTO)",
           "attemptTimeoutMinutes": 15,
           "attemptCodePrefix": "PED",
           "sendMessageSequence": "delivery_request",
-          "attemptSentNotificationEvent": "delivery_requested",
-          "acceptedNotificationEvent": "delivery_confirmed",
-          "exhaustedNotificationEvent": "delivery_unavailable",
+          "outcomeEvents": {
+            "requested": "delivery_requested",
+            "accepted": "delivery_confirmed",
+            "declined": "delivery_unavailable",
+            "timed_out": "delivery_unavailable"
+          },
           "contacts": [
             {
               "businessInboundContactId": "E2EE3BA9-E6BF-43E2-8C1A-560CB724688B",
-              "priority": 1,
-              "retryEnabled": true
-            },
-            {
-              "businessInboundContactId": "E3EE3BA9-E6BF-43E2-8C1A-560CB724688B",
-              "priority": 2,
-              "retryEnabled": true
+              "priority": 1
             }
           ]
         }
@@ -870,3 +857,4 @@ WHERE AgentId = @AgentId;
 
 PRINT N'SeedSolorzanoAgentConfiguration: Camila reconfigurada para negocio ' + CAST(@BusinessId AS NVARCHAR(36));
 GO
+

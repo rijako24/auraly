@@ -1,4 +1,5 @@
 using MimosBabySpa.Application.Agents.Configuration;
+using MimosBabySpa.Application.Agents.Tools;
 using MimosBabySpa.Application.Commerce;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -16,6 +17,7 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
     private readonly IAgentRepository _agentRepo;
     private readonly IMemoryCache _cache;
     private readonly ILogger<AgentConfigProvider> _logger;
+    private readonly AgentToolMetadataRegistry _toolMetadataRegistry;
 
     private static readonly TimeSpan CacheTtl = TimeSpan.FromMinutes(10);
     private const string CachePrefix = "agent_config_";
@@ -24,11 +26,13 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
     public AgentConfigProvider(
         IAgentRepository agentRepo,
         IMemoryCache cache,
-        ILogger<AgentConfigProvider> logger)
+        ILogger<AgentConfigProvider> logger,
+        AgentToolMetadataRegistry toolMetadataRegistry)
     {
         _agentRepo = agentRepo;
         _cache = cache;
         _logger = logger;
+        _toolMetadataRegistry = toolMetadataRegistry;
     }
 
     public async Task<AgentConfig> GetConfigAsync(Guid agentId, CancellationToken ct = default)
@@ -233,56 +237,31 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
         ValidateTemplates(config);
     }
 
-    private static HashSet<string> BuildEnabledCapabilities(AgentConfig config)
+    private HashSet<string> BuildEnabledCapabilities(AgentConfig config)
     {
         var capabilities = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        foreach (var toolName in config.EnabledToolNames)
+        foreach (var tool in _toolMetadataRegistry.GetTools(config.EnabledToolNames))
         {
-            foreach (var capability in ResolveKnownCapabilities(toolName))
-                capabilities.Add(capability);
+            foreach (var capability in tool.Capabilities)
+            {
+                if (!string.IsNullOrWhiteSpace(capability))
+                    capabilities.Add(capability);
+            }
         }
 
         return capabilities;
     }
 
-    private static IEnumerable<string> ResolveKnownCapabilities(string toolName)
-    {
-        if (toolName.Equals("set_fact", StringComparison.OrdinalIgnoreCase))
-            yield return Tools.ToolCapabilities.FactWrite;
-        else if (toolName.Equals("escalate_to_human", StringComparison.OrdinalIgnoreCase))
-            yield return Tools.ToolCapabilities.HumanEscalate;
-        else if (toolName.Equals("prepare_checkout", StringComparison.OrdinalIgnoreCase))
-            yield return Tools.ToolCapabilities.CheckoutPrepare;
-        else if (toolName.Equals("prepare_order_checkout", StringComparison.OrdinalIgnoreCase))
-            yield return Tools.ToolCapabilities.CheckoutPrepare;
-        else if (toolName.Equals("create_reservation", StringComparison.OrdinalIgnoreCase))
-            yield return Tools.ToolCapabilities.ReservationCreate;
-        else if (toolName.Equals("create_order", StringComparison.OrdinalIgnoreCase))
-            yield return Tools.ToolCapabilities.OrderCreate;
-        else if (toolName.Equals("assign_paid_slot", StringComparison.OrdinalIgnoreCase))
-            yield return Tools.ToolCapabilities.PaidSlotAssign;
-    }
-
-    /// <summary>
-    /// Plantillas que las tools del motor pueden emitir según enabledTools.
-    /// Deben existir en SettingsJson.templates (no hay fallback en código).
-    /// </summary>
-    private static readonly IReadOnlyDictionary<string, string[]> ToolRequiredTemplateIds =
-        new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
-        {
-            ["check_availability"] = ["availability_slots"]
-        };
-
     private void ValidateTemplates(AgentConfig config)
     {
         var required = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        foreach (var toolName in config.EnabledToolNames)
+        foreach (var tool in _toolMetadataRegistry.GetTools(config.EnabledToolNames))
         {
-            if (ToolRequiredTemplateIds.TryGetValue(toolName, out var templateIds))
+            foreach (var id in tool.RequiredTemplateIds)
             {
-                foreach (var id in templateIds)
+                if (!string.IsNullOrWhiteSpace(id))
                     required.Add(id);
             }
         }
@@ -404,6 +383,16 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
             if (!definition.Enabled)
                 continue;
 
+            if (!string.IsNullOrWhiteSpace(definition.Tool)
+                && !config.EnabledToolNames.Contains(definition.Tool, StringComparer.OrdinalIgnoreCase))
+            {
+                _logger.LogWarning(
+                    "AgentConfig {AgentId}: escalations.external.events['{Event}'] references tool '{Tool}' which is not in enabledTools",
+                    config.AgentId,
+                    eventName,
+                    definition.Tool);
+            }
+
             if (string.IsNullOrWhiteSpace(definition.SendMessageSequence))
             {
                 _logger.LogWarning(
@@ -420,27 +409,10 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
                     definition.SendMessageSequence);
             }
 
-            ValidateExternalEscalationNotificationEvent(
-                config,
-                eventName,
-                "attemptSentNotificationEvent",
-                definition.AttemptSentNotificationEvent);
-            ValidateExternalEscalationNotificationEvent(
-                config,
-                eventName,
-                "acceptedNotificationEvent",
-                definition.AcceptedNotificationEvent);
-            ValidateExternalEscalationNotificationEvent(
-                config,
-                eventName,
-                "completedNotificationEvent",
-                definition.CompletedNotificationEvent);
-            ValidateExternalEscalationNotificationEvent(
-                config,
-                eventName,
-                "exhaustedNotificationEvent",
-                definition.ExhaustedNotificationEvent);
-
+            foreach (var (outcomeKey, notificationEventName) in definition.OutcomeEvents)
+            {
+                ValidateExternalEscalationOutcomeEvent(config, eventName, outcomeKey, notificationEventName);
+            }
             foreach (var contact in definition.Contacts)
             {
                 if (!contact.BusinessInboundContactId.HasValue)
@@ -454,26 +426,41 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
         }
     }
 
-    private void ValidateExternalEscalationNotificationEvent(
+    private void ValidateExternalEscalationOutcomeEvent(
         AgentConfig config,
         string externalEventName,
-        string propertyName,
+        string outcomeKey,
         string? notificationEventName)
     {
-        if (string.IsNullOrWhiteSpace(notificationEventName))
+        if (string.IsNullOrWhiteSpace(outcomeKey))
+        {
+            _logger.LogWarning(
+                "AgentConfig {AgentId}: escalations.external.events['{ExternalEvent}'].outcomeEvents has empty outcome key",
+                config.AgentId,
+                externalEventName);
             return;
+        }
+
+        if (string.IsNullOrWhiteSpace(notificationEventName))
+        {
+            _logger.LogWarning(
+                "AgentConfig {AgentId}: escalations.external.events['{ExternalEvent}'].outcomeEvents['{Outcome}'] has empty notification event",
+                config.AgentId,
+                externalEventName,
+                outcomeKey);
+            return;
+        }
 
         if (!config.Notifications.ContainsKey(notificationEventName))
         {
             _logger.LogWarning(
-                "AgentConfig {AgentId}: escalations.external.events['{ExternalEvent}'].{Property} references unknown notification event '{NotificationEvent}'",
+                "AgentConfig {AgentId}: escalations.external.events['{ExternalEvent}'].outcomeEvents['{Outcome}'] references unknown notification event '{NotificationEvent}'",
                 config.AgentId,
                 externalEventName,
-                propertyName,
+                outcomeKey,
                 notificationEventName);
         }
     }
-
 
     private static AgentSettings ParseSettings(string? settingsJson)
     {
@@ -522,3 +509,8 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
     }
 
 }
+
+
+
+
+

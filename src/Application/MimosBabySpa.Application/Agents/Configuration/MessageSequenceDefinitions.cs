@@ -106,6 +106,9 @@ public sealed class HumanEscalationDefinitions
 public sealed class ExternalEscalationEventDefinition
 {
     public bool Enabled { get; set; }
+
+    public string Tool { get; set; } = string.Empty;
+
     public int AttemptTimeoutMinutes { get; set; } = 5;
 
     public string AttemptCodePrefix { get; set; } = "EXT";
@@ -116,13 +119,8 @@ public sealed class ExternalEscalationEventDefinition
 
     public string PickupAddress { get; set; } = string.Empty;
 
-    public string? AttemptSentNotificationEvent { get; set; }
-
-    public string? AcceptedNotificationEvent { get; set; }
-
-    public string? CompletedNotificationEvent { get; set; }
-
-    public string? ExhaustedNotificationEvent { get; set; }
+    public Dictionary<string, string> OutcomeEvents { get; set; } =
+        new(StringComparer.OrdinalIgnoreCase);
 
     public IReadOnlyList<ExternalEscalationContactDefinition> Contacts { get; set; } = [];
 }
@@ -133,7 +131,6 @@ public sealed class ExternalEscalationContactDefinition
 
     public Guid? BusinessInboundContactId { get; set; }
 
-    public bool RetryEnabled { get; set; } = true;
 
     public string PickupAddress { get; set; } = string.Empty;
 }
@@ -146,3 +143,4 @@ public sealed class EventNotificationConfig
 
     public string? SendMessageSequence { get; set; }
 }
+

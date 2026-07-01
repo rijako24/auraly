@@ -9,6 +9,7 @@ using static MimosBabySpa.Application.Agents.ToolSideEffectNames;
 
 namespace MimosBabySpa.Application.Agents.Tools.Impl;
 
+[AgentToolMetadata("create_reservation", Capabilities = new[] { ToolCapabilities.ReservationCreate })]
 public sealed class CreateReservationTool : IAgentTool
 {
     private readonly IReservationService _reservations;
@@ -258,3 +259,4 @@ public sealed class CreateReservationTool : IAgentTool
         return string.IsNullOrWhiteSpace(fallback) ? null : fallback;
     }
 }
+

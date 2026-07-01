@@ -105,11 +105,10 @@ END
 
 UPDATE o
 SET PaymentTransactionId = NULL,
-    DeliveryExternalEscalationAttemptId = NULL,
     UpdatedAt = SYSUTCDATETIME()
 FROM dbo.Orders o
 WHERE o.BusinessId = @BusinessId
-  AND (o.PaymentTransactionId IS NOT NULL OR o.DeliveryExternalEscalationAttemptId IS NOT NULL);
+  AND o.PaymentTransactionId IS NOT NULL;
 
 UPDATE pt
 SET SupersededByPaymentTransactionId = NULL
