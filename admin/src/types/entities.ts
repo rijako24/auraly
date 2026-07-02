@@ -117,6 +117,7 @@ export interface Service {
   businessId: string;
   serviceName: string;
   description: string;
+  keywords?: string | null;
   durationMinutes: number;
   price: number;
   includeInCheckoutTotal: boolean;

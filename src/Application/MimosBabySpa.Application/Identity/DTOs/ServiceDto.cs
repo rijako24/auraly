@@ -7,6 +7,7 @@ public record ServiceDto(
     Guid BusinessId,
     string ServiceName,
     string Description,
+    string? Keywords,
     int DurationMinutes,
     decimal Price,
     bool IncludeInCheckoutTotal,

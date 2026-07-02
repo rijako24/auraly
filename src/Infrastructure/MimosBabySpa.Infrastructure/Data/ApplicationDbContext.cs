@@ -846,6 +846,7 @@ public class ApplicationDbContext : DbContext
             entity.HasKey(e => e.ServiceId);
             entity.Property(e => e.ServiceName).IsRequired().HasMaxLength(200);
             entity.Property(e => e.Description).HasColumnType("NVARCHAR(MAX)");
+            entity.Property(e => e.Keywords).HasMaxLength(1000);
             entity.Property(e => e.DurationMinutes).IsRequired();
             entity.Property(e => e.Price).IsRequired().HasPrecision(18, 2);
             entity.Property(e => e.IncludeInCheckoutTotal).IsRequired().HasDefaultValue(true);

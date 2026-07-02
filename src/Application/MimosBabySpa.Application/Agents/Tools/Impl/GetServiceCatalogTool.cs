@@ -4,7 +4,7 @@ using MimosBabySpa.Application.Services;
 namespace MimosBabySpa.Application.Agents.Tools.Impl;
 
 /// <summary>
-/// Retorna el catálogo actualizado de servicios y precios del negocio.
+/// Retorna el catalogo actualizado de servicios y precios del negocio.
 /// La elegibilidad (edad, capacidad, etc.) se infiere del texto en Description + contexto del cliente.
 /// </summary>
 public sealed class GetServiceCatalogTool : IAgentTool
@@ -16,8 +16,9 @@ public sealed class GetServiceCatalogTool : IAgentTool
     public string Name => "get_service_catalog";
 
     public string Description =>
-        "Returns the business service catalog for information requests: services, compatible add-ons per service, prices, durations, options, alternatives, and service details. " +
-        "Use it to answer catalog, pricing, option, comparison, or service-information questions. " +
+        "Returns the business service catalog for information requests: service categories, services, compatible add-ons per service, prices, durations, options, alternatives, and service details. " +
+        "Use view=categories when the customer is choosing the service type and should see only the available service categories/options. " +
+        "Use view=services to answer catalog, pricing, option, comparison, or service-information questions. " +
         "Pass query using the customer's own service-family words when the user narrows the catalog. Do not invent or hard-code query values. " +
         "It does not select a service or store booking.service.";
 
@@ -28,6 +29,11 @@ public sealed class GetServiceCatalogTool : IAgentTool
             "query": {
               "type": "string",
               "description": "Optional customer keyword or service family to filter catalog rows."
+            },
+            "view": {
+              "type": "string",
+              "enum": ["services", "categories"],
+              "description": "Use categories for the initial category/options overview; use services for service rows with price, duration, and add-ons."
             }
           }
         }
@@ -39,7 +45,17 @@ public sealed class GetServiceCatalogTool : IAgentTool
         CancellationToken cancellationToken = default)
     {
         ToolResultHelper.TryGetString(arguments, "query", out var query);
-        var content = await _catalog.GenerateAsync(ctx.BusinessId, query, cancellationToken);
-        return ToolResultHelper.Ok(new { catalog = content, query = string.IsNullOrWhiteSpace(query) ? null : query });
+        ToolResultHelper.TryGetString(arguments, "view", out var viewText);
+        var view = string.Equals(viewText, "categories", StringComparison.OrdinalIgnoreCase)
+            ? CatalogContentView.Categories
+            : CatalogContentView.Services;
+
+        var content = await _catalog.GenerateAsync(ctx.BusinessId, query, view, cancellationToken);
+        return ToolResultHelper.Ok(new
+        {
+            catalog = content,
+            query = string.IsNullOrWhiteSpace(query) ? null : query,
+            view = view == CatalogContentView.Categories ? "categories" : "services"
+        });
     }
 }

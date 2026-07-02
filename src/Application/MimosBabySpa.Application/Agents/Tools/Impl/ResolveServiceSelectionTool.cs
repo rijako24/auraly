@@ -26,6 +26,7 @@ public sealed class ResolveServiceSelectionTool : IAgentTool
     public string Description =>
         "Use this instead of set_fact to store booking.service when the customer selects, confirms, or changes to a service. " +
         "Resolve the customer's raw service wording against the active catalog and store booking.service only when the selection identifies one catalog service unambiguously. " +
+        "If the latest user message is elliptical, include immediate conversation context that belongs to the same service request. " +
         "Do not use it for catalog, pricing, option, comparison, or service-information questions.";
 
     public string ParametersSchema => """
@@ -34,7 +35,7 @@ public sealed class ResolveServiceSelectionTool : IAgentTool
           "properties": {
             "text": {
               "type": "string",
-              "description": "Literal customer wording for the service selection. Use the customer's own words, not an inferred catalog name."
+              "description": "Customer wording for the service selection. If the latest message is elliptical, include immediate same-request context already stated by the customer; do not invent a catalog name."
             }
           },
           "required": ["text"]

@@ -72,6 +72,10 @@ export default function ServiceDetailPage() {
         <p className="text-muted-foreground max-w-2xl">{service.description}</p>
       )}
 
+      {service.keywords && (
+        <p className="text-sm text-muted-foreground max-w-2xl">Keywords: {service.keywords}</p>
+      )}
+
       <div className="grid gap-4 sm:grid-cols-3">
         <StatCard
           title="Precio"
@@ -112,6 +116,12 @@ export default function ServiceDetailPage() {
                     Categoría
                   </p>
                   <p>{service.categoryName ?? service.category?.name ?? "—"}</p>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">
+                    Keywords
+                  </p>
+                  <p>{service.keywords || "—"}</p>
                 </div>
                 <div>
                   <p className="text-sm font-medium text-muted-foreground">

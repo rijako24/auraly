@@ -30,6 +30,7 @@
 :r .\Migrations\MigrateSchedulingMinimumLeadTime.sql
 :r .\Migrations\MigrateBusinessAvailabilityBlocks.sql
 :r .\Migrations\MigrateServiceCheckoutTotalPolicy.sql
+:r .\Migrations\MigrateServiceKeywords.sql
 :r .\Migrations\MigrateBabySpaPlanPrices2026.sql
 :r .\Migrations\MigrateExternalEscalationAttempts.sql
 :r .\Migrations\MigrateAgentTemplatesAndInboundContacts.sql

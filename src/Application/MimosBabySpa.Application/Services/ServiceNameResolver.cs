@@ -52,11 +52,13 @@ public class ServiceNameResolver
         var normalized = input.Trim();
 
         var match = serviceList.FirstOrDefault(s =>
-            Cmp.Compare(s.ServiceName, normalized, Opts) == 0);
+            Cmp.Compare(s.ServiceName, normalized, Opts) == 0
+            || KeywordEquals(s.Keywords, normalized));
         if (match != null) return match.ServiceName;
 
         match = serviceList.FirstOrDefault(s =>
-            Cmp.IndexOf(normalized, s.ServiceName, Opts) >= 0);
+            Cmp.IndexOf(normalized, s.ServiceName, Opts) >= 0
+            || KeywordsContainInput(normalized, s.Keywords));
         if (match != null)
         {
             _logger.LogInformation(
@@ -66,7 +68,8 @@ public class ServiceNameResolver
         }
 
         match = serviceList.FirstOrDefault(s =>
-            Cmp.IndexOf(s.ServiceName, normalized, Opts) >= 0);
+            Cmp.IndexOf(s.ServiceName, normalized, Opts) >= 0
+            || InputContainsKeyword(normalized, s.Keywords));
         if (match != null)
         {
             _logger.LogInformation(
@@ -79,7 +82,8 @@ public class ServiceNameResolver
         if (!string.IsNullOrWhiteSpace(compactInput))
         {
             match = serviceList.FirstOrDefault(s =>
-                Cmp.Compare(CompactName(s.ServiceName), compactInput, Opts) == 0);
+                Cmp.Compare(CompactName(s.ServiceName), compactInput, Opts) == 0
+                || SplitKeywords(s.Keywords).Any(keyword => Cmp.Compare(CompactName(keyword), compactInput, Opts) == 0));
             if (match != null)
             {
                 _logger.LogInformation(
@@ -90,7 +94,10 @@ public class ServiceNameResolver
 
             match = serviceList.FirstOrDefault(s =>
                 Cmp.IndexOf(CompactName(s.ServiceName), compactInput, Opts) >= 0
-                || Cmp.IndexOf(compactInput, CompactName(s.ServiceName), Opts) >= 0);
+                || Cmp.IndexOf(compactInput, CompactName(s.ServiceName), Opts) >= 0
+                || SplitKeywords(s.Keywords).Any(keyword =>
+                    Cmp.IndexOf(CompactName(keyword), compactInput, Opts) >= 0
+                    || Cmp.IndexOf(compactInput, CompactName(keyword), Opts) >= 0));
             if (match != null)
             {
                 _logger.LogInformation(
@@ -145,8 +152,24 @@ public class ServiceNameResolver
 
     private static string CompactName(string value)
     {
-        return string.Concat(value.Where(char.IsLetterOrDigit));
+        return string.Concat(RemoveDiacritics(value).Where(char.IsLetterOrDigit)).ToLowerInvariant();
     }
+
+    private static IEnumerable<string> SplitKeywords(string? value) =>
+        string.IsNullOrWhiteSpace(value)
+            ? []
+            : value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+    private static bool KeywordEquals(string? keywords, string input) =>
+        SplitKeywords(keywords).Any(keyword =>
+            Cmp.Compare(keyword, input, Opts) == 0
+            || CompactName(keyword).Equals(CompactName(input), StringComparison.OrdinalIgnoreCase));
+
+    private static bool KeywordsContainInput(string input, string? keywords) =>
+        SplitKeywords(keywords).Any(keyword => Cmp.IndexOf(input, keyword, Opts) >= 0);
+
+    private static bool InputContainsKeyword(string input, string? keywords) =>
+        SplitKeywords(keywords).Any(keyword => Cmp.IndexOf(keyword, input, Opts) >= 0);
 
     private static Service? ResolveByTokenScore(IReadOnlyList<Service> services, string input)
     {
@@ -174,12 +197,15 @@ public class ServiceNameResolver
     {
         var nameTokens = Tokenize(service.ServiceName).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var descriptionTokens = Tokenize(service.Description).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var keywordTokens = Tokenize(service.Keywords).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         var score = 0;
         foreach (var token in inputTokens)
         {
             if (nameTokens.Contains(token))
                 score += 3;
+            else if (keywordTokens.Contains(token))
+                score += 4;
             else if (descriptionTokens.Contains(token))
                 score += 1;
         }

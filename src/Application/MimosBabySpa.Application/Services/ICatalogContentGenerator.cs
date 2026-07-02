@@ -8,4 +8,16 @@ public interface ICatalogContentGenerator
     Task<string> GenerateAsync(Guid businessId, CancellationToken ct = default);
 
     Task<string> GenerateAsync(Guid businessId, string? query, CancellationToken ct = default);
+
+    Task<string> GenerateAsync(
+        Guid businessId,
+        string? query,
+        CatalogContentView view,
+        CancellationToken ct = default);
+}
+
+public enum CatalogContentView
+{
+    Services,
+    Categories
 }

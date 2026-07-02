@@ -61,7 +61,8 @@ public sealed class ServiceSelectionResolver
         var normalized = text.Trim();
         var exact = services
             .Where(s => ServiceNameEquals(s.ServiceName, normalized)
-                        || CompactName(s.ServiceName).Equals(CompactName(normalized), StringComparison.OrdinalIgnoreCase))
+                        || CompactName(s.ServiceName).Equals(CompactName(normalized), StringComparison.OrdinalIgnoreCase)
+                        || KeywordEquals(s.Keywords, normalized))
             .ToList();
 
         if (exact.Count == 1)
@@ -112,6 +113,7 @@ public sealed class ServiceSelectionResolver
     {
         var nameTokens = Tokenize(service.ServiceName).ToList();
         var descriptionTokens = Tokenize(service.Description).ToList();
+        var keywordTokens = Tokenize(service.Keywords).ToList();
         var score = 0;
         var matchedNameTokens = 0;
 
@@ -139,6 +141,13 @@ public sealed class ServiceSelectionResolver
                 continue;
             }
 
+            if (MatchesAny(keywordTokens, token))
+            {
+                score += 4;
+                matchedNameTokens++;
+                continue;
+            }
+
             if (MatchesAny(descriptionTokens, token))
                 score += 1;
         }
@@ -155,8 +164,18 @@ public sealed class ServiceSelectionResolver
     private static bool ServiceNameEquals(string serviceName, string input) =>
         Cmp.Compare(serviceName, input, Opts) == 0;
 
+    private static bool KeywordEquals(string? keywords, string input) =>
+        SplitKeywords(keywords).Any(keyword =>
+            Cmp.Compare(keyword, input, Opts) == 0
+            || CompactName(keyword).Equals(CompactName(input), StringComparison.OrdinalIgnoreCase));
+
     private static string CompactName(string value) =>
         string.Concat(RemoveDiacritics(value).Where(char.IsLetterOrDigit)).ToLowerInvariant();
+
+    private static IEnumerable<string> SplitKeywords(string? value) =>
+        string.IsNullOrWhiteSpace(value)
+            ? []
+            : value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
     private static IEnumerable<string> Tokenize(string? value)
     {

@@ -114,6 +114,7 @@ public sealed class CatalogImportAdminService : ICatalogImportAdminService
                 BusinessId = businessId,
                 ServiceName = line.ServiceName.Trim(),
                 Description = line.Description ?? string.Empty,
+                Keywords = NormalizeKeywords(line.Keywords),
                 DurationMinutes = line.DurationMinutes > 0 ? line.DurationMinutes : 60,
                 Price = line.Price,
                 IncludeInCheckoutTotal = line.IncludeInCheckoutTotal,
@@ -153,6 +154,9 @@ public sealed class CatalogImportAdminService : ICatalogImportAdminService
             Warnings = warnings
         };
     }
+
+    private static string? NormalizeKeywords(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
     private static ServiceTier ParseTier(string? tier) => tier?.ToLowerInvariant() switch
     {

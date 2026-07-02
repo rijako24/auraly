@@ -32,6 +32,7 @@ export default function NewServicePage() {
   const createService = useCreateService();
   const [serviceName, setServiceName] = useState("");
   const [description, setDescription] = useState("");
+  const [keywords, setKeywords] = useState("");
   const [categoryId, setCategoryId] = useState("");
   const [durationMinutes, setDurationMinutes] = useState("");
   const [price, setPrice] = useState("");
@@ -65,6 +66,7 @@ export default function NewServicePage() {
       businessId,
       serviceName: serviceName.trim(),
       description: description.trim(),
+      keywords: keywords.trim() || null,
       categoryId,
       durationMinutes: parseInt(durationMinutes, 10),
       price: parseInt(price, 10),
@@ -138,6 +140,17 @@ export default function NewServicePage() {
               />
             </div>
 
+
+            <div className="space-y-2">
+              <Label htmlFor="keywords">Keywords</Label>
+              <Textarea
+                id="keywords"
+                value={keywords}
+                onChange={(e) => setKeywords(e.target.value)}
+                placeholder="Palabras o frases separadas por coma"
+                rows={3}
+              />
+            </div>
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
                 <Label htmlFor="categoryId">Categoría</Label>
@@ -180,8 +193,7 @@ export default function NewServicePage() {
                 )}
               </div>
             </div>
-
-            <div className="grid gap-4 sm:grid-cols-2">
+<div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
                 <Label htmlFor="price">Precio COP</Label>
                 <Input
@@ -217,8 +229,7 @@ export default function NewServicePage() {
                 </Select>
               </div>
             </div>
-
-            <div className="grid gap-4 sm:grid-cols-2">
+<div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
                 <Label htmlFor="serviceType">Tipo de servicio</Label>
                 <Select value={serviceType} onValueChange={setServiceType}>

@@ -1,6 +1,7 @@
 export interface CatalogImportServiceLine {
   serviceName: string;
   description?: string | null;
+  keywords?: string | null;
   durationMinutes: number;
   price: number;
   categoryName: string;

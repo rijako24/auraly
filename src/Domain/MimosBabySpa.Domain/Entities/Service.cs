@@ -15,6 +15,7 @@ public class Service
     public Guid BusinessId { get; set; }
     public string ServiceName { get; set; } = string.Empty;
     public string Description { get; set; } = string.Empty;
+    public string? Keywords { get; set; }
     public int DurationMinutes { get; set; }
     public decimal Price { get; set; }
     public bool IncludeInCheckoutTotal { get; set; } = true;

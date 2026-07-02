@@ -92,6 +92,7 @@ public class ServiceAdminService : IServiceAdminService
             BusinessId = request.BusinessId,
             ServiceName = request.ServiceName,
             Description = request.Description ?? string.Empty,
+            Keywords = NormalizeKeywords(request.Keywords),
             DurationMinutes = request.DurationMinutes,
             Price = request.Price,
             IncludeInCheckoutTotal = request.IncludeInCheckoutTotal,
@@ -125,6 +126,7 @@ public class ServiceAdminService : IServiceAdminService
 
         if (request.ServiceName is not null) service.ServiceName = request.ServiceName;
         if (request.Description is not null) service.Description = request.Description;
+        if (request.Keywords is not null) service.Keywords = NormalizeKeywords(request.Keywords);
         if (request.DurationMinutes.HasValue) service.DurationMinutes = request.DurationMinutes.Value;
         if (request.Price.HasValue) service.Price = request.Price.Value;
         if (request.IncludeInCheckoutTotal.HasValue) service.IncludeInCheckoutTotal = request.IncludeInCheckoutTotal.Value;
@@ -167,7 +169,7 @@ public class ServiceAdminService : IServiceAdminService
     }
 
     private static ServiceDto MapToDto(Service s) => new(
-        s.ServiceId, s.BusinessId, s.ServiceName, s.Description, s.DurationMinutes,
+        s.ServiceId, s.BusinessId, s.ServiceName, s.Description, s.Keywords, s.DurationMinutes,
         s.Price, s.IncludeInCheckoutTotal, s.IsActive, s.CategoryId, s.ServiceCategory.Name, s.Tier, s.ServiceType,
         s.FulfillmentKind, s.FixedScheduleLabel, s.CreatedAt);
 
@@ -175,5 +177,8 @@ public class ServiceAdminService : IServiceAdminService
         c.ServiceCategoryId, c.BusinessId, c.Name, c.DisplayOrder, c.IsActive, c.CreatedAt);
 
     private static string? NormalizeFixedScheduleLabel(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    private static string? NormalizeKeywords(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 }

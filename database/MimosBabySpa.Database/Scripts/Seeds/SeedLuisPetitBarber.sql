@@ -15,6 +15,12 @@ DECLARE @AgentId         UNIQUEIDENTIFIER = 'BABA0000-0000-0000-0000-00000000000
 DECLARE @EmployeeId      UNIQUEIDENTIFIER = 'BABA0000-0000-0000-0000-000000000003';
 DECLARE @CategoryId      UNIQUEIDENTIFIER = 'BABA0000-0000-0000-0000-000000000010';
 DECLARE @AddOnCategoryId UNIQUEIDENTIFIER = 'BABA0000-0000-0000-0000-000000000011';
+DECLARE @CejasCategoryId UNIQUEIDENTIFIER = 'BABA0000-0000-0000-0000-000000000012';
+DECLARE @LavadoCategoryId UNIQUEIDENTIFIER = 'BABA0000-0000-0000-0000-000000000013';
+DECLARE @DomicilioCategoryId UNIQUEIDENTIFIER = 'BABA0000-0000-0000-0000-000000000014';
+DECLARE @TratamientosCategoryId UNIQUEIDENTIFIER = 'BABA0000-0000-0000-0000-000000000015';
+DECLARE @BarbaCategoryId UNIQUEIDENTIFIER = 'BABA0000-0000-0000-0000-000000000016';
+DECLARE @PeinadoCategoryId UNIQUEIDENTIFIER = 'BABA0000-0000-0000-0000-000000000017';
 DECLARE @AgentTypeId     UNIQUEIDENTIFIER;
 
 IF NOT EXISTS (SELECT 1 FROM dbo.Tenants WHERE TenantId = @TenantId)
@@ -61,16 +67,16 @@ BEGIN
     INSERT INTO dbo.ServiceCategories
         (ServiceCategoryId, BusinessId, Name, Description, DisplayOrder, IsActive, CreatedAt)
     VALUES
-        (@CategoryId, @BusinessId, N'Servicios de barberia',
-         N'Cortes, barba, cejas, lavado profundo, domicilio y tratamientos especiales.',
+        (@CategoryId, @BusinessId, N'Corte de Cabello',
+         N'Cortes de cabello, cortes con barba, color y puntas.',
          1, 1, GETUTCDATE());
 END
 ELSE
 BEGIN
     UPDATE dbo.ServiceCategories
     SET BusinessId = @BusinessId,
-        Name = N'Servicios de barberia',
-        Description = N'Cortes, barba, cejas, lavado profundo, domicilio y tratamientos especiales.',
+        Name = N'Corte de Cabello',
+        Description = N'Cortes de cabello, cortes con barba, color y puntas.',
         DisplayOrder = 1,
         IsActive = 1,
         UpdatedAt = GETUTCDATE()
@@ -85,7 +91,7 @@ BEGIN
     VALUES
         (@AddOnCategoryId, @BusinessId, N'Adicionales para cortes',
          N'Complementos opcionales que se agregan dentro del tiempo del corte.',
-         2, 1, GETUTCDATE());
+         99, 0, GETUTCDATE());
 END
 ELSE
 BEGIN
@@ -93,12 +99,43 @@ BEGIN
     SET BusinessId = @BusinessId,
         Name = N'Adicionales para cortes',
         Description = N'Complementos opcionales que se agregan dentro del tiempo del corte.',
-        DisplayOrder = 2,
-        IsActive = 1,
+        DisplayOrder = 99,
+        IsActive = 0,
         UpdatedAt = GETUTCDATE()
     WHERE ServiceCategoryId = @AddOnCategoryId;
 END
 
+DECLARE @LiteralCategories TABLE
+(
+    ServiceCategoryId UNIQUEIDENTIFIER NOT NULL,
+    Name NVARCHAR(100) NOT NULL,
+    Description NVARCHAR(MAX) NULL,
+    DisplayOrder INT NOT NULL
+);
+
+INSERT INTO @LiteralCategories (ServiceCategoryId, Name, Description, DisplayOrder)
+VALUES
+(@CejasCategoryId, N'Diseno de cejas', N'Diseno y perfilado de cejas.', 2),
+(@LavadoCategoryId, N'Lavado profundo', N'Limpieza profunda del cabello y cuero cabelludo.', 3),
+(@DomicilioCategoryId, N'Servicio a domicilio', N'Barberia a domicilio segun ubicacion y disponibilidad.', 4),
+(@TratamientosCategoryId, N'Keratina / Tratamientos especiales', N'Tratamientos capilares con valor segun diagnostico.', 5),
+(@BarbaCategoryId, N'Delineado de barba', N'Delineado y perfilado limpio de barba.', 6),
+(@PeinadoCategoryId, N'Peinado premium', N'Lavado y peinado con productos de alta calidad.', 7);
+
+MERGE dbo.ServiceCategories AS target
+USING @LiteralCategories AS source
+   ON target.ServiceCategoryId = source.ServiceCategoryId
+WHEN MATCHED THEN
+    UPDATE SET
+        BusinessId = @BusinessId,
+        Name = source.Name,
+        Description = source.Description,
+        DisplayOrder = source.DisplayOrder,
+        IsActive = 1,
+        UpdatedAt = GETUTCDATE()
+WHEN NOT MATCHED THEN
+    INSERT (ServiceCategoryId, BusinessId, Name, Description, DisplayOrder, IsActive, CreatedAt)
+    VALUES (source.ServiceCategoryId, @BusinessId, source.Name, source.Description, source.DisplayOrder, 1, GETUTCDATE());
 UPDATE dbo.Services
 SET ServiceName = N'Corte basico de nino',
     UpdatedAt = GETUTCDATE()
@@ -169,49 +206,63 @@ DECLARE @Services TABLE
     ServiceId UNIQUEIDENTIFIER NOT NULL,
     ServiceName NVARCHAR(200) NOT NULL,
     Description NVARCHAR(MAX) NOT NULL,
+    Keywords NVARCHAR(1000) NULL,
+    CategoryId UNIQUEIDENTIFIER NOT NULL,
     DurationMinutes INT NOT NULL,
     Price DECIMAL(18, 2) NOT NULL,
     DisplayOrder INT NOT NULL
 );
 
-INSERT INTO @Services (ServiceId, ServiceName, Description, DurationMinutes, Price, DisplayOrder)
+INSERT INTO @Services (ServiceId, ServiceName, Description, Keywords, CategoryId, DurationMinutes, Price, DisplayOrder)
 VALUES
 ('BABA0000-0000-0000-0000-000000000101', N'Corte basico de nino',
  N'Corte infantil con trato paciente, detalle y acabado limpio. Servicio personalizado para una experiencia comoda y puntual.',
- 30, 25000.00, 1),
+ N'corte nino, corte niño, corte infantil, corte de cabello nino, corte de cabello niño, cabello nino, cabello niño, peluqueada nino, peluqueada niño',
+ @CategoryId, 30, 25000.00, 1),
 ('BABA0000-0000-0000-0000-000000000102', N'Corte basico de adulto',
  N'Corte profesional basico para adulto, adaptado al estilo del cliente, con atencion al detalle y acabado limpio.',
- 30, 30000.00, 2),
+ N'corte adulto, corte de adulto, corte de cabello adulto, cabello adulto, hombre, caballero, peluqueada adulto',
+ @CategoryId, 30, 30000.00, 2),
 ('BABA0000-0000-0000-0000-000000000103', N'Corte + barba con terminacion premium',
  N'Corte de cabello y arreglo de barba con perfilado, simetria, peinado y productos de alta calidad.',
- 45, 40000.00, 3),
+ N'corte barba, corte y barba, corte con barba, arreglo de barba, perfilado barba, barba premium',
+ @CategoryId, 45, 40000.00, 3),
 ('BABA0000-0000-0000-0000-000000000104', N'Diseno de cejas',
  N'Diseno y perfilado de cejas para armonizar el rostro con un acabado natural y pulido.',
- 10, 10000.00, 4),
+ N'cejas, diseno cejas, diseño cejas, perfilado cejas, cejas hombre',
+ @CejasCategoryId, 10, 10000.00, 4),
 ('BABA0000-0000-0000-0000-000000000105', N'Lavado profundo',
  N'Limpieza profunda del cabello y cuero cabelludo para una sensacion fresca, cuidada y renovada.',
- 20, 15000.00, 5),
+ N'lavado, lavado profundo, limpieza cabello, cuero cabelludo, lavado cabello',
+ @LavadoCategoryId, 20, 15000.00, 5),
 ('BABA0000-0000-0000-0000-000000000106', N'Servicio a domicilio',
  N'Servicio de barberia a domicilio desde $100.000 COP. El valor final y disponibilidad dependen de ubicacion, horario y condiciones del servicio.',
- 60, 100000.00, 6),
+ N'domicilio, servicio domicilio, barberia domicilio, barbero domicilio, corte domicilio',
+ @DomicilioCategoryId, 60, 100000.00, 6),
 ('BABA0000-0000-0000-0000-000000000107', N'Keratina / Tratamientos especiales',
  N'Keratina y tratamientos especiales desde $120.000 COP. El valor puede variar segun diagnostico, longitud, tecnica y producto requerido.',
- 60, 120000.00, 7),
+ N'keratina, tratamientos especiales, tratamiento capilar, alisado, cabello tratamiento',
+ @TratamientosCategoryId, 60, 120000.00, 7),
 ('BABA0000-0000-0000-0000-000000000108', N'Corte + tinte',
  N'Corte con tinte para cubrimiento de canas o tonificacion de color.',
- 45, 50000.00, 8),
+ N'corte tinte, corte con tinte, corte de cabello tinte, cabello tinte, tinte, color, canas, coloracion, coloración',
+ @CategoryId, 45, 50000.00, 8),
 ('BABA0000-0000-0000-0000-000000000109', N'Corte premium de adulto',
  N'Corte premium de adulto con hidratacion capilar y peinado.',
- 45, 35000.00, 9),
+ N'corte premium adulto, corte adulto premium, corte de cabello premium adulto, cabello premium adulto, hidratacion capilar, peinado adulto, corte elegante adulto',
+ @CategoryId, 45, 35000.00, 9),
 ('BABA0000-0000-0000-0000-000000000110', N'Corte para bebes solo puntas',
  N'Corte para bebes enfocado solo en puntas, con trato cuidadoso y tiempo breve.',
- 20, 20000.00, 10),
+ N'corte bebe, corte bebé, corte bebes, corte bebés, corte de cabello bebe, corte de cabello bebé, cabello bebe, cabello bebé, solo puntas, puntas bebe, primer corte bebe',
+ @CategoryId, 20, 20000.00, 10),
 ('BABA0000-0000-0000-0000-000000000111', N'Delineado de barba',
  N'Delineado de barba con perfilado limpio y acabado profesional.',
- 20, 15000.00, 11),
+ N'delineado barba, delinear barba, perfilado barba, barba',
+ @BarbaCategoryId, 20, 15000.00, 11),
 ('BABA0000-0000-0000-0000-000000000112', N'Peinado premium',
  N'Lavado y peinado premium con productos de alta calidad.',
- 20, 25000.00, 12);
+ N'peinado, peinado premium, lavado peinado, styling, cabello peinado',
+ @PeinadoCategoryId, 20, 25000.00, 12);
 
 MERGE dbo.Services AS target
 USING @Services AS source
@@ -220,10 +271,11 @@ USING @Services AS source
 WHEN MATCHED THEN
     UPDATE SET
         Description = source.Description,
+        Keywords = source.Keywords,
         DurationMinutes = source.DurationMinutes,
         Price = source.Price,
         IncludeInCheckoutTotal = 1,
-        CategoryId = @CategoryId,
+        CategoryId = source.CategoryId,
         Tier = 0,
         ServiceType = 0,
         FulfillmentKind = 0,
@@ -231,11 +283,11 @@ WHEN MATCHED THEN
         IsActive = 1,
         UpdatedAt = GETUTCDATE()
 WHEN NOT MATCHED THEN
-    INSERT (ServiceId, BusinessId, ServiceName, Description, DurationMinutes, Price,
+    INSERT (ServiceId, BusinessId, ServiceName, Description, Keywords, DurationMinutes, Price,
             IncludeInCheckoutTotal, CategoryId, Tier, ServiceType, FulfillmentKind,
             FixedScheduleLabel, IsActive, CreatedAt)
-    VALUES (source.ServiceId, @BusinessId, source.ServiceName, source.Description, source.DurationMinutes, source.Price,
-            1, @CategoryId, 0, 0, 0, NULL, 1, GETUTCDATE());
+    VALUES (source.ServiceId, @BusinessId, source.ServiceName, source.Description, source.Keywords, source.DurationMinutes, source.Price,
+            1, source.CategoryId, 0, 0, 0, NULL, 1, GETUTCDATE());
 
 UPDATE s
 SET IsActive = 0,
@@ -277,26 +329,32 @@ DECLARE @AddOns TABLE
     ServiceId UNIQUEIDENTIFIER NOT NULL,
     ServiceName NVARCHAR(200) NOT NULL,
     Description NVARCHAR(MAX) NOT NULL,
+    Keywords NVARCHAR(1000) NULL,
     Price DECIMAL(18, 2) NOT NULL,
     DisplayOrder INT NOT NULL
 );
 
-INSERT INTO @AddOns (ServiceId, ServiceName, Description, Price, DisplayOrder)
+INSERT INTO @AddOns (ServiceId, ServiceName, Description, Keywords, Price, DisplayOrder)
 VALUES
 ('BABA0000-0000-0000-0000-000000000201', N'Mascarilla de carbono',
  N'Adicional para cortes. Elimina piel muerta y exceso de grasa facial; se realiza dentro del tiempo del corte.',
+ N'mascarilla carbono, mascarilla facial, carbono, limpieza facial, piel grasa',
  15000.00, 1),
 ('BABA0000-0000-0000-0000-000000000202', N'Sombreado con aerografo',
  N'Adicional para cortes que permite un acabado con mayor definicion y perfeccion.',
+ N'aerografo, aerógrafo, sombreado, sombreado aerografo, definicion corte',
  15000.00, 2),
 ('BABA0000-0000-0000-0000-000000000203', N'Fibra capilar',
  N'Adicional para cortes que ayuda a disimular espacios con poco volumen de cabello.',
+ N'fibra capilar, fibra, volumen cabello, disimular espacios, poco cabello',
  10000.00, 3),
 ('BABA0000-0000-0000-0000-000000000204', N'Relajador de ondas a base de celulas madre',
  N'Adicional para cortes, aplicado dentro del tiempo del corte.',
+ N'relajador ondas, ondas, celulas madre, células madre, relajador cabello',
  15000.00, 4),
 ('BABA0000-0000-0000-0000-000000000205', N'Masaje con gafas de relajacion ocular',
  N'Adicional de 10 minutos con gafas de relajacion ocular. Se ofrece junto con cortes compatibles.',
+ N'masaje, masaje ocular, gafas relajacion, relajacion ocular, descanso ojos',
  5000.00, 5);
 
 MERGE dbo.Services AS target
@@ -306,6 +364,7 @@ USING @AddOns AS source
 WHEN MATCHED THEN
     UPDATE SET
         Description = source.Description,
+        Keywords = source.Keywords,
         DurationMinutes = 0,
         Price = source.Price,
         IncludeInCheckoutTotal = 1,
@@ -317,10 +376,10 @@ WHEN MATCHED THEN
         IsActive = 1,
         UpdatedAt = GETUTCDATE()
 WHEN NOT MATCHED THEN
-    INSERT (ServiceId, BusinessId, ServiceName, Description, DurationMinutes, Price,
+    INSERT (ServiceId, BusinessId, ServiceName, Description, Keywords, DurationMinutes, Price,
             IncludeInCheckoutTotal, CategoryId, Tier, ServiceType, FulfillmentKind,
             FixedScheduleLabel, IsActive, CreatedAt)
-    VALUES (source.ServiceId, @BusinessId, source.ServiceName, source.Description, 0, source.Price,
+    VALUES (source.ServiceId, @BusinessId, source.ServiceName, source.Description, source.Keywords, 0, source.Price,
             1, @AddOnCategoryId, 0, 1, 0, NULL, 1, GETUTCDATE());
 
 UPDATE s
@@ -335,11 +394,12 @@ DECLARE @CutServices TABLE (ServiceName NVARCHAR(200) NOT NULL);
 
 INSERT INTO @CutServices (ServiceName)
 VALUES
+    (N'Corte basico de nino'),
     (N'Corte basico de adulto'),
     (N'Corte + barba con terminacion premium'),
     (N'Corte + tinte'),
-    (N'Corte premium de adulto');
-
+    (N'Corte premium de adulto'),
+    (N'Corte para bebes solo puntas');
 DELETE rules
 FROM dbo.ServiceAddOnRules rules
 INNER JOIN dbo.Services addon
@@ -507,8 +567,8 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       {
         "id": "discovery",
         "name": "Descubrimiento",
-        "goal": "Dar la bienvenida, presentarse y preguntar por el tipo de servicio de interes sin mostrar el catalogo completo de entrada.",
-        "hint": "Si el cliente solo saluda o abre la conversacion sin pedir un servicio concreto, responde sin listar el catalogo completo de entrada. Responde con un saludo natural usando este sentido: Bienvenido a BARBER KIDS, soy Luis Petit, barbero profesional. Pregunta de forma generica que servicio desea, sin sugerir categorias ni nombres de servicios. Si el cliente pregunta por precios, catalogo, opciones, cambio de servicio o una familia de servicios, llama get_service_catalog. Cuando el cliente pida una familia de servicios, llama get_service_catalog usando en query la palabra clave o familia expresada por el cliente. Responde con todos los servicios devueltos para esa familia, en lista, incluyendo precio y duracion de cada uno. Responde solo con la informacion relevante a lo que pidio; evita listar todos los servicios salvo que el cliente pida explicitamente todas las opciones. Cuando el cliente seleccione un servicio del catalogo previamente mostrado, guardalo con resolve_service_selection usando el texto literal del cliente. Si resolve_service_selection devuelve ok=true con selection_status=resolved, continua el flujo. Si devuelve un error recuperable cuyo hint indica consultar el catalogo, llama get_service_catalog antes de responder y pregunta cual opcion exacta del catalogo prefiere. No uses set_fact para registrar service.",
+        "goal": "Dar la bienvenida, presentar las categorias u opciones iniciales y avanzar solo cuando el cliente elija un servicio concreto.",
+        "hint": "Si el cliente solo saluda o abre la conversacion sin pedir un servicio concreto, primero llama get_service_catalog con view categories. Despues saluda de forma natural, presentate como Luis Petit de BARBER KIDS, muestra las categorias u opciones devueltas por el catalogo sin precios y pregunta en cual esta interesado. Si el cliente nombra una categoria u opcion amplia, llama get_service_catalog con view services y query usando las palabras del cliente; muestra los servicios devueltos con precio y duracion, y pregunta cual prefiere. Si el cliente nombra un servicio concreto o un equivalente claro, primero intenta guardarlo con resolve_service_selection usando el texto del cliente y el contexto inmediato de la misma solicitud. Cuando el cliente seleccione un servicio del catalogo previamente mostrado, guardalo con resolve_service_selection usando el texto literal del cliente y el contexto inmediato de la misma solicitud. Si no hay una opcion clara despues de intentarlo, pide que elija un servicio exacto usando solo opciones oficiales del catalogo. No uses set_fact para registrar service.",
         "allowedTools": ["get_service_catalog", "resolve_service_selection"],
         "advanceWhenFacts": ["service"]
       },
@@ -559,7 +619,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         "id": "finalization",
         "name": "Cierre con anticipo",
         "goal": "Preparar el resumen, generar el link de anticipo y esperar confirmacion automatica de pago.",
-        "hint": "Si ya estan servicio, fecha, hora, nombre y telefono, llama prepare_checkout usando unicamente medios de pago registrados en checkout.paymentMethods. Si existe un solo medio registrado, usalo directamente sin preguntar permiso adicional. Si el cliente dice que ya pago, usa verify_payment. Si el cliente pide un medio distinto a los registrados, no lo menciones como alternativa disponible ni como opcion no confirmada; responde de forma natural usando solo el medio registrado que permite asegurar la reserva y continua con la opcion registrada por checkout. Nunca sugieras canales, acuerdos manuales o pagos por fuera de checkout.paymentMethods. Indica de forma natural que la reserva se confirmara automaticamente cuando se reciba y apruebe el pago. Si hay link pendiente y el cliente pide cambiar servicio sin nombrar el nuevo servicio, llama get_service_catalog y pregunta cual opcion exacta prefiere. Cuando el cliente seleccione un servicio, guardalo con resolve_service_selection usando el texto literal del cliente. Si resolve_service_selection devuelve un error recuperable cuyo hint indica consultar el catalogo, llama get_service_catalog antes de responder y pregunta cual opcion exacta del catalogo prefiere. Para fecha u hora usa set_fact, revalida disponibilidad cuando corresponda y vuelve a prepare_checkout para generar un nuevo resumen/link. No uses suspend_reservation para un link pendiente sin reserva confirmada.",
+        "hint": "Si ya estan servicio, fecha, hora, nombre y telefono, llama prepare_checkout usando unicamente medios de pago registrados en checkout.paymentMethods. Si existe un solo medio registrado, usalo directamente sin preguntar permiso adicional. Si el cliente dice que ya pago, usa verify_payment. Si el cliente pide un medio distinto a los registrados, no lo menciones como alternativa disponible ni como opcion no confirmada; responde de forma natural usando solo el medio registrado que permite asegurar la reserva y continua con la opcion registrada por checkout. Nunca sugieras canales, acuerdos manuales o pagos por fuera de checkout.paymentMethods. Indica de forma natural que la reserva se confirmara automaticamente cuando se reciba y apruebe el pago. Si hay link pendiente y el cliente pide cambiar servicio sin nombrar el nuevo servicio, llama get_service_catalog y pregunta cual opcion exacta prefiere. Cuando el cliente seleccione un servicio, guardalo con resolve_service_selection usando el texto literal del cliente. Si no hay una opcion clara despues de intentarlo, consulta el catalogo y pregunta cual opcion exacta prefiere. Para fecha u hora usa set_fact, revalida disponibilidad cuando corresponda y vuelve a prepare_checkout para generar un nuevo resumen/link. No uses suspend_reservation para un link pendiente sin reserva confirmada.",
         "allowedTools": [
           "prepare_checkout",
           "verify_payment",
@@ -592,7 +652,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "id": "catalog_or_current_request_change",
       "priority": 925,
       "goal": "Responder consultas de catalogo, precios u opciones en cualquier etapa, y permitir cambios de la solicitud actual antes de pago o reserva confirmada.",
-      "hint": "Usa esta ruta solo cuando el cliente pregunte por precios, catalogo, servicios u opciones, o cuando quiera cambiar servicio, fecha u hora de la solicitud actual. Para precios u opciones, llama get_service_catalog y responde con datos oficiales sin avanzar el flujo. Si el cliente pide una familia de servicios, llama get_service_catalog usando en query la palabra clave o familia expresada por el cliente, y muestra todos los servicios devueltos en lista con precio y duracion; no muestres respuestas parciales. Cuando el cliente seleccione un servicio, guardalo con resolve_service_selection usando el texto literal del cliente; si queda resuelto, revalida disponibilidad cuando haya fecha y hora, y luego reconstruye el resumen/link con prepare_checkout si ya estaba en cierre. Si resolve_service_selection devuelve un error recuperable cuyo hint indica consultar el catalogo, llama get_service_catalog antes de responder y pregunta cual opcion exacta del catalogo prefiere. Para cambio de fecha u hora, usa set_fact, revalida con check_availability cuando corresponda y reconstruye checkout si aplica. No canceles ni suspendas reservas desde esta ruta.",
+      "hint": "Usa esta ruta para consultas de catalogo, precios u opciones, o cambios de servicio, fecha u hora antes de pago o reserva confirmada. Si no hay categoria clara, muestra categorias sin precios; si hay categoria o familia, consulta servicios con la busqueda del cliente y muestra precio y duracion. Para servicio concreto o elegido de una lista, usa resolve_service_selection con el texto y contexto inmediato del cliente; al guardarlo, revalida disponibilidad si ya hay fecha y hora y reconstruye checkout si aplica. Si no queda claro, pide un servicio exacto del catalogo. Para fecha u hora usa set_fact, check_availability y reconstruye checkout si aplica. No canceles ni suspendas reservas desde esta ruta.",
       "allowedTools": ["get_service_catalog", "get_compatible_add_ons", "resolve_service_selection", "set_fact", "check_availability", "prepare_checkout"]
     },
     {
@@ -689,8 +749,8 @@ BEGIN
     WHERE AgentId = @AgentId;
 END
 
-DECLARE @LuisPhoneNumber NVARCHAR(20) = N'+573117323198';
-DECLARE @LuisWhatsAppPhoneId NVARCHAR(100) = N'1234810033044432';
+DECLARE @LuisPhoneNumber NVARCHAR(20) = N'+573117324418';
+DECLARE @LuisWhatsAppPhoneId NVARCHAR(100) = N'1207729672420835';
 DECLARE @LuisWhatsAppBusinessAccountId NVARCHAR(100);
 DECLARE @LuisWhatsAppAccessToken NVARCHAR(500);
 DECLARE @LuisWhatsAppNumberId UNIQUEIDENTIFIER;

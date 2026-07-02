@@ -3,6 +3,7 @@ using System.Text;
 using Microsoft.Extensions.Logging;
 using MimosBabySpa.Application.Configuration;
 using MimosBabySpa.Application.Promotions;
+using MimosBabySpa.Domain.Catalog;
 using MimosBabySpa.Domain.Enums;
 using MimosBabySpa.Domain.Repositories;
 using DomainService = MimosBabySpa.Domain.Entities.Service;
@@ -30,15 +31,22 @@ public class CatalogContentGenerator : ICatalogContentGenerator
     }
 
     public Task<string> GenerateAsync(Guid businessId, CancellationToken ct = default) =>
-        GenerateAsync(businessId, null, ct);
+        GenerateAsync(businessId, null, CatalogContentView.Services, ct);
 
-    public async Task<string> GenerateAsync(Guid businessId, string? query, CancellationToken ct = default)
+    public Task<string> GenerateAsync(Guid businessId, string? query, CancellationToken ct = default) =>
+        GenerateAsync(businessId, query, CatalogContentView.Services, ct);
+
+    public async Task<string> GenerateAsync(
+        Guid businessId,
+        string? query,
+        CatalogContentView view,
+        CancellationToken ct = default)
     {
         try
         {
-            var services      = await _unitOfWork.Services.GetByBusinessIdAsync(businessId);
-            var categories    = await _unitOfWork.ServiceCategories.GetByBusinessIdAsync(businessId);
-            var addOnRules    = await _unitOfWork.ServiceAddOnRules.GetByBusinessIdAsync(businessId);
+            var services = await _unitOfWork.Services.GetByBusinessIdAsync(businessId);
+            var categories = await _unitOfWork.ServiceCategories.GetByBusinessIdAsync(businessId);
+            var addOnRules = await _unitOfWork.ServiceAddOnRules.GetByBusinessIdAsync(businessId);
             var activeServices = services.Where(s => s.IsActive).ToList();
             var catalogServices = FilterByQuery(activeServices, categories, query);
 
@@ -65,30 +73,30 @@ public class CatalogContentGenerator : ICatalogContentGenerator
                     var hasPromotion = priced?.HasPromotion == true;
                     return new ServiceInfo
                     {
-                        ServiceId             = s.ServiceId,
-                        Name                  = s.ServiceName,
-                        Description           = s.Description,
-                        DurationMinutes       = s.DurationMinutes,
-                        Price                 = s.Price,
-                        EffectivePrice        = hasPromotion ? priced!.EffectiveUnitPrice : null,
-                        DiscountAmount        = hasPromotion ? priced!.DiscountAmount : null,
-                        PromotionName         = hasPromotion ? priced!.PromotionName : null,
-                        PromotionSummary      = hasPromotion ? priced!.PromotionSummary : null,
-                        IsActive              = s.IsActive,
-                        CategoryId            = s.CategoryId,
-                        CategoryName          = s.ServiceCategory?.Name ?? string.Empty,
-                        CategoryDisplayOrder  = s.ServiceCategory?.DisplayOrder ?? 0,
-                        Tier                  = s.Tier,
-                        ServiceType           = s.ServiceType,
-                        FulfillmentKind       = s.FulfillmentKind,
-                        FixedScheduleLabel    = s.FixedScheduleLabel,
-                        BundleItems           = s.BundleItems
+                        ServiceId = s.ServiceId,
+                        Name = s.ServiceName,
+                        Description = s.Description,
+                        DurationMinutes = s.DurationMinutes,
+                        Price = s.Price,
+                        EffectivePrice = hasPromotion ? priced!.EffectiveUnitPrice : null,
+                        DiscountAmount = hasPromotion ? priced!.DiscountAmount : null,
+                        PromotionName = hasPromotion ? priced!.PromotionName : null,
+                        PromotionSummary = hasPromotion ? priced!.PromotionSummary : null,
+                        IsActive = s.IsActive,
+                        CategoryId = s.CategoryId,
+                        CategoryName = s.ServiceCategory?.Name ?? string.Empty,
+                        CategoryDisplayOrder = s.ServiceCategory?.DisplayOrder ?? 0,
+                        Tier = s.Tier,
+                        ServiceType = s.ServiceType,
+                        FulfillmentKind = s.FulfillmentKind,
+                        FixedScheduleLabel = s.FixedScheduleLabel,
+                        BundleItems = s.BundleItems
                             .OrderBy(b => b.DisplayOrder)
                             .Select(b => new BundleItemInfo
                             {
-                                Name         = b.IncludedService.ServiceName,
-                                Description  = b.IncludedService.Description,
-                                Price        = b.IncludedService.Price,
+                                Name = b.IncludedService.ServiceName,
+                                Description = b.IncludedService.Description,
+                                Price = b.IncludedService.Price,
                                 DisplayOrder = b.DisplayOrder
                             })
                             .ToList()
@@ -99,9 +107,9 @@ public class CatalogContentGenerator : ICatalogContentGenerator
             var categoryInfos = categories
                 .Select(sc => new CategoryInfo
                 {
-                    CategoryId   = sc.ServiceCategoryId,
-                    Name         = sc.Name,
-                    Description  = sc.Description,
+                    CategoryId = sc.ServiceCategoryId,
+                    Name = sc.Name,
+                    Description = sc.Description,
                     DisplayOrder = sc.DisplayOrder
                 })
                 .ToList();
@@ -109,20 +117,22 @@ public class CatalogContentGenerator : ICatalogContentGenerator
             var addOnRuleInfos = addOnRules
                 .Select(r => new AddOnRuleInfo
                 {
-                    AddOnName                 = r.AddOnService.ServiceName,
-                    AddOnDescription          = r.AddOnService.Description,
-                    AddOnPrice                = r.AddOnService.Price,
-                    IncludeInCheckoutTotal    = r.AddOnService.IncludeInCheckoutTotal,
-                    DisplayOrder              = r.DisplayOrder,
+                    AddOnName = r.AddOnService.ServiceName,
+                    AddOnDescription = r.AddOnService.Description,
+                    AddOnPrice = r.AddOnService.Price,
+                    IncludeInCheckoutTotal = r.AddOnService.IncludeInCheckoutTotal,
+                    DisplayOrder = r.DisplayOrder,
                     CompatibleWithServiceName = r.CompatibleService?.ServiceName,
-                    CompatibleCategoryId      = r.CompatibleService?.CategoryId,
-                    CompatibleCategoryName    = r.CompatibleService?.ServiceCategory?.Name
+                    CompatibleCategoryId = r.CompatibleService?.CategoryId,
+                    CompatibleCategoryName = r.CompatibleService?.ServiceCategory?.Name
                 })
                 .OrderBy(r => r.DisplayOrder)
                 .ThenBy(r => r.AddOnName)
                 .ToList();
 
-            return ServiceCatalogBuilder.Build(serviceInfos, addOnRuleInfos, categoryInfos);
+            return view == CatalogContentView.Categories
+                ? ServiceCatalogBuilder.BuildCategoryOverview(serviceInfos, categoryInfos)
+                : ServiceCatalogBuilder.Build(serviceInfos, addOnRuleInfos, categoryInfos);
         }
         catch (Exception ex)
         {
@@ -131,38 +141,80 @@ public class CatalogContentGenerator : ICatalogContentGenerator
         }
     }
 
-
     private static List<DomainService> FilterByQuery(
         IReadOnlyList<DomainService> services,
         IEnumerable<DomainServiceCategory> categories,
         string? query)
     {
-        var terms = GetSearchTerms(query);
+        var terms = CatalogSearchText.GetSearchTerms(query);
         if (terms.Count == 0)
             return services.ToList();
 
-        var directMatches = services
-            .Where(s => MatchesServiceText(s, terms))
+        var categoryList = categories.ToList();
+        var selectedCategories = categoryList
+            .Where(c => MatchesCategorySelection(c, query, terms))
             .ToList();
+        if (selectedCategories.Count > 0)
+        {
+            var selectedCategoryIds = selectedCategories
+                .Select(c => c.ServiceCategoryId)
+                .ToHashSet();
 
+            var categoryServices = services
+                .Where(s => selectedCategoryIds.Contains(s.CategoryId))
+                .ToList();
+            if (categoryServices.Count > 0)
+                return categoryServices;
+        }
+
+        var allTermMatches = services
+            .Where(s => MatchesServiceText(s, terms, requireAllTerms: true))
+            .ToList();
+        if (allTermMatches.Count > 0)
+            return allTermMatches;
+
+        var directMatches = services
+            .Where(s => MatchesServiceText(s, terms, requireAllTerms: false))
+            .ToList();
         if (directMatches.Count > 0)
             return directMatches;
 
-        var categoryById = categories.ToDictionary(c => c.ServiceCategoryId);
+        var categoryById = categoryList.ToDictionary(c => c.ServiceCategoryId);
         return services
             .Where(s => MatchesCategoryText(categoryById.TryGetValue(s.CategoryId, out var cat) ? cat : null, terms))
             .ToList();
     }
 
-    private static bool MatchesServiceText(DomainService service, IReadOnlyList<string> terms)
+    private static bool MatchesServiceText(
+        DomainService service,
+        IReadOnlyList<string> terms,
+        bool requireAllTerms)
     {
         var haystack = NormalizeSearchText(string.Join(' ', new[]
         {
             service.ServiceName,
-            service.Description
+            service.Description,
+            service.Keywords
         }.Where(s => !string.IsNullOrWhiteSpace(s))));
 
-        return terms.Any(haystack.Contains);
+        return requireAllTerms
+            ? terms.All(term => ContainsSearchTerm(haystack, term))
+            : terms.Any(term => ContainsSearchTerm(haystack, term));
+    }
+
+    private static bool MatchesCategorySelection(
+        DomainServiceCategory category,
+        string? query,
+        IReadOnlyList<string> terms)
+    {
+        var categoryName = CatalogSearchText.NormalizeCompact(category.Name);
+        if (string.IsNullOrWhiteSpace(categoryName))
+            return false;
+
+        var compactQuery = CatalogSearchText.NormalizeCompact(query);
+        return TermsEquivalent(categoryName, compactQuery)
+               || (terms.Count == 1
+                   && terms.Any(term => TermsEquivalent(categoryName, CatalogSearchText.NormalizeCompact(term))));
     }
 
     private static bool MatchesCategoryText(DomainServiceCategory? category, IReadOnlyList<string> terms)
@@ -176,34 +228,26 @@ public class CatalogContentGenerator : ICatalogContentGenerator
             category.Description
         }.Where(s => !string.IsNullOrWhiteSpace(s))));
 
-        return terms.Any(haystack.Contains);
+        return terms.Any(term => ContainsSearchTerm(haystack, term));
     }
 
-    private static IReadOnlyList<string> GetSearchTerms(string? query)
+    private static bool ContainsSearchTerm(string haystack, string term)
     {
-        var normalized = NormalizeSearchText(query);
-        if (string.IsNullOrWhiteSpace(normalized))
-            return Array.Empty<string>();
+        var normalizedTerm = NormalizeSearchText(term);
+        return !string.IsNullOrWhiteSpace(normalizedTerm)
+               && (haystack.Contains(normalizedTerm, StringComparison.Ordinal)
+                   || (normalizedTerm.EndsWith('s')
+                       && normalizedTerm.Length > 3
+                       && haystack.Contains(normalizedTerm[..^1], StringComparison.Ordinal)));
+    }
 
-        var stopWords = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        {
-            "quiero", "quiere", "servicio", "servicios", "precio", "precios", "opcion", "opciones",
-            "para", "con", "sin", "del", "los", "las", "una", "uno", "unos", "unas", "que", "hay",
-            "tienen", "tiene", "cabello"
-        };
-
-        var terms = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var token in normalized.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-        {
-            if (token.Length <= 2 || stopWords.Contains(token))
-                continue;
-
-            terms.Add(token);
-            if (token.EndsWith('s') && token.Length > 3)
-                terms.Add(token[..^1]);
-        }
-
-        return terms.ToList();
+    private static bool TermsEquivalent(string left, string right)
+    {
+        return !string.IsNullOrWhiteSpace(left)
+               && !string.IsNullOrWhiteSpace(right)
+               && (left.Equals(right, StringComparison.Ordinal)
+                   || (left.EndsWith('s') && left.Length > 3 && left[..^1].Equals(right, StringComparison.Ordinal))
+                   || (right.EndsWith('s') && right.Length > 3 && right[..^1].Equals(left, StringComparison.Ordinal)));
     }
 
     private static string NormalizeSearchText(string? value)
@@ -224,5 +268,4 @@ public class CatalogContentGenerator : ICatalogContentGenerator
 
         return string.Join(' ', builder.ToString().Split(' ', StringSplitOptions.RemoveEmptyEntries));
     }
-
 }

@@ -3,6 +3,7 @@ CREATE TABLE [dbo].[Services] (
     [BusinessId] UNIQUEIDENTIFIER NOT NULL,
     [ServiceName] NVARCHAR(200) NOT NULL,
     [Description] NVARCHAR(MAX) NOT NULL,
+    [Keywords] NVARCHAR(1000) NULL,
     [DurationMinutes] INT NOT NULL,
     [Price] DECIMAL(18, 2) NOT NULL,
     [IncludeInCheckoutTotal] BIT NOT NULL DEFAULT 1,

@@ -65,6 +65,63 @@ public static class ServiceCatalogBuilder
         return sb.ToString().Trim();
     }
 
+    public static string BuildCategoryOverview(
+        IReadOnlyList<ServiceInfo> services,
+        IReadOnlyList<CategoryInfo> categories)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine("## CATEGORIAS DE SERVICIOS");
+        sb.AppendLine();
+
+        var standardServices = services
+            .Where(s => s.IsActive && s.ServiceType == ServiceType.Standard)
+            .ToList();
+        var categoryOrder = categories.OrderBy(c => c.DisplayOrder).ToList();
+
+        foreach (var cat in categoryOrder)
+        {
+            var inCategory = standardServices
+                .Where(s => s.CategoryId == cat.CategoryId)
+                .OrderByDescending(s => s.Tier)
+                .ThenBy(s => s.Name)
+                .ToList();
+
+            if (inCategory.Count == 0)
+                continue;
+
+            var description = cat.Description;
+            if (string.IsNullOrWhiteSpace(description)
+                && inCategory.Count == 1
+                && string.Equals(inCategory[0].Name, cat.Name, StringComparison.OrdinalIgnoreCase))
+            {
+                description = inCategory[0].Description;
+            }
+
+            AppendCategoryOption(sb, cat.Name, description);
+        }
+
+        var uncategorized = standardServices
+            .Where(s => !categoryOrder.Any(c => c.CategoryId == s.CategoryId))
+            .OrderByDescending(s => s.Tier)
+            .ThenBy(s => s.Name)
+            .ToList();
+        foreach (var svc in uncategorized)
+            AppendCategoryOption(sb, svc.Name, svc.Description);
+
+        return sb.ToString().Trim();
+    }
+
+    private static void AppendCategoryOption(StringBuilder sb, string name, string? description)
+    {
+        if (string.IsNullOrWhiteSpace(description))
+        {
+            sb.AppendLine($"- **{name}**");
+            return;
+        }
+
+        sb.AppendLine($"- **{name}**: {description}");
+    }
+
     private static void AppendService(StringBuilder sb, ServiceInfo svc, IReadOnlyList<AddOnRuleInfo> addOnRules)
     {
         var price = svc.Price.ToString("N0", CultureInfo.InvariantCulture);

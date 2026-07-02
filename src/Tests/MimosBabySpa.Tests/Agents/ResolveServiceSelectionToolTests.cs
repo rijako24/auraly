@@ -106,6 +106,27 @@ public sealed class ResolveServiceSelectionToolTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_KeywordsResolveHaircutForChild()
+    {
+        var businessId = Guid.NewGuid();
+        SetupServices(businessId,
+            new Service { ServiceName = "Corte basico", Keywords = "corte adulto, corte de cabello adulto" },
+            new Service { ServiceName = "Corte + barba", Keywords = "corte barba, arreglo de barba" },
+            new Service { ServiceName = "Corte infantil", Keywords = "corte nino, corte niño, corte de cabello niño, cabello niño" },
+            new Service { ServiceName = "Corte puntas", Keywords = "corte bebe, corte bebés, solo puntas" });
+        var ctx = CreateContext(businessId);
+
+        using var args = JsonDocument.Parse("""{"text":"corte de cabello para niño"}""");
+        var json = await _tool.ExecuteAsync(args.RootElement, ctx, CancellationToken.None);
+
+        json.Should().Contain("\"selection_status\":\"resolved\"");
+        ctx.Facts[ConversationFactKeys.Service].Should().Be("Corte infantil");
+        _facts.Verify(f => f.SetAsync(
+            ctx.ConversationId, ctx.BusinessId, ConversationFactKeys.Service, "Corte infantil",
+            false, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
     public async Task ExecuteAsync_UsesConfiguredBookingServiceFactKey()
     {
         var businessId = Guid.NewGuid();
@@ -128,16 +149,19 @@ public sealed class ResolveServiceSelectionToolTests
             false, It.IsAny<CancellationToken>()), Times.Once);
     }
 
-    private void SetupServices(Guid businessId, params string[] names)
+    private void SetupServices(Guid businessId, params string[] names) =>
+        SetupServices(businessId, names.Select(name => new Service { ServiceName = name }).ToArray());
+
+    private void SetupServices(Guid businessId, params Service[] services)
     {
         _services
             .Setup(s => s.GetActiveByBusinessIdAsync(businessId))
-            .ReturnsAsync(names.Select(name => new Service
+            .ReturnsAsync(services.Select(service =>
             {
-                BusinessId = businessId,
-                ServiceName = name,
-                Description = string.Empty,
-                IsActive = true
+                service.BusinessId = businessId;
+                service.Description ??= string.Empty;
+                service.IsActive = true;
+                return service;
             }).ToList());
     }
 

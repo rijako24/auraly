@@ -30,14 +30,14 @@ public class ServiceCatalogBuilderTests
         {
             new()
             {
-                AddOnName = "Decoración Sencilla",
-                AddOnDescription = "Globos temáticos",
+                AddOnName = "Decoracion Sencilla",
+                AddOnDescription = "Globos tematicos",
                 AddOnPrice = 35000,
                 CompatibleWithServiceName = "Plan Marineritos"
             },
             new()
             {
-                AddOnName = "Decoración Bouquet Personalizado",
+                AddOnName = "Decoracion Bouquet Personalizado",
                 AddOnDescription = "Flores personalizadas",
                 AddOnPrice = 120000,
                 CompatibleWithServiceName = "Otro Plan"
@@ -48,8 +48,8 @@ public class ServiceCatalogBuilderTests
 
         catalog.Should().Contain("Plan Marineritos");
         catalog.Should().Contain("Complementos compatibles:");
-        catalog.Should().Contain("Decoración Sencilla");
-        catalog.Should().NotContain("Decoración Bouquet Personalizado");
+        catalog.Should().Contain("Decoracion Sencilla");
+        catalog.Should().NotContain("Decoracion Bouquet Personalizado");
         catalog.Should().NotContain("### Complementos");
     }
 
@@ -61,7 +61,7 @@ public class ServiceCatalogBuilderTests
         {
             new()
             {
-                Name = "Taller Grupal - 3 dÃ­as/semana",
+                Name = "Taller Grupal - 3 dias/semana",
                 Description = "Taller por edades",
                 DurationMinutes = 60,
                 Price = 330000,
@@ -73,7 +73,45 @@ public class ServiceCatalogBuilderTests
 
         var catalog = ServiceCatalogBuilder.Build(services, [], []);
 
-        catalog.Should().Contain("Taller Grupal - 3 dÃ­as/semana");
+        catalog.Should().Contain("Taller Grupal - 3 dias/semana");
         catalog.Should().Contain("Complementos compatibles: ninguno");
+    }
+
+    [Fact]
+    public void BuildCategoryOverview_ListsOnlyStandardServiceCategories()
+    {
+        var cutCategoryId = Guid.NewGuid();
+        var addOnCategoryId = Guid.NewGuid();
+        var services = new List<ServiceInfo>
+        {
+            new()
+            {
+                Name = "Corte basico de adulto",
+                Description = "Corte profesional",
+                IsActive = true,
+                CategoryId = cutCategoryId,
+                ServiceType = ServiceType.Standard
+            },
+            new()
+            {
+                Name = "Mascarilla de carbono",
+                Description = "Adicional para cortes",
+                IsActive = true,
+                CategoryId = addOnCategoryId,
+                ServiceType = ServiceType.AddOn
+            }
+        };
+        var categories = new List<CategoryInfo>
+        {
+            new() { CategoryId = cutCategoryId, Name = "Corte de Cabello", Description = "Cortes de cabello", DisplayOrder = 1 },
+            new() { CategoryId = addOnCategoryId, Name = "Adicionales para cortes", DisplayOrder = 2 }
+        };
+
+        var catalog = ServiceCatalogBuilder.BuildCategoryOverview(services, categories);
+
+        catalog.Should().Contain("## CATEGORIAS DE SERVICIOS");
+        catalog.Should().Contain("**Corte de Cabello**");
+        catalog.Should().NotContain("Adicionales para cortes");
+        catalog.Should().NotContain("Mascarilla de carbono");
     }
 }

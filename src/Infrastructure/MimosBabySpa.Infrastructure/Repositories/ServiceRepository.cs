@@ -77,7 +77,8 @@ public class ServiceRepository : IServiceRepository
             var s = search.Trim().ToLower();
             query = query.Where(svc =>
                 svc.ServiceName.ToLower().Contains(s) ||
-                svc.Description.ToLower().Contains(s));
+                svc.Description.ToLower().Contains(s) ||
+                (svc.Keywords != null && svc.Keywords.ToLower().Contains(s)));
         }
 
         return await query.OrderBy(svc => svc.ServiceName).ToPagedListAsync(page, pageSize, ct);

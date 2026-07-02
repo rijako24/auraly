@@ -5,6 +5,7 @@ namespace MimosBabySpa.Application.Identity.DTOs;
 public record UpdateServiceRequest(
     string? ServiceName,
     string? Description,
+    string? Keywords,
     int? DurationMinutes,
     decimal? Price,
     bool? IncludeInCheckoutTotal,

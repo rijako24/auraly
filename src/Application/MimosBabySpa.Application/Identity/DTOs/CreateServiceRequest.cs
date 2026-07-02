@@ -6,6 +6,7 @@ public record CreateServiceRequest(
     Guid BusinessId,
     string ServiceName,
     string? Description,
+    string? Keywords,
     int DurationMinutes,
     decimal Price,
     Guid CategoryId,

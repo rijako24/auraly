@@ -59,6 +59,7 @@ public sealed class CatalogDraftAiParser : ICatalogDraftParser
             {
               "serviceName": "string",
               "description": "string opcional",
+              "keywords": "string opcional, palabras o frases separadas por coma para identificar el servicio",
               "durationMinutes": number,
               "price": number en pesos COP,
               "categoryName": "string",
@@ -140,6 +141,7 @@ public sealed class CatalogDraftAiParser : ICatalogDraftParser
             {
                 ServiceName = name,
                 Description = GetString(el, "description", "descripcion"),
+                Keywords = GetString(el, "keywords", "palabrasClave", "palabras_clave", "tags", "etiquetas"),
                 DurationMinutes = GetInt(el, 60, "durationMinutes", "duracion", "duration"),
                 Price = GetDecimal(el, "price", "precio"),
                 CategoryName = GetString(el, "categoryName", "category", "categoria") ?? "General",
@@ -172,6 +174,7 @@ public sealed class CatalogDraftAiParser : ICatalogDraftParser
             {
                 ServiceName = name,
                 Description = GetCol(cols, headers, "description", "descripcion"),
+                Keywords = GetCol(cols, headers, "keywords", "palabrasclave", "palabras_clave", "tags", "etiquetas"),
                 DurationMinutes = int.TryParse(GetCol(cols, headers, "durationminutes", "duracion"), out var d) ? d : 60,
                 Price = decimal.TryParse(GetCol(cols, headers, "price", "precio"), out var p) ? p : 0,
                 CategoryName = GetCol(cols, headers, "categoryname", "category", "categoria") ?? "General",
@@ -190,6 +193,7 @@ public sealed class CatalogDraftAiParser : ICatalogDraftParser
     {
         ServiceName = line.ServiceName.Trim(),
         Description = line.Description?.Trim(),
+        Keywords = line.Keywords?.Trim(),
         CategoryName = string.IsNullOrWhiteSpace(line.CategoryName) ? "General" : line.CategoryName.Trim(),
         ServiceType = NormalizeServiceType(line.ServiceType),
         Tier = NormalizeTier(line.Tier),

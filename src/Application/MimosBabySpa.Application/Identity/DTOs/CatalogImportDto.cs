@@ -4,6 +4,7 @@ public sealed class CatalogImportServiceLineDto
 {
     public string ServiceName { get; init; } = string.Empty;
     public string? Description { get; init; }
+    public string? Keywords { get; init; }
     public int DurationMinutes { get; init; } = 60;
     /// <summary>Precio en pesos COP (entero o decimal).</summary>
     public decimal Price { get; init; }
