@@ -181,7 +181,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
   "consecutiveErrorEscalationThreshold": 3,
   "persona": "Eres el asistente comercial de Rada Concept por WhatsApp. Atiendes en espanol con tono cercano, elegante y profesional. Ayudas a entender el servicio adecuado y guias hacia una cita de asesoria sin presionar.\n\nResponde claro y breve. Usa listas cortas para explicar servicios, opciones, horarios o resumen de cita.",
   "policies": "## MARCA\n\n- Rada Concept crea espacios funcionales y esteticos para vivienda, mobiliario, remodelaciones y proyectos comerciales.\n- La cotizacion se define despues de entender el proyecto en una asesoria.",  "templates": {
-    "availability_slots": "{{#if intro_message}}\n{{intro_message}}\n\n{{/if}}\n*Horarios disponibles para {{date_formatted}}* ({{service_name}})\n\n{{#each slots}}\n- {{this}}\n{{/each}}\n\nCual prefieres?"
+    "availability_slots": "{{#if intro_message}}\n{{intro_message}}\n\n{{/if}}\n*Espacios disponibles para {{date_formatted}}* ({{service_name}})\n\n{{#each options}}\n- {{this}}\n{{/each}}\n\nCual espacio prefieres?"
   },
   "messageSequences": {},
   "flow": {
@@ -191,7 +191,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         "id": "discovery",
         "name": "Descubrimiento",
         "goal": "Saludar cuando corresponda y entender el tipo de servicio de interes.",
-        "hint": "Si el mensaje del cliente es solo un saludo, saluda breve, presentate como asistente de Rada Concept y pregunta en que tipo de servicio esta interesado. En ese turno no llames herramientas ni listes servicios. Si el cliente ya menciona una necesidad, proyecto o servicio, registra project_context cuando aplique y continua a seleccion de servicio.",
+        "hint": "Si el mensaje del cliente es solo un saludo, saluda breve, presentate como asistente de Rada Concept y pregunta en que tipo de servicio esta interesado. En ese turno no listes servicios completos de entrada. Si el cliente ya menciona una necesidad, proyecto o servicio, registra project_context cuando aplique y continua a seleccion de servicio.",
         "allowedTools": ["set_fact"],
         "advanceWhenFacts": ["project_context"]
       },
@@ -212,13 +212,21 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         "afterTool": [
           {
             "tool": "check_availability",
-            "when": { "path": "data.verbal_status", "equals": "horario_disponible_no_reservado" },
-            "setFacts": {
-              "fulfillment_ready": "reservation"
-            }
+            "when": { "path": "data.availability_checked", "equals": "true" },
+            "setFact": { "key": "desired_date", "value": "{{data.date}}" }
+          },
+          {
+            "tool": "check_availability",
+            "when": { "path": "data.availability_checked", "equals": "true" },
+            "setFact": { "key": "desired_time", "value": "{{data.time}}" }
+          },
+          {
+            "tool": "check_availability",
+            "when": { "path": "data.availability_checked", "equals": "true" },
+            "setFact": { "key": "availability_checked", "value": "true" }
           }
         ],
-        "advanceWhenFacts": ["fulfillment_ready"],
+        "advanceWhenFacts": ["availability_checked"],
         "reentryOnFactChanged": ["service", "desired_date", "desired_time"]
       },
       {
@@ -307,16 +315,19 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "source": "user",
       "scope": "request",
       "captureMode": "eager",
+      "dependsOn": ["service", "desired_date"],
       "aliases": ["hora", "horario"]
     },
     {
-      "key": "fulfillment_ready",
-      "role": "booking.fulfillment_ready",
-      "label": "agenda validada",
+      "key": "availability_checked",
+      "role": "booking.availability_checked",
+      "label": "disponibilidad validada",
       "type": "string",
       "required": false,
       "source": "system",
-      "scope": "ephemeral"
+      "scope": "ephemeral",
+      "retentionDays": 1,
+      "dependsOn": ["service", "desired_date", "desired_time"]
     },
     {
       "key": "customer_name",

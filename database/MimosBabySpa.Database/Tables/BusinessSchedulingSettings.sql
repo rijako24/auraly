@@ -3,6 +3,7 @@ CREATE TABLE [dbo].[BusinessSchedulingSettings] (
     [BusinessId] UNIQUEIDENTIFIER NOT NULL,
     [SlotIntervalMinutes] INT NOT NULL DEFAULT 60,
     [BufferBetweenAppointmentsMinutes] INT NOT NULL DEFAULT 0,
+    [MinimumLeadTimeMinutes] INT NOT NULL DEFAULT 0,
     [RequireEmployee] BIT NOT NULL DEFAULT 1,
     [EmployeeStrategy] NVARCHAR(50) NOT NULL DEFAULT N'least_versatile',
     [CreatedAt] DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
@@ -11,7 +12,8 @@ CREATE TABLE [dbo].[BusinessSchedulingSettings] (
         REFERENCES [dbo].[Businesses] ([BusinessId])
         ON DELETE CASCADE,
     CONSTRAINT [CK_BusinessSchedulingSettings_SlotInterval] CHECK ([SlotIntervalMinutes] > 0),
-    CONSTRAINT [CK_BusinessSchedulingSettings_Buffer] CHECK ([BufferBetweenAppointmentsMinutes] >= 0)
+    CONSTRAINT [CK_BusinessSchedulingSettings_Buffer] CHECK ([BufferBetweenAppointmentsMinutes] >= 0),
+    CONSTRAINT [CK_BusinessSchedulingSettings_MinimumLeadTime] CHECK ([MinimumLeadTimeMinutes] >= 0)
 );
 
 GO

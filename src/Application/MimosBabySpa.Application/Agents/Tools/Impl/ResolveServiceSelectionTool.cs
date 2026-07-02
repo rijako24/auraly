@@ -24,8 +24,9 @@ public sealed class ResolveServiceSelectionTool : IAgentTool
     public IReadOnlyList<string> Capabilities => [ToolCapabilities.FactWrite];
 
     public string Description =>
-        "Resolves the customer's raw service selection against the active service catalog. " +
-        "Stores booking.service only when the selection identifies one catalog service unambiguously.";
+        "Use this instead of set_fact to store booking.service when the customer selects, confirms, or changes to a service. " +
+        "Resolve the customer's raw service wording against the active catalog and store booking.service only when the selection identifies one catalog service unambiguously. " +
+        "Do not use it for catalog, pricing, option, comparison, or service-information questions.";
 
     public string ParametersSchema => """
         {
@@ -33,7 +34,7 @@ public sealed class ResolveServiceSelectionTool : IAgentTool
           "properties": {
             "text": {
               "type": "string",
-              "description": "Raw customer wording for the service selection. Use the customer's own words, not an inferred catalog name."
+              "description": "Literal customer wording for the service selection. Use the customer's own words, not an inferred catalog name."
             }
           },
           "required": ["text"]
@@ -55,14 +56,11 @@ public sealed class ResolveServiceSelectionTool : IAgentTool
         var resolution = await _resolver.ResolveAsync(ctx.BusinessId, text, ct: cancellationToken);
         if (resolution.Status != ServiceSelectionStatus.Resolved || string.IsNullOrWhiteSpace(resolution.ServiceName))
         {
-            return ToolResultHelper.Ok(new
-            {
-                selection_status = FormatStatus(resolution.Status),
-                service = (string?)null,
-                candidates = resolution.Candidates,
-                storage = "none",
-                resolution_hint = BuildResolutionHint(resolution)
-            });
+            return ToolResultHelper.Error(
+                BuildResolutionErrorCode(resolution),
+                BuildResolutionErrorMessage(resolution),
+                BuildResolutionHint(resolution),
+                recoverable: true);
         }
 
         var roleIndex = new FactRoleIndex(ctx.Config?.FactSchema ?? []);
@@ -102,20 +100,26 @@ public sealed class ResolveServiceSelectionTool : IAgentTool
         });
     }
 
-    private static string FormatStatus(ServiceSelectionStatus status) => status switch
+    private static string BuildResolutionErrorCode(ServiceSelectionResolution resolution) => resolution.Status switch
     {
-        ServiceSelectionStatus.Ambiguous => "ambiguous",
-        ServiceSelectionStatus.NotFound => "not_found",
-        _ => "resolved"
+        ServiceSelectionStatus.Ambiguous => "service_selection_ambiguous",
+        ServiceSelectionStatus.NotFound => "service_selection_not_found",
+        _ => "service_selection_unresolved"
+    };
+
+    private static string BuildResolutionErrorMessage(ServiceSelectionResolution resolution) => resolution.Status switch
+    {
+        ServiceSelectionStatus.Ambiguous => "Service selection is ambiguous.",
+        ServiceSelectionStatus.NotFound => "Service selection was not found.",
+        _ => "Service selection could not be resolved."
     };
 
     private static string BuildResolutionHint(ServiceSelectionResolution resolution) => resolution.Status switch
     {
-        ServiceSelectionStatus.Ambiguous when resolution.Candidates.Count > 0 =>
-            $"Ask the customer which exact catalog option they prefer: {string.Join(", ", resolution.Candidates)}.",
-        ServiceSelectionStatus.NotFound =>
-            "Ask the customer to choose one exact service from the catalog.",
+        ServiceSelectionStatus.Ambiguous or ServiceSelectionStatus.NotFound =>
+            "Consult the catalog before answering.",
         _ => "Continue with the resolved service."
     };
+
 }
 

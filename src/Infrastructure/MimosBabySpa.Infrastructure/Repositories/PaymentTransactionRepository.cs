@@ -69,15 +69,6 @@ public class PaymentTransactionRepository : IPaymentTransactionRepository
             existing.ReservationId = transaction.ReservationId;
             existing.AmountInCents = transaction.AmountInCents;
             existing.Currency = transaction.Currency;
-            existing.Snapshot_ServiceId = transaction.Snapshot_ServiceId;
-            existing.Snapshot_ReservationDateTime = transaction.Snapshot_ReservationDateTime;
-            existing.Snapshot_PreferredEmployeeId = transaction.Snapshot_PreferredEmployeeId;
-            existing.Snapshot_DurationMinutes = transaction.Snapshot_DurationMinutes;
-            existing.Snapshot_CustomerName = transaction.Snapshot_CustomerName;
-            existing.Snapshot_CustomerEmail = transaction.Snapshot_CustomerEmail;
-            existing.Snapshot_CustomerPhone = transaction.Snapshot_CustomerPhone;
-            existing.Snapshot_AddOnIds = transaction.Snapshot_AddOnIds;
-            existing.Snapshot_CustomAttributesJson = transaction.Snapshot_CustomAttributesJson;
             existing.RequiresRescheduling = transaction.RequiresRescheduling;
             existing.RequiresRefund = transaction.RequiresRefund;
             existing.SupersededAt = transaction.SupersededAt;

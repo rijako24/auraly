@@ -272,9 +272,18 @@ public sealed class AgentConversationService : IAgentConversationService
                 if (turn.OutboundMessages.Count > outboundCountBeforeTool)
                     userOutput = userOutput with { OutboundMessagesQueued = true };
 
+                if (HasNewRequiredFragment(turn, fragmentCountBeforeTool))
+                {
+                    userOutput = userOutput with { FragmentQueued = true };
+                    _logger.LogInformation(
+                        "Conv {ConvId}: required fragment output queued; waiting for next customer turn",
+                        conversationId);
+                    break;
+                }
+
                 if (HasStageChanged(config, toolCtx, lastStageId) && turn.FragmentEntries.Count > fragmentCountBeforeTool)
                 {
-                    userOutput = userOutput with { StageAdvancedWithFragment = true };
+                    userOutput = userOutput with { FragmentQueued = true };
                     lastStageId = _flowStageDetector.DetectCurrentStage(config.Flow, toolCtx)?.Id;
                     _logger.LogInformation(
                         "Conv {ConvId}: stage advanced to '{Stage}' after fragment output; waiting for next customer turn",
@@ -303,7 +312,7 @@ public sealed class AgentConversationService : IAgentConversationService
         AgentTurnExecution turn,
         Guid conversationId)
     {
-        if (userOutput.StageAdvancedWithFragment)
+        if (userOutput.FragmentQueued)
             return true;
 
         if (!userOutput.OutboundMessagesQueued || turn.OutboundMessages.Count == 0)
@@ -325,10 +334,16 @@ public sealed class AgentConversationService : IAgentConversationService
 
     private readonly record struct UserOutputCompletionState(
         bool OutboundMessagesQueued,
-        bool StageAdvancedWithFragment)
+        bool FragmentQueued)
     {
         public static UserOutputCompletionState None { get; } = new(false, false);
     }
+
+    private static bool HasNewRequiredFragment(AgentTurnExecution turn, int previousFragmentCount) =>
+        turn.FragmentEntries
+            .Skip(previousFragmentCount)
+            .Any(entry => entry.Fragment.Priority == FragmentPriority.Required);
+
     private bool HasStageChanged(AgentConfig config, AgentToolContext toolCtx, string? lastStageId)
     {
         var currentStageId = _flowStageDetector.DetectCurrentStage(config.Flow, toolCtx)?.Id;

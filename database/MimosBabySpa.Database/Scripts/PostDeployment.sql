@@ -27,6 +27,7 @@
 :r .\Migrations\MigrateFlowStageSnapshots.sql
 :r .\Migrations\MigrateConversationCurrentStageName.sql
 :r .\Migrations\MigrateSchedulingPolicyToSettings.sql
+:r .\Migrations\MigrateSchedulingMinimumLeadTime.sql
 :r .\Migrations\MigrateBusinessAvailabilityBlocks.sql
 :r .\Migrations\MigrateServiceCheckoutTotalPolicy.sql
 :r .\Migrations\MigrateBabySpaPlanPrices2026.sql

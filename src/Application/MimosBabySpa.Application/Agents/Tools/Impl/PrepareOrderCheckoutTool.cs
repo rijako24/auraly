@@ -167,7 +167,6 @@ public sealed class PrepareOrderCheckoutTool : IAgentTool
                 quote,
                 paymentPhone,
                 checkoutSnapshotJson,
-                reservationSnapshot: null,
                 cancellationToken);
             if (!linkResult.Success)
                 return ToolResultHelper.Error("payment_link_failed", linkResult.ErrorMessage ?? "Failed to generate payment link.");

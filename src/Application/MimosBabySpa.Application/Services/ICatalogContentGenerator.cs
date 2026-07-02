@@ -6,4 +6,6 @@ namespace MimosBabySpa.Application.Services;
 public interface ICatalogContentGenerator
 {
     Task<string> GenerateAsync(Guid businessId, CancellationToken ct = default);
+
+    Task<string> GenerateAsync(Guid businessId, string? query, CancellationToken ct = default);
 }

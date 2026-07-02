@@ -135,4 +135,77 @@ public sealed class FlowCheckpointInvalidationTests
 
         result.Should().Equal("summary_presented");
     }
+
+    [Fact]
+    public void GetInvalidations_WhenDependencyChanges_ClearsDependentRequestFactsTransitivelyAndResetsAffectedStages()
+    {
+        var ctx = new AgentToolContext
+        {
+            Config = new AgentConfig
+            {
+                FactSchema =
+                [
+                    new FactSchemaEntry { Key = "desired_date", Source = "user", Scope = FactScopes.Request },
+                    new FactSchemaEntry
+                    {
+                        Key = "desired_time",
+                        Source = "user",
+                        Scope = FactScopes.Request,
+                        DependsOn = ["desired_date"]
+                    },
+                    new FactSchemaEntry
+                    {
+                        Key = "availability_checked",
+                        Source = "system",
+                        Scope = FactScopes.Ephemeral,
+                        DependsOn = ["desired_time"]
+                    }
+                ],
+                Flow = new AgentFlowDefinition
+                {
+                    Stages =
+                    [
+                        new AgentFlowStage
+                        {
+                            Id = "scheduling",
+                            AdvanceWhenFacts = ["availability_checked"],
+                            ReentryOnFactChanged = ["desired_time"]
+                        }
+                    ]
+                }
+            }
+        };
+
+        var result = FlowCheckpointInvalidation.GetInvalidations(ctx, ["desired_date"]);
+
+        result.FactsToClear.Should().Equal("desired_time", "availability_checked");
+        result.StageSnapshotsToReset.Should().Equal("scheduling");
+    }
+
+    [Fact]
+    public void GetInvalidations_WhenDependencyChanges_DoesNotClearCustomerScopedFacts()
+    {
+        var ctx = new AgentToolContext
+        {
+            Config = new AgentConfig
+            {
+                FactSchema =
+                [
+                    new FactSchemaEntry { Key = "service", Source = "user", Scope = FactScopes.Request },
+                    new FactSchemaEntry
+                    {
+                        Key = "customer_name",
+                        Source = "user",
+                        Scope = FactScopes.Customer,
+                        DependsOn = ["service"]
+                    }
+                ]
+            }
+        };
+
+        var result = FlowCheckpointInvalidation.GetInvalidations(ctx, ["service"]);
+
+        result.FactsToClear.Should().BeEmpty();
+        result.StageSnapshotsToReset.Should().BeEmpty();
+    }
 }

@@ -108,7 +108,6 @@ public sealed class PrepareCheckoutTool : IAgentTool
                 quote,
                 paymentPhone,
                 snapshotResult.CheckoutSnapshotJson!,
-                snapshotResult.ReservationSnapshot,
                 cancellationToken);
 
             if (!linkResult.Success)
@@ -402,7 +401,7 @@ public sealed class PrepareCheckoutTool : IAgentTool
             : null;
     }
 
-    private static (string? CheckoutSnapshotJson, ReservationIntentSnapshot? ReservationSnapshot, string? Error) BuildCheckoutSnapshot(
+    private static (string? CheckoutSnapshotJson, string? Error) BuildCheckoutSnapshot(
         CheckoutQuote quote,
         FactRoleIndex roles,
         AgentToolContext ctx)
@@ -411,12 +410,24 @@ public sealed class PrepareCheckoutTool : IAgentTool
         foreach (var slot in quote.SystemFactBindings.Keys)
             system[slot] = ResolveSystemFact(quote, roles, ctx.Facts, slot);
 
+        if (quote.CheckoutKind == CheckoutKind.Reservation)
+        {
+            var dateStr = system.GetValueOrDefault(CheckoutSystemSlots.ReservationDate);
+            var timeStr = system.GetValueOrDefault(CheckoutSystemSlots.ReservationTime);
+
+            if (!AgentDateRules.TryParseDate(dateStr, out _))
+                return (null, ToolResultHelper.Error("invalid_reservation_date", "Reservation date binding is missing or invalid."));
+            if (!TimeOnly.TryParse(timeStr, out _))
+                return (null, ToolResultHelper.Error("invalid_reservation_time", "Reservation time binding is missing or invalid."));
+        }
+
         var snapshot = new
         {
             kind = quote.CheckoutKind.ToString(),
             service_id = quote.ServiceId,
             service_name = quote.ServiceName,
             service_category = quote.ServiceCategory,
+            duration_minutes = quote.DurationMinutes,
             payer_name = system.GetValueOrDefault(CheckoutSystemSlots.PayerName),
             payment_phone = system.GetValueOrDefault(CheckoutSystemSlots.PaymentPhone),
             payer_email = system.GetValueOrDefault(CheckoutSystemSlots.PayerEmail),
@@ -429,31 +440,7 @@ public sealed class PrepareCheckoutTool : IAgentTool
             facts = ctx.Facts
         };
 
-        ReservationIntentSnapshot? reservationSnapshot = null;
-        if (quote.CheckoutKind == CheckoutKind.Reservation)
-        {
-            var dateStr = system.GetValueOrDefault(CheckoutSystemSlots.ReservationDate);
-            var timeStr = system.GetValueOrDefault(CheckoutSystemSlots.ReservationTime);
-
-            if (!AgentDateRules.TryParseDate(dateStr, out var date))
-                return (null, null, ToolResultHelper.Error("invalid_reservation_date", "Reservation date binding is missing or invalid."));
-            if (!TimeOnly.TryParse(timeStr, out var time))
-                return (null, null, ToolResultHelper.Error("invalid_reservation_time", "Reservation time binding is missing or invalid."));
-
-            reservationSnapshot = new ReservationIntentSnapshot(
-                quote.ServiceId,
-                quote.ServiceName,
-                date.ToDateTime(time),
-                quote.DurationMinutes,
-                PreferredEmployeeId: null,
-                system.GetValueOrDefault(CheckoutSystemSlots.PayerName),
-                system.GetValueOrDefault(CheckoutSystemSlots.PayerEmail),
-                system.GetValueOrDefault(CheckoutSystemSlots.PaymentPhone),
-                [],
-                JsonSerializer.Serialize(ctx.Facts));
-        }
-
-        return (JsonSerializer.Serialize(snapshot), reservationSnapshot, null);
+        return (JsonSerializer.Serialize(snapshot), null);
     }
 }
 

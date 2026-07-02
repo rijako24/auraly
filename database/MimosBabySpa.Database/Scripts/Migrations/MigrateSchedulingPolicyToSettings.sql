@@ -1,4 +1,4 @@
-﻿-- MigrateSchedulingPolicyToSettings
+-- MigrateSchedulingPolicyToSettings
 -- Garantiza settings de agenda por negocio.
 
 SET NOCOUNT ON;
@@ -16,6 +16,7 @@ WHEN NOT MATCHED THEN
         BusinessId,
         SlotIntervalMinutes,
         BufferBetweenAppointmentsMinutes,
+        MinimumLeadTimeMinutes,
         RequireEmployee,
         EmployeeStrategy,
         CreatedAt)
@@ -23,6 +24,7 @@ WHEN NOT MATCHED THEN
         NEWID(),
         src.BusinessId,
         60,
+        0,
         0,
         1,
         N'least_versatile',

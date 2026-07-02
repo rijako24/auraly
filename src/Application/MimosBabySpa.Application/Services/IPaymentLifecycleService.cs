@@ -8,16 +8,6 @@ public interface IPaymentLifecycleService
 {
     Task<PaymentTransaction?> GetActiveByConversationAsync(Guid conversationId, CancellationToken ct = default);
     Task<PaymentTransaction?> GetActiveByReservationAsync(Guid reservationId, CancellationToken ct = default);
-    Task<PaymentTransaction> CreatePendingAsync(
-        Guid businessId,
-        Guid conversationId,
-        ReservationIntentSnapshot snapshot,
-        string paymentReferenceId,
-        string linkUrl,
-        long amountInCents,
-        string currency,
-        DateTime expiresAt,
-        CancellationToken ct = default);
     Task<PaymentTransaction> CreatePendingCheckoutAsync(
         Guid businessId,
         Guid conversationId,
@@ -30,7 +20,6 @@ public interface IPaymentLifecycleService
         long amountInCents,
         string currency,
         DateTime expiresAt,
-        ReservationIntentSnapshot? reservationSnapshot = null,
         CancellationToken ct = default);
     Task MarkConfirmedAsync(PaymentTransaction payment, string? providerTransactionId, string? webhookPayload, CancellationToken ct = default, PaymentTransactionSource? sourceOverride = null);
     Task MarkRequiresReschedulingAsync(PaymentTransaction payment, CancellationToken ct = default);
@@ -43,5 +32,4 @@ public interface IPaymentLifecycleService
 
     Task<bool> HasConfirmedDepositAsync(Guid conversationId, CancellationToken ct = default);
 
-    bool SnapshotsMatch(PaymentTransaction payment, ReservationIntentSnapshot intent, long amountInCents);
 }

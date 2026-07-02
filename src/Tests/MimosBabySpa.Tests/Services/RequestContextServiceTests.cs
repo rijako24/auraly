@@ -74,7 +74,7 @@ public sealed class RequestContextServiceTests
             ["service"] = "Plan Marineritos",
             ["desired_date"] = "2026-06-16",
             ["desired_time"] = "09:00",
-            ["fulfillment_ready"] = "reservation"
+            ["availability_checked"] = "true"
         };
 
         var factService = new Mock<IConversationFactsService>();
@@ -84,18 +84,18 @@ public sealed class RequestContextServiceTests
                 Record("service", "Plan Marineritos", now.UtcDateTime.AddDays(-1)),
                 Record("desired_date", "2026-06-16", now.UtcDateTime.AddDays(-1)),
                 Record("desired_time", "09:00", now.UtcDateTime.AddDays(-1)),
-                Record("fulfillment_ready", "reservation", now.UtcDateTime.AddDays(-1))
+                Record("availability_checked", "true", now.UtcDateTime.AddDays(-1))
             ]);
         factService.Setup(f => f.ClearFieldsAsync(
                 conversationId,
                 It.Is<IReadOnlyCollection<string>>(keys =>
                     keys.Contains("desired_date")
                     && keys.Contains("desired_time")
-                    && keys.Contains("fulfillment_ready")
+                    && keys.Contains("availability_checked")
                     && !keys.Contains("service")
                     && !keys.Contains("baby_age_months")),
                 It.IsAny<CancellationToken>()))
-            .ReturnsAsync(["desired_date", "desired_time", "fulfillment_ready"]);
+            .ReturnsAsync(["desired_date", "desired_time", "availability_checked"]);
 
         var state = new ConversationState();
         state.Verifications["availability_checked"] = new VerificationEntry(DateTime.UtcNow, null, "{}");
@@ -117,12 +117,12 @@ public sealed class RequestContextServiceTests
             CancellationToken.None);
 
         result.BusinessDayChanged.Should().BeTrue();
-        result.ClearedFacts.Should().BeEquivalentTo(["desired_date", "desired_time", "fulfillment_ready"]);
+        result.ClearedFacts.Should().BeEquivalentTo(["desired_date", "desired_time", "availability_checked"]);
         facts.Should().Contain("service", "Plan Marineritos");
         facts.Should().Contain("baby_age_months", "5");
         facts.Should().NotContainKey("desired_date");
         facts.Should().NotContainKey("desired_time");
-        facts.Should().NotContainKey("fulfillment_ready");
+        facts.Should().NotContainKey("availability_checked");
         state.Verifications.Should().BeEmpty();
     }
 
@@ -160,11 +160,12 @@ public sealed class RequestContextServiceTests
             },
             new FactSchemaEntry
             {
-                Key = "fulfillment_ready",
-                Role = "checkout.fulfillment_ready",
+                Key = "availability_checked",
+                Role = "booking.availability_checked",
                 Source = "system",
                 Scope = FactScopes.Ephemeral,
-                ExpireOnBusinessDayChange = true
+                RetentionDays = 1,
+                DependsOn = ["service", "desired_date", "desired_time"]
             }
         ]
     };

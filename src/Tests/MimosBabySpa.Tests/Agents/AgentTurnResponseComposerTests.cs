@@ -77,9 +77,9 @@ public class AgentTurnResponseComposerTests
                     {{intro_message}}
 
                     {{/if}}
-                    📅 *Horarios disponibles para {{date_formatted}}* ({{service_name}})
+                    📅 *Espacios disponibles para {{date_formatted}}* ({{service_name}})
 
-                    {{#each slots}}
+                    {{#each options}}
                     - {{this}}
                     {{/each}}
 
@@ -99,7 +99,7 @@ public class AgentTurnResponseComposerTests
                     ["intro_message"] = "El horario pedido no está disponible; estos son los libres ese día",
                     ["service_name"] = "Plan Marineritos",
                     ["date_formatted"] = "27/05/2026",
-                    ["slots"] = new List<object> { "09:00", "10:00" }
+                    ["options"] = new List<object> { "09:00-09:45", "10:00-10:45" }
                 },
                 FragmentRenderMode.Inline,
                 FragmentPriority.Required))
@@ -108,7 +108,7 @@ public class AgentTurnResponseComposerTests
         var result = composer.Compose(config, [], token, fragments);
 
         result.Should().Contain("El horario pedido no está disponible");
-        result.Should().Contain("- 09:00");
+        result.Should().Contain("- 09:00-09:45");
         result.Should().Contain("Plan Marineritos");
     }
 
@@ -139,7 +139,7 @@ public class AgentTurnResponseComposerTests
             Templates = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {
                 ["availability_slots"] = """
-                    {{#each slots}}
+                    {{#each options}}
                     - {{this}}
                     {{/each}}
                     """
@@ -152,14 +152,14 @@ public class AgentTurnResponseComposerTests
         {
             new TurnFragmentEntry(token, new TurnFragment(
                 "availability_slots",
-                new Dictionary<string, object?> { ["slots"] = new List<object> { "09:00", "10:00" } },
+                new Dictionary<string, object?> { ["options"] = new List<object> { "09:00-09:45", "10:00-10:45" } },
                 FragmentRenderMode.Inline,
                 FragmentPriority.Required))
         };
 
         var result = composer.Compose(config, [], "¿Confirmas?", fragments);
 
-        result.Should().StartWith("- 09:00");
+        result.Should().StartWith("- 09:00-09:45");
         result.Should().EndWith("¿Confirmas?");
     }
 

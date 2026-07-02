@@ -132,8 +132,8 @@ public sealed class CreateReservationTool : IAgentTool
             return ToolResultHelper.Error(
                 "slot_unavailable",
                 availability.ResponseMessage ?? "The selected time is not available.",
-                availability.AvailableTimeSlots.Count > 0
-                    ? $"Available slots: {string.Join(", ", availability.AvailableTimeSlots)}"
+                availability.AvailableOptions.Count > 0
+                    ? $"Available options: {string.Join(", ", availability.AvailableOptions.Select(o => $"{o.Start}-{o.End}"))}"
                     : "Call check_availability for alternative times.");
         }
 

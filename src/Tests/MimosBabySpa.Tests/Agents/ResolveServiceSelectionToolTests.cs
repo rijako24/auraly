@@ -46,14 +46,39 @@ public sealed class ResolveServiceSelectionToolTests
         var json = await _tool.ExecuteAsync(args.RootElement, ctx, CancellationToken.None);
 
         using var doc = JsonDocument.Parse(json);
-        doc.RootElement.GetProperty("ok").GetBoolean().Should().BeTrue();
-        var data = doc.RootElement.GetProperty("data");
-        data.GetProperty("selection_status").GetString().Should().Be("ambiguous");
-        var candidates = data.GetProperty("candidates")
-            .EnumerateArray()
-            .Select(e => e.GetString())
-            .ToList();
-        candidates.Should().Contain(["Corte de adulto", "Corte + barba"]);
+        doc.RootElement.GetProperty("ok").GetBoolean().Should().BeFalse();
+        var error = doc.RootElement.GetProperty("error");
+        error.GetProperty("code").GetString().Should().Be("service_selection_ambiguous");
+        error.GetProperty("message").GetString().Should().Be("Service selection is ambiguous.");
+        error.GetProperty("hint").GetString().Should().Be("Consult the catalog before answering.");
+        error.GetProperty("recoverable").GetBoolean().Should().BeTrue();
+        doc.RootElement.TryGetProperty("data", out _).Should().BeFalse();
+        ctx.Facts.Should().NotContainKey(ConversationFactKeys.Service);
+        _facts.Verify(f => f.SetAsync(
+            It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<string>(),
+            It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_NotFoundSelection_ReturnsRecoverableError()
+    {
+        var businessId = Guid.NewGuid();
+        SetupServices(businessId,
+            "Corte de adulto",
+            "Corte + barba");
+        var ctx = CreateContext(businessId);
+
+        using var args = JsonDocument.Parse("""{"text":"manicure"}""");
+        var json = await _tool.ExecuteAsync(args.RootElement, ctx, CancellationToken.None);
+
+        using var doc = JsonDocument.Parse(json);
+        doc.RootElement.GetProperty("ok").GetBoolean().Should().BeFalse();
+        var error = doc.RootElement.GetProperty("error");
+        error.GetProperty("code").GetString().Should().Be("service_selection_not_found");
+        error.GetProperty("message").GetString().Should().Be("Service selection was not found.");
+        error.GetProperty("hint").GetString().Should().Be("Consult the catalog before answering.");
+        error.GetProperty("recoverable").GetBoolean().Should().BeTrue();
+        doc.RootElement.TryGetProperty("data", out _).Should().BeFalse();
         ctx.Facts.Should().NotContainKey(ConversationFactKeys.Service);
         _facts.Verify(f => f.SetAsync(
             It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<string>(),

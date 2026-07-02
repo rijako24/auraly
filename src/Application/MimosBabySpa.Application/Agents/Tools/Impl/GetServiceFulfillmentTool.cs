@@ -88,7 +88,7 @@ public sealed class GetServiceFulfillmentTool : IAgentTool
         {
             service = service.ServiceName,
             service_category = serviceCategory,
-            fulfillment_kind = fulfillmentKind,
+            fulfillment_ready = fulfillmentKind,
             requires_availability = fulfillmentKind == "reservation",
             fixed_schedule_label = fixedSchedule
         };

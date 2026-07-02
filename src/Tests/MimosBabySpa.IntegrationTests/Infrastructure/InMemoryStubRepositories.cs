@@ -223,6 +223,7 @@ public sealed class InMemoryBusinessSchedulingSettingsRepository : IBusinessSche
             BusinessId = businessId,
             SlotIntervalMinutes = 60,
             BufferBetweenAppointmentsMinutes = 0,
+            MinimumLeadTimeMinutes = 0,
             RequireEmployee = true,
             EmployeeStrategy = "least_versatile",
             CreatedAt = DateTime.UtcNow

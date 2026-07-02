@@ -17,6 +17,11 @@ public class AvailabilityParams
     public int BufferBetweenAppointmentsMinutes { get; set; } = 0;
 
     /// <summary>
+    /// Anticipacion minima, en minutos, requerida para crear una reserva desde la hora actual del negocio.
+    /// </summary>
+    public int MinimumLeadTimeMinutes { get; set; } = 0;
+
+    /// <summary>
     /// Si true, requiere empleado disponible para confirmar el slot.
     /// </summary>
     public bool RequireEmployee { get; set; } = true;

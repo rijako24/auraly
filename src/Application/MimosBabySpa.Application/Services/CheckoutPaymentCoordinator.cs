@@ -17,7 +17,6 @@ public interface ICheckoutPaymentCoordinator
         CheckoutQuote quote,
         string paymentPhone,
         string checkoutSnapshotJson,
-        ReservationIntentSnapshot? reservationSnapshot = null,
         CancellationToken ct = default);
 }
 
@@ -62,7 +61,6 @@ public sealed class CheckoutPaymentCoordinator : ICheckoutPaymentCoordinator
         CheckoutQuote quote,
         string paymentPhone,
         string checkoutSnapshotJson,
-        ReservationIntentSnapshot? reservationSnapshot = null,
         CancellationToken ct = default)
     {
         var activePayment = ctx.ActivePayment
@@ -109,7 +107,6 @@ public sealed class CheckoutPaymentCoordinator : ICheckoutPaymentCoordinator
             quote.PayableCents,
             quote.Currency,
             result.ExpiresAt ?? DateTime.UtcNow.AddHours(1),
-            reservationSnapshot,
             ct);
 
         if (supersededPayment is not null)

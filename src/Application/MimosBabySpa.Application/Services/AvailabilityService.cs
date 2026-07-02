@@ -42,7 +42,7 @@ public class AvailabilityService : IAvailabilityService
         var businessTimeOfDay = clock.Now.TimeOfDay;
 
         var dateStr = date.ToString("yyyy-MM-dd");
-        var timeStr = time.HasValue ? time.Value.ToString(@"hh\:mm") : null;
+        var timeStr = time.HasValue ? FormatTime(time.Value) : null;
 
         var result = new AvailabilityResult
         {
@@ -63,61 +63,52 @@ public class AvailabilityService : IAvailabilityService
         var activeReservations = await LoadDayReservationsAsync(businessId, date, cancellationToken);
         result.CurrentReservations = activeReservations.Count;
 
-        if (!time.HasValue)
-        {
-            result.AvailableTimeSlots = await GetAvailableSlotsForDayAsync(
-                businessId,
-                requestedService,
-                date,
-                activeReservations,
-                effectivePolicy,
-                businessToday,
-                businessTimeOfDay,
-                cancellationToken);
-
-            result.IsAvailable = result.AvailableTimeSlots.Count > 0;
-            result.ResponseMessage = result.IsAvailable
-                ? $"Disponibilidad confirmada para {service} el {dateStr}."
-                : $"No hay disponibilidad para {service} el {dateStr}. No hay horarios disponibles para ese dia.";
-            return result;
-        }
-
-        var requestedStartTime = time.Value;
-        result.IsAvailable = await IsSlotAvailableAsync(
+        var dayAvailability = await GetAvailabilityForDayAsync(
             businessId,
             requestedService,
             date,
-            requestedStartTime,
             activeReservations,
             effectivePolicy,
             businessToday,
             businessTimeOfDay,
             cancellationToken);
 
-        if (result.IsAvailable)
+        result.AvailableWindows = dayAvailability.Windows.Select(ToDto).ToList();
+        result.AvailableOptions = dayAvailability.Options.Select(ToDto).ToList();
+
+        if (!time.HasValue)
         {
-            result.ResponseMessage = $"Disponibilidad confirmada para {service} el {dateStr} a las {timeStr}. El horario esta libre.";
-        }
-        else
-        {
-            result.AvailableTimeSlots = await GetAvailableSlotsForDayAsync(
-                businessId,
-                requestedService,
-                date,
-                activeReservations,
-                effectivePolicy,
-                businessToday,
-                businessTimeOfDay,
-                cancellationToken);
-            result.ResponseMessage = result.AvailableTimeSlots.Count > 0
-                ? $"No hay disponibilidad para {service} el {dateStr} a las {timeStr}. Consulta otros horarios del dia."
-                : $"No hay disponibilidad para {service} el {dateStr} a las {timeStr}. No hay horarios disponibles para ese dia.";
+            result.IsAvailable = result.AvailableOptions.Count > 0;
+            result.ResponseMessage = result.IsAvailable
+                ? $"Disponibilidad confirmada para {service} el {dateStr}."
+                : $"No hay disponibilidad para {service} el {dateStr}. No hay espacios disponibles para ese dia.";
+            return result;
         }
 
+        var requestedStart = time.Value;
+        var serviceDuration = TimeSpan.FromMinutes(Math.Max(1, requestedService.DurationMinutes));
+        result.RequestedOption = ToDto(new AvailabilityOptionRange(requestedStart, requestedStart.Add(serviceDuration)));
+
+        var matchingOption = dayAvailability.Options
+            .Where(option => option.Start == requestedStart)
+            .Cast<AvailabilityOptionRange?>()
+            .FirstOrDefault();
+        if (matchingOption is { } option)
+        {
+            result.IsAvailable = true;
+            result.Option = ToDto(option);
+            result.ResponseMessage = $"Disponibilidad confirmada para {service} el {dateStr} a las {timeStr}. El horario esta libre.";
+            return result;
+        }
+
+        result.IsAvailable = false;
+        result.ResponseMessage = result.AvailableOptions.Count > 0
+            ? $"No hay disponibilidad para {service} el {dateStr} a las {timeStr}. Consulta otros espacios del dia."
+            : $"No hay disponibilidad para {service} el {dateStr} a las {timeStr}. No hay espacios disponibles para ese dia.";
         return result;
     }
 
-    private async Task<List<string>> GetAvailableSlotsForDayAsync(
+    private async Task<(List<AvailabilityWindowRange> Windows, List<AvailabilityOptionRange> Options)> GetAvailabilityForDayAsync(
         Guid businessId,
         Domain.Entities.Service requestedService,
         DateTime date,
@@ -127,94 +118,232 @@ public class AvailabilityService : IAvailabilityService
         TimeSpan businessTimeOfDay,
         CancellationToken cancellationToken)
     {
-        var candidateTimes = await GetCandidateTimesFromWorkingHoursAsync(
+        var windows = await GetFreeWindowsForDayAsync(
             businessId,
-            requestedService.ServiceId,
-            policy,
+            requestedService,
             date,
-            requestedService.DurationMinutes,
+            activeReservations,
+            policy,
             businessToday,
             businessTimeOfDay,
             cancellationToken);
 
-        var available = new List<string>();
-        foreach (var startTime in candidateTimes)
+        var options = new List<AvailabilityOptionRange>();
+        foreach (var window in windows)
         {
-            if (cancellationToken.IsCancellationRequested)
-                break;
-
-            if (await IsSlotAvailableAsync(
-                    businessId,
-                    requestedService,
-                    date,
-                    startTime,
-                    activeReservations,
-                    policy,
-                    businessToday,
-                    businessTimeOfDay,
-                    cancellationToken))
+            foreach (var option in GenerateOptions(window, requestedService.DurationMinutes, policy))
             {
-                available.Add(startTime.ToString(@"hh\:mm"));
+                if (cancellationToken.IsCancellationRequested)
+                    break;
+
+                if (await IsSlotAvailableAsync(
+                        businessId,
+                        requestedService,
+                        date,
+                        option.Start,
+                        activeReservations,
+                        policy,
+                        businessToday,
+                        businessTimeOfDay,
+                        cancellationToken))
+                {
+                    options.Add(option);
+                }
             }
         }
 
-        return available;
+        options = options
+            .GroupBy(option => option.Start)
+            .Select(group => group.OrderBy(option => option.End).First())
+            .OrderBy(option => option.Start)
+            .ThenBy(option => option.End)
+            .ToList();
+
+        var usableWindows = MergeWindows(
+            windows.Where(window => options.Any(option => option.Start >= window.Start && option.End <= window.End)));
+
+        return (usableWindows, options);
     }
 
-    private async Task<List<TimeSpan>> GetCandidateTimesFromWorkingHoursAsync(
+    private async Task<List<AvailabilityWindowRange>> GetFreeWindowsForDayAsync(
         Guid businessId,
-        Guid serviceId,
-        AvailabilityParams policy,
+        Domain.Entities.Service requestedService,
         DateTime date,
-        int durationMinutes,
+        List<Domain.Entities.Reservation> activeReservations,
+        AvailabilityParams policy,
         DateOnly businessToday,
         TimeSpan businessTimeOfDay,
         CancellationToken cancellationToken)
     {
-        var blocks = new List<TimeBlock>();
+        var dateOnly = DateOnly.FromDateTime(date);
+        var windows = new List<AvailabilityWindowRange>();
 
         if (policy.RequireEmployee)
         {
-            var employees = await _unitOfWork.Employees.GetByBusinessIdAndServiceIdAsync(businessId, serviceId);
+            var employees = await _unitOfWork.Employees.GetByBusinessIdAndServiceIdAsync(businessId, requestedService.ServiceId);
             foreach (var employee in employees)
             {
                 var employeeBlocks = await _workingHoursService.GetEffectiveWorkingHoursAsync(
                     businessId,
                     employee.EmployeeId,
-                    DateOnly.FromDateTime(date),
+                    dateOnly,
                     cancellationToken);
-                blocks.AddRange(employeeBlocks);
+
+                var employeeReservations = activeReservations
+                    .Where(r => r.EmployeeId == employee.EmployeeId)
+                    .ToList();
+
+                windows.AddRange(BuildFreeWindows(employeeBlocks, employeeReservations, policy));
             }
         }
         else
         {
-            blocks.AddRange(await _workingHoursService.GetEffectiveBusinessWorkingHoursAsync(
+            var businessBlocks = await _workingHoursService.GetEffectiveBusinessWorkingHoursAsync(
                 businessId,
-                DateOnly.FromDateTime(date),
-                cancellationToken));
+                dateOnly,
+                cancellationToken);
+
+            windows.AddRange(BuildFreeWindows(businessBlocks, activeReservations, policy));
         }
 
-        if (blocks.Count == 0)
+        if (dateOnly == businessToday)
+        {
+            var earliestStart = businessTimeOfDay.Add(TimeSpan.FromMinutes(Math.Max(0, policy.MinimumLeadTimeMinutes)));
+            windows = TrimWindowsBefore(windows, earliestStart);
+        }
+
+        var requiredDuration = TimeSpan.FromMinutes(Math.Max(1, requestedService.DurationMinutes) + Math.Max(0, policy.BufferBetweenAppointmentsMinutes));
+        return MergeWindows(windows)
+            .Where(window => window.End - window.Start >= requiredDuration)
+            .OrderBy(window => window.Start)
+            .ThenBy(window => window.End)
+            .ToList();
+    }
+
+    private static List<AvailabilityWindowRange> BuildFreeWindows(
+        IReadOnlyList<TimeBlock> workingBlocks,
+        IReadOnlyList<Domain.Entities.Reservation> reservations,
+        AvailabilityParams policy)
+    {
+        var windows = workingBlocks
+            .Where(block => block.IsValid())
+            .Select(block => new AvailabilityWindowRange(block.OpenTime, block.CloseTime))
+            .ToList();
+
+        foreach (var reservation in reservations
+            .Where(r => r.ReservationDateTime.HasValue && r.DurationMinutes.HasValue)
+            .OrderBy(r => r.ReservationDateTime!.Value))
+        {
+            var start = reservation.ReservationDateTime!.Value.TimeOfDay;
+            var duration = Math.Max(1, reservation.DurationMinutes!.Value) + Math.Max(0, policy.BufferBetweenAppointmentsMinutes);
+            var end = start.Add(TimeSpan.FromMinutes(duration));
+            windows = SubtractRange(windows, start, end);
+        }
+
+        return windows;
+    }
+
+    private static List<AvailabilityOptionRange> GenerateOptions(
+        AvailabilityWindowRange window,
+        int serviceDurationMinutes,
+        AvailabilityParams policy)
+    {
+        var serviceDuration = TimeSpan.FromMinutes(Math.Max(1, serviceDurationMinutes));
+        var blockingDuration = TimeSpan.FromMinutes(Math.Max(1, serviceDurationMinutes) + Math.Max(0, policy.BufferBetweenAppointmentsMinutes));
+        var latestStart = window.End - blockingDuration;
+        if (latestStart < window.Start)
             return [];
 
+        var starts = new HashSet<TimeSpan> { window.Start, latestStart };
         var interval = Math.Max(1, policy.SlotIntervalMinutes);
-        var candidates = new HashSet<TimeSpan>();
-
-        foreach (var block in blocks.Where(b => b.IsValid()))
+        var current = AlignUp(window.Start, interval);
+        while (current <= latestStart)
         {
-            var currentTime = block.OpenTime;
-            while (currentTime.Add(TimeSpan.FromMinutes(durationMinutes)) <= block.CloseTime)
-            {
-                candidates.Add(currentTime);
-                currentTime = currentTime.Add(TimeSpan.FromMinutes(interval));
-            }
+            starts.Add(current);
+            current = current.Add(TimeSpan.FromMinutes(interval));
         }
 
-        var ordered = candidates.OrderBy(t => t).ToList();
-        if (DateOnly.FromDateTime(date) == businessToday)
-            ordered.RemoveAll(t => t < businessTimeOfDay);
+        return starts
+            .Where(start => start >= window.Start && start <= latestStart)
+            .OrderBy(start => start)
+            .Select(start => new AvailabilityOptionRange(start, start.Add(serviceDuration)))
+            .ToList();
+    }
 
-        return ordered;
+    private static TimeSpan AlignUp(TimeSpan value, int intervalMinutes)
+    {
+        var intervalTicks = TimeSpan.FromMinutes(intervalMinutes).Ticks;
+        if (intervalTicks <= 0)
+            return value;
+
+        var remainder = value.Ticks % intervalTicks;
+        return remainder == 0
+            ? value
+            : TimeSpan.FromTicks(value.Ticks + intervalTicks - remainder);
+    }
+
+    private static List<AvailabilityWindowRange> TrimWindowsBefore(
+        IEnumerable<AvailabilityWindowRange> windows,
+        TimeSpan earliestStart)
+    {
+        return windows
+            .Select(window => new AvailabilityWindowRange(Max(window.Start, earliestStart), window.End))
+            .Where(window => window.End > window.Start)
+            .ToList();
+    }
+
+    private static List<AvailabilityWindowRange> SubtractRange(
+        IReadOnlyList<AvailabilityWindowRange> windows,
+        TimeSpan blockStart,
+        TimeSpan blockEnd)
+    {
+        if (blockEnd <= blockStart)
+            return windows.ToList();
+
+        var result = new List<AvailabilityWindowRange>();
+        foreach (var window in windows)
+        {
+            if (blockEnd <= window.Start || blockStart >= window.End)
+            {
+                result.Add(window);
+                continue;
+            }
+
+            if (blockStart > window.Start)
+                result.Add(new AvailabilityWindowRange(window.Start, Min(blockStart, window.End)));
+
+            if (blockEnd < window.End)
+                result.Add(new AvailabilityWindowRange(Max(blockEnd, window.Start), window.End));
+        }
+
+        return result.Where(window => window.End > window.Start).ToList();
+    }
+
+    private static List<AvailabilityWindowRange> MergeWindows(IEnumerable<AvailabilityWindowRange> windows)
+    {
+        var ordered = windows
+            .Where(window => window.End > window.Start)
+            .OrderBy(window => window.Start)
+            .ThenBy(window => window.End)
+            .ToList();
+
+        if (ordered.Count == 0)
+            return [];
+
+        var merged = new List<AvailabilityWindowRange> { ordered[0] };
+        foreach (var window in ordered.Skip(1))
+        {
+            var last = merged[^1];
+            if (window.Start <= last.End)
+            {
+                merged[^1] = new AvailabilityWindowRange(last.Start, Max(last.End, window.End));
+                continue;
+            }
+
+            merged.Add(window);
+        }
+
+        return merged;
     }
 
     private async Task<bool> IsSlotAvailableAsync(
@@ -228,10 +357,14 @@ public class AvailabilityService : IAvailabilityService
         TimeSpan businessTimeOfDay,
         CancellationToken cancellationToken)
     {
-        if (DateOnly.FromDateTime(date) == businessToday && startTime < businessTimeOfDay)
-            return false;
+        if (DateOnly.FromDateTime(date) == businessToday)
+        {
+            var earliestStart = businessTimeOfDay.Add(TimeSpan.FromMinutes(Math.Max(0, policy.MinimumLeadTimeMinutes)));
+            if (startTime < earliestStart)
+                return false;
+        }
 
-        var durationMinutes = requestedService.DurationMinutes + policy.BufferBetweenAppointmentsMinutes;
+        var durationMinutes = Math.Max(1, requestedService.DurationMinutes) + Math.Max(0, policy.BufferBetweenAppointmentsMinutes);
         var endTime = startTime.Add(TimeSpan.FromMinutes(durationMinutes));
         var reservationStart = date.Date.Add(startTime);
         var reservationEnd = reservationStart.Add(TimeSpan.FromMinutes(durationMinutes));
@@ -249,7 +382,7 @@ public class AvailabilityService : IAvailabilityService
                 return false;
         }
 
-        var overlappingReservations = GetOverlappingReservations(activeReservations, startTime, endTime);
+        var overlappingReservations = GetOverlappingReservations(activeReservations, startTime, endTime, policy);
         if (overlappingReservations.Count == 0)
             return true;
 
@@ -265,14 +398,15 @@ public class AvailabilityService : IAvailabilityService
     private static List<Domain.Entities.Reservation> GetOverlappingReservations(
         List<Domain.Entities.Reservation> activeReservations,
         TimeSpan startTime,
-        TimeSpan endTime)
+        TimeSpan endTime,
+        AvailabilityParams policy)
     {
         return activeReservations
             .Where(r => r.ReservationDateTime.HasValue && r.DurationMinutes.HasValue)
             .Where(r =>
             {
                 var rStart = r.ReservationDateTime!.Value.TimeOfDay;
-                var rEnd = rStart.Add(TimeSpan.FromMinutes(r.DurationMinutes!.Value));
+                var rEnd = rStart.Add(TimeSpan.FromMinutes(Math.Max(1, r.DurationMinutes!.Value) + Math.Max(0, policy.BufferBetweenAppointmentsMinutes)));
                 return rStart < endTime && rEnd > startTime;
             })
             .ToList();
@@ -345,7 +479,7 @@ public class AvailabilityService : IAvailabilityService
             {
                 _logger.LogInformation(
                     "Recurso insuficiente en {SlotTime} para '{ServiceName}': '{ResourceName}'",
-                    slotStartTime.ToString(@"hh\:mm"),
+                    FormatTime(slotStartTime),
                     requestedServiceName,
                     name);
                 return false;
@@ -360,4 +494,16 @@ public class AvailabilityService : IAvailabilityService
         var service = await _unitOfWork.Services.GetByBusinessIdAndNameAsync(businessId, serviceName);
         return service?.ServiceId;
     }
+
+    private static AvailabilityWindow ToDto(AvailabilityWindowRange window) =>
+        new(FormatTime(window.Start), FormatTime(window.End));
+
+    private static AvailabilityOption ToDto(AvailabilityOptionRange option) =>
+        new(FormatTime(option.Start), FormatTime(option.End));
+
+    private static string FormatTime(TimeSpan time) => time.ToString(@"hh\:mm");
+
+    private static TimeSpan Min(TimeSpan left, TimeSpan right) => left <= right ? left : right;
+
+    private static TimeSpan Max(TimeSpan left, TimeSpan right) => left >= right ? left : right;
 }

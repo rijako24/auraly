@@ -159,6 +159,7 @@ BEGIN
     UPDATE dbo.BusinessSchedulingSettings
     SET SlotIntervalMinutes = 60,
         BufferBetweenAppointmentsMinutes = 0,
+        MinimumLeadTimeMinutes = 0,
         RequireEmployee = 1,
         EmployeeStrategy = N'least_versatile',
         UpdatedAt = GETUTCDATE()
@@ -167,9 +168,9 @@ END
 ELSE
 BEGIN
     INSERT INTO dbo.BusinessSchedulingSettings
-        (BusinessSchedulingSettingsId, BusinessId, SlotIntervalMinutes, BufferBetweenAppointmentsMinutes, RequireEmployee, EmployeeStrategy, CreatedAt)
+        (BusinessSchedulingSettingsId, BusinessId, SlotIntervalMinutes, BufferBetweenAppointmentsMinutes, MinimumLeadTimeMinutes, RequireEmployee, EmployeeStrategy, CreatedAt)
     VALUES
-        (NEWID(), @BusinessId, 60, 0, 1, N'least_versatile', GETUTCDATE());
+        (NEWID(), @BusinessId, 60, 0, 0, 1, N'least_versatile', GETUTCDATE());
 END
 
 DECLARE @Hours TABLE (DayOfWeek INT NOT NULL, OpenTime TIME(0) NOT NULL, CloseTime TIME(0) NOT NULL);
@@ -240,7 +241,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
     }
   },
   "templates": {
-    "availability_slots": "{{#if intro_message}}\n{{intro_message}}\n\n{{/if}}*Horarios disponibles para {{date_formatted}}* ({{service_name}})\n\n{{#each slots}}\n- {{this}}\n{{/each}}\n\nCual prefieres?"
+    "availability_slots": "{{#if intro_message}}\n{{intro_message}}\n\n{{/if}}*Espacios disponibles para {{date_formatted}}* ({{service_name}})\n\n{{#each options}}\n- {{this}}\n{{/each}}\n\nCual espacio prefieres?"
   },
   "flow": {
     "stageDetection": "automatic",
@@ -278,11 +279,21 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         "afterTool": [
           {
             "tool": "check_availability",
-            "when": { "path": "data.verbal_status", "equals": "horario_disponible_no_reservado" },
-            "setFacts": { "fulfillment_ready": "reservation" }
+            "when": { "path": "data.availability_checked", "equals": "true" },
+            "setFact": { "key": "desired_date", "value": "{{data.date}}" }
+          },
+          {
+            "tool": "check_availability",
+            "when": { "path": "data.availability_checked", "equals": "true" },
+            "setFact": { "key": "desired_time", "value": "{{data.time}}" }
+          },
+          {
+            "tool": "check_availability",
+            "when": { "path": "data.availability_checked", "equals": "true" },
+            "setFact": { "key": "availability_checked", "value": "true" }
           }
         ],
-        "advanceWhenFacts": ["fulfillment_ready"],
+        "advanceWhenFacts": ["availability_checked"],
         "reentryOnFactChanged": ["desired_date", "desired_time"]
       },
       {
@@ -327,8 +338,8 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
     { "key": "conversation_volume", "role": "business.volume", "label": "volumen de conversaciones", "type": "string", "required": false, "source": "user", "scope": "request", "captureMode": "eager", "aliases": ["volumen", "chats", "mensajes", "leads"] },
     { "key": "service", "role": "booking.service", "label": "servicio de interes", "type": "string", "required": true, "source": "user", "scope": "request", "captureMode": "eager", "aliases": ["demo", "servicio", "empleado digital", "automatizacion"] },
     { "key": "desired_date", "role": "booking.date", "label": "fecha deseada", "type": "date", "required": true, "source": "user", "scope": "request", "captureMode": "eager", "aliases": ["fecha", "dia", "cuando", "manana", "hoy"] },
-    { "key": "desired_time", "role": "booking.time", "label": "hora deseada", "type": "time", "required": true, "source": "user", "scope": "request", "captureMode": "eager", "aliases": ["hora", "horario"] },
-    { "key": "fulfillment_ready", "role": "booking.fulfillment_ready", "label": "agenda validada", "type": "string", "required": false, "source": "system", "scope": "ephemeral" },
+    { "key": "desired_time", "role": "booking.time", "label": "hora deseada", "type": "time", "required": true, "source": "user", "scope": "request", "captureMode": "eager", "dependsOn": ["service", "desired_date"], "aliases": ["hora", "horario"] },
+    { "key": "availability_checked", "role": "booking.availability_checked", "label": "disponibilidad validada", "type": "string", "required": false, "source": "system", "scope": "ephemeral", "retentionDays": 1, "dependsOn": ["service", "desired_date", "desired_time"] },
     { "key": "customer_name", "role": "customer.name", "label": "nombre", "type": "string", "required": true, "source": "user", "scope": "customer", "captureMode": "eager", "aliases": ["nombre", "mi nombre", "contacto"] },
     { "key": "company_name", "role": "customer.company", "label": "empresa", "type": "string", "required": true, "source": "user", "scope": "customer", "captureMode": "eager", "aliases": ["empresa", "compania", "negocio"] },
     { "key": "customer_phone", "role": "customer.phone", "label": "telefono", "type": "phone", "required": true, "source": "channel", "scope": "customer", "aliases": ["telefono", "celular", "whatsapp"] },

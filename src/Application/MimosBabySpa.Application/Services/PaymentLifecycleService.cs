@@ -17,48 +17,6 @@ public sealed class PaymentLifecycleService : IPaymentLifecycleService
     public Task<PaymentTransaction?> GetActiveByReservationAsync(Guid reservationId, CancellationToken ct = default) =>
         _payments.GetActiveByReservationIdAsync(reservationId, ct);
 
-    public async Task<PaymentTransaction> CreatePendingAsync(
-        Guid businessId,
-        Guid conversationId,
-        ReservationIntentSnapshot snapshot,
-        string paymentReferenceId,
-        string linkUrl,
-        long amountInCents,
-        string currency,
-        DateTime expiresAt,
-        CancellationToken ct = default)
-    {
-        var tx = new PaymentTransaction
-        {
-            PaymentTransactionId = Guid.NewGuid(),
-            BusinessId = businessId,
-            ConversationId = conversationId,
-            ReservationId = null,
-            PaymentReferenceId = paymentReferenceId,
-            LinkUrl = linkUrl,
-            AmountInCents = amountInCents,
-            Currency = currency,
-            Status = PaymentTransactionStatus.Created,
-            Source = PaymentTransactionSource.Automated,
-            ExpiresAt = expiresAt,
-            CreatedAt = DateTime.UtcNow,
-            Snapshot_ServiceId = snapshot.ServiceId,
-            Snapshot_ReservationDateTime = snapshot.ReservationDateTime,
-            Snapshot_PreferredEmployeeId = snapshot.PreferredEmployeeId,
-            Snapshot_DurationMinutes = snapshot.DurationMinutes,
-            Snapshot_CustomerName = snapshot.CustomerName,
-            Snapshot_CustomerEmail = snapshot.CustomerEmail,
-            Snapshot_CustomerPhone = snapshot.CustomerPhone,
-            Snapshot_AddOnIds = snapshot.AddOnServiceIds.Count > 0
-                ? string.Join(",", snapshot.AddOnServiceIds)
-                : null,
-            Snapshot_CustomAttributesJson = snapshot.CustomAttributesJson
-        };
-
-        await _payments.SaveAsync(tx, ct);
-        return tx;
-    }
-
     public async Task<PaymentTransaction> CreatePendingCheckoutAsync(
         Guid businessId,
         Guid conversationId,
@@ -71,7 +29,6 @@ public sealed class PaymentLifecycleService : IPaymentLifecycleService
         long amountInCents,
         string currency,
         DateTime expiresAt,
-        ReservationIntentSnapshot? reservationSnapshot = null,
         CancellationToken ct = default)
     {
         var tx = new PaymentTransaction
@@ -93,21 +50,6 @@ public sealed class PaymentLifecycleService : IPaymentLifecycleService
             QuoteHash = quoteHash,
             ConfirmationOutcome = confirmationOutcome
         };
-
-        if (reservationSnapshot is not null)
-        {
-            tx.Snapshot_ServiceId = reservationSnapshot.ServiceId;
-            tx.Snapshot_ReservationDateTime = reservationSnapshot.ReservationDateTime;
-            tx.Snapshot_PreferredEmployeeId = reservationSnapshot.PreferredEmployeeId;
-            tx.Snapshot_DurationMinutes = reservationSnapshot.DurationMinutes;
-            tx.Snapshot_CustomerName = reservationSnapshot.CustomerName;
-            tx.Snapshot_CustomerEmail = reservationSnapshot.CustomerEmail;
-            tx.Snapshot_CustomerPhone = reservationSnapshot.CustomerPhone;
-            tx.Snapshot_AddOnIds = reservationSnapshot.AddOnServiceIds.Count > 0
-                ? string.Join(",", reservationSnapshot.AddOnServiceIds)
-                : null;
-            tx.Snapshot_CustomAttributesJson = reservationSnapshot.CustomAttributesJson;
-        }
 
         await _payments.SaveAsync(tx, ct);
         return tx;
@@ -176,35 +118,4 @@ public sealed class PaymentLifecycleService : IPaymentLifecycleService
         return latest?.Status == PaymentTransactionStatus.Confirmed;
     }
 
-    public bool SnapshotsMatch(PaymentTransaction payment, ReservationIntentSnapshot intent, long amountInCents)
-    {
-        if (payment.Snapshot_ServiceId != intent.ServiceId)
-            return false;
-
-        if (payment.Snapshot_ReservationDateTime != intent.ReservationDateTime)
-            return false;
-
-        if (payment.AmountInCents != amountInCents)
-            return false;
-
-        var paymentAddOns = NormalizeAddOnIds(payment.Snapshot_AddOnIds);
-        var intentAddOns = NormalizeAddOnIds(
-            intent.AddOnServiceIds.Count > 0
-                ? string.Join(",", intent.AddOnServiceIds)
-                : null);
-
-        if (!string.Equals(paymentAddOns, intentAddOns, StringComparison.Ordinal))
-            return false;
-
-        return string.Equals(
-            payment.Snapshot_CustomAttributesJson ?? string.Empty,
-            intent.CustomAttributesJson ?? string.Empty,
-            StringComparison.Ordinal);
-    }
-
-    private static string NormalizeAddOnIds(string? csv) =>
-        string.IsNullOrWhiteSpace(csv)
-            ? string.Empty
-            : string.Join(",", csv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .OrderBy(x => x, StringComparer.Ordinal));
 }

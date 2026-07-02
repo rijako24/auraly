@@ -6,6 +6,7 @@ public class BusinessSchedulingSettings
     public Guid BusinessId { get; set; }
     public int SlotIntervalMinutes { get; set; } = 60;
     public int BufferBetweenAppointmentsMinutes { get; set; }
+    public int MinimumLeadTimeMinutes { get; set; }
     public bool RequireEmployee { get; set; } = true;
     public string EmployeeStrategy { get; set; } = "least_versatile";
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;

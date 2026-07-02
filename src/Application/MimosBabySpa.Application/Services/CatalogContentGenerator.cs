@@ -1,8 +1,12 @@
+using System.Globalization;
+using System.Text;
 using Microsoft.Extensions.Logging;
 using MimosBabySpa.Application.Configuration;
 using MimosBabySpa.Application.Promotions;
 using MimosBabySpa.Domain.Enums;
 using MimosBabySpa.Domain.Repositories;
+using DomainService = MimosBabySpa.Domain.Entities.Service;
+using DomainServiceCategory = MimosBabySpa.Domain.Entities.ServiceCategory;
 
 namespace MimosBabySpa.Application.Services;
 
@@ -25,7 +29,10 @@ public class CatalogContentGenerator : ICatalogContentGenerator
         _promotions = promotions;
     }
 
-    public async Task<string> GenerateAsync(Guid businessId, CancellationToken ct = default)
+    public Task<string> GenerateAsync(Guid businessId, CancellationToken ct = default) =>
+        GenerateAsync(businessId, null, ct);
+
+    public async Task<string> GenerateAsync(Guid businessId, string? query, CancellationToken ct = default)
     {
         try
         {
@@ -33,10 +40,11 @@ public class CatalogContentGenerator : ICatalogContentGenerator
             var categories    = await _unitOfWork.ServiceCategories.GetByBusinessIdAsync(businessId);
             var addOnRules    = await _unitOfWork.ServiceAddOnRules.GetByBusinessIdAsync(businessId);
             var activeServices = services.Where(s => s.IsActive).ToList();
+            var catalogServices = FilterByQuery(activeServices, categories, query);
 
             var promotionPricing = await _promotions.EvaluateAsync(
                 businessId,
-                activeServices.Select(s => new PromotionPricingItem(
+                catalogServices.Select(s => new PromotionPricingItem(
                     s.ServiceId.ToString("N"),
                     PromotionItemType.Service,
                     null,
@@ -50,7 +58,7 @@ public class CatalogContentGenerator : ICatalogContentGenerator
 
             var priceByService = promotionPricing.Items.ToDictionary(i => i.Item.Key, StringComparer.OrdinalIgnoreCase);
 
-            var serviceInfos = activeServices
+            var serviceInfos = catalogServices
                 .Select(s =>
                 {
                     priceByService.TryGetValue(s.ServiceId.ToString("N"), out var priced);
@@ -122,4 +130,99 @@ public class CatalogContentGenerator : ICatalogContentGenerator
             return string.Empty;
         }
     }
+
+
+    private static List<DomainService> FilterByQuery(
+        IReadOnlyList<DomainService> services,
+        IEnumerable<DomainServiceCategory> categories,
+        string? query)
+    {
+        var terms = GetSearchTerms(query);
+        if (terms.Count == 0)
+            return services.ToList();
+
+        var directMatches = services
+            .Where(s => MatchesServiceText(s, terms))
+            .ToList();
+
+        if (directMatches.Count > 0)
+            return directMatches;
+
+        var categoryById = categories.ToDictionary(c => c.ServiceCategoryId);
+        return services
+            .Where(s => MatchesCategoryText(categoryById.TryGetValue(s.CategoryId, out var cat) ? cat : null, terms))
+            .ToList();
+    }
+
+    private static bool MatchesServiceText(DomainService service, IReadOnlyList<string> terms)
+    {
+        var haystack = NormalizeSearchText(string.Join(' ', new[]
+        {
+            service.ServiceName,
+            service.Description
+        }.Where(s => !string.IsNullOrWhiteSpace(s))));
+
+        return terms.Any(haystack.Contains);
+    }
+
+    private static bool MatchesCategoryText(DomainServiceCategory? category, IReadOnlyList<string> terms)
+    {
+        if (category is null)
+            return false;
+
+        var haystack = NormalizeSearchText(string.Join(' ', new[]
+        {
+            category.Name,
+            category.Description
+        }.Where(s => !string.IsNullOrWhiteSpace(s))));
+
+        return terms.Any(haystack.Contains);
+    }
+
+    private static IReadOnlyList<string> GetSearchTerms(string? query)
+    {
+        var normalized = NormalizeSearchText(query);
+        if (string.IsNullOrWhiteSpace(normalized))
+            return Array.Empty<string>();
+
+        var stopWords = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "quiero", "quiere", "servicio", "servicios", "precio", "precios", "opcion", "opciones",
+            "para", "con", "sin", "del", "los", "las", "una", "uno", "unos", "unas", "que", "hay",
+            "tienen", "tiene", "cabello"
+        };
+
+        var terms = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var token in normalized.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (token.Length <= 2 || stopWords.Contains(token))
+                continue;
+
+            terms.Add(token);
+            if (token.EndsWith('s') && token.Length > 3)
+                terms.Add(token[..^1]);
+        }
+
+        return terms.ToList();
+    }
+
+    private static string NormalizeSearchText(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return string.Empty;
+
+        var normalized = value.Normalize(NormalizationForm.FormD);
+        var builder = new StringBuilder(normalized.Length);
+        foreach (var ch in normalized)
+        {
+            var category = CharUnicodeInfo.GetUnicodeCategory(ch);
+            if (category == UnicodeCategory.NonSpacingMark)
+                continue;
+
+            builder.Append(char.IsLetterOrDigit(ch) ? char.ToLowerInvariant(ch) : ' ');
+        }
+
+        return string.Join(' ', builder.ToString().Split(' ', StringSplitOptions.RemoveEmptyEntries));
+    }
+
 }

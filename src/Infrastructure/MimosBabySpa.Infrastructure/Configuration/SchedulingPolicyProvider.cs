@@ -38,6 +38,7 @@ public class SchedulingPolicyProvider : ISchedulingPolicyProvider
         {
             SlotIntervalMinutes = settings.SlotIntervalMinutes,
             BufferBetweenAppointmentsMinutes = settings.BufferBetweenAppointmentsMinutes,
+            MinimumLeadTimeMinutes = settings.MinimumLeadTimeMinutes,
             RequireEmployee = settings.RequireEmployee,
             EmployeeStrategy = settings.EmployeeStrategy
         };

@@ -104,6 +104,41 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
             config.FactSchema.Select(e => e.Key),
             StringComparer.OrdinalIgnoreCase);
 
+        foreach (var entry in config.FactSchema)
+        {
+            if (string.IsNullOrWhiteSpace(entry.Key))
+            {
+                _logger.LogWarning(
+                    "AgentConfig {AgentId}: factSchema contains an entry without key",
+                    config.AgentId);
+                continue;
+            }
+
+            var dependencies = entry.DependsOn ?? [];
+            foreach (var dependency in dependencies.Where(dep => !string.IsNullOrWhiteSpace(dep)))
+            {
+                if (entry.Key.Equals(dependency.Trim(), StringComparison.OrdinalIgnoreCase))
+                {
+                    _logger.LogWarning(
+                        "AgentConfig {AgentId}: fact '{Key}' dependsOn itself",
+                        config.AgentId, entry.Key);
+                }
+
+                if (!schemaKeys.Contains(dependency))
+                {
+                    _logger.LogWarning(
+                        "AgentConfig {AgentId}: fact '{Key}' dependsOn unknown fact '{Dependency}'",
+                        config.AgentId, entry.Key, dependency);
+                }
+            }
+
+            if (entry.IsCustomerScoped() && dependencies.Count > 0)
+            {
+                _logger.LogWarning(
+                    "AgentConfig {AgentId}: fact '{Key}' is customer-scoped; dependsOn is ignored for customer facts",
+                    config.AgentId, entry.Key);
+            }
+        }
         foreach (var stage in config.Flow.Stages)
         {
             foreach (var factKey in stage.AdvanceWhenFacts)

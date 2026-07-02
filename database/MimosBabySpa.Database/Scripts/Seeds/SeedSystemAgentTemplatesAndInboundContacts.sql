@@ -87,7 +87,7 @@ DECLARE @OperationsSettingsJson NVARCHAR(MAX) = N'{
   "notifications": {},
   "webhooks": {},
   "templates": {
-    "availability_slots": "{{#if intro_message}}\n{{intro_message}}\n\n{{/if}}*Horarios disponibles para {{date_formatted}}* ({{service_name}})\n\n{{#each slots}}\n- {{this}}\n{{/each}}\n\nCual prefieres?"
+    "availability_slots": "{{#if intro_message}}\n{{intro_message}}\n\n{{/if}}*Espacios disponibles para {{date_formatted}}* ({{service_name}})\n\n{{#each options}}\n- {{this}}\n{{/each}}\n\nCual espacio prefieres?"
   },
   "escalations": {
     "human": { "contacts": [] },
@@ -107,9 +107,10 @@ USING (VALUES
     (@DeliveryTemplateId, N'system.domicilio', N'Agente de domicilios', N'domicilio', N'Resuelve interacciones externas con domiciliarios.', @DeliverySettingsJson, N''),
     (@OperationsTemplateId, N'system.operations', N'Agente operativo', N'operations', N'Atiende contactos administrativos y operativos del negocio.', @OperationsSettingsJson, N'')
 ) AS source (AgentTemplateId, [Key], [Name], Kind, [Description], SettingsJson, SystemPromptMarkdown)
-ON target.[Key] = source.[Key]
+ON target.AgentTemplateId = source.AgentTemplateId
+   OR target.[Key] = source.[Key]
 WHEN MATCHED THEN
-    UPDATE SET AgentTemplateId = source.AgentTemplateId,
+    UPDATE SET [Key] = source.[Key],
                [Name] = source.[Name],
                Kind = source.Kind,
                [Description] = source.[Description],

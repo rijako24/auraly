@@ -24,15 +24,6 @@ public class PaymentTransaction
     public string? QuoteHash { get; set; }
     public string? ConfirmationOutcome { get; set; }
 
-    public Guid? Snapshot_ServiceId { get; set; }
-    public DateTime? Snapshot_ReservationDateTime { get; set; }
-    public Guid? Snapshot_PreferredEmployeeId { get; set; }
-    public int? Snapshot_DurationMinutes { get; set; }
-    public string? Snapshot_CustomerName { get; set; }
-    public string? Snapshot_CustomerEmail { get; set; }
-    public string? Snapshot_CustomerPhone { get; set; }
-    public string? Snapshot_AddOnIds { get; set; }
-    public string? Snapshot_CustomAttributesJson { get; set; }
     public bool RequiresRescheduling { get; set; }
     public bool RequiresRefund { get; set; }
     public DateTime? SupersededAt { get; set; }

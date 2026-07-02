@@ -1,4 +1,4 @@
-﻿using FluentAssertions;
+using FluentAssertions;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using MimosBabySpa.Domain.Entities;
@@ -31,6 +31,7 @@ public class SchedulingPolicyProviderTests
             SlotIntervalMinutes = 30,
             BufferBetweenAppointmentsMinutes = 15,
             RequireEmployee = false,
+            MinimumLeadTimeMinutes = 30,
             EmployeeStrategy = "most_available"
         });
 
@@ -39,6 +40,7 @@ public class SchedulingPolicyProviderTests
         policy.SlotIntervalMinutes.Should().Be(30);
         policy.BufferBetweenAppointmentsMinutes.Should().Be(15);
         policy.RequireEmployee.Should().BeFalse();
+        policy.MinimumLeadTimeMinutes.Should().Be(30);
         policy.EmployeeStrategy.Should().Be("most_available");
     }
 

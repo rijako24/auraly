@@ -18,15 +18,6 @@ CREATE TABLE [dbo].[PaymentTransactions] (
     [CheckoutSnapshotJson] NVARCHAR(MAX) NULL,
     [QuoteHash] NVARCHAR(128) NULL,
     [ConfirmationOutcome] NVARCHAR(100) NULL,
-    [Snapshot_ServiceId] UNIQUEIDENTIFIER NULL,
-    [Snapshot_ReservationDateTime] DATETIME2 NULL,
-    [Snapshot_PreferredEmployeeId] UNIQUEIDENTIFIER NULL,
-    [Snapshot_DurationMinutes] INT NULL,
-    [Snapshot_CustomerName] NVARCHAR(200) NULL,
-    [Snapshot_CustomerEmail] NVARCHAR(200) NULL,
-    [Snapshot_CustomerPhone] NVARCHAR(50) NULL,
-    [Snapshot_AddOnIds] NVARCHAR(500) NULL,
-    [Snapshot_CustomAttributesJson] NVARCHAR(MAX) NULL,
     [RequiresRescheduling] BIT NOT NULL DEFAULT 0,
     [RequiresRefund] BIT NOT NULL DEFAULT 0,
     [SupersededAt] DATETIME2 NULL,
@@ -39,9 +30,6 @@ CREATE TABLE [dbo].[PaymentTransactions] (
         ON DELETE NO ACTION,
     CONSTRAINT [FK_PaymentTransactions_Reservations] FOREIGN KEY ([ReservationId])
         REFERENCES [dbo].[Reservations] ([ReservationId])
-        ON DELETE NO ACTION,
-    CONSTRAINT [FK_PaymentTransactions_SnapshotService] FOREIGN KEY ([Snapshot_ServiceId])
-        REFERENCES [dbo].[Services] ([ServiceId])
         ON DELETE NO ACTION,
     CONSTRAINT [FK_PaymentTransactions_SupersededBy] FOREIGN KEY ([SupersededByPaymentTransactionId])
         REFERENCES [dbo].[PaymentTransactions] ([PaymentTransactionId])
@@ -67,10 +55,5 @@ CREATE INDEX [IX_PaymentTransactions_ReservationId] ON [dbo].[PaymentTransaction
 GO
 
 CREATE INDEX [IX_PaymentTransactions_CheckoutKind] ON [dbo].[PaymentTransactions] ([CheckoutKind]);
-
-GO
-
-CREATE INDEX [IX_PaymentTransactions_Snapshot_Slot] ON [dbo].[PaymentTransactions] ([Snapshot_ServiceId], [Snapshot_ReservationDateTime])
-    WHERE [Snapshot_ServiceId] IS NOT NULL;
 
 GO

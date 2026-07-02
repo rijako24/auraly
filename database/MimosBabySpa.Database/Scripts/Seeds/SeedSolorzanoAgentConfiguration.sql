@@ -204,11 +204,6 @@ FROM dbo.ReservationAddOns ra
 INNER JOIN dbo.Services s ON s.ServiceId = ra.AddOnServiceId
 WHERE s.BusinessId = @BusinessId;
 
-UPDATE pt
-SET Snapshot_ServiceId = NULL
-FROM dbo.PaymentTransactions pt
-INNER JOIN dbo.Services s ON s.ServiceId = pt.Snapshot_ServiceId
-WHERE s.BusinessId = @BusinessId;
 
 UPDATE r
 SET ServiceId = NULL,

@@ -1015,11 +1015,6 @@ public class ApplicationDbContext : DbContext
             entity.Property(e => e.QuoteHash).HasMaxLength(128);
             entity.Property(e => e.ConfirmationOutcome).HasMaxLength(100);
             entity.Property(e => e.LinkUrl).HasMaxLength(1000);
-            entity.Property(e => e.Snapshot_CustomerName).HasMaxLength(200);
-            entity.Property(e => e.Snapshot_CustomerEmail).HasMaxLength(200);
-            entity.Property(e => e.Snapshot_CustomerPhone).HasMaxLength(50);
-            entity.Property(e => e.Snapshot_AddOnIds).HasMaxLength(500);
-            entity.Property(e => e.Snapshot_CustomAttributesJson).HasColumnType("NVARCHAR(MAX)");
             entity.Property(e => e.SupersededAt);
             entity.HasOne<PaymentTransaction>()
                 .WithMany()
@@ -1037,11 +1032,6 @@ public class ApplicationDbContext : DbContext
             entity.HasOne(e => e.Reservation)
                 .WithMany()
                 .HasForeignKey(e => e.ReservationId)
-                .OnDelete(DeleteBehavior.Restrict)
-                .IsRequired(false);
-            entity.HasOne<Service>()
-                .WithMany()
-                .HasForeignKey(e => e.Snapshot_ServiceId)
                 .OnDelete(DeleteBehavior.Restrict)
                 .IsRequired(false);
             entity.HasIndex(e => e.PaymentReferenceId).IsUnique();

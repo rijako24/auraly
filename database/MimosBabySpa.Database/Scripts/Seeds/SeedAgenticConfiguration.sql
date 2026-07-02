@@ -225,7 +225,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
     "checkout_enrollment_with_payment": "*Resumen de tu inscripcion*\n- Servicio: {{service_name}}\n- Horario de inscripcion: {{fixed_schedule}}\n{{#each line_items}}\n- {{name}}: ${{price}}\n{{/each}}\n- *TOTAL: ${{total}} {{currency}}*\n\n- Nombre del cliente: {{customer_name}}\n- Telefono: {{customer_phone}}\n{{#if baby_age_months}}\n- Edad del bebe: {{baby_age_months}}\n{{/if}}\n{{#if baby_name}}\n- Nombre del bebe: {{baby_name}}\n{{/if}}\n{{#if baby_birth_date}}\n- Fecha de nacimiento del bebe: {{baby_birth_date}}\n{{/if}}\n\nPaga en linea: {{link_url}}\n\nCuando el pago sea confirmado, te enviaremos el formulario de inscripcion.",
     "checkout_with_deposit": "*Resumen de tu reserva*\n- Servicio: {{service_name}}\n- Fecha: {{date_formatted}}\n- Hora: {{time}}\n- Precio servicio: ${{service_price}}\n{{#each addons}}\n- {{name}}: ${{price}}{{checkout_note}}\n{{/each}}\n- *TOTAL: ${{total}}*\n\n- Nombre del cliente: {{customer_name}}\n- Telefono: {{customer_phone}}\n{{#if baby_age_months}}\n- Edad del bebe: {{baby_age_months}}\n{{/if}}\n{{#if baby_name}}\n- Nombre del bebe: {{baby_name}}\n{{/if}}\n{{#if baby_birth_date}}\n- Fecha de nacimiento del bebe: {{baby_birth_date}}\n{{/if}}\n\nPara confirmar tu reserva, solicitamos un anticipo del {{deposit_pct}}% del valor del servicio.\n\n*Anticipo:* ${{deposit}} {{currency}}\n\nPaga en linea: {{link_url}}\n\nUna vez confirmado el anticipo, tu reserva quedara asegurada. Estamos para ayudarte!",
     "checkout_no_deposit": "*Resumen de tu reserva*\n- Servicio: {{service_name}}\n- Fecha: {{date_formatted}}\n- Hora: {{time}}\n- Precio servicio: ${{service_price}}\n{{#each addons}}\n- {{name}}: ${{price}}{{checkout_note}}\n{{/each}}\n- *TOTAL: ${{total}}*\n\n- Nombre del cliente: {{customer_name}}\n- Telefono: {{customer_phone}}\n{{#if baby_age_months}}\n- Edad del bebe: {{baby_age_months}}\n{{/if}}\n{{#if baby_name}}\n- Nombre del bebe: {{baby_name}}\n{{/if}}\n{{#if baby_birth_date}}\n- Fecha de nacimiento del bebe: {{baby_birth_date}}\n{{/if}}\n\nConfirmas la reserva con esta informacion?",
-    "availability_slots": "{{#if intro_message}}\n{{intro_message}}\n\n{{/if}}\n*Horarios disponibles para {{date_formatted}}* ({{service_name}})\n\n{{#each slots}}\n- {{this}}\n{{/each}}\n\nCual prefieres?"
+    "availability_slots": "{{#if intro_message}}\n{{intro_message}}\n\n{{/if}}\n*Espacios disponibles para {{date_formatted}}* ({{service_name}})\n\n{{#each options}}\n- {{this}}\n{{/each}}\n\nCual espacio prefieres?"
   },
   "flow": {
     "stageDetection": "automatic",
@@ -242,9 +242,19 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         "id": "service_selection",
         "name": "Seleccion de servicio",
         "goal": "Ayudar al cliente a elegir primero una experiencia y luego un servicio exacto del catalogo.",
-        "hint": "Al entrar en esta etapa, llama get_service_catalog antes de presentar categorias, servicios, precios u horarios. Con el catalogo retornado, presenta primero solo las categorias reales con una descripcion breve de la experiencia de cada una y sus beneficios generales para el bebe segun edad/etapa si esta disponible; no muestres precios ni listes servicios en este primer paso. Cierra preguntando cual categoria o experiencia le interesa. Si el cliente elige una categoria, muestra solo los servicios de esa categoria con nombre canonico, duracion, precio, horario si aplica y descripcion breve del catalogo; cierra preguntando que servicio le gustaria para su bebe. En esta etapa enfocate en elegir servicio: reserva los complementos para la etapa Complementos, despues de guardar service. Cuando el cliente enfoque una opcion exacta del catalogo, guarda service con set_fact usando el nombre canonico y explica brevemente sus beneficios segun edad/etapa del bebe.",
-        "allowedTools": ["get_service_catalog", "set_fact"],
-        "advanceWhenFacts": ["service"]
+        "hint": "Al entrar en esta etapa, llama get_service_catalog antes de presentar categorias, servicios, precios u horarios. Con el catalogo retornado, presenta primero solo las categorias reales con una descripcion breve de la experiencia de cada una y sus beneficios generales para el bebe segun edad/etapa si esta disponible; no muestres precios ni listes servicios en este primer paso. Cierra preguntando cual categoria o experiencia le interesa. Si el cliente elige una categoria, muestra solo los servicios de esa categoria con nombre canonico, duracion, precio, horario si aplica y descripcion breve del catalogo; cierra preguntando que servicio le gustaria para su bebe. En esta etapa enfocate en elegir servicio: reserva los complementos para la etapa Complementos, despues de guardar service. Cuando el cliente enfoque una opcion exacta del catalogo, guarda service con set_fact usando el nombre canonico; despues llama get_service_fulfillment para resolver si la ruta es reserva o inscripcion y deja que la regla de la etapa registre fulfillment_ready.",
+        "allowedTools": ["get_service_catalog", "set_fact", "get_service_fulfillment"],
+        "afterTool": [
+          {
+            "tool": "get_service_fulfillment",
+            "when": { "path": "data.fulfillment_ready" },
+            "setFacts": {
+              "fulfillment_ready": "{{data.fulfillment_ready}}",
+              "fixed_schedule_label": "{{data.fixed_schedule_label}}"
+            }
+          }
+        ],
+        "advanceWhenFacts": ["service", "fulfillment_ready"]
       },
       {
         "id": "addons_offering",
@@ -271,27 +281,28 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         "id": "scheduling",
         "name": "Agenda",
         "goal": "Guiar al cliente hacia el siguiente paso de agenda o inscripcion segun la ruta oficial del servicio elegido.",
-        "hint": "Primero llama get_service_fulfillment con el servicio exacto seleccionado y usa la ruta devuelta. Si la ruta es inscripcion, usa el horario fijo del catalogo y deja que el flujo cierre internamente esta etapa. Si la ruta es agenda: si falta fecha, pidela; si el cliente pide horarios para una fecha, llama check_availability con esa fecha y muestra horarios; si el cliente elige una hora de horarios recien presentados, registra desired_date y desired_time y llama check_availability con fecha y hora en el mismo turno. Despues de confirmar disponibilidad, informa el resultado y continua con el siguiente dato del flujo. Si get_service_fulfillment devuelve error de horario no configurado, responde con la informacion oficial disponible y ofrece escalar a humano.",
-        "allowedTools": ["get_service_fulfillment", "check_availability", "set_fact"],
+        "hint": "Usa esta etapa solo para reservas con fulfillment_ready=reservation. Si falta fecha, pidela; si el cliente pide horarios para una fecha, llama check_availability con esa fecha y muestra horarios; si el cliente elige una hora de horarios recien presentados, registra desired_date y desired_time y llama check_availability con fecha y hora en el mismo turno. Despues de confirmar disponibilidad, informa el resultado y continua con el siguiente dato del flujo. Si ya existe fixed_schedule_label, esta etapa se salta porque el servicio es de inscripcion.",
+        "allowedTools": ["check_availability", "set_fact"],
         "afterTool": [
           {
-            "tool": "get_service_fulfillment",
-            "when": { "path": "data.fulfillment_kind", "equals": "enrollment" },
-            "setFacts": {
-              "fixed_schedule_label": "{{data.fixed_schedule_label}}",
-              "fulfillment_ready": "enrollment"
-            }
+            "tool": "check_availability",
+            "when": { "path": "data.availability_checked", "equals": "true" },
+            "setFact": { "key": "desired_date", "value": "{{data.date}}" }
           },
           {
             "tool": "check_availability",
-            "when": { "path": "data.verbal_status", "equals": "horario_disponible_no_reservado" },
-            "setFacts": {
-              "fulfillment_ready": "reservation"
-            }
+            "when": { "path": "data.availability_checked", "equals": "true" },
+            "setFact": { "key": "desired_time", "value": "{{data.time}}" }
+          },
+          {
+            "tool": "check_availability",
+            "when": { "path": "data.availability_checked", "equals": "true" },
+            "setFact": { "key": "availability_checked", "value": "true" }
           }
         ],
-        "advanceWhenFacts": ["fulfillment_ready"],
-        "reentryOnFactChanged": ["service", "desired_date", "desired_time", "fixed_schedule_label"]
+        "advanceWhenFacts": ["availability_checked"],
+        "skipWhen": "fixed_schedule_label",
+        "reentryOnFactChanged": ["service", "desired_date", "desired_time", "fixed_schedule_label", "fulfillment_ready"]
       },
       {
         "id": "customer_data",
@@ -305,7 +316,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         "id": "finalization",
         "name": "Cierre",
         "goal": "Cierra la reserva: resumen, pago o confirmacion verbal, registro de cita y mensajes post-reserva.",
-        "hint": "1) Objetivo: cerrar solo la solicitud actual con resumen, pago o confirmacion segun checkout. 2) Si aun no se mostro el resumen y ya estan los datos requeridos, llama prepare_checkout con el servicio exacto del catalogo; la herramienta resuelve precio, plantilla, monto y link. 3) Si hay link/resumen pendiente y el cliente solo pide informacion normal, responde sin cambiar la solicitud. 4) Si hay link/resumen pendiente y el cliente pide agregar o cambiar complementos sin nombrar uno exacto, llama get_compatible_add_ons y pide cual desea; si cambia servicio o complemento exacto, actualiza los facts correspondientes y reconstruye el resumen/link con prepare_checkout. 5) Premisa de avance: cuando el cliente elige una opcion concreta de una lista recien presentada, esa eleccion autoriza el siguiente paso; registra el nombre exacto de esa opcion como service, llama prepare_checkout y entrega el resumen/link resultante. 6) Si el cliente pide una categoria o servicio no exacto, llama get_service_catalog y ofrece opciones exactas; cuando elija una, aplica la premisa de avance. 7) Si quiere empezar otra solicitud distinta, pregunta si reemplaza la actual o la deja sin efecto; si decide desistir, llama reset_flow_context con reason=start_new_request o customer_abandoned y checkout_action=abandon. 8) Si prepare_checkout entrega enlace de pago, comparte el resumen/link y espera la confirmacion automatica del webhook. 9) Si prepare_checkout entrega un cierre sin pago, pregunta si confirma con esa informacion; cuando confirme verbalmente, llama create_reservation. 10) Si falta o cambia fecha/hora antes del resumen, llama check_availability antes de prepare_checkout. Para servicios con horario oficial de inscripcion, prepara el checkout con ese horario y espera la confirmacion automatica del webhook.",
+        "hint": "1) Objetivo: cerrar solo la solicitud actual con resumen, pago o confirmacion segun checkout. 2) Si aun no se mostro el resumen y ya estan los datos requeridos, llama prepare_checkout con el servicio exacto del catalogo; la herramienta resuelve precio, plantilla, monto y link. 3) Si hay link/resumen pendiente y el cliente solo pide informacion normal, responde sin cambiar la solicitud. 4) Si hay link/resumen pendiente y el cliente pide agregar o cambiar complementos sin nombrar uno exacto, llama get_compatible_add_ons y pide cual desea; si cambia servicio o complemento exacto, actualiza los facts correspondientes y reconstruye el resumen/link con prepare_checkout. 5) Premisa de avance: cuando el cliente elige una opcion concreta de una lista recien presentada, esa eleccion autoriza el siguiente paso; registra el nombre exacto de esa opcion como service, llama prepare_checkout y entrega el resumen/link resultante. 6) Si el cliente pide una categoria o servicio no exacto, llama get_service_catalog y ofrece opciones exactas; cuando elija una, aplica la premisa de avance. 7) Si quiere empezar otra solicitud distinta, pregunta si reemplaza la actual o la deja sin efecto; si decide desistir, llama reset_flow_context con reason=start_new_request o customer_abandoned y checkout_action=abandon. 8) Si prepare_checkout entrega enlace de pago, comparte el resumen/link y espera la confirmacion automatica del webhook. 9) Si prepare_checkout entrega un cierre sin pago, pregunta si confirma con esa informacion; cuando confirme verbalmente, llama create_reservation. Para servicios con horario oficial de inscripcion, prepara el checkout con ese horario y espera la confirmacion automatica del webhook.",
         "allowedTools": [
           "prepare_checkout",
           "create_reservation",
@@ -313,7 +324,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
           "verify_payment",
           "get_service_catalog",
           "get_compatible_add_ons",
-          "check_availability",
           "set_fact",
           "reset_flow_context",
           "send_message_sequence"
@@ -387,17 +397,24 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
     {
       "key": "desired_time", "role": "booking.time", "label": "hora deseada",
       "type": "time", "required": true, "source": "user", "scope": "request", "retentionDays": 7,
+      "dependsOn": ["service", "desired_date"],
       "aliases": ["hora", "horario"]
     },
     {
       "key": "fixed_schedule_label", "role": "checkout.fixed_schedule", "label": "horario de inscripcion",
       "type": "string", "required": false, "source": "user", "scope": "request", "retentionDays": 7,
+      "dependsOn": ["service"],
       "aliases": ["horario de inscripcion", "horario fijo", "horario taller"]
     },
     {
       "key": "fulfillment_ready", "role": "checkout.fulfillment_ready", "label": "ruta de cumplimiento resuelta",
-      "type": "string", "required": false, "source": "system", "scope": "ephemeral", "expireOnBusinessDayChange": true,
-      "aliases": ["ruta lista", "cumplimiento listo"]
+      "type": "string", "required": false, "source": "system", "scope": "ephemeral", "retentionDays": 1,
+      "dependsOn": ["service"]
+    },
+    {
+      "key": "availability_checked", "role": "booking.availability_checked", "label": "disponibilidad validada",
+      "type": "string", "required": false, "source": "system", "scope": "ephemeral", "retentionDays": 1,
+      "dependsOn": ["service", "desired_date", "desired_time"]
     },
     {
       "key": "customer_name", "role": "customer.name", "label": "nombre del cliente",

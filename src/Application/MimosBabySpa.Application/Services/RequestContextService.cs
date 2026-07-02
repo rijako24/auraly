@@ -139,6 +139,7 @@ public sealed class RequestContextService : IRequestContextService
         }
 
         ClearPastBookingDateFacts(config, inMemoryFacts, clock.Today, fieldsToClear);
+        AddDependentFactsToClear(config, fieldsToClear);
 
         var cleared = await _facts.ClearFieldsAsync(conversation.ConversationId, fieldsToClear.ToList(), ct);
         RemoveFromMemory(inMemoryFacts, cleared);
@@ -178,6 +179,35 @@ public sealed class RequestContextService : IRequestContextService
         var timeEntry = FindByRole(config, "booking.time");
         if (timeEntry is not null)
             fieldsToClear.Add(timeEntry.Key);
+    }
+
+    private static void AddDependentFactsToClear(
+        AgentConfig config,
+        ISet<string> fieldsToClear)
+    {
+        if (fieldsToClear.Count == 0)
+            return;
+
+        var queue = new Queue<string>(fieldsToClear);
+        while (queue.Count > 0)
+        {
+            var changedKey = queue.Dequeue();
+            foreach (var entry in config.FactSchema)
+            {
+                if (string.IsNullOrWhiteSpace(entry.Key)
+                    || entry.IsCustomerScoped()
+                    || fieldsToClear.Contains(entry.Key)
+                    || entry.DependsOn.Count == 0
+                    || !entry.DependsOn.Any(dependency =>
+                        dependency.Equals(changedKey, StringComparison.OrdinalIgnoreCase)))
+                {
+                    continue;
+                }
+
+                fieldsToClear.Add(entry.Key);
+                queue.Enqueue(entry.Key);
+            }
+        }
     }
 
     private static FactSchemaEntry? FindByRole(AgentConfig config, string role) =>

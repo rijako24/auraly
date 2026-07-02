@@ -99,10 +99,10 @@ public sealed class ReservationPaidCheckoutFulfillmentHandler : IPaidCheckoutFul
         CancellationToken ct = default)
     {
         var snapshot = PaymentTransactionSnapshotMapper.ToIntentSnapshot(payment);
-        if (snapshot is null || !payment.Snapshot_ServiceId.HasValue)
+        if (snapshot is null)
             throw new InvalidOperationException("Intent de reserva incompleto.");
 
-        var service = await _unitOfWork.Services.GetByIdAsync(payment.Snapshot_ServiceId.Value);
+        var service = await _unitOfWork.Services.GetByIdAsync(snapshot.ServiceId);
         if (service is null)
             throw new InvalidOperationException("Servicio del snapshot no encontrado.");
 
@@ -137,7 +137,7 @@ public sealed class ReservationPaidCheckoutFulfillmentHandler : IPaidCheckoutFul
                     Amount = payment.AmountInCents / 100m,
                     Currency = payment.Currency,
                     OriginalTime = originalTime,
-                    AvailableSlots = availability.AvailableTimeSlots
+                    AvailableSlots = availability.AvailableOptions.Select(o => $"{o.Start}-{o.End}").ToList()
                 });
         }
 

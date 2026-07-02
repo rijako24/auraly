@@ -1,3 +1,5 @@
+using MimosBabySpa.Application.Agents.Configuration;
+
 namespace MimosBabySpa.Application.Agents.Composition;
 
 internal sealed record FlowCheckpointInvalidationResult(
@@ -15,26 +17,40 @@ internal static class FlowCheckpointInvalidation
         AgentToolContext ctx,
         IReadOnlyCollection<string> changedFactKeys)
     {
-        if (changedFactKeys.Count == 0)
+        var changedKeys = NormalizeKeys(changedFactKeys);
+        if (changedKeys.Count == 0)
             return new FlowCheckpointInvalidationResult([], []);
 
-        var changedKeys = changedFactKeys.ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var derivedFacts = (ctx.Config?.FactSchema ?? [])
+        var factSchema = ctx.Config?.FactSchema ?? [];
+        var dependencyClears = ResolveDependencyClears(factSchema, changedKeys);
+        var initialSignals = UnionKeys(changedKeys, dependencyClears);
+
+        var derivedFacts = factSchema
             .Where(entry => !entry.Source.Equals("user", StringComparison.OrdinalIgnoreCase))
             .Select(entry => entry.Key)
+            .Where(key => !string.IsNullOrWhiteSpace(key))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var affectedStages = (ctx.Config?.Flow.Stages ?? [])
-            .Where(stage => stage.ReentryOnFactChanged.Any(changedKeys.Contains))
+
+        var initiallyAffectedStages = (ctx.Config?.Flow.Stages ?? [])
+            .Where(stage => stage.ReentryOnFactChanged.Any(initialSignals.Contains))
             .ToList();
 
-        var factsToClear = affectedStages
+        var derivedAdvanceClears = initiallyAffectedStages
             .SelectMany(stage => stage.AdvanceWhenFacts)
             .Where(factKey => derivedFacts.Contains(factKey)
                 && !changedKeys.Contains(factKey))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        var stageSnapshotsToReset = affectedStages
+        var factsToClear = dependencyClears
+            .Concat(derivedAdvanceClears)
+            .Where(factKey => !changedKeys.Contains(factKey))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var allSignals = UnionKeys(changedKeys, factsToClear);
+        var stageSnapshotsToReset = (ctx.Config?.Flow.Stages ?? [])
+            .Where(stage => stage.ReentryOnFactChanged.Any(allSignals.Contains))
             .Select(stage => stage.Id)
             .Where(id => !string.IsNullOrWhiteSpace(id))
             .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -42,4 +58,53 @@ internal static class FlowCheckpointInvalidation
 
         return new FlowCheckpointInvalidationResult(factsToClear, stageSnapshotsToReset);
     }
+
+    private static HashSet<string> ResolveDependencyClears(
+        IReadOnlyList<FactSchemaEntry> factSchema,
+        HashSet<string> changedKeys)
+    {
+        var factsToClear = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var queue = new Queue<string>(changedKeys);
+
+        while (queue.Count > 0)
+        {
+            var changedKey = queue.Dequeue();
+            foreach (var entry in factSchema)
+            {
+                if (!CanClearOnDependencyChange(entry)
+                    || changedKeys.Contains(entry.Key)
+                    || factsToClear.Contains(entry.Key)
+                    || !DependsOn(entry, changedKey))
+                {
+                    continue;
+                }
+
+                factsToClear.Add(entry.Key);
+                queue.Enqueue(entry.Key);
+            }
+        }
+
+        return factsToClear;
+    }
+
+    private static bool CanClearOnDependencyChange(FactSchemaEntry entry) =>
+        !string.IsNullOrWhiteSpace(entry.Key)
+        && !entry.IsCustomerScoped()
+        && entry.DependsOn is { Count: > 0 };
+
+    private static bool DependsOn(FactSchemaEntry entry, string changedKey) =>
+        entry.DependsOn.Any(dependency =>
+            !string.IsNullOrWhiteSpace(dependency)
+            && dependency.Trim().Equals(changedKey, StringComparison.OrdinalIgnoreCase));
+
+    private static HashSet<string> NormalizeKeys(IEnumerable<string> keys) =>
+        keys
+            .Where(key => !string.IsNullOrWhiteSpace(key))
+            .Select(key => key.Trim())
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+    private static HashSet<string> UnionKeys(
+        IEnumerable<string> left,
+        IEnumerable<string> right) =>
+        left.Concat(right).ToHashSet(StringComparer.OrdinalIgnoreCase);
 }

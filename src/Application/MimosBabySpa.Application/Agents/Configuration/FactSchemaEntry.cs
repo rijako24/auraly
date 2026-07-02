@@ -50,6 +50,13 @@ public sealed class FactSchemaEntry
     public string CaptureMode { get; init; } = "onDemand";
 
     /// <summary>
+    /// Fact keys that must remain unchanged for this fact to stay valid.
+    /// When any dependency changes, the engine may clear this fact and re-enter affected stages.
+    /// Applies to request/ephemeral facts; customer-scoped facts are preserved.
+    /// </summary>
+    public IReadOnlyList<string> DependsOn { get; init; } = [];
+
+    /// <summary>
     /// Nombres alternativos que el LLM puede usar al llamar set_fact.
     /// Ej. ["nombre", "cliente"] para key=customer_name.
     /// El motor los normaliza a Key canónico antes de persistir.

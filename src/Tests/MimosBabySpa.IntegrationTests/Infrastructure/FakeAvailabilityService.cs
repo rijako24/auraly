@@ -54,7 +54,7 @@ public class FakeAvailabilityService : IAvailabilityService
         new()
         {
             IsAvailable         = true,
-            AvailableTimeSlots  = slots,
+            AvailableOptions = slots.Select(s => new AvailabilityOption(s, s)).ToList(),
             ResponseMessage     = $"Hay disponibilidad. Horarios: {string.Join(", ", slots)}",
             RequestServiceName  = service,
             RequestDateString   = date.ToString("yyyy-MM-dd")
@@ -64,7 +64,7 @@ public class FakeAvailabilityService : IAvailabilityService
         new()
         {
             IsAvailable        = false,
-            AvailableTimeSlots = [],
+            AvailableOptions = [],
             ResponseMessage    = "No hay horarios disponibles para esa fecha.",
             RequestServiceName = service,
             RequestDateString  = date.ToString("yyyy-MM-dd")

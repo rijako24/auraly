@@ -43,10 +43,6 @@ BEGIN
     FROM [dbo].[Reservations] r
     INNER JOIN @ServicesToDelete d ON d.[ServiceId] = r.[ServiceId];
 
-    UPDATE pt
-    SET [Snapshot_ServiceId] = NULL
-    FROM [dbo].[PaymentTransactions] pt
-    INNER JOIN @ServicesToDelete d ON d.[ServiceId] = pt.[Snapshot_ServiceId];
 
     DELETE s
     FROM [dbo].[Services] s
