@@ -167,9 +167,10 @@ public sealed class AgentPromptComposer : IPromptComposer
         var lines = new List<string>
         {
             "## RETOMA DE DIA",
-            "- Es el mismo hilo del cliente; no saludes como conversacion nueva.",
-            "- Responde con una retoma breve y natural antes de continuar.",
-            "- Usa ESTADO ACTUAL para no repreguntar datos que ya siguen vigentes."
+            "- Es el mismo hilo del cliente y cambio el dia operativo.",
+            "- Inicia la respuesta saludando y presentandote brevemente con la identidad del agente/negocio definida arriba; no reinicies el flujo ni lo trates como primera conversacion.",
+            "- Despues continua desde el ultimo mensaje del cliente y el ESTADO ACTUAL.",
+            "- Usa los datos listados en ESTADO ACTUAL como contexto vigente; no los repreguntes ni los vuelvas a guardar con el mismo valor."
         };
 
         if (session.PreviousBusinessDay.HasValue)
@@ -181,7 +182,7 @@ public sealed class AgentPromptComposer : IPromptComposer
         if (session.RolloverClearedFacts.Count > 0)
         {
             lines.Add($"- datos_vencidos_o_recalculables: {string.Join(", ", session.RolloverClearedFacts)}");
-            lines.Add("- Si falta fecha u hora despues de la limpieza, pide solo ese dato antes de revisar agenda.");
+            lines.Add("- Si alguno de esos datos vencidos hace falta para continuar, pide solo lo faltante antes de usar herramientas dependientes.");
         }
 
         return string.Join(Environment.NewLine, lines);

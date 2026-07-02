@@ -254,6 +254,57 @@ public class AgentPromptComposerTests
 
 
     [Fact]
+    public void Compose_WithBusinessDayRollover_ReintroducesAndKeepsCurrentFacts()
+    {
+        var config = new AgentConfig
+        {
+            AgentId = DefaultConfig.AgentId,
+            BusinessId = DefaultConfig.BusinessId,
+            Name = "Mimi",
+            Persona = DefaultConfig.Persona,
+            FactSchema =
+            [
+                new FactSchemaEntry { Key = "service", Label = "servicio", Source = "user" },
+                new FactSchemaEntry { Key = "desired_date", Label = "fecha", Source = "user" },
+                new FactSchemaEntry { Key = "desired_time", Label = "hora", Source = "user" }
+            ]
+        };
+
+        var session = new AgentToolContext
+        {
+            Conversation = new Conversation(),
+            ConversationState = new ConversationState(),
+            BusinessDayRollover = true,
+            PreviousBusinessDay = new DateOnly(2026, 6, 17),
+            RolloverClearedFacts = ["desired_time"],
+            Facts = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["service"] = "Corte infantil",
+                ["desired_date"] = "2026-06-18"
+            }
+        };
+
+        var history = new[]
+        {
+            new Message { Sender = "assistant", MessageText = "Hola, soy Mimi." }
+        };
+
+        var result = Compose(config, history, session);
+
+        result.Should().Contain("## RETOMA DE DIA");
+        result.Should().Contain("cambio el dia operativo");
+        result.Should().Contain("presentandote brevemente");
+        result.Should().Contain("no reinicies el flujo");
+        result.Should().Contain("datos_de_solicitud_vigentes: servicio, fecha");
+        result.Should().Contain("## ESTADO ACTUAL");
+        result.Should().Contain("servicio: Corte infantil");
+        result.Should().Contain("fecha: 2026-06-18");
+        result.Should().Contain("datos_vencidos_o_recalculables: desired_time");
+        result.Should().Contain("pide solo lo faltante");
+        result.Should().NotContain("no saludes como conversacion nueva");
+    }
+
+    [Fact]
     public void Compose_GreetingStage_FirstEver_RendersVariantHint()
     {
         var config = new AgentConfig
@@ -805,6 +856,7 @@ public class AgentPromptComposerTests
         result.Should().NotContain("productos");
         result.Should().NotContain("pedido");
     }
+
     private sealed class TestTool : IAgentTool
     {
         public TestTool(string name) => Name = name;
