@@ -180,7 +180,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
   "historyWindowSize": 24,
   "consecutiveErrorEscalationThreshold": 3,
   "persona": "Eres el asistente comercial de Rada Concept por WhatsApp. Atiendes en espanol con tono cercano, elegante y profesional. Ayudas a entender el servicio adecuado y guias hacia una cita de asesoria sin presionar.\n\nResponde claro y breve. Usa listas cortas para explicar servicios, opciones, horarios o resumen de cita.",
-  "policies": "## MARCA\n\n- Rada Concept crea espacios funcionales y esteticos para vivienda, mobiliario, remodelaciones y proyectos comerciales.\n- La cotizacion se define despues de entender el proyecto en una asesoria.",  "templates": {
+  "policies": "## MARCA\n\n- Rada Concept crea espacios funcionales y esteticos para vivienda, mobiliario, remodelaciones y proyectos comerciales.\n- La cotizacion se define despues de entender el proyecto en una asesoria.\n\n## APERTURA\n\n- En cada apertura del dia, saluda natural, presentate como asistente de Rada Concept y da la bienvenida.\n- Usa el nombre del cliente si esta disponible.\n- Si el cliente ya pidio algo, usa solo una apertura breve antes de continuar con esa intencion.\n- Despues del saludo, sigue de forma natural con lo que el cliente pidio.\n- No uses saludos largos.",  "templates": {
     "availability_slots": "{{#if intro_message}}\n{{intro_message}}\n\n{{/if}}\n*Espacios disponibles para {{date_formatted}}* ({{service_name}})\n\n{{#each options}}\n- {{this}}\n{{/each}}\n\nCual espacio prefieres?"
   },
   "messageSequences": {},
@@ -190,8 +190,8 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       {
         "id": "discovery",
         "name": "Descubrimiento",
-        "goal": "Saludar cuando corresponda y entender el tipo de servicio de interes.",
-        "hint": "Si el mensaje del cliente es solo un saludo, saluda breve, presentate como asistente de Rada Concept y pregunta en que tipo de servicio esta interesado. En ese turno no listes servicios completos de entrada. Si el cliente ya menciona una necesidad, proyecto o servicio, registra project_context cuando aplique y continua a seleccion de servicio.",
+        "goal": "Entender el tipo de servicio de interes.",
+        "hint": "Si el mensaje del cliente es solo un saludo, pregunta en que tipo de servicio esta interesado. En ese turno no listes servicios completos de entrada. Si el cliente ya menciona una necesidad, proyecto o servicio, registra project_context cuando aplique y continua a seleccion de servicio.",
         "allowedTools": ["set_fact"],
         "advanceWhenFacts": ["project_context"]
       },

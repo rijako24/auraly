@@ -50,7 +50,7 @@ public sealed class ResolveServiceSelectionToolTests
         var error = doc.RootElement.GetProperty("error");
         error.GetProperty("code").GetString().Should().Be("service_selection_ambiguous");
         error.GetProperty("message").GetString().Should().Be("Service selection is ambiguous.");
-        error.GetProperty("hint").GetString().Should().Be("Consult the catalog before answering.");
+        error.GetProperty("hint").GetString().Should().Be("Call get_service_catalog with view=services and query using the customer's same service/category words; do not fall back to categories for this selection.");
         error.GetProperty("recoverable").GetBoolean().Should().BeTrue();
         doc.RootElement.TryGetProperty("data", out _).Should().BeFalse();
         ctx.Facts.Should().NotContainKey(ConversationFactKeys.Service);
@@ -76,7 +76,7 @@ public sealed class ResolveServiceSelectionToolTests
         var error = doc.RootElement.GetProperty("error");
         error.GetProperty("code").GetString().Should().Be("service_selection_not_found");
         error.GetProperty("message").GetString().Should().Be("Service selection was not found.");
-        error.GetProperty("hint").GetString().Should().Be("Consult the catalog before answering.");
+        error.GetProperty("hint").GetString().Should().Be("Call get_service_catalog with view=services and query using the customer's same service/category words; do not fall back to categories for this selection.");
         error.GetProperty("recoverable").GetBoolean().Should().BeTrue();
         doc.RootElement.TryGetProperty("data", out _).Should().BeFalse();
         ctx.Facts.Should().NotContainKey(ConversationFactKeys.Service);

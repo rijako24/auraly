@@ -83,8 +83,8 @@ public class AgentPromptComposerTests
     {
         var result = Compose(DefaultConfig, []);
 
-        result.Should().Contain("## POLITICA DEL TURNO");
-        result.Should().Contain("primera respuesta visible");
+        result.Should().Contain("## CONTEXTO DEL TURNO");
+        result.Should().Contain("motivo_apertura: primera respuesta visible");
         result.Should().NotContain("saludo breve");
         result.Should().NotContain("pregunta abierta");
     }
@@ -291,16 +291,13 @@ public class AgentPromptComposerTests
 
         var result = Compose(config, history, session);
 
-        result.Should().Contain("## RETOMA DE DIA");
-        result.Should().Contain("cambio el dia operativo");
-        result.Should().Contain("presentandote brevemente");
-        result.Should().Contain("no reinicies el flujo");
-        result.Should().Contain("datos_de_solicitud_vigentes: servicio, fecha");
+        result.Should().Contain("## CONTEXTO DEL TURNO");
+        result.Should().Contain("motivo_apertura: nuevo dia operativo");
         result.Should().Contain("## ESTADO ACTUAL");
         result.Should().Contain("servicio: Corte infantil");
         result.Should().Contain("fecha: 2026-06-18");
-        result.Should().Contain("datos_vencidos_o_recalculables: desired_time");
-        result.Should().Contain("pide solo lo faltante");
+        result.Should().NotContain("## RETOMA DE DIA");
+        result.Should().NotContain("datos_vencidos_o_recalculables");
         result.Should().NotContain("no saludes como conversacion nueva");
     }
 

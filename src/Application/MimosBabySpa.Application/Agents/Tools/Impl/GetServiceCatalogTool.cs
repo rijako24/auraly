@@ -15,6 +15,8 @@ public sealed class GetServiceCatalogTool : IAgentTool
 
     public string Name => "get_service_catalog";
 
+    public IReadOnlyList<string> Capabilities => [];
+
     public string Description =>
         "Returns the business service catalog for information requests: service categories, services, compatible add-ons per service, prices, durations, options, alternatives, and service details. " +
         "Use view=categories only when the customer has not named any service family, service type, option, or narrowing keyword and should see only the available service categories/options. " +
@@ -49,6 +51,7 @@ public sealed class GetServiceCatalogTool : IAgentTool
         var view = string.Equals(viewText, "categories", StringComparison.OrdinalIgnoreCase)
             ? CatalogContentView.Categories
             : CatalogContentView.Services;
+
         if (view == CatalogContentView.Categories && !string.IsNullOrWhiteSpace(query))
             view = CatalogContentView.Services;
 

@@ -56,6 +56,7 @@ public sealed class OutboundMessageDispatcher : IOutboundMessageDispatcher
             _logger.LogWarning(
                 "Business {BusinessId}: outbound blocked by usage gate ({Code})",
                 businessId, gate.Code);
+
             return;
         }
 

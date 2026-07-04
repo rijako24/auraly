@@ -83,6 +83,70 @@ public sealed class WhatsAppInboundDebounceWorkerFunctionTests
             It.IsAny<CancellationToken>()), Times.Never);
     }
 
+    [Fact]
+    public async Task Run_WhenBatchProcessorFails_MarksReceiptsFailedAndRethrows()
+    {
+        var businessId = Guid.NewGuid();
+        const string provider = "whatsapp";
+        const string userNumber = "573013161564";
+        var receivedAt = DateTime.UtcNow.AddSeconds(-10);
+        var pending = new List<InboundMessageReceipt>
+        {
+            Receipt(businessId, provider, "wamid.failed", userNumber, "greeting", receivedAt)
+        };
+
+        var deduplication = new Mock<IInboundMessageDeduplicationService>();
+        deduplication
+            .Setup(d => d.GetPendingConversationMessagesAsync(businessId, provider, userNumber, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(pending);
+        deduplication
+            .Setup(d => d.MarkProcessingAsync(businessId, provider, It.IsAny<IEnumerable<string>>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        deduplication
+            .Setup(d => d.MarkFailedAsync(
+                businessId,
+                provider,
+                It.IsAny<IEnumerable<string>>(),
+                "agent failed",
+                It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var parser = new Mock<IWhatsAppWebhookParserService>();
+        parser
+            .Setup(p => p.ExtractAllMessagesFromEntryAsync(It.IsAny<Entry>(), businessId))
+            .Returns((Entry entry, Guid _) => Task.FromResult(MessagesForEntry(entry, userNumber)));
+
+        var batchProcessor = new Mock<IInboundMessageBatchProcessor>();
+        batchProcessor
+            .Setup(p => p.ProcessAsync(businessId, It.IsAny<IReadOnlyList<IncomingMessage>>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("agent failed"));
+
+        var worker = new WhatsAppInboundDebounceWorkerFunction(
+            deduplication.Object,
+            Mock.Of<IWhatsAppInboundQueueService>(),
+            parser.Object,
+            batchProcessor.Object,
+            Mock.Of<ILogger<WhatsAppInboundDebounceWorkerFunction>>());
+        var body = JsonSerializer.Serialize(new WhatsAppInboundDebounceMessage(
+            businessId,
+            provider,
+            userNumber,
+            DateTime.UtcNow.AddSeconds(-1)));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => worker.Run(body, CancellationToken.None));
+
+        deduplication.Verify(d => d.MarkFailedAsync(
+            businessId,
+            provider,
+            It.Is<IEnumerable<string>>(ids => ids.SequenceEqual(new[] { "wamid.failed" })),
+            "agent failed",
+            It.IsAny<CancellationToken>()), Times.Once);
+        deduplication.Verify(d => d.MarkProcessedAsync(
+            It.IsAny<Guid>(),
+            It.IsAny<string>(),
+            It.IsAny<IEnumerable<string>>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+    }
     private static InboundMessageReceipt Receipt(
         Guid businessId,
         string provider,

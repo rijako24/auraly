@@ -118,7 +118,7 @@ public sealed class ResolveServiceSelectionTool : IAgentTool
     private static string BuildResolutionHint(ServiceSelectionResolution resolution) => resolution.Status switch
     {
         ServiceSelectionStatus.Ambiguous or ServiceSelectionStatus.NotFound =>
-            "Consult the catalog before answering.",
+            "Call get_service_catalog with view=services and query using the customer's same service/category words; do not fall back to categories for this selection.",
         _ => "Continue with the resolved service."
     };
 

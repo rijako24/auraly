@@ -412,6 +412,10 @@ while (true)
 
 static string CreateTestUserPhone()
 {
+    var configuredPhone = Environment.GetEnvironmentVariable("TALKIO_CONSOLE_PHONE");
+    if (!string.IsNullOrWhiteSpace(configuredPhone))
+        return configuredPhone.Trim();
+
     return $"+1555{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() % 10000000:0000000}";
 }
 internal sealed class ConsoleUsageBillingService : IUsageBillingService

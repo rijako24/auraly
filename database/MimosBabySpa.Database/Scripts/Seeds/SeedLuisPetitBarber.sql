@@ -217,7 +217,7 @@ INSERT INTO @Services (ServiceId, ServiceName, Description, Keywords, CategoryId
 VALUES
 ('BABA0000-0000-0000-0000-000000000101', N'Corte basico de nino',
  N'Corte infantil con trato paciente, detalle y acabado limpio. Servicio personalizado para una experiencia comoda y puntual.',
- N'corte nino, corte niÃ±o, corte infantil, corte de cabello nino, corte de cabello niÃ±o, cabello nino, cabello niÃ±o, peluqueada nino, peluqueada niÃ±o',
+ N'corte nino, corte niño, corte infantil, corte de cabello nino, corte de cabello niño, cabello nino, cabello niño, peluqueada nino, peluqueada niño',
  @CategoryId, 30, 25000.00, 1),
 ('BABA0000-0000-0000-0000-000000000102', N'Corte basico de adulto',
  N'Corte profesional basico para adulto, adaptado al estilo del cliente, con atencion al detalle y acabado limpio.',
@@ -229,7 +229,7 @@ VALUES
  @CategoryId, 45, 40000.00, 3),
 ('BABA0000-0000-0000-0000-000000000104', N'Diseno de cejas',
  N'Diseno y perfilado de cejas para armonizar el rostro con un acabado natural y pulido.',
- N'cejas, diseno cejas, diseÃ±o cejas, perfilado cejas, cejas hombre',
+ N'cejas, diseno cejas, diseño cejas, perfilado cejas, cejas hombre',
  @CejasCategoryId, 10, 10000.00, 4),
 ('BABA0000-0000-0000-0000-000000000105', N'Lavado profundo',
  N'Limpieza profunda del cabello y cuero cabelludo para una sensacion fresca, cuidada y renovada.',
@@ -245,7 +245,7 @@ VALUES
  @TratamientosCategoryId, 60, 120000.00, 7),
 ('BABA0000-0000-0000-0000-000000000108', N'Corte + tinte',
  N'Corte con tinte para cubrimiento de canas o tonificacion de color.',
- N'corte tinte, corte con tinte, corte de cabello tinte, cabello tinte, tinte, color, canas, coloracion, coloraciÃ³n',
+ N'corte tinte, corte con tinte, corte de cabello tinte, cabello tinte, tinte, color, canas, coloracion, coloración',
  @CategoryId, 45, 50000.00, 8),
 ('BABA0000-0000-0000-0000-000000000109', N'Corte premium de adulto',
  N'Corte premium de adulto con hidratacion capilar y peinado.',
@@ -253,7 +253,7 @@ VALUES
  @CategoryId, 45, 35000.00, 9),
 ('BABA0000-0000-0000-0000-000000000110', N'Corte para bebes solo puntas',
  N'Corte para bebes enfocado solo en puntas, con trato cuidadoso y tiempo breve.',
- N'corte bebe, corte bebÃ©, corte bebes, corte bebÃ©s, corte de cabello bebe, corte de cabello bebÃ©, cabello bebe, cabello bebÃ©, solo puntas, puntas bebe, primer corte bebe',
+ N'corte bebe, corte bebé, corte bebes, corte bebés, corte de cabello bebe, corte de cabello bebé, cabello bebe, cabello bebé, solo puntas, puntas bebe, primer corte bebe',
  @CategoryId, 20, 20000.00, 10),
 ('BABA0000-0000-0000-0000-000000000111', N'Delineado de barba',
  N'Delineado de barba con perfilado limpio y acabado profesional.',
@@ -342,7 +342,7 @@ VALUES
  15000.00, 1),
 ('BABA0000-0000-0000-0000-000000000202', N'Sombreado con aerografo',
  N'Adicional para cortes que permite un acabado con mayor definicion y perfeccion.',
- N'aerografo, aerÃ³grafo, sombreado, sombreado aerografo, definicion corte',
+ N'aerografo, aerógrafo, sombreado, sombreado aerografo, definicion corte',
  15000.00, 2),
 ('BABA0000-0000-0000-0000-000000000203', N'Fibra capilar',
  N'Adicional para cortes que ayuda a disimular espacios con poco volumen de cabello.',
@@ -350,7 +350,7 @@ VALUES
  10000.00, 3),
 ('BABA0000-0000-0000-0000-000000000204', N'Relajador de ondas a base de celulas madre',
  N'Adicional para cortes, aplicado dentro del tiempo del corte.',
- N'relajador ondas, ondas, celulas madre, cÃ©lulas madre, relajador cabello',
+ N'relajador ondas, ondas, celulas madre, células madre, relajador cabello',
  15000.00, 4),
 ('BABA0000-0000-0000-0000-000000000205', N'Masaje con gafas de relajacion ocular',
  N'Adicional de 10 minutos con gafas de relajacion ocular. Se ofrece junto con cortes compatibles.',
@@ -466,7 +466,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
   "historyWindowSize": 24,
   "consecutiveErrorEscalationThreshold": 3,
   "persona": "Eres Luis Petit, barbero profesional de BARBER KIDS. Atiendes por WhatsApp en primera persona, con tono cercano, profesional, puntual y amable. Tu trabajo es ayudar a elegir el servicio correcto, ofrecer adicionales cuando apliquen, revisar disponibilidad y guiar al cliente hasta pagar el anticipo para asegurar la cita.",
-  "policies": "## MARCA Y ATENCION\n\n- La marca de atencion al cliente es BARBER KID.\n- Luis Petit es el barbero profesional que atiende la conversacion en primera persona.\n- Nunca digas que eres asistente; habla como Luis Petit.\n- Cada servicio es una experiencia personalizada, enfocada en elegancia, detalle, puntualidad y buen trato.",
+  "policies": "## MARCA Y ATENCION\n\n- La marca de atencion al cliente es BARBER KIDS MEN.\n- Luis Petit es el barbero profesional que atiende la conversacion.\n- Cada servicio es una experiencia personalizada, enfocada en elegancia, detalle, puntualidad y buen trato.\n\n## APERTURA\n\n- En cada apertura del dia, saluda natural, presentate como Luis Petit de BARBER KIDS MEN y da la bienvenida.\n- Usa el nombre del cliente si esta disponible.\n- Si el cliente ya pidio algo, usa solo una apertura breve antes de continuar con esa intencion.\n- Despues del saludo, sigue de forma natural con lo que el cliente pidio.\n- No uses saludos largos.",
   "messageSequences": {
     "reservation_confirmed": {
       "messages": [
@@ -567,16 +567,16 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       {
         "id": "discovery",
         "name": "Descubrimiento",
-        "goal": "Dar la bienvenida, presentar las categorias u opciones iniciales y avanzar solo cuando el cliente elija un servicio concreto.",
-        "hint": "Si el cliente solo saluda o abre la conversacion sin pedir un servicio concreto, primero llama get_service_catalog con view categories. Despues saluda de forma natural, presentate como Luis Petit de BARBER KIDS, muestra las categorias u opciones devueltas por el catalogo sin precios y pregunta en cual esta interesado. Si el cliente nombra una categoria u opcion amplia, llama get_service_catalog con view services y query usando las palabras del cliente; muestra los servicios devueltos con precio y duracion, y pregunta cual prefiere. Si el cliente nombra un servicio concreto o un equivalente claro, primero intenta guardarlo con resolve_service_selection usando el texto del cliente y el contexto inmediato de la misma solicitud. Cuando el cliente seleccione un servicio del catalogo previamente mostrado, guardalo con resolve_service_selection usando el texto literal del cliente y el contexto inmediato de la misma solicitud. Si no hay una opcion clara despues de intentarlo, pide que elija un servicio exacto usando solo opciones oficiales del catalogo. No uses set_fact para registrar service.",
+        "goal": "Ayudar al cliente a elegir un servicio exacto del catalogo.",
+        "hint": "Si el cliente solo saluda o abre la conversacion sin pedir un servicio concreto, primero llama get_service_catalog con view categories. Despues muestra las categorias u opciones devueltas por el catalogo sin precios y pregunta en cual esta interesado. Si el cliente nombra una categoria, familia u opcion amplia, llama get_service_catalog con view services y query usando las palabras del cliente; muestra los servicios devueltos con precio y duracion, y pregunta cual prefiere. No uses resolve_service_selection para categorias, familias u opciones amplias. Si el cliente nombra un servicio concreto o un equivalente claro de un servicio exacto, intenta guardarlo con resolve_service_selection usando el texto del cliente y el contexto inmediato de la misma solicitud. Cuando el cliente seleccione un servicio del catalogo previamente mostrado, guardalo con resolve_service_selection usando el texto literal del cliente y el contexto inmediato de la misma solicitud. Si resolve_service_selection devuelve ambiguo o no encontrado y el texto del cliente trae categoria, familia, servicio u opcion, llama get_service_catalog con view services y query usando esas mismas palabras. Si no hay una opcion clara despues de consultar servicios, pide que elija un servicio exacto usando solo opciones oficiales del catalogo. No uses set_fact para registrar service.",
         "allowedTools": ["get_service_catalog", "resolve_service_selection"],
         "advanceWhenFacts": ["service"]
       },
       {
         "id": "add_ons",
         "name": "Complementos",
-        "goal": "Ofrecer adicionales compatibles solo para cortes elegibles antes de preparar el anticipo.",
-        "hint": "Llama get_compatible_add_ons para el servicio elegido. Si hay complementos compatibles, explica que son adicionales opcionales, se realizan dentro del tiempo del corte y tienen valor agregado. Ofrece solo los complementos devueltos por la herramienta en lista, incluyendo el precio de cada complemento, y pregunta si desea agregar alguno o continuar sin adicionales. Si el servicio no tiene complementos compatibles, registra add_ons=ninguno y avanza. Cuando el cliente elija uno o varios complementos exactos, registra add_ons con los nombres canonicos separados por coma. Si no desea complementos, registra add_ons=ninguno.",
+        "goal": "Ofrecer adicionales compatibles cuando apliquen antes de preparar el anticipo.",
+        "hint": "Llama get_compatible_add_ons para el servicio elegido. Cuando existan complementos compatibles, explica que son adicionales opcionales, se agregan al servicio principal y tienen valor agregado. Ofrece los complementos devueltos por la herramienta en lista, incluyendo el precio de cada complemento, y pregunta si desea agregar alguno o continuar. Con lista vacia, registra add_ons=ninguno y avanza. Cuando el cliente elija uno o varios complementos exactos, registra add_ons con los nombres canonicos separados por coma. Cuando el cliente prefiera continuar, registra add_ons=ninguno.",
         "allowedTools": ["get_compatible_add_ons", "set_fact"],
         "advanceWhenFacts": ["add_ons"],
         "reentryOnFactChanged": ["service"]
@@ -585,7 +585,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         "id": "scheduling",
         "name": "Agenda",
         "goal": "Revisar disponibilidad y validar fecha y hora para una reserva por hora.",
-        "hint": "Todos los servicios de Luis Petit se agendan como reserva. Si falta fecha, pregunta: Para que dia deseas el servicio? Si el cliente da dia y hora juntos, registra desired_date y desired_time y llama check_availability con fecha y hora en el mismo turno. Si el cliente da fecha pero no da hora, registra desired_date y en ese mismo turno llama obligatoriamente check_availability sin time; responde mostrando solo los horarios devueltos por la herramienta y pregunta cual prefiere. No preguntes una hora preferida antes de consultar disponibilidad del dia. Usa horarios en bloques de una hora. Cuando el cliente elija una hora de los horarios presentados, registra desired_time y llama check_availability con fecha y hora. Si el horario esta disponible, deja avanzar el flujo.",
+        "hint": "Todos los servicios de este flujo se agendan como reserva. Para check_availability usa el valor canonico guardado en service. Si falta fecha, pregunta: Para que dia deseas el servicio? Si el cliente da dia y hora juntos, registra desired_date y desired_time y llama check_availability con fecha y hora en el mismo turno. Si el cliente da fecha pendiente de hora, registra desired_date y en ese mismo turno llama check_availability usando la fecha; responde mostrando los horarios devueltos por la herramienta y pregunta cual prefiere. Consulta disponibilidad del dia antes de pedir una hora especifica. Usa horarios en bloques de una hora. Cuando el cliente elija una hora de los horarios presentados, registra desired_time y llama check_availability con fecha y hora. Si el horario esta disponible, deja avanzar el flujo.",
         "allowedTools": ["check_availability", "set_fact"],
         "afterTool": [
           {
@@ -611,7 +611,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         "id": "customer_data",
         "name": "Datos del cliente",
         "goal": "Recoger los datos minimos para preparar el anticipo.",
-        "hint": "Confirma brevemente servicio, fecha y hora. Pide solo los datos faltantes: nombre del cliente y, si no viene del canal, telefono.",
+        "hint": "Confirma brevemente servicio, fecha y hora. Pide los datos faltantes: nombre del cliente y telefono cuando este pendiente por canal.",
         "allowedTools": ["set_fact"],
         "advanceWhenFacts": ["customer_name", "customer_phone"]
       },
@@ -619,7 +619,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         "id": "finalization",
         "name": "Cierre con anticipo",
         "goal": "Preparar el resumen, generar el link de anticipo y esperar confirmacion automatica de pago.",
-        "hint": "Si ya estan servicio, fecha, hora, nombre y telefono, llama prepare_checkout usando unicamente medios de pago registrados en checkout.paymentMethods. Si existe un solo medio registrado, usalo directamente sin preguntar permiso adicional. Si el cliente dice que ya pago, usa verify_payment. Si el cliente pide un medio distinto a los registrados, no lo menciones como alternativa disponible ni como opcion no confirmada; responde de forma natural usando solo el medio registrado que permite asegurar la reserva y continua con la opcion registrada por checkout. Nunca sugieras canales, acuerdos manuales o pagos por fuera de checkout.paymentMethods. Indica de forma natural que la reserva se confirmara automaticamente cuando se reciba y apruebe el pago. Si hay link pendiente y el cliente pide cambiar servicio sin nombrar el nuevo servicio, llama get_service_catalog y pregunta cual opcion exacta prefiere. Cuando el cliente seleccione un servicio, guardalo con resolve_service_selection usando el texto literal del cliente. Si no hay una opcion clara despues de intentarlo, consulta el catalogo y pregunta cual opcion exacta prefiere. Para fecha u hora usa set_fact, revalida disponibilidad cuando corresponda y vuelve a prepare_checkout para generar un nuevo resumen/link. No uses suspend_reservation para un link pendiente sin reserva confirmada.",
+        "hint": "Si ya estan servicio, fecha, hora, nombre y telefono, llama prepare_checkout usando medios de pago registrados en checkout.paymentMethods. Si existe un solo medio registrado, usalo directamente. Si el cliente dice que ya pago, usa verify_payment. Si el cliente pide un medio distinto a los registrados, responde de forma natural con el medio registrado que permite asegurar la reserva y continua con la opcion registrada por checkout. Mantente en checkout.paymentMethods para pagos y confirmacion automatica. Indica de forma natural que la reserva se confirmara automaticamente cuando se reciba y apruebe el pago. Si hay link pendiente y el cliente pide cambiar servicio con nuevo servicio pendiente, llama get_service_catalog y pregunta cual opcion exacta prefiere. Cuando el cliente seleccione un servicio, guardalo con resolve_service_selection usando el texto literal del cliente. Con opcion poco clara despues de intentarlo, consulta el catalogo y pregunta cual opcion exacta prefiere. Para fecha u hora usa set_fact, revalida disponibilidad cuando corresponda y vuelve a prepare_checkout para generar un nuevo resumen/link. Para link pendiente usa cambio de servicio, fecha u hora por catalogo, facts, disponibilidad y checkout.",
         "allowedTools": [
           "prepare_checkout",
           "verify_payment",
@@ -645,33 +645,27 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "id": "complete_paid_slot_assignment",
       "priority": 950,
       "goal": "Completar la asignacion de horario cuando un pago confirmado quedo sin reserva porque el horario original ya no estaba disponible.",
-      "hint": "Usa esta ruta solo cuando el cliente este eligiendo nuevo horario para un pago ya confirmado. Primero valida el horario con check_availability usando el servicio original; si esta disponible, llama assign_paid_slot con date y time. Si no esta disponible, ofrece los horarios devueltos por check_availability.",
+      "hint": "Usa esta ruta cuando el cliente este eligiendo nuevo horario para un pago ya confirmado. Primero valida el horario con check_availability usando el servicio original; si esta disponible, llama assign_paid_slot con date y time. Con horario ocupado, ofrece los horarios devueltos por check_availability.",
       "allowedTools": ["check_availability", "assign_paid_slot", "set_fact"]
     },
-    {
-      "id": "catalog_or_current_request_change",
-      "priority": 925,
-      "goal": "Responder consultas de catalogo, precios u opciones en cualquier etapa, y permitir cambios de la solicitud actual antes de pago o reserva confirmada.",
-      "hint": "Usa esta ruta para consultas de catalogo, precios u opciones, o cambios de servicio, fecha u hora antes de pago o reserva confirmada. Si no hay categoria clara, muestra categorias sin precios; si hay categoria o familia, consulta servicios con la busqueda del cliente y muestra precio y duracion. Para servicio concreto o elegido de una lista, usa resolve_service_selection con el texto y contexto inmediato del cliente; al guardarlo, revalida disponibilidad si ya hay fecha y hora y reconstruye checkout si aplica. Si no queda claro, pide un servicio exacto del catalogo. Para fecha u hora usa set_fact, check_availability y reconstruye checkout si aplica. No canceles ni suspendas reservas desde esta ruta.",
-      "allowedTools": ["get_service_catalog", "get_compatible_add_ons", "resolve_service_selection", "set_fact", "check_availability", "prepare_checkout"]
-    },
+
     {
       "id": "manage_existing_reservation",
       "priority": 900,
       "goal": "Gestionar reservas existentes cuando el cliente quiera confirmar asistencia, cambiar, reagendar, cambiar servicio o cancelar una reserva ya creada.",
-      "hint": "Usa esta ruta antes del flujo de reserva nueva. Si el cliente confirma que asistira, usa confirm_reservation_attendance. Primero identifica la reserva con get_customer_reservations cuando haga falta. Para cambios, usa prepare_reservation_change y aplica con confirm_reservation_change solo despues de confirmacion clara. Si hay varias reservas, pregunta cual por fecha y servicio; nunca pidas UUID al cliente. Usa suspend_reservation solo cuando la intencion de suspender o cancelar sea clara, o despues de confirmacion explicita.",
+      "hint": "Usa esta ruta antes del flujo de reserva nueva. Si el cliente confirma que asistira, usa confirm_reservation_attendance. Primero identifica la reserva con get_customer_reservations cuando haga falta. Para cambios, usa prepare_reservation_change y aplica con confirm_reservation_change despues de confirmacion clara. Si hay varias reservas, pregunta cual por fecha y servicio. Usa suspend_reservation cuando la intencion de suspender o cancelar sea clara, o despues de confirmacion explicita.",
       "allowedTools": ["get_customer_reservations", "confirm_reservation_attendance", "prepare_reservation_change", "confirm_reservation_change", "suspend_reservation"]
     }
   ],
   "factSchema": [
-    { "key": "session.engagement", "role": "session.engagement", "label": "contexto de engagement", "type": "string", "required": false, "source": "session", "scope": "ephemeral" },
-    { "key": "booking_intent", "role": "booking.intent", "label": "intencion de reserva", "type": "string", "required": false, "source": "user", "scope": "request", "captureMode": "eager", "aliases": ["reservar", "cita", "agenda", "servicio", "precio", "corte", "barba", "cejas", "lavado", "domicilio", "tratamiento"] },
-    { "key": "service", "role": "booking.service", "label": "servicio", "type": "string", "required": true, "source": "user", "scope": "request", "captureMode": "eager", "retentionDays": 7, "aliases": ["servicio", "barba", "cejas", "lavado", "domicilio", "coloracion", "keratina", "tratamiento"] },
-    { "key": "desired_date", "role": "booking.date", "label": "fecha deseada", "type": "date", "required": true, "source": "user", "scope": "request", "captureMode": "eager", "retentionDays": 7, "aliases": ["fecha", "dia", "cuando", "hoy", "manana"] },
-    { "key": "desired_time", "role": "booking.time", "label": "hora deseada", "type": "time", "required": true, "source": "user", "scope": "request", "captureMode": "eager", "retentionDays": 7, "dependsOn": ["service", "desired_date"], "aliases": ["hora", "horario"] },
-    { "key": "availability_checked", "role": "booking.availability_checked", "label": "disponibilidad validada", "type": "string", "required": false, "source": "system", "scope": "ephemeral", "retentionDays": 1, "dependsOn": ["service", "desired_date", "desired_time"] },
-    { "key": "service_notes", "role": "booking.notes", "label": "notas del servicio", "type": "string", "required": false, "source": "user", "scope": "request", "captureMode": "eager", "retentionDays": 7, "aliases": ["direccion", "ubicacion", "barrio", "domicilio", "color", "keratina", "tratamiento", "nota"] },
-    { "key": "add_ons", "role": "booking.add_ons", "label": "adicionales", "type": "string", "required": false, "source": "user", "scope": "request", "captureMode": "eager", "retentionDays": 7, "dependsOn": ["service"], "aliases": ["adicional", "adicionales", "mascarilla", "aerografo", "sombreado", "fibra", "relajador", "masaje"] },
+    { "key": "session.engagement", "role": "session.engagement", "label": "contexto de engagement", "type": "string", "required": false, "source": "session", "scope": "ephemeral", "expireOnBusinessDayChange": true },
+    { "key": "booking_intent", "role": "booking.intent", "label": "intencion de reserva", "type": "string", "required": false, "source": "user", "scope": "request", "captureMode": "eager", "expireOnBusinessDayChange": true, "aliases": ["reservar", "cita", "agenda", "servicio", "precio", "corte", "barba", "cejas", "lavado", "domicilio", "tratamiento"] },
+    { "key": "service", "role": "booking.service", "label": "servicio", "type": "string", "required": true, "source": "user", "scope": "request", "captureMode": "eager", "retentionDays": 7, "expireOnBusinessDayChange": true, "aliases": ["servicio", "barba", "cejas", "lavado", "domicilio", "coloracion", "keratina", "tratamiento"] },
+    { "key": "desired_date", "role": "booking.date", "label": "fecha deseada", "type": "date", "required": true, "source": "user", "scope": "request", "captureMode": "eager", "retentionDays": 7, "expireOnBusinessDayChange": true, "aliases": ["fecha", "dia", "cuando", "hoy", "manana"] },
+    { "key": "desired_time", "role": "booking.time", "label": "hora deseada", "type": "time", "required": true, "source": "user", "scope": "request", "captureMode": "eager", "retentionDays": 7, "expireOnBusinessDayChange": true, "dependsOn": ["service", "desired_date"], "aliases": ["hora", "horario"] },
+    { "key": "availability_checked", "role": "booking.availability_checked", "label": "disponibilidad validada", "type": "string", "required": false, "source": "system", "scope": "ephemeral", "retentionDays": 1, "expireOnBusinessDayChange": true, "dependsOn": ["service", "desired_date", "desired_time"] },
+    { "key": "service_notes", "role": "booking.notes", "label": "notas del servicio", "type": "string", "required": false, "source": "user", "scope": "request", "captureMode": "eager", "retentionDays": 7, "expireOnBusinessDayChange": true, "aliases": ["direccion", "ubicacion", "barrio", "domicilio", "color", "keratina", "tratamiento", "nota"] },
+    { "key": "add_ons", "role": "booking.add_ons", "label": "adicionales", "type": "string", "required": false, "source": "user", "scope": "request", "captureMode": "eager", "retentionDays": 7, "expireOnBusinessDayChange": true, "dependsOn": ["service"], "aliases": ["adicional", "adicionales", "mascarilla", "aerografo", "sombreado", "fibra", "relajador", "masaje"] },
     { "key": "customer_name", "role": "customer.name", "label": "nombre del cliente", "type": "string", "required": true, "source": "user", "scope": "customer", "captureMode": "eager", "aliases": ["nombre", "cliente", "a nombre de", "mi nombre"] },
     { "key": "customer_phone", "role": "customer.phone", "label": "telefono del cliente", "type": "phone", "required": true, "source": "channel", "scope": "customer", "aliases": ["telefono", "celular", "whatsapp", "numero"] },
     { "key": "customer_email", "role": "customer.email", "label": "email del cliente", "type": "email", "required": false, "source": "user", "scope": "customer", "captureMode": "eager", "aliases": ["email", "correo"] }
@@ -927,4 +921,3 @@ END
 
 PRINT N'SeedLuisPetitBarber: negocio, servicios y agente Luis configurados.';
 GO
-

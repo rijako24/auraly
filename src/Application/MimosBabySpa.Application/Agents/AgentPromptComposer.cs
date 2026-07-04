@@ -46,13 +46,9 @@ public sealed class AgentPromptComposer : IPromptComposer
         if (!string.IsNullOrWhiteSpace(temporalBlock))
             blocks.Add(temporalBlock);
 
-        var turnPolicyBlock = BuildTurnPolicyBlock(input.History);
-        if (!string.IsNullOrWhiteSpace(turnPolicyBlock))
-            blocks.Add(turnPolicyBlock);
-
-        var rolloverBlock = BuildBusinessDayRolloverBlock(input.Config, input.Session);
-        if (!string.IsNullOrWhiteSpace(rolloverBlock))
-            blocks.Add(rolloverBlock);
+        var openingPolicyBlock = BuildTurnContextBlock(input.History, input.Session);
+        if (!string.IsNullOrWhiteSpace(openingPolicyBlock))
+            blocks.Add(openingPolicyBlock);
 
         var stateBlock = BuildStateFactsBlock(input.Config, input.Session, input.LatestPayment);
         if (!string.IsNullOrWhiteSpace(stateBlock))
@@ -141,49 +137,23 @@ public sealed class AgentPromptComposer : IPromptComposer
         blocks.Add(string.Join(Environment.NewLine, lines));
         return string.Join($"{Environment.NewLine}{Environment.NewLine}", blocks);
     }
-    internal static string BuildTurnPolicyBlock(IEnumerable<Message> history)
+    internal static string BuildTurnContextBlock(IEnumerable<Message> history, AgentToolContext? session)
     {
-        if (history.Any(m => IsBotSender(m.Sender)))
+        var isFirstVisibleResponse = !history.Any(m => IsBotSender(m.Sender));
+        var isNewBusinessDay = session?.BusinessDayRollover == true;
+        if (!isFirstVisibleResponse && !isNewBusinessDay)
             return string.Empty;
 
-        return string.Join(Environment.NewLine, new[]
-        {
-            "## POLITICA DEL TURNO",
-            "- Esta sera la primera respuesta visible del bot en la conversacion.",
-        });
-    }
-
-    internal static string BuildBusinessDayRolloverBlock(AgentConfig config, AgentToolContext? session)
-    {
-        if (session?.BusinessDayRollover != true)
-            return string.Empty;
-
-        var requestFacts = config.FactSchema
-            .Where(f => f.EffectiveScope().Equals(FactScopes.Request, StringComparison.OrdinalIgnoreCase))
-            .Where(f => session.Facts.TryGetValue(f.Key, out var value) && !string.IsNullOrWhiteSpace(value))
-            .Select(f => string.IsNullOrWhiteSpace(f.Label) ? f.Key : f.Label)
-            .ToList();
+        var reason = isFirstVisibleResponse
+            ? "primera respuesta visible"
+            : "nuevo dia operativo";
 
         var lines = new List<string>
         {
-            "## RETOMA DE DIA",
-            "- Es el mismo hilo del cliente y cambio el dia operativo.",
-            "- Inicia la respuesta saludando y presentandote brevemente con la identidad del agente/negocio definida arriba; no reinicies el flujo ni lo trates como primera conversacion.",
-            "- Despues continua desde el ultimo mensaje del cliente y el ESTADO ACTUAL.",
-            "- Usa los datos listados en ESTADO ACTUAL como contexto vigente; no los repreguntes ni los vuelvas a guardar con el mismo valor."
+            "## CONTEXTO DEL TURNO",
+            "- apertura_requerida: true",
+            $"- motivo_apertura: {reason}"
         };
-
-        if (session.PreviousBusinessDay.HasValue)
-            lines.Add($"- ultimo_dia_activo: {session.PreviousBusinessDay.Value:yyyy-MM-dd}");
-
-        if (requestFacts.Count > 0)
-            lines.Add($"- datos_de_solicitud_vigentes: {string.Join(", ", requestFacts)}");
-
-        if (session.RolloverClearedFacts.Count > 0)
-        {
-            lines.Add($"- datos_vencidos_o_recalculables: {string.Join(", ", session.RolloverClearedFacts)}");
-            lines.Add("- Si alguno de esos datos vencidos hace falta para continuar, pide solo lo faltante antes de usar herramientas dependientes.");
-        }
 
         return string.Join(Environment.NewLine, lines);
     }

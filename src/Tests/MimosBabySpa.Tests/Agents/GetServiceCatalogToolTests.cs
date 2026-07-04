@@ -84,6 +84,7 @@ public class GetServiceCatalogToolTests
         catalog.RequestedQuery.Should().Be("corte");
     }
 
+
     private sealed class FakeCatalogGenerator(Guid businessId, string content) : ICatalogContentGenerator
     {
         public bool WasCalled { get; private set; }

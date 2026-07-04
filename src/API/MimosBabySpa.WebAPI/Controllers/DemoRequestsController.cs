@@ -16,7 +16,7 @@ namespace MimosBabySpa.WebAPI.Controllers;
 public sealed class DemoRequestsController : ControllerBase
 {
     private const string DemoProvider = "web-demo";
-    private static readonly TimeSpan DebounceDelay = TimeSpan.FromSeconds(3);
+    private static readonly TimeSpan DebounceDelay = TimeSpan.FromSeconds(1);
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNameCaseInsensitive = true

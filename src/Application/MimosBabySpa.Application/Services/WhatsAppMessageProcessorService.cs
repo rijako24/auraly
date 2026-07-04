@@ -105,8 +105,7 @@ public class WhatsAppMessageProcessorService : IWhatsAppMessageProcessorService
 
         if (agentId is null)
         {
-            _logger.LogWarning("No hay agente activo para negocio {BusinessId}. Mensaje ignorado.", businessId);
-            return;
+            throw new InvalidOperationException($"No hay agente activo para negocio {businessId}.");
         }
 
         // 3. Procesar con el motor agentico
@@ -121,7 +120,8 @@ public class WhatsAppMessageProcessorService : IWhatsAppMessageProcessorService
         {
             _logger.LogError("AgentConversationService falló para Conv {ConvId}: {Err}",
                 conversation.ConversationId, result.ErrorMessage);
-            return;
+            throw new InvalidOperationException(
+                $"AgentConversationService fallo para la conversacion {conversation.ConversationId}: {result.ErrorMessage ?? "sin detalle"}");
         }
 
         // 4. Actualizar lead y enviar al canal
@@ -137,7 +137,8 @@ public class WhatsAppMessageProcessorService : IWhatsAppMessageProcessorService
                 conversation.BusinessId,
                 userNumber,
                 result.OutboundMessages,
-                conversation.ConversationId);
+                conversation.ConversationId,
+                throwOnFailure: true);
         }
     }
 

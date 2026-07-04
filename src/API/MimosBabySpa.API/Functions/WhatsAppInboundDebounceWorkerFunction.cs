@@ -10,7 +10,7 @@ namespace MimosBabySpa.API.Functions;
 
 public sealed class WhatsAppInboundDebounceWorkerFunction
 {
-    private static readonly TimeSpan DebounceDelay = TimeSpan.FromSeconds(3);
+    private static readonly TimeSpan DebounceDelay = TimeSpan.FromSeconds(1);
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNameCaseInsensitive = true
