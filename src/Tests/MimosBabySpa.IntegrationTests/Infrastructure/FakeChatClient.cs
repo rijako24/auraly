@@ -5,7 +5,7 @@ namespace MimosBabySpa.IntegrationTests.Infrastructure;
 /// <summary>
 /// IChatClient falso que devuelve respuestas pre-programadas en secuencia.
 /// Cada llamada a CompleteAsync extrae el siguiente resultado de la cola.
-/// Si la cola se agota, devuelve un Stop genérico.
+/// Si la cola se agota, devuelve un Stop genÃ©rico.
 /// </summary>
 public class FakeChatClient : IChatClient
 {
@@ -39,7 +39,7 @@ public class FakeChatClient : IChatClient
         });
     }
 
-    /// <summary>Agrega más resultados scripteados a la cola (útil por turno).</summary>
+    /// <summary>Agrega mÃ¡s resultados scripteados a la cola (Ãºtil por turno).</summary>
     public void Enqueue(IEnumerable<ChatCompletionResult> results)
     {
         foreach (var r in results)
@@ -100,6 +100,53 @@ public static class FakeLlmScript
                 FinishReason = ChatCompletionFinishReason.ToolCalls,
                 ToolCalls = toolCalls,
                 AssistantMessage = ChatMessage.AssistantWithToolCalls(toolCalls)
+            },
+            new ChatCompletionResult
+            {
+                Success = true,
+                FinishReason = ChatCompletionFinishReason.Stop,
+                Content = textResponse,
+                AssistantMessage = ChatMessage.Assistant(textResponse)
+            }
+        ];
+    }
+
+    public static IReadOnlyList<ChatCompletionResult> ManyToolsThenToolThenText(
+        IReadOnlyList<(string ToolName, string ArgsJson)> firstTools,
+        string nextToolName,
+        string nextArgsJson,
+        string textResponse)
+    {
+        var firstToolCalls = firstTools
+            .Select(tool => new ToolCallRequest
+            {
+                Id = $"call_{++_callIdCounter:D3}",
+                FunctionName = tool.ToolName,
+                ArgumentsJson = tool.ArgsJson
+            })
+            .ToList();
+        var nextToolCall = new ToolCallRequest
+        {
+            Id = $"call_{++_callIdCounter:D3}",
+            FunctionName = nextToolName,
+            ArgumentsJson = nextArgsJson
+        };
+
+        return
+        [
+            new ChatCompletionResult
+            {
+                Success = true,
+                FinishReason = ChatCompletionFinishReason.ToolCalls,
+                ToolCalls = firstToolCalls,
+                AssistantMessage = ChatMessage.AssistantWithToolCalls(firstToolCalls)
+            },
+            new ChatCompletionResult
+            {
+                Success = true,
+                FinishReason = ChatCompletionFinishReason.ToolCalls,
+                ToolCalls = [nextToolCall],
+                AssistantMessage = ChatMessage.AssistantWithToolCalls([nextToolCall])
             },
             new ChatCompletionResult
             {

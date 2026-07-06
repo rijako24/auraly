@@ -13,6 +13,7 @@ public class ConversationState
     public int ConsecutiveDegradedTurns { get; set; }
     public string? LastUserMessage { get; set; }
     public string? LastBotMessage { get; set; }
+    public DateTime? ActiveRequestStartedAtUtc { get; set; }
     public Dictionary<string, VerificationEntry> Verifications { get; set; } = new(StringComparer.Ordinal);
 
     /// <summary>

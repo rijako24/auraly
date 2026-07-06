@@ -465,7 +465,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
   "maxToolIterations": 8,
   "historyWindowSize": 24,
   "consecutiveErrorEscalationThreshold": 3,
-  "persona": "Eres Luis Petit, barbero profesional de BARBER KIDS. Atiendes por WhatsApp en primera persona, con tono cercano, profesional, puntual y amable. Tu trabajo es ayudar a elegir el servicio correcto, ofrecer adicionales cuando apliquen, revisar disponibilidad y guiar al cliente hasta pagar el anticipo para asegurar la cita.",
+  "persona": "Eres Luis Petit, barbero profesional de BARBER KIDS MEN. Atiendes por WhatsApp en primera persona, con tono cercano, profesional, puntual y amable. Tu trabajo es ayudar a elegir el servicio correcto, ofrecer adicionales cuando apliquen, revisar disponibilidad y guiar al cliente hasta pagar el anticipo para asegurar la cita.",
   "policies": "## MARCA Y ATENCION\n\n- La marca de atencion al cliente es BARBER KIDS MEN.\n- Luis Petit es el barbero profesional que atiende la conversacion.\n- Cada servicio es una experiencia personalizada, enfocada en elegancia, detalle, puntualidad y buen trato.\n\n## APERTURA\n\n- En cada apertura del dia, saluda natural, presentate como Luis Petit de BARBER KIDS MEN y da la bienvenida.\n- Usa el nombre del cliente si esta disponible.\n- Si el cliente ya pidio algo, usa solo una apertura breve antes de continuar con esa intencion.\n- Despues del saludo, sigue de forma natural con lo que el cliente pidio.\n- No uses saludos largos.",
   "messageSequences": {
     "reservation_confirmed": {
@@ -501,7 +501,17 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
     "payment_slot_taken": {
       "messages": [
         { "body": "Recibimos tu pago de ${amount} {currency}. Tu comprobante quedo registrado." },
-        { "body": "Lo sentimos, el horario de las {Time} ya no esta disponible porque otro cliente lo reservo primero. Tu pago esta seguro. Quieres elegir otro horario? Opciones: {slots}." }
+        { "body": "Lo sentimos, el horario de las {Time} ya no esta disponible. Tu pago esta seguro. Para que dia te gustaria reagendar tu reserva?" }
+      ]
+    },
+    "reservation_attendance_confirmed_reply": {
+      "messages": [
+        { "body": "Muchas gracias, tu cita ha sido confirmada." }
+      ]
+    },
+    "reservation_attendance_reschedule_reply": {
+      "messages": [
+        { "body": "Claro, para que dia y hora te gustaria reagendar tu cita?" }
       ]
     },
     "reservation_created": {
@@ -532,7 +542,19 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
     "confirmation": {
       "enabled": true,
       "trigger": { "type": "relative", "hoursBefore": 24 },
-      "sendMessageSequence": "reservation_confirmation_request"
+      "sendMessageSequence": "reservation_confirmation_request",
+      "actions": {
+        "confirm": {
+          "tool": "confirm_reservation_attendance",
+          "arguments": { "customer_confirmed": true, "job_id": "{source_id}" },
+          "sendMessageSequence": "reservation_attendance_confirmed_reply"
+        },
+        "reschedule": {
+          "tool": "request_reservation_reschedule",
+          "arguments": { "job_id": "{source_id}" },
+          "sendMessageSequence": "reservation_attendance_reschedule_reply"
+        }
+      }
     },
     "reminder": {
       "enabled": true,
@@ -590,7 +612,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         "afterTool": [
           {
             "tool": "check_availability",
-            "when": { "path": "data.availability_checked", "equals": "true" },
+            "when": { "path": "data.date" },
             "setFact": { "key": "desired_date", "value": "{{data.date}}" }
           },
           {
@@ -653,8 +675,8 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "id": "manage_existing_reservation",
       "priority": 900,
       "goal": "Gestionar reservas existentes cuando el cliente quiera confirmar asistencia, cambiar, reagendar, cambiar servicio o cancelar una reserva ya creada.",
-      "hint": "Usa esta ruta antes del flujo de reserva nueva. Si el cliente confirma que asistira, usa confirm_reservation_attendance. Primero identifica la reserva con get_customer_reservations cuando haga falta. Para cambios, usa prepare_reservation_change y aplica con confirm_reservation_change despues de confirmacion clara. Si hay varias reservas, pregunta cual por fecha y servicio. Usa suspend_reservation cuando la intencion de suspender o cancelar sea clara, o despues de confirmacion explicita.",
-      "allowedTools": ["get_customer_reservations", "confirm_reservation_attendance", "prepare_reservation_change", "confirm_reservation_change", "suspend_reservation"]
+      "hint": "Usa esta ruta antes del flujo de reserva nueva. Si el cliente confirma que asistira, usa confirm_reservation_attendance. Si pide reagendar, usa request_reservation_reschedule y luego pregunta nueva fecha y hora. Primero identifica la reserva con get_customer_reservations cuando haga falta. Para cambios, usa prepare_reservation_change y aplica con confirm_reservation_change despues de confirmacion clara. Si hay varias reservas, pregunta cual por fecha y servicio. Usa suspend_reservation cuando la intencion de suspender o cancelar sea clara, o despues de confirmacion explicita.",
+      "allowedTools": ["get_customer_reservations", "confirm_reservation_attendance", "request_reservation_reschedule", "prepare_reservation_change", "confirm_reservation_change", "suspend_reservation"]
     }
   ],
   "factSchema": [
@@ -668,9 +690,15 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
     { "key": "add_ons", "role": "booking.add_ons", "label": "adicionales", "type": "string", "required": false, "source": "user", "scope": "request", "captureMode": "eager", "retentionDays": 7, "expireOnBusinessDayChange": true, "dependsOn": ["service"], "aliases": ["adicional", "adicionales", "mascarilla", "aerografo", "sombreado", "fibra", "relajador", "masaje"] },
     { "key": "customer_name", "role": "customer.name", "label": "nombre del cliente", "type": "string", "required": true, "source": "user", "scope": "customer", "captureMode": "eager", "aliases": ["nombre", "cliente", "a nombre de", "mi nombre"] },
     { "key": "customer_phone", "role": "customer.phone", "label": "telefono del cliente", "type": "phone", "required": true, "source": "channel", "scope": "customer", "aliases": ["telefono", "celular", "whatsapp", "numero"] },
-    { "key": "customer_email", "role": "customer.email", "label": "email del cliente", "type": "email", "required": false, "source": "user", "scope": "customer", "captureMode": "eager", "aliases": ["email", "correo"] }
+    { "key": "customer_email", "role": "customer.email", "label": "email del cliente", "type": "email", "required": false, "source": "user", "scope": "customer", "captureMode": "eager", "aliases": ["email", "correo"] },
+    { "key": "payment_method", "role": "payment.method", "label": "metodo de pago", "type": "string", "required": false, "source": "system", "scope": "request", "expireOnBusinessDayChange": true }
   ],
   "guards": {
+    "capability:checkout.prepare": {
+      "requires": [
+        "verification:availability_checked"
+      ]
+    },
     "capability:reservation.create": {
       "requires": [
         "verification:availability_checked",
@@ -698,6 +726,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
     "suspend_reservation",
     "get_customer_reservations",
     "confirm_reservation_attendance",
+    "request_reservation_reschedule",
     "prepare_reservation_change",
     "confirm_reservation_change",
     "verify_payment",

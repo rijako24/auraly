@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import type { ColumnDef } from "@tanstack/react-table";
-import { MoreHorizontal, Plus, Eye, UserPlus, Users } from "lucide-react";
+import { MoreHorizontal, Plus, Eye, UserPlus, Users, Megaphone } from "lucide-react";
 
 import { DataTable } from "@/components/tables/data-table";
 import { StatCard } from "@/components/cards/stat-card";
@@ -172,12 +172,20 @@ export default function LeadsPage() {
           <h1 className="text-2xl font-semibold tracking-tight">Leads</h1>
           <p className="text-muted-foreground">Gestiona los leads y seguimiento de clientes potenciales</p>
         </div>
-        <Button asChild>
-          <Link href="/dashboard/leads/new">
-            <Plus className="mr-2 h-4 w-4" />
-            Nuevo Lead
-          </Link>
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="outline" asChild>
+            <Link href="/dashboard/campaigns">
+              <Megaphone className="mr-2 h-4 w-4" />
+              Campañas
+            </Link>
+          </Button>
+          <Button asChild>
+            <Link href="/dashboard/leads/new">
+              <Plus className="mr-2 h-4 w-4" />
+              Nuevo Lead
+            </Link>
+          </Button>
+        </div>
       </div>
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard title="Total Leads" value={stats.total} icon={Users} />

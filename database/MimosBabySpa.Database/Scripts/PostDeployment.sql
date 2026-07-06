@@ -48,6 +48,7 @@
 :r .\Seeds\SeedRadaConcept.sql
 :r .\Seeds\SeedAuraly.sql
 :r .\Seeds\SeedLuisPetitBarber.sql
+:r .\Seeds\SeedGoogleCalendarIntegrations.sql
 :r .\Seeds\SeedSolorzanoBusinessIdentity.sql
 :r .\Seeds\SeedBusinessWorkingHours.sql
 :r .\Seeds\SeedSolorzanoWorkingHours.sql

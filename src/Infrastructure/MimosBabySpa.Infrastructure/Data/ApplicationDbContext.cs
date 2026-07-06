@@ -13,6 +13,8 @@ public class ApplicationDbContext : DbContext
     public DbSet<Conversation> Conversations { get; set; }
     public DbSet<Message> Messages { get; set; }
     public DbSet<Lead> Leads { get; set; }
+    public DbSet<Campaign> Campaigns { get; set; }
+    public DbSet<CampaignRecipient> CampaignRecipients { get; set; }
     public DbSet<Tenant> Tenants { get; set; }
     public DbSet<Business> Businesses { get; set; }
     public DbSet<BusinessWhatsAppNumber> BusinessWhatsAppNumbers { get; set; }
@@ -223,6 +225,57 @@ public class ApplicationDbContext : DbContext
             entity.HasIndex(e => new { e.BusinessId, e.UserNumber }); // Índice compuesto
         });
 
+        modelBuilder.Entity<Campaign>(entity =>
+        {
+            entity.HasKey(e => e.CampaignId);
+            entity.Property(e => e.Name).HasMaxLength(160).IsRequired();
+            entity.Property(e => e.Status).HasMaxLength(30).IsRequired();
+            entity.Property(e => e.SourceType).HasMaxLength(30).IsRequired();
+            entity.Property(e => e.TemplateName).HasMaxLength(120).IsRequired();
+            entity.Property(e => e.LanguageCode).HasMaxLength(20).IsRequired();
+            entity.Property(e => e.TemplateCategory).HasMaxLength(30).IsRequired();
+            entity.Property(e => e.FiltersJson).HasColumnType("nvarchar(max)");
+            entity.Property(e => e.ParameterMappingJson).HasColumnType("nvarchar(max)");
+            entity.HasOne(e => e.Business)
+                  .WithMany()
+                  .HasForeignKey(e => e.BusinessId)
+                  .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.CreatedByUser)
+                  .WithMany()
+                  .HasForeignKey(e => e.CreatedByUserId)
+                  .OnDelete(DeleteBehavior.Restrict);
+            entity.HasMany(e => e.Recipients)
+                  .WithOne(e => e.Campaign)
+                  .HasForeignKey(e => e.CampaignId)
+                  .OnDelete(DeleteBehavior.Cascade);
+            entity.HasIndex(e => new { e.BusinessId, e.CreatedAt });
+        });
+
+        modelBuilder.Entity<CampaignRecipient>(entity =>
+        {
+            entity.HasKey(e => e.CampaignRecipientId);
+            entity.Property(e => e.PhoneNormalized).HasMaxLength(50).IsRequired();
+            entity.Property(e => e.CustomerName).HasMaxLength(160);
+            entity.Property(e => e.Status).HasMaxLength(30).IsRequired();
+            entity.Property(e => e.WhatsAppMessageId).HasMaxLength(160);
+            entity.Property(e => e.Error).HasMaxLength(1000);
+            entity.Property(e => e.VariablesJson).HasColumnType("nvarchar(max)");
+            entity.Property(e => e.AttemptCount).IsRequired();
+            entity.HasOne(e => e.Business)
+                  .WithMany()
+                  .HasForeignKey(e => e.BusinessId)
+                  .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.SourceLead)
+                  .WithMany()
+                  .HasForeignKey(e => e.SourceLeadId)
+                  .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.SourceReservation)
+                  .WithMany()
+                  .HasForeignKey(e => e.SourceReservationId)
+                  .OnDelete(DeleteBehavior.Restrict);
+            entity.HasIndex(e => new { e.CampaignId, e.PhoneNormalized }).IsUnique();
+            entity.HasIndex(e => new { e.BusinessId, e.Status });
+        });
         // Reservation configuration
         modelBuilder.Entity<Reservation>(entity =>
         {
@@ -984,6 +1037,7 @@ public class ApplicationDbContext : DbContext
             entity.Property(e => e.Owner).HasConversion<byte>().HasDefaultValue(ConversationOwner.Bot);
             entity.Property(e => e.LastUserMessage).HasColumnType("NVARCHAR(MAX)");
             entity.Property(e => e.LastBotMessage).HasColumnType("NVARCHAR(MAX)");
+            entity.Property(e => e.ActiveRequestStartedAtUtc);
             entity.Property(e => e.VerificationsJson).HasColumnType("NVARCHAR(MAX)");
             entity.Property(e => e.StageSnapshotsJson).HasColumnType("NVARCHAR(MAX)");
             entity.Property(e => e.Version).IsRequired().HasDefaultValue(1);

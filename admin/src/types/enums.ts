@@ -285,12 +285,12 @@ function getConversationStageAccentColor(normalized: string): string {
 }
 
 export enum SystemConfigurationKey {
-  ToneAndStyle = 1,
+  GoogleCalendarPlatformCredentials = 1,
   HumanEscalationErrorThreshold = 2,
 }
 
 export const SystemConfigurationKeyLabels: Record<SystemConfigurationKey, string> = {
-  [SystemConfigurationKey.ToneAndStyle]: "Tono y Estilo",
+  [SystemConfigurationKey.GoogleCalendarPlatformCredentials]: "Credenciales Google Calendar",
   [SystemConfigurationKey.HumanEscalationErrorThreshold]: "Umbral de Escalamiento",
 };
 
@@ -345,6 +345,3 @@ export const PromotionBenefitTypeLabels: Record<PromotionBenefitType, string> = 
   [PromotionBenefitType.FixedUnitPrice]: "Precio fijo",
   [PromotionBenefitType.FreeItem]: "Gratis",
 };
-
-
-

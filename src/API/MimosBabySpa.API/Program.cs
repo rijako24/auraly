@@ -17,6 +17,8 @@ using Microsoft.Extensions.Options;
 
 using MimosBabySpa.Application.BusinessRules;
 using MimosBabySpa.Application.Billing;
+using MimosBabySpa.Application.Campaigns.Interfaces;
+using MimosBabySpa.Application.Campaigns.Services;
 using MimosBabySpa.Application.Commerce;
 using MimosBabySpa.Application.Configuration;
 using MimosBabySpa.Application.StateManagement;
@@ -52,6 +54,7 @@ var host = new HostBuilder()
         services.AddScoped<IConversationRepository, ConversationRepository>();
         services.AddScoped<IMessageRepository, MessageRepository>();
         services.AddScoped<ILeadRepository, LeadRepository>();
+        services.AddScoped<ICampaignRepository, CampaignRepository>();
         services.AddScoped<IReservationRepository, ReservationRepository>();
         services.AddScoped<IConversationStateRepository, ConversationStateRepository>();
         services.AddScoped<IPaymentTransactionRepository, PaymentTransactionRepository>();
@@ -63,11 +66,13 @@ var host = new HostBuilder()
         services.AddScoped<IConversationLifecycleService, ConversationLifecycleService>();
         services.AddScoped<IMessageService, MessageService>();
         services.AddScoped<ILeadService, LeadService>();
+        services.AddScoped<ICampaignDispatchService, CampaignDispatchService>();
         services.AddScoped<IReservationService, ReservationService>();
         services.AddScoped<IBusinessIdentificationService, BusinessIdentificationService>();
         services.AddScoped<IWhatsAppWebhookParserService, WhatsAppWebhookParserService>();
         services.AddScoped<IInboundMessageDeduplicationService, InboundMessageDeduplicationService>();
         services.AddSingleton<IWhatsAppInboundQueueService, WhatsAppInboundQueueService>();
+        services.AddSingleton<ICampaignQueueService, CampaignQueueService>();
         services.AddScoped<IEmployeeAssignmentService, EmployeeAssignmentService>();
         services.AddScoped<IWorkingHoursService, WorkingHoursService>();
         services.AddScoped<IAvailabilityService, AvailabilityService>();
@@ -206,6 +211,7 @@ services.AddScoped<ServiceSelectionResolver>();
         services.AddScoped<IAgentTool, SuspendReservationTool>();
         services.AddScoped<IAgentTool, GetCustomerReservationsTool>();
         services.AddScoped<IAgentTool, ConfirmReservationAttendanceTool>();
+        services.AddScoped<IAgentTool, RequestReservationRescheduleTool>();
         services.AddScoped<IAgentTool, PrepareReservationChangeTool>();
         services.AddScoped<IAgentTool, ConfirmReservationChangeTool>();
         services.AddScoped<IAgentTool, VerifyPaymentTool>();

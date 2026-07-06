@@ -63,6 +63,10 @@ INSERT INTO @Perms VALUES
 (N'Reservations', N'Read', N'reservations.read', N'Ver reservas'),
 (N'Reservations', N'Update', N'reservations.update', N'Actualizar reservas'),
 (N'Leads', N'Read', N'leads.read', N'Ver leads'),
+(N'Campaigns', N'Read', N'campaigns.read', N'Ver campañas'),
+(N'Campaigns', N'Create', N'campaigns.create', N'Crear campañas'),
+(N'Campaigns', N'Send', N'campaigns.send', N'Enviar campañas'),
+(N'Campaigns', N'Cancel', N'campaigns.cancel', N'Cancelar campañas'),
 (N'BusinessConfig', N'Read', N'business_config.read', N'Ver configuraciÃ³n'),
 (N'BusinessConfig', N'Update', N'business_config.update', N'Actualizar configuraciÃ³n');
 

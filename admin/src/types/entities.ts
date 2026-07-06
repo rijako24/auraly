@@ -357,6 +357,94 @@ export interface Lead {
   business?: Business;
 }
 
+export interface WhatsAppTemplate {
+  id: string;
+  name: string;
+  status: string;
+  category: "Marketing" | "Utility" | string;
+  language: string;
+  headerParameterCount: number;
+  bodyParameterCount: number;
+}
+
+
+export type CampaignStatus =
+  | "Draft"
+  | "Scheduled"
+  | "Queued"
+  | "Processing"
+  | "Completed"
+  | "CompletedWithErrors"
+  | "Cancelled"
+  | "Failed"
+  | "QueueFailed";
+
+export type CampaignRecipientStatus = "Pending" | "Sending" | "Sent" | "Failed" | "Skipped";
+
+export interface Campaign {
+  campaignId: string;
+  businessId: string;
+  createdByUserId: string;
+  name: string;
+  status: CampaignStatus;
+  sourceType: "Segment" | "Import";
+  filtersJson: string | null;
+  templateName: string;
+  languageCode: string;
+  templateCategory: "Marketing" | "Utility";
+  parameterMappingJson: string | null;
+  scheduledAtUtc: string | null;
+  recipientCount: number;
+  sentCount: number;
+  failedCount: number;
+  createdAt: string;
+  updatedAt: string | null;
+  recipients?: CampaignRecipient[] | null;
+}
+
+export interface CampaignRecipient {
+  campaignRecipientId: string;
+  campaignId: string;
+  businessId: string;
+  phoneNormalized: string;
+  customerName: string | null;
+  sourceLeadId: string | null;
+  sourceReservationId: string | null;
+  status: CampaignRecipientStatus;
+  whatsAppMessageId: string | null;
+  error: string | null;
+  variablesJson: string | null;
+  attemptCount: number;
+  createdAt: string;
+  lastAttemptAtUtc: string | null;
+  sentAt: string | null;
+}
+
+export interface CreateCampaignRequest {
+  businessId: string;
+  name: string;
+  sourceType: "Segment" | "Import";
+  audience: CampaignAudienceRequest;
+  templateName: string;
+  languageCode: string;
+  templateCategory: "Marketing" | "Utility";
+  bodyParameterKeys: string[];
+  scheduledAtUtc?: string | null;
+}
+
+export interface CampaignAudienceRequest {
+  segmentKey?: string | null;
+  inactiveDays?: number | null;
+  importedRecipients?: ImportedCampaignRecipientRequest[] | null;
+}
+
+export interface ImportedCampaignRecipientRequest {
+  phone: string;
+  customerName?: string | null;
+  variables?: Record<string, string> | null;
+}
+
+
 export interface PaymentTransaction {
   paymentTransactionId: string;
   businessId: string;

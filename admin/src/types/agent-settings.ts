@@ -150,10 +150,17 @@ export interface ReservationAutomationTrigger {
   time?: string | null;
 }
 
+export interface ReservationAutomationActionConfig {
+  tool?: string;
+  arguments?: Record<string, unknown>;
+  sendMessageSequence?: string | null;
+}
+
 export interface ReservationAutomationConfig {
   enabled?: boolean;
   trigger?: ReservationAutomationTrigger;
   sendMessageSequence?: string | null;
+  actions?: Record<string, ReservationAutomationActionConfig>;
 }
 
 export interface ReservationAutomationDefinitions {

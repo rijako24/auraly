@@ -475,4 +475,3 @@ public sealed class PrepareOrderCheckoutTool : IAgentTool
 
     private static string Money(decimal amount) => amount.ToString("N0", CultureInfo.InvariantCulture);
 }
-

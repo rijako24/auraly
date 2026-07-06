@@ -31,7 +31,7 @@ public static class ToolFlowScope
     private static bool IsAllowedByStage(string toolName, AgentFlowStage currentStage) =>
         currentStage.AllowedTools.Contains(toolName, StringComparer.OrdinalIgnoreCase);
 
-    private static bool IsAllowedByGlobalAction(string toolName, AgentConfig config) =>
+    public static bool IsAllowedByGlobalAction(string toolName, AgentConfig config) =>
         config.GlobalActions.Any(action =>
             action.AllowedTools.Contains(toolName, StringComparer.OrdinalIgnoreCase));
 }

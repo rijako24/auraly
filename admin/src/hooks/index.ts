@@ -27,3 +27,5 @@ export {
 } from "./use-analytics";
 export { useMediaQuery } from "./use-media-query";
 export { useToast } from "./use-toast";
+export { useCampaigns, useCampaign, useCreateCampaign } from "./use-campaigns";
+export { useWhatsAppTemplates } from "./use-whatsapp-templates";

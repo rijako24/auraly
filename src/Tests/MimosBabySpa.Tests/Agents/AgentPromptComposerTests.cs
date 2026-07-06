@@ -183,8 +183,7 @@ public class AgentPromptComposerTests
         var result = Compose(
             DefaultConfig,
             [],
-            new AgentToolContext { Conversation = new Conversation(), Facts = [] },
-            payment);
+            new AgentToolContext { Conversation = new Conversation(), Facts = [], ActivePayment = payment });
 
         result.Should().Contain("pago: link generado");
         result.Should().Contain("COP $67,500");
@@ -193,6 +192,26 @@ public class AgentPromptComposerTests
         result.Should().NotContain("link_actual: https://pay.example/link");
         result.Should().NotContain("si el cliente cambia servicio");
         result.Should().NotContain("prepare_checkout");
+    }
+
+    [Fact]
+    public void Compose_WithExpiredLatestPayment_RendersExpiredPaymentState()
+    {
+        var payment = new PaymentTransaction
+        {
+            Status = PaymentTransactionStatus.Created,
+            AmountInCents = 2500000,
+            Currency = "COP",
+            ExpiresAt = DateTime.UtcNow.AddMinutes(-5)
+        };
+
+        var result = Compose(
+            DefaultConfig,
+            [],
+            new AgentToolContext { Conversation = new Conversation(), Facts = [] },
+            payment);
+
+        result.Should().Contain("pago: link expirado");
     }
 
     [Fact]
@@ -852,6 +871,49 @@ public class AgentPromptComposerTests
         result.Should().NotContain("agendar");
         result.Should().NotContain("productos");
         result.Should().NotContain("pedido");
+    }
+
+
+    [Fact]
+    public void ProjectHistoryForTurn_FiltersBeforeBoundaryAndRedactsInactivePaymentLink()
+    {
+        var conversationId = Guid.NewGuid();
+        var inactivePayment = new PaymentTransaction
+        {
+            PaymentTransactionId = Guid.NewGuid(),
+            Status = PaymentTransactionStatus.Created,
+            LinkUrl = "https://pay.example/expired",
+            ExpiresAt = DateTime.UtcNow.AddMinutes(-5)
+        };
+
+        var history = new List<Message>
+        {
+            new()
+            {
+                ConversationId = conversationId,
+                Sender = "bot",
+                MessageText = "old https://pay.example/expired",
+                Timestamp = new DateTime(2026, 7, 4, 10, 0, 0, DateTimeKind.Utc)
+            },
+            new()
+            {
+                ConversationId = conversationId,
+                Sender = "bot",
+                MessageText = "Paga aqui https://pay.example/expired",
+                Timestamp = new DateTime(2026, 7, 5, 10, 0, 0, DateTimeKind.Utc)
+            }
+        };
+
+        var method = typeof(AgentConversationService).GetMethod(
+            "ProjectHistoryForTurn",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+
+        var projected = ((IReadOnlyList<Message>)method!.Invoke(
+            null,
+            new object?[] { history, new DateTime(2026, 7, 5, 0, 0, 0, DateTimeKind.Utc), null, inactivePayment })!).ToList();
+
+        projected.Should().HaveCount(1);
+        projected[0].MessageText.Should().Be("Paga aqui [link de pago no vigente]");
     }
 
     private sealed class TestTool : IAgentTool

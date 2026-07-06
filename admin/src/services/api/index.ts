@@ -6,6 +6,8 @@ export { employeesApi } from "./employees";
 export { reservationsApi } from "./reservations";
 export { conversationsApi } from "./conversations";
 export { leadsApi } from "./leads";
+export { campaignsApi } from "./campaigns";
+export { whatsAppTemplatesApi } from "./whatsapp-templates";
 export { ordersApi } from "./orders";
 export { paymentsApi } from "./payments";
 export { usersApi } from "./users";

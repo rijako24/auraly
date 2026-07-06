@@ -6,6 +6,7 @@ CREATE TABLE [dbo].[ConversationStates] (
     [ConsecutiveDegradedTurns] INT NOT NULL DEFAULT 0,
     [LastUserMessage] NVARCHAR(MAX) NULL,
     [LastBotMessage] NVARCHAR(MAX) NULL,
+    [ActiveRequestStartedAtUtc] DATETIME2 NULL,
     [VerificationsJson] NVARCHAR(MAX) NULL,
     [StageSnapshotsJson] NVARCHAR(MAX) NULL,
     [Version] INT NOT NULL DEFAULT 1,

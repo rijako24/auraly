@@ -1,4 +1,5 @@
 using MimosBabySpa.Application.Agents.Configuration;
+using MimosBabySpa.Application.Agents.Gating;
 using MimosBabySpa.Application.Agents.Tools;
 using MimosBabySpa.Application.Commerce;
 using System.Text.Json;
@@ -396,10 +397,8 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
                 "AgentConfig {AgentId}: {Path} is enabled but sendMessageSequence is empty",
                 config.AgentId,
                 path);
-            return;
         }
-
-        if (!config.MessageSequences.ContainsKey(automation.SendMessageSequence))
+        else if (!config.MessageSequences.ContainsKey(automation.SendMessageSequence))
         {
             _logger.LogWarning(
                 "AgentConfig {AgentId}: {Path} references unknown sequence '{Sequence}'",
@@ -407,7 +406,62 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
                 path,
                 automation.SendMessageSequence);
         }
+
+        foreach (var (outcome, action) in automation.Actions)
+        {
+            ValidateReservationAutomationAction(config, $"{path}.actions['{outcome}']", outcome, action);
+        }
     }
+
+    private void ValidateReservationAutomationAction(
+        AgentConfig config,
+        string path,
+        string outcome,
+        ReservationAutomationActionConfig action)
+    {
+        if (string.IsNullOrWhiteSpace(outcome))
+        {
+            _logger.LogWarning(
+                "AgentConfig {AgentId}: {Path} has an empty outcome",
+                config.AgentId,
+                path);
+        }
+
+        if (string.IsNullOrWhiteSpace(action.Tool))
+        {
+            _logger.LogWarning(
+                "AgentConfig {AgentId}: {Path} has an empty tool",
+                config.AgentId,
+                path);
+        }
+        else if (!config.EnabledToolNames.Contains(action.Tool, StringComparer.OrdinalIgnoreCase))
+        {
+            _logger.LogWarning(
+                "AgentConfig {AgentId}: {Path} references tool '{Tool}' which is not in enabledTools",
+                config.AgentId,
+                path,
+                action.Tool);
+        }
+        else if (!ToolFlowScope.IsAllowedByGlobalAction(action.Tool, config))
+        {
+            _logger.LogWarning(
+                "AgentConfig {AgentId}: {Path} references tool '{Tool}' which is not in globalActions; reservation automation payloads may be blocked by the active flow stage",
+                config.AgentId,
+                path,
+                action.Tool);
+        }
+
+        if (!string.IsNullOrWhiteSpace(action.SendMessageSequence)
+            && !config.MessageSequences.ContainsKey(action.SendMessageSequence))
+        {
+            _logger.LogWarning(
+                "AgentConfig {AgentId}: {Path} references unknown sequence '{Sequence}'",
+                config.AgentId,
+                path,
+                action.SendMessageSequence);
+        }
+    }
+
     private void ValidateExternalEscalations(AgentConfig config)
     {
         if (!config.Escalations.External.Enabled)

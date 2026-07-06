@@ -10,6 +10,7 @@ var scenarios = new List<MimosBabySpa.IntegrationTests.Scenarios.TestScenario>
     new DoubleBookingScenario(),
     new BackendCalendarErrorScenario(),
     new UserChangesDateScenario(),
+    new RepeatReservationAfterCompletionScenario(),
     new AddOnOfferingScenario(),
     // 20 conversaciones completas (desde inicio hasta reserva)
     new FullReservationStyle1FormalScenario(),

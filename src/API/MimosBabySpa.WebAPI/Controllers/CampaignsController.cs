@@ -1,0 +1,61 @@
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using MimosBabySpa.Application.Campaigns.DTOs;
+using MimosBabySpa.Application.Campaigns.Interfaces;
+using MimosBabySpa.Application.Common.DTOs;
+using MimosBabySpa.WebAPI.Authorization;
+using MimosBabySpa.WebAPI.Extensions;
+
+namespace MimosBabySpa.WebAPI.Controllers;
+
+[ApiController]
+[Route("api/campaigns")]
+[Authorize]
+public class CampaignsController : ControllerBase
+{
+    private readonly ICampaignAdminService _service;
+
+    public CampaignsController(ICampaignAdminService service)
+    {
+        _service = service;
+    }
+
+    [HttpGet]
+    [PermissionAuthorize("campaigns.read")]
+    public async Task<ActionResult<PagedResponse<CampaignDto>>> GetByBusiness(
+        [FromQuery] Guid businessId, [FromQuery] PagedRequest request, CancellationToken ct)
+    {
+        return Ok(await _service.GetPagedByBusinessIdAsync(
+            User.GetTenantId(),
+            User.HasPermission("tenants.read"),
+            businessId,
+            request,
+            ct));
+    }
+
+    [HttpGet("{campaignId:guid}")]
+    [PermissionAuthorize("campaigns.read")]
+    public async Task<ActionResult<CampaignDto>> GetById(Guid campaignId, CancellationToken ct)
+    {
+        return Ok(await _service.GetByIdAsync(
+            User.GetTenantId(),
+            User.HasPermission("tenants.read"),
+            campaignId,
+            ct));
+    }
+
+    [HttpPost]
+    [PermissionAuthorize("campaigns.create")]
+    public async Task<ActionResult<CampaignDto>> Create(
+        [FromBody] CreateCampaignRequest request, CancellationToken ct)
+    {
+        var result = await _service.CreateAsync(
+            User.GetTenantId(),
+            User.HasPermission("tenants.read"),
+            User.GetUserId(),
+            request,
+            ct);
+
+        return CreatedAtAction(nameof(GetById), new { campaignId = result.CampaignId }, result);
+    }
+}

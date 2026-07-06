@@ -22,6 +22,7 @@ public sealed class AgentToolContext
     public string? ProviderMessageId { get; init; }
     public string? ReplyToProviderMessageId { get; init; }
     public string? InteractivePayload { get; init; }
+    public InteractivePayloadAction? InteractiveAction { get; init; }
     public IReadOnlyList<string> EscalationContacts { get; init; } = [];
     public int CurrentToolIteration { get; set; }
 

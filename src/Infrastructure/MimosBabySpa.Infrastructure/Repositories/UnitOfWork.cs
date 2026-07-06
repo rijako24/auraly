@@ -9,6 +9,7 @@ public class UnitOfWork : IUnitOfWork
     private IConversationRepository? _conversations;
     private IMessageRepository? _messages;
     private ILeadRepository? _leads;
+    private ICampaignRepository? _campaigns;
     private IBusinessRepository? _businesses;
     private IBusinessWhatsAppNumberRepository? _businessWhatsAppNumbers;
     private ISystemConfigurationRepository? _systemConfigurations;
@@ -73,6 +74,9 @@ public class UnitOfWork : IUnitOfWork
 
     public ILeadRepository Leads =>
         _leads ??= new LeadRepository(_context);
+    public ICampaignRepository Campaigns =>
+        _campaigns ??= new CampaignRepository(_context);
+
 
     public IBusinessRepository Businesses =>
         _businesses ??= new BusinessRepository(_context);

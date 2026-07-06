@@ -67,10 +67,7 @@ public sealed class ToolCapabilityGate : IToolCapabilityGate
         if (stage is null || stage.AllowedTools.Count == 0)
             return null;
 
-        if (stage.AllowedTools.Contains(tool.Name, StringComparer.OrdinalIgnoreCase))
-            return null;
-
-        if (IsAllowedByGlobalAction(tool, config))
+        if (ToolFlowScope.IsAllowedInScope(tool.Name, config, stage))
             return null;
 
         var remediation = !string.IsNullOrWhiteSpace(stage.Hint)
@@ -84,7 +81,4 @@ public sealed class ToolCapabilityGate : IToolCapabilityGate
             remediation);
     }
 
-    private static bool IsAllowedByGlobalAction(IAgentTool tool, AgentConfig config) =>
-        config.GlobalActions.Any(action =>
-            action.AllowedTools.Contains(tool.Name, StringComparer.OrdinalIgnoreCase));
 }

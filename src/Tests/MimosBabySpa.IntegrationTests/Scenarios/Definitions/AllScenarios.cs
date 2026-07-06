@@ -3,9 +3,9 @@ using MimosBabySpa.IntegrationTests.Scenarios;
 
 namespace MimosBabySpa.IntegrationTests.Scenarios.Definitions;
 
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Escenario 1: Reserva Exitosa
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 public class SuccessfulReservationScenario : TestScenario
 {
@@ -31,22 +31,22 @@ public class SuccessfulReservationScenario : TestScenario
             LlmScript: FakeLlmScript.ToolThenText(
                 "check_availability",
                 """{"service":"Plan Marineritos","date":"2026-08-15","time":"10:00"}""",
-                "Hay disponibilidad el 15 de agosto a las 10:00. ¿Confirmamos la reserva?"),
+                "Hay disponibilidad el 15 de agosto a las 10:00. Â¿Confirmamos la reserva?"),
             ExpectedBotResponseContains: "disponib"),
 
         new(
-            UserMessage: "Sí, confirmo el horario de las 10am.",
+            UserMessage: "SÃ­, confirmo el horario de las 10am.",
             LlmScript: FakeLlmScript.ToolThenText(
                 "create_reservation",
-                """{"service":"Plan Marineritos","date":"2026-08-15","time":"10:00","customer_name":"Lucía","customer_phone":"+5491100000000","customer_confirmed":true}""",
-                "¡Tu reserva ha sido creada exitosamente! Te esperamos el 15 de agosto."),
+                """{"service":"Plan Marineritos","date":"2026-08-15","time":"10:00","customer_name":"LucÃ­a","customer_phone":"+5491100000000","customer_confirmed":true}""",
+                "Â¡Tu reserva ha sido creada exitosamente! Te esperamos el 15 de agosto."),
             ExpectedBotResponseContains: "reserva")
     ];
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Escenario 2: Sin Disponibilidad
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 public class NoAvailabilityScenario : TestScenario
 {
@@ -71,15 +71,15 @@ public class NoAvailabilityScenario : TestScenario
             LlmScript: FakeLlmScript.ToolThenText(
                 "check_availability",
                 """{"service":"Plan Post Vacunas","date":"2026-08-20","time":"09:00"}""",
-                "Lo siento, no hay disponibilidad para esa fecha y hora. ¿Te gustaría elegir otra fecha?"),
+                "Lo siento, no hay disponibilidad para esa fecha y hora. Â¿Te gustarÃ­a elegir otra fecha?"),
             ExpectedBotResponseContains: "")
     ];
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Escenario 3: Confirmación sin verificar disponibilidad
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// Escenario 3: ConfirmaciÃ³n sin verificar disponibilidad
 // El bot intenta confirmar sin haber verificado disponibilidad primero.
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 public class ConfirmationWithoutAvailabilityScenario : TestScenario
 {
@@ -100,14 +100,14 @@ public class ConfirmationWithoutAvailabilityScenario : TestScenario
     [
         new(
             UserMessage: "Confirmo la reserva para el Plan Marineritos el lunes.",
-            LlmScript: FakeLlmScript.TextOnly("Para confirmar una reserva primero necesito verificar disponibilidad. ¿Qué fecha y hora prefieres?"),
+            LlmScript: FakeLlmScript.TextOnly("Para confirmar una reserva primero necesito verificar disponibilidad. Â¿QuÃ© fecha y hora prefieres?"),
             ExpectedBotResponseContains: "")
     ];
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Escenario 4: Reserva Doble
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 public class DoubleBookingScenario : TestScenario
 {
@@ -132,7 +132,7 @@ public class DoubleBookingScenario : TestScenario
             LlmScript: FakeLlmScript.ToolThenText(
                 "check_availability",
                 """{"service":"Plan Marineritos","date":"2026-08-15","time":"10:00"}""",
-                "Hay disponibilidad. ¿Confirmamos la reserva?"),
+                "Hay disponibilidad. Â¿Confirmamos la reserva?"),
             ExpectedBotResponseContains: ""),
 
         new(
@@ -140,19 +140,19 @@ public class DoubleBookingScenario : TestScenario
             LlmScript: FakeLlmScript.ToolThenText(
                 "create_reservation",
                 """{"service":"Plan Marineritos","date":"2026-08-15","time":"10:00","customer_name":"Cliente Test","customer_phone":"+5491100000000","customer_confirmed":true}""",
-                "¡Reserva creada exitosamente!"),
+                "Â¡Reserva creada exitosamente!"),
             ExpectedBotResponseContains: "")
     ];
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Escenario 5: Error del Backend de Calendario
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 public class BackendCalendarErrorScenario : TestScenario
 {
     public override string Id          => "test_error_backend_calendar";
-    public override string Description => "El servicio de disponibilidad lanza una excepción. El agente debe manejarla con gracia.";
+    public override string Description => "El servicio de disponibilidad lanza una excepciÃ³n. El agente debe manejarla con gracia.";
     public override CalendarMode CalendarMode     => CalendarMode.ThrowError;
     public override ReservationMode ReservationMode => ReservationMode.AlwaysSucceed;
     public override bool ExpectReservationCreated  => false;
@@ -170,19 +170,19 @@ public class BackendCalendarErrorScenario : TestScenario
             UserMessage: "Quiero reservar Plan Aventuras Marinas para el 2026-09-01 a las 11am.",
             LlmScript:
             [
-                // LLM intenta llamar check_availability (fallará con error del backend)
+                // LLM intenta llamar check_availability (fallarÃ¡ con error del backend)
                 .. FakeLlmScript.ToolThenText(
                     "check_availability",
                     """{"service":"Plan Aventuras Marinas","date":"2026-09-01","time":"11:00"}""",
-                    "Lo siento, hubo un problema al verificar disponibilidad. Por favor intenta más tarde.")
+                    "Lo siento, hubo un problema al verificar disponibilidad. Por favor intenta mÃ¡s tarde.")
             ],
             ExpectedBotResponseContains: "")
     ];
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Escenario 6: Usuario Cambia de Fecha
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 public class UserChangesDateScenario : TestScenario
 {
@@ -208,7 +208,7 @@ public class UserChangesDateScenario : TestScenario
             LlmScript: FakeLlmScript.ToolThenText(
                 "check_availability",
                 """{"service":"Plan Marineritos","date":"2026-08-15","time":"09:00"}""",
-                "Hay disponibilidad el 15 de agosto a las 9:00. ¿Confirmamos?"),
+                "Hay disponibilidad el 15 de agosto a las 9:00. Â¿Confirmamos?"),
             ExpectedBotResponseContains: "disponib"),
 
         new(
@@ -216,7 +216,7 @@ public class UserChangesDateScenario : TestScenario
             LlmScript: FakeLlmScript.ToolThenText(
                 "check_availability",
                 """{"service":"Plan Marineritos","date":"2026-08-22","time":"11:00"}""",
-                "También hay disponibilidad el 22 de agosto a las 11:00. ¿Confirmamos con la nueva fecha?"),
+                "TambiÃ©n hay disponibilidad el 22 de agosto a las 11:00. Â¿Confirmamos con la nueva fecha?"),
             ExpectedBotResponseContains: "disponib"),
 
         new(
@@ -224,7 +224,75 @@ public class UserChangesDateScenario : TestScenario
             LlmScript: FakeLlmScript.ToolThenText(
                 "create_reservation",
                 """{"service":"Plan Marineritos","date":"2026-08-22","time":"11:00","customer_name":"Cliente Test","customer_phone":"+5491100000000","customer_confirmed":true}""",
-                "¡Reserva creada para el 22 de agosto a las 11:00!"),
+                "Â¡Reserva creada para el 22 de agosto a las 11:00!"),
             ExpectedBotResponseContains: "reserva")
+    ];
+}
+
+public class RepeatReservationAfterCompletionScenario : TestScenario
+{
+    public override string Id => "test_repetir_reserva_despues_de_completar";
+    public override string Description => "El cliente completa una reserva, vuelve a saludar, pide servicios y puede completar una segunda reserva en la misma conversacion.";
+    public override CalendarMode CalendarMode => CalendarMode.Available;
+    public override ReservationMode ReservationMode => ReservationMode.AlwaysSucceed;
+    public override bool ExpectReservationCreated => true;
+    public override bool ExpectAvailabilityChecked => true;
+
+    public override IReadOnlyList<string> RulesToValidate =>
+    [
+        "MultipleReservationCycles"
+    ];
+
+    public override IReadOnlyList<ConversationStep> Steps =>
+    [
+        new(
+            UserMessage: "Hola, quiero reservar un Plan Marineritos para el 2026-08-25 a las 10am.",
+            LlmScript: FakeLlmScript.ToolThenText(
+                "check_availability",
+                """{"service":"Plan Marineritos","date":"2026-08-25","time":"10:00"}""",
+                "Hay disponibilidad el 25 de agosto a las 10:00. Confirmamos la reserva?"),
+            ExpectedBotResponseContains: "disponib"),
+
+        new(
+            UserMessage: "Si, confirmo. Soy Richard y mi telefono es +573012926660.",
+            LlmScript: FakeLlmScript.ManyToolsThenToolThenText(
+                [
+                    ("resolve_service_selection", """{"text":"Plan Marineritos"}"""),
+                    ("set_fact", """{"key":"desired_date","value":"2026-08-25"}"""),
+                    ("set_fact", """{"key":"desired_time","value":"10:00"}""")
+                ],
+                "create_reservation",
+                """{"service":"Plan Marineritos","date":"2026-08-25","time":"10:00","customer_name":"Richard","customer_phone":"+573012926660","customer_confirmed":true}""",
+                "Tu reserva quedo creada para el 25 de agosto a las 10:00."),
+            ExpectedBotResponseContains: "reserva"),
+
+        new(
+            UserMessage: "Hola de nuevo, quiero ver los servicios.",
+            LlmScript: FakeLlmScript.ToolThenText(
+                "get_service_catalog",
+                """{"view":"categories"}""",
+                "Hola de nuevo. Tenemos categorias y servicios disponibles para reservar."),
+            ExpectedBotResponseContains: "servicios"),
+
+        new(
+            UserMessage: "Quiero Plan Suaves Mimos - Post Vacunas para el 2026-08-26 a las 11am.",
+            LlmScript: FakeLlmScript.ToolThenText(
+                "check_availability",
+                """{"service":"Plan Suaves Mimos - Post Vacunas","date":"2026-08-26","time":"11:00"}""",
+                "Tambien hay disponibilidad el 26 de agosto a las 11:00. Confirmamos?"),
+            ExpectedBotResponseContains: "disponib"),
+
+        new(
+            UserMessage: "Confirmo esa tambien.",
+            LlmScript: FakeLlmScript.ManyToolsThenToolThenText(
+                [
+                    ("resolve_service_selection", """{"text":"Plan Suaves Mimos - Post Vacunas"}"""),
+                    ("set_fact", """{"key":"desired_date","value":"2026-08-26"}"""),
+                    ("set_fact", """{"key":"desired_time","value":"11:00"}""")
+                ],
+                "create_reservation",
+                """{"service":"Plan Suaves Mimos - Post Vacunas","date":"2026-08-26","time":"11:00","customer_name":"Richard","customer_phone":"+573012926660","customer_confirmed":true}""",
+                "Listo, tu segunda reserva quedo creada para el 26 de agosto a las 11:00."),
+            ExpectedBotResponseContains: "segunda reserva")
     ];
 }

@@ -10,6 +10,8 @@ public interface ILeadRepository
     Task<IEnumerable<Lead>> GetByBusinessIdAsync(Guid businessId);
     Task<(IReadOnlyList<Lead> Items, int TotalCount)> GetPagedByBusinessIdAsync(
         Guid businessId, int page, int pageSize, string? search = null, CancellationToken ct = default);
+    Task<IReadOnlyList<Lead>> GetInactiveByBusinessIdAsync(
+        Guid businessId, DateTime inactiveBeforeUtc, int limit, CancellationToken ct = default);
     Task<Lead> CreateAsync(Lead lead);
     Task<Lead> UpdateAsync(Lead lead);
 }

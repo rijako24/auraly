@@ -58,6 +58,9 @@ public class PaymentConfirmationHandler : IPaymentConfirmationHandler
         PaymentTransactionSource? sourceOverride = null)
     {
         PaymentConfirmationOutcome? outcome = null;
+        PaymentTransaction? fulfilledPayment = null;
+        AgentConfig? fulfilledConfig = null;
+        PaidCheckoutFulfillmentResult? fulfilledResult = null;
 
         await _unitOfWork.ExecuteInTransactionAsync(async () =>
         {
@@ -131,42 +134,57 @@ public class PaymentConfirmationHandler : IPaymentConfirmationHandler
             await CompleteRequestContextAsync(payment.BusinessId, payment.ConversationId, config, state, result.CompletionReason, ct);
             await _stateManager.SaveStateAsync(payment.ConversationId, state, ct);
 
-            if (result.ReservationNotification is not null)
-            {
-                await _notificationDispatcher.SendEventAsync(
-                    payment.BusinessId,
-                    config,
-                    WompiWebhookOutcomes.ReservationCreated,
-                    new MessageSequenceContext
-                    {
-                        Reservation = result.ReservationNotification,
-                        Custom = result.CustomPayload
-                    },
-                    ct);
-            }
-
-            if (result.NotifyCustomer)
-                await SendCustomerSequenceAsync(payment, config, result, ct);
-
-            if (result.NotifyAdmin)
-                await _notificationDispatcher.SendEventAsync(payment.BusinessId, config, result.EventName, result.CustomPayload, ct);
-
-            if (result.TriggerExternalEscalation)
-            {
-                await _externalEscalations.EscalateEventAsync(
-                    config.AgentId,
-                    result.EventName,
-                    result.TargetId,
-                    result.CustomPayload,
-                    ct);
-            }
+            fulfilledPayment = payment;
+            fulfilledConfig = config;
+            fulfilledResult = result;
 
             outcome = PaymentConfirmationOutcome.Ok();
         }, ct);
 
+        if (outcome?.Success == true && fulfilledPayment is not null && fulfilledConfig is not null && fulfilledResult is not null)
+        {
+            await DispatchFulfillmentSideEffectsAsync(fulfilledPayment, fulfilledConfig, fulfilledResult, ct);
+        }
+
         return outcome?.ToResult() ?? new PaymentConfirmationResult(false, "Error interno");
     }
 
+    private async Task DispatchFulfillmentSideEffectsAsync(
+        PaymentTransaction payment,
+        AgentConfig config,
+        PaidCheckoutFulfillmentResult result,
+        CancellationToken ct)
+    {
+        if (result.ReservationNotification is not null)
+        {
+            await _notificationDispatcher.SendEventAsync(
+                payment.BusinessId,
+                config,
+                WompiWebhookOutcomes.ReservationCreated,
+                new MessageSequenceContext
+                {
+                    Reservation = result.ReservationNotification,
+                    Custom = result.CustomPayload
+                },
+                ct);
+        }
+
+        if (result.NotifyCustomer)
+            await SendCustomerSequenceAsync(payment, config, result, ct);
+
+        if (result.NotifyAdmin)
+            await _notificationDispatcher.SendEventAsync(payment.BusinessId, config, result.EventName, result.CustomPayload, ct);
+
+        if (result.TriggerExternalEscalation)
+        {
+            await _externalEscalations.EscalateEventAsync(
+                config.AgentId,
+                result.EventName,
+                result.TargetId,
+                result.CustomPayload,
+                ct);
+        }
+    }
     private async Task SendCustomerSequenceAsync(
         PaymentTransaction payment,
         AgentConfig config,

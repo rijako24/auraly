@@ -37,6 +37,7 @@ public class InMemoryUnitOfWork : IUnitOfWork
     public IReservationIntegrationEventRepository ReservationIntegrationEvents { get; }
     public IExternalEscalationAttemptRepository ExternalEscalationAttempts { get; }
     public ILeadRepository Leads { get; }
+    public ICampaignRepository Campaigns => throw new NotImplementedException();
     public IServiceAddOnRuleRepository ServiceAddOnRules { get; }
     public IReservationAddOnRepository ReservationAddOns { get; }
     public IProductRepository Products { get; }

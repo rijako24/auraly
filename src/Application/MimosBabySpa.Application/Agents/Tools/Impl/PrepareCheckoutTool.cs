@@ -82,6 +82,10 @@ public sealed class PrepareCheckoutTool : IAgentTool
         if (missing.Count > 0)
             return ToolResultHelper.MissingPrerequisites([.. missing]);
 
+        var availabilityError = EnsureReservationAvailabilityVerified(quote, roles, ctx);
+        if (availabilityError is not null)
+            return availabilityError;
+
         await CheckoutPaymentFact.PersistSelectionAsync(_factsService, ctx, roles, quote, cancellationToken);
 
         var templateData = BuildTemplateData(quote, roles, ctx.Facts);
@@ -373,6 +377,47 @@ public sealed class PrepareCheckoutTool : IAgentTool
         return dependencies;
     }
 
+    private string? EnsureReservationAvailabilityVerified(
+        CheckoutQuote quote,
+        FactRoleIndex roles,
+        AgentToolContext ctx)
+    {
+        if (quote.CheckoutKind != CheckoutKind.Reservation)
+            return null;
+
+        var serviceKey = roles.KeyByRole("booking.service") ?? ConversationFactKeys.Service;
+        var dateKey = roles.KeyByRole("booking.date") ?? ConversationFactKeys.DesiredDate;
+        var timeKey = roles.KeyByRole("booking.time") ?? ConversationFactKeys.DesiredTime;
+
+        var service = quote.ServiceName;
+        var date = ResolveSystemFact(quote, roles, ctx.Facts, CheckoutSystemSlots.ReservationDate);
+        var time = ResolveSystemFact(quote, roles, ctx.Facts, CheckoutSystemSlots.ReservationTime);
+
+        if (string.IsNullOrWhiteSpace(service)
+            || string.IsNullOrWhiteSpace(date)
+            || string.IsNullOrWhiteSpace(time))
+        {
+            return ToolResultHelper.Error(
+                "availability_verification_missing",
+                "Reservation checkout requires service, date and time before preparing payment.",
+                "Collect service, date and time, then call check_availability for that exact slot.",
+                recoverable: true);
+        }
+
+        var dependencies = VerificationSnapshot.FromValues(
+            new KeyValuePair<string, string>(serviceKey, service),
+            new KeyValuePair<string, string>(dateKey, date),
+            new KeyValuePair<string, string>(timeKey, time));
+
+        if (_verifications.IsActive(ctx.ConversationState, VerificationFactTypes.AvailabilityChecked, dependencies))
+            return null;
+
+        return ToolResultHelper.Error(
+            "availability_verification_stale",
+            "Availability has not been verified for the exact service, date and time that would be used for checkout.",
+            "Call check_availability again using the same service, date and time before prepare_checkout.",
+            recoverable: true);
+    }
     private static string? ResolveSystemFact(
         CheckoutQuote quote,
         FactRoleIndex roles,
@@ -443,4 +488,3 @@ public sealed class PrepareCheckoutTool : IAgentTool
         return (JsonSerializer.Serialize(snapshot), null);
     }
 }
-

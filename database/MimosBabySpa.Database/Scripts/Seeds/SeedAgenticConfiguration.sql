@@ -157,6 +157,16 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         { "body": "Lo sentimos, el horario de las {Time} ya no esta disponible porque otro cliente lo reserve primero. Tu pago esta seguro. Quieres elegir otro horario? Opciones: {slots}." }
       ]
     },
+    "reservation_attendance_confirmed_reply": {
+      "messages": [
+        { "body": "Muchas gracias, tu cita ha sido confirmada." }
+      ]
+    },
+    "reservation_attendance_reschedule_reply": {
+      "messages": [
+        { "body": "Claro, para que dia y hora te gustaria reagendar tu cita?" }
+      ]
+    },
     "reservation_created": {
       "messages": [
         {
@@ -186,7 +196,19 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
     "confirmation": {
       "enabled": true,
       "trigger": { "type": "relative", "hoursBefore": 24 },
-      "sendMessageSequence": "reservation_confirmation_request"
+      "sendMessageSequence": "reservation_confirmation_request",
+      "actions": {
+        "confirm": {
+          "tool": "confirm_reservation_attendance",
+          "arguments": { "customer_confirmed": true, "job_id": "{source_id}" },
+          "sendMessageSequence": "reservation_attendance_confirmed_reply"
+        },
+        "reschedule": {
+          "tool": "request_reservation_reschedule",
+          "arguments": { "job_id": "{source_id}" },
+          "sendMessageSequence": "reservation_attendance_reschedule_reply"
+        }
+      }
     },
     "reminder": {
       "enabled": true,
@@ -351,8 +373,8 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "id": "manage_existing_reservation",
       "priority": 900,
       "goal": "Gestionar reservas existentes cuando el cliente quiera confirmar asistencia, cambiar, reagendar, agregar o quitar complementos, cambiar servicio o suspender una reserva ya creada.",
-      "hint": "Usa esta ruta antes del flujo de reserva nueva. Si el cliente confirma que asistira, usa confirm_reservation_attendance. Primero identifica la reserva con get_customer_reservations cuando haga falta. Para cambios de servicio, fecha, hora o complementos, usa prepare_reservation_change y aplica con confirm_reservation_change solo despues de confirmacion clara. Para cambios de una reserva ya pagada, no generes nuevo checkout; cualquier saldo restante se maneja en el local. Si hay varias reservas, pregunta cual por fecha y servicio; nunca pidas UUID al cliente. Usa suspend_reservation solo cuando la intencion de suspender o cancelar sea clara, o despues de confirmacion explicita.",
-      "allowedTools": ["get_customer_reservations", "confirm_reservation_attendance", "prepare_reservation_change", "confirm_reservation_change", "suspend_reservation"]
+      "hint": "Usa esta ruta antes del flujo de reserva nueva. Si el cliente confirma que asistira, usa confirm_reservation_attendance. Si pide reagendar, usa request_reservation_reschedule y luego pregunta nueva fecha y hora. Primero identifica la reserva con get_customer_reservations cuando haga falta. Para cambios de servicio, fecha, hora o complementos, usa prepare_reservation_change y aplica con confirm_reservation_change solo despues de confirmacion clara. Para cambios de una reserva ya pagada, no generes nuevo checkout; cualquier saldo restante se maneja en el local. Si hay varias reservas, pregunta cual por fecha y servicio; nunca pidas UUID al cliente. Usa suspend_reservation solo cuando la intencion de suspender o cancelar sea clara, o despues de confirmacion explicita.",
+      "allowedTools": ["get_customer_reservations", "confirm_reservation_attendance", "request_reservation_reschedule", "prepare_reservation_change", "confirm_reservation_change", "suspend_reservation"]
     }
   ],
   "factSchema": [
@@ -430,7 +452,8 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "key": "customer_email", "role": "customer.email", "label": "email del cliente",
       "type": "email", "required": false, "source": "user", "scope": "customer",
       "aliases": ["email", "correo"]
-    }
+    },
+    { "key": "payment_method", "role": "payment.method", "label": "metodo de pago", "type": "string", "required": false, "source": "system", "scope": "request", "expireOnBusinessDayChange": true }
   ],
   "guards": {
     "capability:reservation.create": {
@@ -460,6 +483,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
     "suspend_reservation",
     "get_customer_reservations",
     "confirm_reservation_attendance",
+    "request_reservation_reschedule",
     "prepare_reservation_change",
     "confirm_reservation_change",
     "verify_payment",

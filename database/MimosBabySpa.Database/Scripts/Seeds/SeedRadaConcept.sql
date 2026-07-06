@@ -350,7 +350,8 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "scope": "customer",
       "captureMode": "eager",
       "aliases": ["celular", "telefono", "whatsapp", "numero"]
-    }
+    },
+    { "key": "payment_method", "role": "payment.method", "label": "metodo de pago", "type": "string", "required": false, "source": "system", "scope": "request", "expireOnBusinessDayChange": true }
   ],
   "guards": {},
   "enabledTools": [

@@ -182,17 +182,17 @@ internal sealed class OrderEscalationResolver
     {
         attemptId = Guid.Empty;
         outcomeKey = null;
-        if (string.IsNullOrWhiteSpace(payload))
+
+        if (!InteractivePayloadParser.TryParse(payload, out var action)
+            || !action.Scope.Equals("external_interaction", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (!Guid.TryParseExact(action.SourceId, "N", out attemptId) && !Guid.TryParse(action.SourceId, out attemptId))
             return false;
 
-        var parts = payload.Split(':', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        if (parts.Length != 3 || !parts[0].Equals("external_interaction", StringComparison.OrdinalIgnoreCase))
-            return false;
-
-        if (!Guid.TryParseExact(parts[2], "N", out attemptId) && !Guid.TryParse(parts[2], out attemptId))
-            return false;
-
-        outcomeKey = parts[1].Trim();
+        outcomeKey = action.Outcome;
         return true;
     }
 

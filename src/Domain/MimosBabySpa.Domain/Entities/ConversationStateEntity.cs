@@ -11,6 +11,7 @@ public class ConversationStateEntity
     public int ConsecutiveDegradedTurns { get; set; }
     public string? LastUserMessage { get; set; }
     public string? LastBotMessage { get; set; }
+    public DateTime? ActiveRequestStartedAtUtc { get; set; }
     public string? VerificationsJson { get; set; }
     public string? StageSnapshotsJson { get; set; }
     public int Version { get; set; } = 1;

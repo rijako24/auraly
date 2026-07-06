@@ -9,20 +9,22 @@ internal static class CheckoutPaymentFact
     private const string PaymentMethodRole = "payment.method";
     private const string FallbackPaymentMethodKey = "payment_method";
 
-    public static string ResolveKey(FactRoleIndex roles) =>
-        roles.KeyByRole(PaymentMethodRole) ?? FallbackPaymentMethodKey;
+    public static string? ResolveDeclaredKey(FactRoleIndex roles) =>
+        roles.KeyByRole(PaymentMethodRole)
+        ?? (roles.EntryFor(FallbackPaymentMethodKey) is not null ? FallbackPaymentMethodKey : null);
+
+    public static string ResolveDependencyKey(FactRoleIndex roles) =>
+        ResolveDeclaredKey(roles) ?? FallbackPaymentMethodKey;
 
     public static string? Get(AgentToolContext ctx, FactRoleIndex roles)
     {
-        var key = ResolveKey(roles);
-        if (ctx.Facts.TryGetValue(key, out var value) && !string.IsNullOrWhiteSpace(value))
-            return value.Trim();
+        var key = ResolveDeclaredKey(roles);
+        if (key is null)
+            return null;
 
-        return !key.Equals(FallbackPaymentMethodKey, StringComparison.OrdinalIgnoreCase)
-            && ctx.Facts.TryGetValue(FallbackPaymentMethodKey, out var fallback)
-            && !string.IsNullOrWhiteSpace(fallback)
-                ? fallback.Trim()
-                : null;
+        return ctx.Facts.TryGetValue(key, out var value) && !string.IsNullOrWhiteSpace(value)
+            ? value.Trim()
+            : null;
     }
 
     public static Task PersistSelectionAsync(
@@ -54,7 +56,7 @@ internal static class CheckoutPaymentFact
         if (string.IsNullOrWhiteSpace(paymentMethod))
             return;
 
-        dependencies[ResolveKey(roles)] = paymentMethod.Trim();
+        dependencies[ResolveDependencyKey(roles)] = paymentMethod.Trim();
     }
 
     private static async Task PersistCanonicalAsync(
@@ -67,7 +69,10 @@ internal static class CheckoutPaymentFact
         if (string.IsNullOrWhiteSpace(methodKey))
             return;
 
-        var key = ResolveKey(roles);
+        var key = ResolveDeclaredKey(roles);
+        if (key is null)
+            return;
+
         var canonicalValue = methodKey.Trim();
         if (ctx.Facts.TryGetValue(key, out var current)
             && current.Trim().Equals(canonicalValue, StringComparison.OrdinalIgnoreCase))

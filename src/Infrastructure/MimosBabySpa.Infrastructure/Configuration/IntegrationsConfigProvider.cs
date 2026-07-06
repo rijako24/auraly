@@ -26,12 +26,14 @@ public class IntegrationsConfigProvider : IIntegrationsConfigProvider
         if (connections.Count == 0)
             return null;
 
+        var googleConnection = connections.FirstOrDefault(c =>
+            c.ConnectionType == ConnectionType.Integration &&
+            c.Provider == (int)IntegrationProvider.GoogleCalendar &&
+            c.Capability == (int)IntegrationCapability.Calendar);
+
         return new IntegrationsConfiguration
         {
-            GoogleCalendar = BuildGoogleCalendar(connections.FirstOrDefault(c =>
-                c.ConnectionType == ConnectionType.Integration &&
-                c.Provider == (int)IntegrationProvider.GoogleCalendar &&
-                c.Capability == (int)IntegrationCapability.Calendar)),
+            GoogleCalendar = await BuildGoogleCalendarAsync(googleConnection, cancellationToken),
             Wompi = BuildWompi(connections.FirstOrDefault(c =>
                 c.ConnectionType == ConnectionType.Integration &&
                 c.Provider == (int)IntegrationProvider.Wompi &&
@@ -39,25 +41,62 @@ public class IntegrationsConfigProvider : IIntegrationsConfigProvider
         };
     }
 
-    private GoogleCalendarIntegration? BuildGoogleCalendar(IntegrationConnection? connection)
+    private async Task<GoogleCalendarIntegration?> BuildGoogleCalendarAsync(
+        IntegrationConnection? connection,
+        CancellationToken cancellationToken)
     {
         if (connection is null)
             return null;
 
         var settings = ParseJson(connection.SettingsJson);
-        var secrets = ParseJson(connection.SecretsJson);
+        var platformConfigurationId = GetInt(
+            settings,
+            "platformConfigurationId",
+            (int)SystemConfigurationKey.GoogleCalendarPlatformCredentials);
+        var platformSecrets = await GetPlatformGoogleCalendarConfigurationAsync(platformConfigurationId, cancellationToken);
+
+        var calendarSummary = GetString(settings, "calendarSummary");
+        if (string.IsNullOrWhiteSpace(calendarSummary))
+            calendarSummary = connection.Name;
 
         return new GoogleCalendarIntegration
         {
             Enabled = connection.IsEnabled,
             Provider = "Google",
-            ClientId = GetString(secrets, "clientId"),
-            ClientSecret = GetString(secrets, "clientSecret"),
-            RefreshToken = GetString(secrets, "refreshToken"),
-            CalendarId = GetString(settings, "calendarId", "primary"),
+            PlatformConfigurationId = platformConfigurationId,
+            OwnerEmail = GetString(platformSecrets, "ownerEmail"),
+            ClientId = GetString(platformSecrets, "clientId"),
+            ClientSecret = GetString(platformSecrets, "clientSecret"),
+            RefreshToken = GetString(platformSecrets, "refreshToken"),
+            CalendarId = GetString(settings, "calendarId"),
+            CalendarSummary = calendarSummary,
             TimeZone = GetString(settings, "timeZone", "America/Bogota"),
-            Scopes = GetNullableString(settings, "scopes")
+            Scopes = GetNullableString(platformSecrets, "scopes"),
+            AutoCreateCalendar = GetBool(settings, "autoCreateCalendar", true),
+            SharedWithEmail = GetNullableString(settings, "sharedWithEmail"),
+            SharedRole = GetString(settings, "sharedRole", "writer"),
+            SendSharingNotifications = GetBool(settings, "sendSharingNotifications", true),
+            InsertIntoSharedCalendarList = GetBool(settings, "insertIntoSharedCalendarList", false)
         };
+    }
+
+    private async Task<Dictionary<string, JsonElement>> GetPlatformGoogleCalendarConfigurationAsync(
+        int platformConfigurationId,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var config = await _unitOfWork.SystemConfigurations.GetByKeyAsync((SystemConfigurationKey)platformConfigurationId);
+            return ParseJson(config?.Value);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "No se pudo leer la configuracion global de Google Calendar con SystemConfigurationId={SystemConfigurationId}",
+                platformConfigurationId);
+            return new Dictionary<string, JsonElement>(StringComparer.OrdinalIgnoreCase);
+        }
     }
 
     private WompiIntegration? BuildWompi(IntegrationConnection? connection)

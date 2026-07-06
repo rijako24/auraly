@@ -54,7 +54,7 @@ public static class TestServiceBuilder
         services.AddSingleton<IAvailabilityService>(new FakeAvailabilityService(calendarMode));
         services.AddSingleton<IReservationService>(new FakeReservationService(reservationMode));
         services.AddSingleton<IEmployeeAssignmentService>(new FakeEmployeeAssignmentService(businessId));
-        services.AddSingleton<IConversationService>(new FakeConversationService(businessId));
+        services.AddSingleton<IConversationService, ConversationService>();
         services.AddSingleton<IConversationLifecycleService, ConversationLifecycleService>();
         services.AddSingleton<ILeadService, LeadService>();
         services.AddSingleton<IMessageService>(sp =>
@@ -63,6 +63,7 @@ public static class TestServiceBuilder
         services.AddSingleton<IBusinessClock>(new FakeBusinessClock());
         services.AddSingleton<ITemporalReferenceBuilder, TemporalReferenceBuilder>();
         services.AddSingleton<ISchedulingPolicyProvider, FakeSchedulingPolicyProvider>();
+        services.AddSingleton<IWorkingHoursService, WorkingHoursService>();
         services.AddSingleton<IUsageBillingService, NoOpUsageBillingService>();
 
         services.AddSingleton<IConversationStateRepository>(unitOfWork.ConversationStates);
@@ -85,6 +86,8 @@ public static class TestServiceBuilder
         services.AddSingleton<IFactSourceResolver, MimosBabySpa.Application.Agents.Facts.Resolvers.ChannelEmailResolver>();
         services.AddSingleton<IFactSourceResolver, MimosBabySpa.Application.Agents.Facts.Resolvers.EngagementResolver>();
         services.AddSingleton<IPromptComposer, AgentPromptComposer>();
+        services.AddSingleton<IOperatingHoursTurnPolicy, OperatingHoursTurnPolicy>();
+        services.AddSingleton<IAgentTurnToolResolver, AgentTurnToolResolver>();
 
         services.AddSingleton<IWhatsAppService, NoOpWhatsAppService>();
         services.AddSingleton<IReleaseLinkService, FakeReleaseLinkService>();

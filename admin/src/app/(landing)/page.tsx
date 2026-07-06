@@ -1,8 +1,9 @@
-ï»¿"use client";
+"use client";
 
 import Link from "next/link";
 import Image from "next/image";
 import { useState } from "react";
+import { toast } from "sonner";
 import {
   ArrowRight,
   BarChart3,
@@ -30,7 +31,6 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { Separator } from "@/components/ui/separator";
-import { Textarea } from "@/components/ui/textarea";
 import {
   Accordion,
   AccordionContent,
@@ -174,6 +174,19 @@ const DIFFERENTIATORS = [
   ["Operacion medible", "Cada conversacion deja historial, estado, consumo y contexto para optimizar ventas, soporte y recuperacion."],
 ];
 
+const WHATSAPP_CONTACT_NUMBER = process.env.NEXT_PUBLIC_WHATSAPP_CONTACT_NUMBER;
+const WHATSAPP_CONTACT_MESSAGE =
+  process.env.NEXT_PUBLIC_WHATSAPP_CONTACT_MESSAGE ||
+  "Hola, quiero conocer la plataforma y agendar una demo.";
+
+type DemoForm = {
+  name: string;
+  email: string;
+  company: string;
+  phone: string;
+};
+
+type DemoFormErrors = Partial<Record<keyof DemoForm, string>>;
 const FAQ = [
   {
     q: "Como funcionan los creditos?",
@@ -195,22 +208,50 @@ const FAQ = [
 
 export default function LandingPage() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [form, setForm] = useState({
+  const [form, setForm] = useState<DemoForm>({
     name: "",
     email: "",
     company: "",
     phone: "",
-    message: "",
   });
   const [status, setStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
   const [statusMessage, setStatusMessage] = useState("");
+  const [errors, setErrors] = useState<DemoFormErrors>({});
+  const whatsappContactHref = WHATSAPP_CONTACT_NUMBER
+    ? `https://wa.me/${WHATSAPP_CONTACT_NUMBER}?text=${encodeURIComponent(WHATSAPP_CONTACT_MESSAGE)}`
+    : null;
 
-  const updateForm = (field: keyof typeof form, value: string) => {
+  const updateForm = (field: keyof DemoForm, value: string) => {
     setForm((current) => ({ ...current, [field]: value }));
+    setErrors((current) => {
+      if (!current[field]) return current;
+      const next = { ...current };
+      delete next[field];
+      return next;
+    });
+  };
+
+  const validateForm = () => {
+    const nextErrors: DemoFormErrors = {};
+    if (!form.name.trim()) nextErrors.name = "Cuéntanos tu nombre.";
+    if (!form.company.trim()) nextErrors.company = "Cuéntanos de qué empresa nos escribes.";
+    if (!form.phone.trim()) nextErrors.phone = "Déjanos tu número de WhatsApp.";
+    if (form.email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) {
+      nextErrors.email = "Escribe un correo válido o déjalo vacío.";
+    }
+
+    setErrors(nextErrors);
+    return Object.keys(nextErrors).length === 0;
   };
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
+    if (!validateForm()) {
+      setStatus("error");
+      setStatusMessage("Revisa los campos marcados para poder solicitar la demo.");
+      return;
+    }
+
     setStatus("loading");
     setStatusMessage("");
 
@@ -226,12 +267,18 @@ export default function LandingPage() {
         throw new Error(payload?.title || payload?.message || "No se pudo enviar la solicitud.");
       }
 
-      setForm({ name: "", email: "", company: "", phone: "", message: "" });
+      setForm({ name: "", email: "", company: "", phone: "" });
+      setErrors({});
       setStatus("success");
-      setStatusMessage("Listo. Aly iniciara la conversacion por WhatsApp para coordinar tu demo.");
+      setStatusMessage("");
+      toast.success("Solicitud enviada", {
+        description: "Aly, nuestro agente de ventas, te contactará por WhatsApp para iniciar la demo.",
+      });
     } catch (error) {
       setStatus("error");
-      setStatusMessage(error instanceof Error ? error.message : "No se pudo enviar la solicitud.");
+      const message = error instanceof Error ? error.message : "No se pudo enviar la solicitud.";
+      setStatusMessage(message);
+      toast.error("No se pudo enviar la solicitud", { description: message });
     }
   };
 
@@ -524,14 +571,25 @@ export default function LandingPage() {
             <h2 className="text-3xl font-semibold sm:text-5xl">Revisemos tu flujo actual de WhatsApp.</h2>
             <p className="mt-4 max-w-2xl text-lg text-black/65">Al solicitarla, Aly inicia la conversacion por WhatsApp, entiende tu cuello de botella y te guia hasta coordinar la demo con nuestro equipo.</p>
           </div>
-          <form onSubmit={submit} className="grid gap-3 rounded-lg border border-black/10 bg-[#f7f8f2] p-4">
+          <form onSubmit={submit} noValidate className="grid gap-3 rounded-lg border border-black/10 bg-[#f7f8f2] p-4">
             <div className="grid gap-3 sm:grid-cols-2">
-              <Input value={form.name} onChange={(event) => updateForm("name", event.target.value)} placeholder="Nombre" className="bg-white text-[#151515] placeholder:text-black/45" />
-              <Input type="email" value={form.email} onChange={(event) => updateForm("email", event.target.value)} placeholder="Correo (opcional)" className="bg-white text-[#151515] placeholder:text-black/45" />
-              <Input value={form.company} onChange={(event) => updateForm("company", event.target.value)} placeholder="Empresa" className="bg-white text-[#151515] placeholder:text-black/45" />
-              <Input value={form.phone} onChange={(event) => updateForm("phone", event.target.value)} placeholder="WhatsApp" required className="bg-white text-[#151515] placeholder:text-black/45" />
+              <div className="space-y-1">
+                <Input value={form.name} onChange={(event) => updateForm("name", event.target.value)} placeholder="Nombre" aria-invalid={Boolean(errors.name)} className="bg-white text-[#151515] placeholder:text-black/45" />
+                {errors.name && <p className="text-xs text-destructive">{errors.name}</p>}
+              </div>
+              <div className="space-y-1">
+                <Input type="email" value={form.email} onChange={(event) => updateForm("email", event.target.value)} placeholder="Correo (opcional)" aria-invalid={Boolean(errors.email)} className="bg-white text-[#151515] placeholder:text-black/45" />
+                {errors.email && <p className="text-xs text-destructive">{errors.email}</p>}
+              </div>
+              <div className="space-y-1">
+                <Input value={form.company} onChange={(event) => updateForm("company", event.target.value)} placeholder="Empresa" aria-invalid={Boolean(errors.company)} className="bg-white text-[#151515] placeholder:text-black/45" />
+                {errors.company && <p className="text-xs text-destructive">{errors.company}</p>}
+              </div>
+              <div className="space-y-1">
+                <Input value={form.phone} onChange={(event) => updateForm("phone", event.target.value)} placeholder="WhatsApp" aria-invalid={Boolean(errors.phone)} className="bg-white text-[#151515] placeholder:text-black/45" />
+                {errors.phone && <p className="text-xs text-destructive">{errors.phone}</p>}
+              </div>
             </div>
-            <Textarea value={form.message} onChange={(event) => updateForm("message", event.target.value)} placeholder="Cuentame que quieres automatizar" className="min-h-24 bg-white text-[#151515] placeholder:text-black/45" />
             {statusMessage && (
               <p className={cn("text-sm", status === "success" ? "text-[#1A5860]" : "text-destructive")}>
                 {statusMessage}
@@ -555,7 +613,23 @@ export default function LandingPage() {
           </div>
         </div>
       </footer>
+
+      {whatsappContactHref && (
+        <a
+          href={whatsappContactHref}
+          target="_blank"
+          rel="noreferrer"
+          aria-label="Abrir WhatsApp con Aly"
+          className="fixed bottom-5 right-5 z-50 flex h-14 w-14 items-center justify-center rounded-full bg-[#25D366] text-white shadow-2xl shadow-black/25 transition hover:bg-[#1EBE57] focus:outline-none focus:ring-2 focus:ring-[#25D366] focus:ring-offset-2"
+        >
+          <MessageCircle className="h-6 w-6" />
+        </a>
+      )}
     </main>
   );
 }
+
+
+
+
 

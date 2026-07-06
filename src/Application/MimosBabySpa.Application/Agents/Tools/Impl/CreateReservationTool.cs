@@ -1,5 +1,6 @@
 using System.Text.Json;
 using MimosBabySpa.Application.Agents.Gating;
+using MimosBabySpa.Application.Agents.Facts;
 using MimosBabySpa.Application.BusinessRules;
 using MimosBabySpa.Application.Configuration;
 using MimosBabySpa.Application.DTOs;
@@ -105,6 +106,8 @@ public sealed class CreateReservationTool : IAgentTool
                 }
             });
         }
+
+        EnsureReservationFacts(ctx, service!, dateStr!, timeStr!, customerName!, customerPhone!, customerEmail);
 
         var idempotentResult = TryBuildIdempotentResult(ctx, service!, dateStr!, timeStr!, customerName!);
         if (idempotentResult is not null)
@@ -252,6 +255,34 @@ public sealed class CreateReservationTool : IAgentTool
         }, effects, events);
     }
 
+    private static void EnsureReservationFacts(
+        AgentToolContext ctx,
+        string service,
+        string date,
+        string time,
+        string customerName,
+        string customerPhone,
+        string? customerEmail)
+    {
+        var roles = new FactRoleIndex(ctx.Config?.FactSchema ?? []);
+        SetIfMissing(ctx.Facts, roles.KeyByRole("booking.service") ?? ConversationFactKeys.Service, service);
+        SetIfMissing(ctx.Facts, roles.KeyByRole("booking.date") ?? ConversationFactKeys.DesiredDate, date);
+        SetIfMissing(ctx.Facts, roles.KeyByRole("booking.time") ?? ConversationFactKeys.DesiredTime, time);
+        SetIfMissing(ctx.Facts, roles.KeyByRole("customer.name") ?? ConversationFactKeys.CustomerName, customerName);
+        SetIfMissing(ctx.Facts, roles.KeyByRole("customer.phone") ?? ConversationFactKeys.CustomerPhone, customerPhone);
+
+        if (!string.IsNullOrWhiteSpace(customerEmail))
+            SetIfMissing(ctx.Facts, roles.KeyByRole("customer.email") ?? ConversationFactKeys.CustomerEmail, customerEmail);
+    }
+
+    private static void SetIfMissing(IDictionary<string, string> facts, string key, string value)
+    {
+        if (string.IsNullOrWhiteSpace(key) || string.IsNullOrWhiteSpace(value))
+            return;
+
+        if (!facts.TryGetValue(key, out var current) || string.IsNullOrWhiteSpace(current))
+            facts[key] = value.Trim();
+    }
     private static string? Coalesce(JsonElement args, string property, string? fallback)
     {
         if (ToolResultHelper.TryGetString(args, property, out var fromArgs))
@@ -259,4 +290,6 @@ public sealed class CreateReservationTool : IAgentTool
         return string.IsNullOrWhiteSpace(fallback) ? null : fallback;
     }
 }
+
+
 

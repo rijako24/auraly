@@ -5,6 +5,7 @@ public interface IUnitOfWork : IDisposable
     IConversationRepository Conversations { get; }
     IMessageRepository Messages { get; }
     ILeadRepository Leads { get; }
+    ICampaignRepository Campaigns { get; }
     IBusinessRepository Businesses { get; }
     IBusinessWhatsAppNumberRepository BusinessWhatsAppNumbers { get; }
     ISystemConfigurationRepository SystemConfigurations { get; }

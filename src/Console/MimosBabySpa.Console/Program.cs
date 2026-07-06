@@ -34,11 +34,28 @@ using MimosBabySpa.Infrastructure.Commerce;
 Console.OutputEncoding = System.Text.Encoding.UTF8;
 Console.InputEncoding = System.Text.Encoding.UTF8;
 
+var environmentConfiguration = new Dictionary<string, string?>();
+AddEnvironmentOverride(environmentConfiguration, "ConnectionStrings:DefaultConnection", "ConnectionStrings__DefaultConnection");
+AddEnvironmentOverride(environmentConfiguration, "OpenAI:TextModel:ApiKey", "OpenAI__TextModel__ApiKey");
+AddEnvironmentOverride(environmentConfiguration, "OpenAI:TextModel:Endpoint", "OpenAI__TextModel__Endpoint");
+AddEnvironmentOverride(environmentConfiguration, "OpenAI:TextModel:DeploymentName", "OpenAI__TextModel__DeploymentName");
+AddEnvironmentOverride(environmentConfiguration, "OpenAI:AudioModel:ApiKey", "OpenAI__AudioModel__ApiKey");
+AddEnvironmentOverride(environmentConfiguration, "OpenAI:AudioModel:Endpoint", "OpenAI__AudioModel__Endpoint");
+AddEnvironmentOverride(environmentConfiguration, "OpenAI:AudioModel:DeploymentName", "OpenAI__AudioModel__DeploymentName");
+
 var configuration = new ConfigurationBuilder()
     .SetBasePath(AppContext.BaseDirectory)
     .AddJsonFile("appsettings.json", optional: true, reloadOnChange: true)
     .AddJsonFile("appSettings.json", optional: true, reloadOnChange: true)
+    .AddInMemoryCollection(environmentConfiguration)
     .Build();
+
+static void AddEnvironmentOverride(IDictionary<string, string?> values, string key, string environmentName)
+{
+    var value = Environment.GetEnvironmentVariable(environmentName);
+    if (!string.IsNullOrWhiteSpace(value))
+        values[key] = value;
+}
 
 if (args is ["backfill-customer-memory"])
 {
@@ -229,6 +246,7 @@ services.AddScoped<IAgentTool, AssignPaidSlotTool>();
 services.AddScoped<IAgentTool, SuspendReservationTool>();
 services.AddScoped<IAgentTool, GetCustomerReservationsTool>();
 services.AddScoped<IAgentTool, ConfirmReservationAttendanceTool>();
+services.AddScoped<IAgentTool, RequestReservationRescheduleTool>();
 services.AddScoped<IAgentTool, PrepareReservationChangeTool>();
 services.AddScoped<IAgentTool, ConfirmReservationChangeTool>();
 services.AddScoped<IAgentTool, VerifyPaymentTool>();
@@ -263,28 +281,21 @@ var serviceProvider = services.BuildServiceProvider();
 Console.OutputEncoding = System.Text.Encoding.UTF8;
 Console.InputEncoding = System.Text.Encoding.UTF8;
 
-const string mimosBusinessIdStr = "BABA0000-0000-0000-0000-000000000001";
-const string mimosBusinessName = "Luis Petit Profesional Barber";
-const string mimosAgentIdStr = "BABA0000-0000-0000-0000-000000000002";
-const string mimosAgentName = "Luis";
-const string mimosLegacyAgentName = "Luis Petit";
-const string mimosAgentDisplayName = "Luis";
-
-var mimosBusinessId = Guid.Parse(mimosBusinessIdStr);
-var mimosAgentId = Guid.Parse(mimosAgentIdStr);
+var consoleAgent = ConsoleAgentOptions.FromEnvironment();
 
 Console.WriteLine("========================================================");
-Console.WriteLine("  Luis Petit Profesional Barber - Simulador Agentic Engine (FC)");
+Console.WriteLine($"  {consoleAgent.BusinessName} - Simulador Agentic Engine (FC)");
 Console.WriteLine("========================================================");
 Console.WriteLine();
-Console.WriteLine($"  Negocio : {mimosBusinessName} ({mimosBusinessIdStr})");
-Console.WriteLine($"  Agente  : {mimosAgentName}");
+Console.WriteLine($"  Negocio : {consoleAgent.BusinessName} ({consoleAgent.BusinessId})");
+Console.WriteLine($"  Agente  : {consoleAgent.AgentName}");
 Console.WriteLine("  Escribe  'exit' para salir");
 Console.WriteLine("  Escribe  'reset' para reiniciar la sesion");
 Console.WriteLine();
 
 // Simula el telefono del cliente (clave de sesion).
 var userPhone = CreateTestUserPhone();
+var customerName = Environment.GetEnvironmentVariable("TALKIO_CONSOLE_CUSTOMER_NAME");
 
 while (true)
 {
@@ -322,22 +333,22 @@ while (true)
         var conversationService = scope.ServiceProvider.GetRequiredService<IConversationService>();
         var agentService = scope.ServiceProvider.GetRequiredService<IAgentConversationService>();
 
-        var businessAgents = await agentRepo.GetByBusinessAsync(mimosBusinessId);
+        var businessAgents = await agentRepo.GetByBusinessAsync(consoleAgent.BusinessId);
         var agentEntity = businessAgents.FirstOrDefault(a =>
-            a.AgentId == mimosAgentId
-            || a.Name.Equals(mimosAgentName, StringComparison.OrdinalIgnoreCase)
-            || a.Name.Equals(mimosLegacyAgentName, StringComparison.OrdinalIgnoreCase));
+            a.AgentId == consoleAgent.AgentId
+            || a.Name.Equals(consoleAgent.AgentName, StringComparison.OrdinalIgnoreCase)
+            || consoleAgent.AgentAliases.Any(alias => a.Name.Equals(alias, StringComparison.OrdinalIgnoreCase)));
 
         if (agentEntity == null)
         {
             Console.ForegroundColor = ConsoleColor.Red;
-            Console.WriteLine($"ERROR: Agente '{mimosAgentName}' no encontrado para el negocio {mimosBusinessId}.");
+            Console.WriteLine($"ERROR: Agente '{consoleAgent.AgentName}' no encontrado para el negocio {consoleAgent.BusinessId}.");
             Console.ResetColor();
             Console.WriteLine();
             continue;
         }
 
-        if (agentEntity.BusinessId != mimosBusinessId)
+        if (agentEntity.BusinessId != consoleAgent.BusinessId)
         {
             Console.ForegroundColor = ConsoleColor.Red;
             Console.WriteLine($"ERROR: El agente {agentEntity.AgentId} no pertenece al negocio configurado.");
@@ -347,7 +358,7 @@ while (true)
         }
 
         var conversation = await conversationService.GetOrCreateConversationAsync(
-            agentEntity.BusinessId, userPhone, customerName: null);
+            agentEntity.BusinessId, userPhone, customerName: customerName);
 
         var result = await agentService.ProcessMessageAsync(
             agentEntity.AgentId,
@@ -356,7 +367,7 @@ while (true)
             userPhone);
 
         Console.ForegroundColor = ConsoleColor.Green;
-        Console.Write($"{mimosAgentDisplayName}: ");
+        Console.Write($"{consoleAgent.AgentDisplayName}: ");
         Console.ResetColor();
 
         if (!string.IsNullOrWhiteSpace(result.Response))
@@ -418,6 +429,54 @@ static string CreateTestUserPhone()
 
     return $"+1555{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() % 10000000:0000000}";
 }
+internal sealed record ConsoleAgentOptions(
+    Guid BusinessId,
+    string BusinessName,
+    Guid AgentId,
+    string AgentName,
+    string AgentDisplayName,
+    IReadOnlyList<string> AgentAliases)
+{
+    public static ConsoleAgentOptions FromEnvironment()
+    {
+        var businessId = GetGuid(
+            "TALKIO_CONSOLE_BUSINESS_ID",
+            "BABA0000-0000-0000-0000-000000000001");
+        var agentId = GetGuid(
+            "TALKIO_CONSOLE_AGENT_ID",
+            "BABA0000-0000-0000-0000-000000000002");
+        var agentName = GetText("TALKIO_CONSOLE_AGENT_NAME", "Luis");
+
+        return new ConsoleAgentOptions(
+            businessId,
+            GetText("TALKIO_CONSOLE_BUSINESS_NAME", "Luis Petit Profesional Barber"),
+            agentId,
+            agentName,
+            GetText("TALKIO_CONSOLE_AGENT_DISPLAY_NAME", agentName),
+            GetList("TALKIO_CONSOLE_AGENT_ALIASES", "Luis Petit"));
+    }
+
+    private static Guid GetGuid(string name, string fallback)
+    {
+        var raw = Environment.GetEnvironmentVariable(name);
+        return Guid.Parse(string.IsNullOrWhiteSpace(raw) ? fallback : raw.Trim());
+    }
+
+    private static string GetText(string name, string fallback)
+    {
+        var raw = Environment.GetEnvironmentVariable(name);
+        return string.IsNullOrWhiteSpace(raw) ? fallback : raw.Trim();
+    }
+
+    private static IReadOnlyList<string> GetList(string name, string fallback)
+    {
+        var raw = GetText(name, fallback);
+        return raw
+            .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .ToArray();
+    }
+}
 internal sealed class ConsoleUsageBillingService : IUsageBillingService
 {
     public Task<UsageGateResult> CanProcessAsync(Guid businessId, CancellationToken ct = default) =>
@@ -432,5 +491,4 @@ internal sealed class ConsoleUsageBillingService : IUsageBillingService
     public Task<IReadOnlyList<UsagePlanDto>> GetPlansAsync(CancellationToken ct = default) =>
         Task.FromResult<IReadOnlyList<UsagePlanDto>>(Array.Empty<UsagePlanDto>());
 }
-
 

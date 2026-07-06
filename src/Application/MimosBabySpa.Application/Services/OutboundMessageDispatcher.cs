@@ -57,6 +57,9 @@ public sealed class OutboundMessageDispatcher : IOutboundMessageDispatcher
                 "Business {BusinessId}: outbound blocked by usage gate ({Code})",
                 businessId, gate.Code);
 
+            if (throwOnFailure)
+                throw new InvalidOperationException($"Outbound blocked by usage gate: {gate.Code} - {gate.Reason}");
+
             return;
         }
 
@@ -67,7 +70,7 @@ public sealed class OutboundMessageDispatcher : IOutboundMessageDispatcher
             try
             {
                 await SendOneAsync(businessId, phone, message, ct);
-                await SaveSentMessageAsync(conversationId, message);
+                await SaveSentMessageAsync(conversationId, message, throwOnFailure);
             }
             catch (Exception ex)
             {
@@ -145,7 +148,7 @@ public sealed class OutboundMessageDispatcher : IOutboundMessageDispatcher
             businessId, phone, message.MediaUrl, message.Body, message.Filename);
     }
 
-    private async Task SaveSentMessageAsync(Guid? conversationId, OutboundMessage message)
+    private async Task SaveSentMessageAsync(Guid? conversationId, OutboundMessage message, bool throwOnFailure)
     {
         if (!conversationId.HasValue)
             return;
@@ -171,6 +174,14 @@ public sealed class OutboundMessageDispatcher : IOutboundMessageDispatcher
     {
         var body = message.Body?.Trim();
         var media = BuildMediaReference(message);
+
+        if (string.IsNullOrWhiteSpace(body) && message.Template is not null)
+        {
+            var parameters = message.Template.BodyParameters.Count > 0
+                ? $" | params: {string.Join(", ", message.Template.BodyParameters)}"
+                : string.Empty;
+            body = $"[Plantilla WhatsApp: {message.Template.Name} ({message.Template.LanguageCode}){parameters}]";
+        }
 
         if (string.IsNullOrWhiteSpace(body))
             return media;
@@ -198,3 +209,4 @@ public sealed class OutboundMessageDispatcher : IOutboundMessageDispatcher
             : $"[{mediaType}] {filename} - {message.MediaUrl}";
     }
 }
+

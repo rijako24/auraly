@@ -52,6 +52,16 @@ public class LeadRepository : ILeadRepository
         return await query.OrderByDescending(l => l.Timestamp).ToPagedListAsync(page, pageSize, ct);
     }
 
+    public async Task<IReadOnlyList<Lead>> GetInactiveByBusinessIdAsync(
+        Guid businessId, DateTime inactiveBeforeUtc, int limit, CancellationToken ct = default)
+    {
+        return await _context.Leads
+            .Where(l => l.BusinessId == businessId && l.Timestamp <= inactiveBeforeUtc)
+            .OrderByDescending(l => l.Timestamp)
+            .Take(limit)
+            .ToListAsync(ct);
+    }
+
     public Task<Lead> CreateAsync(Lead lead)
     {
         _context.Leads.Add(lead);

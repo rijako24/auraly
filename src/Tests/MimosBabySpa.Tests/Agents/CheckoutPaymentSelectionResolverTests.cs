@@ -34,6 +34,31 @@ public sealed class CheckoutPaymentSelectionResolverTests
     }
 
     [Fact]
+    public void Resolve_WithSingleMethodAndInvalidExplicitInput_ReturnsRecoverableError()
+    {
+        var mode = new CheckoutModeDefinition
+        {
+            PaymentMethods =
+            {
+                ["transferencia"] = new CheckoutPaymentMethodDefinition
+                {
+                    Label = "transferencia con link de pago",
+                    Payment = new CheckoutPaymentDefinition { Percentage = 100 },
+                    Template = "checkout_with_deposit",
+                    ConfirmationOutcome = "reservation_created"
+                }
+            }
+        };
+
+        var selection = CheckoutPaymentSelectionResolver.Resolve(mode, "reservation", 25_000, rawPaymentMethod: "default");
+
+        selection.MissingPaymentMethod.Should().BeFalse();
+        selection.Error.Should().NotBeNull();
+        selection.Error!.Code.Should().Be("invalid_payment_method");
+        selection.Error.Recoverable.Should().BeTrue();
+    }
+
+    [Fact]
     public void Resolve_WithMultipleMethodsAndNoInput_RequiresPaymentMethod()
     {
         var mode = new CheckoutModeDefinition

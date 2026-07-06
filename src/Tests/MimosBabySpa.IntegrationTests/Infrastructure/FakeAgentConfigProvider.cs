@@ -37,6 +37,7 @@ public class FakeAgentConfigProvider : IAgentConfigProvider
                 "prepare_checkout",
                 "create_reservation",
                 "get_service_catalog",
+                "resolve_service_selection",
                 "get_compatible_add_ons",
                 "get_service_fulfillment",
                 "set_fact",

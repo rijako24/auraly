@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using MimosBabySpa.Application.Agents;
+using MimosBabySpa.Application.Services;
 using MimosBabySpa.IntegrationTests.Bootstrap;
 using MimosBabySpa.IntegrationTests.Infrastructure;
 using MimosBabySpa.IntegrationTests.Interception;
@@ -62,7 +63,13 @@ public class ScenarioRunner
             var agentService   = provider.GetRequiredService<IAgentConversationService>();
 
             // ── Conversación única para el escenario ──────────────────────────
-            var conversationId = Guid.NewGuid();
+            var lifecycle = provider.GetRequiredService<IConversationLifecycleService>();
+            var conversation = await lifecycle.GetOrOpenForCustomerAsync(
+                BusinessId,
+                "+573001234567",
+                channelCustomerName: "Cliente Test",
+                cancellationToken);
+            var conversationId = conversation.ConversationId;
 
             // ── Ejecutar cada paso ────────────────────────────────────────────
             foreach (var (step, idx) in scenario.Steps.Select((s, i) => (s, i)))

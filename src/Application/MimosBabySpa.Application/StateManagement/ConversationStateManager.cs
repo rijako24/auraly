@@ -50,6 +50,7 @@ public class ConversationStateManager : IConversationStateManager
             ConversationId = conversationId,
             BusinessId = businessId,
             Owner = ConversationOwner.Bot,
+            ActiveRequestStartedAtUtc = now,
             Version = 1,
             CreatedAt = now,
             UpdatedAt = now
@@ -106,6 +107,7 @@ public class ConversationStateManager : IConversationStateManager
         ConsecutiveDegradedTurns = entity.ConsecutiveDegradedTurns,
         LastUserMessage = entity.LastUserMessage,
         LastBotMessage = entity.LastBotMessage,
+        ActiveRequestStartedAtUtc = entity.ActiveRequestStartedAtUtc,
         Verifications = DeserializeVerifications(entity.VerificationsJson),
         StageFactSnapshots = DeserializeStageSnapshots(entity.StageSnapshotsJson),
         Version = entity.Version,
@@ -121,6 +123,7 @@ public class ConversationStateManager : IConversationStateManager
         entity.ConsecutiveDegradedTurns = state.ConsecutiveDegradedTurns;
         entity.LastUserMessage = state.LastUserMessage;
         entity.LastBotMessage = state.LastBotMessage;
+        entity.ActiveRequestStartedAtUtc = state.ActiveRequestStartedAtUtc;
         entity.VerificationsJson = state.Verifications.Count == 0
             ? null
             : JsonSerializer.Serialize(state.Verifications, JsonOptions);

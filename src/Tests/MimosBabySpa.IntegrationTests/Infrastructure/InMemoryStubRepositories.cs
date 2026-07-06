@@ -87,7 +87,10 @@ public class InMemoryBusinessRepository : IBusinessRepository
     public Task<Business?> GetByIdAsync(Guid businessId) =>
         Task.FromResult(_business.BusinessId == businessId ? _business : (Business?)null);
 
-    public Task<Business?> GetByIdWithConfigurationAsync(Guid businessId) =>
+    
+    public Task<Business?> GetByNameAsync(string name, CancellationToken ct = default) =>
+        Task.FromResult(string.Equals(_business.Name, name, StringComparison.OrdinalIgnoreCase) ? _business : (Business?)null);
+public Task<Business?> GetByIdWithConfigurationAsync(Guid businessId) =>
         GetByIdAsync(businessId);
 
     public Task<Business> CreateAsync(Business business) => Task.FromResult(business);
@@ -133,6 +136,14 @@ public class InMemoryReservationRepository : IReservationRepository
 
     public Task<IEnumerable<Reservation>> GetByBusinessIdAsync(Guid businessId) =>
         Task.FromResult(_store.Where(r => r.BusinessId == businessId));
+
+    public Task<IReadOnlyList<Reservation>> GetLatestCompletedCustomerReservationsWithoutFutureAsync(
+        Guid businessId,
+        DateTime completedBeforeUtc,
+        DateTime futureFromUtc,
+        int limit,
+        CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<Reservation>>([]);
 
     public Task<IEnumerable<Reservation>> GetByBusinessIdAndDateRangeAsync(
         Guid businessId, DateTime startDate, DateTime endDate) =>
@@ -452,6 +463,10 @@ public class InMemoryLeadRepository : ILeadRepository
 
     public Task<IEnumerable<Lead>> GetByBusinessIdAsync(Guid businessId) =>
         Task.FromResult(Enumerable.Empty<Lead>());
+
+    public Task<IReadOnlyList<Lead>> GetInactiveByBusinessIdAsync(
+        Guid businessId, DateTime inactiveBeforeUtc, int limit, CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<Lead>>([]);
 
     public Task<Lead> CreateAsync(Lead lead) => Task.FromResult(lead);
     public Task<Lead> UpdateAsync(Lead lead) => Task.FromResult(lead);

@@ -650,13 +650,10 @@ public class ReservationService : IReservationService
     {
         var reservationDateTime = reservation.ReservationDateTime!.Value;
         var endDateTime = reservation.EndDateTime!.Value;
-        var titleParts = new List<string> { $"[{serviceName}] Reserva" };
-
-        foreach (var kvp in metadata)
-        {
-            if (!string.IsNullOrWhiteSpace(kvp.Value))
-                titleParts.Add(kvp.Value);
-        }
+        var customerName = metadata.TryGetValue("CustomerName", out var name) && !string.IsNullOrWhiteSpace(name)
+            ? name.Trim()
+            : reservation.CustomerNameSnapshot?.Trim();
+        var title = string.IsNullOrWhiteSpace(customerName) ? serviceName : $"{serviceName} - {customerName}";
 
         var description = $"""
         Reserva confirmada
@@ -676,7 +673,7 @@ public class ReservationService : IReservationService
 
         return new CalendarEvent
         {
-            Title = string.Join(" - ", titleParts),
+            Title = title,
             Description = description,
             StartDateTime = reservationDateTime,
             EndDateTime = endDateTime,

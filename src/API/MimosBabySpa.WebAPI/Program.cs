@@ -20,6 +20,8 @@ using MimosBabySpa.Application.Agents.Testing;
 using MimosBabySpa.Application.Agents.Tools;
 using MimosBabySpa.Application.Agents.Tools.Impl;
 using MimosBabySpa.Application.Billing;
+using MimosBabySpa.Application.Campaigns.Interfaces;
+using MimosBabySpa.Application.Campaigns.Services;
 using MimosBabySpa.Application.BusinessRules;
 using MimosBabySpa.Application.Common.Interfaces;
 using MimosBabySpa.Application.Commerce;
@@ -31,6 +33,7 @@ using MimosBabySpa.Application.Services;
 using MimosBabySpa.Application.Promotions;
 using MimosBabySpa.Application.StateManagement;
 using MimosBabySpa.Application.Time;
+using MimosBabySpa.Application.WhatsAppTemplates.Interfaces;
 using MimosBabySpa.Domain.Repositories;
 using MimosBabySpa.Infrastructure.Catalog;
 using MimosBabySpa.Infrastructure.Commerce;
@@ -91,6 +94,7 @@ builder.Services.AddScoped<IUnitOfWork, UnitOfWork>();
 builder.Services.AddScoped<IConversationRepository, ConversationRepository>();
 builder.Services.AddScoped<IMessageRepository, MessageRepository>();
 builder.Services.AddScoped<ILeadRepository, LeadRepository>();
+builder.Services.AddScoped<ICampaignRepository, CampaignRepository>();
 builder.Services.AddScoped<IReservationRepository, ReservationRepository>();
 builder.Services.AddScoped<IConversationStateRepository, ConversationStateRepository>();
 builder.Services.AddScoped<IPaymentTransactionRepository, PaymentTransactionRepository>();
@@ -104,6 +108,7 @@ builder.Services.AddScoped<IMessageService, MessageService>();
 builder.Services.AddScoped<IOutboundMessageDispatcher, OutboundMessageDispatcher>();
 builder.Services.AddScoped<IInboundMessageDeduplicationService, InboundMessageDeduplicationService>();
 builder.Services.AddSingleton<IWhatsAppInboundQueueService, WhatsAppInboundQueueService>();
+builder.Services.AddSingleton<ICampaignQueueService, CampaignQueueService>();
 builder.Services.AddScoped<IWorkingHoursService, WorkingHoursService>();
 builder.Services.AddScoped<IConversationService, ConversationService>();
 builder.Services.AddScoped<IConversationLifecycleService, ConversationLifecycleService>();
@@ -142,6 +147,7 @@ builder.Services.AddScoped<IEventNotificationDispatcher, EventNotificationDispat
 builder.Services.AddScoped<IBusinessInboundContactRouter, BusinessInboundContactRouter>();
 builder.Services.AddScoped<IExternalEscalationService, ExternalEscalationService>();
         builder.Services.AddScoped<IExternalEscalationOutcomePublisher, ExternalEscalationOutcomePublisher>();
+builder.Services.AddScoped<IWhatsAppMessageProcessorService, WhatsAppMessageProcessorService>();
 builder.Services.AddScoped<IInboundMessageBatchProcessor, InboundMessageBatchProcessor>();
 builder.Services.AddScoped<IConversationFactsService, ConversationFactsService>();
 builder.Services.AddScoped<ICustomerMemoryService, CustomerMemoryService>();
@@ -158,6 +164,12 @@ builder.Services.Configure<ReleaseLinkSettings>(builder.Configuration.GetSection
 builder.Services.AddScoped<IReleaseLinkService, ReleaseLinkService>();
 builder.Services.AddHttpClient<GoogleCalendarService>(c => c.Timeout = TimeSpan.FromSeconds(30));
 builder.Services.AddScoped<ICalendarService, GoogleCalendarService>();
+builder.Services.AddScoped<IBlobStorageService>(sp =>
+{
+    var client = sp.GetRequiredService<BlobServiceClient>();
+    return new BlobStorageService(client, sp.GetRequiredService<ILogger<BlobStorageService>>());
+});
+
 builder.Services.AddSingleton(sp =>
 {
     var configuration = sp.GetRequiredService<IConfiguration>();
@@ -174,6 +186,7 @@ builder.Services.AddSingleton(sp =>
 builder.Services.AddHttpClient();
 builder.Services.Configure<WhatsAppWebhookOptions>(builder.Configuration.GetSection(WhatsAppWebhookOptions.SectionName));
 builder.Services.AddScoped<IWhatsAppCredentialResolver, WhatsAppCredentialResolver>();
+builder.Services.AddHttpClient<IWhatsAppTemplateService, WhatsAppTemplateService>();
 builder.Services.AddScoped<IWhatsAppService>(sp =>
 {
     var httpClient = sp.GetRequiredService<IHttpClientFactory>().CreateClient();
@@ -195,6 +208,8 @@ builder.Services.AddScoped<IPromotionAdminService, PromotionAdminService>();
 builder.Services.AddScoped<IEmployeeAdminService, EmployeeAdminService>();
 builder.Services.AddScoped<IReservationAdminService, ReservationAdminService>();
 builder.Services.AddScoped<ILeadAdminService, LeadAdminService>();
+builder.Services.AddScoped<ICampaignAdminService, CampaignAdminService>();
+builder.Services.AddScoped<ICampaignDispatchService, CampaignDispatchService>();
 builder.Services.AddScoped<IIntegrationAdminService, IntegrationAdminService>();
 builder.Services.AddScoped<IWorkingHoursAdminService, WorkingHoursAdminService>();
 builder.Services.AddScoped<IAgentRepository, AgentRepository>();
@@ -242,6 +257,7 @@ builder.Services.AddScoped<IAgentTool, AssignPaidSlotTool>();
 builder.Services.AddScoped<IAgentTool, SuspendReservationTool>();
 builder.Services.AddScoped<IAgentTool, GetCustomerReservationsTool>();
 builder.Services.AddScoped<IAgentTool, ConfirmReservationAttendanceTool>();
+builder.Services.AddScoped<IAgentTool, RequestReservationRescheduleTool>();
 builder.Services.AddScoped<IAgentTool, PrepareReservationChangeTool>();
 builder.Services.AddScoped<IAgentTool, ConfirmReservationChangeTool>();
 builder.Services.AddScoped<IAgentTool, VerifyPaymentTool>();
@@ -352,5 +368,6 @@ using (var scope = app.Services.CreateScope())
 }
 
 app.Run();
+
 
 

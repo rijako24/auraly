@@ -154,7 +154,6 @@ public sealed class AgentPromptComposer : IPromptComposer
             "- apertura_requerida: true",
             $"- motivo_apertura: {reason}"
         };
-
         return string.Join(Environment.NewLine, lines);
     }
 

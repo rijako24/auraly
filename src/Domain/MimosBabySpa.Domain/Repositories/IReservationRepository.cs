@@ -26,6 +26,13 @@ public interface IReservationRepository
         DateTime toLocal,
         CancellationToken ct = default);
 
+    Task<IReadOnlyList<Reservation>> GetLatestCompletedCustomerReservationsWithoutFutureAsync(
+        Guid businessId,
+        DateTime completedBeforeUtc,
+        DateTime futureFromUtc,
+        int limit,
+        CancellationToken ct = default);
+
     /// <summary>
     /// Gets top services by reservation count and estimated revenue (Service.Price) for dashboard.
     /// </summary>

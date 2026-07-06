@@ -74,6 +74,7 @@ public sealed class RequestContextService : IRequestContextService
 
         var cleared = await _facts.ClearFieldsAsync(conversationId, fieldsToClear, ct);
         RemoveFromMemory(inMemoryFacts, cleared);
+        state.ActiveRequestStartedAtUtc = DateTime.UtcNow;
         ClearVolatileState(state);
 
         _logger.LogInformation(
@@ -144,6 +145,9 @@ public sealed class RequestContextService : IRequestContextService
         var cleared = await _facts.ClearFieldsAsync(conversation.ConversationId, fieldsToClear.ToList(), ct);
         RemoveFromMemory(inMemoryFacts, cleared);
 
+        if (ClearedRequestScopedFact(config, cleared))
+            state.ActiveRequestStartedAtUtc = clock.Now.UtcDateTime;
+
         if (businessDayChanged || cleared.Count > 0)
             ClearVolatileState(state);
 
@@ -208,6 +212,18 @@ public sealed class RequestContextService : IRequestContextService
                 queue.Enqueue(entry.Key);
             }
         }
+    }
+
+    private static bool ClearedRequestScopedFact(AgentConfig config, IReadOnlyCollection<string> cleared)
+    {
+        if (cleared.Count == 0)
+            return false;
+
+        var clearedSet = cleared.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return config.FactSchema.Any(entry =>
+            !string.IsNullOrWhiteSpace(entry.Key)
+            && clearedSet.Contains(entry.Key)
+            && entry.EffectiveScope().Equals(FactScopes.Request, StringComparison.OrdinalIgnoreCase));
     }
 
     private static FactSchemaEntry? FindByRole(AgentConfig config, string role) =>

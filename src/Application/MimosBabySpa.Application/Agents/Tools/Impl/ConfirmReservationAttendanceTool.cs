@@ -56,7 +56,7 @@ public sealed class ConfirmReservationAttendanceTool : IAgentTool
         ToolResultHelper.TryGetString(arguments, "reservation_id", out var reservationIdStr);
         ToolResultHelper.TryGetString(arguments, "notes", out var notes);
         jobIdStr = string.IsNullOrWhiteSpace(jobIdStr)
-            ? TryParseJobIdFromPayload(ctx.InteractivePayload)
+            ? TryParseJobIdFromPayload(ctx)
             : jobIdStr;
 
         ScheduledAutomationJob? sourceJob = null;
@@ -82,6 +82,29 @@ public sealed class ConfirmReservationAttendanceTool : IAgentTool
         if (reservation is null)
             return ToolResultHelper.Error("reservation_not_found", "No reservation was found.", recoverable: true);
 
+        if (!reservation.CustomerConfirmed)
+        {
+            reservation.CustomerConfirmed = true;
+            reservation.UpdatedAt = DateTime.UtcNow;
+            await _unitOfWork.Reservations.UpdateAsync(reservation);
+        }
+
+        var latestResponse = await _unitOfWork.ReservationAttendanceResponses.GetLatestByReservationAsync(
+            ctx.BusinessId,
+            reservation.ReservationId,
+            cancellationToken);
+        if (latestResponse?.ResponseType == ReservationAttendanceResponseType.Confirmed)
+        {
+            await _unitOfWork.SaveChangesAsync(cancellationToken);
+            return ToolResultHelper.Ok(new
+            {
+                reservation_id = reservation.ReservationId,
+                attendance_confirmed = true,
+                responded_at_utc = latestResponse.RespondedAtUtc,
+                idempotent_replay = true
+            });
+        }
+
         var response = new ReservationAttendanceResponse
         {
             ReservationAttendanceResponseId = Guid.NewGuid(),
@@ -104,21 +127,17 @@ public sealed class ConfirmReservationAttendanceTool : IAgentTool
         });
     }
 
-    private static string? TryParseJobIdFromPayload(string? payload)
+    private static string? TryParseJobIdFromPayload(AgentToolContext ctx)
     {
-        if (string.IsNullOrWhiteSpace(payload))
+        var action = ctx.InteractiveAction;
+        if (action is null && !InteractivePayloadParser.TryParse(ctx.InteractivePayload, out action))
             return null;
 
-        var parts = payload.Split(':', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        if (parts.Length >= 3 &&
-            parts[0].Equals("reservation_attendance", StringComparison.OrdinalIgnoreCase) &&
-            parts[1].Equals("confirm", StringComparison.OrdinalIgnoreCase) &&
-            Guid.TryParse(parts[2], out var jobId))
-        {
-            return jobId.ToString("D");
-        }
-
-        return null;
+        return action.Scope.Equals("reservation_attendance", StringComparison.OrdinalIgnoreCase)
+            && action.Outcome.Equals("confirm", StringComparison.OrdinalIgnoreCase)
+            && Guid.TryParse(action.SourceId, out var jobId)
+                ? jobId.ToString("D")
+                : null;
     }
 }
 

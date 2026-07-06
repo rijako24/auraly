@@ -19,7 +19,8 @@ public class TestRuleEngine
             new NoConfirmationWithoutAvailabilityCheckRule(),
             new BotMustNotInventTimeSlotsRule(),
             new NoDuplicateReservationRule(),
-            new ReservationMustIncludeAddOns()
+            new ReservationMustIncludeAddOns(),
+            new MultipleReservationCyclesRule()
         };
     }
 

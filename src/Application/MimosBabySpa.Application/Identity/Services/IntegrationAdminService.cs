@@ -39,24 +39,23 @@ public class IntegrationAdminService : IIntegrationAdminService
             IntegrationCapability.Calendar,
             "Google Calendar",
             ct);
-
-        var existingSecrets = ReadJson(connection.SecretsJson);
-        var secrets = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase)
-        {
-            ["clientId"] = UseNewOrExisting(request.ClientId, existingSecrets, "clientId"),
-            ["clientSecret"] = UseNewOrExisting(request.ClientSecret, existingSecrets, "clientSecret"),
-            ["refreshToken"] = UseNewOrExisting(request.RefreshToken, existingSecrets, "refreshToken")
-        };
+        var settings = ReadJson(connection.SettingsJson);
 
         connection.Name = "Google Calendar";
-        connection.AccountIdentifier = string.IsNullOrWhiteSpace(request.CalendarId) ? "primary" : request.CalendarId.Trim();
+        connection.AccountIdentifier = string.IsNullOrWhiteSpace(request.CalendarId) ? null : request.CalendarId.Trim();
         connection.SettingsJson = Serialize(new
         {
-            calendarId = connection.AccountIdentifier,
+            calendarId = connection.AccountIdentifier ?? string.Empty,
+            platformConfigurationId = (int)SystemConfigurationKey.GoogleCalendarPlatformCredentials,
+            autoCreateCalendar = true,
+            calendarSummary = GetNullable(settings, "calendarSummary"),
             timeZone = string.IsNullOrWhiteSpace(request.TimeZone) ? "America/Bogota" : request.TimeZone.Trim(),
-            scopes = request.Scopes?.Trim()
+            sharedWithEmail = GetNullable(settings, "sharedWithEmail"),
+            sharedRole = Get(settings, "sharedRole", "writer"),
+            sendSharingNotifications = GetBool(settings, "sendSharingNotifications", true),
+            insertIntoSharedCalendarList = GetBool(settings, "insertIntoSharedCalendarList", false)
         });
-        connection.SecretsJson = Serialize(secrets);
+        connection.SecretsJson = null;
         connection.IsEnabled = request.IsEnabled;
         connection.UpdatedAt = DateTime.UtcNow;
 
@@ -298,15 +297,14 @@ public class IntegrationAdminService : IIntegrationAdminService
     private static GoogleCalendarIntegrationDto MapGoogle(IntegrationConnection? connection)
     {
         var settings = ReadJson(connection?.SettingsJson);
-        var secrets = ReadJson(connection?.SecretsJson);
         return new GoogleCalendarIntegrationDto(
             connection?.IsEnabled ?? false,
-            Get(settings, "calendarId", "primary"),
+            Get(settings, "calendarId", string.Empty),
             Get(settings, "timeZone", "America/Bogota"),
             GetNullable(settings, "scopes"),
-            Has(secrets, "clientId"),
-            Has(secrets, "clientSecret"),
-            Has(secrets, "refreshToken"),
+            false,
+            false,
+            false,
             connection?.LastError,
             connection?.LastSyncAt);
     }

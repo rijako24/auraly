@@ -72,6 +72,7 @@ public sealed class ReservationAutomationProcess : ITimedProcess
             if (reservations.Count == 0)
                 continue;
 
+            var utcNow = clock.Now.UtcDateTime;
             var candidates = new List<(Reservation Reservation, ScheduledAutomationJobType Type, DateTime ScheduledAtUtc, string Sequence)>();
             foreach (var reservation in reservations)
             {
@@ -87,9 +88,15 @@ public sealed class ReservationAutomationProcess : ITimedProcess
                     if (!scheduledAtUtc.HasValue)
                         continue;
 
+                    if (scheduledAtUtc.Value < utcNow)
+                        continue;
+
                     candidates.Add((reservation, automation.Type, scheduledAtUtc.Value, automation.Config.SendMessageSequence!));
                 }
             }
+
+            if (candidates.Count == 0)
+                continue;
 
             var keys = candidates
                 .Select(c => BuildDeduplicationKey(config.BusinessId, c.Reservation, c.Type, c.Sequence))
@@ -161,6 +168,12 @@ public sealed class ReservationAutomationProcess : ITimedProcess
         if (reservation.Status != ReservationStatus.Confirmed || !reservation.ReservationDateTime.HasValue)
         {
             await MarkSkippedAsync(job, "Reservation is no longer confirmed.", ct);
+            return;
+        }
+
+        if (job.CreatedAt > job.ScheduledAtUtc)
+        {
+            await MarkSkippedAsync(job, "Job was created after its scheduled time.", ct);
             return;
         }
 

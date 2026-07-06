@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 using MimosBabySpa.Application.Agents.Composition;
 using MimosBabySpa.Application.Agents.Configuration;
@@ -13,6 +14,7 @@ using MimosBabySpa.Application.StateManagement;
 using MimosBabySpa.Domain.Models;
 using MimosBabySpa.Application.LLM;
 using MimosBabySpa.Application.Time;
+using MimosBabySpa.Domain.Entities;
 using MimosBabySpa.Domain.Enums;
 
 namespace MimosBabySpa.Application.Agents;
@@ -161,19 +163,32 @@ public sealed class AgentConversationService : IAgentConversationService
         var effectiveTools = turnTools.EffectiveTools;
         session.OperatingHours = turnTools.OperatingHours;
 
+        var activeHistory = ProjectHistoryForTurn(history, state.ActiveRequestStartedAtUtc, session.ActivePayment, latestPayment);
+
         var compositionInput = new PromptCompositionInput
         {
             Config = config,
-            History = history,
+            History = activeHistory,
             Temporal = temporal,
             Session = session,
             LatestPayment = latestPayment,
             EnabledTools = effectiveTools
         };
         var systemPrompt = _promptComposer.Compose(compositionInput);
-        var messages = BuildMessages(systemPrompt, history, userMessage);
+        var messages = BuildMessages(systemPrompt, activeHistory, userMessage);
         var turn = new AgentTurnExecution(config.ConsecutiveErrorEscalationThreshold);
         session.Turn = turn;
+
+        var interactiveResult = await TryHandleConfiguredInteractiveActionAsync(
+            config,
+            conversationId,
+            userMessage,
+            session,
+            turn,
+            turnTools.ConfiguredTools,
+            cancellationToken);
+        if (interactiveResult is not null)
+            return interactiveResult;
 
         var loop = await RunAgentLoopAsync(
             config, conversationId, messages, turn, session, compositionInput, cancellationToken);
@@ -190,6 +205,198 @@ public sealed class AgentConversationService : IAgentConversationService
 
             _ => AgentTurnResult.Fail(loop.Reason ?? "Unknown loop failure")
         };
+    }
+
+    private async Task<AgentTurnResult?> TryHandleConfiguredInteractiveActionAsync(
+        AgentConfig config,
+        Guid conversationId,
+        string userMessage,
+        AgentToolContext session,
+        AgentTurnExecution turn,
+        IReadOnlyList<IAgentTool> configuredTools,
+        CancellationToken ct)
+    {
+        var interactive = session.InteractiveAction;
+        if (interactive is null)
+            return null;
+
+        if (!TryGetConfiguredReservationAutomationAction(config, interactive, out var action)
+            || action is null
+            || string.IsNullOrWhiteSpace(action.Tool))
+        {
+            _logger.LogDebug(
+                "Conv {ConvId}: interactive payload '{Payload}' has no configured reservation automation action; continuing normal agent flow",
+                conversationId,
+                interactive.RawPayload);
+            return null;
+        }
+
+        var toolName = action.Tool.Trim();
+        if (!configuredTools.Any(t => t.Name.Equals(toolName, StringComparison.OrdinalIgnoreCase)))
+        {
+            _logger.LogWarning(
+                "Conv {ConvId}: configured interactive action {Scope}:{Outcome} references unavailable tool '{Tool}'",
+                conversationId,
+                interactive.Scope,
+                interactive.Outcome,
+                toolName);
+            return null;
+        }
+
+        var toolCall = new ToolCallRequest
+        {
+            Id = $"interactive_{Guid.NewGuid():N}",
+            FunctionName = toolName,
+            ArgumentsJson = BuildInteractiveActionArgumentsJson(action.Arguments, interactive)
+        };
+
+        session.CurrentToolIteration = 0;
+        var factsBeforeTool = SnapshotFacts(session);
+        var outcome = await ExecuteToolCallAsync(toolCall, session, ct);
+        if (outcome.IsError)
+        {
+            _logger.LogWarning(
+                "Conv {ConvId}: configured interactive action {Scope}:{Outcome} failed with {Code}; continuing normal agent flow",
+                conversationId,
+                interactive.Scope,
+                interactive.Outcome,
+                outcome.ErrorCode ?? "tool_error");
+            return null;
+        }
+
+        var changedFactKeys = GetChangedFactKeys(factsBeforeTool, session.Facts);
+        await ApplyReentryInvalidationAsync(session, changedFactKeys, ct);
+        await ApplyAfterToolRulesAsync(config, toolCall, outcome, session, ct);
+        await DispatchToolEffectNotificationsAsync(config, outcome, session, ct);
+        turn.RecordToolOutcome(outcome);
+
+        await EnqueueInteractiveActionSequenceAsync(config, action, interactive, session, ct);
+
+        _logger.LogInformation(
+            "Conv {ConvId}: configured interactive action {Scope}:{Outcome} handled by tool {Tool}",
+            conversationId,
+            interactive.Scope,
+            interactive.Outcome,
+            toolName);
+
+        return await FinalizeTurnAsync(
+            conversationId,
+            userMessage,
+            string.Empty,
+            session,
+            turn,
+            config,
+            configuredTools,
+            ct);
+    }
+
+    private static bool TryGetConfiguredReservationAutomationAction(
+        AgentConfig config,
+        InteractivePayloadAction interactive,
+        out ReservationAutomationActionConfig? action)
+    {
+        action = null;
+
+        if (!interactive.Scope.Equals("reservation_attendance", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        return config.ReservationAutomations.Confirmation?.Actions.TryGetValue(interactive.Outcome, out action) == true;
+    }
+
+    private async Task EnqueueInteractiveActionSequenceAsync(
+        AgentConfig config,
+        ReservationAutomationActionConfig action,
+        InteractivePayloadAction interactive,
+        AgentToolContext ctx,
+        CancellationToken ct)
+    {
+        var sequenceName = action.SendMessageSequence?.Trim();
+        if (string.IsNullOrWhiteSpace(sequenceName))
+            return;
+
+        if (ctx.Turn is null)
+            return;
+
+        if (!config.MessageSequences.ContainsKey(sequenceName))
+        {
+            _logger.LogWarning(
+                "Conv {ConvId}: interactive action sequence '{Sequence}' is not configured",
+                ctx.ConversationId,
+                sequenceName);
+            return;
+        }
+
+        if (!ctx.Turn.TryMarkSequenceEnqueued(sequenceName))
+            return;
+
+        var custom = new Dictionary<string, string>(ctx.Facts, StringComparer.OrdinalIgnoreCase)
+        {
+            ["interactive.scope"] = interactive.Scope,
+            ["interactive.outcome"] = interactive.Outcome,
+            ["interactive.source_id"] = interactive.SourceId,
+            ["interactive.raw_payload"] = interactive.RawPayload
+        };
+
+        var messages = await _sequenceResolver.ResolveAsync(
+            ctx.BusinessId,
+            sequenceName,
+            config.MessageSequences,
+            new MessageSequenceContext
+            {
+                Reservation = ctx.SingleManageableReservation,
+                Custom = custom
+            },
+            ct);
+
+        if (messages.Count == 0)
+            return;
+
+        ctx.Turn.EnqueueOutbound(messages);
+        ctx.Turn.MarkDirectOutboundRequested();
+    }
+
+    private static string BuildInteractiveActionArgumentsJson(
+        IReadOnlyDictionary<string, JsonElement> configuredArguments,
+        InteractivePayloadAction interactive)
+    {
+        if (configuredArguments.Count == 0)
+            return "{}";
+
+        var resolved = configuredArguments.ToDictionary(
+            pair => pair.Key,
+            pair => ResolveInteractiveArgument(pair.Value, interactive),
+            StringComparer.OrdinalIgnoreCase);
+
+        return JsonSerializer.Serialize(resolved);
+    }
+
+    private static object? ResolveInteractiveArgument(JsonElement value, InteractivePayloadAction interactive)
+    {
+        return value.ValueKind switch
+        {
+            JsonValueKind.String => ResolveInteractivePlaceholders(value.GetString() ?? string.Empty, interactive),
+            JsonValueKind.Number => value.Clone(),
+            JsonValueKind.True => true,
+            JsonValueKind.False => false,
+            JsonValueKind.Null => null,
+            _ => value.Clone()
+        };
+    }
+
+    private static string ResolveInteractivePlaceholders(string value, InteractivePayloadAction interactive)
+    {
+        return Regex.Replace(value, "\\{(?<key>[^{}]+)\\}", match =>
+        {
+            var key = match.Groups["key"].Value.Trim();
+            return key switch
+            {
+                "scope" => interactive.Scope,
+                "outcome" => interactive.Outcome,
+                "source_id" => interactive.SourceId,
+                "raw_payload" => interactive.RawPayload,
+                _ => match.Value
+            };
+        });
     }
 
     // ── Bucle de Function Calling ────────────────────────────────────────────
@@ -1049,6 +1256,10 @@ public sealed class AgentConversationService : IAgentConversationService
             ChannelPhone = resolvedPhone
         });
 
+        var parsedInteractiveAction = InteractivePayloadParser.TryParse(inboundMetadata?.InteractivePayload, out var action)
+            ? action
+            : null;
+
         var session = new AgentToolContext
         {
             AgentId = config.AgentId,
@@ -1063,6 +1274,7 @@ public sealed class AgentConversationService : IAgentConversationService
             ProviderMessageId = inboundMetadata?.ProviderMessageId,
             ReplyToProviderMessageId = inboundMetadata?.ReplyToProviderMessageId,
             InteractivePayload = inboundMetadata?.InteractivePayload,
+            InteractiveAction = parsedInteractiveAction,
             EscalationContacts = config.Escalations.Human.Contacts,
             Config = config,
             ConversationState = state,
@@ -1142,6 +1354,53 @@ public sealed class AgentConversationService : IAgentConversationService
             })
             .ToList();
 
+    private static IReadOnlyList<Domain.Entities.Message> ProjectHistoryForTurn(
+        IReadOnlyList<Domain.Entities.Message> history,
+        DateTime? activeRequestStartedAtUtc,
+        PaymentTransaction? activePayment,
+        PaymentTransaction? latestPayment)
+    {
+        var filtered = activeRequestStartedAtUtc.HasValue
+            ? history.Where(message => message.Timestamp >= activeRequestStartedAtUtc.Value)
+            : history;
+
+        return filtered
+            .Select(message => RedactInactivePaymentArtifact(message, activePayment, latestPayment))
+            .ToList();
+    }
+
+    private static Domain.Entities.Message RedactInactivePaymentArtifact(
+        Domain.Entities.Message message,
+        PaymentTransaction? activePayment,
+        PaymentTransaction? latestPayment)
+    {
+        var inactiveLink = latestPayment?.LinkUrl;
+        if (!IsBotSender(message.Sender)
+            || string.IsNullOrWhiteSpace(inactiveLink)
+            || activePayment?.PaymentTransactionId == latestPayment!.PaymentTransactionId)
+        {
+            return message;
+        }
+
+        var redacted = message.MessageText.Replace(
+            inactiveLink,
+            "[link de pago no vigente]",
+            StringComparison.OrdinalIgnoreCase);
+
+        return redacted == message.MessageText
+            ? message
+            : new Domain.Entities.Message
+            {
+                MessageId = message.MessageId,
+                ConversationId = message.ConversationId,
+                Sender = message.Sender,
+                MessageText = redacted,
+                Timestamp = message.Timestamp
+            };
+    }
+    private static bool IsBotSender(string sender) =>
+        sender.Equals("bot", StringComparison.OrdinalIgnoreCase) ||
+        sender.Equals("assistant", StringComparison.OrdinalIgnoreCase);
     private static List<ChatMessage> BuildMessages(
         string systemPrompt,
         IEnumerable<Domain.Entities.Message> history,

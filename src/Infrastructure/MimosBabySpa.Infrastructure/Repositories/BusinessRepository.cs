@@ -21,6 +21,13 @@ public class BusinessRepository : IBusinessRepository
             .FirstOrDefaultAsync(b => b.BusinessId == businessId);
     }
 
+    public async Task<Business?> GetByNameAsync(string name, CancellationToken ct = default)
+    {
+        var normalized = name.Trim().ToLower();
+        return await _context.Businesses
+            .FirstOrDefaultAsync(b => b.Name.ToLower() == normalized, ct);
+    }
+
     public async Task<IReadOnlyList<Business>> GetByTenantIdAsync(Guid tenantId, CancellationToken ct = default)
     {
         return await _context.Businesses

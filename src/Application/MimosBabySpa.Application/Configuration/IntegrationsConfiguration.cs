@@ -1,4 +1,4 @@
-﻿namespace MimosBabySpa.Application.Configuration;
+namespace MimosBabySpa.Application.Configuration;
 
 /// <summary>
 /// ConfiguraciÃ³n de integraciones externas por negocio (Google Calendar, Wompi, Blob Storage, etc.).
@@ -18,12 +18,20 @@ public class GoogleCalendarIntegration
 {
     public bool Enabled { get; set; }
     public string Provider { get; set; } = "Google";
+    public int PlatformConfigurationId { get; set; } = (int)MimosBabySpa.Domain.Enums.SystemConfigurationKey.GoogleCalendarPlatformCredentials;
+    public string OwnerEmail { get; set; } = string.Empty;
     public string ClientId { get; set; } = string.Empty;
     public string ClientSecret { get; set; } = string.Empty;
     public string RefreshToken { get; set; } = string.Empty;
-    public string CalendarId { get; set; } = "primary";
+    public string CalendarId { get; set; } = string.Empty;
+    public string CalendarSummary { get; set; } = string.Empty;
     public string TimeZone { get; set; } = "America/Bogota";
     public string? Scopes { get; set; }
+    public bool AutoCreateCalendar { get; set; }
+    public string? SharedWithEmail { get; set; }
+    public string SharedRole { get; set; } = "writer";
+    public bool SendSharingNotifications { get; set; } = true;
+    public bool InsertIntoSharedCalendarList { get; set; }
 }
 
 /// <summary>
@@ -54,4 +62,3 @@ public class WompiIntegration
         return url.TrimEnd('/');
     }
 }
-

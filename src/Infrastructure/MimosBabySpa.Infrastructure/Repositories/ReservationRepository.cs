@@ -122,6 +122,46 @@ public class ReservationRepository : IReservationRepository
         return grouped.Select(x => (x.ServiceId, x.ServiceName, x.TotalReservations, x.Revenue)).ToList();
     }
 
+    public async Task<IReadOnlyList<Reservation>> GetLatestCompletedCustomerReservationsWithoutFutureAsync(
+        Guid businessId,
+        DateTime completedBeforeUtc,
+        DateTime futureFromUtc,
+        int limit,
+        CancellationToken ct = default)
+    {
+        var futurePhones = await _context.Reservations
+            .Where(r => r.BusinessId == businessId
+                && r.CustomerPhoneSnapshot != null
+                && r.ReservationDateTime.HasValue
+                && r.ReservationDateTime.Value >= futureFromUtc
+                && (r.Status == Domain.Enums.ReservationStatus.Confirmed
+                    || r.Status == Domain.Enums.ReservationStatus.OnHold
+                    || r.Status == Domain.Enums.ReservationStatus.PendingCalendar))
+            .Select(r => r.CustomerPhoneSnapshot!.Trim())
+            .Distinct()
+            .ToListAsync(ct);
+
+        var futurePhoneSet = futurePhones.ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var completed = await _context.Reservations
+            .Include(r => r.Service)
+            .Where(r => r.BusinessId == businessId
+                && r.CustomerPhoneSnapshot != null
+                && r.ReservationDateTime.HasValue
+                && r.ReservationDateTime.Value <= completedBeforeUtc
+                && r.Status == Domain.Enums.ReservationStatus.Completed)
+            .OrderByDescending(r => r.ReservationDateTime)
+            .Take(Math.Max(limit * 5, limit))
+            .ToListAsync(ct);
+
+        return completed
+            .Where(r => !futurePhoneSet.Contains(r.CustomerPhoneSnapshot!.Trim()))
+            .GroupBy(r => r.CustomerPhoneSnapshot!.Trim(), StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.OrderByDescending(r => r.ReservationDateTime).First())
+            .Take(limit)
+            .ToList();
+    }
+
     public async Task<IEnumerable<Reservation>> GetByBusinessIdAndDateRangeAsync(
         Guid businessId,
         DateTime startDate,

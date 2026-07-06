@@ -46,8 +46,10 @@
     <Build Include="Tables\ConversationStates.sql" />
     <Build Include="Tables\Messages.sql" />
     <Build Include="Tables\Leads.sql" />
+    <Build Include="Tables\Campaigns.sql" />
     <Build Include="Tables\CustomerMemory.sql" />
     <Build Include="Tables\Reservations.sql" />
+    <Build Include="Tables\CampaignRecipients.sql" />
     <Build Include="Tables\ReservationIntegrationEvents.sql" />
     <Build Include="Tables\ScheduledAutomationJobs.sql" />
     <Build Include="Tables\ReservationAttendanceResponses.sql" />
