@@ -583,7 +583,7 @@ export default function LandingPage() {
                 {errors.name && <p className="text-xs text-destructive">{errors.name}</p>}
               </div>
               <div className="space-y-1">
-                <Input type="email" value={form.email} onChange={(event) => updateForm("email", event.target.value)} placeholder="Correo" required aria-required="true" aria-invalid={Boolean(errors.email)} className="bg-white text-[#151515] placeholder:text-black/45" />
+                <Input type="email" value={form.email} onChange={(event) => updateForm("email", event.target.value)} placeholder="Correo requerido" required aria-required="true" aria-invalid={Boolean(errors.email)} className="bg-white text-[#151515] placeholder:text-black/45" />
                 {errors.email && <p className="text-xs text-destructive">{errors.email}</p>}
               </div>
               <div className="space-y-1">
