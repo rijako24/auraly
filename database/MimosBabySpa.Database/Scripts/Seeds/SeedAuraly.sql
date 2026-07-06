@@ -37,7 +37,7 @@ BEGIN
     VALUES
         (@BusinessId, @TenantId, N'AURALY',
          N'Plataforma de empleados digitales configurables para WhatsApp, ventas, agenda, soporte, pagos y seguimiento comercial 24/7.',
-         N'Remoto', N'+573000000000', N'admin@auraly.ai', N'https://auraly.ai', 1, GETUTCDATE());
+         N'Remoto', N'+573117324418', N'admin@auraly.ai', N'https://auraly.ai', 1, GETUTCDATE());
 END
 ELSE
 BEGIN
@@ -46,7 +46,7 @@ BEGIN
         Name = N'AURALY',
         Description = N'Plataforma de empleados digitales configurables para WhatsApp, ventas, agenda, soporte, pagos y seguimiento comercial 24/7.',
         Address = N'Remoto',
-        Phone = N'+573000000000',
+        Phone = N'+573117324418',
         Email = N'admin@auraly.ai',
         Website = N'https://auraly.ai',
         IsActive = 1,
@@ -358,7 +358,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
     "escalate_to_human"
   ],
   "escalations": {
-    "human": { "contacts": ["+573000000000"] },
+    "human": { "contacts": ["+573117324418"] },
     "external": { "enabled": false, "events": {} }
   },
   "notifications": {
