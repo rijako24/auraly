@@ -482,6 +482,7 @@ public sealed class PrepareCheckoutTool : IAgentTool
             payment_method = quote.PaymentMethodKey,
             payment_method_label = quote.PaymentMethodLabel,
             payment_percentage = quote.PaymentPercentage,
+            custom_attributes_json = ReservationCustomAttributes.BuildJson(ctx.Facts, ctx.Config?.FactSchema ?? []),
             facts = ctx.Facts
         };
 

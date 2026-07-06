@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.Extensions.Logging;
 using MimosBabySpa.Application.Agents.Gating;
 using MimosBabySpa.Application.Agents.Facts;
 using MimosBabySpa.Application.BusinessRules;
@@ -18,19 +19,22 @@ public sealed class CreateReservationTool : IAgentTool
     private readonly IBusinessRuleEngine _rules;
     private readonly IAvailabilityService _availability;
     private readonly ISchedulingPolicyProvider _schedulingPolicy;
+    private readonly ILogger<CreateReservationTool> _logger;
 
     public CreateReservationTool(
         IReservationService reservations,
         IReservationIntentBuilder intentBuilder,
         IBusinessRuleEngine rules,
         IAvailabilityService availability,
-        ISchedulingPolicyProvider schedulingPolicy)
+        ISchedulingPolicyProvider schedulingPolicy,
+        ILogger<CreateReservationTool> logger)
     {
         _reservations = reservations;
         _intentBuilder = intentBuilder;
         _rules = rules;
         _availability = availability;
         _schedulingPolicy = schedulingPolicy;
+        _logger = logger;
     }
 
     public string Name => "create_reservation";
@@ -152,6 +156,19 @@ public sealed class CreateReservationTool : IAgentTool
             ? new Dictionary<string, string>()
             : new Dictionary<string, string> { [ReservationBusinessAttributeKeys.SelectedAddOns] = addOns! };
 
+        _logger.LogInformation(
+            "AgentTool create_reservation requested BusinessId={BusinessId} AgentId={AgentId} ConversationId={ConversationId} Stage={Stage} ToolIteration={ToolIteration} ActivePaymentId={ActivePaymentId} ActivePaymentRef={ActivePaymentRef} Service={Service} Date={Date} Time={Time} CustomerPhone={CustomerPhone}",
+            ctx.BusinessId,
+            ctx.AgentId,
+            ctx.ConversationId,
+            ctx.Conversation.CurrentStageName ?? "(unknown)",
+            ctx.CurrentToolIteration,
+            ctx.ActivePayment?.PaymentTransactionId,
+            ctx.ActivePayment?.PaymentReferenceId,
+            service,
+            date,
+            time,
+            customerPhone);
         var response = await _reservations.CreateReservationAsync(
             new CreateReservationRequest(
                 ctx.BusinessId, ctx.ConversationId,
@@ -161,6 +178,16 @@ public sealed class CreateReservationTool : IAgentTool
                 intent.CustomAttributesJson),
             cancellationToken);
 
+        _logger.LogInformation(
+            "AgentTool create_reservation created ReservationId={ReservationId} BusinessId={BusinessId} AgentId={AgentId} ConversationId={ConversationId} Service={Service} Date={Date} Time={Time} CustomerPhone={CustomerPhone}",
+            response.ReservationId,
+            ctx.BusinessId,
+            ctx.AgentId,
+            ctx.ConversationId,
+            response.ServiceName ?? service,
+            date,
+            time,
+            customerPhone);
         var reservation = new Domain.Entities.Reservation
         {
             ReservationId = response.ReservationId,

@@ -537,7 +537,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
   "messageSequences": {
     "reservation_confirmed": {
       "messages": [
-        { "body": "Tu reserva en Luis Petit Profesional Barber ha sido confirmada para el {Date} a las {Time}." },
+        { "body": "Tu reserva en BARBER KIDS MEN con Luis Petit Profesional Barber ha sido confirmada para el {Date} a las {Time}." },
         { "body": "Te esperamos para una experiencia personalizada, con puntualidad garantizada y atencion al detalle de principio a fin." }
       ]
     },

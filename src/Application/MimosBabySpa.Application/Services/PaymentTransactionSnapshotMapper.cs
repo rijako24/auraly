@@ -8,17 +8,6 @@ namespace MimosBabySpa.Application.Services;
 
 public static class PaymentTransactionSnapshotMapper
 {
-    private static readonly HashSet<string> UniversalFactKeys = new(StringComparer.OrdinalIgnoreCase)
-    {
-        ConversationFactKeys.CustomerName,
-        ConversationFactKeys.CustomerPhone,
-        ConversationFactKeys.CustomerEmail,
-        ConversationFactKeys.Service,
-        ConversationFactKeys.DesiredDate,
-        ConversationFactKeys.DesiredTime,
-        ConversationFactKeys.AddOns
-    };
-
     public static ReservationIntentSnapshot? ToIntentSnapshot(PaymentTransaction payment, string? serviceName = null)
     {
         var snapshot = ParseCheckoutSnapshot(payment.CheckoutSnapshotJson);
@@ -40,7 +29,9 @@ public static class PaymentTransactionSnapshotMapper
             snapshot.PayerEmail,
             snapshot.PaymentPhone,
             [],
-            BuildCustomAttributesJson(snapshot.Facts));
+            string.IsNullOrWhiteSpace(snapshot.CustomAttributesJson)
+                ? ReservationCustomAttributes.BuildJson(snapshot.Facts, null)
+                : snapshot.CustomAttributesJson);
     }
 
     public static IReadOnlyList<Guid> ParseAddOnIds(string? csv)
@@ -72,23 +63,6 @@ public static class PaymentTransactionSnapshotMapper
                 ? new Service { ServiceId = snapshot.ServiceId, ServiceName = snapshot.ServiceName }
                 : null
         };
-    }
-
-    private static string BuildCustomAttributesJson(IReadOnlyDictionary<string, string>? facts)
-    {
-        var custom = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        if (facts is not null)
-        {
-            foreach (var (key, value) in facts)
-            {
-                if (UniversalFactKeys.Contains(key) || string.IsNullOrWhiteSpace(value))
-                    continue;
-
-                custom[key] = value.Trim();
-            }
-        }
-
-        return custom.Count == 0 ? "{}" : JsonSerializer.Serialize(custom);
     }
 
     private static CheckoutSnapshot? ParseCheckoutSnapshot(string? json)
@@ -133,6 +107,9 @@ public static class PaymentTransactionSnapshotMapper
 
         [JsonPropertyName("reservation_time")]
         public string? ReservationTime { get; set; }
+
+        [JsonPropertyName("custom_attributes_json")]
+        public string? CustomAttributesJson { get; set; }
 
         [JsonPropertyName("facts")]
         public Dictionary<string, string>? Facts { get; set; }

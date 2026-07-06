@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace MimosBabySpa.Application.Agents.Configuration;
 
 public sealed class FactSchemaEntry
@@ -21,6 +23,10 @@ public sealed class FactSchemaEntry
 
     /// <summary>user | channel | system</summary>
     public string Source { get; init; } = "user";
+
+    /// <summary>True when this fact should be shown in reservation calendar/email collected info.</summary>
+    [JsonPropertyName("showInCollectedInfo")]
+    public bool ShowInCollectedInfo { get; init; }
 
     /// <summary>Valor por defecto usado por el hidratador cuando el fact no existe.</summary>
     public string? DefaultValue { get; init; }

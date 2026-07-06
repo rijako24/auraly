@@ -109,6 +109,22 @@ public sealed class ReservationPaidCheckoutFulfillmentHandler : IPaidCheckoutFul
         snapshot = snapshot with { ServiceName = service.ServiceName };
         var businessId = state?.BusinessId ?? payment.BusinessId;
         var originalTime = TimeOnly.FromDateTime(snapshot.ReservationDateTime).ToString("HH:mm", CultureInfo.InvariantCulture);
+        var confirmationChannel = ResolveConfirmationChannel(payment);
+
+        _logger.LogInformation(
+            "PaidCheckout reservation fulfillment started Channel={Channel} PaymentTransactionId={PaymentTransactionId} Ref={Ref} BusinessId={BusinessId} ConversationId={ConversationId} Status={Status} Source={Source} ServiceId={ServiceId} Service={Service} ReservationDateTime={ReservationDateTime} CustomerPhone={CustomerPhone}",
+            confirmationChannel,
+            payment.PaymentTransactionId,
+            payment.PaymentReferenceId,
+            businessId,
+            payment.ConversationId,
+            payment.Status,
+            payment.Source,
+            snapshot.ServiceId,
+            service.ServiceName,
+            snapshot.ReservationDateTime,
+            snapshot.CustomerPhone);
+
         var policy = await _schedulingPolicy.GetAsync(businessId, ct);
         var availability = await _availabilityService.CheckAvailabilityAsync(
             businessId,
@@ -120,7 +136,25 @@ public sealed class ReservationPaidCheckoutFulfillmentHandler : IPaidCheckoutFul
 
         if (!availability.IsAvailable)
         {
-            _logger.LogWarning("Webhook: slot taken after payment Ref={Ref}", payment.PaymentReferenceId);
+            var conflicts = await FindConflictingReservationsAsync(
+                businessId,
+                snapshot.ReservationDateTime,
+                snapshot.DurationMinutes,
+                ct);
+
+            _logger.LogWarning(
+                "PaidCheckout slot taken after payment Channel={Channel} PaymentTransactionId={PaymentTransactionId} Ref={Ref} BusinessId={BusinessId} ConversationId={ConversationId} ServiceId={ServiceId} Service={Service} ReservationDateTime={ReservationDateTime} DurationMinutes={DurationMinutes} CustomerPhone={CustomerPhone} Conflicts={Conflicts}",
+                confirmationChannel,
+                payment.PaymentTransactionId,
+                payment.PaymentReferenceId,
+                businessId,
+                payment.ConversationId,
+                snapshot.ServiceId,
+                service.ServiceName,
+                snapshot.ReservationDateTime,
+                snapshot.DurationMinutes,
+                snapshot.CustomerPhone,
+                conflicts);
             await _paymentLifecycle.MarkRequiresReschedulingAsync(payment, ct);
 
             var stubReservation = PaymentTransactionSnapshotMapper.ToNotificationReservation(payment, service.ServiceName);
@@ -144,6 +178,17 @@ public sealed class ReservationPaidCheckoutFulfillmentHandler : IPaidCheckoutFul
         Reservation reservation;
         try
         {
+            _logger.LogInformation(
+                "PaidCheckout creating reservation from payment Channel={Channel} PaymentTransactionId={PaymentTransactionId} Ref={Ref} BusinessId={BusinessId} ConversationId={ConversationId} ServiceId={ServiceId} Service={Service} ReservationDateTime={ReservationDateTime}",
+                confirmationChannel,
+                payment.PaymentTransactionId,
+                payment.PaymentReferenceId,
+                businessId,
+                payment.ConversationId,
+                snapshot.ServiceId,
+                service.ServiceName,
+                snapshot.ReservationDateTime);
+
             var created = await _reservationService.CreateFromIntentSnapshotAsync(
                 businessId,
                 payment.ConversationId,
@@ -154,10 +199,29 @@ public sealed class ReservationPaidCheckoutFulfillmentHandler : IPaidCheckoutFul
             await _paymentLifecycle.LinkReservationAsync(payment, created.ReservationId, ct);
             reservation = await _unitOfWork.Reservations.GetByIdAsync(created.ReservationId)
                 ?? throw new InvalidOperationException("Reserva creada pero no encontrada.");
+
+            _logger.LogInformation(
+                "PaidCheckout reservation created and linked Channel={Channel} PaymentTransactionId={PaymentTransactionId} Ref={Ref} ReservationId={ReservationId} BusinessId={BusinessId} ConversationId={ConversationId}",
+                confirmationChannel,
+                payment.PaymentTransactionId,
+                payment.PaymentReferenceId,
+                reservation.ReservationId,
+                businessId,
+                payment.ConversationId);
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Webhook: CreateFromIntentSnapshot failed Ref={Ref}", payment.PaymentReferenceId);
+            _logger.LogWarning(
+                ex,
+                "PaidCheckout CreateFromIntentSnapshot failed Channel={Channel} PaymentTransactionId={PaymentTransactionId} Ref={Ref} BusinessId={BusinessId} ConversationId={ConversationId} ServiceId={ServiceId} Service={Service} ReservationDateTime={ReservationDateTime}",
+                confirmationChannel,
+                payment.PaymentTransactionId,
+                payment.PaymentReferenceId,
+                businessId,
+                payment.ConversationId,
+                snapshot.ServiceId,
+                service.ServiceName,
+                snapshot.ReservationDateTime);
             await _paymentLifecycle.MarkRequiresReschedulingAsync(payment, ct);
 
             var stubReservation = PaymentTransactionSnapshotMapper.ToNotificationReservation(payment, service.ServiceName);
@@ -188,6 +252,63 @@ public sealed class ReservationPaidCheckoutFulfillmentHandler : IPaidCheckoutFul
         !string.IsNullOrWhiteSpace(payment.ConfirmationOutcome)
             ? payment.ConfirmationOutcome
             : legacyFallback;
+
+    private async Task<string> FindConflictingReservationsAsync(
+        Guid businessId,
+        DateTime start,
+        int durationMinutes,
+        CancellationToken ct)
+    {
+        var end = start.AddMinutes(durationMinutes);
+        var sameDay = await _unitOfWork.Reservations.GetByBusinessIdAndDateRangeAsync(
+            businessId,
+            start.Date,
+            start.Date.AddDays(1).AddTicks(-1));
+
+        var conflicts = sameDay
+            .Where(r => r.ReservationDateTime.HasValue)
+            .Where(r => r.Status is ReservationStatus.Confirmed
+                or ReservationStatus.Completed
+                or ReservationStatus.OnHold
+                or ReservationStatus.PendingCalendar)
+            .Where(r =>
+            {
+                var conflictStart = r.ReservationDateTime!.Value;
+                var conflictEnd = conflictStart.AddMinutes(r.DurationMinutes ?? durationMinutes);
+                return conflictStart < end && conflictEnd > start;
+            })
+            .Select(r => string.Join("|", new[]
+            {
+                $"reservation_id={r.ReservationId}",
+                $"conversation_id={r.ConversationId}",
+                $"status={r.Status}",
+                $"service_id={r.ServiceId}",
+                $"service={r.Service?.ServiceName ?? string.Empty}",
+                $"start={r.ReservationDateTime:O}",
+                $"duration={r.DurationMinutes}",
+                $"created_at={r.CreatedAt:O}",
+                $"updated_at={r.UpdatedAt:O}",
+                $"customer_phone={r.CustomerPhoneSnapshot ?? string.Empty}"
+            }))
+            .ToList();
+
+        return conflicts.Count == 0 ? "(none_found)" : string.Join("; ", conflicts);
+    }
+
+    private static string ResolveConfirmationChannel(PaymentTransaction payment)
+    {
+        if (payment.Source == PaymentTransactionSource.Manual)
+            return "manual_confirmation";
+
+        var payload = payment.WebhookPayloadJson;
+        if (!string.IsNullOrWhiteSpace(payload)
+            && payload.TrimStart().StartsWith("[Poller ", StringComparison.OrdinalIgnoreCase))
+        {
+            return "payment_link_polling";
+        }
+
+        return "wompi_webhook";
+    }
 }
 
 public sealed class EnrollmentPaidCheckoutFulfillmentHandler : IPaidCheckoutFulfillmentHandler

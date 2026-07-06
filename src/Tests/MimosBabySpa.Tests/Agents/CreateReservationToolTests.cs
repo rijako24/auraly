@@ -1,5 +1,6 @@
 using System.Text.Json;
 using FluentAssertions;
+using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using MimosBabySpa.Application.Agents;
 using MimosBabySpa.Application.Agents.Gating;
@@ -47,7 +48,8 @@ public class CreateReservationToolTests
             _intentBuilder.Object,
             _rules.Object,
             _availability.Object,
-            _schedulingPolicy.Object);
+            _schedulingPolicy.Object,
+            NullLogger<CreateReservationTool>.Instance);
     }
 
     [Fact]

@@ -1,4 +1,3 @@
-using System.Text.Json;
 using MimosBabySpa.Application.Agents;
 using MimosBabySpa.Application.DTOs;
 using MimosBabySpa.Domain.Repositories;
@@ -16,17 +15,6 @@ public interface IReservationIntentBuilder
 
 public sealed class ReservationIntentBuilder : IReservationIntentBuilder
 {
-    private static readonly HashSet<string> UniversalFactKeys = new(StringComparer.OrdinalIgnoreCase)
-    {
-        ConversationFactKeys.CustomerName,
-        ConversationFactKeys.CustomerPhone,
-        ConversationFactKeys.CustomerEmail,
-        ConversationFactKeys.Service,
-        ConversationFactKeys.DesiredDate,
-        ConversationFactKeys.DesiredTime,
-        ConversationFactKeys.AddOns
-    };
-
     private readonly IUnitOfWork _unitOfWork;
     private readonly IAddOnCatalogService _addOnCatalog;
 
@@ -86,21 +74,11 @@ public sealed class ReservationIntentBuilder : IReservationIntentBuilder
             customerEmail,
             customerPhone,
             addOnIds,
-            BuildCustomAttributesJson(ctx.Facts));
+            ReservationCustomAttributes.BuildJson(ctx.Facts, ctx.Config?.FactSchema ?? []));
     }
 
-    public string BuildCustomAttributesJson(IReadOnlyDictionary<string, string> facts)
-    {
-        var custom = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var (key, value) in facts)
-        {
-            if (UniversalFactKeys.Contains(key) || string.IsNullOrWhiteSpace(value))
-                continue;
-            custom[key] = value.Trim();
-        }
-
-        return custom.Count == 0 ? "{}" : JsonSerializer.Serialize(custom);
-    }
+    public string BuildCustomAttributesJson(IReadOnlyDictionary<string, string> facts) =>
+        ReservationCustomAttributes.BuildJson(facts, null);
 
     private async Task<IReadOnlyList<Guid>> ResolveAddOnIdsAsync(
         Guid businessId,

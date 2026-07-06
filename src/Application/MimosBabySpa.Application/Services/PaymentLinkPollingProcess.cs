@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using MimosBabySpa.Domain.Enums;
 using MimosBabySpa.Domain.Repositories;
 
 namespace MimosBabySpa.Application.Services;
@@ -52,7 +53,8 @@ public sealed class PaymentLinkPollingProcess : ITimedProcess
                     status.TransactionId ?? string.Empty,
                     status.AmountInCents ?? tx.AmountInCents,
                     $"[Poller {DateTime.UtcNow:o}]",
-                    ct);
+                    ct,
+                    PaymentTransactionSource.Automated);
 
                 if (!result.Success)
                 {

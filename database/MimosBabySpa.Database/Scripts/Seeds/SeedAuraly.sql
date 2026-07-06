@@ -329,8 +329,8 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
   ],
   "factSchema": [
     { "key": "session.engagement", "role": "session.engagement", "label": "contexto de engagement", "type": "string", "required": false, "source": "session", "scope": "ephemeral" },
-    { "key": "pain_point", "role": "sales.pain_point", "label": "cuello de botella", "type": "string", "required": true, "source": "user", "scope": "request", "captureMode": "eager", "aliases": ["problema", "dolor", "cuello de botella", "necesidad", "reto"] },
-    { "key": "business_type", "role": "business.type", "label": "tipo de negocio", "type": "string", "required": true, "source": "user", "scope": "request", "captureMode": "eager", "aliases": ["negocio", "empresa", "industria", "sector"] },
+    { "key": "pain_point", "role": "sales.pain_point", "label": "problematica que quiere resolver", "type": "string", "required": true, "source": "user", "scope": "request", "captureMode": "eager", "showInCollectedInfo": true, "aliases": ["problema", "dolor", "cuello de botella", "necesidad", "reto"] },
+    { "key": "business_type", "role": "business.type", "label": "tipo de negocio", "type": "string", "required": true, "source": "user", "scope": "request", "captureMode": "eager", "showInCollectedInfo": true, "aliases": ["negocio", "empresa", "industria", "sector"] },
     { "key": "main_channel", "role": "business.channel", "label": "canal principal", "type": "string", "required": true, "source": "user", "scope": "request", "captureMode": "eager", "aliases": ["whatsapp", "instagram", "web", "canal"] },
     { "key": "conversation_volume", "role": "business.volume", "label": "volumen de conversaciones", "type": "string", "required": false, "source": "user", "scope": "request", "captureMode": "eager", "aliases": ["volumen", "chats", "mensajes", "leads"] },
     { "key": "value_explained", "role": "sales.value_explained", "label": "valor explicado", "type": "string", "required": false, "source": "system", "scope": "ephemeral", "retentionDays": 1 },

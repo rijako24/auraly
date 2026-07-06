@@ -28,7 +28,8 @@ public class ToolCapabilityGateTests
         Mock.Of<IReservationIntentBuilder>(),
         Mock.Of<IBusinessRuleEngine>(),
         Mock.Of<IAvailabilityService>(),
-        Mock.Of<ISchedulingPolicyProvider>());
+        Mock.Of<ISchedulingPolicyProvider>(),
+        NullLogger<CreateReservationTool>.Instance);
 
     public ToolCapabilityGateTests()
     {

@@ -128,6 +128,18 @@ public class PaymentConfirmationHandler : IPaymentConfirmationHandler
             if (payment.Status != PaymentTransactionStatus.Confirmed)
                 await _paymentLifecycle.MarkConfirmedAsync(payment, providerTransactionId, webhookPayload, ct, sourceOverride);
 
+            _logger.LogInformation(
+                "Payment confirmation accepted Channel={Channel} PaymentTransactionId={PaymentTransactionId} Ref={Ref} ProviderTransactionId={ProviderTransactionId} BusinessId={BusinessId} ConversationId={ConversationId} CheckoutKind={CheckoutKind} AmountInCents={AmountInCents} Source={Source}",
+                ResolveConfirmationChannel(webhookPayload, sourceOverride),
+                payment.PaymentTransactionId,
+                payment.PaymentReferenceId,
+                providerTransactionId,
+                payment.BusinessId,
+                payment.ConversationId,
+                payment.CheckoutKind,
+                payment.AmountInCents,
+                sourceOverride ?? payment.Source);
+
             var result = await fulfillment.FulfillAsync(payment, state, config, ct);
 
             state.ConsecutiveDegradedTurns = 0;
@@ -260,6 +272,19 @@ public class PaymentConfirmationHandler : IPaymentConfirmationHandler
             ct);
     }
 
+    private static string ResolveConfirmationChannel(string webhookPayload, PaymentTransactionSource? sourceOverride)
+    {
+        if (sourceOverride == PaymentTransactionSource.Manual)
+            return "manual_confirmation";
+
+        if (!string.IsNullOrWhiteSpace(webhookPayload)
+            && webhookPayload.TrimStart().StartsWith("[Poller ", StringComparison.OrdinalIgnoreCase))
+        {
+            return "payment_link_polling";
+        }
+
+        return "wompi_webhook";
+    }
     private sealed record PaymentConfirmationOutcome(bool Success, string? Error)
     {
         public static PaymentConfirmationOutcome Ok() => new(true, null);

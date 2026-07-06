@@ -99,11 +99,17 @@ public class ReservationService : IReservationService
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
         _logger.LogInformation(
-            "Reserva creada exitosamente: {ReservationId} para servicio {ServiceName} el {DateTime} en negocio {BusinessId}",
+            "ReservationService created reservation Source=agent_tool_create_reservation ReservationId={ReservationId} BusinessId={BusinessId} ConversationId={ConversationId} ServiceId={ServiceId} Service={ServiceName} EmployeeId={EmployeeId} DateTime={DateTime} DurationMinutes={DurationMinutes} CustomerPhone={CustomerPhone} CreatedAt={CreatedAt}",
             createdReservation.ReservationId,
+            business.BusinessId,
+            createdReservation.ConversationId,
+            service.ServiceId,
             service.ServiceName,
+            createdReservation.EmployeeId,
             createdReservation.ReservationDateTime,
-            business.BusinessId);
+            createdReservation.DurationMinutes,
+            createdReservation.CustomerPhoneSnapshot,
+            createdReservation.CreatedAt);
 
         return new CreateReservationResponse(
             createdReservation.ReservationId,
@@ -176,6 +182,19 @@ public class ReservationService : IReservationService
             BuildMetadataFromSnapshot(snapshot),
             cancellationToken);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+        _logger.LogInformation(
+            "ReservationService created reservation Source=paid_checkout_fulfillment ReservationId={ReservationId} BusinessId={BusinessId} ConversationId={ConversationId} ServiceId={ServiceId} Service={ServiceName} EmployeeId={EmployeeId} DateTime={DateTime} DurationMinutes={DurationMinutes} CustomerPhone={CustomerPhone} CreatedAt={CreatedAt}",
+            createdReservation.ReservationId,
+            businessId,
+            createdReservation.ConversationId,
+            snapshot.ServiceId,
+            snapshot.ServiceName,
+            createdReservation.EmployeeId,
+            createdReservation.ReservationDateTime,
+            createdReservation.DurationMinutes,
+            createdReservation.CustomerPhoneSnapshot,
+            createdReservation.CreatedAt);
 
         return new CreateReservationResponse(
             createdReservation.ReservationId,
@@ -652,9 +671,7 @@ public class ReservationService : IReservationService
         var reservationDateTime = reservation.ReservationDateTime!.Value;
         var endDateTime = reservation.EndDateTime!.Value;
         var eventMetadata = BuildCalendarMetadata(reservation, metadata);
-        var customerName = eventMetadata.TryGetValue("CustomerName", out var name) && !string.IsNullOrWhiteSpace(name)
-            ? name.Trim()
-            : null;
+        var customerName = GetCalendarMetadataValue(eventMetadata, "CustomerName");
         var title = string.IsNullOrWhiteSpace(customerName) ? serviceName : $"{serviceName} - {customerName}";
 
         var description = new StringBuilder();
@@ -664,13 +681,17 @@ public class ReservationService : IReservationService
         description.AppendLine($"Fecha: {reservationDateTime:dd/MM/yyyy}");
         description.AppendLine($"Hora: {reservationDateTime:HH:mm}");
         description.AppendLine($"Duracion: {reservation.DurationMinutes} minutos");
+        AppendCalendarDescriptionLine(description, "Cliente", customerName);
+        AppendCalendarDescriptionLine(description, "Telefono", GetCalendarMetadataValue(eventMetadata, "Phone"));
+        AppendCalendarDescriptionLine(description, "Correo", GetCalendarMetadataValue(eventMetadata, "Email"));
 
-        if (eventMetadata.Count > 0)
+        var relevantFacts = ReadCalendarCustomAttributes(reservation.CustomAttributesJson);
+        if (relevantFacts.Count > 0)
         {
             description.AppendLine();
             description.AppendLine("Informacion recolectada:");
-            foreach (var kvp in eventMetadata)
-                description.AppendLine($"{kvp.Key}: {kvp.Value}");
+            foreach (var fact in relevantFacts)
+                description.AppendLine($"{fact.Label}: {fact.Value}");
         }
 
         return new CalendarEvent
@@ -685,6 +706,60 @@ public class ReservationService : IReservationService
                 { "BusinessId", reservation.BusinessId.ToString() }
             }
         };
+    }
+
+    private static List<(string Label, string Value)> ReadCalendarCustomAttributes(string? json)
+    {
+        var facts = new List<(string Label, string Value)>();
+        if (string.IsNullOrWhiteSpace(json) || json == "{}")
+            return facts;
+
+        try
+        {
+            var custom = JsonSerializer.Deserialize<Dictionary<string, string>>(json);
+            if (custom is null)
+                return facts;
+
+            foreach (var kvp in custom)
+            {
+                if (!string.IsNullOrWhiteSpace(kvp.Key) && !string.IsNullOrWhiteSpace(kvp.Value))
+                    facts.Add((kvp.Key.Trim(), kvp.Value.Trim()));
+            }
+        }
+        catch
+        {
+            // Calendar details are best effort.
+        }
+
+        return facts;
+    }
+
+    private static string? GetCalendarMetadataValue(
+        IReadOnlyDictionary<string, string> metadata,
+        string key)
+    {
+        if (metadata.TryGetValue(key, out var exactValue) && !string.IsNullOrWhiteSpace(exactValue))
+            return exactValue.Trim();
+
+        foreach (var kvp in metadata)
+        {
+            if (string.Equals(kvp.Key, key, StringComparison.OrdinalIgnoreCase)
+                && !string.IsNullOrWhiteSpace(kvp.Value))
+            {
+                return kvp.Value.Trim();
+            }
+        }
+
+        return null;
+    }
+
+    private static void AppendCalendarDescriptionLine(
+        StringBuilder description,
+        string label,
+        string? value)
+    {
+        if (!string.IsNullOrWhiteSpace(value))
+            description.AppendLine($"{label}: {value.Trim()}");
     }
 
     private async Task<(List<(Guid Id, Service Entity)>, IReadOnlyList<string>)> ResolveAddOnsAsync(
