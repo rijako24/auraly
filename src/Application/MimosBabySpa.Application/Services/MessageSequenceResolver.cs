@@ -228,8 +228,28 @@ public sealed class MessageSequenceResolver : IMessageSequenceResolver
         }
 
         foreach (var (key, value) in custom)
-            resolved = resolved.Replace("{" + key + "}", value ?? string.Empty);
+        {
+            var replacement = value ?? string.Empty;
+            resolved = resolved
+                .Replace("{" + key + "}", replacement)
+                .Replace("{" + ToPascalPlaceholder(key) + "}", replacement);
+        }
 
         return resolved;
+    }
+
+    private static string ToPascalPlaceholder(string key)
+    {
+        if (string.IsNullOrWhiteSpace(key))
+            return string.Empty;
+
+        var parts = key.Split(['_', '-', '.', ' '], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (parts.Length == 0)
+            return key.Trim();
+
+        return string.Concat(parts.Select(part =>
+            part.Length == 0
+                ? string.Empty
+                : char.ToUpperInvariant(part[0]) + part[1..]));
     }
 }

@@ -177,13 +177,6 @@ public sealed class ReservationAutomationProcess : ITimedProcess
             return;
         }
 
-        var phone = reservation.CustomerPhoneSnapshot?.Trim();
-        if (string.IsNullOrWhiteSpace(phone))
-        {
-            await MarkSkippedAsync(job, "Reservation has no customer phone.", ct);
-            return;
-        }
-
         var payload = JsonSerializer.Deserialize<ReservationAutomationJobPayload>(job.PayloadJson, JsonOptions);
         if (payload is null || string.IsNullOrWhiteSpace(payload.SequenceName))
         {
@@ -192,6 +185,26 @@ public sealed class ReservationAutomationProcess : ITimedProcess
         }
 
         var config = await _configProvider.GetConfigAsync(job.AgentId, ct);
+        var clock = await _businessClock.GetSnapshotAsync(job.BusinessId, ct);
+        if (!IsJobStillEligible(job, reservation.ReservationDateTime.Value, config, clock.TimeZone, clock.Now.UtcDateTime, out var skipReason, out var deferUntilUtc))
+        {
+            if (deferUntilUtc.HasValue)
+            {
+                await DeferUntilAsync(job, deferUntilUtc.Value, skipReason, ct);
+                return;
+            }
+
+            await MarkSkippedAsync(job, skipReason, ct);
+            return;
+        }
+
+        var phone = reservation.CustomerPhoneSnapshot?.Trim();
+        if (string.IsNullOrWhiteSpace(phone))
+        {
+            await MarkSkippedAsync(job, "Reservation has no customer phone.", ct);
+            return;
+        }
+
         var messages = await _sequenceResolver.ResolveAsync(
             job.BusinessId,
             payload.SequenceName,
@@ -222,6 +235,18 @@ public sealed class ReservationAutomationProcess : ITimedProcess
         await _unitOfWork.SaveChangesAsync(ct);
     }
 
+    private async Task DeferUntilAsync(ScheduledAutomationJob job, DateTime scheduledAtUtc, string reason, CancellationToken ct)
+    {
+        job.Status = ScheduledAutomationJobStatus.Pending;
+        job.ScheduledAtUtc = scheduledAtUtc;
+        job.LockedUntilUtc = null;
+        job.LastError = reason;
+        job.Attempts = Math.Max(0, job.Attempts - 1);
+        job.UpdatedAt = DateTime.UtcNow;
+        await _unitOfWork.ScheduledAutomationJobs.UpdateAsync(job, ct);
+        await _unitOfWork.SaveChangesAsync(ct);
+    }
+
     private async Task MarkSkippedAsync(ScheduledAutomationJob job, string reason, CancellationToken ct)
     {
         job.Status = ScheduledAutomationJobStatus.Skipped;
@@ -231,6 +256,87 @@ public sealed class ReservationAutomationProcess : ITimedProcess
         await _unitOfWork.ScheduledAutomationJobs.UpdateAsync(job, ct);
         await _unitOfWork.SaveChangesAsync(ct);
     }
+
+    private static bool IsJobStillEligible(
+        ScheduledAutomationJob job,
+        DateTime reservationLocal,
+        AgentConfig config,
+        TimeZoneInfo timeZone,
+        DateTime utcNow,
+        out string skipReason,
+        out DateTime? deferUntilUtc)
+    {
+        deferUntilUtc = null;
+        var effectiveUtcNow = TruncateToMinute(ToUtc(utcNow));
+        var reservationStartUtc = TimeZoneInfo.ConvertTimeToUtc(
+            DateTime.SpecifyKind(reservationLocal, DateTimeKind.Unspecified),
+            timeZone);
+
+        if (!TryGetAutomationConfig(config, job.JobType, out var automation))
+        {
+            skipReason = $"{job.JobType} automation is not configured.";
+            return false;
+        }
+
+        if (!automation.Enabled)
+        {
+            skipReason = $"{job.JobType} automation is disabled.";
+            return false;
+        }
+
+        var configuredScheduledAtUtc = TryCalculateScheduledAtUtc(reservationLocal, automation.Trigger, timeZone);
+        if (!configuredScheduledAtUtc.HasValue)
+        {
+            skipReason = $"{job.JobType} automation trigger is invalid.";
+            return false;
+        }
+
+        var effectiveScheduledAtUtc = TruncateToMinute(configuredScheduledAtUtc.Value);
+        if (effectiveScheduledAtUtc < effectiveUtcNow)
+        {
+            skipReason = "Configured automation time has already passed.";
+            return false;
+        }
+
+        if (effectiveScheduledAtUtc > effectiveUtcNow)
+        {
+            skipReason = "Configured automation time has not arrived.";
+            deferUntilUtc = effectiveScheduledAtUtc;
+            return false;
+        }
+
+        if (reservationStartUtc <= effectiveUtcNow)
+        {
+            skipReason = "Reservation time has already passed.";
+            return false;
+        }
+
+        skipReason = string.Empty;
+        return true;
+    }
+
+    private static bool TryGetAutomationConfig(
+        AgentConfig config,
+        ScheduledAutomationJobType jobType,
+        out ReservationAutomationConfig automation)
+    {
+        automation = jobType switch
+        {
+            ScheduledAutomationJobType.ReservationConfirmation => config.ReservationAutomations.Confirmation!,
+            ScheduledAutomationJobType.ReservationReminder => config.ReservationAutomations.Reminder!,
+            _ => null!
+        };
+
+        return automation is not null;
+    }
+
+    private static DateTime ToUtc(DateTime value) =>
+        value.Kind == DateTimeKind.Utc
+            ? value
+            : value.ToUniversalTime();
+
+    private static DateTime TruncateToMinute(DateTime value) =>
+        new(value.Year, value.Month, value.Day, value.Hour, value.Minute, 0, value.Kind);
 
     private static IEnumerable<(ScheduledAutomationJobType Type, ReservationAutomationConfig Config)> EnumerateEnabledAutomations(
         AgentConfig config)

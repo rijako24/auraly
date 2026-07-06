@@ -1,8 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { AUTH_COOKIE_NAMES } from "@/lib/auth-cookies";
-
-const BACKEND_URL =
-  process.env.NEXT_PUBLIC_API_URL || "http://localhost:5057/api";
+import { getBackendUrl } from "@/lib/backend-url";
 
 export async function POST(request: NextRequest) {
   const accessToken = request.cookies.get(AUTH_COOKIE_NAMES.accessToken)?.value;
@@ -11,7 +9,7 @@ export async function POST(request: NextRequest) {
 
   if (refreshToken) {
     try {
-      await fetch(`${BACKEND_URL}/auth/revoke`, {
+      await fetch(`${getBackendUrl()}/auth/revoke`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

@@ -4,15 +4,14 @@ import {
   getAccessTokenCookieOptions,
   getRefreshTokenCookieOptions,
 } from "@/lib/auth-cookies";
+import { getBackendUrl } from "@/lib/backend-url";
 import type { AuthResponse, RegisterRequest } from "@/types/api";
 
-const BACKEND_URL =
-  process.env.NEXT_PUBLIC_API_URL || "http://localhost:5057/api";
 
 export async function POST(request: NextRequest) {
   try {
     const body = (await request.json()) as RegisterRequest;
-    const res = await fetch(`${BACKEND_URL}/auth/register`, {
+    const res = await fetch(`${getBackendUrl()}/auth/register`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),

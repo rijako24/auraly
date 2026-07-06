@@ -107,6 +107,7 @@ builder.Services.AddScoped<IUsageBillingService, UsageBillingService>();
 builder.Services.AddScoped<IMessageService, MessageService>();
 builder.Services.AddScoped<IOutboundMessageDispatcher, OutboundMessageDispatcher>();
 builder.Services.AddScoped<IInboundMessageDeduplicationService, InboundMessageDeduplicationService>();
+builder.Services.AddScoped<IConversationInboundService, ConversationInboundService>();
 builder.Services.AddSingleton<IWhatsAppInboundQueueService, WhatsAppInboundQueueService>();
 builder.Services.AddSingleton<ICampaignQueueService, CampaignQueueService>();
 builder.Services.AddScoped<IWorkingHoursService, WorkingHoursService>();

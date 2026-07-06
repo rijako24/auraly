@@ -6,5 +6,4 @@ public sealed class DemoRequestOptions
 
     public Guid BusinessId { get; set; }
     public string? BusinessName { get; set; }
-    public string? TemplateSequenceName { get; set; }
 }

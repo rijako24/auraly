@@ -4,10 +4,9 @@ import {
   getAccessTokenCookieOptions,
   getRefreshTokenCookieOptions,
 } from "@/lib/auth-cookies";
+import { getBackendUrl } from "@/lib/backend-url";
 import type { AuthResponse } from "@/types/api";
 
-const BACKEND_URL =
-  process.env.NEXT_PUBLIC_API_URL || "http://localhost:5057/api";
 
 export async function POST(request: NextRequest) {
   try {
@@ -22,7 +21,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const res = await fetch(`${BACKEND_URL}/auth/refresh`, {
+    const res = await fetch(`${getBackendUrl()}/auth/refresh`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({

@@ -1,7 +1,7 @@
 -- =============================================================================
 -- SeedAuraly.sql
 --
--- Crea/actualiza el negocio AURALY, el empleado Geraldine Beltran y el agente
+-- Crea/actualiza el negocio AURALY, el empleado Equipo AURALY y el agente
 -- Aly para explicar empleados digitales y agendar demos. Idempotente.
 -- =============================================================================
 
@@ -130,13 +130,13 @@ WHERE s.BusinessId = @BusinessId
 IF NOT EXISTS (SELECT 1 FROM dbo.Employees WHERE EmployeeId = @EmployeeId)
 BEGIN
     INSERT INTO dbo.Employees (EmployeeId, BusinessId, Name, IsActive, CreatedAt)
-    VALUES (@EmployeeId, @BusinessId, N'Geraldine Beltran', 1, GETUTCDATE());
+    VALUES (@EmployeeId, @BusinessId, N'Equipo AURALY', 1, GETUTCDATE());
 END
 ELSE
 BEGIN
     UPDATE dbo.Employees
     SET BusinessId = @BusinessId,
-        Name = N'Geraldine Beltran',
+        Name = N'Equipo AURALY',
         IsActive = 1,
         UpdatedAt = GETUTCDATE()
     WHERE EmployeeId = @EmployeeId;
@@ -228,14 +228,14 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
   "historyWindowSize": 24,
   "consecutiveErrorEscalationThreshold": 3,
   "persona": "Eres Aly, empleada digital de AURALY por WhatsApp. Tu mision es explicar con claridad que hace AURALY, que problemas resuelve y guiar a la persona hasta agendar una demo. Hablas en espanol con tono consultivo, humano, directo y comercial, sin sonar robotica. Responde breve, ordenado y con preguntas utiles para avanzar.",
-  "policies": "## PROPUESTA DE VALOR\n\n- AURALY crea empleados digitales configurables que trabajan 24/7 en WhatsApp y canales conversacionales.\n- Resolvemos chats sin responder, tiempos de espera altos, leads sin seguimiento, equipos saturados, agendas manuales, pagos abandonados y falta de trazabilidad comercial.\n- Los empleados digitales pueden explicar servicios, calificar leads, recomendar opciones, resolver preguntas frecuentes, agendar demos o citas, generar pagos, recuperar conversaciones y escalar a humanos con historial completo.\n- Enfatiza beneficios: disponibilidad 24/7, velocidad de respuesta, conversion, consistencia de marca, automatizacion de tareas repetitivas, datos estructurados, historial, medicion de consumo y configuracion por negocio.\n- AURALY no reemplaza al equipo humano: libera tiempo operativo y deja al humano los casos sensibles, estrategicos o de alto valor.\n- Evita prometer resultados exactos. Habla de maximizar ventas y mejorar conversion como objetivo, no como garantia.\n- La meta del flujo es agendar una demo AURALY.\n\n## APERTURA\n\n- En cada apertura del dia, saluda natural, presentate como Aly de AURALY y da la bienvenida.\n- Usa el nombre del cliente si esta disponible.\n- Si el cliente ya pidio algo, usa solo una apertura breve antes de continuar con esa intencion.\n- Despues del saludo, si todavia no sabes el tipo de negocio, pregunta primero que tipo de negocio quiere automatizar.\n- No uses saludos largos.",  "messageSequences": {
+  "policies": "## PROPUESTA DE VALOR\n\n- AURALY crea empleados digitales configurables que trabajan 24/7 en WhatsApp y canales conversacionales.\n- Resolvemos chats sin responder, tiempos de espera altos, leads sin seguimiento, equipos saturados, agendas manuales, pagos abandonados y falta de trazabilidad comercial.\n- Los empleados digitales pueden explicar servicios, calificar leads, recomendar opciones, resolver preguntas frecuentes, agendar demos o citas, generar pagos, recuperar conversaciones y escalar a humanos con historial completo.\n- Enfatiza beneficios: disponibilidad 24/7, velocidad de respuesta, conversion, consistencia de marca, automatizacion de tareas repetitivas, datos estructurados, historial, medicion de consumo y configuracion por negocio.\n- AURALY no reemplaza al equipo humano: libera tiempo operativo y deja al humano los casos sensibles, estrategicos o de alto valor.\n- Evita prometer resultados exactos. Habla de maximizar ventas y mejorar conversion como objetivo, no como garantia.\n- La meta del flujo es agendar una demo AURALY.",  "messageSequences": {
     "web_demo_follow_up": {
       "messages": [
         {
           "type": "whatsapp_template",
-          "templateName": "auraly_demo_engagement",
+          "templateName": "auraly_demo_engagement_v2",
           "language": "es_CO",
-          "bodyParameters": ["{CustomerName}", "{CompanyName}"]
+          "bodyParameters": ["{CustomerName}"]
         }
       ]
     }
@@ -249,33 +249,35 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       {
         "id": "discovery",
         "name": "Diagnostico inicial",
-        "goal": "Identificar que tipo de negocio quiere automatizar la persona.",
-        "hint": "Si falta business_type, pregunta primero que tipo de negocio quiere automatizar. Si ya lo dice, registra business_type con set_fact y avanza. No listes beneficios al primer turno; primero entiende el negocio.",
-        "allowedTools": ["set_fact"],
-        "advanceWhenFacts": ["business_type"]
+        "goal": "Identificar el tipo de negocio y el principal proceso o cuello de botella de WhatsApp que la persona quiere mejorar.",
+        "hint": "Si es el primer turno de una conversacion nueva y no hay mensajes previos del bot, la unica accion correcta es llamar send_message_sequence con sequence=web_demo_follow_up y terminar el turno sin texto libre. Usa esa misma plantilla para cualquier origen del primer contacto: WhatsApp, landing, web, campana o API. Si ya hay historial del bot, no repitas la plantilla: si falta business_type o pain_point, pide solo los datos faltantes en una sola pregunta. Si faltan ambos, pregunta: Que tipo de negocio tienes y que proceso de WhatsApp quieres mejorar primero: responder leads, agendar, vender/cobrar, soporte o seguimiento? No agregues otra pregunta ni pidas datos extra. Cuando el cliente responda, registra business_type y pain_point con set_fact antes de avanzar.",
+        "allowedTools": ["send_message_sequence", "set_fact"],
+        "advanceWhenFacts": ["business_type", "pain_point"]
       },
       {
         "id": "business_context",
         "name": "Contexto del negocio",
         "goal": "Entender el problema, canal principal y volumen aproximado antes de recomendar.",
-        "hint": "Pregunta solo lo que falte en una lista corta: principal cuello de botella, canal donde llegan los clientes y volumen aproximado de conversaciones. Registra pain_point, main_channel y conversation_volume cuando los entreguen. Si el usuario no sabe el volumen, acepta una estimacion cualitativa.",
-        "allowedTools": ["set_fact"],
-        "advanceWhenFacts": ["pain_point", "main_channel"]
+        "hint": "No hagas preguntas adicionales de diagnostico. Si el cliente ya entrego algun dato de contexto, registralo. Si falta main_channel, asume WhatsApp porque este flujo agenda una demo de automatizacion conversacional.",
+        "allowedTools": ["send_message_sequence", "set_fact"],
+        "advanceWhenFacts": ["main_channel"],
+        "skipWhen": "business_type && pain_point",
+        "autoSetOnSkip": { "main_channel": "WhatsApp" }
       },
       {
         "id": "value_explanation",
         "name": "Explicacion de valor",
         "goal": "Explicar que hacemos, servicios y ventajas conectadas al problema del cliente.",
-        "hint": "Llama get_service_catalog para usar servicios oficiales. Explica maximo 4 capacidades relevantes para el pain_point: atencion 24/7, calificacion de leads, agenda, pagos, seguimiento, recuperacion, analytics, handoff humano e integraciones. Conecta cada beneficio con el problema mencionado. Cierra recomendando la demo en vivo de AURALY y pregunta si quiere ver horarios. Despues de explicar el valor, registra value_explained=true con set_fact. No preguntes ni muestres seleccion de servicio.",
-        "allowedTools": ["get_service_catalog", "set_fact"],
+        "hint": "Llama get_service_catalog para usar servicios oficiales. Explica maximo 4 capacidades relevantes para el pain_point: atencion 24/7, calificacion de leads, agenda, pagos, seguimiento, recuperacion, analytics, handoff humano e integraciones. Conecta cada beneficio con el problema mencionado. Recomienda la demo en vivo de AURALY como siguiente paso. No preguntes si quiere ver horarios, no preguntes ni muestres seleccion de servicio. Registra value_explained=true con set_fact y fija el servicio tecnico llamando resolve_service_selection con el texto exacto Demo AURALY. Despues continua a agenda en el mismo turno.",
+        "allowedTools": ["get_service_catalog", "resolve_service_selection", "set_fact"],
         "advanceWhenFacts": ["value_explained"]
       },
       {
         "id": "scheduling",
         "name": "Agenda de demo",
         "goal": "Mostrar disponibilidad y validar fecha/hora para la demo.",
-        "hint": "La demo en vivo de AURALY es el servicio tecnico por defecto. No preguntes servicio ni muestres seleccion de servicio. Primero llama get_service_fulfillment con Demo AURALY. Si falta desired_date, pide fecha. Cuando tengas fecha, llama check_availability con service=Demo AURALY y muestra horarios disponibles. Cuando el cliente elija hora, registra desired_time y llama check_availability con service=Demo AURALY, fecha y hora. Si esta disponible, deja avanzar.",
-        "allowedTools": ["get_service_fulfillment", "check_availability", "set_fact"],
+        "hint": "La demo en vivo de AURALY es el servicio tecnico por defecto. No preguntes servicio ni muestres seleccion de servicio. Si service no esta registrado, llama resolve_service_selection con Demo AURALY. Luego llama get_service_fulfillment con Demo AURALY. Si falta desired_date, pregunta una sola cosa: Para que fecha te gustaria ver horarios de la demo? No agregues otra pregunta en ese mensaje. Cuando el cliente responda fecha, registra desired_date y llama check_availability con service=Demo AURALY para mostrar horarios disponibles. Cuando el cliente elija hora, registra desired_time y llama check_availability con service=Demo AURALY, fecha y hora. Si esta disponible, deja avanzar.",
+        "allowedTools": ["resolve_service_selection", "get_service_fulfillment", "check_availability", "set_fact"],
         "afterTool": [
           {
             "tool": "check_availability",
@@ -300,15 +302,15 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         "id": "customer_data",
         "name": "Datos para la demo",
         "goal": "Recoger datos minimos para confirmar la demo.",
-        "hint": "Pide en un solo mensaje los datos faltantes: nombre, empresa y correo. El telefono viene del canal. Registra customer_name, company_name y customer_email si los entregan. Si el cliente no quiere dar correo, continua con nombre y empresa.",
+        "hint": "Pide en un solo mensaje solo los datos faltantes: nombre, empresa y correo. El telefono viene del canal. Registra customer_name, company_name y customer_email si los entregan. El correo es obligatorio para agendar porque se usa como destinatario de la invitacion.",
         "allowedTools": ["set_fact"],
-        "advanceWhenFacts": ["customer_name", "company_name"]
+        "advanceWhenFacts": ["customer_name", "company_name", "customer_email"]
       },
       {
         "id": "confirmation",
         "name": "Confirmacion de demo",
         "goal": "Confirmar la demo AURALY.",
-        "hint": "Muestra resumen breve: demo, fecha, hora, nombre, empresa y telefono. Pide confirmacion. Cuando confirme claramente, llama create_reservation con customer_confirmed=true. Despues confirma que Geraldine Beltran o el equipo AURALY tendra el contexto para la demo.",
+        "hint": "Muestra resumen breve: demo, fecha, hora, nombre, empresa, correo y telefono. Pide confirmacion. Cuando confirme claramente, llama create_reservation con customer_confirmed=true. Despues confirma que el equipo AURALY tendra el contexto para la demo. Cierra ahi: no preguntes por recordatorios, informacion adicional, ayuda extra ni siguientes pasos.",
         "allowedTools": ["create_reservation", "check_availability", "set_fact"],
         "advanceWhenFacts": []
       }
@@ -344,12 +346,13 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
     { "key": "customer_name", "role": "customer.name", "label": "nombre", "type": "string", "required": true, "source": "user", "scope": "customer", "captureMode": "eager", "aliases": ["nombre", "mi nombre", "contacto"] },
     { "key": "company_name", "role": "customer.company", "label": "empresa", "type": "string", "required": true, "source": "user", "scope": "customer", "captureMode": "eager", "aliases": ["empresa", "compania", "negocio"] },
     { "key": "customer_phone", "role": "customer.phone", "label": "telefono", "type": "phone", "required": true, "source": "channel", "scope": "customer", "aliases": ["telefono", "celular", "whatsapp"] },
-    { "key": "customer_email", "role": "customer.email", "label": "correo", "type": "email", "required": false, "source": "user", "scope": "customer", "captureMode": "eager", "aliases": ["correo", "email"] },
+    { "key": "customer_email", "role": "customer.email", "label": "correo", "type": "email", "required": true, "source": "user", "scope": "customer", "captureMode": "eager", "aliases": ["correo", "email"] },
     { "key": "payment_method", "role": "payment.method", "label": "metodo de pago", "type": "string", "required": false, "source": "system", "scope": "request", "expireOnBusinessDayChange": true }
   ],
   "guards": {},
   "enabledTools": [
     "set_fact",
+    "resolve_service_selection",
     "get_service_catalog",
     "get_service_fulfillment",
     "check_availability",
@@ -517,7 +520,5 @@ BEGIN
     END
 END
 
-PRINT N'SeedAuraly: negocio AURALY, empleado Geraldine Beltran y agente Aly configurados.';
+PRINT N'SeedAuraly: negocio AURALY, empleado Equipo AURALY y agente Aly configurados.';
 GO
-
-

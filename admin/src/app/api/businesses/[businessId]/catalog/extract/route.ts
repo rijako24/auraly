@@ -1,8 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { AUTH_COOKIE_NAMES } from "@/lib/auth-cookies";
-
-const BACKEND_URL =
-  process.env.NEXT_PUBLIC_API_URL || "http://localhost:5057/api";
+import { getBackendUrl } from "@/lib/backend-url";
 
 export async function POST(
   request: NextRequest,
@@ -12,7 +10,7 @@ export async function POST(
   const businessHeader = request.headers.get("X-Business-Id") ?? params.businessId;
   const formData = await request.formData();
 
-  const url = `${BACKEND_URL}/businesses/${params.businessId}/catalog/extract`;
+  const url = `${getBackendUrl()}/businesses/${params.businessId}/catalog/extract`;
 
   try {
     const res = await fetch(url, {

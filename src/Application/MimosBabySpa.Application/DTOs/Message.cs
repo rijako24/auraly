@@ -14,6 +14,10 @@ public class Message
     public InteractiveMessage? Interactive { get; set; }
     public ButtonMessage? Button { get; set; }
     public MessageContext? Context { get; set; }
+
+    [JsonPropertyName("facts")]
+    public Dictionary<string, string>? Facts { get; set; }
+
     public string Type { get; set; } = string.Empty;
 }
 

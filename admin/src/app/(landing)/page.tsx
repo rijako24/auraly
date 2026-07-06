@@ -239,8 +239,10 @@ export default function LandingPage() {
     if (!form.name.trim()) nextErrors.name = "Cuéntanos tu nombre.";
     if (!form.company.trim()) nextErrors.company = "Cuéntanos de qué empresa nos escribes.";
     if (!form.phone.trim()) nextErrors.phone = "Déjanos tu número de WhatsApp.";
-    if (form.email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) {
-      nextErrors.email = "Escribe un correo válido o déjalo vacío.";
+    if (!form.email.trim()) {
+      nextErrors.email = "Déjanos tu correo para enviarte la invitación de la demo.";
+    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) {
+      nextErrors.email = "Escribe un correo válido.";
     }
 
     setErrors(nextErrors);
@@ -577,19 +579,19 @@ export default function LandingPage() {
           <form onSubmit={submit} noValidate className="grid gap-3 rounded-lg border border-black/10 bg-[#f7f8f2] p-4">
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1">
-                <Input value={form.name} onChange={(event) => updateForm("name", event.target.value)} placeholder="Nombre" aria-invalid={Boolean(errors.name)} className="bg-white text-[#151515] placeholder:text-black/45" />
+                <Input value={form.name} onChange={(event) => updateForm("name", event.target.value)} placeholder="Nombre" required aria-required="true" aria-invalid={Boolean(errors.name)} className="bg-white text-[#151515] placeholder:text-black/45" />
                 {errors.name && <p className="text-xs text-destructive">{errors.name}</p>}
               </div>
               <div className="space-y-1">
-                <Input type="email" value={form.email} onChange={(event) => updateForm("email", event.target.value)} placeholder="Correo (opcional)" aria-invalid={Boolean(errors.email)} className="bg-white text-[#151515] placeholder:text-black/45" />
+                <Input type="email" value={form.email} onChange={(event) => updateForm("email", event.target.value)} placeholder="Correo" required aria-required="true" aria-invalid={Boolean(errors.email)} className="bg-white text-[#151515] placeholder:text-black/45" />
                 {errors.email && <p className="text-xs text-destructive">{errors.email}</p>}
               </div>
               <div className="space-y-1">
-                <Input value={form.company} onChange={(event) => updateForm("company", event.target.value)} placeholder="Empresa" aria-invalid={Boolean(errors.company)} className="bg-white text-[#151515] placeholder:text-black/45" />
+                <Input value={form.company} onChange={(event) => updateForm("company", event.target.value)} placeholder="Empresa" required aria-required="true" aria-invalid={Boolean(errors.company)} className="bg-white text-[#151515] placeholder:text-black/45" />
                 {errors.company && <p className="text-xs text-destructive">{errors.company}</p>}
               </div>
               <div className="space-y-1">
-                <Input value={form.phone} onChange={(event) => updateForm("phone", event.target.value)} placeholder="WhatsApp" aria-invalid={Boolean(errors.phone)} className="bg-white text-[#151515] placeholder:text-black/45" />
+                <Input value={form.phone} onChange={(event) => updateForm("phone", event.target.value)} placeholder="WhatsApp" required aria-required="true" aria-invalid={Boolean(errors.phone)} className="bg-white text-[#151515] placeholder:text-black/45" />
                 {errors.phone && <p className="text-xs text-destructive">{errors.phone}</p>}
               </div>
             </div>
@@ -631,8 +633,3 @@ export default function LandingPage() {
     </main>
   );
 }
-
-
-
-
-

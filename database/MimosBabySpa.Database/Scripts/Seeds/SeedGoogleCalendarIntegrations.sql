@@ -38,8 +38,6 @@ ELSE IF EXISTS (
     WHERE SystemConfigurationId = @GooglePlatformConfigurationId
       AND (
           ISJSON([Value]) <> 1
-          OR JSON_VALUE([Value], '$.provider') <> N'Google'
-          OR JSON_VALUE([Value], '$.ownerEmail') IS NULL
       )
 )
 BEGIN
@@ -53,7 +51,14 @@ END
 ELSE
 BEGIN
     UPDATE dbo.SystemConfigurations
-    SET [Description] = N'Credenciales globales de Google Calendar para crear calendarios administrados por Auraly.',
+    SET [Value] = JSON_MODIFY(
+            JSON_MODIFY(
+                JSON_MODIFY([Value], '$.provider', COALESCE(NULLIF(JSON_VALUE([Value], '$.provider'), N''), N'Google')),
+                '$.ownerEmail',
+                COALESCE(NULLIF(JSON_VALUE([Value], '$.ownerEmail'), N''), N'geraldine.beltran@auralyapp.co')),
+            '$.scopes',
+            COALESCE(NULLIF(JSON_VALUE([Value], '$.scopes'), N''), N'https://www.googleapis.com/auth/calendar')),
+        [Description] = N'Credenciales globales de Google Calendar para crear calendarios administrados por Auraly.',
         IsActive = 1,
         UpdatedAt = GETUTCDATE()
     WHERE SystemConfigurationId = @GooglePlatformConfigurationId;
@@ -70,7 +75,7 @@ DECLARE @CalendarIntegrations TABLE
 INSERT INTO @CalendarIntegrations (BusinessId, Name, CalendarSummary, SharedWithEmail)
 VALUES
     ('22222222-2222-2222-2222-222222222222', N'Google Calendar - Mimos Baby Spa', N'Auraly - Mimos Baby Spa', N'mimosbabyspa@gmail.com'),
-    ('A0A10000-0000-0000-0000-000000000001', N'Google Calendar - AURALY', N'Auraly - AURALY', N'geraldine.beltran@auralyapp.co'),
+    ('A0A10000-0000-0000-0000-000000000001', N'Google Calendar - AURALY', N'Auraly - AURALY', N'richardjacomeg@gmail.com'),
     ('BABA0000-0000-0000-0000-000000000001', N'Google Calendar - Luis Petit', N'Auraly - Luis Petit Profesional Barber', N'cortesluispetit@gmail.com');
 
 MERGE dbo.IntegrationConnections AS target

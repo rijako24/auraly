@@ -49,7 +49,8 @@ public class WhatsAppWebhookParserService : IWhatsAppWebhookParserService
                         MessageText = message.Text.Body,
                         CustomerName = customerName,
                         ProviderMessageId = message.Id,
-                        ReplyToProviderMessageId = message.Context?.Id
+                        ReplyToProviderMessageId = message.Context?.Id,
+                        Facts = message.Facts ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
                     });
                 }
                 else if (message.Type == "interactive" && message.Interactive?.ButtonReply != null)
@@ -61,6 +62,7 @@ public class WhatsAppWebhookParserService : IWhatsAppWebhookParserService
                         CustomerName = customerName,
                         ProviderMessageId = message.Id,
                         ReplyToProviderMessageId = message.Context?.Id,
+                        Facts = message.Facts ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
                         InteractivePayload = message.Interactive.ButtonReply.Id
                     });
                 }
@@ -73,6 +75,7 @@ public class WhatsAppWebhookParserService : IWhatsAppWebhookParserService
                         CustomerName = customerName,
                         ProviderMessageId = message.Id,
                         ReplyToProviderMessageId = message.Context?.Id,
+                        Facts = message.Facts ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
                         InteractivePayload = message.Button.Payload
                     });
                 }
@@ -117,7 +120,8 @@ public class WhatsAppWebhookParserService : IWhatsAppWebhookParserService
                                 MessageText = transcribedText,
                                 CustomerName = customerName,
                                 ProviderMessageId = message.Id,
-                                ReplyToProviderMessageId = message.Context?.Id
+                                ReplyToProviderMessageId = message.Context?.Id,
+                                Facts = message.Facts ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
                             });
 
                             _logger.LogInformation("Audio transcrito para {UserNumber}: {Transcription}",

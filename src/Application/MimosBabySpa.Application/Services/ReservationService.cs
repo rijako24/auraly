@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using MimosBabySpa.Application.Configuration;
@@ -650,31 +651,32 @@ public class ReservationService : IReservationService
     {
         var reservationDateTime = reservation.ReservationDateTime!.Value;
         var endDateTime = reservation.EndDateTime!.Value;
-        var customerName = metadata.TryGetValue("CustomerName", out var name) && !string.IsNullOrWhiteSpace(name)
+        var eventMetadata = BuildCalendarMetadata(reservation, metadata);
+        var customerName = eventMetadata.TryGetValue("CustomerName", out var name) && !string.IsNullOrWhiteSpace(name)
             ? name.Trim()
-            : reservation.CustomerNameSnapshot?.Trim();
+            : null;
         var title = string.IsNullOrWhiteSpace(customerName) ? serviceName : $"{serviceName} - {customerName}";
 
-        var description = $"""
-        Reserva confirmada
+        var description = new StringBuilder();
+        description.AppendLine("Reserva confirmada");
+        description.AppendLine();
+        description.AppendLine($"Servicio: {serviceName}");
+        description.AppendLine($"Fecha: {reservationDateTime:dd/MM/yyyy}");
+        description.AppendLine($"Hora: {reservationDateTime:HH:mm}");
+        description.AppendLine($"Duracion: {reservation.DurationMinutes} minutos");
 
-        Servicio: {serviceName}
-        Fecha: {reservationDateTime:dd/MM/yyyy}
-        Hora: {reservationDateTime:HH:mm}
-        Duracion: {reservation.DurationMinutes} minutos
-        """;
-
-        if (metadata.Count > 0)
+        if (eventMetadata.Count > 0)
         {
-            description += "\n\nInformacion adicional:\n";
-            foreach (var kvp in metadata)
-                description += $"{kvp.Key}: {kvp.Value}\n";
+            description.AppendLine();
+            description.AppendLine("Informacion recolectada:");
+            foreach (var kvp in eventMetadata)
+                description.AppendLine($"{kvp.Key}: {kvp.Value}");
         }
 
         return new CalendarEvent
         {
             Title = title,
-            Description = description,
+            Description = description.ToString().TrimEnd(),
             StartDateTime = reservationDateTime,
             EndDateTime = endDateTime,
             ExtendedProperties = new Dictionary<string, string>
@@ -742,24 +744,50 @@ public class ReservationService : IReservationService
         if (!string.IsNullOrWhiteSpace(snapshot.CustomerPhone))
             metadata["Phone"] = snapshot.CustomerPhone;
 
-        if (string.IsNullOrWhiteSpace(snapshot.CustomAttributesJson) || snapshot.CustomAttributesJson == "{}")
-            return metadata;
+        return metadata;
+    }
+
+    private static Dictionary<string, string> BuildCalendarMetadata(
+        Reservation reservation,
+        Dictionary<string, string> metadata)
+    {
+        var eventMetadata = new Dictionary<string, string>();
+
+        AddIfPresent(eventMetadata, "CustomerName", reservation.CustomerNameSnapshot);
+        AddIfPresent(eventMetadata, "Email", reservation.CustomerEmailSnapshot);
+        AddIfPresent(eventMetadata, "Phone", reservation.CustomerPhoneSnapshot);
+        MergeJsonMetadata(eventMetadata, reservation.CustomAttributesJson);
+
+        foreach (var kvp in metadata)
+            AddIfPresent(eventMetadata, kvp.Key, kvp.Value);
+
+        return eventMetadata;
+    }
+
+    private static void MergeJsonMetadata(Dictionary<string, string> metadata, string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json) || json == "{}")
+            return;
 
         try
         {
-            var custom = JsonSerializer.Deserialize<Dictionary<string, string>>(snapshot.CustomAttributesJson);
+            var custom = JsonSerializer.Deserialize<Dictionary<string, string>>(json);
             if (custom is null)
-                return metadata;
+                return;
 
             foreach (var kvp in custom)
-                metadata[kvp.Key] = kvp.Value;
+                AddIfPresent(metadata, kvp.Key, kvp.Value);
         }
         catch
         {
             // Metadata is best effort.
         }
+    }
 
-        return metadata;
+    private static void AddIfPresent(Dictionary<string, string> metadata, string key, string? value)
+    {
+        if (!string.IsNullOrWhiteSpace(key) && !string.IsNullOrWhiteSpace(value))
+            metadata[key] = value.Trim();
     }
 
     private static ReservationDto MapToDto(Reservation reservation)

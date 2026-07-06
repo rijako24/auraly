@@ -22,4 +22,5 @@ public interface IAgentConversationService
 public sealed record AgentInboundMetadata(
     string? ProviderMessageId,
     string? ReplyToProviderMessageId,
-    string? InteractivePayload);
+    string? InteractivePayload,
+    IReadOnlyDictionary<string, string>? Facts = null);

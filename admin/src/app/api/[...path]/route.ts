@@ -1,8 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { AUTH_COOKIE_NAMES } from "@/lib/auth-cookies";
-
-const BACKEND_URL =
-  process.env.NEXT_PUBLIC_API_URL || "http://localhost:5057/api";
+import { getBackendUrl } from "@/lib/backend-url";
 
 export async function GET(
   request: NextRequest,
@@ -46,7 +44,8 @@ async function proxy(
 ) {
   const path = pathSegments.join("/");
   const searchParams = request.nextUrl.searchParams.toString();
-  const url = `${BACKEND_URL}/${path}${searchParams ? `?${searchParams}` : ""}`;
+  const backendUrl = getBackendUrl();
+  const url = `${backendUrl}/${path}${searchParams ? `?${searchParams}` : ""}`;
 
   const accessToken = request.cookies.get(AUTH_COOKIE_NAMES.accessToken)?.value;
   const businessId = request.headers.get("X-Business-Id");

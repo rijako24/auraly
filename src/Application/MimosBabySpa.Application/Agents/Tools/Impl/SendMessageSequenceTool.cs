@@ -74,7 +74,7 @@ public sealed class SendMessageSequenceTool : IAgentTool
         }
 
         var reservation = ctx.SingleManageableReservation;
-        var context = new MessageSequenceContext { Reservation = reservation };
+        var context = new MessageSequenceContext { Reservation = reservation, Custom = ctx.Facts };
 
         var messages = await _sequenceResolver.ResolveAsync(
             ctx.BusinessId,

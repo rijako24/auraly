@@ -80,6 +80,7 @@ public sealed class WhatsAppMessageProcessorServiceTests
         agent.VerifyAll();
         leadService.VerifyNoOtherCalls();
     }
+
     [Fact]
     public async Task ProcessIncomingMessageAsync_WhenAgentTurnFails_ThrowsSoInboundCanRetry()
     {

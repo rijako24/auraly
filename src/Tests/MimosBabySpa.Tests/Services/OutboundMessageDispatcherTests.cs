@@ -73,6 +73,32 @@ public sealed class OutboundMessageDispatcherTests
             It.IsAny<string>()), Times.Never);
     }
 
+    [Fact]
+    public async Task SendAllAsync_ChargesUsageForDemoRequestOutbound()
+    {
+        var businessId = Guid.NewGuid();
+        var dispatcher = CreateDispatcher();
+
+        await dispatcher.SendAllAsync(
+            businessId,
+            "573001112233",
+            [new OutboundMessage("Solicitud de demo", null)]);
+
+        _billing.Verify(b => b.CanProcessAsync(
+            businessId,
+            It.IsAny<CancellationToken>()), Times.Once);
+        _billing.Verify(b => b.ChargeAsync(
+            It.Is<UsageChargeRequest>(r =>
+                r.BusinessId == businessId &&
+                r.OperationType == UsageOperationType.OutboundSequence &&
+                r.OutboundMessages == 1),
+            It.IsAny<CancellationToken>()), Times.Once);
+        _whatsApp.Verify(w => w.SendTextMessageAsync(
+            businessId,
+            "573001112233",
+            "Solicitud de demo"), Times.Once);
+    }
+
     private OutboundMessageDispatcher CreateDispatcher() =>
         new(
             _whatsApp.Object,

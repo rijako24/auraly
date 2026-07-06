@@ -1,9 +1,9 @@
 using System.ComponentModel.DataAnnotations;
+using System.Globalization;
 using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
-using MimosBabySpa.Application.Agents;
 using MimosBabySpa.Application.Services;
 using MimosBabySpa.Domain.Repositories;
 using MimosBabySpa.WebAPI.Configuration;
@@ -14,30 +14,20 @@ namespace MimosBabySpa.WebAPI.Controllers;
 [Route("api/demo-requests")]
 public sealed class DemoRequestsController : ControllerBase
 {
-    private const string DefaultTemplateSequenceName = "web_demo_follow_up";
-
+    private const string WhatsAppProvider = "whatsapp";
     private readonly DemoRequestOptions _options;
-    private readonly IActiveAgentConfigResolver _activeAgentConfigResolver;
-    private readonly IMessageSequenceResolver _messageSequenceResolver;
-    private readonly IOutboundMessageDispatcher _outboundDispatcher;
-    private readonly IConversationService _conversationService;
+    private readonly IConversationInboundService _conversationInbound;
     private readonly IUnitOfWork _unitOfWork;
     private readonly ILogger<DemoRequestsController> _logger;
 
     public DemoRequestsController(
         IOptions<DemoRequestOptions> options,
-        IActiveAgentConfigResolver activeAgentConfigResolver,
-        IMessageSequenceResolver messageSequenceResolver,
-        IOutboundMessageDispatcher outboundDispatcher,
-        IConversationService conversationService,
+        IConversationInboundService conversationInbound,
         IUnitOfWork unitOfWork,
         ILogger<DemoRequestsController> logger)
     {
         _options = options.Value;
-        _activeAgentConfigResolver = activeAgentConfigResolver;
-        _messageSequenceResolver = messageSequenceResolver;
-        _outboundDispatcher = outboundDispatcher;
-        _conversationService = conversationService;
+        _conversationInbound = conversationInbound;
         _unitOfWork = unitOfWork;
         _logger = logger;
     }
@@ -57,46 +47,31 @@ public sealed class DemoRequestsController : ControllerBase
             return ValidationProblem(ModelState);
         }
 
-        var config = await _activeAgentConfigResolver.GetActiveConfigAsync(businessId, ct);
-        if (config is null)
-            return Problem("No hay agente activo configurado para solicitudes de demo.", statusCode: StatusCodes.Status500InternalServerError);
+        var email = request.Email.Trim();
+        var customerName = NormalizeCustomerName(request.Name);
+        var messageText = BuildInitialMessage(request, phone, email, customerName);
 
-        var sequenceName = string.IsNullOrWhiteSpace(_options.TemplateSequenceName)
-            ? DefaultTemplateSequenceName
-            : _options.TemplateSequenceName.Trim();
-
-        var messages = await _messageSequenceResolver.ResolveAsync(
-            businessId,
-            sequenceName,
-            config.MessageSequences,
-            BuildSequenceContext(request, phone),
+        var result = await _conversationInbound.EnqueueAsync(
+            new ConversationInboundRequest(
+                businessId,
+                WhatsAppProvider,
+                phone,
+                messageText,
+                customerName,
+                Facts: BuildDemoFacts(request, email, customerName)),
             ct);
 
-        if (messages.Count == 0)
-            return Problem($"La secuencia de demo '{sequenceName}' no esta configurada o no genero mensajes.", statusCode: StatusCodes.Status500InternalServerError);
-
-        var conversation = await _conversationService.GetOrCreateConversationAsync(
-            businessId,
-            phone,
-            request.Name);
-
-        await _outboundDispatcher.SendAllAsync(
-            businessId,
-            phone,
-            messages,
-            conversation.ConversationId,
-            throwOnFailure: true,
-            ct: ct);
-
         _logger.LogInformation(
-            "Demo request sent through WhatsApp template sequence {Sequence} for {Phone}",
-            sequenceName,
-            phone);
+            "Demo request enqueued as inbound conversation message. BusinessId: {BusinessId}, ProviderMessageId: {ProviderMessageId}, IsNew: {IsNew}",
+            businessId,
+            result.ProviderMessageId,
+            result.IsNew);
 
         return Accepted(new
         {
             message = "Solicitud de demo recibida. El agente iniciara la conversacion por WhatsApp.",
-            sequence = sequenceName
+            providerMessageId = result.ProviderMessageId,
+            queued = result.IsNew
         });
     }
 
@@ -112,20 +87,31 @@ public sealed class DemoRequestsController : ControllerBase
         return business?.BusinessId ?? Guid.Empty;
     }
 
-    private static MessageSequenceContext BuildSequenceContext(DemoRequest request, string normalizedPhone) =>
-        new()
+    private static string BuildInitialMessage(DemoRequest request, string normalizedPhone, string email, string customerName) =>
+        string.Join(Environment.NewLine,
+            "Solicitud de demo desde formulario web.",
+            $"Nombre: {customerName}",
+            $"Empresa: {ValueOrDash(request.Company)}",
+            $"Correo: {email}",
+            $"WhatsApp: {normalizedPhone}");
+    private static IReadOnlyDictionary<string, string> BuildDemoFacts(DemoRequest request, string email, string customerName) =>
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
-            Custom = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-            {
-                ["CustomerName"] = ValueOrDash(request.Name),
-                ["CompanyName"] = ValueOrDash(request.Company),
-                ["Email"] = ValueOrDash(request.Email),
-                ["Phone"] = normalizedPhone
-            }
+            ["customer_name"] = customerName,
+            ["company_name"] = request.Company.Trim(),
+            ["customer_email"] = email
         };
 
     private static string ValueOrDash(string? value) =>
         string.IsNullOrWhiteSpace(value) ? "-" : value.Trim();
+
+    private static string NormalizeCustomerName(string value)
+    {
+        var normalized = Regex.Replace(value.Trim(), "\\s+", " ");
+        var culture = CultureInfo.GetCultureInfo("es-CO");
+        return culture.TextInfo.ToTitleCase(normalized.ToLower(culture));
+    }
+
 
     private static string? NormalizeWhatsAppNumber(string value)
     {
@@ -145,12 +131,12 @@ public sealed class DemoRequest
     [Required, MaxLength(60)]
     public string Phone { get; init; } = string.Empty;
 
-    [EmailAddress, MaxLength(200)]
-    public string? Email { get; init; }
+    [Required, EmailAddress, MaxLength(200)]
+    public string Email { get; init; } = string.Empty;
 
-    [MaxLength(120)]
-    public string? Name { get; init; }
+    [Required, MaxLength(120)]
+    public string Name { get; init; } = string.Empty;
 
-    [MaxLength(160)]
-    public string? Company { get; init; }
+    [Required, MaxLength(160)]
+    public string Company { get; init; } = string.Empty;
 }

@@ -137,6 +137,9 @@ public sealed class AgentConversationService : IAgentConversationService
         var session = await LoadTurnSessionAsync(
             config, state, conversationId, channelPhone, inboundMetadata, clockSnapshot, cancellationToken);
 
+        await ApplyInboundFactsAsync(config, session, inboundMetadata?.Facts, cancellationToken);
+        await ApplySkipWhenAutoSetsAsync(config, session, cancellationToken);
+
         // Capa 1 — corto-circuito sin LLM
         if (state.Owner == ConversationOwner.Human)
         {
@@ -1284,15 +1287,147 @@ public sealed class AgentConversationService : IAgentConversationService
             ActivePayment = activePayment
         };
 
-        // Aplicar AutoSetOnSkip para stages que se saltan declarativamente
-        await ApplySkipWhenAutoSetsAsync(config, session, ct);
-
         return session;
     }
 
+    private async Task ApplyInboundFactsAsync(
+        AgentConfig config,
+        AgentToolContext session,
+        IReadOnlyDictionary<string, string>? inboundFacts,
+        CancellationToken ct)
+    {
+        var normalizedFacts = NormalizeInboundFacts(inboundFacts);
+        if (normalizedFacts.Count == 0 || config.FactSchema.Count == 0)
+            return;
+
+        var roleIndex = new FactRoleIndex(config.FactSchema);
+        var changedKeys = new List<string>();
+        var conversationIdentityChanged = false;
+
+        foreach (var (rawKey, value) in normalizedFacts)
+        {
+            var schemaEntry = ResolveInboundFactEntry(config, roleIndex, rawKey);
+            if (schemaEntry is null)
+            {
+                _logger.LogDebug(
+                    "Conv {ConvId}: inbound fact '{FactKey}' skipped because it is not defined in the agent fact schema",
+                    session.ConversationId,
+                    rawKey);
+                continue;
+            }
+
+            var changed = !session.Facts.TryGetValue(schemaEntry.Key, out var existing)
+                || !FactValuesEqual(existing, value);
+
+            await _factsService.SetAsync(
+                session.ConversationId,
+                session.BusinessId,
+                schemaEntry.Key,
+                value,
+                schemaEntry.ShouldRememberAcrossRequests(),
+                ct);
+
+            session.Facts[schemaEntry.Key] = value;
+            if (changed)
+                changedKeys.Add(schemaEntry.Key);
+
+            conversationIdentityChanged |= ApplyConversationIdentityFact(session, schemaEntry, value);
+
+            _logger.LogInformation(
+                "Conv {ConvId}: inbound fact '{RawFactKey}' mapped to '{FactKey}'",
+                session.ConversationId,
+                rawKey,
+                schemaEntry.Key);
+        }
+
+        if (conversationIdentityChanged)
+            await _conversationService.UpdateConversationAsync(session.Conversation, ct);
+
+        await ApplyReentryInvalidationAsync(session, changedKeys, ct);
+    }
+
+    private static bool ApplyConversationIdentityFact(
+        AgentToolContext session,
+        FactSchemaEntry entry,
+        string value)
+    {
+        if (IsFactRoleOrKey(entry, "customer.name", ConversationFactKeys.CustomerName))
+        {
+            session.Conversation.CustomerName = value;
+            return true;
+        }
+
+        if (IsFactRoleOrKey(entry, "customer.email", ConversationFactKeys.CustomerEmail))
+        {
+            session.Conversation.CustomerEmail = value;
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool IsFactRoleOrKey(FactSchemaEntry entry, string role, string key) =>
+        entry.Key.Equals(key, StringComparison.OrdinalIgnoreCase)
+        || string.Equals(entry.Role, role, StringComparison.OrdinalIgnoreCase);
+
+    private static IReadOnlyDictionary<string, string> NormalizeInboundFacts(
+        IReadOnlyDictionary<string, string>? facts)
+    {
+        if (facts is null || facts.Count == 0)
+            return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        return facts
+            .Where(pair => !string.IsNullOrWhiteSpace(pair.Key) && !string.IsNullOrWhiteSpace(pair.Value))
+            .ToDictionary(
+                pair => pair.Key.Trim(),
+                pair => pair.Value.Trim(),
+                StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static FactSchemaEntry? ResolveInboundFactEntry(
+        AgentConfig config,
+        FactRoleIndex roleIndex,
+        string rawKey)
+    {
+        var direct = roleIndex.EntryFor(rawKey.Trim());
+        if (direct is not null)
+            return direct;
+
+        var lookup = NormalizeFactLookupToken(rawKey);
+        if (string.IsNullOrWhiteSpace(lookup))
+            return null;
+
+        return config.FactSchema.FirstOrDefault(entry =>
+            MatchesFactToken(entry.Key, lookup)
+            || MatchesFactToken(entry.Role, lookup)
+            || MatchesFactToken(entry.Label, lookup)
+            || entry.Aliases.Any(alias => MatchesFactToken(alias, lookup)));
+    }
+
+    private static bool MatchesFactToken(string? candidate, string lookup) =>
+        !string.IsNullOrWhiteSpace(candidate)
+        && NormalizeFactLookupToken(candidate).Equals(lookup, StringComparison.OrdinalIgnoreCase);
+
+    private static string NormalizeFactLookupToken(string value)
+    {
+        var normalized = value.Trim().Normalize(System.Text.NormalizationForm.FormD);
+        var builder = new System.Text.StringBuilder(normalized.Length);
+
+        foreach (var character in normalized)
+        {
+            var category = System.Globalization.CharUnicodeInfo.GetUnicodeCategory(character);
+            if (category == System.Globalization.UnicodeCategory.NonSpacingMark)
+                continue;
+
+            if (char.IsLetterOrDigit(character))
+                builder.Append(char.ToLowerInvariant(character));
+        }
+
+        return builder.ToString();
+    }
     /// <summary>
     /// Para cada etapa que tenga SkipWhen satisfecho, aplica AutoSetOnSkip
-    /// solo si el fact aún no tiene valor (el dato de usuario tiene precedencia).
+    /// solo si el fact aun no tiene valor (el dato de usuario tiene precedencia).
     /// </summary>
     private async Task ApplySkipWhenAutoSetsAsync(
         AgentConfig config,

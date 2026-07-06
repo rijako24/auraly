@@ -102,7 +102,7 @@ public sealed class InboundMessageBatchProcessor : IInboundMessageBatchProcessor
             userNumber,
             combinedMessage,
             customerName,
-            BuildMetadata(normalMessages.LastOrDefault()));
+            BuildMetadata(normalMessages));
 
         return new InboundMessageBatchProcessResult(messages.Count, interactiveMessages.Count, true);
     }
@@ -131,7 +131,47 @@ public sealed class InboundMessageBatchProcessor : IInboundMessageBatchProcessor
             : new AgentInboundMetadata(
                 message.ProviderMessageId,
                 message.ReplyToProviderMessageId,
-                message.InteractivePayload);
+                message.InteractivePayload,
+                NormalizeFacts(message.Facts));
+
+    private static AgentInboundMetadata? BuildMetadata(IReadOnlyList<IncomingMessage> messages)
+    {
+        var lastMessage = messages.LastOrDefault();
+        if (lastMessage is null)
+            return null;
+
+        return new AgentInboundMetadata(
+            lastMessage.ProviderMessageId,
+            lastMessage.ReplyToProviderMessageId,
+            lastMessage.InteractivePayload,
+            MergeFacts(messages));
+    }
+
+    private static IReadOnlyDictionary<string, string> MergeFacts(IEnumerable<IncomingMessage> messages)
+    {
+        var facts = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var message in messages)
+        {
+            foreach (var pair in NormalizeFacts(message.Facts))
+                facts[pair.Key] = pair.Value;
+        }
+
+        return facts;
+    }
+
+    private static IReadOnlyDictionary<string, string> NormalizeFacts(
+        IReadOnlyDictionary<string, string>? facts)
+    {
+        if (facts is null || facts.Count == 0)
+            return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        return facts
+            .Where(pair => !string.IsNullOrWhiteSpace(pair.Key) && !string.IsNullOrWhiteSpace(pair.Value))
+            .ToDictionary(
+                pair => pair.Key.Trim(),
+                pair => pair.Value.Trim(),
+                StringComparer.OrdinalIgnoreCase);
+    }
 
     private sealed record IndexedIncomingMessage(
         int Index,

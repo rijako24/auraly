@@ -324,6 +324,73 @@ WHERE s.BusinessId = @BusinessId
   );
 
 
+DECLARE @Hours TABLE (DayOfWeek INT NOT NULL, OpenTime TIME(0) NOT NULL, CloseTime TIME(0) NOT NULL);
+
+INSERT INTO @Hours (DayOfWeek, OpenTime, CloseTime)
+VALUES
+    (1, CONVERT(TIME(0), '08:30'), CONVERT(TIME(0), '12:00')),
+    (1, CONVERT(TIME(0), '14:00'), CONVERT(TIME(0), '19:30')),
+    (2, CONVERT(TIME(0), '08:30'), CONVERT(TIME(0), '12:00')),
+    (2, CONVERT(TIME(0), '14:00'), CONVERT(TIME(0), '19:30')),
+    (3, CONVERT(TIME(0), '08:30'), CONVERT(TIME(0), '12:00')),
+    (3, CONVERT(TIME(0), '14:00'), CONVERT(TIME(0), '19:30')),
+    (4, CONVERT(TIME(0), '08:30'), CONVERT(TIME(0), '12:00')),
+    (4, CONVERT(TIME(0), '14:00'), CONVERT(TIME(0), '19:30')),
+    (5, CONVERT(TIME(0), '08:30'), CONVERT(TIME(0), '12:00')),
+    (5, CONVERT(TIME(0), '14:00'), CONVERT(TIME(0), '19:30')),
+    (6, CONVERT(TIME(0), '08:30'), CONVERT(TIME(0), '12:00')),
+    (6, CONVERT(TIME(0), '14:00'), CONVERT(TIME(0), '19:30')),
+    (0, CONVERT(TIME(0), '09:00'), CONVERT(TIME(0), '12:00'));
+
+MERGE dbo.BusinessWorkingHours AS target
+USING @Hours AS source
+   ON target.BusinessId = @BusinessId
+  AND target.DayOfWeek = source.DayOfWeek
+  AND target.OpenTime = source.OpenTime
+WHEN MATCHED THEN
+    UPDATE SET CloseTime = source.CloseTime,
+               IsActive = 1,
+               UpdatedAt = GETUTCDATE()
+WHEN NOT MATCHED THEN
+    INSERT (BusinessWorkingHourId, BusinessId, DayOfWeek, OpenTime, CloseTime, IsActive, CreatedAt)
+    VALUES (NEWID(), @BusinessId, source.DayOfWeek, source.OpenTime, source.CloseTime, 1, GETUTCDATE());
+
+UPDATE dbo.BusinessWorkingHours
+SET IsActive = 0,
+    UpdatedAt = GETUTCDATE()
+WHERE BusinessId = @BusinessId
+  AND NOT EXISTS (
+      SELECT 1
+      FROM @Hours h
+      WHERE h.DayOfWeek = BusinessWorkingHours.DayOfWeek
+        AND h.OpenTime = BusinessWorkingHours.OpenTime
+  );
+
+MERGE dbo.EmployeeWorkingHours AS target
+USING @Hours AS source
+   ON target.BusinessId = @BusinessId
+  AND target.EmployeeId = @EmployeeId
+  AND target.DayOfWeek = source.DayOfWeek
+  AND target.OpenTime = source.OpenTime
+WHEN MATCHED THEN
+    UPDATE SET CloseTime = source.CloseTime,
+               IsActive = 1,
+               UpdatedAt = GETUTCDATE()
+WHEN NOT MATCHED THEN
+    INSERT (EmployeeWorkingHourId, BusinessId, EmployeeId, DayOfWeek, OpenTime, CloseTime, IsActive, CreatedAt)
+    VALUES (NEWID(), @BusinessId, @EmployeeId, source.DayOfWeek, source.OpenTime, source.CloseTime, 1, GETUTCDATE());
+
+UPDATE dbo.EmployeeWorkingHours
+SET IsActive = 0,
+    UpdatedAt = GETUTCDATE()
+WHERE BusinessId = @BusinessId
+  AND EmployeeId = @EmployeeId
+  AND NOT EXISTS (
+      SELECT 1
+      FROM @Hours h
+      WHERE h.DayOfWeek = EmployeeWorkingHours.DayOfWeek
+        AND h.OpenTime = EmployeeWorkingHours.OpenTime
+  );
 DECLARE @AddOns TABLE
 (
     ServiceId UNIQUEIDENTIFIER NOT NULL,
@@ -607,7 +674,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         "id": "scheduling",
         "name": "Agenda",
         "goal": "Revisar disponibilidad y validar fecha y hora para una reserva por hora.",
-        "hint": "Todos los servicios de este flujo se agendan como reserva. Para check_availability usa el valor canonico guardado en service. Si falta fecha, pregunta: Para que dia deseas el servicio? Si el cliente da dia y hora juntos, registra desired_date y desired_time y llama check_availability con fecha y hora en el mismo turno. Si el cliente da fecha pendiente de hora, registra desired_date y en ese mismo turno llama check_availability usando la fecha; responde mostrando los horarios devueltos por la herramienta y pregunta cual prefiere. Consulta disponibilidad del dia antes de pedir una hora especifica. Usa horarios en bloques de una hora. Cuando el cliente elija una hora de los horarios presentados, registra desired_time y llama check_availability con fecha y hora. Si el horario esta disponible, deja avanzar el flujo.",
+        "hint": "Todos los servicios de este flujo se agendan como reserva. Para check_availability usa el valor canonico guardado en service. Si falta fecha, pregunta: Para que dia deseas el servicio? Si el cliente da dia y hora juntos, registra desired_date y desired_time y llama check_availability con fecha y hora en el mismo turno. Si el cliente da fecha pendiente de hora, registra desired_date y en ese mismo turno llama check_availability usando la fecha; responde mostrando los horarios devueltos por la herramienta y pregunta cual prefiere. Consulta disponibilidad del dia antes de pedir una hora especifica. Usa horarios en intervalos de 30 minutos dentro del horario de atencion. Cuando el cliente elija una hora de los horarios presentados, registra desired_time y llama check_availability con fecha y hora. Si el horario esta disponible, deja avanzar el flujo.",
         "allowedTools": ["check_availability", "set_fact"],
         "afterTool": [
           {
@@ -633,9 +700,9 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         "id": "customer_data",
         "name": "Datos del cliente",
         "goal": "Recoger los datos minimos para preparar el anticipo.",
-        "hint": "Confirma brevemente servicio, fecha y hora. Pide los datos faltantes: nombre del cliente y telefono cuando este pendiente por canal.",
+        "hint": "Confirma brevemente servicio, fecha y hora. Pide en un solo mensaje, en lista corta, todos los datos faltantes para la reserva: nombre del cliente, telefono de contacto y fecha de cumpleanos. Si ya tienes alguno en ESTADO ACTUAL o por canal, lista solo los que falten. Registra cada dato con set_fact.",
         "allowedTools": ["set_fact"],
-        "advanceWhenFacts": ["customer_name", "customer_phone"]
+        "advanceWhenFacts": ["customer_name", "customer_phone", "customer_birth_date"]
       },
       {
         "id": "finalization",
@@ -688,8 +755,9 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
     { "key": "availability_checked", "role": "booking.availability_checked", "label": "disponibilidad validada", "type": "string", "required": false, "source": "system", "scope": "ephemeral", "retentionDays": 1, "expireOnBusinessDayChange": true, "dependsOn": ["service", "desired_date", "desired_time"] },
     { "key": "service_notes", "role": "booking.notes", "label": "notas del servicio", "type": "string", "required": false, "source": "user", "scope": "request", "captureMode": "eager", "retentionDays": 7, "expireOnBusinessDayChange": true, "aliases": ["direccion", "ubicacion", "barrio", "domicilio", "color", "keratina", "tratamiento", "nota"] },
     { "key": "add_ons", "role": "booking.add_ons", "label": "adicionales", "type": "string", "required": false, "source": "user", "scope": "request", "captureMode": "eager", "retentionDays": 7, "expireOnBusinessDayChange": true, "dependsOn": ["service"], "aliases": ["adicional", "adicionales", "mascarilla", "aerografo", "sombreado", "fibra", "relajador", "masaje"] },
-    { "key": "customer_name", "role": "customer.name", "label": "nombre del cliente", "type": "string", "required": true, "source": "user", "scope": "customer", "captureMode": "eager", "aliases": ["nombre", "cliente", "a nombre de", "mi nombre"] },
+    { "key": "customer_name", "role": "customer.name", "label": "nombre del cliente", "type": "string", "required": true, "source": "user", "scope": "customer", "captureMode": "onDemand", "aliases": ["nombre", "cliente", "a nombre de", "mi nombre"] },
     { "key": "customer_phone", "role": "customer.phone", "label": "telefono del cliente", "type": "phone", "required": true, "source": "channel", "scope": "customer", "aliases": ["telefono", "celular", "whatsapp", "numero"] },
+    { "key": "customer_birth_date", "role": "customer.birth_date", "label": "fecha de cumpleanos del cliente", "type": "date", "required": true, "source": "user", "scope": "customer", "captureMode": "onDemand", "aliases": ["cumpleanos", "fecha de cumpleanos", "fecha nacimiento", "fecha de nacimiento", "nacimiento"] },
     { "key": "customer_email", "role": "customer.email", "label": "email del cliente", "type": "email", "required": false, "source": "user", "scope": "customer", "captureMode": "eager", "aliases": ["email", "correo"] },
     { "key": "payment_method", "role": "payment.method", "label": "metodo de pago", "type": "string", "required": false, "source": "system", "scope": "request", "expireOnBusinessDayChange": true }
   ],
