@@ -406,14 +406,64 @@ BEGIN
     WHERE AgentId = @AgentId;
 END
 
-UPDATE dbo.BusinessWhatsAppNumbers
-SET AgentId = @AgentId
-WHERE BusinessId = @BusinessId
-  AND (AgentId IS NULL OR AgentId <> @AgentId);
+DECLARE @AuralyPhoneNumber NVARCHAR(20) = N'+573117324418';
+DECLARE @AuralyWhatsAppPhoneId NVARCHAR(100) = N'1207729672420835';
+DECLARE @AuralyWhatsAppBusinessAccountId NVARCHAR(100);
+DECLARE @AuralyWhatsAppAccessToken NVARCHAR(500);
+DECLARE @AuralyWhatsAppNumberId UNIQUEIDENTIFIER;
 
-IF NOT EXISTS (SELECT 1 FROM dbo.BusinessWhatsAppNumbers WHERE BusinessId = @BusinessId AND IsActive = 1)
+SELECT TOP (1)
+    @AuralyWhatsAppNumberId = BusinessWhatsAppNumberId,
+    @AuralyWhatsAppAccessToken = WhatsAppAccessToken,
+    @AuralyWhatsAppBusinessAccountId = WhatsAppBusinessAccountId
+FROM dbo.BusinessWhatsAppNumbers
+WHERE (WhatsAppPhoneNumberId = @AuralyWhatsAppPhoneId OR BusinessId = @BusinessId)
+  AND NULLIF(LTRIM(RTRIM(WhatsAppAccessToken)), N'') IS NOT NULL
+ORDER BY
+    CASE WHEN WhatsAppPhoneNumberId = @AuralyWhatsAppPhoneId THEN 0 ELSE 1 END,
+    IsActive DESC,
+    CreatedAt DESC;
+
+IF @AuralyWhatsAppAccessToken IS NULL
 BEGIN
-    PRINT N'SeedAuraly: negocio creado sin numero WhatsApp activo. Configura BusinessWhatsAppNumbers para que Aly responda inbound y pueda enviar plantillas.';
+    PRINT N'SeedAuraly: no se encontro token propio de Auraly; omitiendo numero WhatsApp.';
+END
+ELSE IF @AuralyWhatsAppNumberId IS NULL
+BEGIN
+    INSERT INTO dbo.BusinessWhatsAppNumbers (
+        BusinessWhatsAppNumberId,
+        BusinessId,
+        AgentId,
+        PhoneNumber,
+        WhatsAppBusinessAccountId,
+        WhatsAppPhoneNumberId,
+        WhatsAppAccessToken,
+        IsActive,
+        CreatedAt
+    )
+    VALUES (
+        NEWID(),
+        @BusinessId,
+        @AgentId,
+        @AuralyPhoneNumber,
+        @AuralyWhatsAppBusinessAccountId,
+        @AuralyWhatsAppPhoneId,
+        @AuralyWhatsAppAccessToken,
+        1,
+        GETUTCDATE()
+    );
+END
+ELSE
+BEGIN
+    UPDATE dbo.BusinessWhatsAppNumbers
+    SET BusinessId = @BusinessId,
+        AgentId = @AgentId,
+        PhoneNumber = @AuralyPhoneNumber,
+        WhatsAppPhoneNumberId = @AuralyWhatsAppPhoneId,
+        WhatsAppBusinessAccountId = @AuralyWhatsAppBusinessAccountId,
+        WhatsAppAccessToken = @AuralyWhatsAppAccessToken,
+        IsActive = 1
+    WHERE BusinessWhatsAppNumberId = @AuralyWhatsAppNumberId;
 END
 
 DECLARE @MimosSubscriptionId UNIQUEIDENTIFIER;

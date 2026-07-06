@@ -176,7 +176,7 @@ export default function LeadsPage() {
           <Button variant="outline" asChild>
             <Link href="/dashboard/campaigns">
               <Megaphone className="mr-2 h-4 w-4" />
-              Campañas
+              Campanas
             </Link>
           </Button>
           <Button asChild>
