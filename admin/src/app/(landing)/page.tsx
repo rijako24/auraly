@@ -174,7 +174,7 @@ const DIFFERENTIATORS = [
   ["Operacion medible", "Cada conversacion deja historial, estado, consumo y contexto para optimizar ventas, soporte y recuperacion."],
 ];
 
-const DEFAULT_WHATSAPP_CONTACT_NUMBER = "573000000000";
+const DEFAULT_WHATSAPP_CONTACT_NUMBER = "573117324418";
 const WHATSAPP_CONTACT_NUMBER =
   process.env.NEXT_PUBLIC_WHATSAPP_CONTACT_NUMBER || DEFAULT_WHATSAPP_CONTACT_NUMBER;
 const WHATSAPP_CONTACT_MESSAGE =
