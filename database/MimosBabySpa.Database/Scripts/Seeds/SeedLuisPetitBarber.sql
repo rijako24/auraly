@@ -217,7 +217,7 @@ INSERT INTO @Services (ServiceId, ServiceName, Description, Keywords, CategoryId
 VALUES
 ('BABA0000-0000-0000-0000-000000000101', N'Corte basico de nino',
  N'Corte infantil con trato paciente, detalle y acabado limpio. Servicio personalizado para una experiencia comoda y puntual.',
- N'corte nino, corte niño, corte infantil, corte de cabello nino, corte de cabello niño, cabello nino, cabello niño, peluqueada nino, peluqueada niño',
+ N'corte nino, corte infantil, corte de cabello nino, cabello nino, peluqueada nino',
  @CategoryId, 30, 25000.00, 1),
 ('BABA0000-0000-0000-0000-000000000102', N'Corte basico de adulto',
  N'Corte profesional basico para adulto, adaptado al estilo del cliente, con atencion al detalle y acabado limpio.',
@@ -229,7 +229,7 @@ VALUES
  @CategoryId, 45, 40000.00, 3),
 ('BABA0000-0000-0000-0000-000000000104', N'Diseno de cejas',
  N'Diseno y perfilado de cejas para armonizar el rostro con un acabado natural y pulido.',
- N'cejas, diseno cejas, diseño cejas, perfilado cejas, cejas hombre',
+ N'cejas, diseno cejas, perfilado cejas, cejas hombre',
  @CejasCategoryId, 10, 10000.00, 4),
 ('BABA0000-0000-0000-0000-000000000105', N'Lavado profundo',
  N'Limpieza profunda del cabello y cuero cabelludo para una sensacion fresca, cuidada y renovada.',
@@ -245,7 +245,7 @@ VALUES
  @TratamientosCategoryId, 60, 120000.00, 7),
 ('BABA0000-0000-0000-0000-000000000108', N'Corte + tinte',
  N'Corte con tinte para cubrimiento de canas o tonificacion de color.',
- N'corte tinte, corte con tinte, corte de cabello tinte, cabello tinte, tinte, color, canas, coloracion, coloración',
+ N'corte tinte, corte con tinte, corte de cabello tinte, cabello tinte, tinte, color, canas, coloracion',
  @CategoryId, 45, 50000.00, 8),
 ('BABA0000-0000-0000-0000-000000000109', N'Corte premium de adulto',
  N'Corte premium de adulto con hidratacion capilar y peinado.',
@@ -253,7 +253,7 @@ VALUES
  @CategoryId, 45, 35000.00, 9),
 ('BABA0000-0000-0000-0000-000000000110', N'Corte para bebes solo puntas',
  N'Corte para bebes enfocado solo en puntas, con trato cuidadoso y tiempo breve.',
- N'corte bebe, corte bebé, corte bebes, corte bebés, corte de cabello bebe, corte de cabello bebé, cabello bebe, cabello bebé, solo puntas, puntas bebe, primer corte bebe',
+ N'corte bebe, corte bebes, corte de cabello bebe, cabello bebe, solo puntas, puntas bebe, primer corte bebe',
  @CategoryId, 20, 20000.00, 10),
 ('BABA0000-0000-0000-0000-000000000111', N'Delineado de barba',
  N'Delineado de barba con perfilado limpio y acabado profesional.',
@@ -342,7 +342,7 @@ VALUES
  15000.00, 1),
 ('BABA0000-0000-0000-0000-000000000202', N'Sombreado con aerografo',
  N'Adicional para cortes que permite un acabado con mayor definicion y perfeccion.',
- N'aerografo, aerógrafo, sombreado, sombreado aerografo, definicion corte',
+ N'aerografo, sombreado, sombreado aerografo, definicion corte',
  15000.00, 2),
 ('BABA0000-0000-0000-0000-000000000203', N'Fibra capilar',
  N'Adicional para cortes que ayuda a disimular espacios con poco volumen de cabello.',
@@ -350,7 +350,7 @@ VALUES
  10000.00, 3),
 ('BABA0000-0000-0000-0000-000000000204', N'Relajador de ondas a base de celulas madre',
  N'Adicional para cortes, aplicado dentro del tiempo del corte.',
- N'relajador ondas, ondas, celulas madre, células madre, relajador cabello',
+ N'relajador ondas, ondas, celulas madre, relajador cabello',
  15000.00, 4),
 ('BABA0000-0000-0000-0000-000000000205', N'Masaje con gafas de relajacion ocular',
  N'Adicional de 10 minutos con gafas de relajacion ocular. Se ofrece junto con cortes compatibles.',
@@ -465,8 +465,8 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
   "maxToolIterations": 8,
   "historyWindowSize": 24,
   "consecutiveErrorEscalationThreshold": 3,
-  "persona": "Eres Luis Petit, barbero profesional de BARBER KIDS MEN. Atiendes por WhatsApp en primera persona, con tono cercano, profesional, puntual y amable. Tu trabajo es ayudar a elegir el servicio correcto, ofrecer adicionales cuando apliquen, revisar disponibilidad y guiar al cliente hasta pagar el anticipo para asegurar la cita.",
-  "policies": "## MARCA Y ATENCION\n\n- La marca de atencion al cliente es BARBER KIDS MEN.\n- Luis Petit es el barbero profesional que atiende la conversacion.\n- Cada servicio es una experiencia personalizada, enfocada en elegancia, detalle, puntualidad y buen trato.\n\n## APERTURA\n\n- En cada apertura del dia, saluda natural, presentate como Luis Petit de BARBER KIDS MEN y da la bienvenida.\n- Usa el nombre del cliente si esta disponible.\n- Si el cliente ya pidio algo, usa solo una apertura breve antes de continuar con esa intencion.\n- Despues del saludo, sigue de forma natural con lo que el cliente pidio.\n- No uses saludos largos.",
+  "persona": "Eres Luis Petit, barbero profesional de BARBER KIDS MEN. Atiendes reservas por WhatsApp en primera persona, con tono cercano, profesional, puntual y amable.",
+  "policies": "## ATENCION\n\n- Usa nombres y datos oficiales del catalogo o de las herramientas del turno.\n- Manten tono cercano, profesional y puntual.\n\n## PRESENTACION\n\n- Separa informacion y pregunta final en parrafos cortos.\n- Cuando presentes tres o mas categorias, servicios, horarios, complementos u opciones, usa lista vertical con guion.\n- Para catalogos y opciones, conserva los saltos de linea.",
   "messageSequences": {
     "reservation_confirmed": {
       "messages": [
@@ -590,7 +590,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         "id": "discovery",
         "name": "Descubrimiento",
         "goal": "Ayudar al cliente a elegir un servicio exacto del catalogo.",
-        "hint": "Si el cliente solo saluda o abre la conversacion sin pedir un servicio concreto, primero llama get_service_catalog con view categories. Despues muestra las categorias u opciones devueltas por el catalogo sin precios y pregunta en cual esta interesado. Si el cliente nombra una categoria, familia u opcion amplia, llama get_service_catalog con view services y query usando las palabras del cliente; muestra los servicios devueltos con precio y duracion, y pregunta cual prefiere. No uses resolve_service_selection para categorias, familias u opciones amplias. Si el cliente nombra un servicio concreto o un equivalente claro de un servicio exacto, intenta guardarlo con resolve_service_selection usando el texto del cliente y el contexto inmediato de la misma solicitud. Cuando el cliente seleccione un servicio del catalogo previamente mostrado, guardalo con resolve_service_selection usando el texto literal del cliente y el contexto inmediato de la misma solicitud. Si resolve_service_selection devuelve ambiguo o no encontrado y el texto del cliente trae categoria, familia, servicio u opcion, llama get_service_catalog con view services y query usando esas mismas palabras. Si no hay una opcion clara despues de consultar servicios, pide que elija un servicio exacto usando solo opciones oficiales del catalogo. No uses set_fact para registrar service.",
+        "hint": "Primero clasifica el mensaje en una sola ruta. Ruta de busqueda: si el mensaje trae intencion comercial o cualquier palabra relacionada con el catalogo, la primera herramienta debe ser get_service_catalog con view services y query no vacio; en query envia las palabras del cliente que nombran el servicio, categoria, familia u opcion. Si es primera respuesta visible, abre con saludo, bienvenida a BARBER KIDS MEN y la frase exacta soy Luis Petit, barbero profesional. Luego muestra solo servicios oficiales relevantes con precio y duracion y pregunta cual prefiere. Ruta de saludo: usa get_service_catalog con view categories y sin query solo cuando el mensaje sea apertura social pura; responde en este orden: saluda, da la bienvenida a BARBER KIDS MEN, incluye la frase exacta soy Luis Petit, barbero profesional, muestra categorias oficiales en lista vertical con guion y pregunta en que servicio esta interesado el dia de hoy. Ruta de seleccion: cuando el cliente elija un servicio exacto o equivalente claro de los servicios mostrados, llama resolve_service_selection con el texto literal del cliente y el contexto inmediato de la solicitud. Si la seleccion queda ambigua, pide que elija una opcion exacta usando solo servicios oficiales.",
         "allowedTools": ["get_service_catalog", "resolve_service_selection"],
         "advanceWhenFacts": ["service"]
       },
@@ -598,7 +598,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         "id": "add_ons",
         "name": "Complementos",
         "goal": "Ofrecer adicionales compatibles cuando apliquen antes de preparar el anticipo.",
-        "hint": "Llama get_compatible_add_ons para el servicio elegido. Cuando existan complementos compatibles, explica que son adicionales opcionales, se agregan al servicio principal y tienen valor agregado. Ofrece los complementos devueltos por la herramienta en lista, incluyendo el precio de cada complemento, y pregunta si desea agregar alguno o continuar. Con lista vacia, registra add_ons=ninguno y avanza. Cuando el cliente elija uno o varios complementos exactos, registra add_ons con los nombres canonicos separados por coma. Cuando el cliente prefiera continuar, registra add_ons=ninguno.",
+        "hint": "Llama get_compatible_add_ons para el servicio elegido. Cuando existan complementos compatibles, presenta en el mismo turno los complementos devueltos por la herramienta en lista con precio y valor agregado breve; cierra preguntando si desea agregar alguno o continuar sin adicionales. Con lista vacia, registra add_ons=ninguno y avanza. Cuando el cliente elija uno o varios complementos exactos, registra add_ons con los nombres canonicos separados por coma. Cuando el cliente prefiera continuar, registra add_ons=ninguno.",
         "allowedTools": ["get_compatible_add_ons", "set_fact"],
         "advanceWhenFacts": ["add_ons"],
         "reentryOnFactChanged": ["service"]
@@ -663,14 +663,14 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "hint": "Responde con una frase breve y cordial, resume la necesidad y llama escalate_to_human.",
       "allowedTools": ["escalate_to_human"]
     },
-    {
-      "id": "complete_paid_slot_assignment",
-      "priority": 950,
-      "goal": "Completar la asignacion de horario cuando un pago confirmado quedo sin reserva porque el horario original ya no estaba disponible.",
-      "hint": "Usa esta ruta cuando el cliente este eligiendo nuevo horario para un pago ya confirmado. Primero valida el horario con check_availability usando el servicio original; si esta disponible, llama assign_paid_slot con date y time. Con horario ocupado, ofrece los horarios devueltos por check_availability.",
-      "allowedTools": ["check_availability", "assign_paid_slot", "set_fact"]
-    },
 
+    {
+      "id": "complete_paid_reservation_reschedule",
+      "priority": 950,
+      "goal": "Completar la agenda cuando un pago confirmado quedo sin reserva porque el horario original ya no estaba disponible.",
+      "hint": "Usa esta ruta solo cuando el estado indique pago confirmado sin reserva enlazada. No generes nuevo checkout ni pidas nuevo pago. Primero valida el nuevo horario con check_availability usando el servicio original; si esta disponible, llama reschedule_paid_reservation con date y time. Si no esta disponible, ofrece los horarios devueltos por check_availability.",
+      "allowedTools": ["check_availability", "reschedule_paid_reservation", "set_fact"]
+    },
     {
       "id": "manage_existing_reservation",
       "priority": 900,
@@ -707,7 +707,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         "state:no_pending_checkout"
       ]
     },
-    "capability:reservation.assign_paid_slot": {
+    "capability:reservation.reschedule_paid": {
       "requires": [
         "state:payment_confirmed_no_slot",
         "verification:availability_checked"
@@ -722,7 +722,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
     "check_availability",
     "prepare_checkout",
     "create_reservation",
-    "assign_paid_slot",
+    "reschedule_paid_reservation",
     "suspend_reservation",
     "get_customer_reservations",
     "confirm_reservation_attendance",
@@ -783,9 +783,12 @@ SELECT TOP (1)
     @LuisWhatsAppAccessToken = WhatsAppAccessToken,
     @LuisWhatsAppBusinessAccountId = WhatsAppBusinessAccountId
 FROM dbo.BusinessWhatsAppNumbers
-WHERE BusinessId = @BusinessId
+WHERE (WhatsAppPhoneNumberId = @LuisWhatsAppPhoneId OR BusinessId = @BusinessId)
   AND NULLIF(LTRIM(RTRIM(WhatsAppAccessToken)), N'') IS NOT NULL
-ORDER BY IsActive DESC, CreatedAt DESC;
+ORDER BY
+    CASE WHEN WhatsAppPhoneNumberId = @LuisWhatsAppPhoneId THEN 0 ELSE 1 END,
+    IsActive DESC,
+    CreatedAt DESC;
 
 IF @LuisWhatsAppAccessToken IS NULL
 BEGIN

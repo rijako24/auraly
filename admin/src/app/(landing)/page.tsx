@@ -174,7 +174,9 @@ const DIFFERENTIATORS = [
   ["Operacion medible", "Cada conversacion deja historial, estado, consumo y contexto para optimizar ventas, soporte y recuperacion."],
 ];
 
-const WHATSAPP_CONTACT_NUMBER = process.env.NEXT_PUBLIC_WHATSAPP_CONTACT_NUMBER;
+const DEFAULT_WHATSAPP_CONTACT_NUMBER = "573000000000";
+const WHATSAPP_CONTACT_NUMBER =
+  process.env.NEXT_PUBLIC_WHATSAPP_CONTACT_NUMBER || DEFAULT_WHATSAPP_CONTACT_NUMBER;
 const WHATSAPP_CONTACT_MESSAGE =
   process.env.NEXT_PUBLIC_WHATSAPP_CONTACT_MESSAGE ||
   "Hola, quiero conocer la plataforma y agendar una demo.";
@@ -217,8 +219,9 @@ export default function LandingPage() {
   const [status, setStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
   const [statusMessage, setStatusMessage] = useState("");
   const [errors, setErrors] = useState<DemoFormErrors>({});
-  const whatsappContactHref = WHATSAPP_CONTACT_NUMBER
-    ? `https://wa.me/${WHATSAPP_CONTACT_NUMBER}?text=${encodeURIComponent(WHATSAPP_CONTACT_MESSAGE)}`
+  const whatsappContactNumber = WHATSAPP_CONTACT_NUMBER.replace(/\D/g, "");
+  const whatsappContactHref = whatsappContactNumber
+    ? `https://wa.me/${whatsappContactNumber}?text=${encodeURIComponent(WHATSAPP_CONTACT_MESSAGE)}`
     : null;
 
   const updateForm = (field: keyof DemoForm, value: string) => {
@@ -233,11 +236,11 @@ export default function LandingPage() {
 
   const validateForm = () => {
     const nextErrors: DemoFormErrors = {};
-    if (!form.name.trim()) nextErrors.name = "CuÈntanos tu nombre.";
-    if (!form.company.trim()) nextErrors.company = "CuÈntanos de quÈ empresa nos escribes.";
-    if (!form.phone.trim()) nextErrors.phone = "DÈjanos tu n˙mero de WhatsApp.";
+    if (!form.name.trim()) nextErrors.name = "Cu√©ntanos tu nombre.";
+    if (!form.company.trim()) nextErrors.company = "Cu√©ntanos de qu√© empresa nos escribes.";
+    if (!form.phone.trim()) nextErrors.phone = "D√©janos tu n√∫mero de WhatsApp.";
     if (form.email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) {
-      nextErrors.email = "Escribe un correo v·lido o dÈjalo vacÌo.";
+      nextErrors.email = "Escribe un correo v√°lido o d√©jalo vac√≠o.";
     }
 
     setErrors(nextErrors);
@@ -272,7 +275,7 @@ export default function LandingPage() {
       setStatus("success");
       setStatusMessage("");
       toast.success("Solicitud enviada", {
-        description: "Aly, nuestro agente de ventas, te contactar· por WhatsApp para iniciar la demo.",
+        description: "Aly, nuestro agente de ventas, te contactar√° por WhatsApp para iniciar la demo.",
       });
     } catch (error) {
       setStatus("error");
@@ -569,7 +572,7 @@ export default function LandingPage() {
           <div>
             <Sparkles className="mb-5 h-8 w-8 text-[#1A5860]" />
             <h2 className="text-3xl font-semibold sm:text-5xl">Revisemos tu flujo actual de WhatsApp.</h2>
-            <p className="mt-4 max-w-2xl text-lg text-black/65">Al solicitarla, Aly inicia la conversacion por WhatsApp, entiende tu cuello de botella y te guia hasta coordinar la demo con nuestro equipo.</p>
+            <p className="mt-4 max-w-2xl text-lg text-black/65">Dejanos tus datos y te escribimos por WhatsApp para revisar tu flujo, detectar oportunidades y agendar una demo en vivo de AURALY.</p>
           </div>
           <form onSubmit={submit} noValidate className="grid gap-3 rounded-lg border border-black/10 bg-[#f7f8f2] p-4">
             <div className="grid gap-3 sm:grid-cols-2">

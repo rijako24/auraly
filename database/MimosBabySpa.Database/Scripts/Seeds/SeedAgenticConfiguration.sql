@@ -342,7 +342,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         "allowedTools": [
           "prepare_checkout",
           "create_reservation",
-          "assign_paid_slot",
           "verify_payment",
           "get_service_catalog",
           "get_compatible_add_ons",
@@ -363,11 +362,11 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "allowedTools": ["escalate_to_human"]
     },
     {
-      "id": "complete_paid_slot_assignment",
+      "id": "complete_paid_reservation_reschedule",
       "priority": 950,
-      "goal": "Completar la asignacion de horario cuando un pago confirmado quedo sin reserva porque el horario original ya no estaba disponible y el cliente elige otra fecha u hora.",
-      "hint": "Usa esta ruta solo cuando la conversacion venga de un aviso de pago seguro con horario no disponible, o cuando el cliente este eligiendo nuevo horario para un pago ya confirmado. No generes nuevo checkout ni pidas nuevo pago. Primero valida el horario con check_availability usando el servicio original; si esta disponible, llama assign_paid_slot con date y time. Si no esta disponible, ofrece los horarios devueltos por check_availability.",
-      "allowedTools": ["check_availability", "assign_paid_slot", "set_fact"]
+      "goal": "Completar la agenda cuando un pago confirmado quedo sin reserva porque el horario original ya no estaba disponible.",
+      "hint": "Usa esta ruta solo cuando el estado indique pago confirmado sin reserva enlazada. No generes nuevo checkout ni pidas nuevo pago. Primero valida el nuevo horario con check_availability usando el servicio original; si esta disponible, llama reschedule_paid_reservation con date y time. Si no esta disponible, ofrece los horarios devueltos por check_availability.",
+      "allowedTools": ["check_availability", "reschedule_paid_reservation", "set_fact"]
     },
     {
       "id": "manage_existing_reservation",
@@ -464,7 +463,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         "state:no_pending_checkout"
       ]
     },
-    "capability:reservation.assign_paid_slot": {
+    "capability:reservation.reschedule_paid": {
       "requires": [
         "state:payment_confirmed_no_slot",
         "verification:availability_checked"
@@ -479,7 +478,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
     "check_availability",
     "prepare_checkout",
     "create_reservation",
-    "assign_paid_slot",
+    "reschedule_paid_reservation",
     "suspend_reservation",
     "get_customer_reservations",
     "confirm_reservation_attendance",

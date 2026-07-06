@@ -65,7 +65,12 @@ public sealed class VerifyPaymentTool : IAgentTool
             {
                 status = "confirmed",
                 is_approved = true,
-                message = "Payment is already confirmed. The customer should receive or may have already received the automatic confirmation message."
+                payment_transaction_id = payment.PaymentTransactionId,
+                reservation_id = payment.ReservationId,
+                requires_webhook_fulfillment = payment.ReservationId is null,
+                message = payment.ReservationId is null
+                    ? "Payment is confirmed but no reservation is linked yet. Wait for the payment confirmation handler or escalate to operations; do not verbally confirm a reservation."
+                    : "Payment is already confirmed and linked to a reservation."
             });
         }
 

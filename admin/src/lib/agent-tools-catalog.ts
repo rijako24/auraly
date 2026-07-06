@@ -25,7 +25,7 @@ export const AGENT_TOOLS_CATALOG: AgentToolMeta[] = [
 
   { name: "prepare_checkout", label: "Resumen de checkout", group: "Reserva" },
   { name: "create_reservation", label: "Crear reserva", group: "Reserva" },
-  { name: "assign_paid_slot", label: "Asignar slot pagado", group: "Reserva" },
+  { name: "reschedule_paid_reservation", label: "Reagendar reserva pagada", group: "Reserva" },
   { name: "verify_payment", label: "Verificar pago", group: "Pagos" },
 
   { name: "search_products", label: "Buscar productos", group: "Pedidos" },

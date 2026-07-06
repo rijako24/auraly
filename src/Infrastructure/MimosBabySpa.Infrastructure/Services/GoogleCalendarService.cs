@@ -219,6 +219,9 @@ public class GoogleCalendarService : ICalendarService
         if (string.IsNullOrWhiteSpace(settings.SharedWithEmail))
             return false;
 
+        if (string.Equals(settings.SharedWithEmail.Trim(), settings.OwnerEmail?.Trim(), StringComparison.OrdinalIgnoreCase))
+            return false;
+
         var role = NormalizeAclRole(settings.SharedRole);
         var requestBody = new
         {

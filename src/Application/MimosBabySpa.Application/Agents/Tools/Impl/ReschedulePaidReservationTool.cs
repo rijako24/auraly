@@ -12,10 +12,10 @@ using static MimosBabySpa.Application.Agents.ToolSideEffectNames;
 namespace MimosBabySpa.Application.Agents.Tools.Impl;
 
 /// <summary>
-/// Asigna un nuevo horario a un pago confirmado que quedó sin reserva (slot tomado tras el pago).
+/// Agenda una reserva pagada que quedó pendiente porque el horario original se ocupó después del pago.
 /// </summary>
-[AgentToolMetadata("assign_paid_slot", Capabilities = new[] { ToolCapabilities.PaidSlotAssign })]
-public sealed class AssignPaidSlotTool : IAgentTool
+[AgentToolMetadata("reschedule_paid_reservation", Capabilities = new[] { ToolCapabilities.PaidReservationReschedule })]
+public sealed class ReschedulePaidReservationTool : IAgentTool
 {
     private readonly IPaymentLifecycleService _paymentLifecycle;
     private readonly IReservationService _reservations;
@@ -24,7 +24,7 @@ public sealed class AssignPaidSlotTool : IAgentTool
     private readonly IUnitOfWork _unitOfWork;
     private readonly IConversationVerificationService _verifications;
 
-    public AssignPaidSlotTool(
+    public ReschedulePaidReservationTool(
         IPaymentLifecycleService paymentLifecycle,
         IReservationService reservations,
         IAvailabilityService availability,
@@ -40,12 +40,12 @@ public sealed class AssignPaidSlotTool : IAgentTool
         _verifications = verifications;
     }
 
-    public string Name => "assign_paid_slot";
+    public string Name => "reschedule_paid_reservation";
 
-    public IReadOnlyList<string> Capabilities => [ToolCapabilities.PaidSlotAssign];
+    public IReadOnlyList<string> Capabilities => [ToolCapabilities.PaidReservationReschedule];
 
     public string Description =>
-        "Creates a confirmed reservation for a paid PaymentTransaction that has no linked reservation yet, " +
+        "Creates a confirmed reservation for a paid PaymentTransaction that requires rescheduling and has no linked reservation yet, " +
         "using the verified service/date/time snapshot. Links the reservation to the payment record.";
 
     public Func<JsonElement, AgentToolContext, IReadOnlyDictionary<string, string>?>? VerificationDependencyResolver =>
@@ -105,7 +105,7 @@ public sealed class AssignPaidSlotTool : IAgentTool
         {
             return ToolResultHelper.Error(
                 "no_pending_reschedule",
-                "There is no confirmed payment pending slot assignment for this conversation.");
+                "There is no confirmed paid reservation pending rescheduling for this conversation.");
         }
 
         if (payment.ReservationId.HasValue)
@@ -236,4 +236,3 @@ public sealed class AssignPaidSlotTool : IAgentTool
         return string.IsNullOrWhiteSpace(fallback) ? null : fallback;
     }
 }
-

@@ -242,10 +242,10 @@ services.AddScoped<IAgentTool, ResolvePricingTool>();
 services.AddScoped<IAgentTool, PrepareCheckoutTool>();
 services.AddScoped<IAgentTool, PrepareOrderCheckoutTool>();
 services.AddScoped<IAgentTool, CreateReservationTool>();
-services.AddScoped<IAgentTool, AssignPaidSlotTool>();
 services.AddScoped<IAgentTool, SuspendReservationTool>();
 services.AddScoped<IAgentTool, GetCustomerReservationsTool>();
 services.AddScoped<IAgentTool, ConfirmReservationAttendanceTool>();
+services.AddScoped<IAgentTool, ReschedulePaidReservationTool>();
 services.AddScoped<IAgentTool, RequestReservationRescheduleTool>();
 services.AddScoped<IAgentTool, PrepareReservationChangeTool>();
 services.AddScoped<IAgentTool, ConfirmReservationChangeTool>();
@@ -276,6 +276,37 @@ services.AddScoped<IAgentConversationService, AgentConversationService>();
 
 // Build
 var serviceProvider = services.BuildServiceProvider();
+
+if (args.Length >= 2 && args[0].Equals("confirm-payment", StringComparison.OrdinalIgnoreCase))
+{
+    var paymentReferenceId = args[1];
+    await using var scope = serviceProvider.CreateAsyncScope();
+    var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+    var confirmationHandler = scope.ServiceProvider.GetRequiredService<IPaymentConfirmationHandler>();
+    var payment = await unitOfWork.PaymentTransactions.GetByPaymentReferenceIdAsync(paymentReferenceId);
+    if (payment is null)
+    {
+        Console.WriteLine($"Payment reference not found: {paymentReferenceId}");
+        return;
+    }
+
+    var payload = System.Text.Json.JsonSerializer.Serialize(new
+    {
+        source = "console_confirm_payment",
+        confirmed_at = DateTime.UtcNow
+    });
+    var result = await confirmationHandler.HandleAsync(
+        payment.PaymentReferenceId,
+        $"manual:{Guid.NewGuid():N}",
+        payment.AmountInCents,
+        payload,
+        sourceOverride: MimosBabySpa.Domain.Enums.PaymentTransactionSource.Manual);
+
+    Console.WriteLine(result.Success
+        ? $"Payment confirmed: {payment.PaymentReferenceId}"
+        : $"Payment confirmation failed: {result.ErrorMessage}");
+    return;
+}
 
 // Console UI
 Console.OutputEncoding = System.Text.Encoding.UTF8;

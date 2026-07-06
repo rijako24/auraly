@@ -149,7 +149,6 @@ public sealed class AgentTestRuntimeFactory : IAgentTestRuntimeFactory
         Mock("prepare_checkout", "Simulates checkout preparation and payment link generation.", BasicSchema, log, memoryFacts, [ToolCapabilities.CheckoutPrepare]),
         Mock("prepare_order_checkout", "Simulates order checkout preparation and payment link generation.", BasicSchema, log, memoryFacts, [ToolCapabilities.CheckoutPrepare], [ToolOperatingGroups.OrderIntake]),
         Mock("create_reservation", "Simulates reservation creation without persisting.", BasicSchema, log, memoryFacts, [ToolCapabilities.ReservationCreate]),
-        Mock("assign_paid_slot", "Simulates assigning a paid slot without persisting.", BasicSchema, log, memoryFacts, [ToolCapabilities.PaidSlotAssign]),
         Mock("suspend_reservation", "Simulates reservation suspension without persisting.", BasicSchema, log, memoryFacts),
         Mock("verify_payment", "Simulates payment status verification without calling the provider.", BasicSchema, log, memoryFacts),
         Mock("escalate_to_human", "Simulates human escalation without notifications.", BasicSchema, log, memoryFacts, [ToolCapabilities.HumanEscalate]),

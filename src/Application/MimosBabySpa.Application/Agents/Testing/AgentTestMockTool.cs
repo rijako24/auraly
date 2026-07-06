@@ -55,7 +55,6 @@ public sealed class AgentTestMockTool : IAgentTool
             "prepare_checkout" => ExecutePrepareCheckout(arguments, ctx),
             "prepare_order_checkout" => ExecutePrepareOrderCheckout(arguments, ctx),
             "create_reservation" => ExecuteCreateReservation(arguments, ctx),
-            "assign_paid_slot" => ExecuteAssignPaidSlot(arguments, ctx),
             "escalate_to_human" => ExecuteEscalation(arguments, ctx),
             "verify_payment" => ExecuteVerifyPayment(arguments, ctx),
             "send_message_sequence" => ExecuteSendMessageSequence(arguments, ctx),

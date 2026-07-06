@@ -10,7 +10,7 @@ public static class ToolCapabilities
     public const string HumanEscalate = "human.escalate";
     public const string CheckoutPrepare = "checkout.prepare";
     public const string ReservationCreate = "reservation.create";
-    public const string PaidSlotAssign = "reservation.assign_paid_slot";
+    public const string PaidReservationReschedule = "reservation.reschedule_paid";
     public const string ProductSearch = "commerce.product_search";
     public const string OrderDraftUpdate = "commerce.order_draft_update";
     public const string OrderCreate = "commerce.order_create";
