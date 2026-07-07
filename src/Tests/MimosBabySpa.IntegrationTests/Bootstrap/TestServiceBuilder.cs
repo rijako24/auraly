@@ -5,6 +5,7 @@ using MimosBabySpa.Application.Agents;
 using MimosBabySpa.Application.Agents.Composition;
 using MimosBabySpa.Application.Agents.Facts;
 using MimosBabySpa.Application.Agents.Gating;
+using MimosBabySpa.Application.Agents.Runtime;
 using MimosBabySpa.Application.Agents.Templates;
 using MimosBabySpa.Application.Agents.Tools;
 using MimosBabySpa.Application.Agents.Tools.Impl;
@@ -23,8 +24,8 @@ namespace MimosBabySpa.IntegrationTests.Bootstrap;
 
 /// <summary>
 /// Configura un ServiceProvider aislado para cada escenario de test.
-/// No hay BD real, no hay LLM real, no hay calendar real — solo fakes en memoria.
-/// Las IAgentTool están envueltas con ToolCallInterceptor para registrar todas las llamadas.
+/// No hay BD real, no hay LLM real, no hay calendar real; solo fakes en memoria.
+/// Las IAgentTool estan envueltas con ToolCallInterceptor para registrar todas las llamadas.
 /// </summary>
 public static class TestServiceBuilder
 {
@@ -80,6 +81,10 @@ public static class TestServiceBuilder
         services.AddSingleton<IConversationVerificationService, ConversationVerificationService>();
         services.AddSingleton<IGuardEvaluator, GuardEvaluator>();
         services.AddSingleton<IToolCapabilityGate, ToolCapabilityGate>();
+        services.AddSingleton<ITurnEventExtractor, NoOpTurnEventExtractor>();
+        services.AddSingleton<IFlowRuntimeStateResolver, FlowRuntimeStateResolver>();
+        services.AddSingleton<IFlowPolicyEngine, FlowPolicyEngine>();
+        services.AddSingleton<IFlowRuntimeOrchestrator, FlowRuntimeOrchestrator>();
         services.AddSingleton<IFlowStageDetector, FlowStageDetector>();
         services.AddSingleton<IFactHydrator, FactHydrator>();
         services.AddSingleton<IFactSourceResolver, MimosBabySpa.Application.Agents.Facts.Resolvers.ChannelPhoneResolver>();
@@ -115,7 +120,8 @@ public static class TestServiceBuilder
                     sp.GetRequiredService<ISchedulingPolicyProvider>(),
                     sp.GetRequiredService<IEmployeeAssignmentService>(),
                     sp.GetRequiredService<IUnitOfWork>(),
-                    sp.GetRequiredService<IConversationVerificationService>()),
+                    sp.GetRequiredService<IConversationVerificationService>(),
+                    sp.GetRequiredService<ServiceNameResolver>()),
                 new CreateReservationTool(
                     sp.GetRequiredService<IReservationService>(),
                     sp.GetRequiredService<IReservationIntentBuilder>(),
@@ -128,7 +134,8 @@ public static class TestServiceBuilder
                 new GetCompatibleAddOnsTool(sp.GetRequiredService<IAddOnCatalogService>()),
                 new ResolveServiceSelectionTool(
                     sp.GetRequiredService<ServiceSelectionResolver>(),
-                    sp.GetRequiredService<IConversationFactsService>()),
+                    sp.GetRequiredService<IConversationFactsService>(),
+                    sp.GetRequiredService<IAddOnCatalogService>()),
                 new GetServiceFulfillmentTool(
                     sp.GetRequiredService<IUnitOfWork>(),
                     sp.GetRequiredService<ServiceNameResolver>()),

@@ -22,6 +22,14 @@ public interface IPaymentLifecycleService
         DateTime expiresAt,
         CancellationToken ct = default);
     Task MarkConfirmedAsync(PaymentTransaction payment, string? providerTransactionId, string? webhookPayload, CancellationToken ct = default, PaymentTransactionSource? sourceOverride = null);
+    Task RefreshPendingCheckoutAsync(
+        PaymentTransaction payment,
+        string checkoutSnapshotJson,
+        string quoteHash,
+        string confirmationOutcome,
+        long amountInCents,
+        string currency,
+        CancellationToken ct = default);
     Task MarkRequiresReschedulingAsync(PaymentTransaction payment, CancellationToken ct = default);
     Task LinkReservationAsync(PaymentTransaction payment, Guid reservationId, CancellationToken ct = default);
     Task MarkSupersededAsync(PaymentTransaction payment, Guid supersededByPaymentTransactionId, CancellationToken ct = default);

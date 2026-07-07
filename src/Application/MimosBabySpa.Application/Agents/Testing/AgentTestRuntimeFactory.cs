@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using MimosBabySpa.Application.Agents.Composition;
 using MimosBabySpa.Application.Agents.Facts;
 using MimosBabySpa.Application.Agents.Gating;
+using MimosBabySpa.Application.Agents.Runtime;
 using MimosBabySpa.Application.Agents.Templates;
 using MimosBabySpa.Application.Agents.Tools;
 using MimosBabySpa.Application.Agents.Tools.Impl;
@@ -99,6 +100,11 @@ public sealed class AgentTestRuntimeFactory : IAgentTestRuntimeFactory
         var turnToolResolver = new AgentTurnToolResolver(registry, _operatingHoursTurnPolicy);
         var usageBilling = new AgentTestUsageBillingService(log);
         var chatClient = ResolveChatClient(log);
+        var runtime = new FlowRuntimeOrchestrator(
+            new NoOpTurnEventExtractor(),
+            new FlowRuntimeStateResolver(),
+            new FlowPolicyEngine(),
+            testFactsService);
 
         return new AgentConversationService(
             _configProvider,
@@ -120,6 +126,7 @@ public sealed class AgentTestRuntimeFactory : IAgentTestRuntimeFactory
             _promptComposer,
             _turnResponseComposer,
             _toolCapabilityGate,
+            runtime,
             _flowStageDetector,
             _factHydrator,
             usageBilling,

@@ -44,11 +44,11 @@ public class ScenarioRunner
 
         try
         {
-            // ── Construir FakeChatClient con todas las respuestas scripteadas ──
+            // -- Construir FakeChatClient con todas las respuestas scripteadas --
             var allLlmResults = scenario.Steps.SelectMany(s => s.LlmScript).ToList();
             var fakeChatClient = new FakeChatClient(allLlmResults);
 
-            // ── DI container aislado por escenario ────────────────────────────
+            // -- DI container aislado por escenario ----------------------------
             var services = new ServiceCollection();
             TestServiceBuilder.Register(
                 services,
@@ -62,7 +62,7 @@ public class ScenarioRunner
             using var provider = services.BuildServiceProvider();
             var agentService   = provider.GetRequiredService<IAgentConversationService>();
 
-            // ── Conversación única para el escenario ──────────────────────────
+            // -- Conversacion unica para el escenario --------------------------
             var lifecycle = provider.GetRequiredService<IConversationLifecycleService>();
             var conversation = await lifecycle.GetOrOpenForCustomerAsync(
                 BusinessId,
@@ -71,7 +71,7 @@ public class ScenarioRunner
                 cancellationToken);
             var conversationId = conversation.ConversationId;
 
-            // ── Ejecutar cada paso ────────────────────────────────────────────
+            // -- Ejecutar cada paso --------------------------------------------
             foreach (var (step, idx) in scenario.Steps.Select((s, i) => (s, i)))
             {
                 var sw = Stopwatch.StartNew();
@@ -116,7 +116,7 @@ public class ScenarioRunner
                     ElapsedMs:          sw.ElapsedMilliseconds));
             }
 
-            // ── Evaluar reglas de negocio ─────────────────────────────────────
+            // -- Evaluar reglas de negocio -------------------------------------
             IReadOnlyList<TestRuleResult> ruleResults = scenario.RulesToValidate.Count == 0
                 ? _ruleEngine.EvaluateAll(toolLog)
                 : _ruleEngine.EvaluateNamed(toolLog, scenario.RulesToValidate);

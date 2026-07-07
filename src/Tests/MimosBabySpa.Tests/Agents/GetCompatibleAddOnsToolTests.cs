@@ -5,6 +5,8 @@ using MimosBabySpa.Application.Agents;
 using MimosBabySpa.Application.Agents.Tools.Impl;
 using MimosBabySpa.Application.Configuration;
 using MimosBabySpa.Application.Services;
+using MimosBabySpa.Domain.Entities;
+using MimosBabySpa.Domain.Enums;
 using ConversationStateModel = MimosBabySpa.Domain.Models.ConversationState;
 using Xunit;
 
@@ -70,6 +72,41 @@ public class GetCompatibleAddOnsToolTests
         ctx.Facts.Should().NotContainKey(ConversationFactKeys.AddOns);
     }
 
+    [Fact]
+    public async Task ExecuteAsync_WithManageableReservation_UsesCatalogWithoutIntentHardcode()
+    {
+        var businessId = Guid.NewGuid();
+        var addOnCatalog = new Mock<IAddOnCatalogService>();
+        addOnCatalog
+            .Setup(c => c.GetCompatibleAsync(
+                businessId,
+                "Corte premium de adulto",
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
+
+        var tool = new GetCompatibleAddOnsTool(addOnCatalog.Object);
+        var ctx = CreateContext(businessId);
+        ctx.LatestUserMessage = "Quiero cambiar el servicio a corte premium de adulto";
+        ctx.Facts[ConversationFactKeys.Service] = "Corte premium de adulto";
+        ctx.ManageableReservations =
+        [
+            new Reservation
+            {
+                Status = ReservationStatus.Confirmed,
+                ReservationDateTime = new DateTime(2026, 9, 2, 11, 0, 0),
+                Service = new Service { ServiceName = "Corte basico de adulto" }
+            }
+        ];
+
+        using var args = JsonDocument.Parse("{}");
+        var json = await tool.ExecuteAsync(args.RootElement, ctx, CancellationToken.None);
+
+        using var doc = JsonDocument.Parse(json);
+        doc.RootElement.GetProperty("ok").GetBoolean().Should().BeTrue();
+        doc.RootElement.GetProperty("data").GetProperty("count").GetInt32().Should().Be(0);
+        addOnCatalog.Verify(c => c.GetCompatibleAsync(
+            businessId, "Corte premium de adulto", It.IsAny<CancellationToken>()), Times.Once);
+    }
     private static AgentToolContext CreateContext(Guid businessId) => new()
     {
         BusinessId = businessId,

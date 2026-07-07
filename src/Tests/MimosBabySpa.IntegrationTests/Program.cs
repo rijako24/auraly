@@ -35,8 +35,8 @@ var scenarios = new List<MimosBabySpa.IntegrationTests.Scenarios.TestScenario>
     new FullReservationStyle20FourStepsScenario(),
 };
 
-Console.WriteLine("🚀 Iniciando MimosBabySpa Integration Tests...");
-Console.WriteLine($"   Escenarios a ejecutar: {scenarios.Count}");
+Console.WriteLine("Starting MimosBabySpa Integration Tests...");
+Console.WriteLine($"   Scenarios to run: {scenarios.Count}");
 Console.WriteLine();
 
 var runner  = new ScenarioRunner();
@@ -45,7 +45,7 @@ var results = await runner.RunAllAsync(scenarios);
 var printer = new ConsoleReportPrinter();
 printer.Print(results);
 
-// ── Save JSON report ───────────────────────────────────────────────────────
+// -- Save JSON report -------------------------------------------------------
 var reportPath = Path.Combine(
     AppContext.BaseDirectory, "test-reports",
     $"integration-report-{DateTime.UtcNow:yyyyMMddHHmmss}.json");
@@ -53,9 +53,9 @@ var reportPath = Path.Combine(
 var jsonGen = new JsonReportGenerator();
 await jsonGen.SaveAsync(results, reportPath);
 
-Console.WriteLine($"📄 Reporte JSON guardado en: {reportPath}");
+Console.WriteLine($"JSON report saved at: {reportPath}");
 Console.WriteLine();
 
-// ── Exit code ──────────────────────────────────────────────────────────────
+// -- Exit code --------------------------------------------------------------
 var allPassed = results.All(r => r.Passed);
 return allPassed ? 0 : 1;

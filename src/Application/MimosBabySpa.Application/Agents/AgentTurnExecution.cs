@@ -13,6 +13,8 @@ internal sealed class AgentTurnExecution
     private readonly List<OutboundMessage> _outboundMessages = [];
     private readonly HashSet<string> _enqueuedSequences = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<AgentTurnTraceEntry> _trace = [];
+    private int _fragmentRevision;
+    private int _turnCompletingFragmentRevision;
 
     public AgentTurnExecution(int errorEscalationThreshold)
     {
@@ -28,6 +30,7 @@ internal sealed class AgentTurnExecution
     public bool RequestCompleted { get; private set; }
     public bool DirectOutboundRequested { get; private set; }
     public bool CheckoutPrepared { get; private set; }
+    public int FragmentRevision => _fragmentRevision;
 
     public IReadOnlyList<TurnFragmentEntry> FragmentEntries =>
         _fragments.Select(kv => new TurnFragmentEntry(kv.Key, kv.Value)).ToList();
@@ -89,8 +92,16 @@ internal sealed class AgentTurnExecution
         var suffix = Guid.NewGuid().ToString("N")[..6];
         var token = $"{{{{{tokenPrefix}:{suffix}}}}}";
         _fragments[token] = new TurnFragment(templateId, data, mode, priority);
+        _fragmentRevision++;
+
+        if (mode == FragmentRenderMode.Exclusive || priority == FragmentPriority.Required)
+            _turnCompletingFragmentRevision = _fragmentRevision;
+
         return token;
     }
+
+    public bool HasTurnCompletingFragmentSince(int previousFragmentRevision) =>
+        _turnCompletingFragmentRevision > previousFragmentRevision;
 
     public void MarkCheckoutPrepared() => CheckoutPrepared = true;
 

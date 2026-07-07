@@ -3,7 +3,7 @@ using MimosBabySpa.Application.Services;
 namespace MimosBabySpa.IntegrationTests.Infrastructure;
 
 /// <summary>
-/// Fake para tests: siempre retorna éxito con URL mock.
+/// Fake para tests: siempre retorna exito con URL mock.
 /// CheckPaymentStatusAsync retorna no aprobado por defecto.
 /// </summary>
 public class FakePaymentLinkService : IPaymentLinkService

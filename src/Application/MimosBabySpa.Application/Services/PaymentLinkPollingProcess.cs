@@ -6,6 +6,7 @@ namespace MimosBabySpa.Application.Services;
 
 public sealed class PaymentLinkPollingProcess : ITimedProcess
 {
+    public const string ProcessName = "payment_link_polling";
     private static readonly TimeSpan PollingWindow = TimeSpan.FromHours(3);
 
     private readonly IPaymentTransactionRepository _paymentTransactionRepository;
@@ -25,7 +26,7 @@ public sealed class PaymentLinkPollingProcess : ITimedProcess
         _logger = logger;
     }
 
-    public string Name => "payment_link_polling";
+    public string Name => ProcessName;
 
     public async Task RunAsync(CancellationToken ct = default)
     {

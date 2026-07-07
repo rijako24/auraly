@@ -1,4 +1,5 @@
 using System.Text.Json;
+using MimosBabySpa.Application.Agents.Configuration;
 using MimosBabySpa.Application.Agents.Facts;
 using MimosBabySpa.Application.Agents.Gating;
 using MimosBabySpa.Application.Configuration;
@@ -21,6 +22,7 @@ public sealed class ManageReservationTool : IAgentTool
     private readonly ISchedulingPolicyProvider _schedulingPolicy;
     private readonly IUnitOfWork _unitOfWork;
     private readonly IConversationVerificationService _verifications;
+    private readonly IEscalationNotifier _escalationNotifier;
 
     public ManageReservationTool(
         IReservationService reservations,
@@ -29,7 +31,8 @@ public sealed class ManageReservationTool : IAgentTool
         IAvailabilityService availability,
         ISchedulingPolicyProvider schedulingPolicy,
         IUnitOfWork unitOfWork,
-        IConversationVerificationService verifications)
+        IConversationVerificationService verifications,
+        IEscalationNotifier escalationNotifier)
     {
         _reservations = reservations;
         _reservationResolver = reservationResolver;
@@ -38,6 +41,7 @@ public sealed class ManageReservationTool : IAgentTool
         _schedulingPolicy = schedulingPolicy;
         _unitOfWork = unitOfWork;
         _verifications = verifications;
+        _escalationNotifier = escalationNotifier;
     }
 
     public string Name => "manage_reservation";
@@ -46,8 +50,7 @@ public sealed class ManageReservationTool : IAgentTool
 
     public string Description =>
         "Manages customer reservation lifecycle through a single safe workflow. " +
-        "Use preview_change when the customer proposes a new date, time, service, or add-ons for an existing reservation. " +
-        "Use apply_change only after clear customer confirmation. " +
+        "Reservation change policy is supplied by the active agent configuration. " +
         "Use request_reschedule only when the customer wants to move the appointment but has not provided a target slot. " +
         "Use complete_paid_reschedule when a confirmed paid transaction has no linked reservation and the customer provides the replacement date/time.";
 
@@ -85,7 +88,7 @@ public sealed class ManageReservationTool : IAgentTool
             "action": {
               "type": "string",
               "enum": ["request_reschedule", "preview_change", "apply_change", "complete_paid_reschedule", "confirm_attendance", "cancel"],
-              "description": "Operation to perform. Use preview_change before apply_change for concrete existing-reservation changes."
+              "description": "Operation to perform."
             },
             "reservation_id": { "type": "string", "description": "Optional internal UUID; omit when there is only one reservation in ESTADO RESERVA." },
             "payment_transaction_id": { "type": "string", "description": "Optional payment transaction UUID for complete_paid_reschedule." },
@@ -132,14 +135,28 @@ public sealed class ManageReservationTool : IAgentTool
         bool apply,
         CancellationToken cancellationToken)
     {
-        if (apply && (!ToolResultHelper.TryGetBool(arguments, "customer_confirmed", out var confirmed) || !confirmed))
+        var changePolicy = ReservationChangePolicy.From(ctx.Config?.ReservationManagement);
+        var requestedFields = RequestedChangeFields(arguments, changePolicy.KnownChangeFields);
+        var escalationFields = changePolicy.EscalationFieldsFor(requestedFields);
+        if (escalationFields.Count > 0)
+            return await EscalateUnsupportedReservationChangeAsync(arguments, ctx, cancellationToken);
+
+        if (!changePolicy.HasAutomaticField(requestedFields))
         {
-            return ToolResultHelper.Error(
-                "confirmation_required",
-                "Customer confirmation is required before applying reservation changes.",
-                "Summarize the change and ask the customer to confirm.",
+            return ToolResultHelper.ErrorWithLlm(
+                "missing_supported_reservation_change",
+                "Automatic reservation changes require at least one configured automatic change field.",
+                null,
+                new
+                {
+                    next_action = "collect_reschedule_target",
+                    required_fields = changePolicy.AutomaticChangeFields
+                },
                 recoverable: true);
         }
+
+        // Date/time reschedules are the customer's confirmed intent; no second confirmation turn.
+        apply = true;
 
         var request = await PrepareReservationChangeTool.BuildRequestAsync(
             arguments,
@@ -152,32 +169,151 @@ public sealed class ManageReservationTool : IAgentTool
 
         var result = await _reservations.UpdateReservationAsync(request.Request!, cancellationToken);
         if (!result.Success)
-            return ToolResultHelper.Error(result.ErrorCode!, result.ErrorMessage!, result.Hint, recoverable: true);
-
-        if (apply)
         {
-            ctx.ManageableReservations =
-            [
-                new Reservation
-                {
-                    ReservationId = result.ReservationId,
-                    BusinessId = ctx.BusinessId,
-                    ConversationId = ctx.ConversationId,
-                    Status = ReservationStatus.Confirmed,
-                    ReservationDateTime = result.Date.HasValue && result.Time.HasValue
-                        ? result.Date.Value.ToDateTime(result.Time.Value)
-                        : null,
-                    DurationMinutes = result.DurationMinutes,
-                    Service = new Service { ServiceName = result.ServiceName }
-                }
-            ];
+            var hint = result.Hint;
+            if (string.Equals(result.ErrorCode, "slot_unavailable", StringComparison.OrdinalIgnoreCase))
+            {
+                var availabilityHint = await BuildAvailabilityHintAsync(request.Request!, ctx, cancellationToken);
+                hint = null;
+
+                return ToolResultHelper.ErrorWithLlm(
+                    result.ErrorCode!,
+                    result.ErrorMessage!,
+                    hint,
+                    new
+                    {
+                        next_action = "offer_alternative_slots",
+                        requested_date = availabilityHint?.Date,
+                        available_slots = availabilityHint?.Slots ?? []
+                    },
+                    recoverable: true);
+            }
+
+            return ToolResultHelper.Error(result.ErrorCode!, result.ErrorMessage!, hint, recoverable: true);
         }
+
+        ctx.ManageableReservations =
+        [
+            new Reservation
+            {
+                ReservationId = result.ReservationId,
+                BusinessId = ctx.BusinessId,
+                ConversationId = ctx.ConversationId,
+                Status = ReservationStatus.Confirmed,
+                ReservationDateTime = result.Date.HasValue && result.Time.HasValue
+                    ? result.Date.Value.ToDateTime(result.Time.Value)
+                    : null,
+                DurationMinutes = result.DurationMinutes,
+                Service = new Service { ServiceName = result.ServiceName }
+            }
+        ];
 
         return ToolResultHelper.OkWithLlm(
             PrepareReservationChangeTool.ToPayload(result),
             PrepareReservationChangeTool.ToLlmPayload(result));
     }
 
+    private async Task<string> EscalateUnsupportedReservationChangeAsync(
+        JsonElement arguments,
+        AgentToolContext ctx,
+        CancellationToken cancellationToken,
+        string? forcedReason = null)
+    {
+        var resolved = await ResolveReservationAsync(arguments, ctx, cancellationToken);
+        if (!resolved.Success)
+            return resolved.ErrorJson!;
+
+        var reservation = resolved.Reservation!;
+        reservation.Status = ReservationStatus.OnHold;
+        reservation.CustomerConfirmed = false;
+        reservation.UpdatedAt = DateTime.UtcNow;
+        await _unitOfWork.Reservations.UpdateAsync(reservation);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+        ctx.ConversationState.LastEscalatedAt = DateTime.UtcNow;
+        ctx.ManageableReservations = [reservation];
+
+        var reason = forcedReason ?? ResolveUnsupportedChangeReason(arguments, ctx, ReservationChangePolicy.From(ctx.Config?.ReservationManagement));
+        var contactPhone = ConversationContactPhone.Resolve(ctx.Facts, ctx.ChannelPhone) ?? string.Empty;
+        if (ctx.EscalationContacts.Count > 0)
+        {
+            try
+            {
+                await _escalationNotifier.NotifyAsync(
+                    ctx.BusinessId,
+                    ctx.EscalationContacts,
+                    new EscalationNotification(
+                        ctx.ConversationId,
+                        contactPhone,
+                        reason,
+                        ctx.LatestUserMessage),
+                    cancellationToken);
+            }
+            catch
+            {
+                // Notification failures must not prevent the reservation from being placed on hold.
+            }
+        }
+
+        return ToolResultHelper.OkWithLlm(new
+        {
+            reservation_id = reservation.ReservationId,
+            status = ReservationStatus.OnHold.ToString(),
+            escalated = true,
+            reason
+        }, new
+        {
+            next_action = "human_handoff",
+            reservation_id = reservation.ReservationId,
+            status = ReservationStatus.OnHold.ToString(),
+            escalated = true,
+            reason
+        }, EscalatedToHuman);
+    }
+
+    private async Task<AvailabilityHint?> BuildAvailabilityHintAsync(
+        UpdateReservationChangeRequest request,
+        AgentToolContext ctx,
+        CancellationToken cancellationToken)
+    {
+        var reservation = await _unitOfWork.Reservations.GetByIdAsync(request.ReservationId);
+        if (reservation is null)
+            return null;
+
+        var service = reservation.Service;
+        if (service is null && reservation.ServiceId.HasValue)
+            service = await _unitOfWork.Services.GetByIdAsync(reservation.ServiceId.Value);
+        if (string.IsNullOrWhiteSpace(service?.ServiceName))
+            return null;
+
+        DateOnly date;
+        if (request.Date.HasValue)
+            date = request.Date.Value;
+        else if (reservation.ReservationDateTime.HasValue)
+            date = DateOnly.FromDateTime(reservation.ReservationDateTime.Value);
+        else
+            return null;
+
+        var policy = await _schedulingPolicy.GetAsync(ctx.BusinessId, cancellationToken);
+        var availability = await _availability.CheckAvailabilityAsync(
+            ctx.BusinessId,
+            service.ServiceName,
+            date.ToDateTime(TimeOnly.MinValue),
+            null,
+            policy,
+            cancellationToken);
+
+        if (availability.AvailableOptions.Count == 0)
+            return new AvailabilityHint(date, []);
+
+        var options = availability.AvailableOptions
+            .Select(option => option.Start)
+            .Where(option => !string.IsNullOrWhiteSpace(option))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        return new AvailabilityHint(date, options);
+    }
     private async Task<string> CompletePaidRescheduleAsync(
         JsonElement arguments,
         AgentToolContext ctx,
@@ -251,12 +387,23 @@ public sealed class ManageReservationTool : IAgentTool
 
         if (!availability.IsAvailable)
         {
-            return ToolResultHelper.Error(
+            var availableSlots = availability.AvailableOptions
+                .Select(option => option.Start)
+                .Where(option => !string.IsNullOrWhiteSpace(option))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            return ToolResultHelper.ErrorWithLlm(
                 "slot_unavailable",
                 availability.ResponseMessage ?? "The selected time is not available.",
-                availability.AvailableOptions.Count > 0
-                    ? $"Available options: {string.Join(", ", availability.AvailableOptions.Select(o => $"{o.Start}-{o.End}"))}"
-                    : null);
+                null,
+                new
+                {
+                    next_action = "offer_alternative_slots",
+                    requested_date = date,
+                    available_slots = availableSlots
+                },
+                recoverable: true);
         }
 
         var roles = new FactRoleIndex(ctx.Config?.FactSchema ?? []);
@@ -337,13 +484,6 @@ public sealed class ManageReservationTool : IAgentTool
             return resolved.ErrorJson!;
 
         var reservation = resolved.Reservation!;
-        if (reservation.Status == ReservationStatus.Confirmed || reservation.CustomerConfirmed)
-        {
-            reservation.Status = ReservationStatus.OnHold;
-            reservation.CustomerConfirmed = false;
-            reservation.UpdatedAt = DateTime.UtcNow;
-            await _unitOfWork.Reservations.UpdateAsync(reservation);
-        }
 
         var latestResponse = await _unitOfWork.ReservationAttendanceResponses.GetLatestByReservationAsync(
             ctx.BusinessId,
@@ -352,13 +492,17 @@ public sealed class ManageReservationTool : IAgentTool
         if (latestResponse?.ResponseType == ReservationAttendanceResponseType.RescheduleRequested)
         {
             await _unitOfWork.SaveChangesAsync(cancellationToken);
-            return ToolResultHelper.Ok(new
+            return ToolResultHelper.OkWithLlm(new
             {
                 reservation_id = reservation.ReservationId,
                 reschedule_requested = true,
                 status = reservation.Status.ToString(),
                 responded_at_utc = latestResponse.RespondedAtUtc,
                 idempotent_replay = true
+            }, new
+            {
+                next_action = "collect_reschedule_target",
+                required_fields = ReservationChangePolicy.From(ctx.Config?.ReservationManagement).AutomaticChangeFields
             });
         }
 
@@ -377,12 +521,16 @@ public sealed class ManageReservationTool : IAgentTool
         await _unitOfWork.ReservationAttendanceResponses.AddAsync(response, cancellationToken);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
-        return ToolResultHelper.Ok(new
+        return ToolResultHelper.OkWithLlm(new
         {
             reservation_id = reservation.ReservationId,
             reschedule_requested = true,
             status = reservation.Status.ToString(),
             responded_at_utc = response.RespondedAtUtc
+        }, new
+        {
+            next_action = "collect_reschedule_target",
+            required_fields = ReservationChangePolicy.From(ctx.Config?.ReservationManagement).AutomaticChangeFields
         });
     }
 
@@ -393,10 +541,11 @@ public sealed class ManageReservationTool : IAgentTool
     {
         if (!ToolResultHelper.TryGetBool(arguments, "customer_confirmed", out var confirmed) || !confirmed)
         {
-            return ToolResultHelper.Error(
+            return ToolResultHelper.ErrorWithLlm(
                 "confirmation_required",
                 "Customer confirmation is required before registering attendance.",
-                "Ask the customer to confirm if they will attend.",
+                null,
+                new { next_action = "collect_confirmation", confirmation_type = "attendance" },
                 recoverable: true);
         }
 
@@ -458,10 +607,11 @@ public sealed class ManageReservationTool : IAgentTool
     {
         if (!ToolResultHelper.TryGetBool(arguments, "customer_confirmed", out var confirmed) || !confirmed)
         {
-            return ToolResultHelper.Error(
+            return ToolResultHelper.ErrorWithLlm(
                 "confirmation_required",
                 "Customer confirmation is required before cancelling or suspending a reservation.",
-                "Ask the customer to confirm cancellation.",
+                null,
+                new { next_action = "collect_confirmation", confirmation_type = "cancellation" },
                 recoverable: true);
         }
 
@@ -528,6 +678,20 @@ public sealed class ManageReservationTool : IAgentTool
             new() { Success = false, ErrorJson = errorJson };
     }
 
+    private static string ResolveUnsupportedChangeReason(
+        JsonElement arguments,
+        AgentToolContext ctx,
+        ReservationChangePolicy changePolicy)
+    {
+        var fields = RequestedChangeFields(arguments, changePolicy.KnownChangeFields);
+        var reasonCode = ctx.Config?.ReservationManagement.EscalationReasonCode;
+        if (string.IsNullOrWhiteSpace(reasonCode))
+            return string.Join(",", fields);
+
+        return fields.Count == 0
+            ? reasonCode
+            : $"{reasonCode}:{string.Join(",", fields)}";
+    }
     private static string NormalizeAction(string? action, JsonElement arguments)
     {
         if (!string.IsNullOrWhiteSpace(action))
@@ -537,6 +701,20 @@ public sealed class ManageReservationTool : IAgentTool
             return "apply_change";
 
         return HasConcreteChange(arguments) ? "preview_change" : string.Empty;
+    }
+
+    private static IReadOnlyList<string> RequestedChangeFields(
+        JsonElement arguments,
+        IReadOnlyList<string> configuredFields)
+    {
+        var fields = new List<string>();
+        foreach (var field in configuredFields)
+        {
+            if (HasString(arguments, field))
+                fields.Add(field);
+        }
+
+        return fields;
     }
 
     private static bool HasConcreteChange(JsonElement arguments) =>
@@ -555,4 +733,6 @@ public sealed class ManageReservationTool : IAgentTool
             return fromArgs;
         return string.IsNullOrWhiteSpace(fallback) ? null : fallback;
     }
+
+    private sealed record AvailabilityHint(DateOnly Date, IReadOnlyList<string> Slots);
 }

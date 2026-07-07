@@ -22,21 +22,34 @@ public sealed class ReservationLifecycleService : IReservationLifecycleService
         DateOnly businessToday,
         CancellationToken ct = default)
     {
-        var byConversation = await GetActiveAsync(conversationId, ct);
-        if (byConversation is not null
-            && ReservationTemporalFormatter.IsManageableOnBusinessDay(byConversation, businessToday))
+        var reservations = new List<Reservation>();
+
+        var byConversation = await _unitOfWork.Reservations.GetManageableByConversationIdAsync(
+            conversationId,
+            businessToday,
+            ct);
+        reservations.AddRange(byConversation);
+
+        if (!string.IsNullOrWhiteSpace(channelPhone))
         {
-            return CustomerReservationSession.From([byConversation]);
+            var byPhone = await _unitOfWork.Reservations.GetManageableByCustomerPhoneAsync(
+                businessId,
+                channelPhone.Trim(),
+                businessToday,
+                ct);
+            reservations.AddRange(byPhone);
         }
 
-        if (string.IsNullOrWhiteSpace(channelPhone))
-            return CustomerReservationSession.None;
+        var manageable = reservations
+            .Where(r => ReservationTemporalFormatter.IsManageableOnBusinessDay(r, businessToday))
+            .GroupBy(r => r.ReservationId)
+            .Select(g => g.First())
+            .OrderBy(r => r.ReservationDateTime ?? DateTime.MaxValue)
+            .ThenByDescending(r => r.UpdatedAt ?? r.CreatedAt)
+            .ToList();
 
-        var byPhone = await _unitOfWork.Reservations.GetManageableByCustomerPhoneAsync(
-            businessId, channelPhone.Trim(), businessToday, ct);
-
-        return byPhone.Count == 0
+        return manageable.Count == 0
             ? CustomerReservationSession.None
-            : CustomerReservationSession.From(byPhone);
+            : CustomerReservationSession.From(manageable);
     }
 }

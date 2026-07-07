@@ -91,7 +91,7 @@ public sealed class AddOnCatalogService : IAddOnCatalogService
 
             return AddOnValidationResult.Fail(
                 $"Ambiguous add-on selection: {details}.",
-                "Pide al cliente que elija una opcion especifica de los complementos compatibles antes de guardar add_ons.",
+                null,
                 "ambiguous_add_ons");
         }
 
@@ -111,7 +111,7 @@ public sealed class AddOnCatalogService : IAddOnCatalogService
         {
             return AddOnValidationResult.Fail(
                 $"Multiple add-ons from the same group were selected: {string.Join(", ", duplicateGroup.Value.Names)}.",
-                "Pide al cliente que deje una sola opcion por grupo de complementos y conserva las opciones de otros grupos si las eligio.",
+                null,
                 "duplicate_add_on_group");
         }
 

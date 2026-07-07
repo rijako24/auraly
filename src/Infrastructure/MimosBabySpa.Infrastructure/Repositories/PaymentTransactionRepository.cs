@@ -42,6 +42,7 @@ public class PaymentTransactionRepository : IPaymentTransactionRepository
     public async Task<List<PaymentTransaction>> GetPendingAutomatedTransactionsAsync(DateTime createdAfter, CancellationToken ct = default)
     {
         return await _context.PaymentTransactions
+            .AsNoTracking()
             .Where(t => t.Source == PaymentTransactionSource.Automated
                 && t.Status == PaymentTransactionStatus.Created
                 && t.CreatedAt >= createdAfter)

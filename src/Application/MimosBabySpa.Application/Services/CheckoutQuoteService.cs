@@ -15,8 +15,36 @@ public sealed class CheckoutQuoteService : ICheckoutQuoteService
 
     public string ComputeHash(CheckoutQuote quote)
     {
-        var payload = JsonSerializer.SerializeToUtf8Bytes(quote, JsonOptions);
+        var payload = JsonSerializer.SerializeToUtf8Bytes(CheckoutQuoteFingerprint.From(quote), JsonOptions);
         return Convert.ToHexString(SHA256.HashData(payload));
+    }
+
+    private sealed record CheckoutQuoteFingerprint(
+        Guid BusinessId,
+        CheckoutKind CheckoutKind,
+        Guid ServiceId,
+        string ServiceName,
+        IReadOnlyList<CheckoutQuoteLineItem> LineItems,
+        long TotalCents,
+        long PayableCents,
+        string Currency,
+        string PaymentMethodKey,
+        string TemplateId,
+        string ConfirmationOutcome)
+    {
+        public static CheckoutQuoteFingerprint From(CheckoutQuote quote) =>
+            new(
+                quote.BusinessId,
+                quote.CheckoutKind,
+                quote.ServiceId,
+                quote.ServiceName,
+                quote.LineItems,
+                quote.TotalCents,
+                quote.PayableCents,
+                quote.Currency,
+                quote.PaymentMethodKey,
+                quote.TemplateId,
+                quote.ConfirmationOutcome);
     }
 }
 

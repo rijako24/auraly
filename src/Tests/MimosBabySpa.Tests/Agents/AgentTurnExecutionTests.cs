@@ -86,4 +86,52 @@ public sealed class AgentTurnExecutionTests
         turn.ShouldAutoEscalate.Should().BeFalse();
         turn.ConsecutiveToolErrors.Should().Be(1);
     }
+    [Fact]
+    public void HasTurnCompletingFragmentSince_OptionalInlineFragment_ReturnsFalse()
+    {
+        var turn = new AgentTurnExecution(errorEscalationThreshold: 3);
+        var previousRevision = turn.FragmentRevision;
+
+        turn.RegisterFragment("INFO", "availability_slots", new Dictionary<string, object?>());
+
+        turn.HasTurnCompletingFragmentSince(previousRevision).Should().BeFalse();
+    }
+
+    [Fact]
+    public void HasTurnCompletingFragmentSince_RequiredInlineFragment_ReturnsTrue()
+    {
+        var turn = new AgentTurnExecution(errorEscalationThreshold: 3);
+        var previousRevision = turn.FragmentRevision;
+
+        turn.RegisterFragment(
+            "INFO",
+            "availability_slots",
+            new Dictionary<string, object?>(),
+            FragmentRenderMode.Inline,
+            FragmentPriority.Required);
+
+        turn.HasTurnCompletingFragmentSince(previousRevision).Should().BeTrue();
+    }
+
+    [Fact]
+    public void HasTurnCompletingFragmentSince_ExclusiveReplacement_ReturnsTrue()
+    {
+        var turn = new AgentTurnExecution(errorEscalationThreshold: 3);
+
+        turn.RegisterFragment(
+            "CHECKOUT",
+            "checkout_with_deposit",
+            new Dictionary<string, object?> { ["total"] = "100" },
+            FragmentRenderMode.Exclusive);
+        var previousRevision = turn.FragmentRevision;
+
+        turn.RegisterFragment(
+            "CHECKOUT",
+            "checkout_with_deposit",
+            new Dictionary<string, object?> { ["total"] = "200" },
+            FragmentRenderMode.Exclusive);
+
+        turn.FragmentEntries.Should().HaveCount(1);
+        turn.HasTurnCompletingFragmentSince(previousRevision).Should().BeTrue();
+    }
 }

@@ -68,8 +68,11 @@ public sealed class VerifyPaymentTool : IAgentTool
                 payment_transaction_id = payment.PaymentTransactionId,
                 reservation_id = payment.ReservationId,
                 requires_webhook_fulfillment = payment.ReservationId is null,
+                next_action = payment.ReservationId is null
+                    ? "await_webhook_fulfillment_or_escalate_operations"
+                    : "payment_already_confirmed",
                 message = payment.ReservationId is null
-                    ? "Payment is confirmed but no reservation is linked yet. Wait for the payment confirmation handler or escalate to operations; do not verbally confirm a reservation."
+                    ? "Payment is confirmed but no reservation is linked yet."
                     : "Payment is already confirmed and linked to a reservation."
             });
         }
@@ -82,9 +85,12 @@ public sealed class VerifyPaymentTool : IAgentTool
             is_approved = result.IsApproved,
             transaction_id = result.TransactionId,
             amount_cents = result.AmountInCents,
+            next_action = result.IsApproved
+                ? "await_webhook_fulfillment"
+                : "await_payment_confirmation",
             message = result.IsApproved
-                ? "Payment was approved by the provider. Confirmation will be sent automatically shortly — do not call create_reservation."
-                : "Payment is not yet confirmed by the provider. Ask the customer to wait a few minutes or retry the link."
+                ? "Payment was approved by the provider and is pending webhook fulfillment."
+                : "Payment is pending provider confirmation."
         });
     }
 }

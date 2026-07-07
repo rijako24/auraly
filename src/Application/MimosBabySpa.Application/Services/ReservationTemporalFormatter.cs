@@ -13,14 +13,14 @@ public static class ReservationTemporalFormatter
     {
         var service = reservation.Service?.ServiceName ?? reservation.GetServiceName() ?? "servicio";
         if (!reservation.ReservationDateTime.HasValue)
-            return $"{service} (id_reserva={reservation.ReservationId})";
+            return service;
 
         var reservationDate = DateOnly.FromDateTime(reservation.ReservationDateTime.Value);
         var time = TimeOnly.FromDateTime(reservation.ReservationDateTime.Value).ToString("HH:mm");
         var relative = FormatRelativeLabel(reservationDate, businessToday);
         var suffix = string.IsNullOrWhiteSpace(relative) ? string.Empty : $", {relative}";
 
-        return $"{reservationDate:yyyy-MM-dd} {time} {service}{suffix} (id_reserva={reservation.ReservationId})";
+        return $"{reservationDate:yyyy-MM-dd} {time} {service}{suffix}";
     }
 
     public static string FormatRelativeLabel(DateOnly date, DateOnly businessToday)

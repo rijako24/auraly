@@ -45,7 +45,7 @@ public class ToolCallLog
     }
 
     /// <summary>
-    /// Intenta parsear el resultado JSON de la última llamada exitosa a una tool.
+    /// Intenta parsear el resultado JSON de la ultima llamada exitosa a una tool.
     /// </summary>
     public bool TryGetLastResult(string toolName, out JsonElement element)
     {

@@ -11,6 +11,7 @@ namespace MimosBabySpa.Application.Services;
 
 public sealed class ReservationAutomationProcess : ITimedProcess
 {
+    public const string ProcessName = "reservation_automation";
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private static readonly TimeSpan LockDuration = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan ReservationLookAhead = TimeSpan.FromDays(45);
@@ -41,7 +42,7 @@ public sealed class ReservationAutomationProcess : ITimedProcess
         _logger = logger;
     }
 
-    public string Name => "reservation_automation";
+    public string Name => ProcessName;
 
     public async Task RunAsync(CancellationToken ct = default)
     {

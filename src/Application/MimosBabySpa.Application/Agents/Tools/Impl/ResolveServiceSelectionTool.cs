@@ -10,24 +10,25 @@ public sealed class ResolveServiceSelectionTool : IAgentTool
 {
     private readonly ServiceSelectionResolver _resolver;
     private readonly IConversationFactsService _factsService;
+    private readonly IAddOnCatalogService _addOnCatalog;
 
     public ResolveServiceSelectionTool(
         ServiceSelectionResolver resolver,
-        IConversationFactsService factsService)
+        IConversationFactsService factsService,
+        IAddOnCatalogService addOnCatalog)
     {
         _resolver = resolver;
         _factsService = factsService;
-    }
+        _addOnCatalog = addOnCatalog;
+}
 
     public string Name => "resolve_service_selection";
 
     public IReadOnlyList<string> Capabilities => [ToolCapabilities.FactWrite];
 
     public string Description =>
-        "Use this instead of set_fact to store booking.service when the customer selects, confirms, or changes to a service. " +
-        "Resolve the customer's raw service wording against the active catalog and store booking.service only when the selection identifies one catalog service unambiguously. " +
-        "If the latest user message is elliptical, include immediate conversation context that belongs to the same service request. " +
-        "Do not use it for catalog, pricing, option, comparison, or service-information questions.";
+        "Resolves a customer service selection against the active catalog and stores booking.service only for a new/current booking request. " +
+        "It does not apply service changes to an existing reservation.";
 
     public string ParametersSchema => """
         {
@@ -35,7 +36,7 @@ public sealed class ResolveServiceSelectionTool : IAgentTool
           "properties": {
             "text": {
               "type": "string",
-              "description": "Customer wording for the service selection. If the latest message is elliptical, include immediate same-request context already stated by the customer; do not invent a catalog name."
+              "description": "Customer wording for the service selection."
             }
           },
           "required": ["text"]
@@ -54,18 +55,44 @@ public sealed class ResolveServiceSelectionTool : IAgentTool
         if (string.IsNullOrWhiteSpace(text))
             return ToolResultHelper.MissingPrerequisites(["text"]);
 
+        var roleIndex = new FactRoleIndex(ctx.Config?.FactSchema ?? []);
+        var key = roleIndex.KeyByRole("booking.service") ?? ConversationFactKeys.Service;
+        if (ctx.Facts.TryGetValue(key, out var currentService) && !string.IsNullOrWhiteSpace(currentService))
+        {
+            var addOnValidation = await _addOnCatalog.ValidateAsync(ctx.BusinessId, currentService, text, cancellationToken);
+            if (addOnValidation.IsValid && !string.IsNullOrWhiteSpace(addOnValidation.NormalizedCsv))
+            {
+                return ToolResultHelper.ErrorWithLlm(
+                    "add_on_selection_detected",
+                    "Selection matches a compatible add-on for the current service, not a service change.",
+                    null,
+                    new
+                    {
+                        next_action = "set_fact",
+                        key = ConversationFactKeys.AddOns,
+                        value = addOnValidation.NormalizedCsv
+                    },
+                    recoverable: true);
+            }
+        }
+
         var resolution = await _resolver.ResolveAsync(ctx.BusinessId, text, ct: cancellationToken);
         if (resolution.Status != ServiceSelectionStatus.Resolved || string.IsNullOrWhiteSpace(resolution.ServiceName))
         {
-            return ToolResultHelper.Error(
+            return ToolResultHelper.ErrorWithLlm(
                 BuildResolutionErrorCode(resolution),
                 BuildResolutionErrorMessage(resolution),
-                BuildResolutionHint(resolution),
+                null,
+                new
+                {
+                    next_action = "get_service_catalog",
+                    view = "services",
+                    query = text.Trim(),
+                    selection_status = resolution.Status.ToString()
+                },
                 recoverable: true);
         }
 
-        var roleIndex = new FactRoleIndex(ctx.Config?.FactSchema ?? []);
-        var key = roleIndex.KeyByRole("booking.service") ?? ConversationFactKeys.Service;
         var schemaEntry = roleIndex.EntryFor(key);
 
         ctx.Facts.TryGetValue(key, out var previousValue);
@@ -114,13 +141,5 @@ public sealed class ResolveServiceSelectionTool : IAgentTool
         ServiceSelectionStatus.NotFound => "Service selection was not found.",
         _ => "Service selection could not be resolved."
     };
-
-    private static string BuildResolutionHint(ServiceSelectionResolution resolution) => resolution.Status switch
-    {
-        ServiceSelectionStatus.Ambiguous or ServiceSelectionStatus.NotFound =>
-            "Call get_service_catalog with view=services and query using the customer's same service/category words; do not fall back to categories for this selection.",
-        _ => "Continue with the resolved service."
-    };
-
 }
 

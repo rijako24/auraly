@@ -17,7 +17,7 @@ public class FakeEmployeeAssignmentService : IEmployeeAssignmentService
         {
             EmployeeId = Guid.NewGuid(),
             BusinessId = businessId,
-            Name       = "María Terapeuta",
+            Name       = "Maria Terapeuta",
             IsActive   = true,
             CreatedAt  = DateTime.UtcNow
         };

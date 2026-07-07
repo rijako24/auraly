@@ -365,7 +365,7 @@ public class ReservationService : IReservationService
                 return UpdateReservationChangeResult.Fail(
                     "slot_unavailable",
                     "No employee is available for the requested service and time.",
-                    "Call check_availability or ask for another date/time.",
+                    null,
                     request.ReservationId);
             }
         }

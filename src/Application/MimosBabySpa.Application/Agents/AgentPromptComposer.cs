@@ -15,12 +15,10 @@ namespace MimosBabySpa.Application.Agents;
 public sealed class AgentPromptComposer : IPromptComposer
 {
     private readonly IFlowStageDetector _flowStageDetector;
-    private readonly IGuardEvaluator _guardEvaluator;
 
-    public AgentPromptComposer(IFlowStageDetector flowStageDetector, IGuardEvaluator guardEvaluator)
+    public AgentPromptComposer(IFlowStageDetector flowStageDetector)
     {
         _flowStageDetector = flowStageDetector;
-        _guardEvaluator = guardEvaluator;
     }
 
     public string Compose(PromptCompositionInput input)
@@ -35,7 +33,7 @@ public sealed class AgentPromptComposer : IPromptComposer
         if (!string.IsNullOrWhiteSpace(basePrompt))
             blocks.Add(basePrompt.Trim());
 
-        // DetectCurrentStage: llamada única y cacheada para todo el Compose
+        // DetectCurrentStage: llamada Ãºnica y cacheada para todo el Compose
         var currentStage = _flowStageDetector.DetectCurrentStage(input.Config.Flow, input.Session);
 
         var eagerBlock = BuildEagerCaptureBlock(input.Config, input.Session, input.EnabledTools);
@@ -62,41 +60,48 @@ public sealed class AgentPromptComposer : IPromptComposer
         if (!string.IsNullOrWhiteSpace(reentryBlock))
             blocks.Add(reentryBlock);
 
-        var globalActionsBlock = BuildGlobalActionsBlock(input.Config, input.EnabledTools);
+        var globalActionsBlock = BuildGlobalActionsBlock(input.Config, input.EnabledTools, input.Session);
         if (!string.IsNullOrWhiteSpace(globalActionsBlock))
             blocks.Add(globalActionsBlock);
 
 
-        var actionsBlock = BuildActionsBlock(input);
+        var actionsBlock = BuildTurnToolsBlock(input, currentStage);
         if (!string.IsNullOrWhiteSpace(actionsBlock))
             blocks.Add(actionsBlock);
 
         return string.Join($"{Environment.NewLine}{Environment.NewLine}", blocks);
     }
 
-    internal static string BuildGlobalActionsBlock(AgentConfig config, IReadOnlyList<IAgentTool>? effectiveTools = null)
+    internal static string BuildGlobalActionsBlock(
+        AgentConfig config,
+        IReadOnlyList<IAgentTool>? effectiveTools = null,
+        AgentToolContext? session = null)
     {
-        if (config.GlobalActions.Count == 0)
+        var actions = AgentTurnToolScope.OrderedGlobalActions(config);
+        if (session is not null && !ReferenceEquals(session.RuntimeDecision, Runtime.FlowRuntimeDecision.Empty))
+        {
+            actions = actions
+                .Where(action => session.RuntimeDecision.EnabledGlobalActionIds.Contains(action.Id))
+                .ToList();
+        }
+
+        if (actions.Count == 0)
             return string.Empty;
 
         var effectiveToolNames = effectiveTools?.Select(t => t.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var lines = new List<string>
-        {
-            "## ACCIONES TRANSVERSALES",
-            "- Estas acciones pueden usarse cuando apliquen, aunque la etapa actual tenga otro objetivo."
-        };
+        var lines = new List<string> { "## REGLAS TRANSVERSALES APLICABLES" };
 
-        foreach (var action in config.GlobalActions
-                     .OrderByDescending(a => a.Priority)
-                     .ThenBy(a => a.Id, StringComparer.OrdinalIgnoreCase))
+        foreach (var action in actions)
         {
             var label = string.IsNullOrWhiteSpace(action.Id) ? "accion" : action.Id.Trim();
             lines.Add($"- {label}: {action.Goal.Trim()}");
+
             var allowedTools = effectiveToolNames is null
                 ? action.AllowedTools
                 : action.AllowedTools.Where(effectiveToolNames.Contains).ToList();
             if (allowedTools.Count > 0)
                 lines.Add($"  herramientas: {string.Join(", ", allowedTools)}");
+
             if (!string.IsNullOrWhiteSpace(action.Hint))
                 lines.Add($"  orientacion: {action.Hint.Trim()}");
         }
@@ -165,7 +170,7 @@ public sealed class AgentPromptComposer : IPromptComposer
         if (session is null)
             return string.Empty;
 
-        // Keys de facts del sistema/sesión que no deben renderizarse al LLM
+        // Keys de facts del sistema/sesiÃ³n que no deben renderizarse al LLM
         var systemKeys = config.FactSchema
             .Where(e => !e.Source.Equals("user", StringComparison.OrdinalIgnoreCase))
             .Select(e => e.Key)
@@ -174,11 +179,11 @@ public sealed class AgentPromptComposer : IPromptComposer
         var blocks = new List<string>();
         var paymentForContext = ResolvePaymentForContext(session.ActivePayment, latestPayment);
 
-        // ── ESTADO ACTUAL: solo facts del schema + extras no-schema ──────────
+        // â”€â”€ ESTADO ACTUAL: solo facts del schema + extras no-schema â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         var factsLines = new List<string> { "## ESTADO ACTUAL" };
         var renderedKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        // 1. Facts declarados en el schema (con label humanizado) — excluye facts de sistema
+        // 1. Facts declarados en el schema (con label humanizado) - excluye facts de sistema
         foreach (var entry in config.FactSchema.OrderBy(x => x.Key, StringComparer.OrdinalIgnoreCase))
         {
             if (!entry.Source.Equals("user", StringComparison.OrdinalIgnoreCase))
@@ -195,7 +200,7 @@ public sealed class AgentPromptComposer : IPromptComposer
             }
         }
 
-        // 2. Facts extra no declarados en schema — excluye keys de sistema conocidos
+        // 2. Facts extra no declarados en schema - excluye keys de sistema conocidos
         foreach (var (key, value) in session.Facts.OrderBy(x => x.Key, StringComparer.OrdinalIgnoreCase))
         {
             if (renderedKeys.Contains(key)
@@ -219,7 +224,7 @@ public sealed class AgentPromptComposer : IPromptComposer
         if (reservationLines.Count > 0)
             blocks.Add(string.Join(Environment.NewLine, reservationLines));
 
-        // ── POLÍTICA DE PAGO ──────────────────────────────────────────────────
+        // â”€â”€ POLÃTICA DE PAGO â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         var policyLines = new List<string>();
         var paymentLine = TurnContextPaymentFormatter.FormatPaymentLine(paymentForContext);
         if (!string.IsNullOrWhiteSpace(paymentLine))
@@ -252,6 +257,11 @@ public sealed class AgentPromptComposer : IPromptComposer
             lines.Add($"- {ReservationTemporalFormatter.FormatLine(reservation, session.BusinessToday)}");
         }
 
+        if (activeReservations.Count > 1)
+        {
+            lines.Add("- regla: cuando el cliente pida cambiar, cancelar o confirmar una reserva sin identificar una de estas lineas por fecha, hora o servicio existente, pide que indique cual reserva. No infieras disponibilidad ni apliques cambios sobre una reserva no identificada.");
+        }
+
         return lines;
     }
 
@@ -270,15 +280,20 @@ public sealed class AgentPromptComposer : IPromptComposer
     }
 
     /// <summary>
-    /// Emite una instrucción permanente con los facts que deben capturarse de inmediato
-    /// (captureMode=eager) aunque el flujo aún no haya llegado a la etapa que los solicita.
-    /// Solo lista los facts de usuario que todavía no tienen valor.
+    /// Emite una instruccion permanente con los facts que deben capturarse de inmediato
+    /// (captureMode=eager) aunque el flujo aun no haya llegado a la etapa que los solicita.
+    /// Solo lista los facts de usuario que todavia no tienen valor.
     /// </summary>
     internal static string BuildEagerCaptureBlock(AgentConfig config, AgentToolContext? session, IReadOnlyList<IAgentTool>? enabledTools = null)
     {
+        var flowAdvancingFacts = config.Flow.Stages
+            .SelectMany(stage => stage.AdvanceWhenFacts)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
         var eagerMissing = config.FactSchema
             .Where(e => e.CaptureMode.Equals("eager", StringComparison.OrdinalIgnoreCase)
                      && e.Source.Equals("user", StringComparison.OrdinalIgnoreCase))
+            .Where(e => e.Required || flowAdvancingFacts.Contains(e.Key))
             .Where(e =>
             {
                 if (session is null) return true;
@@ -297,30 +312,30 @@ public sealed class AgentPromptComposer : IPromptComposer
 
         var lines = new List<string>
         {
-            "## CAPTURA INMEDIATA",
-            "Esta instrucción tiene prioridad sobre la orientación de la etapa actual.",
-            "- Cuando el último mensaje contenga un valor para un fact listado, llama la herramienta de captura antes de otras herramientas.",
-            "- Guarda únicamente datos expresados o confirmados por el cliente.",
-            "- Mantén objetivos internos y marcadores de estado fuera de facts de usuario.",
-            "- Usa el nombre de fact listado entre paréntesis.",
-            "- Después de guardar los facts presentes, continúa la etapa actual."
+            "## REGLA TRANSVERSAL: CAPTURA INMEDIATA",
+            "- Aplica en cualquier etapa antes de resolver el objetivo actual.",
+            "- Si el ultimo mensaje trae datos utiles, captura solo datos expresados o confirmados por el cliente.",
+            "- Para service usa resolve_service_selection con el texto literal del cliente.",
+            "- Para los demas facts usa set_fact con el nombre de fact listado entre parentesis.",
+            "- Manten objetivos internos y marcadores de estado fuera de facts de usuario.",
+            "- Despues de guardar los facts presentes, continua la etapa actual."
         };
 
         if (captureTools.Count > 0)
-            lines.Add($"- herramientas_de_captura: {string.Join(", ", captureTools)}");
+            lines.Add($"- herramientas de captura disponibles: {string.Join(", ", captureTools)}");
 
+        lines.Add("- datos faltantes que puedes capturar ahora:");
         foreach (var entry in eagerMissing)
         {
             var label = string.IsNullOrWhiteSpace(entry.Label) ? entry.Key : entry.Label;
-            lines.Add($"- {label} ({entry.Key})");
+            lines.Add($"  - {label} ({entry.Key})");
         }
-
         return string.Join(Environment.NewLine, lines);
     }
 
     /// <summary>
     /// Compara los facts actuales contra el snapshot guardado al completar etapas anteriores.
-    /// Si algún fact relevante cambió, inyecta un bloque ATENCIÓN para que el LLM rehaga las acciones dependientes.
+    /// Si algÃºn fact relevante cambió, inyecta un bloque ATENCIÓN para que el LLM rehaga las acciones dependientes.
     /// Recibe el currentStage ya detectado para evitar una segunda llamada a DetectCurrentStage.
     /// </summary>
     internal string BuildReentryBlock(
@@ -328,7 +343,7 @@ public sealed class AgentPromptComposer : IPromptComposer
         AgentToolContext? session,
         AgentFlowStage? currentStage = null)
     {
-        if (session is null || config.Flow.Stages.Count == 0)
+        if (session?.ConversationState is null || config.Flow.Stages.Count == 0)
             return string.Empty;
 
         var snapshots = session.ConversationState.StageFactSnapshots;
@@ -365,7 +380,7 @@ public sealed class AgentPromptComposer : IPromptComposer
                     ? entry.Label
                     : factKey;
 
-                alerts.Add($"- {label} cambió de \"{saved ?? "—"}\" a \"{current}\"");
+                alerts.Add($"- {label} cambió de \"{saved ?? "-"}\" a \"{current}\"");
             }
         }
 
@@ -374,8 +389,8 @@ public sealed class AgentPromptComposer : IPromptComposer
 
         var lines = new List<string>
         {
-            "## ATENCIÓN: DATOS MODIFICADOS",
-            "El cliente cambió información relevante ya procesada. Repite las acciones afectadas antes de continuar:"
+            "## ATENCION: DATOS MODIFICADOS",
+            "El cliente cambio informacion relevante ya procesada. Repite las acciones afectadas antes de continuar:"
         };
         lines.AddRange(alerts);
 
@@ -406,14 +421,6 @@ public sealed class AgentPromptComposer : IPromptComposer
             $"- objetivo: {goal}"
         };
 
-        if (currentStage.AllowedTools.Count > 0)
-        {
-            var effectiveToolNames = effectiveTools.Select(t => t.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
-            var allowedTools = currentStage.AllowedTools.Where(effectiveToolNames.Contains).ToList();
-
-            if (allowedTools.Count > 0)
-                lines.Add($"- acciones_de_etapa: {string.Join(", ", allowedTools)}");
-        }
 
         var stageHint = !string.IsNullOrWhiteSpace(variant?.Hint) ? variant!.Hint : currentStage.Hint;
         if (!string.IsNullOrWhiteSpace(stageHint))
@@ -424,6 +431,7 @@ public sealed class AgentPromptComposer : IPromptComposer
                 : "Qué hacer ahora:");
             lines.Add($"- {stageHint.Trim()}");
         }
+
 
         if (session is not null && currentStage.AdvanceWhenFacts.Count > 0)
         {
@@ -438,54 +446,38 @@ public sealed class AgentPromptComposer : IPromptComposer
 
             if (missingFacts.Count > 0)
             {
-                lines.Add("- criterio_de_avance: la etapa se completa cuando estén presentes estos datos del flujo.");
+                lines.Add("- criterio_de_avance: la etapa se completa cuando estÃ©n presentes estos datos del flujo.");
                 lines.Add($"- datos_para_completar_etapa: {string.Join(", ", DescribeFacts(config, missingFacts))}");
-                lines.Add("- acción: usa estos datos como próximos datos útiles solo cuando la intención actual los requiera.");
+                lines.Add("- acciÃ³n: usa estos datos como prÃ³ximos datos Ãºtiles solo cuando la intenciÃ³n actual los requiera.");
             }
         }
 
         return string.Join(Environment.NewLine, lines);
     }
 
-    private string BuildActionsBlock(PromptCompositionInput input)
+    private string BuildTurnToolsBlock(PromptCompositionInput input, AgentFlowStage? currentStage)
     {
         if (input.EnabledTools.Count == 0)
             return string.Empty;
 
-        using var emptyArgs = System.Text.Json.JsonDocument.Parse("{}");
-        var available = new List<string>();
-        var blocked = new List<string>();
+        var tools = input.Session is null
+            ? input.EnabledTools
+            : AgentTurnToolScope.Resolve(input.Config, input.Session, input.EnabledTools, currentStage);
 
-        foreach (var tool in input.EnabledTools)
-        {
-            var session = input.Session;
-            if (session is null)
-            {
-                available.Add(tool.Name);
-                continue;
-            }
+        if (tools.Count == 0)
+            return string.Empty;
 
-            var eval = _guardEvaluator.EvaluateTool(tool, input.Config, session, emptyArgs.RootElement);
-            if (eval.IsAvailable)
-                available.Add(tool.Name);
-            else
-                blocked.Add($"- {tool.Name}: {eval.BlockReason}");
-        }
+        var names = tools
+            .Select(t => t.Name)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
 
-        var lines = new List<string>();
-        if (available.Count > 0)
-        {
-            lines.Add("## ACCIONES DISPONIBLES");
-            lines.Add(string.Join(", ", available));
-        }
-
-        if (blocked.Count > 0)
-        {
-            lines.Add("## ACCIONES BLOQUEADAS");
-            lines.AddRange(blocked);
-        }
-
-        return string.Join(Environment.NewLine, lines);
+        return string.Join(Environment.NewLine,
+        [
+            "## HERRAMIENTAS DE ESTE TURNO",
+            string.Join(", ", names)
+        ]);
     }
 
     private static PaymentTransaction? ResolvePaymentForContext(

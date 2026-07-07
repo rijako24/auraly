@@ -55,6 +55,26 @@ public sealed class PaymentLifecycleService : IPaymentLifecycleService
         return tx;
     }
 
+    public async Task RefreshPendingCheckoutAsync(
+        PaymentTransaction payment,
+        string checkoutSnapshotJson,
+        string quoteHash,
+        string confirmationOutcome,
+        long amountInCents,
+        string currency,
+        CancellationToken ct = default)
+    {
+        if (payment.Status != PaymentTransactionStatus.Created)
+            return;
+
+        payment.CheckoutSnapshotJson = checkoutSnapshotJson;
+        payment.QuoteHash = quoteHash;
+        payment.ConfirmationOutcome = confirmationOutcome;
+        payment.AmountInCents = amountInCents;
+        payment.Currency = currency;
+        await _payments.SaveAsync(payment, ct);
+    }
+
     public async Task MarkConfirmedAsync(
         PaymentTransaction payment, string? providerTransactionId, string? webhookPayload, CancellationToken ct = default, PaymentTransactionSource? sourceOverride = null)
     {

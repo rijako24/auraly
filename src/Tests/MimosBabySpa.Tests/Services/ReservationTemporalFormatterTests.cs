@@ -24,7 +24,8 @@ public sealed class ReservationTemporalFormatterTests
             new DateOnly(2026, 6, 17));
 
         result.Should().Contain("2026-06-17 10:00 Hidroterapia, hoy");
-        result.Should().Contain("id_reserva=11111111-1111-1111-1111-111111111111");
+        result.Should().NotContain("id_reserva");
+        result.Should().NotContain("11111111-1111-1111-1111-111111111111");
     }
 
     [Fact]

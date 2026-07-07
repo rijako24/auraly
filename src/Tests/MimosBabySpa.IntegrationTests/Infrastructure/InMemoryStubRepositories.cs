@@ -13,9 +13,9 @@ internal static class TestCategoryIds
     public static readonly Guid Otros = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Service Repository — pre-populates the three MimosBabySpa services
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
+// Service Repository - pre-populates the three MimosBabySpa services
+// -----------------------------------------------------------------------------
 
 public class InMemoryServiceRepository : IServiceRepository
 {
@@ -61,9 +61,9 @@ public class InMemoryServiceRepository : IServiceRepository
         throw new NotImplementedException();
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Business Repository — returns a pre-built Business
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
+// Business Repository - returns a pre-built Business
+// -----------------------------------------------------------------------------
 
 public class InMemoryBusinessRepository : IBusinessRepository
 {
@@ -76,7 +76,7 @@ public class InMemoryBusinessRepository : IBusinessRepository
             BusinessId          = businessId,
             TenantId            = Guid.NewGuid(),
             Name                = "Mimos Baby Spa",
-            Description         = "Spa especializado en masajes para bebés",
+            Description         = "Spa especializado en masajes para bebes",
             Phone               = "+1234567890",
             Email               = "info@mimosbabyspa.com",
             IsActive            = true,
@@ -87,7 +87,7 @@ public class InMemoryBusinessRepository : IBusinessRepository
     public Task<Business?> GetByIdAsync(Guid businessId) =>
         Task.FromResult(_business.BusinessId == businessId ? _business : (Business?)null);
 
-    
+
     public Task<Business?> GetByNameAsync(string name, CancellationToken ct = default) =>
         Task.FromResult(string.Equals(_business.Name, name, StringComparison.OrdinalIgnoreCase) ? _business : (Business?)null);
 public Task<Business?> GetByIdWithConfigurationAsync(Guid businessId) =>
@@ -107,7 +107,7 @@ public Task<Business?> GetByIdWithConfigurationAsync(Guid businessId) =>
         throw new NotImplementedException();
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
 public class InMemorySystemConfigurationRepository : ISystemConfigurationRepository
 {
     public Task<SystemConfiguration?> GetByKeyAsync(SystemConfigurationKey key) =>
@@ -123,9 +123,9 @@ public class InMemorySystemConfigurationRepository : ISystemConfigurationReposit
         Task.FromResult(configuration);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
 // Reservation Repository
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
 
 public class InMemoryReservationRepository : IReservationRepository
 {
@@ -159,6 +159,21 @@ public class InMemoryReservationRepository : IReservationRepository
             .OrderByDescending(r => r.UpdatedAt ?? r.CreatedAt)
             .FirstOrDefault());
 
+    public Task<IReadOnlyList<Reservation>> GetManageableByConversationIdAsync(
+        Guid conversationId,
+        DateOnly businessToday,
+        CancellationToken ct = default)
+    {
+        IReadOnlyList<Reservation> result = _store
+            .Where(r => r.ConversationId == conversationId
+                && (r.Status == ReservationStatus.Confirmed || r.Status == ReservationStatus.OnHold)
+                && (!r.ReservationDateTime.HasValue
+                    || DateOnly.FromDateTime(r.ReservationDateTime.Value) >= businessToday))
+            .OrderBy(r => r.ReservationDateTime)
+            .ThenByDescending(r => r.UpdatedAt ?? r.CreatedAt)
+            .ToList();
+        return Task.FromResult(result);
+    }
     public Task<IReadOnlyList<Reservation>> GetManageableByCustomerPhoneAsync(
         Guid businessId,
         string customerPhone,
@@ -357,9 +372,9 @@ public class InMemoryConversationContextRepository : IConversationContextReposit
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// BusinessResource Repository — empty store
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
+// BusinessResource Repository - empty store
+// -----------------------------------------------------------------------------
 
 public class InMemoryBusinessResourceRepository : IBusinessResourceRepository
 {
@@ -376,9 +391,9 @@ public class InMemoryBusinessResourceRepository : IBusinessResourceRepository
     public Task<BusinessResource> UpdateAsync(BusinessResource resource) => Task.FromResult(resource);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Employee Repository — pre-populates one employee
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
+// Employee Repository - pre-populates one employee
+// -----------------------------------------------------------------------------
 
 public class InMemoryEmployeeRepository : IEmployeeRepository
 {
@@ -392,7 +407,7 @@ public class InMemoryEmployeeRepository : IEmployeeRepository
             {
                 EmployeeId = Guid.NewGuid(),
                 BusinessId = businessId,
-                Name       = "María Terapeuta",
+                Name       = "Maria Terapeuta",
                 IsActive   = true,
                 CreatedAt  = DateTime.UtcNow
             }
@@ -419,9 +434,9 @@ public class InMemoryEmployeeRepository : IEmployeeRepository
         throw new NotImplementedException();
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// EmployeeService Repository — returns empty
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
+// EmployeeService Repository - returns empty
+// -----------------------------------------------------------------------------
 
 public class InMemoryEmployeeServiceRepository : IEmployeeServiceRepository
 {
@@ -446,9 +461,9 @@ public class InMemoryEmployeeServiceRepository : IEmployeeServiceRepository
         Task.FromResult(0);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Lead Repository — empty
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
+// Lead Repository - empty
+// -----------------------------------------------------------------------------
 
 public class InMemoryLeadRepository : ILeadRepository
 {
@@ -476,9 +491,9 @@ public class InMemoryLeadRepository : ILeadRepository
         throw new NotImplementedException();
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// ServiceCategory Repository — Plan y Otros para tests
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
+// ServiceCategory Repository - Plan y Otros para tests
+// -----------------------------------------------------------------------------
 
 public class InMemoryServiceCategoryRepository : IServiceCategoryRepository
 {
@@ -511,9 +526,9 @@ public class InMemoryServiceCategoryRepository : IServiceCategoryRepository
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// BusinessAttachment Repository — vacío para tests
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
+// BusinessAttachment Repository - vacio para tests
+// -----------------------------------------------------------------------------
 
 public class InMemoryBusinessAttachmentRepository : IBusinessAttachmentRepository
 {
@@ -524,9 +539,9 @@ public class InMemoryBusinessAttachmentRepository : IBusinessAttachmentRepositor
         Task.FromResult(Enumerable.Empty<BusinessAttachment>());
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
 // ServiceAddOnRule Repository
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
 
 public class InMemoryServiceAddOnRuleRepository : IServiceAddOnRuleRepository
 {
@@ -568,7 +583,7 @@ public class InMemoryServiceAddOnRuleRepository : IServiceAddOnRuleRepository
                 CompatibleServiceId = planDeluxeId,
                 AddOnServiceId = masajeExtraId,
                 DisplayOrder = 1,
-                
+
                 // IMPORTANT: Populate navigation properties for InMemory usage
                 CompatibleService = planDeluxe,
                 AddOnService = masajeExtra
@@ -580,9 +595,9 @@ public class InMemoryServiceAddOnRuleRepository : IServiceAddOnRuleRepository
         Task.FromResult(_rules.Where(r => r.BusinessId == businessId));
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// ReservationAddOn Repository — empty
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
+// ReservationAddOn Repository - empty
+// -----------------------------------------------------------------------------
 
 public class InMemoryReservationAddOnRepository : IReservationAddOnRepository
 {
@@ -604,9 +619,9 @@ public class InMemoryReservationAddOnRepository : IReservationAddOnRepository
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// NoOp WhatsApp Service — para tests que no envían mensajes reales
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
+// NoOp WhatsApp Service - para tests que no envian mensajes reales
+// -----------------------------------------------------------------------------
 
 public class NoOpWhatsAppService : IWhatsAppService
 {
@@ -655,6 +670,3 @@ public sealed class InMemoryPromotionRepository : IPromotionRepository
     public Task<Promotion> UpdateAsync(Promotion promotion, CancellationToken ct = default) =>
         Task.FromResult(promotion);
 }
-
-
-

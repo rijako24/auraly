@@ -13,7 +13,7 @@ public class ReservationMustIncludeAddOns : ITestRule
             .FirstOrDefault(c => !c.ResultIsError);
 
         if (createCall == null)
-            return new TestRuleResult(true, "No se creó reserva exitosa, regla no aplica.", Name);
+            return new TestRuleResult(true, "No se creo reserva exitosa, regla no aplica.", Name);
 
         // Verificar en los argumentos si se pasaron add_ons
         try
@@ -23,12 +23,12 @@ public class ReservationMustIncludeAddOns : ITestRule
                 addOns.ValueKind == JsonValueKind.String &&
                 !string.IsNullOrWhiteSpace(addOns.GetString()))
             {
-                return new TestRuleResult(true, $"✅ La reserva incluye add-ons: {addOns.GetString()}", Name);
+                return new TestRuleResult(true, $"PASS La reserva incluye add-ons: {addOns.GetString()}", Name);
             }
         }
-        catch { /* continúa */ }
+        catch { /* continua */ }
 
         return new TestRuleResult(false,
-            "❌ La reserva se creó SIN add-ons aunque el escenario los requería.", Name);
+            "FAIL La reserva se creo SIN add-ons aunque el escenario los requeria.", Name);
     }
 }

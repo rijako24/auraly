@@ -9,6 +9,7 @@ using MimosBabySpa.Application.Agents.Tools.Impl;
 using MimosBabySpa.Application.Configuration;
 using MimosBabySpa.Application.Services;
 using MimosBabySpa.Domain.Entities;
+using MimosBabySpa.Domain.Enums;
 using MimosBabySpa.Domain.Repositories;
 using ConversationStateModel = MimosBabySpa.Domain.Models.ConversationState;
 using Xunit;
@@ -72,6 +73,31 @@ public class SetFactToolTests
             It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
+    [Fact]
+    public async Task ExecuteAsync_ServiceKey_RequiresResolverWithoutInspectingReservationIntent()
+    {
+        var ctx = CreateContext();
+        ctx.LatestUserMessage = "Quiero cambiar el servicio a corte premium de adulto";
+        ctx.ManageableReservations =
+        [
+            new Reservation
+            {
+                Status = ReservationStatus.Confirmed,
+                ReservationDateTime = new DateTime(2026, 9, 2, 11, 0, 0),
+                Service = new Service { ServiceName = "Corte basico de adulto" }
+            }
+        ];
+
+        using var args = JsonDocument.Parse("""{"key":"service","value":"Corte premium de adulto"}""");
+        var json = await _tool.ExecuteAsync(args.RootElement, ctx, CancellationToken.None);
+
+        json.Should().Contain("service_selection_mismatch");
+        json.Should().Contain("resolve_service_selection");
+        ctx.Facts.Should().NotContainKey(ConversationFactKeys.Service);
+        _facts.Verify(f => f.SetAsync(
+            It.IsAny<Guid>(), It.IsAny<Guid>(), ConversationFactKeys.Service, It.IsAny<string>(),
+            It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
     [Fact]
     public async Task ExecuteAsync_AttributeKey_PersistsToFacts()
     {

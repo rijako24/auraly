@@ -68,11 +68,21 @@ public sealed class CheckoutPaymentCoordinator : ICheckoutPaymentCoordinator
         var quoteHash = _quotes.ComputeHash(quote);
 
         if (activePayment?.LinkUrl is not null
+            && activePayment.Status == PaymentTransactionStatus.Created
             && activePayment.ExpiresAt.HasValue
             && activePayment.ExpiresAt.Value > DateTime.UtcNow
             && activePayment.CheckoutKind == quote.CheckoutKind
             && string.Equals(activePayment.QuoteHash, quoteHash, StringComparison.Ordinal))
         {
+            await _paymentLifecycle.RefreshPendingCheckoutAsync(
+                activePayment,
+                checkoutSnapshotJson,
+                quoteHash,
+                quote.ConfirmationOutcome,
+                quote.PayableCents,
+                quote.Currency,
+                ct);
+
             ctx.ActivePayment = activePayment;
             return CheckoutPaymentLinkResult.Ok(activePayment.LinkUrl, activePayment);
         }

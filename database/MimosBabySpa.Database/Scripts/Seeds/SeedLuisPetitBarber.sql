@@ -605,6 +605,11 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "sendMessageSequence": "reservation_created"
     }
   },
+  "reservationManagement": {
+    "automaticChangeFields": ["date", "time"],
+    "escalateChangeFields": ["service", "add_ons"],
+    "escalationReasonCode": "reservation_change_requires_human"
+  },
   "reservationAutomations": {
     "confirmation": {
       "enabled": true,
@@ -657,7 +662,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         "id": "discovery",
         "name": "Descubrimiento",
         "goal": "Ayudar al cliente a elegir un servicio exacto del catalogo.",
-        "hint": "Primero cumple las instrucciones transversales de captura inmediata cuando apliquen. Luego clasifica el mensaje en una sola ruta. Ruta de busqueda: si el mensaje trae intencion comercial o cualquier palabra relacionada con el catalogo, la primera herramienta de etapa debe ser get_service_catalog con view services y query no vacio; en query envia las palabras del cliente que nombran el servicio, categoria, familia u opcion. Si es primera respuesta visible, abre con saludo, bienvenida a BARBER KIDS MEN y la frase exacta soy Luis Petit, barbero profesional. Luego muestra solo servicios oficiales relevantes con precio y duracion y pregunta cual prefiere. Ruta de saludo: usa get_service_catalog con view categories y sin query solo cuando el mensaje sea apertura social pura; responde en este orden: saluda, da la bienvenida a BARBER KIDS MEN, incluye la frase exacta soy Luis Petit, barbero profesional, muestra categorias oficiales en lista vertical con guion y pregunta en que servicio esta interesado el dia de hoy. Ruta de seleccion: cuando el cliente elija un servicio exacto o equivalente claro de los servicios mostrados, llama resolve_service_selection con el texto literal del cliente y el contexto inmediato de la solicitud. Si la seleccion queda ambigua, pide que elija una opcion exacta usando solo servicios oficiales.",
+        "hint": "Saludo generico: consulta get_service_catalog con vista de categorias, presenta categorias oficiales y pregunta que servicio le interesa. Intencion comercial o servicio puntual: consulta get_service_catalog con vista de servicios y query del mensaje, presenta opciones oficiales relevantes y pregunta cual prefiere. Seleccion clara: usa resolve_service_selection. Responde solo con datos oficiales de catalogo o herramientas.",
         "allowedTools": ["get_service_catalog", "resolve_service_selection", "set_fact"],
         "advanceWhenFacts": ["service"]
       },
@@ -665,8 +670,8 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         "id": "add_ons",
         "name": "Complementos",
         "goal": "Ofrecer adicionales compatibles cuando apliquen antes de preparar el anticipo.",
-        "hint": "Llama get_compatible_add_ons para el servicio elegido. Cuando existan complementos compatibles, presenta en el mismo turno los complementos devueltos por la herramienta en lista con precio y valor agregado breve; cierra preguntando si desea agregar alguno o continuar sin adicionales. Con lista vacia, registra add_ons=ninguno y avanza. Cuando el cliente elija uno o varios complementos exactos, registra add_ons con los nombres canonicos separados por coma. Cuando el cliente prefiera continuar, registra add_ons=ninguno.",
-        "allowedTools": ["get_compatible_add_ons", "set_fact"],
+        "hint": "Obtiene complementos compatibles desde la herramienta. Cuando existan, presenta opciones oficiales con precio y valor breve; pregunta si desea agregar alguno o continuar sin adicionales. Registra add_ons con nombres canonicos o ninguno segun la preferencia del cliente.",
+        "allowedTools": ["get_compatible_add_ons", "resolve_service_selection", "set_fact"],
         "advanceWhenFacts": ["add_ons"],
         "reentryOnFactChanged": ["service"]
       },
@@ -674,7 +679,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         "id": "scheduling",
         "name": "Agenda",
         "goal": "Revisar disponibilidad y validar fecha y hora para una reserva por hora.",
-        "hint": "Todos los servicios de este flujo se agendan como reserva. Para check_availability usa el valor canonico guardado en service. Si falta fecha, pregunta: Para que dia deseas el servicio? Si el cliente da dia y hora juntos, registra desired_date y desired_time y llama check_availability con fecha y hora en el mismo turno. Si el cliente da fecha pendiente de hora, registra desired_date y en ese mismo turno llama check_availability usando la fecha; responde mostrando los horarios devueltos por la herramienta y pregunta cual prefiere. Consulta disponibilidad del dia antes de pedir una hora especifica. Usa horarios en intervalos de 30 minutos dentro del horario de atencion. Cuando el cliente elija una hora de los horarios presentados, registra desired_time y llama check_availability con fecha y hora. Si el horario esta disponible, deja avanzar el flujo.",
+        "hint": "Valida agenda con check_availability usando servicio canonico, fecha y hora disponibles. Si falta fecha, pregunta para que dia desea el servicio; si falta hora, presenta horarios desde la herramienta y pregunta cual prefiere.",
         "allowedTools": ["check_availability", "set_fact"],
         "afterTool": [
           {
@@ -700,7 +705,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         "id": "customer_data",
         "name": "Datos del cliente",
         "goal": "Recoger los datos minimos para preparar el anticipo.",
-        "hint": "Confirma brevemente servicio, fecha y hora. Pide en un solo mensaje, en lista corta, todos los datos faltantes para la reserva: nombre del cliente, telefono de contacto y fecha de cumpleanos. Si ya tienes alguno en ESTADO ACTUAL o por canal, lista solo los que falten. Registra cada dato con set_fact.",
+        "hint": "Confirma brevemente servicio, fecha y hora. Recolecta en un solo mensaje los datos faltantes para preparar el anticipo. Registra datos entregados por el cliente con set_fact y conserva los datos ya presentes en ESTADO ACTUAL.",
         "allowedTools": ["set_fact"],
         "advanceWhenFacts": ["customer_name", "customer_phone", "customer_birth_date"]
       },
@@ -708,7 +713,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         "id": "finalization",
         "name": "Cierre con anticipo",
         "goal": "Preparar el resumen, generar el link de anticipo y esperar confirmacion automatica de pago.",
-        "hint": "Si ya estan servicio, fecha, hora, nombre y telefono, llama prepare_checkout usando medios de pago registrados en checkout.paymentMethods. Si existe un solo medio registrado, usalo directamente. Si el cliente dice que ya pago, usa verify_payment. Si el cliente pide un medio distinto a los registrados, responde de forma natural con el medio registrado que permite asegurar la reserva y continua con la opcion registrada por checkout. Mantente en checkout.paymentMethods para pagos y confirmacion automatica. Indica de forma natural que la reserva se confirmara automaticamente cuando se reciba y apruebe el pago. Si hay link pendiente y el cliente pide cambiar servicio con nuevo servicio pendiente, llama get_service_catalog y pregunta cual opcion exacta prefiere. Cuando el cliente seleccione un servicio, guardalo con resolve_service_selection usando el texto literal del cliente. Con opcion poco clara despues de intentarlo, consulta el catalogo y pregunta cual opcion exacta prefiere. Para fecha u hora usa set_fact, revalida disponibilidad cuando corresponda y vuelve a prepare_checkout para generar un nuevo resumen/link. Para link pendiente usa cambio de servicio, fecha u hora por catalogo, facts, disponibilidad y checkout.",
+        "hint": "Prepara checkout cuando los facts requeridos esten completos. Usa prepare_checkout para resumen y link; comparte el resumen y explica que la reserva se confirma al aprobarse el pago. Usa verify_payment para consultas de pago y actualiza facts/disponibilidad cuando el cliente cambie servicio, fecha u hora antes del pago.",
         "allowedTools": [
           "prepare_checkout",
           "verify_payment",
@@ -727,14 +732,15 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "id": "human_escalation",
       "priority": 1000,
       "goal": "Escalar a una persona cuando el cliente lo pida, este inconforme, necesite cotizacion exacta de servicio variable o la solicitud salga del alcance del bot.",
-      "hint": "Responde con una frase breve y cordial, resume la necesidad y llama escalate_to_human.",
+      "hint": "Escala con resumen breve de la necesidad del cliente.",
       "allowedTools": ["escalate_to_human"]
     },
     {
       "id": "manage_existing_reservation",
       "priority": 900,
       "goal": "Gestionar reservas existentes y pagos confirmados pendientes de agenda cuando el cliente quiera confirmar asistencia, cambiar, reagendar, cambiar servicio, cancelar o completar una reserva ya pagada.",
-      "hint": "Gestiona reservas existentes con prioridad sobre el flujo de reserva nueva cuando el cliente quiera confirmar asistencia, cambiar, reagendar, cambiar servicio o cancelar una reserva creada. Tambien cubre pagos confirmados sin reserva enlazada: si ESTADO RESERVA indica pago confirmado pendiente de horario y el cliente da fecha y hora, llama manage_reservation con action complete_paid_reschedule; si falta fecha u hora, pidela sin llamar herramientas. Usa la reserva activa listada en ESTADO RESERVA como referencia de servicio, fecha y hora. Si el cliente pide reagendar o cambiar horario pero aun no da nuevo horario, pide nueva fecha y hora sin llamar herramientas. Nunca digas que una reserva fue cambiada, confirmada, cancelada o completada si manage_reservation no ha devuelto ok=true en ese mismo turno o en un turno anterior. Si el cliente ya da nueva fecha, hora, servicio o adicionales para una reserva existente, debes llamar manage_reservation con action preview_change; si la herramienta aprueba, resume el cambio y pide confirmacion antes de llamar manage_reservation con action apply_change y customer_confirmed=true. Usa get_customer_reservations cuando el estado muestre varias reservas o la referencia del cliente sea ambigua. Para confirmar asistencia usa manage_reservation con action confirm_attendance y customer_confirmed=true. Para cancelar o suspender usa manage_reservation con action cancel solo cuando la intencion este confirmada.",
+      "hint": "Gestiona solo reservas existentes o pagos confirmados pendientes de agenda. Usa get_customer_reservations para ambiguedad y manage_reservation para aplicar la accion. Fecha y hora se resuelven por disponibilidad; cambios de servicio, adicionales u otros campos quedan en espera y escalan segun resultado de la herramienta.",
+      "runtimeWhenAny": ["context:ManageableReservations.any", "context:ActivePayment.Status=Confirmed&&context:ActivePayment.ReservationId=null"],
       "allowedTools": ["get_customer_reservations", "manage_reservation"]
     }
   ],

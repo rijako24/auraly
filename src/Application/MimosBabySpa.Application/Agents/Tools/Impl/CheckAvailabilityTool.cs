@@ -20,19 +20,22 @@ public sealed class CheckAvailabilityTool : IAgentTool
     private readonly IEmployeeAssignmentService _employeeAssignment;
     private readonly IUnitOfWork _unitOfWork;
     private readonly IConversationVerificationService _verifications;
+    private readonly ServiceNameResolver _serviceNameResolver;
 
     public CheckAvailabilityTool(
         IAvailabilityService availability,
         ISchedulingPolicyProvider schedulingPolicy,
         IEmployeeAssignmentService employeeAssignment,
         IUnitOfWork unitOfWork,
-        IConversationVerificationService verifications)
+        IConversationVerificationService verifications,
+        ServiceNameResolver serviceNameResolver)
     {
         _availability = availability;
         _schedulingPolicy = schedulingPolicy;
         _employeeAssignment = employeeAssignment;
         _unitOfWork = unitOfWork;
         _verifications = verifications;
+        _serviceNameResolver = serviceNameResolver;
     }
 
     public string Name => "check_availability";
@@ -75,6 +78,21 @@ public sealed class CheckAvailabilityTool : IAgentTool
         if (AgentDateRules.IsPastDate(date, ctx.BusinessToday))
             return ToolResultHelper.Error("past_date", "The date must be today or in the future.", recoverable: true);
 
+        var canonicalService = await _serviceNameResolver.ResolveAsync(ctx.BusinessId, service, cancellationToken);
+        if (string.IsNullOrWhiteSpace(canonicalService))
+        {
+            return ToolResultHelper.ErrorWithLlm(
+                "service_selection_unresolved",
+                "Service selection could not be resolved against the active catalog.",
+                null,
+                new
+                {
+                    next_action = "resolve_service_selection",
+                    text = service
+                },
+                recoverable: true);
+        }
+
         TimeSpan? time = null;
         ToolResultHelper.TryGetString(arguments, "time", out var timeStr);
         if (!string.IsNullOrWhiteSpace(timeStr))
@@ -86,12 +104,12 @@ public sealed class CheckAvailabilityTool : IAgentTool
 
         var policy = await _schedulingPolicy.GetAsync(ctx.BusinessId, cancellationToken);
         var result = await _availability.CheckAvailabilityAsync(
-            ctx.BusinessId, service, date.ToDateTime(TimeOnly.MinValue), time, policy, cancellationToken);
+            ctx.BusinessId, canonicalService, date.ToDateTime(TimeOnly.MinValue), time, policy, cancellationToken);
 
         Guid? preferredEmployeeId = null;
         if (result.IsAvailable && time.HasValue)
         {
-            var serviceEntity = await _unitOfWork.Services.GetByBusinessIdAndNameAsync(ctx.BusinessId, service);
+            var serviceEntity = await _unitOfWork.Services.GetByBusinessIdAndNameAsync(ctx.BusinessId, canonicalService);
             if (serviceEntity is not null)
             {
                 var duration = serviceEntity.DurationMinutes > 0 ? serviceEntity.DurationMinutes : 60;
@@ -105,7 +123,7 @@ public sealed class CheckAvailabilityTool : IAgentTool
 
         var availabilityChecked = time.HasValue && result.IsAvailable;
         if (availabilityChecked)
-            RecordAvailabilityVerifications(ctx, service, dateStr, timeStr, result);
+            RecordAvailabilityVerifications(ctx, canonicalService, dateStr, timeStr, result);
 
         var optionsForPresentation = BuildPresentationOptions(result);
         var isListMode = !time.HasValue && result.IsAvailable;
@@ -124,7 +142,7 @@ public sealed class CheckAvailabilityTool : IAgentTool
         {
             var fragmentData = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
             {
-                ["service_name"] = result.RequestServiceName ?? service,
+                ["service_name"] = result.RequestServiceName ?? canonicalService,
                 ["date_formatted"] = date.ToString("dd/MM/yyyy"),
                 ["options"] = optionsForPresentation.Select(static s => (object)s).ToList()
             };
@@ -239,4 +257,4 @@ public sealed class CheckAvailabilityTool : IAgentTool
             VerificationSnapshot.FromValues(pairs.ToArray()),
             VerificationTtl.AvailabilityChecked);
     }
-}
+    }

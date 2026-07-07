@@ -1,6 +1,7 @@
 using System.Text.Json;
 using FluentAssertions;
 using MimosBabySpa.Application.Agents;
+using MimosBabySpa.Application.Agents.Configuration;
 using MimosBabySpa.Application.Agents.Gating;
 using MimosBabySpa.Application.Agents.Tools;
 using MimosBabySpa.Application.Agents.Tools.Impl;
@@ -18,31 +19,66 @@ namespace MimosBabySpa.Tests.Agents;
 public sealed class ManageReservationToolTests
 {
     [Fact]
-    public async Task PreviewChange_ValidatesWithoutApplying()
+    public async Task PreviewChange_DateTimeChange_AppliesImmediately()
     {
         var fx = new Fixture();
         var reservation = fx.CreateReservation();
         fx.Resolve(reservation);
         fx.Reservations.Setup(r => r.UpdateReservationAsync(
-                It.Is<UpdateReservationChangeRequest>(req => req.ReservationId == reservation.ReservationId && !req.Apply && req.Time == new TimeOnly(14, 0)),
+                It.Is<UpdateReservationChangeRequest>(req => req.ReservationId == reservation.ReservationId && req.Apply && req.Time == new TimeOnly(14, 0)),
                 It.IsAny<CancellationToken>()))
-            .ReturnsAsync(fx.ChangeResult(reservation.ReservationId, applied: false));
+            .ReturnsAsync(fx.ChangeResult(reservation.ReservationId, applied: true));
 
         var result = await fx.Tool.ExecuteAsync(Json("""{"action":"preview_change","time":"14:00"}"""), fx.Context);
 
         result.Should().Contain("\"ok\":true");
-        result.Should().Contain("\"applied\":false");
+        result.Should().Contain("\"applied\":true");
     }
 
     [Fact]
-    public async Task ApplyChange_RequiresExplicitConfirmation()
+    public async Task ApplyChange_DateTimeChange_DoesNotRequireSecondConfirmation()
     {
         var fx = new Fixture();
+        var reservation = fx.CreateReservation();
+        fx.Resolve(reservation);
+        fx.Reservations.Setup(r => r.UpdateReservationAsync(
+                It.Is<UpdateReservationChangeRequest>(req => req.ReservationId == reservation.ReservationId && req.Apply && req.Time == new TimeOnly(14, 0)),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(fx.ChangeResult(reservation.ReservationId, applied: true));
 
         var result = await fx.Tool.ExecuteAsync(Json("""{"action":"apply_change","time":"14:00"}"""), fx.Context);
 
-        result.Should().Contain("confirmation_required");
-        fx.Reservations.Verify(r => r.UpdateReservationAsync(It.IsAny<UpdateReservationChangeRequest>(), It.IsAny<CancellationToken>()), Times.Never);
+        result.Should().Contain("\"ok\":true");
+        result.Should().Contain("\"applied\":true");
+    }
+
+    [Fact]
+    public async Task ApplyChange_DateAndTimeChange_AppliesConfiguredAutomaticFieldsImmediately()
+    {
+        var fx = new Fixture();
+        var reservation = fx.CreateReservation();
+        fx.Resolve(reservation);
+        fx.Reservations.Setup(r => r.UpdateReservationAsync(
+                It.Is<UpdateReservationChangeRequest>(req =>
+                    req.ReservationId == reservation.ReservationId
+                    && req.Apply
+                    && req.Date == new DateOnly(2026, 7, 10)
+                    && req.Time == new TimeOnly(14, 0)),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(fx.ChangeResult(reservation.ReservationId, applied: true));
+
+        var result = await fx.Tool.ExecuteAsync(Json("""{"action":"apply_change","date":"2026-07-10","time":"14:00"}"""), fx.Context);
+
+        result.Should().Contain("\"ok\":true");
+        result.Should().Contain("\"applied\":true");
+        fx.Reservations.Verify(r => r.UpdateReservationAsync(
+            It.Is<UpdateReservationChangeRequest>(req => req.Apply),
+            It.IsAny<CancellationToken>()), Times.Once);
+        fx.EscalationNotifier.Verify(n => n.NotifyAsync(
+            It.IsAny<Guid>(),
+            It.IsAny<IReadOnlyList<string>>(),
+            It.IsAny<EscalationNotification>(),
+            It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -62,9 +98,58 @@ public sealed class ManageReservationToolTests
         result.Should().Contain("\"applied\":true");
         fx.Context.ManageableReservations.Should().ContainSingle(r => r.ReservationId == reservation.ReservationId);
     }
+    [Fact]
+    public async Task ServiceChange_PutsReservationOnHoldAndEscalates()
+    {
+        var fx = new Fixture();
+        var reservation = fx.CreateReservation(customerConfirmed: true);
+        fx.Resolve(reservation);
+
+        var result = await fx.Tool.ExecuteAsync(Json("""{"action":"preview_change","service":"Corte premium de adulto"}"""), fx.Context);
+
+        result.Should().Contain("\"ok\":true");
+        result.Should().Contain("OnHold");
+        result.Should().Contain("escalated_to_human");
+        result.Should().Contain("reservation_change_requires_human:service");
+        result.Should().Contain("human_handoff");
+        reservation.Status.Should().Be(ReservationStatus.OnHold);
+        reservation.CustomerConfirmed.Should().BeFalse();
+        fx.ReservationRepository.Verify(r => r.UpdateAsync(reservation), Times.Once);
+        fx.UnitOfWork.Verify(u => u.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Once);
+        fx.EscalationNotifier.Verify(n => n.NotifyAsync(
+            fx.BusinessId,
+            It.IsAny<IReadOnlyList<string>>(),
+            It.Is<EscalationNotification>(notification => notification.Reason == "reservation_change_requires_human:service"),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
 
     [Fact]
-    public async Task RequestReschedule_WithoutTargetSlot_MarksReservationOnHoldAndStoresResponse()
+    public async Task AddOnsChange_PutsReservationOnHoldAndEscalates()
+    {
+        var fx = new Fixture();
+        var reservation = fx.CreateReservation(customerConfirmed: true);
+        fx.Resolve(reservation);
+
+        var result = await fx.Tool.ExecuteAsync(Json("""{"action":"preview_change","add_ons":"Barba premium"}"""), fx.Context);
+
+        result.Should().Contain("\"ok\":true");
+        result.Should().Contain("OnHold");
+        result.Should().Contain("escalated_to_human");
+        result.Should().Contain("reservation_change_requires_human:add_ons");
+        result.Should().Contain("human_handoff");
+        reservation.Status.Should().Be(ReservationStatus.OnHold);
+        reservation.CustomerConfirmed.Should().BeFalse();
+        fx.ReservationRepository.Verify(r => r.UpdateAsync(reservation), Times.Once);
+        fx.UnitOfWork.Verify(u => u.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Once);
+        fx.EscalationNotifier.Verify(n => n.NotifyAsync(
+            fx.BusinessId,
+            It.IsAny<IReadOnlyList<string>>(),
+            It.Is<EscalationNotification>(notification => notification.Reason == "reservation_change_requires_human:add_ons"),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task RequestReschedule_WithoutTargetSlot_StoresResponseWithoutPuttingReservationOnHold()
     {
         var fx = new Fixture();
         var reservation = fx.CreateReservation(customerConfirmed: true);
@@ -79,8 +164,10 @@ public sealed class ManageReservationToolTests
         var result = await fx.Tool.ExecuteAsync(Json("""{"action":"request_reschedule"}"""), fx.Context);
 
         result.Should().Contain("reschedule_requested");
-        reservation.Status.Should().Be(ReservationStatus.OnHold);
-        reservation.CustomerConfirmed.Should().BeFalse();
+        result.Should().Contain("collect_reschedule_target");
+        reservation.Status.Should().Be(ReservationStatus.Confirmed);
+        reservation.CustomerConfirmed.Should().BeTrue();
+        fx.ReservationRepository.Verify(r => r.UpdateAsync(It.IsAny<Reservation>()), Times.Never);
         saved.Should().NotBeNull();
         saved!.ResponseType.Should().Be(ReservationAttendanceResponseType.RescheduleRequested);
         fx.UnitOfWork.Verify(u => u.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Once);
@@ -185,7 +272,8 @@ public sealed class ManageReservationToolTests
         var result = await fx.Tool.ExecuteAsync(Json("""{"action":"complete_paid_reschedule","date":"2026-07-08","time":"14:00"}"""), fx.Context);
 
         result.Should().Contain("slot_unavailable");
-        result.Should().Contain("15:00-15:30");
+        result.Should().Contain("offer_alternative_slots");
+        result.Should().Contain("15:00");
         fx.Reservations.Verify(r => r.CreateFromIntentSnapshotAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<ReservationIntentSnapshot>(), It.IsAny<DateTime>(), It.IsAny<CancellationToken>()), Times.Never);
         fx.PaymentLifecycle.Verify(p => p.LinkReservationAsync(It.IsAny<PaymentTransaction>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
     }
@@ -203,6 +291,7 @@ public sealed class ManageReservationToolTests
         public Mock<ISchedulingPolicyProvider> SchedulingPolicy { get; } = new();
         public Mock<IUnitOfWork> UnitOfWork { get; } = new();
         public Mock<IConversationVerificationService> Verifications { get; } = new();
+        public Mock<IEscalationNotifier> EscalationNotifier { get; } = new();
         public Mock<IReservationRepository> ReservationRepository { get; } = new();
         public Mock<IReservationAttendanceResponseRepository> AttendanceResponses { get; } = new();
         public Mock<IScheduledAutomationJobRepository> ScheduledJobs { get; } = new();
@@ -217,6 +306,19 @@ public sealed class ManageReservationToolTests
             {
                 BusinessId = BusinessId,
                 ConversationId = ConversationId,
+                ConversationState = new MimosBabySpa.Domain.Models.ConversationState { ConversationId = ConversationId, BusinessId = BusinessId },
+                ChannelPhone = "+573001112233",
+                LatestUserMessage = "Quiero cambiar el servicio",
+                EscalationContacts = ["+573009998888"],
+                Config = new AgentConfig
+                {
+                    ReservationManagement = new ReservationManagementDefinitions
+                    {
+                        AutomaticChangeFields = ["date", "time"],
+                        EscalateChangeFields = ["service", "add_ons"],
+                        EscalationReasonCode = "reservation_change_requires_human"
+                    }
+                },
                 Facts = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
                 {
                     ["service"] = "Corte basico de adulto"
@@ -240,7 +342,8 @@ public sealed class ManageReservationToolTests
                 Availability.Object,
                 SchedulingPolicy.Object,
                 UnitOfWork.Object,
-                Verifications.Object);
+                Verifications.Object,
+                EscalationNotifier.Object);
         }
 
         public Reservation CreateReservation(bool customerConfirmed = true) => new()

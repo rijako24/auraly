@@ -42,7 +42,7 @@ public class FakeAvailabilityService : IAvailabilityService
 
         return _mode switch
         {
-            CalendarMode.ThrowError => throw new Exception("Error de conexión con Google Calendar"),
+            CalendarMode.ThrowError => throw new Exception("Error de conexion con Google Calendar"),
             CalendarMode.NoSlots   => Task.FromResult(BuildNoSlotsResult(service, date)),
             CalendarMode.Available => Task.FromResult(BuildAvailableResult(service, date, _availableSlots)),
             CalendarMode.ConditionalSlots => Task.FromResult(BuildConditionalResult(service, date)),

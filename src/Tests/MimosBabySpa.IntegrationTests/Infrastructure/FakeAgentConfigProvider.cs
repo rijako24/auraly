@@ -25,7 +25,7 @@ public class FakeAgentConfigProvider : IAgentConfigProvider
                 Eres Mimo, asistente de MimosBabySpa.
 
                 ## SALUDO Y PRESENTACION
-                En el primer mensaje saluda y preséntate. En turnos siguientes no repitas el saludo.
+                En el primer mensaje saluda y presentate. En turnos siguientes no repitas el saludo.
                 """,
             Model = "gpt-4.1-mini",
             Temperature = 0.3f,

@@ -40,7 +40,17 @@ public sealed class ToolCapabilityGate : IToolCapabilityGate
                 false,
                 "agent_config_missing",
                 "Agent configuration is not available for tool gating.",
-                "Retry the turn or escalate to human."));
+                null));
+        }
+
+        var runtimeActive = !ReferenceEquals(ctx.RuntimeDecision, Runtime.FlowRuntimeDecision.Empty);
+        if (runtimeActive && !ctx.RuntimeDecision.IsToolAllowedByRuntime(tool))
+        {
+            return Task.FromResult(new GateResult(
+                false,
+                "tool_not_allowed_in_runtime_state",
+                "Tool is not allowed in the current runtime state.",
+                null));
         }
 
         var stageResult = EvaluateStageAllowedTools(tool, config, ctx);
@@ -67,12 +77,16 @@ public sealed class ToolCapabilityGate : IToolCapabilityGate
         if (stage is null || stage.AllowedTools.Count == 0)
             return null;
 
-        if (ToolFlowScope.IsAllowedInScope(tool.Name, config, stage))
+        var runtimeActive = !ReferenceEquals(ctx.RuntimeDecision, Runtime.FlowRuntimeDecision.Empty);
+        if (runtimeActive && ctx.RuntimeDecision.ExtraAllowedToolNames.Contains(tool.Name))
+            return null;
+
+        if (ToolFlowScope.IsAllowedInScope(tool.Name, config, stage, ctx.RuntimeDecision))
             return null;
 
         var remediation = !string.IsNullOrWhiteSpace(stage.Hint)
             ? stage.Hint.Trim()
-            : $"Continua con la etapa actual usando una de estas acciones: {string.Join(", ", stage.AllowedTools)}.";
+            : null;
 
         return new GateResult(
             false,

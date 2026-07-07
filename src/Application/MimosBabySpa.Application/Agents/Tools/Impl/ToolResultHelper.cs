@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 
 namespace MimosBabySpa.Application.Agents.Tools.Impl;
 
@@ -45,6 +45,9 @@ internal static class ToolResultHelper
 
     public static string Error(string code, string message, string? hint = null, bool recoverable = false) =>
         JsonSerializer.Serialize(new { ok = false, error = new { code, message, hint, recoverable } }, Options);
+
+    public static string ErrorWithLlm(string code, string message, string? hint, object? llm, bool recoverable = false) =>
+        JsonSerializer.Serialize(new { ok = false, error = new { code, message, hint, recoverable }, llm }, Options);
 
     public static string MissingPrerequisites(params string[] missing) =>
         Error("missing_prerequisites",

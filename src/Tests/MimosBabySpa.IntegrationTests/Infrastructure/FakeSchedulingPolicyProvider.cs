@@ -3,7 +3,7 @@ using MimosBabySpa.Application.Configuration;
 namespace MimosBabySpa.IntegrationTests.Infrastructure;
 
 /// <summary>
-/// Política de agendamiento fija para tests de integración (lun–sáb 08:00–18:00).
+/// Politica de agendamiento fija para tests de integracion (lun-sab 08:00-18:00).
 /// </summary>
 internal sealed class FakeSchedulingPolicyProvider : ISchedulingPolicyProvider
 {

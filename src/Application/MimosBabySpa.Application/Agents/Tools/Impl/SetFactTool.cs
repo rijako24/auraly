@@ -67,8 +67,8 @@ public sealed class SetFactTool : IAgentTool
 
 
     public string Description =>
-        "Registra en el estado de la conversación un dato aportado por el cliente. " +
-        "Úsala SOLO cuando el cliente entregue un dato nuevo o cambie uno existente. " +
+        "Registra en el estado de la conversaciÃ³n un dato aportado por el cliente. " +
+        "Ãšsala SOLO cuando el cliente entregue un dato nuevo o cambie uno existente. " +
         "NUNCA la uses para reconfirmar o repetir un dato que ya aparece en '## ESTADO ACTUAL' con el mismo valor. " +
         "Normaliza fechas a YYYY-MM-DD y horas a HH:mm antes de registrar. " +
         "Input: clave (key) y valor (value). Output: clave y valor normalizado almacenados.";
@@ -122,7 +122,7 @@ public sealed class SetFactTool : IAgentTool
 
 
 
-        // Normalizar alias → key canónico usando el schema del tenant
+        // Normalizar alias â†’ key canÃ³nico usando el schema del tenant
 
         var roleIndex = new FactRoleIndex(ctx.Config?.FactSchema ?? []);
 
@@ -148,7 +148,7 @@ public sealed class SetFactTool : IAgentTool
 
 
 
-        // Validación de tipo basada en schema del tenant (antes de normalizar valor)
+        // ValidaciÃ³n de tipo basada en schema del tenant (antes de normalizar valor)
 
         var schemaEntry = roleIndex.EntryFor(key);
 
@@ -210,10 +210,15 @@ public sealed class SetFactTool : IAgentTool
 
         if (key.Equals(ConversationFactKeys.Service, StringComparison.OrdinalIgnoreCase))
         {
-            return ToolResultHelper.Error(
+            return ToolResultHelper.ErrorWithLlm(
                 ToolErrorCodes.ServiceSelectionMismatch,
                 "Service selection cannot be stored with set_fact.",
-                "Use resolve_service_selection with the customer's raw wording; it will store booking.service only when the selection is unambiguous.",
+                hint: null,
+                new
+                {
+                    next_action = "resolve_service_selection",
+                    fact_key = ConversationFactKeys.Service
+                },
                 recoverable: true);
         }
 
@@ -412,7 +417,7 @@ public sealed class SetFactTool : IAgentTool
 
     /// Valida el valor contra el tipo declarado en factSchema.
 
-    /// Devuelve null si pasa la validación o un JSON de error si no.
+    /// Devuelve null si pasa la validaciÃ³n o un JSON de error si no.
 
     /// </summary>
 
@@ -477,5 +482,3 @@ public sealed class SetFactTool : IAgentTool
     }
 
 }
-
-

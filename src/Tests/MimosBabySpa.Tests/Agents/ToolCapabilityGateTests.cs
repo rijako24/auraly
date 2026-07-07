@@ -57,7 +57,7 @@ public class ToolCapabilityGateTests
 
         result.IsAllowed.Should().BeFalse();
         result.Code.Should().Be("precondition_failed");
-        result.Remediation.Should().Contain("check_availability");
+        result.Remediation.Should().BeNull();
     }
 
     [Fact]
@@ -169,7 +169,7 @@ public class ToolCapabilityGateTests
 
         result.IsAllowed.Should().BeFalse();
         result.Code.Should().Be("precondition_failed");
-        result.Remediation.Should().Contain("prepare_checkout");
+        result.Remediation.Should().BeNull();
     }
 
     [Fact]
@@ -180,7 +180,8 @@ public class ToolCapabilityGateTests
             Mock.Of<ISchedulingPolicyProvider>(),
             Mock.Of<IEmployeeAssignmentService>(),
             Mock.Of<MimosBabySpa.Domain.Repositories.IUnitOfWork>(),
-            _verifications);
+            _verifications,
+            null!);
 
         var ctx = CreateContext();
         ctx.Config = CreateConfigWithAddonsStage();
@@ -206,7 +207,8 @@ public class ToolCapabilityGateTests
             Mock.Of<ISchedulingPolicyProvider>(),
             Mock.Of<IEmployeeAssignmentService>(),
             Mock.Of<MimosBabySpa.Domain.Repositories.IUnitOfWork>(),
-            _verifications);
+            _verifications,
+            null!);
 
         var ctx = CreateContext();
         ctx.Config = CreateConfigWithAddonsStage();
@@ -338,7 +340,8 @@ public class ToolCapabilityGateTests
             Mock.Of<ISchedulingPolicyProvider>(),
             Mock.Of<IEmployeeAssignmentService>(),
             Mock.Of<IUnitOfWork>(),
-            _verifications);
+            _verifications,
+            null!);
 
         var ctx = CreateContext();
         ctx.Config = new AgentConfig

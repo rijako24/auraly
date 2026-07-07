@@ -1,7 +1,7 @@
 namespace MimosBabySpa.IntegrationTests.Interception;
 
 /// <summary>
-/// Representa una invocación de tool registrada durante un escenario de test.
+/// Representa una invocacion de tool registrada durante un escenario de test.
 /// </summary>
 public record ToolCallRecord(
     string ToolName,

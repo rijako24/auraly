@@ -72,6 +72,7 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
             Notifications = settings.Notifications ?? new NotificationDefinitions(),
             Escalations = settings.Escalations ?? new EscalationDefinitions(),
             ReservationAutomations = settings.ReservationAutomations ?? new ReservationAutomationDefinitions(),
+            ReservationManagement = settings.ReservationManagement ?? new ReservationManagementDefinitions(),
             Checkout = settings.Checkout ?? new CheckoutDefinitions(),
             Commerce = settings.Commerce ?? new CommerceConfig(),
             OperatingHours = settings.OperatingHours ?? new OperatingHoursDefinitions()
@@ -269,6 +270,7 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
         ValidateMessageSequences(config);
         ValidateNotifications(config);
         ValidateReservationAutomations(config);
+        ValidateReservationManagement(config);
         ValidateExternalEscalations(config);
         ValidateTemplates(config);
     }
@@ -462,6 +464,37 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
         }
     }
 
+    private void ValidateReservationManagement(AgentConfig config)
+    {
+        if (!config.EnabledToolNames.Contains("manage_reservation", StringComparer.OrdinalIgnoreCase))
+            return;
+
+        var policy = config.ReservationManagement;
+        if (policy.AutomaticChangeFields.Count == 0 && policy.EscalateChangeFields.Count == 0)
+        {
+            _logger.LogWarning(
+                "AgentConfig {AgentId}: manage_reservation is enabled but reservationManagement has no automaticChangeFields or escalateChangeFields",
+                config.AgentId);
+        }
+
+        var duplicateFields = policy.AutomaticChangeFields
+            .Intersect(policy.EscalateChangeFields, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (duplicateFields.Count > 0)
+        {
+            _logger.LogWarning(
+                "AgentConfig {AgentId}: reservationManagement has fields configured as both automatic and escalation: {Fields}",
+                config.AgentId,
+                string.Join(",", duplicateFields));
+        }
+
+        if (policy.EscalateChangeFields.Count > 0 && string.IsNullOrWhiteSpace(policy.EscalationReasonCode))
+        {
+            _logger.LogWarning(
+                "AgentConfig {AgentId}: reservationManagement has escalateChangeFields but escalationReasonCode is empty",
+                config.AgentId);
+        }
+    }
     private void ValidateExternalEscalations(AgentConfig config)
     {
         if (!config.Escalations.External.Enabled)
@@ -592,6 +625,7 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
         public WebhookDefinitions? Webhooks { get; set; }
         public NotificationDefinitions? Notifications { get; set; }
         public ReservationAutomationDefinitions? ReservationAutomations { get; set; }
+        public ReservationManagementDefinitions? ReservationManagement { get; set; }
         public CheckoutDefinitions? Checkout { get; set; }
         public CommerceConfig? Commerce { get; set; }
         public OperatingHoursDefinitions? OperatingHours { get; set; }

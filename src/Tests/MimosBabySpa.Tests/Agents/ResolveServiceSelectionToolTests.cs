@@ -8,6 +8,7 @@ using MimosBabySpa.Application.Agents.Facts;
 using MimosBabySpa.Application.Agents.Tools.Impl;
 using MimosBabySpa.Application.Services;
 using MimosBabySpa.Domain.Entities;
+using MimosBabySpa.Domain.Enums;
 using MimosBabySpa.Domain.Repositories;
 using ConversationStateModel = MimosBabySpa.Domain.Models.ConversationState;
 using Xunit;
@@ -18,6 +19,7 @@ public sealed class ResolveServiceSelectionToolTests
 {
     private readonly Mock<IConversationFactsService> _facts = new();
     private readonly Mock<IServiceRepository> _services = new();
+    private readonly Mock<IAddOnCatalogService> _addOnCatalog = new();
     private readonly ResolveServiceSelectionTool _tool;
 
     public ResolveServiceSelectionToolTests()
@@ -29,7 +31,7 @@ public sealed class ResolveServiceSelectionToolTests
             unitOfWork.Object,
             NullLogger<ServiceSelectionResolver>.Instance);
 
-        _tool = new ResolveServiceSelectionTool(resolver, _facts.Object);
+        _tool = new ResolveServiceSelectionTool(resolver, _facts.Object, _addOnCatalog.Object);
     }
 
     [Fact]
@@ -50,8 +52,9 @@ public sealed class ResolveServiceSelectionToolTests
         var error = doc.RootElement.GetProperty("error");
         error.GetProperty("code").GetString().Should().Be("service_selection_ambiguous");
         error.GetProperty("message").GetString().Should().Be("Service selection is ambiguous.");
-        error.GetProperty("hint").GetString().Should().Be("Call get_service_catalog with view=services and query using the customer's same service/category words; do not fall back to categories for this selection.");
+        error.GetProperty("hint").ValueKind.Should().Be(JsonValueKind.Null);
         error.GetProperty("recoverable").GetBoolean().Should().BeTrue();
+        doc.RootElement.GetProperty("llm").GetProperty("next_action").GetString().Should().Be("get_service_catalog");
         doc.RootElement.TryGetProperty("data", out _).Should().BeFalse();
         ctx.Facts.Should().NotContainKey(ConversationFactKeys.Service);
         _facts.Verify(f => f.SetAsync(
@@ -76,8 +79,9 @@ public sealed class ResolveServiceSelectionToolTests
         var error = doc.RootElement.GetProperty("error");
         error.GetProperty("code").GetString().Should().Be("service_selection_not_found");
         error.GetProperty("message").GetString().Should().Be("Service selection was not found.");
-        error.GetProperty("hint").GetString().Should().Be("Call get_service_catalog with view=services and query using the customer's same service/category words; do not fall back to categories for this selection.");
+        error.GetProperty("hint").ValueKind.Should().Be(JsonValueKind.Null);
         error.GetProperty("recoverable").GetBoolean().Should().BeTrue();
+        doc.RootElement.GetProperty("llm").GetProperty("next_action").GetString().Should().Be("get_service_catalog");
         doc.RootElement.TryGetProperty("data", out _).Should().BeFalse();
         ctx.Facts.Should().NotContainKey(ConversationFactKeys.Service);
         _facts.Verify(f => f.SetAsync(
@@ -85,6 +89,33 @@ public sealed class ResolveServiceSelectionToolTests
             It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
+    [Fact]
+    public async Task ExecuteAsync_WithManageableReservation_StillResolvesCatalogSelectionWithoutIntentHardcode()
+    {
+        var businessId = Guid.NewGuid();
+        SetupServices(businessId, "Corte premium de adulto");
+        var ctx = CreateContext(businessId);
+        ctx.LatestUserMessage = "Quiero cambiar el servicio a corte premium de adulto";
+        ctx.ManageableReservations =
+        [
+            new Reservation
+            {
+                Status = ReservationStatus.Confirmed,
+                ReservationDateTime = new DateTime(2026, 9, 2, 11, 0, 0),
+                Service = new Service { ServiceName = "Corte basico de adulto" }
+            }
+        ];
+
+        using var args = JsonDocument.Parse("""{"text":"corte premium de adulto"}""");
+        var json = await _tool.ExecuteAsync(args.RootElement, ctx, CancellationToken.None);
+
+        using var doc = JsonDocument.Parse(json);
+        doc.RootElement.GetProperty("ok").GetBoolean().Should().BeTrue();
+        ctx.Facts[ConversationFactKeys.Service].Should().Be("Corte premium de adulto");
+        _facts.Verify(f => f.SetAsync(
+            ctx.ConversationId, ctx.BusinessId, ConversationFactKeys.Service, "Corte premium de adulto",
+            false, It.IsAny<CancellationToken>()), Times.Once);
+    }
     [Fact]
     public async Task ExecuteAsync_UniqueSelection_PersistsCanonicalService()
     {

@@ -5,7 +5,7 @@ using MimosBabySpa.Domain.Enums;
 namespace MimosBabySpa.IntegrationTests.Infrastructure;
 
 /// <summary>
-/// FakeConversationService — creates and tracks in-memory conversations for integration tests.
+/// FakeConversationService - creates and tracks in-memory conversations for integration tests.
 /// </summary>
 public class FakeConversationService : IConversationService
 {

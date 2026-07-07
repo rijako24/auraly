@@ -100,7 +100,7 @@ public sealed class PrepareCheckoutTool : IAgentTool
                 return ToolResultHelper.Error(
                     "payment_phone_missing",
                     "Checkout requires payment but no payment phone binding was resolved.",
-                    $"Configure a factSchema entry with role 'customer.phone' or override the advanced checkout binding for {CheckoutSystemSlots.PaymentPhone}.");
+                    null);
             }
 
             var snapshotResult = BuildCheckoutSnapshot(quote, roles, ctx);
@@ -192,7 +192,7 @@ public sealed class PrepareCheckoutTool : IAgentTool
             return (null, ToolResultHelper.Error(
                 "service_not_found",
                 $"Service '{serviceName}' was not found in the catalog.",
-                "Use the canonical service name already selected if it can be resolved. Only call get_service_catalog if the service is genuinely unknown or ambiguous."));
+                null));
         }
 
         if (!string.IsNullOrWhiteSpace(addOns))
@@ -220,7 +220,7 @@ public sealed class PrepareCheckoutTool : IAgentTool
             return (null, ToolResultHelper.Error(
                 "checkout_mode_missing",
                 $"Checkout mode '{checkoutKindText}' is not configured for this agent.",
-                "Add the mode to SettingsJson.checkout.modes."));
+                null));
         }
 
         var pricing = await _pricing.ResolveAsync(
@@ -400,7 +400,7 @@ public sealed class PrepareCheckoutTool : IAgentTool
             return ToolResultHelper.Error(
                 "availability_verification_missing",
                 "Reservation checkout requires service, date and time before preparing payment.",
-                "Collect service, date and time, then call check_availability for that exact slot.",
+                null,
                 recoverable: true);
         }
 
@@ -415,7 +415,7 @@ public sealed class PrepareCheckoutTool : IAgentTool
         return ToolResultHelper.Error(
             "availability_verification_stale",
             "Availability has not been verified for the exact service, date and time that would be used for checkout.",
-            "Call check_availability again using the same service, date and time before prepare_checkout.",
+            null,
             recoverable: true);
     }
     private static string? ResolveSystemFact(
@@ -432,8 +432,20 @@ public sealed class PrepareCheckoutTool : IAgentTool
     private static string? Get(JsonElement args, string property) =>
         ToolResultHelper.TryGetString(args, property, out var value) ? value : null;
 
-    private static string ToolError(CheckoutPaymentSelectionError error) =>
-        ToolResultHelper.Error(error.Code, error.Message, error.Hint, error.Recoverable);
+    private static string ToolError(CheckoutPaymentSelectionError error)
+    {
+        var llm = error.AvailablePaymentMethods is { Count: > 0 }
+            ? new
+            {
+                next_action = "select_payment_method",
+                available_payment_methods = error.AvailablePaymentMethods
+            }
+            : null;
+
+        return llm is null
+            ? ToolResultHelper.Error(error.Code, error.Message, error.Hint, error.Recoverable)
+            : ToolResultHelper.ErrorWithLlm(error.Code, error.Message, error.Hint, llm, error.Recoverable);
+    }
 
     private static string? ResolveBinding(
         FactRoleIndex roles,

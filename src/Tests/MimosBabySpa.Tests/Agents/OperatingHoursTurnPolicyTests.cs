@@ -104,8 +104,7 @@ public sealed class OperatingHoursTurnPolicyTests
     public void Compose_WhenOutsideHours_ReturnsOnlyClosedBusinessPrompt()
     {
         var composer = new AgentPromptComposer(
-            new Application.Agents.Composition.FlowStageDetector(),
-            new Application.Agents.Composition.GuardEvaluator(new ConversationVerificationService()));
+            new Application.Agents.Composition.FlowStageDetector());
         var session = new AgentToolContext
         {
             OperatingHours = new OperatingHoursTurnContext(
@@ -136,7 +135,7 @@ public sealed class OperatingHoursTurnPolicyTests
         prompt.Should().NotContain("comprar");
         prompt.Should().NotContain("agendar");
         prompt.Should().NotContain("## ETAPA ACTUAL");
-        prompt.Should().NotContain("## ACCIONES DISPONIBLES");
+        prompt.Should().NotContain("## HERRAMIENTAS DE ESTE TURNO");
         prompt.Should().NotContain("search_products");
     }
 

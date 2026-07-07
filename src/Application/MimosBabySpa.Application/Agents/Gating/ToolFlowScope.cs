@@ -1,4 +1,5 @@
 using MimosBabySpa.Application.Agents.Configuration;
+using MimosBabySpa.Application.Agents.Runtime;
 using MimosBabySpa.Application.Agents.Tools;
 
 namespace MimosBabySpa.Application.Agents.Gating;
@@ -14,14 +15,18 @@ public static class ToolFlowScope
             return effectiveTools;
 
         return effectiveTools
-            .Where(tool => IsAllowedInScope(tool.Name, config, currentStage!))
+            .Where(tool => IsAllowedInScope(tool.Name, config, currentStage!, FlowRuntimeDecision.Empty))
             .ToList();
     }
 
-    public static bool IsAllowedInScope(string toolName, AgentConfig config, AgentFlowStage? currentStage) =>
+    public static bool IsAllowedInScope(
+        string toolName,
+        AgentConfig config,
+        AgentFlowStage? currentStage,
+        FlowRuntimeDecision runtimeDecision) =>
         !HasStageScope(config, currentStage)
         || IsAllowedByStage(toolName, currentStage!)
-        || IsAllowedByGlobalAction(toolName, config);
+        || IsAllowedByGlobalAction(toolName, config, runtimeDecision);
 
     private static bool HasStageScope(AgentConfig config, AgentFlowStage? currentStage) =>
         config.Flow.Stages.Count > 0
@@ -32,6 +37,13 @@ public static class ToolFlowScope
         currentStage.AllowedTools.Contains(toolName, StringComparer.OrdinalIgnoreCase);
 
     public static bool IsAllowedByGlobalAction(string toolName, AgentConfig config) =>
-        config.GlobalActions.Any(action =>
-            action.AllowedTools.Contains(toolName, StringComparer.OrdinalIgnoreCase));
+        IsAllowedByGlobalAction(toolName, config, FlowRuntimeDecision.Empty);
+
+    public static bool IsAllowedByGlobalAction(string toolName, AgentConfig config, FlowRuntimeDecision runtimeDecision)
+    {
+        var runtimeActive = !ReferenceEquals(runtimeDecision, FlowRuntimeDecision.Empty);
+        return config.GlobalActions.Any(action =>
+            (!runtimeActive || runtimeDecision.EnabledGlobalActionIds.Contains(action.Id))
+            && action.AllowedTools.Contains(toolName, StringComparer.OrdinalIgnoreCase));
+    }
 }

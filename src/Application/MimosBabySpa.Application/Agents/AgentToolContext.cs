@@ -1,5 +1,6 @@
 using MimosBabySpa.Domain.Entities;
 using MimosBabySpa.Domain.Models;
+using MimosBabySpa.Application.Agents.Runtime;
 
 namespace MimosBabySpa.Application.Agents;
 
@@ -47,6 +48,9 @@ public sealed class AgentToolContext
 
     /// <summary>Politicas efimeras calculadas para el turno actual.</summary>
     public OperatingHoursTurnContext OperatingHours { get; set; } = OperatingHoursTurnContext.Disabled;
+
+    /// <summary>Decision efimera de runtime calculada para este turno.</summary>
+    public FlowRuntimeDecision RuntimeDecision { get; set; } = FlowRuntimeDecision.Empty;
 
     /// <summary>Estado del turno actual (fragmentos, tokens, flags).</summary>
     internal AgentTurnExecution? Turn { get; set; }

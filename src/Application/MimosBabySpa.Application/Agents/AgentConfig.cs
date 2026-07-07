@@ -98,6 +98,8 @@ public sealed class AgentConfig
 
     public ReservationAutomationDefinitions ReservationAutomations { get; init; } = new();
 
+    public ReservationManagementDefinitions ReservationManagement { get; init; } = new();
+
     public CheckoutDefinitions Checkout { get; init; } = new();
 
     public CommerceConfig Commerce { get; init; } = new();

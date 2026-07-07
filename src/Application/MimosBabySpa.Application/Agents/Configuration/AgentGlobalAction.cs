@@ -10,4 +10,13 @@ public sealed class AgentGlobalAction
     public int Priority { get; init; }
     public string Goal { get; init; } = string.Empty;
     public string? Hint { get; init; }
-    public IReadOnlyList<string> AllowedTools { get; init; } = [];}
+
+    /// <summary>
+    /// Optional runtime conditions for this global action. Empty means always enabled.
+    /// Supported tokens include runtime_state:&lt;name&gt;, fact:&lt;key&gt;, manageable_reservation.exists,
+    /// payment.pending_checkout, payment.confirmed_without_reservation, and conversation.owner_human.
+    /// </summary>
+    public IReadOnlyList<string> RuntimeWhenAny { get; init; } = [];
+
+    public IReadOnlyList<string> AllowedTools { get; init; } = [];
+}

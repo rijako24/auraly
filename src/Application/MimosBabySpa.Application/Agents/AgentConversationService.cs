@@ -5,6 +5,7 @@ using MimosBabySpa.Application.Agents.Composition;
 using MimosBabySpa.Application.Agents.Configuration;
 using MimosBabySpa.Application.Agents.Facts;
 using MimosBabySpa.Application.Agents.Gating;
+using MimosBabySpa.Application.Agents.Runtime;
 using MimosBabySpa.Application.Agents.Templates;
 using MimosBabySpa.Application.Agents.Tools;
 using MimosBabySpa.Application.Agents.Tools.Impl;
@@ -51,6 +52,7 @@ public sealed class AgentConversationService : IAgentConversationService
     private readonly IPromptComposer _promptComposer;
     private readonly IAgentTurnResponseComposer _turnResponseComposer;
     private readonly IToolCapabilityGate _toolCapabilityGate;
+    private readonly IFlowRuntimeOrchestrator _flowRuntime;
     private readonly IFlowStageDetector _flowStageDetector;
     private readonly IFactHydrator _factHydrator;
     private readonly IUsageBillingService _usageBilling;
@@ -78,6 +80,7 @@ public sealed class AgentConversationService : IAgentConversationService
         IPromptComposer promptComposer,
         IAgentTurnResponseComposer turnResponseComposer,
         IToolCapabilityGate toolCapabilityGate,
+        IFlowRuntimeOrchestrator flowRuntime,
         IFlowStageDetector flowStageDetector,
         IFactHydrator factHydrator,
         IUsageBillingService usageBilling,
@@ -104,6 +107,7 @@ public sealed class AgentConversationService : IAgentConversationService
         _promptComposer = promptComposer;
         _turnResponseComposer = turnResponseComposer;
         _toolCapabilityGate = toolCapabilityGate;
+        _flowRuntime = flowRuntime;
         _flowStageDetector = flowStageDetector;
         _factHydrator = factHydrator;
         _usageBilling = usageBilling;
@@ -162,9 +166,13 @@ public sealed class AgentConversationService : IAgentConversationService
 
         var temporal = _temporalReferenceBuilder.Build(clockSnapshot);
         var latestPayment = await _paymentLifecycle.GetLatestByConversationAsync(conversationId, cancellationToken);
+        session.ActivePayment ??= latestPayment;
+
         var turnTools = await _turnToolResolver.ResolveAsync(config, clockSnapshot, cancellationToken);
         var effectiveTools = turnTools.EffectiveTools;
         session.OperatingHours = turnTools.OperatingHours;
+
+        session.RuntimeDecision = await _flowRuntime.ApplyAsync(config, session, userMessage, cancellationToken);
 
         var activeHistory = ProjectHistoryForTurn(history, state.ActiveRequestStartedAtUtc, session.ActivePayment, latestPayment);
 
@@ -414,7 +422,7 @@ public sealed class AgentConversationService : IAgentConversationService
         CancellationToken ct)
     {
         var currentStage = _flowStageDetector.DetectCurrentStage(config.Flow, toolCtx);
-        var scopedTools = ResolveScopedTools(config, toolCtx, compositionInput.EnabledTools, currentStage);
+        var scopedTools = AgentTurnToolScope.Resolve(config, toolCtx, compositionInput.EnabledTools, currentStage);
         var toolDefinitions = BuildToolDefinitions(config, scopedTools);
         var lastStageId = currentStage?.Id;
         turn.RecordPromptTrace(0, lastStageId, messages[0].Content ?? string.Empty, scopedTools.Select(t => t.Name).ToList());
@@ -466,6 +474,7 @@ public sealed class AgentConversationService : IAgentConversationService
                 var outboundCountBeforeTool = turn.OutboundMessages.Count;
 
                 var fragmentCountBeforeTool = turn.FragmentEntries.Count;
+                var fragmentRevisionBeforeTool = turn.FragmentRevision;
                 var factsBeforeTool = SnapshotFacts(toolCtx);
                 var outcome = await ExecuteToolCallAsync(toolCall, toolCtx, ct);
                 if (!outcome.IsError)
@@ -487,11 +496,11 @@ public sealed class AgentConversationService : IAgentConversationService
                 if (turn.OutboundMessages.Count > outboundCountBeforeTool)
                     userOutput = userOutput with { OutboundMessagesQueued = true };
 
-                if (HasNewRequiredFragment(turn, fragmentCountBeforeTool))
+                if (turn.HasTurnCompletingFragmentSince(fragmentRevisionBeforeTool))
                 {
                     userOutput = userOutput with { FragmentQueued = true };
                     _logger.LogInformation(
-                        "Conv {ConvId}: required fragment output queued; waiting for next customer turn",
+                        "Conv {ConvId}: turn-completing fragment output queued; waiting for next customer turn",
                         conversationId);
                     break;
                 }
@@ -516,7 +525,13 @@ public sealed class AgentConversationService : IAgentConversationService
             }
             if (ShouldCompleteTurnForUserOutput(userOutput, turn, conversationId))
                 return AgentLoopOutcome.Completed(string.Empty);
-            RefreshSystemPromptIfStageChanged(config, messages, compositionInput, turn, iteration + 1, ref lastStageId);
+
+            if (RefreshSystemPromptIfStageChanged(config, messages, compositionInput, turn, iteration + 1, ref lastStageId))
+            {
+                currentStage = _flowStageDetector.DetectCurrentStage(config.Flow, toolCtx);
+                scopedTools = AgentTurnToolScope.Resolve(config, toolCtx, compositionInput.EnabledTools, currentStage);
+                toolDefinitions = BuildToolDefinitions(config, scopedTools);
+            }
         }
 
         return AgentLoopOutcome.Failed("Max iterations exceeded without final response.");
@@ -554,10 +569,6 @@ public sealed class AgentConversationService : IAgentConversationService
         public static UserOutputCompletionState None { get; } = new(false, false);
     }
 
-    private static bool HasNewRequiredFragment(AgentTurnExecution turn, int previousFragmentCount) =>
-        turn.FragmentEntries
-            .Skip(previousFragmentCount)
-            .Any(entry => entry.Fragment.Priority == FragmentPriority.Required);
 
     private bool HasStageChanged(AgentConfig config, AgentToolContext toolCtx, string? lastStageId)
     {
@@ -566,9 +577,9 @@ public sealed class AgentConversationService : IAgentConversationService
     }
     /// <summary>
     /// Tras ejecutar tools, la etapa activa puede haber avanzado. Recompone el system prompt
-    /// para que el LLM reciba goal, hint y acciones_de_etapa actualizadas en la siguiente iteración.
+    /// para que el LLM reciba goal, hint y herramientas del turno actualizadas en la siguiente iteracion.
     /// </summary>
-    private void RefreshSystemPromptIfStageChanged(
+    private bool RefreshSystemPromptIfStageChanged(
         AgentConfig config,
         List<ChatMessage> messages,
         PromptCompositionInput compositionInput,
@@ -578,7 +589,7 @@ public sealed class AgentConversationService : IAgentConversationService
     {
         var currentStageId = _flowStageDetector.DetectCurrentStage(config.Flow, compositionInput.Session)?.Id;
         if (string.Equals(currentStageId, lastStageId, StringComparison.OrdinalIgnoreCase))
-            return;
+            return false;
 
         lastStageId = currentStageId;
         var systemPrompt = _promptComposer.Compose(compositionInput);
@@ -586,7 +597,7 @@ public sealed class AgentConversationService : IAgentConversationService
         if (compositionInput.Session is not null)
         {
             var currentStage = _flowStageDetector.DetectCurrentStage(config.Flow, compositionInput.Session);
-            var scopedTools = ResolveScopedTools(config, compositionInput.Session, compositionInput.EnabledTools, currentStage);
+            var scopedTools = AgentTurnToolScope.Resolve(config, compositionInput.Session, compositionInput.EnabledTools, currentStage);
             turn.RecordPromptTrace(nextIteration, currentStageId, systemPrompt, scopedTools.Select(t => t.Name).ToList());
         }
         else
@@ -597,6 +608,8 @@ public sealed class AgentConversationService : IAgentConversationService
         _logger.LogDebug(
             "Conv: stage changed to '{Stage}' — system prompt refreshed",
             currentStageId ?? "(none)");
+
+        return true;
     }
 
     private async Task<ToolExecutionOutcome> ExecuteToolCallAsync(
@@ -1571,48 +1584,6 @@ public sealed class AgentConversationService : IAgentConversationService
         messages.Add(ChatMessage.User(userMessage));
         return messages;
     }
-    private static IReadOnlyList<IAgentTool> ResolveScopedTools(
-        AgentConfig config,
-        AgentToolContext session,
-        IReadOnlyList<IAgentTool> effectiveTools,
-        AgentFlowStage? currentStage)
-    {
-        var allowedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-        if (currentStage?.AllowedTools.Count > 0)
-        {
-            foreach (var toolName in currentStage.AllowedTools)
-                allowedNames.Add(toolName);
-        }
-
-        foreach (var action in config.GlobalActions)
-        {
-            foreach (var toolName in action.AllowedTools)
-                allowedNames.Add(toolName);
-        }
-
-        if (allowedNames.Count == 0)
-            return effectiveTools;
-
-        var byName = effectiveTools.ToDictionary(t => t.Name, StringComparer.OrdinalIgnoreCase);
-        var scopedTools = FilterTools(byName, allowedNames.ToList());
-        return scopedTools.Count > 0 ? scopedTools : effectiveTools;
-    }
-
-    private static IReadOnlyList<IAgentTool> FilterTools(
-        IReadOnlyDictionary<string, IAgentTool> byName,
-        IReadOnlyList<string> names)
-    {
-        if (names.Count == 0)
-            return [];
-
-        return names
-            .Select(name => byName.TryGetValue(name, out var tool) ? tool : null)
-            .Where(tool => tool is not null)
-            .Cast<IAgentTool>()
-            .ToList();
-    }
-
     private static ChatCompletionOptions BuildOptions(AgentConfig config, bool forceText) =>
         new() { Temperature = config.Temperature, MaxTokens = 800, ForceTextResponse = forceText };
 

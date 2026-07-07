@@ -468,8 +468,20 @@ public sealed class PrepareOrderCheckoutTool : IAgentTool
     private static string? GetFact(AgentToolContext ctx, string key) =>
         ctx.Facts.TryGetValue(key, out var value) ? value : null;
 
-    private static string ToolError(CheckoutPaymentSelectionError error) =>
-        ToolResultHelper.Error(error.Code, error.Message, error.Hint, error.Recoverable);
+    private static string ToolError(CheckoutPaymentSelectionError error)
+    {
+        var llm = error.AvailablePaymentMethods is { Count: > 0 }
+            ? new
+            {
+                next_action = "select_payment_method",
+                available_payment_methods = error.AvailablePaymentMethods
+            }
+            : null;
+
+        return llm is null
+            ? ToolResultHelper.Error(error.Code, error.Message, error.Hint, error.Recoverable)
+            : ToolResultHelper.ErrorWithLlm(error.Code, error.Message, error.Hint, llm, error.Recoverable);
+    }
 
     private static string ShortId(Guid id) => id.ToString("N")[..8].ToUpperInvariant();
 

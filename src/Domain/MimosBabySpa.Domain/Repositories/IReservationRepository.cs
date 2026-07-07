@@ -44,7 +44,15 @@ public interface IReservationRepository
     Task<Reservation?> GetActiveByConversationIdAsync(Guid conversationId, CancellationToken ct = default);
 
     /// <summary>
-    /// Reservas confirmadas o en espera del cliente (teléfono), con cita hoy o futura según el día del negocio.
+    /// Reservas confirmadas o en espera creadas en la conversacion, con cita hoy o futura segun el dia del negocio.
+    /// </summary>
+    Task<IReadOnlyList<Reservation>> GetManageableByConversationIdAsync(
+        Guid conversationId,
+        DateOnly businessToday,
+        CancellationToken ct = default);
+
+    /// <summary>
+    /// Reservas confirmadas o en espera del cliente (telefono), con cita hoy o futura segun el dia del negocio.
     /// </summary>
     Task<IReadOnlyList<Reservation>> GetManageableByCustomerPhoneAsync(
         Guid businessId,
@@ -53,9 +61,9 @@ public interface IReservationRepository
         CancellationToken ct = default);
 
     Task<bool> ExistsOverlappingReservationAsync(
-        Guid businessId, 
-        DateTime reservationDate, 
-        TimeSpan reservationTime, 
-        int durationMinutes, 
+        Guid businessId,
+        DateTime reservationDate,
+        TimeSpan reservationTime,
+        int durationMinutes,
         Guid? excludeReservationId = null);
 }

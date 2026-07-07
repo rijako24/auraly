@@ -55,7 +55,7 @@ public sealed class GuardEvaluator : IGuardEvaluator
             return new ToolAvailabilityResult(
                 false,
                 $"Missing required fact '{key}'.",
-                $"Collect required fact '{key}' before this action.");
+                null);
         }
 
         if (requirement.StartsWith("verification:", StringComparison.OrdinalIgnoreCase))
@@ -73,7 +73,7 @@ public sealed class GuardEvaluator : IGuardEvaluator
             return new ToolAvailabilityResult(
                 false,
                 "There is a pending checkout link for this conversation.",
-                "Wait for payment confirmation, continue the pending checkout, or abandon it before this action.");
+                null);
         }
 
         if (requirement.Equals("state:payment_confirmed_no_slot", StringComparison.OrdinalIgnoreCase))
@@ -89,7 +89,7 @@ public sealed class GuardEvaluator : IGuardEvaluator
             return new ToolAvailabilityResult(
                 false,
                 "No confirmed payment pending slot assignment.",
-                "Only use this action when a confirmed payment is pending slot assignment.");
+                null);
         }
 
         if (requirement.Equals("flag:verbal_confirmation", StringComparison.OrdinalIgnoreCase))
@@ -104,7 +104,7 @@ public sealed class GuardEvaluator : IGuardEvaluator
         return new ToolAvailabilityResult(
                 false,
                 $"Unknown guard requirement '{requirement}'.",
-                "Check agent guard configuration.");
+                null);
     }
 
     private static GuardDefinition? ResolveGuard(IAgentTool tool, AgentConfig config)
@@ -174,7 +174,7 @@ public sealed class GuardEvaluator : IGuardEvaluator
             return new ToolAvailabilityResult(
                 false,
                 $"Unsupported expr guard '{raw}'.",
-                "Use: facts.KEY or verification.TYPE.");
+                null);
         }
 
         var passed = negate ? !result : result;
@@ -185,7 +185,7 @@ public sealed class GuardEvaluator : IGuardEvaluator
         return new ToolAvailabilityResult(
             false,
             negate ? negativeBlockReason : positiveBlockReason,
-            $"Check guard expression: {(negate ? "NOT " : "")}{raw}");
+            null);
     }
 
     private ToolAvailabilityResult EvaluateVerification(
@@ -200,16 +200,7 @@ public sealed class GuardEvaluator : IGuardEvaluator
             return new ToolAvailabilityResult(
                 false,
                 $"Cannot evaluate '{factType}' — required inputs are missing.",
-                factType switch
-                {
-                    VerificationFactTypes.AvailabilityChecked =>
-                        "Call check_availability first for the same service, date and time.",
-                    VerificationFactTypes.CheckoutPrepared =>
-                        "Call prepare_checkout first to show the booking summary.",
-                    VerificationFactTypes.CheckoutNoPaymentPrepared =>
-                        "Call prepare_checkout first and continue only when it returns payment_required=false.",
-                    _ => "Complete required fields first."
-                });
+                null);
         }
 
         if (_verifications.IsActive(ctx.ConversationState, factType, factsForCheck))
@@ -220,23 +211,23 @@ public sealed class GuardEvaluator : IGuardEvaluator
             VerificationFactTypes.AvailabilityChecked => new ToolAvailabilityResult(
                 false,
                 "Availability has not been verified for the current booking inputs.",
-                "Call check_availability first for the same service, date and time."),
+                null),
             VerificationFactTypes.CheckoutPrepared => new ToolAvailabilityResult(
                 false,
                 "Checkout summary has not been prepared for the current booking inputs.",
-                "Call prepare_checkout to render the summary before create_reservation."),
+                null),
             VerificationFactTypes.CheckoutNoPaymentPrepared => new ToolAvailabilityResult(
                 false,
                 "A no-payment reservation checkout has not been prepared for the current booking inputs.",
-                "Call prepare_checkout first. Only call create_reservation after verbal confirmation when payment_required=false."),
+                null),
             VerificationFactTypes.CustomerIdentified => new ToolAvailabilityResult(
                 false,
                 "Customer name and phone must be collected before creating a reservation.",
-                "Use set_fact for customer_name and customer_phone."),
+                null),
             _ => new ToolAvailabilityResult(
                 false,
                 $"Verification '{factType}' is not active.",
-                $"Complete the step that records '{factType}' before calling {tool.Name}.")
+                null)
         };
     }
 

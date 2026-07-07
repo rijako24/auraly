@@ -6,8 +6,8 @@ using MimosBabySpa.Application.Agents.Tools;
 namespace MimosBabySpa.IntegrationTests.Interception;
 
 /// <summary>
-/// Decorador sobre IAgentTool que registra cada ejecución en un ToolCallLog.
-/// Usa el patrón Decorator — envuelve cualquier IAgentTool sin modificarlo.
+/// Decorador sobre IAgentTool que registra cada ejecucion en un ToolCallLog.
+/// Usa el patron Decorator - envuelve cualquier IAgentTool sin modificarlo.
 /// </summary>
 public class ToolCallInterceptor : IAgentTool
 {

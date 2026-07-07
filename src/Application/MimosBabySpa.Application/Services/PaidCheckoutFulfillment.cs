@@ -125,6 +125,37 @@ public sealed class ReservationPaidCheckoutFulfillmentHandler : IPaidCheckoutFul
             snapshot.ReservationDateTime,
             snapshot.CustomerPhone);
 
+        var existingReservation = await FindExistingReservationForPaymentAsync(
+            businessId,
+            payment.ConversationId,
+            snapshot.ServiceId,
+            snapshot.ReservationDateTime,
+            ct);
+        if (existingReservation is not null)
+        {
+            await _paymentLifecycle.LinkReservationAsync(payment, existingReservation.ReservationId, ct);
+
+            _logger.LogInformation(
+                "PaidCheckout linked existing reservation Channel={Channel} PaymentTransactionId={PaymentTransactionId} Ref={Ref} ReservationId={ReservationId} BusinessId={BusinessId} ConversationId={ConversationId} ServiceId={ServiceId} ReservationDateTime={ReservationDateTime}",
+                confirmationChannel,
+                payment.PaymentTransactionId,
+                payment.PaymentReferenceId,
+                existingReservation.ReservationId,
+                businessId,
+                payment.ConversationId,
+                snapshot.ServiceId,
+                snapshot.ReservationDateTime);
+
+            return new PaidCheckoutFulfillmentResult(
+                ResolveOutcome(payment, WompiWebhookOutcomes.ReservationCreated),
+                "order_created",
+                existingReservation.ReservationId,
+                existingReservation.CustomerPhoneSnapshot,
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+                "payment_reservation_already_created",
+                SequenceReservation: existingReservation,
+                NotifyCustomer: false);
+        }
         var policy = await _schedulingPolicy.GetAsync(businessId, ct);
         var availability = await _availabilityService.CheckAvailabilityAsync(
             businessId,
@@ -295,6 +326,30 @@ public sealed class ReservationPaidCheckoutFulfillmentHandler : IPaidCheckoutFul
         return conflicts.Count == 0 ? "(none_found)" : string.Join("; ", conflicts);
     }
 
+    private async Task<Reservation?> FindExistingReservationForPaymentAsync(
+        Guid businessId,
+        Guid conversationId,
+        Guid serviceId,
+        DateTime reservationDateTime,
+        CancellationToken ct)
+    {
+        var reservation = await _unitOfWork.Reservations.GetActiveByConversationIdAsync(conversationId, ct);
+        if (reservation is null)
+            return null;
+
+        if (reservation.BusinessId != businessId
+            || reservation.ServiceId != serviceId
+            || reservation.ReservationDateTime != reservationDateTime)
+        {
+            return null;
+        }
+
+        return reservation.Status is ReservationStatus.Confirmed
+            or ReservationStatus.PendingCalendar
+            or ReservationStatus.OnHold
+            ? reservation
+            : null;
+    }
     private static string ResolveConfirmationChannel(PaymentTransaction payment)
     {
         if (payment.Source == PaymentTransactionSource.Manual)

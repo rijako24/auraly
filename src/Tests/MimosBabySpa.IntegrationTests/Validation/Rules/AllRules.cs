@@ -13,8 +13,8 @@ public class ReservationMustCallCreateReservationRule : ITestRule
         return new TestRuleResult(
             Passed: called,
             Message: called
-                ? "âœ… create_reservation fue invocado."
-                : "âŒ create_reservation NO fue invocado aunque se esperaba una reserva exitosa.",
+                ? "PASS create_reservation fue invocado."
+                : "FAIL create_reservation NO fue invocado aunque se esperaba una reserva exitosa.",
             RuleName: Name);
     }
 }
@@ -29,14 +29,14 @@ public class CheckAvailabilityBeforeCreateReservationRule : ITestRule
         var createCalled = log.WasCalled("create_reservation");
 
         if (!createCalled)
-            return new TestRuleResult(true, "â„¹ï¸ create_reservation no fue invocado â€” regla no aplica.", Name);
+            return new TestRuleResult(true, "INFO create_reservation no fue invocado; regla no aplica.", Name);
 
         var inOrder = log.CalledBefore("check_availability", "create_reservation");
         return new TestRuleResult(
             Passed: checkCalled && inOrder,
             Message: checkCalled && inOrder
-                ? "âœ… check_availability precediÃ³ a create_reservation."
-                : "âŒ create_reservation fue llamado SIN haber verificado disponibilidad antes.",
+                ? "PASS check_availability precedio a create_reservation."
+                : "FAIL create_reservation fue llamado SIN haber verificado disponibilidad antes.",
             RuleName: Name);
     }
 }
@@ -51,13 +51,13 @@ public class NoConfirmationWithoutAvailabilityCheckRule : ITestRule
         var checkCalled = log.WasCalled("check_availability");
 
         if (!createCalled)
-            return new TestRuleResult(true, "â„¹ï¸ Sin reserva creada â€” regla no aplica.", Name);
+            return new TestRuleResult(true, "INFO Sin reserva creada; regla no aplica.", Name);
 
         return new TestRuleResult(
             Passed: checkCalled,
             Message: checkCalled
-                ? "âœ… Disponibilidad verificada antes de confirmar."
-                : "âŒ Se intentÃ³ confirmar reserva sin verificar disponibilidad.",
+                ? "PASS Disponibilidad verificada antes de confirmar."
+                : "FAIL Se intento confirmar reserva sin verificar disponibilidad.",
             RuleName: Name);
     }
 }
@@ -75,8 +75,8 @@ public class BotMustNotInventTimeSlotsRule : ITestRule
         return new TestRuleResult(
             Passed: passed,
             Message: passed
-                ? "âœ… El bot no inventÃ³ horarios â€” consultÃ³ disponibilidad real."
-                : "âŒ El bot creÃ³ una reserva sin consultar disponibilidad (posible horario inventado).",
+                ? "PASS El bot no invento horarios; consulto disponibilidad real."
+                : "FAIL El bot creo una reserva sin consultar disponibilidad (posible horario inventado).",
             RuleName: Name);
     }
 }
@@ -94,8 +94,8 @@ public class NoDuplicateReservationRule : ITestRule
         return new TestRuleResult(
             Passed: !duplicates,
             Message: !duplicates
-                ? "âœ… No hay reservas duplicadas."
-                : $"âŒ Se detectaron {successfulCalls.Count} reservas exitosas â€” posible duplicado.",
+                ? "PASS No hay reservas duplicadas."
+                : $"FAIL Se detectaron {successfulCalls.Count} reservas exitosas; posible duplicado.",
             RuleName: Name);
     }
 }

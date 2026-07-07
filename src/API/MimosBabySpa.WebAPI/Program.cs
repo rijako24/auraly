@@ -15,6 +15,7 @@ using MimosBabySpa.Application.Agents.Composition;
 using MimosBabySpa.Application.Agents.Facts;
 using MimosBabySpa.Application.Agents.Facts.Resolvers;
 using MimosBabySpa.Application.Agents.Gating;
+using MimosBabySpa.Application.Agents.Runtime;
 using MimosBabySpa.Application.Agents.Templates;
 using MimosBabySpa.Application.Agents.Testing;
 using MimosBabySpa.Application.Agents.Tools;
@@ -243,6 +244,10 @@ builder.Services.AddSingleton<IFlowStageDetector, FlowStageDetector>();
 builder.Services.AddScoped<IConversationVerificationService, ConversationVerificationService>();
 builder.Services.AddScoped<IGuardEvaluator, GuardEvaluator>();
 builder.Services.AddScoped<IToolCapabilityGate, ToolCapabilityGate>();
+builder.Services.AddSingleton<ITurnEventExtractor, NoOpTurnEventExtractor>();
+builder.Services.AddScoped<IFlowRuntimeStateResolver, FlowRuntimeStateResolver>();
+builder.Services.AddScoped<IFlowPolicyEngine, FlowPolicyEngine>();
+builder.Services.AddScoped<IFlowRuntimeOrchestrator, FlowRuntimeOrchestrator>();
 builder.Services.AddScoped<IOperatingHoursTurnPolicy, OperatingHoursTurnPolicy>();
 builder.Services.AddScoped<IAgentTurnToolResolver, AgentTurnToolResolver>();
 builder.Services.AddScoped<IPromptComposer, AgentPromptComposer>();
@@ -370,6 +375,3 @@ using (var scope = app.Services.CreateScope())
 }
 
 app.Run();
-
-
-

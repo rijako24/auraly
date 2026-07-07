@@ -4,6 +4,8 @@ namespace MimosBabySpa.Application.Services;
 
 public sealed class ExternalEscalationExpirationProcess : ITimedProcess
 {
+    public const string ProcessName = "external_escalation_expiration";
+
     private readonly IExternalEscalationService _escalations;
     private readonly IExternalEscalationOutcomePublisher _outcomes;
     private readonly ILogger<ExternalEscalationExpirationProcess> _logger;
@@ -18,7 +20,7 @@ public sealed class ExternalEscalationExpirationProcess : ITimedProcess
         _logger = logger;
     }
 
-    public string Name => "external_escalation_expiration";
+    public string Name => ProcessName;
 
     public async Task RunAsync(CancellationToken ct = default)
     {

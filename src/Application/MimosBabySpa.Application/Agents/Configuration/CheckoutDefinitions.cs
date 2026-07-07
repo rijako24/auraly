@@ -178,7 +178,12 @@ public sealed record CheckoutPaymentSelection(
     public bool RequiresPayment => PayableCents > 0;
 }
 
-public sealed record CheckoutPaymentSelectionError(string Code, string Message, string? Hint = null, bool Recoverable = false);
+public sealed record CheckoutPaymentSelectionError(
+    string Code,
+    string Message,
+    string? Hint = null,
+    bool Recoverable = false,
+    IReadOnlyList<string>? AvailablePaymentMethods = null);
 
 public static class CheckoutPaymentSelectionResolver
 {
@@ -193,7 +198,7 @@ public static class CheckoutPaymentSelectionResolver
             return Error(
                 "checkout_payment_methods_missing",
                 $"Checkout mode '{checkoutKind}' has no paymentMethods configured.",
-                "Configure at least one payment method with its template.");
+                hint: null);
         }
 
         var configured = ResolveMethod(mode, rawPaymentMethod);
@@ -210,10 +215,9 @@ public static class CheckoutPaymentSelectionResolver
             return Error(
                 "invalid_payment_method",
                 "Payment method is not configured for this checkout mode.",
-                string.IsNullOrWhiteSpace(options)
-                    ? "Ask the customer for a configured payment method."
-                    : $"Ask the customer to choose one of the configured payment methods: {options}.",
-                recoverable: true);
+                hint: null,
+                recoverable: true,
+                availablePaymentMethods: options);
         }
 
         return FromMethod(configured.Value, totalCents, checkoutKind);
@@ -236,7 +240,7 @@ public static class CheckoutPaymentSelectionResolver
                 return Error(
                     "checkout_payment_percentage_missing",
                     $"Payment method '{key}' in checkout mode '{checkoutKind}' has payment configured without percentage.",
-                    "Set payment.percentage or remove payment from the method.");
+                    hint: null);
             }
 
             if (percentage <= 0 || percentage > 100)
@@ -244,7 +248,7 @@ public static class CheckoutPaymentSelectionResolver
                 return Error(
                     "checkout_payment_percentage_invalid",
                     $"Payment method '{key}' in checkout mode '{checkoutKind}' has invalid payment percentage.",
-                    "Use a percentage between 1 and 100.");
+                    hint: null);
             }
         }
 
@@ -254,7 +258,7 @@ public static class CheckoutPaymentSelectionResolver
             return Error(
                 "checkout_template_missing",
                 $"Payment method '{key}' in checkout mode '{checkoutKind}' has no template configured.",
-                "Set template in the selected payment method.");
+                hint: null);
         }
 
         if (payableCents > 0 && string.IsNullOrWhiteSpace(method.ConfirmationOutcome))
@@ -262,7 +266,7 @@ public static class CheckoutPaymentSelectionResolver
             return Error(
                 "checkout_outcome_missing",
                 $"Payment method '{key}' in checkout mode '{checkoutKind}' creates a payment link but has no confirmationOutcome.",
-                "Set confirmationOutcome in the selected payment method.");
+                hint: null);
         }
 
         return new CheckoutPaymentSelection(
@@ -297,8 +301,8 @@ public static class CheckoutPaymentSelectionResolver
         return null;
     }
 
-    private static string DescribeConfiguredPaymentMethods(CheckoutModeDefinition mode) =>
-        string.Join(", ", mode.PaymentMethods.Select(kvp => PaymentMethodLabel(kvp.Key, kvp.Value)));
+    private static IReadOnlyList<string> DescribeConfiguredPaymentMethods(CheckoutModeDefinition mode) =>
+        mode.PaymentMethods.Select(kvp => PaymentMethodLabel(kvp.Key, kvp.Value)).ToArray();
 
     private static string PaymentMethodLabel(string key, CheckoutPaymentMethodDefinition method) =>
         string.IsNullOrWhiteSpace(method.Label) ? key : method.Label.Trim();
@@ -307,8 +311,9 @@ public static class CheckoutPaymentSelectionResolver
         string code,
         string message,
         string? hint = null,
-        bool recoverable = false) =>
-        new(false, new CheckoutPaymentSelectionError(code, message, hint, recoverable), string.Empty, string.Empty, null, 0, string.Empty, string.Empty);
+        bool recoverable = false,
+        IReadOnlyList<string>? availablePaymentMethods = null) =>
+        new(false, new CheckoutPaymentSelectionError(code, message, hint, recoverable, availablePaymentMethods), string.Empty, string.Empty, null, 0, string.Empty, string.Empty);
 
     private static string NormalizePaymentMethodToken(string? value)
     {

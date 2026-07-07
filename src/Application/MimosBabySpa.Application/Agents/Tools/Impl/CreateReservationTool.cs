@@ -111,6 +111,22 @@ public sealed class CreateReservationTool : IAgentTool
             });
         }
 
+        var activePayment = ctx.ActivePayment;
+        if (activePayment?.Status == PaymentTransactionStatus.Created)
+        {
+            return ToolResultHelper.Error(
+                "payment_required",
+                "A payment link is pending for this reservation. Wait for payment confirmation before creating the reservation.",
+                "Do not call create_reservation for paid checkout flows.");
+        }
+
+        if (activePayment?.Status == PaymentTransactionStatus.Confirmed && !activePayment.ReservationId.HasValue)
+        {
+            return ToolResultHelper.Error(
+                "payment_fulfillment_pending",
+                "Payment is confirmed but no reservation is linked yet. The payment fulfillment handler must create or link the reservation.",
+                "Do not call create_reservation after payment confirmation.");
+        }
         EnsureReservationFacts(ctx, service!, dateStr!, timeStr!, customerName!, customerPhone!, customerEmail);
 
         var idempotentResult = TryBuildIdempotentResult(ctx, service!, dateStr!, timeStr!, customerName!);
@@ -141,7 +157,7 @@ public sealed class CreateReservationTool : IAgentTool
                 availability.ResponseMessage ?? "The selected time is not available.",
                 availability.AvailableOptions.Count > 0
                     ? $"Available options: {string.Join(", ", availability.AvailableOptions.Select(o => $"{o.Start}-{o.End}"))}"
-                    : "Call check_availability for alternative times.");
+                    : null);
         }
 
         var intent = await _intentBuilder.BuildFromContextAsync(ctx, cancellationToken);

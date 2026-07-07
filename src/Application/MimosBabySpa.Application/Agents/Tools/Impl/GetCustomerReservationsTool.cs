@@ -3,6 +3,7 @@ using MimosBabySpa.Application.Services;
 
 namespace MimosBabySpa.Application.Agents.Tools.Impl;
 
+[AgentToolMetadata("get_customer_reservations", Capabilities = new[] { ToolCapabilities.ReservationManage })]
 public sealed class GetCustomerReservationsTool : IAgentTool
 {
     private readonly IReservationLifecycleService _reservationLifecycle;
@@ -13,6 +14,8 @@ public sealed class GetCustomerReservationsTool : IAgentTool
     }
 
     public string Name => "get_customer_reservations";
+
+    public IReadOnlyList<string> Capabilities => [ToolCapabilities.ReservationManage];
 
     public string Description =>
         "Returns upcoming reservations that belong to the current customer channel in the current business. " +

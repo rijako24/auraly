@@ -5,7 +5,7 @@ namespace MimosBabySpa.IntegrationTests.Infrastructure;
 /// <summary>
 /// IChatClient falso que devuelve respuestas pre-programadas en secuencia.
 /// Cada llamada a CompleteAsync extrae el siguiente resultado de la cola.
-/// Si la cola se agota, devuelve un Stop genÃ©rico.
+/// Si la cola se agota, devuelve un Stop generico.
 /// </summary>
 public class FakeChatClient : IChatClient
 {
@@ -39,7 +39,7 @@ public class FakeChatClient : IChatClient
         });
     }
 
-    /// <summary>Agrega mÃ¡s resultados scripteados a la cola (Ãºtil por turno).</summary>
+    /// <summary>Agrega mas resultados scripteados a la cola (util por turno).</summary>
     public void Enqueue(IEnumerable<ChatCompletionResult> results)
     {
         foreach (var r in results)

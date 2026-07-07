@@ -192,6 +192,25 @@ public class ReservationRepository : IReservationRepository
             .FirstOrDefaultAsync(ct);
     }
 
+    public async Task<IReadOnlyList<Reservation>> GetManageableByConversationIdAsync(
+        Guid conversationId,
+        DateOnly businessToday,
+        CancellationToken ct = default)
+    {
+        return await _context.Reservations
+            .Include(r => r.Service)
+            .Include(r => r.Employee)
+            .Include(r => r.AddOns)
+                .ThenInclude(a => a.AddOnService)
+            .Where(r => r.ConversationId == conversationId
+                && (r.Status == Domain.Enums.ReservationStatus.Confirmed
+                    || r.Status == Domain.Enums.ReservationStatus.OnHold)
+                && (!r.ReservationDateTime.HasValue
+                    || DateOnly.FromDateTime(r.ReservationDateTime.Value) >= businessToday))
+            .OrderBy(r => r.ReservationDateTime)
+            .ThenByDescending(r => r.UpdatedAt ?? r.CreatedAt)
+            .ToListAsync(ct);
+    }
     public async Task<IReadOnlyList<Reservation>> GetManageableByCustomerPhoneAsync(
         Guid businessId,
         string customerPhone,
@@ -230,20 +249,20 @@ public class ReservationRepository : IReservationRepository
     }
 
     public async Task<bool> ExistsOverlappingReservationAsync(
-        Guid businessId, 
-        DateTime reservationDate, 
-        TimeSpan reservationTime, 
-        int durationMinutes, 
+        Guid businessId,
+        DateTime reservationDate,
+        TimeSpan reservationTime,
+        int durationMinutes,
         Guid? excludeReservationId = null)
     {
-        // Traer todas las reservas del día y validar solapamiento en memoria
+        // Traer todas las reservas del dÃ­a y validar solapamiento en memoria
         // Dos intervalos se solapan si: start1 < end2 && end1 > start2
-        
+
         // Calcular DateTime de inicio y fin para la nueva reserva
         var newStartDateTime = reservationDate.Date.Add(reservationTime);
         var newEndDateTime = newStartDateTime.AddMinutes(durationMinutes);
-        
-        // Traer todas las reservas del día desde la base de datos
+
+        // Traer todas las reservas del dÃ­a desde la base de datos
         var reservations = await _context.Reservations
             .Where(r => r.BusinessId == businessId &&
                        r.ReservationDateTime.HasValue &&
@@ -273,4 +292,3 @@ public class ReservationRepository : IReservationRepository
             });
     }
 }
-

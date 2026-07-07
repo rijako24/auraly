@@ -45,10 +45,15 @@ public sealed class ConfirmReservationAttendanceTool : IAgentTool
     {
         if (!ToolResultHelper.TryGetBool(arguments, "customer_confirmed", out var confirmed) || !confirmed)
         {
-            return ToolResultHelper.Error(
+            return ToolResultHelper.ErrorWithLlm(
                 "confirmation_required",
                 "Customer confirmation is required before registering attendance.",
-                "Ask the customer to confirm if they will attend.",
+                hint: null,
+                new
+                {
+                    next_action = "collect_confirmation",
+                    confirmation_type = "reservation_attendance"
+                },
                 recoverable: true);
         }
 
