@@ -292,6 +292,12 @@ public sealed class ReservationAutomationProcess : ITimedProcess
         }
 
         var effectiveScheduledAtUtc = TruncateToMinute(configuredScheduledAtUtc.Value);
+        if (reservationStartUtc <= effectiveUtcNow)
+        {
+            skipReason = "Reservation time has already passed.";
+            return false;
+        }
+
         if (effectiveScheduledAtUtc < effectiveUtcNow)
         {
             skipReason = "Configured automation time has already passed.";
@@ -302,12 +308,6 @@ public sealed class ReservationAutomationProcess : ITimedProcess
         {
             skipReason = "Configured automation time has not arrived.";
             deferUntilUtc = effectiveScheduledAtUtc;
-            return false;
-        }
-
-        if (reservationStartUtc <= effectiveUtcNow)
-        {
-            skipReason = "Reservation time has already passed.";
             return false;
         }
 

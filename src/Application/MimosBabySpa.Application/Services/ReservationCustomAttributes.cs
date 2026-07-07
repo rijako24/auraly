@@ -5,30 +5,51 @@ namespace MimosBabySpa.Application.Services;
 
 public static class ReservationCustomAttributes
 {
+    public const string AttributesPropertyName = "attributes";
+    public const string CollectedInfoPropertyName = "collected_info";
+
     public static string BuildJson(
         IReadOnlyDictionary<string, string>? facts,
         IReadOnlyList<FactSchemaEntry>? factSchema)
     {
-        var custom = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         if (facts is null || facts.Count == 0)
             return "{}";
 
         if (factSchema is not { Count: > 0 })
             return "{}";
 
+        var attributes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var collectedInfo = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
         foreach (var entry in factSchema)
         {
-            if (!entry.ShowInCollectedInfo
-                || !facts.TryGetValue(entry.Key, out var value)
-                || string.IsNullOrWhiteSpace(value))
-            {
+            if (!facts.TryGetValue(entry.Key, out var value) || string.IsNullOrWhiteSpace(value))
                 continue;
+
+            var label = ResolveLabel(entry);
+            var trimmed = value.Trim();
+            var key = entry.Key.Trim();
+
+            if (!string.IsNullOrWhiteSpace(key)
+                && string.Equals(entry.Source, "user", StringComparison.OrdinalIgnoreCase))
+            {
+                attributes[key] = trimmed;
             }
 
-            custom[ResolveLabel(entry)] = value.Trim();
+            if (entry.ShowInCollectedInfo)
+                collectedInfo[label] = trimmed;
         }
 
-        return custom.Count == 0 ? "{}" : JsonSerializer.Serialize(custom);
+        if (attributes.Count == 0 && collectedInfo.Count == 0)
+            return "{}";
+
+        var payload = new Dictionary<string, IReadOnlyDictionary<string, string>>(StringComparer.OrdinalIgnoreCase);
+        if (attributes.Count > 0)
+            payload[AttributesPropertyName] = attributes;
+        if (collectedInfo.Count > 0)
+            payload[CollectedInfoPropertyName] = collectedInfo;
+
+        return JsonSerializer.Serialize(payload);
     }
 
     private static string ResolveLabel(FactSchemaEntry entry) =>

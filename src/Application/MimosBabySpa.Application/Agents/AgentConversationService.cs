@@ -413,8 +413,11 @@ public sealed class AgentConversationService : IAgentConversationService
         PromptCompositionInput compositionInput,
         CancellationToken ct)
     {
-        var toolDefinitions = BuildToolDefinitions(config, compositionInput.EnabledTools);
-        var lastStageId = _flowStageDetector.DetectCurrentStage(config.Flow, toolCtx)?.Id;
+        var currentStage = _flowStageDetector.DetectCurrentStage(config.Flow, toolCtx);
+        var scopedTools = ResolveScopedTools(config, toolCtx, compositionInput.EnabledTools, currentStage);
+        var toolDefinitions = BuildToolDefinitions(config, scopedTools);
+        var lastStageId = currentStage?.Id;
+        turn.RecordPromptTrace(0, lastStageId, messages[0].Content ?? string.Empty, scopedTools.Select(t => t.Name).ToList());
         var recoveredEmptyToolTurn = false;
 
         for (int iteration = 0; iteration <= config.MaxToolIterations; iteration++)
@@ -428,6 +431,7 @@ public sealed class AgentConversationService : IAgentConversationService
                 messages, forceText ? null : toolDefinitions, options, ct);
 
             turn.AddTokens(result.PromptTokens, result.CompletionTokens);
+            turn.RecordLlmTrace(iteration, lastStageId, result);
 
             if (!result.Success)
                 return AgentLoopOutcome.Failed($"LLM error: {result.ErrorMessage}");
@@ -449,7 +453,6 @@ public sealed class AgentConversationService : IAgentConversationService
 
                     continue;
                 }
-
                 return AgentLoopOutcome.Completed(response);
             }
 
@@ -474,10 +477,12 @@ public sealed class AgentConversationService : IAgentConversationService
                 await DispatchToolEffectNotificationsAsync(config, outcome, toolCtx, ct);
 
                 turn.RecordToolOutcome(outcome);
+                var llmVisibleToolResult = BuildLlmVisibleToolResult(outcome.RawJson);
+                turn.RecordToolTrace(iteration, lastStageId, toolCall, llmVisibleToolResult);
                 messages.Add(ChatMessage.Tool(
                     toolCall.Id,
                     toolCall.FunctionName,
-                    BuildLlmVisibleToolResult(outcome.RawJson)));
+                    llmVisibleToolResult));
 
                 if (turn.OutboundMessages.Count > outboundCountBeforeTool)
                     userOutput = userOutput with { OutboundMessagesQueued = true };
@@ -511,7 +516,7 @@ public sealed class AgentConversationService : IAgentConversationService
             }
             if (ShouldCompleteTurnForUserOutput(userOutput, turn, conversationId))
                 return AgentLoopOutcome.Completed(string.Empty);
-            RefreshSystemPromptIfStageChanged(config, messages, compositionInput, ref lastStageId);
+            RefreshSystemPromptIfStageChanged(config, messages, compositionInput, turn, iteration + 1, ref lastStageId);
         }
 
         return AgentLoopOutcome.Failed("Max iterations exceeded without final response.");
@@ -561,12 +566,14 @@ public sealed class AgentConversationService : IAgentConversationService
     }
     /// <summary>
     /// Tras ejecutar tools, la etapa activa puede haber avanzado. Recompone el system prompt
-    /// para que el LLM reciba goal, hint y acciones_permitidas actualizados en la siguiente iteración.
+    /// para que el LLM reciba goal, hint y acciones_de_etapa actualizadas en la siguiente iteración.
     /// </summary>
     private void RefreshSystemPromptIfStageChanged(
         AgentConfig config,
         List<ChatMessage> messages,
         PromptCompositionInput compositionInput,
+        AgentTurnExecution turn,
+        int nextIteration,
         ref string? lastStageId)
     {
         var currentStageId = _flowStageDetector.DetectCurrentStage(config.Flow, compositionInput.Session)?.Id;
@@ -576,6 +583,16 @@ public sealed class AgentConversationService : IAgentConversationService
         lastStageId = currentStageId;
         var systemPrompt = _promptComposer.Compose(compositionInput);
         messages[0] = ChatMessage.System(systemPrompt);
+        if (compositionInput.Session is not null)
+        {
+            var currentStage = _flowStageDetector.DetectCurrentStage(config.Flow, compositionInput.Session);
+            var scopedTools = ResolveScopedTools(config, compositionInput.Session, compositionInput.EnabledTools, currentStage);
+            turn.RecordPromptTrace(nextIteration, currentStageId, systemPrompt, scopedTools.Select(t => t.Name).ToList());
+        }
+        else
+        {
+            turn.RecordPromptTrace(nextIteration, currentStageId, systemPrompt, []);
+        }
 
         _logger.LogDebug(
             "Conv: stage changed to '{Stage}' — system prompt refreshed",
@@ -1554,13 +1571,53 @@ public sealed class AgentConversationService : IAgentConversationService
         messages.Add(ChatMessage.User(userMessage));
         return messages;
     }
+    private static IReadOnlyList<IAgentTool> ResolveScopedTools(
+        AgentConfig config,
+        AgentToolContext session,
+        IReadOnlyList<IAgentTool> effectiveTools,
+        AgentFlowStage? currentStage)
+    {
+        var allowedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        if (currentStage?.AllowedTools.Count > 0)
+        {
+            foreach (var toolName in currentStage.AllowedTools)
+                allowedNames.Add(toolName);
+        }
+
+        foreach (var action in config.GlobalActions)
+        {
+            foreach (var toolName in action.AllowedTools)
+                allowedNames.Add(toolName);
+        }
+
+        if (allowedNames.Count == 0)
+            return effectiveTools;
+
+        var byName = effectiveTools.ToDictionary(t => t.Name, StringComparer.OrdinalIgnoreCase);
+        var scopedTools = FilterTools(byName, allowedNames.ToList());
+        return scopedTools.Count > 0 ? scopedTools : effectiveTools;
+    }
+
+    private static IReadOnlyList<IAgentTool> FilterTools(
+        IReadOnlyDictionary<string, IAgentTool> byName,
+        IReadOnlyList<string> names)
+    {
+        if (names.Count == 0)
+            return [];
+
+        return names
+            .Select(name => byName.TryGetValue(name, out var tool) ? tool : null)
+            .Where(tool => tool is not null)
+            .Cast<IAgentTool>()
+            .ToList();
+    }
 
     private static ChatCompletionOptions BuildOptions(AgentConfig config, bool forceText) =>
         new() { Temperature = config.Temperature, MaxTokens = 800, ForceTextResponse = forceText };
 
     private static bool IsFinalAnswer(ChatCompletionFinishReason reason) =>
         reason is ChatCompletionFinishReason.Stop or ChatCompletionFinishReason.Length;
-
     private static bool ShouldRecoverEmptyToolTurn(
         string response,
         AgentTurnExecution turn,

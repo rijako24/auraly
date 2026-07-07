@@ -38,7 +38,7 @@ public sealed class AgentPromptComposer : IPromptComposer
         // DetectCurrentStage: llamada única y cacheada para todo el Compose
         var currentStage = _flowStageDetector.DetectCurrentStage(input.Config.Flow, input.Session);
 
-        var eagerBlock = BuildEagerCaptureBlock(input.Config, input.Session);
+        var eagerBlock = BuildEagerCaptureBlock(input.Config, input.Session, input.EnabledTools);
         if (!string.IsNullOrWhiteSpace(eagerBlock))
             blocks.Add(eagerBlock);
 
@@ -172,51 +172,52 @@ public sealed class AgentPromptComposer : IPromptComposer
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         var blocks = new List<string>();
-        var paymentForContext = ResolvePaymentForContext(session?.ActivePayment, latestPayment);
+        var paymentForContext = ResolvePaymentForContext(session.ActivePayment, latestPayment);
 
         // ── ESTADO ACTUAL: solo facts del schema + extras no-schema ──────────
-        if (session is not null)
+        var factsLines = new List<string> { "## ESTADO ACTUAL" };
+        var renderedKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        // 1. Facts declarados en el schema (con label humanizado) — excluye facts de sistema
+        foreach (var entry in config.FactSchema.OrderBy(x => x.Key, StringComparer.OrdinalIgnoreCase))
         {
-            var factsLines = new List<string> { "## ESTADO ACTUAL" };
-            var renderedKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (!entry.Source.Equals("user", StringComparison.OrdinalIgnoreCase))
+                continue;
 
-            // 1. Facts declarados en el schema (con label humanizado) — excluye facts de sistema
-            foreach (var entry in config.FactSchema.OrderBy(x => x.Key, StringComparer.OrdinalIgnoreCase))
+            session.Facts.TryGetValue(entry.Key, out var raw);
+            var value = !string.IsNullOrWhiteSpace(raw) ? raw : null;
+
+            if (!string.IsNullOrWhiteSpace(value))
             {
-                if (!entry.Source.Equals("user", StringComparison.OrdinalIgnoreCase))
-                    continue;
-
-                session.Facts.TryGetValue(entry.Key, out var raw);
-                var value = !string.IsNullOrWhiteSpace(raw) ? raw : null;
-
-                if (!string.IsNullOrWhiteSpace(value))
-                {
-                    var label = string.IsNullOrWhiteSpace(entry.Label) ? entry.Key : entry.Label;
-                    factsLines.Add($"- {label}: {value}");
-                    renderedKeys.Add(entry.Key);
-                }
-            }
-
-            // 2. Facts extra no declarados en schema — excluye keys de sistema conocidos
-            foreach (var (key, value) in session.Facts.OrderBy(x => x.Key, StringComparer.OrdinalIgnoreCase))
-            {
-                if (renderedKeys.Contains(key)
-                    || string.IsNullOrWhiteSpace(value)
-                    || systemKeys.Contains(key)
-                    || key.StartsWith("system.", StringComparison.OrdinalIgnoreCase))
-                {
-                    continue;
-                }
-
-                factsLines.Add($"- {key}: {value}");
-            }
-
-            if (factsLines.Count > 1)
-            {
-                factsLines.Add("- No vuelvas a llamar set_fact para un dato ya listado arriba con el mismo valor.");
-                blocks.Add(string.Join(Environment.NewLine, factsLines));
+                var label = string.IsNullOrWhiteSpace(entry.Label) ? entry.Key : entry.Label;
+                factsLines.Add($"- {label}: {value}");
+                renderedKeys.Add(entry.Key);
             }
         }
+
+        // 2. Facts extra no declarados en schema — excluye keys de sistema conocidos
+        foreach (var (key, value) in session.Facts.OrderBy(x => x.Key, StringComparer.OrdinalIgnoreCase))
+        {
+            if (renderedKeys.Contains(key)
+                || string.IsNullOrWhiteSpace(value)
+                || systemKeys.Contains(key)
+                || key.StartsWith("system.", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            factsLines.Add($"- {key}: {value}");
+        }
+
+        if (factsLines.Count > 1)
+        {
+            factsLines.Add("- No vuelvas a llamar set_fact para un dato ya listado arriba con el mismo valor.");
+            blocks.Add(string.Join(Environment.NewLine, factsLines));
+        }
+
+        var reservationLines = BuildReservationStateLines(session);
+        if (reservationLines.Count > 0)
+            blocks.Add(string.Join(Environment.NewLine, reservationLines));
 
         // ── POLÍTICA DE PAGO ──────────────────────────────────────────────────
         var policyLines = new List<string>();
@@ -230,6 +231,28 @@ public sealed class AgentPromptComposer : IPromptComposer
         return blocks.Count == 0
             ? string.Empty
             : string.Join($"{Environment.NewLine}{Environment.NewLine}", blocks);
+    }
+
+    private static List<string> BuildReservationStateLines(AgentToolContext session)
+    {
+        var activeReservations = session.ManageableReservations
+            .Where(r => ReservationTemporalFormatter.IsManageableOnBusinessDay(r, session.BusinessToday))
+            .ToList();
+        if (activeReservations.Count == 0)
+            return [];
+
+        var lines = new List<string>
+        {
+            "## ESTADO RESERVA",
+            "- Reservas activas del cliente:"
+        };
+
+        foreach (var reservation in activeReservations)
+        {
+            lines.Add($"- {ReservationTemporalFormatter.FormatLine(reservation, session.BusinessToday)}");
+        }
+
+        return lines;
     }
 
     private static IEnumerable<string> DescribeFacts(AgentConfig config, IReadOnlyList<string> factKeys)
@@ -251,7 +274,7 @@ public sealed class AgentPromptComposer : IPromptComposer
     /// (captureMode=eager) aunque el flujo aún no haya llegado a la etapa que los solicita.
     /// Solo lista los facts de usuario que todavía no tienen valor.
     /// </summary>
-    internal static string BuildEagerCaptureBlock(AgentConfig config, AgentToolContext? session)
+    internal static string BuildEagerCaptureBlock(AgentConfig config, AgentToolContext? session, IReadOnlyList<IAgentTool>? enabledTools = null)
     {
         var eagerMissing = config.FactSchema
             .Where(e => e.CaptureMode.Equals("eager", StringComparison.OrdinalIgnoreCase)
@@ -266,13 +289,25 @@ public sealed class AgentPromptComposer : IPromptComposer
         if (eagerMissing.Count == 0)
             return string.Empty;
 
+        var captureTools = (enabledTools ?? [])
+            .Where(t => t.Capabilities.Contains(ToolCapabilities.FactWrite, StringComparer.OrdinalIgnoreCase))
+            .Select(t => t.Name)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
         var lines = new List<string>
         {
             "## CAPTURA INMEDIATA",
-            "Si el cliente menciona alguno de los siguientes datos antes de que los solicites, persístalo de inmediato con set_fact:",
+            "Esta instrucción tiene prioridad sobre la orientación de la etapa actual.",
+            "- Cuando el último mensaje contenga un valor para un fact listado, llama la herramienta de captura antes de otras herramientas.",
             "- Guarda únicamente datos expresados o confirmados por el cliente.",
-            "- Mantén objetivos internos y marcadores de estado fuera de facts de usuario."
+            "- Mantén objetivos internos y marcadores de estado fuera de facts de usuario.",
+            "- Usa el nombre de fact listado entre paréntesis.",
+            "- Después de guardar los facts presentes, continúa la etapa actual."
         };
+
+        if (captureTools.Count > 0)
+            lines.Add($"- herramientas_de_captura: {string.Join(", ", captureTools)}");
 
         foreach (var entry in eagerMissing)
         {
@@ -375,8 +410,9 @@ public sealed class AgentPromptComposer : IPromptComposer
         {
             var effectiveToolNames = effectiveTools.Select(t => t.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
             var allowedTools = currentStage.AllowedTools.Where(effectiveToolNames.Contains).ToList();
+
             if (allowedTools.Count > 0)
-                lines.Add($"- acciones_permitidas: {string.Join(", ", allowedTools)}");
+                lines.Add($"- acciones_de_etapa: {string.Join(", ", allowedTools)}");
         }
 
         var stageHint = !string.IsNullOrWhiteSpace(variant?.Hint) ? variant!.Hint : currentStage.Hint;

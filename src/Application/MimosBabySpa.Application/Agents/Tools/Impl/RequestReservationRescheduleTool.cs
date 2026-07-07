@@ -22,8 +22,9 @@ public sealed class RequestReservationRescheduleTool : IAgentTool
     public string Name => "request_reservation_reschedule";
 
     public string Description =>
-        "Registers that the customer requested to reschedule an existing reservation. " +
-        "Use when the customer taps a reschedule button or clearly says they need to move the appointment.";
+        "Registers that the customer requested to reschedule an existing reservation without applying a new slot. " +
+        "Use when the customer taps a reschedule button or asks to move the appointment but has not provided a new date/time yet. " +
+        "If the customer provides the target date/time, use prepare_reservation_change and confirm_reservation_change instead.";
 
     public string ParametersSchema => """
         {

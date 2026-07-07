@@ -134,6 +134,8 @@ public class AgentPromptComposerTests
             [
                 new Reservation
                 {
+                    Status = ReservationStatus.Confirmed,
+                    ReservationDateTime = new DateTime(2026, 5, 22, 10, 0, 0),
                     Service = new Service { ServiceName = "Plan Marineritos" }
                 }
             ]
@@ -145,10 +147,11 @@ public class AgentPromptComposerTests
         result.Should().Contain("edad del bebé (meses): 5");
         result.Should().Contain("plan / servicio: Plan Marineritos");
         result.Should().Contain("complementos: Decoración Sencilla");
+        result.Should().Contain("## ESTADO RESERVA");
+        result.Should().Contain("Reservas activas del cliente:");
+        result.Should().Contain("Plan Marineritos");
         result.Should().NotContain("## RESERVAS GESTIONABLES");
         result.Should().NotContain("hay_reservas_gestionables");
-        result.Should().NotContain("get_customer_reservations");
-        result.Should().NotContain("si el cliente pide cambiar servicio");
     }
 
     [Fact]
@@ -267,8 +270,43 @@ public class AgentPromptComposerTests
             [],
             new AgentToolContext { Conversation = new Conversation(), Facts = [] });
 
-        // Sin facts y sin schema, no hay bloque ESTADO ACTUAL
+        // Sin facts ni reservas activas, no hay bloques de estado.
         result.Should().NotContain("## ESTADO ACTUAL");
+        result.Should().NotContain("## ESTADO RESERVA");
+    }
+
+
+    [Fact]
+    public void Compose_WithExpiredReservation_DoesNotRenderReservationStateBlock()
+    {
+        var result = Compose(
+            DefaultConfig,
+            [],
+            new AgentToolContext
+            {
+                BusinessToday = new DateOnly(2026, 5, 21),
+                Conversation = new Conversation(),
+                Facts = [],
+                ManageableReservations =
+                [
+                    new Reservation
+                    {
+                        Status = ReservationStatus.Confirmed,
+                        ReservationDateTime = new DateTime(2026, 5, 20, 10, 0, 0),
+                        Service = new Service { ServiceName = "Plan Marineritos" }
+                    },
+                    new Reservation
+                    {
+                        Status = ReservationStatus.Cancelled,
+                        ReservationDateTime = new DateTime(2026, 5, 22, 10, 0, 0),
+                        Service = new Service { ServiceName = "Plan Ballenitas" }
+                    }
+                ]
+            });
+
+        result.Should().NotContain("## ESTADO RESERVA");
+        result.Should().NotContain("Plan Marineritos");
+        result.Should().NotContain("Plan Ballenitas");
     }
 
 

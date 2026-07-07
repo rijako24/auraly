@@ -211,6 +211,7 @@ services.AddScoped<ServiceSelectionResolver>();
         services.AddScoped<IAgentTool, GetCustomerReservationsTool>();
         services.AddScoped<IAgentTool, ConfirmReservationAttendanceTool>();
         services.AddScoped<IAgentTool, ReschedulePaidReservationTool>();
+        services.AddScoped<IAgentTool, ManageReservationTool>();
         services.AddScoped<IAgentTool, RequestReservationRescheduleTool>();
         services.AddScoped<IAgentTool, PrepareReservationChangeTool>();
         services.AddScoped<IAgentTool, ConfirmReservationChangeTool>();

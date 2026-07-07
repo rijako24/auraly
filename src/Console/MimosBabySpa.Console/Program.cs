@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -246,6 +247,7 @@ services.AddScoped<IAgentTool, SuspendReservationTool>();
 services.AddScoped<IAgentTool, GetCustomerReservationsTool>();
 services.AddScoped<IAgentTool, ConfirmReservationAttendanceTool>();
 services.AddScoped<IAgentTool, ReschedulePaidReservationTool>();
+services.AddScoped<IAgentTool, ManageReservationTool>();
 services.AddScoped<IAgentTool, RequestReservationRescheduleTool>();
 services.AddScoped<IAgentTool, PrepareReservationChangeTool>();
 services.AddScoped<IAgentTool, ConfirmReservationChangeTool>();
@@ -313,6 +315,10 @@ Console.OutputEncoding = System.Text.Encoding.UTF8;
 Console.InputEncoding = System.Text.Encoding.UTF8;
 
 var consoleAgent = ConsoleAgentOptions.FromEnvironment();
+var traceEnabled = IsTraceEnabled(args);
+var scriptedMessages = BuildLuisReservationScript(args);
+if (scriptedMessages.Count > 0)
+    traceEnabled = true;
 
 Console.WriteLine("========================================================");
 Console.WriteLine($"  {consoleAgent.BusinessName} - Simulador Agentic Engine (FC)");
@@ -322,6 +328,8 @@ Console.WriteLine($"  Negocio : {consoleAgent.BusinessName} ({consoleAgent.Busin
 Console.WriteLine($"  Agente  : {consoleAgent.AgentName}");
 Console.WriteLine("  Escribe  'exit' para salir");
 Console.WriteLine("  Escribe  'reset' para reiniciar la sesion");
+Console.WriteLine("  Usa     --trace para ver system prompt, tools y respuestas del LLM");
+Console.WriteLine("  Usa     test-luis-reserva para correr una prueba automatica con traza");
 Console.WriteLine();
 
 // Simula el telefono del cliente (clave de sesion).
@@ -334,7 +342,16 @@ while (true)
     Console.Write("Tu: ");
     Console.ResetColor();
 
-    var input = Console.ReadLine();
+    string? input;
+    if (scriptedMessages.Count > 0)
+    {
+        input = scriptedMessages.Dequeue();
+        Console.WriteLine(input);
+    }
+    else
+    {
+        input = Console.ReadLine();
+    }
 
     if (string.IsNullOrWhiteSpace(input))
         continue;
@@ -420,6 +437,9 @@ while (true)
             }
         }
 
+        if (traceEnabled)
+            PrintTurnTrace(result.Trace);
+
         if (string.IsNullOrWhiteSpace(result.Response)
             && result.OutboundMessages.Count == 0)
         {
@@ -432,6 +452,9 @@ while (true)
             Console.WriteLine($"[error: {result.ErrorMessage}]");
 
         Console.WriteLine();
+
+        if (scriptedMessages.Count == 0 && IsScriptedReservationTest(args))
+            break;
 
         if (result.EscalatedToHuman)
         {
@@ -452,6 +475,101 @@ while (true)
     }
 }
 
+
+static bool IsTraceEnabled(string[] args) =>
+    args.Any(a => a.Equals("--trace", StringComparison.OrdinalIgnoreCase)
+               || a.Equals("trace", StringComparison.OrdinalIgnoreCase))
+    || string.Equals(Environment.GetEnvironmentVariable("TALKIO_CONSOLE_TRACE"), "true", StringComparison.OrdinalIgnoreCase);
+
+static bool IsScriptedReservationTest(string[] args) =>
+    args.Any(a => a.Equals("test-luis-reserva", StringComparison.OrdinalIgnoreCase)
+               || a.Equals("--test-luis-reserva", StringComparison.OrdinalIgnoreCase)
+               || a.Equals("luis-reserva-trace", StringComparison.OrdinalIgnoreCase));
+
+static Queue<string> BuildLuisReservationScript(string[] args)
+{
+    if (!IsScriptedReservationTest(args))
+        return new Queue<string>();
+
+    var custom = Environment.GetEnvironmentVariable("TALKIO_CONSOLE_TEST_MESSAGES");
+    var messages = string.IsNullOrWhiteSpace(custom)
+        ? new[]
+        {
+            "Hola, quiero reservar un corte de cabello",
+            "Sin adicionales por ahora",
+            "Mañana a las 10 de la mañana",
+            "Mi nombre es Carlos Perez",
+            "Sí, confirma la reserva"
+        }
+        : custom.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+    return new Queue<string>(messages);
+}
+
+static void PrintTurnTrace(IReadOnlyList<AgentTurnTraceEntry> trace)
+{
+    if (trace.Count == 0)
+        return;
+
+    var jsonOptions = new JsonSerializerOptions { WriteIndented = true };
+    Console.ForegroundColor = ConsoleColor.DarkGray;
+    Console.WriteLine();
+    Console.WriteLine("--- TRACE LLM ---");
+    Console.ResetColor();
+
+    foreach (var entry in trace)
+    {
+        Console.ForegroundColor = ConsoleColor.DarkYellow;
+        Console.WriteLine($"[{entry.Kind}] iter={entry.Iteration} stage={entry.StageId ?? "(sin etapa)"}");
+        Console.ResetColor();
+
+        if (entry.EnabledTools.Count > 0)
+            Console.WriteLine($"tools: {string.Join(", ", entry.EnabledTools)}");
+
+        if (!string.IsNullOrWhiteSpace(entry.FinishReason))
+            Console.WriteLine($"finish: {entry.FinishReason}");
+
+        if (entry.ToolCalls.Count > 0)
+        {
+            Console.WriteLine("tool_calls:");
+            foreach (var toolCall in entry.ToolCalls)
+            {
+                Console.WriteLine($"- {toolCall.FunctionName}({toolCall.ArgumentsJson}) id={toolCall.Id}");
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(entry.ToolName))
+        {
+            Console.WriteLine($"tool: {entry.ToolName}({entry.ToolArgumentsJson})");
+            Console.WriteLine("tool_result_visible_para_llm:");
+            Console.WriteLine(PrettyJson(entry.ToolResultJson, jsonOptions));
+        }
+
+        if (!string.IsNullOrWhiteSpace(entry.Content))
+        {
+            Console.WriteLine(entry.Kind == "system_prompt" ? "system_prompt:" : "respuesta_llm:");
+            Console.WriteLine(entry.Content);
+        }
+
+        Console.WriteLine();
+    }
+}
+
+static string PrettyJson(string? json, JsonSerializerOptions options)
+{
+    if (string.IsNullOrWhiteSpace(json))
+        return string.Empty;
+
+    try
+    {
+        using var document = JsonDocument.Parse(json);
+        return JsonSerializer.Serialize(document.RootElement, options);
+    }
+    catch (JsonException)
+    {
+        return json;
+    }
+}
 static string CreateTestUserPhone()
 {
     var configuredPhone = Environment.GetEnvironmentVariable("TALKIO_CONSOLE_PHONE");
@@ -522,4 +640,3 @@ internal sealed class ConsoleUsageBillingService : IUsageBillingService
     public Task<IReadOnlyList<UsagePlanDto>> GetPlansAsync(CancellationToken ct = default) =>
         Task.FromResult<IReadOnlyList<UsagePlanDto>>(Array.Empty<UsagePlanDto>());
 }
-

@@ -612,13 +612,13 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "sendMessageSequence": "reservation_confirmation_request",
       "actions": {
         "confirm": {
-          "tool": "confirm_reservation_attendance",
-          "arguments": { "customer_confirmed": true, "job_id": "{source_id}" },
+          "tool": "manage_reservation",
+          "arguments": { "action": "confirm_attendance", "customer_confirmed": true, "job_id": "{source_id}" },
           "sendMessageSequence": "reservation_attendance_confirmed_reply"
         },
         "reschedule": {
-          "tool": "request_reservation_reschedule",
-          "arguments": { "job_id": "{source_id}" },
+          "tool": "manage_reservation",
+          "arguments": { "action": "request_reschedule", "job_id": "{source_id}" },
           "sendMessageSequence": "reservation_attendance_reschedule_reply"
         }
       }
@@ -657,8 +657,8 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         "id": "discovery",
         "name": "Descubrimiento",
         "goal": "Ayudar al cliente a elegir un servicio exacto del catalogo.",
-        "hint": "Primero clasifica el mensaje en una sola ruta. Ruta de busqueda: si el mensaje trae intencion comercial o cualquier palabra relacionada con el catalogo, la primera herramienta debe ser get_service_catalog con view services y query no vacio; en query envia las palabras del cliente que nombran el servicio, categoria, familia u opcion. Si es primera respuesta visible, abre con saludo, bienvenida a BARBER KIDS MEN y la frase exacta soy Luis Petit, barbero profesional. Luego muestra solo servicios oficiales relevantes con precio y duracion y pregunta cual prefiere. Ruta de saludo: usa get_service_catalog con view categories y sin query solo cuando el mensaje sea apertura social pura; responde en este orden: saluda, da la bienvenida a BARBER KIDS MEN, incluye la frase exacta soy Luis Petit, barbero profesional, muestra categorias oficiales en lista vertical con guion y pregunta en que servicio esta interesado el dia de hoy. Ruta de seleccion: cuando el cliente elija un servicio exacto o equivalente claro de los servicios mostrados, llama resolve_service_selection con el texto literal del cliente y el contexto inmediato de la solicitud. Si la seleccion queda ambigua, pide que elija una opcion exacta usando solo servicios oficiales.",
-        "allowedTools": ["get_service_catalog", "resolve_service_selection"],
+        "hint": "Primero cumple las instrucciones transversales de captura inmediata cuando apliquen. Luego clasifica el mensaje en una sola ruta. Ruta de busqueda: si el mensaje trae intencion comercial o cualquier palabra relacionada con el catalogo, la primera herramienta de etapa debe ser get_service_catalog con view services y query no vacio; en query envia las palabras del cliente que nombran el servicio, categoria, familia u opcion. Si es primera respuesta visible, abre con saludo, bienvenida a BARBER KIDS MEN y la frase exacta soy Luis Petit, barbero profesional. Luego muestra solo servicios oficiales relevantes con precio y duracion y pregunta cual prefiere. Ruta de saludo: usa get_service_catalog con view categories y sin query solo cuando el mensaje sea apertura social pura; responde en este orden: saluda, da la bienvenida a BARBER KIDS MEN, incluye la frase exacta soy Luis Petit, barbero profesional, muestra categorias oficiales en lista vertical con guion y pregunta en que servicio esta interesado el dia de hoy. Ruta de seleccion: cuando el cliente elija un servicio exacto o equivalente claro de los servicios mostrados, llama resolve_service_selection con el texto literal del cliente y el contexto inmediato de la solicitud. Si la seleccion queda ambigua, pide que elija una opcion exacta usando solo servicios oficiales.",
+        "allowedTools": ["get_service_catalog", "resolve_service_selection", "set_fact"],
         "advanceWhenFacts": ["service"]
       },
       {
@@ -730,20 +730,12 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "hint": "Responde con una frase breve y cordial, resume la necesidad y llama escalate_to_human.",
       "allowedTools": ["escalate_to_human"]
     },
-
-    {
-      "id": "complete_paid_reservation_reschedule",
-      "priority": 950,
-      "goal": "Completar la agenda cuando un pago confirmado quedo sin reserva porque el horario original ya no estaba disponible.",
-      "hint": "Usa esta ruta solo cuando el estado indique pago confirmado sin reserva enlazada. No generes nuevo checkout ni pidas nuevo pago. Primero valida el nuevo horario con check_availability usando el servicio original; si esta disponible, llama reschedule_paid_reservation con date y time. Si no esta disponible, ofrece los horarios devueltos por check_availability.",
-      "allowedTools": ["check_availability", "reschedule_paid_reservation", "set_fact"]
-    },
     {
       "id": "manage_existing_reservation",
       "priority": 900,
-      "goal": "Gestionar reservas existentes cuando el cliente quiera confirmar asistencia, cambiar, reagendar, cambiar servicio o cancelar una reserva ya creada.",
-      "hint": "Usa esta ruta antes del flujo de reserva nueva. Si el cliente confirma que asistira, usa confirm_reservation_attendance. Si pide reagendar, usa request_reservation_reschedule y luego pregunta nueva fecha y hora. Primero identifica la reserva con get_customer_reservations cuando haga falta. Para cambios, usa prepare_reservation_change y aplica con confirm_reservation_change despues de confirmacion clara. Si hay varias reservas, pregunta cual por fecha y servicio. Usa suspend_reservation cuando la intencion de suspender o cancelar sea clara, o despues de confirmacion explicita.",
-      "allowedTools": ["get_customer_reservations", "confirm_reservation_attendance", "request_reservation_reschedule", "prepare_reservation_change", "confirm_reservation_change", "suspend_reservation"]
+      "goal": "Gestionar reservas existentes y pagos confirmados pendientes de agenda cuando el cliente quiera confirmar asistencia, cambiar, reagendar, cambiar servicio, cancelar o completar una reserva ya pagada.",
+      "hint": "Gestiona reservas existentes con prioridad sobre el flujo de reserva nueva cuando el cliente quiera confirmar asistencia, cambiar, reagendar, cambiar servicio o cancelar una reserva creada. Tambien cubre pagos confirmados sin reserva enlazada: si ESTADO RESERVA indica pago confirmado pendiente de horario y el cliente da fecha y hora, llama manage_reservation con action complete_paid_reschedule; si falta fecha u hora, pidela sin llamar herramientas. Usa la reserva activa listada en ESTADO RESERVA como referencia de servicio, fecha y hora. Si el cliente pide reagendar o cambiar horario pero aun no da nuevo horario, pide nueva fecha y hora sin llamar herramientas. Nunca digas que una reserva fue cambiada, confirmada, cancelada o completada si manage_reservation no ha devuelto ok=true en ese mismo turno o en un turno anterior. Si el cliente ya da nueva fecha, hora, servicio o adicionales para una reserva existente, debes llamar manage_reservation con action preview_change; si la herramienta aprueba, resume el cambio y pide confirmacion antes de llamar manage_reservation con action apply_change y customer_confirmed=true. Usa get_customer_reservations cuando el estado muestre varias reservas o la referencia del cliente sea ambigua. Para confirmar asistencia usa manage_reservation con action confirm_attendance y customer_confirmed=true. Para cancelar o suspender usa manage_reservation con action cancel solo cuando la intencion este confirmada.",
+      "allowedTools": ["get_customer_reservations", "manage_reservation"]
     }
   ],
   "factSchema": [
@@ -774,12 +766,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         "verification:checkout_no_payment_prepared",
         "state:no_pending_checkout"
       ]
-    },
-    "capability:reservation.reschedule_paid": {
-      "requires": [
-        "state:payment_confirmed_no_slot",
-        "verification:availability_checked"
-      ]
     }
   },
   "enabledTools": [
@@ -790,13 +776,8 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
     "check_availability",
     "prepare_checkout",
     "create_reservation",
-    "reschedule_paid_reservation",
-    "suspend_reservation",
     "get_customer_reservations",
-    "confirm_reservation_attendance",
-    "request_reservation_reschedule",
-    "prepare_reservation_change",
-    "confirm_reservation_change",
+    "manage_reservation",
     "verify_payment",
     "escalate_to_human",
     "reset_flow_context",

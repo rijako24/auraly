@@ -53,12 +53,63 @@ public class ReservationServiceCalendarEventTests
     }
 
     [Fact]
-    public void ReservationCustomAttributes_BuildJson_UsesOnlyFactsMarkedForCollectedInfo()
+    public void BuildCalendarEvent_UsesOnlyCollectedInfoFromReservationAttributeEnvelope()
     {
         var facts = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
             [ConversationFactKeys.CustomerName] = "Geraldine",
             [ConversationFactKeys.Service] = "Demo AURALY",
+            [ConversationFactKeys.DesiredDate] = "2026-07-07",
+            [ConversationFactKeys.DesiredTime] = "16:00",
+            ["business_type"] = "Spa",
+            ["pain_point"] = "Agendar demos desde WhatsApp",
+            ["availability_checked"] = "true"
+        };
+        var schema = new List<FactSchemaEntry>
+        {
+            new() { Key = ConversationFactKeys.CustomerName, Label = "nombre del cliente", Source = "user" },
+            new() { Key = ConversationFactKeys.Service, Label = "servicio", Source = "user" },
+            new() { Key = ConversationFactKeys.DesiredDate, Label = "fecha deseada", Source = "user" },
+            new() { Key = ConversationFactKeys.DesiredTime, Label = "hora deseada", Source = "user" },
+            new() { Key = "business_type", Label = "Tipo de negocio", Source = "user", ShowInCollectedInfo = true },
+            new() { Key = "pain_point", Label = "Problematica que quiere resolver", Source = "user", ShowInCollectedInfo = true },
+            new() { Key = "availability_checked", Label = "disponibilidad validada", Source = "system" }
+        };
+        var reservation = new Reservation
+        {
+            ReservationId = Guid.NewGuid(),
+            BusinessId = Guid.NewGuid(),
+            ReservationDateTime = new DateTime(2026, 7, 7, 16, 0, 0),
+            DurationMinutes = 60,
+            Status = ReservationStatus.Confirmed,
+            CustomerNameSnapshot = "Geraldine",
+            CustomerPhoneSnapshot = "573042052007",
+            CustomAttributesJson = ReservationCustomAttributes.BuildJson(facts, schema)
+        };
+
+        var calendarEvent = BuildCalendarEvent(reservation, "Demo AURALY", []);
+
+        calendarEvent.Description.Should().Contain("Servicio: Demo AURALY");
+        calendarEvent.Description.Should().Contain("Fecha: 07/07/2026");
+        calendarEvent.Description.Should().Contain("Hora: 16:00");
+        calendarEvent.Description.Should().Contain("Tipo de negocio: Spa");
+        calendarEvent.Description.Should().Contain("Problematica que quiere resolver: Agendar demos desde WhatsApp");
+        calendarEvent.Description.Should().NotContain("nombre del cliente: Geraldine");
+        calendarEvent.Description.Should().NotContain("servicio: Demo AURALY");
+        calendarEvent.Description.Should().NotContain("fecha deseada: 2026-07-07");
+        calendarEvent.Description.Should().NotContain("hora deseada: 16:00");
+        calendarEvent.Description.Should().NotContain("disponibilidad validada: true");
+    }
+
+    [Fact]
+    public void ReservationCustomAttributes_BuildJson_PersistsUserFactsAndSeparatesCollectedInfo()
+    {
+        var facts = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            [ConversationFactKeys.CustomerName] = "Geraldine",
+            [ConversationFactKeys.Service] = "Demo AURALY",
+            [ConversationFactKeys.DesiredDate] = "2026-07-07",
+            [ConversationFactKeys.DesiredTime] = "16:00",
             ["business_type"] = "Spa",
             ["pain_point"] = "Agendar demos desde WhatsApp",
             ["availability_checked"] = "true",
@@ -68,6 +119,8 @@ public class ReservationServiceCalendarEventTests
         {
             new() { Key = ConversationFactKeys.CustomerName, Role = "customer.name", Label = "nombre del cliente", Source = "user" },
             new() { Key = ConversationFactKeys.Service, Role = "booking.service", Label = "servicio", Source = "user" },
+            new() { Key = ConversationFactKeys.DesiredDate, Role = "booking.date", Label = "fecha deseada", Source = "user" },
+            new() { Key = ConversationFactKeys.DesiredTime, Role = "booking.time", Label = "hora deseada", Source = "user" },
             new() { Key = "business_type", Label = "Tipo de negocio", Source = "user", ShowInCollectedInfo = true },
             new() { Key = "pain_point", Label = "Problematica que quiere resolver", Source = "user", ShowInCollectedInfo = true },
             new() { Key = "availability_checked", Label = "disponibilidad validada", Source = "system" },
@@ -75,13 +128,24 @@ public class ReservationServiceCalendarEventTests
         };
 
         var json = ReservationCustomAttributes.BuildJson(facts, schema);
-        var custom = JsonSerializer.Deserialize<Dictionary<string, string>>(json)!;
+        var payload = JsonSerializer.Deserialize<Dictionary<string, Dictionary<string, string>>>(json)!;
 
-        custom.Should().BeEquivalentTo(new Dictionary<string, string>
+        payload[ReservationCustomAttributes.AttributesPropertyName].Should().BeEquivalentTo(new Dictionary<string, string>
+        {
+            [ConversationFactKeys.CustomerName] = "Geraldine",
+            [ConversationFactKeys.Service] = "Demo AURALY",
+            [ConversationFactKeys.DesiredDate] = "2026-07-07",
+            [ConversationFactKeys.DesiredTime] = "16:00",
+            ["business_type"] = "Spa",
+            ["pain_point"] = "Agendar demos desde WhatsApp"
+        });
+        payload[ReservationCustomAttributes.CollectedInfoPropertyName].Should().BeEquivalentTo(new Dictionary<string, string>
         {
             ["Tipo de negocio"] = "Spa",
             ["Problematica que quiere resolver"] = "Agendar demos desde WhatsApp"
         });
+        json.Should().NotContain("availability_checked");
+        json.Should().NotContain("session.engagement");
     }
 
     private static CalendarEvent BuildCalendarEvent(

@@ -10,5 +10,4 @@ public sealed class AgentGlobalAction
     public int Priority { get; init; }
     public string Goal { get; init; } = string.Empty;
     public string? Hint { get; init; }
-    public IReadOnlyList<string> AllowedTools { get; init; } = [];
-}
+    public IReadOnlyList<string> AllowedTools { get; init; } = [];}

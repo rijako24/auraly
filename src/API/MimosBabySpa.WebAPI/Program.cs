@@ -258,6 +258,7 @@ builder.Services.AddScoped<IAgentTool, SuspendReservationTool>();
 builder.Services.AddScoped<IAgentTool, GetCustomerReservationsTool>();
 builder.Services.AddScoped<IAgentTool, ConfirmReservationAttendanceTool>();
 builder.Services.AddScoped<IAgentTool, ReschedulePaidReservationTool>();
+builder.Services.AddScoped<IAgentTool, ManageReservationTool>();
 builder.Services.AddScoped<IAgentTool, RequestReservationRescheduleTool>();
 builder.Services.AddScoped<IAgentTool, PrepareReservationChangeTool>();
 builder.Services.AddScoped<IAgentTool, ConfirmReservationChangeTool>();

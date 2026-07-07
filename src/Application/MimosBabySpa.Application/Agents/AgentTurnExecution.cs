@@ -1,4 +1,5 @@
 using MimosBabySpa.Application.Agents.Templates;
+using MimosBabySpa.Application.LLM;
 
 namespace MimosBabySpa.Application.Agents;
 
@@ -11,6 +12,7 @@ internal sealed class AgentTurnExecution
     private readonly Dictionary<string, TurnFragment> _fragments = new(StringComparer.Ordinal);
     private readonly List<OutboundMessage> _outboundMessages = [];
     private readonly HashSet<string> _enqueuedSequences = new(StringComparer.OrdinalIgnoreCase);
+    private readonly List<AgentTurnTraceEntry> _trace = [];
 
     public AgentTurnExecution(int errorEscalationThreshold)
     {
@@ -31,6 +33,7 @@ internal sealed class AgentTurnExecution
         _fragments.Select(kv => new TurnFragmentEntry(kv.Key, kv.Value)).ToList();
 
     public IReadOnlyList<OutboundMessage> OutboundMessages => _outboundMessages;
+    public IReadOnlyList<AgentTurnTraceEntry> Trace => _trace;
 
     public bool ShouldAutoEscalate =>
         ConsecutiveToolErrors >= _errorEscalationThreshold;
@@ -99,6 +102,59 @@ internal sealed class AgentTurnExecution
     public bool TryMarkSequenceEnqueued(string sequenceName) =>
         _enqueuedSequences.Add(sequenceName);
 
+    public void RecordPromptTrace(
+        int iteration,
+        string? stageId,
+        string systemPrompt,
+        IReadOnlyList<string> enabledTools)
+    {
+        _trace.Add(new AgentTurnTraceEntry
+        {
+            Kind = "system_prompt",
+            Iteration = iteration,
+            StageId = stageId,
+            Content = systemPrompt,
+            EnabledTools = enabledTools
+        });
+    }
+
+    public void RecordLlmTrace(int iteration, string? stageId, ChatCompletionResult result)
+    {
+        _trace.Add(new AgentTurnTraceEntry
+        {
+            Kind = "llm_response",
+            Iteration = iteration,
+            StageId = stageId,
+            Content = result.Content,
+            FinishReason = result.FinishReason.ToString(),
+            ToolCalls = result.ToolCalls
+                .Select(t => new ToolCallTraceEntry
+                {
+                    Id = t.Id,
+                    FunctionName = t.FunctionName,
+                    ArgumentsJson = t.ArgumentsJson
+                })
+                .ToList()
+        });
+    }
+
+    public void RecordToolTrace(
+        int iteration,
+        string? stageId,
+        ToolCallRequest toolCall,
+        string llmVisibleResultJson)
+    {
+        _trace.Add(new AgentTurnTraceEntry
+        {
+            Kind = "tool_result",
+            Iteration = iteration,
+            StageId = stageId,
+            ToolName = toolCall.FunctionName,
+            ToolArgumentsJson = toolCall.ArgumentsJson,
+            ToolResultJson = llmVisibleResultJson
+        });
+    }
+
     public AgentTurnResult ToSuccessResult(string response) =>
         AgentTurnResult.Ok(
             response,
@@ -106,5 +162,6 @@ internal sealed class AgentTurnExecution
             RequestCompleted,
             TotalTokens,
             ToolCallCount,
-            OutboundMessages);
+            OutboundMessages,
+            Trace);
 }

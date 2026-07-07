@@ -716,15 +716,17 @@ public class ReservationService : IReservationService
 
         try
         {
-            var custom = JsonSerializer.Deserialize<Dictionary<string, string>>(json);
-            if (custom is null)
+            using var doc = JsonDocument.Parse(json);
+            if (doc.RootElement.ValueKind != JsonValueKind.Object)
                 return facts;
 
-            foreach (var kvp in custom)
+            if (doc.RootElement.TryGetProperty(ReservationCustomAttributes.CollectedInfoPropertyName, out var collectedInfo))
             {
-                if (!string.IsNullOrWhiteSpace(kvp.Key) && !string.IsNullOrWhiteSpace(kvp.Value))
-                    facts.Add((kvp.Key.Trim(), kvp.Value.Trim()));
+                AddStringProperties(facts, collectedInfo);
+                return facts;
             }
+
+            AddStringProperties(facts, doc.RootElement);
         }
         catch
         {
@@ -732,6 +734,22 @@ public class ReservationService : IReservationService
         }
 
         return facts;
+    }
+
+    private static void AddStringProperties(List<(string Label, string Value)> facts, JsonElement element)
+    {
+        if (element.ValueKind != JsonValueKind.Object)
+            return;
+
+        foreach (var property in element.EnumerateObject())
+        {
+            if (property.Value.ValueKind != JsonValueKind.String)
+                continue;
+
+            var value = property.Value.GetString();
+            if (!string.IsNullOrWhiteSpace(property.Name) && !string.IsNullOrWhiteSpace(value))
+                facts.Add((property.Name.Trim(), value.Trim()));
+        }
     }
 
     private static string? GetCalendarMetadataValue(
