@@ -265,16 +265,18 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "sendMessageSequence": "reservation_confirmation_request",
       "actions": {
         "confirm": {
-          "tool": "confirm_reservation_attendance",
+          "tool": "manage_reservation",
           "arguments": {
+            "action": "confirm_attendance",
             "customer_confirmed": true,
             "job_id": "{source_id}"
           },
           "sendMessageSequence": "reservation_attendance_confirmed_reply"
         },
         "reschedule": {
-          "tool": "request_reservation_reschedule",
+          "tool": "manage_reservation",
           "arguments": {
+            "action": "request_reschedule",
             "job_id": "{source_id}"
           },
           "sendMessageSequence": "reservation_attendance_reschedule_reply"
@@ -347,6 +349,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         ],
         "conversationGuidance": "Si el primer mensaje es solo saludo, agrega solo una pregunta simple de ayuda: En que puedo ayudarte hoy con el bienestar de tu bebe? Si el primer mensaje tambien trae informacion o una intencion, no agregues una pregunta generica; continua con esa informacion y con la etapa que corresponda. Cuando el cliente comparta nombre o edad del bebe, capturalos. Cuando la intencion sea reserva nueva o recomendacion personalizada, pide solo el dato faltante necesario para avanzar.",
         "allowedActions": [
+          "resolver_servicio",
           "registrar_dato"
         ],
         "collect": [
@@ -375,9 +378,10 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
           "service",
           "fulfillment_ready"
         ],
-        "conversationGuidance": "Al entrar en esta etapa, llama get_service_catalog antes de presentar categorias, servicios, precios u horarios. Con el catalogo retornado, presenta primero solo las categorias reales con una descripcion breve de la experiencia de cada una y sus beneficios generales para el bebe segun edad/etapa si esta disponible; no muestres precios ni listes servicios en este primer paso. Cierra preguntando cual categoria o experiencia le interesa. Si el cliente elige una categoria, muestra solo los servicios de esa categoria con nombre canonico, duracion, precio, horario si aplica y descripcion breve del catalogo; cierra preguntando que servicio le gustaria para su bebe. En esta etapa enfocate en elegir servicio: reserva los complementos para la etapa Complementos, despues de guardar service. Cuando el cliente enfoque una opcion exacta del catalogo, guarda service con set_fact usando el nombre canonico; despues llama get_service_fulfillment para resolver si la ruta es reserva o inscripcion y deja que la regla de la etapa registre fulfillment_ready.",
+        "conversationGuidance": "Al entrar en esta etapa, consulta el catalogo oficial antes de presentar categorias, servicios, precios u horarios. Con el catalogo retornado, presenta primero solo las categorias reales con una descripcion breve de la experiencia de cada una y sus beneficios generales para el bebe segun edad/etapa si esta disponible; no muestres precios ni listes servicios en este primer paso. Cierra preguntando cual categoria o experiencia le interesa. Si el cliente elige una categoria, muestra solo los servicios de esa categoria con nombre canonico, duracion, precio, horario si aplica y descripcion breve del catalogo; cierra preguntando que servicio le gustaria para su bebe. En esta etapa enfocate en elegir servicio: reserva los complementos para la etapa Complementos, despues de guardar service. Cuando el cliente enfoque una opcion exacta del catalogo, registra service usando el nombre canonico; despues resuelve el tipo de atencion para saber si la ruta es reserva o inscripcion y deja que la regla de la etapa registre fulfillment_ready.",
         "allowedActions": [
           "consultar_catalogo",
+          "resolver_servicio",
           "registrar_dato",
           "resolver_tipo_atencion"
         ],
@@ -416,7 +420,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         "advanceWhenFacts": [
           "add_ons"
         ],
-        "conversationGuidance": "Llama get_compatible_add_ons con el servicio exacto seleccionado. Antes de ofrecer complementos, confirma la eleccion del servicio en tono calido y agrega una descripcion breve con beneficios sintetizados desde la informacion oficial del catalogo y la etapa del bebe si esta disponible. Cuando data.count sea mayor que 0, usa data.add_ons como lista completa y fuente de nombres canonicos. Presenta las familias disponibles de forma natural: decoraciones y fotografias, con una descripcion breve de cada familia. Para decoracion, explica que permite ambientar la experiencia con detalles tematicos o personalizados. Para fotografia, explica que permite guardar el recuerdo en fotos digitales, impresas o video segun la opcion elegida; presenta las condiciones de disponibilidad como nota informativa del complemento. Presenta solo las familias y sus descripciones breves; los nombres y detalles de cada opcion van en las imagenes adjuntas. Menciona que los detalles estan en las imagenes adjuntas y pregunta si desea agregar decoracion, fotografia, ambas opciones o continuar sin complementos. Haz una sola pregunta final sobre complementos. El fact add_ons se completa con add_ons=ninguno o con nombres canonicos de data.add_ons. Si el cliente continua sin complementos, registra add_ons=ninguno con set_fact. Si el cliente expresa interes por una familia o grupo de complementos y esa seleccion puede corresponder a varias opciones compatibles, mantente en complementos: usa data.add_ons o llama get_compatible_add_ons para refrescarlo, y pide que elija una opcion especifica por nombre o desde la imagen. Cuando tengas un nombre canonico compatible o una autorizacion explicita para que Mimi elija, registra add_ons con set_fact. Si el complemento registrado tiene include_in_checkout_total=false, informa que su disponibilidad se validara con el proveedor correspondiente y que su valor es informativo, sin incluirse en el anticipo. El cliente puede elegir complementos de grupos distintos; si set_fact devuelve duplicate_add_on_group, pide que conserve una sola opcion de ese grupo. Si pide ambas categorias, registra un nombre canonico por cada grupo elegido, separados por coma. Si set_fact devuelve ambiguous_add_ons, pide al cliente que elija una opcion especifica de los complementos compatibles. Despues de registrar add_ons, continua con el siguiente paso natural del flujo. Cuando data.count sea 0, registra add_ons=ninguno y deja que el flujo avance.",
+        "conversationGuidance": "Consulta complementos compatibles con el servicio exacto seleccionado. Antes de ofrecer complementos, confirma la eleccion del servicio en tono calido y agrega una descripcion breve con beneficios sintetizados desde la informacion oficial del catalogo y la etapa del bebe si esta disponible. Cuando existan complementos compatibles, usa la lista retornada como fuente de nombres canonicos. Presenta las familias disponibles de forma natural: decoraciones y fotografias, con una descripcion breve de cada familia. Para decoracion, explica que permite ambientar la experiencia con detalles tematicos o personalizados. Para fotografia, explica que permite guardar el recuerdo en fotos digitales, impresas o video segun la opcion elegida; presenta las condiciones de disponibilidad como nota informativa del complemento. Presenta solo las familias y sus descripciones breves; los nombres y detalles de cada opcion van en las imagenes adjuntas. Menciona que los detalles estan en las imagenes adjuntas y pregunta si desea agregar decoracion, fotografia, ambas opciones o continuar sin complementos. Haz una sola pregunta final sobre complementos. El fact add_ons se completa con add_ons=ninguno o con nombres canonicos compatibles. Si el cliente continua sin complementos, registra add_ons=ninguno. Si el cliente expresa interes por una familia o grupo de complementos y esa seleccion puede corresponder a varias opciones compatibles, mantente en complementos: usa los complementos compatibles vigentes o refrescalos, y pide que elija una opcion especifica por nombre o desde la imagen. Cuando tengas un nombre canonico compatible o una autorizacion explicita para que Mimi elija, registra add_ons. Si el complemento registrado no se incluye en el total de checkout, informa que su disponibilidad se validara con el proveedor correspondiente y que su valor es informativo, sin incluirse en el anticipo. El cliente puede elegir complementos de grupos distintos; si la herramienta indica grupo duplicado, pide que conserve una sola opcion de ese grupo. Si pide ambas categorias, registra un nombre canonico por cada grupo elegido, separados por coma. Si la herramienta indica complementos ambiguos, pide al cliente que elija una opcion especifica de los complementos compatibles. Despues de registrar add_ons, continua con el siguiente paso natural del flujo. Cuando no existan complementos compatibles, registra add_ons=ninguno y deja que el flujo avance.",
         "allowedActions": [
           "consultar_complementos",
           "registrar_dato"
@@ -476,7 +480,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
           "fixed_schedule_label",
           "fulfillment_ready"
         ],
-        "conversationGuidance": "Usa esta etapa solo para reservas con fulfillment_ready=reservation. Si falta fecha, pidela; si el cliente pide horarios para una fecha, llama check_availability con esa fecha y muestra horarios; si el cliente elige una hora de horarios recien presentados, registra desired_date y desired_time y llama check_availability con fecha y hora en el mismo turno. Despues de confirmar disponibilidad, informa el resultado y continua con el siguiente dato del flujo. Si ya existe fixed_schedule_label, esta etapa se salta porque el servicio es de inscripcion.",
+        "conversationGuidance": "Usa esta etapa solo para reservas con fulfillment_ready=reservation. Si falta fecha, pidela; si el cliente pide horarios para una fecha, valida disponibilidad con esa fecha y muestra horarios oficiales; si el cliente elige una hora de horarios recien presentados, registra desired_date y desired_time y valida disponibilidad con fecha y hora en el mismo turno. Despues de confirmar disponibilidad, informa el resultado y continua con el siguiente dato del flujo. Si ya existe fixed_schedule_label, esta etapa se salta porque el servicio es de inscripcion.",
         "allowedActions": [
           "validar_disponibilidad",
           "registrar_dato"
@@ -509,7 +513,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         "name": "Cierre",
         "goal": "Cierra la reserva: resumen, pago o confirmacion verbal, registro de cita y mensajes post-reserva.",
         "advanceWhenFacts": [],
-        "conversationGuidance": "1) Objetivo: cerrar solo la solicitud actual con resumen, pago o confirmacion segun checkout. 2) Si aun no se mostro el resumen y ya estan los datos requeridos, llama prepare_checkout con el servicio exacto del catalogo; la herramienta resuelve precio, plantilla, monto y link. 3) Si hay link/resumen pendiente y el cliente solo pide informacion normal, responde sin cambiar la solicitud. 4) Si hay link/resumen pendiente y el cliente pide agregar o cambiar complementos sin nombrar uno exacto, llama get_compatible_add_ons y pide cual desea; si cambia servicio o complemento exacto, actualiza los facts correspondientes y reconstruye el resumen/link con prepare_checkout. 5) Premisa de avance: cuando el cliente elige una opcion concreta de una lista recien presentada, esa eleccion autoriza el siguiente paso; registra el nombre exacto de esa opcion como service, llama prepare_checkout y entrega el resumen/link resultante. 6) Si el cliente pide una categoria o servicio no exacto, llama get_service_catalog y ofrece opciones exactas; cuando elija una, aplica la premisa de avance. 7) Si quiere empezar otra solicitud distinta, pregunta si reemplaza la actual o la deja sin efecto; si decide desistir, llama reset_flow_context con reason=start_new_request o customer_abandoned y checkout_action=abandon. 8) Si prepare_checkout entrega enlace de pago, comparte el resumen/link y espera la confirmacion automatica del webhook. 9) Si prepare_checkout entrega un cierre sin pago, pregunta si confirma con esa informacion; cuando confirme verbalmente, llama create_reservation. Para servicios con horario oficial de inscripcion, prepara el checkout con ese horario y espera la confirmacion automatica del webhook.",
+        "conversationGuidance": "Objetivo: cerrar solo la solicitud actual con resumen, pago o confirmacion segun checkout. Si aun no se mostro el resumen y ya estan los datos requeridos, prepara el checkout con el servicio exacto del catalogo; la herramienta resuelve precio, plantilla, monto y link. Si hay link/resumen pendiente y el cliente solo pide informacion normal, responde sin cambiar la solicitud. Si hay link/resumen pendiente y el cliente pide agregar o cambiar complementos sin nombrar uno exacto, consulta complementos compatibles y pide cual desea; si cambia servicio o complemento exacto, actualiza los facts correspondientes y reconstruye el resumen/link. Premisa de avance: cuando el cliente elige una opcion concreta de una lista recien presentada, esa eleccion autoriza el siguiente paso; registra el nombre exacto de esa opcion como service, prepara checkout y entrega el resumen/link resultante. Si el cliente pide una categoria o servicio no exacto, consulta el catalogo oficial y ofrece opciones exactas; cuando elija una, aplica la premisa de avance. Si quiere empezar otra solicitud distinta, pregunta si reemplaza la actual o la deja sin efecto; si decide desistir, reinicia el flujo con reason=start_new_request o customer_abandoned y checkout_action=abandon. Si checkout entrega enlace de pago, comparte el resumen/link y espera la confirmacion automatica del webhook. Si checkout entrega un cierre sin pago, pregunta si confirma con esa informacion; cuando confirme verbalmente, crea la reserva. Para servicios con horario oficial de inscripcion, prepara el checkout con ese horario y espera la confirmacion automatica del webhook.",
         "allowedActions": [
           "preparar_checkout",
           "crear_reserva",
@@ -535,6 +539,11 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
           "name": "Consultar catalogo oficial",
           "purpose": "Presentar categorias o servicios oficiales segun la intencion del cliente.",
           "tool": "get_service_catalog"
+        },
+        "resolver_servicio": {
+          "name": "Resolver servicio exacto",
+          "purpose": "Convertir la seleccion del cliente en un servicio canonico del catalogo.",
+          "tool": "resolve_service_selection"
         },
         "resolver_tipo_atencion": {
           "name": "Resolver tipo de atencion",
@@ -581,40 +590,20 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
           "purpose": "Pasar la conversacion a una persona con el contexto necesario.",
           "tool": "escalate_to_human"
         },
-        "agendar_pago_confirmado": {
-          "name": "Agendar pago confirmado",
-          "purpose": "Crear o ajustar una reserva pendiente a partir de un pago confirmado.",
-          "tool": "reschedule_paid_reservation"
-        },
         "obtener_reservas_cliente": {
-          "name": "Obtener reservas del cliente",
-          "purpose": "Listar reservas gestionables para resolver ambiguedad o aplicar cambios.",
+          "name": "Mostrar reservas del cliente",
+          "purpose": "Listar reservas gestionables cuando el cliente tiene varias o la solicitud es ambigua.",
           "tool": "get_customer_reservations"
         },
-        "confirmar_asistencia_reserva": {
-          "name": "Confirmar asistencia",
-          "purpose": "Registrar confirmacion de asistencia de una reserva existente.",
-          "tool": "confirm_reservation_attendance"
+        "gestionar_reserva": {
+          "name": "Gestionar reserva existente",
+          "purpose": "Aplicar cambios permitidos, confirmar asistencia, cancelar o escalar cambios no automaticos segun politica configurada.",
+          "tool": "manage_reservation"
         },
-        "solicitar_reagenda_reserva": {
-          "name": "Solicitar reagenda",
-          "purpose": "Registrar que el cliente necesita reagendar una reserva existente.",
-          "tool": "request_reservation_reschedule"
-        },
-        "preparar_cambio_reserva": {
-          "name": "Preparar cambio de reserva",
-          "purpose": "Validar y preparar cambios solicitados para una reserva existente.",
-          "tool": "prepare_reservation_change"
-        },
-        "confirmar_cambio_reserva": {
-          "name": "Confirmar cambio de reserva",
-          "purpose": "Aplicar un cambio de reserva previamente preparado.",
-          "tool": "confirm_reservation_change"
-        },
-        "suspender_reserva": {
-          "name": "Suspender reserva",
-          "purpose": "Poner una reserva en espera cuando corresponde.",
-          "tool": "suspend_reservation"
+        "completar_reagenda_pagada": {
+          "name": "Completar reagenda pagada",
+          "purpose": "Crear la reserva de un pago confirmado pendiente usando la nueva fecha y hora disponible.",
+          "tool": "manage_reservation"
         }
       },
       "enabled": true
@@ -625,7 +614,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "id": "human_escalation",
       "priority": 1000,
       "goal": "Escalar a una persona cuando el cliente lo pida, este frustrado, haya errores consecutivos o la solicitud salga del alcance del bot.",
-      "conversationGuidance": "Usa escalate_to_human con una razon breve y el ultimo mensaje relevante del cliente.",
+      "conversationGuidance": "Escala con una razon breve y el ultimo mensaje relevante del cliente.",
       "allowedActions": [
         "escalar_humano"
       ]
@@ -634,10 +623,10 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "id": "complete_paid_reservation_reschedule",
       "priority": 950,
       "goal": "Completar la agenda cuando un pago confirmado quedo sin reserva porque el horario original ya no estaba disponible.",
-      "conversationGuidance": "Usa esta ruta solo cuando el estado indique pago confirmado sin reserva enlazada. No generes nuevo checkout ni pidas nuevo pago. Primero valida el nuevo horario con check_availability usando el servicio original; si esta disponible, llama reschedule_paid_reservation con date y time. Si no esta disponible, ofrece los horarios devueltos por check_availability.",
+      "conversationGuidance": "Usa esta ruta solo cuando el estado indique pago confirmado sin reserva enlazada. No generes nuevo checkout ni pidas nuevo pago. Fecha y hora se resuelven por disponibilidad; si el horario no esta disponible, ofrece horarios oficiales devueltos por la herramienta.",
       "allowedActions": [
         "validar_disponibilidad",
-        "agendar_pago_confirmado",
+        "completar_reagenda_pagada",
         "registrar_dato"
       ]
     },
@@ -645,14 +634,10 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "id": "manage_existing_reservation",
       "priority": 900,
       "goal": "Gestionar reservas existentes cuando el cliente quiera confirmar asistencia, cambiar, reagendar, agregar o quitar complementos, cambiar servicio o suspender una reserva ya creada.",
-      "conversationGuidance": "Usa esta ruta antes del flujo de reserva nueva. Si el cliente confirma que asistira, usa confirm_reservation_attendance. Si pide reagendar, usa request_reservation_reschedule y luego pregunta nueva fecha y hora. Primero identifica la reserva con get_customer_reservations cuando haga falta. Para cambios de servicio, fecha, hora o complementos, usa prepare_reservation_change y aplica con confirm_reservation_change solo despues de confirmacion clara. Para cambios de una reserva ya pagada, no generes nuevo checkout; cualquier saldo restante se maneja en el local. Si hay varias reservas, pregunta cual por fecha y servicio; nunca pidas UUID al cliente. Usa suspend_reservation solo cuando la intencion de suspender o cancelar sea clara, o despues de confirmacion explicita.",
+      "conversationGuidance": "Gestiona esta ruta antes del flujo de reserva nueva. Primero identifica la reserva cuando haga falta. Fecha y hora pueden aplicarse directamente si hay disponibilidad; cambios de servicio, complementos u otros campos quedan en espera y escalan segun resultado de la herramienta. Si hay varias reservas, pregunta cual por fecha y servicio; nunca pidas UUID al cliente. No generes nuevo checkout para cambios de una reserva ya pagada.",
       "allowedActions": [
         "obtener_reservas_cliente",
-        "confirmar_asistencia_reserva",
-        "solicitar_reagenda_reserva",
-        "preparar_cambio_reserva",
-        "confirmar_cambio_reserva",
-        "suspender_reserva"
+        "gestionar_reserva"
       ]
     }
   ],
@@ -882,29 +867,19 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         "verification:checkout_no_payment_prepared",
         "state:no_pending_checkout"
       ]
-    },
-    "capability:reservation.reschedule_paid": {
-      "requires": [
-        "state:payment_confirmed_no_slot",
-        "verification:availability_checked"
-      ]
     }
   },
   "enabledTools": [
     "set_fact",
     "get_service_catalog",
+    "resolve_service_selection",
     "get_compatible_add_ons",
     "get_service_fulfillment",
     "check_availability",
     "prepare_checkout",
     "create_reservation",
-    "reschedule_paid_reservation",
-    "suspend_reservation",
     "get_customer_reservations",
-    "confirm_reservation_attendance",
-    "request_reservation_reschedule",
-    "prepare_reservation_change",
-    "confirm_reservation_change",
+    "manage_reservation",
     "verify_payment",
     "escalate_to_human",
     "reset_flow_context",
@@ -922,6 +897,15 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
     }
   },
   "reservationManagement": {
+    "automaticChangeFields": [
+      "date",
+      "time"
+    ],
+    "escalateChangeFields": [
+      "service",
+      "add_ons"
+    ],
+    "escalationReasonCode": "reservation_change_requires_human",
     "manageableReservationGuidance": "Cuando el cliente pida cambiar, cancelar o confirmar una reserva sin identificar una reserva por fecha, hora o servicio existente, pide que indique cual reserva. No infieras disponibilidad ni apliques cambios sobre una reserva no identificada."
   }
 }';

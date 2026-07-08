@@ -1,4 +1,4 @@
-﻿using System.Text.Json;
+using System.Text.Json;
 using FluentAssertions;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
@@ -41,7 +41,7 @@ public sealed class ResolveServiceSelectionToolTests
         SetupServices(businessId,
             "Corte de adulto",
             "Corte + barba",
-            "Corte de niÃ±o");
+            "Corte de niño");
         var ctx = CreateContext(businessId);
 
         using var args = JsonDocument.Parse("""{"text":"corte"}""");
@@ -116,6 +116,32 @@ public sealed class ResolveServiceSelectionToolTests
             ctx.ConversationId, ctx.BusinessId, ConversationFactKeys.Service, "Corte premium de adulto",
             false, It.IsAny<CancellationToken>()), Times.Once);
     }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenSelectionMatchesCurrentService_ReturnsUnchangedBeforeAddOnDetection()
+    {
+        var businessId = Guid.NewGuid();
+        SetupServices(businessId, "Plan Marineritos");
+        var ctx = CreateContext(businessId);
+        ctx.Facts[ConversationFactKeys.Service] = "Plan Marineritos";
+        _addOnCatalog.Setup(a => a.ValidateAsync(
+                businessId,
+                "Plan Marineritos",
+                "Plan Marineritos",
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(AddOnValidationResult.Ok("Decoracion Sencilla"));
+
+        using var args = JsonDocument.Parse("""{"text":"Plan Marineritos"}""");
+        var json = await _tool.ExecuteAsync(args.RootElement, ctx, CancellationToken.None);
+
+        json.Should().Contain("\"unchanged\":true");
+        json.Should().NotContain("add_on_selection_detected");
+        ctx.Facts[ConversationFactKeys.Service].Should().Be("Plan Marineritos");
+        _facts.Verify(f => f.SetAsync(
+            It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<string>(),
+            It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
     [Fact]
     public async Task ExecuteAsync_UniqueSelection_PersistsCanonicalService()
     {
@@ -123,7 +149,7 @@ public sealed class ResolveServiceSelectionToolTests
         SetupServices(businessId,
             "Corte de adulto",
             "Corte + barba",
-            "Corte de niÃ±o");
+            "Corte de niño");
         var ctx = CreateContext(businessId);
 
         using var args = JsonDocument.Parse("""{"text":"corte adulto"}""");
@@ -143,11 +169,11 @@ public sealed class ResolveServiceSelectionToolTests
         SetupServices(businessId,
             new Service { ServiceName = "Corte basico", Keywords = "corte adulto, corte de cabello adulto" },
             new Service { ServiceName = "Corte + barba", Keywords = "corte barba, arreglo de barba" },
-            new Service { ServiceName = "Corte infantil", Keywords = "corte nino, corte niÃ±o, corte de cabello niÃ±o, cabello niÃ±o" },
-            new Service { ServiceName = "Corte puntas", Keywords = "corte bebe, corte bebÃ©s, solo puntas" });
+            new Service { ServiceName = "Corte infantil", Keywords = "corte nino, corte niño, corte de cabello niño, cabello niño" },
+            new Service { ServiceName = "Corte puntas", Keywords = "corte bebe, corte bebés, solo puntas" });
         var ctx = CreateContext(businessId);
 
-        using var args = JsonDocument.Parse("""{"text":"corte de cabello para niÃ±o"}""");
+        using var args = JsonDocument.Parse("""{"text":"corte de cabello para niño"}""");
         var json = await _tool.ExecuteAsync(args.RootElement, ctx, CancellationToken.None);
 
         json.Should().Contain("\"selection_status\":\"resolved\"");

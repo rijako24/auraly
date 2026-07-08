@@ -147,6 +147,7 @@ public static class TestServiceBuilder
                     sp.GetRequiredService<ICustomerReservationResolver>()),
                 new SetFactTool(
                     sp.GetRequiredService<IConversationFactsService>(),
+                    sp.GetRequiredService<ServiceSelectionResolver>(),
                     sp.GetRequiredService<IAddOnCatalogService>(),
                     sp.GetRequiredService<IConversationVerificationService>(),
                     sp.GetRequiredService<ILeadService>()),

@@ -20,7 +20,7 @@ public sealed class ResolveServiceSelectionTool : IAgentTool
         _resolver = resolver;
         _factsService = factsService;
         _addOnCatalog = addOnCatalog;
-}
+    }
 
     public string Name => "resolve_service_selection";
 
@@ -57,7 +57,25 @@ public sealed class ResolveServiceSelectionTool : IAgentTool
 
         var roleIndex = new FactRoleIndex(ctx.Config?.FactSchema ?? []);
         var key = roleIndex.KeyByRole("booking.service") ?? ConversationFactKeys.Service;
-        if (ctx.Facts.TryGetValue(key, out var currentService) && !string.IsNullOrWhiteSpace(currentService))
+        ctx.Facts.TryGetValue(key, out var currentService);
+
+        var resolution = await _resolver.ResolveAsync(ctx.BusinessId, text, ct: cancellationToken);
+        if (!string.IsNullOrWhiteSpace(currentService)
+            && resolution.Status == ServiceSelectionStatus.Resolved
+            && !string.IsNullOrWhiteSpace(resolution.ServiceName)
+            && currentService.Trim().Equals(resolution.ServiceName.Trim(), StringComparison.OrdinalIgnoreCase))
+        {
+            return ToolResultHelper.Ok(new
+            {
+                selection_status = "resolved",
+                service = resolution.ServiceName,
+                key,
+                unchanged = true,
+                storage = "fact_unchanged"
+            });
+        }
+
+        if (!string.IsNullOrWhiteSpace(currentService))
         {
             var addOnValidation = await _addOnCatalog.ValidateAsync(ctx.BusinessId, currentService, text, cancellationToken);
             if (addOnValidation.IsValid && !string.IsNullOrWhiteSpace(addOnValidation.NormalizedCsv))
@@ -75,39 +93,10 @@ public sealed class ResolveServiceSelectionTool : IAgentTool
                     recoverable: true);
             }
         }
-
-        var resolution = await _resolver.ResolveAsync(ctx.BusinessId, text, ct: cancellationToken);
         if (resolution.Status != ServiceSelectionStatus.Resolved || string.IsNullOrWhiteSpace(resolution.ServiceName))
-        {
-            return ToolResultHelper.ErrorWithLlm(
-                BuildResolutionErrorCode(resolution),
-                BuildResolutionErrorMessage(resolution),
-                null,
-                new
-                {
-                    next_action = "get_service_catalog",
-                    view = "services",
-                    query = text.Trim(),
-                    selection_status = resolution.Status.ToString()
-                },
-                recoverable: true);
-        }
+            return ServiceSelectionToolResults.Unresolved(resolution, text.Trim());
 
         var schemaEntry = roleIndex.EntryFor(key);
-
-        ctx.Facts.TryGetValue(key, out var previousValue);
-        if (!string.IsNullOrWhiteSpace(previousValue)
-            && previousValue.Trim().Equals(resolution.ServiceName.Trim(), StringComparison.OrdinalIgnoreCase))
-        {
-            return ToolResultHelper.Ok(new
-            {
-                selection_status = "resolved",
-                service = resolution.ServiceName,
-                key,
-                unchanged = true,
-                storage = "fact_unchanged"
-            });
-        }
 
         await _factsService.SetAsync(
             ctx.ConversationId,
@@ -127,19 +116,5 @@ public sealed class ResolveServiceSelectionTool : IAgentTool
             storage = "fact"
         });
     }
-
-    private static string BuildResolutionErrorCode(ServiceSelectionResolution resolution) => resolution.Status switch
-    {
-        ServiceSelectionStatus.Ambiguous => "service_selection_ambiguous",
-        ServiceSelectionStatus.NotFound => "service_selection_not_found",
-        _ => "service_selection_unresolved"
-    };
-
-    private static string BuildResolutionErrorMessage(ServiceSelectionResolution resolution) => resolution.Status switch
-    {
-        ServiceSelectionStatus.Ambiguous => "Service selection is ambiguous.",
-        ServiceSelectionStatus.NotFound => "Service selection was not found.",
-        _ => "Service selection could not be resolved."
-    };
 }
 

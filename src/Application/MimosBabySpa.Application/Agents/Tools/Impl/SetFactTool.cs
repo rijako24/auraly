@@ -1,4 +1,4 @@
-﻿using System.Text.Json;
+using System.Text.Json;
 
 using MimosBabySpa.Application.Agents.Configuration;
 
@@ -31,6 +31,8 @@ public sealed class SetFactTool : IAgentTool
 
     private readonly IConversationFactsService _factsService;
 
+    private readonly ServiceSelectionResolver _serviceSelectionResolver;
+
     private readonly IAddOnCatalogService _addOnCatalog;
 
     private readonly IConversationVerificationService _verifications;
@@ -39,6 +41,8 @@ public sealed class SetFactTool : IAgentTool
     public SetFactTool(
 
         IConversationFactsService factsService,
+
+        ServiceSelectionResolver serviceSelectionResolver,
 
         IAddOnCatalogService addOnCatalog,
 
@@ -49,6 +53,8 @@ public sealed class SetFactTool : IAgentTool
     {
 
         _factsService = factsService;
+
+        _serviceSelectionResolver = serviceSelectionResolver;
 
         _addOnCatalog = addOnCatalog;
 
@@ -67,8 +73,8 @@ public sealed class SetFactTool : IAgentTool
 
 
     public string Description =>
-        "Registra en el estado de la conversaciÃƒÂ³n un dato aportado por el cliente. " +
-        "ÃƒÅ¡sala SOLO cuando el cliente entregue un dato nuevo o cambie uno existente. " +
+        "Registra en el estado de la conversacion un dato aportado por el cliente. " +
+        "Usala SOLO cuando el cliente entregue un dato nuevo o cambie uno existente. " +
         "NUNCA la uses para reconfirmar o repetir un dato que ya aparece en '## ESTADO ACTUAL' con el mismo valor. " +
         "Normaliza fechas a YYYY-MM-DD y horas a HH:mm antes de registrar. " +
         "Input: clave (key) y valor (value). Output: clave y valor normalizado almacenados.";
@@ -122,7 +128,7 @@ public sealed class SetFactTool : IAgentTool
 
 
 
-        // Normalizar alias Ã¢â€ â€™ key canÃƒÂ³nico usando el schema del tenant
+        // Normalizar alias -> key canonico usando el schema del tenant
 
         var roleIndex = new FactRoleIndex(ctx.Config?.FactSchema ?? []);
 
@@ -148,7 +154,7 @@ public sealed class SetFactTool : IAgentTool
 
 
 
-        // ValidaciÃƒÂ³n de tipo basada en schema del tenant (antes de normalizar valor)
+        // Validacion de tipo basada en schema del tenant (antes de normalizar valor)
 
         var schemaEntry = roleIndex.EntryFor(key);
 
@@ -208,18 +214,14 @@ public sealed class SetFactTool : IAgentTool
 
         }
 
-        if (key.Equals(ConversationFactKeys.Service, StringComparison.OrdinalIgnoreCase))
+        if (IsBookingServiceFact(key, schemaEntry))
         {
-            return ToolResultHelper.ErrorWithLlm(
-                ToolErrorCodes.ServiceSelectionMismatch,
-                "Service selection cannot be stored with set_fact.",
-                remediation: null,
-                new
-                {
-                    next_action = "resolve_service_selection",
-                    fact_key = ConversationFactKeys.Service
-                },
-                recoverable: true);
+            return await ResolveAndStoreServiceAsync(
+                key,
+                value,
+                schemaEntry,
+                ctx,
+                cancellationToken);
         }
 
         ctx.Facts.TryGetValue(key, out var previousValue);
@@ -339,6 +341,55 @@ public sealed class SetFactTool : IAgentTool
 
 
 
+
+    private async Task<string> ResolveAndStoreServiceAsync(
+        string key,
+        string value,
+        FactSchemaEntry? schemaEntry,
+        AgentToolContext ctx,
+        CancellationToken cancellationToken)
+    {
+        var resolution = await _serviceSelectionResolver.ResolveAsync(ctx.BusinessId, value, ct: cancellationToken);
+        if (resolution.Status != ServiceSelectionStatus.Resolved || string.IsNullOrWhiteSpace(resolution.ServiceName))
+            return ServiceSelectionToolResults.Unresolved(resolution, value);
+
+        ctx.Facts.TryGetValue(key, out var previousValue);
+        if (!string.IsNullOrWhiteSpace(previousValue)
+            && previousValue.Trim().Equals(resolution.ServiceName.Trim(), StringComparison.OrdinalIgnoreCase))
+        {
+            return ToolResultHelper.Ok(new
+            {
+                key,
+                value = resolution.ServiceName,
+                selection_status = "resolved",
+                unchanged = true,
+                storage = "fact_unchanged"
+            });
+        }
+
+        await _factsService.SetAsync(
+            ctx.ConversationId,
+            ctx.BusinessId,
+            key,
+            resolution.ServiceName,
+            schemaEntry?.ShouldRememberAcrossRequests() ?? false,
+            cancellationToken);
+
+        ctx.Facts[key] = resolution.ServiceName;
+
+        return ToolResultHelper.Ok(new
+        {
+            key,
+            value = resolution.ServiceName,
+            selection_status = "resolved",
+            storage = "fact"
+        });
+    }
+
+    private static bool IsBookingServiceFact(string key, FactSchemaEntry? schemaEntry) =>
+        key.Equals(ConversationFactKeys.Service, StringComparison.OrdinalIgnoreCase)
+        || string.Equals(schemaEntry?.Role, "booking.service", StringComparison.OrdinalIgnoreCase);
+
     private Task TryRecordCustomerIdentifiedAsync(AgentToolContext ctx)
 
     {
@@ -417,7 +468,7 @@ public sealed class SetFactTool : IAgentTool
 
     /// Valida el valor contra el tipo declarado en factSchema.
 
-    /// Devuelve null si pasa la validaciÃƒÂ³n o un JSON de error si no.
+    /// Devuelve null si pasa la validacion o un JSON de error si no.
 
     /// </summary>
 

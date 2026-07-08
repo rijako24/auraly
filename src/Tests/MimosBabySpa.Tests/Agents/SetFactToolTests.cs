@@ -49,34 +49,39 @@ public class SetFactToolTests
 
         var unitOfWork = new Mock<IUnitOfWork>();
         unitOfWork.SetupGet(u => u.Services).Returns(_services.Object);
+        var resolver = new ServiceSelectionResolver(unitOfWork.Object, NullLogger<ServiceSelectionResolver>.Instance);
 
         _tool = new SetFactTool(
             _facts.Object,
+            resolver,
             _addOnCatalog.Object,
             _verifications,
             _leadService.Object);
     }
 
     [Fact]
-    public async Task ExecuteAsync_ServiceKey_RequiresServiceSelectionTool()
+    public async Task ExecuteAsync_ServiceKey_ResolvesAndPersistsCanonicalService()
     {
         var ctx = CreateContext();
+        _services.Setup(s => s.GetActiveByBusinessIdAsync(ctx.BusinessId))
+            .ReturnsAsync([new Service { BusinessId = ctx.BusinessId, ServiceName = "Plan Marineritos", IsActive = true }]);
 
         using var args = JsonDocument.Parse("""{"key":"service","value":"Plan Marineritos"}""");
         var json = await _tool.ExecuteAsync(args.RootElement, ctx, CancellationToken.None);
 
-        json.Should().Contain("service_selection_mismatch");
-        json.Should().Contain("resolve_service_selection");
-        ctx.Facts.Should().NotContainKey(ConversationFactKeys.Service);
+        json.Should().Contain("\"selection_status\":\"resolved\"");
+        ctx.Facts[ConversationFactKeys.Service].Should().Be("Plan Marineritos");
         _facts.Verify(f => f.SetAsync(
-            It.IsAny<Guid>(), It.IsAny<Guid>(), ConversationFactKeys.Service, It.IsAny<string>(),
-            It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Never);
+            ctx.ConversationId, ctx.BusinessId, ConversationFactKeys.Service, "Plan Marineritos",
+            It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
-    public async Task ExecuteAsync_ServiceKey_RequiresResolverWithoutInspectingReservationIntent()
+    public async Task ExecuteAsync_ServiceKey_ResolvesWithoutInspectingReservationIntent()
     {
         var ctx = CreateContext();
+        _services.Setup(s => s.GetActiveByBusinessIdAsync(ctx.BusinessId))
+            .ReturnsAsync([new Service { BusinessId = ctx.BusinessId, ServiceName = "Corte premium de adulto", IsActive = true }]);
         ctx.LatestUserMessage = "Quiero cambiar el servicio a corte premium de adulto";
         ctx.ManageableReservations =
         [
@@ -91,12 +96,11 @@ public class SetFactToolTests
         using var args = JsonDocument.Parse("""{"key":"service","value":"Corte premium de adulto"}""");
         var json = await _tool.ExecuteAsync(args.RootElement, ctx, CancellationToken.None);
 
-        json.Should().Contain("service_selection_mismatch");
-        json.Should().Contain("resolve_service_selection");
-        ctx.Facts.Should().NotContainKey(ConversationFactKeys.Service);
+        json.Should().Contain("\"selection_status\":\"resolved\"");
+        ctx.Facts[ConversationFactKeys.Service].Should().Be("Corte premium de adulto");
         _facts.Verify(f => f.SetAsync(
-            It.IsAny<Guid>(), It.IsAny<Guid>(), ConversationFactKeys.Service, It.IsAny<string>(),
-            It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Never);
+            ctx.ConversationId, ctx.BusinessId, ConversationFactKeys.Service, "Corte premium de adulto",
+            It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Once);
     }
     [Fact]
     public async Task ExecuteAsync_AttributeKey_PersistsToFacts()

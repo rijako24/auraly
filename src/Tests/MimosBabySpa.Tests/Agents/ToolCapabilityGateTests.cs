@@ -227,8 +227,13 @@ public class ToolCapabilityGateTests
     [Fact]
     public async Task EvaluateAsync_SetFact_HasNoPreconditions()
     {
+        var services = new Mock<IServiceRepository>();
+        var unitOfWork = new Mock<IUnitOfWork>();
+        unitOfWork.SetupGet(u => u.Services).Returns(services.Object);
+        var resolver = new ServiceSelectionResolver(unitOfWork.Object, NullLogger<ServiceSelectionResolver>.Instance);
         var setFactTool = new SetFactTool(
             Mock.Of<IConversationFactsService>(),
+            resolver,
             Mock.Of<IAddOnCatalogService>(),
             _verifications,
             Mock.Of<ILeadService>());
