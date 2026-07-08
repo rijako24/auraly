@@ -45,10 +45,11 @@ public sealed class ConfirmReservationChangeTool : IAgentTool
     {
         if (!ToolResultHelper.TryGetBool(arguments, "customer_confirmed", out var confirmed) || !confirmed)
         {
-            return ToolResultHelper.Error(
+            return ToolResultHelper.ErrorWithNextAction(
                 "confirmation_required",
                 "Customer confirmation is required before applying reservation changes.",
-                "Summarize the change and ask the customer to confirm.",
+                "collect_confirmation",
+                new { confirmation_type = "reservation_change" },
                 recoverable: true);
         }
 
@@ -63,7 +64,7 @@ public sealed class ConfirmReservationChangeTool : IAgentTool
 
         var result = await _reservations.UpdateReservationAsync(request.Request!, cancellationToken);
         if (!result.Success)
-            return ToolResultHelper.Error(result.ErrorCode!, result.ErrorMessage!, result.Remediation, recoverable: true);
+            return PrepareReservationChangeTool.BuildErrorResult(result);
 
         ctx.ManageableReservations =
         [

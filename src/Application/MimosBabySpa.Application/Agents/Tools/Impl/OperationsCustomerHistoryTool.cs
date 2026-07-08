@@ -35,7 +35,7 @@ public sealed class OperationsCustomerHistoryTool : IAgentTool
 
         var search = !string.IsNullOrWhiteSpace(customerPhone) ? customerPhone : customer;
         if (string.IsNullOrWhiteSpace(search))
-            return ToolResultHelper.Error("customer_required", "Provide customer_phone or customer.");
+            return ToolResultHelper.ErrorWithNextAction("customer_required", "Customer identifier is required.", "collect_customer_identifier", recoverable: true);
 
         var limit = ToolResultHelper.TryGetInt(arguments, "limit", out var rawLimit)
             ? Math.Clamp(rawLimit, 1, 20)

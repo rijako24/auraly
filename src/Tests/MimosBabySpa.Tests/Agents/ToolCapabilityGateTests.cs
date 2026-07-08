@@ -207,6 +207,7 @@ public class ToolCapabilityGateTests
         result.Code.Should().Be("stage_action_pending");
         result.Reason.Should().Contain("addons_offering");
         result.Remediation.Should().BeNull();
+        AssertStagePendingLlm(result, "addons_offering", "add_ons");
     }
 
     [Fact]
@@ -232,6 +233,7 @@ public class ToolCapabilityGateTests
         result.Code.Should().Be("stage_action_pending");
         result.Reason.Should().Contain("discovery");
         result.Remediation.Should().BeNull();
+        AssertStagePendingLlm(result, "discovery", "service");
     }
 
     [Fact]
@@ -402,6 +404,25 @@ public class ToolCapabilityGateTests
     }
 
 
+    private static void AssertStagePendingLlm(GateResult result, string stageId, params string[] expectedMissingFacts)
+    {
+        result.Llm.Should().NotBeNull();
+
+        var json = JsonSerializer.Serialize(result.Llm);
+        using var doc = JsonDocument.Parse(json);
+        var root = doc.RootElement;
+
+        root.GetProperty("next_action").GetString().Should().Be("continue_current_stage");
+        root.GetProperty("stage_id").GetString().Should().Be(stageId);
+
+        var missingFacts = root.GetProperty("missing_facts")
+            .EnumerateArray()
+            .Select(item => item.GetString())
+            .Where(item => !string.IsNullOrWhiteSpace(item))
+            .ToArray();
+
+        missingFacts.Should().Contain(expectedMissingFacts);
+    }
     private static ConversationalFlowLanguage LanguageForTools(params string[] toolNames) => new()
     {
         Actions = toolNames

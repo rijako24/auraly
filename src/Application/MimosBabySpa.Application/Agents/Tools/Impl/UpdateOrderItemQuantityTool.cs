@@ -51,7 +51,7 @@ public sealed class UpdateOrderItemQuantityTool : IAgentTool
 
         var draft = await _commerce.GetDraftAsync(ctx, cancellationToken);
         if (draft.Items.Count == 0)
-            return ToolResultHelper.Error("empty_order", "The order draft has no items.", "Help the customer choose a product first.", recoverable: true);
+            return ToolResultHelper.ErrorWithNextAction("empty_order", "The order draft has no items.", "select_product", recoverable: true);
 
         if (!OrderItemSelectionResolver.TryResolve(arguments, draft, out var item, out var ambiguous))
         {
@@ -76,7 +76,7 @@ public sealed class UpdateOrderItemQuantityTool : IAgentTool
     private static string BuildClarificationHint(IReadOnlyList<OrderItemSnapshot> items)
     {
         var options = items.Take(5).Select(i => $"{i.OrderItemId}: {i.ProductName} x{i.Quantity}");
-        return "Pregunta cual item del pedido quiere modificar: " + string.Join("; ", options) + ".";
+        return string.Join("; ", options);
     }
 
     private static bool TryGetDecimal(JsonElement args, string name, out decimal value)

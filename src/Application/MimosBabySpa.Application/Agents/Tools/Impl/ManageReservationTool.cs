@@ -189,7 +189,7 @@ public sealed class ManageReservationTool : IAgentTool
                     recoverable: true);
             }
 
-            return ToolResultHelper.Error(result.ErrorCode!, result.ErrorMessage!, remediation, recoverable: true);
+            return PrepareReservationChangeTool.BuildErrorResult(result);
         }
 
         ctx.ManageableReservations =
@@ -622,7 +622,7 @@ public sealed class ManageReservationTool : IAgentTool
         var success = await _reservations.SuspendAsync(resolved.Reservation!.ReservationId, cancellationToken);
         return success
             ? ToolResultHelper.Ok(new { reservation_id = resolved.Reservation.ReservationId, status = "suspended" })
-            : ToolResultHelper.Error("suspend_failed", "The reservation could not be suspended.", "Verify the reservation is in an active state.");
+            : ToolResultHelper.ErrorWithNextAction("suspend_failed", "The reservation could not be suspended.", "select_reservation", recoverable: true);
     }
 
     private async Task<ManageReservationResolveResult> ResolveReservationAsync(

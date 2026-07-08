@@ -622,9 +622,11 @@ public sealed class AgentConversationService : IAgentConversationService
 
         if (tool is null)
         {
-            var notFound = ToolResultHelper.Error("tool_not_found",
+            var notFound = ToolResultHelper.ErrorWithNextAction(
+                "tool_not_found",
                 $"Tool '{toolCall.FunctionName}' is not registered.",
-                "Check the available tool names.");
+                "select_available_tool",
+                new { tool = toolCall.FunctionName });
             return ToolExecutionOutcome.Parse(notFound);
         }
 
@@ -639,8 +641,11 @@ public sealed class AgentConversationService : IAgentConversationService
                     "Conv {ConvId}: tool {Name} blocked by gate ({Code}): {Reason}",
                     ctx.ConversationId, toolCall.FunctionName, gate.Code, gate.Reason);
 
-                return ToolExecutionOutcome.Parse(
-                    ToolResultHelper.Error(gate.Code!, gate.Reason!, gate.Remediation));
+                var gateResult = gate.Llm is null
+                    ? ToolResultHelper.Error(gate.Code!, gate.Reason!, gate.Remediation, recoverable: true)
+                    : ToolResultHelper.ErrorWithLlm(gate.Code!, gate.Reason!, gate.Remediation, gate.Llm, recoverable: true);
+
+                return ToolExecutionOutcome.Parse(gateResult);
             }
             var rawJson = await tool.ExecuteAsync(argsDoc.RootElement, ctx, ct);
             var outcome = ToolExecutionOutcome.Parse(rawJson);
@@ -657,7 +662,11 @@ public sealed class AgentConversationService : IAgentConversationService
                 ctx.ConversationId, toolCall.FunctionName);
 
             return ToolExecutionOutcome.Parse(
-                ToolResultHelper.Error("tool_exception", ex.Message, "Try again or escalate."));
+                ToolResultHelper.ErrorWithNextAction(
+                    "tool_exception",
+                    ex.Message,
+                    "human_handoff",
+                    new { tool = toolCall.FunctionName }));
         }
     }
 

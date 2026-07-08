@@ -73,7 +73,7 @@ public sealed class CheckAvailabilityTool : IAgentTool
             return ToolResultHelper.Error("invalid_args", "Parameter 'date' is required.", recoverable: true);
 
         if (!AgentDateRules.TryParseDate(dateStr, out var date))
-            return ToolResultHelper.Error("invalid_date", $"'{dateStr}' is not a valid date.", "Use YYYY-MM-DD format.", recoverable: true);
+            return ToolResultHelper.ErrorWithNextAction("invalid_date", $"'{dateStr}' is not a valid date.", "collect_valid_date", new { expected_format = "yyyy-MM-dd" });
 
         if (AgentDateRules.IsPastDate(date, ctx.BusinessToday))
             return ToolResultHelper.Error("past_date", "The date must be today or in the future.", recoverable: true);
@@ -98,7 +98,7 @@ public sealed class CheckAvailabilityTool : IAgentTool
         if (!string.IsNullOrWhiteSpace(timeStr))
         {
             if (!TimeSpan.TryParse(timeStr, out var parsedTime))
-                return ToolResultHelper.Error("invalid_time", $"'{timeStr}' is not a valid time.", "Use HH:mm format.", recoverable: true);
+                return ToolResultHelper.ErrorWithNextAction("invalid_time", $"'{timeStr}' is not a valid time.", "collect_valid_time", new { expected_format = "HH:mm" });
             time = parsedTime;
         }
 

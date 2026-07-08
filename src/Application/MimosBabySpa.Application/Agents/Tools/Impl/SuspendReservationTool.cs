@@ -53,9 +53,7 @@ public sealed class SuspendReservationTool : IAgentTool
         var success = await _reservations.SuspendAsync(reservationId, cancellationToken);
 
         if (!success)
-            return ToolResultHelper.Error("suspend_failed",
-                "The reservation could not be suspended.",
-                "Verify the reservation is in an active state.");
+            return ToolResultHelper.ErrorWithNextAction("suspend_failed", "The reservation could not be suspended.", "select_reservation");
 
         return ToolResultHelper.Ok(new { reservation_id = reservationId, status = "suspended" });
     }

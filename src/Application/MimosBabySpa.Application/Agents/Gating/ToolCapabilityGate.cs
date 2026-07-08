@@ -5,7 +5,12 @@ using MimosBabySpa.Application.Agents.Tools;
 
 namespace MimosBabySpa.Application.Agents.Gating;
 
-public sealed record GateResult(bool IsAllowed, string? Code, string? Reason, string? Remediation);
+public sealed record GateResult(
+    bool IsAllowed,
+    string? Code,
+    string? Reason,
+    string? Remediation,
+    object? Llm = null);
 
 public interface IToolCapabilityGate
 {
@@ -87,7 +92,25 @@ public sealed class ToolCapabilityGate : IToolCapabilityGate
             false,
             "stage_action_pending",
             $"Etapa '{stage.Id}': {stage.Goal}",
-            null);
+            null,
+            BuildStagePendingLlm(stage, ctx));
     }
 
+    private static object BuildStagePendingLlm(AgentFlowStage stage, AgentToolContext ctx)
+    {
+        var missingFacts = stage.AdvanceWhenFacts
+            .Where(fact => !ctx.Facts.TryGetValue(fact, out var value) || string.IsNullOrWhiteSpace(value))
+            .ToArray();
+
+        return new
+        {
+            next_action = "continue_current_stage",
+            stage_id = stage.Id,
+            stage_goal = stage.Goal,
+            allowed_actions = stage.AllowedActions,
+            collect = stage.Collect,
+            missing_facts = missingFacts,
+            ask = stage.Ask
+        };
+    }
 }

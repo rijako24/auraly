@@ -1,4 +1,4 @@
-﻿using System.Text.Json;
+using System.Text.Json;
 
 namespace MimosBabySpa.Application.Agents.Tools.Impl;
 
@@ -49,10 +49,26 @@ internal static class ToolResultHelper
     public static string ErrorWithLlm(string code, string message, string? remediation, object? llm, bool recoverable = false) =>
         JsonSerializer.Serialize(new { ok = false, error = new { code, message, remediation, recoverable }, llm }, Options);
 
+    public static string ErrorWithNextAction(
+        string code,
+        string message,
+        string nextAction,
+        object? context = null,
+        bool recoverable = true)
+    {
+        object llm = context is null
+            ? new { next_action = nextAction }
+            : new { next_action = nextAction, context };
+
+        return ErrorWithLlm(code, message, null, llm, recoverable);
+    }
+
     public static string MissingPrerequisites(params string[] missing) =>
-        Error("missing_prerequisites",
+        ErrorWithNextAction(
+            "missing_prerequisites",
             "Required data is missing before this action can be performed.",
-            $"Collect the following first: {string.Join(", ", missing)}",
+            "collect_missing_prerequisites",
+            new { missing },
             recoverable: true);
 
     public static bool TryGetString(JsonElement args, string property, out string value)
