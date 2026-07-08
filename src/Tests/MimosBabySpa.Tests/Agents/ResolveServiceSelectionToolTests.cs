@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using FluentAssertions;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
@@ -41,7 +41,7 @@ public sealed class ResolveServiceSelectionToolTests
         SetupServices(businessId,
             "Corte de adulto",
             "Corte + barba",
-            "Corte de niño");
+            "Corte de niÃ±o");
         var ctx = CreateContext(businessId);
 
         using var args = JsonDocument.Parse("""{"text":"corte"}""");
@@ -52,7 +52,7 @@ public sealed class ResolveServiceSelectionToolTests
         var error = doc.RootElement.GetProperty("error");
         error.GetProperty("code").GetString().Should().Be("service_selection_ambiguous");
         error.GetProperty("message").GetString().Should().Be("Service selection is ambiguous.");
-        error.GetProperty("hint").ValueKind.Should().Be(JsonValueKind.Null);
+        error.GetProperty("remediation").ValueKind.Should().Be(JsonValueKind.Null);
         error.GetProperty("recoverable").GetBoolean().Should().BeTrue();
         doc.RootElement.GetProperty("llm").GetProperty("next_action").GetString().Should().Be("get_service_catalog");
         doc.RootElement.TryGetProperty("data", out _).Should().BeFalse();
@@ -79,7 +79,7 @@ public sealed class ResolveServiceSelectionToolTests
         var error = doc.RootElement.GetProperty("error");
         error.GetProperty("code").GetString().Should().Be("service_selection_not_found");
         error.GetProperty("message").GetString().Should().Be("Service selection was not found.");
-        error.GetProperty("hint").ValueKind.Should().Be(JsonValueKind.Null);
+        error.GetProperty("remediation").ValueKind.Should().Be(JsonValueKind.Null);
         error.GetProperty("recoverable").GetBoolean().Should().BeTrue();
         doc.RootElement.GetProperty("llm").GetProperty("next_action").GetString().Should().Be("get_service_catalog");
         doc.RootElement.TryGetProperty("data", out _).Should().BeFalse();
@@ -123,7 +123,7 @@ public sealed class ResolveServiceSelectionToolTests
         SetupServices(businessId,
             "Corte de adulto",
             "Corte + barba",
-            "Corte de niño");
+            "Corte de niÃ±o");
         var ctx = CreateContext(businessId);
 
         using var args = JsonDocument.Parse("""{"text":"corte adulto"}""");
@@ -143,11 +143,11 @@ public sealed class ResolveServiceSelectionToolTests
         SetupServices(businessId,
             new Service { ServiceName = "Corte basico", Keywords = "corte adulto, corte de cabello adulto" },
             new Service { ServiceName = "Corte + barba", Keywords = "corte barba, arreglo de barba" },
-            new Service { ServiceName = "Corte infantil", Keywords = "corte nino, corte niño, corte de cabello niño, cabello niño" },
-            new Service { ServiceName = "Corte puntas", Keywords = "corte bebe, corte bebés, solo puntas" });
+            new Service { ServiceName = "Corte infantil", Keywords = "corte nino, corte niÃ±o, corte de cabello niÃ±o, cabello niÃ±o" },
+            new Service { ServiceName = "Corte puntas", Keywords = "corte bebe, corte bebÃ©s, solo puntas" });
         var ctx = CreateContext(businessId);
 
-        using var args = JsonDocument.Parse("""{"text":"corte de cabello para niño"}""");
+        using var args = JsonDocument.Parse("""{"text":"corte de cabello para niÃ±o"}""");
         var json = await _tool.ExecuteAsync(args.RootElement, ctx, CancellationToken.None);
 
         json.Should().Contain("\"selection_status\":\"resolved\"");

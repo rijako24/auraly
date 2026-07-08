@@ -53,7 +53,7 @@ public sealed class ToolCapabilityGate : IToolCapabilityGate
                 null));
         }
 
-        var stageResult = EvaluateStageAllowedTools(tool, config, ctx);
+        var stageResult = EvaluateStageAllowedActions(tool, config, ctx);
         if (stageResult is not null)
             return Task.FromResult(stageResult);
 
@@ -68,13 +68,13 @@ public sealed class ToolCapabilityGate : IToolCapabilityGate
             evaluation.Remediation));
     }
 
-    private GateResult? EvaluateStageAllowedTools(IAgentTool tool, AgentConfig config, AgentToolContext ctx)
+    private GateResult? EvaluateStageAllowedActions(IAgentTool tool, AgentConfig config, AgentToolContext ctx)
     {
         if (config.Flow.Stages.Count == 0)
             return null;
 
         var stage = _flowStageDetector.DetectCurrentStage(config.Flow, ctx);
-        if (stage is null || stage.AllowedTools.Count == 0)
+        if (stage is null || stage.AllowedActions.Count == 0)
             return null;
 
         var runtimeActive = !ReferenceEquals(ctx.RuntimeDecision, Runtime.FlowRuntimeDecision.Empty);

@@ -4,7 +4,7 @@ namespace MimosBabySpa.Application.Agents.Tools.Impl;
 
 /// <summary>
 /// Helpers para construir respuestas JSON estandarizadas de tools.
-/// Shape: { "ok": true, "data": {...} } | { "ok": false, "error": { "code", "message", "hint" } }
+/// Shape: { "ok": true, "data": {...} } | { "ok": false, "error": { "code", "message", "recoverable" } }
 /// </summary>
 internal static class ToolResultHelper
 {
@@ -43,11 +43,11 @@ internal static class ToolResultHelper
         return JsonSerializer.Serialize(new { ok = true, data, llm, effects }, Options);
     }
 
-    public static string Error(string code, string message, string? hint = null, bool recoverable = false) =>
-        JsonSerializer.Serialize(new { ok = false, error = new { code, message, hint, recoverable } }, Options);
+    public static string Error(string code, string message, string? remediation = null, bool recoverable = false) =>
+        JsonSerializer.Serialize(new { ok = false, error = new { code, message, remediation, recoverable } }, Options);
 
-    public static string ErrorWithLlm(string code, string message, string? hint, object? llm, bool recoverable = false) =>
-        JsonSerializer.Serialize(new { ok = false, error = new { code, message, hint, recoverable }, llm }, Options);
+    public static string ErrorWithLlm(string code, string message, string? remediation, object? llm, bool recoverable = false) =>
+        JsonSerializer.Serialize(new { ok = false, error = new { code, message, remediation, recoverable }, llm }, Options);
 
     public static string MissingPrerequisites(params string[] missing) =>
         Error("missing_prerequisites",

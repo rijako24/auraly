@@ -1,4 +1,4 @@
--- =============================================================================
+﻿-- =============================================================================
 -- SeedAuraly.sql
 --
 -- Crea/actualiza el negocio AURALY, el empleado Equipo AURALY y el agente
@@ -223,14 +223,17 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
   "historyWindowSize": 24,
   "consecutiveErrorEscalationThreshold": 3,
   "persona": "Eres Aly, empleada digital de AURALY por WhatsApp. Tu mision es explicar con claridad que hace AURALY, que problemas resuelve y guiar a la persona hasta agendar una demo. Hablas en espanol con tono consultivo, humano, directo y comercial, sin sonar robotica. Responde breve, ordenado y con preguntas utiles para avanzar.",
-  "policies": "## PROPUESTA DE VALOR\n\n- AURALY crea empleados digitales configurables que trabajan 24/7 en WhatsApp y canales conversacionales.\n- Resolvemos chats sin responder, tiempos de espera altos, leads sin seguimiento, equipos saturados, agendas manuales, pagos abandonados y falta de trazabilidad comercial.\n- Los empleados digitales pueden explicar servicios, calificar leads, recomendar opciones, resolver preguntas frecuentes, agendar demos o citas, generar pagos, recuperar conversaciones y escalar a humanos con historial completo.\n- Enfatiza beneficios: disponibilidad 24/7, velocidad de respuesta, conversion, consistencia de marca, automatizacion de tareas repetitivas, datos estructurados, historial, medicion de consumo y configuracion por negocio.\n- AURALY no reemplaza al equipo humano: libera tiempo operativo y deja al humano los casos sensibles, estrategicos o de alto valor.\n- Evita prometer resultados exactos. Habla de maximizar ventas y mejorar conversion como objetivo, no como garantia.\n- La meta del flujo es agendar una demo AURALY.",  "messageSequences": {
+  "policies": "## PROPUESTA DE VALOR\n\n- AURALY crea empleados digitales configurables que trabajan 24/7 en WhatsApp y canales conversacionales.\n- Resolvemos chats sin responder, tiempos de espera altos, leads sin seguimiento, equipos saturados, agendas manuales, pagos abandonados y falta de trazabilidad comercial.\n- Los empleados digitales pueden explicar servicios, calificar leads, recomendar opciones, resolver preguntas frecuentes, agendar demos o citas, generar pagos, recuperar conversaciones y escalar a humanos con historial completo.\n- Enfatiza beneficios: disponibilidad 24/7, velocidad de respuesta, conversion, consistencia de marca, automatizacion de tareas repetitivas, datos estructurados, historial, medicion de consumo y configuracion por negocio.\n- AURALY no reemplaza al equipo humano: libera tiempo operativo y deja al humano los casos sensibles, estrategicos o de alto valor.\n- Evita prometer resultados exactos. Habla de maximizar ventas y mejorar conversion como objetivo, no como garantia.\n- La meta del flujo es agendar una demo AURALY.",
+  "messageSequences": {
     "web_demo_follow_up": {
       "messages": [
         {
           "type": "whatsapp_template",
           "templateName": "auraly_demo_engagement_v2",
           "language": "es_CO",
-          "bodyParameters": ["{CustomerName}"]
+          "bodyParameters": [
+            "{CustomerName}"
+          ]
         }
       ]
     }
@@ -245,104 +248,439 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         "id": "discovery",
         "name": "Diagnostico inicial",
         "goal": "Identificar el tipo de negocio y el principal proceso o cuello de botella de WhatsApp que la persona quiere mejorar.",
-        "hint": "Si es el primer turno de una conversacion nueva y no hay mensajes previos del bot, la unica accion correcta es llamar send_message_sequence con sequence=web_demo_follow_up y terminar el turno sin texto libre. Usa esa misma plantilla para cualquier origen del primer contacto: WhatsApp, landing, web, campana o API. Si ya hay historial del bot, no repitas la plantilla: si falta business_type o pain_point, pide solo los datos faltantes en una sola pregunta. Si faltan ambos, pregunta: Que tipo de negocio tienes y que proceso de WhatsApp quieres mejorar primero: responder leads, agendar, vender/cobrar, soporte o seguimiento? No agregues otra pregunta ni pidas datos extra. Cuando el cliente responda, registra business_type y pain_point con set_fact antes de avanzar.",
-        "allowedTools": ["send_message_sequence", "set_fact"],
-        "advanceWhenFacts": ["business_type", "pain_point"]
+        "advanceWhenFacts": [
+          "business_type",
+          "pain_point"
+        ],
+        "conversationGuidance": "Si es el primer turno de una conversacion nueva y no hay mensajes previos del bot, la unica accion correcta es llamar send_message_sequence con sequence=web_demo_follow_up y terminar el turno sin texto libre. Usa esa misma plantilla para cualquier origen del primer contacto: WhatsApp, landing, web, campana o API. Si ya hay historial del bot, no repitas la plantilla: si falta business_type o pain_point, pide solo los datos faltantes en una sola pregunta. Si faltan ambos, pregunta: Que tipo de negocio tienes y que proceso de WhatsApp quieres mejorar primero: responder leads, agendar, vender/cobrar, soporte o seguimiento? No agregues otra pregunta ni pidas datos extra. Cuando el cliente responda, registra business_type y pain_point con set_fact antes de avanzar.",
+        "allowedActions": [
+          "enviar_secuencia",
+          "registrar_dato"
+        ],
+        "collect": [
+          "business_type",
+          "pain_point"
+        ],
+        "ask": ""
       },
       {
         "id": "business_context",
         "name": "Contexto del negocio",
         "goal": "Entender el problema, canal principal y volumen aproximado antes de recomendar.",
-        "hint": "No hagas preguntas adicionales de diagnostico. Si el cliente ya entrego algun dato de contexto, registralo. Si falta main_channel, asume WhatsApp porque este flujo agenda una demo de automatizacion conversacional.",
-        "allowedTools": ["send_message_sequence", "set_fact"],
-        "advanceWhenFacts": ["main_channel"],
+        "advanceWhenFacts": [
+          "main_channel"
+        ],
         "skipWhen": "business_type && pain_point",
-        "autoSetOnSkip": { "main_channel": "WhatsApp" }
+        "autoSetOnSkip": {
+          "main_channel": "WhatsApp"
+        },
+        "conversationGuidance": "No hagas preguntas adicionales de diagnostico. Si el cliente ya entrego algun dato de contexto, registralo. Si falta main_channel, asume WhatsApp porque este flujo agenda una demo de automatizacion conversacional.",
+        "allowedActions": [
+          "enviar_secuencia",
+          "registrar_dato"
+        ],
+        "collect": [
+          "main_channel"
+        ],
+        "ask": ""
       },
       {
         "id": "value_explanation",
         "name": "Explicacion de valor",
         "goal": "Explicar que hacemos, servicios y ventajas conectadas al problema del cliente.",
-        "hint": "Llama get_service_catalog para usar servicios oficiales. Explica maximo 4 capacidades relevantes para el pain_point: atencion 24/7, calificacion de leads, agenda, pagos, seguimiento, recuperacion, analytics, handoff humano e integraciones. Conecta cada beneficio con el problema mencionado. Recomienda la demo en vivo de AURALY como siguiente paso. No preguntes si quiere ver horarios, no preguntes ni muestres seleccion de servicio. Registra value_explained=true con set_fact y fija el servicio tecnico llamando resolve_service_selection con el texto exacto Demo AURALY. Despues continua a agenda en el mismo turno.",
-        "allowedTools": ["get_service_catalog", "resolve_service_selection", "set_fact"],
-        "advanceWhenFacts": ["value_explained"]
+        "advanceWhenFacts": [
+          "value_explained"
+        ],
+        "conversationGuidance": "Llama get_service_catalog para usar servicios oficiales. Explica maximo 4 capacidades relevantes para el pain_point: atencion 24/7, calificacion de leads, agenda, pagos, seguimiento, recuperacion, analytics, handoff humano e integraciones. Conecta cada beneficio con el problema mencionado. Recomienda la demo en vivo de AURALY como siguiente paso. No preguntes si quiere ver horarios, no preguntes ni muestres seleccion de servicio. Registra value_explained=true con set_fact y fija el servicio tecnico llamando resolve_service_selection con el texto exacto Demo AURALY. Despues continua a agenda en el mismo turno.",
+        "allowedActions": [
+          "consultar_catalogo",
+          "resolver_servicio",
+          "registrar_dato"
+        ],
+        "collect": [
+          "value_explained"
+        ],
+        "ask": ""
       },
       {
         "id": "scheduling",
         "name": "Agenda de demo",
         "goal": "Mostrar disponibilidad y validar fecha/hora para la demo.",
-        "hint": "La demo en vivo de AURALY es el servicio tecnico por defecto. No preguntes servicio ni muestres seleccion de servicio. Si service no esta registrado, llama resolve_service_selection con Demo AURALY. Luego llama get_service_fulfillment con Demo AURALY. Si falta desired_date, pregunta una sola cosa: Para que fecha te gustaria ver horarios de la demo? No agregues otra pregunta en ese mensaje. Cuando el cliente responda fecha, registra desired_date y llama check_availability con service=Demo AURALY para mostrar horarios disponibles. Cuando el cliente elija hora, registra desired_time y llama check_availability con service=Demo AURALY, fecha y hora. Si esta disponible, deja avanzar.",
-        "allowedTools": ["resolve_service_selection", "get_service_fulfillment", "check_availability", "set_fact"],
         "afterTool": [
           {
             "tool": "check_availability",
-            "when": { "path": "data.availability_checked", "equals": "true" },
-            "setFact": { "key": "desired_date", "value": "{{data.date}}" }
+            "when": {
+              "path": "data.availability_checked",
+              "equals": "true"
+            },
+            "setFact": {
+              "key": "desired_date",
+              "value": "{{data.date}}"
+            }
           },
           {
             "tool": "check_availability",
-            "when": { "path": "data.availability_checked", "equals": "true" },
-            "setFact": { "key": "desired_time", "value": "{{data.time}}" }
+            "when": {
+              "path": "data.availability_checked",
+              "equals": "true"
+            },
+            "setFact": {
+              "key": "desired_time",
+              "value": "{{data.time}}"
+            }
           },
           {
             "tool": "check_availability",
-            "when": { "path": "data.availability_checked", "equals": "true" },
-            "setFact": { "key": "availability_checked", "value": "true" }
+            "when": {
+              "path": "data.availability_checked",
+              "equals": "true"
+            },
+            "setFact": {
+              "key": "availability_checked",
+              "value": "true"
+            }
           }
         ],
-        "advanceWhenFacts": ["availability_checked"],
-        "reentryOnFactChanged": ["desired_date", "desired_time"]
+        "advanceWhenFacts": [
+          "availability_checked"
+        ],
+        "reentryOnFactChanged": [
+          "desired_date",
+          "desired_time"
+        ],
+        "conversationGuidance": "La demo en vivo de AURALY es el servicio tecnico por defecto. No preguntes servicio ni muestres seleccion de servicio. Si service no esta registrado, llama resolve_service_selection con Demo AURALY. Luego llama get_service_fulfillment con Demo AURALY. Si falta desired_date, pregunta una sola cosa: Para que fecha te gustaria ver horarios de la demo? No agregues otra pregunta en ese mensaje. Cuando el cliente responda fecha, registra desired_date y llama check_availability con service=Demo AURALY para mostrar horarios disponibles. Cuando el cliente elija hora, registra desired_time y llama check_availability con service=Demo AURALY, fecha y hora. Si esta disponible, deja avanzar.",
+        "allowedActions": [
+          "resolver_servicio",
+          "resolver_tipo_atencion",
+          "validar_disponibilidad",
+          "registrar_dato"
+        ],
+        "collect": [
+          "availability_checked"
+        ],
+        "ask": ""
       },
       {
         "id": "customer_data",
         "name": "Datos para la demo",
         "goal": "Recoger datos minimos para confirmar la demo.",
-        "hint": "Pide en un solo mensaje solo los datos faltantes: nombre, empresa y correo. El telefono viene del canal. Registra customer_name, company_name y customer_email si los entregan. El correo es obligatorio para agendar porque se usa como destinatario de la invitacion.",
-        "allowedTools": ["set_fact"],
-        "advanceWhenFacts": ["customer_name", "company_name", "customer_email"]
+        "advanceWhenFacts": [
+          "customer_name",
+          "company_name",
+          "customer_email"
+        ],
+        "conversationGuidance": "Pide en un solo mensaje solo los datos faltantes: nombre, empresa y correo. El telefono viene del canal. Registra customer_name, company_name y customer_email si los entregan. El correo es obligatorio para agendar porque se usa como destinatario de la invitacion.",
+        "allowedActions": [
+          "registrar_dato"
+        ],
+        "collect": [
+          "customer_name",
+          "company_name",
+          "customer_email"
+        ],
+        "ask": ""
       },
       {
         "id": "confirmation",
         "name": "Confirmacion de demo",
         "goal": "Confirmar la demo AURALY.",
-        "hint": "Muestra resumen breve: demo, fecha, hora, nombre, empresa, correo y telefono. Pide confirmacion. Cuando confirme claramente, llama create_reservation con customer_confirmed=true. Despues confirma que el equipo AURALY tendra el contexto para la demo. Cierra ahi: no preguntes por recordatorios, informacion adicional, ayuda extra ni siguientes pasos.",
-        "allowedTools": ["create_reservation", "check_availability", "set_fact"],
-        "advanceWhenFacts": []
+        "advanceWhenFacts": [],
+        "conversationGuidance": "Muestra resumen breve: demo, fecha, hora, nombre, empresa, correo y telefono. Pide confirmacion. Cuando confirme claramente, llama create_reservation con customer_confirmed=true. Despues confirma que el equipo AURALY tendra el contexto para la demo. Cierra ahi: no preguntes por recordatorios, informacion adicional, ayuda extra ni siguientes pasos.",
+        "allowedActions": [
+          "crear_reserva",
+          "validar_disponibilidad",
+          "registrar_dato"
+        ],
+        "collect": [],
+        "ask": ""
       }
-    ]
+    ],
+    "language": {
+      "actions": {
+        "enviar_secuencia": {
+          "name": "Enviar secuencia configurada",
+          "purpose": "Enviar una secuencia declarada en la configuracion del agente.",
+          "tool": "send_message_sequence"
+        },
+        "registrar_dato": {
+          "name": "Registrar dato",
+          "purpose": "Guardar datos expresados por el cliente cuando son necesarios para avanzar.",
+          "tool": "set_fact"
+        },
+        "consultar_catalogo": {
+          "name": "Consultar catalogo oficial",
+          "purpose": "Presentar categorias o servicios oficiales segun la intencion del cliente.",
+          "tool": "get_service_catalog"
+        },
+        "resolver_servicio": {
+          "name": "Resolver servicio",
+          "purpose": "Convertir la seleccion del cliente en un servicio canonico del catalogo.",
+          "tool": "resolve_service_selection"
+        },
+        "resolver_tipo_atencion": {
+          "name": "Resolver tipo de atencion",
+          "purpose": "Determinar si el servicio requiere agenda, inscripcion u otra ruta de cumplimiento.",
+          "tool": "get_service_fulfillment"
+        },
+        "validar_disponibilidad": {
+          "name": "Validar disponibilidad",
+          "purpose": "Consultar agenda oficial y confirmar fecha y hora disponibles.",
+          "tool": "check_availability"
+        },
+        "crear_reserva": {
+          "name": "Crear reserva",
+          "purpose": "Crear la reserva cuando los datos requeridos y verificaciones esten completos.",
+          "tool": "create_reservation"
+        },
+        "escalar_humano": {
+          "name": "Escalar a humano",
+          "purpose": "Pasar la conversacion a una persona con el contexto necesario.",
+          "tool": "escalate_to_human"
+        },
+        "reiniciar_solicitud": {
+          "name": "Reiniciar solicitud",
+          "purpose": "Limpiar el contexto de la solicitud actual segun la intencion del cliente.",
+          "tool": "reset_flow_context"
+        }
+      },
+      "enabled": true
+    }
   },
   "globalActions": [
     {
       "id": "human_handoff",
       "priority": 100,
       "goal": "Escalar a humano cuando lo pidan o cuando la solicitud sea alianza, soporte sensible, compra enterprise o caso fuera de alcance.",
-      "hint": "Responde con una frase breve y cordial, resume el contexto y llama escalate_to_human.",
-      "allowedTools": ["escalate_to_human"]
+      "conversationGuidance": "Responde con una frase breve y cordial, resume el contexto y llama escalate_to_human.",
+      "allowedActions": [
+        "escalar_humano"
+      ]
     },
     {
       "id": "restart_demo_flow",
       "priority": 70,
       "goal": "Reiniciar la solicitud si el cliente cambia de tema o quiere empezar de nuevo.",
-      "hint": "Usa reset_flow_context solo si el cliente lo pide claramente o cambia por completo el objetivo.",
-      "allowedTools": ["reset_flow_context", "set_fact"]
+      "conversationGuidance": "Usa reset_flow_context solo si el cliente lo pide claramente o cambia por completo el objetivo.",
+      "allowedActions": [
+        "reiniciar_solicitud",
+        "registrar_dato"
+      ]
     }
   ],
   "factSchema": [
-    { "key": "session.engagement", "role": "session.engagement", "label": "contexto de engagement", "type": "string", "required": false, "source": "session", "scope": "ephemeral" },
-    { "key": "pain_point", "role": "sales.pain_point", "label": "problematica que quiere resolver", "type": "string", "required": true, "source": "user", "scope": "request", "captureMode": "eager", "showInCollectedInfo": true, "aliases": ["problema", "dolor", "cuello de botella", "necesidad", "reto"] },
-    { "key": "business_type", "role": "business.type", "label": "tipo de negocio", "type": "string", "required": true, "source": "user", "scope": "request", "captureMode": "eager", "showInCollectedInfo": true, "aliases": ["negocio", "empresa", "industria", "sector"] },
-    { "key": "main_channel", "role": "business.channel", "label": "canal principal", "type": "string", "required": true, "source": "user", "scope": "request", "captureMode": "eager", "aliases": ["whatsapp", "instagram", "web", "canal"] },
-    { "key": "conversation_volume", "role": "business.volume", "label": "volumen de conversaciones", "type": "string", "required": false, "source": "user", "scope": "request", "captureMode": "eager", "aliases": ["volumen", "chats", "mensajes", "leads"] },
-    { "key": "value_explained", "role": "sales.value_explained", "label": "valor explicado", "type": "string", "required": false, "source": "system", "scope": "ephemeral", "retentionDays": 1 },
-    { "key": "service", "role": "booking.service", "label": "servicio tecnico", "type": "string", "required": false, "source": "system", "scope": "request" },
-    { "key": "desired_date", "role": "booking.date", "label": "fecha deseada", "type": "date", "required": true, "source": "user", "scope": "request", "captureMode": "eager", "aliases": ["fecha", "dia", "cuando", "manana", "hoy"] },
-    { "key": "desired_time", "role": "booking.time", "label": "hora deseada", "type": "time", "required": true, "source": "user", "scope": "request", "captureMode": "eager", "dependsOn": ["service", "desired_date"], "aliases": ["hora", "horario"] },
-    { "key": "availability_checked", "role": "booking.availability_checked", "label": "disponibilidad validada", "type": "string", "required": false, "source": "system", "scope": "ephemeral", "retentionDays": 1, "dependsOn": ["service", "desired_date", "desired_time"] },
-    { "key": "customer_name", "role": "customer.name", "label": "nombre", "type": "string", "required": true, "source": "user", "scope": "customer", "captureMode": "eager", "aliases": ["nombre", "mi nombre", "contacto"] },
-    { "key": "company_name", "role": "customer.company", "label": "empresa", "type": "string", "required": true, "source": "user", "scope": "customer", "captureMode": "eager", "aliases": ["empresa", "compania", "negocio"] },
-    { "key": "customer_phone", "role": "customer.phone", "label": "telefono", "type": "phone", "required": true, "source": "channel", "scope": "customer", "aliases": ["telefono", "celular", "whatsapp"] },
-    { "key": "customer_email", "role": "customer.email", "label": "correo", "type": "email", "required": true, "source": "user", "scope": "customer", "captureMode": "eager", "aliases": ["correo", "email"] },
-    { "key": "payment_method", "role": "payment.method", "label": "metodo de pago", "type": "string", "required": false, "source": "system", "scope": "request", "expireOnBusinessDayChange": true }
+    {
+      "key": "session.engagement",
+      "role": "session.engagement",
+      "label": "contexto de engagement",
+      "type": "string",
+      "required": false,
+      "source": "session",
+      "scope": "ephemeral"
+    },
+    {
+      "key": "pain_point",
+      "role": "sales.pain_point",
+      "label": "problematica que quiere resolver",
+      "type": "string",
+      "required": true,
+      "source": "user",
+      "scope": "request",
+      "captureMode": "eager",
+      "showInCollectedInfo": true,
+      "aliases": [
+        "problema",
+        "dolor",
+        "cuello de botella",
+        "necesidad",
+        "reto"
+      ]
+    },
+    {
+      "key": "business_type",
+      "role": "business.type",
+      "label": "tipo de negocio",
+      "type": "string",
+      "required": true,
+      "source": "user",
+      "scope": "request",
+      "captureMode": "eager",
+      "showInCollectedInfo": true,
+      "aliases": [
+        "negocio",
+        "empresa",
+        "industria",
+        "sector"
+      ]
+    },
+    {
+      "key": "main_channel",
+      "role": "business.channel",
+      "label": "canal principal",
+      "type": "string",
+      "required": true,
+      "source": "user",
+      "scope": "request",
+      "captureMode": "eager",
+      "aliases": [
+        "whatsapp",
+        "instagram",
+        "web",
+        "canal"
+      ]
+    },
+    {
+      "key": "conversation_volume",
+      "role": "business.volume",
+      "label": "volumen de conversaciones",
+      "type": "string",
+      "required": false,
+      "source": "user",
+      "scope": "request",
+      "captureMode": "eager",
+      "aliases": [
+        "volumen",
+        "chats",
+        "mensajes",
+        "leads"
+      ]
+    },
+    {
+      "key": "value_explained",
+      "role": "sales.value_explained",
+      "label": "valor explicado",
+      "type": "string",
+      "required": false,
+      "source": "system",
+      "scope": "ephemeral",
+      "retentionDays": 1
+    },
+    {
+      "key": "service",
+      "role": "booking.service",
+      "label": "servicio tecnico",
+      "type": "string",
+      "required": false,
+      "source": "system",
+      "scope": "request"
+    },
+    {
+      "key": "desired_date",
+      "role": "booking.date",
+      "label": "fecha deseada",
+      "type": "date",
+      "required": true,
+      "source": "user",
+      "scope": "request",
+      "captureMode": "eager",
+      "aliases": [
+        "fecha",
+        "dia",
+        "cuando",
+        "manana",
+        "hoy"
+      ]
+    },
+    {
+      "key": "desired_time",
+      "role": "booking.time",
+      "label": "hora deseada",
+      "type": "time",
+      "required": true,
+      "source": "user",
+      "scope": "request",
+      "captureMode": "eager",
+      "dependsOn": [
+        "service",
+        "desired_date"
+      ],
+      "aliases": [
+        "hora",
+        "horario"
+      ]
+    },
+    {
+      "key": "availability_checked",
+      "role": "booking.availability_checked",
+      "label": "disponibilidad validada",
+      "type": "string",
+      "required": false,
+      "source": "system",
+      "scope": "ephemeral",
+      "retentionDays": 1,
+      "dependsOn": [
+        "service",
+        "desired_date",
+        "desired_time"
+      ]
+    },
+    {
+      "key": "customer_name",
+      "role": "customer.name",
+      "label": "nombre",
+      "type": "string",
+      "required": true,
+      "source": "user",
+      "scope": "customer",
+      "captureMode": "eager",
+      "aliases": [
+        "nombre",
+        "mi nombre",
+        "contacto"
+      ]
+    },
+    {
+      "key": "company_name",
+      "role": "customer.company",
+      "label": "empresa",
+      "type": "string",
+      "required": true,
+      "source": "user",
+      "scope": "customer",
+      "captureMode": "eager",
+      "aliases": [
+        "empresa",
+        "compania",
+        "negocio"
+      ]
+    },
+    {
+      "key": "customer_phone",
+      "role": "customer.phone",
+      "label": "telefono",
+      "type": "phone",
+      "required": true,
+      "source": "channel",
+      "scope": "customer",
+      "aliases": [
+        "telefono",
+        "celular",
+        "whatsapp"
+      ]
+    },
+    {
+      "key": "customer_email",
+      "role": "customer.email",
+      "label": "correo",
+      "type": "email",
+      "required": true,
+      "source": "user",
+      "scope": "customer",
+      "captureMode": "eager",
+      "aliases": [
+        "correo",
+        "email"
+      ]
+    },
+    {
+      "key": "payment_method",
+      "role": "payment.method",
+      "label": "metodo de pago",
+      "type": "string",
+      "required": false,
+      "source": "system",
+      "scope": "request",
+      "expireOnBusinessDayChange": true
+    }
   ],
   "guards": {},
   "enabledTools": [
@@ -356,8 +694,15 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
     "escalate_to_human"
   ],
   "escalations": {
-    "human": { "contacts": ["+573117324418"] },
-    "external": { "enabled": false, "events": {} }
+    "human": {
+      "contacts": [
+        "+573117324418"
+      ]
+    },
+    "external": {
+      "enabled": false,
+      "events": {}
+    }
   },
   "notifications": {
     "reservation_created": {

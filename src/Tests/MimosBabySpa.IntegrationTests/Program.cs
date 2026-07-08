@@ -1,4 +1,4 @@
-using MimosBabySpa.IntegrationTests.Reports;
+﻿using MimosBabySpa.IntegrationTests.Reports;
 using MimosBabySpa.IntegrationTests.Runner;
 using MimosBabySpa.IntegrationTests.Scenarios.Definitions;
 
@@ -34,6 +34,8 @@ var scenarios = new List<MimosBabySpa.IntegrationTests.Scenarios.TestScenario>
     new FullReservationStyle19MinimalScenario(),
     new FullReservationStyle20FourStepsScenario(),
 };
+
+scenarios.AddRange(AdditionalReservationScenario.BuildAll());
 
 Console.WriteLine("Starting MimosBabySpa Integration Tests...");
 Console.WriteLine($"   Scenarios to run: {scenarios.Count}");

@@ -99,12 +99,6 @@ public sealed class AgentPromptComposer : IPromptComposer
             if (action.AllowedActions.Count > 0)
                 lines.Add($"  acciones: {string.Join(", ", action.AllowedActions)}");
 
-            var allowedTools = effectiveToolNames is null
-                ? action.AllowedTools
-                : action.AllowedTools.Where(effectiveToolNames.Contains).ToList();
-            if (allowedTools.Count > 0)
-                lines.Add($"  herramientas: {string.Join(", ", allowedTools)}");
-
             if (!string.IsNullOrWhiteSpace(action.ConversationGuidance))
                 lines.Add($"  orientacion: {action.ConversationGuidance.Trim()}");
         }
@@ -223,7 +217,7 @@ public sealed class AgentPromptComposer : IPromptComposer
             blocks.Add(string.Join(Environment.NewLine, factsLines));
         }
 
-        var reservationLines = BuildReservationStateLines(session);
+        var reservationLines = BuildReservationStateLines(config, session);
         if (reservationLines.Count > 0)
             blocks.Add(string.Join(Environment.NewLine, reservationLines));
 
@@ -241,7 +235,7 @@ public sealed class AgentPromptComposer : IPromptComposer
             : string.Join($"{Environment.NewLine}{Environment.NewLine}", blocks);
     }
 
-    private static List<string> BuildReservationStateLines(AgentToolContext session)
+    private static List<string> BuildReservationStateLines(AgentConfig config, AgentToolContext session)
     {
         var activeReservations = session.ManageableReservations
             .Where(r => ReservationTemporalFormatter.IsManageableOnBusinessDay(r, session.BusinessToday))
@@ -260,9 +254,9 @@ public sealed class AgentPromptComposer : IPromptComposer
             lines.Add($"- {ReservationTemporalFormatter.FormatLine(reservation, session.BusinessToday)}");
         }
 
-        if (activeReservations.Count > 1)
+        if (activeReservations.Count > 1 && !string.IsNullOrWhiteSpace(config.ReservationManagement.ManageableReservationGuidance))
         {
-            lines.Add("- regla: cuando el cliente pida cambiar, cancelar o confirmar una reserva sin identificar una de estas lineas por fecha, hora o servicio existente, pide que indique cual reserva. No infieras disponibilidad ni apliques cambios sobre una reserva no identificada.");
+            lines.Add($"- guia: {config.ReservationManagement.ManageableReservationGuidance.Trim()}");
         }
 
         return lines;

@@ -112,12 +112,14 @@ public sealed class FlowRuntimeTests
         {
             Flow = new AgentFlowDefinition
             {
+                Language = LanguageForTools("missing_tool"),
+
                 Stages =
                 [
                     new AgentFlowStage
                     {
                         Id = "tenant_stage",
-                        AllowedTools = ["missing_tool"]
+                        AllowedActions = ["missing_tool"]
                     }
                 ]
             }
@@ -166,12 +168,14 @@ public sealed class FlowRuntimeTests
     {
         Flow = new AgentFlowDefinition
         {
+            Language = LanguageForTools("set_fact", "prepare_checkout", "escalate_to_human", "get_customer_reservations", "manage_reservation"),
+
             Stages =
             [
                 new AgentFlowStage
                 {
                     Id = "tenant_checkout_stage",
-                    AllowedTools = ["set_fact", "prepare_checkout"]
+                    AllowedActions = ["set_fact", "prepare_checkout"]
                 }
             ]
         },
@@ -180,13 +184,13 @@ public sealed class FlowRuntimeTests
             new AgentGlobalAction
             {
                 Id = "tenant_human_handoff",
-                AllowedTools = ["escalate_to_human"]
+                AllowedActions = ["escalate_to_human"]
             },
             new AgentGlobalAction
             {
                 Id = globalActionId,
                 RuntimeWhenAny = ["context:ManageableReservations.any", "context:ActivePayment.Status=Confirmed&&context:ActivePayment.ReservationId=null"],
-                AllowedTools = ["get_customer_reservations", "manage_reservation"]
+                AllowedActions = ["get_customer_reservations", "manage_reservation"]
             }
         ]
     };
@@ -220,4 +224,20 @@ public sealed class FlowRuntimeTests
             CancellationToken cancellationToken = default) =>
             Task.FromResult("""{"ok":true,"data":{}}""");
     }
+    private static ConversationalFlowLanguage LanguageForTools(params string[] toolNames) => new()
+    {
+        Enabled = true,
+        Actions = toolNames
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(
+                tool => tool,
+                tool => new SemanticFlowAction
+                {
+                    Name = tool,
+                    Purpose = $"Test action for {tool}.",
+                    Tool = tool
+                },
+                StringComparer.OrdinalIgnoreCase)
+    };
+
 }

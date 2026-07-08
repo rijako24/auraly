@@ -23,7 +23,7 @@ public class AddOnCatalogServiceTests
         var planMarineritos = CreateService(_planMarineritosId, "Plan Marineritos");
         var deluxe = CreateService(_planDeluxeId, "Plan Deluxe");
         var masajeExtra = CreateAddOn(_masajeExtraId, "Masaje Extra 15m");
-        var decoracion = CreateAddOn(_decoracionId, "Decoración Sencilla");
+        var decoracion = CreateAddOn(_decoracionId, "DecoraciÃ³n Sencilla");
 
         var rules = new List<ServiceAddOnRule>
         {
@@ -50,7 +50,7 @@ public class AddOnCatalogServiceTests
 
         var compatible = await sut.GetCompatibleAsync(_businessId, "Plan Marineritos");
 
-        compatible.Should().ContainSingle(a => a.AddOnName == "Decoración Sencilla");
+        compatible.Should().ContainSingle(a => a.AddOnName == "DecoraciÃ³n Sencilla");
         compatible.Should().NotContain(a => a.AddOnName == "Masaje Extra 15m");
     }
 
@@ -58,7 +58,7 @@ public class AddOnCatalogServiceTests
     public async Task ValidateAsync_RejectsUnknownAddOnNames()
     {
         var planMarineritos = CreateService(_planMarineritosId, "Plan Marineritos");
-        var decoracion = CreateAddOn(_decoracionId, "Decoración Sencilla");
+        var decoracion = CreateAddOn(_decoracionId, "DecoraciÃ³n Sencilla");
         var rules = new List<ServiceAddOnRule>
         {
             new()
@@ -76,14 +76,14 @@ public class AddOnCatalogServiceTests
 
         result.IsValid.Should().BeFalse();
         result.ErrorMessage.Should().Contain("Masaje Inventado");
-        result.Hint.Should().Contain("ninguno");
+        result.Remediation.Should().Contain("ninguno");
     }
 
     [Fact]
     public async Task ValidateAsync_NormalizesValidAddOnNames()
     {
         var planMarineritos = CreateService(_planMarineritosId, "Plan Marineritos");
-        var decoracion = CreateAddOn(_decoracionId, "Decoración Sencilla");
+        var decoracion = CreateAddOn(_decoracionId, "DecoraciÃ³n Sencilla");
         var rules = new List<ServiceAddOnRule>
         {
             new()
@@ -100,7 +100,7 @@ public class AddOnCatalogServiceTests
         var result = await sut.ValidateAsync(_businessId, "Plan Marineritos", "decoracion sencilla");
 
         result.IsValid.Should().BeTrue();
-        result.NormalizedCsv.Should().Be("Decoración Sencilla");
+        result.NormalizedCsv.Should().Be("DecoraciÃ³n Sencilla");
     }
 
     [Fact]
@@ -133,7 +133,7 @@ public class AddOnCatalogServiceTests
 
         result.IsValid.Should().BeFalse();
         result.ErrorCode.Should().Be("ambiguous_add_ons");
-        result.Hint.Should().BeNull();
+        result.Remediation.Should().BeNull();
         result.ErrorMessage.Should().Contain("Fotos digitales");
         result.ErrorMessage.Should().Contain("Fotos digitales con video");
     }
@@ -143,7 +143,7 @@ public class AddOnCatalogServiceTests
     {
         var planMarineritos = CreateService(_planMarineritosId, "Plan Marineritos");
         var fotosDigitales = CreateAddOn(Guid.NewGuid(), "Fotos digitales");
-        var decoracion = CreateAddOn(_decoracionId, "DecoraciÃ³n Sencilla");
+        var decoracion = CreateAddOn(_decoracionId, "DecoraciÃƒÂ³n Sencilla");
         var rules = new List<ServiceAddOnRule>
         {
             new()
@@ -203,7 +203,7 @@ public class AddOnCatalogServiceTests
 
         result.IsValid.Should().BeFalse();
         result.ErrorCode.Should().Be("duplicate_add_on_group");
-        result.Hint.Should().BeNull();
+        result.Remediation.Should().BeNull();
     }
 
     [Fact]
@@ -211,7 +211,7 @@ public class AddOnCatalogServiceTests
     {
         var planMarineritos = CreateService(_planMarineritosId, "Plan Marineritos");
         var fotosDigitales = CreateAddOn(Guid.NewGuid(), "Fotos digitales");
-        var decoracion = CreateAddOn(_decoracionId, "DecoraciÃ³n Sencilla");
+        var decoracion = CreateAddOn(_decoracionId, "DecoraciÃƒÂ³n Sencilla");
         var rules = new List<ServiceAddOnRule>
         {
             new()
@@ -235,10 +235,10 @@ public class AddOnCatalogServiceTests
         var result = await sut.ValidateAsync(
             _businessId,
             "Plan Marineritos",
-            "Fotos digitales, DecoraciÃ³n Sencilla");
+            "Fotos digitales, DecoraciÃƒÂ³n Sencilla");
 
         result.IsValid.Should().BeTrue();
-        result.NormalizedCsv.Should().Be("Fotos digitales, DecoraciÃ³n Sencilla");
+        result.NormalizedCsv.Should().Be("Fotos digitales, DecoraciÃƒÂ³n Sencilla");
     }
 
     private AddOnCatalogService CreateSut(Service selectedService, List<ServiceAddOnRule> rules)

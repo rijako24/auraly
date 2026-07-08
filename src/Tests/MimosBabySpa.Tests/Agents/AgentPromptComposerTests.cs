@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using FluentAssertions;
 using MimosBabySpa.Application.Agents;
 using MimosBabySpa.Application.Agents.Composition;
@@ -94,7 +94,7 @@ public class AgentPromptComposerTests
         var history = new[]
         {
             new Message { Sender = "user",      MessageText = "hola" },
-            new Message { Sender = "assistant", MessageText = "Â¡Hola! Soy Mimi." }
+            new Message { Sender = "assistant", MessageText = "Ã‚Â¡Hola! Soy Mimi." }
         };
 
         var result = Compose(DefaultConfig, history);
@@ -114,7 +114,7 @@ public class AgentPromptComposerTests
             Persona = DefaultConfig.Persona,
             FactSchema =
             [
-                new FactSchemaEntry { Key = "baby_age_months", Label = "edad del bebÃ© (meses)", Type = "number", Source = "user", Required = true },
+                new FactSchemaEntry { Key = "baby_age_months", Label = "edad del bebÃƒÂ© (meses)", Type = "number", Source = "user", Required = true },
                 new FactSchemaEntry { Key = "service", Label = "plan / servicio", Source = "user" },
                 new FactSchemaEntry { Key = "add_ons", Label = "complementos", Source = "user" }
             ]
@@ -127,7 +127,7 @@ public class AgentPromptComposerTests
             {
                 ["baby_age_months"] = "5",
                 ["service"]         = "Plan Marineritos",
-                ["add_ons"]         = "DecoraciÃ³n Sencilla"
+                ["add_ons"]         = "DecoraciÃƒÂ³n Sencilla"
             },
             ManageableReservations =
             [
@@ -143,9 +143,9 @@ public class AgentPromptComposerTests
         var result = Compose(config, [], session);
 
         result.Should().Contain("## ESTADO ACTUAL");
-        result.Should().Contain("edad del bebÃ© (meses): 5");
+        result.Should().Contain("edad del bebÃƒÂ© (meses): 5");
         result.Should().Contain("plan / servicio: Plan Marineritos");
-        result.Should().Contain("complementos: DecoraciÃ³n Sencilla");
+        result.Should().Contain("complementos: DecoraciÃƒÂ³n Sencilla");
         result.Should().Contain("## ESTADO RESERVA");
         result.Should().Contain("Reservas activas del cliente:");
         result.Should().Contain("Plan Marineritos");
@@ -181,7 +181,19 @@ public class AgentPromptComposerTests
             ]
         };
 
-        var result = Compose(DefaultConfig, [], session);
+        var config = new AgentConfig
+        {
+            AgentId = DefaultConfig.AgentId,
+            BusinessId = DefaultConfig.BusinessId,
+            Name = DefaultConfig.Name,
+            Persona = DefaultConfig.Persona,
+            ReservationManagement = new ReservationManagementDefinitions
+            {
+                ManageableReservationGuidance = "cuando el cliente pida cambiar, cancelar o confirmar una reserva sin identificar, pide elegir por fecha y servicio"
+            }
+        };
+
+        var result = Compose(config, [], session);
 
         result.Should().Contain("Plan Marineritos");
         result.Should().Contain("Plan Ballenitas");
@@ -414,7 +426,7 @@ public class AgentPromptComposerTests
                         Goal = "Saludar al cliente",
                         Variants = new Dictionary<string, AgentFlowStageVariant>
                         {
-                            ["firstEver"] = new() { ConversationGuidance = "Â¡Hola! Soy Mimi de Mimo's Baby Spa." }
+                            ["firstEver"] = new() { ConversationGuidance = "Ã‚Â¡Hola! Soy Mimi de Mimo's Baby Spa." }
                         }
                     }
                 ]
@@ -435,7 +447,7 @@ public class AgentPromptComposerTests
 
         result.Should().Contain("## ETAPA ACTUAL");
         result.Should().Contain("greeting");
-        result.Should().Contain("Â¡Hola! Soy Mimi de Mimo's Baby Spa.");
+        result.Should().Contain("Ã‚Â¡Hola! Soy Mimi de Mimo's Baby Spa.");
     }
 
     [Fact]
@@ -458,8 +470,8 @@ public class AgentPromptComposerTests
                         Goal = "Saludar al cliente",
                         Variants = new Dictionary<string, AgentFlowStageVariant>
                         {
-                            ["firstEver"]         = new() { ConversationGuidance = "Â¡Hola! Soy Mimi." },
-                            ["returningCustomer"] = new() { ConversationGuidance = "Â¡Bienvenido de vuelta!" }
+                            ["firstEver"]         = new() { ConversationGuidance = "Ã‚Â¡Hola! Soy Mimi." },
+                            ["returningCustomer"] = new() { ConversationGuidance = "Ã‚Â¡Bienvenido de vuelta!" }
                         }
                     },
                     new AgentFlowStage
@@ -486,7 +498,7 @@ public class AgentPromptComposerTests
 
         result.Should().Contain("discovery");
         result.Should().NotContain("greeting");
-        result.Should().NotContain("Â¡Hola! Soy Mimi.");
+        result.Should().NotContain("Ã‚Â¡Hola! Soy Mimi.");
     }
 
     [Fact]
@@ -497,7 +509,7 @@ public class AgentPromptComposerTests
             AgentId = DefaultConfig.AgentId,
             BusinessId = DefaultConfig.BusinessId,
             Name = "Mimi",
-            Persona = "## ROL\nEres Mimi.\n\n## CÃ“MO ABRES LA CONVERSACIÃ“N\n- En tu primer mensaje: saludo.\n- Si conoces el nombre del cliente, salÃºdalo por nombre.",
+            Persona = "## ROL\nEres Mimi.\n\n## CÃƒâ€œMO ABRES LA CONVERSACIÃƒâ€œN\n- En tu primer mensaje: saludo.\n- Si conoces el nombre del cliente, salÃƒÂºdalo por nombre.",
             FactSchema =
             [
                 new FactSchemaEntry { Key = "baby_name", Source = "user" },
@@ -506,14 +518,16 @@ public class AgentPromptComposerTests
             ],
             Flow = new AgentFlowDefinition
             {
+                Language = LanguageForTools("get_service_catalog", "set_fact"),
+
                 StageDetection = "automatic",
                 Stages =
                 [
                     new AgentFlowStage
                     {
                         Id = "discovery",
-                        Goal = "Conocer al bebÃ© y elegir servicio",
-                        AllowedTools = ["get_service_catalog", "set_fact"],
+                        Goal = "Conocer al bebÃƒÂ© y elegir servicio",
+                        AllowedActions = ["get_service_catalog", "set_fact"],
                         AdvanceWhenFacts = ["baby_name", "baby_age_months", "service"]
                     }
                 ]
@@ -529,15 +543,15 @@ public class AgentPromptComposerTests
 
         var result = Compose(config, [], session);
 
-        result.Should().Contain("CÃ“MO ABRES LA CONVERSACIÃ“N");
+        result.Should().Contain("CÃƒâ€œMO ABRES LA CONVERSACIÃƒâ€œN");
         result.Should().Contain("etapa: discovery");
         result.Should().NotContain("etapa: greeting");
-        result.Should().Contain("criterio_de_avance: la etapa se completa cuando estÃ©n presentes estos datos del flujo");
+        result.Should().Contain("criterio_de_avance: la etapa se completa");
         result.Should().Contain("datos_para_completar_etapa: baby_name (baby_name), baby_age_months (baby_age_months), service (service)");
         result.Should().Contain("usa estos datos como");
         result.Should().NotContain("si el cliente solo saluda");
         result.Should().NotContain("facts_pendientes");
-        result.Should().NotContain("el sistema te llevarÃ¡ automÃ¡ticamente al siguiente paso");
+        result.Should().NotContain("el sistema te llevarÃƒÂ¡ automÃƒÂ¡ticamente al siguiente paso");
     }
 
     [Fact]
@@ -577,10 +591,10 @@ public class AgentPromptComposerTests
 
         var result = Compose(config, [], session);
 
-        result.Should().Contain("criterio_de_avance: la etapa se completa cuando estÃ©n presentes estos datos del flujo");
+        result.Should().Contain("criterio_de_avance: la etapa se completa");
         result.Should().Contain("datos_para_completar_etapa: service (service)");
         result.Should().NotContain("facts_pendientes");
-        result.Should().NotContain("el sistema te llevarÃ¡ automÃ¡ticamente al siguiente paso");
+        result.Should().NotContain("el sistema te llevarÃƒÂ¡ automÃƒÂ¡ticamente al siguiente paso");
     }
 
     [Fact]
@@ -633,10 +647,10 @@ public class AgentPromptComposerTests
         var result = Compose(config, [], session);
 
         result.Should().Contain("etapa: finalization");
-        result.Should().NotContain("el sistema te llevarÃ¡ automÃ¡ticamente al siguiente paso");
+        result.Should().NotContain("el sistema te llevarÃƒÂ¡ automÃƒÂ¡ticamente al siguiente paso");
     }
 
-    // â”€â”€ BuildEagerCaptureBlock â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // Ã¢â€â‚¬Ã¢â€â‚¬ BuildEagerCaptureBlock Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
     [Fact]
     public void Compose_WithGlobalActions_RendersTransversalActionsBlock()
@@ -655,7 +669,7 @@ public class AgentPromptComposerTests
                     Priority = 900,
                     Goal = "Gestionar reservas existentes.",
                     ConversationGuidance = "Usa get_customer_reservations antes de modificar.",
-                    AllowedTools = ["get_customer_reservations", "confirm_reservation_change"]
+                    AllowedActions = ["get_customer_reservations", "confirm_reservation_change"]
                 }
             ]
         };
@@ -682,13 +696,15 @@ public class AgentPromptComposerTests
             Persona = DefaultConfig.Persona,
             Flow = new AgentFlowDefinition
             {
+                Language = LanguageForTools("get_service_catalog"),
+
                 Stages =
                 [
                     new AgentFlowStage
                     {
                         Id = "discovery",
                         Goal = "Elegir servicio",
-                        AllowedTools = ["get_service_catalog"]
+                        AllowedActions = ["get_service_catalog"]
                     }
                 ]
             },
@@ -700,7 +716,7 @@ public class AgentPromptComposerTests
                     Priority = 900,
                     Goal = "Gestionar reservas existentes.",
                     ConversationGuidance = "Usa get_customer_reservations antes de modificar.",
-                    AllowedTools = ["get_customer_reservations", "manage_reservation"]
+                    AllowedActions = ["get_customer_reservations", "manage_reservation"]
                 }
             ]
         };
@@ -710,7 +726,7 @@ public class AgentPromptComposerTests
             Conversation = new Conversation(),
             ConversationState = new ConversationState(),
             Facts = [],
-            LatestUserMessage = "SÃ­, confirma la reserva"
+            LatestUserMessage = "SÃƒÂ­, confirma la reserva"
         }, enabledTools: [new TestTool("get_service_catalog"), new TestTool("get_customer_reservations"), new TestTool("manage_reservation")]);
 
         result.Should().Contain("manage_existing_reservation");
@@ -733,7 +749,7 @@ public class AgentPromptComposerTests
                     Priority = 1000,
                     Goal = "Notificar al equipo humano sin desactivar el bot.",
                     ConversationGuidance = "Escala cuando el cliente pida hablar con una persona o cuando el caso sea sensible.",
-                    AllowedTools = ["escalate_to_human"]
+                    AllowedActions = ["escalate_to_human"]
                 }
             ]
         };
@@ -757,8 +773,8 @@ public class AgentPromptComposerTests
             Name = "Mimi",
             FactSchema =
             [
-                new FactSchemaEntry { Key = "baby_name", Label = "nombre del bebÃ©", CaptureMode = "eager", Source = "user", Required = true },
-                new FactSchemaEntry { Key = "baby_age_months", Label = "edad del bebÃ©", CaptureMode = "eager", Source = "user", Required = true },
+                new FactSchemaEntry { Key = "baby_name", Label = "nombre del bebÃƒÂ©", CaptureMode = "eager", Source = "user", Required = true },
+                new FactSchemaEntry { Key = "baby_age_months", Label = "edad del bebÃƒÂ©", CaptureMode = "eager", Source = "user", Required = true },
                 new FactSchemaEntry { Key = "service", Label = "plan", CaptureMode = "onDemand", Source = "user" }
             ]
         };
@@ -774,8 +790,8 @@ public class AgentPromptComposerTests
         result.Should().Contain("## REGLA TRANSVERSAL: CAPTURA INMEDIATA");
         result.Should().Contain("captura solo datos expresados o confirmados por el cliente");
         result.Should().Contain("Manten objetivos internos y marcadores de estado fuera de facts de usuario");
-        result.Should().Contain("nombre del bebÃ© (baby_name)");
-        result.Should().Contain("edad del bebÃ© (baby_age_months)");
+        result.Should().Contain("nombre del bebÃƒÂ© (baby_name)");
+        result.Should().Contain("edad del bebÃƒÂ© (baby_age_months)");
         result.Should().NotContain("plan (service)");
     }
     [Fact]
@@ -822,7 +838,7 @@ public class AgentPromptComposerTests
             Name = "Mimi",
             FactSchema =
             [
-                new FactSchemaEntry { Key = "baby_name", Label = "nombre del bebÃ©", CaptureMode = "eager", Source = "user", Required = true }
+                new FactSchemaEntry { Key = "baby_name", Label = "nombre del bebÃƒÂ©", CaptureMode = "eager", Source = "user", Required = true }
             ]
         };
 
@@ -831,7 +847,7 @@ public class AgentPromptComposerTests
             Conversation = new Conversation(),
             Facts = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {
-                ["baby_name"] = "LucÃ­a"
+                ["baby_name"] = "LucÃƒÂ­a"
             }
         };
 
@@ -857,7 +873,7 @@ public class AgentPromptComposerTests
 
         result.Should().NotContain("## REGLA TRANSVERSAL: CAPTURA INMEDIATA");
     }
-    // â”€â”€ BuildReentryBlock â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // Ã¢â€â‚¬Ã¢â€â‚¬ BuildReentryBlock Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
     [Fact]
     public void Compose_WithNoStageSnapshots_NoReentryBlock()
@@ -892,7 +908,7 @@ public class AgentPromptComposerTests
 
         var result = Compose(config, [], session);
 
-        result.Should().NotContain("## ATENCIÃ“N");
+        result.Should().NotContain("## ATENCIÃƒâ€œN");
     }
 
     [Fact]
@@ -938,7 +954,7 @@ public class AgentPromptComposerTests
 
         var result = Compose(config, [], session);
 
-        result.Should().NotContain("## ATENCIÃ“N");
+        result.Should().NotContain("## ATENCIÃƒâ€œN");
     }
 
     [Fact]
@@ -1175,6 +1191,23 @@ public class AgentPromptComposerTests
         result.Should().Contain("manage_reservation");
         result.Should().NotContain("set_fact");
     }
+
+
+    private static ConversationalFlowLanguage LanguageForTools(params string[] toolNames) => new()
+    {
+        Enabled = true,
+        Actions = toolNames
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(
+                tool => tool,
+                tool => new SemanticFlowAction
+                {
+                    Name = tool,
+                    Purpose = $"Test action for {tool}.",
+                    Tool = tool
+                },
+                StringComparer.OrdinalIgnoreCase)
+    };
 
     private sealed class TestTool : IAgentTool
     {

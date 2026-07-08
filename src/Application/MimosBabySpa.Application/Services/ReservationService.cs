@@ -388,7 +388,7 @@ public class ReservationService : IReservationService
                 return UpdateReservationChangeResult.Fail(
                     validation.ErrorCode ?? "invalid_add_ons",
                     validation.ErrorMessage ?? "Invalid add-on selection.",
-                    validation.Hint,
+                    validation.Remediation,
                     request.ReservationId);
             }
 

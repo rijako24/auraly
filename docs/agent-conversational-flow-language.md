@@ -1,4 +1,4 @@
-# Lenguaje Conversacional De Flujos
+﻿# Lenguaje Conversacional De Flujos
 
 Este lenguaje permite configurar agentes por etapas habladas sin escribir reglas del motor ni depender de instrucciones imperativas. La idea es que negocio describa el flujo con palabras de dominio controladas, y el motor traduzca esas palabras a herramientas mediante configuracion.
 
@@ -105,7 +105,6 @@ Las acciones globales permiten interrumpir la etapa actual sin quemar reglas en 
 ## Reglas De Configuracion
 
 - No poner nombres de servicios o categorias en C#.
-- No usar `allowedTools` en etapas; usa `allowedActions` y el catalogo semantico.
 - La guia conversacional vive en `conversationGuidance`.
 - No poner instrucciones imperativas tecnicas en `conversationGuidance`.
 - No inventar catalogo: todo servicio, categoria o adicional debe venir de herramientas o catalogo configurado.

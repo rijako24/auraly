@@ -25,16 +25,17 @@ public static class ToolFlowScope
         AgentFlowStage? currentStage,
         FlowRuntimeDecision runtimeDecision) =>
         !HasStageScope(config, currentStage)
-        || IsAllowedByStage(toolName, currentStage!)
+        || IsAllowedByStage(toolName, config, currentStage!)
         || IsAllowedByGlobalAction(toolName, config, runtimeDecision);
 
     private static bool HasStageScope(AgentConfig config, AgentFlowStage? currentStage) =>
         config.Flow.Stages.Count > 0
         && currentStage is not null
-        && currentStage.AllowedTools.Count > 0;
+        && currentStage.AllowedActions.Count > 0;
 
-    private static bool IsAllowedByStage(string toolName, AgentFlowStage currentStage) =>
-        currentStage.AllowedTools.Contains(toolName, StringComparer.OrdinalIgnoreCase);
+    private static bool IsAllowedByStage(string toolName, AgentConfig config, AgentFlowStage currentStage) =>
+        SemanticFlowActionResolver.ResolveToolNames(config, currentStage.AllowedActions)
+            .Contains(toolName, StringComparer.OrdinalIgnoreCase);
 
     public static bool IsAllowedByGlobalAction(string toolName, AgentConfig config) =>
         IsAllowedByGlobalAction(toolName, config, FlowRuntimeDecision.Empty);
@@ -44,6 +45,7 @@ public static class ToolFlowScope
         var runtimeActive = !ReferenceEquals(runtimeDecision, FlowRuntimeDecision.Empty);
         return config.GlobalActions.Any(action =>
             (!runtimeActive || runtimeDecision.EnabledGlobalActionIds.Contains(action.Id))
-            && action.AllowedTools.Contains(toolName, StringComparer.OrdinalIgnoreCase));
+            && SemanticFlowActionResolver.ResolveToolNames(config, action.AllowedActions)
+                .Contains(toolName, StringComparer.OrdinalIgnoreCase));
     }
 }

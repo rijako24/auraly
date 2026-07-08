@@ -63,7 +63,7 @@ public sealed class ResolvePricingTool : IAgentTool
                 return ToolResultHelper.Error(
                     "invalid_add_ons",
                     validation.ErrorMessage ?? "Invalid add-on selection.",
-                    validation.Hint);
+                    validation.Remediation);
             }
 
             addOns = validation.NormalizedCsv;
@@ -111,4 +111,3 @@ public sealed class ResolvePricingTool : IAgentTool
         return items;
     }
 }
-

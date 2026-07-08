@@ -1,4 +1,4 @@
--- =============================================================================
+﻿-- =============================================================================
 -- SeedSystemAgentTemplatesAndInboundContacts.sql
 --
 -- Templates del sistema y contactos inbound operativos por negocio.
@@ -24,11 +24,37 @@ DECLARE @DeliverySettingsJson NVARCHAR(MAX) = N'{
         "id": "order_request",
         "name": "Gestion de domicilio",
         "goal": "Resolver si el domiciliario acepta o rechaza una solicitud pendiente.",
-        "hint": "Si el mensaje viene citado/respondiendo a una solicitud de domicilio, la cita identifica el pedido: si el contacto acepta/confirma/toma el pedido, llama accept_order_request; si rechaza o dice que no puede tomarlo, llama reject_order_request. No pidas confirmacion ni motivo en esos casos. Usa search_order solo cuando no haya cita ni payload interactivo, cuando necesites resolver por codigo PED/datos del pedido, o cuando haya varias ordenes pendientes; si hay ambiguedad, pide elegir mostrando request_code. Si el pedido esta vencido o no disponible, responde breve indicando que ya no puede gestionarse automaticamente. Tras aceptar agradece la confirmacion; tras rechazar indica que se registro el rechazo.",
-        "allowedTools": ["search_order", "accept_order_request", "reject_order_request"],
-        "advanceWhenFacts": []
+        "advanceWhenFacts": [],
+        "conversationGuidance": "Si el mensaje viene citado/respondiendo a una solicitud de domicilio, la cita identifica el pedido: si el contacto acepta/confirma/toma el pedido, llama accept_order_request; si rechaza o dice que no puede tomarlo, llama reject_order_request. No pidas confirmacion ni motivo en esos casos. Usa search_order solo cuando no haya cita ni payload interactivo, cuando necesites resolver por codigo PED/datos del pedido, o cuando haya varias ordenes pendientes; si hay ambiguedad, pide elegir mostrando request_code. Si el pedido esta vencido o no disponible, responde breve indicando que ya no puede gestionarse automaticamente. Tras aceptar agradece la confirmacion; tras rechazar indica que se registro el rechazo.",
+        "allowedActions": [
+          "buscar_pedido",
+          "aceptar_solicitud_pedido",
+          "rechazar_solicitud_pedido"
+        ],
+        "collect": [],
+        "ask": ""
       }
-    ]
+    ],
+    "language": {
+      "actions": {
+        "buscar_pedido": {
+          "name": "Buscar pedido",
+          "purpose": "Buscar pedido por codigo o datos disponibles.",
+          "tool": "search_order"
+        },
+        "aceptar_solicitud_pedido": {
+          "name": "Aceptar solicitud de pedido",
+          "purpose": "Registrar aceptacion de una solicitud externa de pedido.",
+          "tool": "accept_order_request"
+        },
+        "rechazar_solicitud_pedido": {
+          "name": "Rechazar solicitud de pedido",
+          "purpose": "Registrar rechazo de una solicitud externa de pedido.",
+          "tool": "reject_order_request"
+        }
+      },
+      "enabled": true
+    }
   },
   "enabledTools": [
     "search_order",
@@ -39,8 +65,13 @@ DECLARE @DeliverySettingsJson NVARCHAR(MAX) = N'{
   "notifications": {},
   "webhooks": {},
   "escalations": {
-    "human": { "contacts": [] },
-    "external": { "enabled": false, "events": {} }
+    "human": {
+      "contacts": []
+    },
+    "external": {
+      "enabled": false,
+      "events": {}
+    }
   },
   "checkout": {
     "currency": "COP",
@@ -62,18 +93,55 @@ DECLARE @OperationsSettingsJson NVARCHAR(MAX) = N'{
         "id": "operations",
         "name": "Operacion interna",
         "goal": "Atender mensajes operativos autorizados del negocio: agenda, bloqueos, metricas, pedidos, ventas e historial de clientes.",
-        "hint": "Usa operations_get_reservations para preguntas de agenda por dia o rango. Usa operations_block_availability para bloquear horarios o dias. Usa operations_get_business_metrics para ventas, pedidos, reservas y servicios mas vendidos. Usa operations_get_customer_history para ultima compra o historial de un cliente. Usa operations_request_reschedule para avisar a clientes afectados que deben reagendar; no muevas reservas directamente desde operaciones.",
-        "allowedTools": [
-          "operations_get_reservations",
-          "operations_block_availability",
-          "operations_request_reschedule",
-          "operations_get_business_metrics",
-          "operations_get_customer_history",
-          "check_availability"
+        "advanceWhenFacts": [],
+        "conversationGuidance": "Usa operations_get_reservations para preguntas de agenda por dia o rango. Usa operations_block_availability para bloquear horarios o dias. Usa operations_get_business_metrics para ventas, pedidos, reservas y servicios mas vendidos. Usa operations_get_customer_history para ultima compra o historial de un cliente. Usa operations_request_reschedule para avisar a clientes afectados que deben reagendar; no muevas reservas directamente desde operaciones.",
+        "allowedActions": [
+          "operaciones_consultar_reservas",
+          "operaciones_bloquear_disponibilidad",
+          "operaciones_solicitar_reagenda",
+          "operaciones_metricas_negocio",
+          "operaciones_historial_cliente",
+          "ejecutar_check_availability"
         ],
-        "advanceWhenFacts": []
+        "collect": [],
+        "ask": ""
       }
-    ]
+    ],
+    "language": {
+      "actions": {
+        "operaciones_consultar_reservas": {
+          "name": "Consultar reservas operativas",
+          "purpose": "Consultar agenda operativa por fecha o rango.",
+          "tool": "operations_get_reservations"
+        },
+        "operaciones_bloquear_disponibilidad": {
+          "name": "Bloquear disponibilidad",
+          "purpose": "Bloquear horarios o dias desde operaciones.",
+          "tool": "operations_block_availability"
+        },
+        "operaciones_solicitar_reagenda": {
+          "name": "Solicitar reagenda operativa",
+          "purpose": "Solicitar reagenda para clientes afectados desde operaciones.",
+          "tool": "operations_request_reschedule"
+        },
+        "operaciones_metricas_negocio": {
+          "name": "Consultar metricas",
+          "purpose": "Consultar metricas operativas del negocio.",
+          "tool": "operations_get_business_metrics"
+        },
+        "operaciones_historial_cliente": {
+          "name": "Consultar historial de cliente",
+          "purpose": "Consultar historial operativo de un cliente.",
+          "tool": "operations_get_customer_history"
+        },
+        "ejecutar_check_availability": {
+          "name": "Ejecutar check_availability",
+          "purpose": "Ejecutar la capacidad configurada check_availability.",
+          "tool": "check_availability"
+        }
+      },
+      "enabled": true
+    }
   },
   "enabledTools": [
     "operations_get_reservations",
@@ -90,10 +158,18 @@ DECLARE @OperationsSettingsJson NVARCHAR(MAX) = N'{
     "availability_slots": "{{#if intro_message}}\n{{intro_message}}\n\n{{/if}}*Espacios disponibles para {{date_formatted}}* ({{service_name}})\n\n{{#each options}}\n- {{this}}\n{{/each}}\n\nCual espacio prefieres?"
   },
   "escalations": {
-    "human": { "contacts": [] },
-    "external": { "enabled": false, "events": {} }
+    "human": {
+      "contacts": []
+    },
+    "external": {
+      "enabled": false,
+      "events": {}
+    }
   },
-  "checkout": { "currency": "COP", "modes": {} }
+  "checkout": {
+    "currency": "COP",
+    "modes": {}
+  }
 }';
 
 IF ISJSON(@DeliverySettingsJson) <> 1
@@ -247,11 +323,3 @@ WHERE BusinessId = @SolorzanoBusinessId
   AND PhoneNormalized = N'573006704013';
 
 PRINT N'SeedSystemAgentTemplatesAndInboundContacts: templates y contactos inbound configurados.';
-
-
-
-
-
-
-
-

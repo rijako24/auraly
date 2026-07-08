@@ -1,4 +1,4 @@
--- =============================================================================
+﻿-- =============================================================================
 -- SeedLuisPetitBarber.sql
 --
 -- Crea/actualiza el negocio Luis Petit Profesional Barber, su catalogo de
@@ -654,7 +654,8 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "service",
       "add_ons"
     ],
-    "escalationReasonCode": "reservation_change_requires_human"
+    "escalationReasonCode": "reservation_change_requires_human",
+    "manageableReservationGuidance": "Cuando el cliente pida cambiar, cancelar o confirmar una reserva sin identificar una reserva por fecha, hora o servicio existente, pide que indique cual reserva. No infieras disponibilidad ni apliques cambios sobre una reserva no identificada."
   },
   "reservationAutomations": {
     "confirmation": {

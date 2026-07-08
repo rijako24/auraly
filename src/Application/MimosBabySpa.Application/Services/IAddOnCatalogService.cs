@@ -3,7 +3,7 @@ using MimosBabySpa.Application.Configuration;
 namespace MimosBabySpa.Application.Services;
 
 /// <summary>
-/// Fuente única de verdad para complementos (add-ons) compatibles con un servicio.
+/// Fuente Ãºnica de verdad para complementos (add-ons) compatibles con un servicio.
 /// </summary>
 public interface IAddOnCatalogService
 {
@@ -23,12 +23,12 @@ public sealed record AddOnValidationResult(
     bool IsValid,
     string? NormalizedCsv,
     string? ErrorMessage,
-    string? Hint,
+    string? Remediation,
     string? ErrorCode = null)
 {
     public static AddOnValidationResult Ok(string? normalizedCsv) =>
         new(true, normalizedCsv, null, null);
 
-    public static AddOnValidationResult Fail(string message, string? hint = null, string? errorCode = null) =>
-        new(false, null, message, hint, errorCode);
+    public static AddOnValidationResult Fail(string message, string? remediation = null, string? errorCode = null) =>
+        new(false, null, message, remediation, errorCode);
 }

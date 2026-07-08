@@ -20,5 +20,4 @@ public sealed class AgentGlobalAction
 
     public IReadOnlyList<string> AllowedActions { get; init; } = [];
 
-    public IReadOnlyList<string> AllowedTools { get; init; } = [];
 }

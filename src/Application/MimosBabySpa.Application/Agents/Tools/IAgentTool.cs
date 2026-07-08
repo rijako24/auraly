@@ -69,7 +69,7 @@ public interface IAgentTool
     /// Ejecuta la tool. Siempre retorna un JSON serializable con shape:
     /// { "ok": true, "data": {...} }
     /// o
-    /// { "ok": false, "error": { "code": "...", "message": "...", "hint": "..." } }
+    /// { "ok": false, "error": { "code": "...", "message": "...", "recoverable": true } }
     /// </summary>
     Task<string> ExecuteAsync(
         JsonElement arguments,

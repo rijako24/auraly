@@ -256,6 +256,8 @@ public class ToolCapabilityGateTests
             EnabledToolNames = ["set_fact", "suspend_reservation"],
             Flow = new AgentFlowDefinition
             {
+                Language = LanguageForTools("set_fact", "suspend_reservation"),
+
                 StageDetection = "automatic",
                 Stages =
                 [
@@ -264,7 +266,7 @@ public class ToolCapabilityGateTests
                         Id = "customer_data",
                         Goal = "Pedir datos",
                         ConversationGuidance = "Pide datos del cliente.",
-                        AllowedTools = ["set_fact"]
+                        AllowedActions = ["set_fact"]
                     }
                 ]
             },
@@ -273,7 +275,7 @@ public class ToolCapabilityGateTests
                 new AgentGlobalAction
                 {
                     Id = "manage_existing_reservation",
-                    AllowedTools = ["suspend_reservation"]
+                    AllowedActions = ["suspend_reservation"]
                 }
             ]
         };
@@ -293,13 +295,15 @@ public class ToolCapabilityGateTests
             BusinessId = Guid.NewGuid(),
             Flow = new AgentFlowDefinition
             {
+                Language = LanguageForTools("search_products", "add_order_item", "reset_flow_context"),
+
                 Stages =
                 [
                     new AgentFlowStage
                     {
                         Id = "discovery",
                         Goal = "Construir carrito",
-                        AllowedTools = ["search_products", "add_order_item"]
+                        AllowedActions = ["search_products", "add_order_item"]
                     }
                 ]
             },
@@ -308,7 +312,7 @@ public class ToolCapabilityGateTests
                 new AgentGlobalAction
                 {
                     Id = "restart_order",
-                    AllowedTools = ["reset_flow_context"]
+                    AllowedActions = ["reset_flow_context"]
                 }
             ]
         };
@@ -351,6 +355,8 @@ public class ToolCapabilityGateTests
             EnabledToolNames = ["set_fact", "check_availability", "suspend_reservation"],
             Flow = new AgentFlowDefinition
             {
+                Language = LanguageForTools("set_fact", "suspend_reservation"),
+
                 StageDetection = "automatic",
                 Stages =
                 [
@@ -359,7 +365,7 @@ public class ToolCapabilityGateTests
                         Id = "customer_data",
                         Goal = "Pedir datos",
                         ConversationGuidance = "Pide datos del cliente.",
-                        AllowedTools = ["set_fact"]
+                        AllowedActions = ["set_fact"]
                     }
                 ]
             },
@@ -368,7 +374,7 @@ public class ToolCapabilityGateTests
                 new AgentGlobalAction
                 {
                     Id = "manage_existing_reservation",
-                    AllowedTools = ["suspend_reservation"]
+                    AllowedActions = ["suspend_reservation"]
                 }
             ]
         };
@@ -379,6 +385,23 @@ public class ToolCapabilityGateTests
         result.IsAllowed.Should().BeFalse();
         result.Code.Should().Be("stage_action_pending");
     }
+
+
+    private static ConversationalFlowLanguage LanguageForTools(params string[] toolNames) => new()
+    {
+        Enabled = true,
+        Actions = toolNames
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(
+                tool => tool,
+                tool => new SemanticFlowAction
+                {
+                    Name = tool,
+                    Purpose = $"Test action for {tool}.",
+                    Tool = tool
+                },
+                StringComparer.OrdinalIgnoreCase)
+    };
 
     private sealed class TestTool : IAgentTool
     {
@@ -408,6 +431,8 @@ public class ToolCapabilityGateTests
         EnabledToolNames = ["set_fact", "get_service_catalog", "check_availability"],
         Flow = new AgentFlowDefinition
         {
+            Language = LanguageForTools("get_service_catalog", "set_fact"),
+
             StageDetection = "automatic",
             Stages =
             [
@@ -416,7 +441,7 @@ public class ToolCapabilityGateTests
                     Id = "discovery",
                     Goal = "discovery",
                     ConversationGuidance = "Presenta catálogo y registra service con set_fact al elegir.",
-                    AllowedTools = ["get_service_catalog", "set_fact"],
+                    AllowedActions = ["get_service_catalog", "set_fact"],
                     AdvanceWhenFacts = ["baby_name", "baby_age_months", "service"]
                 },
                 new AgentFlowStage
@@ -424,7 +449,7 @@ public class ToolCapabilityGateTests
                     Id = "addons_offering",
                     Goal = "Ofrecer complementos",
                     ConversationGuidance = "Lista complementos y registra add_ons con set_fact.",
-                    AllowedTools = ["get_service_catalog", "set_fact"],
+                    AllowedActions = ["get_service_catalog", "set_fact"],
                     AdvanceWhenFacts = ["add_ons"]
                 }
             ]

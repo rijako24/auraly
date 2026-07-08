@@ -53,7 +53,7 @@ public sealed class PrepareReservationChangeTool : IAgentTool
 
         var result = await _reservations.UpdateReservationAsync(request.Request!, cancellationToken);
         if (!result.Success)
-            return ToolResultHelper.Error(result.ErrorCode!, result.ErrorMessage!, result.Hint, recoverable: true);
+            return ToolResultHelper.Error(result.ErrorCode!, result.ErrorMessage!, result.Remediation, recoverable: true);
 
         return ToolResultHelper.OkWithLlm(ToPayload(result), ToLlmPayload(result));
     }

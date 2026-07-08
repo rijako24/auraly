@@ -14,15 +14,9 @@ internal static class AgentTurnToolScope
         var allowedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var runtimeActive = !ReferenceEquals(session.RuntimeDecision, Runtime.FlowRuntimeDecision.Empty);
 
-        if (currentStage?.AllowedTools.Count > 0)
-        {
-            foreach (var toolName in currentStage.AllowedTools)
-                allowedNames.Add(toolName);
-        }
-
         if (currentStage?.AllowedActions.Count > 0)
         {
-            foreach (var toolName in ResolveActionToolNames(config, currentStage.AllowedActions))
+            foreach (var toolName in SemanticFlowActionResolver.ResolveToolNames(config, currentStage.AllowedActions))
                 allowedNames.Add(toolName);
         }
 
@@ -31,13 +25,11 @@ internal static class AgentTurnToolScope
             if (runtimeActive && !session.RuntimeDecision.EnabledGlobalActionIds.Contains(action.Id))
                 continue;
 
-            if (runtimeActive && IsDisabledByRuntime(action.AllowedTools, effectiveTools, session.RuntimeDecision))
+            var actionToolNames = SemanticFlowActionResolver.ResolveToolNames(config, action.AllowedActions);
+            if (runtimeActive && IsDisabledByRuntime(actionToolNames, effectiveTools, session.RuntimeDecision))
                 continue;
 
-            foreach (var toolName in action.AllowedTools)
-                allowedNames.Add(toolName);
-
-            foreach (var toolName in ResolveActionToolNames(config, action.AllowedActions))
+            foreach (var toolName in actionToolNames)
                 allowedNames.Add(toolName);
         }
 
@@ -70,26 +62,6 @@ internal static class AgentTurnToolScope
         return effectiveTools
             .Where(tool => names.Contains(tool.Name))
             .Any(tool => tool.Capabilities.Any(decision.DisabledToolCapabilities.Contains));
-    }
-
-    private static IEnumerable<string> ResolveActionToolNames(
-        AgentConfig config,
-        IReadOnlyList<string> actionIds)
-    {
-        if (!config.FlowLanguage.Enabled || actionIds.Count == 0)
-            yield break;
-
-        foreach (var actionId in actionIds)
-        {
-            if (string.IsNullOrWhiteSpace(actionId))
-                continue;
-
-            if (!config.FlowLanguage.Actions.TryGetValue(actionId.Trim(), out var action))
-                continue;
-
-            if (!string.IsNullOrWhiteSpace(action.Tool))
-                yield return action.Tool.Trim();
-        }
     }
 
     public static IReadOnlyList<AgentGlobalAction> OrderedGlobalActions(AgentConfig config) =>

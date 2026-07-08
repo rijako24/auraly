@@ -30,10 +30,7 @@ public sealed class AgentFlowStage
     public string? OnProblem { get; init; }
 
     /// <summary>
-    /// Whitelist de tools permitidas en esta etapa. Vacío = sin restricción por etapa.
-    /// Cuando está definido, el gate bloquea cualquier otra tool con la instrucción de la etapa.
     /// </summary>
-    public IReadOnlyList<string> AllowedTools { get; init; } = [];
 
     /// <summary>Facts que deben estar presentes para avanzar a la siguiente etapa.</summary>
     public IReadOnlyList<string> AdvanceWhenFacts { get; init; } = [];

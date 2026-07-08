@@ -170,16 +170,16 @@ public sealed class ManageReservationTool : IAgentTool
         var result = await _reservations.UpdateReservationAsync(request.Request!, cancellationToken);
         if (!result.Success)
         {
-            var hint = result.Hint;
+            var remediation = result.Remediation;
             if (string.Equals(result.ErrorCode, "slot_unavailable", StringComparison.OrdinalIgnoreCase))
             {
                 var availabilityHint = await BuildAvailabilityHintAsync(request.Request!, ctx, cancellationToken);
-                hint = null;
+                remediation = null;
 
                 return ToolResultHelper.ErrorWithLlm(
                     result.ErrorCode!,
                     result.ErrorMessage!,
-                    hint,
+                    remediation,
                     new
                     {
                         next_action = "offer_alternative_slots",
@@ -189,7 +189,7 @@ public sealed class ManageReservationTool : IAgentTool
                     recoverable: true);
             }
 
-            return ToolResultHelper.Error(result.ErrorCode!, result.ErrorMessage!, hint, recoverable: true);
+            return ToolResultHelper.Error(result.ErrorCode!, result.ErrorMessage!, remediation, recoverable: true);
         }
 
         ctx.ManageableReservations =

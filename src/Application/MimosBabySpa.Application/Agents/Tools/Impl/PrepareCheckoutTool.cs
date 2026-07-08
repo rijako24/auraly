@@ -204,7 +204,7 @@ public sealed class PrepareCheckoutTool : IAgentTool
                 return (null, ToolResultHelper.Error(
                     validation.ErrorCode ?? "invalid_add_ons",
                     validation.ErrorMessage ?? "Invalid add-on selection.",
-                    validation.Hint));
+                    validation.Remediation));
             }
 
             addOns = validation.NormalizedCsv;

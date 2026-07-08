@@ -63,7 +63,7 @@ public sealed class ConfirmReservationChangeTool : IAgentTool
 
         var result = await _reservations.UpdateReservationAsync(request.Request!, cancellationToken);
         if (!result.Success)
-            return ToolResultHelper.Error(result.ErrorCode!, result.ErrorMessage!, result.Hint, recoverable: true);
+            return ToolResultHelper.Error(result.ErrorCode!, result.ErrorMessage!, result.Remediation, recoverable: true);
 
         ctx.ManageableReservations =
         [

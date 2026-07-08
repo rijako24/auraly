@@ -1,4 +1,4 @@
-using MimosBabySpa.Application.Agents.Configuration;
+﻿using MimosBabySpa.Application.Agents.Configuration;
 using MimosBabySpa.Application.Agents.Gating;
 using MimosBabySpa.Application.Agents.Tools;
 using MimosBabySpa.Application.Commerce;
@@ -11,7 +11,7 @@ using MimosBabySpa.Domain.Repositories;
 namespace MimosBabySpa.Application.Agents;
 
 /// <summary>
-/// Lee la configuración del agente desde BD y la cachea 10 minutos.
+/// Lee la configuraciÃ³n del agente desde BD y la cachea 10 minutos.
 /// </summary>
 public sealed class AgentConfigProvider : IAgentConfigProvider
 {
@@ -81,7 +81,7 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
         if (config.EnabledToolNames.Count == 0)
         {
             _logger.LogWarning(
-                "AgentConfig {AgentId}: enabledTools is empty — agent will have no tools available. Configure tools in SettingsJson.",
+                "AgentConfig {AgentId}: enabledTools is empty â€” agent will have no tools available. Configure tools in SettingsJson.",
                 agentId);
         }
 
@@ -97,8 +97,8 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
     }
 
     /// <summary>
-    /// Valida la coherencia de la configuración del agente y emite advertencias en log.
-    /// No lanza excepciones — la config se acepta aunque tenga inconsistencias menores.
+    /// Valida la coherencia de la configuraciÃ³n del agente y emite advertencias en log.
+    /// No lanza excepciones â€” la config se acepta aunque tenga inconsistencias menores.
     /// </summary>
     private void ValidateConfig(AgentConfig config)
     {
@@ -167,7 +167,7 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
             if (stage.AutoSetOnSkip.Count > 0 && string.IsNullOrWhiteSpace(stage.SkipWhen))
             {
                 _logger.LogWarning(
-                    "AgentConfig {AgentId}: stage '{Stage}' has autoSetOnSkip but no skipWhen — auto-set will never trigger",
+                    "AgentConfig {AgentId}: stage '{Stage}' has autoSetOnSkip but no skipWhen â€” auto-set will never trigger",
                     config.AgentId, stage.Id);
             }
 
@@ -214,17 +214,8 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
                 }
             }
 
-            foreach (var toolName in stage.AllowedTools)
-            {
-                if (!config.EnabledToolNames.Contains(toolName, StringComparer.OrdinalIgnoreCase))
-                {
-                    _logger.LogWarning(
-                        "AgentConfig {AgentId}: stage '{Stage}' allowedTools references '{Tool}' which is not in enabledTools",
-                        config.AgentId, stage.Id, toolName);
-                }
-            }
-        }
 
+        }
         foreach (var action in config.GlobalActions)
         {
             if (string.IsNullOrWhiteSpace(action.Id))
@@ -234,17 +225,8 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
                     config.AgentId);
             }
 
-            foreach (var toolName in action.AllowedTools)
-            {
-                if (!config.EnabledToolNames.Contains(toolName, StringComparer.OrdinalIgnoreCase))
-                {
-                    _logger.LogWarning(
-                        "AgentConfig {AgentId}: globalAction '{Action}' allowedTools references '{Tool}' which is not in enabledTools",
-                        config.AgentId, action.Id, toolName);
-                }
-            }
-        }
 
+        }
         var enabledCapabilities = BuildEnabledCapabilities(config);
 
         // Verificar que los guards solo referencian capabilities habilitadas
@@ -271,7 +253,7 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
         ValidateMessageSequences(config);
         ValidateNotifications(config);
         ValidateReservationAutomations(config);
-        ValidateReservationManagement(config);
+        ValidateReservationManagement(config, enabledCapabilities);
         ValidateExternalEscalations(config);
         ValidateTemplates(config);
     }
@@ -540,16 +522,16 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
         }
     }
 
-    private void ValidateReservationManagement(AgentConfig config)
+    private void ValidateReservationManagement(AgentConfig config, IReadOnlySet<string> enabledCapabilities)
     {
-        if (!config.EnabledToolNames.Contains("manage_reservation", StringComparer.OrdinalIgnoreCase))
+        if (!enabledCapabilities.Contains(ToolCapabilities.ReservationManage))
             return;
 
         var policy = config.ReservationManagement;
         if (policy.AutomaticChangeFields.Count == 0 && policy.EscalateChangeFields.Count == 0)
         {
             _logger.LogWarning(
-                "AgentConfig {AgentId}: manage_reservation is enabled but reservationManagement has no automaticChangeFields or escalateChangeFields",
+                "AgentConfig {AgentId}: a reservation management tool is enabled but reservationManagement has no automaticChangeFields or escalateChangeFields",
                 config.AgentId);
         }
 
@@ -708,8 +690,3 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
     }
 
 }
-
-
-
-
-

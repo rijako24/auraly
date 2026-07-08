@@ -13,7 +13,7 @@ public sealed record UpdateReservationChangeResult(
     bool Success,
     string? ErrorCode,
     string? ErrorMessage,
-    string? Hint,
+    string? Remediation,
     Guid ReservationId,
     string ServiceName,
     DateOnly? Date,
@@ -28,7 +28,7 @@ public sealed record UpdateReservationChangeResult(
     public static UpdateReservationChangeResult Fail(
         string code,
         string message,
-        string? hint,
+        string? remediation,
         Guid reservationId) =>
-        new(false, code, message, hint, reservationId, string.Empty, null, null, null, null, [], 0m, string.Empty, false);
+        new(false, code, message, remediation, reservationId, string.Empty, null, null, null, null, [], 0m, string.Empty, false);
 }

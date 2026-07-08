@@ -1,4 +1,4 @@
--- =============================================================================
+﻿-- =============================================================================
 -- SeedSolorzanoAgentConfiguration.sql
 --
 -- Configuracion completa del agente Camila (Vinos Artesanales Solorzano) para
@@ -397,24 +397,24 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         "id": "discovery",
         "name": "Descubrimiento y recomendacion",
         "goal": "Presentar el catalogo inicial sin precios y construir el carrito hasta que el cliente finalice la compra.",
-        "hint": "En saludos o informacion inicial, primero llama search_products con query vino y limit 10. Luego presenta hasta 10 productos activos devueltos por search_products sin mencionar precios, y cierra exactamente con: Que vino te gustaria degustar el dia de hoy?. Para recomendaciones por ocasion, opciones, precios, promos, tamanos, presentaciones o sabores, llama search_products antes de responder; usa query vino, limit 5 cuando la ocasion sea general. Si el cliente selecciona por numero, precio, tamano, sabor, nombre parcial o descripcion, resuelve solo contra productos activos devueltos por search_products en el turno vigente; si no hay resultado vigente o la referencia no aparece, llama search_products antes de responder o agregar. Si hay una coincidencia razonable pero falta cantidad, pregunta cuantas unidades quiere. Agrega al carrito solo cuando producto y cantidad expresa esten claros. Despues de add_order_item exitoso, muestra el carrito y pregunta: Quieres agregar algo mas a la compra? Si responde con una negacion y existe al menos un item, llama set_fact order_finalized=true; si el carrito esta vacio, ayuda a elegir un producto primero.",
-        "allowedTools": [
-          "search_products",
-          "add_order_item",
-          "set_fact"
-        ],
         "advanceWhenFacts": [
           "order_finalized"
-        ]
+        ],
+        "conversationGuidance": "En saludos o informacion inicial, primero llama search_products con query vino y limit 10. Luego presenta hasta 10 productos activos devueltos por search_products sin mencionar precios, y cierra exactamente con: Que vino te gustaria degustar el dia de hoy?. Para recomendaciones por ocasion, opciones, precios, promos, tamanos, presentaciones o sabores, llama search_products antes de responder; usa query vino, limit 5 cuando la ocasion sea general. Si el cliente selecciona por numero, precio, tamano, sabor, nombre parcial o descripcion, resuelve solo contra productos activos devueltos por search_products en el turno vigente; si no hay resultado vigente o la referencia no aparece, llama search_products antes de responder o agregar. Si hay una coincidencia razonable pero falta cantidad, pregunta cuantas unidades quiere. Agrega al carrito solo cuando producto y cantidad expresa esten claros. Despues de add_order_item exitoso, muestra el carrito y pregunta: Quieres agregar algo mas a la compra? Si responde con una negacion y existe al menos un item, llama set_fact order_finalized=true; si el carrito esta vacio, ayuda a elegir un producto primero.",
+        "allowedActions": [
+          "buscar_productos",
+          "agregar_producto_pedido",
+          "registrar_dato"
+        ],
+        "collect": [
+          "order_finalized"
+        ],
+        "ask": ""
       },
       {
         "id": "order_data",
         "name": "Datos del pedido",
         "goal": "Recoger direccion de entrega, celular y nombre de quien recibe para coordinar envio. La ciudad por defecto es Valledupar.",
-        "hint": "Pide en una sola lista solo los datos de usuario que falten: Direccion de entrega, Celular de contacto y Nombre de quien recibe. No pidas ciudad si ya existe por defecto; usa Valledupar como ciudad local salvo que el cliente indique otra. Cuando el cliente responda, registra con set_fact todos los datos que entregue en ese turno. Si todavia falta algun dato requerido, pide solo los faltantes juntos.",
-        "allowedTools": [
-          "set_fact"
-        ],
         "advanceWhenFacts": [
           "city",
           "delivery_address",
@@ -426,31 +426,40 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
           "delivery_address",
           "delivery_phone",
           "customer_name"
-        ]
+        ],
+        "conversationGuidance": "Pide en una sola lista solo los datos de usuario que falten: Direccion de entrega, Celular de contacto y Nombre de quien recibe. No pidas ciudad si ya existe por defecto; usa Valledupar como ciudad local salvo que el cliente indique otra. Cuando el cliente responda, registra con set_fact todos los datos que entregue en ese turno. Si todavia falta algun dato requerido, pide solo los faltantes juntos.",
+        "allowedActions": [
+          "registrar_dato"
+        ],
+        "collect": [
+          "city",
+          "delivery_address",
+          "delivery_phone",
+          "customer_name"
+        ],
+        "ask": ""
       },
       {
         "id": "payment_method",
         "name": "Metodo de pago",
         "goal": "Preguntar si el cliente pagara en efectivo al recibir o por transferencia con link despues de confirmar los datos de envio.",
-        "hint": "Cuando ya existan items y datos completos de entrega, pregunta una sola cosa con estas dos opciones: efectivo al recibir o transferencia con link de pago. Si responde efectivo, registra payment_method=efectivo. Si responde transferencia o link de pago, registra payment_method=transferencia. Despues de guardar el metodo de pago, continua al resumen.",
-        "allowedTools": [
-          "set_fact",
-          "get_order_draft"
-        ],
         "advanceWhenFacts": [
           "payment_method"
-        ]
+        ],
+        "conversationGuidance": "Cuando ya existan items y datos completos de entrega, pregunta una sola cosa con estas dos opciones: efectivo al recibir o transferencia con link de pago. Si responde efectivo, registra payment_method=efectivo. Si responde transferencia o link de pago, registra payment_method=transferencia. Despues de guardar el metodo de pago, continua al resumen.",
+        "allowedActions": [
+          "registrar_dato",
+          "consultar_pedido"
+        ],
+        "collect": [
+          "payment_method"
+        ],
+        "ask": ""
       },
       {
         "id": "summary",
         "name": "Resumen del pedido",
         "goal": "Preparar y mostrar el resumen oficial del pedido segun el metodo de pago configurado.",
-        "hint": "Cuando ya existan items, datos de entrega y metodo de pago, llama prepare_order_checkout una sola vez para calcular envio, total y renderizar el resumen oficial. Si devuelve resumen sin link, muestra el resumen y pide confirmacion verbal. Si devuelve link de pago, muestra el resumen/link y espera confirmacion automatica del webhook. Si falla por configuracion de pago, link de pago o error no recuperable, responde breve y llama escalate_to_human en ese mismo turno.",
-        "allowedTools": [
-          "prepare_order_checkout",
-          "get_order_draft",
-          "escalate_to_human"
-        ],
         "advanceWhenFacts": [
           "order_checkout_presented"
         ],
@@ -473,58 +482,135 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
               "order_checkout_presented": "true"
             }
           }
-        ]
+        ],
+        "conversationGuidance": "Cuando ya existan items, datos de entrega y metodo de pago, llama prepare_order_checkout una sola vez para calcular envio, total y renderizar el resumen oficial. Si devuelve resumen sin link, muestra el resumen y pide confirmacion verbal. Si devuelve link de pago, muestra el resumen/link y espera confirmacion automatica del webhook. Si falla por configuracion de pago, link de pago o error no recuperable, responde breve y llama escalate_to_human en ese mismo turno.",
+        "allowedActions": [
+          "preparar_checkout_pedido",
+          "consultar_pedido",
+          "escalar_humano"
+        ],
+        "collect": [
+          "order_checkout_presented"
+        ],
+        "ask": ""
       },
       {
         "id": "order_confirmation",
         "name": "Confirmacion del pedido",
         "goal": "Confirmar el pedido ya resumido o acompanar el pago pendiente segun el metodo elegido.",
-        "hint": "Si payment_method=efectivo y el cliente confirma claramente el resumen, llama create_order con customer_confirmed=true, customer_name, customer_phone y delivery_address; cuando create_order confirme el pedido, llama send_message_sequence con sequence=order_created_customer. Si payment_method=transferencia, espera la confirmacion automatica del webhook; si el cliente pregunta por el pago, llama verify_payment. Si el cliente corrige datos, metodo de pago o carrito, aplica el cambio con la accion transversal de modificar pedido y presenta el resumen recalculado.",
-        "allowedTools": [
-          "create_order",
-          "send_message_sequence",
-          "verify_payment",
-          "get_order_draft",
-          "set_fact",
-          "escalate_to_human"
+        "advanceWhenFacts": [],
+        "conversationGuidance": "Si payment_method=efectivo y el cliente confirma claramente el resumen, llama create_order con customer_confirmed=true, customer_name, customer_phone y delivery_address; cuando create_order confirme el pedido, llama send_message_sequence con sequence=order_created_customer. Si payment_method=transferencia, espera la confirmacion automatica del webhook; si el cliente pregunta por el pago, llama verify_payment. Si el cliente corrige datos, metodo de pago o carrito, aplica el cambio con la accion transversal de modificar pedido y presenta el resumen recalculado.",
+        "allowedActions": [
+          "crear_pedido",
+          "enviar_secuencia",
+          "verificar_pago",
+          "consultar_pedido",
+          "registrar_dato",
+          "escalar_humano"
         ],
-        "advanceWhenFacts": []
+        "collect": [],
+        "ask": ""
       }
-    ]
+    ],
+    "language": {
+      "actions": {
+        "buscar_productos": {
+          "name": "Buscar productos oficiales",
+          "purpose": "Consultar productos activos antes de recomendar o agregar al carrito.",
+          "tool": "search_products"
+        },
+        "agregar_producto_pedido": {
+          "name": "Agregar producto al pedido",
+          "purpose": "Agregar un producto oficial con cantidad clara al pedido actual.",
+          "tool": "add_order_item"
+        },
+        "registrar_dato": {
+          "name": "Registrar dato",
+          "purpose": "Guardar datos expresados por el cliente cuando son necesarios para avanzar.",
+          "tool": "set_fact"
+        },
+        "consultar_pedido": {
+          "name": "Consultar pedido actual",
+          "purpose": "Obtener el carrito o pedido en curso.",
+          "tool": "get_order_draft"
+        },
+        "preparar_checkout_pedido": {
+          "name": "Preparar resumen del pedido",
+          "purpose": "Calcular envio, total y pago del pedido actual.",
+          "tool": "prepare_order_checkout"
+        },
+        "escalar_humano": {
+          "name": "Escalar a humano",
+          "purpose": "Pasar la conversacion a una persona con el contexto necesario.",
+          "tool": "escalate_to_human"
+        },
+        "crear_pedido": {
+          "name": "Crear pedido",
+          "purpose": "Crear el pedido confirmado.",
+          "tool": "create_order"
+        },
+        "enviar_secuencia": {
+          "name": "Enviar secuencia configurada",
+          "purpose": "Enviar una secuencia declarada en la configuracion del agente.",
+          "tool": "send_message_sequence"
+        },
+        "verificar_pago": {
+          "name": "Verificar pago",
+          "purpose": "Consultar el estado de pago vigente.",
+          "tool": "verify_payment"
+        },
+        "quitar_producto_pedido": {
+          "name": "Quitar producto del pedido",
+          "purpose": "Retirar o reducir productos del pedido actual.",
+          "tool": "remove_order_item"
+        },
+        "actualizar_cantidad_pedido": {
+          "name": "Actualizar cantidad del pedido",
+          "purpose": "Cambiar la cantidad final de un producto del pedido.",
+          "tool": "update_order_item_quantity"
+        },
+        "reiniciar_solicitud": {
+          "name": "Reiniciar solicitud",
+          "purpose": "Limpiar el contexto de la solicitud actual segun la intencion del cliente.",
+          "tool": "reset_flow_context"
+        }
+      },
+      "enabled": true
+    }
   },
   "globalActions": [
     {
       "id": "human_handoff",
       "priority": 100,
       "goal": "Escalar a humano cuando el cliente lo pida, haya queja grave, distribuidor/mayorista o una situacion fuera del flujo normal.",
-      "hint": "Responde con una frase corta y cordial. Para distribuidor, menciona minimo 12 unidades y margen 25%. Luego llama escalate_to_human.",
-      "allowedTools": [
-        "escalate_to_human"
+      "conversationGuidance": "Responde con una frase corta y cordial. Para distribuidor, menciona minimo 12 unidades y margen 25%. Luego llama escalate_to_human.",
+      "allowedActions": [
+        "escalar_humano"
       ]
     },
     {
       "id": "modify_current_order",
       "priority": 90,
       "goal": "Modificar el carrito actual cuando el cliente, despues de decir que no agregaba mas o despues de recibir el resumen/link, pida agregar, quitar o cambiar productos/cantidades.",
-      "hint": "Si el cliente quiere agregar, quitar, reducir cantidades, cambiar productos o ver opciones para modificar el pedido actual, esta accion tiene prioridad sobre pedir datos de envio o verificar pago. Si ya hubo resumen o link de pago, primero modifica el carrito y luego genera un resumen/link nuevo. Para cualquier cambio sobre carrito ya existente, llama get_order_draft primero. Para cambiar la cantidad total de un producto ya en carrito, llama update_order_item_quantity con quantity igual a la cantidad final deseada. Para quitar un item completo, llama remove_order_item sin quantity; para reducirlo a una cantidad final menor, llama remove_order_item con quantity igual a la cantidad final deseada. Si hay varios items y la referencia del producto queda ambigua, pregunta una sola vez usando los nombres de los productos del carrito. Para agregar producto nuevo o unidades adicionales, llama add_order_item solo con producto vigente devuelto por search_products; si falta producto o la referencia viene de una lista anterior, llama search_products; si falta cantidad, pregunta solo cuantas unidades. Si pide otro tamano, presentacion, sabor u opciones parecidas, llama search_products antes de responder y menciona solo alternativas devueltas por la herramienta. Despues de add_order_item, remove_order_item o update_order_item_quantity exitoso, llama get_order_draft y muestra el carrito actualizado. Si el carrito quedo vacio, ayuda a elegir producto. Si el carrito tiene items y ya existen city, delivery_address, delivery_phone, customer_name y payment_method, llama set_fact order_finalized=true y luego prepare_order_checkout en el mismo turno para recalcular total y link; presenta el nuevo resumen/link como la version vigente del pedido. Si faltan datos de envio o metodo de pago, pide solo lo faltante.",
-      "allowedTools": [
-        "search_products",
-        "add_order_item",
-        "remove_order_item",
-        "update_order_item_quantity",
-        "get_order_draft",
-        "set_fact",
-        "prepare_order_checkout"
+      "conversationGuidance": "Si el cliente quiere agregar, quitar, reducir cantidades, cambiar productos o ver opciones para modificar el pedido actual, esta accion tiene prioridad sobre pedir datos de envio o verificar pago. Si ya hubo resumen o link de pago, primero modifica el carrito y luego genera un resumen/link nuevo. Para cualquier cambio sobre carrito ya existente, llama get_order_draft primero. Para cambiar la cantidad total de un producto ya en carrito, llama update_order_item_quantity con quantity igual a la cantidad final deseada. Para quitar un item completo, llama remove_order_item sin quantity; para reducirlo a una cantidad final menor, llama remove_order_item con quantity igual a la cantidad final deseada. Si hay varios items y la referencia del producto queda ambigua, pregunta una sola vez usando los nombres de los productos del carrito. Para agregar producto nuevo o unidades adicionales, llama add_order_item solo con producto vigente devuelto por search_products; si falta producto o la referencia viene de una lista anterior, llama search_products; si falta cantidad, pregunta solo cuantas unidades. Si pide otro tamano, presentacion, sabor u opciones parecidas, llama search_products antes de responder y menciona solo alternativas devueltas por la herramienta. Despues de add_order_item, remove_order_item o update_order_item_quantity exitoso, llama get_order_draft y muestra el carrito actualizado. Si el carrito quedo vacio, ayuda a elegir producto. Si el carrito tiene items y ya existen city, delivery_address, delivery_phone, customer_name y payment_method, llama set_fact order_finalized=true y luego prepare_order_checkout en el mismo turno para recalcular total y link; presenta el nuevo resumen/link como la version vigente del pedido. Si faltan datos de envio o metodo de pago, pide solo lo faltante.",
+      "allowedActions": [
+        "buscar_productos",
+        "agregar_producto_pedido",
+        "quitar_producto_pedido",
+        "actualizar_cantidad_pedido",
+        "consultar_pedido",
+        "registrar_dato",
+        "preparar_checkout_pedido"
       ]
     },
     {
       "id": "restart_order",
       "priority": 70,
       "goal": "Reiniciar el pedido actual si el cliente cambia completamente de producto o quiere empezar de nuevo.",
-      "hint": "Usa reset_flow_context solo cuando el cliente indique claramente que quiere cambiar el pedido completo, empezar de cero, cancelar el pedido anterior o hacer otro pedido independiente. Si habia resumen o link pendiente y el cliente abandona ese pedido, usa checkout_action=abandon. Para agregar o quitar productos del pedido actual, usa modify_current_order.",
-      "allowedTools": [
-        "reset_flow_context",
-        "set_fact"
+      "conversationGuidance": "Usa reset_flow_context solo cuando el cliente indique claramente que quiere cambiar el pedido completo, empezar de cero, cancelar el pedido anterior o hacer otro pedido independiente. Si habia resumen o link pendiente y el cliente abandona ese pedido, usa checkout_action=abandon. Para agregar o quitar productos del pedido actual, usa modify_current_order.",
+      "allowedActions": [
+        "reiniciar_solicitud",
+        "registrar_dato"
       ]
     }
   ],
@@ -762,9 +848,11 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
     }
   },
   "escalations": {
-    "human": { "contacts": [
+    "human": {
+      "contacts": [
         "+573004442469"
-      ] },
+      ]
+    },
     "external": {
       "enabled": true,
       "events": {

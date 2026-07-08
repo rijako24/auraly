@@ -577,7 +577,7 @@ public sealed class AgentConversationService : IAgentConversationService
     }
     /// <summary>
     /// Tras ejecutar tools, la etapa activa puede haber avanzado. Recompone el system prompt
-    /// para que el LLM reciba goal, hint y herramientas del turno actualizadas en la siguiente iteracion.
+    /// para que el LLM reciba goal, guia conversacional y herramientas del turno actualizadas en la siguiente iteracion.
     /// </summary>
     private bool RefreshSystemPromptIfStageChanged(
         AgentConfig config,

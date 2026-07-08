@@ -1,4 +1,4 @@
-using FluentAssertions;
+﻿using FluentAssertions;
 using MimosBabySpa.Application.Agents;
 using MimosBabySpa.Application.Agents.Configuration;
 using MimosBabySpa.Application.Agents.Tools;
@@ -79,7 +79,7 @@ public sealed class ToolExecutionOutcomeTests
     [Fact]
     public void Parse_RecoverableErrorCode_IsMarkedRecoverable()
     {
-        var json = """{"ok":false,"error":{"code":"unknown_fact_key","message":"x","hint":"y","recoverable":true}}""";
+        var json = """{"ok":false,"error":{"code":"unknown_fact_key","message":"x","remediation":"y","recoverable":true}}""";
         var outcome = ToolExecutionOutcome.Parse(json);
 
         outcome.IsError.Should().BeTrue();

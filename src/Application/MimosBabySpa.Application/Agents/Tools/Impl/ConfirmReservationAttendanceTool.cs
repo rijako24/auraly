@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using MimosBabySpa.Application.Services;
 using MimosBabySpa.Domain.Entities;
 using MimosBabySpa.Domain.Enums;
@@ -48,7 +48,7 @@ public sealed class ConfirmReservationAttendanceTool : IAgentTool
             return ToolResultHelper.ErrorWithLlm(
                 "confirmation_required",
                 "Customer confirmation is required before registering attendance.",
-                hint: null,
+                remediation: null,
                 new
                 {
                     next_action = "collect_confirmation",
@@ -145,5 +145,3 @@ public sealed class ConfirmReservationAttendanceTool : IAgentTool
                 : null;
     }
 }
-
-
