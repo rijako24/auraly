@@ -211,9 +211,10 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         "advanceWhenFacts": [
           "service"
         ],
-        "conversationGuidance": "Cuando el cliente responda el tipo de servicio, pida opciones o describa su proyecto, llama get_service_catalog. Explica maximo 1 a 3 servicios relevantes con alcance y beneficios, sin mencionar precios. Si pide precio, indica que la cotizacion se define despues de entender medidas, alcance y materiales en asesoria. Cuando el cliente elija un servicio exacto o uno claramente equivalente, registra service con el nombre canonico del catalogo. Si la necesidad puede corresponder a varias opciones, ayuda a escoger con una explicacion breve.",
+        "conversationGuidance": "Cuando el cliente responda el tipo de servicio, pida opciones o describa su proyecto, consulta el catalogo oficial. Explica maximo 1 a 3 servicios relevantes con alcance y beneficios, sin mencionar precios. Si pide precio, indica que la cotizacion se define despues de entender medidas, alcance y materiales en asesoria. Cuando el cliente elija un servicio exacto o uno claramente equivalente, registra service con el nombre canonico del catalogo. Si la necesidad puede corresponder a varias opciones, ayuda a escoger con una explicacion breve.",
         "allowedActions": [
           "consultar_catalogo",
+          "resolver_servicio",
           "registrar_dato"
         ],
         "collect": [
@@ -268,7 +269,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
           "desired_date",
           "desired_time"
         ],
-        "conversationGuidance": "Primero llama get_service_fulfillment con el servicio elegido. Para agenda, pide fecha si falta desired_date. Cuando tengas fecha, llama check_availability para mostrar horarios disponibles. Cuando el cliente elija hora, registra desired_time y llama check_availability con fecha y hora. Si el horario esta disponible, deja avanzar el flujo.",
+        "conversationGuidance": "Primero resuelve el tipo de atencion con el servicio elegido. Para agenda, pide fecha si falta desired_date. Cuando tengas fecha, valida disponibilidad para mostrar horarios disponibles. Cuando el cliente elija hora, registra desired_time y valida disponibilidad con fecha y hora. Si el horario esta disponible, deja avanzar el flujo.",
         "allowedActions": [
           "resolver_tipo_atencion",
           "validar_disponibilidad",
@@ -287,7 +288,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
           "customer_name",
           "customer_phone"
         ],
-        "conversationGuidance": "Pide en un solo mensaje los datos faltantes para la cita, en lista corta: nombre y celular de contacto. Si ya tienes uno de los datos, pide solo el que falta. Registra los datos con set_fact.",
+        "conversationGuidance": "Pide en un solo mensaje los datos faltantes para la cita, en lista corta: nombre y celular de contacto. Si ya tienes uno de los datos, pide solo el que falta. Registra los datos entregados.",
         "allowedActions": [
           "registrar_dato"
         ],
@@ -302,7 +303,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         "name": "Confirmacion",
         "goal": "Confirmar la cita de asesoria.",
         "advanceWhenFacts": [],
-        "conversationGuidance": "Muestra un resumen breve con servicio, fecha, hora y nombre. Pide confirmacion. Cuando el cliente confirme claramente, llama create_reservation con customer_confirmed=true. Despues de crear la cita, confirma con tono cordial que quedo agendada. Si falta o cambia fecha u hora, vuelve a check_availability antes de crear la cita.",
+        "conversationGuidance": "Muestra un resumen breve con servicio, fecha, hora y nombre. Pide confirmacion. Cuando el cliente confirme claramente, crea la reserva con customer_confirmed=true. Despues de crear la cita, confirma con tono cordial que quedo agendada. Si falta o cambia fecha u hora, vuelve a validar disponibilidad antes de crear la cita.",
         "allowedActions": [
           "crear_reserva",
           "validar_disponibilidad",
@@ -323,6 +324,11 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
           "name": "Consultar catalogo oficial",
           "purpose": "Presentar categorias o servicios oficiales segun la intencion del cliente.",
           "tool": "get_service_catalog"
+        },
+        "resolver_servicio": {
+          "name": "Resolver servicio exacto",
+          "purpose": "Convertir la seleccion del cliente en un servicio canonico del catalogo.",
+          "tool": "resolve_service_selection"
         },
         "resolver_tipo_atencion": {
           "name": "Resolver tipo de atencion",
@@ -358,7 +364,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "id": "human_handoff",
       "priority": 100,
       "goal": "Escalar a humano cuando el cliente lo pida, haya queja, solicitud fuera del alcance o necesite cotizacion detallada inmediata.",
-      "conversationGuidance": "Responde con una frase breve y cordial, y llama escalate_to_human.",
+      "conversationGuidance": "Responde con una frase breve y cordial, y escala a humano.",
       "allowedActions": [
         "escalar_humano"
       ]
@@ -367,7 +373,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "id": "restart_request",
       "priority": 70,
       "goal": "Reiniciar la solicitud actual cuando el cliente quiera cambiar completamente de servicio o empezar de nuevo.",
-      "conversationGuidance": "Usa reset_flow_context cuando el cliente indique claramente que quiere cambiar la solicitud completa. Conserva datos persistentes del cliente.",
+      "conversationGuidance": "Reinicia la solicitud cuando el cliente indique claramente que quiere cambiar la solicitud completa. Conserva datos persistentes del cliente.",
       "allowedActions": [
         "reiniciar_solicitud",
         "registrar_dato"
@@ -519,6 +525,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
   "guards": {},
   "enabledTools": [
     "set_fact",
+    "resolve_service_selection",
     "get_service_catalog",
     "get_service_fulfillment",
     "check_availability",

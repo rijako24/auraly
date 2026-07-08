@@ -19,6 +19,7 @@ public sealed class CreateReservationTool : IAgentTool
     private readonly IBusinessRuleEngine _rules;
     private readonly IAvailabilityService _availability;
     private readonly ISchedulingPolicyProvider _schedulingPolicy;
+    private readonly ServiceNameResolver _serviceNameResolver;
     private readonly ILogger<CreateReservationTool> _logger;
 
     public CreateReservationTool(
@@ -27,6 +28,7 @@ public sealed class CreateReservationTool : IAgentTool
         IBusinessRuleEngine rules,
         IAvailabilityService availability,
         ISchedulingPolicyProvider schedulingPolicy,
+        ServiceNameResolver serviceNameResolver,
         ILogger<CreateReservationTool> logger)
     {
         _reservations = reservations;
@@ -34,6 +36,7 @@ public sealed class CreateReservationTool : IAgentTool
         _rules = rules;
         _availability = availability;
         _schedulingPolicy = schedulingPolicy;
+        _serviceNameResolver = serviceNameResolver;
         _logger = logger;
     }
 
@@ -127,6 +130,10 @@ public sealed class CreateReservationTool : IAgentTool
                 "Payment is confirmed but no reservation is linked yet. The payment fulfillment handler must create or link the reservation.",
                 "Do not call create_reservation after payment confirmation.");
         }
+        var canonicalService = await _serviceNameResolver.ResolveAsync(ctx.BusinessId, service!, cancellationToken);
+        if (!string.IsNullOrWhiteSpace(canonicalService))
+            service = canonicalService;
+
         EnsureReservationFacts(ctx, service!, dateStr!, timeStr!, customerName!, customerPhone!, customerEmail);
 
         var idempotentResult = TryBuildIdempotentResult(ctx, service!, dateStr!, timeStr!, customerName!);

@@ -128,6 +128,7 @@ public static class TestServiceBuilder
                     sp.GetRequiredService<IBusinessRuleEngine>(),
                     sp.GetRequiredService<IAvailabilityService>(),
                     sp.GetRequiredService<ISchedulingPolicyProvider>(),
+                    sp.GetRequiredService<ServiceNameResolver>(),
                     sp.GetRequiredService<ILogger<CreateReservationTool>>()),
                 new EscalateToHumanTool(sp.GetRequiredService<IEscalationNotifier>()),
                 new GetCustomerReservationsTool(sp.GetRequiredService<IReservationLifecycleService>()),

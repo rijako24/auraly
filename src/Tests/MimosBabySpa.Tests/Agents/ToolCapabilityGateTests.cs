@@ -29,7 +29,18 @@ public class ToolCapabilityGateTests
         Mock.Of<IBusinessRuleEngine>(),
         Mock.Of<IAvailabilityService>(),
         Mock.Of<ISchedulingPolicyProvider>(),
+        CreateServiceNameResolver(),
         NullLogger<CreateReservationTool>.Instance);
+
+    private static ServiceNameResolver CreateServiceNameResolver()
+    {
+        var services = new Mock<IServiceRepository>();
+        services.Setup(r => r.GetActiveByBusinessIdAsync(It.IsAny<Guid>()))
+            .ReturnsAsync(Array.Empty<Service>());
+        var unitOfWork = new Mock<IUnitOfWork>();
+        unitOfWork.SetupGet(u => u.Services).Returns(services.Object);
+        return new ServiceNameResolver(unitOfWork.Object, NullLogger<ServiceNameResolver>.Instance);
+    }
 
     public ToolCapabilityGateTests()
     {
@@ -219,7 +230,7 @@ public class ToolCapabilityGateTests
         var result = await _gate.EvaluateAsync(checkAvailabilityTool, args.RootElement, ctx, CancellationToken.None);
 
         result.IsAllowed.Should().BeFalse();
-        result.Remediation.Should().Contain("Presenta catÃ¡logo");
+        result.Remediation.Should().Contain("Presenta catalogo");
         result.Remediation.Should().NotContain("datos faltantes");
         result.Remediation.Should().NotContain("Antes registra");
     }
@@ -424,8 +435,8 @@ public class ToolCapabilityGateTests
 
 
     /// <summary>
-    /// Config con guards declarativos equivalentes a lo que Mimi configura en producciÃ³n.
-    /// Los tests validan el comportamiento del GuardEvaluator con guards explÃ­citos,
+    /// Config con guards declarativos equivalentes a lo que Mimi configura en produccion.
+    /// Los tests validan el comportamiento del GuardEvaluator con guards explicitos,
     /// no con precondiciones hardcoded (ToolPreconditionProvider eliminado).
     /// </summary>
     private static AgentConfig CreateConfigWithAddonsStage() => new()
@@ -444,7 +455,7 @@ public class ToolCapabilityGateTests
                 {
                     Id = "discovery",
                     Goal = "discovery",
-                    ConversationGuidance = "Presenta catÃ¡logo y registra service con set_fact al elegir.",
+                    ConversationGuidance = "Presenta catalogo y registra service con set_fact al elegir.",
                     AllowedActions = ["get_service_catalog", "set_fact"],
                     AdvanceWhenFacts = ["baby_name", "baby_age_months", "service"]
                 },

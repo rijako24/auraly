@@ -11,6 +11,7 @@ using MimosBabySpa.Application.DTOs;
 using MimosBabySpa.Application.Services;
 using MimosBabySpa.Domain.Entities;
 using MimosBabySpa.Domain.Enums;
+using MimosBabySpa.Domain.Repositories;
 using ConversationStateModel = MimosBabySpa.Domain.Models.ConversationState;
 using Xunit;
 
@@ -23,6 +24,7 @@ public class CreateReservationToolTests
     private readonly Mock<IBusinessRuleEngine> _rules = new();
     private readonly Mock<IAvailabilityService> _availability = new();
     private readonly Mock<ISchedulingPolicyProvider> _schedulingPolicy = new();
+    private readonly Mock<IServiceRepository> _services = new();
     private readonly CreateReservationTool _tool;
 
     public CreateReservationToolTests()
@@ -43,12 +45,19 @@ public class CreateReservationToolTests
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(new AvailabilityResult { IsAvailable = true });
 
+        _services.Setup(r => r.GetActiveByBusinessIdAsync(It.IsAny<Guid>()))
+            .ReturnsAsync(Array.Empty<Service>());
+        var unitOfWork = new Mock<IUnitOfWork>();
+        unitOfWork.SetupGet(u => u.Services).Returns(_services.Object);
+        var serviceNameResolver = new ServiceNameResolver(unitOfWork.Object, NullLogger<ServiceNameResolver>.Instance);
+
         _tool = new CreateReservationTool(
             _reservations.Object,
             _intentBuilder.Object,
             _rules.Object,
             _availability.Object,
             _schedulingPolicy.Object,
+            serviceNameResolver,
             NullLogger<CreateReservationTool>.Instance);
     }
 
@@ -72,7 +81,7 @@ public class CreateReservationToolTests
             .ReturnsAsync(new CreateReservationResponse(
                 Guid.NewGuid(),
                 "Plan Marineritos",
-                "María",
+                "Maria",
                 new DateOnly(2026, 5, 22),
                 new TimeOnly(9, 0),
                 60,
@@ -118,7 +127,7 @@ public class CreateReservationToolTests
             .ReturnsAsync(new CreateReservationResponse(
                 Guid.NewGuid(),
                 "Plan Marineritos",
-                "María",
+                "Maria",
                 new DateOnly(2026, 5, 22),
                 new TimeOnly(9, 0),
                 60,
@@ -142,6 +151,69 @@ public class CreateReservationToolTests
         await _tool.ExecuteAsync(args.RootElement, ctx, CancellationToken.None);
 
         turn.FragmentEntries.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenServiceArgumentHasDiacritics_CreatesReservationWithCanonicalService()
+    {
+        _services.Setup(r => r.GetActiveByBusinessIdAsync(It.IsAny<Guid>()))
+            .ReturnsAsync([
+                new Service
+                {
+                    ServiceId = Guid.NewGuid(),
+                    BusinessId = Guid.NewGuid(),
+                    ServiceName = "Diseno Interior",
+                    DurationMinutes = 60,
+                    IsActive = true
+                }
+            ]);
+
+        _intentBuilder.Setup(b => b.BuildFromContextAsync(It.IsAny<AgentToolContext>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ReservationIntentSnapshot(
+                Guid.NewGuid(),
+                "Diseno Interior",
+                new DateTime(2026, 5, 22, 9, 0, 0),
+                60,
+                null,
+                "Ana Gomez",
+                null,
+                "+573001234567",
+                [],
+                "{}"));
+
+        _reservations.Setup(r => r.CreateReservationAsync(It.IsAny<CreateReservationRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CreateReservationResponse(
+                Guid.NewGuid(),
+                "Diseno Interior",
+                string.Empty,
+                new DateOnly(2026, 5, 22),
+                new TimeOnly(9, 0),
+                60,
+                []));
+
+        var ctx = CreateContext();
+        using var args = JsonDocument.Parse("""
+            {
+              "service":"Dise\u00f1o Interior",
+              "date":"2026-05-22",
+              "time":"09:00",
+              "customer_name":"Ana Gomez",
+              "customer_phone":"+573001234567",
+              "customer_confirmed":true
+            }
+            """);
+
+        await _tool.ExecuteAsync(args.RootElement, ctx, CancellationToken.None);
+
+        _rules.Verify(r => r.ValidateReservationAsync(
+            It.IsAny<Guid>(),
+            "Diseno Interior",
+            It.IsAny<DateOnly>(),
+            It.IsAny<TimeOnly>(),
+            It.IsAny<CancellationToken>()), Times.Once);
+        _reservations.Verify(r => r.CreateReservationAsync(
+            It.Is<CreateReservationRequest>(request => request.ServiceName == "Diseno Interior"),
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 
     private static AgentToolContext CreateContext() => new()

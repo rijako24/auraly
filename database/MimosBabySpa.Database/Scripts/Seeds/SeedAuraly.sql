@@ -252,7 +252,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
           "business_type",
           "pain_point"
         ],
-        "conversationGuidance": "Si es el primer turno de una conversacion nueva y no hay mensajes previos del bot, la unica accion correcta es llamar send_message_sequence con sequence=web_demo_follow_up y terminar el turno sin texto libre. Usa esa misma plantilla para cualquier origen del primer contacto: WhatsApp, landing, web, campana o API. Si ya hay historial del bot, no repitas la plantilla: si falta business_type o pain_point, pide solo los datos faltantes en una sola pregunta. Si faltan ambos, pregunta: Que tipo de negocio tienes y que proceso de WhatsApp quieres mejorar primero: responder leads, agendar, vender/cobrar, soporte o seguimiento? No agregues otra pregunta ni pidas datos extra. Cuando el cliente responda, registra business_type y pain_point con set_fact antes de avanzar.",
+        "conversationGuidance": "Si es el primer turno de una conversacion nueva y no hay mensajes previos del bot, envia la secuencia web_demo_follow_up y termina el turno sin texto libre. Usa esa misma plantilla para cualquier origen del primer contacto: WhatsApp, landing, web, campana o API. Si ya hay historial del bot, no repitas la plantilla: si falta business_type o pain_point, pide solo los datos faltantes en una sola pregunta. Si faltan ambos, pregunta: Que tipo de negocio tienes y que proceso de WhatsApp quieres mejorar primero: responder leads, agendar, vender/cobrar, soporte o seguimiento? No agregues otra pregunta ni pidas datos extra. Cuando el cliente responda, registra business_type y pain_point antes de avanzar.",
         "allowedActions": [
           "enviar_secuencia",
           "registrar_dato"
@@ -289,17 +289,15 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         "name": "Explicacion de valor",
         "goal": "Explicar que hacemos, servicios y ventajas conectadas al problema del cliente.",
         "advanceWhenFacts": [
-          "value_explained"
+          "service"
         ],
-        "conversationGuidance": "Llama get_service_catalog para usar servicios oficiales. Explica maximo 4 capacidades relevantes para el pain_point: atencion 24/7, calificacion de leads, agenda, pagos, seguimiento, recuperacion, analytics, handoff humano e integraciones. Conecta cada beneficio con el problema mencionado. Recomienda la demo en vivo de AURALY como siguiente paso. No preguntes si quiere ver horarios, no preguntes ni muestres seleccion de servicio. Registra value_explained=true con set_fact y fija el servicio tecnico llamando resolve_service_selection con el texto exacto Demo AURALY. Despues continua a agenda en el mismo turno.",
+        "conversationGuidance": "Consulta servicios oficiales. Explica maximo 4 capacidades relevantes para el pain_point: atencion 24/7, calificacion de leads, agenda, pagos, seguimiento, recuperacion, analytics, handoff humano e integraciones. Conecta cada beneficio con el problema mencionado. Recomienda la demo en vivo de AURALY como siguiente paso. No preguntes si quiere ver horarios, no preguntes ni muestres seleccion de servicio. Fija el servicio tecnico con el texto exacto Demo AURALY. Despues continua a agenda en el mismo turno.",
         "allowedActions": [
           "consultar_catalogo",
           "resolver_servicio",
           "registrar_dato"
         ],
-        "collect": [
-          "value_explained"
-        ],
+        "collect": [],
         "ask": ""
       },
       {
@@ -348,7 +346,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
           "desired_date",
           "desired_time"
         ],
-        "conversationGuidance": "La demo en vivo de AURALY es el servicio tecnico por defecto. No preguntes servicio ni muestres seleccion de servicio. Si service no esta registrado, llama resolve_service_selection con Demo AURALY. Luego llama get_service_fulfillment con Demo AURALY. Si falta desired_date, pregunta una sola cosa: Para que fecha te gustaria ver horarios de la demo? No agregues otra pregunta en ese mensaje. Cuando el cliente responda fecha, registra desired_date y llama check_availability con service=Demo AURALY para mostrar horarios disponibles. Cuando el cliente elija hora, registra desired_time y llama check_availability con service=Demo AURALY, fecha y hora. Si esta disponible, deja avanzar.",
+        "conversationGuidance": "La demo en vivo de AURALY es el servicio tecnico por defecto. No preguntes servicio ni muestres seleccion de servicio. Si service no esta registrado, resuelvelo con Demo AURALY. Luego resuelve el tipo de atencion para Demo AURALY. Si falta desired_date, pregunta una sola cosa: Para que fecha te gustaria ver horarios de la demo? No agregues otra pregunta en ese mensaje. Cuando el cliente responda fecha, registra desired_date y valida disponibilidad con Demo AURALY para mostrar horarios disponibles. Cuando el cliente elija hora, registra desired_time y valida disponibilidad con Demo AURALY, fecha y hora. Si esta disponible, deja avanzar.",
         "allowedActions": [
           "resolver_servicio",
           "resolver_tipo_atencion",
@@ -385,7 +383,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         "name": "Confirmacion de demo",
         "goal": "Confirmar la demo AURALY.",
         "advanceWhenFacts": [],
-        "conversationGuidance": "Muestra resumen breve: demo, fecha, hora, nombre, empresa, correo y telefono. Pide confirmacion. Cuando confirme claramente, llama create_reservation con customer_confirmed=true. Despues confirma que el equipo AURALY tendra el contexto para la demo. Cierra ahi: no preguntes por recordatorios, informacion adicional, ayuda extra ni siguientes pasos.",
+        "conversationGuidance": "Muestra resumen breve: demo, fecha, hora, nombre, empresa, correo y telefono. Pide confirmacion. Cuando confirme claramente, crea la reserva con customer_confirmed=true. Despues confirma que el equipo AURALY tendra el contexto para la demo. Cierra ahi: no preguntes por recordatorios, informacion adicional, ayuda extra ni siguientes pasos.",
         "allowedActions": [
           "crear_reserva",
           "validar_disponibilidad",
@@ -451,7 +449,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "id": "human_handoff",
       "priority": 100,
       "goal": "Escalar a humano cuando lo pidan o cuando la solicitud sea alianza, soporte sensible, compra enterprise o caso fuera de alcance.",
-      "conversationGuidance": "Responde con una frase breve y cordial, resume el contexto y llama escalate_to_human.",
+      "conversationGuidance": "Responde con una frase breve y cordial, resume el contexto y escala a humano.",
       "allowedActions": [
         "escalar_humano"
       ]
@@ -460,7 +458,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "id": "restart_demo_flow",
       "priority": 70,
       "goal": "Reiniciar la solicitud si el cliente cambia de tema o quiere empezar de nuevo.",
-      "conversationGuidance": "Usa reset_flow_context solo si el cliente lo pide claramente o cambia por completo el objetivo.",
+      "conversationGuidance": "Reinicia la solicitud solo si el cliente lo pide claramente o cambia por completo el objetivo.",
       "allowedActions": [
         "reiniciar_solicitud",
         "registrar_dato"
@@ -685,6 +683,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
   "guards": {},
   "enabledTools": [
     "set_fact",
+    "send_message_sequence",
     "resolve_service_selection",
     "get_service_catalog",
     "get_service_fulfillment",
