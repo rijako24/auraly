@@ -140,12 +140,15 @@ public static class TestServiceBuilder
                 new GetServiceFulfillmentTool(
                     sp.GetRequiredService<IUnitOfWork>(),
                     sp.GetRequiredService<ServiceNameResolver>()),
-                new PrepareReservationChangeTool(
+                new ManageReservationTool(
                     sp.GetRequiredService<IReservationService>(),
-                    sp.GetRequiredService<ICustomerReservationResolver>()),
-                new ConfirmReservationChangeTool(
-                    sp.GetRequiredService<IReservationService>(),
-                    sp.GetRequiredService<ICustomerReservationResolver>()),
+                    sp.GetRequiredService<ICustomerReservationResolver>(),
+                    sp.GetRequiredService<IPaymentLifecycleService>(),
+                    sp.GetRequiredService<IAvailabilityService>(),
+                    sp.GetRequiredService<ISchedulingPolicyProvider>(),
+                    sp.GetRequiredService<IUnitOfWork>(),
+                    sp.GetRequiredService<IConversationVerificationService>(),
+                    sp.GetRequiredService<IEscalationNotifier>()),
                 new SetFactTool(
                     sp.GetRequiredService<IConversationFactsService>(),
                     sp.GetRequiredService<ServiceSelectionResolver>(),

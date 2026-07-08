@@ -4,60 +4,8 @@ using MimosBabySpa.Application.Services;
 
 namespace MimosBabySpa.Application.Agents.Tools.Impl;
 
-public sealed class PrepareReservationChangeTool : IAgentTool
+internal static class ReservationChangeToolSupport
 {
-    private readonly IReservationService _reservations;
-    private readonly ICustomerReservationResolver _reservationResolver;
-
-    public PrepareReservationChangeTool(
-        IReservationService reservations,
-        ICustomerReservationResolver reservationResolver)
-    {
-        _reservations = reservations;
-        _reservationResolver = reservationResolver;
-    }
-
-    public string Name => "prepare_reservation_change";
-
-    public string Description =>
-        "Validates a requested change to an existing customer reservation without applying it. " +
-        "Can validate service, date, time, and add-ons together.";
-
-    public string ParametersSchema => """
-        {
-          "type": "object",
-          "properties": {
-            "reservation_id": { "type": "string", "description": "Optional internal UUID; omit when there is only one reservation in ESTADO RESERVA." },
-            "service": { "type": "string", "description": "Optional new exact or natural service name." },
-            "date": { "type": "string", "description": "Optional new date in YYYY-MM-DD format." },
-            "time": { "type": "string", "description": "Optional new time in HH:mm format." },
-            "add_ons": { "type": "string", "description": "Optional comma-separated add-on names." },
-            "add_ons_mode": { "type": "string", "enum": ["add", "remove", "replace"], "description": "How to apply add_ons. Default is add." }
-          }
-        }
-        """;
-
-    public async Task<string> ExecuteAsync(
-        JsonElement arguments,
-        AgentToolContext ctx,
-        CancellationToken cancellationToken = default)
-    {
-        var request = await BuildRequestAsync(
-            arguments,
-            ctx,
-            _reservationResolver,
-            apply: false,
-            cancellationToken);
-        if (request.ErrorJson is not null)
-            return request.ErrorJson;
-
-        var result = await _reservations.UpdateReservationAsync(request.Request!, cancellationToken);
-        if (!result.Success)
-            return BuildErrorResult(result);
-
-        return ToolResultHelper.OkWithLlm(ToPayload(result), ToLlmPayload(result));
-    }
-
     internal static async Task<(UpdateReservationChangeRequest? Request, string? ErrorJson)> BuildRequestAsync(
         JsonElement arguments,
         AgentToolContext ctx,
@@ -176,6 +124,7 @@ public sealed class PrepareReservationChangeTool : IAgentTool
                 payment_policy = string.IsNullOrWhiteSpace(result.PaymentPolicy) ? null : result.PaymentPolicy
             });
     }
+
     private static string CustomerReservationChangeSummary(UpdateReservationChangeResult result)
     {
         var date = result.Date?.ToString("yyyy-MM-dd") ?? "sin fecha";

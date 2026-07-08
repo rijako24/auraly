@@ -58,7 +58,7 @@ public sealed class AgentTestMockTool : IAgentTool
             "escalate_to_human" => ExecuteEscalation(arguments, ctx),
             "verify_payment" => ExecuteVerifyPayment(arguments, ctx),
             "send_message_sequence" => ExecuteSendMessageSequence(arguments, ctx),
-            "suspend_reservation" => ExecuteReservationMutation(arguments, "reservation_suspend_requested"),
+            "manage_reservation" => ExecuteReservationManagement(arguments, ctx),
             _ => ToolResultHelper.Error("test_tool_not_supported", $"Tool '{Name}' is not supported in test mode.")
         };
 
@@ -283,46 +283,6 @@ public sealed class AgentTestMockTool : IAgentTool
         }, ToolSideEffectNames.RequestCompleted);
     }
 
-    private string ExecuteAssignPaidSlot(JsonElement arguments, AgentToolContext ctx)
-    {
-        TryGetString(arguments, "date", out var date);
-        TryGetString(arguments, "time", out var time);
-
-        var reservationId = Guid.NewGuid();
-        _log.Add("paid_slot_assign_requested", Name, new
-        {
-            reservationId,
-            date,
-            time,
-            paymentTransactionId = ctx.ActivePayment?.PaymentTransactionId,
-            persisted = false
-        });
-
-        var reservation = new Reservation
-        {
-            ReservationId = reservationId,
-            BusinessId = ctx.BusinessId,
-            ConversationId = ctx.ConversationId,
-            Status = ReservationStatus.Confirmed,
-            CustomerNameSnapshot = ctx.Facts.GetValueOrDefault(ConversationFactKeys.CustomerName),
-            CustomerPhoneSnapshot = ConversationContactPhone.Resolve(ctx.Facts, ctx.ChannelPhone)
-        };
-
-        ctx.ManageableReservations = [reservation];
-        ctx.NotificationContexts["reservation_created"] = new MessageSequenceContext { Reservation = reservation };
-
-        return ToolResultHelper.Ok(new
-        {
-            reservation_id = reservationId,
-            payment_transaction_id = ctx.ActivePayment?.PaymentTransactionId,
-            date,
-            time,
-            status = ReservationStatus.Confirmed.ToString(),
-            is_booking_confirmed = true,
-            test_mode = true
-        }, ToolSideEffectNames.RequestCompleted);
-    }
-
     private string ExecuteEscalation(JsonElement arguments, AgentToolContext ctx)
     {
         TryGetString(arguments, "reason", out var reason);
@@ -382,17 +342,22 @@ public sealed class AgentTestMockTool : IAgentTool
         });
     }
 
-    private string ExecuteReservationMutation(JsonElement arguments, string eventType)
+    private string ExecuteReservationManagement(JsonElement arguments, AgentToolContext ctx)
     {
+        TryGetString(arguments, "action", out var action);
+        var eventType = string.IsNullOrWhiteSpace(action)
+            ? "reservation_management_requested"
+            : $"reservation_{action}_requested";
+
         _log.Add(eventType, Name, new { arguments = SafeJson(arguments), persisted = false });
+
         return ToolResultHelper.Ok(new
         {
             accepted = true,
-            test_mode = true,
-            message = "Reservation mutation skipped in agent test mode."
+            action = string.IsNullOrWhiteSpace(action) ? null : action,
+            test_mode = true
         });
     }
-
     private static bool TryGetString(JsonElement args, string property, out string value)
     {
         value = string.Empty;

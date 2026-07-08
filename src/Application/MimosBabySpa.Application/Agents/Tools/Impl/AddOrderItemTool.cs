@@ -89,10 +89,11 @@ public sealed class AddOrderItemTool : IAgentTool
             && string.IsNullOrWhiteSpace(sku)
             && string.IsNullOrWhiteSpace(name))
         {
-            return ToolResultHelper.Error(
+            return ToolResultHelper.ErrorWithNextAction(
                 "missing_prerequisites",
                 "A current active product selection is required before adding an item.",
-                "Call search_products again or ask the customer to choose an active product from the current catalog result.",
+                "select_product",
+                new { required_source = "active_catalog_result" },
                 recoverable: true);
         }
 
@@ -108,18 +109,20 @@ public sealed class AddOrderItemTool : IAgentTool
         }
         catch (InvalidOperationException ex) when (ex.Message.Contains("Product not found", StringComparison.OrdinalIgnoreCase))
         {
-            return ToolResultHelper.Error(
+            return ToolResultHelper.ErrorWithNextAction(
                 "product_not_found",
                 "The product could not be resolved in the catalog.",
-                "Call search_products again and offer only active alternatives.",
+                "search_products",
+                new { catalog_filter = "active_products" },
                 recoverable: true);
         }
         catch (InvalidOperationException ex) when (ex.Message.Contains("Product inactive", StringComparison.OrdinalIgnoreCase))
         {
-            return ToolResultHelper.Error(
+            return ToolResultHelper.ErrorWithNextAction(
                 "product_inactive",
                 "The selected product is inactive and cannot be added to the order.",
-                "Call search_products again and offer only active alternatives.",
+                "search_products",
+                new { catalog_filter = "active_products" },
                 recoverable: true);
         }
 

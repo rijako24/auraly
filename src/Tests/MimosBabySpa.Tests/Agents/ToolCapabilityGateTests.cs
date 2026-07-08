@@ -261,19 +261,17 @@ public class ToolCapabilityGateTests
     [Fact]
     public async Task EvaluateAsync_GlobalActionTool_BypassesStageWhitelist()
     {
-        var suspendTool = new SuspendReservationTool(
-            Mock.Of<IReservationService>(),
-            Mock.Of<ICustomerReservationResolver>());
+        var manageTool = new TestTool("manage_reservation");
 
         var ctx = CreateContext();
         ctx.Config = new AgentConfig
         {
             AgentId = Guid.NewGuid(),
             BusinessId = Guid.NewGuid(),
-            EnabledToolNames = ["set_fact", "suspend_reservation"],
+            EnabledToolNames = ["set_fact", "manage_reservation"],
             Flow = new AgentFlowDefinition
             {
-                Language = LanguageForTools("set_fact", "suspend_reservation"),
+                Language = LanguageForTools("set_fact", "manage_reservation"),
 
                 StageDetection = "automatic",
                 Stages =
@@ -292,13 +290,13 @@ public class ToolCapabilityGateTests
                 new AgentGlobalAction
                 {
                     Id = "manage_existing_reservation",
-                    AllowedActions = ["suspend_reservation"]
+                    AllowedActions = ["manage_reservation"]
                 }
             ]
         };
 
         using var args = JsonDocument.Parse("{}");
-        var result = await _gate.EvaluateAsync(suspendTool, args.RootElement, ctx, CancellationToken.None);
+        var result = await _gate.EvaluateAsync(manageTool, args.RootElement, ctx, CancellationToken.None);
 
         result.IsAllowed.Should().BeTrue();
     }
@@ -369,10 +367,10 @@ public class ToolCapabilityGateTests
         {
             AgentId = Guid.NewGuid(),
             BusinessId = Guid.NewGuid(),
-            EnabledToolNames = ["set_fact", "check_availability", "suspend_reservation"],
+            EnabledToolNames = ["set_fact", "check_availability", "manage_reservation"],
             Flow = new AgentFlowDefinition
             {
-                Language = LanguageForTools("set_fact", "suspend_reservation"),
+                Language = LanguageForTools("set_fact", "manage_reservation"),
 
                 StageDetection = "automatic",
                 Stages =
@@ -391,7 +389,7 @@ public class ToolCapabilityGateTests
                 new AgentGlobalAction
                 {
                     Id = "manage_existing_reservation",
-                    AllowedActions = ["suspend_reservation"]
+                    AllowedActions = ["manage_reservation"]
                 }
             ]
         };

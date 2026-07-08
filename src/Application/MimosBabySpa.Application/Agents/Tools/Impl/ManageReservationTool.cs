@@ -51,8 +51,7 @@ public sealed class ManageReservationTool : IAgentTool
     public string Description =>
         "Manages customer reservation lifecycle through a single safe workflow. " +
         "Reservation change policy is supplied by the active agent configuration. " +
-        "Use request_reschedule only when the customer wants to move the appointment but has not provided a target slot. " +
-        "Use complete_paid_reschedule when a confirmed paid transaction has no linked reservation and the customer provides the replacement date/time.";
+        "Supported operations cover reschedule intent, automatic configured changes, paid reschedule completion, attendance confirmation, and cancellation/suspension.";
 
     public Func<JsonElement, AgentToolContext, IReadOnlyDictionary<string, string>?>? VerificationDependencyResolver =>
         (args, ctx) =>
@@ -121,10 +120,11 @@ public sealed class ManageReservationTool : IAgentTool
             "request_reschedule" => await RequestRescheduleAsync(arguments, ctx, cancellationToken),
             "confirm_attendance" => await ConfirmAttendanceAsync(arguments, ctx, cancellationToken),
             "cancel" => await CancelAsync(arguments, ctx, cancellationToken),
-            _ => ToolResultHelper.Error(
+            _ => ToolResultHelper.ErrorWithNextAction(
                 "invalid_action",
                 $"Unknown reservation management action '{action}'.",
-                "Use one of: request_reschedule, preview_change, apply_change, complete_paid_reschedule, confirm_attendance, cancel.",
+                "select_reservation_management_action",
+                new { available_actions = new[] { "request_reschedule", "preview_change", "apply_change", "complete_paid_reschedule", "confirm_attendance", "cancel" } },
                 recoverable: true)
         };
     }
@@ -158,7 +158,7 @@ public sealed class ManageReservationTool : IAgentTool
         // Date/time reschedules are the customer's confirmed intent; no second confirmation turn.
         apply = true;
 
-        var request = await PrepareReservationChangeTool.BuildRequestAsync(
+        var request = await ReservationChangeToolSupport.BuildRequestAsync(
             arguments,
             ctx,
             _reservationResolver,
@@ -189,7 +189,7 @@ public sealed class ManageReservationTool : IAgentTool
                     recoverable: true);
             }
 
-            return PrepareReservationChangeTool.BuildErrorResult(result);
+            return ReservationChangeToolSupport.BuildErrorResult(result);
         }
 
         ctx.ManageableReservations =
@@ -209,8 +209,8 @@ public sealed class ManageReservationTool : IAgentTool
         ];
 
         return ToolResultHelper.OkWithLlm(
-            PrepareReservationChangeTool.ToPayload(result),
-            PrepareReservationChangeTool.ToLlmPayload(result));
+            ReservationChangeToolSupport.ToPayload(result),
+            ReservationChangeToolSupport.ToLlmPayload(result));
     }
 
     private async Task<string> EscalateUnsupportedReservationChangeAsync(

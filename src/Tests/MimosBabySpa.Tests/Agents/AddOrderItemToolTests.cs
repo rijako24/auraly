@@ -197,7 +197,7 @@ public class AddOrderItemToolTests
         var json = await addTool.ExecuteAsync(addArgs.RootElement, ctx, CancellationToken.None);
 
         json.Should().Contain("missing_prerequisites");
-        json.Should().Contain("search_products");
+        json.Should().Contain("select_product");
         json.Should().NotContain("Dulce 750ML");
         json.Should().NotContain("Premium 750ML");
         _commerce.Verify(c => c.AddItemAsync(ctx, It.IsAny<AddOrderItemRequest>(), It.IsAny<CancellationToken>()), Times.Never);

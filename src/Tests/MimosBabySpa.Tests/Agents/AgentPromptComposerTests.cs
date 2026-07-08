@@ -669,7 +669,7 @@ public class AgentPromptComposerTests
                     Priority = 900,
                     Goal = "Gestionar reservas existentes.",
                     ConversationGuidance = "Usa get_customer_reservations antes de modificar.",
-                    AllowedActions = ["get_customer_reservations", "confirm_reservation_change"]
+                    AllowedActions = ["get_customer_reservations", "manage_reservation"]
                 }
             ]
         };
@@ -679,11 +679,11 @@ public class AgentPromptComposerTests
             Conversation = new Conversation(),
             Facts = [],
             LatestUserMessage = "quiero reagendar mi reserva"
-        }, enabledTools: [new TestTool("get_customer_reservations"), new TestTool("confirm_reservation_change")]);
+        }, enabledTools: [new TestTool("get_customer_reservations"), new TestTool("manage_reservation")]);
 
         result.Should().Contain("## REGLAS TRANSVERSALES APLICABLES");
         result.Should().Contain("manage_existing_reservation");
-        result.Should().Contain("get_customer_reservations, confirm_reservation_change");
+        result.Should().Contain("get_customer_reservations, manage_reservation");
     }
     [Fact]
     public void Compose_WithNewReservationConfirmation_RendersConfiguredGlobalActions()

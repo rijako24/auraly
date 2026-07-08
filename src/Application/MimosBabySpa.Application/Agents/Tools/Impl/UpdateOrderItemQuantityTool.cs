@@ -57,10 +57,11 @@ public sealed class UpdateOrderItemQuantityTool : IAgentTool
         {
             if (ambiguous.Count > 1)
             {
-                return ToolResultHelper.Error(
+                return ToolResultHelper.ErrorWithNextAction(
                     "order_item_ambiguous",
                     "The order item selection is ambiguous.",
-                    BuildClarificationHint(ambiguous),
+                    "clarify_order_item_selection",
+                    new { available_items = ToSelectionOptions(ambiguous) },
                     recoverable: true);
             }
 
@@ -73,11 +74,11 @@ public sealed class UpdateOrderItemQuantityTool : IAgentTool
         return ToolResultHelper.Ok(new { order = updated });
     }
 
-    private static string BuildClarificationHint(IReadOnlyList<OrderItemSnapshot> items)
-    {
-        var options = items.Take(5).Select(i => $"{i.OrderItemId}: {i.ProductName} x{i.Quantity}");
-        return string.Join("; ", options);
-    }
+    private static object[] ToSelectionOptions(IReadOnlyList<OrderItemSnapshot> items) =>
+        items.Take(5)
+            .Select(item => new { order_item_id = item.OrderItemId, product_name = item.ProductName, quantity = item.Quantity })
+            .Cast<object>()
+            .ToArray();
 
     private static bool TryGetDecimal(JsonElement args, string name, out decimal value)
     {
