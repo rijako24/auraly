@@ -1,4 +1,4 @@
-﻿-- =============================================================================
+-- =============================================================================
 -- SeedLuisPetitBarber.sql
 --
 -- Crea/actualiza el negocio Luis Petit Profesional Barber, su catalogo de
@@ -869,7 +869,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       }
     ],
     "language": {
-      "enabled": true,
       "actions": {
         "mostrar_catalogo": {
           "name": "Mostrar catalogo oficial",

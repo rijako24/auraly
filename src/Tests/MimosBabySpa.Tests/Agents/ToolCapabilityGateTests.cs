@@ -219,7 +219,7 @@ public class ToolCapabilityGateTests
         var result = await _gate.EvaluateAsync(checkAvailabilityTool, args.RootElement, ctx, CancellationToken.None);
 
         result.IsAllowed.Should().BeFalse();
-        result.Remediation.Should().Contain("Presenta catálogo");
+        result.Remediation.Should().Contain("Presenta catÃ¡logo");
         result.Remediation.Should().NotContain("datos faltantes");
         result.Remediation.Should().NotContain("Antes registra");
     }
@@ -389,7 +389,6 @@ public class ToolCapabilityGateTests
 
     private static ConversationalFlowLanguage LanguageForTools(params string[] toolNames) => new()
     {
-        Enabled = true,
         Actions = toolNames
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToDictionary(
@@ -420,8 +419,8 @@ public class ToolCapabilityGateTests
 
 
     /// <summary>
-    /// Config con guards declarativos equivalentes a lo que Mimi configura en producción.
-    /// Los tests validan el comportamiento del GuardEvaluator con guards explícitos,
+    /// Config con guards declarativos equivalentes a lo que Mimi configura en producciÃ³n.
+    /// Los tests validan el comportamiento del GuardEvaluator con guards explÃ­citos,
     /// no con precondiciones hardcoded (ToolPreconditionProvider eliminado).
     /// </summary>
     private static AgentConfig CreateConfigWithAddonsStage() => new()
@@ -440,7 +439,7 @@ public class ToolCapabilityGateTests
                 {
                     Id = "discovery",
                     Goal = "discovery",
-                    ConversationGuidance = "Presenta catálogo y registra service con set_fact al elegir.",
+                    ConversationGuidance = "Presenta catÃ¡logo y registra service con set_fact al elegir.",
                     AllowedActions = ["get_service_catalog", "set_fact"],
                     AdvanceWhenFacts = ["baby_name", "baby_age_months", "service"]
                 },

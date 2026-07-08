@@ -1,4 +1,4 @@
-﻿-- =============================================================================
+-- =============================================================================
 -- SeedAgenticConfiguration.sql
 --
 -- Configuracion inicial del agente "Mimi Bot" para el motor agentic

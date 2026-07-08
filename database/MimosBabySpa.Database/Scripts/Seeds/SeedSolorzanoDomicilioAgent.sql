@@ -1,4 +1,4 @@
-﻿-- =============================================================================
+-- =============================================================================
 -- SeedSolorzanoDomicilioAgent.sql
 --
 -- Agente inbound para contactos de domicilio de Vinos Artesanales Solorzano.

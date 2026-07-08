@@ -13,9 +13,11 @@ internal static class AgentTurnToolScope
     {
         var allowedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var runtimeActive = !ReferenceEquals(session.RuntimeDecision, Runtime.FlowRuntimeDecision.Empty);
+        var hasConfiguredScope = false;
 
         if (currentStage?.AllowedActions.Count > 0)
         {
+            hasConfiguredScope = true;
             foreach (var toolName in SemanticFlowActionResolver.ResolveToolNames(config, currentStage.AllowedActions))
                 allowedNames.Add(toolName);
         }
@@ -25,6 +27,9 @@ internal static class AgentTurnToolScope
             if (runtimeActive && !session.RuntimeDecision.EnabledGlobalActionIds.Contains(action.Id))
                 continue;
 
+            if (action.AllowedActions.Count > 0)
+                hasConfiguredScope = true;
+
             var actionToolNames = SemanticFlowActionResolver.ResolveToolNames(config, action.AllowedActions);
             if (runtimeActive && IsDisabledByRuntime(actionToolNames, effectiveTools, session.RuntimeDecision))
                 continue;
@@ -33,11 +38,14 @@ internal static class AgentTurnToolScope
                 allowedNames.Add(toolName);
         }
 
+        if (session.RuntimeDecision.ExtraAllowedToolNames.Count > 0)
+            hasConfiguredScope = true;
+
         foreach (var toolName in session.RuntimeDecision.ExtraAllowedToolNames)
             allowedNames.Add(toolName);
 
         if (allowedNames.Count == 0)
-            return effectiveTools;
+            return hasConfiguredScope ? [] : effectiveTools;
 
         var byName = effectiveTools.ToDictionary(t => t.Name, StringComparer.OrdinalIgnoreCase);
         var scopedTools = allowedNames

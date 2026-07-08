@@ -135,6 +135,33 @@ public sealed class FlowRuntimeTests
         scoped.Should().BeEmpty();
     }
     [Fact]
+    public void Resolve_WhenConfiguredScopeReferencesUnknownSemanticAction_ReturnsNoTools()
+    {
+        var config = new AgentConfig
+        {
+            Flow = new AgentFlowDefinition
+            {
+                Stages =
+                [
+                    new AgentFlowStage
+                    {
+                        Id = "tenant_stage",
+                        AllowedActions = ["unknown_action"]
+                    }
+                ]
+            }
+        };
+        var session = CreateSession();
+
+        var scoped = AgentTurnToolScope.Resolve(
+            config,
+            session,
+            [new StubTool("set_fact"), new StubTool("prepare_checkout")],
+            config.Flow.Stages[0]);
+
+        scoped.Should().BeEmpty();
+    }
+    [Fact]
     public void BuildGlobalActionsBlock_WhenRuntimeConditionDisablesGlobalAction_DoesNotRenderIt()
     {
         var config = CreateConfig(globalActionId: "custom_action_id");
@@ -226,7 +253,6 @@ public sealed class FlowRuntimeTests
     }
     private static ConversationalFlowLanguage LanguageForTools(params string[] toolNames) => new()
     {
-        Enabled = true,
         Actions = toolNames
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToDictionary(

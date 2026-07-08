@@ -1,4 +1,4 @@
-﻿using MimosBabySpa.Application.Agents.Configuration;
+using MimosBabySpa.Application.Agents.Configuration;
 using MimosBabySpa.Application.Agents.Gating;
 using MimosBabySpa.Application.Agents.Tools;
 using MimosBabySpa.Application.Commerce;
@@ -260,9 +260,6 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
 
     private void ValidateFlowLanguage(AgentConfig config)
     {
-        if (!config.FlowLanguage.Enabled)
-            return;
-
         var actionIds = new HashSet<string>(config.FlowLanguage.Actions.Keys, StringComparer.OrdinalIgnoreCase);
 
         foreach (var (actionId, action) in config.FlowLanguage.Actions)

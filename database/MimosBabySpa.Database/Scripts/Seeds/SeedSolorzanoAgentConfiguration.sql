@@ -1,4 +1,4 @@
-﻿-- =============================================================================
+-- =============================================================================
 -- SeedSolorzanoAgentConfiguration.sql
 --
 -- Configuracion completa del agente Camila (Vinos Artesanales Solorzano) para

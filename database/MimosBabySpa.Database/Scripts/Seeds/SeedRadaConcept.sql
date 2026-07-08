@@ -1,4 +1,4 @@
-﻿-- =============================================================================
+-- =============================================================================
 -- SeedRadaConcept.sql
 --
 -- Crea/actualiza el negocio Rada Concept, su catalogo de servicios y el agente

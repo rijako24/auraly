@@ -1,4 +1,4 @@
-﻿# Lenguaje Conversacional De Flujos
+# Lenguaje Conversacional De Flujos
 
 Este lenguaje permite configurar agentes por etapas habladas sin escribir reglas del motor ni depender de instrucciones imperativas. La idea es que negocio describa el flujo con palabras de dominio controladas, y el motor traduzca esas palabras a herramientas mediante configuracion.
 
@@ -15,7 +15,6 @@ El motor entiende primitivas genericas. El tenant define el negocio.
   "flow": {
     "stageDetection": "automatic",
     "language": {
-      "enabled": true,
       "actions": {
         "resolver_servicio": {
           "name": "Resolver servicio exacto",

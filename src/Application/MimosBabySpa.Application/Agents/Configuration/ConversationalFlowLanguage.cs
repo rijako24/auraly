@@ -2,8 +2,6 @@ namespace MimosBabySpa.Application.Agents.Configuration;
 
 public sealed class ConversationalFlowLanguage
 {
-    public bool Enabled { get; init; }
-
     public IReadOnlyDictionary<string, SemanticFlowAction> Actions { get; init; }
         = new Dictionary<string, SemanticFlowAction>(StringComparer.OrdinalIgnoreCase);
 }

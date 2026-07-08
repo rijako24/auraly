@@ -1,4 +1,4 @@
-﻿-- =============================================================================
+-- =============================================================================
 -- SeedSystemAgentTemplatesAndInboundContacts.sql
 --
 -- Templates del sistema y contactos inbound operativos por negocio.

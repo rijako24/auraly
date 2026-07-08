@@ -1,4 +1,4 @@
-﻿using System.Text.Json;
+using System.Text.Json;
 using FluentAssertions;
 using MimosBabySpa.Application.Agents;
 using MimosBabySpa.Application.Agents.Composition;
@@ -1096,8 +1096,7 @@ public class AgentPromptComposerTests
             {
                 Language = new ConversationalFlowLanguage
                 {
-                    Enabled = true,
-                    Actions = new Dictionary<string, SemanticFlowAction>(StringComparer.OrdinalIgnoreCase)
+                                Actions = new Dictionary<string, SemanticFlowAction>(StringComparer.OrdinalIgnoreCase)
                     {
                         ["resolver_servicio"] = new()
                         {
@@ -1156,8 +1155,7 @@ public class AgentPromptComposerTests
             {
                 Language = new ConversationalFlowLanguage
                 {
-                    Enabled = true,
-                    Actions = new Dictionary<string, SemanticFlowAction>(StringComparer.OrdinalIgnoreCase)
+                                Actions = new Dictionary<string, SemanticFlowAction>(StringComparer.OrdinalIgnoreCase)
                     {
                         ["gestionar_reserva"] = new()
                         {
@@ -1195,7 +1193,6 @@ public class AgentPromptComposerTests
 
     private static ConversationalFlowLanguage LanguageForTools(params string[] toolNames) => new()
     {
-        Enabled = true,
         Actions = toolNames
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToDictionary(
