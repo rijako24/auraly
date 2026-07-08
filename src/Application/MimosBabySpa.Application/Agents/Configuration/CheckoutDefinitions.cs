@@ -181,7 +181,6 @@ public sealed record CheckoutPaymentSelection(
 public sealed record CheckoutPaymentSelectionError(
     string Code,
     string Message,
-    string? Hint = null,
     bool Recoverable = false,
     IReadOnlyList<string>? AvailablePaymentMethods = null);
 
@@ -197,8 +196,7 @@ public static class CheckoutPaymentSelectionResolver
         {
             return Error(
                 "checkout_payment_methods_missing",
-                $"Checkout mode '{checkoutKind}' has no paymentMethods configured.",
-                hint: null);
+                $"Checkout mode '{checkoutKind}' has no paymentMethods configured.");
         }
 
         var configured = ResolveMethod(mode, rawPaymentMethod);
@@ -215,7 +213,6 @@ public static class CheckoutPaymentSelectionResolver
             return Error(
                 "invalid_payment_method",
                 "Payment method is not configured for this checkout mode.",
-                hint: null,
                 recoverable: true,
                 availablePaymentMethods: options);
         }
@@ -239,16 +236,14 @@ public static class CheckoutPaymentSelectionResolver
             {
                 return Error(
                     "checkout_payment_percentage_missing",
-                    $"Payment method '{key}' in checkout mode '{checkoutKind}' has payment configured without percentage.",
-                    hint: null);
+                    $"Payment method '{key}' in checkout mode '{checkoutKind}' has payment configured without percentage.");
             }
 
             if (percentage <= 0 || percentage > 100)
             {
                 return Error(
                     "checkout_payment_percentage_invalid",
-                    $"Payment method '{key}' in checkout mode '{checkoutKind}' has invalid payment percentage.",
-                    hint: null);
+                    $"Payment method '{key}' in checkout mode '{checkoutKind}' has invalid payment percentage.");
             }
         }
 
@@ -257,16 +252,14 @@ public static class CheckoutPaymentSelectionResolver
         {
             return Error(
                 "checkout_template_missing",
-                $"Payment method '{key}' in checkout mode '{checkoutKind}' has no template configured.",
-                hint: null);
+                $"Payment method '{key}' in checkout mode '{checkoutKind}' has no template configured.");
         }
 
         if (payableCents > 0 && string.IsNullOrWhiteSpace(method.ConfirmationOutcome))
         {
             return Error(
                 "checkout_outcome_missing",
-                $"Payment method '{key}' in checkout mode '{checkoutKind}' creates a payment link but has no confirmationOutcome.",
-                hint: null);
+                $"Payment method '{key}' in checkout mode '{checkoutKind}' creates a payment link but has no confirmationOutcome.");
         }
 
         return new CheckoutPaymentSelection(
@@ -310,10 +303,9 @@ public static class CheckoutPaymentSelectionResolver
     private static CheckoutPaymentSelection Error(
         string code,
         string message,
-        string? hint = null,
         bool recoverable = false,
         IReadOnlyList<string>? availablePaymentMethods = null) =>
-        new(false, new CheckoutPaymentSelectionError(code, message, hint, recoverable, availablePaymentMethods), string.Empty, string.Empty, null, 0, string.Empty, string.Empty);
+        new(false, new CheckoutPaymentSelectionError(code, message, recoverable, availablePaymentMethods), string.Empty, string.Empty, null, 0, string.Empty, string.Empty);
 
     private static string NormalizePaymentMethodToken(string? value)
     {

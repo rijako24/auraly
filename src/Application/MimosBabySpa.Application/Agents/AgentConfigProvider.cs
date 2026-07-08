@@ -267,12 +267,88 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
             }
         }
 
+        ValidateFlowLanguage(config);
         ValidateMessageSequences(config);
         ValidateNotifications(config);
         ValidateReservationAutomations(config);
         ValidateReservationManagement(config);
         ValidateExternalEscalations(config);
         ValidateTemplates(config);
+    }
+
+    private void ValidateFlowLanguage(AgentConfig config)
+    {
+        if (!config.FlowLanguage.Enabled)
+            return;
+
+        var actionIds = new HashSet<string>(config.FlowLanguage.Actions.Keys, StringComparer.OrdinalIgnoreCase);
+
+        foreach (var (actionId, action) in config.FlowLanguage.Actions)
+        {
+            if (string.IsNullOrWhiteSpace(actionId))
+            {
+                _logger.LogWarning("AgentConfig {AgentId}: flow.language.actions contains an empty action id", config.AgentId);
+                continue;
+            }
+
+            if (string.IsNullOrWhiteSpace(action.Tool))
+            {
+                _logger.LogWarning(
+                    "AgentConfig {AgentId}: flow.language.actions['{Action}'] has no tool mapping",
+                    config.AgentId,
+                    actionId);
+            }
+            else if (!config.EnabledToolNames.Contains(action.Tool, StringComparer.OrdinalIgnoreCase))
+            {
+                _logger.LogWarning(
+                    "AgentConfig {AgentId}: flow.language.actions['{Action}'] references tool '{Tool}' which is not in enabledTools",
+                    config.AgentId,
+                    actionId,
+                    action.Tool);
+            }
+
+            foreach (var factKey in action.Requires.Concat(action.Produces))
+            {
+                if (!string.IsNullOrWhiteSpace(factKey) && !config.FactSchema.Any(f => f.Key.Equals(factKey, StringComparison.OrdinalIgnoreCase)))
+                {
+                    _logger.LogWarning(
+                        "AgentConfig {AgentId}: flow.language.actions['{Action}'] references unknown fact '{Fact}'",
+                        config.AgentId,
+                        actionId,
+                        factKey);
+                }
+            }
+        }
+
+        foreach (var stage in config.Flow.Stages)
+        {
+            foreach (var actionId in stage.AllowedActions)
+            {
+                if (!actionIds.Contains(actionId))
+                {
+                    _logger.LogWarning(
+                        "AgentConfig {AgentId}: stage '{Stage}' allowedActions references unknown action '{Action}'",
+                        config.AgentId,
+                        stage.Id,
+                        actionId);
+                }
+            }
+        }
+
+        foreach (var action in config.GlobalActions)
+        {
+            foreach (var actionId in action.AllowedActions)
+            {
+                if (!actionIds.Contains(actionId))
+                {
+                    _logger.LogWarning(
+                        "AgentConfig {AgentId}: globalAction '{GlobalAction}' allowedActions references unknown action '{Action}'",
+                        config.AgentId,
+                        action.Id,
+                        actionId);
+                }
+            }
+        }
     }
 
     private HashSet<string> BuildEnabledCapabilities(AgentConfig config)

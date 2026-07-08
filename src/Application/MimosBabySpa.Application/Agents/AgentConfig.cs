@@ -22,6 +22,8 @@ public sealed class AgentConfig
     /// <summary>Flujo conversacional estructurado por etapas.</summary>
     public AgentFlowDefinition Flow { get; init; } = new();
 
+    public ConversationalFlowLanguage FlowLanguage => Flow.Language;
+
     /// <summary>Acciones transversales disponibles sin depender de la etapa activa.</summary>
     public IReadOnlyList<AgentGlobalAction> GlobalActions { get; init; } = [];
 

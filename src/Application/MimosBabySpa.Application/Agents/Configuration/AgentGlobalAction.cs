@@ -9,7 +9,7 @@ public sealed class AgentGlobalAction
     public string Id { get; init; } = string.Empty;
     public int Priority { get; init; }
     public string Goal { get; init; } = string.Empty;
-    public string? Hint { get; init; }
+    public string? ConversationGuidance { get; init; }
 
     /// <summary>
     /// Optional runtime conditions for this global action. Empty means always enabled.
@@ -17,6 +17,8 @@ public sealed class AgentGlobalAction
     /// payment.pending_checkout, payment.confirmed_without_reservation, and conversation.owner_human.
     /// </summary>
     public IReadOnlyList<string> RuntimeWhenAny { get; init; } = [];
+
+    public IReadOnlyList<string> AllowedActions { get; init; } = [];
 
     public IReadOnlyList<string> AllowedTools { get; init; } = [];
 }

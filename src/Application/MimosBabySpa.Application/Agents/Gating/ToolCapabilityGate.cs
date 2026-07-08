@@ -84,8 +84,8 @@ public sealed class ToolCapabilityGate : IToolCapabilityGate
         if (ToolFlowScope.IsAllowedInScope(tool.Name, config, stage, ctx.RuntimeDecision))
             return null;
 
-        var remediation = !string.IsNullOrWhiteSpace(stage.Hint)
-            ? stage.Hint.Trim()
+        var remediation = !string.IsNullOrWhiteSpace(stage.ConversationGuidance)
+            ? stage.ConversationGuidance.Trim()
             : null;
 
         return new GateResult(

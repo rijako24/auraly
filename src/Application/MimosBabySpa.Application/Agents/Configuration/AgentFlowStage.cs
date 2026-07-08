@@ -13,17 +13,27 @@ public sealed class AgentFlowStage
     /// <summary>Objetivo narrativo de la etapa (lenguaje natural para el LLM).</summary>
     public string Goal { get; init; } = string.Empty;
 
+    /// <summary>Pregunta conversacional sugerida cuando la etapa necesita input del cliente.</summary>
+    public string? Ask { get; init; }
+
+    /// <summary>Datos de negocio que la etapa puede recoger sin bloquear si no son necesarios.</summary>
+    public IReadOnlyList<string> Collect { get; init; } = [];
+
+    /// <summary>Acciones semanticas del flow.language.actions permitidas en esta etapa.</summary>
+    public IReadOnlyList<string> AllowedActions { get; init; } = [];
+
+    /// <summary>Orientacion conversacional para conservar el comportamiento hablado del agente.</summary>
+    public string? ConversationGuidance { get; init; }
+
+    public string? OnSuccess { get; init; }
+
+    public string? OnProblem { get; init; }
+
     /// <summary>
     /// Whitelist de tools permitidas en esta etapa. Vacío = sin restricción por etapa.
     /// Cuando está definido, el gate bloquea cualquier otra tool con la instrucción de la etapa.
     /// </summary>
     public IReadOnlyList<string> AllowedTools { get; init; } = [];
-
-    /// <summary>
-    /// Orientación concreta para el LLM en esta etapa (acción y pregunta cerrada esperada).
-    /// Las variantes pueden sobreescribir con su propio hint.
-    /// </summary>
-    public string? Hint { get; init; }
 
     /// <summary>Facts que deben estar presentes para avanzar a la siguiente etapa.</summary>
     public IReadOnlyList<string> AdvanceWhenFacts { get; init; } = [];

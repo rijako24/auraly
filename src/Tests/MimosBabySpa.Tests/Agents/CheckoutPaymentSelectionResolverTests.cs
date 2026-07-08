@@ -56,7 +56,6 @@ public sealed class CheckoutPaymentSelectionResolverTests
         selection.Error.Should().NotBeNull();
         selection.Error!.Code.Should().Be("invalid_payment_method");
         selection.Error.Recoverable.Should().BeTrue();
-        selection.Error.Hint.Should().BeNull();
         selection.Error.AvailablePaymentMethods.Should().Equal("transferencia con link de pago");
     }
 

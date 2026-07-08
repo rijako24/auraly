@@ -537,8 +537,12 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
   "messageSequences": {
     "reservation_confirmed": {
       "messages": [
-        { "body": "Tu reserva en BARBER KIDS MEN con Luis Petit Profesional Barber ha sido confirmada para el {Date} a las {Time}." },
-        { "body": "Te esperamos para una experiencia personalizada, con puntualidad garantizada y atencion al detalle de principio a fin." }
+        {
+          "body": "Tu reserva en BARBER KIDS MEN con Luis Petit Profesional Barber ha sido confirmada para el {Date} a las {Time}."
+        },
+        {
+          "body": "Te esperamos para una experiencia personalizada, con puntualidad garantizada y atencion al detalle de principio a fin."
+        }
       ]
     },
     "reservation_confirmation_request": {
@@ -547,10 +551,21 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
           "type": "whatsapp_template",
           "templateName": "reservation_confirmation_request",
           "language": "es_CO",
-          "bodyParameters": ["{CustomerName}", "{Service}", "{Date}", "{Time}"],
+          "bodyParameters": [
+            "{CustomerName}",
+            "{Service}",
+            "{Date}",
+            "{Time}"
+          ],
           "buttons": [
-            { "id": "reservation_attendance:confirm:{job_id}", "title": "Confirmar" },
-            { "id": "reservation_attendance:reschedule:{job_id}", "title": "Reprogramar" }
+            {
+              "id": "reservation_attendance:confirm:{job_id}",
+              "title": "Confirmar"
+            },
+            {
+              "id": "reservation_attendance:reschedule:{job_id}",
+              "title": "Reprogramar"
+            }
           ]
         }
       ]
@@ -561,24 +576,37 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
           "type": "whatsapp_template",
           "templateName": "reservation_reminder",
           "language": "es_CO",
-          "bodyParameters": ["{CustomerName}", "{Service}", "{Date}", "{Time}"]
+          "bodyParameters": [
+            "{CustomerName}",
+            "{Service}",
+            "{Date}",
+            "{Time}"
+          ]
         }
       ]
     },
     "payment_slot_taken": {
       "messages": [
-        { "body": "Recibimos tu pago de ${amount} {currency}. Tu comprobante quedo registrado." },
-        { "body": "Lo sentimos, el horario de las {Time} ya no esta disponible. Tu pago esta seguro. Para que dia te gustaria reagendar tu reserva?" }
+        {
+          "body": "Recibimos tu pago de ${amount} {currency}. Tu comprobante quedo registrado."
+        },
+        {
+          "body": "Lo sentimos, el horario de las {Time} ya no esta disponible. Tu pago esta seguro. Para que dia te gustaria reagendar tu reserva?"
+        }
       ]
     },
     "reservation_attendance_confirmed_reply": {
       "messages": [
-        { "body": "Muchas gracias, tu cita ha sido confirmada." }
+        {
+          "body": "Muchas gracias, tu cita ha sido confirmada."
+        }
       ]
     },
     "reservation_attendance_reschedule_reply": {
       "messages": [
-        { "body": "Claro, para que dia y hora te gustaria reagendar tu cita?" }
+        {
+          "body": "Claro, para que dia y hora te gustaria reagendar tu cita?"
+        }
       ]
     },
     "reservation_created": {
@@ -587,50 +615,82 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
           "type": "whatsapp_template",
           "templateName": "reservation_created",
           "language": "es_CO",
-          "bodyParameters": ["{CustomerName}", "{Service}", "{Date}", "{Time}", "{Total}"]
+          "bodyParameters": [
+            "{CustomerName}",
+            "{Service}",
+            "{Date}",
+            "{Time}",
+            "{Total}"
+          ]
         }
       ]
     }
   },
   "webhooks": {
     "wompi": {
-      "reservation_created": { "sendMessageSequence": "reservation_confirmed" },
-      "slot_unavailable_after_payment": { "sendMessageSequence": "payment_slot_taken" }
+      "reservation_created": {
+        "sendMessageSequence": "reservation_confirmed"
+      },
+      "slot_unavailable_after_payment": {
+        "sendMessageSequence": "payment_slot_taken"
+      }
     }
   },
   "notifications": {
     "reservation_created": {
       "enabled": true,
-      "recipients": ["573042052007"],
+      "recipients": [
+        "573042052007"
+      ],
       "sendMessageSequence": "reservation_created"
     }
   },
   "reservationManagement": {
-    "automaticChangeFields": ["date", "time"],
-    "escalateChangeFields": ["service", "add_ons"],
+    "automaticChangeFields": [
+      "date",
+      "time"
+    ],
+    "escalateChangeFields": [
+      "service",
+      "add_ons"
+    ],
     "escalationReasonCode": "reservation_change_requires_human"
   },
   "reservationAutomations": {
     "confirmation": {
       "enabled": true,
-      "trigger": { "type": "relative", "hoursBefore": 24 },
+      "trigger": {
+        "type": "relative",
+        "hoursBefore": 24
+      },
       "sendMessageSequence": "reservation_confirmation_request",
       "actions": {
         "confirm": {
           "tool": "manage_reservation",
-          "arguments": { "action": "confirm_attendance", "customer_confirmed": true, "job_id": "{source_id}" },
+          "arguments": {
+            "action": "confirm_attendance",
+            "customer_confirmed": true,
+            "job_id": "{source_id}"
+          },
           "sendMessageSequence": "reservation_attendance_confirmed_reply"
         },
         "reschedule": {
           "tool": "manage_reservation",
-          "arguments": { "action": "request_reschedule", "job_id": "{source_id}" },
+          "arguments": {
+            "action": "request_reschedule",
+            "job_id": "{source_id}"
+          },
           "sendMessageSequence": "reservation_attendance_reschedule_reply"
         }
       }
     },
     "reminder": {
       "enabled": true,
-      "trigger": { "type": "fixedLocalTime", "daysBefore": 0, "time": "08:00" },
+      "trigger": {
+        "type": "fixedLocalTime",
+        "daysBefore": 0,
+        "time": "08:00"
+      },
       "sendMessageSequence": "reservation_reminder"
     }
   },
@@ -641,8 +701,13 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         "paymentMethods": {
           "transferencia": {
             "label": "transferencia con link de pago",
-            "aliases": ["transferencia", "link de pago"],
-            "payment": { "percentage": 100 },
+            "aliases": [
+              "transferencia",
+              "link de pago"
+            ],
+            "payment": {
+              "percentage": 100
+            },
             "template": "checkout_with_deposit",
             "confirmationOutcome": "reservation_created"
           }
@@ -662,102 +727,517 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         "id": "discovery",
         "name": "Descubrimiento",
         "goal": "Ayudar al cliente a elegir un servicio exacto del catalogo.",
-        "hint": "Saludo generico: consulta get_service_catalog con vista de categorias, presenta categorias oficiales y pregunta que servicio le interesa. Intencion comercial o servicio puntual: consulta get_service_catalog con vista de servicios y query del mensaje, presenta opciones oficiales relevantes y pregunta cual prefiere. Seleccion clara: usa resolve_service_selection. Responde solo con datos oficiales de catalogo o herramientas.",
-        "allowedTools": ["get_service_catalog", "resolve_service_selection", "set_fact"],
-        "advanceWhenFacts": ["service"]
+        "advanceWhenFacts": [
+          "service"
+        ],
+        "ask": "Que servicio te interesa?",
+        "collect": [
+          "booking_intent",
+          "service"
+        ],
+        "allowedActions": [
+          "mostrar_catalogo",
+          "resolver_servicio",
+          "registrar_dato"
+        ],
+        "conversationGuidance": "Saludo generico: presenta categorias oficiales. Servicio puntual: presenta servicios oficiales relevantes. Seleccion clara: resuelve el servicio exacto. Responde solo con datos oficiales de catalogo o herramientas."
       },
       {
         "id": "add_ons",
         "name": "Complementos",
         "goal": "Ofrecer adicionales compatibles cuando apliquen antes de preparar el anticipo.",
-        "hint": "Obtiene complementos compatibles desde la herramienta. Cuando existan, presenta opciones oficiales con precio y valor breve; pregunta si desea agregar alguno o continuar sin adicionales. Registra add_ons con nombres canonicos o ninguno segun la preferencia del cliente.",
-        "allowedTools": ["get_compatible_add_ons", "resolve_service_selection", "set_fact"],
-        "advanceWhenFacts": ["add_ons"],
-        "reentryOnFactChanged": ["service"]
+        "advanceWhenFacts": [
+          "add_ons"
+        ],
+        "reentryOnFactChanged": [
+          "service"
+        ],
+        "ask": "Deseas agregar algun adicional compatible o continuamos sin adicionales?",
+        "collect": [
+          "add_ons"
+        ],
+        "allowedActions": [
+          "consultar_adicionales",
+          "resolver_servicio",
+          "registrar_dato"
+        ],
+        "conversationGuidance": "Ofrece solo adicionales oficiales compatibles. Si existen, presenta opciones con precio y valor breve. Si el cliente rechaza o no aplican, registra ninguno y continua."
       },
       {
         "id": "scheduling",
         "name": "Agenda",
         "goal": "Revisar disponibilidad y validar fecha y hora para una reserva por hora.",
-        "hint": "Valida agenda con check_availability usando servicio canonico, fecha y hora disponibles. Si falta fecha, pregunta para que dia desea el servicio; si falta hora, presenta horarios desde la herramienta y pregunta cual prefiere.",
-        "allowedTools": ["check_availability", "set_fact"],
         "afterTool": [
           {
             "tool": "check_availability",
-            "when": { "path": "data.date" },
-            "setFact": { "key": "desired_date", "value": "{{data.date}}" }
+            "when": {
+              "path": "data.date"
+            },
+            "setFact": {
+              "key": "desired_date",
+              "value": "{{data.date}}"
+            }
           },
           {
             "tool": "check_availability",
-            "when": { "path": "data.availability_checked", "equals": "true" },
-            "setFact": { "key": "desired_time", "value": "{{data.time}}" }
+            "when": {
+              "path": "data.availability_checked",
+              "equals": "true"
+            },
+            "setFact": {
+              "key": "desired_time",
+              "value": "{{data.time}}"
+            }
           },
           {
             "tool": "check_availability",
-            "when": { "path": "data.availability_checked", "equals": "true" },
-            "setFact": { "key": "availability_checked", "value": "true" }
+            "when": {
+              "path": "data.availability_checked",
+              "equals": "true"
+            },
+            "setFact": {
+              "key": "availability_checked",
+              "value": "true"
+            }
           }
         ],
-        "advanceWhenFacts": ["availability_checked"],
-        "reentryOnFactChanged": ["service", "desired_date", "desired_time"]
+        "advanceWhenFacts": [
+          "availability_checked"
+        ],
+        "reentryOnFactChanged": [
+          "service",
+          "desired_date",
+          "desired_time"
+        ],
+        "ask": "Para que fecha y hora quieres reservar?",
+        "collect": [
+          "desired_date",
+          "desired_time"
+        ],
+        "allowedActions": [
+          "validar_disponibilidad",
+          "registrar_dato"
+        ],
+        "conversationGuidance": "Valida agenda con servicio canonico. Si falta fecha, pregunta el dia. Si falta hora o el horario no esta disponible, presenta horarios devueltos por disponibilidad y aplica el seleccionado."
       },
       {
         "id": "customer_data",
         "name": "Datos del cliente",
         "goal": "Recoger los datos minimos para preparar el anticipo.",
-        "hint": "Confirma brevemente servicio, fecha y hora. Recolecta en un solo mensaje los datos faltantes para preparar el anticipo. Registra datos entregados por el cliente con set_fact y conserva los datos ya presentes en ESTADO ACTUAL.",
-        "allowedTools": ["set_fact"],
-        "advanceWhenFacts": ["customer_name", "customer_phone", "customer_birth_date"]
+        "advanceWhenFacts": [
+          "customer_name",
+          "customer_phone",
+          "customer_birth_date"
+        ],
+        "ask": "Me compartes los datos faltantes para preparar el anticipo?",
+        "collect": [
+          "customer_name",
+          "customer_phone",
+          "customer_birth_date",
+          "customer_email"
+        ],
+        "allowedActions": [
+          "registrar_dato"
+        ],
+        "conversationGuidance": "Confirma brevemente servicio, fecha y hora. Pide en un solo mensaje solo los datos requeridos que falten. Conserva los datos ya presentes."
       },
       {
         "id": "finalization",
         "name": "Cierre con anticipo",
         "goal": "Preparar el resumen, generar el link de anticipo y esperar confirmacion automatica de pago.",
-        "hint": "Prepara checkout cuando los facts requeridos esten completos. Usa prepare_checkout para resumen y link; comparte el resumen y explica que la reserva se confirma al aprobarse el pago. Usa verify_payment para consultas de pago y actualiza facts/disponibilidad cuando el cliente cambie servicio, fecha u hora antes del pago.",
-        "allowedTools": [
-          "prepare_checkout",
-          "verify_payment",
-          "get_service_catalog",
-          "resolve_service_selection",
-          "set_fact",
-          "reset_flow_context",
-          "send_message_sequence"
+        "advanceWhenFacts": [],
+        "ask": "Genero el resumen y link de anticipo con estos datos?",
+        "collect": [
+          "service",
+          "desired_date",
+          "desired_time",
+          "customer_name",
+          "customer_phone",
+          "customer_birth_date"
         ],
-        "advanceWhenFacts": []
+        "allowedActions": [
+          "preparar_anticipo",
+          "verificar_pago",
+          "mostrar_catalogo",
+          "resolver_servicio",
+          "registrar_dato",
+          "reiniciar_flujo",
+          "enviar_secuencia"
+        ],
+        "conversationGuidance": "Prepara checkout cuando los facts requeridos esten completos. Si el cliente cambia servicio, fecha u hora antes del pago, actualiza datos y revalida disponibilidad antes de generar un nuevo link."
       }
-    ]
+    ],
+    "language": {
+      "enabled": true,
+      "actions": {
+        "mostrar_catalogo": {
+          "name": "Mostrar catalogo oficial",
+          "purpose": "Presentar categorias o servicios oficiales segun la intencion del cliente.",
+          "tool": "get_service_catalog",
+          "produces": [
+            "service"
+          ],
+          "whenMissingData": "Si el saludo es generico, muestra categorias oficiales; si pide algo puntual, muestra servicios oficiales relacionados."
+        },
+        "resolver_servicio": {
+          "name": "Resolver servicio exacto",
+          "purpose": "Convertir la seleccion del cliente en un servicio canonico del catalogo.",
+          "tool": "resolve_service_selection",
+          "requires": [
+            "service"
+          ],
+          "produces": [
+            "service"
+          ],
+          "whenMissingData": "Si no hay coincidencia unica, pide elegir entre opciones oficiales."
+        },
+        "registrar_dato": {
+          "name": "Registrar dato del cliente o de la reserva",
+          "purpose": "Guardar datos expresados por el cliente cuando son necesarios para avanzar.",
+          "tool": "set_fact",
+          "produces": [
+            "desired_date",
+            "desired_time",
+            "add_ons",
+            "customer_name",
+            "customer_birth_date",
+            "customer_email"
+          ]
+        },
+        "consultar_adicionales": {
+          "name": "Consultar adicionales compatibles",
+          "purpose": "Obtener complementos oficiales compatibles con el servicio seleccionado.",
+          "tool": "get_compatible_add_ons",
+          "requires": [
+            "service"
+          ],
+          "produces": [
+            "add_ons"
+          ],
+          "whenMissingData": "Si no hay adicionales compatibles, continua sin detener el flujo."
+        },
+        "validar_disponibilidad": {
+          "name": "Validar disponibilidad",
+          "purpose": "Confirmar en agenda la fecha y hora solicitadas, o presentar horarios disponibles.",
+          "tool": "check_availability",
+          "requires": [
+            "service",
+            "desired_date"
+          ],
+          "produces": [
+            "desired_date",
+            "desired_time",
+            "availability_checked"
+          ],
+          "whenMissingData": "Si falta fecha u hora, pregunta solo el dato necesario; si hay slots, presentalos y aplica el seleccionado."
+        },
+        "preparar_anticipo": {
+          "name": "Preparar anticipo",
+          "purpose": "Generar resumen oficial y link de pago cuando la reserva ya tiene datos completos y disponibilidad validada.",
+          "tool": "prepare_checkout",
+          "requires": [
+            "service",
+            "desired_date",
+            "desired_time",
+            "availability_checked",
+            "customer_name",
+            "customer_phone",
+            "customer_birth_date"
+          ],
+          "produces": [
+            "payment_method"
+          ],
+          "onSuccess": "Comparte el resumen y explica que la reserva se confirma al aprobarse el pago."
+        },
+        "verificar_pago": {
+          "name": "Verificar pago",
+          "purpose": "Consultar estado del pago cuando el cliente pregunta por el anticipo.",
+          "tool": "verify_payment"
+        },
+        "reiniciar_flujo": {
+          "name": "Reiniciar flujo de reserva",
+          "purpose": "Limpiar el contexto de la solicitud actual cuando el cliente quiere empezar de cero.",
+          "tool": "reset_flow_context"
+        },
+        "enviar_secuencia": {
+          "name": "Enviar secuencia configurada",
+          "purpose": "Enviar mensajes configurados por plantilla cuando una accion del flujo lo requiera.",
+          "tool": "send_message_sequence"
+        },
+        "obtener_reservas_cliente": {
+          "name": "Mostrar reservas del cliente",
+          "purpose": "Listar reservas gestionables cuando el cliente tiene varias o la solicitud es ambigua.",
+          "tool": "get_customer_reservations"
+        },
+        "gestionar_reserva": {
+          "name": "Gestionar reserva existente",
+          "purpose": "Aplicar cambios permitidos, confirmar asistencia, cancelar o escalar cambios no automaticos segun politica configurada.",
+          "tool": "manage_reservation"
+        },
+        "escalar_humano": {
+          "name": "Escalar a humano",
+          "purpose": "Poner la conversacion en manos de una persona con un resumen breve del motivo.",
+          "tool": "escalate_to_human"
+        }
+      }
+    }
   },
   "globalActions": [
     {
       "id": "human_escalation",
       "priority": 1000,
       "goal": "Escalar a una persona cuando el cliente lo pida, este inconforme, necesite cotizacion exacta de servicio variable o la solicitud salga del alcance del bot.",
-      "hint": "Escala con resumen breve de la necesidad del cliente.",
-      "allowedTools": ["escalate_to_human"]
+      "allowedActions": [
+        "escalar_humano"
+      ],
+      "conversationGuidance": "Escala con resumen breve de la necesidad del cliente."
     },
     {
       "id": "manage_existing_reservation",
       "priority": 900,
       "goal": "Gestionar reservas existentes y pagos confirmados pendientes de agenda cuando el cliente quiera confirmar asistencia, cambiar, reagendar, cambiar servicio, cancelar o completar una reserva ya pagada.",
-      "hint": "Gestiona solo reservas existentes o pagos confirmados pendientes de agenda. Usa get_customer_reservations para ambiguedad y manage_reservation para aplicar la accion. Fecha y hora se resuelven por disponibilidad; cambios de servicio, adicionales u otros campos quedan en espera y escalan segun resultado de la herramienta.",
-      "runtimeWhenAny": ["context:ManageableReservations.any", "context:ActivePayment.Status=Confirmed&&context:ActivePayment.ReservationId=null"],
-      "allowedTools": ["get_customer_reservations", "manage_reservation"]
+      "runtimeWhenAny": [
+        "context:ManageableReservations.any",
+        "context:ActivePayment.Status=Confirmed&&context:ActivePayment.ReservationId=null"
+      ],
+      "allowedActions": [
+        "obtener_reservas_cliente",
+        "gestionar_reserva"
+      ],
+      "conversationGuidance": "Gestiona solo reservas existentes o pagos confirmados pendientes de agenda. Fecha y hora se resuelven por disponibilidad; cambios de servicio, adicionales u otros campos quedan en espera y escalan segun resultado de la herramienta."
     }
   ],
   "factSchema": [
-    { "key": "session.engagement", "role": "session.engagement", "label": "contexto de engagement", "type": "string", "required": false, "source": "session", "scope": "ephemeral", "expireOnBusinessDayChange": true },
-    { "key": "booking_intent", "role": "booking.intent", "label": "intencion de reserva", "type": "string", "required": false, "source": "user", "scope": "request", "captureMode": "eager", "expireOnBusinessDayChange": true, "aliases": ["reservar", "cita", "agenda", "servicio", "precio", "corte", "barba", "cejas", "lavado", "domicilio", "tratamiento"] },
-    { "key": "service", "role": "booking.service", "label": "servicio", "type": "string", "required": true, "source": "user", "scope": "request", "captureMode": "eager", "retentionDays": 7, "expireOnBusinessDayChange": true, "aliases": ["servicio", "barba", "cejas", "lavado", "domicilio", "coloracion", "keratina", "tratamiento"] },
-    { "key": "desired_date", "role": "booking.date", "label": "fecha deseada", "type": "date", "required": true, "source": "user", "scope": "request", "captureMode": "eager", "retentionDays": 7, "expireOnBusinessDayChange": true, "aliases": ["fecha", "dia", "cuando", "hoy", "manana"] },
-    { "key": "desired_time", "role": "booking.time", "label": "hora deseada", "type": "time", "required": true, "source": "user", "scope": "request", "captureMode": "eager", "retentionDays": 7, "expireOnBusinessDayChange": true, "dependsOn": ["service", "desired_date"], "aliases": ["hora", "horario"] },
-    { "key": "availability_checked", "role": "booking.availability_checked", "label": "disponibilidad validada", "type": "string", "required": false, "source": "system", "scope": "ephemeral", "retentionDays": 1, "expireOnBusinessDayChange": true, "dependsOn": ["service", "desired_date", "desired_time"] },
-    { "key": "service_notes", "role": "booking.notes", "label": "notas del servicio", "type": "string", "required": false, "source": "user", "scope": "request", "captureMode": "eager", "retentionDays": 7, "expireOnBusinessDayChange": true, "aliases": ["direccion", "ubicacion", "barrio", "domicilio", "color", "keratina", "tratamiento", "nota"] },
-    { "key": "add_ons", "role": "booking.add_ons", "label": "adicionales", "type": "string", "required": false, "source": "user", "scope": "request", "captureMode": "eager", "retentionDays": 7, "expireOnBusinessDayChange": true, "dependsOn": ["service"], "aliases": ["adicional", "adicionales", "mascarilla", "aerografo", "sombreado", "fibra", "relajador", "masaje"] },
-    { "key": "customer_name", "role": "customer.name", "label": "nombre del cliente", "type": "string", "required": true, "source": "user", "scope": "customer", "captureMode": "onDemand", "aliases": ["nombre", "cliente", "a nombre de", "mi nombre"] },
-    { "key": "customer_phone", "role": "customer.phone", "label": "telefono del cliente", "type": "phone", "required": true, "source": "channel", "scope": "customer", "aliases": ["telefono", "celular", "whatsapp", "numero"] },
-    { "key": "customer_birth_date", "role": "customer.birth_date", "label": "fecha de cumpleanos del cliente", "type": "date", "required": true, "source": "user", "scope": "customer", "captureMode": "onDemand", "aliases": ["cumpleanos", "fecha de cumpleanos", "fecha nacimiento", "fecha de nacimiento", "nacimiento"] },
-    { "key": "customer_email", "role": "customer.email", "label": "email del cliente", "type": "email", "required": false, "source": "user", "scope": "customer", "captureMode": "eager", "aliases": ["email", "correo"] },
-    { "key": "payment_method", "role": "payment.method", "label": "metodo de pago", "type": "string", "required": false, "source": "system", "scope": "request", "expireOnBusinessDayChange": true }
+    {
+      "key": "session.engagement",
+      "role": "session.engagement",
+      "label": "contexto de engagement",
+      "type": "string",
+      "required": false,
+      "source": "session",
+      "scope": "ephemeral",
+      "expireOnBusinessDayChange": true
+    },
+    {
+      "key": "booking_intent",
+      "role": "booking.intent",
+      "label": "intencion de reserva",
+      "type": "string",
+      "required": false,
+      "source": "user",
+      "scope": "request",
+      "captureMode": "eager",
+      "expireOnBusinessDayChange": true,
+      "aliases": [
+        "reservar",
+        "cita",
+        "agenda",
+        "servicio",
+        "precio",
+        "corte",
+        "barba",
+        "cejas",
+        "lavado",
+        "domicilio",
+        "tratamiento"
+      ]
+    },
+    {
+      "key": "service",
+      "role": "booking.service",
+      "label": "servicio",
+      "type": "string",
+      "required": true,
+      "source": "user",
+      "scope": "request",
+      "captureMode": "eager",
+      "retentionDays": 7,
+      "expireOnBusinessDayChange": true,
+      "aliases": [
+        "servicio",
+        "barba",
+        "cejas",
+        "lavado",
+        "domicilio",
+        "coloracion",
+        "keratina",
+        "tratamiento"
+      ]
+    },
+    {
+      "key": "desired_date",
+      "role": "booking.date",
+      "label": "fecha deseada",
+      "type": "date",
+      "required": true,
+      "source": "user",
+      "scope": "request",
+      "captureMode": "eager",
+      "retentionDays": 7,
+      "expireOnBusinessDayChange": true,
+      "aliases": [
+        "fecha",
+        "dia",
+        "cuando",
+        "hoy",
+        "manana"
+      ]
+    },
+    {
+      "key": "desired_time",
+      "role": "booking.time",
+      "label": "hora deseada",
+      "type": "time",
+      "required": true,
+      "source": "user",
+      "scope": "request",
+      "captureMode": "eager",
+      "retentionDays": 7,
+      "expireOnBusinessDayChange": true,
+      "dependsOn": [
+        "service",
+        "desired_date"
+      ],
+      "aliases": [
+        "hora",
+        "horario"
+      ]
+    },
+    {
+      "key": "availability_checked",
+      "role": "booking.availability_checked",
+      "label": "disponibilidad validada",
+      "type": "string",
+      "required": false,
+      "source": "system",
+      "scope": "ephemeral",
+      "retentionDays": 1,
+      "expireOnBusinessDayChange": true,
+      "dependsOn": [
+        "service",
+        "desired_date",
+        "desired_time"
+      ]
+    },
+    {
+      "key": "service_notes",
+      "role": "booking.notes",
+      "label": "notas del servicio",
+      "type": "string",
+      "required": false,
+      "source": "user",
+      "scope": "request",
+      "captureMode": "eager",
+      "retentionDays": 7,
+      "expireOnBusinessDayChange": true,
+      "aliases": [
+        "direccion",
+        "ubicacion",
+        "barrio",
+        "domicilio",
+        "color",
+        "keratina",
+        "tratamiento",
+        "nota"
+      ]
+    },
+    {
+      "key": "add_ons",
+      "role": "booking.add_ons",
+      "label": "adicionales",
+      "type": "string",
+      "required": false,
+      "source": "user",
+      "scope": "request",
+      "captureMode": "eager",
+      "retentionDays": 7,
+      "expireOnBusinessDayChange": true,
+      "dependsOn": [
+        "service"
+      ],
+      "aliases": [
+        "adicional",
+        "adicionales",
+        "mascarilla",
+        "aerografo",
+        "sombreado",
+        "fibra",
+        "relajador",
+        "masaje"
+      ]
+    },
+    {
+      "key": "customer_name",
+      "role": "customer.name",
+      "label": "nombre del cliente",
+      "type": "string",
+      "required": true,
+      "source": "user",
+      "scope": "customer",
+      "captureMode": "onDemand",
+      "aliases": [
+        "nombre",
+        "cliente",
+        "a nombre de",
+        "mi nombre"
+      ]
+    },
+    {
+      "key": "customer_phone",
+      "role": "customer.phone",
+      "label": "telefono del cliente",
+      "type": "phone",
+      "required": true,
+      "source": "channel",
+      "scope": "customer",
+      "aliases": [
+        "telefono",
+        "celular",
+        "whatsapp",
+        "numero"
+      ]
+    },
+    {
+      "key": "customer_birth_date",
+      "role": "customer.birth_date",
+      "label": "fecha de cumpleanos del cliente",
+      "type": "date",
+      "required": true,
+      "source": "user",
+      "scope": "customer",
+      "captureMode": "onDemand",
+      "aliases": [
+        "cumpleanos",
+        "fecha de cumpleanos",
+        "fecha nacimiento",
+        "fecha de nacimiento",
+        "nacimiento"
+      ]
+    },
+    {
+      "key": "customer_email",
+      "role": "customer.email",
+      "label": "email del cliente",
+      "type": "email",
+      "required": false,
+      "source": "user",
+      "scope": "customer",
+      "captureMode": "eager",
+      "aliases": [
+        "email",
+        "correo"
+      ]
+    },
+    {
+      "key": "payment_method",
+      "role": "payment.method",
+      "label": "metodo de pago",
+      "type": "string",
+      "required": false,
+      "source": "system",
+      "scope": "request",
+      "expireOnBusinessDayChange": true
+    }
   ],
   "guards": {
     "capability:checkout.prepare": {
@@ -790,8 +1270,15 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
     "send_message_sequence"
   ],
   "escalations": {
-    "human": { "contacts": ["+573042052007"] },
-    "external": { "enabled": false, "events": {} }
+    "human": {
+      "contacts": [
+        "+573042052007"
+      ]
+    },
+    "external": {
+      "enabled": false,
+      "events": {}
+    }
   }
 }';
 

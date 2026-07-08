@@ -96,14 +96,17 @@ public sealed class AgentPromptComposer : IPromptComposer
             var label = string.IsNullOrWhiteSpace(action.Id) ? "accion" : action.Id.Trim();
             lines.Add($"- {label}: {action.Goal.Trim()}");
 
+            if (action.AllowedActions.Count > 0)
+                lines.Add($"  acciones: {string.Join(", ", action.AllowedActions)}");
+
             var allowedTools = effectiveToolNames is null
                 ? action.AllowedTools
                 : action.AllowedTools.Where(effectiveToolNames.Contains).ToList();
             if (allowedTools.Count > 0)
                 lines.Add($"  herramientas: {string.Join(", ", allowedTools)}");
 
-            if (!string.IsNullOrWhiteSpace(action.Hint))
-                lines.Add($"  orientacion: {action.Hint.Trim()}");
+            if (!string.IsNullOrWhiteSpace(action.ConversationGuidance))
+                lines.Add($"  orientacion: {action.ConversationGuidance.Trim()}");
         }
 
         return string.Join(Environment.NewLine, lines);
@@ -422,15 +425,7 @@ public sealed class AgentPromptComposer : IPromptComposer
         };
 
 
-        var stageHint = !string.IsNullOrWhiteSpace(variant?.Hint) ? variant!.Hint : currentStage.Hint;
-        if (!string.IsNullOrWhiteSpace(stageHint))
-        {
-            lines.Add(string.Empty);
-            lines.Add(variant?.Hint is not null
-                ? "Orientación para este engagement:"
-                : "Qué hacer ahora:");
-            lines.Add($"- {stageHint.Trim()}");
-        }
+        AppendConversationalStageLines(config, currentStage, lines, variant);
 
 
         if (session is not null && currentStage.AdvanceWhenFacts.Count > 0)
@@ -453,6 +448,80 @@ public sealed class AgentPromptComposer : IPromptComposer
         }
 
         return string.Join(Environment.NewLine, lines);
+    }
+
+    private static void AppendConversationalStageLines(
+        AgentConfig config,
+        AgentFlowStage currentStage,
+        List<string> lines,
+        AgentFlowStageVariant? variant)
+    {
+        if (!string.IsNullOrWhiteSpace(currentStage.Ask))
+            lines.Add($"- pregunta_conversacional: {currentStage.Ask.Trim()}");
+
+        if (currentStage.Collect.Count > 0)
+            lines.Add($"- puede_recoger: {string.Join(", ", currentStage.Collect)}");
+
+        var guidance = !string.IsNullOrWhiteSpace(variant?.ConversationGuidance)
+            ? variant!.ConversationGuidance
+            : currentStage.ConversationGuidance;
+        if (!string.IsNullOrWhiteSpace(guidance))
+            lines.Add($"- guia_conversacional: {guidance.Trim()}");
+
+        if (!string.IsNullOrWhiteSpace(currentStage.OnSuccess))
+            lines.Add($"- si_resulta_bien: {currentStage.OnSuccess.Trim()}");
+
+        if (!string.IsNullOrWhiteSpace(currentStage.OnProblem))
+            lines.Add($"- si_hay_problema: {currentStage.OnProblem.Trim()}");
+
+        var actions = ResolveStageActions(config, currentStage).ToList();
+        if (actions.Count == 0)
+            return;
+
+        lines.Add(string.Empty);
+        lines.Add("Acciones de negocio disponibles en esta etapa:");
+        foreach (var (id, action) in actions)
+        {
+            lines.Add($"- {id}: {ResolveActionText(action)}");
+            if (action.Requires.Count > 0)
+                lines.Add($"  requiere: {string.Join(", ", action.Requires)}");
+            if (action.Produces.Count > 0)
+                lines.Add($"  produce: {string.Join(", ", action.Produces)}");
+            if (!string.IsNullOrWhiteSpace(action.WhenMissingData))
+                lines.Add($"  si_faltan_datos: {action.WhenMissingData.Trim()}");
+            if (!string.IsNullOrWhiteSpace(action.OnSuccess))
+                lines.Add($"  resultado_exitoso: {action.OnSuccess.Trim()}");
+            if (!string.IsNullOrWhiteSpace(action.OnProblem))
+                lines.Add($"  problema: {action.OnProblem.Trim()}");
+        }
+    }
+
+    private static IEnumerable<KeyValuePair<string, SemanticFlowAction>> ResolveStageActions(
+        AgentConfig config,
+        AgentFlowStage currentStage)
+    {
+        foreach (var actionId in currentStage.AllowedActions)
+        {
+            if (string.IsNullOrWhiteSpace(actionId))
+                continue;
+
+            if (config.FlowLanguage.Actions.TryGetValue(actionId.Trim(), out var action))
+                yield return new KeyValuePair<string, SemanticFlowAction>(actionId.Trim(), action);
+        }
+    }
+
+    private static string ResolveActionText(SemanticFlowAction action)
+    {
+        if (!string.IsNullOrWhiteSpace(action.Name) && !string.IsNullOrWhiteSpace(action.Purpose))
+            return $"{action.Name.Trim()} - {action.Purpose.Trim()}";
+
+        if (!string.IsNullOrWhiteSpace(action.Purpose))
+            return action.Purpose.Trim();
+
+        if (!string.IsNullOrWhiteSpace(action.Name))
+            return action.Name.Trim();
+
+        return "accion configurada";
     }
 
     private string BuildTurnToolsBlock(PromptCompositionInput input, AgentFlowStage? currentStage)

@@ -263,7 +263,7 @@ public class ToolCapabilityGateTests
                     {
                         Id = "customer_data",
                         Goal = "Pedir datos",
-                        Hint = "Pide datos del cliente.",
+                        ConversationGuidance = "Pide datos del cliente.",
                         AllowedTools = ["set_fact"]
                     }
                 ]
@@ -358,7 +358,7 @@ public class ToolCapabilityGateTests
                     {
                         Id = "customer_data",
                         Goal = "Pedir datos",
-                        Hint = "Pide datos del cliente.",
+                        ConversationGuidance = "Pide datos del cliente.",
                         AllowedTools = ["set_fact"]
                     }
                 ]
@@ -415,7 +415,7 @@ public class ToolCapabilityGateTests
                 {
                     Id = "discovery",
                     Goal = "discovery",
-                    Hint = "Presenta catálogo y registra service con set_fact al elegir.",
+                    ConversationGuidance = "Presenta catálogo y registra service con set_fact al elegir.",
                     AllowedTools = ["get_service_catalog", "set_fact"],
                     AdvanceWhenFacts = ["baby_name", "baby_age_months", "service"]
                 },
@@ -423,7 +423,7 @@ public class ToolCapabilityGateTests
                 {
                     Id = "addons_offering",
                     Goal = "Ofrecer complementos",
-                    Hint = "Lista complementos y registra add_ons con set_fact.",
+                    ConversationGuidance = "Lista complementos y registra add_ons con set_fact.",
                     AllowedTools = ["get_service_catalog", "set_fact"],
                     AdvanceWhenFacts = ["add_ons"]
                 }

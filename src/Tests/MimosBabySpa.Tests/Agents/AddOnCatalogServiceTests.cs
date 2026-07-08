@@ -133,7 +133,7 @@ public class AddOnCatalogServiceTests
 
         result.IsValid.Should().BeFalse();
         result.ErrorCode.Should().Be("ambiguous_add_ons");
-        result.Hint.Should().Contain("opcion especifica");
+        result.Hint.Should().BeNull();
         result.ErrorMessage.Should().Contain("Fotos digitales");
         result.ErrorMessage.Should().Contain("Fotos digitales con video");
     }
@@ -203,7 +203,7 @@ public class AddOnCatalogServiceTests
 
         result.IsValid.Should().BeFalse();
         result.ErrorCode.Should().Be("duplicate_add_on_group");
-        result.Hint.Should().Contain("una sola opcion por grupo");
+        result.Hint.Should().BeNull();
     }
 
     [Fact]

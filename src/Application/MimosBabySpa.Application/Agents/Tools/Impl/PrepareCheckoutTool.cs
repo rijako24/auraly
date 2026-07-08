@@ -443,8 +443,8 @@ public sealed class PrepareCheckoutTool : IAgentTool
             : null;
 
         return llm is null
-            ? ToolResultHelper.Error(error.Code, error.Message, error.Hint, error.Recoverable)
-            : ToolResultHelper.ErrorWithLlm(error.Code, error.Message, error.Hint, llm, error.Recoverable);
+            ? ToolResultHelper.Error(error.Code, error.Message, null, error.Recoverable)
+            : ToolResultHelper.ErrorWithLlm(error.Code, error.Message, null, llm, error.Recoverable);
     }
 
     private static string? ResolveBinding(
