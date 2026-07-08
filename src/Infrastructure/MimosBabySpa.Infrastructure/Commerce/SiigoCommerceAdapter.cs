@@ -107,6 +107,8 @@ public sealed class SiigoCommerceAdapter : ICommerceAdapter
         _httpClient.Timeout = TimeSpan.FromSeconds(settings.RequestTimeoutSeconds);
         _httpClient.DefaultRequestHeaders.Clear();
         _httpClient.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+        if (string.IsNullOrWhiteSpace(settings.PartnerId))
+            throw new InvalidOperationException("Siigo partnerId is not configured for this business.");
         _httpClient.DefaultRequestHeaders.Add("Partner-Id", settings.PartnerId);
 
         var token = await AuthenticateAsync(settings, ct);
@@ -227,7 +229,7 @@ public sealed class SiigoCommerceAdapter : ICommerceAdapter
             stamp = new { send = settings.Order.StampSend },
             mail = new { send = settings.Order.MailSend },
             observations = string.IsNullOrWhiteSpace(order.Notes)
-                ? "Pedido creado desde WhatsApp por Auraly"
+                ? "Pedido creado desde WhatsApp"
                 : order.Notes,
             items = items.Select(i => new
             {

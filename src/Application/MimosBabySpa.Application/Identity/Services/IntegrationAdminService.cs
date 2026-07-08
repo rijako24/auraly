@@ -196,7 +196,7 @@ public class IntegrationAdminService : IIntegrationAdminService
         connection.SettingsJson = Serialize(new
         {
             baseUrl = string.IsNullOrWhiteSpace(request.BaseUrl) ? "https://api.siigo.com/" : request.BaseUrl.Trim(),
-            partnerId = string.IsNullOrWhiteSpace(request.PartnerId) ? "auraly" : request.PartnerId.Trim(),
+            partnerId = string.IsNullOrWhiteSpace(request.PartnerId) ? string.Empty : request.PartnerId.Trim(),
             requestTimeoutSeconds = request.RequestTimeoutSeconds <= 0 ? 30 : request.RequestTimeoutSeconds,
             catalog = new
             {
@@ -341,7 +341,7 @@ public class IntegrationAdminService : IIntegrationAdminService
         return new SiigoCommerceIntegrationDto(
             connection?.IsEnabled ?? false,
             Get(settings, "baseUrl", "https://api.siigo.com/"),
-            Get(settings, "partnerId", "auraly"),
+            Get(settings, "partnerId", string.Empty),
             GetInt(settings, "requestTimeoutSeconds", 30),
             GetInt(catalog, "defaultPageSize", 25),
             GetBool(catalog, "cacheProducts", true),

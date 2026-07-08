@@ -25,7 +25,7 @@ DECLARE @DeliverySettingsJson NVARCHAR(MAX) = N'{
         "name": "Gestion de domicilio",
         "goal": "Resolver si el domiciliario acepta o rechaza una solicitud pendiente.",
         "advanceWhenFacts": [],
-        "conversationGuidance": "Si el mensaje viene citado/respondiendo a una solicitud de domicilio, la cita identifica el pedido: si el contacto acepta/confirma/toma el pedido, llama accept_order_request; si rechaza o dice que no puede tomarlo, llama reject_order_request. No pidas confirmacion ni motivo en esos casos. Usa search_order solo cuando no haya cita ni payload interactivo, cuando necesites resolver por codigo PED/datos del pedido, o cuando haya varias ordenes pendientes; si hay ambiguedad, pide elegir mostrando request_code. Si el pedido esta vencido o no disponible, responde breve indicando que ya no puede gestionarse automaticamente. Tras aceptar agradece la confirmacion; tras rechazar indica que se registro el rechazo.",
+        "conversationGuidance": "Si el mensaje viene citado/respondiendo a una solicitud de domicilio, la cita identifica el pedido: si el contacto acepta/confirma/toma el pedido, acepta la solicitud; si rechaza o dice que no puede tomarlo, rechaza la solicitud. No pidas confirmacion ni motivo en esos casos. Busca el pedido solo cuando no haya cita ni payload interactivo, cuando necesites resolver por codigo PED/datos del pedido, o cuando haya varias ordenes pendientes; si hay ambiguedad, pide elegir mostrando request_code. Si el pedido esta vencido o no disponible, responde breve indicando que ya no puede gestionarse automaticamente. Tras aceptar agradece la confirmacion; tras rechazar indica que se registro el rechazo.",
         "allowedActions": [
           "buscar_pedido",
           "aceptar_solicitud_pedido",
@@ -94,7 +94,7 @@ DECLARE @OperationsSettingsJson NVARCHAR(MAX) = N'{
         "name": "Operacion interna",
         "goal": "Atender mensajes operativos autorizados del negocio: agenda, bloqueos, metricas, pedidos, ventas e historial de clientes.",
         "advanceWhenFacts": [],
-        "conversationGuidance": "Usa operations_get_reservations para preguntas de agenda por dia o rango. Usa operations_block_availability para bloquear horarios o dias. Usa operations_get_business_metrics para ventas, pedidos, reservas y servicios mas vendidos. Usa operations_get_customer_history para ultima compra o historial de un cliente. Usa operations_request_reschedule para avisar a clientes afectados que deben reagendar; no muevas reservas directamente desde operaciones.",
+        "conversationGuidance": "Consulta reservas operativas para preguntas de agenda por dia o rango. Bloquea disponibilidad para bloquear horarios o dias. Consulta metricas de negocio para ventas, pedidos, reservas y servicios mas vendidos. Consulta historial de cliente para ultima compra o historial de un cliente. Solicita reagenda operativa para avisar a clientes afectados que deben reagendar; no muevas reservas directamente desde operaciones.",
         "allowedActions": [
           "operaciones_consultar_reservas",
           "operaciones_bloquear_disponibilidad",
@@ -135,8 +135,8 @@ DECLARE @OperationsSettingsJson NVARCHAR(MAX) = N'{
           "tool": "operations_get_customer_history"
         },
         "ejecutar_check_availability": {
-          "name": "Ejecutar check_availability",
-          "purpose": "Ejecutar la capacidad configurada check_availability.",
+          "name": "Validar disponibilidad",
+          "purpose": "Consultar disponibilidad del calendario para un servicio, fecha y hora.",
           "tool": "check_availability"
         }
       },

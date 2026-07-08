@@ -186,13 +186,13 @@ public class GoogleCalendarService : ICalendarService
         CancellationToken cancellationToken)
     {
         var summary = string.IsNullOrWhiteSpace(settings.CalendarSummary)
-            ? "Auraly - Reservas"
+            ? "Reservas"
             : settings.CalendarSummary.Trim();
 
         var requestBody = new
         {
             summary,
-            description = $"Calendario de reservas administrado por Auraly ({settings.OwnerEmail}).",
+            description = $"Calendario de reservas ({settings.OwnerEmail}).",
             timeZone = settings.TimeZone
         };
 

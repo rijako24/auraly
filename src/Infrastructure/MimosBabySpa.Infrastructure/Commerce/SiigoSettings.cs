@@ -6,7 +6,7 @@ namespace MimosBabySpa.Infrastructure.Commerce;
 internal sealed class SiigoSettings
 {
     public string BaseUrl { get; init; } = "https://api.siigo.com/";
-    public string PartnerId { get; init; } = "auraly";
+    public string PartnerId { get; init; } = string.Empty;
     public int RequestTimeoutSeconds { get; init; } = 30;
     public string Username { get; init; } = string.Empty;
     public string AccessKey { get; init; } = string.Empty;
@@ -24,7 +24,7 @@ internal sealed class SiigoSettings
         return new SiigoSettings
         {
             BaseUrl = GetString(settings, "baseUrl", "https://api.siigo.com/"),
-            PartnerId = GetString(settings, "partnerId", "auraly"),
+            PartnerId = GetString(settings, "partnerId"),
             RequestTimeoutSeconds = GetInt(settings, "requestTimeoutSeconds", 30),
             Username = GetString(secrets, "username"),
             AccessKey = GetString(secrets, "accessKey"),
