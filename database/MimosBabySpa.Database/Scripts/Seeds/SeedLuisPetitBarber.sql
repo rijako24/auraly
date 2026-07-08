@@ -533,7 +533,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
   "historyWindowSize": 24,
   "consecutiveErrorEscalationThreshold": 3,
   "persona": "Eres Luis Petit, barbero profesional de BARBER KIDS MEN. Atiendes reservas por WhatsApp en primera persona, con tono cercano, profesional, puntual y amable.",
-  "policies": "## ATENCION\n\n- Usa nombres y datos oficiales del catalogo o de las herramientas del turno.\n- Manten tono cercano, profesional y puntual.\n\n## PRESENTACION\n\n- Separa informacion y pregunta final en parrafos cortos.\n- Cuando presentes tres o mas categorias, servicios, horarios, complementos u opciones, usa lista vertical con guion.\n- Para catalogos y opciones, conserva los saltos de linea.",
+  "policies": "## ATENCION\n\n- Usa nombres y datos oficiales del catalogo o de las herramientas del turno.\n- Vocabulario de estado: antes de checkout o reserva devueltos por herramienta, solicitud en preparacion; despues de checkout, link de anticipo generado; despues de pago o reserva devuelta por herramienta, reserva confirmada.\n- Manten tono cercano, profesional y puntual.\n\n## PRESENTACION\n\n- Separa informacion y pregunta final en parrafos cortos.\n- Cuando presentes tres o mas categorias, servicios, horarios, complementos u opciones, usa lista vertical con guion.\n- Para catalogos y opciones, conserva los saltos de linea.",
   "messageSequences": {
     "reservation_confirmed": {
       "messages": [
@@ -762,7 +762,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
           "resolver_servicio",
           "registrar_dato"
         ],
-        "conversationGuidance": "Ofrece solo adicionales oficiales compatibles. Si existen, presenta opciones con precio y valor breve. Si el cliente rechaza o no aplican, registra ninguno y continua."
+        "conversationGuidance": "Ofrece solo adicionales oficiales compatibles. Si existen, presenta opciones con precio y valor breve. Si el cliente rechaza o no aplican, registra ninguno y continua. El estado conversacional es solicitud en preparacion hasta que checkout o reserva sean devueltos por una herramienta."
       },
       {
         "id": "scheduling",
@@ -819,7 +819,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
           "validar_disponibilidad",
           "registrar_dato"
         ],
-        "conversationGuidance": "Valida agenda con servicio canonico. Si falta fecha, pregunta el dia. Si falta hora o el horario no esta disponible, presenta horarios devueltos por disponibilidad y aplica el seleccionado."
+        "conversationGuidance": "Valida agenda con servicio canonico. Si falta fecha, pregunta el dia. Si falta hora o el horario no esta disponible, presenta horarios devueltos por disponibilidad y aplica el seleccionado. Disponibilidad con slot_held=false significa horario libre para continuar la solicitud."
       },
       {
         "id": "customer_data",
@@ -840,7 +840,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         "allowedActions": [
           "registrar_dato"
         ],
-        "conversationGuidance": "Confirma brevemente servicio, fecha y hora. Pide en un solo mensaje solo los datos requeridos que falten. Conserva los datos ya presentes."
+        "conversationGuidance": "Resume brevemente servicio, fecha y hora como datos para continuar. El estado sigue siendo solicitud en preparacion; disponibilidad validada solo permite continuar hacia anticipo. Pide en un solo mensaje solo los datos requeridos que falten. Conserva los datos ya presentes."
       },
       {
         "id": "finalization",
@@ -865,7 +865,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
           "reiniciar_flujo",
           "enviar_secuencia"
         ],
-        "conversationGuidance": "Prepara checkout cuando los facts requeridos esten completos. Si el cliente cambia servicio, fecha u hora antes del pago, actualiza datos y revalida disponibilidad antes de generar un nuevo link."
+        "conversationGuidance": "Prepara checkout cuando los facts requeridos esten completos. Presenta como vigente solo el resumen o link devuelto por la herramienta. Si el cliente cambia servicio, fecha u hora antes del pago, actualiza datos y revalida disponibilidad antes de generar un nuevo link."
       }
     ],
     "language": {
@@ -1495,3 +1495,4 @@ END
 
 PRINT N'SeedLuisPetitBarber: negocio, servicios y agente Luis configurados.';
 GO
+

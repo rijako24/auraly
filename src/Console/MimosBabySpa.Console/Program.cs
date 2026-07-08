@@ -938,11 +938,9 @@ static Queue<string> BuildLuisReservationScript(string[] args)
     var messages = string.IsNullOrWhiteSpace(custom)
         ? new[]
         {
-            "Hola, quiero reservar un corte de cabello",
-            "Sin adicionales por ahora",
-            "Ma�ana a las 10 de la ma�ana",
-            "Mi nombre es Carlos Perez",
-            "S�, confirma la reserva"
+            "Hola, quiero reservar un corte basico de adulto manana a las 10:30 de la manana",
+            "Sin adicionales",
+            "Mi nombre es Carlos Perez y naci el 1990-01-01",
         }
         : custom.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
@@ -1105,3 +1103,4 @@ internal sealed class ConsoleUsageBillingService : IUsageBillingService
         Task.FromResult<IReadOnlyList<UsagePlanDto>>(Array.Empty<UsagePlanDto>());
 
 }
+
