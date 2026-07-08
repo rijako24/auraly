@@ -278,7 +278,7 @@ public class ReservationService : IReservationService
             return UpdateReservationChangeResult.Fail(
                 "service_not_found",
                 "The reservation has no service assigned.",
-                "Escalate to a human to review this reservation.",
+                null,
                 request.ReservationId);
         }
 
@@ -294,7 +294,7 @@ public class ReservationService : IReservationService
                 return UpdateReservationChangeResult.Fail(
                     "service_not_found",
                     $"Service '{request.ServiceName}' was not found in this business catalog.",
-                    "Use get_service_catalog and ask the customer to choose an exact service.",
+                    null,
                     request.ReservationId);
             }
 
@@ -304,7 +304,7 @@ public class ReservationService : IReservationService
                 return UpdateReservationChangeResult.Fail(
                     "service_not_found",
                     $"Service '{canonical}' was not found in this business catalog.",
-                    "Use get_service_catalog and ask the customer to choose an exact service.",
+                    null,
                     request.ReservationId);
             }
         }
@@ -317,7 +317,7 @@ public class ReservationService : IReservationService
                 return UpdateReservationChangeResult.Fail(
                     "date_required",
                     "A date is required to change the reservation time.",
-                    "Ask for the desired date.",
+                    null,
                     request.ReservationId);
             }
 
@@ -326,7 +326,7 @@ public class ReservationService : IReservationService
                 return UpdateReservationChangeResult.Fail(
                     "time_required",
                     "A time is required to change the reservation date.",
-                    "Ask for the desired time.",
+                    null,
                     request.ReservationId);
             }
 
@@ -340,7 +340,7 @@ public class ReservationService : IReservationService
             return UpdateReservationChangeResult.Fail(
                 "datetime_required",
                 "Reservation date and time are required before applying this change.",
-                "Ask for date and time.",
+                null,
                 request.ReservationId);
         }
 

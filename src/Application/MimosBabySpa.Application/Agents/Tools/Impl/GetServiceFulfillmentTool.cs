@@ -51,20 +51,30 @@ public sealed class GetServiceFulfillmentTool : IAgentTool
         var canonical = await _nameResolver.ResolveAsync(ctx.BusinessId, serviceName, cancellationToken);
         if (canonical is null)
         {
-            return ToolResultHelper.Error(
+            return ToolResultHelper.ErrorWithLlm(
                 ToolErrorCodes.ServiceNotResolved,
                 $"Service '{serviceName}' was not found in the catalog.",
-                "Call get_service_catalog and use exactly one service name from the catalog.",
+                null,
+                new
+                {
+                    next_action = "select_catalog_service",
+                    unresolved_service = serviceName
+                },
                 recoverable: true);
         }
 
         var service = await _unitOfWork.Services.GetByBusinessIdAndNameAsync(ctx.BusinessId, canonical);
         if (service is null)
         {
-            return ToolResultHelper.Error(
+            return ToolResultHelper.ErrorWithLlm(
                 ToolErrorCodes.ServiceNotResolved,
                 $"Service '{canonical}' was not found in the catalog.",
-                "Call get_service_catalog and use exactly one service name from the catalog.",
+                null,
+                new
+                {
+                    next_action = "select_catalog_service",
+                    unresolved_service = canonical
+                },
                 recoverable: true);
         }
 
@@ -76,10 +86,16 @@ public sealed class GetServiceFulfillmentTool : IAgentTool
         if (service.FulfillmentKind == ServiceFulfillmentKind.Enrollment
             && string.IsNullOrWhiteSpace(fixedSchedule))
         {
-            return ToolResultHelper.Error(
+            return ToolResultHelper.ErrorWithLlm(
                 "service_fulfillment_missing_schedule",
                 $"Service '{service.ServiceName}' is configured as enrollment but has no fixed schedule label.",
-                "Escalate to a human or configure FixedScheduleLabel for this service.",
+                null,
+                new
+                {
+                    next_action = "human_handoff",
+                    reason = "service_fulfillment_missing_schedule",
+                    service = service.ServiceName
+                },
                 recoverable: true);
         }
 
@@ -101,12 +117,12 @@ public sealed class GetServiceFulfillmentTool : IAgentTool
 
         if (string.IsNullOrWhiteSpace(fixedSchedule))
         {
-            llmData["guidance"] = "Continua con el siguiente dato necesario para revisar la agenda.";
+            llmData["next_action"] = "collect_reservation_schedule";
         }
         else
         {
             llmData["official_schedule"] = fixedSchedule;
-            llmData["guidance"] = "Continua con el horario oficial de inscripcion.";
+            llmData["next_action"] = "present_fixed_schedule";
         }
 
         return ToolResultHelper.OkWithLlm(internalData, llmData);

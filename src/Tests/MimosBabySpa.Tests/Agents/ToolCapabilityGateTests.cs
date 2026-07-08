@@ -205,9 +205,8 @@ public class ToolCapabilityGateTests
 
         result.IsAllowed.Should().BeFalse();
         result.Code.Should().Be("stage_action_pending");
-        result.Remediation.Should().Contain("Lista complementos");
-        result.Remediation.Should().NotContain("datos faltantes");
-        result.Remediation.Should().NotContain("Antes registra");
+        result.Reason.Should().Contain("addons_offering");
+        result.Remediation.Should().BeNull();
     }
 
     [Fact]
@@ -230,9 +229,9 @@ public class ToolCapabilityGateTests
         var result = await _gate.EvaluateAsync(checkAvailabilityTool, args.RootElement, ctx, CancellationToken.None);
 
         result.IsAllowed.Should().BeFalse();
-        result.Remediation.Should().Contain("Presenta catalogo");
-        result.Remediation.Should().NotContain("datos faltantes");
-        result.Remediation.Should().NotContain("Antes registra");
+        result.Code.Should().Be("stage_action_pending");
+        result.Reason.Should().Contain("discovery");
+        result.Remediation.Should().BeNull();
     }
 
     [Fact]

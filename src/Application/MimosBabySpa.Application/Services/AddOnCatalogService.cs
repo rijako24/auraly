@@ -58,7 +58,7 @@ public sealed class AddOnCatalogService : IAddOnCatalogService
         {
             return AddOnValidationResult.Fail(
                 $"Service '{serviceName}' was not found in the catalog.",
-                "Call get_service_catalog to get the current list of services.");
+                null, "service_not_found");
         }
 
         var compatible = await GetCompatibleAsync(businessId, service.ServiceName, ct);

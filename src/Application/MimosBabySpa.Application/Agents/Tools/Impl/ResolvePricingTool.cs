@@ -75,9 +75,15 @@ public sealed class ResolvePricingTool : IAgentTool
             cancellationToken);
 
         if (result is null)
-            return ToolResultHelper.Error("service_not_found",
+            return ToolResultHelper.ErrorWithLlm("service_not_found",
                 $"Service '{service}' was not found in the catalog.",
-                "Call get_service_catalog to get the current list of services.");
+                null,
+                new
+                {
+                    next_action = "select_catalog_service",
+                    unresolved_service = service
+                },
+                recoverable: true);
 
         return ToolResultHelper.Ok(new
         {

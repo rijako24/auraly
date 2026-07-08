@@ -117,18 +117,30 @@ public sealed class CreateReservationTool : IAgentTool
         var activePayment = ctx.ActivePayment;
         if (activePayment?.Status == PaymentTransactionStatus.Created)
         {
-            return ToolResultHelper.Error(
+            return ToolResultHelper.ErrorWithLlm(
                 "payment_required",
                 "A payment link is pending for this reservation. Wait for payment confirmation before creating the reservation.",
-                "Do not call create_reservation for paid checkout flows.");
+                null,
+                new
+                {
+                    next_action = "await_payment_confirmation",
+                    payment_status = activePayment.Status.ToString()
+                },
+                recoverable: true);
         }
 
         if (activePayment?.Status == PaymentTransactionStatus.Confirmed && !activePayment.ReservationId.HasValue)
         {
-            return ToolResultHelper.Error(
+            return ToolResultHelper.ErrorWithLlm(
                 "payment_fulfillment_pending",
                 "Payment is confirmed but no reservation is linked yet. The payment fulfillment handler must create or link the reservation.",
-                "Do not call create_reservation after payment confirmation.");
+                null,
+                new
+                {
+                    next_action = "await_payment_fulfillment",
+                    payment_status = activePayment.Status.ToString()
+                },
+                recoverable: true);
         }
         var canonicalService = await _serviceNameResolver.ResolveAsync(ctx.BusinessId, service!, cancellationToken);
         if (!string.IsNullOrWhiteSpace(canonicalService))
