@@ -19,13 +19,10 @@ export const AGENT_TOOLS_CATALOG: AgentToolMeta[] = [
   { name: "check_availability", label: "Disponibilidad", group: "Agenda" },
   { name: "get_customer_reservations", label: "Reservas del cliente", group: "Agenda" },
   { name: "confirm_reservation_attendance", label: "Confirmar asistencia", group: "Agenda" },
-  { name: "prepare_reservation_change", label: "Preparar cambio de reserva", group: "Agenda" },
-  { name: "confirm_reservation_change", label: "Confirmar cambio de reserva", group: "Agenda" },
-  { name: "suspend_reservation", label: "Cancelar / suspender", group: "Agenda" },
+  { name: "manage_reservation", label: "Gestionar reserva", group: "Agenda" },
 
   { name: "prepare_checkout", label: "Resumen de checkout", group: "Reserva" },
   { name: "create_reservation", label: "Crear reserva", group: "Reserva" },
-  { name: "reschedule_paid_reservation", label: "Reagendar reserva pagada", group: "Reserva" },
   { name: "verify_payment", label: "Verificar pago", group: "Pagos" },
 
   { name: "search_products", label: "Buscar productos", group: "Pedidos" },
