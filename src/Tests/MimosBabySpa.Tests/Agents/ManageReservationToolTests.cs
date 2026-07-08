@@ -82,6 +82,90 @@ public sealed class ManageReservationToolTests
     }
 
     [Fact]
+    public async Task ApplyChange_WhenAutomaticAndEscalatedFieldsAreMixed_PutsReservationOnHoldAndEscalates()
+    {
+        var fx = new Fixture();
+        var reservation = fx.CreateReservation(customerConfirmed: true);
+        fx.Resolve(reservation);
+
+        var result = await fx.Tool.ExecuteAsync(
+            Json("""{"action":"apply_change","service":"Corte premium de adulto","time":"14:00"}"""),
+            fx.Context);
+
+        result.Should().Contain("\"ok\":true");
+        result.Should().Contain("OnHold");
+        result.Should().Contain("reservation_change_requires_human:service,time");
+        result.Should().Contain("human_handoff");
+        reservation.Status.Should().Be(ReservationStatus.OnHold);
+        reservation.CustomerConfirmed.Should().BeFalse();
+        fx.Reservations.Verify(r => r.UpdateReservationAsync(
+            It.IsAny<UpdateReservationChangeRequest>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+        fx.EscalationNotifier.Verify(n => n.NotifyAsync(
+            fx.BusinessId,
+            It.IsAny<IReadOnlyList<string>>(),
+            It.Is<EscalationNotification>(notification => notification.Reason == "reservation_change_requires_human:service,time"),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ApplyChange_WhenAutomaticSlotUnavailable_OffersAlternativeSlotsWithoutApplying()
+    {
+        var fx = new Fixture();
+        var reservation = fx.CreateReservation();
+        reservation.Service = new Service { ServiceName = "Corte basico de adulto" };
+        fx.Resolve(reservation);
+        fx.ReservationRepository.Setup(r => r.GetByIdAsync(reservation.ReservationId))
+            .ReturnsAsync(reservation);
+        fx.Reservations.Setup(r => r.UpdateReservationAsync(
+                It.Is<UpdateReservationChangeRequest>(req => req.ReservationId == reservation.ReservationId && req.Apply),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new UpdateReservationChangeResult(
+                false,
+                "slot_unavailable",
+                "The selected slot is unavailable.",
+                null,
+                reservation.ReservationId,
+                string.Empty,
+                null,
+                null,
+                null,
+                null,
+                [],
+                0m,
+                string.Empty,
+                false));
+        fx.Availability.Setup(a => a.CheckAvailabilityAsync(
+                fx.BusinessId,
+                "Corte basico de adulto",
+                new DateTime(2026, 7, 8),
+                null,
+                It.IsAny<AvailabilityParams?>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AvailabilityResult
+            {
+                IsAvailable = true,
+                AvailableOptions =
+                [
+                    new AvailabilityOption("15:00", "15:30"),
+                    new AvailabilityOption("16:00", "16:30")
+                ]
+            });
+
+        var result = await fx.Tool.ExecuteAsync(Json("""{"action":"apply_change","time":"14:00"}"""), fx.Context);
+
+        result.Should().Contain("slot_unavailable");
+        result.Should().Contain("offer_alternative_slots");
+        result.Should().Contain("15:00");
+        result.Should().Contain("16:00");
+        result.Should().NotContain("\"applied\":true");
+        fx.EscalationNotifier.Verify(n => n.NotifyAsync(
+            It.IsAny<Guid>(),
+            It.IsAny<IReadOnlyList<string>>(),
+            It.IsAny<EscalationNotification>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+    }
+    [Fact]
     public async Task ApplyChange_AppliesAfterConfirmation()
     {
         var fx = new Fixture();
