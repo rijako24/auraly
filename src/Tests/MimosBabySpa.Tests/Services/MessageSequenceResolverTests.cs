@@ -84,6 +84,49 @@ public sealed class MessageSequenceResolverTests
     }
 
     [Fact]
+    public async Task ResolveAsync_TextStep_ExpandsReservationTime12Placeholder()
+    {
+        var businessId = Guid.NewGuid();
+        var catalog = new MessageSequenceCatalog
+        {
+            ["reservation_confirmed"] = new MessageSequence
+            {
+                Messages =
+                [
+                    new MessageSequenceStep
+                    {
+                        Body = "Tu cita quedo confirmada a las {Time12}."
+                    }
+                ]
+            }
+        };
+
+        SetupEmptyAttachments(businessId);
+        SetupServices(businessId);
+
+        var reservation = new Reservation
+        {
+            ReservationId = Guid.NewGuid(),
+            ReservationDateTime = new DateTime(2026, 6, 10, 14, 30, 0),
+            Service = new Service { ServiceName = "Corte basico", Price = 30000 }
+        };
+
+        _unitOfWork.Setup(u => u.Reservations.GetByIdAsync(reservation.ReservationId))
+            .ReturnsAsync(reservation);
+
+        var result = await _resolver.ResolveAsync(
+            businessId,
+            "reservation_confirmed",
+            catalog,
+            new MessageSequenceContext { Reservation = reservation },
+            CancellationToken.None);
+
+        result.Should().ContainSingle();
+        result[0].Body.Should().Contain("2:30 pm");
+        result[0].Body.Should().NotContain("14:30");
+    }
+
+    [Fact]
     public async Task ResolveAsync_WithAttachment_ResolvesMediaUrl()
     {
         var businessId = Guid.NewGuid();

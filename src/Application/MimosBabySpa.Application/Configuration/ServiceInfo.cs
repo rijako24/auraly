@@ -5,7 +5,7 @@ namespace MimosBabySpa.Application.Configuration;
 /// <summary>
 /// Proyección de servicio para la capa de aplicación.
 ///
-/// CategoryId + Tier permiten al ServiceCatalogBuilder agrupar y ordenar servicios
+/// CategoryId opcional + Tier permiten al ServiceCatalogBuilder agrupar y ordenar servicios
 /// de mayor a menor nivel para que el LLM recomiende primero la opción más completa.
 /// </summary>
 public class ServiceInfo
@@ -22,9 +22,9 @@ public class ServiceInfo
     public bool IsActive { get; set; }
 
     /// <summary>
-    /// ID de la categoría del servicio.
+    /// ID opcional de la categoria del servicio.
     /// </summary>
-    public Guid CategoryId { get; set; }
+    public Guid? CategoryId { get; set; }
 
     /// <summary>
     /// Nombre de la categoría (para presentación).

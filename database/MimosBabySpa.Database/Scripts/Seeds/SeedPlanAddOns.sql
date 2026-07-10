@@ -44,7 +44,7 @@ DECLARE biz_cursor CURSOR LOCAL FAST_FORWARD FOR
 
         WHERE sc.BusinessId = b.BusinessId
 
-          AND sc.Name = N'Plan'
+          AND sc.Name IN (N'Planes Baby Spa', N'Plan')
 
     );
 
@@ -66,9 +66,9 @@ BEGIN
 
     WHERE sc.BusinessId = @BusinessId
 
-      AND sc.Name = N'Plan'
+      AND sc.Name IN (N'Planes Baby Spa', N'Plan')
 
-    ORDER BY sc.DisplayOrder, sc.ServiceCategoryId;
+    ORDER BY CASE WHEN sc.Name = N'Planes Baby Spa' THEN 0 ELSE 1 END, sc.DisplayOrder, sc.ServiceCategoryId;
 
 
 

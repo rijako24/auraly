@@ -9,7 +9,7 @@ public record CreateServiceRequest(
     string? Keywords,
     int DurationMinutes,
     decimal Price,
-    Guid CategoryId,
+    Guid? CategoryId,
     ServiceTier Tier = ServiceTier.Base,
     ServiceType ServiceType = ServiceType.Standard,
     ServiceFulfillmentKind FulfillmentKind = ServiceFulfillmentKind.Reservation,

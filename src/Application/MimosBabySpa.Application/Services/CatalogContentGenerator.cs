@@ -205,7 +205,7 @@ public class CatalogContentGenerator : ICatalogContentGenerator
                 .ToHashSet();
 
             var categoryServices = services
-                .Where(s => selectedCategoryIds.Contains(s.CategoryId))
+                .Where(s => s.CategoryId.HasValue && selectedCategoryIds.Contains(s.CategoryId.Value))
                 .ToList();
             if (categoryServices.Count > 0)
                 return categoryServices;
@@ -225,7 +225,7 @@ public class CatalogContentGenerator : ICatalogContentGenerator
 
         var categoryById = categoryList.ToDictionary(c => c.ServiceCategoryId);
         return services
-            .Where(s => MatchesCategoryText(categoryById.TryGetValue(s.CategoryId, out var cat) ? cat : null, terms))
+            .Where(s => s.CategoryId.HasValue && MatchesCategoryText(categoryById.TryGetValue(s.CategoryId.Value, out var cat) ? cat : null, terms))
             .ToList();
     }
 
@@ -280,9 +280,12 @@ public class CatalogContentGenerator : ICatalogContentGenerator
             return false;
 
         var compactQuery = CatalogSearchText.NormalizeCompact(query);
-        return TermsEquivalent(categoryName, compactQuery)
-               || (terms.Count == 1
-                   && terms.Any(term => TermsEquivalent(categoryName, CatalogSearchText.NormalizeCompact(term))));
+        if (TermsEquivalent(categoryName, compactQuery))
+            return true;
+
+        var categoryTokens = CatalogSearchText.GetSearchTerms(category.Name);
+        return terms.Count > 0
+               && terms.All(term => categoryTokens.Any(token => TermsMatch(token, term)));
     }
 
     private static bool MatchesCategoryText(DomainServiceCategory? category, IReadOnlyList<string> terms)
@@ -307,8 +310,13 @@ public class CatalogContentGenerator : ICatalogContentGenerator
 
         return haystack
             .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Any(token => TermsEquivalent(token, normalizedTerm));
+            .Any(token => TermsMatch(token, normalizedTerm));
     }
+
+    private static bool TermsMatch(string catalogTerm, string queryTerm) =>
+        TermsEquivalent(catalogTerm, queryTerm)
+        || (queryTerm.Length >= 4 && catalogTerm.StartsWith(queryTerm, StringComparison.Ordinal))
+        || (catalogTerm.Length >= 4 && queryTerm.StartsWith(catalogTerm, StringComparison.Ordinal));
 
     private static bool TermsEquivalent(string left, string right)
     {

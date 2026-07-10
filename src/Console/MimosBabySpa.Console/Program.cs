@@ -599,6 +599,7 @@ var consoleAgent = ConsoleAgentOptions.FromEnvironment();
 var traceEnabled = IsTraceEnabled(args);
 
 var scriptedScenario = ResolveScriptedScenario(args);
+consoleAgent = ResolveScenarioAgent(scriptedScenario) ?? consoleAgent;
 var scriptedMessages = BuildLuisReservationScript(args);
 var scriptedCaseIndex = 0;
 var scriptedCheckoutState = new ConsoleCheckoutState();
@@ -623,6 +624,7 @@ Console.WriteLine("  Usa     --trace para ver system prompt, tools y respuestas 
 Console.WriteLine("  Usa     test-luis-reserva para correr una prueba automatica con traza");
 Console.WriteLine("  Usa     test-luis-catalogo para validar que hola consulte catalogo oficial");
 Console.WriteLine("  Usa     test-luis-critical-flow para correr escenarios criticos contra BD/config real");
+Console.WriteLine("  Usa     test-mimos-critical-flow / test-auraly-critical-flow / test-rada-critical-flow / test-solorzano-critical-flow / test-cjdistribuciones-critical-flow");
 
 Console.WriteLine();
 
@@ -1038,7 +1040,7 @@ static async Task<bool> ConfirmLatestConversationPaymentAsync(
     }
 
     Console.ForegroundColor = ConsoleColor.Green;
-    Console.WriteLine($"[PASS] test-luis-critical-flow #{caseIndex + 1:00}: pago confirmado y fulfillment ejecutado para {payment.PaymentReferenceId}.");
+    Console.WriteLine($"[PASS] {scenario ?? "test-luis-critical-flow"} #{caseIndex + 1:00}: pago confirmado y fulfillment ejecutado para {payment.PaymentReferenceId}.");
     Console.ResetColor();
     return true;
 }
@@ -1049,13 +1051,29 @@ static bool IsTraceEnabled(string[] args) =>
 
 static string? ResolveScriptedScenario(string[] args)
 {
-    if (args.Any(a => a.Equals("test-luis-critical-flow", StringComparison.OrdinalIgnoreCase)
-                   || a.Equals("--test-luis-critical-flow", StringComparison.OrdinalIgnoreCase)))
-        return "luis-critical-flow";
+    var known = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+    {
+        ["test-luis-critical-flow"] = "luis-critical-flow",
+        ["--test-luis-critical-flow"] = "luis-critical-flow",
+        ["test-mimos-critical-flow"] = "mimos-critical-flow",
+        ["--test-mimos-critical-flow"] = "mimos-critical-flow",
+        ["test-auraly-critical-flow"] = "auraly-critical-flow",
+        ["--test-auraly-critical-flow"] = "auraly-critical-flow",
+        ["test-rada-critical-flow"] = "rada-critical-flow",
+        ["--test-rada-critical-flow"] = "rada-critical-flow",
+        ["test-solorzano-critical-flow"] = "solorzano-critical-flow",
+        ["--test-solorzano-critical-flow"] = "solorzano-critical-flow",
+        ["test-cjdistribuciones-critical-flow"] = "cjdistribuciones-critical-flow",
+        ["--test-cjdistribuciones-critical-flow"] = "cjdistribuciones-critical-flow",
+        ["test-luis-catalogo"] = "luis-catalogo",
+        ["--test-luis-catalogo"] = "luis-catalogo"
+    };
 
-    if (args.Any(a => a.Equals("test-luis-catalogo", StringComparison.OrdinalIgnoreCase)
-                   || a.Equals("--test-luis-catalogo", StringComparison.OrdinalIgnoreCase)))
-        return "luis-catalogo";
+    foreach (var arg in args)
+    {
+        if (known.TryGetValue(arg, out var scenario))
+            return scenario;
+    }
 
     if (IsScriptedReservationTest(args))
         return "luis-reserva";
@@ -1084,6 +1102,7 @@ static Queue<string> BuildLuisReservationScript(string[] args)
     {
         "luis-catalogo" => new[] { "hola" },
         "luis-critical-flow" => BuildLuisCriticalFlowMessages(),
+        "mimos-critical-flow" or "auraly-critical-flow" or "rada-critical-flow" or "solorzano-critical-flow" or "cjdistribuciones-critical-flow" => BuildConsoleScenarioMessages(GetConsoleScenarioSteps(scenario)),
         _ => new[]
         {
             "Hola, quiero reservar un corte basico de adulto manana a las 10:30 de la manana",
@@ -1119,10 +1138,9 @@ static bool ValidateScriptedTurn(
         return false;
     }
 
-    if (!string.Equals(scenario, "luis-critical-flow", StringComparison.OrdinalIgnoreCase))
+    var steps = GetConsoleScenarioSteps(scenario);
+    if (steps.Count == 0)
         return true;
-
-    var steps = GetLuisCriticalFlowSteps();
     if (caseIndex < 0 || caseIndex >= steps.Count)
         return true;
 
@@ -1169,9 +1187,9 @@ static bool ValidateScriptedTurn(
         var forbidden = current.ForbiddenTools.Count == 0 ? string.Empty : $"; prohibidas ausentes: {string.Join(", ", current.ForbiddenTools)}";
         var expectedResults = current.ToolResultContains.Count == 0 ? string.Empty : $"; resultados validados: {string.Join(", ", current.ToolResultContains.Select(e => e.ToolName))}";
         var expectedStages = current.ExpectedStages.Count == 0 ? string.Empty : $"; etapas: {string.Join(", ", current.ExpectedStages)}";
-        Console.WriteLine($"[PASS] test-luis-critical-flow #{caseIndex + 1:00} {current.Id}: {expected}{forbidden}{expectedResults}{expectedStages}");
+        Console.WriteLine($"[PASS] {scenario} #{caseIndex + 1:00} {current.Id}: {expected}{forbidden}{expectedResults}{expectedStages}");
         if (caseIndex == steps.Count - 1)
-            Console.WriteLine($"[PASS] test-luis-critical-flow: {steps.Count}/{steps.Count} pasos criticos pasaron.");
+            Console.WriteLine($"[PASS] {scenario}: {steps.Count}/{steps.Count} pasos criticos pasaron.");
         Console.ResetColor();
         return true;
     }
@@ -1198,7 +1216,7 @@ static bool ValidateScriptedTurn(
         failures.Add(toolOrderFailure);
     if (checkoutFailure is not null)
         failures.Add(checkoutFailure);
-    Console.WriteLine($"[FAIL] test-luis-critical-flow #{caseIndex + 1:00} {current.Id}: {string.Join("; ", failures)} para '{input}'. Respuesta: {response}");
+    Console.WriteLine($"[FAIL] {scenario} #{caseIndex + 1:00} {current.Id}: {string.Join("; ", failures)} para '{input}'. Respuesta: {response}");
     Console.ResetColor();
     return false;
 }
@@ -1277,6 +1295,33 @@ static string[] BuildLuisCriticalFlowMessages()
 
     return messages.ToArray();
 }
+static string[] BuildConsoleScenarioMessages(IReadOnlyList<ConsoleScenarioStep> steps)
+{
+    var messages = new List<string>();
+    var first = true;
+    foreach (var step in steps)
+    {
+        if (!first && step.ResetBefore)
+            messages.Add("reset");
+
+        messages.Add(step.UserMessage);
+        first = false;
+    }
+
+    return messages.ToArray();
+}
+
+static IReadOnlyList<ConsoleScenarioStep> GetConsoleScenarioSteps(string? scenario) => scenario?.ToLowerInvariant() switch
+{
+    "luis-critical-flow" => GetLuisCriticalFlowSteps(),
+    "mimos-critical-flow" => GetMimosCriticalFlowSteps(),
+    "auraly-critical-flow" => GetAuralyCriticalFlowSteps(),
+    "rada-critical-flow" => GetRadaCriticalFlowSteps(),
+    "solorzano-critical-flow" => GetSolorzanoCriticalFlowSteps(),
+    "cjdistribuciones-critical-flow" => GetCjDistribucionesCriticalFlowSteps(),
+    _ => []
+};
+
 
 static IReadOnlyList<ConsoleScenarioStep> GetLuisCriticalFlowSteps()
 {
@@ -1438,6 +1483,284 @@ static IReadOnlyList<ConsoleScenarioStep> GetLuisCriticalFlowSteps()
     ];
 }
 
+
+static IReadOnlyList<ConsoleScenarioStep> GetMimosCriticalFlowSteps()
+{
+    var testDate = NextBusinessDate();
+
+    return
+    [
+        new("mimos_greeting", "hola", [])
+        {
+            ExpectedStages = ["discovery"],
+            ForbiddenTools = ["get_service_catalog", "get_compatible_add_ons", "check_availability", "prepare_checkout", "create_reservation", "manage_reservation"],
+            ResponseContainsAll = ["Mimo", "Baby Spa", "bebe"],
+            ResponseContainsAny = ["ayudarte", "bienestar"],
+            ResponseForbiddenContains = ["categoria", "catalogo", "servicio", "complementos", "anticipo", "resumen"]
+        },
+        new("mimos_capture_baby_context", "Mi bebe se llama Mia y tiene 8 meses", ["set_fact", "get_service_catalog"])
+        {
+            ResetBefore = false,
+            ExpectedStages = ["discovery", "service_selection"],
+            ForbiddenTools = ["get_compatible_add_ons", "check_availability", "prepare_checkout", "create_reservation", "manage_reservation"],
+            ToolResultContains = [new("set_fact", "baby_name"), new("set_fact", "baby_age_months"), new("get_service_catalog", "## CATEGORIAS DE SERVICIOS")],
+            ResponseContainsAny = ["categoria", "servicio", "experiencia"],
+            ResponseForbiddenContains = ["complementos", "anticipo", "resumen"]
+        },
+        new("mimos_service_catalog", "quiero una experiencia de hidroterapia", ["get_service_catalog"])
+        {
+            ResetBefore = false,
+            ExpectedStages = ["service_selection"],
+            ForbiddenTools = ["get_compatible_add_ons", "check_availability", "prepare_checkout", "create_reservation", "manage_reservation"],
+            ToolResultContains = [new("get_service_catalog", "## CATEGORIAS DE SERVICIOS")],
+            ResponseContainsAny = ["hidro", "servicio", "experiencia"],
+            ResponseForbiddenContains = ["complementos", "decoracion", "fotografia", "anticipo", "resumen"]
+        },
+        new("mimos_exact_service_addons", "Elijo Plan Aventuras Marinas", ["resolve_service_selection", "get_service_fulfillment", "get_compatible_add_ons"])
+        {
+            ResetBefore = false,
+            ExpectedStages = ["service_selection", "addons_offering"],
+            ExpectedToolOrder = ["resolve_service_selection", "get_service_fulfillment", "get_compatible_add_ons"],
+            ForbiddenTools = ["get_service_catalog", "check_availability", "prepare_checkout", "create_reservation", "manage_reservation"],
+            ToolResultContains = [new("get_service_fulfillment", "fulfillment_ready"), new("get_service_fulfillment", "reservation")],
+            ResponseContainsAny = ["complemento", "decoracion", "fotografia", "continuar sin complementos"],
+            ResponseForbiddenContains = ["resumen"]
+        },
+        new("mimos_no_addons", "seguimos sin complementos", ["set_fact"])
+        {
+            ResetBefore = false,
+            ExpectedStages = ["addons_offering"],
+            ForbiddenTools = ["get_service_catalog", "get_compatible_add_ons", "check_availability", "prepare_checkout", "create_reservation", "manage_reservation"],
+            ToolResultContains = [new("set_fact", "add_ons")],
+            ResponseContainsAny = ["fecha", "cuando", "dia"],
+            ResponseForbiddenContains = ["anticipo", "resumen"]
+        },
+        new("mimos_date_slots", $"Que horarios tienes para el {testDate}", ["set_fact", "check_availability"])
+        {
+            ResetBefore = false,
+            ExpectedStages = ["scheduling"],
+            ExpectedToolOrder = ["set_fact", "check_availability"],
+            ForbiddenTools = ["get_service_catalog", "get_compatible_add_ons", "prepare_checkout", "create_reservation", "manage_reservation"],
+            ToolResultContains = [new("set_fact", "desired_date")],
+            ResponseContainsAny = ["espacios", "horarios", "hora"]
+        },
+        new("mimos_pick_time", "A las 9:00", ["set_fact", "check_availability"])
+        {
+            ResetBefore = false,
+            ExpectedStages = ["scheduling"],
+            ExpectedToolOrder = ["set_fact", "check_availability"],
+            ForbiddenTools = ["get_service_catalog", "get_compatible_add_ons", "prepare_checkout", "create_reservation", "manage_reservation"],
+            ToolResultContains = [new("set_fact", "desired_time"), new("check_availability", "availability_checked")],
+            ResponseContainsAny = ["nombre", "nacimiento", "registro"]
+        },
+        new("mimos_checkout", "La registra Laura Perez y Mia nacio el 2025-11-15", ["set_fact", "prepare_checkout"])
+        {
+            ResetBefore = false,
+            ExpectedStages = ["customer_data", "finalization"],
+            ExpectedToolOrder = ["set_fact", "prepare_checkout"],
+            ForbiddenTools = ["get_service_catalog", "get_compatible_add_ons", "manage_reservation"],
+            ToolResultContains = [new("set_fact", "customer_name"), new("set_fact", "baby_birth_date"), new("prepare_checkout", "checkout_token")],
+            ResponseContainsAny = ["resumen", "anticipo", "pago", "link"],
+            ResponseForbiddenContains = ["Genero el resumen", "Quieres que genere"]
+        }
+    ];
+}
+
+static IReadOnlyList<ConsoleScenarioStep> GetAuralyCriticalFlowSteps()
+{
+    var testDate = NextBusinessDate();
+
+    return
+    [
+        new("auraly_first_contact_sequence", "hola", ["send_message_sequence"])
+        {
+            ExpectedStages = ["discovery"],
+            ForbiddenTools = ["get_service_catalog", "check_availability", "prepare_checkout", "create_reservation"],
+            ResponseForbiddenContains = ["Que tipo de negocio tienes"]
+        },
+        new("auraly_capture_context_and_value", "Tengo un restaurante y quiero mejorar responder leads y agendar por WhatsApp", ["set_fact", "get_service_catalog"])
+        {
+            ResetBefore = false,
+            ExpectedStages = ["discovery", "value_explanation"],
+            ForbiddenTools = ["check_availability", "prepare_checkout", "create_reservation"],
+            ToolResultContains = [new("set_fact", "business_type"), new("set_fact", "pain_point"), new("get_service_catalog", "Demo AURALY")],
+            ResponseContainsAny = ["AURALY", "demo", "WhatsApp"]
+        },
+        new("auraly_ask_date", "quiero agendar la demo", ["resolve_service_selection"])
+        {
+            ResetBefore = false,
+            ExpectedStages = ["scheduling"],
+            ForbiddenTools = ["get_service_catalog", "prepare_checkout", "create_reservation"],
+            ResponseContainsAny = ["fecha", "horarios", "demo"],
+            ResponseForbiddenContains = ["servicio"]
+        },
+        new("auraly_date_slots", $"Para el {testDate}", ["set_fact", "check_availability"])
+        {
+            ResetBefore = false,
+            ExpectedStages = ["scheduling"],
+            ExpectedToolOrder = ["set_fact", "check_availability"],
+            ForbiddenTools = ["get_service_catalog", "prepare_checkout", "create_reservation"],
+            ToolResultContains = [new("set_fact", "desired_date")],
+            ResponseContainsAny = ["espacios", "horarios", "hora"]
+        },
+        new("auraly_pick_time", "A las 14:00", ["set_fact", "check_availability"])
+        {
+            ResetBefore = false,
+            ExpectedStages = ["scheduling"],
+            ExpectedToolOrder = ["set_fact", "check_availability"],
+            ForbiddenTools = ["get_service_catalog", "prepare_checkout", "create_reservation"],
+            ToolResultContains = [new("set_fact", "desired_time"), new("check_availability", "availability_checked")],
+            ResponseContainsAny = ["nombre", "empresa", "correo"]
+        },
+        new("auraly_customer_data", "Soy Ana Gomez de Restaurante Norte y mi correo es ana.gomez@example.com", ["set_fact"])
+        {
+            ResetBefore = false,
+            ExpectedStages = ["customer_data"],
+            ForbiddenTools = ["get_service_catalog", "check_availability", "prepare_checkout", "create_reservation"],
+            ToolResultContains = [new("set_fact", "customer_name"), new("set_fact", "company_name"), new("set_fact", "customer_email")],
+            ResponseContainsAny = ["confirma", "resumen", "demo"]
+        },
+        new("auraly_confirm", "confirmo", ["set_fact", "create_reservation"])
+        {
+            ResetBefore = false,
+            ExpectedStages = ["confirmation", "reservation_creation"],
+            ForbiddenTools = ["get_service_catalog", "prepare_checkout"],
+            ToolResultContains = [new("set_fact", "customer_confirmed"), new("create_reservation", "reservation_id")],
+            ResponseContainsAny = ["confirm", "demo", "AURALY"]
+        }
+    ];
+}
+
+static IReadOnlyList<ConsoleScenarioStep> GetRadaCriticalFlowSteps()
+{
+    var testDate = NextBusinessDate();
+
+    return
+    [
+        new("rada_greeting", "hola", [])
+        {
+            ExpectedStages = ["discovery"],
+            ForbiddenTools = ["get_service_catalog", "check_availability", "prepare_checkout", "create_reservation"],
+            ResponseContainsAny = ["Rada Concept", "servicio"],
+            ResponseForbiddenContains = ["Diseno Arquitectonico", "catalogo", "precio", "resumen"]
+        },
+        new("rada_project_catalog", "necesito diseno para remodelar una sala comercial", ["set_fact", "get_service_catalog"])
+        {
+            ResetBefore = false,
+            ExpectedStages = ["discovery", "service_selection"],
+            ForbiddenTools = ["check_availability", "prepare_checkout", "create_reservation"],
+            ToolResultContains = [new("set_fact", "project_context"), new("get_service_catalog", "Diseno")],
+            ResponseContainsAny = ["diseno", "remodelacion", "asesoria"]
+        },
+        new("rada_exact_service", "Elijo Asesoria en Diseno", ["resolve_service_selection"])
+        {
+            ResetBefore = false,
+            ExpectedStages = ["service_selection"],
+            ForbiddenTools = ["get_service_catalog", "prepare_checkout", "create_reservation"],
+            ResponseContainsAny = ["fecha", "agenda", "asesoria"]
+        },
+        new("rada_date_slots", $"Que horarios tienes para el {testDate}", ["set_fact", "check_availability"])
+        {
+            ResetBefore = false,
+            ExpectedStages = ["scheduling"],
+            ExpectedToolOrder = ["set_fact", "check_availability"],
+            ForbiddenTools = ["get_service_catalog", "prepare_checkout", "create_reservation"],
+            ToolResultContains = [new("set_fact", "desired_date")],
+            ResponseContainsAny = ["espacios", "horarios", "hora"]
+        },
+        new("rada_pick_time", "A las 10:00", ["set_fact", "check_availability"])
+        {
+            ResetBefore = false,
+            ExpectedStages = ["scheduling"],
+            ExpectedToolOrder = ["set_fact", "check_availability"],
+            ForbiddenTools = ["get_service_catalog", "prepare_checkout", "create_reservation"],
+            ToolResultContains = [new("set_fact", "desired_time"), new("check_availability", "availability_checked")],
+            ResponseContainsAny = ["nombre", "celular"]
+        },
+        new("rada_customer_data", "Me llamo Carlos Ruiz y mi celular es 3001234567", ["set_fact"])
+        {
+            ResetBefore = false,
+            ExpectedStages = ["customer_data"],
+            ForbiddenTools = ["get_service_catalog", "check_availability", "prepare_checkout", "create_reservation"],
+            ToolResultContains = [new("set_fact", "customer_name"), new("set_fact", "customer_phone")],
+            ResponseContainsAny = ["resumen", "confirmas", "confirmacion"]
+        },
+        new("rada_confirm", "confirmo", ["set_fact", "create_reservation"])
+        {
+            ResetBefore = false,
+            ExpectedStages = ["confirmation", "reservation_creation"],
+            ForbiddenTools = ["get_service_catalog", "prepare_checkout"],
+            ToolResultContains = [new("set_fact", "customer_confirmed"), new("create_reservation", "reservation_id")],
+            ResponseContainsAny = ["agendada", "confirm"]
+        }
+    ];
+}
+
+static IReadOnlyList<ConsoleScenarioStep> GetSolorzanoCriticalFlowSteps()
+{
+    return
+    [
+        new("solorzano_greeting_catalog", "hola quiero ver vinos", ["search_products"])
+        {
+            ExpectedStages = ["discovery"],
+            ForbiddenTools = ["get_service_catalog", "check_availability", "prepare_checkout", "create_reservation", "create_order"],
+            ToolResultContains = [new("search_products", "Mango")],
+            ResponseContainsAll = ["Que vino te gustaria degustar el dia de hoy"],
+            ResponseForbiddenContains = ["precio", "$"]
+        },
+        new("solorzano_add_product", "quiero 2 mango 750", ["add_order_item"])
+        {
+            ResetBefore = false,
+            ExpectedStages = ["discovery"],
+            ForbiddenTools = ["get_service_catalog", "check_availability", "prepare_checkout", "create_reservation", "prepare_order_checkout", "create_order"],
+            ToolResultContains = [new("add_order_item", "Mango 750ML")],
+            ResponseContainsAll = ["Quieres agregar algo mas a la compra"]
+        },
+        new("solorzano_finalize_items", "no, asi esta bien", ["set_fact"])
+        {
+            ResetBefore = false,
+            ExpectedStages = ["discovery"],
+            ForbiddenTools = ["search_products", "prepare_order_checkout", "create_order"],
+            ToolResultContains = [new("set_fact", "order_finalized")],
+            ResponseContainsAny = ["Direccion", "Celular", "Nombre"]
+        },
+        new("solorzano_delivery_data", "Direccion Calle 10 #20-30, celular 3001234567, recibe Carlos Perez", ["set_fact"])
+        {
+            ResetBefore = false,
+            ExpectedStages = ["order_data"],
+            ForbiddenTools = ["search_products", "prepare_order_checkout", "create_order"],
+            ToolResultContains = [new("set_fact", "delivery_address"), new("set_fact", "delivery_phone"), new("set_fact", "customer_name")],
+            ResponseContainsAny = ["efectivo", "transferencia"]
+        },
+        new("solorzano_payment_summary", "pago en efectivo", ["set_fact", "prepare_order_checkout"])
+        {
+            ResetBefore = false,
+            ExpectedStages = ["payment_method", "summary"],
+            ExpectedToolOrder = ["set_fact", "prepare_order_checkout"],
+            ForbiddenTools = ["search_products", "get_service_catalog", "check_availability", "prepare_checkout", "create_reservation", "create_order"],
+            ToolResultContains = [new("set_fact", "payment_method"), new("prepare_order_checkout", "order_checkout_presented")],
+            ResponseContainsAny = ["resumen", "total", "envio", "confirm"]
+        },
+        new("solorzano_confirm_order", "confirmo el pedido", ["create_order"])
+        {
+            ResetBefore = false,
+            ExpectedStages = ["order_confirmation"],
+            ForbiddenTools = ["search_products", "prepare_checkout", "create_reservation"],
+            ToolResultContains = [new("create_order", "order_id")],
+            ResponseContainsAny = ["pedido", "confirm"]
+        }
+    ];
+}
+
+static string NextBusinessDate()
+{
+    var date = DateTime.Today.AddDays(3650 + (int)(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() % 1200));
+    while (date.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday)
+        date = date.AddDays(1);
+
+    return date.ToString("yyyy-MM-dd");
+}
+
 static bool ResponseContains(string? response, string expected) =>
     !string.IsNullOrWhiteSpace(response)
     && NormalizeConsoleText(response).Contains(NormalizeConsoleText(expected), StringComparison.Ordinal);
@@ -1564,6 +1887,86 @@ static string PrettyJson(string? json, JsonSerializerOptions options)
     }
 }
 
+static IReadOnlyList<ConsoleScenarioStep> GetCjDistribucionesCriticalFlowSteps()
+{
+    return
+    [
+        new("cj_identification", "hola", [])
+        {
+            ExpectedStages = ["customer_name"],
+            ForbiddenTools = ["search_products", "prepare_order_checkout", "create_order", "get_service_catalog", "check_availability", "prepare_checkout", "create_reservation"],
+            ResponseContainsAll = ["CJ Distribuciones", "nombre"],
+            ResponseForbiddenContains = ["catalogo", "precio", "$", "total"]
+        },
+        new("cj_profile", "Soy Surtimax La 15", ["set_fact"])
+        {
+            ResetBefore = false,
+            ExpectedStages = ["customer_name", "customer_type"],
+            ForbiddenTools = ["search_products", "prepare_order_checkout", "create_order", "get_service_catalog", "check_availability", "prepare_checkout", "create_reservation"],
+            ToolResultContains = [new("set_fact", "customer_name")],
+            ResponseContainsAny = ["Hogar", "Tienda", "Restaurante", "Comida rapida", "Distribuidor"]
+        },
+        new("cj_profile_natural_language", "Tengo una tienda y minimercado", ["set_fact"])
+        {
+            ResetBefore = false,
+            ExpectedStages = ["customer_type"],
+            ForbiddenTools = ["prepare_order_checkout", "create_order", "get_service_catalog", "check_availability", "prepare_checkout", "create_reservation"],
+            ToolResultContains = [new("set_fact", "customer_type")],
+            ResponseContainsAny = ["productos", "catalogo", "necesitas", "preparar"]
+        },
+        new("cj_product_list", "Necesito 2 pechugas, 1 papa 2.5 y 1 quesillo de 20 lonchas", ["search_products", "add_order_item"])
+        {
+            ResetBefore = false,
+            ExpectedStages = ["product_selection"],
+            ForbiddenTools = ["get_service_catalog", "check_availability", "prepare_checkout", "create_reservation", "prepare_order_checkout", "create_order"],
+            ToolResultContains = [new("search_products", "Pechuga"), new("search_products", "Papa a la francesa 2.5 kg"), new("search_products", "Quesillo 20 lonchas")],
+            ResponseContainsAny = ["pechuga", "papa", "quesillo", "agreg"],
+            ResponseForbiddenContains = ["Se muestran referencias", "placeholder"]
+        },
+        new("cj_finalize_cart_review", "eso es todo, dame el total", ["set_fact", "get_order_draft"])
+        {
+            ResetBefore = false,
+            ExpectedStages = ["product_selection", "cart_review"],
+            ForbiddenTools = ["search_products", "prepare_order_checkout", "create_order", "get_service_catalog", "check_availability", "prepare_checkout", "create_reservation"],
+            ToolResultContains = [new("set_fact", "order_finalized")],
+            ResponseContainsAny = ["pedido", "total", "correcto", "modificar"]
+        },
+        new("cj_confirm_cart_delivery_method", "esta correcto", ["set_fact"])
+        {
+            ResetBefore = false,
+            ExpectedStages = ["cart_review", "order_data"],
+            ForbiddenTools = ["search_products", "prepare_order_checkout", "create_order", "get_service_catalog", "check_availability", "prepare_checkout", "create_reservation"],
+            ToolResultContains = [new("set_fact", "cart_review_confirmed")],
+            ResponseContainsAny = ["recoger", "recogida", "domicilio"]
+        },
+        new("cj_delivery_data", "A domicilio en Calle 10 #20-30 barrio Centro, celular 3001234567", ["set_fact"])
+        {
+            ResetBefore = false,
+            ExpectedStages = ["order_data"],
+            ForbiddenTools = ["search_products", "prepare_order_checkout", "create_order", "get_service_catalog", "check_availability", "prepare_checkout", "create_reservation"],
+            ToolResultContains = [new("set_fact", "delivery_method"), new("set_fact", "delivery_address"), new("set_fact", "delivery_phone")],
+            ResponseContainsAny = ["efectivo", "transferencia"]
+        },
+        new("cj_payment_summary", "pago en efectivo", ["set_fact", "prepare_order_checkout"])
+        {
+            ResetBefore = false,
+            ExpectedStages = ["payment_method", "summary"],
+            ExpectedToolOrder = ["set_fact", "prepare_order_checkout"],
+            ForbiddenTools = ["search_products", "get_service_catalog", "check_availability", "prepare_checkout", "create_reservation", "create_order"],
+            ToolResultContains = [new("set_fact", "payment_method"), new("prepare_order_checkout", "order_checkout_presented")],
+            ResponseContainsAny = ["resumen", "total", "envio", "confirm"]
+        },
+        new("cj_confirm_order", "confirmo el pedido", ["create_order"])
+        {
+            ResetBefore = false,
+            ExpectedStages = ["order_confirmation"],
+            ForbiddenTools = ["search_products", "prepare_checkout", "create_reservation"],
+            ToolResultContains = [new("create_order", "order_id")],
+            ResponseContainsAny = ["pedido", "confirm"]
+        }
+    ];
+}
+
 static string CreateTestUserPhone()
 
 {
@@ -1582,6 +1985,46 @@ static string CreateTestUserPhone()
 
 static string CreateFreshTestUserPhone() =>
     $"+1555{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() % 10000000:0000000}{Random.Shared.Next(0, 100):00}";
+
+static ConsoleAgentOptions? ResolveScenarioAgent(string? scenario) => scenario?.ToLowerInvariant() switch
+{
+    "mimos-critical-flow" => new ConsoleAgentOptions(
+        Guid.Parse("22222222-2222-2222-2222-222222222222"),
+        "Mimos Baby Spa - Valledupar",
+        Guid.Parse("7105A9D5-D4E4-4BBA-9F3A-DBB34E0B1B86"),
+        "Mimi Bot",
+        "Mimi",
+        ["Mimi Bot", "Mimo Bot"]),
+    "auraly-critical-flow" => new ConsoleAgentOptions(
+        Guid.Parse("A0A10000-0000-0000-0000-000000000001"),
+        "AURALY",
+        Guid.Parse("A0A10000-0000-0000-0000-000000000002"),
+        "Aly",
+        "Aly",
+        ["Aly"]),
+    "rada-critical-flow" => new ConsoleAgentOptions(
+        Guid.Parse("AADA0000-0000-0000-0000-000000000001"),
+        "Rada Concept",
+        Guid.Parse("AADA0000-0000-0000-0000-000000000002"),
+        "Asistente Rada Concept",
+        "Rada",
+        ["Asistente Rada Concept"]),
+    "solorzano-critical-flow" => new ConsoleAgentOptions(
+        Guid.Parse("FCEE3BA9-E6BF-43E2-8C1A-560CB724688B"),
+        "Vinos Artesanales Solorzano",
+        Guid.Parse("B0EE3BA9-E6BF-43E2-8C1A-560CB724688B"),
+        "Camila",
+        "Camila",
+        ["Camila"]),
+    "cjdistribuciones-critical-flow" => new ConsoleAgentOptions(
+        Guid.Parse("C1D15A00-0000-0000-0000-000000000010"),
+        "CJ Distribuciones",
+        Guid.Parse("C1D15A00-0000-0000-0000-000000000020"),
+        "Asistente CJ Distribuciones",
+        "CJ",
+        ["Asistente CJ Distribuciones"]),
+    _ => null
+};
 
 internal sealed record ConsoleScenarioStep(string Id, string UserMessage, IReadOnlyList<string> ExpectedTools)
 {
@@ -1686,6 +2129,3 @@ internal sealed class ConsoleUsageBillingService : IUsageBillingService
         Task.FromResult<IReadOnlyList<UsagePlanDto>>(Array.Empty<UsagePlanDto>());
 
 }
-
-
-

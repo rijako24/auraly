@@ -12,7 +12,7 @@ DECLARE @CategoryName NVARCHAR(100) = N'Iniciaci' + NCHAR(243) + N'n al Jard' + 
 DECLARE @LegacyCategoryName NVARCHAR(100) = N'Programa';
 DECLARE @Description NVARCHAR(MAX) = N'Espacio para acompanar la transicion a la etapa escolar, fortaleciendo autonomia, habilidades sociales, rutinas, desarrollo emocional y preparacion para el jardin en un ambiente calido y guiado por profesionales. Inversion: mensualidad $380.000 COP; inscripcion de pago unico $100.000 COP; uniforme con valor pendiente por definir.';
 DECLARE @FixedScheduleLabel NVARCHAR(500) = N'lunes a viernes 08:00-11:30';
-DECLARE @CategoryDescription NVARCHAR(MAX) = N'Programa de acompanamiento infantil con inscripcion y horario fijo.';
+DECLARE @CategoryDescription NVARCHAR(MAX) = N'Programa de acompanamiento infantil con inscripcion y horario fijo para preparar la transicion al jardin. Fortalece autonomia, socializacion, rutinas, lenguaje, motricidad y seguridad emocional en un ambiente calido y guiado.';
 DECLARE @MimosBusinessId UNIQUEIDENTIFIER = '22222222-2222-2222-2222-222222222222';
 
 DECLARE @Businesses TABLE
@@ -59,7 +59,6 @@ BEGIN
         WHERE sc.BusinessId = @BusinessId
           AND sc.Name = @LegacyCategoryName;
     END
-
     IF @CategoryId IS NULL
     BEGIN
         SET @CategoryId = NEWID();
@@ -75,7 +74,7 @@ BEGIN
     BEGIN
         UPDATE dbo.ServiceCategories
         SET Name = @CategoryName,
-            Description = COALESCE(Description, @CategoryDescription),
+            Description = CASE WHEN Description IS NULL OR LTRIM(RTRIM(Description)) = N'' OR Description = N'Programa de acompanamiento infantil con inscripcion y horario fijo.' THEN @CategoryDescription ELSE Description END,
             DisplayOrder = CASE WHEN DisplayOrder = 99 THEN 3 ELSE DisplayOrder END,
             IsActive = 1,
             UpdatedAt = GETUTCDATE()

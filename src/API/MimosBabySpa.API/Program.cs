@@ -194,6 +194,12 @@ services.AddScoped<ServiceSelectionResolver>();
 
         services.Configure<OpenAIAudioModelOptions>(configuration.GetSection(OpenAIAudioModelOptions.SectionName));
 
+        services.AddSingleton(_ =>
+            configuration.GetSection(AudioTranscriptionQualityOptions.SectionName).Get<AudioTranscriptionQualityOptions>()
+            ?? new AudioTranscriptionQualityOptions());
+
+        services.AddSingleton<IAudioTranscriptionQualityEvaluator, AudioTranscriptionQualityEvaluator>();
+
 
 
         services.AddKeyedSingleton<OpenAIClient>("Text", (sp, _) =>

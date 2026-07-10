@@ -1,3 +1,5 @@
+using System.Globalization;
+using MimosBabySpa.Application.Configuration;
 using MimosBabySpa.Application.DTOs;
 using Microsoft.Extensions.Logging;
 
@@ -8,11 +10,15 @@ public class WhatsAppWebhookParserService : IWhatsAppWebhookParserService
     private readonly IWhatsAppService _whatsAppService;
     private readonly IAIService _aiService;
     private readonly IBusinessIdentificationService _businessIdentificationService;
+    private readonly IAudioTranscriptionQualityEvaluator _audioQualityEvaluator;
+    private readonly AudioTranscriptionQualityOptions _audioQualityOptions;
     private readonly ILogger<WhatsAppWebhookParserService> _logger;
 
     public WhatsAppWebhookParserService(
         IWhatsAppService whatsAppService,
         IAIService aiService,
+        IAudioTranscriptionQualityEvaluator audioQualityEvaluator,
+        AudioTranscriptionQualityOptions audioQualityOptions,
         IBusinessIdentificationService businessIdentificationService,
         ILogger<WhatsAppWebhookParserService> logger)
     {
@@ -20,6 +26,8 @@ public class WhatsAppWebhookParserService : IWhatsAppWebhookParserService
         _aiService = aiService;
         _businessIdentificationService = businessIdentificationService;
         _logger = logger;
+        _audioQualityEvaluator = audioQualityEvaluator;
+        _audioQualityOptions = audioQualityOptions;
     }
 
     public async Task<IEnumerable<IncomingMessage>> ExtractAllMessagesFromEntryAsync(Entry entry, Guid businessId)
@@ -110,9 +118,11 @@ public class WhatsAppWebhookParserService : IWhatsAppWebhookParserService
                         using var audioStream = await _whatsAppService.DownloadMediaAsync(businessId, mediaId);
 
                         // Transcribir el audio a texto
-                        var transcribedText = await _aiService.TranscribeAudioAsync(audioStream, mimeType);
+                        var transcription = await _aiService.TranscribeAudioAsync(audioStream, mimeType);
+                        var quality = _audioQualityEvaluator.Evaluate(transcription);
+                        var transcribedText = transcription.Text?.Trim() ?? string.Empty;
 
-                        if (!string.IsNullOrWhiteSpace(transcribedText))
+                        if (quality.ShouldAccept && !string.IsNullOrWhiteSpace(transcribedText))
                         {
                             result.Add(new IncomingMessage
                             {
@@ -121,20 +131,38 @@ public class WhatsAppWebhookParserService : IWhatsAppWebhookParserService
                                 CustomerName = customerName,
                                 ProviderMessageId = message.Id,
                                 ReplyToProviderMessageId = message.Context?.Id,
-                                Facts = message.Facts ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                                Facts = BuildAudioFacts(message.Facts, quality)
                             });
 
-                            _logger.LogInformation("Audio transcrito para {UserNumber}: {Transcription}",
-                                message.From, transcribedText);
+                            _logger.LogInformation(
+                                "Audio aceptado para {UserNumber}: Reliability={Reliability}, Confidence={Confidence}, Reason={Reason}",
+                                message.From,
+                                quality.Reliability,
+                                quality.ConfidenceScore,
+                                quality.Reason);
+                        }
+                        else if (!string.IsNullOrWhiteSpace(transcribedText))
+                        {
+                            _logger.LogWarning(
+                                "Audio rechazado para {UserNumber}: Reliability={Reliability}, Confidence={Confidence}, Reason={Reason}, Text={Transcription}",
+                                message.From,
+                                quality.Reliability,
+                                quality.ConfidenceScore,
+                                quality.Reason,
+                                transcribedText);
+
+                            await SendUnclearAudioReplyAsync(businessId, message.From);
                         }
                         else
                         {
                             _logger.LogWarning("No se pudo transcribir el audio del usuario {UserNumber}", message.From);
+                            await SendUnclearAudioReplyAsync(businessId, message.From);
                         }
                     }
                     catch (Exception ex)
                     {
                         _logger.LogError(ex, "Error transcribiendo audio del usuario {UserNumber}", message.From);
+                        await TrySendUnclearAudioReplyAsync(businessId, message.From);
                         // Continuar con los demás mensajes
                     }
                 }
@@ -142,5 +170,46 @@ public class WhatsAppWebhookParserService : IWhatsAppWebhookParserService
         }
 
         return result;
+    }
+
+    private async Task SendUnclearAudioReplyAsync(Guid businessId, string userNumber)
+    {
+        if (string.IsNullOrWhiteSpace(_audioQualityOptions.UnclearAudioReply))
+            return;
+
+        await _whatsAppService.SendTextMessageAsync(
+            businessId,
+            userNumber,
+            _audioQualityOptions.UnclearAudioReply);
+    }
+
+    private async Task TrySendUnclearAudioReplyAsync(Guid businessId, string userNumber)
+    {
+        try
+        {
+            await SendUnclearAudioReplyAsync(businessId, userNumber);
+        }
+        catch (Exception replyEx)
+        {
+            _logger.LogWarning(replyEx, "No se pudo enviar respuesta de audio no claro al usuario {UserNumber}", userNumber);
+        }
+    }
+
+    private static IReadOnlyDictionary<string, string> BuildAudioFacts(
+        IReadOnlyDictionary<string, string>? source,
+        AudioTranscriptionQualityAssessment quality)
+    {
+        var facts = source is null
+            ? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            : new Dictionary<string, string>(source, StringComparer.OrdinalIgnoreCase);
+
+        facts["system.input.modality"] = "audio";
+        facts["system.audio.reliability"] = quality.Reliability.ToString().ToLowerInvariant();
+        facts["system.audio.confidence"] = quality.ConfidenceScore.ToString("0.00", CultureInfo.InvariantCulture);
+
+        if (!string.IsNullOrWhiteSpace(quality.Reason))
+            facts["system.audio.reason"] = quality.Reason;
+
+        return facts;
     }
 }

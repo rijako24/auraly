@@ -502,7 +502,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
     "reservation_confirmed": {
       "messages": [
         {
-          "body": "Tu reserva en BARBER KIDS MENS con Luis Petit Profesional Barber ha sido confirmada para el {Date} a las {Time}."
+          "body": "Tu reserva en BARBER KIDS MENS con Luis Petit Profesional Barber ha sido confirmada para el {Date} a las {Time12}."
         },
         {
           "body": "Te esperamos para una experiencia personalizada, con puntualidad garantizada y atencion al detalle de principio a fin."
@@ -701,7 +701,9 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         ],
         "collect": [
           "booking_intent",
-          "service"
+          "service",
+          "desired_date",
+          "desired_time"
         ],
         "allowedActions": [
           "get_service_catalog",
@@ -717,12 +719,12 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
             }
           }
         ],
-        "conversationGuidance": "Cuando respondas con catalogo en discovery, ordena el mensaje asi: saluda, da la bienvenida a BARBER KIDS MENS, presentate literalmente como: Soy Luis Petit, barbero profesional. No digas tu barbero profesional. Despues muestra el catalogo oficial desde la salida vigente de get_service_catalog y al final cierra preguntando: En que servicio estas interesado? Usa la salida vigente de get_service_catalog como fuente oficial para presentar categorias, servicios y precios. Si el cliente nombra una familia o necesidad amplia, presenta opciones oficiales. Si el cliente elige o parafrasea un servicio de una lista ya presentada, o nombra un servicio puntual con intencion de reservar, llama resolve_service_selection con el texto literal antes de responder; no presentes complementos ni confirmes el servicio como elegido hasta que service quede registrado. No respondas categorias, servicios ni precios sin salida vigente de get_service_catalog."
+        "conversationGuidance": "Cuando respondas con catalogo en discovery, ordena el mensaje asi: saluda, da la bienvenida a BARBER KIDS MENS, presentate literalmente como: Soy Luis Petit, barbero profesional. No digas tu barbero profesional. Despues muestra el catalogo oficial desde la salida vigente de get_service_catalog y al final cierra preguntando: En que servicio estas interesado? Usa la salida vigente de get_service_catalog como fuente oficial para presentar categorias, servicios y precios. Si el cliente menciona fecha u hora, como hoy, manana o una hora concreta, capturala con set_fact antes de responder para conservarla cuando elija servicio. Si el cliente nombra una familia o necesidad amplia, presenta opciones oficiales. Si el cliente elige o parafrasea un servicio de una lista ya presentada, o nombra un servicio puntual con intencion de reservar, llama resolve_service_selection con el texto literal antes de responder; no presentes complementos ni confirmes el servicio como elegido hasta que service quede registrado. No respondas categorias, servicios ni precios sin salida vigente de get_service_catalog."
       },
       {
         "id": "add_ons",
         "name": "Complementos",
-        "goal": "Ofrecer adicionales compatibles cuando apliquen antes de preparar el anticipo.",
+        "goal": "Ofrecer adicionales compatibles cuando apliquen.",
         "advanceWhenFacts": [
           "add_ons"
         ],
@@ -762,8 +764,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
             "when": {
               "requiredFacts": [
                 "service",
-                "desired_date",
-                "desired_time"
+                "desired_date"
               ],
               "missingFacts": [
                 "availability_checked"
@@ -821,7 +822,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
           "check_availability",
           "set_fact"
         ],
-        "conversationGuidance": "Valida agenda con servicio canonico. Si falta fecha, pregunta el dia. Si falta hora o el horario no esta disponible, presenta horarios devueltos por disponibilidad y aplica el seleccionado. Disponibilidad con slot_held=false significa horario libre para continuar la solicitud."
+        "conversationGuidance": "Valida agenda con servicio canonico. Si falta fecha, pregunta el dia. Si ya hay fecha pero falta hora, check_availability se ejecuta con service y date para mostrar espacios disponibles del dia. Si el cliente da una hora exacta, valida con check_availability usando service, date y time. Si el horario no esta disponible, presenta horarios devueltos por disponibilidad y aplica el seleccionado. Disponibilidad con slot_held=false significa horario libre para continuar la solicitud."
       },
       {
         "id": "customer_data",

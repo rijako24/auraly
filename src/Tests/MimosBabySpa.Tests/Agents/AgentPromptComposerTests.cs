@@ -1154,7 +1154,8 @@ public class AgentPromptComposerTests
 
         result.Should().Contain("guia_conversacional: Presenta solo opciones oficiales.");
         result.Should().NotContain("pregunta_conversacional");
-        result.Should().Contain("puede_recoger: service");
+        result.Should().Contain("datos_que_debe_capturar_si_el_cliente_los_menciona: service");
+        result.Should().Contain("regla_collect: si el ultimo mensaje contiene alguno de esos datos");
         result.Should().Contain("## HERRAMIENTAS DE ESTE TURNO");
         result.Should().Contain("resolve_service_selection");
     }

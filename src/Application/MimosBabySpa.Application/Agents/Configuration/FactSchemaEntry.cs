@@ -63,9 +63,13 @@ public sealed class FactSchemaEntry
     public IReadOnlyList<string> DependsOn { get; init; } = [];
 
     /// <summary>
-    /// Nombres alternativos que el LLM puede usar al llamar set_fact.
-    /// Ej. ["nombre", "cliente"] para key=customer_name.
-    /// El motor los normaliza a Key canónico antes de persistir.
+    /// Optional authority that validates/canonicalizes user-provided values.
+    /// Example: catalog-backed facts are resolved by tools/catalog services, not aliases.
+    /// </summary>
+    public string? ValueSource { get; init; }
+
+    /// <summary>
+    /// Alias names that can be used to normalize set_fact keys for non-catalog facts.
     /// </summary>
     public IReadOnlyList<string> Aliases { get; init; } = [];
 }

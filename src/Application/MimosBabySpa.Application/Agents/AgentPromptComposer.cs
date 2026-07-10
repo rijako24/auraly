@@ -1,4 +1,4 @@
-﻿using MimosBabySpa.Application.Agents.Composition;
+using MimosBabySpa.Application.Agents.Composition;
 using MimosBabySpa.Application.Agents.Configuration;
 using MimosBabySpa.Application.Agents.Tools;
 using MimosBabySpa.Application.Services;
@@ -457,7 +457,10 @@ public sealed class AgentPromptComposer : IPromptComposer
     {
 
         if (currentStage.Collect.Count > 0)
-            lines.Add($"- puede_recoger: {string.Join(", ", currentStage.Collect)}");
+        {
+            lines.Add($"- datos_que_debe_capturar_si_el_cliente_los_menciona: {string.Join(", ", currentStage.Collect)}");
+            lines.Add("- regla_collect: si el ultimo mensaje contiene alguno de esos datos y aun no esta en ESTADO ACTUAL, capturalo con una herramienta antes de responder; collect no bloquea el avance de etapa.");
+        }
 
         var guidance = !string.IsNullOrWhiteSpace(variant?.ConversationGuidance)
             ? variant!.ConversationGuidance

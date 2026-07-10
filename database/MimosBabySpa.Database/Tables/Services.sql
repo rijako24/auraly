@@ -7,7 +7,7 @@ CREATE TABLE [dbo].[Services] (
     [DurationMinutes] INT NOT NULL,
     [Price] DECIMAL(18, 2) NOT NULL,
     [IncludeInCheckoutTotal] BIT NOT NULL DEFAULT 1,
-    [CategoryId] UNIQUEIDENTIFIER NOT NULL,
+    [CategoryId] UNIQUEIDENTIFIER NULL,
     [Tier] INT NOT NULL DEFAULT 0,
     [ServiceType] INT NOT NULL DEFAULT 0,
     [FulfillmentKind] INT NOT NULL DEFAULT 0,

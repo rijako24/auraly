@@ -24,7 +24,7 @@ public class AIService : IAIService
         _logger = logger;
     }
 
-    public async Task<string> TranscribeAudioAsync(Stream audioStream, string mimeType)
+    public async Task<AudioTranscriptionResult> TranscribeAudioAsync(Stream audioStream, string mimeType)
     {
         try
         {
@@ -41,9 +41,22 @@ public class AIService : IAIService
                     Language = "es"
                 });
 
-            var transcription = response.Value.Text;
-            _logger.LogInformation("Audio transcrito exitosamente");
-            return transcription;
+            var transcription = response.Value;
+            var segments = transcription.Segments
+                .Select(segment => new AudioTranscriptionSegmentSignal(
+                    segment.Text,
+                    segment.Start,
+                    segment.End,
+                    segment.AverageLogProbability,
+                    segment.NoSpeechProbability,
+                    segment.CompressionRatio))
+                .ToList();
+
+            _logger.LogInformation("Audio transcrito exitosamente. Duration={DurationSeconds}s, Segments={SegmentCount}",
+                transcription.Duration?.TotalSeconds,
+                segments.Count);
+
+            return new AudioTranscriptionResult(transcription.Text, transcription.Duration, segments);
         }
         catch (Exception ex)
         {

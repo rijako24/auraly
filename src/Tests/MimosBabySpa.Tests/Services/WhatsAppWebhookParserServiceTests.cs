@@ -1,5 +1,6 @@
 using FluentAssertions;
 using Microsoft.Extensions.Logging.Abstractions;
+using MimosBabySpa.Application.Configuration;
 using MimosBabySpa.Application.DTOs;
 using MimosBabySpa.Application.Services;
 using Moq;
@@ -15,6 +16,8 @@ public sealed class WhatsAppWebhookParserServiceTests
         var parser = new WhatsAppWebhookParserService(
             Mock.Of<IWhatsAppService>(),
             Mock.Of<IAIService>(),
+            new AudioTranscriptionQualityEvaluator(new AudioTranscriptionQualityOptions()),
+            new AudioTranscriptionQualityOptions(),
             Mock.Of<IBusinessIdentificationService>(),
             NullLogger<WhatsAppWebhookParserService>.Instance);
         var attemptId = Guid.NewGuid();

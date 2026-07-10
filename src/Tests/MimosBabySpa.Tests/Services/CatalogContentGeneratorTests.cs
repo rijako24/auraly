@@ -110,4 +110,96 @@ public sealed class CatalogContentGeneratorTests
         services.Verify(r => r.GetActiveByBusinessIdAsync(It.IsAny<Guid>()), Times.Never);
         pricing.VerifyAll();
     }
+
+    [Fact]
+    public async Task GenerateAsync_ServicesViewWithCategoryTokenQuery_ReturnsServicesInMatchingCategory()
+    {
+        var businessId = Guid.NewGuid();
+        var category = new ServiceCategory
+        {
+            ServiceCategoryId = Guid.NewGuid(),
+            BusinessId = businessId,
+            Name = "Planes Baby Spa",
+            DisplayOrder = 1,
+            IsActive = true
+        };
+        var service = new Service
+        {
+            ServiceId = Guid.NewGuid(),
+            BusinessId = businessId,
+            ServiceName = "Plan Marineritos",
+            Description = "Hidroterapia y masaje infantil",
+            DurationMinutes = 60,
+            Price = 125000m,
+            IsActive = true,
+            CategoryId = category.ServiceCategoryId,
+            ServiceCategory = category,
+            ServiceType = ServiceType.Standard,
+            Tier = ServiceTier.Base
+        };
+
+        var services = new Mock<IServiceRepository>(MockBehavior.Strict);
+        services
+            .Setup(r => r.SearchActiveCatalogAsync(
+                businessId,
+                It.Is<IReadOnlyList<string>>(terms => terms.Contains("planes")),
+                It.IsAny<int>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
+        services
+            .Setup(r => r.GetActiveByBusinessIdAsync(businessId))
+            .ReturnsAsync([service]);
+
+        var categories = new Mock<IServiceCategoryRepository>(MockBehavior.Strict);
+        categories
+            .Setup(r => r.GetByBusinessIdAsync(businessId))
+            .ReturnsAsync([category]);
+
+        var addOnRules = new Mock<IServiceAddOnRuleRepository>(MockBehavior.Strict);
+        addOnRules
+            .Setup(r => r.GetByBusinessIdAsync(businessId))
+            .ReturnsAsync([]);
+
+        var unitOfWork = new Mock<IUnitOfWork>();
+        unitOfWork.SetupGet(u => u.Services).Returns(services.Object);
+        unitOfWork.SetupGet(u => u.ServiceCategories).Returns(categories.Object);
+        unitOfWork.SetupGet(u => u.ServiceAddOnRules).Returns(addOnRules.Object);
+
+        var pricing = new Mock<IServiceCatalogPricingService>(MockBehavior.Strict);
+        pricing
+            .Setup(p => p.BuildServiceInfosAsync(
+                businessId,
+                It.Is<IReadOnlyList<Service>>(items => items.Count == 1 && items[0].ServiceId == service.ServiceId),
+                true,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync([
+                new ServiceInfo
+                {
+                    ServiceId = service.ServiceId,
+                    Name = service.ServiceName,
+                    Description = service.Description,
+                    DurationMinutes = service.DurationMinutes,
+                    Price = service.Price,
+                    IsActive = true,
+                    CategoryId = category.ServiceCategoryId,
+                    CategoryName = category.Name,
+                    CategoryDisplayOrder = category.DisplayOrder,
+                    Tier = service.Tier,
+                    ServiceType = service.ServiceType,
+                    FulfillmentKind = service.FulfillmentKind,
+                    BundleItems = []
+                }
+            ]);
+
+        var sut = new CatalogContentGenerator(
+            unitOfWork.Object,
+            Mock.Of<ILogger<CatalogContentGenerator>>(),
+            pricing.Object);
+
+        var catalog = await sut.GenerateAsync(businessId, "planes", CatalogContentView.Services);
+
+        catalog.Should().Contain("Plan Marineritos");
+        catalog.Should().Contain("Planes Baby Spa");
+        pricing.VerifyAll();
+    }
 }

@@ -23,321 +23,120 @@ DECLARE @OperationsTemplateId UNIQUEIDENTIFIER = 'A2222222-2222-2222-2222-222222
 
 
 DECLARE @DeliverySettingsJson NVARCHAR(MAX) = N'{
-
   "model": "gpt-4.1-mini",
-
   "temperature": 0.2,
-
   "maxToolIterations": 4,
-
   "historyWindowSize": 12,
-
   "persona": "Eres el asistente de domicilios del negocio. Atiendes solo a domiciliarios y coordinas si toman o rechazan solicitudes asignadas por WhatsApp.",
-
   "policies": "Responde breve y operativo. Tu funcion es resolver solicitudes de domicilio pendientes. No atiendas clientes finales ni solicitudes administrativas.",
-
-  "flow": {
-
-    "stageDetection": "automatic",
-
-    "stages": [
-
-      {
-
-        "id": "order_request",
-
-        "name": "Gestion de domicilio",
-
-        "goal": "Resolver si el domiciliario acepta o rechaza una solicitud pendiente.",
-
-        "advanceWhenFacts": [],
-
-        "conversationGuidance": "Si el mensaje viene citado/respondiendo a una solicitud de domicilio, la cita identifica el pedido: si el contacto acepta/confirma/toma el pedido, acepta la solicitud; si rechaza o dice que no puede tomarlo, rechaza la solicitud. No pidas confirmacion ni motivo en esos casos. Busca el pedido solo cuando no haya cita ni payload interactivo, cuando necesites resolver por codigo PED/datos del pedido, o cuando haya varias ordenes pendientes; si hay ambiguedad, pide elegir mostrando request_code. Si el pedido esta vencido o no disponible, responde breve indicando que ya no puede gestionarse automaticamente. Tras aceptar agradece la confirmacion; tras rechazar indica que se registro el rechazo.",
-
-        "allowedActions": [
-
-          "buscar_pedido",
-
-          "aceptar_solicitud_pedido",
-
-          "rechazar_solicitud_pedido"
-
-        ],
-
-        "collect": [],
-
-      }
-
-    ],
-
-    "language": {
-
-      "actions": {
-
-        "buscar_pedido": {
-
-          "name": "Buscar pedido",
-
-          "purpose": "Buscar pedido por codigo o datos disponibles.",
-
-          "tool": "search_order"
-
-        },
-
-        "aceptar_solicitud_pedido": {
-
-          "name": "Aceptar solicitud de pedido",
-
-          "purpose": "Registrar aceptacion de una solicitud externa de pedido.",
-
-          "tool": "accept_order_request"
-
-        },
-
-        "rechazar_solicitud_pedido": {
-
-          "name": "Rechazar solicitud de pedido",
-
-          "purpose": "Registrar rechazo de una solicitud externa de pedido.",
-
-          "tool": "reject_order_request"
-
-        }
-
-      },
-
-      "enabled": true
-
-    }
-
-  },
-
   "enabledTools": [
-
     "search_order",
-
     "accept_order_request",
-
     "reject_order_request"
-
   ],
-
   "guards": {},
-
   "notifications": {},
-
   "webhooks": {},
-
   "escalations": {
-
     "human": {
-
       "contacts": []
-
     },
-
     "external": {
-
       "enabled": false,
-
       "events": {}
-
     }
-
   },
-
   "checkout": {
-
     "currency": "COP",
-
     "modes": {}
-
-  }
-
+  },
+  "flows": [
+    {
+      "id": "order_request",
+      "type": "primary",
+      "routingGuidance": "Use this primary flow for external order request interactions with delivery contacts.",
+      "stageDetection": "automatic",
+      "stages": [
+        {
+          "id": "order_request",
+          "name": "Gestion de domicilio",
+          "goal": "Resolver si el domiciliario acepta o rechaza una solicitud pendiente.",
+          "advanceWhenFacts": [],
+          "conversationGuidance": "Si el mensaje viene citado/respondiendo a una solicitud de domicilio, la cita identifica el pedido: si el contacto acepta/confirma/toma el pedido, acepta la solicitud; si rechaza o dice que no puede tomarlo, rechaza la solicitud. No pidas confirmacion ni motivo en esos casos. Busca el pedido solo cuando no haya cita ni payload interactivo, cuando necesites resolver por codigo PED/datos del pedido, o cuando haya varias ordenes pendientes; si hay ambiguedad, pide elegir mostrando request_code. Si el pedido esta vencido o no disponible, responde breve indicando que ya no puede gestionarse automaticamente. Tras aceptar agradece la confirmacion; tras rechazar indica que se registro el rechazo.",
+          "allowedActions": [
+            "search_order",
+            "accept_order_request",
+            "reject_order_request"
+          ],
+          "collect": []
+        }
+      ]
+    }
+  ]
 }';
 
 
 
 DECLARE @OperationsSettingsJson NVARCHAR(MAX) = N'{
-
   "model": "gpt-4.1-mini",
-
   "temperature": 0.2,
-
   "maxToolIterations": 6,
-
   "historyWindowSize": 12,
-
   "persona": "Eres el agente operativo interno del negocio. Atiendes solo contactos administrativos autorizados.",
-
   "policies": "Responde de forma breve y operativa. No atiendas solicitudes de clientes finales ni de domiciliarios. Todas las consultas y cambios deben usar las tools operativas, que trabajan siempre sobre el negocio actual. Para reagendar reservas por inconvenientes operativos, usa operations_request_reschedule para enviar el aviso al cliente y dejar que su respuesta siga por el flujo normal. No cambies fecha u hora desde operaciones.",
-
-  "flow": {
-
-    "stageDetection": "automatic",
-
-    "stages": [
-
-      {
-
-        "id": "operations",
-
-        "name": "Operacion interna",
-
-        "goal": "Atender mensajes operativos autorizados del negocio: agenda, bloqueos, metricas, pedidos, ventas e historial de clientes.",
-
-        "advanceWhenFacts": [],
-
-        "conversationGuidance": "Consulta reservas operativas para preguntas de agenda por dia o rango. Bloquea disponibilidad para bloquear horarios o dias. Consulta metricas de negocio para ventas, pedidos, reservas y servicios mas vendidos. Consulta historial de cliente para ultima compra o historial de un cliente. Solicita reagenda operativa para avisar a clientes afectados que deben reagendar; no muevas reservas directamente desde operaciones.",
-
-        "allowedActions": [
-
-          "operaciones_consultar_reservas",
-
-          "operaciones_bloquear_disponibilidad",
-
-          "operaciones_solicitar_reagenda",
-
-          "operaciones_metricas_negocio",
-
-          "operaciones_historial_cliente",
-
-          "ejecutar_check_availability"
-
-        ],
-
-        "collect": [],
-
-      }
-
-    ],
-
-    "language": {
-
-      "actions": {
-
-        "operaciones_consultar_reservas": {
-
-          "name": "Consultar reservas operativas",
-
-          "purpose": "Consultar agenda operativa por fecha o rango.",
-
-          "tool": "operations_get_reservations"
-
-        },
-
-        "operaciones_bloquear_disponibilidad": {
-
-          "name": "Bloquear disponibilidad",
-
-          "purpose": "Bloquear horarios o dias desde operaciones.",
-
-          "tool": "operations_block_availability"
-
-        },
-
-        "operaciones_solicitar_reagenda": {
-
-          "name": "Solicitar reagenda operativa",
-
-          "purpose": "Solicitar reagenda para clientes afectados desde operaciones.",
-
-          "tool": "operations_request_reschedule"
-
-        },
-
-        "operaciones_metricas_negocio": {
-
-          "name": "Consultar metricas",
-
-          "purpose": "Consultar metricas operativas del negocio.",
-
-          "tool": "operations_get_business_metrics"
-
-        },
-
-        "operaciones_historial_cliente": {
-
-          "name": "Consultar historial de cliente",
-
-          "purpose": "Consultar historial operativo de un cliente.",
-
-          "tool": "operations_get_customer_history"
-
-        },
-
-        "ejecutar_check_availability": {
-
-          "name": "Validar disponibilidad",
-
-          "purpose": "Consultar disponibilidad del calendario para un servicio, fecha y hora.",
-
-          "tool": "check_availability"
-
-        }
-
-      },
-
-      "enabled": true
-
-    }
-
-  },
-
   "enabledTools": [
-
     "operations_get_reservations",
-
     "operations_block_availability",
-
     "operations_request_reschedule",
-
     "operations_get_business_metrics",
-
     "operations_get_customer_history",
-
     "check_availability"
-
   ],
-
   "guards": {},
-
   "notifications": {},
-
   "webhooks": {},
-
   "templates": {
-
     "availability_slots": "{{#if intro_message}}\n{{intro_message}}\n\n{{/if}}*Espacios disponibles para {{date_formatted}}* ({{service_name}})\n\n{{#each options}}\n- {{this}}\n{{/each}}\n\nCual espacio prefieres?"
-
   },
-
   "escalations": {
-
     "human": {
-
       "contacts": []
-
     },
-
     "external": {
-
       "enabled": false,
-
       "events": {}
-
     }
-
   },
-
   "checkout": {
-
     "currency": "COP",
-
     "modes": {}
-
-  }
-
+  },
+  "flows": [
+    {
+      "id": "order_request",
+      "type": "primary",
+      "routingGuidance": "Use this primary flow for external order request interactions with delivery contacts.",
+      "stageDetection": "automatic",
+      "stages": [
+        {
+          "id": "operations",
+          "name": "Operacion interna",
+          "goal": "Atender mensajes operativos autorizados del negocio: agenda, bloqueos, metricas, pedidos, ventas e historial de clientes.",
+          "advanceWhenFacts": [],
+          "conversationGuidance": "Consulta reservas operativas para preguntas de agenda por dia o rango. Bloquea disponibilidad para bloquear horarios o dias. Consulta metricas de negocio para ventas, pedidos, reservas y servicios mas vendidos. Consulta historial de cliente para ultima compra o historial de un cliente. Solicita reagenda operativa para avisar a clientes afectados que deben reagendar; no muevas reservas directamente desde operaciones.",
+          "allowedActions": [
+            "operaciones_consultar_reservas",
+            "operaciones_bloquear_disponibilidad",
+            "operaciones_solicitar_reagenda",
+            "operaciones_metricas_negocio",
+            "operaciones_historial_cliente",
+            "ejecutar_check_availability"
+          ],
+          "collect": []
+        }
+      ]
+    }
+  ]
 }';
 
 

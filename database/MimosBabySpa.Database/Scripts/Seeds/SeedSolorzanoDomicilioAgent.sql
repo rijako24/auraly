@@ -81,137 +81,56 @@ DECLARE @SolorzanoDeliverySystemPrompt NVARCHAR(MAX) = N'';
 
 
 DECLARE @SolorzanoDeliverySettingsJson NVARCHAR(MAX) = N'{
-
   "model": "gpt-4.1-mini",
-
   "temperature": 0.2,
-
   "maxToolIterations": 4,
-
   "historyWindowSize": 12,
-
   "persona": "Eres el asistente de domicilios de Vinos Artesanales Solorzano. Atiendes solo a domiciliarios y coordinas si toman o rechazan pedidos asignados por WhatsApp.",
-
   "policies": "Responde breve y operativo. Tu funcion es resolver pedidos de domicilio pendientes. Usa el codigo del pedido cuando este disponible.",
-
-  "flow": {
-
-    "stageDetection": "automatic",
-
-    "stages": [
-
-      {
-
-        "id": "order_request",
-
-        "name": "Gestion de domicilio",
-
-        "goal": "Resolver si el domiciliario acepta o rechaza un pedido pendiente.",
-
-        "advanceWhenFacts": [],
-
-        "conversationGuidance": "Si el mensaje viene citado/respondiendo a una solicitud de domicilio, la cita identifica el pedido: si el contacto acepta/confirma/toma el pedido, acepta la solicitud; si rechaza o dice que no puede tomarlo, rechaza la solicitud. No pidas confirmacion ni motivo en esos casos. Busca el pedido solo cuando no haya cita ni payload interactivo, cuando necesites resolver por codigo PED/datos del pedido, o cuando haya varias ordenes pendientes; si hay ambiguedad, pide elegir mostrando request_code. Si el pedido esta vencido o no disponible, responde breve indicando que ya no puede gestionarse automaticamente. Tras aceptar agradece la confirmacion; tras rechazar indica que se registro el rechazo.",
-
-        "allowedActions": [
-
-          "buscar_pedido",
-
-          "aceptar_solicitud_pedido",
-
-          "rechazar_solicitud_pedido"
-
-        ],
-
-        "collect": [],
-
-      }
-
-    ],
-
-    "language": {
-
-      "actions": {
-
-        "buscar_pedido": {
-
-          "name": "Buscar pedido",
-
-          "purpose": "Buscar pedido por codigo o datos disponibles.",
-
-          "tool": "search_order"
-
-        },
-
-        "aceptar_solicitud_pedido": {
-
-          "name": "Aceptar solicitud de pedido",
-
-          "purpose": "Registrar aceptacion de una solicitud externa de pedido.",
-
-          "tool": "accept_order_request"
-
-        },
-
-        "rechazar_solicitud_pedido": {
-
-          "name": "Rechazar solicitud de pedido",
-
-          "purpose": "Registrar rechazo de una solicitud externa de pedido.",
-
-          "tool": "reject_order_request"
-
-        }
-
-      },
-
-      "enabled": true
-
-    }
-
-  },
-
   "enabledTools": [
-
     "search_order",
-
     "accept_order_request",
-
     "reject_order_request"
-
   ],
-
   "guards": {},
-
   "notifications": {},
-
   "webhooks": {},
-
   "escalations": {
-
     "human": {
-
       "contacts": []
-
     },
-
     "external": {
-
       "enabled": false,
-
       "events": {}
-
     }
-
   },
-
   "checkout": {
-
     "currency": "COP",
-
     "modes": {}
-
-  }
-
+  },
+  "flows": [
+    {
+      "id": "order_request",
+      "type": "primary",
+      "routingGuidance": "Use this primary flow for external order request interactions with delivery contacts.",
+      "stageDetection": "automatic",
+      "stages": [
+        {
+          "id": "order_request",
+          "name": "Gestion de domicilio",
+          "goal": "Resolver si el domiciliario acepta o rechaza un pedido pendiente.",
+          "advanceWhenFacts": [],
+          "conversationGuidance": "Si el mensaje viene citado/respondiendo a una solicitud de domicilio, la cita identifica el pedido: si el contacto acepta/confirma/toma el pedido, acepta la solicitud; si rechaza o dice que no puede tomarlo, rechaza la solicitud. No pidas confirmacion ni motivo en esos casos. Busca el pedido solo cuando no haya cita ni payload interactivo, cuando necesites resolver por codigo PED/datos del pedido, o cuando haya varias ordenes pendientes; si hay ambiguedad, pide elegir mostrando request_code. Si el pedido esta vencido o no disponible, responde breve indicando que ya no puede gestionarse automaticamente. Tras aceptar agradece la confirmacion; tras rechazar indica que se registro el rechazo.",
+          "allowedActions": [
+            "search_order",
+            "accept_order_request",
+            "reject_order_request"
+          ],
+          "collect": []
+        }
+      ]
+    }
+  ]
 }';
 
 

@@ -31,6 +31,7 @@
 :r .\Migrations\MigrateBusinessAvailabilityBlocks.sql
 :r .\Migrations\MigrateServiceCheckoutTotalPolicy.sql
 :r .\Migrations\MigrateServiceKeywords.sql
+:r .\Migrations\MigrateNullableServiceCategory.sql
 :r .\Migrations\MigrateBabySpaPlanPrices2026.sql
 :r .\Migrations\MigrateExternalEscalationAttempts.sql
 :r .\Migrations\MigrateAgentTemplatesAndInboundContacts.sql
@@ -44,6 +45,7 @@
 :r .\Seeds\SeedDevBusiness.sql
 :r .\Seeds\SeedServiceCategoriesForNewBusinesses.sql
 :r .\Migrations\MigrateIniciacionJardinService2026.sql
+:r .\Migrations\MigrateBabySpaServiceKeywords2026.sql
 :r .\Seeds\SeedBillingPlans.sql
 :r .\Seeds\SeedRadaConcept.sql
 :r .\Seeds\SeedAuraly.sql
@@ -57,6 +59,7 @@
 :r .\Seeds\SeedSolorzanoWhatsAppNumber.sql
 :r .\Seeds\SeedRadaConceptWhatsAppNumber.sql
 :r .\Seeds\SeedSolorzanoDomicilioAgent.sql
+:r .\Seeds\SeedCJDistribuciones.sql
 GO
 :r .\Seeds\SeedSystemAgentTemplatesAndInboundContacts.sql
 GO

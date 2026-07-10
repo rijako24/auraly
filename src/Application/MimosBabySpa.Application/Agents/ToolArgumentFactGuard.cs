@@ -103,6 +103,9 @@ internal static class ToolArgumentFactGuard
         if (!protectedFacts.TryGetValue(factKey, out var entry))
             return null;
 
+        if (IsExternallyValidatedFact(entry))
+            return null;
+
         return IsSupportedByStateOrLatestMessage(config, ctx, entry, value)
             ? null
             : new UnsupportedArgument(factKey, "value");
@@ -121,6 +124,9 @@ internal static class ToolArgumentFactGuard
 
             var entry = ResolveFactForArgument(config, protectedFacts, property.Name);
             if (entry is null)
+                continue;
+
+            if (IsExternallyValidatedFact(entry))
                 continue;
 
             if (!IsSupportedByStateOrLatestMessage(config, ctx, entry, value))
@@ -155,6 +161,12 @@ internal static class ToolArgumentFactGuard
         return tail?.Equals(argumentName, StringComparison.OrdinalIgnoreCase) == true;
     }
 
+    private static bool IsExternallyValidatedFact(FactSchemaEntry entry) =>
+        entry.ValueSource is not null
+        && (entry.ValueSource.Equals("catalog", StringComparison.OrdinalIgnoreCase)
+            || entry.ValueSource.Equals("tool", StringComparison.OrdinalIgnoreCase)
+            || entry.ValueSource.Equals("external", StringComparison.OrdinalIgnoreCase));
+
     private static bool IsSupportedByStateOrLatestMessage(
         AgentConfig config,
         AgentToolContext ctx,
@@ -166,13 +178,13 @@ internal static class ToolArgumentFactGuard
 
         if (ctx.Facts.TryGetValue(entry.Key, out var currentValue)
             && !string.IsNullOrWhiteSpace(currentValue)
-            && currentValue.Trim().Equals(value.Trim(), StringComparison.OrdinalIgnoreCase))
+            && NormalizeFactSupportText(currentValue).Equals(NormalizeFactSupportText(value), StringComparison.Ordinal))
         {
             return true;
         }
 
         if (!string.IsNullOrWhiteSpace(ctx.LatestUserMessage)
-            && ctx.LatestUserMessage.Contains(value, StringComparison.OrdinalIgnoreCase))
+            && NormalizeFactSupportText(ctx.LatestUserMessage).Contains(NormalizeFactSupportText(value), StringComparison.Ordinal))
         {
             return true;
         }
@@ -181,6 +193,22 @@ internal static class ToolArgumentFactGuard
             config.FactSchema,
             entry.Key,
             ctx.LatestUserMessage);
+    }
+
+    private static string NormalizeFactSupportText(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return string.Empty;
+
+        var decomposed = value.Trim().ToLowerInvariant().Normalize(System.Text.NormalizationForm.FormD);
+        var chars = decomposed
+            .Where(ch => System.Globalization.CharUnicodeInfo.GetUnicodeCategory(ch)
+                != System.Globalization.UnicodeCategory.NonSpacingMark)
+            .ToArray();
+
+        return string.Join(' ', new string(chars)
+            .Normalize(System.Text.NormalizationForm.FormC)
+            .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
     }
 
     private static string BuildBlockedResult(string toolName, string factKey, string argumentName) =>

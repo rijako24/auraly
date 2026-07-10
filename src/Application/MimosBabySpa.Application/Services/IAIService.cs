@@ -9,5 +9,5 @@ public interface IAIService
     /// <summary>
     /// Transcribe un stream de audio (voz de WhatsApp) a texto usando Whisper.
     /// </summary>
-    Task<string> TranscribeAudioAsync(Stream audioStream, string mimeType);
+    Task<AudioTranscriptionResult> TranscribeAudioAsync(Stream audioStream, string mimeType);
 }

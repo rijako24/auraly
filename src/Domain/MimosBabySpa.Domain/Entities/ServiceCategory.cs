@@ -2,7 +2,7 @@ namespace MimosBabySpa.Domain.Entities;
 
 /// <summary>
 /// Categoría de servicio por negocio. Define agrupación en catálogo.
-/// Multitenant: cada negocio crea sus propias categorías (Plan, Taller, Clase, Otros, etc.).
+/// Multitenant: cada negocio crea sus propias categorías (Planes Baby Spa, Taller, Clase, Iniciacion al Jardin, etc.).
 /// </summary>
 public class ServiceCategory
 {

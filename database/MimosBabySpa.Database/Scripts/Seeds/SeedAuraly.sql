@@ -412,6 +412,58 @@ WHERE BusinessId = @BusinessId
 
 
 
+MERGE dbo.EmployeeWorkingHours AS target
+
+USING @Hours AS source
+
+   ON target.BusinessId = @BusinessId
+
+  AND target.EmployeeId = @EmployeeId
+
+  AND target.DayOfWeek = source.DayOfWeek
+
+  AND target.OpenTime = source.OpenTime
+
+WHEN MATCHED THEN
+
+    UPDATE SET CloseTime = source.CloseTime,
+
+               IsActive = 1,
+
+               UpdatedAt = GETUTCDATE()
+
+WHEN NOT MATCHED THEN
+
+    INSERT (EmployeeWorkingHourId, BusinessId, EmployeeId, DayOfWeek, OpenTime, CloseTime, IsActive, CreatedAt)
+
+    VALUES (NEWID(), @BusinessId, @EmployeeId, source.DayOfWeek, source.OpenTime, source.CloseTime, 1, GETUTCDATE());
+
+
+
+UPDATE dbo.EmployeeWorkingHours
+
+SET IsActive = 0,
+
+    UpdatedAt = GETUTCDATE()
+
+WHERE BusinessId = @BusinessId
+
+  AND EmployeeId = @EmployeeId
+
+  AND NOT EXISTS (
+
+      SELECT 1
+
+      FROM @Hours h
+
+      WHERE h.DayOfWeek = EmployeeWorkingHours.DayOfWeek
+
+        AND h.OpenTime = EmployeeWorkingHours.OpenTime
+
+  );
+
+
+
 SELECT @AgentTypeId = AgentTypeId FROM dbo.AgentTypes WHERE Name = N'Vendedor';
 
 
@@ -481,400 +533,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
   "templates": {
 
     "availability_slots": "{{#if intro_message}}\n{{intro_message}}\n\n{{/if}}*Espacios disponibles para {{date_formatted}}*\n\n{{#each options}}\n- {{this}}\n{{/each}}\n\nCual espacio prefieres?"
-
-  },
-
-  "flow": {
-
-    "stageDetection": "automatic",
-
-    "stages": [
-
-      {
-
-        "id": "discovery",
-
-        "name": "Diagnostico inicial",
-
-        "goal": "Identificar el tipo de negocio y el principal proceso o cuello de botella de WhatsApp que la persona quiere mejorar.",
-
-        "advanceWhenFacts": [
-
-          "business_type",
-
-          "pain_point"
-
-        ],
-
-        "conversationGuidance": "Si es el primer turno de una conversacion nueva y no hay mensajes previos del bot, envia la secuencia web_demo_follow_up y termina el turno sin texto libre. Usa esa misma plantilla para cualquier origen del primer contacto: WhatsApp, landing, web, campana o API. Si ya hay historial del bot, no repitas la plantilla: si falta business_type o pain_point, pide solo los datos faltantes en una sola pregunta. Si faltan ambos, pregunta: Que tipo de negocio tienes y que proceso de WhatsApp quieres mejorar primero: responder leads, agendar, vender/cobrar, soporte o seguimiento? No agregues otra pregunta ni pidas datos extra. Cuando el cliente responda, registra business_type y pain_point antes de avanzar.",
-
-        "allowedActions": [
-
-          "send_message_sequence",
-
-          "set_fact"
-
-        ],
-
-        "collect": [
-
-          "business_type",
-
-          "pain_point"
-
-        ],
-
-      },
-
-      {
-
-        "id": "business_context",
-
-        "name": "Contexto del negocio",
-
-        "goal": "Entender el problema, canal principal y volumen aproximado antes de recomendar.",
-
-        "advanceWhenFacts": [
-
-          "main_channel"
-
-        ],
-
-        "skipWhen": "business_type && pain_point",
-
-        "autoSetOnSkip": {
-
-          "main_channel": "WhatsApp"
-
-        },
-
-        "conversationGuidance": "No hagas preguntas adicionales de diagnostico. Si el cliente ya entrego algun dato de contexto, registralo. Si falta main_channel, asume WhatsApp porque este flujo agenda una demo de automatizacion conversacional.",
-
-        "allowedActions": [
-
-          "send_message_sequence",
-
-          "set_fact"
-
-        ],
-
-        "collect": [
-
-          "main_channel"
-
-        ],
-
-      },
-
-      {
-
-        "id": "value_explanation",
-
-        "name": "Explicacion de valor",
-
-        "goal": "Explicar que hacemos, servicios y ventajas conectadas al problema del cliente.",
-
-        "advanceWhenFacts": [
-
-          "service"
-
-        ],
-
-        "conversationGuidance": "Consulta servicios oficiales. Explica maximo 4 capacidades relevantes para el pain_point: atencion 24/7, calificacion de leads, agenda, pagos, seguimiento, recuperacion, analytics, handoff humano e integraciones. Conecta cada beneficio con el problema mencionado. Recomienda la demo en vivo de AURALY como siguiente paso. No preguntes si quiere ver horarios, no preguntes ni muestres seleccion de servicio. Fija el servicio tecnico con el texto exacto Demo AURALY. Despues continua a agenda en el mismo turno.",
-
-        "allowedActions": [
-
-          "consultar_catalogo",
-
-          "resolve_service_selection",
-
-          "set_fact"
-
-        ],
-
-        "collect": [],
-
-      },
-
-      {
-
-        "id": "scheduling",
-
-        "name": "Agenda de demo",
-
-        "goal": "Mostrar disponibilidad y validar fecha/hora para la demo.",
-
-        "afterTool": [
-
-          {
-
-            "tool": "check_availability",
-
-            "when": {
-
-              "path": "data.availability_checked",
-
-              "equals": "true"
-
-            },
-
-            "setFact": {
-
-              "key": "desired_date",
-
-              "value": "{{data.date}}"
-
-            }
-
-          },
-
-          {
-
-            "tool": "check_availability",
-
-            "when": {
-
-              "path": "data.availability_checked",
-
-              "equals": "true"
-
-            },
-
-            "setFact": {
-
-              "key": "desired_time",
-
-              "value": "{{data.time}}"
-
-            }
-
-          },
-
-          {
-
-            "tool": "check_availability",
-
-            "when": {
-
-              "path": "data.availability_checked",
-
-              "equals": "true"
-
-            },
-
-            "setFact": {
-
-              "key": "availability_checked",
-
-              "value": "true"
-
-            }
-
-          }
-
-        ],
-
-        "advanceWhenFacts": [
-
-          "availability_checked"
-
-        ],
-
-        "reentryOnFactChanged": [
-
-          "desired_date",
-
-          "desired_time"
-
-        ],
-
-        "conversationGuidance": "La demo en vivo de AURALY es el servicio tecnico por defecto. No preguntes servicio ni muestres seleccion de servicio. Si service no esta registrado, resuelvelo con Demo AURALY. Luego resuelve el tipo de atencion para Demo AURALY. Si falta desired_date, pregunta una sola cosa: Para que fecha te gustaria ver horarios de la demo? No agregues otra pregunta en ese mensaje. Cuando el cliente responda fecha, registra desired_date y valida disponibilidad con Demo AURALY para mostrar horarios disponibles. Cuando el cliente elija hora, registra desired_time y valida disponibilidad con Demo AURALY, fecha y hora. Si esta disponible, deja avanzar.",
-
-        "allowedActions": [
-
-          "resolve_service_selection",
-
-          "resolver_tipo_atencion",
-
-          "check_availability",
-
-          "set_fact"
-
-        ],
-
-        "collect": [
-
-          "availability_checked"
-
-        ],
-
-      },
-
-      {
-
-        "id": "customer_data",
-
-        "name": "Datos para la demo",
-
-        "goal": "Recoger datos minimos para confirmar la demo.",
-
-        "advanceWhenFacts": [
-
-          "customer_name",
-
-          "company_name",
-
-          "customer_email"
-
-        ],
-
-        "conversationGuidance": "Pide en un solo mensaje solo los datos faltantes: nombre, empresa y correo. El telefono viene del canal. Registra customer_name, company_name y customer_email si los entregan. El correo es obligatorio para agendar porque se usa como destinatario de la invitacion.",
-
-        "allowedActions": [
-
-          "set_fact"
-
-        ],
-
-        "collect": [
-
-          "customer_name",
-
-          "company_name",
-
-          "customer_email"
-
-        ],
-
-      },
-
-      {
-
-        "id": "confirmation",
-
-        "name": "Confirmacion de demo",
-
-        "goal": "Confirmar la demo AURALY.",
-
-        "advanceWhenFacts": [],
-
-        "conversationGuidance": "Muestra resumen breve: demo, fecha, hora, nombre, empresa, correo y telefono. Pide confirmacion. Cuando confirme claramente, crea la reserva con customer_confirmed=true. Despues confirma que el equipo AURALY tendra el contexto para la demo. Cierra ahi: no preguntes por recordatorios, informacion adicional, ayuda extra ni siguientes pasos.",
-
-        "allowedActions": [
-
-          "crear_reserva",
-
-          "check_availability",
-
-          "set_fact"
-
-        ],
-
-        "collect": [],
-
-      }
-
-    ],
-
-    "language": {
-
-      "actions": {
-
-        "send_message_sequence": {
-
-          "name": "Enviar secuencia configurada",
-
-          "purpose": "Enviar una secuencia declarada en la configuracion del agente.",
-
-          "tool": "send_message_sequence"
-
-        },
-
-        "set_fact": {
-
-          "name": "Registrar dato",
-
-          "purpose": "Guardar datos expresados por el cliente cuando son necesarios para avanzar.",
-
-          "tool": "set_fact"
-
-        },
-
-        "consultar_catalogo": {
-
-          "name": "Consultar catalogo oficial",
-
-          "purpose": "Presentar categorias o servicios oficiales segun la intencion del cliente.",
-
-          "tool": "get_service_catalog"
-
-        },
-
-        "resolve_service_selection": {
-
-          "name": "Resolver servicio",
-
-          "purpose": "Convertir la seleccion del cliente en un servicio canonico del catalogo.",
-
-          "tool": "resolve_service_selection"
-
-        },
-
-        "resolver_tipo_atencion": {
-
-          "name": "Resolver tipo de atencion",
-
-          "purpose": "Determinar si el servicio requiere agenda, inscripcion u otra ruta de cumplimiento.",
-
-          "tool": "get_service_fulfillment"
-
-        },
-
-        "check_availability": {
-
-          "name": "Validar disponibilidad",
-
-          "purpose": "Consultar agenda oficial y confirmar fecha y hora disponibles.",
-
-          "tool": "check_availability"
-
-        },
-
-        "crear_reserva": {
-
-          "name": "Crear reserva",
-
-          "purpose": "Crear la reserva cuando los datos requeridos y verificaciones esten completos.",
-
-          "tool": "create_reservation"
-
-        },
-
-        "escalate_to_human": {
-
-          "name": "Escalar a humano",
-
-          "purpose": "Pasar la conversacion a una persona con el contexto necesario.",
-
-          "tool": "escalate_to_human"
-
-        },
-
-        "reset_flow_context": {
-
-          "name": "Reiniciar solicitud",
-
-          "purpose": "Limpiar el contexto de la solicitud actual segun la intencion del cliente.",
-
-          "tool": "reset_flow_context"
-
-        }
-
-      },
-
-      "enabled": true
-
-    }
 
   },
 
@@ -1346,6 +1004,38 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
 
       "expireOnBusinessDayChange": true
 
+    },
+
+    {
+
+      "key": "customer_confirmed",
+
+      "role": "confirmation.verbal",
+
+      "label": "confirmacion del cliente",
+
+      "type": "boolean",
+
+      "required": false,
+
+      "source": "user",
+
+      "scope": "request",
+
+      "captureMode": "explicit",
+
+      "retentionDays": 1,
+
+      "aliases": [
+
+        "confirmo",
+
+        "confirmacion",
+
+        "si confirmo"
+
+      ]
+
     }
 
   ],
@@ -1416,7 +1106,435 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
 
     "modes": {}
 
-  }
+  },
+
+  "flows": [
+
+    {
+
+      "id": "booking",
+
+      "type": "primary",
+
+      "routingGuidance": "Use this primary flow for new AURALY demo requests, value explanation, scheduling, customer data and confirmation.",
+
+      "stageDetection": "automatic",
+
+      "stages": [
+
+        {
+
+          "id": "discovery",
+
+          "name": "Diagnostico inicial",
+
+          "goal": "Identificar el tipo de negocio y el principal proceso o cuello de botella de WhatsApp que la persona quiere mejorar.",
+
+          "advanceWhenFacts": [
+
+            "business_type",
+
+            "pain_point"
+
+          ],
+
+          "conversationGuidance": "Si es el primer turno de una conversacion nueva y no hay mensajes previos del bot, envia la secuencia web_demo_follow_up y termina el turno sin texto libre. Usa esa misma plantilla para cualquier origen del primer contacto: WhatsApp, landing, web, campana o API. Si ya hay historial del bot, no repitas la plantilla: si falta business_type o pain_point, pide solo los datos faltantes en una sola pregunta. Si faltan ambos, pregunta: Que tipo de negocio tienes y que proceso de WhatsApp quieres mejorar primero: responder leads, agendar, vender/cobrar, soporte o seguimiento? No agregues otra pregunta ni pidas datos extra. Cuando el cliente responda, registra business_type y pain_point antes de avanzar.",
+
+          "allowedActions": [
+
+            "send_message_sequence",
+
+            "set_fact"
+
+          ],
+
+          "collect": [
+
+            "business_type",
+
+            "pain_point"
+
+          ]
+
+        },
+
+        {
+
+          "id": "business_context",
+
+          "name": "Contexto del negocio",
+
+          "goal": "Entender el problema, canal principal y volumen aproximado antes de recomendar.",
+
+          "advanceWhenFacts": [
+
+            "main_channel"
+
+          ],
+
+          "skipWhen": "business_type && pain_point",
+
+          "autoSetOnSkip": {
+
+            "main_channel": "WhatsApp"
+
+          },
+
+          "conversationGuidance": "No hagas preguntas adicionales de diagnostico. Si el cliente ya entrego algun dato de contexto, registralo. Si falta main_channel, asume WhatsApp porque este flujo agenda una demo de automatizacion conversacional.",
+
+          "allowedActions": [
+
+            "send_message_sequence",
+
+            "set_fact"
+
+          ],
+
+          "collect": [
+
+            "main_channel"
+
+          ]
+
+        },
+
+        {
+
+          "id": "value_explanation",
+
+          "name": "Explicacion de valor",
+
+          "goal": "Explicar que hacemos, servicios y ventajas conectadas al problema del cliente.",
+
+          "advanceWhenFacts": [
+
+            "service"
+
+          ],
+
+          "conversationGuidance": "Consulta servicios oficiales. Explica maximo 4 capacidades relevantes para el pain_point: atencion 24/7, calificacion de leads, agenda, pagos, seguimiento, recuperacion, analytics, handoff humano e integraciones. Conecta cada beneficio con el problema mencionado. Recomienda la demo en vivo de AURALY como siguiente paso. No preguntes si quiere ver horarios, no preguntes ni muestres seleccion de servicio. Fija el servicio tecnico con el texto exacto Demo AURALY. Despues continua a agenda en el mismo turno.",
+
+          "allowedActions": [
+
+            "get_service_catalog",
+
+            "resolve_service_selection",
+
+            "set_fact"
+
+          ],
+
+          "collect": [],
+
+          "entryActions": [
+
+            {
+
+              "tool": "get_service_catalog",
+
+              "arguments": {
+
+                "view": "services",
+
+                "query": "{{user.message}}"
+
+              }
+
+            }
+
+          ]
+
+        },
+
+        {
+
+          "id": "scheduling",
+
+          "name": "Agenda de demo",
+
+          "goal": "Mostrar disponibilidad y validar fecha/hora para la demo.",
+
+          "afterTool": [
+
+            {
+
+              "tool": "check_availability",
+
+              "when": {
+
+                "path": "data.availability_checked",
+
+                "equals": "true"
+
+              },
+
+              "setFact": {
+
+                "key": "desired_date",
+
+                "value": "{{data.date}}"
+
+              }
+
+            },
+
+            {
+
+              "tool": "check_availability",
+
+              "when": {
+
+                "path": "data.availability_checked",
+
+                "equals": "true"
+
+              },
+
+              "setFact": {
+
+                "key": "desired_time",
+
+                "value": "{{data.time}}"
+
+              }
+
+            },
+
+            {
+
+              "tool": "check_availability",
+
+              "when": {
+
+                "path": "data.availability_checked",
+
+                "equals": "true"
+
+              },
+
+              "setFact": {
+
+                "key": "availability_checked",
+
+                "value": "true"
+
+              }
+
+            }
+
+          ],
+
+          "advanceWhenFacts": [
+
+            "availability_checked"
+
+          ],
+
+          "reentryOnFactChanged": [
+
+            "desired_date",
+
+            "desired_time"
+
+          ],
+
+          "conversationGuidance": "La demo en vivo de AURALY es el servicio tecnico por defecto. No preguntes servicio ni muestres seleccion de servicio. Si service no esta registrado, resuelvelo con Demo AURALY. Luego resuelve el tipo de atencion para Demo AURALY. Si falta desired_date, pregunta una sola cosa: Para que fecha te gustaria ver horarios de la demo? No agregues otra pregunta en ese mensaje. Cuando el cliente responda fecha, registra desired_date y valida disponibilidad con Demo AURALY para mostrar horarios disponibles. Cuando el cliente elija hora, registra desired_time y valida disponibilidad con Demo AURALY, fecha y hora. Si esta disponible, deja avanzar.",
+
+          "allowedActions": [
+
+            "resolve_service_selection",
+
+            "get_service_fulfillment",
+
+            "check_availability",
+
+            "set_fact"
+
+          ],
+
+          "collect": [
+
+            "availability_checked"
+
+          ],
+
+          "entryActions": [
+
+            {
+
+              "tool": "check_availability",
+
+              "arguments": {
+
+                "service": "{{fact.service}}",
+
+                "date": "{{fact.desired_date}}",
+
+                "time": "{{fact.desired_time}}"
+
+              },
+
+              "when": {
+
+                "requiredFacts": [
+
+                  "service",
+
+                  "desired_date",
+
+                  "desired_time"
+
+                ],
+
+                "missingFacts": [
+
+                  "availability_checked"
+
+                ]
+
+              }
+
+            }
+
+          ]
+
+        },
+
+        {
+
+          "id": "customer_data",
+
+          "name": "Datos para la demo",
+
+          "goal": "Recoger datos minimos para confirmar la demo.",
+
+          "advanceWhenFacts": [
+
+            "customer_name",
+
+            "company_name",
+
+            "customer_email"
+
+          ],
+
+          "conversationGuidance": "Pide en un solo mensaje solo los datos faltantes: nombre, empresa y correo. El telefono viene del canal. Registra customer_name, company_name y customer_email si los entregan. El correo es obligatorio para agendar porque se usa como destinatario de la invitacion.",
+
+          "allowedActions": [
+
+            "set_fact"
+
+          ],
+
+          "collect": [
+
+            "customer_name",
+
+            "company_name",
+
+            "customer_email"
+
+          ]
+
+        },
+
+        {
+
+          "id": "confirmation",
+
+          "name": "Confirmacion de demo",
+
+          "goal": "Confirmar la demo AURALY.",
+
+          "advanceWhenFacts": [
+
+            "customer_confirmed"
+
+          ],
+
+          "conversationGuidance": "Muestra resumen breve: demo, fecha, hora, nombre, empresa, correo y telefono. Pide confirmacion. No llames create_reservation en esta etapa. Cuando el cliente confirme claramente, registra customer_confirmed=true con set_fact y deja avanzar; no crees la reserva en el mismo paso.",
+
+          "allowedActions": [
+
+            "set_fact",
+
+            "check_availability"
+
+          ],
+
+          "collect": [
+
+            "customer_confirmed"
+
+          ]
+
+        },
+
+        {
+
+          "id": "reservation_creation",
+
+          "name": "Creacion de demo",
+
+          "goal": "Crear la reserva de demo solo despues de confirmacion verbal explicita.",
+
+          "advanceWhenFacts": [],
+
+          "conversationGuidance": "Crea la reserva con customer_confirmed=true usando los datos ya validados. Despues confirma que el equipo AURALY tendra el contexto para la demo. Cierra ahi: no preguntes por recordatorios, informacion adicional, ayuda extra ni siguientes pasos.",
+
+          "allowedActions": [
+
+            "create_reservation",
+
+            "check_availability",
+
+            "set_fact"
+
+          ],
+
+          "collect": [],
+
+          "entryActions": [
+
+            {
+
+              "tool": "create_reservation",
+
+              "arguments": {
+
+                "customer_confirmed": true
+
+              },
+
+              "when": {
+
+                "requiredFacts": [
+
+                  "service",
+
+                  "desired_date",
+
+                  "desired_time",
+
+                  "customer_name",
+
+                  "customer_confirmed"
+
+                ]
+
+              }
+
+            }
+
+          ]
+
+        }
+
+      ]
+
+    }
+
+  ]
 
 }';
 

@@ -1,3 +1,4 @@
+using System.Globalization;
 using Microsoft.Extensions.Logging;
 using MimosBabySpa.Application.Agents;
 using MimosBabySpa.Application.Agents.Configuration;
@@ -205,12 +206,16 @@ public sealed class MessageSequenceResolver : IMessageSequenceResolver
             var time = reservation.ReservationDateTime.HasValue
                 ? TimeOnly.FromDateTime(reservation.ReservationDateTime.Value).ToString("HH:mm")
                 : string.Empty;
+            var time12 = reservation.ReservationDateTime.HasValue
+                ? TimeOnly.FromDateTime(reservation.ReservationDateTime.Value).ToString("h:mm tt", CultureInfo.InvariantCulture).ToLowerInvariant()
+                : string.Empty;
 
             resolved = resolved
                 .Replace("{CustomerName}", reservation.CustomerNameSnapshot ?? string.Empty)
                 .Replace("{Service}", serviceName)
                 .Replace("{Date}", date)
                 .Replace("{Time}", time)
+                .Replace("{Time12}", time12)
                 .Replace("{Total}", total.ToString("N0"));
         }
 

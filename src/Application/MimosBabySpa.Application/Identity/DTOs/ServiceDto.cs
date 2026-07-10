@@ -12,7 +12,7 @@ public record ServiceDto(
     decimal Price,
     bool IncludeInCheckoutTotal,
     bool IsActive,
-    Guid CategoryId,
+    Guid? CategoryId,
     string CategoryName,
     ServiceTier Tier,
     ServiceType ServiceType,

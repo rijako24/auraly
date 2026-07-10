@@ -372,344 +372,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
 
   "messageSequences": {},
 
-  "flow": {
-
-    "stageDetection": "automatic",
-
-    "stages": [
-
-      {
-
-        "id": "discovery",
-
-        "name": "Descubrimiento",
-
-        "goal": "Entender el tipo de servicio de interes.",
-
-        "advanceWhenFacts": [
-
-          "project_context"
-
-        ],
-
-        "conversationGuidance": "Si el mensaje del cliente es solo un saludo, pregunta en que tipo de servicio esta interesado. En ese turno no listes servicios completos de entrada. Si el cliente ya menciona una necesidad, proyecto o servicio, registra project_context cuando aplique y continua a seleccion de servicio.",
-
-        "allowedActions": [
-
-          "set_fact"
-
-        ],
-
-        "collect": [
-
-          "project_context"
-
-        ],
-
-      },
-
-      {
-
-        "id": "service_selection",
-
-        "name": "Seleccion de servicio",
-
-        "goal": "Explicar amablemente los servicios de Rada Concept y registrar el servicio de interes.",
-
-        "advanceWhenFacts": [
-
-          "service"
-
-        ],
-
-        "conversationGuidance": "Cuando el cliente responda el tipo de servicio, pida opciones o describa su proyecto, consulta el catalogo oficial. Explica maximo 1 a 3 servicios relevantes con alcance y beneficios, sin mencionar precios. Si pide precio, indica que la cotizacion se define despues de entender medidas, alcance y materiales en asesoria. Cuando el cliente elija un servicio exacto o uno claramente equivalente, registra service con el nombre canonico del catalogo. Si la necesidad puede corresponder a varias opciones, ayuda a escoger con una explicacion breve.",
-
-        "allowedActions": [
-
-          "consultar_catalogo",
-
-          "resolve_service_selection",
-
-          "set_fact"
-
-        ],
-
-        "collect": [
-
-          "service"
-
-        ],
-
-      },
-
-      {
-
-        "id": "scheduling",
-
-        "name": "Agenda",
-
-        "goal": "Revisar disponibilidad y acordar fecha y hora para la cita de asesoria.",
-
-        "afterTool": [
-
-          {
-
-            "tool": "check_availability",
-
-            "when": {
-
-              "path": "data.availability_checked",
-
-              "equals": "true"
-
-            },
-
-            "setFact": {
-
-              "key": "desired_date",
-
-              "value": "{{data.date}}"
-
-            }
-
-          },
-
-          {
-
-            "tool": "check_availability",
-
-            "when": {
-
-              "path": "data.availability_checked",
-
-              "equals": "true"
-
-            },
-
-            "setFact": {
-
-              "key": "desired_time",
-
-              "value": "{{data.time}}"
-
-            }
-
-          },
-
-          {
-
-            "tool": "check_availability",
-
-            "when": {
-
-              "path": "data.availability_checked",
-
-              "equals": "true"
-
-            },
-
-            "setFact": {
-
-              "key": "availability_checked",
-
-              "value": "true"
-
-            }
-
-          }
-
-        ],
-
-        "advanceWhenFacts": [
-
-          "availability_checked"
-
-        ],
-
-        "reentryOnFactChanged": [
-
-          "service",
-
-          "desired_date",
-
-          "desired_time"
-
-        ],
-
-        "conversationGuidance": "Primero resuelve el tipo de atencion con el servicio elegido. Para agenda, pide fecha si falta desired_date. Cuando tengas fecha, valida disponibilidad para mostrar horarios disponibles. Cuando el cliente elija hora, registra desired_time y valida disponibilidad con fecha y hora. Si el horario esta disponible, deja avanzar el flujo.",
-
-        "allowedActions": [
-
-          "resolver_tipo_atencion",
-
-          "check_availability",
-
-          "set_fact"
-
-        ],
-
-        "collect": [
-
-          "availability_checked"
-
-        ],
-
-      },
-
-      {
-
-        "id": "customer_data",
-
-        "name": "Datos del cliente",
-
-        "goal": "Recoger datos minimos para crear la cita.",
-
-        "advanceWhenFacts": [
-
-          "customer_name",
-
-          "customer_phone"
-
-        ],
-
-        "conversationGuidance": "Pide en un solo mensaje los datos faltantes para la cita, en lista corta: nombre y celular de contacto. Si ya tienes uno de los datos, pide solo el que falta. Registra los datos entregados.",
-
-        "allowedActions": [
-
-          "set_fact"
-
-        ],
-
-        "collect": [
-
-          "customer_name",
-
-          "customer_phone"
-
-        ],
-
-      },
-
-      {
-
-        "id": "confirmation",
-
-        "name": "Confirmacion",
-
-        "goal": "Confirmar la cita de asesoria.",
-
-        "advanceWhenFacts": [],
-
-        "conversationGuidance": "Muestra un resumen breve con servicio, fecha, hora y nombre. Pide confirmacion. Cuando el cliente confirme claramente, crea la reserva con customer_confirmed=true. Despues de crear la cita, confirma con tono cordial que quedo agendada. Si falta o cambia fecha u hora, vuelve a validar disponibilidad antes de crear la cita.",
-
-        "allowedActions": [
-
-          "crear_reserva",
-
-          "check_availability",
-
-          "set_fact"
-
-        ],
-
-        "collect": [],
-
-      }
-
-    ],
-
-    "language": {
-
-      "actions": {
-
-        "set_fact": {
-
-          "name": "Registrar dato",
-
-          "purpose": "Guardar datos expresados por el cliente cuando son necesarios para avanzar.",
-
-          "tool": "set_fact"
-
-        },
-
-        "consultar_catalogo": {
-
-          "name": "Consultar catalogo oficial",
-
-          "purpose": "Presentar categorias o servicios oficiales segun la intencion del cliente.",
-
-          "tool": "get_service_catalog"
-
-        },
-
-        "resolve_service_selection": {
-
-          "name": "Resolver servicio exacto",
-
-          "purpose": "Convertir la seleccion del cliente en un servicio canonico del catalogo.",
-
-          "tool": "resolve_service_selection"
-
-        },
-
-        "resolver_tipo_atencion": {
-
-          "name": "Resolver tipo de atencion",
-
-          "purpose": "Determinar si el servicio requiere agenda, inscripcion u otra ruta de cumplimiento.",
-
-          "tool": "get_service_fulfillment"
-
-        },
-
-        "check_availability": {
-
-          "name": "Validar disponibilidad",
-
-          "purpose": "Consultar agenda oficial y confirmar fecha y hora disponibles.",
-
-          "tool": "check_availability"
-
-        },
-
-        "crear_reserva": {
-
-          "name": "Crear reserva",
-
-          "purpose": "Crear la reserva cuando los datos requeridos y verificaciones esten completos.",
-
-          "tool": "create_reservation"
-
-        },
-
-        "escalate_to_human": {
-
-          "name": "Escalar a humano",
-
-          "purpose": "Pasar la conversacion a una persona con el contexto necesario.",
-
-          "tool": "escalate_to_human"
-
-        },
-
-        "reset_flow_context": {
-
-          "name": "Reiniciar solicitud",
-
-          "purpose": "Limpiar el contexto de la solicitud actual segun la intencion del cliente.",
-
-          "tool": "reset_flow_context"
-
-        }
-
-      },
-
-      "enabled": true
-
-    }
-
-  },
-
   "globalActions": [
 
     {
@@ -1032,6 +694,38 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
 
       "expireOnBusinessDayChange": true
 
+    },
+
+    {
+
+      "key": "customer_confirmed",
+
+      "role": "confirmation.verbal",
+
+      "label": "confirmacion del cliente",
+
+      "type": "boolean",
+
+      "required": false,
+
+      "source": "user",
+
+      "scope": "request",
+
+      "captureMode": "explicit",
+
+      "retentionDays": 1,
+
+      "aliases": [
+
+        "confirmo",
+
+        "confirmacion",
+
+        "si confirmo"
+
+      ]
+
     }
 
   ],
@@ -1100,7 +794,389 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
 
     "modes": {}
 
-  }
+  },
+
+  "flows": [
+
+    {
+
+      "id": "booking",
+
+      "type": "primary",
+
+      "routingGuidance": "Use this primary flow for new Rada Concept design requests, service selection, scheduling, customer data and confirmation.",
+
+      "stageDetection": "automatic",
+
+      "stages": [
+
+        {
+
+          "id": "discovery",
+
+          "name": "Descubrimiento",
+
+          "goal": "Entender el tipo de servicio de interes.",
+
+          "advanceWhenFacts": [
+
+            "project_context"
+
+          ],
+
+          "conversationGuidance": "Si el mensaje del cliente es solo un saludo, pregunta en que tipo de servicio esta interesado. En ese turno no listes servicios completos de entrada. Si el cliente ya menciona una necesidad, proyecto o servicio, registra project_context cuando aplique y continua a seleccion de servicio.",
+
+          "allowedActions": [
+
+            "set_fact"
+
+          ],
+
+          "collect": [
+
+            "project_context"
+
+          ]
+
+        },
+
+        {
+
+          "id": "service_selection",
+
+          "name": "Seleccion de servicio",
+
+          "goal": "Explicar amablemente los servicios de Rada Concept y registrar el servicio de interes.",
+
+          "advanceWhenFacts": [
+
+            "service"
+
+          ],
+
+          "conversationGuidance": "Cuando el cliente responda el tipo de servicio, pida opciones o describa su proyecto, consulta el catalogo oficial. Explica maximo 1 a 3 servicios relevantes con alcance y beneficios, sin mencionar precios. Si pide precio, indica que la cotizacion se define despues de entender medidas, alcance y materiales en asesoria. Cuando el cliente elija un servicio exacto o uno claramente equivalente, registra service con el nombre canonico del catalogo. Si la necesidad puede corresponder a varias opciones, ayuda a escoger con una explicacion breve.",
+
+          "allowedActions": [
+
+            "get_service_catalog",
+
+            "resolve_service_selection",
+
+            "set_fact"
+
+          ],
+
+          "collect": [
+
+            "service"
+
+          ],
+
+          "entryActions": [
+
+            {
+
+              "tool": "get_service_catalog",
+
+              "arguments": {
+
+                "view": "auto",
+
+                "query": "{{user.message}}"
+
+              }
+
+            }
+
+          ]
+
+        },
+
+        {
+
+          "id": "scheduling",
+
+          "name": "Agenda",
+
+          "goal": "Revisar disponibilidad y acordar fecha y hora para la cita de asesoria.",
+
+          "afterTool": [
+
+            {
+
+              "tool": "check_availability",
+
+              "when": {
+
+                "path": "data.availability_checked",
+
+                "equals": "true"
+
+              },
+
+              "setFact": {
+
+                "key": "desired_date",
+
+                "value": "{{data.date}}"
+
+              }
+
+            },
+
+            {
+
+              "tool": "check_availability",
+
+              "when": {
+
+                "path": "data.availability_checked",
+
+                "equals": "true"
+
+              },
+
+              "setFact": {
+
+                "key": "desired_time",
+
+                "value": "{{data.time}}"
+
+              }
+
+            },
+
+            {
+
+              "tool": "check_availability",
+
+              "when": {
+
+                "path": "data.availability_checked",
+
+                "equals": "true"
+
+              },
+
+              "setFact": {
+
+                "key": "availability_checked",
+
+                "value": "true"
+
+              }
+
+            }
+
+          ],
+
+          "advanceWhenFacts": [
+
+            "availability_checked"
+
+          ],
+
+          "reentryOnFactChanged": [
+
+            "service",
+
+            "desired_date",
+
+            "desired_time"
+
+          ],
+
+          "conversationGuidance": "Primero resuelve el tipo de atencion con el servicio elegido. Para agenda, pide fecha si falta desired_date. Cuando tengas fecha, valida disponibilidad para mostrar horarios disponibles. Cuando el cliente elija hora, registra desired_time y valida disponibilidad con fecha y hora. Si el horario esta disponible, deja avanzar el flujo.",
+
+          "allowedActions": [
+
+            "get_service_fulfillment",
+
+            "check_availability",
+
+            "set_fact"
+
+          ],
+
+          "collect": [
+
+            "availability_checked"
+
+          ],
+
+          "entryActions": [
+
+            {
+
+              "tool": "check_availability",
+
+              "arguments": {
+
+                "service": "{{fact.service}}",
+
+                "date": "{{fact.desired_date}}",
+
+                "time": "{{fact.desired_time}}"
+
+              },
+
+              "when": {
+
+                "requiredFacts": [
+
+                  "service",
+
+                  "desired_date",
+
+                  "desired_time"
+
+                ],
+
+                "missingFacts": [
+
+                  "availability_checked"
+
+                ]
+
+              }
+
+            }
+
+          ]
+
+        },
+
+        {
+
+          "id": "customer_data",
+
+          "name": "Datos del cliente",
+
+          "goal": "Recoger datos minimos para crear la cita.",
+
+          "advanceWhenFacts": [
+
+            "customer_name",
+
+            "customer_phone"
+
+          ],
+
+          "conversationGuidance": "Pide en un solo mensaje los datos faltantes para la cita, en lista corta: nombre y celular de contacto. Si ya tienes uno de los datos, pide solo el que falta. Registra los datos entregados.",
+
+          "allowedActions": [
+
+            "set_fact"
+
+          ],
+
+          "collect": [
+
+            "customer_name",
+
+            "customer_phone"
+
+          ]
+
+        },
+
+        {
+
+          "id": "confirmation",
+
+          "name": "Confirmacion",
+
+          "goal": "Confirmar la cita de asesoria.",
+
+          "advanceWhenFacts": [
+
+            "customer_confirmed"
+
+          ],
+
+          "conversationGuidance": "Muestra un resumen breve con servicio, fecha, hora y nombre. Pide confirmacion. No llames create_reservation en esta etapa. Cuando el cliente confirme claramente, registra customer_confirmed=true con set_fact y deja avanzar; no crees la cita en el mismo paso. Si falta o cambia fecha u hora, vuelve a validar disponibilidad antes de crear la cita.",
+
+          "allowedActions": [
+
+            "set_fact",
+
+            "check_availability"
+
+          ],
+
+          "collect": [
+
+            "customer_confirmed"
+
+          ]
+
+        },
+
+        {
+
+          "id": "reservation_creation",
+
+          "name": "Creacion de cita",
+
+          "goal": "Crear la cita de asesoria solo despues de confirmacion verbal explicita.",
+
+          "advanceWhenFacts": [],
+
+          "conversationGuidance": "Crea la cita con customer_confirmed=true usando los datos ya validados. Despues de crearla, confirma con tono cordial que quedo agendada y cierra sin pedir datos extra.",
+
+          "allowedActions": [
+
+            "create_reservation",
+
+            "check_availability",
+
+            "set_fact"
+
+          ],
+
+          "collect": [],
+
+          "entryActions": [
+
+            {
+
+              "tool": "create_reservation",
+
+              "arguments": {
+
+                "customer_confirmed": true
+
+              },
+
+              "when": {
+
+                "requiredFacts": [
+
+                  "service",
+
+                  "desired_date",
+
+                  "desired_time",
+
+                  "customer_name",
+
+                  "customer_confirmed"
+
+                ]
+
+              }
+
+            }
+
+          ]
+
+        }
+
+      ]
+
+    }
+
+  ]
 
 }';
 

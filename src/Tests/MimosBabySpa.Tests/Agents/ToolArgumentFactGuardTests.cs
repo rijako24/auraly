@@ -99,7 +99,7 @@ public sealed class ToolArgumentFactGuardTests
 
 
     [Fact]
-    public void BuildUnsupportedUserFactResult_BlocksStringFactWithAliasesWhenUserDidNotProvideIt()
+    public void BuildUnsupportedUserFactResult_AllowsAddOnsFactSoCatalogValidationCanDecide()
     {
         var config = BuildConfig();
         var stage = BuildAddOnsStage();
@@ -116,8 +116,7 @@ public sealed class ToolArgumentFactGuardTests
             """{"key":"add_ons","value":"ninguno"}""",
             ctx);
 
-        result.Should().Contain("tool_argument_requires_user_fact_capture");
-        result.Should().Contain("add_ons");
+        result.Should().BeNull();
     }
 
     [Fact]
@@ -175,7 +174,8 @@ public sealed class ToolArgumentFactGuardTests
                 Key = "service",
                 Role = "booking.service",
                 Type = "string",
-                Source = "user"
+                Source = "user",
+                ValueSource = "catalog"
             },
             new FactSchemaEntry
             {
@@ -199,6 +199,7 @@ public sealed class ToolArgumentFactGuardTests
                 Role = "booking.addons",
                 Type = "string",
                 Source = "user",
+                ValueSource = "catalog",
                 Aliases = ["adicional", "adicionales"]
             },
             new FactSchemaEntry

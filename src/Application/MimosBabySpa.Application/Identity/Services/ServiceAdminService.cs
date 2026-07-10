@@ -170,7 +170,7 @@ public class ServiceAdminService : IServiceAdminService
 
     private static ServiceDto MapToDto(Service s) => new(
         s.ServiceId, s.BusinessId, s.ServiceName, s.Description, s.Keywords, s.DurationMinutes,
-        s.Price, s.IncludeInCheckoutTotal, s.IsActive, s.CategoryId, s.ServiceCategory.Name, s.Tier, s.ServiceType,
+        s.Price, s.IncludeInCheckoutTotal, s.IsActive, s.CategoryId, s.ServiceCategory?.Name ?? string.Empty, s.Tier, s.ServiceType,
         s.FulfillmentKind, s.FixedScheduleLabel, s.CreatedAt);
 
     private static ServiceCategoryDto MapCategoryToDto(ServiceCategory c) => new(

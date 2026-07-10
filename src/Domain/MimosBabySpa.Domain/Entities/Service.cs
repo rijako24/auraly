@@ -6,7 +6,7 @@ namespace MimosBabySpa.Domain.Entities;
 /// Servicio ofrecido por un negocio (ej: Marineritos, Aventuras Marinas).
 ///
 /// Categoría y tier de recomendación:
-///   - CategoryId: categoría del servicio (FK a ServiceCategories). Define agrupación y elegibilidad de add-ons.
+///   - CategoryId: categoria opcional del servicio (FK a ServiceCategories). Define agrupacion y elegibilidad de add-ons cuando existe.
 ///   - Tier: orden de recomendación dentro de la misma categoría (Deluxe > Premium > Base).
 /// </summary>
 public class Service
@@ -24,9 +24,9 @@ public class Service
     public DateTime? UpdatedAt { get; set; }
 
     /// <summary>
-    /// Categoría del servicio (Plan, Taller, Clase, Otros, etc.). Por negocio.
+    /// Categoria opcional del servicio (Planes Baby Spa, Taller, Clase, etc.). Por negocio.
     /// </summary>
-    public Guid CategoryId { get; set; }
+    public Guid? CategoryId { get; set; }
 
     /// <summary>
     /// Orden de recomendación dentro de la categoría (Deluxe > Premium > Base).
@@ -50,7 +50,7 @@ public class Service
 
     // Navigation properties
     public virtual Business Business { get; set; } = null!;
-    public virtual ServiceCategory ServiceCategory { get; set; } = null!;
+    public virtual ServiceCategory? ServiceCategory { get; set; }
     public virtual ICollection<ServiceResourceUsage> ResourceUsages { get; set; } = new List<ServiceResourceUsage>();
 
     /// <summary>
