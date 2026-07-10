@@ -1,4 +1,4 @@
-using MimosBabySpa.Application.Agents;
+﻿using MimosBabySpa.Application.Agents;
 using MimosBabySpa.Application.DTOs;
 using MimosBabySpa.Domain.Entities;
 using MimosBabySpa.Domain.Enums;
@@ -72,7 +72,10 @@ public sealed class CheckoutPaymentCoordinator : ICheckoutPaymentCoordinator
             && activePayment.ExpiresAt.HasValue
             && activePayment.ExpiresAt.Value > DateTime.UtcNow
             && activePayment.CheckoutKind == quote.CheckoutKind
-            && string.Equals(activePayment.QuoteHash, quoteHash, StringComparison.Ordinal))
+            && string.Equals(activePayment.QuoteHash, quoteHash, StringComparison.Ordinal)
+            && activePayment.AmountInCents == quote.PayableCents
+            && string.Equals(activePayment.Currency, quote.Currency, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(activePayment.ConfirmationOutcome, quote.ConfirmationOutcome, StringComparison.OrdinalIgnoreCase))
         {
             await _paymentLifecycle.RefreshPendingCheckoutAsync(
                 activePayment,

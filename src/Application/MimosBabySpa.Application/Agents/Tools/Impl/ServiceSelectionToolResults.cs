@@ -5,18 +5,13 @@ namespace MimosBabySpa.Application.Agents.Tools.Impl;
 internal static class ServiceSelectionToolResults
 {
     public static string Unresolved(ServiceSelectionResolution resolution, string query) =>
-        ToolResultHelper.ErrorWithLlm(
-            ErrorCode(resolution),
-            ErrorMessage(resolution),
-            null,
-            new
+        ToolResultHelper.ErrorWithLlm(ErrorCode(resolution), ErrorMessage(resolution), new
             {
                 next_action = "get_service_catalog",
                 view = "services",
                 query = query.Trim(),
                 selection_status = resolution.Status.ToString()
-            },
-            recoverable: true);
+            }, recoverable: true);
 
     private static string ErrorCode(ServiceSelectionResolution resolution) => resolution.Status switch
     {

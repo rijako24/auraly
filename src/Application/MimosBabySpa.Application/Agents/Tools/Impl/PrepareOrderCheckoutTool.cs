@@ -1,7 +1,7 @@
+using MimosBabySpa.Application.Agents.Configuration;
 using System.Globalization;
 using System.Text.Json;
 using MimosBabySpa.Application.Commerce;
-using MimosBabySpa.Application.Agents.Configuration;
 using MimosBabySpa.Application.Agents.Facts;
 using MimosBabySpa.Application.Agents.Gating;
 using MimosBabySpa.Application.Agents.Templates;
@@ -15,7 +15,7 @@ namespace MimosBabySpa.Application.Agents.Tools.Impl;
 [AgentToolMetadata("prepare_order_checkout", Capabilities = new[] { ToolCapabilities.CheckoutPrepare })]
 public sealed class PrepareOrderCheckoutTool : IAgentTool
 {
-    private readonly IUnitOfWork _unitOfWork;
+private readonly IUnitOfWork _unitOfWork;
     private readonly IProductCatalogAvailabilityService _availability;
     private readonly ICheckoutPaymentCoordinator _checkoutPayments;
     private readonly IConversationFactsService _factsService;
@@ -80,21 +80,14 @@ public sealed class PrepareOrderCheckoutTool : IAgentTool
         var unavailableItems = await _availability.FindUnavailableDraftItemsAsync(ctx.BusinessId, items, cancellationToken);
         if (unavailableItems.Count > 0)
         {
-            return ToolResultHelper.Error(
-                "product_inactive",
-                "The order contains an unavailable product and cannot be checked out.",
-                "Remove the unavailable product from the order and call search_products for active alternatives.",
-                recoverable: true);
+            return ToolResultHelper.Error("product_inactive", "The order contains an unavailable product and cannot be checked out.");
         }
 
         var checkout = ctx.Config?.Checkout ?? new CheckoutDefinitions();
         var checkoutMode = checkout.ResolveMode("order");
         if (checkoutMode is null)
         {
-            return ToolResultHelper.Error(
-                "checkout_mode_missing",
-                "Checkout mode 'order' is not configured for this agent.",
-                "Add SettingsJson.checkout.modes.order.");
+            return ToolResultHelper.Error("checkout_mode_missing", "Checkout mode 'order' is not configured for this agent.");
         }
 
         var roles = new FactRoleIndex(ctx.Config?.FactSchema ?? []);
@@ -479,8 +472,8 @@ public sealed class PrepareOrderCheckoutTool : IAgentTool
             : null;
 
         return llm is null
-            ? ToolResultHelper.Error(error.Code, error.Message, null, error.Recoverable)
-            : ToolResultHelper.ErrorWithLlm(error.Code, error.Message, null, llm, error.Recoverable);
+            ? ToolResultHelper.Error(error.Code, error.Message)
+            : ToolResultHelper.ErrorWithLlm(error.Code, error.Message, llm, recoverable: error.Recoverable);
     }
 
     private static string ShortId(Guid id) => id.ToString("N")[..8].ToUpperInvariant();

@@ -15,14 +15,6 @@ public sealed class EscalateToHumanTool : IAgentTool
 
     public IReadOnlyList<string> Capabilities => [ToolCapabilities.HumanEscalate];
 
-    public IReadOnlyList<string> SemanticTriggers =>
-    [
-        "customer_frustration",
-        "consecutive_errors",
-        "out_of_scope_request",
-        "explicit_human_request"
-    ];
-
     public string Description =>
         "Notifies configured human escalation contacts without disabling the bot or changing conversation ownership.";
 

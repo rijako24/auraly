@@ -1,4 +1,4 @@
-﻿using System.Text.Json;
+using System.Text.Json;
 using MimosBabySpa.Application.Services;
 using MimosBabySpa.Domain.Entities;
 using MimosBabySpa.Domain.Enums;
@@ -48,7 +48,7 @@ public sealed class ConfirmReservationAttendanceTool : IAgentTool
             return ToolResultHelper.ErrorWithLlm(
                 "confirmation_required",
                 "Customer confirmation is required before registering attendance.",
-                remediation: null,
+
                 new
                 {
                     next_action = "collect_confirmation",
@@ -78,14 +78,14 @@ public sealed class ConfirmReservationAttendanceTool : IAgentTool
         {
             var resolved = await _reservationResolver.ResolveAsync(ctx, reservationIdStr, cancellationToken);
             if (!resolved.Success)
-                return resolved.ErrorJson ?? ToolResultHelper.Error("reservation_not_found", "No reservation was found.", recoverable: true);
+                return resolved.ErrorJson ?? ToolResultHelper.Error("reservation_not_found", "No reservation was found.");
             if (resolved.Reservation is null)
-                return ToolResultHelper.Error("reservation_not_found", "No reservation was found.", recoverable: true);
+                return ToolResultHelper.Error("reservation_not_found", "No reservation was found.");
             reservation = resolved.Reservation;
         }
 
         if (reservation is null)
-            return ToolResultHelper.Error("reservation_not_found", "No reservation was found.", recoverable: true);
+            return ToolResultHelper.Error("reservation_not_found", "No reservation was found.");
 
         if (!reservation.CustomerConfirmed)
         {

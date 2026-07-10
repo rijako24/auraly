@@ -15,7 +15,7 @@ namespace MimosBabySpa.Application.Agents.Tools.Impl;
 [AgentToolMetadata("check_availability", RequiredTemplateIds = new[] { "availability_slots" })]
 public sealed class CheckAvailabilityTool : IAgentTool
 {
-    private readonly IAvailabilityService _availability;
+private readonly IAvailabilityService _availability;
     private readonly ISchedulingPolicyProvider _schedulingPolicy;
     private readonly IEmployeeAssignmentService _employeeAssignment;
     private readonly IUnitOfWork _unitOfWork;
@@ -68,29 +68,24 @@ public sealed class CheckAvailabilityTool : IAgentTool
         ToolResultHelper.TryGetString(arguments, "date", out var dateStr);
 
         if (string.IsNullOrWhiteSpace(service))
-            return ToolResultHelper.Error("invalid_args", "Parameter 'service' is required.", recoverable: true);
+            return ToolResultHelper.Error("invalid_args", "Parameter 'service' is required.");
         if (string.IsNullOrWhiteSpace(dateStr))
-            return ToolResultHelper.Error("invalid_args", "Parameter 'date' is required.", recoverable: true);
+            return ToolResultHelper.Error("invalid_args", "Parameter 'date' is required.");
 
         if (!AgentDateRules.TryParseDate(dateStr, out var date))
             return ToolResultHelper.ErrorWithNextAction("invalid_date", $"'{dateStr}' is not a valid date.", "collect_valid_date", new { expected_format = "yyyy-MM-dd" });
 
         if (AgentDateRules.IsPastDate(date, ctx.BusinessToday))
-            return ToolResultHelper.Error("past_date", "The date must be today or in the future.", recoverable: true);
+            return ToolResultHelper.Error("past_date", "The date must be today or in the future.");
 
         var canonicalService = await _serviceNameResolver.ResolveAsync(ctx.BusinessId, service, cancellationToken);
         if (string.IsNullOrWhiteSpace(canonicalService))
         {
-            return ToolResultHelper.ErrorWithLlm(
-                "service_selection_unresolved",
-                "Service selection could not be resolved against the active catalog.",
-                null,
-                new
+            return ToolResultHelper.ErrorWithLlm("service_selection_unresolved", "Service selection could not be resolved against the active catalog.", new
                 {
                     next_action = "resolve_service_selection",
                     text = service
-                },
-                recoverable: true);
+                }, recoverable: true);
         }
 
         TimeSpan? time = null;

@@ -13,6 +13,7 @@ using MimosBabySpa.Application.Billing;
 using MimosBabySpa.Application.BusinessRules;
 using MimosBabySpa.Application.Configuration;
 using MimosBabySpa.Application.LLM;
+using MimosBabySpa.Application.Promotions;
 using MimosBabySpa.Application.Services;
 using MimosBabySpa.Application.StateManagement;
 using MimosBabySpa.Application.Time;
@@ -84,6 +85,7 @@ public static class TestServiceBuilder
         services.AddSingleton<ITurnEventExtractor, NoOpTurnEventExtractor>();
         services.AddSingleton<IFlowRuntimeStateResolver, FlowRuntimeStateResolver>();
         services.AddSingleton<IFlowPolicyEngine, FlowPolicyEngine>();
+services.AddSingleton<IFlowRouter, FlowRouter>();
         services.AddSingleton<IFlowRuntimeOrchestrator, FlowRuntimeOrchestrator>();
         services.AddSingleton<IFlowStageDetector, FlowStageDetector>();
         services.AddSingleton<IFactHydrator, FactHydrator>();
@@ -105,6 +107,10 @@ public static class TestServiceBuilder
         services.AddSingleton<ServiceNameResolver>();
         services.AddSingleton<ServiceSelectionResolver>();
         services.AddSingleton<IAddOnCatalogService, AddOnCatalogService>();
+        services.AddSingleton<IPromotionPricingService, PromotionPricingService>();
+        services.AddSingleton<ReservationPricingResolver>();
+        services.AddSingleton<ICheckoutQuoteService, CheckoutQuoteService>();
+        services.AddSingleton<ICheckoutPaymentCoordinator, CheckoutPaymentCoordinator>();
 
         services.AddSingleton<IChatClient>(fakeChatClient);
         services.AddSingleton<IAgentConfigProvider>(new FakeAgentConfigProvider(businessId));
@@ -122,6 +128,15 @@ public static class TestServiceBuilder
                     sp.GetRequiredService<IUnitOfWork>(),
                     sp.GetRequiredService<IConversationVerificationService>(),
                     sp.GetRequiredService<ServiceNameResolver>()),
+                new PrepareCheckoutTool(
+                    sp.GetRequiredService<ReservationPricingResolver>(),
+                    sp.GetRequiredService<IAddOnCatalogService>(),
+                    sp.GetRequiredService<ICheckoutPaymentCoordinator>(),
+                    sp.GetRequiredService<IConversationFactsService>(),
+                    sp.GetRequiredService<IConversationVerificationService>(),
+                    sp.GetRequiredService<IUnitOfWork>(),
+                    sp.GetRequiredService<ServiceNameResolver>()),
+
                 new CreateReservationTool(
                     sp.GetRequiredService<IReservationService>(),
                     sp.GetRequiredService<IReservationIntentBuilder>(),
@@ -151,7 +166,6 @@ public static class TestServiceBuilder
                     sp.GetRequiredService<IEscalationNotifier>()),
                 new SetFactTool(
                     sp.GetRequiredService<IConversationFactsService>(),
-                    sp.GetRequiredService<ServiceSelectionResolver>(),
                     sp.GetRequiredService<IAddOnCatalogService>(),
                     sp.GetRequiredService<IConversationVerificationService>(),
                     sp.GetRequiredService<ILeadService>()),

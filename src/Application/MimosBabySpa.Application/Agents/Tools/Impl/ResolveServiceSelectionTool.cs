@@ -1,3 +1,5 @@
+using System.Globalization;
+using System.Text;
 using System.Text.Json;
 using MimosBabySpa.Application.Agents.Configuration;
 using MimosBabySpa.Application.Agents.Facts;
@@ -52,6 +54,8 @@ public sealed class ResolveServiceSelectionTool : IAgentTool
             ? rawText
             : ctx.LatestUserMessage;
 
+        text = ChooseCustomerSupportedText(text, ctx.LatestUserMessage);
+
         if (string.IsNullOrWhiteSpace(text))
             return ToolResultHelper.MissingPrerequisites(["text"]);
 
@@ -83,7 +87,6 @@ public sealed class ResolveServiceSelectionTool : IAgentTool
                 return ToolResultHelper.ErrorWithLlm(
                     "add_on_selection_detected",
                     "Selection matches a compatible add-on for the current service, not a service change.",
-                    null,
                     new
                     {
                         next_action = "set_fact",
@@ -93,6 +96,7 @@ public sealed class ResolveServiceSelectionTool : IAgentTool
                     recoverable: true);
             }
         }
+
         if (resolution.Status != ServiceSelectionStatus.Resolved || string.IsNullOrWhiteSpace(resolution.ServiceName))
             return ServiceSelectionToolResults.Unresolved(resolution, text.Trim());
 
@@ -116,5 +120,92 @@ public sealed class ResolveServiceSelectionTool : IAgentTool
             storage = "fact"
         });
     }
+    private static string? ChooseCustomerSupportedText(string? toolText, string? latestUserMessage)
+    {
+        if (string.IsNullOrWhiteSpace(toolText) || string.IsNullOrWhiteSpace(latestUserMessage))
+            return toolText;
+
+        return IsSupportedByLatestMessage(toolText, latestUserMessage)
+            ? toolText
+            : latestUserMessage;
+    }
+
+    private static bool IsSupportedByLatestMessage(string toolText, string latestUserMessage)
+    {
+        var toolCompact = Compact(toolText);
+        var messageCompact = Compact(latestUserMessage);
+        if (string.IsNullOrWhiteSpace(toolCompact) || string.IsNullOrWhiteSpace(messageCompact))
+            return true;
+
+        if (toolCompact.Equals(messageCompact, StringComparison.Ordinal)
+            || messageCompact.Contains(toolCompact, StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        var toolTokens = Tokenize(toolText).Distinct(StringComparer.Ordinal).ToList();
+        if (toolTokens.Count == 0)
+            return true;
+
+        var messageTokens = Tokenize(latestUserMessage).Distinct(StringComparer.Ordinal).ToList();
+        if (messageTokens.Count == 0)
+            return false;
+
+        var matched = toolTokens.Count(toolToken => messageTokens.Any(messageToken => TokensMatch(toolToken, messageToken)));
+        if (toolTokens.Count == 1)
+            return matched == 1;
+
+        var ratio = matched / (double)toolTokens.Count;
+        return matched >= 2 && ratio >= 0.67d;
+    }
+
+    private static bool TokensMatch(string left, string right) =>
+        left.Equals(right, StringComparison.Ordinal)
+        || (left.Length >= 4 && right.StartsWith(left, StringComparison.Ordinal))
+        || (right.Length >= 4 && left.StartsWith(right, StringComparison.Ordinal));
+
+    private static IReadOnlyList<string> Tokenize(string value)
+    {
+        var normalized = RemoveDiacritics(value).ToLowerInvariant();
+        var tokens = new List<string>();
+        var token = new List<char>();
+
+        foreach (var ch in normalized)
+        {
+            if (char.IsLetterOrDigit(ch))
+            {
+                token.Add(ch);
+                continue;
+            }
+
+            FlushToken(token, tokens);
+        }
+
+        FlushToken(token, tokens);
+        return tokens;
+    }
+
+    private static void FlushToken(List<char> token, List<string> tokens)
+    {
+        if (token.Count == 0)
+            return;
+
+        var text = new string(token.ToArray());
+        token.Clear();
+
+        if (text.Length >= 3 || text.All(char.IsDigit))
+            tokens.Add(text);
+    }
+
+    private static string Compact(string value) =>
+        string.Concat(RemoveDiacritics(value).Where(char.IsLetterOrDigit)).ToLowerInvariant();
+
+    private static string RemoveDiacritics(string value)
+    {
+        var normalized = value.Normalize(NormalizationForm.FormD);
+        return string.Concat(normalized.Where(ch =>
+            CharUnicodeInfo.GetUnicodeCategory(ch) != UnicodeCategory.NonSpacingMark));
+    }
 }
+
 

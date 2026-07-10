@@ -43,12 +43,11 @@ internal static class ToolResultHelper
         return JsonSerializer.Serialize(new { ok = true, data, llm, effects }, Options);
     }
 
-    public static string Error(string code, string message, string? remediation = null, bool recoverable = false) =>
-        JsonSerializer.Serialize(new { ok = false, error = new { code, message, remediation, recoverable } }, Options);
+    public static string Error(string code, string message, bool recoverable = false) =>
+        JsonSerializer.Serialize(new { ok = false, error = new { code, message, recoverable } }, Options);
 
-    public static string ErrorWithLlm(string code, string message, string? remediation, object? llm, bool recoverable = false) =>
-        JsonSerializer.Serialize(new { ok = false, error = new { code, message, remediation, recoverable }, llm }, Options);
-
+    public static string ErrorWithLlm(string code, string message, object? llm, bool recoverable = false) =>
+        JsonSerializer.Serialize(new { ok = false, error = new { code, message, recoverable }, llm }, Options);
     public static string ErrorWithNextAction(
         string code,
         string message,
@@ -60,7 +59,7 @@ internal static class ToolResultHelper
             ? new { next_action = nextAction }
             : new { next_action = nextAction, context };
 
-        return ErrorWithLlm(code, message, null, llm, recoverable);
+        return ErrorWithLlm(code, message, llm: llm, recoverable: recoverable);
     }
 
     public static string MissingPrerequisites(params string[] missing) =>

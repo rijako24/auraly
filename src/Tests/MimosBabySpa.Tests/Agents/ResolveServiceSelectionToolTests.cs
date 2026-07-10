@@ -5,6 +5,7 @@ using Moq;
 using MimosBabySpa.Application.Agents;
 using MimosBabySpa.Application.Agents.Configuration;
 using MimosBabySpa.Application.Agents.Facts;
+using MimosBabySpa.Application.Agents.Gating;
 using MimosBabySpa.Application.Agents.Tools.Impl;
 using MimosBabySpa.Application.Services;
 using MimosBabySpa.Domain.Entities;
@@ -31,6 +32,13 @@ public sealed class ResolveServiceSelectionToolTests
             unitOfWork.Object,
             NullLogger<ServiceSelectionResolver>.Instance);
 
+        _addOnCatalog.Setup(a => a.ValidateAsync(
+                It.IsAny<Guid>(),
+                It.IsAny<string>(),
+                It.IsAny<string?>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(AddOnValidationResult.Fail("not a compatible add-on"));
+
         _tool = new ResolveServiceSelectionTool(resolver, _facts.Object, _addOnCatalog.Object);
     }
 
@@ -41,7 +49,7 @@ public sealed class ResolveServiceSelectionToolTests
         SetupServices(businessId,
             "Corte de adulto",
             "Corte + barba",
-            "Corte de niño");
+            "Corte de niÃƒÂ±o");
         var ctx = CreateContext(businessId);
 
         using var args = JsonDocument.Parse("""{"text":"corte"}""");
@@ -52,7 +60,7 @@ public sealed class ResolveServiceSelectionToolTests
         var error = doc.RootElement.GetProperty("error");
         error.GetProperty("code").GetString().Should().Be("service_selection_ambiguous");
         error.GetProperty("message").GetString().Should().Be("Service selection is ambiguous.");
-        error.GetProperty("remediation").ValueKind.Should().Be(JsonValueKind.Null);
+        error.TryGetProperty("remediation", out _).Should().BeFalse();
         error.GetProperty("recoverable").GetBoolean().Should().BeTrue();
         doc.RootElement.GetProperty("llm").GetProperty("next_action").GetString().Should().Be("get_service_catalog");
         doc.RootElement.TryGetProperty("data", out _).Should().BeFalse();
@@ -62,6 +70,29 @@ public sealed class ResolveServiceSelectionToolTests
             It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
+    [Fact]
+    public async Task ExecuteAsync_WhenToolTextIsMoreSpecificThanCustomerMessage_UsesCustomerMessage()
+    {
+        var businessId = Guid.NewGuid();
+        SetupServices(businessId,
+            "Corte basico de adulto",
+            "Corte premium de adulto",
+            "Corte infantil");
+        var ctx = CreateContext(businessId);
+        ctx.LatestUserMessage = "quiero un corte";
+
+        using var args = JsonDocument.Parse("""{"text":"Corte basico de adulto"}""");
+        var json = await _tool.ExecuteAsync(args.RootElement, ctx, CancellationToken.None);
+
+        using var doc = JsonDocument.Parse(json);
+        doc.RootElement.GetProperty("ok").GetBoolean().Should().BeFalse();
+        doc.RootElement.GetProperty("error").GetProperty("code").GetString().Should().Be("service_selection_ambiguous");
+        doc.RootElement.GetProperty("llm").GetProperty("next_action").GetString().Should().Be("get_service_catalog");
+        ctx.Facts.Should().NotContainKey(ConversationFactKeys.Service);
+        _facts.Verify(f => f.SetAsync(
+            It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<string>(),
+            It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
     [Fact]
     public async Task ExecuteAsync_NotFoundSelection_ReturnsRecoverableError()
     {
@@ -79,7 +110,7 @@ public sealed class ResolveServiceSelectionToolTests
         var error = doc.RootElement.GetProperty("error");
         error.GetProperty("code").GetString().Should().Be("service_selection_not_found");
         error.GetProperty("message").GetString().Should().Be("Service selection was not found.");
-        error.GetProperty("remediation").ValueKind.Should().Be(JsonValueKind.Null);
+        error.TryGetProperty("remediation", out _).Should().BeFalse();
         error.GetProperty("recoverable").GetBoolean().Should().BeTrue();
         doc.RootElement.GetProperty("llm").GetProperty("next_action").GetString().Should().Be("get_service_catalog");
         doc.RootElement.TryGetProperty("data", out _).Should().BeFalse();
@@ -149,7 +180,7 @@ public sealed class ResolveServiceSelectionToolTests
         SetupServices(businessId,
             "Corte de adulto",
             "Corte + barba",
-            "Corte de niño");
+            "Corte de niÃƒÂ±o");
         var ctx = CreateContext(businessId);
 
         using var args = JsonDocument.Parse("""{"text":"corte adulto"}""");
@@ -161,6 +192,44 @@ public sealed class ResolveServiceSelectionToolTests
             ctx.ConversationId, ctx.BusinessId, ConversationFactKeys.Service, "Corte de adulto",
             false, It.IsAny<CancellationToken>()), Times.Once);
     }
+    [Fact]
+    public async Task ExecuteAsync_ServiceChange_InvalidatesCheckoutPreparedVerification()
+    {
+        var businessId = Guid.NewGuid();
+        SetupServices(businessId, "Plan Marineritos", "Plan Deluxe");
+        var ctx = CreateContext(businessId);
+        ctx.Config = new AgentConfig
+        {
+            FactSchema =
+            [
+                new FactSchemaEntry { Key = "service", Role = "booking.service", Source = "user" },
+                new FactSchemaEntry { Key = "desired_date", Role = "booking.date", Type = "date", Source = "user" },
+                new FactSchemaEntry { Key = "desired_time", Role = "booking.time", Type = "time", Source = "user" },
+                new FactSchemaEntry { Key = "add_ons", Role = "booking.addons", Source = "user" }
+            ]
+        };
+        ctx.Facts[ConversationFactKeys.Service] = "Plan Marineritos";
+        ctx.Facts[ConversationFactKeys.DesiredDate] = "2026-05-27";
+        ctx.Facts[ConversationFactKeys.DesiredTime] = "08:00";
+        ctx.Facts[ConversationFactKeys.AddOns] = "ninguno";
+
+        var verifications = new ConversationVerificationService();
+        var checkoutDeps = VerificationSnapshot.Of(ctx.Facts,
+            ConversationFactKeys.Service,
+            ConversationFactKeys.DesiredDate,
+            ConversationFactKeys.DesiredTime,
+            ConversationFactKeys.AddOns);
+        verifications.Record(ctx, VerificationFactTypes.CheckoutPrepared, checkoutDeps, null);
+        verifications.IsActive(ctx.ConversationState, VerificationFactTypes.CheckoutPrepared, ctx.Facts)
+            .Should().BeTrue();
+
+        using var args = JsonDocument.Parse("""{"text":"Plan Deluxe"}""");
+        await _tool.ExecuteAsync(args.RootElement, ctx, CancellationToken.None);
+
+        verifications.IsActive(ctx.ConversationState, VerificationFactTypes.CheckoutPrepared, ctx.Facts)
+            .Should().BeFalse();
+    }
+
 
     [Fact]
     public async Task ExecuteAsync_KeywordsResolveHaircutForChild()
@@ -169,11 +238,11 @@ public sealed class ResolveServiceSelectionToolTests
         SetupServices(businessId,
             new Service { ServiceName = "Corte basico", Keywords = "corte adulto, corte de cabello adulto" },
             new Service { ServiceName = "Corte + barba", Keywords = "corte barba, arreglo de barba" },
-            new Service { ServiceName = "Corte infantil", Keywords = "corte nino, corte niño, corte de cabello niño, cabello niño" },
-            new Service { ServiceName = "Corte puntas", Keywords = "corte bebe, corte bebés, solo puntas" });
+            new Service { ServiceName = "Corte infantil", Keywords = "corte nino, corte niÃƒÂ±o, corte de cabello niÃƒÂ±o, cabello niÃƒÂ±o" },
+            new Service { ServiceName = "Corte puntas", Keywords = "corte bebe, corte bebÃƒÂ©s, solo puntas" });
         var ctx = CreateContext(businessId);
 
-        using var args = JsonDocument.Parse("""{"text":"corte de cabello para niño"}""");
+        using var args = JsonDocument.Parse("""{"text":"corte de cabello para niÃƒÂ±o"}""");
         var json = await _tool.ExecuteAsync(args.RootElement, ctx, CancellationToken.None);
 
         json.Should().Contain("\"selection_status\":\"resolved\"");
@@ -231,3 +300,4 @@ public sealed class ResolveServiceSelectionToolTests
         Facts = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
     };
 }
+

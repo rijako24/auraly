@@ -60,10 +60,7 @@ public sealed class ResolvePricingTool : IAgentTool
 
             if (!validation.IsValid)
             {
-                return ToolResultHelper.Error(
-                    "invalid_add_ons",
-                    validation.ErrorMessage ?? "Invalid add-on selection.",
-                    validation.Remediation);
+                return ToolResultHelper.Error("invalid_add_ons", validation.ErrorMessage ?? "Invalid add-on selection.");
             }
 
             addOns = validation.NormalizedCsv;
@@ -75,15 +72,11 @@ public sealed class ResolvePricingTool : IAgentTool
             cancellationToken);
 
         if (result is null)
-            return ToolResultHelper.ErrorWithLlm("service_not_found",
-                $"Service '{service}' was not found in the catalog.",
-                null,
-                new
+            return ToolResultHelper.ErrorWithLlm("service_not_found", $"Service '{service}' was not found in the catalog.", new
                 {
                     next_action = "select_catalog_service",
                     unresolved_service = service
-                },
-                recoverable: true);
+                }, recoverable: true);
 
         return ToolResultHelper.Ok(new
         {

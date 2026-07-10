@@ -236,7 +236,7 @@ public class AgentPromptComposerTests
             [],
             new AgentToolContext { Conversation = new Conversation(), Facts = [], ActivePayment = payment });
 
-        result.Should().Contain("pago: link generado");
+        result.Should().Contain("payment: status=created");
         result.Should().Contain("COP $67,500");
         result.Should().NotContain("## CHECKOUT PENDIENTE");
         result.Should().NotContain("hay_link_pendiente: true");
@@ -262,7 +262,7 @@ public class AgentPromptComposerTests
             new AgentToolContext { Conversation = new Conversation(), Facts = [] },
             payment);
 
-        result.Should().Contain("pago: link expirado");
+        result.Should().Contain("payment: status=expired");
     }
 
     [Fact]
@@ -281,7 +281,7 @@ public class AgentPromptComposerTests
             new AgentToolContext { Conversation = new Conversation(), Facts = [] },
             payment);
 
-        result.Should().Contain("pago: confirmado");
+        result.Should().Contain("payment: status=confirmed");
     }
 
     [Fact]
@@ -303,7 +303,7 @@ public class AgentPromptComposerTests
             new AgentToolContext { Conversation = new Conversation(), Facts = [] },
             payment);
 
-        result.Should().Contain("pago: confirmado");
+        result.Should().Contain("payment: status=confirmed");
         result.Should().NotContain("## ESTADO PAGO");
         result.Should().NotContain("pago_confirmado_sin_slot: true");
         result.Should().NotContain($"payment_transaction_id: {paymentId}");
@@ -518,8 +518,6 @@ public class AgentPromptComposerTests
             ],
             Flow = new AgentFlowDefinition
             {
-                Language = LanguageForTools("get_service_catalog", "set_fact"),
-
                 StageDetection = "automatic",
                 Stages =
                 [
@@ -669,7 +667,18 @@ public class AgentPromptComposerTests
                     Priority = 900,
                     Goal = "Gestionar reservas existentes.",
                     ConversationGuidance = "Usa get_customer_reservations antes de modificar.",
-                    AllowedActions = ["get_customer_reservations", "manage_reservation"]
+                    AllowedActions = ["get_customer_reservations", "manage_reservation"],
+                    EntryActions =
+                    [
+                        new StageEntryAction
+                        {
+                            Tool = "get_customer_reservations",
+                            When = new StageEntryActionCondition
+                            {
+                                MessageMatches = [new StageEntryMessageMatch { AnyOf = ["reagendar mi reserva", "cambiar mi reserva"] }]
+                            }
+                        }
+                    ]
                 }
             ]
         };
@@ -696,8 +705,6 @@ public class AgentPromptComposerTests
             Persona = DefaultConfig.Persona,
             Flow = new AgentFlowDefinition
             {
-                Language = LanguageForTools("get_service_catalog"),
-
                 Stages =
                 [
                     new AgentFlowStage
@@ -716,7 +723,18 @@ public class AgentPromptComposerTests
                     Priority = 900,
                     Goal = "Gestionar reservas existentes.",
                     ConversationGuidance = "Usa get_customer_reservations antes de modificar.",
-                    AllowedActions = ["get_customer_reservations", "manage_reservation"]
+                    AllowedActions = ["get_customer_reservations", "manage_reservation"],
+                    EntryActions =
+                    [
+                        new StageEntryAction
+                        {
+                            Tool = "get_customer_reservations",
+                            When = new StageEntryActionCondition
+                            {
+                                MessageMatches = [new StageEntryMessageMatch { AnyOf = ["reagendar mi reserva", "cambiar mi reserva"] }]
+                            }
+                        }
+                    ]
                 }
             ]
         };
@@ -729,8 +747,8 @@ public class AgentPromptComposerTests
             LatestUserMessage = "SÃƒÂ­, confirma la reserva"
         }, enabledTools: [new TestTool("get_service_catalog"), new TestTool("get_customer_reservations"), new TestTool("manage_reservation")]);
 
-        result.Should().Contain("manage_existing_reservation");
-        result.Should().Contain("manage_reservation");
+        result.Should().NotContain("manage_existing_reservation");
+        result.Should().NotContain("manage_reservation");
     }
     [Fact]
     public void Compose_WithHumanEscalationGlobalAction_RendersViaGlobalActions()
@@ -749,12 +767,28 @@ public class AgentPromptComposerTests
                     Priority = 1000,
                     Goal = "Notificar al equipo humano sin desactivar el bot.",
                     ConversationGuidance = "Escala cuando el cliente pida hablar con una persona o cuando el caso sea sensible.",
-                    AllowedActions = ["escalate_to_human"]
+                    AllowedActions = ["escalate_to_human"],
+                    EntryActions =
+                    [
+                        new StageEntryAction
+                        {
+                            Tool = "escalate_to_human",
+                            When = new StageEntryActionCondition
+                            {
+                                MessageMatches = [new StageEntryMessageMatch { AnyOf = ["hablar con una persona"] }]
+                            }
+                        }
+                    ]
                 }
             ]
         };
 
-        var result = Compose(config, [], enabledTools: [new TestTool("escalate_to_human")]);
+        var result = Compose(config, [], new AgentToolContext
+        {
+            Conversation = new Conversation(),
+            ConversationState = new ConversationState(),
+            LatestUserMessage = "quiero hablar con una persona"
+        }, enabledTools: [new TestTool("escalate_to_human")]);
 
         result.Should().Contain("## REGLAS TRANSVERSALES APLICABLES");
         result.Should().Contain("human_escalation");
@@ -1084,7 +1118,7 @@ public class AgentPromptComposerTests
     }
 
     [Fact]
-    public void Compose_WithConversationalFlowLanguage_RendersSpokenStageAndUsesConversationalGuidanceOnly()
+    public void Compose_WithToolScopedStage_RendersConversationalGuidanceOnly()
     {
         var config = new AgentConfig
         {
@@ -1094,30 +1128,14 @@ public class AgentPromptComposerTests
             Persona = "Eres Luis.",
             Flow = new AgentFlowDefinition
             {
-                Language = new ConversationalFlowLanguage
-                {
-                                Actions = new Dictionary<string, SemanticFlowAction>(StringComparer.OrdinalIgnoreCase)
-                    {
-                        ["resolver_servicio"] = new()
-                        {
-                            Name = "Resolver servicio exacto",
-                            Purpose = "Convertir seleccion del cliente en servicio canonico.",
-                            Tool = "resolve_service_selection",
-                            Requires = ["service"],
-                            Produces = ["service"],
-                            WhenMissingData = "Pide elegir entre opciones oficiales."
-                        }
-                    }
-                },
                 Stages =
                 [
                     new AgentFlowStage
                     {
                         Id = "discovery",
                         Goal = "Elegir servicio",
-                        Ask = "Que servicio te interesa?",
                         Collect = ["service"],
-                        AllowedActions = ["resolver_servicio"],
+                        AllowedActions = ["resolve_service_selection"],
                         ConversationGuidance = "Presenta solo opciones oficiales.",
                         AdvanceWhenFacts = ["service"]
                     }
@@ -1134,16 +1152,15 @@ public class AgentPromptComposerTests
 
         var result = Compose(config, [], session, enabledTools: [new TestTool("resolve_service_selection")]);
 
-        result.Should().Contain("pregunta_conversacional: Que servicio te interesa?");
+        result.Should().Contain("guia_conversacional: Presenta solo opciones oficiales.");
+        result.Should().NotContain("pregunta_conversacional");
         result.Should().Contain("puede_recoger: service");
-        result.Should().Contain("Acciones de negocio disponibles en esta etapa:");
-        result.Should().Contain("resolver_servicio: Resolver servicio exacto");
-        result.Should().Contain("si_faltan_datos: Pide elegir entre opciones oficiales.");
+        result.Should().Contain("## HERRAMIENTAS DE ESTE TURNO");
         result.Should().Contain("resolve_service_selection");
     }
 
     [Fact]
-    public void Compose_WithGlobalActionAllowedActions_RendersSemanticActionAndScopesMappedTool()
+    public void Compose_WithGlobalActionAllowedActions_RendersToolNamesAndScopesTool()
     {
         var config = new AgentConfig
         {
@@ -1151,21 +1168,6 @@ public class AgentPromptComposerTests
             BusinessId = DefaultConfig.BusinessId,
             Name = "Luis",
             Persona = "Eres Luis.",
-            Flow = new AgentFlowDefinition
-            {
-                Language = new ConversationalFlowLanguage
-                {
-                                Actions = new Dictionary<string, SemanticFlowAction>(StringComparer.OrdinalIgnoreCase)
-                    {
-                        ["gestionar_reserva"] = new()
-                        {
-                            Name = "Gestionar reserva existente",
-                            Purpose = "Aplicar cambios permitidos segun politica configurada.",
-                            Tool = "manage_reservation"
-                        }
-                    }
-                }
-            },
             GlobalActions =
             [
                 new AgentGlobalAction
@@ -1173,7 +1175,18 @@ public class AgentPromptComposerTests
                     Id = "manage_existing_reservation",
                     Priority = 900,
                     Goal = "Gestionar reservas existentes.",
-                    AllowedActions = ["gestionar_reserva"]
+                    AllowedActions = ["manage_reservation"],
+                    EntryActions =
+                    [
+                        new StageEntryAction
+                        {
+                            Tool = "manage_reservation",
+                            When = new StageEntryActionCondition
+                            {
+                                MessageMatches = [new StageEntryMessageMatch { AnyOf = ["cambiar mi reserva"] }]
+                            }
+                        }
+                    ]
                 }
             ]
         };
@@ -1181,30 +1194,16 @@ public class AgentPromptComposerTests
         var result = Compose(config, [], new AgentToolContext
         {
             Conversation = new Conversation(),
-            Facts = []
+            ConversationState = new ConversationState(),
+            Facts = [],
+            LatestUserMessage = "quiero cambiar mi reserva",
         }, enabledTools: [new TestTool("manage_reservation"), new TestTool("set_fact")]);
 
-        result.Should().Contain("acciones: gestionar_reserva");
+        result.Should().Contain("tools: manage_reservation");
         result.Should().Contain("## HERRAMIENTAS DE ESTE TURNO");
         result.Should().Contain("manage_reservation");
         result.Should().NotContain("set_fact");
     }
-
-
-    private static ConversationalFlowLanguage LanguageForTools(params string[] toolNames) => new()
-    {
-        Actions = toolNames
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(
-                tool => tool,
-                tool => new SemanticFlowAction
-                {
-                    Name = tool,
-                    Purpose = $"Test action for {tool}.",
-                    Tool = tool
-                },
-                StringComparer.OrdinalIgnoreCase)
-    };
 
     private sealed class TestTool : IAgentTool
     {

@@ -4,9 +4,10 @@ using MimosBabySpa.Domain.Repositories;
 
 namespace MimosBabySpa.Application.Agents.Tools.Impl;
 
+[AgentToolMetadata("operations_get_customer_history")]
 public sealed class OperationsCustomerHistoryTool : IAgentTool
 {
-    private readonly IUnitOfWork _unitOfWork;
+private readonly IUnitOfWork _unitOfWork;
 
     public OperationsCustomerHistoryTool(IUnitOfWork unitOfWork)
     {
@@ -120,5 +121,3 @@ public sealed class OperationsCustomerHistoryTool : IAgentTool
                 || (hasSearchDigits && OperationsToolParsing.NormalizePhone(phone).Contains(normalizedSearch))));
     }
 }
-
-

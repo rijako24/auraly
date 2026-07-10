@@ -9,13 +9,14 @@ public static class ToolFlowScope
     public static IReadOnlyList<IAgentTool> FilterVisibleTools(
         AgentConfig config,
         AgentFlowStage? currentStage,
-        IReadOnlyList<IAgentTool> effectiveTools)
+        IReadOnlyList<IAgentTool> effectiveTools,
+        AgentToolContext? session = null)
     {
-        if (!HasStageScope(config, currentStage))
+        if (!HasStageScope(currentStage))
             return effectiveTools;
 
         return effectiveTools
-            .Where(tool => IsAllowedInScope(tool.Name, config, currentStage!, FlowRuntimeDecision.Empty))
+            .Where(tool => IsAllowedInScope(tool.Name, config, currentStage!, FlowRuntimeDecision.Empty, session))
             .ToList();
     }
 
@@ -23,29 +24,28 @@ public static class ToolFlowScope
         string toolName,
         AgentConfig config,
         AgentFlowStage? currentStage,
-        FlowRuntimeDecision runtimeDecision) =>
-        !HasStageScope(config, currentStage)
-        || IsAllowedByStage(toolName, config, currentStage!)
-        || IsAllowedByGlobalAction(toolName, config, runtimeDecision);
+        FlowRuntimeDecision runtimeDecision,
+        AgentToolContext? session = null) =>
+        !HasStageScope(currentStage)
+        || IsAllowedByStage(toolName, currentStage!)
+        || IsAllowedByGlobalAction(toolName, config, runtimeDecision, session);
 
-    private static bool HasStageScope(AgentConfig config, AgentFlowStage? currentStage) =>
-        config.Flow.Stages.Count > 0
-        && currentStage is not null
-        && currentStage.AllowedActions.Count > 0;
+    private static bool HasStageScope(AgentFlowStage? currentStage) =>
+        currentStage is not null && currentStage.AllowedActions.Count > 0;
 
-    private static bool IsAllowedByStage(string toolName, AgentConfig config, AgentFlowStage currentStage) =>
-        SemanticFlowActionResolver.ResolveToolNames(config, currentStage.AllowedActions)
-            .Contains(toolName, StringComparer.OrdinalIgnoreCase);
+    private static bool IsAllowedByStage(string toolName, AgentFlowStage currentStage) =>
+        currentStage.AllowedActions.Contains(toolName, StringComparer.OrdinalIgnoreCase);
 
     public static bool IsAllowedByGlobalAction(string toolName, AgentConfig config) =>
-        IsAllowedByGlobalAction(toolName, config, FlowRuntimeDecision.Empty);
+        config.GlobalActions.Any(action =>
+            action.AllowedActions.Contains(toolName, StringComparer.OrdinalIgnoreCase));
 
-    public static bool IsAllowedByGlobalAction(string toolName, AgentConfig config, FlowRuntimeDecision runtimeDecision)
-    {
-        var runtimeActive = !ReferenceEquals(runtimeDecision, FlowRuntimeDecision.Empty);
-        return config.GlobalActions.Any(action =>
-            (!runtimeActive || runtimeDecision.EnabledGlobalActionIds.Contains(action.Id))
-            && SemanticFlowActionResolver.ResolveToolNames(config, action.AllowedActions)
-                .Contains(toolName, StringComparer.OrdinalIgnoreCase));
-    }
+    public static bool IsAllowedByGlobalAction(
+        string toolName,
+        AgentConfig config,
+        FlowRuntimeDecision runtimeDecision,
+        AgentToolContext? session = null) =>
+        config.GlobalActions.Any(action =>
+            AgentTurnToolScope.ShouldExposeGlobalActionToLlm(action, session)
+            && action.AllowedActions.Contains(toolName, StringComparer.OrdinalIgnoreCase));
 }

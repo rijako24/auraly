@@ -4,9 +4,10 @@ using MimosBabySpa.Domain.Repositories;
 
 namespace MimosBabySpa.Application.Agents.Tools.Impl;
 
+[AgentToolMetadata("operations_get_business_metrics")]
 public sealed class OperationsBusinessMetricsTool : IAgentTool
 {
-    private readonly IUnitOfWork _unitOfWork;
+private readonly IUnitOfWork _unitOfWork;
 
     public OperationsBusinessMetricsTool(IUnitOfWork unitOfWork)
     {
@@ -21,7 +22,7 @@ public sealed class OperationsBusinessMetricsTool : IAgentTool
         {
           "type": "object",
           "properties": {
-            "date": { "type": "string", "description": "YYYY-MM-DD, today/hoy, or tomorrow/ma�ana. Defaults to today" },
+            "date": { "type": "string", "description": "YYYY-MM-DD, today/hoy, or tomorrow/manana. Defaults to today" },
             "end_date": { "type": "string", "description": "Optional YYYY-MM-DD end date" }
           }
         }

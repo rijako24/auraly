@@ -1,6 +1,6 @@
+using MimosBabySpa.Application.Agents.Configuration;
 using System.Globalization;
 using System.Text.Json;
-using MimosBabySpa.Application.Agents.Configuration;
 using MimosBabySpa.Application.Agents.Facts;
 using MimosBabySpa.Application.Agents.Gating;
 using MimosBabySpa.Application.Agents.Templates;
@@ -19,7 +19,7 @@ namespace MimosBabySpa.Application.Agents.Tools.Impl;
 [AgentToolMetadata("prepare_checkout", Capabilities = new[] { ToolCapabilities.CheckoutPrepare })]
 public sealed class PrepareCheckoutTool : IAgentTool
 {
-    private readonly ReservationPricingResolver _pricing;
+private readonly ReservationPricingResolver _pricing;
     private readonly IAddOnCatalogService _addOnCatalog;
     private readonly ICheckoutPaymentCoordinator _checkoutPayments;
     private readonly IConversationFactsService _factsService;
@@ -97,10 +97,7 @@ public sealed class PrepareCheckoutTool : IAgentTool
             var paymentPhone = ResolveSystemFact(quote, roles, ctx.Facts, CheckoutSystemSlots.PaymentPhone);
             if (string.IsNullOrWhiteSpace(paymentPhone))
             {
-                return ToolResultHelper.Error(
-                    "payment_phone_missing",
-                    "Checkout requires payment but no payment phone binding was resolved.",
-                    null);
+                return ToolResultHelper.Error("payment_phone_missing", "Checkout requires payment but no payment phone binding was resolved.");
             }
 
             var snapshotResult = BuildCheckoutSnapshot(quote, roles, ctx);
@@ -173,9 +170,21 @@ public sealed class PrepareCheckoutTool : IAgentTool
         if (string.IsNullOrWhiteSpace(serviceName))
             return (null, ToolResultHelper.MissingPrerequisites(["service"]));
 
-        ToolResultHelper.TryGetString(arguments, "add_ons", out var addOns);
-        addOns ??= roles.GetByRole(ctx.Facts, "booking.addons")
-            ?? ConversationFactKeys.Get(ctx.Facts, ConversationFactKeys.AddOns);
+        string? addOns;
+        if (arguments.TryGetProperty("add_ons", out var addOnsElement))
+        {
+            addOns = addOnsElement.ValueKind == JsonValueKind.String
+                ? addOnsElement.GetString()
+                : null;
+        }
+        else
+        {
+            addOns = roles.GetByRole(ctx.Facts, "booking.addons")
+                ?? ConversationFactKeys.Get(ctx.Facts, ConversationFactKeys.AddOns);
+        }
+
+        if (string.IsNullOrWhiteSpace(addOns))
+            addOns = null;
 
         var service = await _unitOfWork.Services.GetByBusinessIdAndNameAsync(ctx.BusinessId, serviceName);
         if (service is null)
@@ -189,10 +198,7 @@ public sealed class PrepareCheckoutTool : IAgentTool
 
         if (service is null)
         {
-            return (null, ToolResultHelper.Error(
-                "service_not_found",
-                $"Service '{serviceName}' was not found in the catalog.",
-                null));
+            return (null, ToolResultHelper.Error("service_not_found", $"Service '{serviceName}' was not found in the catalog."));
         }
 
         if (!string.IsNullOrWhiteSpace(addOns))
@@ -201,10 +207,7 @@ public sealed class PrepareCheckoutTool : IAgentTool
                 ctx.BusinessId, service.ServiceName, addOns, cancellationToken);
             if (!validation.IsValid)
             {
-                return (null, ToolResultHelper.Error(
-                    validation.ErrorCode ?? "invalid_add_ons",
-                    validation.ErrorMessage ?? "Invalid add-on selection.",
-                    validation.Remediation));
+                return (null, ToolResultHelper.Error(validation.ErrorCode ?? "invalid_add_ons", validation.ErrorMessage ?? "Invalid add-on selection."));
             }
 
             addOns = validation.NormalizedCsv;
@@ -217,10 +220,7 @@ public sealed class PrepareCheckoutTool : IAgentTool
         var checkoutMode = checkout.ResolveMode(checkoutKindText);
         if (checkoutMode is null)
         {
-            return (null, ToolResultHelper.Error(
-                "checkout_mode_missing",
-                $"Checkout mode '{checkoutKindText}' is not configured for this agent.",
-                null));
+            return (null, ToolResultHelper.Error("checkout_mode_missing", $"Checkout mode '{checkoutKindText}' is not configured for this agent."));
         }
 
         var pricing = await _pricing.ResolveAsync(
@@ -397,11 +397,7 @@ public sealed class PrepareCheckoutTool : IAgentTool
             || string.IsNullOrWhiteSpace(date)
             || string.IsNullOrWhiteSpace(time))
         {
-            return ToolResultHelper.Error(
-                "availability_verification_missing",
-                "Reservation checkout requires service, date and time before preparing payment.",
-                null,
-                recoverable: true);
+            return ToolResultHelper.Error("availability_verification_missing", "Reservation checkout requires service, date and time before preparing payment.", recoverable: true);
         }
 
         var dependencies = VerificationSnapshot.FromValues(
@@ -412,11 +408,7 @@ public sealed class PrepareCheckoutTool : IAgentTool
         if (_verifications.IsActive(ctx.ConversationState, VerificationFactTypes.AvailabilityChecked, dependencies))
             return null;
 
-        return ToolResultHelper.Error(
-            "availability_verification_stale",
-            "Availability has not been verified for the exact service, date and time that would be used for checkout.",
-            null,
-            recoverable: true);
+        return ToolResultHelper.Error("availability_verification_stale", "Availability has not been verified for the exact service, date and time that would be used for checkout.", recoverable: true);
     }
     private static string? ResolveSystemFact(
         CheckoutQuote quote,
@@ -443,8 +435,8 @@ public sealed class PrepareCheckoutTool : IAgentTool
             : null;
 
         return llm is null
-            ? ToolResultHelper.Error(error.Code, error.Message, null, error.Recoverable)
-            : ToolResultHelper.ErrorWithLlm(error.Code, error.Message, null, llm, error.Recoverable);
+            ? ToolResultHelper.Error(error.Code, error.Message)
+            : ToolResultHelper.ErrorWithLlm(error.Code, error.Message, llm, recoverable: error.Recoverable);
     }
 
     private static string? ResolveBinding(

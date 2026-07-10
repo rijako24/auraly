@@ -1,4 +1,4 @@
-using MimosBabySpa.Application.Agents.Tools;
+﻿using MimosBabySpa.Application.Agents.Tools;
 
 namespace MimosBabySpa.Application.Agents.Runtime;
 
@@ -9,11 +9,22 @@ public enum FlowRuntimeState
     Default
 }
 
+public sealed record FlowRouteDecision(
+    string ActiveFlowId,
+    string Decision,
+    string Reason,
+    double Confidence,
+    bool IsPrimaryFlow)
+{
+    public static FlowRouteDecision Primary(string flowId, string reason = "primary_flow") =>
+        new(flowId, "primary_flow", reason, 1.0, true);
+}
+
 public sealed record FlowRuntimeDecision(
     FlowRuntimeState State,
     IReadOnlyList<TurnEvent> Events,
     IReadOnlyDictionary<string, string> FactMutations,
-    IReadOnlySet<string> EnabledGlobalActionIds,
+    FlowRouteDecision Route,
     IReadOnlySet<string> ExtraAllowedToolNames,
     IReadOnlySet<string> BlockedToolNames,
     IReadOnlySet<string> DisabledToolCapabilities)
@@ -22,7 +33,7 @@ public sealed record FlowRuntimeDecision(
         FlowRuntimeState.Default,
         [],
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
-        new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+        FlowRouteDecision.Primary(string.Empty),
         new HashSet<string>(StringComparer.OrdinalIgnoreCase),
         new HashSet<string>(StringComparer.OrdinalIgnoreCase),
         new HashSet<string>(StringComparer.OrdinalIgnoreCase));
@@ -51,7 +62,17 @@ public interface IFlowPolicyEngine
         AgentConfig config,
         AgentToolContext session,
         FlowRuntimeState state,
-        IReadOnlyList<TurnEvent> events);
+        IReadOnlyList<TurnEvent> events,
+        FlowRouteDecision route);
+}
+
+public interface IFlowRouter
+{
+    Task<FlowRouteDecision> RouteAsync(
+        AgentConfig config,
+        AgentToolContext session,
+        string userMessage,
+        CancellationToken ct);
 }
 
 public interface IFlowRuntimeOrchestrator

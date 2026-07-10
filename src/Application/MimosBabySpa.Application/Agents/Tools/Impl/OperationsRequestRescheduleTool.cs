@@ -6,9 +6,10 @@ using MimosBabySpa.Domain.Repositories;
 
 namespace MimosBabySpa.Application.Agents.Tools.Impl;
 
+[AgentToolMetadata("operations_request_reschedule")]
 public sealed class OperationsRequestRescheduleTool : IAgentTool
 {
-    private readonly IUnitOfWork _unitOfWork;
+private readonly IUnitOfWork _unitOfWork;
     private readonly IConversationLifecycleService _conversationLifecycle;
     private readonly IOutboundMessageDispatcher _outboundDispatcher;
 
@@ -235,5 +236,3 @@ public sealed class OperationsRequestRescheduleTool : IAgentTool
                "Para que dia y hora te gustaria reagendar? Si tienes varias citas, dime cual quieres mover primero.";
     }
 }
-
-

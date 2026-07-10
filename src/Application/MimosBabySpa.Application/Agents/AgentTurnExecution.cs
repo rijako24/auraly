@@ -1,4 +1,4 @@
-using MimosBabySpa.Application.Agents.Templates;
+﻿using MimosBabySpa.Application.Agents.Templates;
 using MimosBabySpa.Application.LLM;
 
 namespace MimosBabySpa.Application.Agents;
@@ -12,6 +12,7 @@ internal sealed class AgentTurnExecution
     private readonly Dictionary<string, TurnFragment> _fragments = new(StringComparer.Ordinal);
     private readonly List<OutboundMessage> _outboundMessages = [];
     private readonly HashSet<string> _enqueuedSequences = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _entryActionRuns = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<AgentTurnTraceEntry> _trace = [];
     private int _fragmentRevision;
     private int _turnCompletingFragmentRevision;
@@ -112,6 +113,12 @@ internal sealed class AgentTurnExecution
 
     public bool TryMarkSequenceEnqueued(string sequenceName) =>
         _enqueuedSequences.Add(sequenceName);
+
+    public bool HasEntryActionRun(string key) =>
+        _entryActionRuns.Contains(key);
+
+    public void MarkEntryActionRun(string key) =>
+        _entryActionRuns.Add(key);
 
     public void RecordPromptTrace(
         int iteration,

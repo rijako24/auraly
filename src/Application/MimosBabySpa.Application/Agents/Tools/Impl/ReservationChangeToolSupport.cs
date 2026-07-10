@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using MimosBabySpa.Application.DTOs;
 using MimosBabySpa.Application.Services;
 
@@ -36,7 +36,7 @@ internal static class ReservationChangeToolSupport
                     "collect_valid_date",
                     new { expected_format = "yyyy-MM-dd" }));
             if (AgentDateRules.IsPastDate(parsedDate, ctx.BusinessToday))
-                return (null, ToolResultHelper.Error("past_date", "New date must be today or in the future.", recoverable: true));
+                return (null, ToolResultHelper.Error("past_date", "New date must be today or in the future."));
             date = parsedDate;
         }
 
@@ -127,9 +127,9 @@ internal static class ReservationChangeToolSupport
 
     private static string CustomerReservationChangeSummary(UpdateReservationChangeResult result)
     {
-        var date = result.Date?.ToString("yyyy-MM-dd") ?? "sin fecha";
-        var time = result.Time?.ToString("HH:mm") ?? "sin hora";
-        var addOns = result.AddOns.Count == 0 ? "sin complementos" : string.Join(", ", result.AddOns);
-        return $"{date} {time} {result.ServiceName}; complementos: {addOns}";
+        var date = result.Date?.ToString("yyyy-MM-dd") ?? "missing";
+        var time = result.Time?.ToString("HH:mm") ?? "missing";
+        var addOns = result.AddOns.Count == 0 ? "none" : string.Join(", ", result.AddOns);
+        return $"date={date}; time={time}; service={result.ServiceName}; add_ons={addOns}";
     }
 }

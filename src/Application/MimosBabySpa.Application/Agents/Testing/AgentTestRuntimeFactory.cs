@@ -103,6 +103,7 @@ public sealed class AgentTestRuntimeFactory : IAgentTestRuntimeFactory
         var runtime = new FlowRuntimeOrchestrator(
             new NoOpTurnEventExtractor(),
             new FlowRuntimeStateResolver(),
+            new FlowRouter(chatClient, _flowStageDetector),
             new FlowPolicyEngine(),
             testFactsService);
 

@@ -20,7 +20,11 @@ public class TestRuleEngine
             new BotMustNotInventTimeSlotsRule(),
             new NoDuplicateReservationRule(),
             new ReservationMustIncludeAddOns(),
-            new MultipleReservationCyclesRule()
+            new MultipleReservationCyclesRule(),
+            new PrepareCheckoutCalledAtLeastTwiceRule(),
+            new LastCheckoutIncludesMasajeExtraRule(),
+            new LastCheckoutRemovesAddOnsRule(),
+            new LastCheckoutUsesChangedBookingInputsRule()
         };
     }
 

@@ -1,4 +1,4 @@
-﻿using FluentAssertions;
+using FluentAssertions;
 using MimosBabySpa.Application.Agents;
 using MimosBabySpa.Application.Agents.Configuration;
 using MimosBabySpa.Application.Agents.Tools;
@@ -30,7 +30,7 @@ public sealed class SetFactParametersSchemaBuilderTests
             .Select(e => e.GetString())
             .ToList();
 
-        enumValues.Should().BeEquivalentTo(["desired_date", "desired_time", "service"]);
+        enumValues.Should().BeEquivalentTo(["desired_date", "desired_time"]);
         enumValues.Should().NotContain("session.engagement");
         enumValues.Should().NotContain("date");
         enumValues.Should().NotContain("time");

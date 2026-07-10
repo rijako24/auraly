@@ -9,9 +9,10 @@ namespace MimosBabySpa.Application.Agents.Tools.Impl;
 /// Retorna la ruta de cumplimiento de un servicio: reserva con disponibilidad
 /// o inscripcion con horario fijo. Es una consulta estructurada y no modifica facts.
 /// </summary>
+[AgentToolMetadata("get_service_fulfillment")]
 public sealed class GetServiceFulfillmentTool : IAgentTool
 {
-    private readonly IUnitOfWork _unitOfWork;
+private readonly IUnitOfWork _unitOfWork;
     private readonly ServiceNameResolver _nameResolver;
 
     public GetServiceFulfillmentTool(IUnitOfWork unitOfWork, ServiceNameResolver nameResolver)
@@ -51,31 +52,21 @@ public sealed class GetServiceFulfillmentTool : IAgentTool
         var canonical = await _nameResolver.ResolveAsync(ctx.BusinessId, serviceName, cancellationToken);
         if (canonical is null)
         {
-            return ToolResultHelper.ErrorWithLlm(
-                ToolErrorCodes.ServiceNotResolved,
-                $"Service '{serviceName}' was not found in the catalog.",
-                null,
-                new
+            return ToolResultHelper.ErrorWithLlm(ToolErrorCodes.ServiceNotResolved, $"Service '{serviceName}' was not found in the catalog.", new
                 {
                     next_action = "select_catalog_service",
                     unresolved_service = serviceName
-                },
-                recoverable: true);
+                }, recoverable: true);
         }
 
         var service = await _unitOfWork.Services.GetByBusinessIdAndNameAsync(ctx.BusinessId, canonical);
         if (service is null)
         {
-            return ToolResultHelper.ErrorWithLlm(
-                ToolErrorCodes.ServiceNotResolved,
-                $"Service '{canonical}' was not found in the catalog.",
-                null,
-                new
+            return ToolResultHelper.ErrorWithLlm(ToolErrorCodes.ServiceNotResolved, $"Service '{canonical}' was not found in the catalog.", new
                 {
                     next_action = "select_catalog_service",
                     unresolved_service = canonical
-                },
-                recoverable: true);
+                }, recoverable: true);
         }
 
         var fulfillmentKind = service.FulfillmentKind == ServiceFulfillmentKind.Enrollment
@@ -86,17 +77,12 @@ public sealed class GetServiceFulfillmentTool : IAgentTool
         if (service.FulfillmentKind == ServiceFulfillmentKind.Enrollment
             && string.IsNullOrWhiteSpace(fixedSchedule))
         {
-            return ToolResultHelper.ErrorWithLlm(
-                "service_fulfillment_missing_schedule",
-                $"Service '{service.ServiceName}' is configured as enrollment but has no fixed schedule label.",
-                null,
-                new
+            return ToolResultHelper.ErrorWithLlm("service_fulfillment_missing_schedule", $"Service '{service.ServiceName}' is configured as enrollment but has no fixed schedule label.", new
                 {
                     next_action = "human_handoff",
                     reason = "service_fulfillment_missing_schedule",
                     service = service.ServiceName
-                },
-                recoverable: true);
+                }, recoverable: true);
         }
 
         var serviceCategory = service.ServiceCategory?.Name ?? string.Empty;

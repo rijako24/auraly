@@ -14,7 +14,7 @@ namespace MimosBabySpa.Application.Agents.Tools.Impl;
 [AgentToolMetadata("create_reservation", Capabilities = new[] { ToolCapabilities.ReservationCreate })]
 public sealed class CreateReservationTool : IAgentTool
 {
-    private readonly IReservationService _reservations;
+private readonly IReservationService _reservations;
     private readonly IReservationIntentBuilder _intentBuilder;
     private readonly IBusinessRuleEngine _rules;
     private readonly IAvailabilityService _availability;
@@ -70,16 +70,17 @@ public sealed class CreateReservationTool : IAgentTool
         AgentToolContext ctx,
         CancellationToken cancellationToken = default)
     {
-        var service = Coalesce(arguments, "service", ConversationFactKeys.Get(ctx.Facts, ConversationFactKeys.Service));
-        var dateStr = Coalesce(arguments, "date", ConversationFactKeys.Get(ctx.Facts, ConversationFactKeys.DesiredDate));
-        var timeStr = Coalesce(arguments, "time", ConversationFactKeys.Get(ctx.Facts, ConversationFactKeys.DesiredTime));
+        var roles = new FactRoleIndex(ctx.Config?.FactSchema ?? []);
+        var service = Coalesce(arguments, "service", GetFact(roles, ctx.Facts, "booking.service", ConversationFactKeys.Service));
+        var dateStr = Coalesce(arguments, "date", GetFact(roles, ctx.Facts, "booking.date", ConversationFactKeys.DesiredDate));
+        var timeStr = Coalesce(arguments, "time", GetFact(roles, ctx.Facts, "booking.time", ConversationFactKeys.DesiredTime));
         var customerName = Coalesce(arguments, "customer_name",
-            ConversationFactKeys.Get(ctx.Facts, ConversationFactKeys.CustomerName) ?? ctx.Conversation.CustomerName);
+            GetFact(roles, ctx.Facts, "customer.name", ConversationFactKeys.CustomerName) ?? ctx.Conversation.CustomerName);
         var customerPhone = Coalesce(arguments, "customer_phone",
-            ConversationContactPhone.Resolve(ctx.Facts, ctx.ChannelPhone));
+            GetFact(roles, ctx.Facts, "customer.phone", ConversationFactKeys.CustomerPhone) ?? ConversationContactPhone.Resolve(ctx.Facts, ctx.ChannelPhone));
         var customerEmail = Coalesce(arguments, "customer_email",
-            ConversationFactKeys.Get(ctx.Facts, ConversationFactKeys.CustomerEmail) ?? ctx.Conversation.CustomerEmail);
-        var addOns = Coalesce(arguments, "add_ons", ConversationFactKeys.Get(ctx.Facts, ConversationFactKeys.AddOns));
+            GetFact(roles, ctx.Facts, "customer.email", ConversationFactKeys.CustomerEmail) ?? ctx.Conversation.CustomerEmail);
+        var addOns = Coalesce(arguments, "add_ons", GetFact(roles, ctx.Facts, "booking.addons", ConversationFactKeys.AddOns));
 
         var missing = new List<string>();
         if (string.IsNullOrWhiteSpace(service)) missing.Add("service");
@@ -117,30 +118,20 @@ public sealed class CreateReservationTool : IAgentTool
         var activePayment = ctx.ActivePayment;
         if (activePayment?.Status == PaymentTransactionStatus.Created)
         {
-            return ToolResultHelper.ErrorWithLlm(
-                "payment_required",
-                "A payment link is pending for this reservation. Wait for payment confirmation before creating the reservation.",
-                null,
-                new
+            return ToolResultHelper.ErrorWithLlm("payment_required", "A payment link is pending for this reservation. Wait for payment confirmation before creating the reservation.", new
                 {
                     next_action = "await_payment_confirmation",
                     payment_status = activePayment.Status.ToString()
-                },
-                recoverable: true);
+                }, recoverable: true);
         }
 
         if (activePayment?.Status == PaymentTransactionStatus.Confirmed && !activePayment.ReservationId.HasValue)
         {
-            return ToolResultHelper.ErrorWithLlm(
-                "payment_fulfillment_pending",
-                "Payment is confirmed but no reservation is linked yet. The payment fulfillment handler must create or link the reservation.",
-                null,
-                new
+            return ToolResultHelper.ErrorWithLlm("payment_fulfillment_pending", "Payment is confirmed but no reservation is linked yet. The payment fulfillment handler must create or link the reservation.", new
                 {
                     next_action = "await_payment_fulfillment",
                     payment_status = activePayment.Status.ToString()
-                },
-                recoverable: true);
+                }, recoverable: true);
         }
         var canonicalService = await _serviceNameResolver.ResolveAsync(ctx.BusinessId, service!, cancellationToken);
         if (!string.IsNullOrWhiteSpace(canonicalService))
@@ -171,12 +162,11 @@ public sealed class CreateReservationTool : IAgentTool
 
         if (!availability.IsAvailable)
         {
-            return ToolResultHelper.Error(
-                "slot_unavailable",
-                availability.ResponseMessage ?? "The selected time is not available.",
-                availability.AvailableOptions.Count > 0
-                    ? $"Available options: {string.Join(", ", availability.AvailableOptions.Select(o => $"{o.Start}-{o.End}"))}"
-                    : null);
+            var unavailableMessage = availability.ResponseMessage ?? "The selected time is not available.";
+            if (availability.AvailableOptions.Count > 0)
+                unavailableMessage = $"{unavailableMessage} Available options: {string.Join(", ", availability.AvailableOptions.Select(o => $"{o.Start}-{o.End}"))}";
+
+            return ToolResultHelper.Error("slot_unavailable", unavailableMessage);
         }
 
         var intent = await _intentBuilder.BuildFromContextAsync(ctx, cancellationToken);
@@ -345,6 +335,12 @@ public sealed class CreateReservationTool : IAgentTool
         if (!facts.TryGetValue(key, out var current) || string.IsNullOrWhiteSpace(current))
             facts[key] = value.Trim();
     }
+    private static string? GetFact(
+        FactRoleIndex roles,
+        IReadOnlyDictionary<string, string> facts,
+        string role,
+        string fallbackKey) =>
+        roles.GetByRole(facts, role) ?? ConversationFactKeys.Get(facts, fallbackKey);
     private static string? Coalesce(JsonElement args, string property, string? fallback)
     {
         if (ToolResultHelper.TryGetString(args, property, out var fromArgs))
@@ -352,6 +348,3 @@ public sealed class CreateReservationTool : IAgentTool
         return string.IsNullOrWhiteSpace(fallback) ? null : fallback;
     }
 }
-
-
-

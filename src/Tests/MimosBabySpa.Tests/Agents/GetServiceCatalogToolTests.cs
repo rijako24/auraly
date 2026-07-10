@@ -27,9 +27,9 @@ public class GetServiceCatalogToolTests
 
         json.Should().Contain("\"ok\":true");
         json.Should().Contain("Plan Test");
-        json.Should().Contain("\"view\":\"services\"");
+        json.Should().Contain("\"view\":\"auto\"");
         catalog.WasCalled.Should().BeTrue();
-        catalog.RequestedView.Should().Be(CatalogContentView.Services);
+        catalog.RequestedView.Should().Be(CatalogContentView.Auto);
     }
 
     [Fact]
@@ -53,17 +53,17 @@ public class GetServiceCatalogToolTests
     }
 
     [Fact]
-    public void Description_RoutesNamedServiceFamiliesToServicesView()
+    public void Description_ExplainsAutoCatalogRouting()
     {
         var tool = new GetServiceCatalogTool(new FakeCatalogGenerator(Guid.NewGuid(), string.Empty));
 
-        tool.Description.Should().Contain("Use view=categories only when the customer has not named any service family");
-        tool.Description.Should().Contain("Use view=services to answer catalog, pricing, option, comparison, service-information, or narrowed service-family questions");
-        tool.Description.Should().Contain("Pass query using the customer's own service-family words");
+        tool.Description.Should().Contain("Use view=auto when the turn should consult the catalog");
+        tool.Description.Should().Contain("Use view=categories only when the customer should see the available service categories/options");
+        tool.Description.Should().Contain("Pass query using the customer's own words");
     }
 
     [Fact]
-    public async Task ExecuteAsync_WhenCategoriesViewHasQuery_UsesServicesView()
+    public async Task ExecuteAsync_WhenAutoViewHasQuery_ForwardsAutoViewAndQuery()
     {
         var businessId = Guid.NewGuid();
         var catalog = new FakeCatalogGenerator(businessId, "## CATALOGO DE SERVICIOS\n- Corte infantil");
@@ -74,13 +74,13 @@ public class GetServiceCatalogToolTests
             ConversationState = new ConversationStateModel()
         };
 
-        using var args = JsonDocument.Parse("""{"view":"categories","query":"corte"}""");
+        using var args = JsonDocument.Parse("""{"view":"auto","query":"corte"}""");
         var json = await tool.ExecuteAsync(args.RootElement, ctx, CancellationToken.None);
 
         json.Should().Contain("Corte infantil");
-        json.Should().Contain("\"view\":\"services\"");
+        json.Should().Contain("\"view\":\"auto\"");
         json.Should().Contain("\"query\":\"corte\"");
-        catalog.RequestedView.Should().Be(CatalogContentView.Services);
+        catalog.RequestedView.Should().Be(CatalogContentView.Auto);
         catalog.RequestedQuery.Should().Be("corte");
     }
 

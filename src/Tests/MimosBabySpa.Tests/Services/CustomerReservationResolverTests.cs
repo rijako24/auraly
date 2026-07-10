@@ -1,4 +1,4 @@
-﻿using FluentAssertions;
+using FluentAssertions;
 using MimosBabySpa.Application.Agents;
 using MimosBabySpa.Application.Services;
 using MimosBabySpa.Domain.Entities;
@@ -45,6 +45,19 @@ public sealed class CustomerReservationResolverTests
         result.Reservation.Should().BeSameAs(second);
     }
 
+    [Fact]
+    public async Task ResolveAsync_NonUuidReservationId_FallsBackToContextResolution()
+    {
+        var fx = new Fixture();
+        var reservation = fx.CreateReservation(new DateTime(2026, 9, 6, 10, 0, 0), "Corte basico adulto");
+        fx.Context.ManageableReservations = [reservation];
+        fx.Context.LatestUserMessage = "quiero cambiar el servicio de mi reserva";
+
+        var result = await fx.Resolver.ResolveAsync(fx.Context, "2026-09-06 10:00 Corte basico adulto");
+
+        result.Success.Should().BeTrue();
+        result.Reservation.Should().BeSameAs(reservation);
+    }
     [Fact]
     public async Task ResolveAsync_ExplicitReservationFromSameConversation_AllowsDifferentContactPhoneSnapshot()
     {

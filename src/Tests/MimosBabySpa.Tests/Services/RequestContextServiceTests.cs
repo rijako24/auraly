@@ -300,7 +300,7 @@ public sealed class RequestContextServiceTests
             new FactSchemaEntry
             {
                 Key = ConversationFactKeys.AddOns,
-                Role = "booking.add_ons",
+                Role = "booking.addons",
                 Scope = FactScopes.Request,
                 RetentionDays = 7
             },

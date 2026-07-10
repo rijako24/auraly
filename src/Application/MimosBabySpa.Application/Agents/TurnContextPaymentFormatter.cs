@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using MimosBabySpa.Domain.Entities;
 using MimosBabySpa.Domain.Enums;
 
@@ -14,19 +14,19 @@ internal static class TurnContextPaymentFormatter
         return payment.Status switch
         {
             PaymentTransactionStatus.Confirmed =>
-                $"- pago: confirmado ({FormatAmount(payment.AmountInCents, payment.Currency)})",
+                $"- payment: status=confirmed; amount={FormatAmount(payment.AmountInCents, payment.Currency)}",
 
             PaymentTransactionStatus.Created when IsExpired(payment) =>
-                "- pago: link expirado",
+                "- payment: status=expired",
 
             PaymentTransactionStatus.Created =>
-                $"- pago: link generado ({FormatAmount(payment.AmountInCents, payment.Currency)}, expira {FormatExpiry(payment.ExpiresAt)})",
+                $"- payment: status=created; amount={FormatAmount(payment.AmountInCents, payment.Currency)}; expires={FormatExpiry(payment.ExpiresAt)}",
 
             PaymentTransactionStatus.Failed =>
-                "- pago: fallido",
+                "- payment: status=failed",
 
             PaymentTransactionStatus.Expired =>
-                "- pago: link expirado",
+                "- payment: status=expired",
 
             _ => null
         };
@@ -44,14 +44,14 @@ internal static class TurnContextPaymentFormatter
     private static string FormatExpiry(DateTime? expiresAt)
     {
         if (!expiresAt.HasValue)
-            return "sin fecha de expiracion";
+            return "missing";
 
         var remaining = expiresAt.Value - DateTime.UtcNow;
         if (remaining <= TimeSpan.Zero)
-            return "expirado";
+            return "expired";
 
         if (remaining.TotalMinutes < 60)
-            return $"en {(int)Math.Ceiling(remaining.TotalMinutes)} min";
+            return $"in_{(int)Math.Ceiling(remaining.TotalMinutes)}_min";
 
         return expiresAt.Value.ToString("HH:mm", CultureInfo.InvariantCulture) + " UTC";
     }

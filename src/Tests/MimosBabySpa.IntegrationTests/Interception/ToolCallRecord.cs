@@ -9,4 +9,7 @@ public record ToolCallRecord(
     string ResultJson,
     bool ResultIsError,
     DateTimeOffset CalledAt,
-    long ElapsedMs);
+    long ElapsedMs,
+    string FactsJson = "",
+    string? ActivePaymentCheckoutSnapshotJson = null,
+    long? ActivePaymentAmountInCents = null);

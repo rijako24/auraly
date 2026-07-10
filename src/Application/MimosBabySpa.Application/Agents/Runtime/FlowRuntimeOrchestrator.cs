@@ -7,17 +7,20 @@ public sealed class FlowRuntimeOrchestrator : IFlowRuntimeOrchestrator
 {
     private readonly ITurnEventExtractor _eventExtractor;
     private readonly IFlowRuntimeStateResolver _stateResolver;
+    private readonly IFlowRouter _flowRouter;
     private readonly IFlowPolicyEngine _policyEngine;
     private readonly IConversationFactsService _factsService;
 
     public FlowRuntimeOrchestrator(
         ITurnEventExtractor eventExtractor,
         IFlowRuntimeStateResolver stateResolver,
+        IFlowRouter flowRouter,
         IFlowPolicyEngine policyEngine,
         IConversationFactsService factsService)
     {
         _eventExtractor = eventExtractor;
         _stateResolver = stateResolver;
+        _flowRouter = flowRouter;
         _policyEngine = policyEngine;
         _factsService = factsService;
     }
@@ -30,7 +33,8 @@ public sealed class FlowRuntimeOrchestrator : IFlowRuntimeOrchestrator
     {
         var events = _eventExtractor.Extract(userMessage);
         var state = _stateResolver.Resolve(config, session);
-        var decision = _policyEngine.Decide(config, session, state, events);
+        var route = await _flowRouter.RouteAsync(config, session, userMessage, ct);
+        var decision = _policyEngine.Decide(config, session, state, events, route);
 
         foreach (var (key, value) in decision.FactMutations)
         {

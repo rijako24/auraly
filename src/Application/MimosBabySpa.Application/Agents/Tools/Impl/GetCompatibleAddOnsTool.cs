@@ -7,9 +7,10 @@ namespace MimosBabySpa.Application.Agents.Tools.Impl;
 /// Retorna los complementos compatibles con un servicio concreto.
 /// Es una consulta estructurada; no modifica facts ni decide la respuesta al cliente.
 /// </summary>
+[AgentToolMetadata("get_compatible_add_ons")]
 public sealed class GetCompatibleAddOnsTool : IAgentTool
 {
-    private readonly IAddOnCatalogService _addOnCatalog;
+private readonly IAddOnCatalogService _addOnCatalog;
 
     public GetCompatibleAddOnsTool(IAddOnCatalogService addOnCatalog)
     {

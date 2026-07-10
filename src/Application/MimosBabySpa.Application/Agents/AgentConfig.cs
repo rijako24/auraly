@@ -1,10 +1,10 @@
-using MimosBabySpa.Application.Agents.Configuration;
+﻿using MimosBabySpa.Application.Agents.Configuration;
 using MimosBabySpa.Application.Commerce;
 
 namespace MimosBabySpa.Application.Agents;
 
 /// <summary>
-/// Configuración de un agente cargada desde BD por turno (con caché).
+/// Configuracion de un agente cargada desde BD por turno (con cache).
 /// Fuente: Agents.SettingsJson (persona, flow, guards, etc.) con fallback legacy a SystemPromptMarkdown.
 /// </summary>
 public sealed class AgentConfig
@@ -13,16 +13,17 @@ public sealed class AgentConfig
     public Guid BusinessId { get; init; }
     public string Name { get; init; } = string.Empty;
 
-    /// <summary>Identidad y tono del agente (SettingsJson → persona).</summary>
+    /// <summary>Identidad y tono del agente (SettingsJson -> persona).</summary>
     public string Persona { get; init; } = string.Empty;
 
-    /// <summary>Políticas operativas en markdown (SettingsJson → policies).</summary>
+    /// <summary>Politicas operativas en markdown (SettingsJson -> policies).</summary>
     public string Policies { get; init; } = string.Empty;
 
-    /// <summary>Flujo conversacional estructurado por etapas.</summary>
+    /// <summary>Flow default normalizado. Compatibilidad con SettingsJson.flow.</summary>
     public AgentFlowDefinition Flow { get; init; } = new();
 
-    public ConversationalFlowLanguage FlowLanguage => Flow.Language;
+/// <summary>Flows conversacionales disponibles para este agente. Si falta, se normaliza desde Flow.</summary>
+    public IReadOnlyList<AgentFlowDefinition> Flows { get; init; } = [];
 
     /// <summary>Acciones transversales disponibles sin depender de la etapa activa.</summary>
     public IReadOnlyList<AgentGlobalAction> GlobalActions { get; init; } = [];
@@ -38,7 +39,7 @@ public sealed class AgentConfig
     public IReadOnlyDictionary<string, string> Templates { get; init; }
         = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>Legacy: Agents.SystemPromptMarkdown. Usado solo si Persona está vacía.</summary>
+    /// <summary>Legacy: Agents.SystemPromptMarkdown. Usado solo si Persona esta vacia.</summary>
     public string SystemPrompt { get; init; } = string.Empty;
 
     /// <summary>Contenido base del prompt: Persona + Policies, o SystemPrompt legacy.</summary>
@@ -55,10 +56,10 @@ public sealed class AgentConfig
 
     public float Temperature { get; init; } = 0.7f;
 
-    /// <summary>Máximo de iteraciones de tool calling por turno (anti-loop).</summary>
+    /// <summary>Maximo de iteraciones de tool calling por turno (anti-loop).</summary>
     public int MaxToolIterations { get; init; } = 6;
 
-    /// <summary>Máximo de mensajes del historial enviados al LLM por turno.</summary>
+    /// <summary>Maximo de mensajes del historial enviados al LLM por turno.</summary>
     public int HistoryWindowSize { get; init; } = 20;
 
     /// <summary>
@@ -75,14 +76,14 @@ public sealed class AgentConfig
 
 
     /// <summary>
-    /// Catálogo de secuencias outbound nombradas (texto + adjuntos).
-    /// Fuente: SettingsJson → messageSequences.
+    /// Catalogo de secuencias outbound nombradas (texto + adjuntos).
+    /// Fuente: SettingsJson -> messageSequences.
     /// </summary>
     public MessageSequenceCatalog MessageSequences { get; init; } = new();
 
     /// <summary>
     /// Disparadores de secuencias por webhook (p. ej. Wompi).
-    /// Fuente: SettingsJson → webhooks.
+    /// Fuente: SettingsJson -> webhooks.
     /// </summary>
     public WebhookDefinitions Webhooks { get; init; } = new();
 

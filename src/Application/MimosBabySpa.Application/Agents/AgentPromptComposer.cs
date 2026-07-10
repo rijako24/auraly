@@ -1,4 +1,4 @@
-using MimosBabySpa.Application.Agents.Composition;
+﻿using MimosBabySpa.Application.Agents.Composition;
 using MimosBabySpa.Application.Agents.Configuration;
 using MimosBabySpa.Application.Agents.Tools;
 using MimosBabySpa.Application.Services;
@@ -33,8 +33,9 @@ public sealed class AgentPromptComposer : IPromptComposer
         if (!string.IsNullOrWhiteSpace(basePrompt))
             blocks.Add(basePrompt.Trim());
 
-        // DetectCurrentStage: llamada Ãºnica y cacheada para todo el Compose
-        var currentStage = _flowStageDetector.DetectCurrentStage(input.Config.Flow, input.Session);
+        // DetectCurrentStage: llamada unica y cacheada para todo el Compose
+        var activeFlow = input.Session is null ? input.Config.Flow : ActiveFlowResolver.Resolve(input.Config, input.Session);
+        var currentStage = _flowStageDetector.DetectCurrentStage(activeFlow, input.Session);
 
         var eagerBlock = BuildEagerCaptureBlock(input.Config, input.Session, input.EnabledTools);
         if (!string.IsNullOrWhiteSpace(eagerBlock))
@@ -52,11 +53,11 @@ public sealed class AgentPromptComposer : IPromptComposer
         if (!string.IsNullOrWhiteSpace(stateBlock))
             blocks.Add(stateBlock);
 
-        var flowBlock = BuildFlowBlock(input.Config, input.Session, currentStage, input.EnabledTools);
+        var flowBlock = BuildFlowBlock(input.Config, activeFlow, input.Session, currentStage, input.EnabledTools);
         if (!string.IsNullOrWhiteSpace(flowBlock))
             blocks.Add(flowBlock);
 
-        var reentryBlock = BuildReentryBlock(input.Config, input.Session, currentStage);
+        var reentryBlock = BuildReentryBlock(input.Config, activeFlow, input.Session, currentStage);
         if (!string.IsNullOrWhiteSpace(reentryBlock))
             blocks.Add(reentryBlock);
 
@@ -78,12 +79,6 @@ public sealed class AgentPromptComposer : IPromptComposer
         AgentToolContext? session = null)
     {
         var actions = AgentTurnToolScope.OrderedGlobalActions(config);
-        if (session is not null && !ReferenceEquals(session.RuntimeDecision, Runtime.FlowRuntimeDecision.Empty))
-        {
-            actions = actions
-                .Where(action => session.RuntimeDecision.EnabledGlobalActionIds.Contains(action.Id))
-                .ToList();
-        }
 
         if (actions.Count == 0)
             return string.Empty;
@@ -93,11 +88,15 @@ public sealed class AgentPromptComposer : IPromptComposer
 
         foreach (var action in actions)
         {
+            var exposeTools = AgentTurnToolScope.ShouldExposeGlobalActionToLlm(action, session);
+            if (!exposeTools)
+                continue;
+
             var label = string.IsNullOrWhiteSpace(action.Id) ? "accion" : action.Id.Trim();
             lines.Add($"- {label}: {action.Goal.Trim()}");
 
             if (action.AllowedActions.Count > 0)
-                lines.Add($"  acciones: {string.Join(", ", action.AllowedActions)}");
+                lines.Add($"  tools: {string.Join(", ", action.AllowedActions)}");
 
             if (!string.IsNullOrWhiteSpace(action.ConversationGuidance))
                 lines.Add($"  orientacion: {action.ConversationGuidance.Trim()}");
@@ -167,7 +166,7 @@ public sealed class AgentPromptComposer : IPromptComposer
         if (session is null)
             return string.Empty;
 
-        // Keys de facts del sistema/sesiÃ³n que no deben renderizarse al LLM
+        // Keys de facts del sistema/sesion que no deben renderizarse al LLM
         var systemKeys = config.FactSchema
             .Where(e => !e.Source.Equals("user", StringComparison.OrdinalIgnoreCase))
             .Select(e => e.Key)
@@ -176,7 +175,7 @@ public sealed class AgentPromptComposer : IPromptComposer
         var blocks = new List<string>();
         var paymentForContext = ResolvePaymentForContext(session.ActivePayment, latestPayment);
 
-        // â”€â”€ ESTADO ACTUAL: solo facts del schema + extras no-schema â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // ESTADO ACTUAL: solo facts del schema + extras no-schema
         var factsLines = new List<string> { "## ESTADO ACTUAL" };
         var renderedKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -221,7 +220,7 @@ public sealed class AgentPromptComposer : IPromptComposer
         if (reservationLines.Count > 0)
             blocks.Add(string.Join(Environment.NewLine, reservationLines));
 
-        // â”€â”€ POLÃTICA DE PAGO â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // POLITICA DE PAGO
         var policyLines = new List<string>();
         var paymentLine = TurnContextPaymentFormatter.FormatPaymentLine(paymentForContext);
         if (!string.IsNullOrWhiteSpace(paymentLine))
@@ -283,7 +282,8 @@ public sealed class AgentPromptComposer : IPromptComposer
     /// </summary>
     internal static string BuildEagerCaptureBlock(AgentConfig config, AgentToolContext? session, IReadOnlyList<IAgentTool>? enabledTools = null)
     {
-        var flowAdvancingFacts = config.Flow.Stages
+        var activeFlow = session is null ? config.Flow : ActiveFlowResolver.Resolve(config, session);
+        var flowAdvancingFacts = activeFlow.Stages
             .SelectMany(stage => stage.AdvanceWhenFacts)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
@@ -332,31 +332,32 @@ public sealed class AgentPromptComposer : IPromptComposer
 
     /// <summary>
     /// Compara los facts actuales contra el snapshot guardado al completar etapas anteriores.
-    /// Si algÃºn fact relevante cambió, inyecta un bloque ATENCIÓN para que el LLM rehaga las acciones dependientes.
+    /// Si algun fact relevante cambio, inyecta un bloque ATENCION para que el LLM rehaga las acciones dependientes.
     /// Recibe el currentStage ya detectado para evitar una segunda llamada a DetectCurrentStage.
     /// </summary>
     internal string BuildReentryBlock(
         AgentConfig config,
+        AgentFlowDefinition activeFlow,
         AgentToolContext? session,
         AgentFlowStage? currentStage = null)
     {
-        if (session?.ConversationState is null || config.Flow.Stages.Count == 0)
+        if (session?.ConversationState is null || activeFlow.Stages.Count == 0)
             return string.Empty;
 
         var snapshots = session.ConversationState.StageFactSnapshots;
         if (snapshots.Count == 0)
             return string.Empty;
 
-        var resolvedStage = currentStage ?? _flowStageDetector.DetectCurrentStage(config.Flow, session);
+        var resolvedStage = currentStage ?? _flowStageDetector.DetectCurrentStage(activeFlow, session);
         var currentIdx = resolvedStage is null
-            ? config.Flow.Stages.Count
-            : config.Flow.Stages.ToList().FindIndex(s => s.Id == resolvedStage.Id);
+            ? activeFlow.Stages.Count
+            : activeFlow.Stages.ToList().FindIndex(s => s.Id == resolvedStage.Id);
 
         var alerts = new List<string>();
 
         for (var i = 0; i < currentIdx; i++)
         {
-            var stage = config.Flow.Stages[i];
+            var stage = activeFlow.Stages[i];
             if (stage.ReentryOnFactChanged.Count == 0)
                 continue;
 
@@ -377,7 +378,7 @@ public sealed class AgentPromptComposer : IPromptComposer
                     ? entry.Label
                     : factKey;
 
-                alerts.Add($"- {label} cambió de \"{saved ?? "-"}\" a \"{current}\"");
+                alerts.Add($"- {label} cambio de \"{saved ?? "-"}\" a \"{current}\"");
             }
         }
 
@@ -400,11 +401,12 @@ public sealed class AgentPromptComposer : IPromptComposer
     /// </summary>
     private string BuildFlowBlock(
         AgentConfig config,
+        AgentFlowDefinition activeFlow,
         AgentToolContext? session,
         AgentFlowStage? currentStage,
         IReadOnlyList<IAgentTool> effectiveTools)
     {
-        if (config.Flow.Stages.Count == 0 || currentStage is null)
+        if (activeFlow.Stages.Count == 0 || currentStage is null)
             return string.Empty;
 
         // Resolver variante activa (si la etapa tiene variantes y hay engagement en facts)
@@ -413,6 +415,9 @@ public sealed class AgentPromptComposer : IPromptComposer
         var goal = !string.IsNullOrWhiteSpace(variant?.Goal) ? variant.Goal : currentStage.Goal;
         var lines = new List<string>
         {
+            "## FLOW ACTUAL",
+            $"- flow: {activeFlow.Id}",
+            $"- tipo_flow: {(string.IsNullOrWhiteSpace(activeFlow.Type) ? FlowTypes.Primary : activeFlow.Type)}",
             "## ETAPA ACTUAL",
             $"- etapa: {currentStage.Id}",
             $"- objetivo: {goal}"
@@ -435,9 +440,9 @@ public sealed class AgentPromptComposer : IPromptComposer
 
             if (missingFacts.Count > 0)
             {
-                lines.Add("- criterio_de_avance: la etapa se completa cuando estÃ©n presentes estos datos del flujo.");
+                lines.Add("- criterio_de_avance: la etapa se completa cuando esten presentes estos datos del flujo.");
                 lines.Add($"- datos_para_completar_etapa: {string.Join(", ", DescribeFacts(config, missingFacts))}");
-                lines.Add("- acciÃ³n: usa estos datos como prÃ³ximos datos Ãºtiles solo cuando la intenciÃ³n actual los requiera.");
+                lines.Add("- accion: usa estos datos como proximos datos utiles solo cuando la intencion actual los requiera.");
             }
         }
 
@@ -450,8 +455,6 @@ public sealed class AgentPromptComposer : IPromptComposer
         List<string> lines,
         AgentFlowStageVariant? variant)
     {
-        if (!string.IsNullOrWhiteSpace(currentStage.Ask))
-            lines.Add($"- pregunta_conversacional: {currentStage.Ask.Trim()}");
 
         if (currentStage.Collect.Count > 0)
             lines.Add($"- puede_recoger: {string.Join(", ", currentStage.Collect)}");
@@ -467,55 +470,6 @@ public sealed class AgentPromptComposer : IPromptComposer
 
         if (!string.IsNullOrWhiteSpace(currentStage.OnProblem))
             lines.Add($"- si_hay_problema: {currentStage.OnProblem.Trim()}");
-
-        var actions = ResolveStageActions(config, currentStage).ToList();
-        if (actions.Count == 0)
-            return;
-
-        lines.Add(string.Empty);
-        lines.Add("Acciones de negocio disponibles en esta etapa:");
-        foreach (var (id, action) in actions)
-        {
-            lines.Add($"- {id}: {ResolveActionText(action)}");
-            if (action.Requires.Count > 0)
-                lines.Add($"  requiere: {string.Join(", ", action.Requires)}");
-            if (action.Produces.Count > 0)
-                lines.Add($"  produce: {string.Join(", ", action.Produces)}");
-            if (!string.IsNullOrWhiteSpace(action.WhenMissingData))
-                lines.Add($"  si_faltan_datos: {action.WhenMissingData.Trim()}");
-            if (!string.IsNullOrWhiteSpace(action.OnSuccess))
-                lines.Add($"  resultado_exitoso: {action.OnSuccess.Trim()}");
-            if (!string.IsNullOrWhiteSpace(action.OnProblem))
-                lines.Add($"  problema: {action.OnProblem.Trim()}");
-        }
-    }
-
-    private static IEnumerable<KeyValuePair<string, SemanticFlowAction>> ResolveStageActions(
-        AgentConfig config,
-        AgentFlowStage currentStage)
-    {
-        foreach (var actionId in currentStage.AllowedActions)
-        {
-            if (string.IsNullOrWhiteSpace(actionId))
-                continue;
-
-            if (config.FlowLanguage.Actions.TryGetValue(actionId.Trim(), out var action))
-                yield return new KeyValuePair<string, SemanticFlowAction>(actionId.Trim(), action);
-        }
-    }
-
-    private static string ResolveActionText(SemanticFlowAction action)
-    {
-        if (!string.IsNullOrWhiteSpace(action.Name) && !string.IsNullOrWhiteSpace(action.Purpose))
-            return $"{action.Name.Trim()} - {action.Purpose.Trim()}";
-
-        if (!string.IsNullOrWhiteSpace(action.Purpose))
-            return action.Purpose.Trim();
-
-        if (!string.IsNullOrWhiteSpace(action.Name))
-            return action.Name.Trim();
-
-        return "accion configurada";
     }
 
     private string BuildTurnToolsBlock(PromptCompositionInput input, AgentFlowStage? currentStage)
@@ -539,7 +493,8 @@ public sealed class AgentPromptComposer : IPromptComposer
         return string.Join(Environment.NewLine,
         [
             "## HERRAMIENTAS DE ESTE TURNO",
-            string.Join(", ", names)
+            string.Join(", ", names),
+            "- Si este turno ya incluye un resultado de herramienta, usa esa salida como fuente vigente para responder; no repitas la misma herramienta salvo que falte informacion necesaria."
         ]);
     }
 
@@ -547,19 +502,30 @@ public sealed class AgentPromptComposer : IPromptComposer
         PaymentTransaction? activePayment,
         PaymentTransaction? latestPayment)
     {
-        if (activePayment?.Status == PaymentTransactionStatus.Confirmed)
-            return activePayment;
+        return ResolveActionablePayment(activePayment)
+            ?? ResolveActionablePayment(latestPayment);
+    }
 
-        if (latestPayment?.Status == PaymentTransactionStatus.Confirmed)
-            return latestPayment;
+    private static PaymentTransaction? ResolveActionablePayment(PaymentTransaction? payment)
+    {
+        if (payment is null)
+            return null;
 
-        if (activePayment is not null)
-            return activePayment;
+        if (payment.Status == PaymentTransactionStatus.Created)
+            return payment;
 
-        return latestPayment;
+        if (payment.Status == PaymentTransactionStatus.Confirmed
+            && (!payment.ReservationId.HasValue || payment.RequiresRescheduling))
+        {
+            return payment;
+        }
+
+        return null;
     }
 
     private static bool IsBotSender(string sender) =>
         sender.Equals("bot", StringComparison.OrdinalIgnoreCase) ||
         sender.Equals("assistant", StringComparison.OrdinalIgnoreCase);
 }
+
+

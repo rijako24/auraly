@@ -7,7 +7,7 @@ namespace MimosBabySpa.Application.Agents.Tools.Impl;
 [AgentToolMetadata("search_products", Capabilities = new[] { ToolCapabilities.ProductSearch })]
 public sealed class SearchProductsTool : IAgentTool
 {
-    private readonly ICommerceService _commerce;
+private readonly ICommerceService _commerce;
     private readonly IConversationFactsService _factsService;
 
     public SearchProductsTool(ICommerceService commerce, IConversationFactsService factsService)
@@ -62,4 +62,3 @@ public sealed class SearchProductsTool : IAgentTool
         });
     }
 }
-

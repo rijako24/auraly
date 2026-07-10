@@ -3,9 +3,10 @@ using MimosBabySpa.Application.Commerce;
 
 namespace MimosBabySpa.Application.Agents.Tools.Impl;
 
+[AgentToolMetadata("get_order_draft")]
 public sealed class GetOrderDraftTool : IAgentTool
 {
-    private readonly ICommerceService _commerce;
+private readonly ICommerceService _commerce;
 
     public GetOrderDraftTool(ICommerceService commerce) => _commerce = commerce;
 

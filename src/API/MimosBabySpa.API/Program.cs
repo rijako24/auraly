@@ -162,6 +162,7 @@ services.AddScoped<ServiceSelectionResolver>();
         services.AddScoped<ReservationPricingResolver>();
 
         services.AddScoped<IPromotionPricingService, PromotionPricingService>();
+        services.AddScoped<IServiceCatalogPricingService, ServiceCatalogPricingService>();
 
         services.AddScoped<IBusinessClock, BusinessClock>();
 
@@ -397,6 +398,7 @@ services.AddScoped<ServiceSelectionResolver>();
 services.AddSingleton<ITurnEventExtractor, NoOpTurnEventExtractor>();
 services.AddScoped<IFlowRuntimeStateResolver, FlowRuntimeStateResolver>();
 services.AddScoped<IFlowPolicyEngine, FlowPolicyEngine>();
+services.AddScoped<IFlowRouter, FlowRouter>();
 services.AddScoped<IFlowRuntimeOrchestrator, FlowRuntimeOrchestrator>();
 
         services.AddScoped<IOperatingHoursTurnPolicy, OperatingHoursTurnPolicy>();

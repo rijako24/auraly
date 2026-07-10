@@ -1,4 +1,4 @@
-using MimosBabySpa.Application.Agents.Configuration;
+﻿using MimosBabySpa.Application.Agents.Configuration;
 using MimosBabySpa.Application.Agents.Tools;
 
 namespace MimosBabySpa.Application.Agents;
@@ -18,24 +18,19 @@ internal static class AgentTurnToolScope
         if (currentStage?.AllowedActions.Count > 0)
         {
             hasConfiguredScope = true;
-            foreach (var toolName in SemanticFlowActionResolver.ResolveToolNames(config, currentStage.AllowedActions))
-                allowedNames.Add(toolName);
+            foreach (var toolName in currentStage.AllowedActions.Where(name => !string.IsNullOrWhiteSpace(name)))
+                allowedNames.Add(toolName.Trim());
         }
 
         foreach (var action in OrderedGlobalActions(config))
         {
-            if (runtimeActive && !session.RuntimeDecision.EnabledGlobalActionIds.Contains(action.Id))
-                continue;
-
             if (action.AllowedActions.Count > 0)
                 hasConfiguredScope = true;
 
-            var actionToolNames = SemanticFlowActionResolver.ResolveToolNames(config, action.AllowedActions);
-            if (runtimeActive && IsDisabledByRuntime(actionToolNames, effectiveTools, session.RuntimeDecision))
+            if (!ShouldExposeGlobalActionToLlm(action, session))
                 continue;
 
-            foreach (var toolName in actionToolNames)
-                allowedNames.Add(toolName);
+            AddGlobalActionTools(action, effectiveTools, session, runtimeActive, allowedNames);
         }
 
         if (session.RuntimeDecision.ExtraAllowedToolNames.Count > 0)
@@ -48,14 +43,30 @@ internal static class AgentTurnToolScope
             return hasConfiguredScope ? [] : effectiveTools;
 
         var byName = effectiveTools.ToDictionary(t => t.Name, StringComparer.OrdinalIgnoreCase);
-        var scopedTools = allowedNames
+        return allowedNames
             .Select(name => byName.TryGetValue(name, out var tool) ? tool : null)
             .Where(tool => tool is not null)
             .Cast<IAgentTool>()
             .Where(tool => !runtimeActive || session.RuntimeDecision.IsToolAllowedByRuntime(tool))
             .ToList();
+    }
 
-        return scopedTools;
+    private static void AddGlobalActionTools(
+        AgentGlobalAction action,
+        IReadOnlyList<IAgentTool> effectiveTools,
+        AgentToolContext session,
+        bool runtimeActive,
+        ISet<string> allowedNames)
+    {
+        var actionToolNames = action.AllowedActions
+            .Where(name => !string.IsNullOrWhiteSpace(name))
+            .Select(name => name.Trim())
+            .ToList();
+        if (runtimeActive && IsDisabledByRuntime(actionToolNames, effectiveTools, session.RuntimeDecision))
+            return;
+
+        foreach (var toolName in actionToolNames)
+            allowedNames.Add(toolName);
     }
 
     private static bool IsDisabledByRuntime(
@@ -70,6 +81,17 @@ internal static class AgentTurnToolScope
         return effectiveTools
             .Where(tool => names.Contains(tool.Name))
             .Any(tool => tool.Capabilities.Any(decision.DisabledToolCapabilities.Contains));
+    }
+
+    public static bool ShouldExposeGlobalActionToLlm(AgentGlobalAction action, AgentToolContext? session)
+    {
+        if (action.EntryActions.Count == 0)
+            return false;
+
+        if (session is null)
+            return false;
+
+        return action.EntryActions.Any(entryAction => StageEntryActionMatcher.Matches(entryAction, session));
     }
 
     public static IReadOnlyList<AgentGlobalAction> OrderedGlobalActions(AgentConfig config) =>

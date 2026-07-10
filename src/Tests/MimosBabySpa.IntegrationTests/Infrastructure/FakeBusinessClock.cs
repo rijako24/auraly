@@ -3,7 +3,7 @@ using MimosBabySpa.Application.Time;
 namespace MimosBabySpa.IntegrationTests.Infrastructure;
 
 /// <summary>
-/// Reloj fijo para tests: evita fechas pasadas en escenarios con fechas absolutas (2026-08).
+/// Reloj fijo para tests: mantiene las fechas absolutas de escenarios en el futuro.
 /// </summary>
 public sealed class FakeBusinessClock : IBusinessClock
 {
@@ -16,7 +16,7 @@ public sealed class FakeBusinessClock : IBusinessClock
         TimeOnly? time = null,
         string timeZoneId = BusinessClock.DefaultTimeZoneId)
     {
-        _today = today ?? new DateOnly(2026, 8, 22);
+        _today = today ?? new DateOnly(2026, 7, 8);
         _time = time ?? new TimeOnly(10, 0);
         _timeZone = BusinessTimeZoneResolver.Resolve(timeZoneId);
     }

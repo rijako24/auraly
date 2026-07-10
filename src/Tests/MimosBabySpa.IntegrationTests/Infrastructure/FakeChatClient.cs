@@ -54,6 +54,22 @@ public static class FakeLlmScript
 {
     private static int _callIdCounter;
 
+    /// <summary>LLM invoca una tool y el turno termina con la salida de la tool.</summary>
+    public static IReadOnlyList<ChatCompletionResult> ToolOnly(string toolName, string argsJson)
+    {
+        var callId = $"call_{++_callIdCounter:D3}";
+        var toolCall = new ToolCallRequest { Id = callId, FunctionName = toolName, ArgumentsJson = argsJson };
+        return
+        [
+            new ChatCompletionResult
+            {
+                Success = true,
+                FinishReason = ChatCompletionFinishReason.ToolCalls,
+                ToolCalls = [toolCall],
+                AssistantMessage = ChatMessage.AssistantWithToolCalls([toolCall])
+            }
+        ];
+    }
     /// <summary>LLM invoca una tool y luego retorna texto final.</summary>
     public static IReadOnlyList<ChatCompletionResult> ToolThenText(
         string toolName, string argsJson, string textResponse)

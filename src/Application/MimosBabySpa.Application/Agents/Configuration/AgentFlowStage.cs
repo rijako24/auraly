@@ -1,3 +1,5 @@
+using System.Text.Json;
+
 namespace MimosBabySpa.Application.Agents.Configuration;
 
 /// <summary>
@@ -13,14 +15,15 @@ public sealed class AgentFlowStage
     /// <summary>Objetivo narrativo de la etapa (lenguaje natural para el LLM).</summary>
     public string Goal { get; init; } = string.Empty;
 
-    /// <summary>Pregunta conversacional sugerida cuando la etapa necesita input del cliente.</summary>
-    public string? Ask { get; init; }
 
     /// <summary>Datos de negocio que la etapa puede recoger sin bloquear si no son necesarios.</summary>
     public IReadOnlyList<string> Collect { get; init; } = [];
 
-    /// <summary>Acciones semanticas del flow.language.actions permitidas en esta etapa.</summary>
+    /// <summary>Nombres exactos de tools permitidas en esta etapa.</summary>
     public IReadOnlyList<string> AllowedActions { get; init; } = [];
+
+    /// <summary>Acciones exactas de tool que el motor puede ejecutar al entrar a la etapa si se cumplen condiciones declarativas.</summary>
+    public IReadOnlyList<StageEntryAction> EntryActions { get; init; } = [];
 
     /// <summary>Orientacion conversacional para conservar el comportamiento hablado del agente.</summary>
     public string? ConversationGuidance { get; init; }
@@ -36,22 +39,22 @@ public sealed class AgentFlowStage
     public IReadOnlyList<string> AdvanceWhenFacts { get; init; } = [];
 
     /// <summary>
-    /// Si alguno de estos facts cambia después de que la etapa fue completada,
-    /// el compositor inyecta un bloque de ATENCIÓN para que el LLM repita acciones dependientes.
+    /// Si alguno de estos facts cambia despues de que la etapa fue completada,
+    /// el compositor inyecta un bloque de ATENCION para que el LLM repita acciones dependientes.
     /// </summary>
     public IReadOnlyList<string> ReentryOnFactChanged { get; init; } = [];
 
     /// <summary>
-    /// Expresión de facts que, si se cumple, permite saltar esta etapa aunque sus
-    /// AdvanceWhenFacts no estén completos (ej. el cliente dio fecha/hora antes de elegir add-ons).
+    /// Expresion de facts que, si se cumple, permite saltar esta etapa aunque sus
+    /// AdvanceWhenFacts no esten completos (ej. el cliente dio fecha/hora antes de elegir add-ons).
     /// Sintaxis: fact keys separados por "&&" (todos deben estar presentes).
     /// Ej.: "desired_date &amp;&amp; desired_time"
     /// </summary>
     public string? SkipWhen { get; init; }
 
     /// <summary>
-    /// Map fact → valor a grabar automáticamente cuando la etapa se salta por SkipWhen.
-    /// Garantiza consistencia del estado sin intervención del LLM.
+    /// Map fact -> valor a grabar automaticamente cuando la etapa se salta por SkipWhen.
+    /// Garantiza consistencia del estado sin intervencion del LLM.
     /// Ej.: { "add_ons": "ninguno" }
     /// </summary>
     public Dictionary<string, string> AutoSetOnSkip { get; init; } = new(StringComparer.OrdinalIgnoreCase);
@@ -65,9 +68,28 @@ public sealed class AgentFlowStage
     /// <summary>
     /// Variantes de la etapa por engagement context.
     /// Keys: "firstEver" | "returningCustomer" | "continuingSession".
-    /// Si la etapa tiene Variants y el engagement actual NO está en el dict,
-    /// la etapa se salta automáticamente (no aplica a este tipo de cliente).
+    /// Si la etapa tiene Variants y el engagement actual NO esta en el dict,
+    /// la etapa se salta automaticamente (no aplica a este tipo de cliente).
     /// </summary>
     public Dictionary<string, AgentFlowStageVariant> Variants { get; init; }
         = new(StringComparer.OrdinalIgnoreCase);
+}
+public sealed class StageEntryAction
+{
+    public string Tool { get; init; } = string.Empty;
+    public Dictionary<string, JsonElement> Arguments { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+    public StageEntryActionCondition When { get; init; } = new();
+}
+
+public sealed class StageEntryActionCondition
+{
+    public IReadOnlyList<string> RequiredFacts { get; init; } = [];
+    public IReadOnlyList<string> MissingFacts { get; init; } = [];
+    public IReadOnlyList<string> MissingVerifications { get; init; } = [];
+    public IReadOnlyList<StageEntryMessageMatch> MessageMatches { get; init; } = [];
+}
+
+public sealed class StageEntryMessageMatch
+{
+    public IReadOnlyList<string> AnyOf { get; init; } = [];
 }

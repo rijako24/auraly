@@ -21,7 +21,6 @@ public class SetFactToolTests
     private readonly Mock<IConversationFactsService> _facts = new();
     private readonly Mock<IAddOnCatalogService> _addOnCatalog = new();
     private readonly Mock<ILeadService> _leadService = new();
-    private readonly Mock<IServiceRepository> _services = new();
     private readonly ConversationVerificationService _verifications = new();
     private readonly SetFactTool _tool;
 
@@ -42,65 +41,33 @@ public class SetFactToolTests
                 It.IsAny<string>(),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<AddOnRuleInfo>());
-
-        _services
-            .Setup(s => s.GetActiveByBusinessIdAsync(It.IsAny<Guid>()))
-            .ReturnsAsync(Array.Empty<Service>());
-
-        var unitOfWork = new Mock<IUnitOfWork>();
-        unitOfWork.SetupGet(u => u.Services).Returns(_services.Object);
-        var resolver = new ServiceSelectionResolver(unitOfWork.Object, NullLogger<ServiceSelectionResolver>.Instance);
-
         _tool = new SetFactTool(
             _facts.Object,
-            resolver,
             _addOnCatalog.Object,
             _verifications,
             _leadService.Object);
     }
 
     [Fact]
-    public async Task ExecuteAsync_ServiceKey_ResolvesAndPersistsCanonicalService()
+    public async Task ExecuteAsync_ServiceKey_ReturnsWrongToolForServiceSelection()
     {
         var ctx = CreateContext();
-        _services.Setup(s => s.GetActiveByBusinessIdAsync(ctx.BusinessId))
-            .ReturnsAsync([new Service { BusinessId = ctx.BusinessId, ServiceName = "Plan Marineritos", IsActive = true }]);
+        ctx.Config = CreateMimiLikeSchema();
+        ctx.LatestUserMessage = "Cambia el servicio a Plan Marineritos";
 
         using var args = JsonDocument.Parse("""{"key":"service","value":"Plan Marineritos"}""");
         var json = await _tool.ExecuteAsync(args.RootElement, ctx, CancellationToken.None);
 
-        json.Should().Contain("\"selection_status\":\"resolved\"");
-        ctx.Facts[ConversationFactKeys.Service].Should().Be("Plan Marineritos");
+        using var doc = JsonDocument.Parse(json);
+        doc.RootElement.GetProperty("ok").GetBoolean().Should().BeFalse();
+        doc.RootElement.GetProperty("error").GetProperty("code").GetString().Should().Be("wrong_tool_for_service_selection");
+        doc.RootElement.GetProperty("llm").GetProperty("next_action").GetString().Should().Be("resolve_service_selection");
+        doc.RootElement.GetProperty("llm").GetProperty("arguments").GetProperty("text").GetString()
+            .Should().Be("Cambia el servicio a Plan Marineritos");
+        ctx.Facts.Should().NotContainKey(ConversationFactKeys.Service);
         _facts.Verify(f => f.SetAsync(
-            ctx.ConversationId, ctx.BusinessId, ConversationFactKeys.Service, "Plan Marineritos",
-            It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Once);
-    }
-
-    [Fact]
-    public async Task ExecuteAsync_ServiceKey_ResolvesWithoutInspectingReservationIntent()
-    {
-        var ctx = CreateContext();
-        _services.Setup(s => s.GetActiveByBusinessIdAsync(ctx.BusinessId))
-            .ReturnsAsync([new Service { BusinessId = ctx.BusinessId, ServiceName = "Corte premium de adulto", IsActive = true }]);
-        ctx.LatestUserMessage = "Quiero cambiar el servicio a corte premium de adulto";
-        ctx.ManageableReservations =
-        [
-            new Reservation
-            {
-                Status = ReservationStatus.Confirmed,
-                ReservationDateTime = new DateTime(2026, 9, 2, 11, 0, 0),
-                Service = new Service { ServiceName = "Corte basico de adulto" }
-            }
-        ];
-
-        using var args = JsonDocument.Parse("""{"key":"service","value":"Corte premium de adulto"}""");
-        var json = await _tool.ExecuteAsync(args.RootElement, ctx, CancellationToken.None);
-
-        json.Should().Contain("\"selection_status\":\"resolved\"");
-        ctx.Facts[ConversationFactKeys.Service].Should().Be("Corte premium de adulto");
-        _facts.Verify(f => f.SetAsync(
-            ctx.ConversationId, ctx.BusinessId, ConversationFactKeys.Service, "Corte premium de adulto",
-            It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Once);
+            It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<string>(),
+            It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Never);
     }
     [Fact]
     public async Task ExecuteAsync_AttributeKey_PersistsToFacts()
@@ -393,6 +360,36 @@ public class SetFactToolTests
             .Should().BeFalse();
     }
 
+    [Theory]
+    [InlineData("desired_date", "2026-05-28")]
+    [InlineData("desired_time", "09:00")]
+    [InlineData("add_ons", "Decoración Bouquet Personalizado")]
+    public async Task ExecuteAsync_BookingFactChange_InvalidatesCheckoutPreparedVerification(
+        string key,
+        string newValue)
+    {
+        var ctx = CreateContext();
+        ctx.Config = CreateMimiLikeSchema();
+        ctx.Facts[ConversationFactKeys.Service] = "Plan Marineritos";
+        ctx.Facts[ConversationFactKeys.DesiredDate] = "2026-05-27";
+        ctx.Facts[ConversationFactKeys.DesiredTime] = "08:00";
+        ctx.Facts[ConversationFactKeys.AddOns] = "Decoración Sencilla";
+
+        var checkoutDeps = VerificationSnapshot.Of(ctx.Facts,
+            ConversationFactKeys.Service,
+            ConversationFactKeys.DesiredDate,
+            ConversationFactKeys.DesiredTime,
+            ConversationFactKeys.AddOns);
+        _verifications.Record(ctx, VerificationFactTypes.CheckoutPrepared, checkoutDeps, null);
+        _verifications.IsActive(ctx.ConversationState, VerificationFactTypes.CheckoutPrepared, ctx.Facts)
+            .Should().BeTrue();
+
+        using var args = JsonDocument.Parse($$"""{"key":"{{key}}","value":"{{newValue}}"}""");
+        await _tool.ExecuteAsync(args.RootElement, ctx, CancellationToken.None);
+
+        _verifications.IsActive(ctx.ConversationState, VerificationFactTypes.CheckoutPrepared, ctx.Facts)
+            .Should().BeFalse();
+    }
     private static AgentConfig CreateMimiLikeSchema() => new()
     {
         FactSchema =

@@ -15,7 +15,7 @@ namespace MimosBabySpa.Application.Agents.Tools.Impl;
 [AgentToolMetadata("manage_reservation", Capabilities = new[] { ToolCapabilities.ReservationManage })]
 public sealed class ManageReservationTool : IAgentTool
 {
-    private readonly IReservationService _reservations;
+private readonly IReservationService _reservations;
     private readonly ICustomerReservationResolver _reservationResolver;
     private readonly IPaymentLifecycleService _paymentLifecycle;
     private readonly IAvailabilityService _availability;
@@ -143,16 +143,11 @@ public sealed class ManageReservationTool : IAgentTool
 
         if (!changePolicy.HasAutomaticField(requestedFields))
         {
-            return ToolResultHelper.ErrorWithLlm(
-                "missing_supported_reservation_change",
-                "Automatic reservation changes require at least one configured automatic change field.",
-                null,
-                new
+            return ToolResultHelper.ErrorWithLlm("missing_supported_reservation_change", "Automatic reservation changes require at least one configured automatic change field.", new
                 {
                     next_action = "collect_reschedule_target",
                     required_fields = changePolicy.AutomaticChangeFields
-                },
-                recoverable: true);
+                }, recoverable: true);
         }
 
         // Date/time reschedules are the customer's confirmed intent; no second confirmation turn.
@@ -176,17 +171,12 @@ public sealed class ManageReservationTool : IAgentTool
                 var availabilityHint = await BuildAvailabilityHintAsync(request.Request!, ctx, cancellationToken);
                 remediation = null;
 
-                return ToolResultHelper.ErrorWithLlm(
-                    result.ErrorCode!,
-                    result.ErrorMessage!,
-                    remediation,
-                    new
+                return ToolResultHelper.ErrorWithLlm(result.ErrorCode!, result.ErrorMessage!, new
                     {
                         next_action = "offer_alternative_slots",
                         requested_date = availabilityHint?.Date,
                         available_slots = availabilityHint?.Slots ?? []
-                    },
-                    recoverable: true);
+                    }, recoverable: true);
             }
 
             return ReservationChangeToolSupport.BuildErrorResult(result);
@@ -393,17 +383,12 @@ public sealed class ManageReservationTool : IAgentTool
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
-            return ToolResultHelper.ErrorWithLlm(
-                "slot_unavailable",
-                availability.ResponseMessage ?? "The selected time is not available.",
-                null,
-                new
+            return ToolResultHelper.ErrorWithLlm("slot_unavailable", availability.ResponseMessage ?? "The selected time is not available.", new
                 {
                     next_action = "offer_alternative_slots",
                     requested_date = date,
                     available_slots = availableSlots
-                },
-                recoverable: true);
+                }, recoverable: true);
         }
 
         var roles = new FactRoleIndex(ctx.Config?.FactSchema ?? []);
@@ -541,12 +526,7 @@ public sealed class ManageReservationTool : IAgentTool
     {
         if (!ToolResultHelper.TryGetBool(arguments, "customer_confirmed", out var confirmed) || !confirmed)
         {
-            return ToolResultHelper.ErrorWithLlm(
-                "confirmation_required",
-                "Customer confirmation is required before registering attendance.",
-                null,
-                new { next_action = "collect_confirmation", confirmation_type = "attendance" },
-                recoverable: true);
+            return ToolResultHelper.ErrorWithLlm("confirmation_required", "Customer confirmation is required before registering attendance.", new { next_action = "collect_confirmation", confirmation_type = "attendance" }, recoverable: true);
         }
 
         var resolved = await ResolveReservationAsync(arguments, ctx, cancellationToken);
@@ -607,12 +587,7 @@ public sealed class ManageReservationTool : IAgentTool
     {
         if (!ToolResultHelper.TryGetBool(arguments, "customer_confirmed", out var confirmed) || !confirmed)
         {
-            return ToolResultHelper.ErrorWithLlm(
-                "confirmation_required",
-                "Customer confirmation is required before cancelling or suspending a reservation.",
-                null,
-                new { next_action = "collect_confirmation", confirmation_type = "cancellation" },
-                recoverable: true);
+            return ToolResultHelper.ErrorWithLlm("confirmation_required", "Customer confirmation is required before cancelling or suspending a reservation.", new { next_action = "collect_confirmation", confirmation_type = "cancellation" }, recoverable: true);
         }
 
         var resolved = await ResolveReservationAsync(arguments, ctx, cancellationToken);
@@ -649,7 +624,7 @@ public sealed class ManageReservationTool : IAgentTool
             cancellationToken);
         return resolved.Success
             ? ManageReservationResolveResult.Ok(resolved.Reservation!)
-            : ManageReservationResolveResult.Fail(resolved.ErrorJson ?? ToolResultHelper.Error("reservation_not_found", "No reservation was found.", recoverable: true));
+            : ManageReservationResolveResult.Fail(resolved.ErrorJson ?? ToolResultHelper.Error("reservation_not_found", "No reservation was found."));
     }
 
     private static string? TryParseJobIdFromPayload(AgentToolContext ctx)

@@ -18,6 +18,7 @@ public interface ICatalogContentGenerator
 
 public enum CatalogContentView
 {
+    Auto,
     Services,
     Categories
 }

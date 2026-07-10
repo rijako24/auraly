@@ -1,4 +1,5 @@
 using MimosBabySpa.Application.Agents;
+using MimosBabySpa.Application.Agents.Facts;
 using MimosBabySpa.Application.DTOs;
 using MimosBabySpa.Domain.Repositories;
 
@@ -28,9 +29,10 @@ public sealed class ReservationIntentBuilder : IReservationIntentBuilder
         AgentToolContext ctx,
         CancellationToken cancellationToken = default)
     {
-        var serviceName = ConversationFactKeys.Get(ctx.Facts, ConversationFactKeys.Service);
-        var dateStr = ConversationFactKeys.Get(ctx.Facts, ConversationFactKeys.DesiredDate);
-        var timeStr = ConversationFactKeys.Get(ctx.Facts, ConversationFactKeys.DesiredTime);
+        var roles = new FactRoleIndex(ctx.Config?.FactSchema ?? []);
+        var serviceName = GetFact(roles, ctx.Facts, "booking.service", ConversationFactKeys.Service);
+        var dateStr = GetFact(roles, ctx.Facts, "booking.date", ConversationFactKeys.DesiredDate);
+        var timeStr = GetFact(roles, ctx.Facts, "booking.time", ConversationFactKeys.DesiredTime);
 
         if (string.IsNullOrWhiteSpace(serviceName)
             || string.IsNullOrWhiteSpace(dateStr)
@@ -46,7 +48,7 @@ public sealed class ReservationIntentBuilder : IReservationIntentBuilder
         if (service is null)
             return null;
 
-        var addOnsCsv = ConversationFactKeys.Get(ctx.Facts, ConversationFactKeys.AddOns);
+        var addOnsCsv = GetFact(roles, ctx.Facts, "booking.addons", ConversationFactKeys.AddOns);
         var addOnIds = new List<Guid>();
         if (!string.IsNullOrWhiteSpace(addOnsCsv))
         {
@@ -58,10 +60,10 @@ public sealed class ReservationIntentBuilder : IReservationIntentBuilder
             addOnIds.AddRange(await ResolveAddOnIdsAsync(ctx.BusinessId, validation.NormalizedCsv, cancellationToken));
         }
 
-        var customerName = ConversationFactKeys.Get(ctx.Facts, ConversationFactKeys.CustomerName)
+        var customerName = GetFact(roles, ctx.Facts, "customer.name", ConversationFactKeys.CustomerName)
             ?? ctx.Conversation.CustomerName;
         var customerPhone = ConversationContactPhone.Resolve(ctx.Facts, ctx.ChannelPhone);
-        var customerEmail = ConversationFactKeys.Get(ctx.Facts, ConversationFactKeys.CustomerEmail)
+        var customerEmail = GetFact(roles, ctx.Facts, "customer.email", ConversationFactKeys.CustomerEmail)
             ?? ctx.Conversation.CustomerEmail;
 
         return new ReservationIntentSnapshot(
@@ -79,6 +81,13 @@ public sealed class ReservationIntentBuilder : IReservationIntentBuilder
 
     public string BuildCustomAttributesJson(IReadOnlyDictionary<string, string> facts) =>
         ReservationCustomAttributes.BuildJson(facts, null);
+
+    private static string? GetFact(
+        FactRoleIndex roles,
+        IReadOnlyDictionary<string, string> facts,
+        string role,
+        string fallbackKey) =>
+        roles.GetByRole(facts, role) ?? ConversationFactKeys.Get(facts, fallbackKey);
 
     private async Task<IReadOnlyList<Guid>> ResolveAddOnIdsAsync(
         Guid businessId,

@@ -27,7 +27,6 @@ public class ToolCallInterceptor : IAgentTool
     public string? DefaultTemplateId => _inner.DefaultTemplateId;
     public IReadOnlyList<string> RequiredTemplateIds => _inner.RequiredTemplateIds;
     public string? DefaultTemplate => _inner.DefaultTemplate;
-    public IReadOnlyList<string> SemanticTriggers => _inner.SemanticTriggers;
 
     public string BuildParametersSchema(AgentConfig config) =>
         _inner.BuildParametersSchema(config);
@@ -52,7 +51,10 @@ public class ToolCallInterceptor : IAgentTool
             ResultJson: result,
             ResultIsError: isError,
             CalledAt: DateTimeOffset.UtcNow,
-            ElapsedMs: sw.ElapsedMilliseconds));
+            ElapsedMs: sw.ElapsedMilliseconds,
+            FactsJson: JsonSerializer.Serialize(context.Facts),
+            ActivePaymentCheckoutSnapshotJson: context.ActivePayment?.CheckoutSnapshotJson,
+            ActivePaymentAmountInCents: context.ActivePayment?.AmountInCents));
 
         return result;
     }

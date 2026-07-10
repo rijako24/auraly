@@ -78,4 +78,3 @@ public sealed class StartExternalInteractionTool : IAgentTool
                 : ctx.ConversationId;
     }
 }
-

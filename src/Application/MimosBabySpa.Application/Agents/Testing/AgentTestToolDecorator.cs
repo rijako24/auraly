@@ -26,7 +26,6 @@ public sealed class AgentTestToolDecorator : IAgentTool
     public string ParametersSchema => _inner.ParametersSchema;
     public string? DefaultTemplateId => _inner.DefaultTemplateId;
     public string? DefaultTemplate => _inner.DefaultTemplate;
-    public IReadOnlyList<string> SemanticTriggers => _inner.SemanticTriggers;
     public Func<JsonElement, AgentToolContext, IReadOnlyDictionary<string, string>?>? VerificationDependencyResolver =>
         _inner.VerificationDependencyResolver;
 

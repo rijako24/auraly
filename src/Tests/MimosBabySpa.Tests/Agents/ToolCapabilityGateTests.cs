@@ -239,13 +239,8 @@ public class ToolCapabilityGateTests
     [Fact]
     public async Task EvaluateAsync_SetFact_HasNoPreconditions()
     {
-        var services = new Mock<IServiceRepository>();
-        var unitOfWork = new Mock<IUnitOfWork>();
-        unitOfWork.SetupGet(u => u.Services).Returns(services.Object);
-        var resolver = new ServiceSelectionResolver(unitOfWork.Object, NullLogger<ServiceSelectionResolver>.Instance);
         var setFactTool = new SetFactTool(
             Mock.Of<IConversationFactsService>(),
-            resolver,
             Mock.Of<IAddOnCatalogService>(),
             _verifications,
             Mock.Of<ILeadService>());
@@ -271,7 +266,6 @@ public class ToolCapabilityGateTests
             EnabledToolNames = ["set_fact", "manage_reservation"],
             Flow = new AgentFlowDefinition
             {
-                Language = LanguageForTools("set_fact", "manage_reservation"),
 
                 StageDetection = "automatic",
                 Stages =
@@ -290,17 +284,91 @@ public class ToolCapabilityGateTests
                 new AgentGlobalAction
                 {
                     Id = "manage_existing_reservation",
-                    AllowedActions = ["manage_reservation"]
+                    AllowedActions = ["manage_reservation"],
+                    EntryActions =
+                    [
+                        new StageEntryAction
+                        {
+                            Tool = "manage_reservation",
+                            When = new StageEntryActionCondition
+                            {
+                                MessageMatches = [new StageEntryMessageMatch { AnyOf = ["cambiar la hora de mi reserva"] }]
+                            }
+                        }
+                    ]
                 }
             ]
         };
 
+        ctx.LatestUserMessage = "quiero cambiar la hora de mi reserva";
         using var args = JsonDocument.Parse("{}");
         var result = await _gate.EvaluateAsync(manageTool, args.RootElement, ctx, CancellationToken.None);
 
         result.IsAllowed.Should().BeTrue();
     }
 
+    [Fact]
+    public async Task EvaluateAsync_GlobalActionWithEntryAction_RequiresMatchingMessage()
+    {
+        var manageTool = new TestTool("manage_reservation");
+
+        var ctx = CreateContext();
+        ctx.LatestUserMessage = "quiero cambiar la hora";
+        ctx.Config = new AgentConfig
+        {
+            AgentId = Guid.NewGuid(),
+            BusinessId = Guid.NewGuid(),
+            EnabledToolNames = ["set_fact", "manage_reservation"],
+            Flow = new AgentFlowDefinition
+            {
+                StageDetection = "automatic",
+                Stages =
+                [
+                    new AgentFlowStage
+                    {
+                        Id = "customer_data",
+                        Goal = "Pedir datos",
+                        ConversationGuidance = "Pide datos del cliente.",
+                        AllowedActions = ["set_fact"]
+                    }
+                ]
+            },
+            GlobalActions =
+            [
+                new AgentGlobalAction
+                {
+                    Id = "manage_existing_reservation",
+                    AllowedActions = ["manage_reservation"],
+                    EntryActions =
+                    [
+                        new StageEntryAction
+                        {
+                            Tool = "manage_reservation",
+                            When = new StageEntryActionCondition
+                            {
+                                MessageMatches =
+                                [
+                                    new StageEntryMessageMatch
+                                    {
+                                        AnyOf = ["cambiar la hora de mi reserva"]
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                }
+            ]
+        };
+
+        using var args = JsonDocument.Parse("{}");
+        var blocked = await _gate.EvaluateAsync(manageTool, args.RootElement, ctx, CancellationToken.None);
+        blocked.IsAllowed.Should().BeFalse();
+        blocked.Code.Should().Be("stage_action_pending");
+
+        ctx.LatestUserMessage = "quiero cambiar la hora de mi reserva";
+        var allowed = await _gate.EvaluateAsync(manageTool, args.RootElement, ctx, CancellationToken.None);
+        allowed.IsAllowed.Should().BeTrue();
+    }
     [Fact]
     public void FilterVisibleTools_StageWhitelist_ExposesOnlyStageAndGlobalActionTools()
     {
@@ -310,7 +378,6 @@ public class ToolCapabilityGateTests
             BusinessId = Guid.NewGuid(),
             Flow = new AgentFlowDefinition
             {
-                Language = LanguageForTools("search_products", "add_order_item", "reset_flow_context"),
 
                 Stages =
                 [
@@ -327,7 +394,18 @@ public class ToolCapabilityGateTests
                 new AgentGlobalAction
                 {
                     Id = "restart_order",
-                    AllowedActions = ["reset_flow_context"]
+                    AllowedActions = ["reset_flow_context"],
+                    EntryActions =
+                    [
+                        new StageEntryAction
+                        {
+                            Tool = "reset_flow_context",
+                            When = new StageEntryActionCondition
+                            {
+                                MessageMatches = [new StageEntryMessageMatch { AnyOf = ["reiniciar pedido"] }]
+                            }
+                        }
+                    ]
                 }
             ]
         };
@@ -342,7 +420,11 @@ public class ToolCapabilityGateTests
             new TestTool("reset_flow_context")
         ];
 
-        var visibleTools = ToolFlowScope.FilterVisibleTools(config, currentStage, effectiveTools);
+        var visibleTools = ToolFlowScope.FilterVisibleTools(config, currentStage, effectiveTools, new AgentToolContext
+        {
+            ConversationState = new ConversationStateModel(),
+            LatestUserMessage = "quiero reiniciar pedido"
+        });
 
         visibleTools.Select(t => t.Name).Should().Equal(
             "search_products",
@@ -370,7 +452,6 @@ public class ToolCapabilityGateTests
             EnabledToolNames = ["set_fact", "check_availability", "manage_reservation"],
             Flow = new AgentFlowDefinition
             {
-                Language = LanguageForTools("set_fact", "manage_reservation"),
 
                 StageDetection = "automatic",
                 Stages =
@@ -421,20 +502,6 @@ public class ToolCapabilityGateTests
 
         missingFacts.Should().Contain(expectedMissingFacts);
     }
-    private static ConversationalFlowLanguage LanguageForTools(params string[] toolNames) => new()
-    {
-        Actions = toolNames
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(
-                tool => tool,
-                tool => new SemanticFlowAction
-                {
-                    Name = tool,
-                    Purpose = $"Test action for {tool}.",
-                    Tool = tool
-                },
-                StringComparer.OrdinalIgnoreCase)
-    };
 
     private sealed class TestTool : IAgentTool
     {
@@ -464,7 +531,6 @@ public class ToolCapabilityGateTests
         EnabledToolNames = ["set_fact", "get_service_catalog", "check_availability"],
         Flow = new AgentFlowDefinition
         {
-            Language = LanguageForTools("get_service_catalog", "set_fact"),
 
             StageDetection = "automatic",
             Stages =

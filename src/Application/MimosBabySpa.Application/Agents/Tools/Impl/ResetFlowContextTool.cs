@@ -9,9 +9,10 @@ namespace MimosBabySpa.Application.Agents.Tools.Impl;
 /// <summary>
 /// Clears the current request context while preserving facts marked as persistent in factSchema.
 /// </summary>
+[AgentToolMetadata("reset_flow_context")]
 public sealed class ResetFlowContextTool : IAgentTool
 {
-    private readonly IRequestContextService _requestContext;
+private readonly IRequestContextService _requestContext;
     private readonly IPaymentLifecycleService _payments;
     private readonly IUnitOfWork _unitOfWork;
 
@@ -67,10 +68,7 @@ public sealed class ResetFlowContextTool : IAgentTool
         if (!checkoutAction.Equals("none", StringComparison.OrdinalIgnoreCase)
             && !checkoutAction.Equals("abandon", StringComparison.OrdinalIgnoreCase))
         {
-            return ToolResultHelper.Error(
-                "invalid_checkout_action",
-                $"checkout_action '{checkoutAction}' is not supported.",
-                "Use 'none' or 'abandon'.");
+            return ToolResultHelper.Error("invalid_checkout_action", $"checkout_action '{checkoutAction}' is not supported.");
         }
 
         PaymentTransactionStatus? previousPaymentStatus = null;

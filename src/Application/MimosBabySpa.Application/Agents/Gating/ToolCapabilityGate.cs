@@ -75,10 +75,11 @@ public sealed class ToolCapabilityGate : IToolCapabilityGate
 
     private GateResult? EvaluateStageAllowedActions(IAgentTool tool, AgentConfig config, AgentToolContext ctx)
     {
-        if (config.Flow.Stages.Count == 0)
+        var activeFlow = ActiveFlowResolver.Resolve(config, ctx);
+        if (activeFlow.Stages.Count == 0)
             return null;
 
-        var stage = _flowStageDetector.DetectCurrentStage(config.Flow, ctx);
+        var stage = _flowStageDetector.DetectCurrentStage(activeFlow, ctx);
         if (stage is null || stage.AllowedActions.Count == 0)
             return null;
 
@@ -86,7 +87,7 @@ public sealed class ToolCapabilityGate : IToolCapabilityGate
         if (runtimeActive && ctx.RuntimeDecision.ExtraAllowedToolNames.Contains(tool.Name))
             return null;
 
-        if (ToolFlowScope.IsAllowedInScope(tool.Name, config, stage, ctx.RuntimeDecision))
+        if (ToolFlowScope.IsAllowedInScope(tool.Name, config, stage, ctx.RuntimeDecision, ctx))
             return null;
         return new GateResult(
             false,
@@ -109,8 +110,7 @@ public sealed class ToolCapabilityGate : IToolCapabilityGate
             stage_goal = stage.Goal,
             allowed_actions = stage.AllowedActions,
             collect = stage.Collect,
-            missing_facts = missingFacts,
-            ask = stage.Ask
+            missing_facts = missingFacts
         };
     }
 }

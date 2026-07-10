@@ -7,6 +7,7 @@ namespace MimosBabySpa.Application.Agents.Tools.Impl;
 /// Retorna el catalogo actualizado de servicios y precios del negocio.
 /// La elegibilidad (edad, capacidad, etc.) se infiere del texto en Description + contexto del cliente.
 /// </summary>
+[AgentToolMetadata("get_service_catalog")]
 public sealed class GetServiceCatalogTool : IAgentTool
 {
     private readonly ICatalogContentGenerator _catalog;
@@ -19,9 +20,10 @@ public sealed class GetServiceCatalogTool : IAgentTool
 
     public string Description =>
         "Returns the business service catalog for information requests: service categories, services, compatible add-ons per service, prices, durations, options, alternatives, and service details. " +
-        "Use view=categories only when the customer has not named any service family, service type, option, or narrowing keyword and should see only the available service categories/options. " +
-        "Use view=services to answer catalog, pricing, option, comparison, service-information, or narrowed service-family questions, including broad family words from the customer. " +
-        "Pass query using the customer's own service-family words when the user narrows the catalog. Do not invent or hard-code query values. " +
+        "Use view=auto when the turn should consult the catalog and let the tool choose category overview vs filtered services from the tenant catalog. " +
+        "Use view=categories only when the customer should see the available service categories/options. " +
+        "Use view=services only when the caller intentionally needs service rows with price/duration/add-ons. " +
+        "Pass query using the customer's own words. Do not invent or hard-code query values. " +
         "It does not select a service or store booking.service.";
 
     public string ParametersSchema => """
@@ -34,8 +36,8 @@ public sealed class GetServiceCatalogTool : IAgentTool
             },
             "view": {
               "type": "string",
-              "enum": ["services", "categories"],
-              "description": "Use categories for the initial category/options overview; use services for service rows with price, duration, and add-ons."
+              "enum": ["auto", "services", "categories"],
+              "description": "Use auto for discovery; categories for an overview; services for service rows with price, duration, and add-ons."
             }
           }
         }
@@ -48,19 +50,24 @@ public sealed class GetServiceCatalogTool : IAgentTool
     {
         ToolResultHelper.TryGetString(arguments, "query", out var query);
         ToolResultHelper.TryGetString(arguments, "view", out var viewText);
-        var view = string.Equals(viewText, "categories", StringComparison.OrdinalIgnoreCase)
-            ? CatalogContentView.Categories
-            : CatalogContentView.Services;
+        var view = viewText?.Trim().ToLowerInvariant() switch
+        {
+            "categories" => CatalogContentView.Categories,
+            "services" => CatalogContentView.Services,
+            _ => CatalogContentView.Auto
+        };
 
-        if (view == CatalogContentView.Categories && !string.IsNullOrWhiteSpace(query))
-            view = CatalogContentView.Services;
+        var requestedView = view == CatalogContentView.Categories
+            ? "categories"
+            : view == CatalogContentView.Services ? "services" : "auto";
 
         var content = await _catalog.GenerateAsync(ctx.BusinessId, query, view, cancellationToken);
         return ToolResultHelper.Ok(new
         {
             catalog = content,
             query = string.IsNullOrWhiteSpace(query) ? null : query,
-            view = view == CatalogContentView.Categories ? "categories" : "services"
+            view = requestedView,
+            requested_view = requestedView
         });
     }
 }

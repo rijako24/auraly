@@ -264,9 +264,10 @@ internal static class OrderEscalationToolPayload
     }
 }
 
+[AgentToolMetadata("search_order")]
 public sealed class SearchOrderTool : IAgentTool
 {
-    private readonly OrderEscalationResolver _resolver;
+private readonly OrderEscalationResolver _resolver;
 
     public SearchOrderTool(IUnitOfWork unitOfWork)
     {
@@ -320,9 +321,10 @@ public sealed class SearchOrderTool : IAgentTool
     }
 }
 
+[AgentToolMetadata("accept_order_request")]
 public sealed class AcceptOrderRequestTool : IAgentTool
 {
-    private readonly OrderEscalationResolver _resolver;
+private readonly OrderEscalationResolver _resolver;
     private readonly IExternalEscalationService _escalations;
 
     public AcceptOrderRequestTool(IUnitOfWork unitOfWork, IExternalEscalationService escalations)
@@ -420,9 +422,10 @@ public sealed class AcceptOrderRequestTool : IAgentTool
     }
 }
 
+[AgentToolMetadata("reject_order_request")]
 public sealed class RejectOrderRequestTool : IAgentTool
 {
-    private readonly OrderEscalationResolver _resolver;
+private readonly OrderEscalationResolver _resolver;
     private readonly IExternalEscalationService _escalations;
 
     public RejectOrderRequestTool(IUnitOfWork unitOfWork, IExternalEscalationService escalations)
@@ -518,5 +521,3 @@ public sealed class RejectOrderRequestTool : IAgentTool
         }, ToolSideEffectNames.RequestCompleted);
     }
 }
-
-

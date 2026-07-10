@@ -4,9 +4,10 @@ using MimosBabySpa.Domain.Repositories;
 
 namespace MimosBabySpa.Application.Agents.Tools.Impl;
 
+[AgentToolMetadata("operations_get_reservations")]
 public sealed class OperationsGetReservationsTool : IAgentTool
 {
-    private readonly IUnitOfWork _unitOfWork;
+private readonly IUnitOfWork _unitOfWork;
 
     public OperationsGetReservationsTool(IUnitOfWork unitOfWork)
     {
@@ -21,7 +22,7 @@ public sealed class OperationsGetReservationsTool : IAgentTool
         {
           "type": "object",
           "properties": {
-            "date": { "type": "string", "description": "YYYY-MM-DD, today/hoy, or tomorrow/ma�ana" },
+            "date": { "type": "string", "description": "YYYY-MM-DD, today/hoy, or tomorrow/manana" },
             "end_date": { "type": "string", "description": "Optional YYYY-MM-DD end date" },
             "status": { "type": "string", "description": "Optional reservation status" },
             "customer": { "type": "string", "description": "Optional customer name or phone filter" },
@@ -34,7 +35,7 @@ public sealed class OperationsGetReservationsTool : IAgentTool
     public async Task<string> ExecuteAsync(JsonElement arguments, AgentToolContext ctx, CancellationToken cancellationToken = default)
     {
         if (!OperationsToolParsing.TryGetDate(arguments, "date", ctx.BusinessToday, out var startDate))
-            return ToolResultHelper.Error("date_required", "date must be provided as YYYY-MM-DD, today/hoy, or tomorrow/ma�ana.");
+            return ToolResultHelper.Error("date_required", "date must be provided as YYYY-MM-DD, today/hoy, or tomorrow/manana.");
 
         var endDate = OperationsToolParsing.TryGetDate(arguments, "end_date", ctx.BusinessToday, out var parsedEnd)
             ? parsedEnd
@@ -92,5 +93,3 @@ public sealed class OperationsGetReservationsTool : IAgentTool
         });
     }
 }
-
-

@@ -6,7 +6,7 @@ namespace MimosBabySpa.Application.Agents.Tools.Impl;
 [AgentToolMetadata("get_customer_reservations", Capabilities = new[] { ToolCapabilities.ReservationManage })]
 public sealed class GetCustomerReservationsTool : IAgentTool
 {
-    private readonly IReservationLifecycleService _reservationLifecycle;
+private readonly IReservationLifecycleService _reservationLifecycle;
 
     public GetCustomerReservationsTool(IReservationLifecycleService reservationLifecycle)
     {

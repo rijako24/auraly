@@ -399,10 +399,9 @@ public class FullReservationStyle15AskFirstScenario : TestScenario
     public override IReadOnlyList<ConversationStep> Steps =>
     [
         new("Que horarios tienen para el 2026-08-16?",
-            FakeLlmScript.ToolThenText(
+            FakeLlmScript.ToolOnly(
                 "check_availability",
-                """{"service":"Plan Marineritos","date":"2026-08-16"}""",
-                "Para el 16 de agosto tenemos disponibilidad a las 9:00, 11:00 y 15:00. Cual prefieres?"),
+                """{"service":"Plan Marineritos","date":"2026-08-16"}"""),
             ""),
         new("A las 3pm para Plan Post Vacunas, soy Juan Perez",
             FakeLlmScript.ToolThenText(

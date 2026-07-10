@@ -5,12 +5,13 @@ using MimosBabySpa.Application.Services;
 namespace MimosBabySpa.Application.Agents.Tools.Impl;
 
 /// <summary>
-/// Encola una secuencia nombrada del catálogo del agente (texto + adjuntos) para envío tras la respuesta principal.
-/// Capacidad genérica: el stage indica qué secuencia usar (p. ej. reservation_docs).
+/// Encola una secuencia nombrada del catalogo del agente (texto + adjuntos) para envio tras la respuesta principal.
+/// Capacidad generica: el stage indica que secuencia usar (p. ej. reservation_docs).
 /// </summary>
+[AgentToolMetadata("send_message_sequence")]
 public sealed class SendMessageSequenceTool : IAgentTool
 {
-    private readonly IMessageSequenceResolver _sequenceResolver;
+private readonly IMessageSequenceResolver _sequenceResolver;
 
     public SendMessageSequenceTool(IMessageSequenceResolver sequenceResolver)
     {
@@ -52,10 +53,7 @@ public sealed class SendMessageSequenceTool : IAgentTool
         var catalog = ctx.Config?.MessageSequences;
         if (catalog is null || !catalog.ContainsKey(sequenceName))
         {
-            return ToolResultHelper.Error(
-                "unknown_sequence",
-                $"Sequence '{sequenceName}' is not configured for this agent.",
-                "Use a sequence name from messageSequences in agent settings.");
+            return ToolResultHelper.Error("unknown_sequence", $"Sequence '{sequenceName}' is not configured for this agent.");
         }
 
         if (ctx.Turn is null)

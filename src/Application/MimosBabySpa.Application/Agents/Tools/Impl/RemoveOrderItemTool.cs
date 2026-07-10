@@ -8,7 +8,7 @@ namespace MimosBabySpa.Application.Agents.Tools.Impl;
 [AgentToolMetadata("remove_order_item", Capabilities = new[] { ToolCapabilities.OrderDraftUpdate })]
 public sealed class RemoveOrderItemTool : IAgentTool
 {
-    private readonly ICommerceService _commerce;
+private readonly ICommerceService _commerce;
     private readonly IConversationFactsService _factsService;
 
     public RemoveOrderItemTool(ICommerceService commerce, IConversationFactsService factsService)
@@ -53,8 +53,7 @@ public sealed class RemoveOrderItemTool : IAgentTool
             {
                 return ToolResultHelper.Error(
                     "order_item_ambiguous",
-                    "The order item selection is ambiguous.",
-                    BuildClarificationHint(ambiguous),
+                    $"The order item selection is ambiguous. {BuildClarificationHint(ambiguous)}",
                     recoverable: true);
             }
 
@@ -94,4 +93,3 @@ public sealed class RemoveOrderItemTool : IAgentTool
             && property.TryGetDecimal(out value);
     }
 }
-

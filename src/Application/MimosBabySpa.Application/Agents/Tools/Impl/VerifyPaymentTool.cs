@@ -6,11 +6,12 @@ namespace MimosBabySpa.Application.Agents.Tools.Impl;
 
 /// <summary>
 /// Consulta el estado del anticipo en el proveedor de pagos.
-/// No crea reservas ni confirma pagos — eso lo hace el webhook de Wompi vía PaymentConfirmationHandler.
+/// No crea reservas ni confirma pagos; eso lo hace el webhook de Wompi via PaymentConfirmationHandler.
 /// </summary>
+[AgentToolMetadata("verify_payment")]
 public sealed class VerifyPaymentTool : IAgentTool
 {
-    private readonly IPaymentLinkService _paymentLinks;
+private readonly IPaymentLinkService _paymentLinks;
     private readonly IPaymentLifecycleService _paymentLifecycle;
 
     public VerifyPaymentTool(

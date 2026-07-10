@@ -5,9 +5,9 @@
 -- servicios y el agente Luis para reservas con anticipo del 100%.
 -- Idempotente.
 -- =============================================================================
-
+SET ANSI_NULLS ON;
+SET QUOTED_IDENTIFIER ON;
 SET NOCOUNT ON;
-
 DECLARE @MimosBusinessId UNIQUEIDENTIFIER = '22222222-2222-2222-2222-222222222222';
 DECLARE @TenantId        UNIQUEIDENTIFIER = 'BABA0000-0000-0000-0000-000000000000';
 DECLARE @BusinessId      UNIQUEIDENTIFIER = 'BABA0000-0000-0000-0000-000000000001';
@@ -22,7 +22,6 @@ DECLARE @TratamientosCategoryId UNIQUEIDENTIFIER = 'BABA0000-0000-0000-0000-0000
 DECLARE @BarbaCategoryId UNIQUEIDENTIFIER = 'BABA0000-0000-0000-0000-000000000016';
 DECLARE @PeinadoCategoryId UNIQUEIDENTIFIER = 'BABA0000-0000-0000-0000-000000000017';
 DECLARE @AgentTypeId     UNIQUEIDENTIFIER;
-
 IF NOT EXISTS (SELECT 1 FROM dbo.Tenants WHERE TenantId = @TenantId)
 BEGIN
     INSERT INTO dbo.Tenants (TenantId, Name, Email, IsActive, CreatedAt)
@@ -37,7 +36,6 @@ BEGIN
         UpdatedAt = GETUTCDATE()
     WHERE TenantId = @TenantId;
 END
-
 IF NOT EXISTS (SELECT 1 FROM dbo.Businesses WHERE BusinessId = @BusinessId)
 BEGIN
     INSERT INTO dbo.Businesses
@@ -61,7 +59,6 @@ BEGIN
         UpdatedAt = GETUTCDATE()
     WHERE BusinessId = @BusinessId;
 END
-
 IF NOT EXISTS (SELECT 1 FROM dbo.ServiceCategories WHERE ServiceCategoryId = @CategoryId)
 BEGIN
     INSERT INTO dbo.ServiceCategories
@@ -82,8 +79,6 @@ BEGIN
         UpdatedAt = GETUTCDATE()
     WHERE ServiceCategoryId = @CategoryId;
 END
-
-
 IF NOT EXISTS (SELECT 1 FROM dbo.ServiceCategories WHERE ServiceCategoryId = @AddOnCategoryId)
 BEGIN
     INSERT INTO dbo.ServiceCategories
@@ -104,7 +99,6 @@ BEGIN
         UpdatedAt = GETUTCDATE()
     WHERE ServiceCategoryId = @AddOnCategoryId;
 END
-
 DECLARE @LiteralCategories TABLE
 (
     ServiceCategoryId UNIQUEIDENTIFIER NOT NULL,
@@ -112,7 +106,6 @@ DECLARE @LiteralCategories TABLE
     Description NVARCHAR(MAX) NULL,
     DisplayOrder INT NOT NULL
 );
-
 INSERT INTO @LiteralCategories (ServiceCategoryId, Name, Description, DisplayOrder)
 VALUES
 (@CejasCategoryId, N'Diseno de cejas', N'Diseno y perfilado de cejas.', 2),
@@ -121,7 +114,6 @@ VALUES
 (@TratamientosCategoryId, N'Keratina / Tratamientos especiales', N'Tratamientos capilares con valor segun diagnostico.', 5),
 (@BarbaCategoryId, N'Delineado de barba', N'Delineado y perfilado limpio de barba.', 6),
 (@PeinadoCategoryId, N'Peinado premium', N'Lavado y peinado con productos de alta calidad.', 7);
-
 MERGE dbo.ServiceCategories AS target
 USING @LiteralCategories AS source
    ON target.ServiceCategoryId = source.ServiceCategoryId
@@ -148,7 +140,6 @@ WHERE BusinessId = @BusinessId
       WHERE existing.BusinessId = @BusinessId
         AND existing.ServiceName = N'Corte basico de nino'
   );
-
 UPDATE dbo.Services
 SET ServiceName = N'Corte basico de adulto',
     UpdatedAt = GETUTCDATE()
@@ -161,7 +152,6 @@ WHERE BusinessId = @BusinessId
       WHERE existing.BusinessId = @BusinessId
         AND existing.ServiceName = N'Corte basico de adulto'
   );
-
 UPDATE dbo.Services
 SET ServiceName = N'Corte + barba con terminacion premium',
     UpdatedAt = GETUTCDATE()
@@ -174,7 +164,6 @@ WHERE BusinessId = @BusinessId
       WHERE existing.BusinessId = @BusinessId
         AND existing.ServiceName = N'Corte + barba con terminacion premium'
   );
-
 UPDATE dbo.Services
 SET ServiceName = N'Diseno de cejas',
     UpdatedAt = GETUTCDATE()
@@ -187,7 +176,6 @@ WHERE BusinessId = @BusinessId
       WHERE existing.BusinessId = @BusinessId
         AND existing.ServiceName = N'Diseno de cejas'
   );
-
 UPDATE dbo.Services
 SET ServiceName = N'Keratina / Tratamientos especiales',
     UpdatedAt = GETUTCDATE()
@@ -200,7 +188,6 @@ WHERE BusinessId = @BusinessId
       WHERE existing.BusinessId = @BusinessId
         AND existing.ServiceName = N'Keratina / Tratamientos especiales'
   );
-
 DECLARE @Services TABLE
 (
     ServiceId UNIQUEIDENTIFIER NOT NULL,
@@ -212,7 +199,6 @@ DECLARE @Services TABLE
     Price DECIMAL(18, 2) NOT NULL,
     DisplayOrder INT NOT NULL
 );
-
 INSERT INTO @Services (ServiceId, ServiceName, Description, Keywords, CategoryId, DurationMinutes, Price, DisplayOrder)
 VALUES
 ('BABA0000-0000-0000-0000-000000000101', N'Corte basico de nino',
@@ -263,7 +249,6 @@ VALUES
  N'Lavado y peinado premium con productos de alta calidad.',
  N'peinado, peinado premium, lavado peinado, styling, cabello peinado',
  @PeinadoCategoryId, 20, 25000.00, 12);
-
 MERGE dbo.Services AS target
 USING @Services AS source
    ON target.BusinessId = @BusinessId
@@ -288,14 +273,12 @@ WHEN NOT MATCHED THEN
             FixedScheduleLabel, IsActive, CreatedAt)
     VALUES (source.ServiceId, @BusinessId, source.ServiceName, source.Description, source.Keywords, source.DurationMinutes, source.Price,
             1, source.CategoryId, 0, 0, 0, NULL, 1, GETUTCDATE());
-
 UPDATE s
 SET IsActive = 0,
     UpdatedAt = GETUTCDATE()
 FROM dbo.Services s
 WHERE s.BusinessId = @BusinessId
   AND NOT EXISTS (SELECT 1 FROM @Services src WHERE src.ServiceName = s.ServiceName);
-
 IF NOT EXISTS (SELECT 1 FROM dbo.Employees WHERE EmployeeId = @EmployeeId)
 BEGIN
     INSERT INTO dbo.Employees (EmployeeId, BusinessId, Name, IsActive, CreatedAt)
@@ -310,7 +293,6 @@ BEGIN
         UpdatedAt = GETUTCDATE()
     WHERE EmployeeId = @EmployeeId;
 END
-
 INSERT INTO dbo.EmployeeServices (EmployeeServiceId, EmployeeId, ServiceId, CreatedAt)
 SELECT NEWID(), @EmployeeId, s.ServiceId, GETUTCDATE()
 FROM dbo.Services s
@@ -322,10 +304,7 @@ WHERE s.BusinessId = @BusinessId
       WHERE es.EmployeeId = @EmployeeId
         AND es.ServiceId = s.ServiceId
   );
-
-
 DECLARE @Hours TABLE (DayOfWeek INT NOT NULL, OpenTime TIME(0) NOT NULL, CloseTime TIME(0) NOT NULL);
-
 INSERT INTO @Hours (DayOfWeek, OpenTime, CloseTime)
 VALUES
     (1, CONVERT(TIME(0), '08:30'), CONVERT(TIME(0), '12:00')),
@@ -341,7 +320,6 @@ VALUES
     (6, CONVERT(TIME(0), '08:30'), CONVERT(TIME(0), '12:00')),
     (6, CONVERT(TIME(0), '14:00'), CONVERT(TIME(0), '19:30')),
     (0, CONVERT(TIME(0), '09:00'), CONVERT(TIME(0), '12:00'));
-
 MERGE dbo.BusinessWorkingHours AS target
 USING @Hours AS source
    ON target.BusinessId = @BusinessId
@@ -354,7 +332,6 @@ WHEN MATCHED THEN
 WHEN NOT MATCHED THEN
     INSERT (BusinessWorkingHourId, BusinessId, DayOfWeek, OpenTime, CloseTime, IsActive, CreatedAt)
     VALUES (NEWID(), @BusinessId, source.DayOfWeek, source.OpenTime, source.CloseTime, 1, GETUTCDATE());
-
 UPDATE dbo.BusinessWorkingHours
 SET IsActive = 0,
     UpdatedAt = GETUTCDATE()
@@ -365,7 +342,6 @@ WHERE BusinessId = @BusinessId
       WHERE h.DayOfWeek = BusinessWorkingHours.DayOfWeek
         AND h.OpenTime = BusinessWorkingHours.OpenTime
   );
-
 MERGE dbo.EmployeeWorkingHours AS target
 USING @Hours AS source
    ON target.BusinessId = @BusinessId
@@ -379,7 +355,6 @@ WHEN MATCHED THEN
 WHEN NOT MATCHED THEN
     INSERT (EmployeeWorkingHourId, BusinessId, EmployeeId, DayOfWeek, OpenTime, CloseTime, IsActive, CreatedAt)
     VALUES (NEWID(), @BusinessId, @EmployeeId, source.DayOfWeek, source.OpenTime, source.CloseTime, 1, GETUTCDATE());
-
 UPDATE dbo.EmployeeWorkingHours
 SET IsActive = 0,
     UpdatedAt = GETUTCDATE()
@@ -400,7 +375,6 @@ DECLARE @AddOns TABLE
     Price DECIMAL(18, 2) NOT NULL,
     DisplayOrder INT NOT NULL
 );
-
 INSERT INTO @AddOns (ServiceId, ServiceName, Description, Keywords, Price, DisplayOrder)
 VALUES
 ('BABA0000-0000-0000-0000-000000000201', N'Mascarilla de carbono',
@@ -423,7 +397,6 @@ VALUES
  N'Adicional de 10 minutos con gafas de relajacion ocular. Se ofrece junto con cortes compatibles.',
  N'masaje, masaje ocular, gafas relajacion, relajacion ocular, descanso ojos',
  5000.00, 5);
-
 MERGE dbo.Services AS target
 USING @AddOns AS source
    ON target.BusinessId = @BusinessId
@@ -448,7 +421,6 @@ WHEN NOT MATCHED THEN
             FixedScheduleLabel, IsActive, CreatedAt)
     VALUES (source.ServiceId, @BusinessId, source.ServiceName, source.Description, source.Keywords, 0, source.Price,
             1, @AddOnCategoryId, 0, 1, 0, NULL, 1, GETUTCDATE());
-
 UPDATE s
 SET IsActive = 0,
     UpdatedAt = GETUTCDATE()
@@ -456,9 +428,7 @@ FROM dbo.Services s
 WHERE s.BusinessId = @BusinessId
   AND s.CategoryId = @AddOnCategoryId
   AND NOT EXISTS (SELECT 1 FROM @AddOns src WHERE src.ServiceName = s.ServiceName);
-
 DECLARE @CutServices TABLE (ServiceName NVARCHAR(200) NOT NULL);
-
 INSERT INTO @CutServices (ServiceName)
 VALUES
     (N'Corte basico de nino'),
@@ -474,7 +444,6 @@ INNER JOIN dbo.Services addon
 WHERE rules.BusinessId = @BusinessId
   AND addon.BusinessId = @BusinessId
   AND addon.CategoryId = @AddOnCategoryId;
-
 INSERT INTO dbo.ServiceAddOnRules
     (ServiceAddOnRuleId, BusinessId, AddOnServiceId, CompatibleServiceId, DisplayOrder)
 SELECT
@@ -495,7 +464,6 @@ INNER JOIN dbo.Services cut
    AND cut.IsActive = 1
 INNER JOIN @CutServices compatible
     ON compatible.ServiceName = cut.ServiceName;
-
 IF EXISTS (SELECT 1 FROM dbo.BusinessSchedulingSettings WHERE BusinessId = @BusinessId)
 BEGIN
     UPDATE dbo.BusinessSchedulingSettings
@@ -514,31 +482,27 @@ BEGIN
     VALUES
         (NEWID(), @BusinessId, 30, 0, 30, 1, N'least_versatile', GETUTCDATE());
 END
-
 SELECT @AgentTypeId = AgentTypeId FROM dbo.AgentTypes WHERE Name = N'Vendedor';
-
 IF @AgentTypeId IS NULL
 BEGIN
     SET @AgentTypeId = NEWID();
     INSERT INTO dbo.AgentTypes (AgentTypeId, Name, Description, IsActive)
     VALUES (@AgentTypeId, N'Vendedor', N'Agente de ventas y agendamiento.', 1);
 END
-
 DECLARE @SystemPrompt NVARCHAR(MAX) = N'';
-
 DECLARE @SettingsJson NVARCHAR(MAX) = N'{
   "model": "gpt-4.1-mini",
   "temperature": 0.66,
   "maxToolIterations": 8,
   "historyWindowSize": 24,
   "consecutiveErrorEscalationThreshold": 3,
-  "persona": "Eres Luis Petit, barbero profesional de BARBER KIDS MEN. Atiendes reservas por WhatsApp en primera persona, con tono cercano, profesional, puntual y amable.",
-  "policies": "## ATENCION\n\n- Usa nombres y datos oficiales del catalogo o de las herramientas del turno.\n- Vocabulario de estado: antes de checkout o reserva devueltos por herramienta, solicitud en preparacion; despues de checkout, link de anticipo generado; despues de pago o reserva devuelta por herramienta, reserva confirmada.\n- Manten tono cercano, profesional y puntual.\n\n## PRESENTACION\n\n- Separa informacion y pregunta final en parrafos cortos.\n- Cuando presentes tres o mas categorias, servicios, horarios, complementos u opciones, usa lista vertical con guion.\n- Para catalogos y opciones, conserva los saltos de linea.",
+  "persona": "Eres Luis Petit, barbero profesional de BARBER KIDS MENS. Atiendes reservas por WhatsApp en primera persona, con tono cercano, profesional, puntual y amable.",
+  "policies": "## ATENCION\n\n- Usa nombres y datos oficiales del catalogo o de las herramientas del turno.\n- Vocabulario de estado: antes de checkout o reserva devueltos por herramienta, solicitud en preparacion; despues de checkout, link de anticipo generado; despues de pago o reserva devuelta por herramienta, reserva confirmada.\n- Antes de pago aprobado o reserva creada por herramienta, evita decir tu reserva, cambie tu reserva o reserva confirmada; usa solicitud, datos de la solicitud o link pendiente.\n- Nunca inventes, reconstruyas ni reutilices resumenes o links de pago desde el historial; todo resumen o link vigente debe venir de prepare_checkout o create_reservation despues de cualquier cambio relevante.\n- Manten tono cercano, profesional y puntual.\n\n## PRESENTACION\n\n- Separa informacion y pregunta final en parrafos cortos.\n- Cuando presentes tres o mas categorias, servicios, horarios, complementos u opciones, usa lista vertical con guion.\n- Para catalogos y opciones, conserva los saltos de linea.",
   "messageSequences": {
     "reservation_confirmed": {
       "messages": [
         {
-          "body": "Tu reserva en BARBER KIDS MEN con Luis Petit Profesional Barber ha sido confirmada para el {Date} a las {Time}."
+          "body": "Tu reserva en BARBER KIDS MENS con Luis Petit Profesional Barber ha sido confirmada para el {Date} a las {Time}."
         },
         {
           "body": "Te esperamos para una experiencia personalizada, con puntualidad garantizada y atencion al detalle de principio a fin."
@@ -721,8 +685,12 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
     "checkout_no_deposit": "*Resumen de tu reserva*\n- Servicio: {{service_name}}\n- Fecha: {{date_formatted}}\n- Hora: {{time}}\n- Precio servicio: ${{service_price}} {{currency}}\n- *TOTAL: ${{total}} {{currency}}*\n\n- Nombre del cliente: {{customer_name}}\n- Telefono: {{customer_phone}}\n\nConfirmas la reserva con esta informacion?",
     "availability_slots": "{{#if intro_message}}\n{{intro_message}}\n\n{{/if}}*Espacios disponibles para {{date_formatted}}* ({{service_name}})\n\n{{#each options}}\n- {{this}}\n{{/each}}\n\nCual espacio prefieres?"
   },
-  "flow": {
-    "stageDetection": "automatic",
+  "flows": [
+    {
+      "id": "booking",
+      "type": "primary",
+      "routingGuidance": "Use this primary flow for new bookings, catalog questions, service selection, add-ons, scheduling, customer data and checkout summaries.",
+      "stageDetection": "automatic",
     "stages": [
       {
         "id": "discovery",
@@ -731,17 +699,25 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         "advanceWhenFacts": [
           "service"
         ],
-        "ask": "Que servicio te interesa?",
         "collect": [
           "booking_intent",
           "service"
         ],
         "allowedActions": [
-          "mostrar_catalogo",
-          "resolver_servicio",
-          "registrar_dato"
+          "get_service_catalog",
+          "resolve_service_selection",
+          "set_fact"
         ],
-        "conversationGuidance": "Saludo generico: presenta categorias oficiales. Servicio puntual: presenta servicios oficiales relevantes. Seleccion clara: resuelve el servicio exacto. Responde solo con datos oficiales de catalogo o herramientas."
+        "entryActions": [
+          {
+            "tool": "get_service_catalog",
+            "arguments": {
+              "view": "auto",
+              "query": "{{user.message}}"
+            }
+          }
+        ],
+        "conversationGuidance": "Cuando respondas con catalogo en discovery, ordena el mensaje asi: saluda, da la bienvenida a BARBER KIDS MENS, presentate literalmente como: Soy Luis Petit, barbero profesional. No digas tu barbero profesional. Despues muestra el catalogo oficial desde la salida vigente de get_service_catalog y al final cierra preguntando: En que servicio estas interesado? Usa la salida vigente de get_service_catalog como fuente oficial para presentar categorias, servicios y precios. Si el cliente nombra una familia o necesidad amplia, presenta opciones oficiales. Si el cliente elige o parafrasea un servicio de una lista ya presentada, o nombra un servicio puntual con intencion de reservar, llama resolve_service_selection con el texto literal antes de responder; no presentes complementos ni confirmes el servicio como elegido hasta que service quede registrado. No respondas categorias, servicios ni precios sin salida vigente de get_service_catalog."
       },
       {
         "id": "add_ons",
@@ -753,21 +729,48 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         "reentryOnFactChanged": [
           "service"
         ],
-        "ask": "Deseas agregar algun adicional compatible o continuamos sin adicionales?",
         "collect": [
           "add_ons"
         ],
         "allowedActions": [
-          "consultar_adicionales",
-          "resolver_servicio",
-          "registrar_dato"
+          "get_compatible_add_ons",
+          "resolve_service_selection",
+          "set_fact"
         ],
-        "conversationGuidance": "Ofrece solo adicionales oficiales compatibles. Si existen, presenta opciones con precio y valor breve. Si el cliente rechaza o no aplican, registra ninguno y continua. El estado conversacional es solicitud en preparacion hasta que checkout o reserva sean devueltos por una herramienta."
+        "entryActions": [
+          {
+            "tool": "get_compatible_add_ons",
+            "arguments": {
+              "service": "{{fact.service}}"
+            }
+          }
+        ],
+        "conversationGuidance": "Usa la salida vigente de get_compatible_add_ons como fuente oficial de adicionales compatibles. Si el ultimo mensaje ya trae una decision sobre adicionales, registrala con set_fact y continua sin volver a preguntar. Si el mensaje pide resumen, link o actualizar anticipo junto con una decision de adicionales, registra primero add_ons y no respondas resumen ni link desde esta etapa. Si existen adicionales y aun falta decision, presenta opciones con precio y valor breve y termina con esta pregunta simple: Quieres agregar alguno de estos adicionales o seguimos sin ellos? Si el cliente rechaza o no aplican, registra add_ons=ninguno y continua. El estado conversacional es solicitud en preparacion hasta que checkout o reserva sean devueltos por una herramienta."
       },
       {
         "id": "scheduling",
         "name": "Agenda",
         "goal": "Revisar disponibilidad y validar fecha y hora para una reserva por hora.",
+        "entryActions": [
+          {
+            "tool": "check_availability",
+            "arguments": {
+              "service": "{{fact.service}}",
+              "date": "{{fact.desired_date}}",
+              "time": "{{fact.desired_time}}"
+            },
+            "when": {
+              "requiredFacts": [
+                "service",
+                "desired_date",
+                "desired_time"
+              ],
+              "missingFacts": [
+                "availability_checked"
+              ]
+            }
+          }
+        ],
         "afterTool": [
           {
             "tool": "check_availability",
@@ -810,14 +813,13 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
           "desired_date",
           "desired_time"
         ],
-        "ask": "Para que fecha y hora quieres reservar?",
         "collect": [
           "desired_date",
           "desired_time"
         ],
         "allowedActions": [
-          "validar_disponibilidad",
-          "registrar_dato"
+          "check_availability",
+          "set_fact"
         ],
         "conversationGuidance": "Valida agenda con servicio canonico. Si falta fecha, pregunta el dia. Si falta hora o el horario no esta disponible, presenta horarios devueltos por disponibilidad y aplica el seleccionado. Disponibilidad con slot_held=false significa horario libre para continuar la solicitud."
       },
@@ -830,7 +832,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
           "customer_phone",
           "customer_birth_date"
         ],
-        "ask": "Me compartes los datos faltantes para preparar el anticipo?",
         "collect": [
           "customer_name",
           "customer_phone",
@@ -838,7 +839,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
           "customer_email"
         ],
         "allowedActions": [
-          "registrar_dato"
+          "set_fact"
         ],
         "conversationGuidance": "Resume brevemente servicio, fecha y hora como datos para continuar. El estado sigue siendo solicitud en preparacion; disponibilidad validada solo permite continuar hacia anticipo. Pide en un solo mensaje solo los datos requeridos que falten. Conserva los datos ya presentes."
       },
@@ -846,8 +847,61 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         "id": "finalization",
         "name": "Cierre con anticipo",
         "goal": "Preparar el resumen, generar el link de anticipo y esperar confirmacion automatica de pago.",
+        "entryActions": [
+          {
+            "tool": "prepare_checkout",
+            "arguments": {},
+            "when": {
+              "requiredFacts": [
+                "service",
+                "add_ons",
+                "desired_date",
+                "desired_time",
+                "customer_name",
+                "customer_birth_date",
+                "availability_checked"
+              ],
+              "missingVerifications": [
+                "checkout_prepared"
+              ]
+            }
+          }
+        ],
+        "afterTool": [
+          {
+            "tool": "check_availability",
+            "when": {
+              "path": "data.date"
+            },
+            "setFact": {
+              "key": "desired_date",
+              "value": "{{data.date}}"
+            }
+          },
+          {
+            "tool": "check_availability",
+            "when": {
+              "path": "data.availability_checked",
+              "equals": "true"
+            },
+            "setFact": {
+              "key": "desired_time",
+              "value": "{{data.time}}"
+            }
+          },
+          {
+            "tool": "check_availability",
+            "when": {
+              "path": "data.availability_checked",
+              "equals": "true"
+            },
+            "setFact": {
+              "key": "availability_checked",
+              "value": "true"
+            }
+          }
+        ],
         "advanceWhenFacts": [],
-        "ask": "Genero el resumen y link de anticipo con estos datos?",
         "collect": [
           "service",
           "desired_date",
@@ -857,154 +911,85 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
           "customer_birth_date"
         ],
         "allowedActions": [
-          "preparar_anticipo",
-          "verificar_pago",
-          "mostrar_catalogo",
-          "resolver_servicio",
-          "registrar_dato",
-          "reiniciar_flujo",
-          "enviar_secuencia"
+          "prepare_checkout",
+          "verify_payment",
+          "get_service_catalog",
+          "resolve_service_selection",
+          "check_availability",
+          "set_fact",
+          "reset_flow_context",
+          "send_message_sequence"
         ],
-        "conversationGuidance": "Prepara checkout cuando los facts requeridos esten completos. Presenta como vigente solo el resumen o link devuelto por la herramienta. Si el cliente cambia servicio, fecha u hora antes del pago, actualiza datos y revalida disponibilidad antes de generar un nuevo link."
+        "conversationGuidance": "Prepara checkout cuando los facts requeridos esten completos. Antes de pago aprobado o reserva creada por herramienta, habla de solicitud, datos o link pendiente; no digas tu reserva, cambie tu reserva ni reserva confirmada. Si el cliente pide cambiar la hora o fecha sin dar el nuevo valor, pregunta a que hora o fecha actualizas la solicitud. Nunca construyas, copies ni reutilices un resumen o link del historial. Si el cliente pide resumen, link, anticipo o actualizar resumen, usa los facts actuales y llama prepare_checkout. Si el cliente cambia fecha u hora antes del pago, actualiza el fact con set_fact o con el resultado de check_availability, valida disponibilidad con servicio, fecha y hora actuales y despues llama prepare_checkout si ya habia resumen o link pendiente. Si cambia servicio o complementos antes del pago, actualiza primero el fact correspondiente; para quitar complementos registra add_ons=ninguno. Presenta como vigente solo el resumen o link devuelto por la herramienta."
       }
-    ],
-    "language": {
-      "actions": {
-        "mostrar_catalogo": {
-          "name": "Mostrar catalogo oficial",
-          "purpose": "Presentar categorias o servicios oficiales segun la intencion del cliente.",
-          "tool": "get_service_catalog",
-          "produces": [
-            "service"
-          ],
-          "whenMissingData": "Si el saludo es generico, muestra categorias oficiales; si pide algo puntual, muestra servicios oficiales relacionados."
-        },
-        "resolver_servicio": {
-          "name": "Resolver servicio exacto",
-          "purpose": "Convertir la seleccion del cliente en un servicio canonico del catalogo.",
-          "tool": "resolve_service_selection",
-          "requires": [
-            "service"
-          ],
-          "produces": [
-            "service"
-          ],
-          "whenMissingData": "Si no hay coincidencia unica, pide elegir entre opciones oficiales."
-        },
-        "registrar_dato": {
-          "name": "Registrar dato del cliente o de la reserva",
-          "purpose": "Guardar datos expresados por el cliente cuando son necesarios para avanzar.",
-          "tool": "set_fact",
-          "produces": [
+    ]
+    },
+    {
+      "id": "reservation_management",
+      "type": "secondary",
+      "ttlSeconds": 900,
+      "routingGuidance": "Use only when the customer clearly wants to manage an existing reservation: view it, confirm attendance, cancel it, or change its date, time, service or add-ons. Do not use it for an open booking request, a pending checkout summary or a pending payment link.",
+      "stageDetection": "automatic",
+      "stages": [
+        {
+          "id": "reservation_management",
+          "name": "Gestion de reserva existente",
+          "goal": "Gestionar una reserva existente sin mezclarla con una solicitud nueva.",
+          "collect": [
             "desired_date",
-            "desired_time",
-            "add_ons",
-            "customer_name",
-            "customer_birth_date",
-            "customer_email"
-          ]
-        },
-        "consultar_adicionales": {
-          "name": "Consultar adicionales compatibles",
-          "purpose": "Obtener complementos oficiales compatibles con el servicio seleccionado.",
-          "tool": "get_compatible_add_ons",
-          "requires": [
-            "service"
+            "desired_time"
           ],
-          "produces": [
-            "add_ons"
+          "allowedActions": [
+            "get_customer_reservations",
+            "manage_reservation",
+            "escalate_to_human"
           ],
-          "whenMissingData": "Si no hay adicionales compatibles, continua sin detener el flujo."
-        },
-        "validar_disponibilidad": {
-          "name": "Validar disponibilidad",
-          "purpose": "Confirmar en agenda la fecha y hora solicitadas, o presentar horarios disponibles.",
-          "tool": "check_availability",
-          "requires": [
-            "service",
-            "desired_date"
+          "entryActions": [
+            {
+              "tool": "get_customer_reservations",
+              "arguments": {}
+            }
           ],
-          "produces": [
-            "desired_date",
-            "desired_time",
-            "availability_checked"
-          ],
-          "whenMissingData": "Si falta fecha u hora, pregunta solo el dato necesario; si hay slots, presentalos y aplica el seleccionado."
-        },
-        "preparar_anticipo": {
-          "name": "Preparar anticipo",
-          "purpose": "Generar resumen oficial y link de pago cuando la reserva ya tiene datos completos y disponibilidad validada.",
-          "tool": "prepare_checkout",
-          "requires": [
-            "service",
-            "desired_date",
-            "desired_time",
-            "availability_checked",
-            "customer_name",
-            "customer_phone",
-            "customer_birth_date"
-          ],
-          "produces": [
-            "payment_method"
-          ],
-          "onSuccess": "Comparte el resumen y explica que la reserva se confirma al aprobarse el pago."
-        },
-        "verificar_pago": {
-          "name": "Verificar pago",
-          "purpose": "Consultar estado del pago cuando el cliente pregunta por el anticipo.",
-          "tool": "verify_payment"
-        },
-        "reiniciar_flujo": {
-          "name": "Reiniciar flujo de reserva",
-          "purpose": "Limpiar el contexto de la solicitud actual cuando el cliente quiere empezar de cero.",
-          "tool": "reset_flow_context"
-        },
-        "enviar_secuencia": {
-          "name": "Enviar secuencia configurada",
-          "purpose": "Enviar mensajes configurados por plantilla cuando una accion del flujo lo requiera.",
-          "tool": "send_message_sequence"
-        },
-        "obtener_reservas_cliente": {
-          "name": "Mostrar reservas del cliente",
-          "purpose": "Listar reservas gestionables cuando el cliente tiene varias o la solicitud es ambigua.",
-          "tool": "get_customer_reservations"
-        },
-        "gestionar_reserva": {
-          "name": "Gestionar reserva existente",
-          "purpose": "Aplicar cambios permitidos, confirmar asistencia, cancelar o escalar cambios no automaticos segun politica configurada.",
-          "tool": "manage_reservation"
-        },
-        "escalar_humano": {
-          "name": "Escalar a humano",
-          "purpose": "Poner la conversacion en manos de una persona con un resumen breve del motivo.",
-          "tool": "escalate_to_human"
+          "conversationGuidance": "Este flow solo aplica a reservas existentes. Si el cliente pide cambiar fecha u hora de una reserva existente, usa manage_reservation con el nuevo dato; la tool valida disponibilidad y aplica el cambio si corresponde. Si pide cambiar servicio o adicionales de una reserva ya confirmada, llama manage_reservation; la tool decide si coloca la reserva en espera y escala. Si hay varias reservas, usa get_customer_reservations o pide que la identifique por fecha, hora o servicio; nunca pidas UUID al cliente. No generes checkout nuevo para cambios de una reserva ya pagada. Si el cliente empieza una solicitud nueva, deja que el router vuelva al flow booking."
         }
-      }
+      ]
     }
-  },
+  ],
   "globalActions": [
     {
       "id": "human_escalation",
       "priority": 1000,
       "goal": "Escalar a una persona cuando el cliente lo pida, este inconforme, necesite cotizacion exacta de servicio variable o la solicitud salga del alcance del bot.",
       "allowedActions": [
-        "escalar_humano"
+        "escalate_to_human"
+      ],
+      "entryActions": [
+        {
+          "tool": "escalate_to_human",
+          "arguments": {
+            "reason": "customer_requested_human"
+          },
+          "when": {
+            "messageMatches": [
+              {
+                "anyOf": [
+                  "hablar con una persona",
+                  "hablar con un humano",
+                  "hablar con humano",
+                  "hablar con asesor",
+                  "quiero un asesor",
+                  "necesito un asesor",
+                  "necesito ayuda de una persona",
+                  "quiero atencion humana",
+                  "pasame con alguien",
+                  "comunicarme con una persona"
+                ]
+              }
+            ]
+          }
+        }
       ],
       "conversationGuidance": "Escala con resumen breve de la necesidad del cliente."
-    },
-    {
-      "id": "manage_existing_reservation",
-      "priority": 900,
-      "goal": "Gestionar reservas existentes y pagos confirmados pendientes de agenda cuando el cliente quiera confirmar asistencia, cambiar, reagendar, cambiar servicio, cancelar o completar una reserva ya pagada.",
-      "runtimeWhenAny": [
-        "context:ManageableReservations.any",
-        "context:ActivePayment.Status=Confirmed&&context:ActivePayment.ReservationId=null"
-      ],
-      "allowedActions": [
-        "obtener_reservas_cliente",
-        "gestionar_reserva"
-      ],
-      "conversationGuidance": "Gestiona solo reservas existentes o pagos confirmados pendientes de agenda. Fecha y hora se resuelven por disponibilidad; cambios de servicio, adicionales u otros campos quedan en espera y escalan segun resultado de la herramienta."
     }
   ],
   "factSchema": [
@@ -1094,10 +1079,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "captureMode": "eager",
       "retentionDays": 7,
       "expireOnBusinessDayChange": true,
-      "dependsOn": [
-        "service",
-        "desired_date"
-      ],
       "aliases": [
         "hora",
         "horario"
@@ -1143,7 +1124,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
     },
     {
       "key": "add_ons",
-      "role": "booking.add_ons",
+      "role": "booking.addons",
       "label": "adicionales",
       "type": "string",
       "required": false,
@@ -1281,12 +1262,10 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
     }
   }
 }';
-
 IF ISJSON(@SettingsJson) <> 1
 BEGIN
     THROW 51000, 'SeedLuisPetitBarber: SettingsJson invalido.', 1;
 END
-
 IF NOT EXISTS (SELECT 1 FROM dbo.Agents WHERE AgentId = @AgentId)
 BEGIN
     INSERT INTO dbo.Agents
@@ -1313,13 +1292,11 @@ BEGIN
         UpdatedAt = GETUTCDATE()
     WHERE AgentId = @AgentId;
 END
-
 DECLARE @LuisPhoneNumber NVARCHAR(20) = N'+573117323198';
 DECLARE @LuisWhatsAppPhoneId NVARCHAR(100) = N'1234810033044432';
 DECLARE @LuisWhatsAppBusinessAccountId NVARCHAR(100);
 DECLARE @LuisWhatsAppAccessToken NVARCHAR(500);
 DECLARE @LuisWhatsAppNumberId UNIQUEIDENTIFIER;
-
 SELECT TOP (1)
     @LuisWhatsAppNumberId = BusinessWhatsAppNumberId,
     @LuisWhatsAppAccessToken = WhatsAppAccessToken,
@@ -1331,7 +1308,6 @@ ORDER BY
     CASE WHEN WhatsAppPhoneNumberId = @LuisWhatsAppPhoneId THEN 0 ELSE 1 END,
     IsActive DESC,
     CreatedAt DESC;
-
 IF @LuisWhatsAppAccessToken IS NULL
 BEGIN
     PRINT N'SeedLuisPetitBarber: no se encontro token propio de Luis; omitiendo numero WhatsApp.';
@@ -1375,7 +1351,6 @@ BEGIN
 END
 DECLARE @ExistingLuisWompiId UNIQUEIDENTIFIER;
 DECLARE @SourceWompiConnectionId UNIQUEIDENTIFIER;
-
 SELECT @ExistingLuisWompiId = IntegrationConnectionId
 FROM dbo.IntegrationConnections
 WHERE BusinessId = @BusinessId
@@ -1384,7 +1359,6 @@ WHERE BusinessId = @BusinessId
   AND Capability = 1
   AND IsEnabled = 1
   AND NULLIF(SecretsJson, N'{}') IS NOT NULL;
-
 SELECT @SourceWompiConnectionId = IntegrationConnectionId
 FROM dbo.IntegrationConnections
 WHERE BusinessId = @MimosBusinessId
@@ -1393,7 +1367,6 @@ WHERE BusinessId = @MimosBusinessId
   AND Capability = 1
   AND IsEnabled = 1
   AND NULLIF(SecretsJson, N'{}') IS NOT NULL;
-
 IF @ExistingLuisWompiId IS NULL AND @SourceWompiConnectionId IS NOT NULL
 BEGIN
     MERGE dbo.IntegrationConnections AS target
@@ -1428,7 +1401,6 @@ BEGIN
                 AccountIdentifier, SettingsJson, SecretsJson, IsEnabled, CreatedAt)
         VALUES (NEWID(), source.BusinessId, source.ConnectionType, source.Provider, source.Capability, source.[Name],
                 source.AccountIdentifier, source.SettingsJson, source.SecretsJson, source.IsEnabled, GETUTCDATE());
-
     PRINT N'SeedLuisPetitBarber: Wompi copiado desde Mimos para Luis Petit Profesional Barber.';
 END
 ELSE IF @ExistingLuisWompiId IS NOT NULL
@@ -1439,15 +1411,12 @@ ELSE
 BEGIN
     PRINT N'SeedLuisPetitBarber: Wompi de Mimos no encontrado; configura pagos para habilitar anticipos.';
 END
-
 DECLARE @MimosSubscriptionId UNIQUEIDENTIFIER;
-
 SELECT TOP (1) @MimosSubscriptionId = BusinessSubscriptionId
 FROM dbo.BusinessSubscriptions
 WHERE BusinessId = @MimosBusinessId
   AND Status IN (1, 2, 3)
 ORDER BY CreatedAt DESC;
-
 IF @MimosSubscriptionId IS NOT NULL
 BEGIN
     IF EXISTS (SELECT 1 FROM dbo.BusinessSubscriptions WHERE BusinessId = @BusinessId AND Status IN (1, 2, 3))
@@ -1492,7 +1461,7 @@ BEGIN
         WHERE BusinessSubscriptionId = @MimosSubscriptionId;
     END
 END
-
 PRINT N'SeedLuisPetitBarber: negocio, servicios y agente Luis configurados.';
 GO
+
 

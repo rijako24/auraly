@@ -1,4 +1,5 @@
 using MimosBabySpa.Application.Agents;
+using MimosBabySpa.Application.Agents.Configuration;
 
 namespace MimosBabySpa.IntegrationTests.Infrastructure;
 
@@ -31,7 +32,40 @@ public class FakeAgentConfigProvider : IAgentConfigProvider
             Temperature = 0.3f,
             MaxToolIterations = 8,
             ConsecutiveErrorEscalationThreshold = 3,
-            EnabledToolNames =
+            FactSchema =
+            [
+                new FactSchemaEntry { Key = "service", Role = "booking.service", Source = "user", Scope = FactScopes.Request },
+                new FactSchemaEntry { Key = "reservation_date", Role = "booking.date", Source = "user", Scope = FactScopes.Request },
+                new FactSchemaEntry { Key = "reservation_time", Role = "booking.time", Source = "user", Scope = FactScopes.Request },
+                new FactSchemaEntry { Key = "customer_name", Role = "customer.name", Source = "user", Scope = FactScopes.Request },
+                new FactSchemaEntry { Key = "customer_phone", Role = "customer.phone", Source = "user", Scope = FactScopes.Request },
+                new FactSchemaEntry { Key = "add_ons", Role = "booking.addons", Source = "user", Scope = FactScopes.Request }
+            ],
+            Checkout = new CheckoutDefinitions
+            {
+                Currency = "COP",
+                Modes =
+                {
+                    ["reservation"] = new CheckoutModeDefinition
+                    {
+                        PaymentMethods =
+                        {
+                            ["wompi"] = new CheckoutPaymentMethodDefinition
+                            {
+                                Label = "Wompi",
+                                Template = "checkout_with_deposit",
+                                ConfirmationOutcome = "reservation",
+                                Payment = new CheckoutPaymentDefinition { Percentage = 100 }
+                            }
+                        }
+                    }
+                }
+            },
+            Templates = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["availability_slots"] = "Espacios disponibles para {{date_formatted}}: {{#each options}}{{this}} {{/each}}",
+                ["checkout_with_deposit"] = "Resumen: {{service_name}} {{date_formatted}} {{time}} total {{total}} {{currency}} {{link_url}}"
+            },            EnabledToolNames =
             [
                 "check_availability",
                 "prepare_checkout",

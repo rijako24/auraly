@@ -1,4 +1,4 @@
-using MimosBabySpa.Application.Agents.Configuration;
+﻿using MimosBabySpa.Application.Agents.Configuration;
 using MimosBabySpa.Application.Agents.Gating;
 using MimosBabySpa.Application.Agents.Tools;
 using MimosBabySpa.Application.Commerce;
@@ -11,7 +11,7 @@ using MimosBabySpa.Domain.Repositories;
 namespace MimosBabySpa.Application.Agents;
 
 /// <summary>
-/// Lee la configuraciÃ³n del agente desde BD y la cachea 10 minutos.
+/// Lee la configuracion del agente desde BD y la cachea 10 minutos.
 /// </summary>
 public sealed class AgentConfigProvider : IAgentConfigProvider
 {
@@ -48,6 +48,8 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
 
         var settings = ParseSettings(agent.SettingsJson);
 
+        var normalizedFlows = NormalizeFlows(settings);
+
         var config = new AgentConfig
         {
             AgentId = agentId,
@@ -55,7 +57,8 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
             Name = agent.Name,
             Persona = settings.Persona?.Trim() ?? string.Empty,
             Policies = settings.Policies?.Trim() ?? string.Empty,
-            Flow = settings.Flow ?? new AgentFlowDefinition(),
+            Flow = normalizedFlows.FirstOrDefault(AgentFlowCatalog.IsPrimary) ?? normalizedFlows.FirstOrDefault() ?? new AgentFlowDefinition(),
+            Flows = normalizedFlows,
             GlobalActions = settings.GlobalActions ?? [],
             FactSchema = settings.FactSchema ?? [],
             Guards = settings.Guards ?? new Dictionary<string, GuardDefinition>(StringComparer.OrdinalIgnoreCase),
@@ -81,15 +84,19 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
         if (config.EnabledToolNames.Count == 0)
         {
             _logger.LogWarning(
-                "AgentConfig {AgentId}: enabledTools is empty â€” agent will have no tools available. Configure tools in SettingsJson.",
+                "AgentConfig {AgentId}: enabledTools is empty - agent will have no tools available. Configure tools in SettingsJson",
                 agentId);
         }
 
         _cache.Set(cacheKey, config, CacheTtl);
 
         _logger.LogInformation(
-            "AgentConfig loaded: AgentId={Id}, Model={Model}, Tools={Tools}, FlowStages={Stages}",
-            agentId, config.Model, string.Join(",", config.EnabledToolNames), config.Flow.Stages.Count);
+            "AgentConfig loaded: AgentId={Id}, Model={Model}, Tools={Tools}, Flows={Flows}, FlowStages={Stages}",
+            agentId,
+            config.Model,
+            string.Join(",", config.EnabledToolNames),
+            string.Join(",", AgentFlowCatalog.EffectiveFlows(config).Select(flow => flow.Id)),
+            AgentFlowCatalog.EffectiveFlows(config).Sum(flow => flow.Stages.Count));
 
         ValidateConfig(config);
 
@@ -97,8 +104,8 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
     }
 
     /// <summary>
-    /// Valida la coherencia de la configuraciÃ³n del agente y emite advertencias en log.
-    /// No lanza excepciones â€” la config se acepta aunque tenga inconsistencias menores.
+    /// Valida la coherencia de la configuracion del agente y emite advertencias en log.
+    /// No lanza excepciones; la config se acepta aunque tenga inconsistencias menores.
     /// </summary>
     private void ValidateConfig(AgentConfig config)
     {
@@ -141,7 +148,8 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
                     config.AgentId, entry.Key);
             }
         }
-        foreach (var stage in config.Flow.Stages)
+        foreach (var flow in AgentFlowCatalog.EffectiveFlows(config))
+        foreach (var stage in flow.Stages)
         {
             foreach (var factKey in stage.AdvanceWhenFacts)
             {
@@ -163,11 +171,16 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
                 }
             }
 
-
+            ValidateEntryActions(
+                config,
+                $"stage '{stage.Id}'",
+                stage.EntryActions,
+                stage.AllowedActions,
+                schemaKeys);
             if (stage.AutoSetOnSkip.Count > 0 && string.IsNullOrWhiteSpace(stage.SkipWhen))
             {
                 _logger.LogWarning(
-                    "AgentConfig {AgentId}: stage '{Stage}' has autoSetOnSkip but no skipWhen â€” auto-set will never trigger",
+                    "AgentConfig {AgentId}: stage '{Stage}' has autoSetOnSkip but no skipWhen - auto-set will never trigger",
                     config.AgentId, stage.Id);
             }
 
@@ -225,6 +238,12 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
                     config.AgentId);
             }
 
+            ValidateEntryActions(
+                config,
+                $"globalAction '{action.Id}'",
+                action.EntryActions,
+                action.AllowedActions,
+                schemaKeys);
 
         }
         var enabledCapabilities = BuildEnabledCapabilities(config);
@@ -249,7 +268,7 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
             }
         }
 
-        ValidateFlowLanguage(config);
+        ValidateAllowedActions(config);
         ValidateMessageSequences(config);
         ValidateNotifications(config);
         ValidateReservationAutomations(config);
@@ -258,78 +277,113 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
         ValidateTemplates(config);
     }
 
-    private void ValidateFlowLanguage(AgentConfig config)
+    private void ValidateEntryActions(
+        AgentConfig config,
+        string scope,
+        IReadOnlyList<StageEntryAction> entryActions,
+        IReadOnlyList<string> allowedActions,
+        IReadOnlySet<string> schemaKeys)
     {
-        var actionIds = new HashSet<string>(config.FlowLanguage.Actions.Keys, StringComparer.OrdinalIgnoreCase);
-
-        foreach (var (actionId, action) in config.FlowLanguage.Actions)
+        foreach (var entryAction in entryActions)
         {
-            if (string.IsNullOrWhiteSpace(actionId))
+            if (string.IsNullOrWhiteSpace(entryAction.Tool))
             {
-                _logger.LogWarning("AgentConfig {AgentId}: flow.language.actions contains an empty action id", config.AgentId);
+                _logger.LogWarning(
+                    "AgentConfig {AgentId}: {Scope} entryAction has empty tool name",
+                    config.AgentId, scope);
                 continue;
             }
 
-            if (string.IsNullOrWhiteSpace(action.Tool))
+            if (!config.EnabledToolNames.Contains(entryAction.Tool, StringComparer.OrdinalIgnoreCase))
             {
                 _logger.LogWarning(
-                    "AgentConfig {AgentId}: flow.language.actions['{Action}'] has no tool mapping",
-                    config.AgentId,
-                    actionId);
-            }
-            else if (!config.EnabledToolNames.Contains(action.Tool, StringComparer.OrdinalIgnoreCase))
-            {
-                _logger.LogWarning(
-                    "AgentConfig {AgentId}: flow.language.actions['{Action}'] references tool '{Tool}' which is not in enabledTools",
-                    config.AgentId,
-                    actionId,
-                    action.Tool);
+                    "AgentConfig {AgentId}: {Scope} entryAction references '{Tool}' which is not in enabledTools",
+                    config.AgentId, scope, entryAction.Tool);
             }
 
-            foreach (var factKey in action.Requires.Concat(action.Produces))
+            if (allowedActions.Count > 0
+                && !allowedActions.Contains(entryAction.Tool, StringComparer.OrdinalIgnoreCase))
             {
-                if (!string.IsNullOrWhiteSpace(factKey) && !config.FactSchema.Any(f => f.Key.Equals(factKey, StringComparison.OrdinalIgnoreCase)))
+                _logger.LogWarning(
+                    "AgentConfig {AgentId}: {Scope} entryAction references '{Tool}' which is not in allowedActions",
+                    config.AgentId, scope, entryAction.Tool);
+            }
+
+            foreach (var factKey in entryAction.When.RequiredFacts)
+            {
+                if (!schemaKeys.Contains(factKey))
                 {
                     _logger.LogWarning(
-                        "AgentConfig {AgentId}: flow.language.actions['{Action}'] references unknown fact '{Fact}'",
-                        config.AgentId,
-                        actionId,
-                        factKey);
+                        "AgentConfig {AgentId}: {Scope} entryAction requiredFacts references unknown fact '{Key}'",
+                        config.AgentId, scope, factKey);
+                }
+            }
+
+            foreach (var factKey in entryAction.When.MissingFacts)
+            {
+                if (!schemaKeys.Contains(factKey))
+                {
+                    _logger.LogWarning(
+                        "AgentConfig {AgentId}: {Scope} entryAction missingFacts references unknown fact '{Key}'",
+                        config.AgentId, scope, factKey);
+                }
+            }
+
+            foreach (var verificationType in entryAction.When.MissingVerifications)
+            {
+                if (string.IsNullOrWhiteSpace(verificationType))
+                {
+                    _logger.LogWarning(
+                        "AgentConfig {AgentId}: {Scope} entryAction missingVerifications contains an empty verification type",
+                        config.AgentId, scope);
+                }
+            }
+
+            foreach (var messageMatch in entryAction.When.MessageMatches)
+            {
+                if (messageMatch.AnyOf.Count == 0 || messageMatch.AnyOf.All(string.IsNullOrWhiteSpace))
+                {
+                    _logger.LogWarning(
+                        "AgentConfig {AgentId}: {Scope} entryAction messageMatches has no candidates",
+                        config.AgentId, scope);
                 }
             }
         }
-
-        foreach (var stage in config.Flow.Stages)
+    }
+    private void ValidateAllowedActions(AgentConfig config)
+    {
+        var toolIds = new HashSet<string>(config.EnabledToolNames, StringComparer.OrdinalIgnoreCase);
+        foreach (var flow in AgentFlowCatalog.EffectiveFlows(config))
+        foreach (var stage in flow.Stages)
         {
-            foreach (var actionId in stage.AllowedActions)
+            foreach (var toolName in stage.AllowedActions)
             {
-                if (!actionIds.Contains(actionId))
+                if (!toolIds.Contains(toolName))
                 {
                     _logger.LogWarning(
-                        "AgentConfig {AgentId}: stage '{Stage}' allowedActions references unknown action '{Action}'",
+                        "AgentConfig {AgentId}: stage '{Stage}' allowedActions references unknown enabled tool '{Tool}'",
                         config.AgentId,
                         stage.Id,
-                        actionId);
+                        toolName);
                 }
             }
         }
 
         foreach (var action in config.GlobalActions)
         {
-            foreach (var actionId in action.AllowedActions)
+            foreach (var toolName in action.AllowedActions)
             {
-                if (!actionIds.Contains(actionId))
+                if (!toolIds.Contains(toolName))
                 {
                     _logger.LogWarning(
-                        "AgentConfig {AgentId}: globalAction '{GlobalAction}' allowedActions references unknown action '{Action}'",
+                        "AgentConfig {AgentId}: globalAction '{GlobalAction}' allowedActions references unknown enabled tool '{Tool}'",
                         config.AgentId,
                         action.Id,
-                        actionId);
+                        toolName);
                 }
             }
         }
     }
-
     private HashSet<string> BuildEnabledCapabilities(AgentConfig config)
     {
         var capabilities = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -499,15 +553,6 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
                 path,
                 action.Tool);
         }
-        else if (!ToolFlowScope.IsAllowedByGlobalAction(action.Tool, config))
-        {
-            _logger.LogWarning(
-                "AgentConfig {AgentId}: {Path} references tool '{Tool}' which is not in globalActions; reservation automation payloads may be blocked by the active flow stage",
-                config.AgentId,
-                path,
-                action.Tool);
-        }
-
         if (!string.IsNullOrWhiteSpace(action.SendMessageSequence)
             && !config.MessageSequences.ContainsKey(action.SendMessageSequence))
         {
@@ -639,6 +684,38 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
         }
     }
 
+    private static IReadOnlyList<AgentFlowDefinition> NormalizeFlows(AgentSettings settings)
+    {
+        var configured = settings.Flows?
+            .Where(flow => flow.Stages.Count > 0 || !string.IsNullOrWhiteSpace(flow.Id))
+            .Select(flow => string.IsNullOrWhiteSpace(flow.Id)
+                ? CopyFlow(flow, string.Empty, FlowTypes.Primary)
+                : flow)
+            .ToList();
+
+        if (configured is { Count: > 0 })
+            return configured;
+
+        if (settings.Flow is null)
+            return [];
+
+        var legacyId = string.IsNullOrWhiteSpace(settings.Flow.Id)
+            ? string.Empty
+            : settings.Flow.Id.Trim();
+
+        return [CopyFlow(settings.Flow, legacyId, FlowTypes.Primary)];
+    }
+
+    private static AgentFlowDefinition CopyFlow(AgentFlowDefinition source, string id, string type) => new()
+    {
+        Id = id,
+        Type = string.IsNullOrWhiteSpace(source.Type) ? type : source.Type,
+        RoutingGuidance = source.RoutingGuidance,
+        TtlSeconds = source.TtlSeconds,
+        StageDetection = source.StageDetection,
+        Stages = source.Stages
+    };
+
     private static AgentSettings ParseSettings(string? settingsJson)
     {
         if (string.IsNullOrWhiteSpace(settingsJson))
@@ -665,6 +742,7 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
         public string? Persona { get; set; }
         public string? Policies { get; set; }
         public AgentFlowDefinition? Flow { get; set; }
+        public IReadOnlyList<AgentFlowDefinition>? Flows { get; set; }
         public IReadOnlyList<AgentGlobalAction>? GlobalActions { get; set; }
         public IReadOnlyList<FactSchemaEntry>? FactSchema { get; set; }
         public Dictionary<string, GuardDefinition>? Guards { get; set; }

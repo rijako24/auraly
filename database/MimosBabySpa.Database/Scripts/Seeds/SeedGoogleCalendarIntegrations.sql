@@ -137,3 +137,4 @@ WHEN NOT MATCHED THEN
 
 PRINT N'SeedGoogleCalendarIntegrations: configuracion Google Calendar multitenant preparada.';
 GO
+

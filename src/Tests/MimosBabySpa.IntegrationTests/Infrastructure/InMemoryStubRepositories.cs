@@ -1,3 +1,4 @@
+using MimosBabySpa.Domain.Catalog;
 using MimosBabySpa.Domain.Entities;
 using MimosBabySpa.Domain.Enums;
 using MimosBabySpa.Domain.Repositories;
@@ -52,6 +53,34 @@ public class InMemoryServiceRepository : IServiceRepository
 
     public Task<IEnumerable<Service>> GetActiveByBusinessIdAsync(Guid businessId) =>
         Task.FromResult(_store.Where(s => s.BusinessId == businessId && s.IsActive));
+
+    public Task<IReadOnlyList<Service>> SearchActiveCatalogAsync(
+        Guid businessId,
+        IReadOnlyList<string> terms,
+        int limit,
+        CancellationToken ct = default)
+    {
+        var searchTerms = terms
+            .Where(term => !string.IsNullOrWhiteSpace(term))
+            .Select(term => term.Trim())
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+        var matches = _store
+            .Where(s => s.BusinessId == businessId && s.IsActive)
+            .Where(s => searchTerms.Count == 0 || searchTerms.Any(term => CatalogSearchText.ContainsAllTerms(
+                term,
+                s.ServiceName,
+                s.Description,
+                s.Keywords,
+                s.ServiceCategory?.Name,
+                s.ServiceCategory?.Description)))
+            .OrderBy(s => s.ServiceName)
+            .Take(Math.Clamp(limit, 1, 200))
+            .ToList();
+
+        return Task.FromResult<IReadOnlyList<Service>>(matches);
+    }
 
     public Task<Service> CreateAsync(Service service) { _store.Add(service); return Task.FromResult(service); }
     public Task<Service> UpdateAsync(Service service) => Task.FromResult(service);

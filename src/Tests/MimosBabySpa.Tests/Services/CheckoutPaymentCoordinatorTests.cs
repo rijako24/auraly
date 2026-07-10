@@ -1,4 +1,4 @@
-using FluentAssertions;
+﻿using FluentAssertions;
 using Moq;
 using MimosBabySpa.Application.Agents;
 using MimosBabySpa.Application.Services;
@@ -123,6 +123,71 @@ public sealed class CheckoutPaymentCoordinatorTests
             quote.PayableCents,
             quote.Currency,
             It.IsAny<CancellationToken>()), Times.Once);
+    }
+    [Fact]
+    public async Task EnsurePaymentLinkAsync_WithDifferentBillableHash_CreatesNewPaymentLink()
+    {
+        var quote = CreateQuote();
+        var payment = new PaymentTransaction
+        {
+            PaymentTransactionId = Guid.NewGuid(),
+            CheckoutKind = quote.CheckoutKind,
+            Status = PaymentTransactionStatus.Created,
+            LinkUrl = "https://pay.test/original",
+            ExpiresAt = DateTime.UtcNow.AddMinutes(30),
+            QuoteHash = "old-billable-hash",
+            CheckoutSnapshotJson = "old-snapshot",
+            AmountInCents = quote.PayableCents,
+            Currency = quote.Currency,
+            ConfirmationOutcome = quote.ConfirmationOutcome
+        };
+        var newPayment = new PaymentTransaction
+        {
+            PaymentTransactionId = Guid.NewGuid(),
+            CheckoutKind = quote.CheckoutKind,
+            Status = PaymentTransactionStatus.Created,
+            LinkUrl = "https://pay.test/new",
+            PaymentReferenceId = "test_new"
+        };
+
+        var lifecycle = new Mock<IPaymentLifecycleService>();
+        lifecycle.Setup(p => p.CreatePendingCheckoutAsync(
+                quote.BusinessId,
+                quote.ConversationId,
+                quote.CheckoutKind,
+                "new-snapshot",
+                "new-billable-hash",
+                quote.ConfirmationOutcome,
+                "test_new",
+                "https://pay.test/new",
+                quote.PayableCents,
+                quote.Currency,
+                It.IsAny<DateTime>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(newPayment);
+
+        var paymentLinks = new Mock<IPaymentLinkService>();
+        paymentLinks.Setup(p => p.GenerateAnticipoLinkAsync(It.IsAny<PaymentLinkRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PaymentLinkResult(true, "https://pay.test/new", "test_new", DateTime.UtcNow.AddMinutes(30), null));
+        var quotes = new Mock<ICheckoutQuoteService>();
+        quotes.Setup(q => q.ComputeHash(quote)).Returns("new-billable-hash");
+        var coordinator = new CheckoutPaymentCoordinator(paymentLinks.Object, lifecycle.Object, quotes.Object);
+        var ctx = new AgentToolContext
+        {
+            BusinessId = quote.BusinessId,
+            ConversationId = quote.ConversationId,
+            ActivePayment = payment
+        };
+
+        var result = await coordinator.EnsurePaymentLinkAsync(ctx, quote, "+15550000000", "new-snapshot", CancellationToken.None);
+
+        result.Success.Should().BeTrue();
+        result.LinkUrl.Should().Be("https://pay.test/new");
+        result.Payment.Should().BeSameAs(newPayment);
+        ctx.ActivePayment.Should().BeSameAs(newPayment);
+        paymentLinks.Verify(p => p.GenerateAnticipoLinkAsync(It.IsAny<PaymentLinkRequest>(), It.IsAny<CancellationToken>()), Times.Once);
+        lifecycle.Verify(p => p.RefreshPendingCheckoutAsync(It.IsAny<PaymentTransaction>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<long>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        lifecycle.Verify(p => p.MarkSupersededAsync(payment, newPayment.PaymentTransactionId, It.IsAny<CancellationToken>()), Times.Once);
     }
     [Fact]
     public async Task EnsurePaymentLinkAsync_WithConfirmedSameQuote_CreatesNewPaymentLink()

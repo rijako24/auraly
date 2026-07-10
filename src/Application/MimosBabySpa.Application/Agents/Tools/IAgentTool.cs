@@ -45,14 +45,6 @@ public interface IAgentTool
 
     /// <summary>Contenido de la plantilla por defecto.</summary>
     string? DefaultTemplate => null;
-
-    /// <summary>
-    /// Eventos semánticos universales expuestos por la tool para capas de configuración o telemetría.
-    /// La política conversacional debe venir de la configuración del tenant, por ejemplo globalActions o stages.
-    /// Ejemplos: "customer_frustration", "consecutive_errors", "out_of_scope_request".
-    /// </summary>
-    IReadOnlyList<string> SemanticTriggers => [];
-
     /// <summary>Invariantes universales evaluadas antes de ejecutar la tool.</summary>
     ToolAvailabilityResult Evaluate(AgentToolContext ctx, JsonElement arguments) =>
         new(true, null, null);

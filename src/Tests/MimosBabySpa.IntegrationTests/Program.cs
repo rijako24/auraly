@@ -1,4 +1,4 @@
-﻿using MimosBabySpa.IntegrationTests.Reports;
+using MimosBabySpa.IntegrationTests.Reports;
 using MimosBabySpa.IntegrationTests.Runner;
 using MimosBabySpa.IntegrationTests.Scenarios.Definitions;
 
@@ -33,6 +33,9 @@ var scenarios = new List<MimosBabySpa.IntegrationTests.Scenarios.TestScenario>
     new FullReservationStyle18CompoundNameScenario(),
     new FullReservationStyle19MinimalScenario(),
     new FullReservationStyle20FourStepsScenario(),
+    new CheckoutAfterSummaryAddOnChangeScenario(),
+    new CheckoutAfterSummaryRemoveAddOnScenario(),
+    new CheckoutAfterSummaryBookingInputChangeScenario(),
 };
 
 scenarios.AddRange(AdditionalReservationScenario.BuildAll());

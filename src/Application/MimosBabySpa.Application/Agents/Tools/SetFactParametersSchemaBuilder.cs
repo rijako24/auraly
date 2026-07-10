@@ -1,5 +1,6 @@
 using System.Text.Json;
 using MimosBabySpa.Application.Agents.Configuration;
+using MimosBabySpa.Application.Agents.Facts;
 
 namespace MimosBabySpa.Application.Agents.Tools;
 
@@ -20,7 +21,7 @@ internal static class SetFactParametersSchemaBuilder
           "properties": {
             "key": {
               "type": "string",
-              "description": "Short snake_case identifier (e.g. customer_name, baby_age_months, service)"
+              "description": "Short snake_case identifier (e.g. customer_name, desired_date, desired_time)"
             },
             "value": {
               "type": "string",
@@ -35,6 +36,8 @@ internal static class SetFactParametersSchemaBuilder
     {
         var userFacts = config.FactSchema
             .Where(e => e.Source.Equals("user", StringComparison.OrdinalIgnoreCase))
+            .Where(e => !string.Equals(e.Role, "booking.service", StringComparison.OrdinalIgnoreCase)
+                && !e.Key.Equals(ConversationFactKeys.Service, StringComparison.OrdinalIgnoreCase))
             .OrderBy(e => e.Key, StringComparer.OrdinalIgnoreCase)
             .ToList();
 

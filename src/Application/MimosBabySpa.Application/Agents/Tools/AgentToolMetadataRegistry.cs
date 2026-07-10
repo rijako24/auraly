@@ -1,4 +1,5 @@
 using System.Reflection;
+using MimosBabySpa.Application.Agents.Configuration;
 
 namespace MimosBabySpa.Application.Agents.Tools;
 
@@ -11,12 +12,16 @@ public sealed class AgentToolMetadataRegistry
         _tools = typeof(IAgentTool).Assembly
             .GetTypes()
             .Where(type => !type.IsAbstract && typeof(IAgentTool).IsAssignableFrom(type))
-            .Select(type => type.GetCustomAttribute<AgentToolMetadataAttribute>())
-            .Where(attribute => attribute is not null && !string.IsNullOrWhiteSpace(attribute.Name))
-            .Select(attribute => new AgentToolMetadata(
-                attribute!.Name,
-                attribute.Capabilities,
-                attribute.RequiredTemplateIds))
+            .Select(type => new
+            {
+                Tool = type.GetCustomAttribute<AgentToolMetadataAttribute>(),
+                Type = type
+            })
+            .Where(item => item.Tool is not null && !string.IsNullOrWhiteSpace(item.Tool.Name))
+            .Select(item => new AgentToolMetadata(
+                item.Tool!.Name,
+                item.Tool.Capabilities,
+                item.Tool.RequiredTemplateIds))
             .GroupBy(tool => tool.Name, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
     }

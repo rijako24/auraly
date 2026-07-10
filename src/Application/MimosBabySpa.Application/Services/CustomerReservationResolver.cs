@@ -31,14 +31,9 @@ public sealed class CustomerReservationResolver : ICustomerReservationResolver
         string? reservationIdFromArgs,
         CancellationToken ct = default)
     {
-        if (!string.IsNullOrWhiteSpace(reservationIdFromArgs))
+        if (!string.IsNullOrWhiteSpace(reservationIdFromArgs)
+            && Guid.TryParse(reservationIdFromArgs, out var explicitId))
         {
-            if (!Guid.TryParse(reservationIdFromArgs, out var explicitId))
-            {
-                return ReservationResolveResult.Fail(
-                    ToolResultHelper.Error("invalid_args", $"'{reservationIdFromArgs}' is not a valid reservation ID."));
-            }
-
             return await ResolveExplicitAsync(ctx, explicitId, ct);
         }
 
@@ -58,12 +53,7 @@ public sealed class CustomerReservationResolver : ICustomerReservationResolver
             return resolvedFromSession;
 
         return ReservationResolveResult.Fail(
-            ToolResultHelper.ErrorWithLlm(
-                "no_manageable_reservation",
-                "No confirmed reservation was found for this customer.",
-                null,
-                new { next_action = "collect_booking_request_or_handoff" },
-                recoverable: true));
+            ToolResultHelper.ErrorWithLlm("no_manageable_reservation", "No confirmed reservation was found for this customer.", new { next_action = "collect_booking_request_or_handoff" }, recoverable: true));
     }
 
     private async Task<ReservationResolveResult> ResolveExplicitAsync(
@@ -89,12 +79,7 @@ public sealed class CustomerReservationResolver : ICustomerReservationResolver
         if (!ReservationTemporalFormatter.IsManageableOnBusinessDay(reservation, ctx.BusinessToday))
         {
             return ReservationResolveResult.Fail(
-                ToolResultHelper.ErrorWithLlm(
-                    "reservation_not_manageable",
-                    "This reservation is not an upcoming manageable reservation.",
-                    null,
-                    new { next_action = "get_customer_reservations" },
-                    recoverable: true));
+                ToolResultHelper.ErrorWithLlm("reservation_not_manageable", "This reservation is not an upcoming manageable reservation.", new { next_action = "get_customer_reservations" }, recoverable: true));
         }
 
         if (ctx.ManageableReservations.Count > 1
@@ -229,16 +214,11 @@ public sealed class CustomerReservationResolver : ICustomerReservationResolver
             .Select(r => ReservationTemporalFormatter.FormatLine(r, businessToday))
             .ToList();
 
-        return ToolResultHelper.ErrorWithLlm(
-            "ambiguous_reservation",
-            "This customer has more than one upcoming reservation.",
-            null,
-            new
+        return ToolResultHelper.ErrorWithLlm("ambiguous_reservation", "This customer has more than one upcoming reservation.", new
             {
                 next_action = "select_reservation",
                 reservations = options
-            },
-            recoverable: true);
+            }, recoverable: true);
     }
 
     internal static string FormatReservationLine(Reservation reservation, DateOnly businessToday) =>

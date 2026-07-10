@@ -11,7 +11,7 @@ namespace MimosBabySpa.Application.Agents.Tools.Impl;
 [AgentToolMetadata("create_order", Capabilities = new[] { ToolCapabilities.OrderCreate })]
 public sealed class CreateOrderTool : IAgentTool
 {
-    private readonly ICommerceService _commerce;
+private readonly ICommerceService _commerce;
     private readonly IUnitOfWork _unitOfWork;
     private readonly IEventNotificationDispatcher _notificationDispatcher;
     private readonly IExternalEscalationService _externalEscalations;
@@ -68,11 +68,7 @@ public sealed class CreateOrderTool : IAgentTool
         }
         catch (InvalidOperationException ex) when (ex.Message.Contains("Product inactive", StringComparison.OrdinalIgnoreCase))
         {
-            return ToolResultHelper.Error(
-                "product_inactive",
-                "The order contains an inactive product and cannot be confirmed.",
-                "Remove the inactive product from the order and call search_products for active alternatives.",
-                recoverable: true);
+            return ToolResultHelper.Error("product_inactive", "The order contains an inactive product and cannot be confirmed.");
         }
 
         var isConfirmed = order.Status is OrderStatus.Confirmed or OrderStatus.SyncPending or OrderStatus.Synced;
@@ -176,5 +172,3 @@ public sealed class CreateOrderTool : IAgentTool
 
     private static string Money(decimal amount) => amount.ToString("N0", CultureInfo.InvariantCulture);
 }
-
-
