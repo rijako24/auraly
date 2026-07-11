@@ -41,6 +41,8 @@ public sealed class CheckoutPaymentMethodDefinition
     public CheckoutPaymentDefinition? Payment { get; set; }
     public string? Template { get; set; }
     public string? ConfirmationOutcome { get; set; }
+    public bool ManualConfirmationRequired { get; set; }
+    public int? ManualExpirationMinutes { get; set; }
 }
 
 public sealed class OrderCheckoutShippingDefinition
@@ -176,6 +178,9 @@ public sealed record CheckoutPaymentSelection(
     string ConfirmationOutcome)
 {
     public bool RequiresPayment => PayableCents > 0;
+    public bool RequiresPaymentLink => PayableCents > 0 && !RequiresManualConfirmation;
+    public bool RequiresManualConfirmation { get; init; }
+    public int ManualExpirationMinutes { get; init; } = 1440;
 }
 
 public sealed record CheckoutPaymentSelectionError(
@@ -228,9 +233,12 @@ public static class CheckoutPaymentSelectionResolver
         var key = configured.Key;
         var method = configured.Value;
         var label = PaymentMethodLabel(key, method);
+        var requiresManualConfirmation = method.ManualConfirmationRequired;
         var percentage = method.Payment?.Percentage;
+        if (requiresManualConfirmation && percentage is null)
+            percentage = 100;
 
-        if (method.Payment is not null)
+        if (method.Payment is not null || requiresManualConfirmation)
         {
             if (percentage is null)
             {
@@ -255,11 +263,11 @@ public static class CheckoutPaymentSelectionResolver
                 $"Payment method '{key}' in checkout mode '{checkoutKind}' has no template configured.");
         }
 
-        if (payableCents > 0 && string.IsNullOrWhiteSpace(method.ConfirmationOutcome))
+        if ((payableCents > 0 || requiresManualConfirmation) && string.IsNullOrWhiteSpace(method.ConfirmationOutcome))
         {
             return Error(
                 "checkout_outcome_missing",
-                $"Payment method '{key}' in checkout mode '{checkoutKind}' creates a payment link but has no confirmationOutcome.");
+                $"Payment method '{key}' in checkout mode '{checkoutKind}' requires payment confirmation but has no confirmationOutcome.");
         }
 
         return new CheckoutPaymentSelection(
@@ -270,7 +278,11 @@ public static class CheckoutPaymentSelectionResolver
             percentage,
             payableCents,
             method.Template!.Trim(),
-            payableCents > 0 ? method.ConfirmationOutcome!.Trim() : string.Empty);
+            (payableCents > 0 || requiresManualConfirmation) ? method.ConfirmationOutcome!.Trim() : string.Empty)
+        {
+            RequiresManualConfirmation = requiresManualConfirmation,
+            ManualExpirationMinutes = Math.Max(1, method.ManualExpirationMinutes ?? 1440)
+        };
     }
 
     private static KeyValuePair<string, CheckoutPaymentMethodDefinition>? ResolveMethod(

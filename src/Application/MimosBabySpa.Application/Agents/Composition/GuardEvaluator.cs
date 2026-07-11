@@ -1,5 +1,6 @@
 using System.Text.Json;
 using MimosBabySpa.Application.Agents.Configuration;
+using MimosBabySpa.Application.Agents.Facts;
 using MimosBabySpa.Application.Agents.Gating;
 using MimosBabySpa.Application.Agents.Tools;
 using MimosBabySpa.Application.Agents.Tools.Impl;
@@ -93,7 +94,7 @@ public sealed class GuardEvaluator : IGuardEvaluator
         }
 
         if (requirement.Equals("flag:verbal_confirmation", StringComparison.OrdinalIgnoreCase))
-            return ToolAvailabilityResultAvailable;
+            return EvaluateVerbalConfirmationFlag(ctx);
 
         if (requirement.StartsWith("expr:", StringComparison.OrdinalIgnoreCase))
         {
@@ -105,6 +106,100 @@ public sealed class GuardEvaluator : IGuardEvaluator
                 false,
                 $"Unknown guard requirement '{requirement}'.",
                 null);
+    }
+
+    private static ToolAvailabilityResult EvaluateVerbalConfirmationFlag(AgentToolContext ctx)
+    {
+        if (ctx.Turn?.CheckoutPrepared == true)
+        {
+            return new ToolAvailabilityResult(
+                false,
+                "Customer confirmation must be collected after the checkout summary has been presented.",
+                null);
+        }
+
+        var roles = new FactRoleIndex(ctx.Config?.FactSchema ?? []);
+        var confirmationKey = roles.KeyByRole("confirmation.verbal");
+        if (string.IsNullOrWhiteSpace(confirmationKey))
+        {
+            return new ToolAvailabilityResult(
+                false,
+                "No verbal confirmation fact is configured for this agent.",
+                null);
+        }
+
+        var confirmationEntry = roles.EntryFor(confirmationKey);
+        if (confirmationEntry is null)
+        {
+            return new ToolAvailabilityResult(
+                false,
+                $"Verbal confirmation fact '{confirmationKey}' is not configured in factSchema.",
+                null);
+        }
+
+        if (!ctx.Facts.TryGetValue(confirmationKey, out var rawValue) || !IsTruthy(rawValue))
+        {
+            return new ToolAvailabilityResult(
+                false,
+                "Customer verbal confirmation is required.",
+                null);
+        }
+
+        if (!LatestMessageMatchesConfirmationAlias(confirmationEntry, ctx.LatestUserMessage))
+        {
+            return new ToolAvailabilityResult(
+                false,
+                "Customer verbal confirmation must be present in the latest customer message.",
+                null);
+        }
+
+        return ToolAvailabilityResultAvailable;
+    }
+
+    private static bool LatestMessageMatchesConfirmationAlias(FactSchemaEntry entry, string? message)
+    {
+        if (entry.Aliases.Count == 0 || string.IsNullOrWhiteSpace(message))
+            return false;
+
+        var normalizedMessage = NormalizeGuardText(message);
+        if (string.IsNullOrWhiteSpace(normalizedMessage))
+            return false;
+
+        return entry.Aliases
+            .Select(NormalizeGuardText)
+            .Where(alias => !string.IsNullOrWhiteSpace(alias))
+            .Any(alias => ContainsNormalizedPhrase(normalizedMessage, alias));
+    }
+
+    private static bool ContainsNormalizedPhrase(string normalizedMessage, string normalizedCandidate) =>
+        $" {normalizedMessage} ".Contains($" {normalizedCandidate} ", StringComparison.Ordinal);
+
+    private static string NormalizeGuardText(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return string.Empty;
+
+        var decomposed = value.Trim().ToLowerInvariant().Normalize(System.Text.NormalizationForm.FormD);
+        var chars = decomposed
+            .Where(ch => System.Globalization.CharUnicodeInfo.GetUnicodeCategory(ch) != System.Globalization.UnicodeCategory.NonSpacingMark)
+            .Select(ch => char.IsLetterOrDigit(ch) ? ch : ' ')
+            .ToArray();
+
+        return System.Text.RegularExpressions.Regex.Replace(
+            new string(chars).Normalize(System.Text.NormalizationForm.FormC),
+            "\\s+",
+            " ").Trim();
+    }
+
+    private static bool IsTruthy(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return false;
+
+        if (bool.TryParse(value.Trim(), out var parsed))
+            return parsed;
+
+        return value.Trim().Equals("1", StringComparison.OrdinalIgnoreCase);
     }
 
     private static GuardDefinition? ResolveGuard(IAgentTool tool, AgentConfig config)

@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using MimosBabySpa.Application.Agents.Gating;
 using MimosBabySpa.Application.Commerce;
@@ -97,6 +98,27 @@ private readonly ICommerceService _commerce;
                 recoverable: true);
         }
 
+        if (IsShortAffirmation(ctx.LatestUserMessage))
+        {
+            var currentDraft = await _commerce.GetDraftAsync(ctx, cancellationToken);
+            var existingItem = FindExistingItem(currentDraft, productId, externalId, sku, name);
+            if (existingItem is not null)
+            {
+                return ToolResultHelper.ErrorWithLlm(
+                    "duplicate_add_from_short_confirmation",
+                    "The latest customer message is only a short confirmation and the product is already in the cart. Do not add it again unless the customer explicitly asks for more units.",
+                    new
+                    {
+                        next_action = "keep_existing_cart_item",
+                        product_name = existingItem.ProductName,
+                        existing_quantity = existingItem.Quantity,
+                        requested_additional_quantity = quantity,
+                        customer_prompt_guidance = "Acknowledge the existing cart item and continue with the pending confirmation or next missing order data. If the customer wants more units, ask them to state the additional quantity explicitly."
+                    },
+                    recoverable: true);
+            }
+        }
+
         OrderSnapshot draft;
         try
         {
@@ -106,6 +128,23 @@ private readonly ICommerceService _commerce;
                 cancellationToken);
             await ProductSelectionMemory.ClearSelectedAsync(_factsService, ctx, cancellationToken);
             await OrderDraftFactInvalidation.ClearOrderFinalizedAsync(_factsService, ctx, cancellationToken);
+        }
+        catch (InsufficientProductStockException ex)
+        {
+            return ToolResultHelper.ErrorWithLlm(
+                "insufficient_product_stock",
+                "The requested quantity is greater than the available catalog stock. Do not add the item automatically; ask the customer whether they want the available quantity instead.",
+                new
+                {
+                    next_action = "confirm_available_quantity_before_adding",
+                    product_name = ex.ProductName,
+                    requested_quantity = ex.RequestedQuantity,
+                    available_quantity = ex.AvailableQuantity,
+                    existing_cart_quantity = ex.ExistingCartQuantity,
+                    available_to_add = ex.AvailableToAdd,
+                    customer_prompt_guidance = "Tell the customer only the available quantity for this requested product and ask if they want to include that available quantity instead. Do not mention SKU/code or internal stock metadata."
+                },
+                recoverable: true);
         }
         catch (InvalidOperationException ex) when (ex.Message.Contains("Product not found", StringComparison.OrdinalIgnoreCase))
         {
@@ -141,6 +180,63 @@ private readonly ICommerceService _commerce;
         return true;
     }
 
+    private static OrderItemSnapshot? FindExistingItem(
+        OrderSnapshot draft,
+        Guid? productId,
+        string? externalId,
+        string? sku,
+        string? name)
+    {
+        if (draft.Items.Count == 0)
+            return null;
+
+        return draft.Items.FirstOrDefault(item =>
+            (productId.HasValue && item.ProductId == productId)
+            || (!string.IsNullOrWhiteSpace(externalId)
+                && item.ExternalProductId?.Equals(externalId, StringComparison.OrdinalIgnoreCase) == true)
+            || (!string.IsNullOrWhiteSpace(sku)
+                && item.Sku?.Equals(sku, StringComparison.OrdinalIgnoreCase) == true)
+            || (!string.IsNullOrWhiteSpace(name)
+                && NormalizeProductText(item.ProductName) == NormalizeProductText(name)));
+    }
+
+    private static bool IsShortAffirmation(string? message)
+    {
+        var normalized = NormalizeIntentText(message);
+        if (string.IsNullOrWhiteSpace(normalized))
+            return false;
+
+        return normalized is "si" or "ok" or "okay" or "dale" or "correcto" or "confirmo" or "listo" or "de acuerdo";
+    }
+
+    private static string NormalizeIntentText(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return string.Empty;
+
+        var decomposed = value.Trim().ToLowerInvariant().Normalize(System.Text.NormalizationForm.FormD);
+        var chars = decomposed
+            .Where(ch => CharUnicodeInfo.GetUnicodeCategory(ch) != UnicodeCategory.NonSpacingMark)
+            .Select(ch => char.IsLetterOrDigit(ch) ? ch : ' ')
+            .ToArray();
+
+        return string.Join(' ', new string(chars)
+            .Normalize(System.Text.NormalizationForm.FormC)
+            .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+    }
+
+    private static string NormalizeProductText(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return string.Empty;
+
+        var decomposed = value.Trim().ToLowerInvariant().Normalize(System.Text.NormalizationForm.FormD);
+        return new string(decomposed
+            .Where(ch => CharUnicodeInfo.GetUnicodeCategory(ch) != UnicodeCategory.NonSpacingMark)
+            .Where(char.IsLetterOrDigit)
+            .ToArray())
+            .Normalize(System.Text.NormalizationForm.FormC);
+    }
     private static bool TryGetDecimal(JsonElement args, string name, out decimal value)
     {
         value = 0;

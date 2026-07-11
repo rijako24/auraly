@@ -184,6 +184,10 @@ services.AddScoped<ServiceSelectionResolver>();
 
         services.AddScoped<ICommerceAdapter>(sp => sp.GetRequiredService<SiigoCommerceAdapter>());
 
+        services.AddHttpClient<MantisCommerceAdapter>();
+
+        services.AddScoped<ICommerceAdapter>(sp => sp.GetRequiredService<MantisCommerceAdapter>());
+
         services.AddScoped<ICommerceAdapterFactory, CommerceAdapterFactory>();
 
 
@@ -450,6 +454,7 @@ services.AddScoped<IAgentTool, ResolveServiceSelectionTool>();
         services.AddScoped<IAgentTool, GetServiceFulfillmentTool>();
 
         services.AddScoped<IAgentTool, SearchProductsTool>();
+        services.AddScoped<IAgentTool, SearchWebRecipesTool>();
 
         services.AddScoped<IAgentTool, AddOrderItemTool>();
 

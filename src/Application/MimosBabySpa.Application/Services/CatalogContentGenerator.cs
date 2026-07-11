@@ -50,10 +50,20 @@ public class CatalogContentGenerator : ICatalogContentGenerator
             var useCatalogSearch = view != CatalogContentView.Categories && searchTerms.Count > 0;
             var services = await LoadCatalogServicesAsync(businessId, searchTerms, useCatalogSearch, ct);
 
-            if (view == CatalogContentView.Services && useCatalogSearch && services.Count == 0)
-                services = await LoadActiveServicesAsync(businessId, ct);
+            IReadOnlyList<DomainService> catalogServices;
+            CatalogContentView effectiveView;
+            if (useCatalogSearch && services.Count > 0)
+            {
+                catalogServices = services;
+                effectiveView = CatalogContentView.Services;
+            }
+            else
+            {
+                if (view == CatalogContentView.Services && useCatalogSearch && services.Count == 0)
+                    services = await LoadActiveServicesAsync(businessId, ct);
 
-            var catalogServices = ResolveCatalogServices(services, categories, query, view, out var effectiveView);
+                catalogServices = ResolveCatalogServices(services, categories, query, view, out effectiveView);
+            }
 
             if (effectiveView == CatalogContentView.Categories)
             {

@@ -27,6 +27,7 @@ bld/
 artifacts/
 publish/
 database/backups/
+.tmp/
 
 # Visual Studio cache/options directory
 .vs/

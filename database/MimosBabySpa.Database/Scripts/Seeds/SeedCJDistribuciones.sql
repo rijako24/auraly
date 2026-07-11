@@ -1,4 +1,4 @@
-﻿-- =============================================================================
+-- =============================================================================
 -- SeedCJDistribuciones.sql
 --
 -- Negocio CJ Distribuciones con flujo de pedidos abierto, perfil comercial,
@@ -12,7 +12,7 @@ SET NOCOUNT ON;
 DECLARE @TenantId UNIQUEIDENTIFIER = 'C1D15A00-0000-0000-0000-000000000001';
 DECLARE @BusinessId UNIQUEIDENTIFIER = 'C1D15A00-0000-0000-0000-000000000010';
 DECLARE @AgentId UNIQUEIDENTIFIER = 'C1D15A00-0000-0000-0000-000000000020';
-DECLARE @LocalCommerceConnectionId UNIQUEIDENTIFIER = 'C1D15A00-0000-0000-0000-000000000030';
+DECLARE @MantisCommerceConnectionId UNIQUEIDENTIFIER = 'C1D15A00-0000-0000-0000-000000000030';
 DECLARE @AgentTypeId UNIQUEIDENTIFIER;
 
 SELECT TOP (1) @AgentTypeId = AgentTypeId
@@ -69,27 +69,31 @@ END
 MERGE dbo.IntegrationConnections AS target
 USING (
     SELECT
-        @LocalCommerceConnectionId AS IntegrationConnectionId,
+        @MantisCommerceConnectionId AS IntegrationConnectionId,
         @BusinessId AS BusinessId,
         CAST(1 AS INT) AS ConnectionType,
-        CAST(0 AS INT) AS Provider,
+        CAST(3 AS INT) AS Provider,
         CAST(0 AS INT) AS Capability,
-        N'Comercio local CJ Distribuciones' AS [Name],
-        N'local' AS AccountIdentifier,
-        N'{"currency":"COP","manageStock":false}' AS SettingsJson,
+        N'Mantis Commerce CJ Distribuciones' AS [Name],
+        N'Mantis' AS AccountIdentifier,
+        N'{"baseUrl":"http://93.189.95.109:8080/MantisFiccCasalinsPruWeb/rest/","currency":"COP","requestTimeoutSeconds":30,"catalog":{"searchEndpoint":"pwsConsultarArticuloCasalins","defaultPageSize":5,"maxPageSize":5,"cacheProducts":true},"order":{"createEndpoint":"pwsCrearPedidoCasalins","warehouse":"1","mockCreateOrders":true}}' AS SettingsJson,
         CAST(NULL AS NVARCHAR(MAX)) AS SecretsJson,
         CAST(1 AS BIT) AS IsEnabled
 ) AS source
-   ON target.BusinessId = source.BusinessId
-  AND target.ConnectionType = source.ConnectionType
-  AND target.Provider = source.Provider
-  AND target.Capability = source.Capability
+   ON target.IntegrationConnectionId = source.IntegrationConnectionId
+   OR (target.BusinessId = source.BusinessId
+       AND target.ConnectionType = source.ConnectionType
+       AND target.Provider = source.Provider
+       AND target.Capability = source.Capability)
 WHEN MATCHED THEN
     UPDATE SET
+        ConnectionType = source.ConnectionType,
+        Provider = source.Provider,
+        Capability = source.Capability,
         [Name] = source.[Name],
         AccountIdentifier = source.AccountIdentifier,
         SettingsJson = source.SettingsJson,
-        SecretsJson = source.SecretsJson,
+        SecretsJson = COALESCE(target.SecretsJson, source.SecretsJson),
         IsEnabled = source.IsEnabled,
         LastError = NULL,
         UpdatedAt = GETUTCDATE()
@@ -134,7 +138,7 @@ USING @Products AS source
   AND target.Sku = source.Sku
 WHEN MATCHED THEN
     UPDATE SET
-        IntegrationConnectionId = @LocalCommerceConnectionId,
+        IntegrationConnectionId = @MantisCommerceConnectionId,
         ExternalProductId = NULL,
         Source = 0,
         [Name] = source.[Name],
@@ -151,7 +155,7 @@ WHEN NOT MATCHED THEN
     INSERT (ProductId, BusinessId, IntegrationConnectionId, ExternalProductId, Source, Sku, [Name],
             [Description], CategoryName, UnitPrice, Currency, ManageStock, StockQuantity,
             IsActive, RawPayloadJson, LastSyncedAt, CreatedAt)
-    VALUES (source.ProductId, @BusinessId, @LocalCommerceConnectionId, NULL, 0, source.Sku, source.[Name],
+    VALUES (source.ProductId, @BusinessId, @MantisCommerceConnectionId, NULL, 0, source.Sku, source.[Name],
             source.[Description], source.CategoryName, source.UnitPrice, source.Currency, 0, source.StockQuantity,
             source.IsActive, NULL, NULL, GETUTCDATE());
 
@@ -206,13 +210,13 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
   "historyWindowSize": 24,
   "commerce": {
     "enabled": true,
-    "provider": "Local"
+    "provider": "Mantis"
   },
   "operatingHours": {
     "enforce": true
   },
   "persona": "Eres el asistente comercial de CJ Distribuciones por WhatsApp. Atiendes pedidos de alimentos y productos de consumo para hogares, tiendas, minimercados, restaurantes, comidas rapidas y distribuidores. Hablas en espanol con tono claro, amable y practico. Guias la compra sin obligar al cliente a navegar menus y usas el catalogo como fuente de verdad.",
-  "policies": "## REGLAS DEL FLUJO CJ DISTRIBUCIONES\n\n- En conversacion nueva, si no existe customer_name confiable y el cliente no lo informo en el mensaje actual, saluda: Hola! Bienvenido a CJ Distribuciones. Con gusto te ayudo a realizar tu pedido. Me indicas tu nombre o el nombre de tu establecimiento?\n- Guarda el nombre con set_fact y no lo vuelvas a pedir cuando ya exista, lo haya informado en el turno actual o sea cliente recurrente identificado.\n- Despues del nombre, si falta customer_type, pregunta por el perfil con las opciones: A. Hogar, B. Tienda o minimercado, C. Restaurante, D. Comida rapida, E. Distribuidor. Acepta respuestas naturales: ama de casa o para mi casa = Hogar; tienda o minimercado = TiendaMinimercado; restaurante = Restaurante; hamburguesas, perros o comidas rapidas = ComidaRapida; distribuidor, mayorista o al por mayor = Distribuidor. Si el cliente corrige el perfil despues, actualiza el fact.\n- Una vez identificado el perfil, invita a escribir directamente productos, busquedas, precios, disponibilidad, catalogo, receta, surtido o continuacion de pedido. No obligues a navegar un menu.\n- Para catalogo, precios, disponibilidad, referencias, listas de productos y recomendaciones comerciales, usa solo productos oficiales devueltos por search_products en el turno vigente. Nunca inventes presentaciones, precios, disponibilidad, descuentos ni condiciones por perfil.\n- Cuando el cliente escriba una lista, extrae cada producto y cantidad, busca referencias reales con search_products, resuelve primero coincidencias exactas y muestra opciones solo si hay ambiguedad. Agrega al carrito unicamente productos suficientemente identificados o confirmados.\n- Nunca respondas con placeholders como: se muestran referencias, presentacion y precio. Muestra resultados reales devueltos por la tool o explica claramente que no encontraste coincidencia.\n- Para recetas o preparaciones, puedes razonar ingredientes o complementos razonables, pero debes buscarlos en catalogo antes de ofrecerlos. Recomienda solo productos realmente encontrados. Si un complemento normal no aparece, dilo como no encontrado en el catalogo actual. No agregues recomendaciones sin aprobacion.\n- Usa el perfil como contexto comercial, no como restriccion rigida. Hogar: presentaciones familiares, cantidades moderadas e ideas practicas. TiendaMinimercado: rotacion, reventa, unidades, paquetes o cajas. Restaurante: rendimiento, institucional y consistencia. ComidaRapida: hamburguesas, perros, fritos, salsas, quesos, carnes frias y desechables si existen. Distribuidor: mayor volumen, cajas, paquetes o bultos, sin inventar descuentos.\n- Despues de agregar productos puedes hacer una sola recomendacion complementaria breve, relevante y basada en catalogo. No envies listas extensas, no repitas la misma recomendacion y no recomiendes productos sin relacion.\n- Si el cliente dice eso es todo, dame el total, no quiero agregar mas, cuanto seria, pasame la factura o equivalente, registra order_finalized=true y pasa inmediatamente al resumen del carrito. No sigas vendiendo.\n- El resumen, precios, subtotales, descuentos, impuestos, envio y total final deben venir del motor o las tools. No calcules mentalmente cuando exista workflow o tool para hacerlo.\n- Despues de que el cliente apruebe el carrito, pregunta si prefiere recogida o domicilio. Para recogida usa la direccion configurada de CJ Distribuciones o el punto de recogida disponible; para domicilio solicita solo datos faltantes y confiables.\n- Para pago, muestra solo los metodos configurados actualmente: efectivo al recibir y transferencia manual. Si selecciona transferencia, usa el workflow actual, informa el valor exacto y no afirmes pago recibido solo porque envie una imagen salvo validacion del sistema.",
+  "policies": "## PRESENTACION\n\nHola! Bienvenido a CJ Distribuciones. Con gusto te ayudo a realizar tu pedido. Me indicas tu nombre o el nombre de tu establecimiento?",
   "messageSequences": {
     "order_created_customer": {
       "messages": [
@@ -250,22 +254,25 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
     }
   ],
   "factSchema": [
-    { "key": "customer_name", "role": "customer.name", "label": "nombre del cliente o establecimiento", "type": "string", "required": true, "source": "user", "scope": "customer", "captureMode": "eager", "aliases": ["nombre", "cliente", "establecimiento", "negocio", "recibe", "destinatario"] },
-    { "key": "customer_type", "role": "customer.type", "label": "perfil del cliente", "type": "string", "required": true, "source": "user", "scope": "customer", "captureMode": "eager", "aliases": ["hogar", "ama de casa", "casa", "tienda", "minimercado", "restaurante", "comida rapida", "hamburguesas", "perros", "distribuidor", "mayorista", "al por mayor"] },
-    { "key": "order_finalized", "role": "order.finalized", "label": "cliente finalizo el carrito", "type": "string", "required": true, "source": "user", "scope": "request", "captureMode": "onDemand", "aliases": ["finalizar", "listo", "eso es todo", "dame el total", "cuanto seria", "pasame la factura", "nada mas", "no agregar mas"], "retentionDays": 1 },
-    { "key": "cart_review_confirmed", "role": "order.cart_review_confirmed", "label": "carrito aprobado por el cliente", "type": "string", "required": true, "source": "user", "scope": "request", "captureMode": "onDemand", "aliases": ["correcto", "asi esta bien", "confirmo", "esta bien", "aprobado"], "retentionDays": 1 },
-    { "key": "delivery_method", "role": "shipping.method", "label": "modalidad de entrega", "type": "string", "required": true, "source": "user", "scope": "request", "captureMode": "onDemand", "aliases": ["recogida", "recoger", "retiro", "domicilio", "entrega"], "retentionDays": 1 },
-    { "key": "city", "role": "shipping.city", "label": "ciudad de entrega", "type": "string", "required": true, "source": "system", "defaultValue": "Valledupar", "scope": "request", "captureMode": "eager", "aliases": ["ciudad", "municipio", "destino"], "retentionDays": 1 },
-    { "key": "delivery_address", "role": "shipping.address", "label": "direccion de entrega o recogida", "type": "string", "required": true, "source": "user", "scope": "request", "captureMode": "onDemand", "aliases": ["direccion", "domicilio", "barrio", "referencia", "direccion de entrega", "punto de recogida"], "retentionDays": 1 },
-    { "key": "delivery_phone", "role": "customer.phone", "label": "celular de entrega", "type": "phone", "required": true, "source": "user", "scope": "customer", "captureMode": "onDemand", "aliases": ["telefono", "celular", "whatsapp", "numero", "contacto"] },
-    { "key": "payment_method", "role": "payment.method", "label": "metodo de pago", "type": "string", "required": true, "source": "user", "scope": "request", "captureMode": "onDemand", "aliases": ["efectivo", "contraentrega", "transferencia", "nequi", "bancolombia"], "retentionDays": 1 },
-    { "key": "order_checkout_presented", "role": "order.checkout_presented", "label": "resumen final presentado", "type": "string", "required": false, "source": "system", "scope": "request", "retentionDays": 1 }
+    { "key": "customer_name", "role": "customer.name", "label": "nombre del cliente o establecimiento", "type": "string", "required": true, "source": "user", "scope": "customer", "aliases": ["nombre", "cliente", "establecimiento", "negocio", "recibe", "destinatario"] },
+    { "key": "customer_type", "role": "customer.type", "label": "perfil del cliente", "type": "string", "required": true, "source": "user", "scope": "customer", "aliases": ["hogar", "ama de casa", "casa", "tienda", "minimercado", "restaurante", "comida rapida", "hamburguesas", "perros", "distribuidor", "mayorista", "al por mayor"] },
+    { "key": "order_finalized", "role": "order.finalized", "label": "cliente finalizo el carrito", "type": "boolean", "required": true, "source": "user", "scope": "request", "aliases": ["finalizar", "listo", "eso es todo", "solo eso", "dame el total", "cuanto seria", "pasame la factura", "nada mas", "no agregar mas"], "retentionDays": 1 },
+    { "key": "cart_review_confirmed", "role": "order.cart_review_confirmed", "label": "carrito aprobado por el cliente", "type": "boolean", "required": true, "source": "user", "scope": "request", "aliases": ["correcto", "asi esta bien", "confirmo", "esta bien", "aprobado"], "retentionDays": 1 },
+    { "key": "delivery_method", "role": "shipping.method", "label": "modalidad de entrega", "type": "string", "required": true, "source": "user", "scope": "request", "aliases": ["recogida", "recoger", "retiro", "domicilio", "entrega"], "retentionDays": 1 },
+    { "key": "city", "role": "shipping.city", "label": "ciudad de entrega", "type": "string", "required": true, "source": "system", "defaultValue": "Valledupar", "scope": "request", "aliases": ["ciudad", "municipio", "destino"], "retentionDays": 1 },
+    { "key": "delivery_address", "role": "shipping.address", "label": "direccion de entrega o recogida", "type": "string", "required": true, "source": "user", "scope": "request", "aliases": ["direccion", "domicilio", "barrio", "referencia", "direccion de entrega", "punto de recogida"], "retentionDays": 1 },
+    { "key": "delivery_phone", "role": "customer.phone", "label": "celular de entrega", "type": "phone", "required": true, "source": "user", "scope": "customer", "aliases": ["telefono", "celular", "whatsapp", "numero", "contacto"] },
+    { "key": "payment_method", "role": "payment.method", "label": "metodo de pago", "type": "string", "required": true, "source": "user", "scope": "request", "aliases": ["efectivo", "contraentrega", "transferencia", "nequi", "bancolombia"], "retentionDays": 1 },
+    { "key": "order_checkout_presented", "role": "order.checkout_presented", "label": "resumen final presentado", "type": "boolean", "required": false, "source": "system", "scope": "request", "retentionDays": 1 },
+    { "key": "system.recipe_catalog_queries", "role": "system.recipe_catalog_queries", "label": "consultas de catalogo derivadas de receta", "type": "json", "required": false, "source": "system", "scope": "request", "retentionDays": 1 },
+    { "key": "customer_confirmed", "role": "confirmation.verbal", "label": "confirmacion verbal del pedido", "type": "boolean", "required": false, "source": "user", "scope": "request", "aliases": ["confirmo", "confirmo pedido", "si confirmo", "confirmado"], "dependsOn": ["order_checkout_presented", "cart_review_confirmed", "delivery_method", "city", "delivery_address", "delivery_phone", "customer_name", "payment_method"], "retentionDays": 1 }
   ],
   "guards": {
     "capability:commerce.order_create": {
       "requires": [
         "verification:checkout_no_payment_prepared",
-        "state:no_pending_checkout"
+        "state:no_pending_checkout",
+        "flag:verbal_confirmation"
       ]
     }
   },
@@ -313,7 +320,10 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
           "transferencia": {
             "label": "transferencia manual",
             "aliases": ["transferencia", "nequi", "bancolombia"],
-            "template": "order_checkout_manual_transfer"
+            "template": "order_checkout_manual_transfer",
+            "manualConfirmationRequired": true,
+            "manualExpirationMinutes": 1440,
+            "confirmationOutcome": "order_paid"
           }
         },
         "shipping": {
@@ -327,7 +337,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
   },
   "templates": {
     "order_checkout_no_payment": "*Resumen de tu pedido*\n{{#each line_items}}\n- {{name}} x{{quantity}}: ${{line_total}}\n{{/each}}\n- Envio: ${{shipping_cost}}\n- *Total: ${{total}} {{currency}}*\n\nEntrega:\n- Ciudad: {{city}}\n- Direccion: {{delivery_address}}\n- Celular: {{customer_phone}}\n{{#if customer_name}}\n- Nombre: {{customer_name}}\n{{/if}}\n\nMetodo de pago: efectivo al recibir\n\nConfirmas tu pedido con esta informacion?",
-    "order_checkout_manual_transfer": "*Resumen de tu pedido*\n{{#each line_items}}\n- {{name}} x{{quantity}}: ${{line_total}}\n{{/each}}\n- Envio: ${{shipping_cost}}\n- *Total: ${{total}} {{currency}}*\n\nEntrega:\n- Ciudad: {{city}}\n- Direccion: {{delivery_address}}\n- Celular: {{customer_phone}}\n{{#if customer_name}}\n- Nombre: {{customer_name}}\n{{/if}}\n\nMetodo de pago: transferencia manual\n\nConfirmas tu pedido con esta informacion? Al confirmarlo, el equipo te indicara los datos de pago."
+    "order_checkout_manual_transfer": "*Resumen de tu pedido*\n{{#each line_items}}\n- {{name}} x{{quantity}}: ${{line_total}}\n{{/each}}\n- Envio: ${{shipping_cost}}\n- *Total: ${{total}} {{currency}}*\n\nEntrega:\n- Ciudad: {{city}}\n- Direccion: {{delivery_address}}\n- Celular: {{customer_phone}}\n{{#if customer_name}}\n- Nombre: {{customer_name}}\n{{/if}}\n\nMetodo de pago: transferencia manual\n\nTu pago queda pendiente de confirmacion manual. Un agente del equipo de CJ Distribuciones confirmara el pago; cuando se confirme, te notificaremos que el pedido fue creado."
   },
   "flows": [
     {
@@ -359,7 +369,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
           "name": "Productos, catalogo y recomendaciones",
           "goal": "Recibir pedidos abiertos, resolver productos reales del catalogo, recomendar de forma controlada y construir el carrito hasta que el cliente finalice.",
           "advanceWhenFacts": ["order_finalized"],
-          "conversationGuidance": "Cuando customer_name y customer_type existan, responde: Perfecto, {customer_name}. Puedes escribirme directamente los productos que necesitas o contarme que deseas preparar y te ayudo a encontrar opciones en nuestro catalogo. Usa search_products para listas directas, busquedas, catalogo, precios, disponibilidad, surtido y complementos. Para listas, busca cada producto y cantidad, muestra referencias reales y agrega solo coincidencias claras o confirmadas. Si hay ambiguedad, pide la referencia preferida usando candidatos reales. Para recetas o preparaciones, identifica ingredientes razonables, buscalos en catalogo y recomienda solo encontrados; puedes usar search_web_recipes como apoyo de idea cuando el cliente pida receta explicitamente, pero el catalogo manda para vender. Despues de agregar productos, puedes hacer una sola venta complementaria breve basada en catalogo y relacionada con lo pedido. Si el cliente indica que termino o pide total/factura, registra order_finalized=true de inmediato.",
+          "conversationGuidance": "Cuando customer_name y customer_type existan, responde: Perfecto, {customer_name}. Puedes escribirme directamente los productos que necesitas o contarme que deseas preparar y te ayudo a encontrar opciones en nuestro catalogo. Usa search_products para listas directas, busquedas, catalogo, precios, disponibilidad, surtido y complementos. Para listas, busca cada producto y cantidad, muestra referencias reales con nombre, presentacion y precio cuando la tool lo entregue; no muestres SKU, codigos internos ni unidades de stock en opciones normales; agrega solo coincidencias claras o confirmadas. Si hay ambiguedad, pide la referencia preferida usando candidatos reales. Si pides confirmacion sobre un producto pendiente despues de haber agregado otros, una respuesta afirmativa confirma solo ese producto pendiente; no vuelvas a agregar productos ya agregados salvo que el cliente pida mas unidades explicitamente. Para recetas o preparaciones, primero usa search_web_recipes como apoyo externo; despues usa search_products con las consultas de ingredientes derivadas por la receta, no con la frase completa del cliente. No respondas solo con links ni digas que si quiere luego buscas catalogo; en la misma respuesta muestra maximo dos ideas de receta y una seccion breve de ingredientes disponibles en catalogo con productos reales, presentacion y precio cuando la tool los entregue. No concluyas que no hay un ingrediente si no se busco como ingrediente separado. No muestres SKU, codigos internos ni unidades de stock salvo si el cliente pidio mas cantidad de la disponible, en cuyo caso informa la cantidad disponible y pregunta si desea incluir esa cantidad. Recomienda solo productos encontrados y pide confirmacion para agregarlos. Despues de agregar productos, puedes hacer una sola venta complementaria breve basada en catalogo y relacionada con lo pedido. Si el cliente indica que termino o pide total/factura, registra order_finalized=true de inmediato.",
           "allowedActions": [
             "search_products",
             "search_web_recipes",
@@ -368,15 +378,44 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
             "set_fact"
           ],
           "collect": ["order_finalized"],
+          "afterTool": [
+            {
+              "tool": "search_web_recipes",
+              "when": {
+                "path": "ok",
+                "equals": "true"
+              },
+              "setFacts": {
+                "system.recipe_catalog_queries": "{{data.catalog_search_queries}}"
+              }
+            }
+          ],
           "entryActions": [
+            {
+              "tool": "search_web_recipes",
+              "arguments": {
+                "ingredient": "{{user.message}}",
+                "query": "preparacion facil",
+                "limit": 2
+              },
+              "when": {
+                "requiredFacts": ["customer_name", "customer_type"],
+                "messageMatches": [
+                  { "anyOf": ["receta", "preparar", "preparacion", "preparaciÃƒÂ³n", "cocinar", "cocino", "hacer con"] }
+                ]
+              }
+            },
             {
               "tool": "search_products",
               "arguments": {
-                "query": "{{user.message}}",
+                "queries": "{{fact.system.recipe_catalog_queries}}",
                 "limit": 10
               },
               "when": {
-                "requiredFacts": ["customer_name", "customer_type"]
+                "requiredFacts": ["customer_name", "customer_type", "system.recipe_catalog_queries"],
+                "messageMatches": [
+                  { "anyOf": ["receta", "preparar", "preparacion", "preparaciÃƒÂ³n", "cocinar", "cocino", "hacer con"] }
+                ]
               }
             }
           ]
@@ -427,7 +466,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
               }
             }
           ],
-          "conversationGuidance": "Cuando ya existan items, carrito aprobado, entrega y metodo de pago, llama prepare_order_checkout una sola vez. Muestra el resumen renderizado por la tool y pide confirmacion verbal. Para transferencia, informa solo lo que entregue el workflow actual y no confirmes pago recibido sin validacion del sistema. Si falla por configuracion no recuperable, escala a humano.",
+          "conversationGuidance": "Cuando ya existan items, carrito aprobado, entrega y metodo de pago, llama prepare_order_checkout una sola vez. Si el metodo es efectivo, muestra el resumen renderizado por la tool y pide confirmacion verbal. Si el metodo es transferencia, muestra el resumen renderizado por la tool e informa que el pago queda pendiente de confirmacion manual por el equipo; no pidas comprobante, no pidas confirmacion adicional del pedido y no llames create_order. Si falla por configuracion no recuperable, escala a humano.",
           "allowedActions": ["prepare_order_checkout", "get_order_draft", "escalate_to_human"],
           "collect": ["order_checkout_presented"],
           "entryActions": [
@@ -445,10 +484,10 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
           "id": "order_confirmation",
           "name": "Confirmacion del pedido",
           "goal": "Crear el pedido despues de confirmacion del cliente.",
-          "advanceWhenFacts": [],
-          "conversationGuidance": "Si el cliente confirma claramente el resumen final, crea el pedido con customer_confirmed=true, customer_name, customer_phone y delivery_address; despues envia la secuencia order_created_customer. Si corrige datos, metodo de pago o carrito, aplica el cambio y presenta resumen actualizado. No afirmes pago recibido solo por una imagen o comprobante si el workflow no lo valida.",
+          "advanceWhenFacts": ["customer_confirmed"],
+          "conversationGuidance": "Si payment_method=transferencia, no pidas confirmacion verbal, no llames create_order y responde que el pago queda pendiente de confirmacion manual por el equipo de CJ Distribuciones; cuando el pago se confirme manualmente, el sistema notificara que el pedido fue creado. Si payment_method=efectivo y falta customer_confirmed, pide confirmacion verbal del resumen final y registrala solo cuando el cliente la entregue claramente. Con customer_confirmed=true y metodo efectivo, crea el pedido usando los facts vigentes y despues envia la secuencia order_created_customer. Si corrige datos, metodo de pago o carrito, aplica el cambio y presenta resumen actualizado. No afirmes pago recibido solo por una imagen o comprobante si el workflow no lo valida.",
           "allowedActions": ["create_order", "send_message_sequence", "get_order_draft", "set_fact", "escalate_to_human"],
-          "collect": []
+          "collect": ["customer_confirmed"]
         }
       ]
     }
@@ -487,9 +526,6 @@ BEGIN
     WHERE AgentId = @AgentId;
 END
 
-PRINT N'SeedCJDistribuciones: negocio, catalogo y agente configurados.';
+PRINT N'SeedCJDistribuciones: negocio, Mantis y agente configurados.';
 
 GO
-
-
-

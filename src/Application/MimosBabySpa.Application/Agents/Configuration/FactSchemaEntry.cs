@@ -49,11 +49,6 @@ public sealed class FactSchemaEntry
     /// </summary>
     public bool ExpireOnBusinessDayChange { get; init; }
 
-    /// <summary>
-    /// eager  → el LLM debe capturar este dato en cuanto el cliente lo mencione, sin esperar su etapa.
-    /// onDemand → se captura cuando el flujo llega a la etapa correspondiente (comportamiento por defecto).
-    /// </summary>
-    public string CaptureMode { get; init; } = "onDemand";
 
     /// <summary>
     /// Fact keys that must remain unchanged for this fact to stay valid.

@@ -30,7 +30,9 @@ public sealed class CheckoutQuoteService : ICheckoutQuoteService
         string Currency,
         string PaymentMethodKey,
         string TemplateId,
-        string ConfirmationOutcome)
+        string ConfirmationOutcome,
+        bool RequiresManualConfirmation,
+        int ManualExpirationMinutes)
     {
         public static CheckoutQuoteFingerprint From(CheckoutQuote quote) =>
             new(
@@ -44,7 +46,9 @@ public sealed class CheckoutQuoteService : ICheckoutQuoteService
                 quote.Currency,
                 quote.PaymentMethodKey,
                 quote.TemplateId,
-                quote.ConfirmationOutcome);
+                quote.ConfirmationOutcome,
+                quote.RequiresManualConfirmation,
+                quote.ManualExpirationMinutes);
     }
 }
 
@@ -69,6 +73,11 @@ public sealed record CheckoutQuote(
     IReadOnlyDictionary<string, string> SystemFactBindings,
     IReadOnlyDictionary<string, string> TemplateFactBindings,
     DateTime IssuedAtUtc,
-    DateTime ExpiresAtUtc);
+    DateTime ExpiresAtUtc)
+{
+    public bool RequiresManualConfirmation { get; init; }
+    public int ManualExpirationMinutes { get; init; } = 1440;
+    public bool RequiresPaymentLink => PayableCents > 0 && !RequiresManualConfirmation;
+};
 
 public sealed record CheckoutQuoteLineItem(string Name, decimal Price, bool IncludeInCheckoutTotal = true);

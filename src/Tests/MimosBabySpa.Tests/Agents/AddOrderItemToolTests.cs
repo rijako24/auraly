@@ -101,6 +101,36 @@ public class AddOrderItemToolTests
         capturedRequest.Quantity.Should().Be(3m);
         _commerce.Verify(c => c.UpdateItemQuantityAsync(ctx, It.IsAny<Guid>(), It.IsAny<decimal>(), It.IsAny<CancellationToken>()), Times.Never);
     }
+    [Fact]
+    public async Task ExecuteAsync_WhenShortConfirmationWouldReaddExistingProduct_ReturnsRecoverableDuplicateError()
+    {
+        var ctx = CreateContext();
+        var productId = Guid.NewGuid();
+        var existingItemId = Guid.NewGuid();
+
+        _commerce
+            .Setup(c => c.GetDraftAsync(ctx, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new OrderSnapshot(
+                Guid.NewGuid(),
+                OrderStatus.Draft,
+                "COP",
+                9800m,
+                0m,
+                0m,
+                9800m,
+                [new OrderItemSnapshot(existingItemId, productId, null, null, "PAPA FARM FRITES X 2.5K", 1m, 9800m, 9800m)]));
+
+        var tool = new AddOrderItemTool(_commerce.Object, _facts.Object);
+        ctx.LatestUserMessage = "si";
+        using var args = JsonDocument.Parse($$"""{"product_id":"{{productId}}","quantity":1}""");
+
+        var json = await tool.ExecuteAsync(args.RootElement, ctx, CancellationToken.None);
+
+        json.Should().Contain("\"ok\":false");
+        json.Should().Contain("duplicate_add_from_short_confirmation");
+        json.Should().Contain("keep_existing_cart_item");
+        _commerce.Verify(c => c.AddItemAsync(ctx, It.IsAny<AddOrderItemRequest>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
 
     [Fact]
     public async Task ExecuteAsync_WhenProductIsInactive_ReturnsRecoverableError()
@@ -113,7 +143,7 @@ public class AddOrderItemToolTests
             .ThrowsAsync(new InvalidOperationException("Product inactive."));
 
         var tool = new AddOrderItemTool(_commerce.Object, _facts.Object);
-        using var args = JsonDocument.Parse($$"""{"product_id":"{{productId}}","quantity":1}""");
+        using var args = JsonDocument.Parse($$$"""{"product_id":"{{productId}}","quantity":1}""");
 
         var json = await tool.ExecuteAsync(args.RootElement, ctx, CancellationToken.None);
 
@@ -121,6 +151,27 @@ public class AddOrderItemToolTests
         json.Should().Contain("product_inactive");
     }
 
+    [Fact]
+    public async Task ExecuteAsync_WhenRequestedQuantityExceedsStock_ReturnsRecoverableAvailableQuantityPrompt()
+    {
+        var ctx = CreateContext();
+        var productId = Guid.NewGuid();
+
+        _commerce
+            .Setup(c => c.AddItemAsync(ctx, It.IsAny<AddOrderItemRequest>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InsufficientProductStockException("Pechuga", 12m, 10m, 0m));
+
+        var tool = new AddOrderItemTool(_commerce.Object, _facts.Object);
+        using var args = JsonDocument.Parse($$"""{"product_id":"{{productId}}","quantity":12}""");
+
+        var json = await tool.ExecuteAsync(args.RootElement, ctx, CancellationToken.None);
+
+        json.Should().Contain("\"ok\":false");
+        json.Should().Contain("insufficient_product_stock");
+        json.Should().Contain("confirm_available_quantity_before_adding");
+        json.Should().Contain("available_quantity");
+        json.Should().Contain("10");
+    }
     [Fact]
     public async Task ExecuteAsync_WhenQuantityOnlyAfterSingleSelectedProduct_AddsSelectedProduct()
     {

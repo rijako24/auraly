@@ -693,7 +693,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "required": false,
       "source": "user",
       "scope": "request",
-      "captureMode": "eager",
       "aliases": [
         "regalo",
         "compartir",
@@ -707,16 +706,16 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "key": "order_finalized",
       "role": "order.finalized",
       "label": "cliente finalizo el carrito",
-      "type": "string",
+      "type": "boolean",
       "required": true,
       "source": "user",
       "scope": "request",
-      "captureMode": "onDemand",
       "aliases": [
         "finalizar",
-        "cerrar_pedido",
-        "no_agregar_mas",
-        "nada_mas",
+        "cerrar pedido",
+        "no agregar mas",
+        "nada mas",
+        "solo eso",
         "listo"
       ],
       "retentionDays": 1
@@ -729,7 +728,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "required": false,
       "source": "user",
       "scope": "request",
-      "captureMode": "eager",
       "aliases": [
         "regalo",
         "tula",
@@ -747,7 +745,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "source": "system",
       "defaultValue": "Valledupar",
       "scope": "request",
-      "captureMode": "eager",
       "aliases": [
         "ciudad",
         "municipio",
@@ -763,7 +760,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "required": true,
       "source": "user",
       "scope": "request",
-      "captureMode": "eager",
       "aliases": [
         "direccion",
         "domicilio",
@@ -780,7 +776,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "required": true,
       "source": "user",
       "scope": "customer",
-      "captureMode": "eager",
       "aliases": [
         "telefono",
         "celular",
@@ -797,7 +792,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "required": true,
       "source": "user",
       "scope": "customer",
-      "captureMode": "eager",
       "aliases": [
         "nombre",
         "cliente",
@@ -814,7 +808,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "required": true,
       "source": "user",
       "scope": "request",
-      "captureMode": "eager",
       "aliases": [
         "efectivo",
         "transferencia"
@@ -825,11 +818,36 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "key": "order_checkout_presented",
       "role": "order.checkout_presented",
       "label": "resumen presentado",
-      "type": "string",
+      "type": "boolean",
       "required": false,
       "source": "system",
       "scope": "request",
       "retentionDays": 1
+    },
+    {
+      "key": "customer_confirmed",
+      "role": "confirmation.verbal",
+      "label": "confirmacion verbal del pedido",
+      "type": "boolean",
+      "required": false,
+      "source": "user",
+      "scope": "request",
+      "retentionDays": 1,
+      "dependsOn": [
+        "order_checkout_presented",
+        "order_finalized",
+        "city",
+        "delivery_address",
+        "delivery_phone",
+        "customer_name",
+        "payment_method"
+      ],
+      "aliases": [
+        "confirmo",
+        "confirmo pedido",
+        "si confirmo",
+        "confirmado"
+      ]
     },
     {
       "key": "shipping_cost",
@@ -846,7 +864,8 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
     "capability:commerce.order_create": {
       "requires": [
         "verification:checkout_no_payment_prepared",
-        "state:no_pending_checkout"
+        "state:no_pending_checkout",
+        "flag:verbal_confirmation"
       ]
     }
   },
@@ -1114,8 +1133,8 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
           "id": "order_confirmation",
           "name": "Confirmacion del pedido",
           "goal": "Confirmar el pedido ya resumido o acompanar el pago pendiente segun el metodo elegido.",
-          "advanceWhenFacts": [],
-          "conversationGuidance": "Si payment_method=efectivo y el cliente confirma claramente el resumen, crea el pedido con customer_confirmed=true, customer_name, customer_phone y delivery_address; cuando el pedido quede creado, envia la secuencia order_created_customer. Si payment_method=transferencia, espera la confirmacion automatica del webhook; si el cliente pregunta por el pago, verifica el pago. Si el cliente corrige datos, metodo de pago o carrito, aplica el cambio con la accion transversal de modificar pedido y presenta el resumen recalculado.",
+          "advanceWhenFacts": ["customer_confirmed"],
+          "conversationGuidance": "Si falta customer_confirmed, pide confirmacion verbal del resumen final y registrala solo cuando el cliente la entregue claramente. Si payment_method=efectivo y customer_confirmed=true, crea el pedido con los facts vigentes; cuando el pedido quede creado, envia la secuencia order_created_customer. Si payment_method=transferencia, espera la confirmacion automatica del webhook; si el cliente pregunta por el pago, verifica el pago. Si el cliente corrige datos, metodo de pago o carrito, aplica el cambio con la accion transversal de modificar pedido y presenta el resumen recalculado.",
           "allowedActions": [
             "create_order",
             "send_message_sequence",
@@ -1124,7 +1143,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
             "set_fact",
             "escalate_to_human"
           ],
-          "collect": []
+          "collect": ["customer_confirmed"]
         }
       ]
     }
@@ -1172,4 +1191,3 @@ WHERE AgentId = @AgentId;
 PRINT N'SeedSolorzanoAgentConfiguration: Camila reconfigurada para negocio ' + CAST(@BusinessId AS NVARCHAR(36));
 
 GO
-

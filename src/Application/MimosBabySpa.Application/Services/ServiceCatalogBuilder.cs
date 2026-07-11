@@ -7,14 +7,15 @@ namespace MimosBabySpa.Application.Services;
 
 /// <summary>
 /// Construye el markdown del catalogo de servicios para inyectar en el LLM.
-/// Agrupa por categoria, ordena por Tier (Deluxe > Premium > Base) e incluye complementos compatibles por servicio.
+/// Agrupa por categoria y ordena por Tier (Deluxe > Premium > Base).
 /// </summary>
 public static class ServiceCatalogBuilder
 {
     public static string Build(
         IReadOnlyList<ServiceInfo> services,
         IReadOnlyList<AddOnRuleInfo> addOnRules,
-        IReadOnlyList<CategoryInfo> categories)
+        IReadOnlyList<CategoryInfo> categories,
+        bool includeAddOns = false)
     {
         var sb = new StringBuilder();
         sb.AppendLine("## CATALOGO DE SERVICIOS");
@@ -23,6 +24,12 @@ public static class ServiceCatalogBuilder
         var standardServices = services
             .Where(s => s.IsActive && s.ServiceType == ServiceType.Standard)
             .ToList();
+
+        if (standardServices.Count == 0)
+        {
+            sb.AppendLine("- No se encontraron servicios principales activos para esta consulta.");
+            return sb.ToString().Trim();
+        }
 
         var categoryOrder = categories.OrderBy(c => c.DisplayOrder).ToList();
 
@@ -36,7 +43,7 @@ public static class ServiceCatalogBuilder
         {
             sb.AppendLine("### Servicios");
             foreach (var svc in uncategorized)
-                AppendService(sb, svc, addOnRules);
+                AppendService(sb, svc, addOnRules, includeAddOns);
             sb.AppendLine();
         }
 
@@ -57,7 +64,7 @@ public static class ServiceCatalogBuilder
             sb.AppendLine();
 
             foreach (var svc in inCategory)
-                AppendService(sb, svc, addOnRules);
+                AppendService(sb, svc, addOnRules, includeAddOns);
 
             sb.AppendLine();
         }
@@ -76,6 +83,13 @@ public static class ServiceCatalogBuilder
         var standardServices = services
             .Where(s => s.IsActive && s.ServiceType == ServiceType.Standard)
             .ToList();
+
+        if (standardServices.Count == 0)
+        {
+            sb.AppendLine("- No se encontraron categorias con servicios principales activos.");
+            return sb.ToString().Trim();
+        }
+
         var categoryOrder = categories.OrderBy(c => c.DisplayOrder).ToList();
 
         foreach (var cat in categoryOrder)
@@ -122,7 +136,7 @@ public static class ServiceCatalogBuilder
         sb.AppendLine($"- **{name}**: {description}");
     }
 
-    private static void AppendService(StringBuilder sb, ServiceInfo svc, IReadOnlyList<AddOnRuleInfo> addOnRules)
+    private static void AppendService(StringBuilder sb, ServiceInfo svc, IReadOnlyList<AddOnRuleInfo> addOnRules, bool includeAddOns)
     {
         var price = svc.Price.ToString("N0", CultureInfo.InvariantCulture);
         var effectivePrice = svc.EffectivePrice?.ToString("N0", CultureInfo.InvariantCulture);
@@ -149,6 +163,9 @@ public static class ServiceCatalogBuilder
                 sb.AppendLine($"  - {item.Name}: {item.Description} (${itemPrice})");
             }
         }
+
+        if (!includeAddOns)
+            return;
 
         var compatibleAddOns = GetCompatibleAddOns(svc, addOnRules);
         if (compatibleAddOns.Count == 0)
@@ -184,4 +201,3 @@ public static class ServiceCatalogBuilder
         return string.Equals(rule.CompatibleWithServiceName, svc.Name, StringComparison.OrdinalIgnoreCase);
     }
 }
-

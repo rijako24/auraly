@@ -132,7 +132,7 @@ public class AgentTurnResponseComposerTests
     }
 
     [Fact]
-    public void Compose_RequiredFragment_PrependsWhenTokenMissing()
+    public void Compose_RequiredFragment_UsesOnlyRenderedTemplateWhenTokenMissing()
     {
         var config = new AgentConfig
         {
@@ -160,7 +160,7 @@ public class AgentTurnResponseComposerTests
         var result = composer.Compose(config, [], "¿Confirmas?", fragments);
 
         result.Should().StartWith("- 09:00-09:45");
-        result.Should().EndWith("¿Confirmas?");
+        result.Should().NotContain("Confirmas");
     }
 
     [Fact]
@@ -184,7 +184,7 @@ public class AgentTurnResponseComposerTests
     }
 
     [Fact]
-    public void Compose_PrependsWhenTokenMissing()
+    public void Compose_RequiredCheckoutFragment_UsesOnlyRenderedTemplateWhenTokenMissing()
     {
         var composer = CreateComposer();
         const string token = "{{CHECKOUT:xyz789}}";
@@ -200,6 +200,6 @@ public class AgentTurnResponseComposerTests
         var result = composer.Compose(ConfigWithCheckoutTemplate, [], "¿Confirmas?", fragments);
 
         result.Should().StartWith("TOTAL: $50,000");
-        result.Should().EndWith("¿Confirmas?");
+        result.Should().NotContain("Confirmas");
     }
 }

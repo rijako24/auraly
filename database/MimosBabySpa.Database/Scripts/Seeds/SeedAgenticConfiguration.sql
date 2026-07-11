@@ -380,7 +380,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "type": "string",
       "required": true,
       "source": "user",
-      "captureMode": "eager",
       "scope": "customer",
       "aliases": [
         "nombre bebe",
@@ -394,7 +393,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "type": "number",
       "required": true,
       "source": "user",
-      "captureMode": "eager",
       "scope": "customer",
       "retentionDays": 7,
       "aliases": [
@@ -410,7 +408,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "type": "date",
       "required": false,
       "source": "user",
-      "captureMode": "onDemand",
       "scope": "customer",
       "aliases": [
         "fecha de nacimiento",
@@ -430,7 +427,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "scope": "request",
       "retentionDays": 7,
       "valueSource": "catalog",
-      "captureMode": "eager",
       "expireOnBusinessDayChange": true
     },
     {
@@ -442,7 +438,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "source": "user",
       "scope": "request",
       "retentionDays": 7,
-      "captureMode": "eager",
       "dependsOn": [
         "service"
       ],
@@ -465,7 +460,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         "hoy",
         "manana"
       ],
-      "captureMode": "eager",
       "expireOnBusinessDayChange": true
     },
     {
@@ -481,7 +475,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         "hora",
         "horario"
       ],
-      "captureMode": "eager",
       "expireOnBusinessDayChange": true
     },
     {
@@ -543,8 +536,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         "cliente",
         "a nombre de",
         "mi nombre"
-      ],
-      "captureMode": "onDemand"
+      ]
     },
     {
       "key": "customer_phone",
@@ -572,8 +564,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "aliases": [
         "email",
         "correo"
-      ],
-      "captureMode": "eager"
+      ]
     },
     {
       "key": "payment_method",
@@ -584,6 +575,31 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "source": "system",
       "scope": "request",
       "expireOnBusinessDayChange": true
+    },
+    {
+      "key": "customer_confirmed",
+      "role": "confirmation.verbal",
+      "label": "confirmacion verbal del cliente",
+      "type": "boolean",
+      "required": false,
+      "source": "user",
+      "scope": "request",
+      "retentionDays": 1,
+      "dependsOn": [
+        "service",
+        "add_ons",
+        "desired_date",
+        "desired_time",
+        "customer_name",
+        "baby_birth_date",
+        "fixed_schedule_label"
+      ],
+      "aliases": [
+        "confirmo",
+        "confirmo reserva",
+        "si confirmo",
+        "confirmado"
+      ]
     }
   ],
   "guards": {
@@ -592,7 +608,8 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         "verification:availability_checked",
         "verification:customer_identified",
         "verification:checkout_no_payment_prepared",
-        "state:no_pending_checkout"
+        "state:no_pending_checkout",
+        "flag:verbal_confirmation"
       ]
     }
   },
@@ -867,9 +884,10 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
           "name": "Cierre con anticipo",
           "goal": "Preparar el resumen, generar el link de anticipo y esperar confirmacion automatica de pago.",
           "advanceWhenFacts": [],
-          "conversationGuidance": "Prepara checkout cuando los facts requeridos esten completos. Antes de pago aprobado o reserva creada por herramienta, habla de solicitud, datos o link pendiente; no digas tu reserva, cambie tu reserva ni reserva confirmada. Si el cliente pide cambiar la hora o fecha sin dar el nuevo valor, pregunta a que hora o fecha actualizas la solicitud. Nunca construyas, copies ni reutilices un resumen o link del historial. Si el cliente pide resumen, link, anticipo o actualizar resumen, usa los facts actuales y llama prepare_checkout. Si el cliente cambia fecha u hora antes del pago, actualiza el fact con set_fact o con el resultado de check_availability, valida disponibilidad con servicio, fecha y hora actuales y despues llama prepare_checkout si ya habia resumen o link pendiente. Si cambia servicio o complementos antes del pago, actualiza primero el fact correspondiente; para quitar complementos registra add_ons=ninguno. Presenta como vigente solo el resumen o link devuelto por la herramienta.",
+          "conversationGuidance": "Prepara checkout cuando los facts requeridos esten completos. Antes de pago aprobado o reserva creada por herramienta, habla de solicitud, datos o link pendiente; no digas tu reserva, cambie tu reserva ni reserva confirmada. Si el cliente pide cambiar la hora o fecha sin dar el nuevo valor, pregunta a que hora o fecha actualizas la solicitud. Nunca construyas, copies ni reutilices un resumen o link del historial. Si el cliente pide resumen, link, anticipo o actualizar resumen, usa los facts actuales y llama prepare_checkout. Si el cliente cambia fecha u hora antes del pago, actualiza el fact con set_fact o con el resultado de check_availability, valida disponibilidad con servicio, fecha y hora actuales y despues llama prepare_checkout si ya habia resumen o link pendiente. Si cambia servicio o complementos antes del pago, actualiza primero el fact correspondiente; para quitar complementos registra add_ons=ninguno. Presenta como vigente solo el resumen o link devuelto por la herramienta. Si el checkout no requiere pago, pide confirmacion verbal del resumen y crea la reserva solo cuando customer_confirmed=true venga del ultimo mensaje del cliente.",
           "allowedActions": [
             "prepare_checkout",
+            "create_reservation",
             "verify_payment",
             "get_service_catalog",
             "resolve_service_selection",
@@ -885,7 +903,8 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
             "desired_date",
             "desired_time",
             "customer_name",
-            "baby_birth_date"
+            "baby_birth_date",
+            "customer_confirmed"
           ],
           "entryActions": [
             {

@@ -3,6 +3,7 @@ using System.Text.Json;
 using MimosBabySpa.Application.Agents.Facts;
 using MimosBabySpa.Application.Agents.Gating;
 using MimosBabySpa.Application.Agents.Templates;
+using MimosBabySpa.Application.Agents.Tools;
 using MimosBabySpa.Application.Configuration;
 using MimosBabySpa.Application.Services;
 using MimosBabySpa.Domain.Repositories;
@@ -12,7 +13,7 @@ namespace MimosBabySpa.Application.Agents.Tools.Impl;
 /// <summary>
 /// Consulta de disponibilidad - solo lectura. No crea ni modifica reservas.
 /// </summary>
-[AgentToolMetadata("check_availability", RequiredTemplateIds = new[] { "availability_slots" })]
+[AgentToolMetadata("check_availability", Capabilities = new[] { ToolCapabilities.AvailabilityCheck }, RequiredTemplateIds = new[] { "availability_slots" })]
 public sealed class CheckAvailabilityTool : IAgentTool
 {
 private readonly IAvailabilityService _availability;
@@ -39,6 +40,8 @@ private readonly IAvailabilityService _availability;
     }
 
     public string Name => "check_availability";
+
+    public IReadOnlyList<string> Capabilities => [ToolCapabilities.AvailabilityCheck];
 
     public IReadOnlyList<string> RequiredTemplateIds => ["availability_slots"];
 

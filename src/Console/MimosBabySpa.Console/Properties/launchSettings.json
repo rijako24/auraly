@@ -1,0 +1,26 @@
+{
+    "profiles":  {
+                     "CJ Distribuciones":  {
+                                               "commandName":  "Project",
+                                               "environmentVariables":  {
+                                                                            "TALKIO_CONSOLE_BUSINESS_ID":  "C1D15A00-0000-0000-0000-000000000010",
+                                                                            "TALKIO_CONSOLE_BUSINESS_NAME":  "CJ Distribuciones",
+                                                                            "TALKIO_CONSOLE_AGENT_ID":  "C1D15A00-0000-0000-0000-000000000020",
+                                                                            "TALKIO_CONSOLE_AGENT_NAME":  "Asistente CJ Distribuciones",
+                                                                            "TALKIO_CONSOLE_AGENT_DISPLAY_NAME":  "CJ",
+                                                                            "TALKIO_CONSOLE_AGENT_ALIASES":  "Asistente CJ Distribuciones;CJ"
+                                                                        }
+                                           },
+                     "Luis Bot":  {
+                                      "commandName":  "Project",
+                                      "environmentVariables":  {
+                                                                   "TALKIO_CONSOLE_BUSINESS_ID":  "BABA0000-0000-0000-0000-000000000001",
+                                                                   "TALKIO_CONSOLE_BUSINESS_NAME":  "Luis Petit Profesional Barber",
+                                                                   "TALKIO_CONSOLE_AGENT_ID":  "BABA0000-0000-0000-0000-000000000002",
+                                                                   "TALKIO_CONSOLE_AGENT_NAME":  "Luis",
+                                                                   "TALKIO_CONSOLE_AGENT_DISPLAY_NAME":  "Luis",
+                                                                   "TALKIO_CONSOLE_AGENT_ALIASES":  "Luis Petit"
+                                                               }
+                                  }
+                 }
+}

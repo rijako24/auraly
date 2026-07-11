@@ -190,7 +190,7 @@ export interface AgentOperatingHoursSettings {
 }
 export interface AgentCommerceSettings {
   enabled?: boolean;
-  provider?: "Local" | "Siigo" | "CustomHttp";
+  provider?: "Local" | "Siigo" | "CustomHttp" | "Mantis";
 }
 
 export interface AgentSettings {

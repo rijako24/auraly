@@ -44,7 +44,7 @@ public class ServiceCatalogBuilderTests
             }
         };
 
-        var catalog = ServiceCatalogBuilder.Build(services, addOnRules, []);
+        var catalog = ServiceCatalogBuilder.Build(services, addOnRules, [], includeAddOns: true);
 
         catalog.Should().Contain("Plan Marineritos");
         catalog.Should().Contain("Complementos compatibles:");
@@ -71,12 +71,43 @@ public class ServiceCatalogBuilderTests
             }
         };
 
-        var catalog = ServiceCatalogBuilder.Build(services, [], []);
+        var catalog = ServiceCatalogBuilder.Build(services, [], [], includeAddOns: true);
 
         catalog.Should().Contain("Taller Grupal - 3 dias/semana");
         catalog.Should().Contain("Complementos compatibles: ninguno");
     }
 
+
+    [Fact]
+    public void Build_WhenNoStandardServices_ReturnsExplicitEmptyCatalogMessage()
+    {
+        var services = new List<ServiceInfo>
+        {
+            new()
+            {
+                Name = "Mascarilla de carbono",
+                Description = "Adicional para cortes",
+                IsActive = true,
+                ServiceType = ServiceType.AddOn
+            }
+        };
+
+        var catalog = ServiceCatalogBuilder.Build(services, [], []);
+
+        catalog.Should().Contain("## CATALOGO DE SERVICIOS");
+        catalog.Should().Contain("No se encontraron servicios principales activos para esta consulta.");
+        catalog.Should().NotBe("## CATALOGO DE SERVICIOS");
+    }
+
+    [Fact]
+    public void BuildCategoryOverview_WhenNoStandardServices_ReturnsExplicitEmptyCategoriesMessage()
+    {
+        var catalog = ServiceCatalogBuilder.BuildCategoryOverview([], []);
+
+        catalog.Should().Contain("## CATEGORIAS DE SERVICIOS");
+        catalog.Should().Contain("No se encontraron categorias con servicios principales activos.");
+        catalog.Should().NotBe("## CATEGORIAS DE SERVICIOS");
+    }
     [Fact]
     public void BuildCategoryOverview_ListsOnlyStandardServiceCategories()
     {

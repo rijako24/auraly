@@ -82,6 +82,7 @@ public sealed class SetFactTool : IAgentTool
         if (!FactKeyNormalizer.TryNormalizeValue(rawValue, out var value))
             return ToolResultHelper.Error(ToolErrorCodes.InvalidValue, "Fact value cannot be empty.", recoverable: true);
 
+
         if (schemaEntry is not null)
         {
             var typeError = ValidateType(key, value, schemaEntry.Type);
@@ -108,6 +109,13 @@ public sealed class SetFactTool : IAgentTool
             && string.Equals(previousValue.Trim(), value.Trim(), StringComparison.OrdinalIgnoreCase))
         {
             return ToolResultHelper.Ok(new { key, value, unchanged = true, storage = "fact_unchanged" });
+        }
+
+        if (schemaEntry is not null)
+        {
+            var missingDependencies = MissingDependencies(schemaEntry, ctx);
+            if (missingDependencies.Count > 0)
+                return ToolResultHelper.MissingPrerequisites([.. missingDependencies]);
         }
 
         if (key.Equals(ConversationFactKeys.AddOns, StringComparison.OrdinalIgnoreCase))
@@ -167,9 +175,10 @@ public sealed class SetFactTool : IAgentTool
 
     private Task TryRecordCustomerIdentifiedAsync(AgentToolContext ctx)
     {
-        var name = ConversationFactKeys.Get(ctx.Facts, ConversationFactKeys.CustomerName)
+        var name = ctx.GetFactByRole("customer.name")
+            ?? ConversationFactKeys.Get(ctx.Facts, ConversationFactKeys.CustomerName)
             ?? ctx.Conversation.CustomerName;
-        var phone = ConversationContactPhone.Resolve(ctx.Facts, ctx.ChannelPhone);
+        var phone = ConversationContactPhone.Resolve(ctx.Facts, ctx.ChannelPhone, ctx.Config);
 
         if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(phone))
             return Task.CompletedTask;
@@ -202,6 +211,17 @@ public sealed class SetFactTool : IAgentTool
             or JsonValueKind.False;
     }
 
+    private static IReadOnlyList<string> MissingDependencies(FactSchemaEntry entry, AgentToolContext ctx)
+    {
+        if (entry.DependsOn.Count == 0)
+            return [];
+
+        return entry.DependsOn
+            .Where(dependency => !ctx.Facts.TryGetValue(dependency, out var dependencyValue)
+                || string.IsNullOrWhiteSpace(dependencyValue))
+            .ToArray();
+    }
+
     /// <summary>
     /// Valida el valor contra el tipo declarado en factSchema.
     /// Devuelve null si pasa la validacion o un JSON de error si no.
@@ -226,8 +246,10 @@ public sealed class SetFactTool : IAgentTool
             "time" when !System.TimeSpan.TryParse(value, out _) =>
                 ToolResultHelper.Error(ToolErrorCodes.InvalidType, $"'{key}' must be a time in HH:mm format, got '{value}'.", recoverable: true),
 
+            "boolean" or "bool" when !bool.TryParse(value, out _) =>
+                ToolResultHelper.Error(ToolErrorCodes.InvalidType, $"'{key}' must be a boolean, got '{value}'.", recoverable: true),
+
             _ => null
         };
     }
 }
-

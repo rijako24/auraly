@@ -37,10 +37,6 @@ public sealed class AgentPromptComposer : IPromptComposer
         var activeFlow = input.Session is null ? input.Config.Flow : ActiveFlowResolver.Resolve(input.Config, input.Session);
         var currentStage = _flowStageDetector.DetectCurrentStage(activeFlow, input.Session);
 
-        var eagerBlock = BuildEagerCaptureBlock(input.Config, input.Session, input.EnabledTools);
-        if (!string.IsNullOrWhiteSpace(eagerBlock))
-            blocks.Add(eagerBlock);
-
         var temporalBlock = input.Temporal.ToPromptBlock();
         if (!string.IsNullOrWhiteSpace(temporalBlock))
             blocks.Add(temporalBlock);
@@ -276,61 +272,6 @@ public sealed class AgentPromptComposer : IPromptComposer
     }
 
     /// <summary>
-    /// Emite una instruccion permanente con los facts que deben capturarse de inmediato
-    /// (captureMode=eager) aunque el flujo aun no haya llegado a la etapa que los solicita.
-    /// Solo lista los facts de usuario que todavia no tienen valor.
-    /// </summary>
-    internal static string BuildEagerCaptureBlock(AgentConfig config, AgentToolContext? session, IReadOnlyList<IAgentTool>? enabledTools = null)
-    {
-        var activeFlow = session is null ? config.Flow : ActiveFlowResolver.Resolve(config, session);
-        var flowAdvancingFacts = activeFlow.Stages
-            .SelectMany(stage => stage.AdvanceWhenFacts)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
-
-        var eagerMissing = config.FactSchema
-            .Where(e => e.CaptureMode.Equals("eager", StringComparison.OrdinalIgnoreCase)
-                     && e.Source.Equals("user", StringComparison.OrdinalIgnoreCase))
-            .Where(e => e.Required || flowAdvancingFacts.Contains(e.Key))
-            .Where(e =>
-            {
-                if (session is null) return true;
-                return !session.Facts.TryGetValue(e.Key, out var raw) || string.IsNullOrWhiteSpace(raw);
-            })
-            .ToList();
-
-        if (eagerMissing.Count == 0)
-            return string.Empty;
-
-        var captureTools = (enabledTools ?? [])
-            .Where(t => t.Capabilities.Contains(ToolCapabilities.FactWrite, StringComparer.OrdinalIgnoreCase))
-            .Select(t => t.Name)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
-
-        var lines = new List<string>
-        {
-            "## REGLA TRANSVERSAL: CAPTURA INMEDIATA",
-            "- Aplica en cualquier etapa antes de resolver el objetivo actual.",
-            "- Si el ultimo mensaje trae datos utiles, captura solo datos expresados o confirmados por el cliente.",
-            "- Para service usa resolve_service_selection con el texto literal del cliente.",
-            "- Para los demas facts usa set_fact con el nombre de fact listado entre parentesis.",
-            "- Manten objetivos internos y marcadores de estado fuera de facts de usuario.",
-            "- Despues de guardar los facts presentes, continua la etapa actual."
-        };
-
-        if (captureTools.Count > 0)
-            lines.Add($"- herramientas de captura disponibles: {string.Join(", ", captureTools)}");
-
-        lines.Add("- datos faltantes que puedes capturar ahora:");
-        foreach (var entry in eagerMissing)
-        {
-            var label = string.IsNullOrWhiteSpace(entry.Label) ? entry.Key : entry.Label;
-            lines.Add($"  - {label} ({entry.Key})");
-        }
-        return string.Join(Environment.NewLine, lines);
-    }
-
-    /// <summary>
     /// Compara los facts actuales contra el snapshot guardado al completar etapas anteriores.
     /// Si algun fact relevante cambio, inyecta un bloque ATENCION para que el LLM rehaga las acciones dependientes.
     /// Recibe el currentStage ya detectado para evitar una segunda llamada a DetectCurrentStage.
@@ -493,12 +434,15 @@ public sealed class AgentPromptComposer : IPromptComposer
             .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        return string.Join(Environment.NewLine,
-        [
+        var lines = new List<string>
+        {
             "## HERRAMIENTAS DE ESTE TURNO",
             string.Join(", ", names),
             "- Si este turno ya incluye un resultado de herramienta, usa esa salida como fuente vigente para responder; no repitas la misma herramienta salvo que falte informacion necesaria."
-        ]);
+        };
+
+
+        return string.Join(Environment.NewLine, lines);
     }
 
     private static PaymentTransaction? ResolvePaymentForContext(
@@ -530,5 +474,3 @@ public sealed class AgentPromptComposer : IPromptComposer
         sender.Equals("bot", StringComparison.OrdinalIgnoreCase) ||
         sender.Equals("assistant", StringComparison.OrdinalIgnoreCase);
 }
-
-

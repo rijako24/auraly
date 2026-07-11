@@ -77,7 +77,7 @@ private readonly IReservationService _reservations;
         var customerName = Coalesce(arguments, "customer_name",
             GetFact(roles, ctx.Facts, "customer.name", ConversationFactKeys.CustomerName) ?? ctx.Conversation.CustomerName);
         var customerPhone = Coalesce(arguments, "customer_phone",
-            GetFact(roles, ctx.Facts, "customer.phone", ConversationFactKeys.CustomerPhone) ?? ConversationContactPhone.Resolve(ctx.Facts, ctx.ChannelPhone));
+            GetFact(roles, ctx.Facts, "customer.phone", ConversationFactKeys.CustomerPhone) ?? ConversationContactPhone.Resolve(ctx.Facts, ctx.ChannelPhone, ctx.Config));
         var customerEmail = Coalesce(arguments, "customer_email",
             GetFact(roles, ctx.Facts, "customer.email", ConversationFactKeys.CustomerEmail) ?? ctx.Conversation.CustomerEmail);
         var addOns = Coalesce(arguments, "add_ons", GetFact(roles, ctx.Facts, "booking.addons", ConversationFactKeys.AddOns));

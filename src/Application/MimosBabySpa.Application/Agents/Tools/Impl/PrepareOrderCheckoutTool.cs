@@ -153,7 +153,28 @@ private readonly IUnitOfWork _unitOfWork;
 
         string? paymentLink = null;
         Guid? paymentTransactionId = null;
-        if (quote.PayableCents > 0)
+        if (quote.RequiresManualConfirmation)
+        {
+            var manualResult = await _checkoutPayments.EnsureManualPaymentAsync(
+                ctx,
+                quote,
+                checkoutSnapshotJson,
+                cancellationToken);
+            if (!manualResult.Success)
+                return ToolResultHelper.Error("manual_payment_failed", manualResult.ErrorMessage ?? "Failed to prepare manual payment confirmation.");
+
+            if (manualResult.Payment is not null && order.PaymentTransactionId != manualResult.Payment.PaymentTransactionId)
+            {
+                order.PaymentTransactionId = manualResult.Payment.PaymentTransactionId;
+                order.UpdatedAt = DateTime.UtcNow;
+                await _unitOfWork.OrderDrafts.UpdateAsync(order, cancellationToken);
+                await _unitOfWork.SaveChangesAsync(cancellationToken);
+            }
+
+            paymentTransactionId = manualResult.Payment?.PaymentTransactionId;
+            templateData["payment_pending_manual_confirmation"] = true;
+        }
+        else if (quote.PayableCents > 0)
         {
             var linkResult = await _checkoutPayments.EnsurePaymentLinkAsync(
                 ctx,
@@ -218,7 +239,7 @@ private readonly IUnitOfWork _unitOfWork;
             checkoutDependencies,
             ttl: null);
 
-        if (quote.PayableCents <= 0)
+        if (quote.PayableCents <= 0 && !quote.RequiresManualConfirmation)
         {
             _verifications.Record(
                 ctx,
@@ -233,6 +254,7 @@ private readonly IUnitOfWork _unitOfWork;
             checkout_kind = quote.CheckoutKind.ToString(),
             template_id = quote.TemplateId,
             payment_required = quote.PayableCents > 0,
+            payment_pending_manual_confirmation = quote.RequiresManualConfirmation,
             payment_transaction_id = paymentTransactionId,
             payment_link = paymentLink,
             order_draft_id = order.OrderDraftId,
@@ -277,7 +299,11 @@ private readonly IUnitOfWork _unitOfWork;
             new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
             new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
             DateTime.UtcNow,
-            DateTime.UtcNow.AddMinutes(30));
+            DateTime.UtcNow.AddMinutes(30))
+        {
+            RequiresManualConfirmation = paymentSelection.RequiresManualConfirmation,
+            ManualExpirationMinutes = paymentSelection.ManualExpirationMinutes
+        };
     }
 
     private static Dictionary<string, object?> BuildTemplateData(

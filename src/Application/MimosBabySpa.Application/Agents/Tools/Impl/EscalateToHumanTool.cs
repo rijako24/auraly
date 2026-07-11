@@ -37,7 +37,7 @@ public sealed class EscalateToHumanTool : IAgentTool
         ToolResultHelper.TryGetString(arguments, "reason", out var reason);
         ToolResultHelper.TryGetString(arguments, "last_user_message", out var lastUserMessage);
         ctx.ConversationState.LastEscalatedAt = DateTime.UtcNow;
-        var contactPhone = ConversationContactPhone.Resolve(ctx.Facts, ctx.ChannelPhone) ?? string.Empty;
+        var contactPhone = ConversationContactPhone.Resolve(ctx.Facts, ctx.ChannelPhone, ctx.Config) ?? string.Empty;
 
         if (ctx.EscalationContacts.Count > 0)
         {

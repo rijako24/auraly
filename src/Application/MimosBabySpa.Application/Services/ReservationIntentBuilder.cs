@@ -62,7 +62,7 @@ public sealed class ReservationIntentBuilder : IReservationIntentBuilder
 
         var customerName = GetFact(roles, ctx.Facts, "customer.name", ConversationFactKeys.CustomerName)
             ?? ctx.Conversation.CustomerName;
-        var customerPhone = ConversationContactPhone.Resolve(ctx.Facts, ctx.ChannelPhone);
+        var customerPhone = ConversationContactPhone.Resolve(ctx.Facts, ctx.ChannelPhone, ctx.Config);
         var customerEmail = GetFact(roles, ctx.Facts, "customer.email", ConversationFactKeys.CustomerEmail)
             ?? ctx.Conversation.CustomerEmail;
 

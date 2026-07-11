@@ -106,6 +106,59 @@ public class SetFactToolTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_BooleanFactRejectsNonBooleanValue()
+    {
+        var ctx = CreateContext();
+        ctx.Config = new AgentConfig
+        {
+            FactSchema =
+            [
+                new FactSchemaEntry { Key = "customer_confirmed", Type = "boolean", Source = "user" }
+            ]
+        };
+
+        using var args = JsonDocument.Parse("""{"key":"customer_confirmed","value":"restaurante"}""");
+        var json = await _tool.ExecuteAsync(args.RootElement, ctx, CancellationToken.None);
+
+        json.Should().Contain("invalid_type");
+        ctx.Facts.Should().NotContainKey("customer_confirmed");
+        _facts.Verify(f => f.SetAsync(
+            It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<string>(),
+            It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_FactWithMissingDependsOnReturnsMissingPrerequisites()
+    {
+        var ctx = CreateContext();
+        ctx.Config = new AgentConfig
+        {
+            FactSchema =
+            [
+                new FactSchemaEntry
+                {
+                    Key = "customer_confirmed",
+                    Type = "boolean",
+                    Source = "user",
+                    DependsOn = ["order_checkout_presented"]
+                }
+            ]
+        };
+
+        using var args = JsonDocument.Parse("""{"key":"customer_confirmed","value":true}""");
+        var missingJson = await _tool.ExecuteAsync(args.RootElement, ctx, CancellationToken.None);
+
+        missingJson.Should().Contain("missing_prerequisites");
+        missingJson.Should().Contain("order_checkout_presented");
+        ctx.Facts.Should().NotContainKey("customer_confirmed");
+
+        ctx.Facts["order_checkout_presented"] = "true";
+        var savedJson = await _tool.ExecuteAsync(args.RootElement, ctx, CancellationToken.None);
+
+        savedJson.Should().Contain("\"ok\":true");
+        ctx.Facts["customer_confirmed"].Should().Be("true");
+    }
+    [Fact]
     public async Task ExecuteAsync_CustomerName_PersistsToConversation()
     {
         var ctx = CreateContext();
@@ -428,6 +481,29 @@ public class ConversationContactPhoneTests
     {
         ConversationContactPhone.Resolve(new Dictionary<string, string>(), "+573001234567")
             .Should().Be("+573001234567");
+    }
+    [Fact]
+    public void Resolve_UsesConfiguredCustomerPhoneRole()
+    {
+        var facts = new Dictionary<string, string>
+        {
+            ["delivery_phone"] = "3012926660"
+        };
+        var config = new AgentConfig
+        {
+            FactSchema =
+            [
+                new FactSchemaEntry
+                {
+                    Key = "delivery_phone",
+                    Role = "customer.phone",
+                    Type = "phone",
+                    Source = "user"
+                }
+            ]
+        };
+
+        ConversationContactPhone.Resolve(facts, "+573001234567", config).Should().Be("3012926660");
     }
 }
 

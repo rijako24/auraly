@@ -92,7 +92,25 @@ private readonly ReservationPricingResolver _pricing;
         string? linkUrl = null;
         PaymentTransaction? payment = null;
 
-        if (quote.PayableCents > 0)
+        if (quote.RequiresManualConfirmation)
+        {
+            var snapshotResult = BuildCheckoutSnapshot(quote, roles, ctx);
+            if (snapshotResult.Error is not null)
+                return snapshotResult.Error;
+
+            var manualResult = await _checkoutPayments.EnsureManualPaymentAsync(
+                ctx,
+                quote,
+                snapshotResult.CheckoutSnapshotJson!,
+                cancellationToken);
+
+            if (!manualResult.Success)
+                return ToolResultHelper.Error("manual_payment_failed", manualResult.ErrorMessage ?? "Failed to prepare manual payment confirmation.");
+
+            payment = manualResult.Payment;
+            templateData["payment_pending_manual_confirmation"] = true;
+        }
+        else if (quote.PayableCents > 0)
         {
             var paymentPhone = ResolveSystemFact(quote, roles, ctx.Facts, CheckoutSystemSlots.PaymentPhone);
             if (string.IsNullOrWhiteSpace(paymentPhone))
@@ -152,6 +170,7 @@ private readonly ReservationPricingResolver _pricing;
             checkout_kind = quote.CheckoutKind.ToString(),
             template_id = quote.TemplateId,
             payment_required = quote.PayableCents > 0,
+            payment_pending_manual_confirmation = quote.RequiresManualConfirmation,
             payment_transaction_id = payment?.PaymentTransactionId,
             is_booking_confirmed = false
         });
@@ -262,7 +281,11 @@ private readonly ReservationPricingResolver _pricing;
             new Dictionary<string, string>(bindings.SystemFactBindings, StringComparer.OrdinalIgnoreCase),
             new Dictionary<string, string>(bindings.TemplateFactBindings, StringComparer.OrdinalIgnoreCase),
             DateTime.UtcNow,
-            DateTime.UtcNow.AddMinutes(30));
+            DateTime.UtcNow.AddMinutes(30))
+        {
+            RequiresManualConfirmation = paymentSelection.RequiresManualConfirmation,
+            ManualExpirationMinutes = paymentSelection.ManualExpirationMinutes
+        };
 
         return (quote, null);
     }

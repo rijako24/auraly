@@ -33,7 +33,7 @@ internal static class FactValueShapeMatcher
                 System.Globalization.NumberStyles.Any,
                 System.Globalization.CultureInfo.InvariantCulture,
                 out _),
-            _ => entry?.Aliases.Count > 0 ? ContainsConfiguredAlias(entry, message) : !string.IsNullOrWhiteSpace(message)
+            _ => entry?.Aliases.Count > 0 && ContainsConfiguredAlias(entry, message)
         };
     }
 
@@ -80,7 +80,62 @@ internal static class FactValueShapeMatcher
         return entry.Aliases
             .Where(alias => !string.IsNullOrWhiteSpace(alias))
             .Select(NormalizeText)
-            .Any(alias => normalizedMessage.Contains(alias, StringComparison.Ordinal));
+            .Any(alias => normalizedMessage.Contains(alias, StringComparison.Ordinal)
+                || FuzzyTokenMatches(normalizedMessage, alias));
+    }
+
+    private static bool FuzzyTokenMatches(string normalizedMessage, string normalizedAlias)
+    {
+        var messageTokens = SplitTokens(normalizedMessage);
+        var aliasTokens = SplitTokens(normalizedAlias);
+        if (messageTokens.Length == 0 || aliasTokens.Length == 0)
+            return false;
+
+        return aliasTokens.All(aliasToken =>
+            messageTokens.Any(messageToken => IsNearToken(messageToken, aliasToken)));
+    }
+
+    private static string[] SplitTokens(string value) =>
+        value.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+    private static bool IsNearToken(string left, string right)
+    {
+        if (left.Equals(right, StringComparison.Ordinal))
+            return true;
+
+        const int MinimumFuzzyLength = 5;
+        if (left.Length < MinimumFuzzyLength || right.Length < MinimumFuzzyLength)
+            return false;
+
+        if (Math.Abs(left.Length - right.Length) > 1)
+            return false;
+
+        return LevenshteinDistance(left, right) <= 1;
+    }
+
+    private static int LevenshteinDistance(string left, string right)
+    {
+        var previous = new int[right.Length + 1];
+        var current = new int[right.Length + 1];
+
+        for (var index = 0; index <= right.Length; index++)
+            previous[index] = index;
+
+        for (var leftIndex = 1; leftIndex <= left.Length; leftIndex++)
+        {
+            current[0] = leftIndex;
+            for (var rightIndex = 1; rightIndex <= right.Length; rightIndex++)
+            {
+                var substitutionCost = left[leftIndex - 1] == right[rightIndex - 1] ? 0 : 1;
+                current[rightIndex] = Math.Min(
+                    Math.Min(current[rightIndex - 1] + 1, previous[rightIndex] + 1),
+                    previous[rightIndex - 1] + substitutionCost);
+            }
+
+            (previous, current) = (current, previous);
+        }
+
+        return previous[right.Length];
     }
 
     private static string NormalizeText(string value)
@@ -93,5 +148,4 @@ internal static class FactValueShapeMatcher
             .ToArray());
     }
 }
-
 

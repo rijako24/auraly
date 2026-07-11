@@ -224,7 +224,7 @@ private readonly IReservationService _reservations;
         ctx.ManageableReservations = [reservation];
 
         var reason = forcedReason ?? ResolveUnsupportedChangeReason(arguments, ctx, ReservationChangePolicy.From(ctx.Config?.ReservationManagement));
-        var contactPhone = ConversationContactPhone.Resolve(ctx.Facts, ctx.ChannelPhone) ?? string.Empty;
+        var contactPhone = ConversationContactPhone.Resolve(ctx.Facts, ctx.ChannelPhone, ctx.Config) ?? string.Empty;
         if (ctx.EscalationContacts.Count > 0)
         {
             try

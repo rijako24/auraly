@@ -34,6 +34,9 @@ public sealed class CommerceService : ICommerceService
         var adapterContext = await BuildContextAsync(ctx.BusinessId, ctx.AgentId, ctx.ConversationId, ctx.Config, ct);
         var adapter = _adapterFactory.Resolve(adapterContext.Provider);
         var result = await adapter.SearchProductsAsync(request, adapterContext, ct);
+        result = result.AppliedFilters is null
+            ? result with { AppliedFilters = ProductSearchAppliedFilters.From(request) }
+            : result;
         return await EnrichProductPromotionsAsync(ctx.BusinessId, result, ct);
     }
 
@@ -55,6 +58,7 @@ public sealed class CommerceService : ICommerceService
         var unitPrice = request.UnitPrice ?? product.UnitPrice;
         var existingItems = await _unitOfWork.OrderDraftItems.GetByDraftIdAsync(ctx.BusinessId, draft.OrderDraftId, ct);
         var existingItem = existingItems.FirstOrDefault(item => IsSameOrderProduct(item, product));
+        EnsureRequestedQuantityFitsStock(product, request.Quantity, existingItem?.Quantity ?? 0m);
         if (existingItem is not null)
         {
             existingItem.Quantity += request.Quantity;
@@ -258,6 +262,22 @@ public sealed class CommerceService : ICommerceService
             (!string.IsNullOrWhiteSpace(p.Sku) && CatalogSearchText.NormalizeCompact(p.Sku).Contains(normalizedInput, StringComparison.Ordinal)));
     }
 
+    private static void EnsureRequestedQuantityFitsStock(ProductReference product, decimal additionalQuantity, decimal existingCartQuantity)
+    {
+        if (!product.StockQuantity.HasValue)
+            return;
+
+        var requestedTotal = existingCartQuantity + additionalQuantity;
+        if (requestedTotal <= product.StockQuantity.Value)
+            return;
+
+        throw new InsufficientProductStockException(
+            product.Name,
+            requestedTotal,
+            product.StockQuantity.Value,
+            existingCartQuantity);
+    }
+
     private static bool IsSameOrderProduct(OrderDraftItem item, ProductReference product)
     {
         if (product.ProductId.HasValue && item.ProductId == product.ProductId)
@@ -419,7 +439,7 @@ public sealed class CommerceService : ICommerceService
     {
         draft.CustomerNameSnapshot = Coalesce(request.CustomerName, draft.CustomerNameSnapshot, ctx.Conversation.CustomerName);
         draft.CustomerEmailSnapshot = Coalesce(request.CustomerEmail, draft.CustomerEmailSnapshot, ctx.Conversation.CustomerEmail);
-        draft.CustomerPhoneSnapshot = Coalesce(request.CustomerPhone, draft.CustomerPhoneSnapshot, ConversationContactPhone.Resolve(ctx.Facts, ctx.ChannelPhone));
+        draft.CustomerPhoneSnapshot = Coalesce(request.CustomerPhone, draft.CustomerPhoneSnapshot, ConversationContactPhone.Resolve(ctx.Facts, ctx.ChannelPhone, ctx.Config));
         draft.CustomerDocumentSnapshot = Coalesce(request.CustomerDocument, draft.CustomerDocumentSnapshot, GetFact(ctx, "customer_document"));
         draft.DeliveryAddressSnapshot = Coalesce(request.DeliveryAddress, draft.DeliveryAddressSnapshot, GetFact(ctx, "delivery_address"));
         draft.Notes = Coalesce(request.Notes, draft.Notes, null);

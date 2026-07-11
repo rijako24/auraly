@@ -1,0 +1,146 @@
+FALLOS DETECTADOS EN API MANTIS
+
+Endpoint:
+POST /MantisFiccCasalinsPruWeb/rest/pwsConsultarArticuloCasalins
+
+1. Busqueda por nombre exacto devuelve paginacion pero no productos
+
+Payload enviado:
+
+{
+  "Pagina": 1,
+  "CantPag": 5,
+  "codproducto": "",
+  "Nomproducto": "PAPA FARM FRITES X 2.5K",
+  "Catproducto": "",
+  "SubCatproducto": "",
+  "Famproducto": "",
+  "Claproducto": "",
+  "Tipoproducto": ""
+}
+
+Respuesta observada:
+
+{
+  "ErrorKey": "",
+  "SDTPaginadoCasalins": {
+    "NextPage": "True",
+    "PagaSize": 5,
+    "Page": 1,
+    "PreviousPage": "False",
+    "TotalItems": 1,
+    "TotalPages": 0
+  }
+}
+
+Problema:
+La API indica TotalItems = 1, pero no retorna el arreglo SDTConArtCasalins con el producto.
+
+
+2. El mismo producto si aparece en busquedas amplias
+
+Buscando con:
+
+{
+  "Nomproducto": "PAPA"
+}
+
+La API si retorna el producto:
+
+CG29 - PAPA FARM FRITES X 2.5K
+
+Problema:
+El producto existe en Mantis, pero no se retorna cuando se busca por su nombre exacto.
+
+
+3. Busqueda por codigo no retorna el producto
+
+Payload enviado:
+
+{
+  "Pagina": 1,
+  "CantPag": 5,
+  "codproducto": "CG29",
+  "Nomproducto": "VACIO",
+  "Catproducto": "",
+  "SubCatproducto": "",
+  "Famproducto": "",
+  "Claproducto": "",
+  "Tipoproducto": ""
+}
+
+Respuesta observada:
+No retorna productos.
+
+Problema:
+El codigo CG29 existe y aparece en busqueda por nombre/familia, pero no se encuentra usando codproducto.
+
+
+4. CantPag cambia el comportamiento de forma inconsistente
+
+Caso A:
+
+{
+  "Nomproducto": "pechuga",
+  "CantPag": 5
+}
+
+Resultado:
+Retorna productos, por ejemplo:
+
+PO36 - TROZOS DE PECHUGA DE POLLO
+PO04 - BANDEJA FILETE DE PECHUGA CON HUESO
+PO08 - PECHUGA MAC POLLO
+
+Caso B:
+
+{
+  "Nomproducto": "pechuga",
+  "CantPag": 20
+}
+
+Resultado:
+Devuelve solo paginacion y no retorna productos.
+
+Problema:
+Aumentar CantPag no deberia eliminar resultados. La paginacion deberia devolver los mismos resultados o mas, no cero productos.
+
+
+5. TotalPages aparece en cero aunque hay resultados
+
+Respuesta observada:
+
+{
+  "TotalItems": 1,
+  "TotalPages": 0
+}
+
+Problema:
+Si TotalItems es mayor que cero, TotalPages deberia ser al menos 1.
+
+
+6. NextPage aparece como True aunque no viene una pagina util de productos
+
+Respuesta observada:
+
+{
+  "NextPage": "True",
+  "TotalItems": 1,
+  "TotalPages": 0
+}
+
+Problema:
+Los metadatos de paginacion son inconsistentes. NextPage, TotalItems y TotalPages no estan alineados con los productos retornados.
+
+
+RESUMEN
+
+La API de Mantis esta retornando metadatos de paginacion que indican que hay resultados, pero omite el arreglo de productos.
+
+Ademas:
+- Las busquedas exactas por nombre fallan aunque el producto existe.
+- Las busquedas por codigo fallan aunque el codigo existe.
+- CantPag cambia los resultados de forma inesperada.
+- TotalPages y NextPage son inconsistentes con TotalItems y con los productos retornados.
+
+Esto obliga al consumidor de la API a hacer busquedas amplias y filtrado local para encontrar productos que Mantis si tiene registrados.

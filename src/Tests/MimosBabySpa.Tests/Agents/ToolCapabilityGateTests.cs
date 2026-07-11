@@ -56,6 +56,8 @@ public class ToolCapabilityGateTests
         ctx.Facts[ConversationFactKeys.Service] = "Plan Marineritos";
         ctx.Facts[ConversationFactKeys.DesiredDate] = "2026-05-22";
         ctx.Facts[ConversationFactKeys.DesiredTime] = "09:00";
+        ctx.Facts["customer_confirmed"] = "true";
+        ctx.LatestUserMessage = "confirmo";
 
         _verifications.Record(
             ctx,
@@ -73,6 +75,47 @@ public class ToolCapabilityGateTests
 
     [Fact]
     public async Task EvaluateAsync_CreateReservation_WithVerifications_IsAllowed()
+    {
+        var ctx = CreateContext();
+        ctx.Facts[ConversationFactKeys.Service] = "Plan Marineritos";
+        ctx.Facts[ConversationFactKeys.DesiredDate] = "2026-05-22";
+        ctx.Facts[ConversationFactKeys.DesiredTime] = "09:00";
+        ctx.Facts["customer_confirmed"] = "true";
+        ctx.LatestUserMessage = "confirmo";
+
+        _verifications.Record(
+            ctx,
+            VerificationFactTypes.AvailabilityChecked,
+            VerificationSnapshot.FromValues(
+                new KeyValuePair<string, string>(ConversationFactKeys.Service, "Plan Marineritos"),
+                new KeyValuePair<string, string>(ConversationFactKeys.DesiredDate, "2026-05-22"),
+                new KeyValuePair<string, string>(ConversationFactKeys.DesiredTime, "09:00")),
+            VerificationTtl.AvailabilityChecked);
+
+        _verifications.Record(
+            ctx,
+            VerificationFactTypes.CustomerIdentified,
+            new Dictionary<string, string>(),
+            ttl: null);
+
+        _verifications.Record(
+            ctx,
+            VerificationFactTypes.CheckoutNoPaymentPrepared,
+            VerificationSnapshot.Of(ctx.Facts,
+                ConversationFactKeys.Service,
+                ConversationFactKeys.DesiredDate,
+                ConversationFactKeys.DesiredTime,
+                ConversationFactKeys.AddOns),
+            ttl: null);
+
+        using var args = JsonDocument.Parse("""{"customer_confirmed":true}""");
+        var result = await _gate.EvaluateAsync(_createReservationTool, args.RootElement, ctx, CancellationToken.None);
+
+        result.IsAllowed.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_CreateReservation_WithoutVerbalConfirmationFact_IsRejected()
     {
         var ctx = CreateContext();
         ctx.Facts[ConversationFactKeys.Service] = "Plan Marineritos";
@@ -107,7 +150,9 @@ public class ToolCapabilityGateTests
         using var args = JsonDocument.Parse("""{"customer_confirmed":true}""");
         var result = await _gate.EvaluateAsync(_createReservationTool, args.RootElement, ctx, CancellationToken.None);
 
-        result.IsAllowed.Should().BeTrue();
+        result.IsAllowed.Should().BeFalse();
+        result.Code.Should().Be("precondition_failed");
+        result.Reason.Should().Contain("verbal confirmation");
     }
 
     [Fact]
@@ -118,6 +163,8 @@ public class ToolCapabilityGateTests
         ctx.Facts[ConversationFactKeys.Service] = "Plan Marineritos";
         ctx.Facts[ConversationFactKeys.DesiredDate] = "2026-05-22";
         ctx.Facts[ConversationFactKeys.DesiredTime] = "09:00";
+        ctx.Facts["customer_confirmed"] = "true";
+        ctx.LatestUserMessage = "confirmo";
 
         _verifications.Record(
             ctx,
@@ -159,6 +206,8 @@ public class ToolCapabilityGateTests
         ctx.Facts[ConversationFactKeys.Service] = "Plan Marineritos";
         ctx.Facts[ConversationFactKeys.DesiredDate] = "2026-05-22";
         ctx.Facts[ConversationFactKeys.DesiredTime] = "09:00";
+        ctx.Facts["customer_confirmed"] = "true";
+        ctx.LatestUserMessage = "confirmo";
 
         _verifications.Record(
             ctx,
@@ -560,6 +609,17 @@ public class ToolCapabilityGateTests
         AgentId = Guid.NewGuid(),
         BusinessId = Guid.NewGuid(),
         EnabledToolNames = ["create_reservation"],
+        FactSchema =
+        [
+            new FactSchemaEntry
+            {
+                Key = "customer_confirmed",
+                Role = "confirmation.verbal",
+                Type = "boolean",
+                Source = "user",
+                Aliases = ["confirmo"]
+            }
+        ],
         Guards = new Dictionary<string, MimosBabySpa.Application.Agents.Configuration.GuardDefinition>(StringComparer.OrdinalIgnoreCase)
         {
             ["capability:reservation.create"] = new()
@@ -569,7 +629,8 @@ public class ToolCapabilityGateTests
                     "verification:availability_checked",
                     "verification:customer_identified",
                     "verification:checkout_no_payment_prepared",
-                    "state:no_pending_checkout"
+                    "state:no_pending_checkout",
+                    "flag:verbal_confirmation"
                 ]
             }
         }

@@ -50,7 +50,7 @@ public sealed class SiigoCommerceAdapter : ICommerceAdapter
             filtered = cached;
         }
 
-        return new ProductSearchResult(filtered, "siigo", (response?.Pagination?.TotalResults ?? 0) > pageSize);
+        return new ProductSearchResult(filtered, "siigo", (response?.Pagination?.TotalResults ?? 0) > pageSize, ProductSearchAppliedFilters.From(request));
     }
 
     public async Task<ProductReference?> GetProductAsync(AddOrderItemRequest request, CommerceAdapterContext ctx, CancellationToken ct = default)
@@ -262,7 +262,10 @@ public sealed class SiigoCommerceAdapter : ICommerceAdapter
              || Contains(p.Code, query)
              || Contains(p.Description, query)
              || Contains(p.AccountGroup?.Name, query))
-            && (string.IsNullOrWhiteSpace(category) || Contains(p.AccountGroup?.Name, category)));
+            && MatchesFilter(p.AccountGroup?.Name, category)
+            && MatchesFilter(p.AccountGroup?.Name, request.Family)
+            && MatchesFilter(p.AccountGroup?.Name, request.Subcategory)
+            && MatchesFilter(p.AccountGroup?.Name, request.ProductClass));
     }
 
     private static ProductReference Map(SiigoProduct product, int priceListPosition)
@@ -293,6 +296,8 @@ public sealed class SiigoCommerceAdapter : ICommerceAdapter
 
     private static IntegrationConnection RequireConnection(CommerceAdapterContext ctx) =>
         ctx.Connection ?? throw new InvalidOperationException("Siigo requires a commerce connection.");
+    private static bool MatchesFilter(string? value, string? filter) =>
+        string.IsNullOrWhiteSpace(filter) || Contains(value, filter);
 
     private static bool Contains(string? value, string term) =>
         !string.IsNullOrWhiteSpace(value) && value.Contains(term, StringComparison.OrdinalIgnoreCase);

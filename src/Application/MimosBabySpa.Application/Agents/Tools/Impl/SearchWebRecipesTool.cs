@@ -1,4 +1,6 @@
 using System.Net;
+using System.Globalization;
+using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
@@ -72,6 +74,7 @@ public sealed partial class SearchWebRecipesTool : IAgentTool
 
             var html = await response.Content.ReadAsStringAsync(timeout.Token);
             var results = ParseDuckDuckGoResults(html, limit);
+            var catalogSearchQueries = BuildCatalogSearchQueries(ingredient, results);
 
             return ToolResultHelper.Ok(new
             {
@@ -79,7 +82,8 @@ public sealed partial class SearchWebRecipesTool : IAgentTool
                 source = "duckduckgo_html",
                 count = results.Count,
                 results,
-                usage_guidance = "Presenta maximo dos ideas breves y conserva los enlaces/fuentes devueltos. Si no hay detalle suficiente, invita a abrir el enlace o pide permiso para buscar otra receta."
+                catalog_search_queries = catalogSearchQueries,
+                usage_guidance = "Presenta maximo dos ideas breves y conserva los enlaces/fuentes devueltos. Para vender ingredientes, usa catalog_search_queries con search_products; no concluyas disponibilidad de catalogo desde la receta."
             });
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
@@ -164,6 +168,95 @@ public sealed partial class SearchWebRecipesTool : IAgentTool
         var decoded = WebUtility.HtmlDecode(TagRegex().Replace(value, " "));
         return WhitespaceRegex().Replace(decoded, " ").Trim();
     }
+    private static IReadOnlyList<string> BuildCatalogSearchQueries(
+        string ingredient,
+        IReadOnlyList<WebRecipeSearchResult> results)
+    {
+        var queries = new List<string>();
+        AddCatalogQueryCandidates(queries, ingredient);
+
+        foreach (var result in results)
+        {
+            AddCatalogQueryCandidates(queries, result.Title);
+            if (!string.IsNullOrWhiteSpace(result.Snippet))
+                AddCatalogQueryCandidates(queries, result.Snippet);
+        }
+
+        return queries
+            .Where(query => query.Length >= 3)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(8)
+            .ToList();
+    }
+
+    private static void AddCatalogQueryCandidates(List<string> queries, string text)
+    {
+        var tokens = TokenizeCatalogQuery(text).ToArray();
+        if (tokens.Length == 0)
+            return;
+
+        for (var i = 0; i < tokens.Length - 1; i++)
+        {
+            AddQuery(queries, $"{tokens[i]} {tokens[i + 1]}");
+            AddQuery(queries, $"{Singularize(tokens[i])} {Singularize(tokens[i + 1])}");
+        }
+
+        foreach (var token in tokens)
+        {
+            AddQuery(queries, token);
+            AddQuery(queries, Singularize(token));
+        }
+    }
+
+    private static IEnumerable<string> TokenizeCatalogQuery(string text)
+    {
+        var normalized = RemoveDiacritics(text).ToLowerInvariant();
+        foreach (var token in Regex.Split(normalized, @"[^a-z0-9]+"))
+        {
+            if (token.Length < 3 || CatalogQueryStopWords.Contains(token))
+                continue;
+
+            yield return token;
+        }
+    }
+
+    private static string Singularize(string token)
+    {
+        if (token.Length > 4 && token.EndsWith("es", StringComparison.Ordinal))
+            return token[..^2];
+
+        if (token.Length > 3 && token.EndsWith('s'))
+            return token[..^1];
+
+        return token;
+    }
+
+    private static void AddQuery(List<string> queries, string query)
+    {
+        query = WhitespaceRegex().Replace(query, " ").Trim();
+        if (query.Length >= 3)
+            queries.Add(query);
+    }
+
+    private static string RemoveDiacritics(string value)
+    {
+        var normalized = value.Normalize(NormalizationForm.FormD);
+        var chars = normalized
+            .Where(ch => CharUnicodeInfo.GetUnicodeCategory(ch) != UnicodeCategory.NonSpacingMark)
+            .ToArray();
+
+        return new string(chars).Normalize(NormalizationForm.FormC);
+    }
+
+    private static readonly HashSet<string> CatalogQueryStopWords = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "quiero", "preparar", "prepara", "preparacion", "receta", "recetas",
+        "facil", "faciles", "cocinar", "cocino", "hacer", "como", "para",
+        "con", "sin", "una", "uno", "unos", "unas", "del", "las", "los",
+        "que", "por", "esta", "este", "estas", "estos", "tipo", "estilo",
+        "casera", "casero", "deliciosa", "delicioso", "ideas", "paso",
+        "pasos", "ingrediente", "ingredientes", "rapida", "rapido"
+    };
 
     [GeneratedRegex("<a[^>]+class=\"result__a\"[^>]+href=\"(?<url>[^\"]+)\"[^>]*>(?<title>.*?)</a>", RegexOptions.IgnoreCase | RegexOptions.Singleline)]
     private static partial Regex ResultRegex();

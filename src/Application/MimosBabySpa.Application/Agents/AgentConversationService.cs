@@ -165,6 +165,8 @@ public sealed class AgentConversationService : IAgentConversationService
             config.BusinessId, session.Conversation.UserNumber, history, cancellationToken);
         session.Facts["session.engagement"] = engagementKey;
 
+        await ApplyCollectFactCapturesAsync(config, session, userMessage, cancellationToken);
+
         var temporal = _temporalReferenceBuilder.Build(clockSnapshot);
         var latestPayment = await _paymentLifecycle.GetLatestByConversationAsync(conversationId, cancellationToken);
         var latestActionablePayment = ResolveActionablePayment(latestPayment);
@@ -480,6 +482,7 @@ public sealed class AgentConversationService : IAgentConversationService
         ToolRepairDirective? pendingToolRepair = null;
         var stageChangeToolBudget = 0;
 
+        var initialEntryActionFragmentRevision = turn.FragmentRevision;
         var initialEntryActions = await TryRunStageEntryActionsUntilStableAsync(
             config,
             conversationId,
@@ -492,6 +495,9 @@ public sealed class AgentConversationService : IAgentConversationService
             onlyImmediateActions: true);
         if (initialEntryActions.RanAny)
         {
+            if (turn.HasTurnCompletingFragmentSince(initialEntryActionFragmentRevision))
+                return AgentLoopOutcome.Completed(string.Empty);
+
             if (RefreshSystemPromptIfStageChanged(config, messages, compositionInput, turn, 0, ref lastStageId))
                 stageChangeToolBudget = Math.Max(stageChangeToolBudget, 1);
 
@@ -568,6 +574,7 @@ public sealed class AgentConversationService : IAgentConversationService
 
                 if (!forceText)
                 {
+                    var pendingEntryActionFragmentRevision = turn.FragmentRevision;
                     var pendingEntryActions = await TryRunStageEntryActionsUntilStableAsync(
                         config,
                         conversationId,
@@ -581,6 +588,8 @@ public sealed class AgentConversationService : IAgentConversationService
                         onlyImmediateActions: currentStage is not null && MentionsCollectableFactValue(config, currentStage, toolCtx.LatestUserMessage));
                     if (pendingEntryActions.RanAny)
                     {
+                        if (turn.HasTurnCompletingFragmentSince(pendingEntryActionFragmentRevision))
+                            return AgentLoopOutcome.Completed(response);
                         stageChangeToolBudget = Math.Max(stageChangeToolBudget, 1);
                         if (RefreshSystemPromptIfStageChanged(config, messages, compositionInput, turn, iteration + 1, ref lastStageId))
                             stageChangeToolBudget = Math.Max(stageChangeToolBudget, 1);
@@ -610,6 +619,7 @@ public sealed class AgentConversationService : IAgentConversationService
             }
 
             var stateMutationRanInBatch = false;
+            var stateMutationChangedStageInBatch = false;
             for (var toolCallIndex = 0; toolCallIndex < toolCalls.Count; toolCallIndex++)
             {
                 var toolCall = toolCalls[toolCallIndex];
@@ -631,7 +641,8 @@ public sealed class AgentConversationService : IAgentConversationService
                     currentStage,
                     toolCall.FunctionName,
                     toolCall.ArgumentsJson,
-                    toolCtx);
+                    toolCtx,
+                    scopedTools);
                 if (unsupportedUserFactResult is not null)
                 {
                     messages.Add(ChatMessage.Tool(toolCall.Id, toolCall.FunctionName, unsupportedUserFactResult));
@@ -718,6 +729,8 @@ public sealed class AgentConversationService : IAgentConversationService
                 if (HasStageChanged(config, toolCtx, lastStageId))
                 {
                     var nextStageId = _flowStageDetector.DetectCurrentStage(ActiveFlowResolver.Resolve(config, toolCtx), toolCtx)?.Id;
+                    if (stateMutationRanInBatch)
+                        stateMutationChangedStageInBatch = true;
                     var staleCount = 0;
                     var replayedFactCount = 0;
                     var factsInvalidatedByCurrentTool = FlowCheckpointInvalidation
@@ -795,6 +808,7 @@ public sealed class AgentConversationService : IAgentConversationService
             if (ShouldCompleteTurnForUserOutput(userOutput, turn, conversationId))
                 return AgentLoopOutcome.Completed(string.Empty);
 
+            var reconciledEntryActionFragmentRevision = turn.FragmentRevision;
             var reconciledEntryActions = await TryRunStageEntryActionsUntilStableAsync(
                 config,
                 conversationId,
@@ -804,9 +818,12 @@ public sealed class AgentConversationService : IAgentConversationService
                 compositionInput,
                 lastStageId,
                 ct,
-                includeGlobalActions: false);
+                includeGlobalActions: false,
+                onlyImmediateActions: stateMutationChangedStageInBatch);
             if (reconciledEntryActions.RanAny)
             {
+                if (turn.HasTurnCompletingFragmentSince(reconciledEntryActionFragmentRevision))
+                    return AgentLoopOutcome.Completed(string.Empty);
                 stageChangeToolBudget = Math.Max(stageChangeToolBudget, 1);
                 if (turn.ShouldAutoEscalate)
                 {
@@ -922,7 +939,7 @@ public sealed class AgentConversationService : IAgentConversationService
 
         foreach (var entryAction in stage.EntryActions)
         {
-            if (onlyImmediateActions && !IsImmediateEntryAction(entryAction))
+            if (onlyImmediateActions && !IsImmediateEntryAction(entryAction) && entryAction.When.MessageMatches.Count == 0)
                 continue;
 
             if (HasStageEntryActionRun(toolCtx.ConversationState, stage.Id, entryAction, toolCtx))
@@ -968,7 +985,7 @@ public sealed class AgentConversationService : IAgentConversationService
         var scopeId = BuildGlobalEntryActionScopeId(globalAction);
         foreach (var entryAction in globalAction.EntryActions)
         {
-            if (onlyImmediateActions && !IsImmediateEntryAction(entryAction))
+            if (onlyImmediateActions && !IsImmediateEntryAction(entryAction) && entryAction.When.MessageMatches.Count == 0)
                 continue;
 
             if (HasStageEntryActionRun(toolCtx.ConversationState, scopeId, entryAction, toolCtx))
@@ -1619,6 +1636,8 @@ public sealed class AgentConversationService : IAgentConversationService
         parts.AddRange(condition.MissingVerifications
             .OrderBy(key => key, StringComparer.OrdinalIgnoreCase)
             .Select(key => $"mv:{NormalizeStageEntryActionKeyPart(key)}={(IsMissingVerification(ctx, key) ? "missing" : "active")}"));
+        if (condition.MessageMatches.Count > 0)
+            parts.Add($"msg:{NormalizeStageEntryActionKeyPart(ctx.LatestUserMessage)}");
 
         return string.Join("&", parts);
     }
@@ -1712,15 +1731,15 @@ public sealed class AgentConversationService : IAgentConversationService
     {
         foreach (var (key, valueTemplate) in EnumerateAfterToolFactActions(rule))
         {
-            if (ctx.Facts.TryGetValue(key, out var existing)
-                && !string.IsNullOrWhiteSpace(existing))
-            {
-                continue;
-            }
-
             var value = ResolveAfterToolValue(outcomeJson, valueTemplate);
             if (string.IsNullOrWhiteSpace(value))
                 continue;
+
+            if (ctx.Facts.TryGetValue(key, out var existing)
+                && string.Equals(existing, value, StringComparison.Ordinal))
+            {
+                continue;
+            }
 
             var schemaEntry = config.FactSchema.FirstOrDefault(e =>
                 e.Key.Equals(key, StringComparison.OrdinalIgnoreCase));
@@ -2281,6 +2300,166 @@ public sealed class AgentConversationService : IAgentConversationService
         await ApplyReentryInvalidationAsync(session, changedKeys, ct);
     }
 
+    private async Task ApplyCollectFactCapturesAsync(
+        AgentConfig config,
+        AgentToolContext session,
+        string message,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(message) || config.FactSchema.Count == 0)
+            return;
+
+        var activeFlow = ActiveFlowResolver.Resolve(config, session);
+        var currentStage = _flowStageDetector.DetectCurrentStage(activeFlow, session);
+        if (currentStage is null)
+            return;
+
+        var candidateKeys = currentStage.Collect
+            .Concat(currentStage.AdvanceWhenFacts)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (candidateKeys.Count == 0)
+            return;
+
+        var changedKeys = new List<string>();
+        var conversationIdentityChanged = false;
+
+        foreach (var entry in config.FactSchema.Where(entry => candidateKeys.Contains(entry.Key)))
+        {
+            if (!CanCaptureDeterministically(entry))
+                continue;
+
+            if (!TryExtractDeterministicFactValue(entry, message, session.BusinessToday, out var value))
+                continue;
+
+            var changed = session.Facts.TryGetValue(entry.Key, out var existing)
+                && HasFactValue(existing)
+                && !FactValuesEqual(existing, value);
+
+            if (session.Facts.TryGetValue(entry.Key, out existing)
+                && FactValuesEqual(existing, value))
+            {
+                continue;
+            }
+
+            await _factsService.SetAsync(
+                session.ConversationId,
+                session.BusinessId,
+                entry.Key,
+                value,
+                entry.ShouldRememberAcrossRequests(),
+                ct);
+
+            session.Facts[entry.Key] = value;
+            if (changed)
+                changedKeys.Add(entry.Key);
+
+            conversationIdentityChanged |= ApplyConversationIdentityFact(session, entry, value);
+
+            _logger.LogInformation(
+                "Conv {ConvId}: collect fact '{FactKey}' captured deterministically from latest user message",
+                session.ConversationId,
+                entry.Key);
+        }
+
+        if (conversationIdentityChanged)
+            await _conversationService.UpdateConversationAsync(session.Conversation, ct);
+
+        await ApplyReentryInvalidationAsync(session, changedKeys, ct);
+    }
+
+    private static bool CanCaptureDeterministically(FactSchemaEntry entry)
+    {
+        if (!entry.Source.Equals("user", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        if (entry.ValueSource is not null
+            && (entry.ValueSource.Equals("catalog", StringComparison.OrdinalIgnoreCase)
+                || entry.ValueSource.Equals("tool", StringComparison.OrdinalIgnoreCase)
+                || entry.ValueSource.Equals("external", StringComparison.OrdinalIgnoreCase)))
+        {
+            return false;
+        }
+
+        var type = entry.Type.Trim().ToLowerInvariant();
+        return type is "phone" or "email"
+            || (type == "boolean" && entry.Aliases.Count > 0);
+    }
+
+    internal static bool TryExtractDeterministicFactValue(
+        FactSchemaEntry entry,
+        string message,
+        DateOnly businessToday,
+        out string value)
+    {
+        value = string.Empty;
+        return entry.Type.Trim().ToLowerInvariant() switch
+        {
+            "email" => TryExtractEmail(message, out value),
+            "phone" => TryExtractPhone(message, out value),
+            "boolean" => TryExtractBooleanAlias(entry, message, out value),
+            _ => false
+        };
+    }
+
+    private static bool TryExtractBooleanAlias(FactSchemaEntry entry, string message, out string value)
+    {
+        value = string.Empty;
+        if (entry.Aliases.Count == 0)
+            return false;
+
+        var normalizedMessage = NormalizeIntentText(message);
+        if (string.IsNullOrWhiteSpace(normalizedMessage))
+            return false;
+
+        foreach (var alias in entry.Aliases)
+        {
+            var normalizedAlias = NormalizeIntentText(alias);
+            if (string.IsNullOrWhiteSpace(normalizedAlias))
+                continue;
+
+            if (!ContainsNormalizedPhrase(normalizedMessage, normalizedAlias))
+                continue;
+
+            value = bool.TrueString.ToLowerInvariant();
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool TryExtractEmail(string message, out string value)
+    {
+        value = string.Empty;
+        var match = Regex.Match(
+            message,
+            @"(?<!\S)[^\s@]+@[^\s@]+\.[^\s@.,;:!?]+",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        if (!match.Success)
+            return false;
+
+        value = match.Value.Trim().TrimEnd('.', ',', ';', ':', '!', '?');
+        return true;
+    }
+
+    private static bool TryExtractPhone(string message, out string value)
+    {
+        value = string.Empty;
+        var match = Regex.Match(
+            message,
+            @"(?<!\d)(?:\+?\d[\d\s().-]{6,}\d)(?!\d)",
+            RegexOptions.CultureInvariant);
+        if (!match.Success)
+            return false;
+
+        var digits = new string(match.Value.Where(char.IsDigit).ToArray());
+        if (digits.Length < 7)
+            return false;
+
+        value = match.Value.Trim();
+        return true;
+    }
+
     private static bool ApplyConversationIdentityFact(
         AgentToolContext session,
         FactSchemaEntry entry,
@@ -2682,6 +2861,3 @@ public sealed class AgentConversationService : IAgentConversationService
         }
     }
 }
-
-
-

@@ -128,4 +128,33 @@ public sealed class CheckoutPaymentSelectionResolverTests
         selection.Error.Should().NotBeNull();
         selection.Error!.Code.Should().Be("checkout_payment_percentage_invalid");
     }
-}
+
+    [Fact]
+    public void Resolve_WithManualConfirmationMethod_DefaultsToFullPendingPayment()
+    {
+        var mode = new CheckoutModeDefinition
+        {
+            PaymentMethods =
+            {
+                ["transferencia"] = new CheckoutPaymentMethodDefinition
+                {
+                    Label = "transferencia manual",
+                    ManualConfirmationRequired = true,
+                    ManualExpirationMinutes = 1440,
+                    Template = "order_checkout_manual_transfer",
+                    ConfirmationOutcome = "order_paid"
+                }
+            }
+        };
+
+        var selection = CheckoutPaymentSelectionResolver.Resolve(mode, "order", 100_000, "transferencia");
+
+        selection.Error.Should().BeNull();
+        selection.RequiresManualConfirmation.Should().BeTrue();
+        selection.RequiresPaymentLink.Should().BeFalse();
+        selection.PayableCents.Should().Be(100_000);
+        selection.PaymentPercentage.Should().Be(100);
+        selection.TemplateId.Should().Be("order_checkout_manual_transfer");
+        selection.ConfirmationOutcome.Should().Be("order_paid");
+        selection.ManualExpirationMinutes.Should().Be(1440);
+    }}

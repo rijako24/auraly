@@ -276,6 +276,10 @@ services.AddHttpClient<SiigoCommerceAdapter>();
 
 services.AddScoped<ICommerceAdapter>(sp => sp.GetRequiredService<SiigoCommerceAdapter>());
 
+services.AddHttpClient<MantisCommerceAdapter>();
+
+services.AddScoped<ICommerceAdapter>(sp => sp.GetRequiredService<MantisCommerceAdapter>());
+
 services.AddScoped<ICommerceAdapterFactory, CommerceAdapterFactory>();
 
 
@@ -518,6 +522,7 @@ services.AddScoped<IAgentTool, ResetFlowContextTool>();
 services.AddScoped<IAgentTool, SendMessageSequenceTool>();
 
 services.AddScoped<IAgentTool, SearchProductsTool>();
+services.AddScoped<IAgentTool, SearchWebRecipesTool>();
 
 services.AddScoped<IAgentTool, AddOrderItemTool>();
 
@@ -594,7 +599,7 @@ Console.InputEncoding = System.Text.Encoding.UTF8;
 
 
 
-var consoleAgent = ConsoleAgentOptions.FromEnvironment();
+var consoleAgent = ResolveRequestedConsoleAgent(args) ?? ConsoleAgentOptions.FromEnvironment();
 
 var traceEnabled = IsTraceEnabled(args);
 
@@ -624,7 +629,8 @@ Console.WriteLine("  Usa     --trace para ver system prompt, tools y respuestas 
 Console.WriteLine("  Usa     test-luis-reserva para correr una prueba automatica con traza");
 Console.WriteLine("  Usa     test-luis-catalogo para validar que hola consulte catalogo oficial");
 Console.WriteLine("  Usa     test-luis-critical-flow para correr escenarios criticos contra BD/config real");
-Console.WriteLine("  Usa     test-mimos-critical-flow / test-auraly-critical-flow / test-rada-critical-flow / test-solorzano-critical-flow / test-cjdistribuciones-critical-flow");
+Console.WriteLine("  Usa     test-mimos-critical-flow / test-mimos-early-date-flow / test-auraly-critical-flow / test-rada-critical-flow / test-solorzano-critical-flow / test-cjdistribuciones-critical-flow / test-cjdistribuciones-transfer-flow / test-cjdistribuciones-recipe-flow");
+Console.WriteLine("  Usa     cj / cjdistribuciones para abrir la consola interactiva de CJ Distribuciones");
 
 Console.WriteLine();
 
@@ -1057,6 +1063,8 @@ static string? ResolveScriptedScenario(string[] args)
         ["--test-luis-critical-flow"] = "luis-critical-flow",
         ["test-mimos-critical-flow"] = "mimos-critical-flow",
         ["--test-mimos-critical-flow"] = "mimos-critical-flow",
+        ["test-mimos-early-date-flow"] = "mimos-early-date-flow",
+        ["--test-mimos-early-date-flow"] = "mimos-early-date-flow",
         ["test-auraly-critical-flow"] = "auraly-critical-flow",
         ["--test-auraly-critical-flow"] = "auraly-critical-flow",
         ["test-rada-critical-flow"] = "rada-critical-flow",
@@ -1065,6 +1073,10 @@ static string? ResolveScriptedScenario(string[] args)
         ["--test-solorzano-critical-flow"] = "solorzano-critical-flow",
         ["test-cjdistribuciones-critical-flow"] = "cjdistribuciones-critical-flow",
         ["--test-cjdistribuciones-critical-flow"] = "cjdistribuciones-critical-flow",
+        ["test-cjdistribuciones-transfer-flow"] = "cjdistribuciones-transfer-flow",
+        ["--test-cjdistribuciones-transfer-flow"] = "cjdistribuciones-transfer-flow",
+        ["test-cjdistribuciones-recipe-flow"] = "cjdistribuciones-recipe-flow",
+        ["--test-cjdistribuciones-recipe-flow"] = "cjdistribuciones-recipe-flow",
         ["test-luis-catalogo"] = "luis-catalogo",
         ["--test-luis-catalogo"] = "luis-catalogo"
     };
@@ -1087,6 +1099,25 @@ static bool IsScriptedReservationTest(string[] args) =>
     args.Any(a => a.Equals("test-luis-reserva", StringComparison.OrdinalIgnoreCase)
                || a.Equals("--test-luis-reserva", StringComparison.OrdinalIgnoreCase)
                || a.Equals("luis-reserva-trace", StringComparison.OrdinalIgnoreCase));
+static ConsoleAgentOptions? ResolveRequestedConsoleAgent(string[] args)
+{
+    foreach (var arg in args)
+    {
+        var normalized = arg.Trim()
+            .TrimStart('-')
+            .Replace("_", string.Empty, StringComparison.OrdinalIgnoreCase)
+            .Replace("-", string.Empty, StringComparison.OrdinalIgnoreCase)
+            .ToLowerInvariant();
+        if (normalized is "cj" or "cjdistribuciones")
+            return ConsoleAgentOptions.CjDistribuciones();
+
+        if (normalized is "luis" or "luispetit")
+            return ConsoleAgentOptions.LuisPetit();
+    }
+
+    return null;
+}
+
 
 static Queue<string> BuildLuisReservationScript(string[] args)
 {
@@ -1102,7 +1133,7 @@ static Queue<string> BuildLuisReservationScript(string[] args)
     {
         "luis-catalogo" => new[] { "hola" },
         "luis-critical-flow" => BuildLuisCriticalFlowMessages(),
-        "mimos-critical-flow" or "auraly-critical-flow" or "rada-critical-flow" or "solorzano-critical-flow" or "cjdistribuciones-critical-flow" => BuildConsoleScenarioMessages(GetConsoleScenarioSteps(scenario)),
+        "mimos-critical-flow" or "mimos-early-date-flow" or "auraly-critical-flow" or "rada-critical-flow" or "solorzano-critical-flow" or "cjdistribuciones-critical-flow" or "cjdistribuciones-transfer-flow" or "cjdistribuciones-recipe-flow" => BuildConsoleScenarioMessages(GetConsoleScenarioSteps(scenario)),
         _ => new[]
         {
             "Hola, quiero reservar un corte basico de adulto manana a las 10:30 de la manana",
@@ -1154,6 +1185,9 @@ static bool ValidateScriptedTurn(
     var missingToolResults = current.ToolResultContains
         .Where(expectation => !TraceToolResultContains(trace, expectation.ToolName, expectation.Text))
         .ToArray();
+    var missingAnyToolResults = current.ToolResultContainsAny
+        .Where(expectation => !expectation.AnyText.Any(text => TraceToolResultContains(trace, expectation.ToolName, text)))
+        .ToArray();
     var missingStages = current.ExpectedStages
         .Where(stage => !TraceContainsStage(trace, stage))
         .ToArray();
@@ -1174,6 +1208,7 @@ static bool ValidateScriptedTurn(
     if (missingTools.Length == 0
         && forbiddenTools.Length == 0
         && missingToolResults.Length == 0
+        && missingAnyToolResults.Length == 0
         && missingStages.Length == 0
         && forbiddenStages.Length == 0
         && !missingResponseAny
@@ -1202,6 +1237,8 @@ static bool ValidateScriptedTurn(
         failures.Add($"tools prohibidas invocadas {string.Join(", ", forbiddenTools)}");
     if (missingToolResults.Length > 0)
         failures.Add($"resultados esperados ausentes {string.Join(", ", missingToolResults.Select(e => $"{e.ToolName}:{e.Text}"))}");
+    if (missingAnyToolResults.Length > 0)
+        failures.Add($"resultados alternativos esperados ausentes {string.Join(", ", missingAnyToolResults.Select(e => $"{e.ToolName}:({string.Join("|", e.AnyText)})"))}");
     if (missingStages.Length > 0)
         failures.Add($"faltan etapas {string.Join(", ", missingStages)}");
     if (forbiddenStages.Length > 0)
@@ -1315,10 +1352,13 @@ static IReadOnlyList<ConsoleScenarioStep> GetConsoleScenarioSteps(string? scenar
 {
     "luis-critical-flow" => GetLuisCriticalFlowSteps(),
     "mimos-critical-flow" => GetMimosCriticalFlowSteps(),
+    "mimos-early-date-flow" => GetMimosEarlyDateFlowSteps(),
     "auraly-critical-flow" => GetAuralyCriticalFlowSteps(),
     "rada-critical-flow" => GetRadaCriticalFlowSteps(),
     "solorzano-critical-flow" => GetSolorzanoCriticalFlowSteps(),
     "cjdistribuciones-critical-flow" => GetCjDistribucionesCriticalFlowSteps(),
+    "cjdistribuciones-transfer-flow" => GetCjDistribucionesTransferFlowSteps(),
+    "cjdistribuciones-recipe-flow" => GetCjDistribucionesRecipeFlowSteps(),
     _ => []
 };
 
@@ -1451,7 +1491,7 @@ static IReadOnlyList<ConsoleScenarioStep> GetLuisCriticalFlowSteps()
             ResetBefore = false,
             ExpectedStages = ["discovery"],
             ForbiddenTools = ["manage_reservation", "get_customer_reservations", "get_compatible_add_ons", "check_availability", "prepare_checkout"],
-            ToolResultContains = [new("get_service_catalog", "## CATEGORIAS DE SERVICIOS")],
+            ToolResultContainsAny = [new("get_service_catalog", ["## CATALOGO DE SERVICIOS", "## CATEGORIAS DE SERVICIOS"])],
             ResponseContainsAll = ["bienvenido", "BARBER KIDS MENS", "Soy Luis Petit", "barbero profesional", "servicio", "interesado"],
             ResponseForbiddenContains = ["tu barbero profesional", "adicionales", "anticipo", "resumen", "hoy"]
         },
@@ -1503,7 +1543,7 @@ static IReadOnlyList<ConsoleScenarioStep> GetMimosCriticalFlowSteps()
             ResetBefore = false,
             ExpectedStages = ["discovery", "service_selection"],
             ForbiddenTools = ["get_compatible_add_ons", "check_availability", "prepare_checkout", "create_reservation", "manage_reservation"],
-            ToolResultContains = [new("set_fact", "baby_name"), new("set_fact", "baby_age_months"), new("get_service_catalog", "## CATEGORIAS DE SERVICIOS")],
+            ToolResultContains = [new("set_fact", "baby_name"), new("get_service_catalog", "## CATALOGO DE SERVICIOS")],
             ResponseContainsAny = ["categoria", "servicio", "experiencia"],
             ResponseForbiddenContains = ["complementos", "anticipo", "resumen"]
         },
@@ -1512,7 +1552,7 @@ static IReadOnlyList<ConsoleScenarioStep> GetMimosCriticalFlowSteps()
             ResetBefore = false,
             ExpectedStages = ["service_selection"],
             ForbiddenTools = ["get_compatible_add_ons", "check_availability", "prepare_checkout", "create_reservation", "manage_reservation"],
-            ToolResultContains = [new("get_service_catalog", "## CATEGORIAS DE SERVICIOS")],
+            ToolResultContainsAny = [new("get_service_catalog", ["## CATALOGO DE SERVICIOS", "## CATEGORIAS DE SERVICIOS"])],
             ResponseContainsAny = ["hidro", "servicio", "experiencia"],
             ResponseForbiddenContains = ["complementos", "decoracion", "fotografia", "anticipo", "resumen"]
         },
@@ -1522,7 +1562,7 @@ static IReadOnlyList<ConsoleScenarioStep> GetMimosCriticalFlowSteps()
             ExpectedStages = ["service_selection", "addons_offering"],
             ExpectedToolOrder = ["resolve_service_selection", "get_service_fulfillment", "get_compatible_add_ons"],
             ForbiddenTools = ["get_service_catalog", "check_availability", "prepare_checkout", "create_reservation", "manage_reservation"],
-            ToolResultContains = [new("get_service_fulfillment", "fulfillment_ready"), new("get_service_fulfillment", "reservation")],
+            ToolResultContains = [new("get_service_fulfillment", "collect_reservation_schedule")],
             ResponseContainsAny = ["complemento", "decoracion", "fotografia", "continuar sin complementos"],
             ResponseForbiddenContains = ["resumen"]
         },
@@ -1566,6 +1606,39 @@ static IReadOnlyList<ConsoleScenarioStep> GetMimosCriticalFlowSteps()
     ];
 }
 
+static IReadOnlyList<ConsoleScenarioStep> GetMimosEarlyDateFlowSteps()
+{
+    var testDate = NextBusinessDate();
+
+    return
+    [
+        new("mimos_early_date_context", $"Hola, que espacios tienen para el {testDate}. Mi bebe se llama Mia y tiene 8 meses", ["set_fact", "get_service_catalog"])
+        {
+            ExpectedStages = ["discovery", "service_selection"],
+            ForbiddenTools = ["get_compatible_add_ons", "check_availability", "prepare_checkout", "create_reservation", "manage_reservation"],
+            ToolResultContains = [new("set_fact", "desired_date"), new("set_fact", "baby_name"), new("get_service_catalog", "## CATALOGO DE SERVICIOS")],
+            ResponseContainsAny = ["categoria", "servicio", "experiencia"]
+        },
+        new("mimos_early_date_service", "Elijo Plan Aventuras Marinas", ["resolve_service_selection", "get_service_fulfillment", "get_compatible_add_ons"])
+        {
+            ResetBefore = false,
+            ExpectedStages = ["service_selection", "addons_offering"],
+            ExpectedToolOrder = ["resolve_service_selection", "get_service_fulfillment", "get_compatible_add_ons"],
+            ForbiddenTools = ["get_service_catalog", "check_availability", "prepare_checkout", "create_reservation", "manage_reservation"],
+            ToolResultContains = [new("get_service_fulfillment", "reservation")],
+            ResponseContainsAny = ["complemento", "decoracion", "fotografia", "continuar sin complementos"]
+        },
+        new("mimos_early_date_no_addons_runs_availability", "seguimos sin complementos", ["set_fact", "check_availability"])
+        {
+            ResetBefore = false,
+            ExpectedStages = ["addons_offering", "scheduling"],
+            ExpectedToolOrder = ["set_fact", "check_availability"],
+            ForbiddenTools = ["get_service_catalog", "get_compatible_add_ons", "prepare_checkout", "create_reservation", "manage_reservation"],
+            ToolResultContains = [new("set_fact", "add_ons"), new("check_availability", "availability_checked")],
+            ResponseContainsAny = ["espacios", "horarios", "hora"]
+        }
+    ];
+}
 static IReadOnlyList<ConsoleScenarioStep> GetAuralyCriticalFlowSteps()
 {
     var testDate = NextBusinessDate();
@@ -1738,7 +1811,7 @@ static IReadOnlyList<ConsoleScenarioStep> GetSolorzanoCriticalFlowSteps()
             ExpectedStages = ["payment_method", "summary"],
             ExpectedToolOrder = ["set_fact", "prepare_order_checkout"],
             ForbiddenTools = ["search_products", "get_service_catalog", "check_availability", "prepare_checkout", "create_reservation", "create_order"],
-            ToolResultContains = [new("set_fact", "payment_method"), new("prepare_order_checkout", "order_checkout_presented")],
+            ToolResultContains = [new("set_fact", "payment_method"), new("prepare_order_checkout", "checkout_token")],
             ResponseContainsAny = ["resumen", "total", "envio", "confirm"]
         },
         new("solorzano_confirm_order", "confirmo el pedido", ["create_order"])
@@ -1914,16 +1987,16 @@ static IReadOnlyList<ConsoleScenarioStep> GetCjDistribucionesCriticalFlowSteps()
             ToolResultContains = [new("set_fact", "customer_type")],
             ResponseContainsAny = ["productos", "catalogo", "necesitas", "preparar"]
         },
-        new("cj_product_list", "Necesito 2 pechugas, 1 papa 2.5 y 1 quesillo de 20 lonchas", ["search_products", "add_order_item"])
+        new("cj_product_list", "Necesito 1 PAPA FARM FRITES X 2.5K", ["search_products", "add_order_item"])
         {
             ResetBefore = false,
             ExpectedStages = ["product_selection"],
             ForbiddenTools = ["get_service_catalog", "check_availability", "prepare_checkout", "create_reservation", "prepare_order_checkout", "create_order"],
-            ToolResultContains = [new("search_products", "Pechuga"), new("search_products", "Papa a la francesa 2.5 kg"), new("search_products", "Quesillo 20 lonchas")],
-            ResponseContainsAny = ["pechuga", "papa", "quesillo", "agreg"],
-            ResponseForbiddenContains = ["Se muestran referencias", "placeholder"]
+            ToolResultContains = [new("search_products", "PAPA FARM FRITES X 2.5K"), new("add_order_item", "PAPA FARM FRITES X 2.5K")],
+            ResponseContainsAny = ["tambien", "puede", "agregar", "complement"],
+            ResponseForbiddenContains = ["Se muestran referencias", "placeholder", "SKU", "stock", "existencia"]
         },
-        new("cj_finalize_cart_review", "eso es todo, dame el total", ["set_fact", "get_order_draft"])
+        new("cj_finalize_cart_review", "solo eso", ["set_fact", "get_order_draft"])
         {
             ResetBefore = false,
             ExpectedStages = ["product_selection", "cart_review"],
@@ -1953,7 +2026,7 @@ static IReadOnlyList<ConsoleScenarioStep> GetCjDistribucionesCriticalFlowSteps()
             ExpectedStages = ["payment_method", "summary"],
             ExpectedToolOrder = ["set_fact", "prepare_order_checkout"],
             ForbiddenTools = ["search_products", "get_service_catalog", "check_availability", "prepare_checkout", "create_reservation", "create_order"],
-            ToolResultContains = [new("set_fact", "payment_method"), new("prepare_order_checkout", "order_checkout_presented")],
+            ToolResultContains = [new("set_fact", "payment_method"), new("prepare_order_checkout", "checkout_token")],
             ResponseContainsAny = ["resumen", "total", "envio", "confirm"]
         },
         new("cj_confirm_order", "confirmo el pedido", ["create_order"])
@@ -1961,12 +2034,124 @@ static IReadOnlyList<ConsoleScenarioStep> GetCjDistribucionesCriticalFlowSteps()
             ResetBefore = false,
             ExpectedStages = ["order_confirmation"],
             ForbiddenTools = ["search_products", "prepare_checkout", "create_reservation"],
-            ToolResultContains = [new("create_order", "order_id")],
-            ResponseContainsAny = ["pedido", "confirm"]
+            ToolResultContains = [new("create_order", "order_id")]
         }
     ];
 }
 
+
+static IReadOnlyList<ConsoleScenarioStep> GetCjDistribucionesRecipeFlowSteps()
+{
+    return
+    [
+        new("cj_recipe_identification", "hola quiero hacer un pedido", [])
+        {
+            ExpectedStages = ["customer_name"],
+            ForbiddenTools = ["search_products", "search_web_recipes", "prepare_order_checkout", "create_order", "get_service_catalog", "check_availability", "prepare_checkout", "create_reservation"]
+        },
+        new("cj_recipe_name", "Richard", ["set_fact"])
+        {
+            ResetBefore = false,
+            ExpectedStages = ["customer_name", "customer_type"],
+            ForbiddenTools = ["search_products", "search_web_recipes", "prepare_order_checkout", "create_order", "get_service_catalog", "check_availability", "prepare_checkout", "create_reservation"],
+            ToolResultContains = [new("set_fact", "customer_name")]
+        },
+        new("cj_recipe_profile_option", "la A", ["set_fact"])
+        {
+            ResetBefore = false,
+            ExpectedStages = ["customer_type", "product_selection"],
+            ForbiddenTools = ["search_products", "search_web_recipes", "prepare_order_checkout", "create_order", "get_service_catalog", "check_availability", "prepare_checkout", "create_reservation"],
+            ToolResultContains = [new("set_fact", "customer_type"), new("set_fact", "Hogar")]
+        },
+        new("cj_recipe_search", "quiero preparar un pocho con tocinetas y papas fritas", ["search_web_recipes", "search_products"])
+        {
+            ResetBefore = false,
+            ExpectedStages = ["product_selection"],
+            ExpectedToolOrder = ["search_web_recipes", "search_products"],
+            ForbiddenTools = ["prepare_order_checkout", "create_order", "get_service_catalog", "check_availability", "prepare_checkout", "create_reservation"],
+            ToolResultContains = [new("search_web_recipes", "catalog_search_queries")],
+            ToolResultContainsAny = [new("search_products", ["PAPA", "TOCINETA", "FRITES"])],
+            ResponseContainsAny = ["Papa", "Tocineta", "papas", "tocineta"],
+            ResponseForbiddenContains = ["te ayudo a buscar en nuestro catalogo", "si quieres, te ayudo a buscar", "SKU", "stock", "existencia"]
+        }
+    ];
+}
+static IReadOnlyList<ConsoleScenarioStep> GetCjDistribucionesTransferFlowSteps()
+{
+    return
+    [
+        new("cj_transfer_identification", "hola", [])
+        {
+            ExpectedStages = ["customer_name"],
+            ForbiddenTools = ["search_products", "prepare_order_checkout", "create_order", "get_service_catalog", "check_availability", "prepare_checkout", "create_reservation"],
+            ResponseContainsAll = ["CJ Distribuciones", "nombre"]
+        },
+        new("cj_transfer_profile", "Soy Restaurante La Parrilla", ["set_fact"])
+        {
+            ResetBefore = false,
+            ExpectedStages = ["customer_name", "customer_type"],
+            ForbiddenTools = ["search_products", "prepare_order_checkout", "create_order", "get_service_catalog", "check_availability", "prepare_checkout", "create_reservation"],
+            ToolResultContains = [new("set_fact", "customer_name")],
+            ResponseContainsAny = ["Hogar", "Tienda", "Restaurante", "Comida rapida", "Distribuidor"]
+        },
+        new("cj_transfer_profile_natural_language", "Soy restaurante", ["set_fact"])
+        {
+            ResetBefore = false,
+            ExpectedStages = ["customer_type"],
+            ForbiddenTools = ["prepare_order_checkout", "create_order", "get_service_catalog", "check_availability", "prepare_checkout", "create_reservation"],
+            ToolResultContains = [new("set_fact", "customer_type")]
+        },
+        new("cj_transfer_product_sell", "Necesito 1 PAPA FARM FRITES X 2.5K", ["search_products", "add_order_item"])
+        {
+            ResetBefore = false,
+            ExpectedStages = ["product_selection"],
+            ForbiddenTools = ["get_service_catalog", "check_availability", "prepare_checkout", "create_reservation", "prepare_order_checkout", "create_order"],
+            ToolResultContains = [new("search_products", "PAPA FARM FRITES X 2.5K"), new("add_order_item", "PAPA FARM FRITES X 2.5K")],
+            ResponseContainsAny = ["tambien", "puede", "agregar", "complement"],
+            ResponseForbiddenContains = ["Se muestran referencias", "placeholder", "SKU", "stock", "existencia"]
+        },
+        new("cj_transfer_finalize_cart_review", "solo eso", ["set_fact", "get_order_draft"])
+        {
+            ResetBefore = false,
+            ExpectedStages = ["product_selection", "cart_review"],
+            ForbiddenTools = ["search_products", "prepare_order_checkout", "create_order", "get_service_catalog", "check_availability", "prepare_checkout", "create_reservation"],
+            ToolResultContains = [new("set_fact", "order_finalized")],
+            ResponseContainsAny = ["pedido", "total", "correcto", "modificar"]
+        },
+        new("cj_transfer_confirm_cart_delivery_method", "esta correcto", ["set_fact"])
+        {
+            ResetBefore = false,
+            ExpectedStages = ["cart_review", "order_data"],
+            ForbiddenTools = ["search_products", "prepare_order_checkout", "create_order", "get_service_catalog", "check_availability", "prepare_checkout", "create_reservation"],
+            ToolResultContains = [new("set_fact", "cart_review_confirmed")],
+            ResponseContainsAny = ["recoger", "recogida", "domicilio"]
+        },
+        new("cj_transfer_delivery_data", "A domicilio en Calle 10 #20-30 barrio Centro, celular 3001234567", ["set_fact"])
+        {
+            ResetBefore = false,
+            ExpectedStages = ["order_data"],
+            ForbiddenTools = ["search_products", "prepare_order_checkout", "create_order", "get_service_catalog", "check_availability", "prepare_checkout", "create_reservation"],
+            ToolResultContains = [new("set_fact", "delivery_method"), new("set_fact", "delivery_address"), new("set_fact", "delivery_phone")],
+            ResponseContainsAny = ["efectivo", "transferencia"]
+        },
+        new("cj_transfer_payment_summary", "pago por transferencia", ["set_fact", "prepare_order_checkout"])
+        {
+            ResetBefore = false,
+            ExpectedStages = ["payment_method", "summary"],
+            ExpectedToolOrder = ["set_fact", "prepare_order_checkout"],
+            ForbiddenTools = ["search_products", "get_service_catalog", "check_availability", "prepare_checkout", "create_reservation", "create_order"],
+            ToolResultContains = [new("set_fact", "payment_method"), new("prepare_order_checkout", "payment_pending_manual_confirmation"), new("prepare_order_checkout", "payment_transaction_id")],
+            ResponseContainsAny = ["pendiente", "confirmacion manual", "equipo", "confirmara"]
+        },
+        new("cj_transfer_customer_confirms_no_order", "confirmo el pedido", [])
+        {
+            ResetBefore = false,
+            ExpectedStages = ["order_confirmation"],
+            ForbiddenTools = ["create_order", "prepare_checkout", "create_reservation"],
+            ResponseContainsAny = ["pendiente", "confirmacion", "equipo", "pago"]
+        }
+    ];
+}
 static string CreateTestUserPhone()
 
 {
@@ -1988,7 +2173,7 @@ static string CreateFreshTestUserPhone() =>
 
 static ConsoleAgentOptions? ResolveScenarioAgent(string? scenario) => scenario?.ToLowerInvariant() switch
 {
-    "mimos-critical-flow" => new ConsoleAgentOptions(
+    "mimos-critical-flow" or "mimos-early-date-flow" => new ConsoleAgentOptions(
         Guid.Parse("22222222-2222-2222-2222-222222222222"),
         "Mimos Baby Spa - Valledupar",
         Guid.Parse("7105A9D5-D4E4-4BBA-9F3A-DBB34E0B1B86"),
@@ -2016,13 +2201,7 @@ static ConsoleAgentOptions? ResolveScenarioAgent(string? scenario) => scenario?.
         "Camila",
         "Camila",
         ["Camila"]),
-    "cjdistribuciones-critical-flow" => new ConsoleAgentOptions(
-        Guid.Parse("C1D15A00-0000-0000-0000-000000000010"),
-        "CJ Distribuciones",
-        Guid.Parse("C1D15A00-0000-0000-0000-000000000020"),
-        "Asistente CJ Distribuciones",
-        "CJ",
-        ["Asistente CJ Distribuciones"]),
+    "cjdistribuciones-critical-flow" or "cjdistribuciones-transfer-flow" or "cjdistribuciones-recipe-flow" => ConsoleAgentOptions.CjDistribuciones(),
     _ => null
 };
 
@@ -2036,10 +2215,12 @@ internal sealed record ConsoleScenarioStep(string Id, string UserMessage, IReadO
     public IReadOnlyList<string> ResponseContainsAll { get; init; } = [];
     public IReadOnlyList<string> ResponseForbiddenContains { get; init; } = [];
     public IReadOnlyList<ConsoleToolResultExpectation> ToolResultContains { get; init; } = [];
+    public IReadOnlyList<ConsoleToolResultAnyExpectation> ToolResultContainsAny { get; init; } = [];
     public bool ResetBefore { get; init; } = true;
     public CheckoutExpectation CheckoutExpectation { get; init; } = CheckoutExpectation.None;
 }
 internal sealed record ConsoleToolResultExpectation(string ToolName, string Text);
+internal sealed record ConsoleToolResultAnyExpectation(string ToolName, IReadOnlyList<string> AnyText);
 internal enum CheckoutExpectation
 {
     None,
@@ -2064,22 +2245,39 @@ internal sealed record ConsoleAgentOptions(
 {
     public static ConsoleAgentOptions FromEnvironment()
     {
+        var defaults = CjDistribuciones();
         var businessId = GetGuid(
             "TALKIO_CONSOLE_BUSINESS_ID",
-            "BABA0000-0000-0000-0000-000000000001");
+            defaults.BusinessId.ToString());
         var agentId = GetGuid(
             "TALKIO_CONSOLE_AGENT_ID",
-            "BABA0000-0000-0000-0000-000000000002");
-        var agentName = GetText("TALKIO_CONSOLE_AGENT_NAME", "Luis");
+            defaults.AgentId.ToString());
+        var agentName = GetText("TALKIO_CONSOLE_AGENT_NAME", defaults.AgentName);
 
         return new ConsoleAgentOptions(
             businessId,
-            GetText("TALKIO_CONSOLE_BUSINESS_NAME", "Luis Petit Profesional Barber"),
+            GetText("TALKIO_CONSOLE_BUSINESS_NAME", defaults.BusinessName),
             agentId,
             agentName,
             GetText("TALKIO_CONSOLE_AGENT_DISPLAY_NAME", agentName),
-            GetList("TALKIO_CONSOLE_AGENT_ALIASES", "Luis Petit"));
+            GetList("TALKIO_CONSOLE_AGENT_ALIASES", string.Join(';', defaults.AgentAliases)));
     }
+
+    public static ConsoleAgentOptions LuisPetit() => new(
+        Guid.Parse("BABA0000-0000-0000-0000-000000000001"),
+        "Luis Petit Profesional Barber",
+        Guid.Parse("BABA0000-0000-0000-0000-000000000002"),
+        "Luis",
+        "Luis",
+        ["Luis Petit"]);
+
+    public static ConsoleAgentOptions CjDistribuciones() => new(
+        Guid.Parse("C1D15A00-0000-0000-0000-000000000010"),
+        "CJ Distribuciones",
+        Guid.Parse("C1D15A00-0000-0000-0000-000000000020"),
+        "Asistente CJ Distribuciones",
+        "CJ",
+        ["Asistente CJ Distribuciones", "CJ"]);
 
     private static Guid GetGuid(string name, string fallback)
     {

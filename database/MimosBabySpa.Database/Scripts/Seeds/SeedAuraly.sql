@@ -614,8 +614,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
 
       "scope": "request",
 
-      "captureMode": "eager",
-
       "showInCollectedInfo": true,
 
       "aliases": [
@@ -650,8 +648,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
 
       "scope": "request",
 
-      "captureMode": "eager",
-
       "showInCollectedInfo": true,
 
       "aliases": [
@@ -684,8 +680,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
 
       "scope": "request",
 
-      "captureMode": "eager",
-
       "aliases": [
 
         "whatsapp",
@@ -715,8 +709,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "source": "user",
 
       "scope": "request",
-
-      "captureMode": "eager",
 
       "aliases": [
 
@@ -786,8 +778,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
 
       "scope": "request",
 
-      "captureMode": "eager",
-
       "aliases": [
 
         "fecha",
@@ -819,8 +809,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "source": "user",
 
       "scope": "request",
-
-      "captureMode": "eager",
 
       "dependsOn": [
 
@@ -886,8 +874,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
 
       "scope": "customer",
 
-      "captureMode": "eager",
-
       "aliases": [
 
         "nombre",
@@ -915,8 +901,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "source": "user",
 
       "scope": "customer",
-
-      "captureMode": "eager",
 
       "aliases": [
 
@@ -974,8 +958,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
 
       "scope": "customer",
 
-      "captureMode": "eager",
-
       "aliases": [
 
         "correo",
@@ -1021,8 +1003,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "source": "user",
 
       "scope": "request",
-
-      "captureMode": "explicit",
 
       "retentionDays": 1,
 

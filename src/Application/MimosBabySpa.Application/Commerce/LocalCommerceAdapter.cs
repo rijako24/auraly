@@ -15,17 +15,24 @@ public sealed class LocalCommerceAdapter : ICommerceAdapter
 
     public async Task<ProductSearchResult> SearchProductsAsync(ProductSearchRequest request, CommerceAdapterContext ctx, CancellationToken ct = default)
     {
+        var repositoryLimit = HasStructuredFilters(request) ? 50 : request.Limit;
         var products = await _unitOfWork.Products.SearchAsync(
             ctx.BusinessId,
             request.Query,
             request.Category,
-            request.Limit,
+            repositoryLimit,
             ct,
             includeInactive: true);
+        var filtered = products
+            .Select(Map)
+            .Where(product => ProductMatches(product, request))
+            .Take(Math.Clamp(request.Limit, 1, 50))
+            .ToList();
         return new ProductSearchResult(
-            products.Select(Map).ToList(),
+            filtered,
             Source,
-            false);
+            false,
+            ProductSearchAppliedFilters.From(request));
     }
 
     public async Task<ProductReference?> GetProductAsync(AddOrderItemRequest request, CommerceAdapterContext ctx, CancellationToken ct = default)
@@ -62,6 +69,31 @@ public sealed class LocalCommerceAdapter : ICommerceAdapter
     {
         return Task.FromResult(new CreateExternalOrderResult(order.OrderId.ToString(), null, Source, "{}"));
     }
+
+    private static bool HasStructuredFilters(ProductSearchRequest request) =>
+        !string.IsNullOrWhiteSpace(request.Family)
+        || !string.IsNullOrWhiteSpace(request.Subcategory)
+        || !string.IsNullOrWhiteSpace(request.ProductClass);
+
+    private static bool ProductMatches(ProductReference product, ProductSearchRequest request) =>
+        MatchesFilter(product.CategoryName, request.Category)
+        && MatchesFilter(CombinedMetadata(product), request.Family)
+        && MatchesFilter(CombinedMetadata(product), request.Subcategory)
+        && MatchesFilter(CombinedMetadata(product), request.ProductClass);
+
+    private static string CombinedMetadata(ProductReference product) =>
+        string.Join(" ", new[]
+        {
+            product.CategoryName,
+            product.FamilyName,
+            product.SubcategoryName,
+            product.ProductClassName,
+            product.RawPayloadJson
+        }.Where(value => !string.IsNullOrWhiteSpace(value)));
+
+    private static bool MatchesFilter(string? value, string? filter) =>
+        string.IsNullOrWhiteSpace(filter)
+        || (!string.IsNullOrWhiteSpace(value) && value.Contains(filter.Trim(), StringComparison.OrdinalIgnoreCase));
 
     private static ProductReference Map(Product product) =>
         new(
