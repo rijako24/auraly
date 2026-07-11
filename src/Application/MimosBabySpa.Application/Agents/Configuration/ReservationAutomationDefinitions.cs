@@ -33,7 +33,7 @@ public sealed class ReservationAutomationTrigger
 
 public sealed class ReservationAutomationActionConfig
 {
-    public string Tool { get; set; } = string.Empty;
+    public string Operation { get; set; } = string.Empty;
 
     public Dictionary<string, JsonElement> Arguments { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 

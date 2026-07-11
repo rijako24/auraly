@@ -72,6 +72,51 @@ public sealed class ConversationFactsService : IConversationFactsService
         await _unitOfWork.SaveChangesAsync(ct);
     }
 
+    public Task ApplyBatchAsync(
+        Guid conversationId,
+        Guid businessId,
+        IReadOnlyDictionary<string, string?> mutations,
+        IReadOnlySet<string> rememberAcrossRequests,
+        CancellationToken ct = default) =>
+        _unitOfWork.ExecuteInTransactionAsync(async () =>
+        {
+            if (mutations.Count == 0)
+                return;
+
+            var cleared = mutations
+                .Where(pair => pair.Value is null)
+                .Select(pair => pair.Key)
+                .ToList();
+            if (cleared.Count > 0)
+                await _unitOfWork.ConversationContexts.DeleteFieldsAsync(conversationId, cleared, ct);
+
+            foreach (var (key, value) in mutations.Where(pair => pair.Value is not null))
+                await _unitOfWork.ConversationContexts.CreateOrUpdateAsync(conversationId, key, value!);
+
+            var conversation = await _unitOfWork.Conversations.GetByIdAsync(conversationId);
+            if (conversation is not null)
+            {
+                if (mutations.TryGetValue(ConversationFactKeys.CustomerName, out var name) && name is not null)
+                    conversation.CustomerName = name;
+                if (mutations.TryGetValue(ConversationFactKeys.CustomerEmail, out var email) && email is not null)
+                    conversation.CustomerEmail = email;
+
+                if (mutations.ContainsKey(ConversationFactKeys.CustomerName)
+                    || mutations.ContainsKey(ConversationFactKeys.CustomerEmail))
+                {
+                    conversation.Timestamp = DateTime.UtcNow;
+                    await _unitOfWork.Conversations.UpdateAsync(conversation);
+                }
+
+                foreach (var key in rememberAcrossRequests)
+                {
+                    if (mutations.TryGetValue(key, out var value) && value is not null)
+                        await _customerMemory.RememberAsync(businessId, conversation.UserNumber, key, value, ct);
+                }
+            }
+
+            await _unitOfWork.SaveChangesAsync(ct);
+        }, ct);
     public async Task<IReadOnlyList<string>> ClearNonPersistentAsync(
         Guid conversationId,
         IReadOnlyCollection<string> persistentKeys,

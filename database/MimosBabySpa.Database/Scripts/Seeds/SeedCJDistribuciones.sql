@@ -213,7 +213,10 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
     "provider": "Mantis"
   },
   "operatingHours": {
-    "enforce": true
+    "enforce": true,
+    "outsideHours": {
+      "guidance": "Responde de forma breve, cordial y cerrada. Explica que el negocio esta fuera de horario y que el proximo horario habil es {{next_operating_window}}. Adapta el mensaje a lo que dijo el cliente, pero no solicites datos, no prometas ejecutar gestiones, no abras catalogos y no termines con preguntas."
+    }
   },
   "persona": "Eres el asistente comercial de CJ Distribuciones por WhatsApp. Atiendes pedidos de alimentos y productos de consumo para hogares, tiendas, minimercados, restaurantes, comidas rapidas y distribuidores. Hablas en espanol con tono claro, amable y practico. Guias la compra sin obligar al cliente a navegar menus y usas el catalogo como fuente de verdad.",
   "policies": "## PRESENTACION\n\nHola! Bienvenido a CJ Distribuciones. Con gusto te ayudo a realizar tu pedido. Me indicas tu nombre o el nombre de tu establecimiento?",
@@ -231,27 +234,12 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "id": "modify_current_order",
       "priority": 90,
       "goal": "Modificar el carrito actual cuando el cliente pida agregar, quitar o cambiar productos o cantidades.",
-      "conversationGuidance": "Consulta el pedido actual si hay duda. Para agregar productos nuevos, busca productos oficiales antes de agregar. Si cambia cantidades, usa update_order_item_quantity. Si el cambio afecta un resumen ya presentado, limpia o actualiza los facts de cierre necesarios y vuelve a mostrar el carrito actualizado.",
-      "allowedActions": [
-        "search_products",
-        "add_order_item",
-        "remove_order_item",
-        "update_order_item_quantity",
-        "get_order_draft",
-        "set_fact",
-        "prepare_order_checkout"
-      ]
-    },
+      "conversationGuidance": "Consulta el pedido actual si hay duda. Para agregar productos nuevos, busca productos oficiales antes de agregar. Si cambia cantidades, usa update_order_item_quantity. Si el cambio afecta un resumen ya presentado, limpia o actualiza los facts de cierre necesarios y vuelve a mostrar el carrito actualizado."},
     {
       "id": "human_handoff",
       "priority": 80,
       "goal": "Escalar a humano cuando el cliente lo pida, haya queja, caso mayorista especial o solicitud fuera del alcance.",
-      "conversationGuidance": "Responde breve y cordial antes de escalar. Para distribuidores con negociacion especial, toma nombre, negocio y ciudad si los entregan, sin inventar condiciones comerciales.",
-      "allowedActions": [
-        "escalate_to_human",
-        "set_fact"
-      ]
-    }
+      "conversationGuidance": "Responde breve y cordial antes de escalar. Para distribuidores con negociacion especial, toma nombre, negocio y ciudad si los entregan, sin inventar condiciones comerciales."}
   ],
   "factSchema": [
     { "key": "customer_name", "role": "customer.name", "label": "nombre del cliente o establecimiento", "type": "string", "required": true, "source": "user", "scope": "customer", "aliases": ["nombre", "cliente", "establecimiento", "negocio", "recibe", "destinatario"] },
@@ -337,6 +325,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
   },
   "templates": {
     "order_checkout_no_payment": "*Resumen de tu pedido*\n{{#each line_items}}\n- {{name}} x{{quantity}}: ${{line_total}}\n{{/each}}\n- Envio: ${{shipping_cost}}\n- *Total: ${{total}} {{currency}}*\n\nEntrega:\n- Ciudad: {{city}}\n- Direccion: {{delivery_address}}\n- Celular: {{customer_phone}}\n{{#if customer_name}}\n- Nombre: {{customer_name}}\n{{/if}}\n\nMetodo de pago: efectivo al recibir\n\nConfirmas tu pedido con esta informacion?",
+    "single_active_order_required": "Solo podemos gestionar un pedido activo por conversación. Termina el pedido actual antes de iniciar otro; no se aplicó ningún cambio.",
     "order_checkout_manual_transfer": "*Resumen de tu pedido*\n{{#each line_items}}\n- {{name}} x{{quantity}}: ${{line_total}}\n{{/each}}\n- Envio: ${{shipping_cost}}\n- *Total: ${{total}} {{currency}}*\n\nEntrega:\n- Ciudad: {{city}}\n- Direccion: {{delivery_address}}\n- Celular: {{customer_phone}}\n{{#if customer_name}}\n- Nombre: {{customer_name}}\n{{/if}}\n\nMetodo de pago: transferencia manual\n\nTu pago queda pendiente de confirmacion manual. Un agente del equipo de CJ Distribuciones confirmara el pago; cuando se confirme, te notificaremos que el pedido fue creado."
   },
   "flows": [
@@ -351,8 +340,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
           "name": "Identificacion del cliente",
           "goal": "Obtener el nombre del cliente o establecimiento antes de iniciar el pedido cuando no exista un nombre confiable.",
           "advanceWhenFacts": ["customer_name"],
-          "conversationGuidance": "Si falta customer_name y el cliente no lo informo en el mensaje actual, saluda exactamente: Hola! Bienvenido a CJ Distribuciones. Con gusto te ayudo a realizar tu pedido. Me indicas tu nombre o el nombre de tu establecimiento? Si ya lo dijo, registralo con set_fact y continua sin volver a pedirlo.",
-          "allowedActions": ["set_fact"],
+          "conversationGuidance": "Si falta customer_name y el cliente no lo informo en el mensaje actual, saluda exactamente: Hola! Bienvenido a CJ Distribuciones. Con gusto te ayudo a realizar tu pedido. Me indicas tu nombre o el nombre de tu establecimiento? Si ya lo dijo, continúa sin volver a pedirlo; el motor registra el dato extraído.",
           "collect": ["customer_name"]
         },
         {
@@ -361,7 +349,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
           "goal": "Clasificar el perfil comercial como Hogar, TiendaMinimercado, Restaurante, ComidaRapida o Distribuidor.",
           "advanceWhenFacts": ["customer_type"],
           "conversationGuidance": "Si falta customer_type, pregunta: Mucho gusto, {customer_name}. Para brindarte informacion y recomendaciones mas adecuadas, cual de estas opciones describe mejor tu perfil? A. Hogar B. Tienda o minimercado C. Restaurante D. Comida rapida E. Distribuidor. Acepta respuestas naturales y registra el valor canonico. Si el cliente corrige el perfil posteriormente, actualizalo.",
-          "allowedActions": ["set_fact"],
           "collect": ["customer_type"]
         },
         {
@@ -369,65 +356,155 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
           "name": "Productos, catalogo y recomendaciones",
           "goal": "Recibir pedidos abiertos, resolver productos reales del catalogo, recomendar de forma controlada y construir el carrito hasta que el cliente finalice.",
           "advanceWhenFacts": ["order_finalized"],
-          "conversationGuidance": "Cuando customer_name y customer_type existan, responde: Perfecto, {customer_name}. Puedes escribirme directamente los productos que necesitas o contarme que deseas preparar y te ayudo a encontrar opciones en nuestro catalogo. Usa search_products para listas directas, busquedas, catalogo, precios, disponibilidad, surtido y complementos. Para listas, busca cada producto y cantidad, muestra referencias reales con nombre, presentacion y precio cuando la tool lo entregue; no muestres SKU, codigos internos ni unidades de stock en opciones normales; agrega solo coincidencias claras o confirmadas. Si hay ambiguedad, pide la referencia preferida usando candidatos reales. Si pides confirmacion sobre un producto pendiente despues de haber agregado otros, una respuesta afirmativa confirma solo ese producto pendiente; no vuelvas a agregar productos ya agregados salvo que el cliente pida mas unidades explicitamente. Para recetas o preparaciones, primero usa search_web_recipes como apoyo externo; despues usa search_products con las consultas de ingredientes derivadas por la receta, no con la frase completa del cliente. No respondas solo con links ni digas que si quiere luego buscas catalogo; en la misma respuesta muestra maximo dos ideas de receta y una seccion breve de ingredientes disponibles en catalogo con productos reales, presentacion y precio cuando la tool los entregue. No concluyas que no hay un ingrediente si no se busco como ingrediente separado. No muestres SKU, codigos internos ni unidades de stock salvo si el cliente pidio mas cantidad de la disponible, en cuyo caso informa la cantidad disponible y pregunta si desea incluir esa cantidad. Recomienda solo productos encontrados y pide confirmacion para agregarlos. Despues de agregar productos, puedes hacer una sola venta complementaria breve basada en catalogo y relacionada con lo pedido. Si el cliente indica que termino o pide total/factura, registra order_finalized=true de inmediato.",
-          "allowedActions": [
-            "search_products",
-            "search_web_recipes",
-            "add_order_item",
-            "get_order_draft",
-            "set_fact"
-          ],
+          "conversationGuidance": "Cuando customer_name y customer_type existan, responde: Perfecto, {customer_name}. Puedes escribirme directamente los productos que necesitas o contarme que deseas preparar y te ayudo a encontrar opciones en nuestro catalogo. Para listas directas, búsquedas, catálogo, precios, disponibilidad, surtido y complementos, responde únicamente con resultados oficiales producidos por las operaciones configuradas. Para listas, busca cada producto y cantidad, muestra referencias reales con nombre, presentacion y precio cuando el resultado vigente lo entregue; no muestres SKU, codigos internos ni unidades de stock en opciones normales; agrega solo coincidencias claras o confirmadas. Si hay ambiguedad, pide la referencia preferida usando candidatos reales. Si pides confirmacion sobre un producto pendiente despues de haber agregado otros, una respuesta afirmativa confirma solo ese producto pendiente; no vuelvas a agregar productos ya agregados salvo que el cliente pida mas unidades explicitamente. Para recetas o preparaciones, primero presenta el resultado de receta producido por la operación configurada y después los productos oficiales encontrados con las consultas de ingredientes derivadas, no con la frase completa del cliente. No respondas solo con links ni digas que si quiere luego buscas catalogo; en la misma respuesta muestra maximo dos ideas de receta y una seccion breve de ingredientes disponibles en catalogo con productos reales, presentacion y precio cuando la operación los entregue. No concluyas que no hay un ingrediente si no se busco como ingrediente separado. No muestres SKU, codigos internos ni unidades de stock salvo si el cliente pidio mas cantidad de la disponible, en cuyo caso informa la cantidad disponible y pregunta si desea incluir esa cantidad. Recomienda solo productos encontrados y pide confirmacion para agregarlos. Despues de agregar productos, puedes hacer una sola venta complementaria breve basada en catalogo y relacionada con lo pedido. Si el cliente indica que termino o pide total/factura, registra order_finalized=true de inmediato.",
           "collect": ["order_finalized"],
-          "afterTool": [
+          "signals": [
             {
-              "tool": "search_web_recipes",
-              "when": {
-                "path": "ok",
-                "equals": "true"
-              },
-              "setFacts": {
-                "system.recipe_catalog_queries": "{{data.catalog_search_queries}}"
+              "type": "recipe_request",
+              "description": "El cliente pide ideas o recetas para preparar algo. El valor contiene únicamente el ingrediente o preparación principal expresada por el cliente.",
+              "valueSchema": { "type": "string" }
+            },
+            {
+              "type": "order_changes",
+              "description": "Cambios explícitos solicitados por el cliente sobre productos del pedido. Extrae todos los productos y cantidades del mismo mensaje. productText contiene solo la frase que identifica el producto o presentación, sin repetir cantidad ni verbo de acción; quantity contiene la cantidad por separado. groupReference es null para un único pedido; si el cliente distribuye productos entre pedidos o direcciones distintas, contiene la dirección o referencia de grupo correspondiente en cada producto para que el motor rechace atómicamente el intento de pedidos simultáneos.",
+              "valueSchema": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "operation": { "type": "string", "enum": ["add", "remove", "set_quantity"] },
+                    "productText": { "type": "string" },
+                    "quantity": { "type": ["number", "null"] },
+                    "groupReference": { "type": ["string", "null"] }
+                  },
+                  "required": ["operation", "productText", "quantity", "groupReference"]
+                }
               }
             }
           ],
-          "entryActions": [
+          "actions": [
             {
-              "tool": "search_web_recipes",
-              "arguments": {
-                "ingredient": "{{user.message}}",
-                "query": "preparacion facil",
-                "limit": 2
-              },
-              "when": {
-                "requiredFacts": ["customer_name", "customer_type"],
-                "messageMatches": [
-                  { "anyOf": ["receta", "preparar", "preparacion", "preparaciÃƒÂ³n", "cocinar", "cocino", "hacer con"] }
-                ]
+              "id": "search_recipe_request",
+              "operation": "commerce.search_recipes",
+              "trigger": "on_signal",
+              "signal": "recipe_request",
+              "arguments": { "ingredient": "{{signal.recipe_request.value}}", "query": "preparacion facil", "limit": 2 },
+              "onOutcome": {
+                "recipes.found": {
+                  "effects": [
+                    { "type": "facts.set_from_outcome", "bindings": { "system.recipe_catalog_queries": "catalog_search_queries" } }
+                  ],
+                  "response": { "guidance": "Presenta máximo dos ideas devueltas y luego muestra únicamente ingredientes encontrados en el catálogo oficial." }
+                }
               }
             },
             {
-              "tool": "search_products",
-              "arguments": {
-                "queries": "{{fact.system.recipe_catalog_queries}}",
-                "limit": 10
-              },
-              "when": {
-                "requiredFacts": ["customer_name", "customer_type", "system.recipe_catalog_queries"],
-                "messageMatches": [
-                  { "anyOf": ["receta", "preparar", "preparacion", "preparaciÃƒÂ³n", "cocinar", "cocino", "hacer con"] }
-                ]
+              "id": "search_recipe_catalog_products",
+              "operation": "commerce.search_products",
+              "trigger": "when_ready",
+              "condition": { "factPresent": "system.recipe_catalog_queries" },
+              "arguments": { "queries": "{{fact.system.recipe_catalog_queries}}", "limit": 10 },
+              "onOutcome": {
+                "products.found": {
+                  "effects": [ { "type": "facts.clear", "facts": ["system.recipe_catalog_queries"] } ],
+                  "response": { "guidance": "Muestra solo productos reales devueltos por catálogo, con presentación y precio cuando estén disponibles." }
+                }
+              }
+            },
+            {
+              "id": "apply_order_changes",
+              "operation": "commerce.apply_order_changes",
+              "trigger": "on_signal",
+              "signal": "order_changes",
+              "arguments": { "commands": "{{signal.order_changes.value}}" },
+              "onOutcome": {
+                "cart.applied": {
+                  "response": { "guidance": "Confirma brevemente los cambios aplicados y continúa según el objetivo de la etapa." }
+                },
+                "cart.product_not_found": {
+                  "response": { "mode": "ask_clarification", "guidance": "Indica que ese producto no se encontró y pide una descripción o referencia más precisa." }
+                },
+                "cart.product_ambiguous": {
+                  "response": { "mode": "ask_clarification", "guidance": "Presenta únicamente los candidatos devueltos y pregunta cuál referencia desea." }
+                },
+                "cart.item_not_found_or_ambiguous": {
+                  "response": { "mode": "ask_clarification", "guidance": "Aclara cuál producto existente del pedido desea modificar." }
+                },
+                "cart.conflicting_commands": {
+                  "response": { "mode": "ask_clarification", "guidance": "Pide aclarar el cambio final para el producto repetido; no se aplicó ningún cambio del lote." }
+                },
+                "cart.multiple_orders": {
+                  "response": { "template": "single_active_order_required" }
+                }
               }
             }
-          ]
-        },
+          ]},
         {
           "id": "cart_review",
           "name": "Resumen inicial del pedido",
           "goal": "Mostrar el carrito con productos y subtotales disponibles antes de pedir entrega o pago.",
           "advanceWhenFacts": ["cart_review_confirmed"],
-          "conversationGuidance": "Cuando order_finalized=true y existan items, usa get_order_draft para mostrar: Tu pedido queda asi, con cada producto, presentacion, cantidad y subtotal si la tool lo entrega. Muestra el total calculado por el sistema si esta disponible. Pregunta: Esta correcto o deseas modificar algo? Si confirma, registra cart_review_confirmed=true. Si modifica, aplica cambios con las tools de carrito y vuelve a mostrar el resumen.",
-          "allowedActions": ["get_order_draft", "set_fact", "search_products", "add_order_item", "remove_order_item", "update_order_item_quantity"],
-          "collect": ["cart_review_confirmed"]
+          "conversationGuidance": "Cuando order_finalized=true y existan items, usa get_order_draft para mostrar: Tu pedido queda asi, con cada producto, presentacion, cantidad y subtotal si el resultado vigente lo entrega. Muestra el total calculado por el sistema si esta disponible. Pregunta: Esta correcto o deseas modificar algo? Si confirma, registra cart_review_confirmed=true. Si modifica, aplica los cambios extraídos mediante la operación configurada y vuelve a mostrar el resumen.",
+          "collect": ["cart_review_confirmed"],
+          "signals": [
+            {
+              "type": "order_changes",
+              "description": "Cambios explícitos solicitados por el cliente sobre productos del pedido. Extrae todos los productos y cantidades del mismo mensaje. productText contiene solo la frase que identifica el producto o presentación, sin repetir cantidad ni verbo de acción; quantity contiene la cantidad por separado. groupReference es null para un único pedido; si el cliente distribuye productos entre pedidos o direcciones distintas, contiene la dirección o referencia de grupo correspondiente en cada producto para que el motor rechace atómicamente el intento de pedidos simultáneos.",
+              "valueSchema": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "operation": { "type": "string", "enum": ["add", "remove", "set_quantity"] },
+                    "productText": { "type": "string" },
+                    "quantity": { "type": ["number", "null"] },
+                    "groupReference": { "type": ["string", "null"] }
+                  },
+                  "required": ["operation", "productText", "quantity", "groupReference"]
+                }
+              }
+            }
+          ],
+          "actions": [
+            {
+              "id": "show_current_order_draft",
+              "operation": "commerce.get_order_draft",
+              "trigger": "when_ready",
+              "arguments": {},
+              "onOutcome": {
+                "order.draft_loaded": { "response": { "guidance": "Muestra los ítems, cantidades, subtotales y total devueltos, y pregunta si el pedido actual está correcto." } }
+              }
+            },
+            {
+              "id": "apply_order_changes",
+              "operation": "commerce.apply_order_changes",
+              "trigger": "on_signal",
+              "signal": "order_changes",
+              "arguments": { "commands": "{{signal.order_changes.value}}" },
+              "onOutcome": {
+                "cart.applied": {
+                  "response": { "guidance": "Confirma brevemente los cambios aplicados y continúa según el objetivo de la etapa." }
+                },
+                "cart.product_not_found": {
+                  "response": { "mode": "ask_clarification", "guidance": "Indica que ese producto no se encontró y pide una descripción o referencia más precisa." }
+                },
+                "cart.product_ambiguous": {
+                  "response": { "mode": "ask_clarification", "guidance": "Presenta únicamente los candidatos devueltos y pregunta cuál referencia desea." }
+                },
+                "cart.item_not_found_or_ambiguous": {
+                  "response": { "mode": "ask_clarification", "guidance": "Aclara cuál producto existente del pedido desea modificar." }
+                },
+                "cart.conflicting_commands": {
+                  "response": { "mode": "ask_clarification", "guidance": "Pide aclarar el cambio final para el producto repetido; no se aplicó ningún cambio del lote." }
+                },
+                "cart.multiple_orders": {
+                  "response": { "template": "single_active_order_required" }
+                }
+              }
+            }
+          ]
         },
         {
           "id": "order_data",
@@ -436,7 +513,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
           "advanceWhenFacts": ["delivery_method", "city", "delivery_address", "delivery_phone", "customer_name"],
           "reentryOnFactChanged": ["delivery_method", "city", "delivery_address", "delivery_phone", "customer_name"],
           "conversationGuidance": "Despues de aprobar el carrito pregunta: Prefieres recoger tu pedido o recibirlo a domicilio? Si elige recogida, registra delivery_method=recogida y usa como delivery_address el punto de recogida configurado o Punto de recogida CJ Distribuciones - Valledupar, Cesar. Si elige domicilio, registra delivery_method=domicilio y solicita solo datos faltantes: direccion, barrio o referencia cuando aplique, telefono si no existe y nombre del receptor si falta. No pidas datos confiables ya disponibles. No pidas ciudad si ya existe por defecto; usa Valledupar salvo que el cliente indique otra ciudad.",
-          "allowedActions": ["set_fact"],
           "collect": ["delivery_method", "city", "delivery_address", "delivery_phone", "customer_name"]
         },
         {
@@ -445,7 +521,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
           "goal": "Elegir uno de los metodos de pago configurados para CJ Distribuciones.",
           "advanceWhenFacts": ["payment_method"],
           "conversationGuidance": "Cuando la modalidad de entrega y datos requeridos esten completos, pregunta: Como deseas realizar el pago? Opciones configuradas: transferencia o efectivo. Registra payment_method=efectivo o payment_method=transferencia segun responda. No menciones metodos no configurados.",
-          "allowedActions": ["set_fact", "get_order_draft"],
           "collect": ["payment_method"]
         },
         {
@@ -454,39 +529,66 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
           "goal": "Preparar y mostrar el resumen oficial con entrega, pago y total final del motor.",
           "advanceWhenFacts": ["order_checkout_presented"],
           "reentryOnFactChanged": ["order_finalized", "cart_review_confirmed", "delivery_method", "city", "delivery_address", "delivery_phone", "customer_name", "payment_method"],
-          "afterTool": [
+          "actions": [
             {
-              "tool": "prepare_order_checkout",
-              "when": {
-                "path": "ok",
-                "equals": "true"
+              "id": "prepare_order_checkout",
+              "operation": "commerce.prepare_checkout",
+              "trigger": "when_ready",
+              "condition": {
+                "all": [
+                  { "factPresent": "cart_review_confirmed" },
+                  { "factPresent": "delivery_method" },
+                  { "factPresent": "city" },
+                  { "factPresent": "delivery_address" },
+                  { "factPresent": "delivery_phone" },
+                  { "factPresent": "customer_name" },
+                  { "factPresent": "payment_method" },
+                  { "factMissing": "order_checkout_presented" }
+                ]
               },
-              "setFacts": {
-                "order_checkout_presented": "true"
-              }
-            }
-          ],
-          "conversationGuidance": "Cuando ya existan items, carrito aprobado, entrega y metodo de pago, llama prepare_order_checkout una sola vez. Si el metodo es efectivo, muestra el resumen renderizado por la tool y pide confirmacion verbal. Si el metodo es transferencia, muestra el resumen renderizado por la tool e informa que el pago queda pendiente de confirmacion manual por el equipo; no pidas comprobante, no pidas confirmacion adicional del pedido y no llames create_order. Si falla por configuracion no recuperable, escala a humano.",
-          "allowedActions": ["prepare_order_checkout", "get_order_draft", "escalate_to_human"],
-          "collect": ["order_checkout_presented"],
-          "entryActions": [
-            {
-              "tool": "prepare_order_checkout",
               "arguments": {},
-              "when": {
-                "requiredFacts": ["cart_review_confirmed", "delivery_method", "city", "delivery_address", "delivery_phone", "customer_name", "payment_method"],
-                "missingFacts": ["order_checkout_presented"]
+              "onOutcome": {
+                "order.checkout_ready": {
+                  "effects": [ { "type": "fact.set", "fact": "order_checkout_presented", "value": true } ]
+                },
+                "order.checkout_payment_required": {
+                  "effects": [ { "type": "fact.set", "fact": "order_checkout_presented", "value": true } ]
+                },
+                "order.checkout_pending_manual_payment": {
+                  "effects": [ { "type": "fact.set", "fact": "order_checkout_presented", "value": true } ]
+                }
               }
             }
-          ]
-        },
+          ],          "conversationGuidance": "Cuando ya existan items, carrito aprobado, entrega y metodo de pago, el motor prepara el checkout una sola vez. Si el metodo es efectivo, muestra el resumen autoritativo renderizado por el motor y pide confirmacion verbal. Si el metodo es transferencia, muestra el resumen autoritativo renderizado por el motor e informa que el pago queda pendiente de confirmacion manual por el equipo; no pidas comprobante, no pidas confirmacion adicional del pedido y no confirmes que el pedido fue creado. Si falla por configuracion no recuperable, escala a humano.",
+          "collect": ["order_checkout_presented"]},
         {
           "id": "order_confirmation",
           "name": "Confirmacion del pedido",
           "goal": "Crear el pedido despues de confirmacion del cliente.",
           "advanceWhenFacts": ["customer_confirmed"],
-          "conversationGuidance": "Si payment_method=transferencia, no pidas confirmacion verbal, no llames create_order y responde que el pago queda pendiente de confirmacion manual por el equipo de CJ Distribuciones; cuando el pago se confirme manualmente, el sistema notificara que el pedido fue creado. Si payment_method=efectivo y falta customer_confirmed, pide confirmacion verbal del resumen final y registrala solo cuando el cliente la entregue claramente. Con customer_confirmed=true y metodo efectivo, crea el pedido usando los facts vigentes y despues envia la secuencia order_created_customer. Si corrige datos, metodo de pago o carrito, aplica el cambio y presenta resumen actualizado. No afirmes pago recibido solo por una imagen o comprobante si el workflow no lo valida.",
-          "allowedActions": ["create_order", "send_message_sequence", "get_order_draft", "set_fact", "escalate_to_human"],
+          "actions": [
+            {
+              "id": "create_confirmed_cash_order",
+              "operation": "commerce.create_order",
+              "trigger": "when_ready",
+              "condition": {
+                "all": [
+                  { "factEquals": { "key": "payment_method", "value": "efectivo" } },
+                  { "factEquals": { "key": "customer_confirmed", "value": true } }
+                ]
+              },
+              "arguments": { "customer_confirmed": "{{fact.customer_confirmed}}" },
+              "onOutcome": {
+                "order.created": {
+                  "effects": [
+                    { "type": "sequence.enqueue", "sequence": "order_created_customer" },
+                    { "type": "request.complete" }
+                  ],
+                  "response": { "guidance": "Confirma el pedido únicamente con los datos autoritativos devueltos por la operación." }
+                }
+              }
+            }
+          ],          "conversationGuidance": "Si payment_method=transferencia, no pidas confirmacion verbal, no confirmes que el pedido fue creado y responde que el pago queda pendiente de confirmacion manual por el equipo de CJ Distribuciones; cuando el pago se confirme manualmente, el sistema notificara que el pedido fue creado. Si payment_method=efectivo y falta customer_confirmed, pide confirmacion verbal del resumen final y registrala solo cuando el cliente la entregue claramente. Con customer_confirmed=true y metodo efectivo, crea el pedido usando los facts vigentes y despues envia la secuencia order_created_customer. Si corrige datos, metodo de pago o carrito, aplica el cambio y presenta resumen actualizado. No afirmes pago recibido solo por una imagen o comprobante si el workflow no lo valida.",
           "collect": ["customer_confirmed"]
         }
       ]

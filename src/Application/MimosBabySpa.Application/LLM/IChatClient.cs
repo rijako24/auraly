@@ -25,11 +25,22 @@ public sealed class ChatCompletionOptions
     public float? Temperature { get; init; }
     public int? MaxTokens { get; init; }
 
+    /// <summary>Requests a response that strictly follows the supplied JSON Schema.</summary>
+    public ChatStructuredOutput? StructuredOutput { get; init; }
+
     /// <summary>
     /// Cuando es true, fuerza al modelo a responder en texto sin invocar tools.
     /// Usado para cortar loops o forzar respuesta final.
     /// </summary>
     public bool ForceTextResponse { get; init; }
+}
+
+public sealed class ChatStructuredOutput
+{
+    public string Name { get; init; } = string.Empty;
+    public string JsonSchema { get; init; } = "{}";
+    public string? Description { get; init; }
+    public bool Strict { get; init; } = true;
 }
 
 /// <summary>

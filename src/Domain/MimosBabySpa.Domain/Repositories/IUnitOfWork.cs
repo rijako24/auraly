@@ -28,6 +28,7 @@ public interface IUnitOfWork : IDisposable
     IIntegrationConnectionRepository IntegrationConnections { get; }
     IReservationIntegrationEventRepository ReservationIntegrationEvents { get; }
     IExternalEscalationAttemptRepository ExternalEscalationAttempts { get; }
+    IExternalEscalationOutcomeDeliveryRepository ExternalEscalationOutcomeDeliveries { get; }
     IConversationStateRepository ConversationStates { get; }
     IServiceAddOnRuleRepository ServiceAddOnRules { get; }
     IReservationAddOnRepository ReservationAddOns { get; }

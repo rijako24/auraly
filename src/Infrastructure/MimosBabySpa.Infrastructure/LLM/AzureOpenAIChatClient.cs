@@ -1,159 +1,153 @@
-using Azure;
 using Azure.AI.OpenAI;
 using Microsoft.Extensions.Logging;
 using MimosBabySpa.Application.LLM;
+using OpenAI.Chat;
+using SdkChatMessage = OpenAI.Chat.ChatMessage;
 
 namespace MimosBabySpa.Infrastructure.LLM;
 
 /// <summary>
-/// Implementación de IChatClient sobre Azure OpenAI SDK beta.17.
-/// Único punto de contacto con el SDK. Soporta Function Calling nativo.
+/// Single adapter between the application contract and the Azure OpenAI SDK.
+/// Supports function calling for the active engine and strict JSON Schema outputs for planners.
 /// </summary>
 public sealed class AzureOpenAIChatClient : IChatClient
 {
-    private readonly OpenAIClient _client;
-    private readonly string _deploymentName;
+    private readonly ChatClient _client;
     private readonly ILogger<AzureOpenAIChatClient> _logger;
 
     public AzureOpenAIChatClient(
-        OpenAIClient client,
+        AzureOpenAIClient client,
         string deploymentName,
         ILogger<AzureOpenAIChatClient> logger)
     {
-        _client = client;
-        _deploymentName = deploymentName;
+        _client = client.GetChatClient(deploymentName);
         _logger = logger;
     }
 
     public async Task<ChatCompletionResult> CompleteAsync(
-        IReadOnlyList<ChatMessage> messages,
+        IReadOnlyList<Application.LLM.ChatMessage> messages,
         IReadOnlyList<ChatToolDefinition>? tools = null,
-        ChatCompletionOptions? options = null,
+        Application.LLM.ChatCompletionOptions? options = null,
         CancellationToken cancellationToken = default)
     {
         try
         {
-            var sdkMessages = messages.Select(ToSdkMessage).ToList();
-            var sdkOptions = new ChatCompletionsOptions(_deploymentName, sdkMessages)
+            if (options?.StructuredOutput is not null && tools is { Count: > 0 })
+                throw new InvalidOperationException("Structured output and function tools cannot be requested in the same planner call.");
+
+            var sdkOptions = new OpenAI.Chat.ChatCompletionOptions
             {
                 Temperature = options?.Temperature ?? 0.7f,
-                MaxTokens = options?.MaxTokens ?? 800
+                MaxOutputTokenCount = options?.MaxTokens ?? 800
             };
+
+            if (options?.StructuredOutput is { } structured)
+            {
+                sdkOptions.ResponseFormat = ChatResponseFormat.CreateJsonSchemaFormat(
+                    structured.Name,
+                    BinaryData.FromString(structured.JsonSchema),
+                    structured.Description,
+                    structured.Strict);
+            }
 
             if (tools is { Count: > 0 } && options?.ForceTextResponse != true)
             {
                 foreach (var tool in tools)
-                    sdkOptions.Tools.Add(ToSdkTool(tool));
-
-                sdkOptions.ToolChoice = ChatCompletionsToolChoice.Auto;
+                {
+                    sdkOptions.Tools.Add(ChatTool.CreateFunctionTool(
+                        tool.Name,
+                        tool.Description,
+                        BinaryData.FromString(tool.ParametersJson)));
+                }
             }
 
             _logger.LogDebug(
-                "Chat completion: messages={MsgCount}, tools={ToolCount}, forceText={Force}",
-                messages.Count, tools?.Count ?? 0, options?.ForceTextResponse);
+                "Chat completion: messages={MessageCount}, tools={ToolCount}, structured={Structured}, forceText={ForceText}",
+                messages.Count,
+                tools?.Count ?? 0,
+                options?.StructuredOutput?.Name,
+                options?.ForceTextResponse);
 
-            var response = await _client.GetChatCompletionsAsync(sdkOptions, cancellationToken);
-            var choice = response.Value.Choices[0];
+            var response = await _client.CompleteChatAsync(
+                messages.Select(ToSdkMessage),
+                sdkOptions,
+                cancellationToken);
+            var completion = response.Value;
 
             _logger.LogInformation(
-                "Chat completion done: finish_reason={Finish}, tokens={Total}",
-                choice.FinishReason, response.Value.Usage.TotalTokens);
+                "Chat completion done: finish_reason={FinishReason}, tokens={TotalTokens}",
+                completion.FinishReason,
+                completion.Usage.TotalTokenCount);
 
-            return BuildResult(choice, response.Value.Usage);
-        }
-        catch (RequestFailedException ex)
-        {
-            _logger.LogError(ex, "Azure OpenAI error {Status}: {Message}", ex.Status, ex.Message);
-            return new ChatCompletionResult
-            {
-                Success = false,
-                ErrorMessage = ex.Message,
-                FinishReason = ChatCompletionFinishReason.Error,
-                AssistantMessage = ChatMessage.Assistant(string.Empty)
-            };
+            return BuildResult(completion);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Unexpected error calling Azure OpenAI");
+            _logger.LogError(ex, "Azure OpenAI chat completion failed");
             return new ChatCompletionResult
             {
                 Success = false,
                 ErrorMessage = ex.Message,
                 FinishReason = ChatCompletionFinishReason.Error,
-                AssistantMessage = ChatMessage.Assistant(string.Empty)
+                AssistantMessage = Application.LLM.ChatMessage.Assistant(string.Empty)
             };
         }
     }
 
-    private static ChatCompletionResult BuildResult(ChatChoice choice, CompletionsUsage usage)
+    private static ChatCompletionResult BuildResult(ChatCompletion completion)
     {
-        var finishReason = choice.FinishReason?.ToString() switch
+        if (completion.ToolCalls.Count > 0)
         {
-            "tool_calls" => ChatCompletionFinishReason.ToolCalls,
-            "length" => ChatCompletionFinishReason.Length,
-            _ => ChatCompletionFinishReason.Stop
-        };
-
-        if (finishReason == ChatCompletionFinishReason.ToolCalls)
-        {
-            var toolCalls = choice.Message.ToolCalls
-                .OfType<ChatCompletionsFunctionToolCall>()
-                .Select(tc => new ToolCallRequest
+            var toolCalls = completion.ToolCalls
+                .Select(call => new ToolCallRequest
                 {
-                    Id = tc.Id,
-                    FunctionName = tc.Name,
-                    ArgumentsJson = tc.Arguments
+                    Id = call.Id,
+                    FunctionName = call.FunctionName,
+                    ArgumentsJson = call.FunctionArguments.ToString()
                 })
                 .ToList();
-
-            var assistantMsg = ChatMessage.AssistantWithToolCalls(toolCalls);
 
             return new ChatCompletionResult
             {
                 Success = true,
                 FinishReason = ChatCompletionFinishReason.ToolCalls,
                 ToolCalls = toolCalls,
-                AssistantMessage = assistantMsg,
-                PromptTokens = usage.PromptTokens,
-                CompletionTokens = usage.CompletionTokens
+                AssistantMessage = Application.LLM.ChatMessage.AssistantWithToolCalls(toolCalls),
+                PromptTokens = completion.Usage.InputTokenCount,
+                CompletionTokens = completion.Usage.OutputTokenCount
             };
         }
 
-        var content = choice.Message.Content ?? string.Empty;
+        var content = string.Concat(completion.Content.Select(part => part.Text));
+        var finishReason = completion.FinishReason switch
+        {
+            ChatFinishReason.Length => ChatCompletionFinishReason.Length,
+            _ => ChatCompletionFinishReason.Stop
+        };
+
         return new ChatCompletionResult
         {
             Success = true,
             FinishReason = finishReason,
             Content = content,
-            AssistantMessage = ChatMessage.Assistant(content),
-            PromptTokens = usage.PromptTokens,
-            CompletionTokens = usage.CompletionTokens
+            AssistantMessage = Application.LLM.ChatMessage.Assistant(content),
+            PromptTokens = completion.Usage.InputTokenCount,
+            CompletionTokens = completion.Usage.OutputTokenCount
         };
     }
 
-    private static ChatRequestMessage ToSdkMessage(ChatMessage msg) => msg.Role switch
+    private static SdkChatMessage ToSdkMessage(Application.LLM.ChatMessage message) => message.Role switch
     {
-        Application.LLM.ChatRole.System => new ChatRequestSystemMessage(msg.Content ?? string.Empty),
-        Application.LLM.ChatRole.User => new ChatRequestUserMessage(msg.Content ?? string.Empty),
-        Application.LLM.ChatRole.Assistant when msg.ToolCalls is { Count: > 0 } => BuildAssistantWithToolCalls(msg),
-        Application.LLM.ChatRole.Assistant => new ChatRequestAssistantMessage(msg.Content ?? string.Empty),
-        Application.LLM.ChatRole.Tool => new ChatRequestToolMessage(msg.Content ?? string.Empty, msg.ToolCallId!),
-        _ => throw new ArgumentOutOfRangeException(nameof(msg), $"Unknown role: {msg.Role}")
+        Application.LLM.ChatRole.System => new SystemChatMessage(message.Content ?? string.Empty),
+        Application.LLM.ChatRole.User => new UserChatMessage(message.Content ?? string.Empty),
+        Application.LLM.ChatRole.Assistant when message.ToolCalls is { Count: > 0 } =>
+            new AssistantChatMessage(message.ToolCalls.Select(call =>
+                ChatToolCall.CreateFunctionToolCall(
+                    call.Id,
+                    call.FunctionName,
+                    BinaryData.FromString(call.ArgumentsJson)))),
+        Application.LLM.ChatRole.Assistant => new AssistantChatMessage(message.Content ?? string.Empty),
+        Application.LLM.ChatRole.Tool => new ToolChatMessage(message.ToolCallId!, message.Content ?? string.Empty),
+        _ => throw new ArgumentOutOfRangeException(nameof(message), $"Unknown role: {message.Role}")
     };
-
-    private static ChatRequestAssistantMessage BuildAssistantWithToolCalls(ChatMessage msg)
-    {
-        var sdkMsg = new ChatRequestAssistantMessage(msg.Content ?? string.Empty);
-        foreach (var tc in msg.ToolCalls!)
-            sdkMsg.ToolCalls.Add(new ChatCompletionsFunctionToolCall(tc.Id, tc.FunctionName, tc.ArgumentsJson));
-        return sdkMsg;
-    }
-
-    private static ChatCompletionsFunctionToolDefinition ToSdkTool(ChatToolDefinition tool) =>
-        new(new FunctionDefinition
-        {
-            Name = tool.Name,
-            Description = tool.Description,
-            Parameters = BinaryData.FromString(tool.ParametersJson)
-        });
 }

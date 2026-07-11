@@ -32,6 +32,7 @@ public class UnitOfWork : IUnitOfWork
     private IIntegrationConnectionRepository? _integrationConnections;
     private IReservationIntegrationEventRepository? _reservationIntegrationEvents;
     private IExternalEscalationAttemptRepository? _externalEscalationAttempts;
+    private IExternalEscalationOutcomeDeliveryRepository? _externalEscalationOutcomeDeliveries;
     private IConversationStateRepository? _conversationStates;
     private IServiceAddOnRuleRepository? _serviceAddOnRules;
     private IReservationAddOnRepository? _reservationAddOns;
@@ -144,6 +145,9 @@ public class UnitOfWork : IUnitOfWork
 
     public IExternalEscalationAttemptRepository ExternalEscalationAttempts =>
         _externalEscalationAttempts ??= new ExternalEscalationAttemptRepository(_context);
+
+    public IExternalEscalationOutcomeDeliveryRepository ExternalEscalationOutcomeDeliveries =>
+        _externalEscalationOutcomeDeliveries ??= new ExternalEscalationOutcomeDeliveryRepository(_context);
 
     public IConversationStateRepository ConversationStates =>
         _conversationStates ??= new ConversationStateRepository(_context);

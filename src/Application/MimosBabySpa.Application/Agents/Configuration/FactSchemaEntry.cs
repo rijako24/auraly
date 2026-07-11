@@ -19,6 +19,9 @@ public sealed class FactSchemaEntry
     /// <summary>string | number | date | time | phone | email</summary>
     public string Type { get; init; } = "string";
 
+    /// <summary>Tenant-configured semantic normalization guidance for this fact.</summary>
+    public string? ExtractionGuidance { get; init; }
+
     public bool Required { get; init; }
 
     /// <summary>user | channel | system</summary>

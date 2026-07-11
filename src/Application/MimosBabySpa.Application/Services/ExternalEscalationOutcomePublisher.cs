@@ -8,16 +8,20 @@ namespace MimosBabySpa.Application.Services;
 
 public interface IExternalEscalationOutcomePublisher
 {
-    Task PublishAsync(
+    Task<Guid> EnqueueAsync(
         Guid businessId,
         Guid attemptId,
         string outcomeKey,
         IReadOnlyDictionary<string, string>? payload = null,
         CancellationToken ct = default);
+
+    Task<bool> PublishAsync(Guid deliveryId, CancellationToken ct = default);
+    Task<int> PublishPendingAsync(CancellationToken ct = default);
 }
 
 public sealed class ExternalEscalationOutcomePublisher : IExternalEscalationOutcomePublisher
 {
+    private const int PendingBatchSize = 100;
     private readonly IUnitOfWork _unitOfWork;
     private readonly IAgentConfigProvider _configProvider;
     private readonly IEventNotificationDispatcher _notifications;
@@ -35,61 +39,131 @@ public sealed class ExternalEscalationOutcomePublisher : IExternalEscalationOutc
         _logger = logger;
     }
 
-    public async Task PublishAsync(
+    public async Task<Guid> EnqueueAsync(
         Guid businessId,
         Guid attemptId,
         string outcomeKey,
         IReadOnlyDictionary<string, string>? payload = null,
         CancellationToken ct = default)
     {
-        if (string.IsNullOrWhiteSpace(outcomeKey))
-            return;
+        var normalizedOutcome = outcomeKey?.Trim() ?? string.Empty;
+        if (normalizedOutcome.Length == 0)
+            throw new ArgumentException("Outcome key is required.", nameof(outcomeKey));
 
-        var attempt = await _unitOfWork.ExternalEscalationAttempts.GetByIdAsync(attemptId, ct);
-        if (attempt is null || attempt.BusinessId != businessId)
-            return;
+        var existing = await _unitOfWork.ExternalEscalationOutcomeDeliveries
+            .GetByAttemptAndOutcomeAsync(attemptId, normalizedOutcome, ct);
+        if (existing is not null)
+            return existing.ExternalEscalationOutcomeDeliveryId;
 
-        var normalizedOutcome = outcomeKey.Trim();
-        var custom = MergePayload(ReadCustomPayload(attempt.CustomPayloadJson), payload);
-        custom["outcome_key"] = normalizedOutcome;
+        var now = DateTime.UtcNow;
+        var delivery = new ExternalEscalationOutcomeDelivery
+        {
+            ExternalEscalationOutcomeDeliveryId = Guid.NewGuid(),
+            BusinessId = businessId,
+            ExternalEscalationAttemptId = attemptId,
+            OutcomeKey = normalizedOutcome,
+            PayloadJson = JsonSerializer.Serialize(payload ?? new Dictionary<string, string>()),
+            CreatedAt = now,
+            NextAttemptAt = now
+        };
+
+        await _unitOfWork.ExternalEscalationOutcomeDeliveries.AddAsync(delivery, ct);
+        return delivery.ExternalEscalationOutcomeDeliveryId;
+    }
+
+    public async Task<bool> PublishAsync(Guid deliveryId, CancellationToken ct = default)
+    {
+        var delivery = await _unitOfWork.ExternalEscalationOutcomeDeliveries.GetByIdAsync(deliveryId, ct);
+        if (delivery is null)
+            return false;
+        if (delivery.PublishedAt is not null)
+            return true;
+
+        var attempt = await _unitOfWork.ExternalEscalationAttempts.GetByIdAsync(delivery.ExternalEscalationAttemptId, ct);
+        if (attempt is null || attempt.BusinessId != delivery.BusinessId)
+        {
+            await RecordFailureAsync(delivery, "external_escalation_attempt_not_found", ct);
+            return false;
+        }
 
         var config = await _configProvider.GetConfigAsync(attempt.SourceAgentId, ct);
-        if (!TryResolveNotificationEvent(config, attempt.EventName, normalizedOutcome, out var eventName))
+        if (!TryResolveNotificationEvent(config, attempt.EventName, delivery.OutcomeKey, out var eventName))
         {
-            _logger.LogWarning(
-                "External escalation outcome '{Outcome}' is not mapped for event '{ExternalEvent}' AgentId={AgentId} BusinessId={BusinessId}",
-                normalizedOutcome,
-                attempt.EventName,
-                attempt.SourceAgentId,
-                businessId);
-            return;
+            await RecordFailureAsync(delivery, "external_escalation_outcome_not_configured", ct);
+            return false;
         }
+
+        delivery.PublishAttempts++;
+        delivery.LastAttemptAt = DateTime.UtcNow;
+        delivery.NextAttemptAt = delivery.LastAttemptAt.Value.Add(RetryDelay(delivery.PublishAttempts));
+        delivery.LastError = null;
+        await _unitOfWork.ExternalEscalationOutcomeDeliveries.UpdateAsync(delivery, ct);
+        await _unitOfWork.SaveChangesAsync(ct);
 
         try
         {
+            var custom = MergePayload(ReadCustomPayload(attempt.CustomPayloadJson), ReadPayload(delivery.PayloadJson));
+            custom["outcome_key"] = delivery.OutcomeKey;
+            custom["external_outcome_delivery_id"] = delivery.ExternalEscalationOutcomeDeliveryId.ToString();
+
             await _notifications.SendEventAsync(
-                businessId,
+                delivery.BusinessId,
                 config,
                 eventName,
                 BuildNotificationPayload(attempt, custom),
                 ct);
+
+            delivery.PublishedAt = DateTime.UtcNow;
+            delivery.LastError = null;
+            await _unitOfWork.ExternalEscalationOutcomeDeliveries.UpdateAsync(delivery, ct);
+            await _unitOfWork.SaveChangesAsync(ct);
+            return true;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(
-                ex,
-                "External escalation outcome event '{Event}' failed for AttemptId={AttemptId} BusinessId={BusinessId}",
-                eventName,
-                attempt.ExternalEscalationAttemptId,
-                businessId);
+            delivery.LastError = Truncate(ex.Message, 4000);
+            await _unitOfWork.ExternalEscalationOutcomeDeliveries.UpdateAsync(delivery, ct);
+            await _unitOfWork.SaveChangesAsync(ct);
+            _logger.LogWarning(ex,
+                "External escalation outcome delivery failed DeliveryId={DeliveryId} AttemptId={AttemptId}",
+                delivery.ExternalEscalationOutcomeDeliveryId,
+                attempt.ExternalEscalationAttemptId);
+            return false;
         }
     }
 
-    private static bool TryResolveNotificationEvent(
-        AgentConfig config,
-        string externalEventName,
-        string outcomeKey,
-        out string eventName)
+    public async Task<int> PublishPendingAsync(CancellationToken ct = default)
+    {
+        var pending = await _unitOfWork.ExternalEscalationOutcomeDeliveries
+            .GetPendingAsync(DateTime.UtcNow, PendingBatchSize, ct);
+        var published = 0;
+        foreach (var delivery in pending)
+        {
+            if (await PublishAsync(delivery.ExternalEscalationOutcomeDeliveryId, ct))
+                published++;
+        }
+
+        return published;
+    }
+
+    private async Task RecordFailureAsync(ExternalEscalationOutcomeDelivery delivery, string error, CancellationToken ct)
+    {
+        delivery.PublishAttempts++;
+        delivery.LastAttemptAt = DateTime.UtcNow;
+        delivery.NextAttemptAt = delivery.LastAttemptAt.Value.Add(RetryDelay(delivery.PublishAttempts));
+        delivery.LastError = error;
+        await _unitOfWork.ExternalEscalationOutcomeDeliveries.UpdateAsync(delivery, ct);
+        await _unitOfWork.SaveChangesAsync(ct);
+    }
+
+    private static TimeSpan RetryDelay(int attempts) =>
+        TimeSpan.FromMinutes(Math.Min(60, Math.Pow(2, Math.Clamp(attempts, 1, 6))));
+
+    private static bool TryResolveNotificationEvent(AgentConfig config, string externalEventName, string outcomeKey, out string eventName)
     {
         eventName = string.Empty;
         if (!config.Escalations.External.Events.TryGetValue(externalEventName, out var definition))
@@ -97,22 +171,15 @@ public sealed class ExternalEscalationOutcomePublisher : IExternalEscalationOutc
 
         foreach (var (configuredOutcome, configuredEvent) in definition.OutcomeEvents)
         {
-            if (!configuredOutcome.Equals(outcomeKey, StringComparison.OrdinalIgnoreCase)
-                || string.IsNullOrWhiteSpace(configuredEvent))
-            {
+            if (!configuredOutcome.Equals(outcomeKey, StringComparison.OrdinalIgnoreCase) || string.IsNullOrWhiteSpace(configuredEvent))
                 continue;
-            }
-
             eventName = configuredEvent.Trim();
             return true;
         }
-
         return false;
     }
 
-    private static Dictionary<string, string> BuildNotificationPayload(
-        ExternalEscalationAttempt attempt,
-        IReadOnlyDictionary<string, string> custom)
+    private static Dictionary<string, string> BuildNotificationPayload(ExternalEscalationAttempt attempt, IReadOnlyDictionary<string, string> custom)
     {
         var payload = new Dictionary<string, string>(custom, StringComparer.OrdinalIgnoreCase)
         {
@@ -130,35 +197,23 @@ public sealed class ExternalEscalationOutcomePublisher : IExternalEscalationOutc
             ["pickup_address"] = attempt.PickupAddressSnapshot ?? string.Empty,
             ["escalated_at_utc"] = attempt.EscalatedAt.ToString("O")
         };
-
         if (attempt.CompletedAt is DateTime completedAt)
             payload["completed_at_utc"] = completedAt.ToString("O");
-
         return payload;
     }
 
-    private static Dictionary<string, string> MergePayload(
-        IReadOnlyDictionary<string, string> basePayload,
-        IReadOnlyDictionary<string, string>? responsePayload)
+    private static Dictionary<string, string> MergePayload(IReadOnlyDictionary<string, string> first, IReadOnlyDictionary<string, string> second)
     {
-        var merged = new Dictionary<string, string>(basePayload, StringComparer.OrdinalIgnoreCase);
-        if (responsePayload is null)
-            return merged;
-
-        foreach (var (key, value) in responsePayload)
-        {
-            if (!string.IsNullOrWhiteSpace(key))
-                merged[key] = value ?? string.Empty;
-        }
-
+        var merged = new Dictionary<string, string>(first, StringComparer.OrdinalIgnoreCase);
+        foreach (var (key, value) in second)
+            if (!string.IsNullOrWhiteSpace(key)) merged[key] = value ?? string.Empty;
         return merged;
     }
 
-    private static IReadOnlyDictionary<string, string> ReadCustomPayload(string? json)
-    {
-        if (string.IsNullOrWhiteSpace(json))
-            return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+    private static IReadOnlyDictionary<string, string> ReadCustomPayload(string? json) => ReadPayload(json ?? "{}");
 
+    private static IReadOnlyDictionary<string, string> ReadPayload(string json)
+    {
         try
         {
             return JsonSerializer.Deserialize<Dictionary<string, string>>(json)
@@ -169,4 +224,7 @@ public sealed class ExternalEscalationOutcomePublisher : IExternalEscalationOutc
             return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         }
     }
+
+    private static string Truncate(string value, int maxLength) =>
+        value.Length <= maxLength ? value : value[..maxLength];
 }

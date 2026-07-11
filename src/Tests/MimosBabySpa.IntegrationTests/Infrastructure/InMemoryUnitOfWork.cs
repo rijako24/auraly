@@ -36,6 +36,7 @@ public class InMemoryUnitOfWork : IUnitOfWork
     public IIntegrationConnectionRepository IntegrationConnections { get; }
     public IReservationIntegrationEventRepository ReservationIntegrationEvents { get; }
     public IExternalEscalationAttemptRepository ExternalEscalationAttempts { get; }
+    public IExternalEscalationOutcomeDeliveryRepository ExternalEscalationOutcomeDeliveries { get; }
     public ILeadRepository Leads { get; }
     public ICampaignRepository Campaigns => throw new NotImplementedException();
     public IServiceAddOnRuleRepository ServiceAddOnRules { get; }
@@ -96,6 +97,7 @@ private readonly Guid _businessId;
         IntegrationConnections = new InMemoryIntegrationConnectionRepository();
         ReservationIntegrationEvents = new InMemoryReservationIntegrationEventRepository();
         ExternalEscalationAttempts = new InMemoryExternalEscalationAttemptRepository();
+        ExternalEscalationOutcomeDeliveries = new InMemoryExternalEscalationOutcomeDeliveryRepository();
         Leads                = new InMemoryLeadRepository();
         ServiceAddOnRules    = new InMemoryServiceAddOnRuleRepository(businessId);
         ReservationAddOns    = new InMemoryReservationAddOnRepository();

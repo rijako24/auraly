@@ -5,6 +5,7 @@ using Moq;
 using MimosBabySpa.Application.Agents;
 using MimosBabySpa.Application.Agents.Configuration;
 using MimosBabySpa.Application.Agents.Gating;
+using MimosBabySpa.Application.Agents.Operations.Reservation;
 using MimosBabySpa.Application.Agents.Templates;
 using MimosBabySpa.Application.Agents.Tools.Impl;
 using MimosBabySpa.Application.Promotions;
@@ -33,7 +34,7 @@ public sealed class PrepareCheckoutToolTests
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(AddOnValidationResult.Ok("Mascarilla de carbono"));
         checkoutPayments.Setup(c => c.EnsurePaymentLinkAsync(
-                ctx,
+                It.Is<CheckoutPaymentContext>(value => value.BusinessId == ctx.BusinessId && value.ConversationId == ctx.ConversationId),
                 It.Is<CheckoutQuote>(q => q.TotalCents == 6500000 && q.LineItems.Count == 2),
                 "+15554098032",
                 It.IsAny<string>(),
@@ -59,7 +60,7 @@ public sealed class PrepareCheckoutToolTests
         RecordAvailability(ctx);
 
         checkoutPayments.Setup(c => c.EnsurePaymentLinkAsync(
-                ctx,
+                It.Is<CheckoutPaymentContext>(value => value.BusinessId == ctx.BusinessId && value.ConversationId == ctx.ConversationId),
                 It.Is<CheckoutQuote>(q => q.TotalCents == 5000000 && q.LineItems.Count == 1),
                 "+15554098032",
                 It.IsAny<string>(),
@@ -91,7 +92,7 @@ public sealed class PrepareCheckoutToolTests
         RecordAvailability(ctx, service: "Corte premium", date: "2026-07-08", time: "14:30");
 
         checkoutPayments.Setup(c => c.EnsurePaymentLinkAsync(
-                ctx,
+                It.Is<CheckoutPaymentContext>(value => value.BusinessId == ctx.BusinessId && value.ConversationId == ctx.ConversationId),
                 It.Is<CheckoutQuote>(q =>
                     q.ServiceName == "Corte premium"
                     && q.TotalCents == 4000000
@@ -123,7 +124,7 @@ public sealed class PrepareCheckoutToolTests
         RecordAvailability(ctx, service: "Corte + tinte", date: date, time: time);
 
         checkoutPayments.Setup(c => c.EnsurePaymentLinkAsync(
-                ctx,
+                It.Is<CheckoutPaymentContext>(value => value.BusinessId == ctx.BusinessId && value.ConversationId == ctx.ConversationId),
                 It.Is<CheckoutQuote>(q => q.ServiceName == "Corte + tinte" && q.TotalCents == 5000000),
                 "+15554098032",
                 It.Is<string>(snapshot =>
@@ -203,14 +204,15 @@ public sealed class PrepareCheckoutToolTests
         addOnCatalog = new Mock<IAddOnCatalogService>();
         checkoutPayments = new Mock<ICheckoutPaymentCoordinator>();
 
-        return new PrepareCheckoutTool(
+        var verifications = new ConversationVerificationService();
+        var checkout = new ReservationCheckoutPreparationService(
             pricing,
             addOnCatalog.Object,
             checkoutPayments.Object,
-            Mock.Of<IConversationFactsService>(),
-            new ConversationVerificationService(),
+            verifications,
             unitOfWork.Object,
             nameResolver);
+        return new PrepareCheckoutTool(checkout, Mock.Of<IConversationFactsService>(), verifications);
     }
 
     private static AgentToolContext CreateContext(Guid businessId, string addOns, string service = "Corte + tinte", string date = "2026-07-08", string time = "14:30")

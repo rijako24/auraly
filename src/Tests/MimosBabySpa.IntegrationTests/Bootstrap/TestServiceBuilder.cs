@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 using MimosBabySpa.Application.Agents;
 using MimosBabySpa.Application.Agents.Composition;
 using MimosBabySpa.Application.Agents.Facts;
+using MimosBabySpa.Application.Agents.Operations.Reservation;
 using MimosBabySpa.Application.Agents.Gating;
 using MimosBabySpa.Application.Agents.Runtime;
 using MimosBabySpa.Application.Agents.Templates;
@@ -111,6 +112,8 @@ services.AddSingleton<IFlowRouter, FlowRouter>();
         services.AddSingleton<ReservationPricingResolver>();
         services.AddSingleton<ICheckoutQuoteService, CheckoutQuoteService>();
         services.AddSingleton<ICheckoutPaymentCoordinator, CheckoutPaymentCoordinator>();
+        services.AddSingleton<IReservationCheckoutPreparationService, ReservationCheckoutPreparationService>();
+        services.AddSingleton<IReservationCreationService, ReservationCreationService>();
 
         services.AddSingleton<IChatClient>(fakeChatClient);
         services.AddSingleton<IAgentConfigProvider>(new FakeAgentConfigProvider(businessId));
@@ -129,22 +132,11 @@ services.AddSingleton<IFlowRouter, FlowRouter>();
                     sp.GetRequiredService<IConversationVerificationService>(),
                     sp.GetRequiredService<ServiceNameResolver>()),
                 new PrepareCheckoutTool(
-                    sp.GetRequiredService<ReservationPricingResolver>(),
-                    sp.GetRequiredService<IAddOnCatalogService>(),
-                    sp.GetRequiredService<ICheckoutPaymentCoordinator>(),
+                    sp.GetRequiredService<IReservationCheckoutPreparationService>(),
                     sp.GetRequiredService<IConversationFactsService>(),
-                    sp.GetRequiredService<IConversationVerificationService>(),
-                    sp.GetRequiredService<IUnitOfWork>(),
-                    sp.GetRequiredService<ServiceNameResolver>()),
-
+                    sp.GetRequiredService<IConversationVerificationService>()),
                 new CreateReservationTool(
-                    sp.GetRequiredService<IReservationService>(),
-                    sp.GetRequiredService<IReservationIntentBuilder>(),
-                    sp.GetRequiredService<IBusinessRuleEngine>(),
-                    sp.GetRequiredService<IAvailabilityService>(),
-                    sp.GetRequiredService<ISchedulingPolicyProvider>(),
-                    sp.GetRequiredService<ServiceNameResolver>(),
-                    sp.GetRequiredService<ILogger<CreateReservationTool>>()),
+                    sp.GetRequiredService<IReservationCreationService>()),
                 new EscalateToHumanTool(sp.GetRequiredService<IEscalationNotifier>()),
                 new GetCustomerReservationsTool(sp.GetRequiredService<IReservationLifecycleService>()),
                 new GetCompatibleAddOnsTool(sp.GetRequiredService<IAddOnCatalogService>()),

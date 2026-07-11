@@ -19,11 +19,23 @@ public sealed class AgentFlowStage
     /// <summary>Datos de negocio que la etapa puede recoger sin bloquear si no son necesarios.</summary>
     public IReadOnlyList<string> Collect { get; init; } = [];
 
+    /// <summary>Semantic signals the planner may extract for this stage. Signals never execute code directly.</summary>
+    public IReadOnlyList<StageSignalDefinition> Signals { get; init; } = [];
+
     /// <summary>Nombres exactos de tools permitidas en esta etapa.</summary>
     public IReadOnlyList<string> AllowedActions { get; init; } = [];
 
     /// <summary>Acciones exactas de tool que el motor puede ejecutar al entrar a la etapa si se cumplen condiciones declarativas.</summary>
     public IReadOnlyList<StageEntryAction> EntryActions { get; init; } = [];
+
+    /// <summary>Deterministic operations declared by this stage.</summary>
+    public IReadOnlyList<StageActionDefinition> Actions { get; init; } = [];
+
+    /// <summary>Explicit deterministic transitions within the owning flow.</summary>
+    public IReadOnlyList<StageTransitionDefinition> Transitions { get; init; } = [];
+
+    /// <summary>Renderer-only behavior after deterministic execution.</summary>
+    public StageResponseDefinition Response { get; init; } = new();
 
     /// <summary>Orientacion conversacional para conservar el comportamiento hablado del agente.</summary>
     public string? ConversationGuidance { get; init; }

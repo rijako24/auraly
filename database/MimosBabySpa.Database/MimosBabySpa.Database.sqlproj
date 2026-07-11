@@ -60,6 +60,7 @@
     <Build Include="Tables\OrderConnectionEvents.sql" />
     <Build Include="Tables\PromotionApplications.sql" />
     <Build Include="Tables\ExternalEscalationAttempts.sql" />
+    <Build Include="Tables\ExternalEscalationOutcomeDeliveries.sql" />
     <Build Include="Tables\ReservationAddOns.sql" />
     <Build Include="Tables\ServiceAddOnRules.sql" />
     <Build Include="Tables\ServiceBundleItems.sql" />

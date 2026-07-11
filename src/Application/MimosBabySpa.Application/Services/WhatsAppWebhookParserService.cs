@@ -61,17 +61,18 @@ public class WhatsAppWebhookParserService : IWhatsAppWebhookParserService
                         Facts = message.Facts ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
                     });
                 }
-                else if (message.Type == "interactive" && message.Interactive?.ButtonReply != null)
+                else if (message.Type == "interactive"
+                         && TryResolveInteractiveReply(message.Interactive, out var interactiveReply))
                 {
                     result.Add(new IncomingMessage
                     {
                         UserNumber = message.From,
-                        MessageText = message.Interactive.ButtonReply.Title,
+                        MessageText = interactiveReply.Title,
                         CustomerName = customerName,
                         ProviderMessageId = message.Id,
                         ReplyToProviderMessageId = message.Context?.Id,
                         Facts = message.Facts ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
-                        InteractivePayload = message.Interactive.ButtonReply.Id
+                        InteractivePayload = interactiveReply.Id
                     });
                 }
                 else if (message.Type == "button" && message.Button != null)
@@ -172,6 +173,35 @@ public class WhatsAppWebhookParserService : IWhatsAppWebhookParserService
         return result;
     }
 
+    private static bool TryResolveInteractiveReply(
+        InteractiveMessage? interactive,
+        out ResolvedInteractiveReply reply)
+    {
+        reply = default!;
+        if (interactive?.ButtonReply is { } button
+            && TryNormalizeInteractiveReply(button.Id, button.Title, out reply))
+        {
+            return true;
+        }
+
+        return interactive?.ListReply is { } list
+            && TryNormalizeInteractiveReply(list.Id, list.Title, out reply);
+    }
+
+    private static bool TryNormalizeInteractiveReply(
+        string? id,
+        string? title,
+        out ResolvedInteractiveReply reply)
+    {
+        reply = default!;
+        if (string.IsNullOrWhiteSpace(id))
+            return false;
+
+        var normalizedId = id.Trim();
+        var normalizedTitle = string.IsNullOrWhiteSpace(title) ? normalizedId : title.Trim();
+        reply = new ResolvedInteractiveReply(normalizedId, normalizedTitle);
+        return true;
+    }
     private async Task SendUnclearAudioReplyAsync(Guid businessId, string userNumber)
     {
         if (string.IsNullOrWhiteSpace(_audioQualityOptions.UnclearAudioReply))
@@ -212,4 +242,5 @@ public class WhatsAppWebhookParserService : IWhatsAppWebhookParserService
 
         return facts;
     }
+    private sealed record ResolvedInteractiveReply(string Id, string Title);
 }

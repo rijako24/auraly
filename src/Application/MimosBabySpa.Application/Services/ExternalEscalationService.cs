@@ -161,12 +161,14 @@ public sealed class ExternalEscalationService : IExternalEscalationService
 
         if (definition.OutcomeEvents.ContainsKey(ExternalEscalationOutcomeKeys.Requested))
         {
-            await _outcomes.PublishAsync(
+            var deliveryId = await _outcomes.EnqueueAsync(
                 config.BusinessId,
                 attempt.ExternalEscalationAttemptId,
                 ExternalEscalationOutcomeKeys.Requested,
                 customPayload,
                 ct);
+            await _unitOfWork.SaveChangesAsync(ct);
+            await _outcomes.PublishAsync(deliveryId, ct);
         }
 
         return new ExternalEscalationSendResult(true, attempt.AttemptCode, null, attempt.ExternalEscalationAttemptId);
@@ -216,10 +218,16 @@ public sealed class ExternalEscalationService : IExternalEscalationService
             attempt.AcceptedAt = null;
         }
 
+        var deliveryId = await _outcomes.EnqueueAsync(
+            request.BusinessId,
+            attempt.ExternalEscalationAttemptId,
+            outcomeKey,
+            payload,
+            ct);
         await _unitOfWork.ExternalEscalationAttempts.UpdateAsync(attempt, ct);
         await _unitOfWork.SaveChangesAsync(ct);
 
-        await _outcomes.PublishAsync(request.BusinessId, attempt.ExternalEscalationAttemptId, outcomeKey, payload, ct);
+        await _outcomes.PublishAsync(deliveryId, ct);
 
         return new ExternalEscalationCompletionResult(true, attempt, "Escalacion completada.", outcomeKey, payload);
     }
@@ -244,6 +252,12 @@ public sealed class ExternalEscalationService : IExternalEscalationService
             attempt.CompletedAt = now;
             attempt.OutcomeKey = timedOutOutcome;
             attempt.ResponsePayloadJson = JsonSerializer.Serialize(payload);
+            await _outcomes.EnqueueAsync(
+                attempt.BusinessId,
+                attempt.ExternalEscalationAttemptId,
+                timedOutOutcome,
+                payload,
+                ct);
             await _unitOfWork.ExternalEscalationAttempts.UpdateAsync(attempt, ct);
             await _unitOfWork.SaveChangesAsync(ct);
 

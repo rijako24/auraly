@@ -122,14 +122,10 @@ public sealed class OperatingHoursTurnPolicyTests
             EnabledTools = [new TestTool("search_products")]
         });
 
-        prompt.Should().Contain("## DISPONIBILIDAD ACTUAL");
+        prompt.Should().Contain("## ESTADO OPERATIVO DETERMINISTICO");
         prompt.Should().Contain("fuera de horario laboral");
-        prompt.Should().Contain("proximo_horario_habil: hoy de 1:00 p. m. a 9:00 p. m.");
-        prompt.Should().Contain("no repitas literalmente la misma plantilla");
-        prompt.Should().Contain("agradece el contacto");
-        prompt.Should().Contain("Si empieza por hoy, no agregues fecha ni dia");
+        prompt.Should().Contain("next_operating_window: hoy de 1:00 p. m. a 9:00 p. m.");
         prompt.Should().Contain("Eres un agente de prueba.");
-        prompt.Should().Contain("gestiones operativas");
         prompt.Should().Contain("No solicites datos");
         prompt.Should().Contain("no termines con preguntas");
         prompt.Should().NotContain("comprar");
@@ -151,7 +147,11 @@ public sealed class OperatingHoursTurnPolicyTests
         EnabledToolNames = enabledTools ?? [],
         OperatingHours = new OperatingHoursDefinitions
         {
-            Enforce = enforceHours
+            Enforce = enforceHours,
+            OutsideHours = new OutsideOperatingHoursResponseDefinition
+            {
+                Guidance = "Estamos fuera de horario laboral. El proximo horario es {{next_operating_window}}. No solicites datos y no termines con preguntas."
+            }
         }
     };
 

@@ -70,6 +70,22 @@ internal sealed class AgentTestConversationFactsService : IConversationFactsServ
         return Task.CompletedTask;
     }
 
+    public Task ApplyBatchAsync(
+        Guid conversationId,
+        Guid businessId,
+        IReadOnlyDictionary<string, string?> mutations,
+        IReadOnlySet<string> rememberAcrossRequests,
+        CancellationToken ct = default)
+    {
+        foreach (var (key, value) in mutations)
+        {
+            if (value is null)
+                _facts.Remove(key);
+            else
+                _facts[key] = value;
+        }
+        return Task.CompletedTask;
+    }
     public Task<IReadOnlyList<string>> ClearNonPersistentAsync(
         Guid conversationId,
         IReadOnlyCollection<string> persistentKeys,

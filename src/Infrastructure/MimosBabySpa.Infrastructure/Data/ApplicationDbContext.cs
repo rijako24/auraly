@@ -52,6 +52,7 @@ public class ApplicationDbContext : DbContext
     public DbSet<OrderItem> OrderItems { get; set; }
     public DbSet<OrderConnectionEvent> OrderConnectionEvents { get; set; }
     public DbSet<ExternalEscalationAttempt> ExternalEscalationAttempts { get; set; }
+    public DbSet<ExternalEscalationOutcomeDelivery> ExternalEscalationOutcomeDeliveries { get; set; }
     public DbSet<ConversationStateEntity> ConversationStates { get; set; }
     public DbSet<PaymentTransaction> PaymentTransactions { get; set; }
     public DbSet<Enrollment> Enrollments { get; set; }
@@ -862,6 +863,18 @@ public class ApplicationDbContext : DbContext
             entity.HasIndex(e => new { e.BusinessId, e.ContactPhoneSnapshot, e.Status });
             entity.HasIndex(e => new { e.BusinessId, e.AttemptCode, e.ContactPhoneSnapshot });
             entity.HasIndex(e => e.WhatsAppMessageId);
+        });
+
+        modelBuilder.Entity<ExternalEscalationOutcomeDelivery>(entity =>
+        {
+            entity.HasKey(e => e.ExternalEscalationOutcomeDeliveryId);
+            entity.Property(e => e.OutcomeKey).IsRequired().HasMaxLength(100);
+            entity.Property(e => e.PayloadJson).IsRequired().HasColumnType("NVARCHAR(MAX)");
+            entity.Property(e => e.LastError).HasMaxLength(4000);
+            entity.HasOne(e => e.Business).WithMany().HasForeignKey(e => e.BusinessId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.Attempt).WithMany().HasForeignKey(e => e.ExternalEscalationAttemptId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasIndex(e => new { e.ExternalEscalationAttemptId, e.OutcomeKey }).IsUnique();
+            entity.HasIndex(e => new { e.PublishedAt, e.NextAttemptAt });
         });
 
         // BusinessAttachment configuration

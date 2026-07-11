@@ -5,10 +5,18 @@ using MimosBabySpa.Domain.Repositories;
 
 namespace MimosBabySpa.Application.Services;
 
+public sealed record ReservationIntentContext(
+    Guid BusinessId,
+    AgentConfig Config,
+    IReadOnlyDictionary<string, string> Facts,
+    string? CustomerName = null,
+    string? CustomerEmail = null,
+    string? ChannelPhone = null);
+
 public interface IReservationIntentBuilder
 {
-    Task<ReservationIntentSnapshot?> BuildFromContextAsync(
-        AgentToolContext ctx,
+    Task<ReservationIntentSnapshot?> BuildAsync(
+        ReservationIntentContext context,
         CancellationToken cancellationToken = default);
 
     string BuildCustomAttributesJson(IReadOnlyDictionary<string, string> facts);
@@ -25,46 +33,49 @@ public sealed class ReservationIntentBuilder : IReservationIntentBuilder
         _addOnCatalog = addOnCatalog;
     }
 
-    public async Task<ReservationIntentSnapshot?> BuildFromContextAsync(
-        AgentToolContext ctx,
+    public async Task<ReservationIntentSnapshot?> BuildAsync(
+        ReservationIntentContext context,
         CancellationToken cancellationToken = default)
     {
-        var roles = new FactRoleIndex(ctx.Config?.FactSchema ?? []);
-        var serviceName = GetFact(roles, ctx.Facts, "booking.service", ConversationFactKeys.Service);
-        var dateStr = GetFact(roles, ctx.Facts, "booking.date", ConversationFactKeys.DesiredDate);
-        var timeStr = GetFact(roles, ctx.Facts, "booking.time", ConversationFactKeys.DesiredTime);
+        var roles = new FactRoleIndex(context.Config.FactSchema);
+        var serviceName = GetFact(roles, context.Facts, "booking.service", ConversationFactKeys.Service);
+        var dateStr = GetFact(roles, context.Facts, "booking.date", ConversationFactKeys.DesiredDate);
+        var timeStr = GetFact(roles, context.Facts, "booking.time", ConversationFactKeys.DesiredTime);
 
         if (string.IsNullOrWhiteSpace(serviceName)
-            || string.IsNullOrWhiteSpace(dateStr)
-            || string.IsNullOrWhiteSpace(timeStr))
+            || !AgentDateRules.TryParseDate(dateStr, out var date)
+            || !TimeOnly.TryParse(timeStr, out var time))
+        {
             return null;
+        }
 
-        if (!AgentDateRules.TryParseDate(dateStr, out var date))
-            return null;
-        if (!TimeOnly.TryParse(timeStr, out var time))
-            return null;
-
-        var service = await _unitOfWork.Services.GetByBusinessIdAndNameAsync(ctx.BusinessId, serviceName);
+        var service = await _unitOfWork.Services.GetByBusinessIdAndNameAsync(context.BusinessId, serviceName);
         if (service is null)
             return null;
 
-        var addOnsCsv = GetFact(roles, ctx.Facts, "booking.addons", ConversationFactKeys.AddOns);
+        var addOnsCsv = GetFact(roles, context.Facts, "booking.addons", ConversationFactKeys.AddOns);
         var addOnIds = new List<Guid>();
         if (!string.IsNullOrWhiteSpace(addOnsCsv))
         {
             var validation = await _addOnCatalog.ValidateAsync(
-                ctx.BusinessId, serviceName, addOnsCsv, cancellationToken);
+                context.BusinessId,
+                serviceName,
+                addOnsCsv,
+                cancellationToken);
             if (!validation.IsValid)
                 return null;
 
-            addOnIds.AddRange(await ResolveAddOnIdsAsync(ctx.BusinessId, validation.NormalizedCsv, cancellationToken));
+            addOnIds.AddRange(await ResolveAddOnIdsAsync(
+                context.BusinessId,
+                validation.NormalizedCsv,
+                cancellationToken));
         }
 
-        var customerName = GetFact(roles, ctx.Facts, "customer.name", ConversationFactKeys.CustomerName)
-            ?? ctx.Conversation.CustomerName;
-        var customerPhone = ConversationContactPhone.Resolve(ctx.Facts, ctx.ChannelPhone, ctx.Config);
-        var customerEmail = GetFact(roles, ctx.Facts, "customer.email", ConversationFactKeys.CustomerEmail)
-            ?? ctx.Conversation.CustomerEmail;
+        var customerName = GetFact(roles, context.Facts, "customer.name", ConversationFactKeys.CustomerName)
+            ?? context.CustomerName;
+        var customerPhone = ResolveCustomerPhone(context, roles);
+        var customerEmail = GetFact(roles, context.Facts, "customer.email", ConversationFactKeys.CustomerEmail)
+            ?? context.CustomerEmail;
 
         return new ReservationIntentSnapshot(
             service.ServiceId,
@@ -76,11 +87,19 @@ public sealed class ReservationIntentBuilder : IReservationIntentBuilder
             customerEmail,
             customerPhone,
             addOnIds,
-            ReservationCustomAttributes.BuildJson(ctx.Facts, ctx.Config?.FactSchema ?? []));
+            ReservationCustomAttributes.BuildJson(context.Facts, context.Config.FactSchema));
     }
 
     public string BuildCustomAttributesJson(IReadOnlyDictionary<string, string> facts) =>
         ReservationCustomAttributes.BuildJson(facts, null);
+
+    private static string? ResolveCustomerPhone(ReservationIntentContext context, FactRoleIndex roles)
+    {
+        var factPhone = GetFact(roles, context.Facts, "customer.phone", ConversationFactKeys.CustomerPhone);
+        if (!string.IsNullOrWhiteSpace(factPhone))
+            return factPhone.Trim();
+        return string.IsNullOrWhiteSpace(context.ChannelPhone) ? null : context.ChannelPhone.Trim();
+    }
 
     private static string? GetFact(
         FactRoleIndex roles,
@@ -98,17 +117,16 @@ public sealed class ReservationIntentBuilder : IReservationIntentBuilder
             return [];
 
         var ids = new List<Guid>();
-        var names = addOnsCsv.Split([',', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        foreach (var name in names)
+        foreach (var name in addOnsCsv.Split(
+                     [',', ';'],
+                     StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
             if (string.Equals(name, "ninguno", StringComparison.OrdinalIgnoreCase))
                 continue;
-
             var addOn = await _unitOfWork.Services.GetByBusinessIdAndNameAsync(businessId, name);
             if (addOn is not null)
                 ids.Add(addOn.ServiceId);
         }
-
         return ids;
     }
 }

@@ -56,7 +56,7 @@ public sealed class InboundMessageBatchProcessor : IInboundMessageBatchProcessor
 
         var interactiveMessages = indexedMessages
             .Where(item => item.IsInteractive)
-            .GroupBy(item => item.Message.InteractivePayload, StringComparer.OrdinalIgnoreCase)
+            .GroupBy(item => item.Message.InteractivePayload, StringComparer.Ordinal)
             .Select(group => group.Last())
             .OrderBy(item => item.Index)
             .ToList();

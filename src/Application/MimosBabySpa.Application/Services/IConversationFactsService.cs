@@ -13,6 +13,12 @@ public interface IConversationFactsService
         bool rememberAcrossRequests = false,
         CancellationToken ct = default);
 
+    Task ApplyBatchAsync(
+        Guid conversationId,
+        Guid businessId,
+        IReadOnlyDictionary<string, string?> mutations,
+        IReadOnlySet<string> rememberAcrossRequests,
+        CancellationToken ct = default);
     Task<IReadOnlyList<string>> ClearNonPersistentAsync(
         Guid conversationId,
         IReadOnlyCollection<string> persistentKeys,

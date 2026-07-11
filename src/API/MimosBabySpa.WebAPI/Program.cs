@@ -224,16 +224,16 @@ builder.Services.AddScoped<ICatalogDocumentTextExtractor, CatalogDocumentTextExt
 builder.Services.AddScoped<ICatalogDraftParser, CatalogDraftAiParser>();
 
 builder.Services.Configure<OpenAITextModelOptions>(builder.Configuration.GetSection(OpenAITextModelOptions.SectionName));
-builder.Services.AddSingleton<OpenAIClient>(sp =>
+builder.Services.AddSingleton<AzureOpenAIClient>(sp =>
 {
     var options = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<OpenAITextModelOptions>>().Value;
     if (string.IsNullOrWhiteSpace(options.Endpoint) || string.IsNullOrWhiteSpace(options.ApiKey))
         throw new InvalidOperationException("OpenAI:TextModel:Endpoint y ApiKey deben estar configurados en WebAPI.");
-    return new OpenAIClient(new Uri(options.Endpoint), new AzureKeyCredential(options.ApiKey));
+    return new AzureOpenAIClient(new Uri(options.Endpoint), new System.ClientModel.ApiKeyCredential(options.ApiKey));
 });
 builder.Services.AddScoped<IChatClient>(sp =>
 {
-    var client = sp.GetRequiredService<OpenAIClient>();
+    var client = sp.GetRequiredService<AzureOpenAIClient>();
     var options = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<OpenAITextModelOptions>>().Value;
     var logger = sp.GetRequiredService<ILogger<AzureOpenAIChatClient>>();
     return new AzureOpenAIChatClient(client, options.DeploymentName, logger);
@@ -291,6 +291,35 @@ builder.Services.AddScoped<IAgentTool, OperationsRequestRescheduleTool>();
 builder.Services.AddScoped<IAgentTool, OperationsBusinessMetricsTool>();
 builder.Services.AddScoped<IAgentTool, OperationsCustomerHistoryTool>();
 builder.Services.AddScoped<AgentToolRegistry>();
+MimosBabySpa.Application.Agents.Operations.AgentMethodOperationRegistration.AddDeterministicAgentMethodOperations(builder.Services);
+builder.Services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Availability.CheckAvailabilityOperation>();
+builder.Services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Catalog.GetCompatibleAddOnsOperation>();
+builder.Services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Catalog.GetServiceFulfillmentOperation>();
+builder.Services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Catalog.ResolveServiceSelectionOperation>();
+builder.Services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Catalog.GetServiceCatalogOperation>();
+builder.Services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Commerce.ApplyOrderChangesOperation>();
+builder.Services.AddScoped<MimosBabySpa.Application.Agents.Operations.Reservation.IReservationCheckoutPreparationService, MimosBabySpa.Application.Agents.Operations.Reservation.ReservationCheckoutPreparationService>();
+builder.Services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Reservation.PrepareReservationCheckoutOperation>();
+builder.Services.AddScoped<MimosBabySpa.Application.Agents.Operations.Reservation.IReservationCreationService, MimosBabySpa.Application.Agents.Operations.Reservation.ReservationCreationService>();
+builder.Services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Reservation.CreateReservationOperation>();
+builder.Services.AddScoped<MimosBabySpa.Application.Agents.Operations.AgentOperationRegistry>();
+builder.Services.AddSingleton<MimosBabySpa.Application.Agents.Facts.FactMutationBatchProcessor>();
+builder.Services.AddSingleton<MimosBabySpa.Application.Agents.Runtime.IDeterministicFlowSelector, MimosBabySpa.Application.Agents.Runtime.DeterministicFlowSelector>();
+builder.Services.AddScoped<MimosBabySpa.Application.Commerce.ICartProductResolver, MimosBabySpa.Application.Commerce.CommerceCartProductResolver>();
+builder.Services.AddScoped<MimosBabySpa.Application.Commerce.ICartMutationStore, MimosBabySpa.Application.Commerce.CommerceCartMutationStore>();
+builder.Services.AddScoped<MimosBabySpa.Application.Commerce.CartCommandBatchProcessor>();
+builder.Services.AddScoped<MimosBabySpa.Application.Agents.Configuration.AgentConfigurationCompiler>();
+builder.Services.AddScoped<MimosBabySpa.Application.Agents.Runtime.StageConditionEvaluator>();
+builder.Services.AddScoped<MimosBabySpa.Application.Agents.Runtime.OperationArgumentBinder>();
+builder.Services.AddSingleton<MimosBabySpa.Application.Agents.Planning.TurnPlanValidator>();
+builder.Services.AddScoped<MimosBabySpa.Application.Agents.Planning.ITurnPlanner, MimosBabySpa.Application.Agents.Planning.LlmTurnPlanner>();
+builder.Services.AddScoped<MimosBabySpa.Application.Agents.Runtime.DeterministicStageExecutor>();
+builder.Services.AddScoped<MimosBabySpa.Application.Agents.Runtime.DeterministicStageTransitionResolver>();
+builder.Services.AddScoped<MimosBabySpa.Application.Agents.Runtime.DeterministicTurnCoordinator>();
+builder.Services.AddScoped<MimosBabySpa.Application.Agents.Runtime.IDeterministicResponseRenderer, MimosBabySpa.Application.Agents.Runtime.DeterministicResponseRenderer>();
+builder.Services.AddScoped<MimosBabySpa.Application.Agents.Runtime.IOperationEventContextResolver, MimosBabySpa.Application.Agents.Runtime.ReservationCreatedOperationEventContextResolver>();
+builder.Services.AddScoped<MimosBabySpa.Application.Agents.Runtime.IDeterministicTurnEffectProcessor, MimosBabySpa.Application.Agents.Runtime.DeterministicTurnEffectProcessor>();
+builder.Services.AddScoped<MimosBabySpa.Application.Agents.Operations.IOperationPresentationComposer, MimosBabySpa.Application.Agents.Operations.OperationPresentationComposer>();
 builder.Services.AddScoped<IAgentConversationService, AgentConversationService>();
 builder.Services.AddScoped<IAgentTestRuntimeFactory, AgentTestRuntimeFactory>();
 

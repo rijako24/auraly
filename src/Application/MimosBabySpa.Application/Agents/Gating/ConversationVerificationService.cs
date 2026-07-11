@@ -6,6 +6,12 @@ namespace MimosBabySpa.Application.Agents.Gating;
 public interface IConversationVerificationService
 {
     void Record(
+        ConversationState state,
+        string factType,
+        IReadOnlyDictionary<string, string> dependencyFacts,
+        TimeSpan? ttl);
+
+    void Record(
         AgentToolContext ctx,
         string factType,
         IReadOnlyDictionary<string, string> dependencyFacts,
@@ -25,6 +31,13 @@ public sealed class ConversationVerificationService : IConversationVerificationS
         AgentToolContext ctx,
         string factType,
         IReadOnlyDictionary<string, string> dependencyFacts,
+        TimeSpan? ttl) =>
+        Record(ctx.ConversationState, factType, dependencyFacts, ttl);
+
+    public void Record(
+        ConversationState state,
+        string factType,
+        IReadOnlyDictionary<string, string> dependencyFacts,
         TimeSpan? ttl)
     {
         var now = DateTime.UtcNow;
@@ -32,13 +45,13 @@ public sealed class ConversationVerificationService : IConversationVerificationS
             ? VerificationSnapshot.Serialize(dependencyFacts)
             : null;
 
-        ctx.ConversationState.Verifications[factType] = new VerificationEntry(
+        state.Verifications[factType] = new VerificationEntry(
             now,
             ttl.HasValue ? now.Add(ttl.Value) : null,
             payloadJson);
 
-        PurgeExpired(ctx.ConversationState.Verifications);
-        EnforceMaxSize(ctx.ConversationState.Verifications);
+        PurgeExpired(state.Verifications);
+        EnforceMaxSize(state.Verifications);
     }
 
     public bool IsActive(

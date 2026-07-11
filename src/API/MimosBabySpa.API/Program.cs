@@ -206,7 +206,7 @@ services.AddScoped<ServiceSelectionResolver>();
 
 
 
-        services.AddKeyedSingleton<OpenAIClient>("Text", (sp, _) =>
+        services.AddKeyedSingleton<AzureOpenAIClient>("Text", (sp, _) =>
 
         {
 
@@ -220,11 +220,11 @@ services.AddScoped<ServiceSelectionResolver>();
 
                 throw new InvalidOperationException("OpenAI:TextModel:DeploymentName debe estar configurado");
 
-            return new OpenAIClient(new Uri(options.Endpoint), new Azure.AzureKeyCredential(options.ApiKey));
+            return new AzureOpenAIClient(new Uri(options.Endpoint), new System.ClientModel.ApiKeyCredential(options.ApiKey));
 
         });
 
-        services.AddKeyedSingleton<OpenAIClient>("Audio", (sp, _) =>
+        services.AddKeyedSingleton<AzureOpenAIClient>("Audio", (sp, _) =>
 
         {
 
@@ -238,7 +238,7 @@ services.AddScoped<ServiceSelectionResolver>();
 
                 throw new InvalidOperationException("OpenAI:AudioModel:DeploymentName debe estar configurado");
 
-            return new OpenAIClient(new Uri(options.Endpoint), new Azure.AzureKeyCredential(options.ApiKey));
+            return new AzureOpenAIClient(new Uri(options.Endpoint), new System.ClientModel.ApiKeyCredential(options.ApiKey));
 
         });
 
@@ -250,7 +250,7 @@ services.AddScoped<ServiceSelectionResolver>();
 
         {
 
-            var audioClient = sp.GetRequiredKeyedService<OpenAIClient>("Audio");
+            var audioClient = sp.GetRequiredKeyedService<AzureOpenAIClient>("Audio");
 
             var audioOptions = sp.GetRequiredService<IOptions<OpenAIAudioModelOptions>>().Value;
 
@@ -372,7 +372,7 @@ services.AddScoped<ServiceSelectionResolver>();
 
         {
 
-            var textClient = sp.GetRequiredKeyedService<OpenAIClient>("Text");
+            var textClient = sp.GetRequiredKeyedService<AzureOpenAIClient>("Text");
 
             var textOptions = sp.GetRequiredService<IOptions<OpenAITextModelOptions>>().Value;
 
@@ -493,6 +493,35 @@ services.AddScoped<IAgentTool, ResolveServiceSelectionTool>();
 
 
         services.AddScoped<AgentToolRegistry>();
+MimosBabySpa.Application.Agents.Operations.AgentMethodOperationRegistration.AddDeterministicAgentMethodOperations(services);
+services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Availability.CheckAvailabilityOperation>();
+services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Catalog.GetCompatibleAddOnsOperation>();
+services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Catalog.GetServiceFulfillmentOperation>();
+services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Catalog.ResolveServiceSelectionOperation>();
+services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Catalog.GetServiceCatalogOperation>();
+services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Commerce.ApplyOrderChangesOperation>();
+services.AddScoped<MimosBabySpa.Application.Agents.Operations.Reservation.IReservationCheckoutPreparationService, MimosBabySpa.Application.Agents.Operations.Reservation.ReservationCheckoutPreparationService>();
+services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Reservation.PrepareReservationCheckoutOperation>();
+services.AddScoped<MimosBabySpa.Application.Agents.Operations.Reservation.IReservationCreationService, MimosBabySpa.Application.Agents.Operations.Reservation.ReservationCreationService>();
+services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Reservation.CreateReservationOperation>();
+services.AddScoped<MimosBabySpa.Application.Agents.Operations.AgentOperationRegistry>();
+services.AddSingleton<MimosBabySpa.Application.Agents.Facts.FactMutationBatchProcessor>();
+services.AddSingleton<MimosBabySpa.Application.Agents.Runtime.IDeterministicFlowSelector, MimosBabySpa.Application.Agents.Runtime.DeterministicFlowSelector>();
+services.AddScoped<MimosBabySpa.Application.Commerce.ICartProductResolver, MimosBabySpa.Application.Commerce.CommerceCartProductResolver>();
+services.AddScoped<MimosBabySpa.Application.Commerce.ICartMutationStore, MimosBabySpa.Application.Commerce.CommerceCartMutationStore>();
+services.AddScoped<MimosBabySpa.Application.Commerce.CartCommandBatchProcessor>();
+services.AddScoped<MimosBabySpa.Application.Agents.Configuration.AgentConfigurationCompiler>();
+services.AddScoped<MimosBabySpa.Application.Agents.Runtime.StageConditionEvaluator>();
+services.AddScoped<MimosBabySpa.Application.Agents.Runtime.OperationArgumentBinder>();
+services.AddSingleton<MimosBabySpa.Application.Agents.Planning.TurnPlanValidator>();
+services.AddScoped<MimosBabySpa.Application.Agents.Planning.ITurnPlanner, MimosBabySpa.Application.Agents.Planning.LlmTurnPlanner>();
+services.AddScoped<MimosBabySpa.Application.Agents.Runtime.DeterministicStageExecutor>();
+services.AddScoped<MimosBabySpa.Application.Agents.Runtime.DeterministicStageTransitionResolver>();
+services.AddScoped<MimosBabySpa.Application.Agents.Runtime.DeterministicTurnCoordinator>();
+services.AddScoped<MimosBabySpa.Application.Agents.Runtime.IDeterministicResponseRenderer, MimosBabySpa.Application.Agents.Runtime.DeterministicResponseRenderer>();
+services.AddScoped<MimosBabySpa.Application.Agents.Runtime.IOperationEventContextResolver, MimosBabySpa.Application.Agents.Runtime.ReservationCreatedOperationEventContextResolver>();
+services.AddScoped<MimosBabySpa.Application.Agents.Runtime.IDeterministicTurnEffectProcessor, MimosBabySpa.Application.Agents.Runtime.DeterministicTurnEffectProcessor>();
+services.AddScoped<MimosBabySpa.Application.Agents.Operations.IOperationPresentationComposer, MimosBabySpa.Application.Agents.Operations.OperationPresentationComposer>();
 
         services.AddScoped<IAgentConversationService, AgentConversationService>();
 

@@ -38,15 +38,18 @@ public sealed class ExternalEscalationServiceTests
             .Returns(Task.CompletedTask);
 
         _outcomes
-            .Setup(o => o.PublishAsync(
+            .Setup(o => o.EnqueueAsync(
                 It.IsAny<Guid>(),
                 It.IsAny<Guid>(),
                 It.IsAny<string>(),
                 It.IsAny<IReadOnlyDictionary<string, string>?>(),
                 It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-    }
+            .ReturnsAsync(Guid.NewGuid());
+        _outcomes
+            .Setup(o => o.PublishAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
 
+    }
     [Fact]
     public async Task Router_ResolvesOnlyActiveInboundContactWithMatchingBusinessAndAgent()
     {
@@ -160,7 +163,7 @@ public sealed class ExternalEscalationServiceTests
         attempt.Status.Should().Be(ExternalEscalationAttemptStatus.Accepted);
         attempt.OutcomeKey.Should().Be("accepted");
         attempt.CompletedAt.Should().NotBeNull();
-        _outcomes.Verify(o => o.PublishAsync(
+        _outcomes.Verify(o => o.EnqueueAsync(
             _businessId,
             attempt.ExternalEscalationAttemptId,
             "accepted",
@@ -168,6 +171,7 @@ public sealed class ExternalEscalationServiceTests
                 p["outcome_key"] == "accepted" &&
                 p["order_number"] == "ORD-1"),
             It.IsAny<CancellationToken>()), Times.Once);
+        _outcomes.Verify(o => o.PublishAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]

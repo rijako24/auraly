@@ -5,8 +5,31 @@ using MimosBabySpa.Domain.Enums;
 
 namespace MimosBabySpa.Application.Services;
 
+public sealed record CheckoutPaymentContext(
+    Guid BusinessId,
+    Guid ConversationId,
+    PaymentTransaction? ActivePayment = null);
+
 public interface ICheckoutPaymentCoordinator
 {
+    Task<CheckoutPaymentDiscardResult> DiscardActiveCheckoutAsync(
+        CheckoutPaymentContext context,
+        CheckoutKind checkoutKind,
+        CancellationToken ct = default);
+
+    Task<CheckoutPaymentLinkResult> EnsurePaymentLinkAsync(
+        CheckoutPaymentContext context,
+        CheckoutQuote quote,
+        string paymentPhone,
+        string checkoutSnapshotJson,
+        CancellationToken ct = default);
+
+    Task<CheckoutPaymentLinkResult> EnsureManualPaymentAsync(
+        CheckoutPaymentContext context,
+        CheckoutQuote quote,
+        string checkoutSnapshotJson,
+        CancellationToken ct = default);
+
     Task<CheckoutPaymentDiscardResult> DiscardActiveCheckoutAsync(
         AgentToolContext ctx,
         CheckoutKind checkoutKind,
@@ -47,8 +70,22 @@ public sealed class CheckoutPaymentCoordinator : ICheckoutPaymentCoordinator
         CheckoutKind checkoutKind,
         CancellationToken ct = default)
     {
-        var activePayment = ctx.ActivePayment
-            ?? await _paymentLifecycle.GetActiveByConversationAsync(ctx.ConversationId, ct);
+        var result = await DiscardActiveCheckoutAsync(
+            new CheckoutPaymentContext(ctx.BusinessId, ctx.ConversationId, ctx.ActivePayment),
+            checkoutKind,
+            ct);
+        if (result.DiscardedPayment is not null)
+            ctx.ActivePayment = null;
+        return result;
+    }
+
+    public async Task<CheckoutPaymentDiscardResult> DiscardActiveCheckoutAsync(
+        CheckoutPaymentContext context,
+        CheckoutKind checkoutKind,
+        CancellationToken ct = default)
+    {
+        var activePayment = context.ActivePayment
+            ?? await _paymentLifecycle.GetActiveByConversationAsync(context.ConversationId, ct);
 
         if (activePayment is null
             || activePayment.Status != PaymentTransactionStatus.Created
@@ -58,7 +95,6 @@ public sealed class CheckoutPaymentCoordinator : ICheckoutPaymentCoordinator
         }
 
         await _paymentLifecycle.DiscardPendingAsync(activePayment, ct);
-        ctx.ActivePayment = null;
         return new CheckoutPaymentDiscardResult(activePayment);
     }
 
@@ -69,8 +105,26 @@ public sealed class CheckoutPaymentCoordinator : ICheckoutPaymentCoordinator
         string checkoutSnapshotJson,
         CancellationToken ct = default)
     {
-        var activePayment = ctx.ActivePayment
-            ?? await _paymentLifecycle.GetActiveByConversationAsync(ctx.ConversationId, ct);
+        var result = await EnsurePaymentLinkAsync(
+            new CheckoutPaymentContext(ctx.BusinessId, ctx.ConversationId, ctx.ActivePayment),
+            quote,
+            paymentPhone,
+            checkoutSnapshotJson,
+            ct);
+        if (result.Payment is not null)
+            ctx.ActivePayment = result.Payment;
+        return result;
+    }
+
+    public async Task<CheckoutPaymentLinkResult> EnsurePaymentLinkAsync(
+        CheckoutPaymentContext context,
+        CheckoutQuote quote,
+        string paymentPhone,
+        string checkoutSnapshotJson,
+        CancellationToken ct = default)
+    {
+        var activePayment = context.ActivePayment
+            ?? await _paymentLifecycle.GetActiveByConversationAsync(context.ConversationId, ct);
         var quoteHash = _quotes.ComputeHash(quote);
 
         if (!string.IsNullOrWhiteSpace(activePayment?.LinkUrl)
@@ -84,19 +138,16 @@ public sealed class CheckoutPaymentCoordinator : ICheckoutPaymentCoordinator
                 quote.PayableCents,
                 quote.Currency,
                 ct);
-
-            ctx.ActivePayment = activePayment;
             return CheckoutPaymentLinkResult.Ok(activePayment.LinkUrl!, activePayment);
         }
 
-        PaymentTransaction? supersededPayment = null;
-        if (activePayment is not null && activePayment.Status == PaymentTransactionStatus.Created)
-            supersededPayment = activePayment;
-
+        var supersededPayment = activePayment is { Status: PaymentTransactionStatus.Created }
+            ? activePayment
+            : null;
         var result = await _paymentLinks.GenerateAnticipoLinkAsync(
             new PaymentLinkRequest(
-                ctx.BusinessId,
-                ctx.ConversationId,
+                context.BusinessId,
+                context.ConversationId,
                 paymentPhone,
                 quote.ServiceName,
                 quote.PayableCents,
@@ -108,8 +159,8 @@ public sealed class CheckoutPaymentCoordinator : ICheckoutPaymentCoordinator
             return CheckoutPaymentLinkResult.Fail(result.ErrorMessage ?? "Failed to generate payment link.");
 
         var payment = await _paymentLifecycle.CreatePendingCheckoutAsync(
-            ctx.BusinessId,
-            ctx.ConversationId,
+            context.BusinessId,
+            context.ConversationId,
             quote.CheckoutKind,
             checkoutSnapshotJson,
             quoteHash,
@@ -124,7 +175,6 @@ public sealed class CheckoutPaymentCoordinator : ICheckoutPaymentCoordinator
         if (supersededPayment is not null)
             await _paymentLifecycle.MarkSupersededAsync(supersededPayment, payment.PaymentTransactionId, ct);
 
-        ctx.ActivePayment = payment;
         return CheckoutPaymentLinkResult.Ok(payment.LinkUrl!, payment);
     }
 
@@ -134,8 +184,24 @@ public sealed class CheckoutPaymentCoordinator : ICheckoutPaymentCoordinator
         string checkoutSnapshotJson,
         CancellationToken ct = default)
     {
-        var activePayment = ctx.ActivePayment
-            ?? await _paymentLifecycle.GetActiveByConversationAsync(ctx.ConversationId, ct);
+        var result = await EnsureManualPaymentAsync(
+            new CheckoutPaymentContext(ctx.BusinessId, ctx.ConversationId, ctx.ActivePayment),
+            quote,
+            checkoutSnapshotJson,
+            ct);
+        if (result.Payment is not null)
+            ctx.ActivePayment = result.Payment;
+        return result;
+    }
+
+    public async Task<CheckoutPaymentLinkResult> EnsureManualPaymentAsync(
+        CheckoutPaymentContext context,
+        CheckoutQuote quote,
+        string checkoutSnapshotJson,
+        CancellationToken ct = default)
+    {
+        var activePayment = context.ActivePayment
+            ?? await _paymentLifecycle.GetActiveByConversationAsync(context.ConversationId, ct);
         var quoteHash = _quotes.ComputeHash(quote);
 
         if (activePayment is not null
@@ -150,24 +216,21 @@ public sealed class CheckoutPaymentCoordinator : ICheckoutPaymentCoordinator
                 quote.PayableCents,
                 quote.Currency,
                 ct);
-
-            ctx.ActivePayment = activePayment;
             return CheckoutPaymentLinkResult.OkManual(activePayment);
         }
 
-        PaymentTransaction? supersededPayment = null;
-        if (activePayment is not null && activePayment.Status == PaymentTransactionStatus.Created)
-            supersededPayment = activePayment;
-
+        var supersededPayment = activePayment is { Status: PaymentTransactionStatus.Created }
+            ? activePayment
+            : null;
         var issuedAt = DateTime.UtcNow;
         var payment = await _paymentLifecycle.CreatePendingCheckoutAsync(
-            ctx.BusinessId,
-            ctx.ConversationId,
+            context.BusinessId,
+            context.ConversationId,
             quote.CheckoutKind,
             checkoutSnapshotJson,
             quoteHash,
             quote.ConfirmationOutcome,
-            $"manual-{quote.CheckoutKind.ToString().ToLowerInvariant()}-{ctx.ConversationId:N}-{issuedAt:yyyyMMddHHmmss}",
+            $"manual-{quote.CheckoutKind.ToString().ToLowerInvariant()}-{context.ConversationId:N}-{issuedAt:yyyyMMddHHmmss}",
             string.Empty,
             quote.PayableCents,
             quote.Currency,
@@ -177,7 +240,6 @@ public sealed class CheckoutPaymentCoordinator : ICheckoutPaymentCoordinator
         if (supersededPayment is not null)
             await _paymentLifecycle.MarkSupersededAsync(supersededPayment, payment.PaymentTransactionId, ct);
 
-        ctx.ActivePayment = payment;
         return CheckoutPaymentLinkResult.OkManual(payment);
     }
 

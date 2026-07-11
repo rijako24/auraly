@@ -5,6 +5,7 @@ using Moq;
 using MimosBabySpa.Application.Agents;
 using MimosBabySpa.Application.Agents.Composition;
 using MimosBabySpa.Application.Agents.Configuration;
+using MimosBabySpa.Application.Agents.Operations.Reservation;
 using MimosBabySpa.Application.Agents.Gating;
 using MimosBabySpa.Application.Agents.Tools;
 using MimosBabySpa.Application.Agents.Tools.Impl;
@@ -24,13 +25,7 @@ public class ToolCapabilityGateTests
     private readonly ConversationVerificationService _verifications = new();
     private readonly ToolCapabilityGate _gate;
     private readonly CreateReservationTool _createReservationTool = new(
-        Mock.Of<IReservationService>(),
-        Mock.Of<IReservationIntentBuilder>(),
-        Mock.Of<IBusinessRuleEngine>(),
-        Mock.Of<IAvailabilityService>(),
-        Mock.Of<ISchedulingPolicyProvider>(),
-        CreateServiceNameResolver(),
-        NullLogger<CreateReservationTool>.Instance);
+        Mock.Of<IReservationCreationService>());
 
     private static ServiceNameResolver CreateServiceNameResolver()
     {

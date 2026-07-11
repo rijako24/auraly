@@ -34,6 +34,7 @@
 :r .\Migrations\MigrateNullableServiceCategory.sql
 :r .\Migrations\MigrateBabySpaPlanPrices2026.sql
 :r .\Migrations\MigrateExternalEscalationAttempts.sql
+:r .\Migrations\MigrateExternalEscalationOutcomeDeliveries.sql
 :r .\Migrations\MigrateAgentTemplatesAndInboundContacts.sql
 :r .\Migrations\MigrateOrderCheckoutPayments.sql
 :r .\Migrations\MigrateRemoveOrderAssignmentState.sql

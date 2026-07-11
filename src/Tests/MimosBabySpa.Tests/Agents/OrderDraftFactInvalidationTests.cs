@@ -84,6 +84,13 @@ public sealed class OrderDraftFactInvalidationTests
             CancellationToken ct = default) =>
             throw new NotImplementedException();
 
+        public Task ApplyBatchAsync(
+            Guid conversationId,
+            Guid businessId,
+            IReadOnlyDictionary<string, string?> mutations,
+            IReadOnlySet<string> rememberAcrossRequests,
+            CancellationToken ct = default) =>
+            throw new NotImplementedException();
         public Task<IReadOnlyList<string>> ClearNonPersistentAsync(
             Guid conversationId,
             IReadOnlyCollection<string> persistentKeys,

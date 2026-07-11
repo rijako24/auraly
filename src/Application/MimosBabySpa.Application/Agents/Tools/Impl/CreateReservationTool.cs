@@ -1,43 +1,22 @@
 using System.Text.Json;
-using Microsoft.Extensions.Logging;
-using MimosBabySpa.Application.Agents.Gating;
-using MimosBabySpa.Application.Agents.Facts;
-using MimosBabySpa.Application.BusinessRules;
-using MimosBabySpa.Application.Configuration;
-using MimosBabySpa.Application.DTOs;
-using MimosBabySpa.Application.Services;
+using MimosBabySpa.Application.Agents.Operations.Reservation;
 using MimosBabySpa.Domain.Enums;
 using static MimosBabySpa.Application.Agents.ToolSideEffectNames;
 
 namespace MimosBabySpa.Application.Agents.Tools.Impl;
 
+/// <summary>
+/// Compatibility adapter for the pre-deterministic runtime. Reservation creation behavior lives
+/// in <see cref="IReservationCreationService"/> and is shared with the typed operation.
+/// </summary>
 [AgentToolMetadata("create_reservation", Capabilities = new[] { ToolCapabilities.ReservationCreate })]
 public sealed class CreateReservationTool : IAgentTool
 {
-private readonly IReservationService _reservations;
-    private readonly IReservationIntentBuilder _intentBuilder;
-    private readonly IBusinessRuleEngine _rules;
-    private readonly IAvailabilityService _availability;
-    private readonly ISchedulingPolicyProvider _schedulingPolicy;
-    private readonly ServiceNameResolver _serviceNameResolver;
-    private readonly ILogger<CreateReservationTool> _logger;
+    private readonly IReservationCreationService _creation;
 
-    public CreateReservationTool(
-        IReservationService reservations,
-        IReservationIntentBuilder intentBuilder,
-        IBusinessRuleEngine rules,
-        IAvailabilityService availability,
-        ISchedulingPolicyProvider schedulingPolicy,
-        ServiceNameResolver serviceNameResolver,
-        ILogger<CreateReservationTool> logger)
+    public CreateReservationTool(IReservationCreationService creation)
     {
-        _reservations = reservations;
-        _intentBuilder = intentBuilder;
-        _rules = rules;
-        _availability = availability;
-        _schedulingPolicy = schedulingPolicy;
-        _serviceNameResolver = serviceNameResolver;
-        _logger = logger;
+        _creation = creation;
     }
 
     public string Name => "create_reservation";
@@ -45,8 +24,7 @@ private readonly IReservationService _reservations;
     public IReadOnlyList<string> Capabilities => [ToolCapabilities.ReservationCreate];
 
     public string Description =>
-        "Creates a confirmed reservation from the current booking facts and customer confirmation flag. " +
-        "Returns reservation_id, service, date, time, and status. Does not send customer-facing messages.";
+        "Creates one confirmed reservation after explicit customer confirmation and deterministic validation.";
 
     public string ParametersSchema => """
         {
@@ -70,281 +48,132 @@ private readonly IReservationService _reservations;
         AgentToolContext ctx,
         CancellationToken cancellationToken = default)
     {
-        var roles = new FactRoleIndex(ctx.Config?.FactSchema ?? []);
-        var service = Coalesce(arguments, "service", GetFact(roles, ctx.Facts, "booking.service", ConversationFactKeys.Service));
-        var dateStr = Coalesce(arguments, "date", GetFact(roles, ctx.Facts, "booking.date", ConversationFactKeys.DesiredDate));
-        var timeStr = Coalesce(arguments, "time", GetFact(roles, ctx.Facts, "booking.time", ConversationFactKeys.DesiredTime));
-        var customerName = Coalesce(arguments, "customer_name",
-            GetFact(roles, ctx.Facts, "customer.name", ConversationFactKeys.CustomerName) ?? ctx.Conversation.CustomerName);
-        var customerPhone = Coalesce(arguments, "customer_phone",
-            GetFact(roles, ctx.Facts, "customer.phone", ConversationFactKeys.CustomerPhone) ?? ConversationContactPhone.Resolve(ctx.Facts, ctx.ChannelPhone, ctx.Config));
-        var customerEmail = Coalesce(arguments, "customer_email",
-            GetFact(roles, ctx.Facts, "customer.email", ConversationFactKeys.CustomerEmail) ?? ctx.Conversation.CustomerEmail);
-        var addOns = Coalesce(arguments, "add_ons", GetFact(roles, ctx.Facts, "booking.addons", ConversationFactKeys.AddOns));
+        var result = await _creation.CreateAsync(
+            new ReservationCreationRequest(
+                ctx.AgentId,
+                ctx.BusinessId,
+                ctx.ConversationId,
+                ctx.BusinessToday,
+                ctx.Config ?? new AgentConfig(),
+                ctx.Facts,
+                ReadBool(arguments, "customer_confirmed"),
+                ReadString(arguments, "service"),
+                ReadString(arguments, "date"),
+                ReadString(arguments, "time"),
+                ReadString(arguments, "customer_name"),
+                ReadString(arguments, "customer_phone"),
+                ReadString(arguments, "customer_email"),
+                ReadString(arguments, "add_ons"),
+                ctx.Conversation.CustomerName,
+                ctx.Conversation.CustomerEmail,
+                ctx.ChannelPhone,
+                ctx.ActivePayment,
+                ctx.SingleManageableReservation),
+            cancellationToken);
 
-        var missing = new List<string>();
-        if (string.IsNullOrWhiteSpace(service)) missing.Add("service");
-        if (string.IsNullOrWhiteSpace(dateStr)) missing.Add("date");
-        if (string.IsNullOrWhiteSpace(timeStr)) missing.Add("time");
-        if (string.IsNullOrWhiteSpace(customerName)) missing.Add("customer_name");
-        if (string.IsNullOrWhiteSpace(customerPhone)) missing.Add("customer_phone");
-        if (missing.Count > 0)
-            return ToolResultHelper.MissingPrerequisites([.. missing]);
+        if (!result.Success)
+            return Failure(result);
 
-        if (!AgentDateRules.TryParseDate(dateStr!, out var date))
-            return ToolResultHelper.Error("invalid_date", $"'{dateStr}' is not a valid date.");
-        if (AgentDateRules.IsPastDate(date, ctx.BusinessToday))
-            return ToolResultHelper.Error("past_date", "Reservation date must be today or in the future.");
-        if (!TimeOnly.TryParse(timeStr, out var time))
-            return ToolResultHelper.Error("invalid_time", $"'{timeStr}' is not a valid time.");
+        foreach (var (key, value) in result.EffectiveFacts)
+        {
+            if (!ctx.Facts.TryGetValue(key, out var current) || string.IsNullOrWhiteSpace(current))
+                ctx.Facts[key] = value;
+        }
 
-        if (!ToolResultHelper.TryGetBool(arguments, "customer_confirmed", out var confirmed) || !confirmed)
+        if (result.Code == ReservationCreationOutcomeCodes.PendingConfirmation)
         {
             return ToolResultHelper.Ok(new
             {
                 status = "pending_confirmation",
                 summary = new
                 {
-                    service,
-                    date = dateStr,
-                    time = timeStr,
-                    customer_name = customerName,
-                    customer_phone = customerPhone,
-                    add_ons = string.IsNullOrWhiteSpace(addOns) ? null : addOns
+                    service = result.Service,
+                    date = result.Date,
+                    time = result.Time,
+                    customer_name = result.CustomerName,
+                    customer_phone = result.CustomerPhone
                 }
             });
         }
 
-        var activePayment = ctx.ActivePayment;
-        if (activePayment?.Status == PaymentTransactionStatus.Created)
+        if (result.Reservation is not null)
+            ctx.ManageableReservations = [result.Reservation];
+        if (result.Code == ReservationCreationOutcomeCodes.Created && result.Reservation is not null)
         {
-            return ToolResultHelper.ErrorWithLlm("payment_required", "A payment link is pending for this reservation. Wait for payment confirmation before creating the reservation.", new
-                {
-                    next_action = "await_payment_confirmation",
-                    payment_status = activePayment.Status.ToString()
-                }, recoverable: true);
+            ctx.NotificationContexts["reservation_created"] = new MessageSequenceContext
+            {
+                Reservation = result.Reservation
+            };
         }
 
-        if (activePayment?.Status == PaymentTransactionStatus.Confirmed && !activePayment.ReservationId.HasValue)
-        {
-            return ToolResultHelper.ErrorWithLlm("payment_fulfillment_pending", "Payment is confirmed but no reservation is linked yet. The payment fulfillment handler must create or link the reservation.", new
-                {
-                    next_action = "await_payment_fulfillment",
-                    payment_status = activePayment.Status.ToString()
-                }, recoverable: true);
-        }
-        var canonicalService = await _serviceNameResolver.ResolveAsync(ctx.BusinessId, service!, cancellationToken);
-        if (!string.IsNullOrWhiteSpace(canonicalService))
-            service = canonicalService;
-
-        EnsureReservationFacts(ctx, service!, dateStr!, timeStr!, customerName!, customerPhone!, customerEmail);
-
-        var idempotentResult = TryBuildIdempotentResult(ctx, service!, dateStr!, timeStr!, customerName!);
-        if (idempotentResult is not null)
-            return idempotentResult;
-
-        var ruleResult = await _rules.ValidateReservationAsync(
-            ctx.BusinessId, service!, date, time, cancellationToken);
-        if (!ruleResult.IsValid)
-        {
-            return ToolResultHelper.Error("business_rule_violation",
-                ruleResult.Reason ?? "Business rules prevent this reservation.");
-        }
-
-        var schedulingPolicy = await _schedulingPolicy.GetAsync(ctx.BusinessId, cancellationToken);
-        var availability = await _availability.CheckAvailabilityAsync(
-            ctx.BusinessId,
-            service!,
-            date.ToDateTime(TimeOnly.MinValue),
-            time.ToTimeSpan(),
-            schedulingPolicy,
-            cancellationToken);
-
-        if (!availability.IsAvailable)
-        {
-            var unavailableMessage = availability.ResponseMessage ?? "The selected time is not available.";
-            if (availability.AvailableOptions.Count > 0)
-                unavailableMessage = $"{unavailableMessage} Available options: {string.Join(", ", availability.AvailableOptions.Select(o => $"{o.Start}-{o.End}"))}";
-
-            return ToolResultHelper.Error("slot_unavailable", unavailableMessage);
-        }
-
-        var intent = await _intentBuilder.BuildFromContextAsync(ctx, cancellationToken);
-        if (intent is null)
-        {
-            return ToolResultHelper.Error(
-                "invalid_booking_data",
-                "Could not build reservation intent from collected facts.");
-        }
-
-        var attributes = string.IsNullOrWhiteSpace(addOns)
-            ? new Dictionary<string, string>()
-            : new Dictionary<string, string> { [ReservationBusinessAttributeKeys.SelectedAddOns] = addOns! };
-
-        _logger.LogInformation(
-            "AgentTool create_reservation requested BusinessId={BusinessId} AgentId={AgentId} ConversationId={ConversationId} Stage={Stage} ToolIteration={ToolIteration} ActivePaymentId={ActivePaymentId} ActivePaymentRef={ActivePaymentRef} Service={Service} Date={Date} Time={Time} CustomerPhone={CustomerPhone}",
-            ctx.BusinessId,
-            ctx.AgentId,
-            ctx.ConversationId,
-            ctx.Conversation.CurrentStageName ?? "(unknown)",
-            ctx.CurrentToolIteration,
-            ctx.ActivePayment?.PaymentTransactionId,
-            ctx.ActivePayment?.PaymentReferenceId,
-            service,
-            date,
-            time,
-            customerPhone);
-        var response = await _reservations.CreateReservationAsync(
-            new CreateReservationRequest(
-                ctx.BusinessId, ctx.ConversationId,
-                service!, date, time,
-                customerName!, customerEmail,
-                customerPhone!, attributes,
-                intent.CustomAttributesJson),
-            cancellationToken);
-
-        _logger.LogInformation(
-            "AgentTool create_reservation created ReservationId={ReservationId} BusinessId={BusinessId} AgentId={AgentId} ConversationId={ConversationId} Service={Service} Date={Date} Time={Time} CustomerPhone={CustomerPhone}",
-            response.ReservationId,
-            ctx.BusinessId,
-            ctx.AgentId,
-            ctx.ConversationId,
-            response.ServiceName ?? service,
-            date,
-            time,
-            customerPhone);
-        var reservation = new Domain.Entities.Reservation
-        {
-            ReservationId = response.ReservationId,
-            BusinessId = ctx.BusinessId,
-            ConversationId = ctx.ConversationId,
-            Status = ReservationStatus.Confirmed,
-            ReservationDateTime = date.ToDateTime(time),
-            CustomerNameSnapshot = customerName,
-            CustomerPhoneSnapshot = customerPhone,
-            CustomAttributesJson = intent.CustomAttributesJson
-        };
-
-        ctx.ManageableReservations = [reservation];
-        ctx.NotificationContexts["reservation_created"] = new MessageSequenceContext { Reservation = reservation };
-
-        return BuildSuccessResult(
-            response.ReservationId,
-            response.ServiceName ?? service!,
-            dateStr!,
-            timeStr!,
-            customerName!,
-            response.EmployeeName,
-            response.DurationMinutes,
-            response.AddOnNames);
-    }
-
-    private static string? TryBuildIdempotentResult(
-        AgentToolContext ctx,
-        string service,
-        string dateStr,
-        string timeStr,
-        string customerName)
-    {
-        var reservation = ctx.SingleManageableReservation;
-        if (reservation?.Status != ReservationStatus.Confirmed
-            || !reservation.ReservationDateTime.HasValue)
-        {
-            return null;
-        }
-
-        var existingDate = DateOnly.FromDateTime(reservation.ReservationDateTime.Value);
-        var existingTime = TimeOnly.FromDateTime(reservation.ReservationDateTime.Value);
-
-        if (!DateOnly.TryParse(dateStr, out var requestedDate)
-            || !TimeOnly.TryParse(timeStr, out var requestedTime)
-            || existingDate != requestedDate
-            || existingTime != requestedTime)
-        {
-            return null;
-        }
-
-        return BuildSuccessResult(
-            reservation.ReservationId,
-            service,
-            dateStr,
-            timeStr,
-            customerName,
-            idempotentReplay: true);
-    }
-
-    private static string BuildSuccessResult(
-        Guid reservationId,
-        string service,
-        string dateStr,
-        string timeStr,
-        string customerName,
-        string? employee = null,
-        int? durationMinutes = null,
-        IReadOnlyList<string>? addOnNames = null,
-        bool idempotentReplay = false)
-    {
-        var effects = idempotentReplay
+        var effects = result.IdempotentReplay
             ? Array.Empty<string>()
-            : [ToolSideEffectNames.RequestCompleted];
-        var events = idempotentReplay
+            : [RequestCompleted];
+        var events = result.IdempotentReplay
             ? Array.Empty<string>()
             : ["reservation_created"];
-
         return ToolResultHelper.OkWithEvents(new
         {
-            reservation_id = reservationId,
-            service,
-            date = dateStr,
-            time = timeStr,
-            customer_name = customerName,
+            reservation_id = result.ReservationId,
+            service = result.Service,
+            date = result.Date,
+            time = result.Time,
+            customer_name = result.CustomerName,
             status = ReservationStatus.Confirmed.ToString(),
-            is_booking_confirmed = true,
-            employee,
-            duration_minutes = durationMinutes,
-            add_ons = addOnNames,
-            idempotent_replay = idempotentReplay
+            is_booking_confirmed = result.IsBookingConfirmed,
+            employee = result.Employee,
+            duration_minutes = result.DurationMinutes,
+            add_ons = result.AddOnNames,
+            idempotent_replay = result.IdempotentReplay
         }, effects, events);
     }
 
-    private static void EnsureReservationFacts(
-        AgentToolContext ctx,
-        string service,
-        string date,
-        string time,
-        string customerName,
-        string customerPhone,
-        string? customerEmail)
+    private static string Failure(ReservationCreationResult result)
     {
-        var roles = new FactRoleIndex(ctx.Config?.FactSchema ?? []);
-        SetIfMissing(ctx.Facts, roles.KeyByRole("booking.service") ?? ConversationFactKeys.Service, service);
-        SetIfMissing(ctx.Facts, roles.KeyByRole("booking.date") ?? ConversationFactKeys.DesiredDate, date);
-        SetIfMissing(ctx.Facts, roles.KeyByRole("booking.time") ?? ConversationFactKeys.DesiredTime, time);
-        SetIfMissing(ctx.Facts, roles.KeyByRole("customer.name") ?? ConversationFactKeys.CustomerName, customerName);
-        SetIfMissing(ctx.Facts, roles.KeyByRole("customer.phone") ?? ConversationFactKeys.CustomerPhone, customerPhone);
+        if (result.MissingPrerequisites.Count > 0)
+            return ToolResultHelper.MissingPrerequisites([.. result.MissingPrerequisites]);
 
-        if (!string.IsNullOrWhiteSpace(customerEmail))
-            SetIfMissing(ctx.Facts, roles.KeyByRole("customer.email") ?? ConversationFactKeys.CustomerEmail, customerEmail);
+        if (result.Code is ReservationCreationOutcomeCodes.PaymentRequired
+            or ReservationCreationOutcomeCodes.PaymentFulfillmentPending)
+        {
+            return ToolResultHelper.ErrorWithLlm(
+                result.Code == ReservationCreationOutcomeCodes.PaymentRequired
+                    ? "payment_required"
+                    : "payment_fulfillment_pending",
+                result.Message ?? "Payment processing is pending.",
+                new
+                {
+                    next_action = result.Code == ReservationCreationOutcomeCodes.PaymentRequired
+                        ? "await_payment_confirmation"
+                        : "await_payment_fulfillment"
+                },
+                recoverable: true);
+        }
+
+        return ToolResultHelper.Error(
+            LegacyCode(result.Code),
+            result.Message ?? "Reservation could not be created.",
+            result.Recoverable);
     }
 
-    private static void SetIfMissing(IDictionary<string, string> facts, string key, string value)
+    private static string LegacyCode(string code) => code switch
     {
-        if (string.IsNullOrWhiteSpace(key) || string.IsNullOrWhiteSpace(value))
-            return;
+        "input.invalid_date" => "invalid_date",
+        "input.past_date" => "past_date",
+        "input.invalid_time" => "invalid_time",
+        "reservation.business_rule_violation" => "business_rule_violation",
+        "reservation.slot_unavailable" => "slot_unavailable",
+        "reservation.invalid_booking_data" => "invalid_booking_data",
+        _ => code
+    };
 
-        if (!facts.TryGetValue(key, out var current) || string.IsNullOrWhiteSpace(current))
-            facts[key] = value.Trim();
-    }
-    private static string? GetFact(
-        FactRoleIndex roles,
-        IReadOnlyDictionary<string, string> facts,
-        string role,
-        string fallbackKey) =>
-        roles.GetByRole(facts, role) ?? ConversationFactKeys.Get(facts, fallbackKey);
-    private static string? Coalesce(JsonElement args, string property, string? fallback)
-    {
-        if (ToolResultHelper.TryGetString(args, property, out var fromArgs))
-            return fromArgs;
-        return string.IsNullOrWhiteSpace(fallback) ? null : fallback;
-    }
+    private static string? ReadString(JsonElement input, string property) =>
+        input.TryGetProperty(property, out var value) && value.ValueKind == JsonValueKind.String
+            ? value.GetString()
+            : null;
+
+    private static bool ReadBool(JsonElement input, string property) =>
+        input.TryGetProperty(property, out var value)
+        && value.ValueKind is JsonValueKind.True or JsonValueKind.False
+        && value.GetBoolean();
 }

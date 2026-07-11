@@ -26,16 +26,8 @@ public sealed class ExternalEscalationExpirationProcess : ITimedProcess
     {
         try
         {
-            var expiredAttempts = await _escalations.ProcessExpiredAttemptsAsync(ct);
-            foreach (var expired in expiredAttempts)
-            {
-                await _outcomes.PublishAsync(
-                    expired.BusinessId,
-                    expired.AttemptId,
-                    expired.OutcomeKey,
-                    expired.Payload,
-                    ct);
-            }
+            await _escalations.ProcessExpiredAttemptsAsync(ct);
+            await _outcomes.PublishPendingAsync(ct);
         }
         catch (Exception ex)
         {

@@ -1,4 +1,4 @@
-﻿using MimosBabySpa.Application.Agents.Configuration;
+using MimosBabySpa.Application.Agents.Configuration;
 using MimosBabySpa.Application.Agents.Gating;
 using MimosBabySpa.Application.Agents.Tools;
 using MimosBabySpa.Application.Commerce;
@@ -19,6 +19,7 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
     private readonly IMemoryCache _cache;
     private readonly ILogger<AgentConfigProvider> _logger;
     private readonly AgentToolMetadataRegistry _toolMetadataRegistry;
+    private readonly AgentConfigurationCompiler _configurationCompiler;
 
     private static readonly TimeSpan CacheTtl = TimeSpan.FromMinutes(10);
     private const string CachePrefix = "agent_config_";
@@ -28,12 +29,14 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
         IAgentRepository agentRepo,
         IMemoryCache cache,
         ILogger<AgentConfigProvider> logger,
-        AgentToolMetadataRegistry toolMetadataRegistry)
+        AgentToolMetadataRegistry toolMetadataRegistry,
+        AgentConfigurationCompiler configurationCompiler)
     {
         _agentRepo = agentRepo;
         _cache = cache;
         _logger = logger;
         _toolMetadataRegistry = toolMetadataRegistry;
+        _configurationCompiler = configurationCompiler;
     }
 
     public async Task<AgentConfig> GetConfigAsync(Guid agentId, CancellationToken ct = default)
@@ -88,6 +91,19 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
                 agentId);
         }
 
+        var compilation = _configurationCompiler.Compile(config);
+        if (!compilation.IsValid)
+        {
+            var diagnostics = string.Join("; ", compilation.Diagnostics.Select(diagnostic =>
+                $"{diagnostic.Path}:{diagnostic.Code}:{diagnostic.Message}"));
+            _logger.LogError(
+                "AgentConfig {AgentId} rejected by compiler: {Diagnostics}",
+                agentId,
+                diagnostics);
+            throw new InvalidOperationException($"Agent configuration {agentId} is invalid: {diagnostics}");
+        }
+
+        ValidateConfig(config);
         _cache.Set(cacheKey, config, CacheTtl);
 
         _logger.LogInformation(
@@ -97,8 +113,6 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
             string.Join(",", config.EnabledToolNames),
             string.Join(",", AgentFlowCatalog.EffectiveFlows(config).Select(flow => flow.Id)),
             AgentFlowCatalog.EffectiveFlows(config).Sum(flow => flow.Stages.Count));
-
-        ValidateConfig(config);
 
         return config;
     }
@@ -538,22 +552,13 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
                 path);
         }
 
-        if (string.IsNullOrWhiteSpace(action.Tool))
+        if (string.IsNullOrWhiteSpace(action.Operation))
         {
             _logger.LogWarning(
-                "AgentConfig {AgentId}: {Path} has an empty tool",
+                "AgentConfig {AgentId}: {Path} has an empty operation",
                 config.AgentId,
                 path);
-        }
-        else if (!config.EnabledToolNames.Contains(action.Tool, StringComparer.OrdinalIgnoreCase))
-        {
-            _logger.LogWarning(
-                "AgentConfig {AgentId}: {Path} references tool '{Tool}' which is not in enabledTools",
-                config.AgentId,
-                path,
-                action.Tool);
-        }
-        if (!string.IsNullOrWhiteSpace(action.SendMessageSequence)
+        }        if (!string.IsNullOrWhiteSpace(action.SendMessageSequence)
             && !config.MessageSequences.ContainsKey(action.SendMessageSequence))
         {
             _logger.LogWarning(

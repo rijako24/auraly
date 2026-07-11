@@ -1,6 +1,7 @@
 using Azure.AI.OpenAI;
 using Microsoft.Extensions.Logging;
 using MimosBabySpa.Application.Services;
+using OpenAI.Audio;
 
 namespace MimosBabySpa.Infrastructure.Services;
 
@@ -10,12 +11,12 @@ namespace MimosBabySpa.Infrastructure.Services;
 /// </summary>
 public class AIService : IAIService
 {
-    private readonly OpenAIClient _audioClient;
+    private readonly AzureOpenAIClient _audioClient;
     private readonly string _audioDeploymentName;
     private readonly ILogger<AIService> _logger;
 
     public AIService(
-        OpenAIClient audioClient,
+        AzureOpenAIClient audioClient,
         string audioDeploymentName,
         ILogger<AIService> logger)
     {
@@ -34,8 +35,12 @@ public class AIService : IAIService
             await audioStream.CopyToAsync(memoryStream);
             var audioBytes = memoryStream.ToArray();
 
-            var response = await _audioClient.GetAudioTranscriptionAsync(
-                new AudioTranscriptionOptions(_audioDeploymentName, BinaryData.FromBytes(audioBytes))
+            var audioClient = _audioClient.GetAudioClient(_audioDeploymentName);
+            using var transcriptionStream = new MemoryStream(audioBytes);
+            var response = await audioClient.TranscribeAudioAsync(
+                transcriptionStream,
+                GetAudioFileName(mimeType),
+                new AudioTranscriptionOptions
                 {
                     ResponseFormat = AudioTranscriptionFormat.Verbose,
                     Language = "es"
@@ -45,8 +50,8 @@ public class AIService : IAIService
             var segments = transcription.Segments
                 .Select(segment => new AudioTranscriptionSegmentSignal(
                     segment.Text,
-                    segment.Start,
-                    segment.End,
+                    segment.StartTime,
+                    segment.EndTime,
                     segment.AverageLogProbability,
                     segment.NoSpeechProbability,
                     segment.CompressionRatio))
@@ -64,4 +69,13 @@ public class AIService : IAIService
             throw;
         }
     }
-}
+
+    private static string GetAudioFileName(string mimeType) => mimeType.ToLowerInvariant() switch
+    {
+        "audio/ogg" or "audio/opus" => "audio.ogg",
+        "audio/mp4" or "audio/m4a" => "audio.m4a",
+        "audio/mpeg" or "audio/mp3" => "audio.mp3",
+        "audio/wav" or "audio/x-wav" => "audio.wav",
+        "audio/webm" => "audio.webm",
+        _ => "audio.ogg"
+    };}

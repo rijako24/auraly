@@ -106,32 +106,30 @@ public sealed class AgentPromptComposer : IPromptComposer
         if (policy is null || !policy.IsEnforced || !policy.IsOutsideOperatingHours)
             return string.Empty;
 
+        var configuredGuidance = config.OperatingHours.OutsideHours.Guidance?.Trim();
+        if (string.IsNullOrWhiteSpace(configuredGuidance))
+            return string.Empty;
+
         var blocks = new List<string>();
-        var basePrompt = config.BasePrompt;
-        if (!string.IsNullOrWhiteSpace(basePrompt))
-            blocks.Add(basePrompt.Trim());
+        if (!string.IsNullOrWhiteSpace(config.BasePrompt))
+            blocks.Add(config.BasePrompt.Trim());
 
-        var lines = new List<string>
+        var state = new List<string>
         {
-            "## DISPONIBILIDAD ACTUAL",
-            "- El negocio esta fuera de horario laboral en este momento.",
-            "- Responde como el agente de este negocio, con la identidad y tono definidos arriba.",
-            "- Adapta la respuesta al ultimo mensaje del cliente; no repitas literalmente la misma plantilla en todos los turnos.",
-            "- No inicies, confirmes ni avances gestiones operativas del negocio mientras este fuera de horario.",
-            "- Si el cliente solo saluda, saluda y agradece el contacto de forma natural; luego explica brevemente que ahora no estamos disponibles.",
-            "- Si el cliente pide avanzar alguna gestion, explica brevemente que no podemos gestionarla fuera del horario laboral.",
-            "- Si el cliente pregunta por que, responde brevemente que estamos fuera del horario laboral.",
-            "- No solicites datos, no prometas ejecutar acciones y no hables de un tipo de gestion que el cliente no haya mencionado.",
-            "- Responde de forma breve y cerrada: no termines con preguntas ni ofrezcas continuar flujos, catalogos o recomendaciones fuera de horario."
+            "## ESTADO OPERATIVO DETERMINISTICO",
+            "- operating_status: closed",
+            "- operations_allowed: false"
         };
-
         if (!string.IsNullOrWhiteSpace(policy.NextOperatingWindowText))
-        {
-            lines.Insert(1, $"- proximo_horario_habil: {policy.NextOperatingWindowText}.");
-            lines.Insert(2, "- Cuando menciones el proximo horario, usa proximo_horario_habil. Si empieza por hoy, no agregues fecha ni dia.");
-        }
+            state.Add($"- next_operating_window: {policy.NextOperatingWindowText}");
 
-        blocks.Add(string.Join(Environment.NewLine, lines));
+        state.Add("## ORIENTACION CONFIGURADA");
+        state.Add(configuredGuidance.Replace(
+            "{{next_operating_window}}",
+            policy.NextOperatingWindowText ?? string.Empty,
+            StringComparison.OrdinalIgnoreCase));
+
+        blocks.Add(string.Join(Environment.NewLine, state));
         return string.Join($"{Environment.NewLine}{Environment.NewLine}", blocks);
     }
     internal static string BuildTurnContextBlock(IEnumerable<Message> history, AgentToolContext? session)

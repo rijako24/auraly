@@ -20,7 +20,14 @@ public class AgentPromptComposerTests
         AgentId = Guid.NewGuid(),
         BusinessId = Guid.NewGuid(),
         Name = "Mimi",
-        Persona = "## ROL\nEres Mimi."
+        Persona = "## ROL\nEres Mimi.",
+        OperatingHours = new OperatingHoursDefinitions
+        {
+            OutsideHours = new OutsideOperatingHoursResponseDefinition
+            {
+                Guidance = "Estamos fuera de horario laboral. El proximo horario es {{next_operating_window}}. No solicites datos y no termines con preguntas."
+            }
+        }
     };
 
     private static readonly TemporalReferenceContext DefaultTemporal = new TemporalReferenceBuilder()
@@ -799,14 +806,10 @@ public class AgentPromptComposerTests
 
         var result = Compose(DefaultConfig, [], session);
 
-        result.Should().Contain("## DISPONIBILIDAD ACTUAL");
+        result.Should().Contain("## ESTADO OPERATIVO DETERMINISTICO");
         result.Should().Contain("fuera de horario laboral");
-        result.Should().Contain("proximo_horario_habil: hoy de 1:00 p. m. a 9:00 p. m.");
-        result.Should().Contain("no repitas literalmente la misma plantilla");
-        result.Should().Contain("agradece el contacto");
-        result.Should().Contain("Si empieza por hoy, no agregues fecha ni dia");
+        result.Should().Contain("next_operating_window: hoy de 1:00 p. m. a 9:00 p. m.");
         result.Should().Contain("Eres Mimi");
-        result.Should().Contain("gestiones operativas");
         result.Should().Contain("No solicites datos");
         result.Should().Contain("no termines con preguntas");
         result.Should().NotContain("comprar");

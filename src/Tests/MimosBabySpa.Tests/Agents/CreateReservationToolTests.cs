@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using MimosBabySpa.Application.Agents;
 using MimosBabySpa.Application.Agents.Gating;
+using MimosBabySpa.Application.Agents.Operations.Reservation;
 using MimosBabySpa.Application.Agents.Tools.Impl;
 using MimosBabySpa.Application.BusinessRules;
 using MimosBabySpa.Application.Configuration;
@@ -51,20 +52,23 @@ public class CreateReservationToolTests
         unitOfWork.SetupGet(u => u.Services).Returns(_services.Object);
         var serviceNameResolver = new ServiceNameResolver(unitOfWork.Object, NullLogger<ServiceNameResolver>.Instance);
 
-        _tool = new CreateReservationTool(
+        var creation = new ReservationCreationService(
             _reservations.Object,
             _intentBuilder.Object,
             _rules.Object,
             _availability.Object,
             _schedulingPolicy.Object,
             serviceNameResolver,
-            NullLogger<CreateReservationTool>.Instance);
+            Mock.Of<IPaymentLifecycleService>(),
+            Mock.Of<IReservationLifecycleService>(),
+            NullLogger<ReservationCreationService>.Instance);
+        _tool = new CreateReservationTool(creation);
     }
 
     [Fact]
     public async Task ExecuteAsync_WhenDepositNotRequired_CreatesConfirmedReservation()
     {
-        _intentBuilder.Setup(b => b.BuildFromContextAsync(It.IsAny<AgentToolContext>(), It.IsAny<CancellationToken>()))
+        _intentBuilder.Setup(b => b.BuildAsync(It.IsAny<ReservationIntentContext>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ReservationIntentSnapshot(
                 Guid.NewGuid(),
                 "Plan Marineritos",
@@ -110,7 +114,7 @@ public class CreateReservationToolTests
     [Fact]
     public async Task ExecuteAsync_WhenDepositNotRequired_DoesNotRegisterConfirmationFragment()
     {
-        _intentBuilder.Setup(b => b.BuildFromContextAsync(It.IsAny<AgentToolContext>(), It.IsAny<CancellationToken>()))
+        _intentBuilder.Setup(b => b.BuildAsync(It.IsAny<ReservationIntentContext>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ReservationIntentSnapshot(
                 Guid.NewGuid(),
                 "Plan Marineritos",
@@ -168,7 +172,7 @@ public class CreateReservationToolTests
                 }
             ]);
 
-        _intentBuilder.Setup(b => b.BuildFromContextAsync(It.IsAny<AgentToolContext>(), It.IsAny<CancellationToken>()))
+        _intentBuilder.Setup(b => b.BuildAsync(It.IsAny<ReservationIntentContext>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ReservationIntentSnapshot(
                 Guid.NewGuid(),
                 "Diseno Interior",

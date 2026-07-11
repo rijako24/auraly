@@ -35,6 +35,7 @@ using Microsoft.Extensions.Options;
 // Agentic Engine
 
 using MimosBabySpa.Application.Agents;
+using MimosBabySpa.Application.Agents.Planning;
 
 using MimosBabySpa.Application.Billing;
 
@@ -292,7 +293,7 @@ services.Configure<OpenAIAudioModelOptions>(configuration.GetSection(OpenAIAudio
 
 
 
-services.AddKeyedSingleton<OpenAIClient>("Text", (sp, _) =>
+services.AddKeyedSingleton<AzureOpenAIClient>("Text", (sp, _) =>
 
 {
 
@@ -302,13 +303,13 @@ services.AddKeyedSingleton<OpenAIClient>("Text", (sp, _) =>
 
         throw new InvalidOperationException("OpenAI:TextModel:Endpoint y ApiKey deben estar configurados");
 
-    return new OpenAIClient(new Uri(opts.Endpoint), new Azure.AzureKeyCredential(opts.ApiKey));
+    return new AzureOpenAIClient(new Uri(opts.Endpoint), new System.ClientModel.ApiKeyCredential(opts.ApiKey));
 
 });
 
 
 
-services.AddKeyedSingleton<OpenAIClient>("Audio", (sp, _) =>
+services.AddKeyedSingleton<AzureOpenAIClient>("Audio", (sp, _) =>
 
 {
 
@@ -318,7 +319,7 @@ services.AddKeyedSingleton<OpenAIClient>("Audio", (sp, _) =>
 
         throw new InvalidOperationException("OpenAI:AudioModel:Endpoint y ApiKey deben estar configurados");
 
-    return new OpenAIClient(new Uri(opts.Endpoint), new Azure.AzureKeyCredential(opts.ApiKey));
+    return new AzureOpenAIClient(new Uri(opts.Endpoint), new System.ClientModel.ApiKeyCredential(opts.ApiKey));
 
 });
 
@@ -434,7 +435,7 @@ services.AddScoped<MimosBabySpa.Application.LLM.IChatClient>(sp =>
 
 {
 
-    var textClient = sp.GetRequiredKeyedService<OpenAIClient>("Text");
+    var textClient = sp.GetRequiredKeyedService<AzureOpenAIClient>("Text");
 
     var textOptions = sp.GetRequiredService<IOptions<OpenAITextModelOptions>>().Value;
 
@@ -478,6 +479,9 @@ services.AddScoped<IOperatingHoursTurnPolicy, OperatingHoursTurnPolicy>();
 services.AddScoped<IAgentTurnToolResolver, AgentTurnToolResolver>();
 
 services.AddScoped<IPromptComposer, AgentPromptComposer>();
+services.AddSingleton<TurnPlanValidator>();
+services.AddScoped<ITurnPlanner, LlmTurnPlanner>();
+services.AddScoped<TurnPlanPilotRunner>();
 
 
 
@@ -549,6 +553,33 @@ services.AddScoped<IAgentTool, OperationsCustomerHistoryTool>();
 
 
 services.AddScoped<AgentToolRegistry>();
+MimosBabySpa.Application.Agents.Operations.AgentMethodOperationRegistration.AddDeterministicAgentMethodOperations(services);
+services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Availability.CheckAvailabilityOperation>();
+services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Catalog.GetCompatibleAddOnsOperation>();
+services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Catalog.GetServiceFulfillmentOperation>();
+services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Catalog.ResolveServiceSelectionOperation>();
+services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Catalog.GetServiceCatalogOperation>();
+services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Commerce.ApplyOrderChangesOperation>();
+services.AddScoped<MimosBabySpa.Application.Agents.Operations.Reservation.IReservationCheckoutPreparationService, MimosBabySpa.Application.Agents.Operations.Reservation.ReservationCheckoutPreparationService>();
+services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Reservation.PrepareReservationCheckoutOperation>();
+services.AddScoped<MimosBabySpa.Application.Agents.Operations.Reservation.IReservationCreationService, MimosBabySpa.Application.Agents.Operations.Reservation.ReservationCreationService>();
+services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Reservation.CreateReservationOperation>();
+services.AddScoped<MimosBabySpa.Application.Agents.Operations.AgentOperationRegistry>();
+services.AddSingleton<MimosBabySpa.Application.Agents.Facts.FactMutationBatchProcessor>();
+services.AddSingleton<MimosBabySpa.Application.Agents.Runtime.IDeterministicFlowSelector, MimosBabySpa.Application.Agents.Runtime.DeterministicFlowSelector>();
+services.AddScoped<MimosBabySpa.Application.Commerce.ICartProductResolver, MimosBabySpa.Application.Commerce.CommerceCartProductResolver>();
+services.AddScoped<MimosBabySpa.Application.Commerce.ICartMutationStore, MimosBabySpa.Application.Commerce.CommerceCartMutationStore>();
+services.AddScoped<MimosBabySpa.Application.Commerce.CartCommandBatchProcessor>();
+services.AddScoped<MimosBabySpa.Application.Agents.Configuration.AgentConfigurationCompiler>();
+services.AddScoped<MimosBabySpa.Application.Agents.Runtime.StageConditionEvaluator>();
+services.AddScoped<MimosBabySpa.Application.Agents.Runtime.OperationArgumentBinder>();
+services.AddScoped<MimosBabySpa.Application.Agents.Runtime.DeterministicStageExecutor>();
+services.AddScoped<MimosBabySpa.Application.Agents.Runtime.DeterministicStageTransitionResolver>();
+services.AddScoped<MimosBabySpa.Application.Agents.Runtime.DeterministicTurnCoordinator>();
+services.AddScoped<MimosBabySpa.Application.Agents.Runtime.IDeterministicResponseRenderer, MimosBabySpa.Application.Agents.Runtime.DeterministicResponseRenderer>();
+services.AddScoped<MimosBabySpa.Application.Agents.Runtime.IOperationEventContextResolver, MimosBabySpa.Application.Agents.Runtime.ReservationCreatedOperationEventContextResolver>();
+services.AddScoped<MimosBabySpa.Application.Agents.Runtime.IDeterministicTurnEffectProcessor, MimosBabySpa.Application.Agents.Runtime.DeterministicTurnEffectProcessor>();
+services.AddScoped<MimosBabySpa.Application.Agents.Operations.IOperationPresentationComposer, MimosBabySpa.Application.Agents.Operations.OperationPresentationComposer>();
 
 services.AddScoped<IAgentConversationService, AgentConversationService>();
 
@@ -605,6 +636,14 @@ var traceEnabled = IsTraceEnabled(args);
 
 var scriptedScenario = ResolveScriptedScenario(args);
 consoleAgent = ResolveScenarioAgent(scriptedScenario) ?? consoleAgent;
+
+if (TurnPlanPilotRunner.IsRequested(args))
+{
+    await using var pilotScope = serviceProvider.CreateAsyncScope();
+    var pilot = pilotScope.ServiceProvider.GetRequiredService<TurnPlanPilotRunner>();
+    Environment.ExitCode = await pilot.RunAsync(consoleAgent.AgentId, args);
+    return;
+}
 var scriptedMessages = BuildLuisReservationScript(args);
 var scriptedCaseIndex = 0;
 var scriptedCheckoutState = new ConsoleCheckoutState();
@@ -614,7 +653,7 @@ if (scriptedMessages.Count > 0 && !string.Equals(scriptedScenario, "luis-critica
     traceEnabled = true;
 
 Console.WriteLine("========================================================");
-Console.WriteLine($"  {consoleAgent.BusinessName} - Simulador Agentic Engine (FC)");
+Console.WriteLine($"  {consoleAgent.BusinessName} - Simulador de Motor Deterministico");
 Console.WriteLine("========================================================");
 Console.WriteLine();
 Console.WriteLine($"  Negocio : {consoleAgent.BusinessName} ({consoleAgent.BusinessId})");
@@ -624,7 +663,7 @@ Console.WriteLine("  Escribe  'exit' para salir");
 
 Console.WriteLine("  Escribe  'reset' para reiniciar la sesion");
 
-Console.WriteLine("  Usa     --trace para ver system prompt, tools y respuestas del LLM");
+Console.WriteLine("  Usa     --trace para ver TurnPlan, operaciones y respuestas del LLM");
 
 Console.WriteLine("  Usa     test-luis-reserva para correr una prueba automatica con traza");
 Console.WriteLine("  Usa     test-luis-catalogo para validar que hola consulte catalogo oficial");

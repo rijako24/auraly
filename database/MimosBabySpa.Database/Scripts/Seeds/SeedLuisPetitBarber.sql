@@ -631,7 +631,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "sendMessageSequence": "reservation_confirmation_request",
       "actions": {
         "confirm": {
-          "tool": "manage_reservation",
+          "operation": "reservation.manage",
           "arguments": {
             "action": "confirm_attendance",
             "customer_confirmed": true,
@@ -640,7 +640,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
           "sendMessageSequence": "reservation_attendance_confirmed_reply"
         },
         "reschedule": {
-          "tool": "manage_reservation",
+          "operation": "reservation.manage",
           "arguments": {
             "action": "request_reschedule",
             "job_id": "{source_id}"
@@ -695,134 +695,191 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       {
         "id": "discovery",
         "name": "Descubrimiento",
-        "goal": "Ayudar al cliente a elegir un servicio exacto del catalogo.",
-        "advanceWhenFacts": [
-          "service"
-        ],
-        "collect": [
-          "booking_intent",
-          "service",
-          "desired_date",
-          "desired_time"
-        ],
-        "allowedActions": [
-          "get_service_catalog",
-          "resolve_service_selection",
-          "set_fact"
-        ],
-        "entryActions": [
+        "goal": "Ayudar al cliente a elegir un servicio exacto del catálogo.",
+        "advanceWhenFacts": ["service"],
+        "collect": ["booking_intent", "service", "desired_date", "desired_time"],
+        "signals": [
           {
-            "tool": "get_service_catalog",
-            "arguments": {
-              "view": "auto",
-              "query": "{{user.message}}"
+            "type": "catalog_query",
+            "description": "El cliente pide ver servicios, categorías, precios o información del catálogo.",
+            "valueSchema": { "type": "string" }
+          },
+          {
+            "type": "service_selection",
+            "description": "Texto con el que el cliente elige o intenta elegir un servicio concreto.",
+            "valueSchema": { "type": "string" }
+          }
+        ],
+        "actions": [
+          {
+            "id": "show_catalog_on_entry",
+            "operation": "catalog.get_services",
+            "trigger": "on_enter",
+            "condition": {
+              "all": [
+                { "not": { "signalPresent": "catalog_query" } },
+                { "not": { "signalPresent": "service_selection" } }
+              ]
+            },
+            "arguments": { "query": "{{turn.message}}", "view": "auto" },
+            "onOutcome": {
+              "catalog.services_returned": {
+                "response": { "guidance": "Da la bienvenida, preséntate como Luis Petit, barbero profesional, muestra el catálogo oficial devuelto y pregunta qué servicio le interesa." }
+              }
+            }
+          },
+          {
+            "id": "answer_catalog_query",
+            "operation": "catalog.get_services",
+            "trigger": "on_signal",
+            "signal": "catalog_query",
+            "arguments": { "query": "{{signal.catalog_query.value}}", "view": "auto" },
+            "onOutcome": {
+              "catalog.services_returned": {
+                "response": { "guidance": "Responde usando exclusivamente los servicios, categorías y precios devueltos por el catálogo." }
+              }
+            }
+          },
+          {
+            "id": "resolve_service",
+            "operation": "catalog.resolve_service",
+            "trigger": "on_signal",
+            "signal": "service_selection",
+            "arguments": { "text": "{{signal.service_selection.value}}" },
+            "onOutcome": {
+              "catalog.service_resolved": {
+                "effects": [
+                  { "type": "facts.set_from_outcome", "bindings": { "service": "service" } }
+                ]
+              },
+              "catalog.service_unchanged": {},
+              "catalog.add_on_detected": {
+                "effects": [
+                  { "type": "facts.set_from_outcome", "bindings": { "add_ons": "addOns" } }
+                ]
+              },
+              "catalog.service_ambiguous": {
+                "response": { "mode": "ask_clarification", "guidance": "Presenta solo los candidatos devueltos y pregunta cuál servicio desea." }
+              },
+              "catalog.service_not_found": {
+                "response": { "mode": "ask_clarification", "guidance": "Indica que no se encontró ese servicio y ofrece consultar el catálogo oficial." }
+              }
             }
           }
         ],
-        "conversationGuidance": "Cuando respondas con catalogo en discovery, ordena el mensaje asi: saluda, da la bienvenida a BARBER KIDS MENS, presentate literalmente como: Soy Luis Petit, barbero profesional. No digas tu barbero profesional. Despues muestra el catalogo oficial desde la salida vigente de get_service_catalog y al final cierra preguntando: En que servicio estas interesado? Usa la salida vigente de get_service_catalog como fuente oficial para presentar categorias, servicios y precios. Si el cliente menciona fecha u hora, como hoy, manana o una hora concreta, capturala con set_fact antes de responder para conservarla cuando elija servicio. Si el cliente nombra una familia o necesidad amplia, presenta opciones oficiales. Si el cliente elige o parafrasea un servicio de una lista ya presentada, o nombra un servicio puntual con intencion de reservar, llama resolve_service_selection con el texto literal antes de responder; no presentes complementos ni confirmes el servicio como elegido hasta que service quede registrado. No respondas categorias, servicios ni precios sin salida vigente de get_service_catalog."
+        "conversationGuidance": "Captura fecha u hora aunque el cliente las dé antes de elegir servicio. Habla únicamente con datos vigentes del catálogo. No confirmes un servicio hasta que el outcome de resolución lo haya guardado."
       },
       {
         "id": "add_ons",
         "name": "Complementos",
         "goal": "Ofrecer adicionales compatibles cuando apliquen.",
-        "advanceWhenFacts": [
-          "add_ons"
-        ],
-        "reentryOnFactChanged": [
-          "service"
-        ],
-        "collect": [
-          "add_ons"
-        ],
-        "allowedActions": [
-          "get_compatible_add_ons",
-          "resolve_service_selection",
-          "set_fact"
-        ],
-        "entryActions": [
+        "advanceWhenFacts": ["add_ons"],
+        "collect": ["add_ons"],
+        "signals": [
           {
-            "tool": "get_compatible_add_ons",
-            "arguments": {
-              "service": "{{fact.service}}"
+            "type": "catalog_selection",
+            "description": "El cliente elige, rechaza o corrige un servicio o complemento del catálogo.",
+            "valueSchema": { "type": "string" }
+          }
+        ],
+        "actions": [
+          {
+            "id": "resolve_catalog_selection",
+            "operation": "catalog.resolve_service",
+            "trigger": "on_signal",
+            "signal": "catalog_selection",
+            "arguments": { "text": "{{signal.catalog_selection.value}}" },
+            "onOutcome": {
+              "catalog.service_resolved": {
+                "effects": [
+                  { "type": "facts.set_from_outcome", "bindings": { "service": "service" } }
+                ]
+              },
+              "catalog.service_unchanged": {},
+              "catalog.add_on_detected": {
+                "effects": [
+                  { "type": "facts.set_from_outcome", "bindings": { "add_ons": "addOns" } }
+                ]
+              },
+              "catalog.service_ambiguous": {
+                "response": { "mode": "ask_clarification", "guidance": "Aclara cuál servicio o adicional desea." }
+              },
+              "catalog.service_not_found": {
+                "response": { "mode": "ask_clarification", "guidance": "Aclara cuál servicio o adicional del catálogo desea." }
+              }
+            }
+          },
+          {
+            "id": "get_compatible_add_ons",
+            "operation": "catalog.get_compatible_add_ons",
+            "condition": { "factMissing": "add_ons" },
+            "arguments": { "service": "{{fact.service}}" },
+            "onOutcome": {
+              "catalog.add_ons_available": {
+                "response": { "guidance": "Presenta únicamente los adicionales compatibles devueltos y pregunta si desea agregar alguno o continuar sin ellos." }
+              },
+              "catalog.no_add_ons": {
+                "effects": [
+                  { "type": "fact.set", "fact": "add_ons", "value": "ninguno" }
+                ]
+              }
             }
           }
         ],
-        "conversationGuidance": "Usa la salida vigente de get_compatible_add_ons como fuente oficial de adicionales compatibles. Si el ultimo mensaje ya trae una decision sobre adicionales, registrala con set_fact y continua sin volver a preguntar. Si el mensaje pide resumen, link o actualizar anticipo junto con una decision de adicionales, registra primero add_ons y no respondas resumen ni link desde esta etapa. Si existen adicionales y aun falta decision, presenta opciones con precio y valor breve y termina con esta pregunta simple: Quieres agregar alguno de estos adicionales o seguimos sin ellos? Si el cliente rechaza o no aplican, registra add_ons=ninguno y continua. El estado conversacional es solicitud en preparacion hasta que checkout o reserva sean devueltos por una herramienta."
+        "conversationGuidance": "Si el cliente rechaza adicionales claramente, guarda add_ons=ninguno. No ofrezcas adicionales que no aparezcan en el outcome vigente del catálogo."
       },
       {
         "id": "scheduling",
         "name": "Agenda",
         "goal": "Revisar disponibilidad y validar fecha y hora para una reserva por hora.",
-        "entryActions": [
+        "collect": ["desired_date", "desired_time"],
+        "actions": [
           {
-            "tool": "check_availability",
+            "id": "check_availability",
+            "operation": "reservation.check_availability",
+            "condition": { "verificationMissing": "availability_checked" },
             "arguments": {
               "service": "{{fact.service}}",
               "date": "{{fact.desired_date}}",
               "time": "{{fact.desired_time}}"
             },
-            "when": {
-              "requiredFacts": [
-                "service",
-                "desired_date"
-              ],
-              "missingFacts": [
-                "availability_checked"
-              ]
+            "onOutcome": {
+              "availability.exact_time_available": {
+                "response": { "guidance": "Confirma brevemente que el horario está disponible y continúa con los datos faltantes." }
+              },
+              "availability.options_available": {
+                "response": { "mode": "continue" }
+              },
+              "availability.requested_time_unavailable": {
+                "response": { "mode": "ask_clarification" }
+              },
+              "availability.none": {
+                "response": { "mode": "ask_clarification", "guidance": "Indica que no hay espacios ese día y pregunta por otra fecha." }
+              },
+              "input.invalid_date": {
+                "response": { "mode": "ask_clarification", "guidance": "Pide una fecha válida." }
+              },
+              "input.past_date": {
+                "response": { "mode": "ask_clarification", "guidance": "Pide una fecha de hoy en adelante." }
+              },
+              "input.invalid_time": {
+                "response": { "mode": "ask_clarification", "guidance": "Pide una hora válida." }
+              },
+              "catalog.service_unresolved": {
+                "response": { "mode": "ask_clarification", "guidance": "Pide que elija nuevamente un servicio del catálogo vigente." }
+              }
             }
           }
         ],
-        "afterTool": [
+        "transitions": [
           {
-            "tool": "check_availability",
-            "when": {
-              "path": "data.date"
-            },
-            "setFact": {
-              "key": "desired_date",
-              "value": "{{data.date}}"
-            }
-          },
-          {
-            "tool": "check_availability",
-            "when": {
-              "path": "data.availability_checked",
-              "equals": "true"
-            },
-            "setFact": {
-              "key": "desired_time",
-              "value": "{{data.time}}"
-            }
-          },
-          {
-            "tool": "check_availability",
-            "when": {
-              "path": "data.availability_checked",
-              "equals": "true"
-            },
-            "setFact": {
-              "key": "availability_checked",
-              "value": "true"
-            }
+            "id": "availability_verified",
+            "priority": 10,
+            "condition": { "verificationActive": "availability_checked" },
+            "to": "customer_data"
           }
         ],
-        "advanceWhenFacts": [
-          "availability_checked"
-        ],
-        "reentryOnFactChanged": [
-          "service",
-          "desired_date",
-          "desired_time"
-        ],
-        "collect": [
-          "desired_date",
-          "desired_time"
-        ],
-        "allowedActions": [
-          "check_availability",
-          "set_fact"
-        ],
-        "conversationGuidance": "Valida agenda con servicio canonico. Si falta fecha, pregunta el dia. Si ya hay fecha pero falta hora, check_availability se ejecuta con service y date para mostrar espacios disponibles del dia. Si el cliente da una hora exacta, valida con check_availability usando service, date y time. Si el horario no esta disponible, presenta horarios devueltos por disponibilidad y aplica el seleccionado. Disponibilidad con slot_held=false significa horario libre para continuar la solicitud."
+        "conversationGuidance": "Si falta fecha, pregunta el día. Si hay fecha pero falta hora, la operación configurada muestra los espacios disponibles mediante template exclusivo. Si el cliente da una hora exacta, la operación valida ese horario. No afirmes disponibilidad sin el outcome vigente."
       },
       {
         "id": "customer_data",
@@ -839,67 +896,75 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
           "customer_birth_date",
           "customer_email"
         ],
-        "allowedActions": [
-          "set_fact"
-        ],
         "conversationGuidance": "Resume brevemente servicio, fecha y hora como datos para continuar. El estado sigue siendo solicitud en preparacion; disponibilidad validada solo permite continuar hacia anticipo. Pide en un solo mensaje solo los datos requeridos que falten. Conserva los datos ya presentes."
       },
       {
         "id": "finalization",
         "name": "Cierre con anticipo",
         "goal": "Preparar el resumen, generar el link de anticipo y esperar confirmacion automatica de pago.",
-        "entryActions": [
+        "actions": [
           {
-            "tool": "prepare_checkout",
-            "arguments": {},
-            "when": {
-              "requiredFacts": [
-                "service",
-                "add_ons",
-                "desired_date",
-                "desired_time",
-                "customer_name",
-                "customer_birth_date",
-                "availability_checked"
-              ],
-              "missingVerifications": [
-                "checkout_prepared"
+            "id": "prepare_authoritative_checkout",
+            "operation": "reservation.prepare_checkout",
+            "condition": {
+              "all": [
+                { "factPresent": "service" },
+                { "factPresent": "add_ons" },
+                { "factPresent": "desired_date" },
+                { "factPresent": "desired_time" },
+                { "factPresent": "customer_name" },
+                { "factPresent": "customer_phone" },
+                { "factPresent": "customer_birth_date" },
+                { "verificationActive": "availability_checked" },
+                { "verificationMissing": "checkout_prepared" }
               ]
+            },
+            "arguments": {
+              "service": "{{fact.service}}",
+              "add_ons": "{{fact.add_ons}}",
+              "context": {
+                "date": "{{fact.desired_date}}",
+                "time": "{{fact.desired_time}}",
+                "customer_name": "{{fact.customer_name}}",
+                "customer_phone": "{{fact.customer_phone}}",
+                "customer_birth_date": "{{fact.customer_birth_date}}"
+              }
+            }
+          },
+          {
+            "id": "create_confirmed_no_payment_reservation",
+            "operation": "reservation.create",
+            "condition": {
+              "all": [
+                { "factEquals": { "key": "customer_confirmed", "value": true } },
+                { "verificationActive": "checkout_no_payment_prepared" }
+              ]
+            },
+            "arguments": {
+              "service": "{{fact.service}}",
+              "date": "{{fact.desired_date}}",
+              "time": "{{fact.desired_time}}",
+              "customer_name": "{{fact.customer_name}}",
+              "customer_phone": "{{fact.customer_phone}}",
+              "customer_email": "{{fact.customer_email}}",
+              "add_ons": "{{fact.add_ons}}",
+              "customer_confirmed": true
+            },
+            "onOutcome": {
+              "reservation.created": {
+                "effects": [
+                  { "type": "request.complete" }
+                ]
+              }
             }
           }
         ],
-        "afterTool": [
+        "transitions": [
           {
-            "tool": "check_availability",
-            "when": {
-              "path": "data.date"
-            },
-            "setFact": {
-              "key": "desired_date",
-              "value": "{{data.date}}"
-            }
-          },
-          {
-            "tool": "check_availability",
-            "when": {
-              "path": "data.availability_checked",
-              "equals": "true"
-            },
-            "setFact": {
-              "key": "desired_time",
-              "value": "{{data.time}}"
-            }
-          },
-          {
-            "tool": "check_availability",
-            "when": {
-              "path": "data.availability_checked",
-              "equals": "true"
-            },
-            "setFact": {
-              "key": "availability_checked",
-              "value": "true"
-            }
+            "id": "revalidate_changed_schedule",
+            "priority": 100,
+            "condition": { "verificationMissing": "availability_checked" },
+            "to": "scheduling"
           }
         ],
         "advanceWhenFacts": [],
@@ -912,18 +977,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
           "customer_birth_date",
           "customer_confirmed"
         ],
-        "allowedActions": [
-          "prepare_checkout",
-          "create_reservation",
-          "verify_payment",
-          "get_service_catalog",
-          "resolve_service_selection",
-          "check_availability",
-          "set_fact",
-          "reset_flow_context",
-          "send_message_sequence"
-        ],
-        "conversationGuidance": "Prepara checkout cuando los facts requeridos esten completos. Antes de pago aprobado o reserva creada por herramienta, habla de solicitud, datos o link pendiente; no digas tu reserva, cambie tu reserva ni reserva confirmada. Si el cliente pide cambiar la hora o fecha sin dar el nuevo valor, pregunta a que hora o fecha actualizas la solicitud. Nunca construyas, copies ni reutilices un resumen o link del historial. Si el cliente pide resumen, link, anticipo o actualizar resumen, usa los facts actuales y llama prepare_checkout. Si el cliente cambia fecha u hora antes del pago, actualiza el fact con set_fact o con el resultado de check_availability, valida disponibilidad con servicio, fecha y hora actuales y despues llama prepare_checkout si ya habia resumen o link pendiente. Si cambia servicio o complementos antes del pago, actualiza primero el fact correspondiente; para quitar complementos registra add_ons=ninguno. Presenta como vigente solo el resumen o link devuelto por la herramienta. Si el checkout no requiere pago, pide confirmacion verbal del resumen y crea la reserva solo cuando customer_confirmed=true venga del ultimo mensaje del cliente."
+        "conversationGuidance": "El motor prepara y presenta el checkout autoritativo cuando los datos y la disponibilidad vigente estan listos. No reconstruyas resumenes ni links desde el historial. Si cambia servicio, complementos, fecha u hora, usa solo los facts vigentes y espera la nueva validacion deterministica. Antes de pago aprobado o reserva creada, habla de solicitud o link pendiente. Para checkout sin pago, solicita confirmacion verbal antes de crear la reserva."
       }
     ]
     },
@@ -942,18 +996,63 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
             "desired_date",
             "desired_time"
           ],
-          "allowedActions": [
-            "get_customer_reservations",
-            "manage_reservation",
-            "escalate_to_human"
-          ],
-          "entryActions": [
-            {
-              "tool": "get_customer_reservations",
-              "arguments": {}
-            }
-          ],
-          "conversationGuidance": "Este flow solo aplica a reservas existentes. Si el cliente pide cambiar fecha u hora de una reserva existente, usa manage_reservation con el nuevo dato; la tool valida disponibilidad y aplica el cambio si corresponde. Si pide cambiar servicio o adicionales de una reserva ya confirmada, llama manage_reservation; la tool decide si coloca la reserva en espera y escala. Si hay varias reservas, usa get_customer_reservations o pide que la identifique por fecha, hora o servicio; nunca pidas UUID al cliente. No generes checkout nuevo para cambios de una reserva ya pagada. Si el cliente empieza una solicitud nueva, deja que el router vuelva al flow booking."
+      "signals": [
+        {
+          "type": "reservation_management_request",
+          "description": "Solicitud explícita para consultar, cambiar, confirmar o cancelar una reserva existente. Usa apply_change solo cuando el cliente pide aplicar el cambio; no inventes reservation_id.",
+          "valueSchema": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "action": { "type": "string", "enum": ["request_reschedule", "preview_change", "apply_change", "confirm_attendance", "cancel"] },
+              "reservation_id": { "type": ["string", "null"] },
+              "payment_transaction_id": { "type": ["string", "null"] },
+              "job_id": { "type": ["string", "null"] },
+              "service": { "type": ["string", "null"] },
+              "date": { "type": ["string", "null"] },
+              "time": { "type": ["string", "null"] },
+              "add_ons": { "type": ["string", "null"] },
+              "add_ons_mode": { "type": ["string", "null"], "enum": ["add", "remove", "replace", null] },
+              "customer_confirmed": { "type": ["boolean", "null"] },
+              "notes": { "type": ["string", "null"] }
+            },
+            "required": ["action", "reservation_id", "payment_transaction_id", "job_id", "service", "date", "time", "add_ons", "add_ons_mode", "customer_confirmed", "notes"]
+          }
+        }
+      ],
+      "actions": [
+        {
+          "id": "list_reservations_on_entry",
+          "operation": "reservation.list",
+          "trigger": "on_enter",
+          "arguments": {},
+          "onOutcome": {
+            "reservation.listed": { "response": { "guidance": "Usa únicamente las reservas devueltas para identificar la solicitud del cliente; nunca pidas UUID." } }
+          }
+        },
+        {
+          "id": "manage_reservation_request",
+          "operation": "reservation.manage",
+          "trigger": "on_signal",
+          "signal": "reservation_management_request",
+          "arguments": {
+            "action": "{{signal.reservation_management_request.value.action}}",
+            "reservation_id": "{{signal.reservation_management_request.value.reservation_id}}",
+            "payment_transaction_id": "{{signal.reservation_management_request.value.payment_transaction_id}}",
+            "job_id": "{{signal.reservation_management_request.value.job_id}}",
+            "service": "{{signal.reservation_management_request.value.service}}",
+            "date": "{{signal.reservation_management_request.value.date}}",
+            "time": "{{signal.reservation_management_request.value.time}}",
+            "add_ons": "{{signal.reservation_management_request.value.add_ons}}",
+            "add_ons_mode": "{{signal.reservation_management_request.value.add_ons_mode}}",
+            "customer_confirmed": "{{signal.reservation_management_request.value.customer_confirmed}}",
+            "notes": "{{signal.reservation_management_request.value.notes}}"
+          },
+          "onOutcome": {
+            "reservation.managed": { "response": { "guidance": "Comunica únicamente el resultado devuelto por la operación de gestión de reserva." } }
+          }
+        }
+      ],"conversationGuidance": "Este flow solo aplica a reservas existentes. Si el cliente pide cambiar fecha u hora de una reserva existente, el motor valida la disponibilidad y aplica el cambio con el nuevo dato si corresponde. Si pide cambiar servicio o adicionales de una reserva ya confirmada, el motor decide si coloca la reserva en espera y escala. Si hay varias reservas, usa únicamente las reservas vigentes devueltas por el motor o pide que la identifique por fecha, hora o servicio; nunca pidas UUID al cliente. No generes checkout nuevo para cambios de una reserva ya pagada. Si el cliente empieza una solicitud nueva, deja que el router vuelva al flow booking."
         }
       ]
     }
@@ -963,35 +1062,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "id": "human_escalation",
       "priority": 1000,
       "goal": "Escalar a una persona cuando el cliente lo pida, este inconforme, necesite cotizacion exacta de servicio variable o la solicitud salga del alcance del bot.",
-      "allowedActions": [
-        "escalate_to_human"
-      ],
-      "entryActions": [
-        {
-          "tool": "escalate_to_human",
-          "arguments": {
-            "reason": "customer_requested_human"
-          },
-          "when": {
-            "messageMatches": [
-              {
-                "anyOf": [
-                  "hablar con una persona",
-                  "hablar con un humano",
-                  "hablar con humano",
-                  "hablar con asesor",
-                  "quiero un asesor",
-                  "necesito un asesor",
-                  "necesito ayuda de una persona",
-                  "quiero atencion humana",
-                  "pasame con alguien",
-                  "comunicarme con una persona"
-                ]
-              }
-            ]
-          }
-        }
-      ],
       "conversationGuidance": "Escala con resumen breve de la necesidad del cliente."
     }
   ],
