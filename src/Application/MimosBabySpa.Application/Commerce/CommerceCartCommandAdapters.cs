@@ -16,13 +16,14 @@ public sealed class CommerceCartProductResolver : ICartProductResolver
         string productText,
         CancellationToken cancellationToken = default)
     {
-        var remembered = ProductSelectionMemory.FindExactCatalogMatches(context, productText);
+        var searchReference = ProductSelectionMemory.NormalizeSearchReference(productText);
+        var remembered = ProductSelectionMemory.FindCatalogMatches(context, searchReference);
         if (remembered.Count > 0)
             return remembered;
 
         var result = await _commerce.SearchProductsAsync(
             context,
-            new ProductSearchRequest(productText, null, Limit: 10, IncludeStock: true),
+            new ProductSearchRequest(searchReference, null, Limit: 10, IncludeStock: true),
             cancellationToken);
         return result.Products.Where(product => product.IsActive).ToList();
     }

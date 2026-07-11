@@ -37,6 +37,7 @@ public sealed class CommerceService : ICommerceService
         result = result.AppliedFilters is null
             ? result with { AppliedFilters = ProductSearchAppliedFilters.From(request) }
             : result;
+        result = _availability.FilterSellable(result);
         return await EnrichProductPromotionsAsync(ctx.BusinessId, result, ct);
     }
 
@@ -114,6 +115,8 @@ public sealed class CommerceService : ICommerceService
             throw new InvalidOperationException("Order item does not belong to the active draft.");
 
         await _unitOfWork.OrderDraftItems.DeleteAsync(item, ct);
+        await _unitOfWork.SaveChangesAsync(ct);
+
         await RecalculateAsync(draft, ct);
         draft.UpdatedAt = DateTime.UtcNow;
         await _unitOfWork.SaveChangesAsync(ct);
@@ -136,6 +139,25 @@ public sealed class CommerceService : ICommerceService
             ?? throw new InvalidOperationException("Order item not found.");
         if (item.OrderDraftId != draft.OrderDraftId)
             throw new InvalidOperationException("Order item does not belong to the active draft.");
+
+        if (quantity > item.Quantity)
+        {
+            var adapterContext = await BuildContextAsync(ctx.BusinessId, ctx.AgentId, ctx.ConversationId, ctx.Config, ct);
+            var adapter = _adapterFactory.Resolve(adapterContext.Provider);
+            var lookup = new AddOrderItemRequest(
+                item.ProductId,
+                item.ExternalProductId,
+                item.Sku,
+                item.ProductNameSnapshot,
+                quantity,
+                item.UnitPrice);
+            var product = await adapter.GetProductAsync(lookup, adapterContext, ct)
+                ?? await FindCachedProductAsync(lookup, adapterContext, ct)
+                ?? throw new InvalidOperationException("Product not found.");
+            if (!_availability.IsSellable(product))
+                throw new InvalidOperationException("Product inactive.");
+            EnsureRequestedQuantityFitsStock(product, quantity, 0m);
+        }
 
         item.Quantity = quantity;
         item.LineTotal = quantity * item.UnitPrice;

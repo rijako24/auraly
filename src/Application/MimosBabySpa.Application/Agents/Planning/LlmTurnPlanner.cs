@@ -422,6 +422,10 @@ public sealed class LlmTurnPlanner : ITurnPlanner
 
                 "Emit a configured semantic signal at most once and only when latestUserMessage supports it. A signal describes customer meaning; it never executes an operation.",
 
+                "Use recentConversation only to resolve contextual references in latestUserMessage. Every batch item must correspond to distinct customer meaning in latestUserMessage; preserve every independently requested item and quantity exactly once. Product ambiguity is resolved later by the deterministic operation.",
+
+                "When currentFacts contains a pending operation selection, interpret a short candidate choice as continuation of the configured mutation signal and identify the selected candidate at the highest specificity supported by the latest message and offered options. The deterministic operation owns restoration of the deferred batch.",
+
                 "Ambiguity in one field never discards other explicit meaning. Still emit every independent configured signal and preserve its complete payload from latestUserMessage; report the ambiguous fact separately in response.ambiguousFields.",
 
                 "decision must be null unless the customer explicitly accepts, rejects or revises an existing artifact.",

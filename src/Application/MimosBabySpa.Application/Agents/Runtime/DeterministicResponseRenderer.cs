@@ -88,6 +88,7 @@ public sealed class DeterministicResponseRenderer : IDeterministicResponseRender
                 "Treat operation outcomes as the only authority for catalog, availability, prices, totals, reservations, payments and external state.",
                 "Never claim success, confirmation, availability or payment unless a successful outcome explicitly supports it.",
                 "Follow responseGuidance and stage conversationGuidance. Ask only for data those instructions require.",
+                "Apply the configured persona and policies as the authority for voice, empathy, conversational style and WhatsApp presentation.",
                 "Be concise, natural and consistent with the configured persona."
             },
             stage = new
@@ -115,7 +116,8 @@ public sealed class DeterministicResponseRenderer : IDeterministicResponseRender
             options: new ChatCompletionOptions
             {
                 Temperature = request.Config.Temperature,
-                MaxTokens = 1200,},
+                MaxTokens = 1200
+            },
             cancellationToken: cancellationToken);
 
         var response = result.Success ? result.Content : string.Empty;

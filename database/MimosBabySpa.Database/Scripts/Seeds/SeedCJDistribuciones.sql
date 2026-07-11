@@ -218,7 +218,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                                             }
                        },
     "persona":  "Eres el asistente comercial de CJ Distribuciones por WhatsApp. Atiendes pedidos de alimentos y productos de consumo para hogares y negocios. Hablas en espanol con tono claro, amable, breve y practico. El saludo inicial y el cierre son los momentos para usar el nombre del cliente; en los turnos intermedios respondes directamente. El catalogo y los resultados de las operaciones son la fuente de verdad comercial.",
-    "policies":  "## PRESENTACION\n\n- Presentate como asistente de CJ Distribuciones con tono breve, amable y practico.\n- Reserva el nombre del cliente para el saludo inicial y el cierre; en los turnos intermedios responde directamente.\n- Presenta catalogos, precios, carrito, totales y estado del pedido exclusivamente desde resultados oficiales del turno.",
+    "policies":  "## EXPERIENCIA CONVERSACIONAL\n\n- Responde primero a la intencion real de la persona y conserva la continuidad con el turno anterior.\n- Reconoce elecciones, avances o inquietudes de forma natural solo cuando aporte valor; varia las transiciones para mantener una conversacion fluida.\n- Usa el nombre con moderacion, principalmente en una apertura, un momento de tranquilidad o un cierre significativo.\n- Consulta la conversacion reciente para evitar repetir saludos, nombres, agradecimientos o la misma explicacion en turnos consecutivos.\n- Adapta el tono al mensaje recibido y manten una actitud humana, atenta, empatica y profesional.\n- Ante confusion, inconvenientes o incertidumbre, demuestra comprension y explica el siguiente paso con claridad.\n- En WhatsApp, usa mensajes breves, parrafos cortos y listas legibles cuando ayuden a entender opciones o resumenes.\n- Formula una sola pregunta enfocada cuando sea necesaria para avanzar.\n\n## PRESENTACION\n\n- Presentate como asistente de CJ Distribuciones con tono breve, amable y practico.\n- Reserva el nombre del cliente para el saludo inicial y el cierre; en los turnos intermedios responde directamente.\n- Presenta catalogos, precios, carrito, totales y estado del pedido exclusivamente desde resultados oficiales del turno.",
     "messageSequences":  {
                              "order_created_customer":  {
                                                             "messages":  [
@@ -520,12 +520,13 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
     "templates":  {
                       "order_checkout_no_payment":  "*Resumen de tu pedido*\n{{#each line_items}}\n- {{name}} x{{quantity}}: ${{line_total}}\n{{/each}}\n- Envio: ${{shipping_cost}}\n- *Total: ${{total}} {{currency}}*\n\nEntrega:\n- Ciudad: {{city}}\n- Direccion: {{delivery_address}}\n- Celular: {{customer_phone}}\n{{#if customer_name}}\n- Nombre: {{customer_name}}\n{{/if}}\n\nMetodo de pago: efectivo al recibir\n\nConfirmas tu pedido con esta informacion?",
                       "order_checkout_manual_transfer":  "*Resumen de tu pedido*\n{{#each line_items}}\n- {{name}} x{{quantity}}: ${{line_total}}\n{{/each}}\n- Envio: ${{shipping_cost}}\n- *Total: ${{total}} {{currency}}*\n\nEntrega:\n- Ciudad: {{city}}\n- Direccion: {{delivery_address}}\n- Celular: {{customer_phone}}\n{{#if customer_name}}\n- Nombre: {{customer_name}}\n{{/if}}\n\nMetodo de pago: transferencia manual\n\nTu pago queda pendiente de confirmacion manual. Un agente del equipo de CJ Distribuciones confirmara el pago; cuando se confirme, te notificaremos que el pedido fue creado.",
-                      "catalog_results":  "*Productos disponibles*\r\n{{#each products}}\r\n- {{name}}: ${{unit_price}} {{currency}}\r\n{{/each}}\r\n\r\nIndica cuales deseas incluir y en que cantidad.",
-                      "recipe_results":  "*Ideas para preparar*\r\n{{#each results}}\r\n- {{Title}}\r\n  {{Url}}\r\n{{/each}}",
-                      "cart_snapshot":  "*Pedido actual*\r\n{{#each items}}\r\n- {{name}} x{{quantity}}: ${{line_total}}\r\n{{/each}}\r\n*Total: ${{total}} {{currency}}*\r\n\r\nPuedes seguir agregando productos o finalizar la seleccion.",
-                      "cart_review":  "*Resumen de tu pedido*\r\n{{#each items}}\r\n- {{name}} x{{quantity}}: ${{line_total}}\r\n{{/each}}\r\n*Total: ${{total}} {{currency}}*\r\n\r\nConfirma si esta correcto o indica el cambio que necesitas.",
-                      "product_ambiguity":  "Encontre varias referencias para {{product_text}}:\r\n{{#each product_options}}\r\n- {{Name}}: ${{UnitPrice}} {{Currency}}\r\n{{/each}}\r\n\r\nIndica cual deseas incluir.",
-                      "product_selection_prompt":  "Puedes indicar los productos y cantidades que necesitas o la preparacion para la que deseas recomendaciones.",
+                      "catalog_results":  "Estas son las opciones que encontre para ti:\r\n\r\n*Productos disponibles*\r\n{{#each products}}\r\n- {{name}}: ${{unit_price}} {{currency}}\r\n{{/each}}\r\n\r\nCuales te gustaria agregar y en que cantidad?",
+                      "recipe_results":  "Buena idea. Puedes inspirarte con estas preparaciones:\r\n\r\n*Ideas para preparar*\r\n{{#each results}}\r\n- {{Title}}\r\n  {{Url}}\r\n{{/each}}",
+                      "cart_snapshot":  "Listo, asi va tu pedido:\r\n\r\n*Pedido actual*\r\n{{#each items}}\r\n- {{name}} x{{quantity}}: ${{line_total}}\r\n{{/each}}\r\n*Total: ${{total}} {{currency}}*\r\n\r\nPuedes agregar algo mas o decirme cuando este completo.",
+                      "cart_review":  "Perfecto, revisemos juntos el pedido:\r\n\r\n*Resumen de tu pedido*\r\n{{#each items}}\r\n- {{name}} x{{quantity}}: ${{line_total}}\r\n{{/each}}\r\n*Total: ${{total}} {{currency}}*\r\n\r\nEsta correcto o deseas ajustar algo?",
+                      "product_ambiguity":  "Quiero asegurarme de agregar la opcion correcta. Para {{product_text}} encontre:\r\n{{#each product_options}}\r\n- {{Name}}: ${{UnitPrice}} {{Currency}}\r\n{{/each}}\r\n\r\nCual prefieres? Conservare los demas productos de tu solicitud.",
+                      "insufficient_stock":  "Puedo ayudarte con esa referencia, pero la cantidad solicitada supera el inventario disponible.\r\n\r\n- Producto: {{product_text}}\r\n- Solicitado en total: {{requested_quantity}}\r\n- Disponible: {{available_quantity}}\r\n\r\nPara este cambio, indica una cantidad de hasta {{maximum_command_quantity}}; los demas cambios del lote aun no se han aplicado.",
+                      "product_selection_prompt":  "Con gusto te ayudo a elegir. Dime que productos y cantidades necesitas, o que deseas preparar para recomendarte opciones.",
                       "order_draft_unavailable":  "No fue posible consultar el pedido vigente en este momento. Intenta nuevamente para continuar con el resumen.",
                       "customer_name_prompt":  "Hola! Bienvenido a CJ Distribuciones. Con gusto te ayudo a realizar tu pedido. Me indicas tu nombre o el nombre de tu establecimiento?",
                       "customer_type_prompt":  "Mucho gusto, {{customer_name}}. Selecciona el perfil que describe tu compra:\r\nA. Hogar\r\nB. Tienda o minimercado\r\nC. Restaurante\r\nD. Comida rapida\r\nE. Distribuidor"
@@ -545,7 +546,8 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                                                               ],
                                          "conversationGuidance":  "Si falta customer_name y el cliente no lo informo en el mensaje actual, saluda exactamente: Hola! Bienvenido a CJ Distribuciones. Con gusto te ayudo a realizar tu pedido. Me indicas tu nombre o el nombre de tu establecimiento? Si ya lo dijo, continÃºa sin volver a pedirlo; el motor registra el dato extraÃ­do.",
                                          "collect":  [
-                                                         "customer_name"
+                                                         "customer_name",
+                                                         "customer_type"
                                                      ],
                                          "response":  {
                                                           "fallbackTemplate":  "customer_name_prompt",
@@ -575,7 +577,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                                          "advanceWhenFacts":  [
                                                                   "order_finalized"
                                                               ],
-                                         "conversationGuidance":  "Gestiona la seleccion abierta de productos mediante las senales configuradas. Las consultas comerciales se presentan con resultados autoritativos del catalogo. Las solicitudes de preparacion producen ideas de receta y productos relacionados del catalogo en el mismo turno. Los cambios confirmados se aplican al unico pedido activo y muestran su estado vigente. Cuando el cliente comunique que termino la seleccion, registra order_finalized=true.",
+                                         "conversationGuidance":  "Acompana al cliente de forma cercana mientras elige productos. Las consultas comerciales se presentan con resultados autoritativos del catalogo. Las solicitudes de preparacion producen ideas de receta y productos relacionados en el mismo turno. Cuando solicite productos y cantidades, conserva el lote completo para que el motor lo aplique al unico pedido activo. Tras cada cambio presenta el estado vigente con una transicion natural. Cuando el cliente comunique que termino la seleccion, registra order_finalized=true.",
                                          "collect":  [
                                                          "order_finalized",
                                                          "delivery_method",
@@ -593,44 +595,10 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                                                          },
                                                          {
                                                              "type":  "order_changes",
-                                                             "description":  "Cambios solicitados sobre el unico pedido activo. El valor conserva cada producto, operacion, cantidad y referencia de destino expresada por el cliente.",
+                                                             "description":  "Una mutacion explicita de uno o varios productos del unico pedido activo. Representa cada producto afectado con exactamente un comando: add cuando la cantidad es incremental o corresponde a un producto nuevo; set_quantity cuando la cantidad expresa el total final deseado para una linea existente; remove cuando se elimina por completo la linea, con quantity nulo. Cada comando corresponde a un producto afectado en el mensaje actual y se emite exactamente una vez. Conserva referencias parciales o contextuales, todas las cantidades y todos los productos del turno; el historial se usa para resolver la referencia, mientras las mutaciones provienen del mensaje actual. El motor resuelve catalogo, ambiguedad e inventario de forma autoritativa. Cuando exista una seleccion pendiente, la referencia elegida continua esa misma mutacion y el motor restaura el resto del lote.",
                                                              "valueSchema":  {
                                                                                  "type":  "array",
-                                                                                 "items":  {
-                                                                                               "type":  "object",
-                                                                                               "additionalProperties":  false,
-                                                                                               "properties":  {
-                                                                                                                  "operation":  {
-                                                                                                                                    "type":  "string",
-                                                                                                                                    "enum":  [
-                                                                                                                                                 "add",
-                                                                                                                                                 "remove",
-                                                                                                                                                 "set_quantity"
-                                                                                                                                             ]
-                                                                                                                                },
-                                                                                                                  "productText":  {
-                                                                                                                                      "type":  "string"
-                                                                                                                                  },
-                                                                                                                  "quantity":  {
-                                                                                                                                   "type":  [
-                                                                                                                                                "number",
-                                                                                                                                                "null"
-                                                                                                                                            ]
-                                                                                                                               },
-                                                                                                                  "destinationReference":  {
-                                                                                                                                               "type":  [
-                                                                                                                                                            "string",
-                                                                                                                                                            "null"
-                                                                                                                                                        ]
-                                                                                                                                           }
-                                                                                                              },
-                                                                                               "required":  [
-                                                                                                                "operation",
-                                                                                                                "productText",
-                                                                                                                "quantity",
-                                                                                                                "destinationReference"
-                                                                                                            ]
-                                                                                           }
+                                                                                 "items":  {"anyOf":[{"type":"object","additionalProperties":false,"properties":{"operation":{"type":"string","enum":["add"]},"productText":{"type":"string"},"quantity":{"type":"number"},"destinationReference":{"type":["string","null"]}},"required":["operation","productText","quantity","destinationReference"]},{"type":"object","additionalProperties":false,"properties":{"operation":{"type":"string","enum":["set_quantity"]},"productText":{"type":"string"},"quantity":{"type":"number"},"destinationReference":{"type":["string","null"]}},"required":["operation","productText","quantity","destinationReference"]},{"type":"object","additionalProperties":false,"properties":{"operation":{"type":"string","enum":["remove"]},"productText":{"type":"string"},"quantity":{"type":"null"},"destinationReference":{"type":["string","null"]}},"required":["operation","productText","quantity","destinationReference"]}]}
                                                                              },
                                                              "ambiguityRules":  [
                                                                                     {
@@ -643,7 +611,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                                                          },
                                                          {
                                                              "type":  "catalog_query",
-                                                             "description":  "Necesidad vigente de consultar productos, referencias, precios, disponibilidad o recomendaciones en el catalogo. El valor contiene terminos de busqueda concretos resueltos desde el turno y su contexto conversacional.",
+                                                             "description":  "Consulta de existencia, opciones, referencias, precios, disponibilidad o recomendaciones sin una instruccion explicita de agregar cantidades al pedido. El valor contiene terminos de busqueda concretos resueltos desde el turno y su contexto conversacional.",
                                                              "valueSchema":  {
                                                                                  "type":  "object",
                                                                                  "additionalProperties":  false,
@@ -774,7 +742,21 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                                                                                                                               }
                                                                                                                           ]
                                                                                                           },
-                                                                               "cart.item_not_found_or_ambiguous":  {
+                                                                               "cart.insufficient_stock":  {
+                                                                                                              "response":  {
+                                                                                                                               "mode":  "ask_clarification",
+                                                                                                                               "guidance":  "Explica con claridad la cantidad disponible y pide una cantidad valida; ningun cambio del lote fue aplicado."
+                                                                                                                           },
+                                                                                                              "effects":  [
+                                                                                                                              {
+                                                                                                                                  "type": "presentation.add",
+                                                                                                                                  "template": "insufficient_stock",
+                                                                                                                                  "dataPath": "error.context",
+                                                                                                                                  "mode": "Exclusive",
+                                                                                                                                  "priority": "Required"
+                                                                                                                              }
+                                                                                                                          ]
+                                                                                                          },                                                                               "cart.item_not_found_or_ambiguous":  {
                                                                                                                         "response":  {
                                                                                                                                          "mode":  "ask_clarification",
                                                                                                                                          "guidance":  "Aclara cuÃ¡l producto existente del pedido desea modificar."
@@ -840,44 +822,10 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                                          "signals":  [
                                                          {
                                                              "type":  "order_changes",
-                                                             "description":  "Cambios explÃ­citos del Ãºnico pedido activo. Extrae todos los productos y cantidades. destinationReference contiene la direcciÃ³n asociada al producto. Si aparecen dos direcciones diferentes, no elijas: marca delivery_address como ambiguo y conserva cada direcciÃ³n en su producto; el motor diferirÃ¡ todo el lote hasta que el cliente elija una direcciÃ³n para el pedido completo.",
+                                                             "description":  "Una mutacion explicita de uno o varios productos del unico pedido activo. Representa cada producto afectado con exactamente un comando: add cuando la cantidad es incremental o corresponde a un producto nuevo; set_quantity cuando la cantidad expresa el total final deseado para una linea existente; remove cuando se elimina por completo la linea, con quantity nulo. Cada comando corresponde a un producto afectado en el mensaje actual y se emite exactamente una vez. Conserva referencias parciales o contextuales, todas las cantidades y todos los productos del turno; el historial se usa para resolver la referencia, mientras las mutaciones provienen del mensaje actual. El motor resuelve catalogo, ambiguedad e inventario de forma autoritativa. Cuando exista una seleccion pendiente, la referencia elegida continua esa misma mutacion y el motor restaura el resto del lote.",
                                                              "valueSchema":  {
                                                                                  "type":  "array",
-                                                                                 "items":  {
-                                                                                               "type":  "object",
-                                                                                               "additionalProperties":  false,
-                                                                                               "properties":  {
-                                                                                                                  "operation":  {
-                                                                                                                                    "type":  "string",
-                                                                                                                                    "enum":  [
-                                                                                                                                                 "add",
-                                                                                                                                                 "remove",
-                                                                                                                                                 "set_quantity"
-                                                                                                                                             ]
-                                                                                                                                },
-                                                                                                                  "productText":  {
-                                                                                                                                      "type":  "string"
-                                                                                                                                  },
-                                                                                                                  "quantity":  {
-                                                                                                                                   "type":  [
-                                                                                                                                                "number",
-                                                                                                                                                "null"
-                                                                                                                                            ]
-                                                                                                                               },
-                                                                                                                  "destinationReference":  {
-                                                                                                                                               "type":  [
-                                                                                                                                                            "string",
-                                                                                                                                                            "null"
-                                                                                                                                                        ]
-                                                                                                                                           }
-                                                                                                              },
-                                                                                               "required":  [
-                                                                                                                "operation",
-                                                                                                                "productText",
-                                                                                                                "quantity",
-                                                                                                                "destinationReference"
-                                                                                                            ]
-                                                                                           }
+                                                                                 "items":  {"anyOf":[{"type":"object","additionalProperties":false,"properties":{"operation":{"type":"string","enum":["add"]},"productText":{"type":"string"},"quantity":{"type":"number"},"destinationReference":{"type":["string","null"]}},"required":["operation","productText","quantity","destinationReference"]},{"type":"object","additionalProperties":false,"properties":{"operation":{"type":"string","enum":["set_quantity"]},"productText":{"type":"string"},"quantity":{"type":"number"},"destinationReference":{"type":["string","null"]}},"required":["operation","productText","quantity","destinationReference"]},{"type":"object","additionalProperties":false,"properties":{"operation":{"type":"string","enum":["remove"]},"productText":{"type":"string"},"quantity":{"type":"null"},"destinationReference":{"type":["string","null"]}},"required":["operation","productText","quantity","destinationReference"]}]}
                                                                              },
                                                              "ambiguityRules":  [
                                                                                     {
@@ -967,7 +915,21 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                                                                                                                               }
                                                                                                                           ]
                                                                                                           },
-                                                                               "cart.item_not_found_or_ambiguous":  {
+                                                                               "cart.insufficient_stock":  {
+                                                                                                              "response":  {
+                                                                                                                               "mode":  "ask_clarification",
+                                                                                                                               "guidance":  "Explica con claridad la cantidad disponible y pide una cantidad valida; ningun cambio del lote fue aplicado."
+                                                                                                                           },
+                                                                                                              "effects":  [
+                                                                                                                              {
+                                                                                                                                  "type": "presentation.add",
+                                                                                                                                  "template": "insufficient_stock",
+                                                                                                                                  "dataPath": "error.context",
+                                                                                                                                  "mode": "Exclusive",
+                                                                                                                                  "priority": "Required"
+                                                                                                                              }
+                                                                                                                          ]
+                                                                                                          },                                                                               "cart.item_not_found_or_ambiguous":  {
                                                                                                                         "response":  {
                                                                                                                                          "mode":  "ask_clarification",
                                                                                                                                          "guidance":  "Aclara cuÃ¡l producto existente del pedido desea modificar."

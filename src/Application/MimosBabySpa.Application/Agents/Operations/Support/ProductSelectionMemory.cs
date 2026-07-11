@@ -1,3 +1,5 @@
+using System.Globalization;
+using System.Text;
 using System.Text.Json;
 using MimosBabySpa.Application.Commerce;
 using MimosBabySpa.Application.Services;
@@ -43,7 +45,17 @@ internal static class ProductSelectionMemory
         ctx.Facts[CatalogProductsKey] = value;
     }
 
-    public static IReadOnlyList<ProductReference> FindExactCatalogMatches(
+    public static string NormalizeSearchReference(string productText)
+    {
+        var ignored = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "de", "del", "el", "la", "los", "las", "un", "una", "unos", "unas"
+        };
+        return string.Join(' ', NormalizeWords(productText)
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(token => !token.All(char.IsDigit) && !ignored.Contains(token)));
+    }
+    public static IReadOnlyList<ProductReference> FindCatalogMatches(
         AgentConversationContext ctx,
         string productText)
     {
@@ -52,18 +64,58 @@ internal static class ProductSelectionMemory
         try
         {
             var candidates = JsonSerializer.Deserialize<List<ProductCandidate>>(raw, JsonOptions) ?? [];
-            var requested = productText.Trim();
-            return candidates
-                .Where(candidate => candidate.Name.Equals(requested, StringComparison.OrdinalIgnoreCase)
+            var searchReference = NormalizeSearchReference(productText);
+            var requested = NormalizeTokens(searchReference);
+            if (requested.Count == 0)
+                return [];
+
+            var exact = candidates.Where(candidate =>
+                    Normalize(candidate.Name).Equals(Normalize(searchReference), StringComparison.Ordinal)
                     || (!string.IsNullOrWhiteSpace(candidate.Sku)
-                        && candidate.Sku.Equals(requested, StringComparison.OrdinalIgnoreCase)))
-                .Select(candidate => candidate.ToProductReference())
+                        && Normalize(candidate.Sku).Equals(Normalize(searchReference), StringComparison.Ordinal)))
                 .ToList();
+            var matches = exact.Count > 0
+                ? exact
+                : candidates.Where(candidate =>
+                    {
+                        var candidateTokens = NormalizeTokens(candidate.Name);
+                        return requested.All(token => candidateTokens.Any(value =>
+                            value.Equals(token, StringComparison.Ordinal)
+                            || value.StartsWith(token, StringComparison.Ordinal)
+                            || token.StartsWith(value, StringComparison.Ordinal)));
+                    })
+                    .ToList();
+
+            return matches.Select(candidate => candidate.ToProductReference()).ToList();
         }
         catch (JsonException)
         {
             return [];
         }
+    }
+
+    private static IReadOnlyList<string> NormalizeTokens(string? value) =>
+        NormalizeWords(value)
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(token => token.Length > 3 && token.EndsWith('s') ? token[..^1] : token)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+    private static string Normalize(string? value) =>
+        NormalizeWords(value).Replace(" ", string.Empty, StringComparison.Ordinal);
+
+    private static string NormalizeWords(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return string.Empty;
+        var decomposed = value.Trim().ToLowerInvariant().Normalize(NormalizationForm.FormD);
+        var characters = decomposed
+            .Where(character => CharUnicodeInfo.GetUnicodeCategory(character) != UnicodeCategory.NonSpacingMark)
+            .Select(character => char.IsLetterOrDigit(character) ? character : ' ')
+            .ToArray();
+        return string.Join(' ', new string(characters)
+            .Normalize(NormalizationForm.FormC)
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
     }
     public static bool TryGetSelected(AgentConversationContext ctx, out ProductCandidate candidate) =>
         TryReadCandidate(ctx, SelectedProductKey, out candidate);
@@ -122,7 +174,8 @@ internal sealed record ProductCandidate(
     string? Sku,
     string Name,
     decimal UnitPrice,
-    string Currency = "COP")
+    string Currency = "COP",
+    decimal? StockQuantity = null)
 {
     public static ProductCandidate From(ProductReference product) =>
         new(
@@ -131,7 +184,8 @@ internal sealed record ProductCandidate(
             Truncate(product.Sku, 80),
             Truncate(product.Name, 140) ?? string.Empty,
             product.EffectiveUnitPrice ?? product.UnitPrice,
-            product.Currency);
+            product.Currency,
+            product.StockQuantity);
 
     public ProductReference ToProductReference() =>
         new(
@@ -143,7 +197,7 @@ internal sealed record ProductCandidate(
             null,
             UnitPrice,
             Currency,
-            null,
+            StockQuantity,
             UnitPrice);
     private static string? Truncate(string? value, int maxLength)
     {

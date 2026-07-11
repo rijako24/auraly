@@ -12,7 +12,7 @@ namespace MimosBabySpa.Tests.Commerce;
 public sealed class CommerceServiceSearchTests
 {
     [Fact]
-    public async Task SearchProductsAsync_ReturnsInactiveProductsAsUnavailable()
+    public async Task SearchProductsAsync_ReturnsOnlySellableProducts()
     {
         var businessId = Guid.NewGuid();
         var unitOfWork = new Mock<IUnitOfWork>();
@@ -55,15 +55,11 @@ public sealed class CommerceServiceSearchTests
             new ProductSearchRequest("vino", null, 10),
             CancellationToken.None);
 
-        result.Products.Should().HaveCount(3);
+        result.Products.Should().ContainSingle();
         result.Products[0].Name.Should().Be("Mango 750ML");
-        result.Products[1].Name.Should().Be("Dulce 750ML");
-        result.Products[1].IsActive.Should().BeFalse();
-        result.Products[2].Name.Should().Be("Semidulce 750ML");
-        result.Products[2].IsActive.Should().BeTrue();
         promotions.Verify(p => p.EvaluateAsync(
             businessId,
-            It.Is<IReadOnlyList<PromotionPricingItem>>(items => items.Count == 3),
+            It.Is<IReadOnlyList<PromotionPricingItem>>(items => items.Count == 1),
             It.IsAny<DateTime?>(),
             It.IsAny<CancellationToken>()));
     }

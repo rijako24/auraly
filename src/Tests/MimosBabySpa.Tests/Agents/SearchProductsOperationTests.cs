@@ -99,7 +99,7 @@ public class SearchProductsOperationTests
     {
         var ctx = CreateContext();
         var displayed = new ProductReference(
-            Guid.NewGuid(), "PO36", "PO36", "PECHUGA CAMPOLLO", null, "Pollo", 13541.35m, "COP", null);
+            Guid.NewGuid(), "PO36", "PO36", "PECHUGA CAMPOLLO", null, "Pollo", 13541.35m, "COP", 7m);
         _commerce
             .Setup(c => c.SearchProductsAsync(ctx, It.IsAny<ProductSearchRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ProductSearchResult([displayed], "mantis"));
@@ -116,6 +116,44 @@ public class SearchProductsOperationTests
         matches.Should().ContainSingle();
         matches[0].Name.Should().Be("PECHUGA CAMPOLLO");
         matches[0].UnitPrice.Should().Be(13541.35m);
+        matches[0].StockQuantity.Should().Be(7m);
+        _commerce.Verify(c => c.SearchProductsAsync(
+            It.IsAny<AgentConversationContext>(), It.IsAny<ProductSearchRequest>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+    [Fact]
+    public async Task PartialPluralReference_IsResolvedOnlyAgainstTheDisplayedCatalogSnapshot()
+    {
+        var ctx = CreateContext();
+        var products = new[]
+        {
+            new ProductReference(Guid.NewGuid(), "PO26", "PO26", "PERNIL MERCAPOLLO", null, "Pollo", 5647.05m, "COP", null),
+            new ProductReference(Guid.NewGuid(), "PO20", "PO20", "PERNIL CAMPOLLO", null, "Pollo", 6499.82m, "COP", null),
+            new ProductReference(Guid.NewGuid(), "PO60", "PO60", "ALA JUMBO MERCAPOLLO", null, "Pollo", 7145.01m, "COP", null),
+            new ProductReference(Guid.NewGuid(), "PO61", "PO61", "BANDEJA FILETE DE PECHUGA CON HUESO", null, "Pollo", 14634.14m, "COP", null),
+            new ProductReference(Guid.NewGuid(), "PO62", "PO62", "PECHUGA MAC POLLO", null, "Pollo", 13001.08m, "COP", null),
+            new ProductReference(Guid.NewGuid(), "PO63", "PO63", "PECHUGA CRIOLLA", null, "Pollo", 14033.67m, "COP", null)
+        };
+        _commerce
+            .Setup(c => c.SearchProductsAsync(ctx, It.IsAny<ProductSearchRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ProductSearchResult(products, "mantis"));
+        var facts = new Mock<IConversationFactsService>();
+        var operation = new SearchProductsOperation(_commerce.Object, facts.Object);
+        using var args = JsonDocument.Parse("""{"query":"pollo","limit":10}""");
+        await operation.ExecuteAsync(args.RootElement, new OperationContext { Session = ctx }, CancellationToken.None);
+        _commerce.Invocations.Clear();
+        var resolver = new CommerceCartProductResolver(_commerce.Object);
+
+        var perniles = await resolver.FindAsync(ctx, "perniles");
+        var alas = await resolver.FindAsync(ctx, "alas");
+        var bandejas = await resolver.FindAsync(ctx, "2 bandejas");
+        var macPollo = await resolver.FindAsync(ctx, "1 de mac pollo");
+        var criollas = await resolver.FindAsync(ctx, "2 criollas");
+
+        perniles.Select(product => product.Name).Should().Equal("PERNIL MERCAPOLLO", "PERNIL CAMPOLLO");
+        alas.Should().ContainSingle().Which.Name.Should().Be("ALA JUMBO MERCAPOLLO");
+        bandejas.Should().ContainSingle().Which.Name.Should().Be("BANDEJA FILETE DE PECHUGA CON HUESO");
+        macPollo.Should().ContainSingle().Which.Name.Should().Be("PECHUGA MAC POLLO");
+        criollas.Should().ContainSingle().Which.Name.Should().Be("PECHUGA CRIOLLA");
         _commerce.Verify(c => c.SearchProductsAsync(
             It.IsAny<AgentConversationContext>(), It.IsAny<ProductSearchRequest>(), It.IsAny<CancellationToken>()), Times.Never);
     }

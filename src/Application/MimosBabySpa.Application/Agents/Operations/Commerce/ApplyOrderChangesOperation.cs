@@ -1,5 +1,7 @@
 using System.Text.Json;
+using MimosBabySpa.Application.Agents.Operations.Support;
 using MimosBabySpa.Application.Commerce;
+using MimosBabySpa.Application.Services;
 
 namespace MimosBabySpa.Application.Agents.Operations.Commerce;
 
@@ -8,8 +10,17 @@ public sealed class ApplyOrderChangesOperation : IAgentOperation
     public const string OperationId = "commerce.apply_order_changes";
 
     private readonly CartCommandBatchProcessor _processor;
+    private readonly IConversationFactsService? _facts;
 
     public ApplyOrderChangesOperation(CartCommandBatchProcessor processor) => _processor = processor;
+
+    public ApplyOrderChangesOperation(
+        CartCommandBatchProcessor processor,
+        IConversationFactsService facts)
+    {
+        _processor = processor;
+        _facts = facts;
+    }
 
     public OperationDescriptor Descriptor { get; } = new(
         OperationId,
@@ -44,6 +55,7 @@ public sealed class ApplyOrderChangesOperation : IAgentOperation
             "cart.product_not_found",
             "cart.product_ambiguous",
             "cart.item_not_found_or_ambiguous",
+            "cart.insufficient_stock",
             "cart.invalid_input"
         ],
         ["commerce.order_draft.write"],
@@ -86,7 +98,27 @@ public sealed class ApplyOrderChangesOperation : IAgentOperation
             Facts = new Dictionary<string, string>(context.Facts, StringComparer.OrdinalIgnoreCase)
         };
 
-        var result = await _processor.ApplyAsync(session, commands, cancellationToken);
+        var pending = PendingCartCommandMemory.Read(session);
+        var effectiveCommands = PendingCartCommandMemory.MergeResolution(session, commands);
+        if (pending is not null && effectiveCommands.Count == 0)
+            return AmbiguousOutcome(PendingIssue(pending));
+
+        var result = await _processor.ApplyAsync(session, effectiveCommands, cancellationToken);
+        if (result.Success && _facts is not null && pending is not null)
+            await PendingCartCommandMemory.ClearAsync(_facts, session, cancellationToken);
+        if (!result.Success
+            && _facts is not null
+            && result.Code == "cart.product_ambiguous"
+            && result.Issues.FirstOrDefault() is { } ambiguousIssue)
+        {
+            await PendingCartCommandMemory.SaveAsync(
+                _facts,
+                session,
+                effectiveCommands,
+                ambiguousIssue,
+                cancellationToken);
+        }
+
         return result.Success
             ? OperationOutcome.Ok(result.Code, new
             {
@@ -106,6 +138,12 @@ public sealed class ApplyOrderChangesOperation : IAgentOperation
                     }).ToList()
                 }
             })
+            : FailureOutcome(result);
+    }
+
+    private static OperationOutcome FailureOutcome(CartCommandBatchResult result) =>
+        result.Code == "cart.product_ambiguous" && result.Issues.FirstOrDefault() is { } issue
+            ? AmbiguousOutcome(issue)
             : OperationOutcome.Fail(
                 result.Code,
                 result.Code == "cart.multiple_destinations"
@@ -118,7 +156,33 @@ public sealed class ApplyOrderChangesOperation : IAgentOperation
                     issues = result.Issues,
                     product_text = result.Issues.FirstOrDefault()?.ProductText,
                     candidates = result.Issues.FirstOrDefault()?.Candidates ?? [],
-                    product_options = result.Issues.FirstOrDefault()?.ProductCandidates ?? []
+                    product_options = result.Issues.FirstOrDefault()?.ProductCandidates ?? [],
+                    requested_quantity = result.Issues.FirstOrDefault()?.RequestedQuantity,
+                    available_quantity = result.Issues.FirstOrDefault()?.AvailableQuantity,
+                    existing_cart_quantity = result.Issues.FirstOrDefault()?.ExistingCartQuantity,
+                    maximum_command_quantity = result.Issues.FirstOrDefault()?.MaximumCommandQuantity
                 });
-    }
+
+    private static CartCommandIssue PendingIssue(PendingCartCommandBatch pending) =>
+        new(
+            "product_ambiguous",
+            pending.AmbiguousProductText,
+            pending.ProductCandidates.Select(candidate => candidate.Name).ToList())
+        {
+            ProductCandidates = pending.ProductCandidates
+        };
+
+    private static OperationOutcome AmbiguousOutcome(CartCommandIssue issue) =>
+        OperationOutcome.Fail(
+            "cart.product_ambiguous",
+            "The requested order changes could not be applied atomically.",
+            true,
+            "order_changes_clarification",
+            new
+            {
+                issues = new[] { issue },
+                product_text = issue.ProductText,
+                candidates = issue.Candidates,
+                product_options = issue.ProductCandidates
+            });
 }

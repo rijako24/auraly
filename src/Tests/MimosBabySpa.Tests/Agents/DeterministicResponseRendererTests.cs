@@ -118,6 +118,7 @@ public sealed class DeterministicResponseRendererTests
         response.Text.Should().Be("Respuesta natural");
         chat.CallCount.Should().Be(1);
         chat.Prompt.Should().Contain("Corte infantil: 30000");
+        chat.Prompt.Should().Contain("configured persona and policies");
     }
 
     private static DeterministicResponseRequest Request(DeterministicTurnResult turn) => new(

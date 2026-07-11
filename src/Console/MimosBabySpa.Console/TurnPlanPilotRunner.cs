@@ -157,7 +157,7 @@ internal sealed class TurnPlanPilotRunner
             }
 
             var businessNow = DateTimeOffset.UtcNow.ToOffset(TimeSpan.FromHours(-5));
-            var facts = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var facts = new Dictionary<string, string>(test.InitialFacts, StringComparer.OrdinalIgnoreCase);
             var scope = TurnPlanScopeBuilder.Build(config, stage, facts);
             var proposal = await _planner.PlanAsync(
                 new TurnPlanningContext(config, stage, scope, facts, test.Message, businessNow,
@@ -275,6 +275,45 @@ internal sealed class TurnPlanPilotRunner
         foreach (var signal in test.ExpectedSignals)
             if (!plan.Signals.Any(value => value.Type.Equals(signal, StringComparison.OrdinalIgnoreCase)))
                 errors.Add($"No extrajo signal '{signal}'.");
+        foreach (var absent in test.AbsentSignals)
+            if (plan.Signals.Any(value => value.Type.Equals(absent, StringComparison.OrdinalIgnoreCase)))
+                errors.Add($"Signal '{absent}' debia permanecer sin extraer.");
+        foreach (var expected in test.ExpectedSignalItems)
+        {
+            var signal = plan.Signals.LastOrDefault(value =>
+                value.Type.Equals(expected.Type, StringComparison.OrdinalIgnoreCase));
+            if (signal is null || signal.Value.ValueKind != JsonValueKind.Array)
+            {
+                errors.Add($"Signal '{expected.Type}' no contiene un lote de items.");
+                continue;
+            }
+
+            var items = signal.Value.EnumerateArray().ToList();
+            if (items.Count != expected.Count)
+                errors.Add($"Signal '{expected.Type}' esperaba {expected.Count} items y recibio {items.Count}.");
+            foreach (var product in expected.Products)
+            {
+                if (!items.Any(item => item.TryGetProperty("productText", out var text)
+                    && (text.GetString() ?? string.Empty).Contains(product, StringComparison.OrdinalIgnoreCase)))
+                {
+                    errors.Add($"Signal '{expected.Type}' no conservo la referencia '{product}'.");
+                }
+            }
+            foreach (var operation in expected.Operations)
+            {
+                if (!items.Any(item => item.TryGetProperty("operation", out var value)
+                    && value.GetString()?.Equals(operation, StringComparison.OrdinalIgnoreCase) == true))
+                    errors.Add($"Signal '{expected.Type}' no conservo la operacion '{operation}'.");
+            }
+            foreach (var quantity in expected.Quantities)
+            {
+                if (!items.Any(item => item.TryGetProperty("quantity", out var value)
+                    && value.ValueKind == JsonValueKind.Number
+                    && value.TryGetDecimal(out var actual)
+                    && actual == quantity))
+                    errors.Add($"Signal '{expected.Type}' no conservo la cantidad '{quantity}'.");
+            }
+        }
 
         foreach (var ambiguous in test.ExpectedAmbiguousFields)
             if (!plan.Response.AmbiguousFields.Contains(ambiguous, StringComparer.OrdinalIgnoreCase))
@@ -391,10 +430,13 @@ internal sealed class TurnPlanPilotRunner
         public string Stage { get; init; } = string.Empty;
         public string Message { get; init; } = string.Empty;
         public IReadOnlyList<ExtractorHistoryMessage> History { get; init; } = [];
+        public IReadOnlyDictionary<string, string> InitialFacts { get; init; } = new Dictionary<string, string>();
         public string? ExpectedFlow { get; init; }
         public IReadOnlyList<ExpectedFact> ExpectedFacts { get; init; } = [];
         public IReadOnlyList<string> AbsentFacts { get; init; } = [];
         public IReadOnlyList<string> ExpectedSignals { get; init; } = [];
+        public IReadOnlyList<string> AbsentSignals { get; init; } = [];
+        public IReadOnlyList<ExpectedSignalItems> ExpectedSignalItems { get; init; } = [];
         public IReadOnlyList<string> ExpectedAmbiguousFields { get; init; } = [];
     }
 
@@ -411,6 +453,14 @@ internal sealed class TurnPlanPilotRunner
         public int? DateOffsetDays { get; init; }
     }
 
+    private sealed class ExpectedSignalItems
+    {
+        public string Type { get; init; } = string.Empty;
+        public int Count { get; init; }
+        public IReadOnlyList<string> Products { get; init; } = [];
+        public IReadOnlyList<string> Operations { get; init; } = [];
+        public IReadOnlyList<decimal> Quantities { get; init; } = [];
+    }
     private sealed record PilotRequest(
         AgentConfig Config,
         string StageId,
