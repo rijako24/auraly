@@ -36,6 +36,7 @@ public class ConversationStateRepository : IConversationStateRepository
             existing.ActiveRequestStartedAtUtc = entity.ActiveRequestStartedAtUtc;
             existing.VerificationsJson = entity.VerificationsJson;
             existing.StageSnapshotsJson = entity.StageSnapshotsJson;
+            existing.RuntimeStateJson = entity.RuntimeStateJson;
             existing.Version = entity.Version;
             existing.UpdatedAt = entity.UpdatedAt;
             _context.ConversationStates.Update(existing);

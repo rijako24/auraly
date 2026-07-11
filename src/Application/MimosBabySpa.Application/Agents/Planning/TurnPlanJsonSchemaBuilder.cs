@@ -11,7 +11,8 @@ public static class TurnPlanJsonSchemaBuilder
     public static ChatStructuredOutput Build(TurnPlanScope scope)
     {
         var flowIds = scope.Flows.Keys.OrderBy(key => key, StringComparer.OrdinalIgnoreCase).ToArray();
-        var factKeys = scope.Facts.Keys.OrderBy(key => key, StringComparer.OrdinalIgnoreCase).ToArray();
+        var facts = scope.Facts.Values.OrderBy(fact => fact.Key, StringComparer.OrdinalIgnoreCase).ToArray();
+        var factKeys = facts.Select(fact => fact.Key).ToArray();
         var signals = scope.Signals.Values.OrderBy(signal => signal.Type, StringComparer.OrdinalIgnoreCase).ToArray();
 
         var schema = new Dictionary<string, object?>
@@ -21,7 +22,7 @@ public static class TurnPlanJsonSchemaBuilder
             ["properties"] = new Dictionary<string, object?>
             {
                 ["flowIntent"] = FlowIntentSchema(flowIds),
-                ["facts"] = ArraySchema(FactSchema(factKeys)),
+                ["facts"] = ArraySchema(FactSchema(facts)),
                 ["signals"] = ArraySchema(SignalSchema(signals)),
                 ["decision"] = DecisionSchema(),
                 ["response"] = ResponseSchema(factKeys.Concat(signals.Select(signal => signal.Type)).Concat(new[] { "flowIntent", "decision" }).ToArray())
@@ -57,13 +58,38 @@ public static class TurnPlanJsonSchemaBuilder
         ["items"] = itemSchema
     };
 
-    private static Dictionary<string, object?> FactSchema(IReadOnlyList<string> keys) => new()
+    private static Dictionary<string, object?> FactSchema(IReadOnlyList<FactSchemaEntry> facts)
+    {
+        if (facts.Count == 0)
+        {
+            return new Dictionary<string, object?>
+            {
+                ["type"] = "object",
+                ["additionalProperties"] = false,
+                ["properties"] = new Dictionary<string, object?>
+                {
+                    ["key"] = new Dictionary<string, object?> { ["type"] = "string" },
+                    ["operation"] = new Dictionary<string, object?> { ["type"] = "string" },
+                    ["value"] = new Dictionary<string, object?> { ["type"] = "null" },
+                    ["evidence"] = EvidenceSchema()
+                },
+                ["required"] = new[] { "key", "operation", "value", "evidence" }
+            };
+        }
+
+        return new Dictionary<string, object?>
+        {
+            ["anyOf"] = facts.Select(FactBranch).ToArray()
+        };
+    }
+
+    private static Dictionary<string, object?> FactBranch(FactSchemaEntry fact) => new()
     {
         ["type"] = "object",
         ["additionalProperties"] = false,
         ["properties"] = new Dictionary<string, object?>
         {
-            ["key"] = StringSchemaWithOptionalEnum(keys),
+            ["key"] = new Dictionary<string, object?> { ["type"] = "string", ["enum"] = new[] { fact.Key } },
             ["operation"] = new Dictionary<string, object?>
             {
                 ["type"] = "string",
@@ -71,18 +97,26 @@ public static class TurnPlanJsonSchemaBuilder
             },
             ["value"] = new Dictionary<string, object?>
             {
-                ["anyOf"] = new object[]
-                {
-                    new Dictionary<string, object?> { ["type"] = "string" },
-                    new Dictionary<string, object?> { ["type"] = "number" },
-                    new Dictionary<string, object?> { ["type"] = "boolean" },
-                    new Dictionary<string, object?> { ["type"] = "null" }
-                }
+                ["anyOf"] = new object[] { FactValueSchema(fact), new Dictionary<string, object?> { ["type"] = "null" } }
             },
             ["evidence"] = EvidenceSchema()
         },
         ["required"] = new[] { "key", "operation", "value", "evidence" }
     };
+
+    private static Dictionary<string, object?> FactValueSchema(FactSchemaEntry fact)
+    {
+        if (fact.Options.Count > 0)
+            return new Dictionary<string, object?> { ["type"] = "string", ["enum"] = fact.Options.Select(option => option.Value).ToArray() };
+
+        var type = fact.Type.ToLowerInvariant() switch
+        {
+            "boolean" => "boolean",
+            "number" => "number",
+            _ => "string"
+        };
+        return new Dictionary<string, object?> { ["type"] = type };
+    }
 
     private static Dictionary<string, object?> SignalSchema(IReadOnlyList<StageSignalDefinition> signals)
     {

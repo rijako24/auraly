@@ -37,6 +37,8 @@ public sealed class DeterministicResponseRenderer : IDeterministicResponseRender
         CancellationToken cancellationToken = default)
     {
         var presentations = request.Turn.Presentations.ToList();
+        if (request.Turn.Response?.SuppressText == true)
+            return new DeterministicRenderedResponse(string.Empty, 0, 0);
         if (!string.IsNullOrWhiteSpace(request.Turn.Response?.Template)
             && !presentations.Any(presentation =>
                 presentation.Mode == FragmentRenderMode.Exclusive
@@ -49,6 +51,15 @@ public sealed class DeterministicResponseRenderer : IDeterministicResponseRender
                 FragmentPriority.Required));
         }
 
+        if (presentations.Count == 0
+            && !string.IsNullOrWhiteSpace(request.Turn.Response?.FallbackTemplate))
+        {
+            presentations.Add(new OperationPresentation(
+                request.Turn.Response.FallbackTemplate,
+                request.Turn.Facts.ToDictionary(pair => pair.Key, pair => (object?)pair.Value, StringComparer.OrdinalIgnoreCase),
+                FragmentRenderMode.Exclusive,
+                FragmentPriority.Required));
+        }
         if (presentations.Any(presentation => presentation.Mode == FragmentRenderMode.Exclusive))
         {
             return new DeterministicRenderedResponse(

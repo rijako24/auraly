@@ -39,4 +39,46 @@ public sealed class OperationPresentationComposerTests
         response.Should().Be($"Espacios para Corte infantil: 9:00 AM{Environment.NewLine}10:00 AM");
         response.Should().NotContain("Claro");
     }
+    [Fact]
+    public void CatalogPresentation_RendersEveryReturnedProductWithItsAuthoritativePrice()
+    {
+        var composer = new OperationPresentationComposer(
+            new AgentTemplateResolver(),
+            new PromptTemplateRenderer());
+        var config = new AgentConfig
+        {
+            Templates = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["catalog_results"] = "{{#each products}}- {{name}}: ${{unit_price}} {{currency}}{{/each}}"
+            }
+        };
+        var presentation = new OperationPresentation(
+            "catalog_results",
+            new Dictionary<string, object?>
+            {
+                ["products"] = new List<object?>
+                {
+                    new Dictionary<string, object?>
+                    {
+                        ["name"] = "Pollo",
+                        ["unit_price"] = 12000m,
+                        ["currency"] = "COP"
+                    },
+                    new Dictionary<string, object?>
+                    {
+                        ["name"] = "Tocineta",
+                        ["unit_price"] = 8500m,
+                        ["currency"] = "COP"
+                    }
+                }
+            },
+            FragmentRenderMode.Exclusive,
+            FragmentPriority.Required);
+
+        var response = composer.Compose(config, "Precios estimados por el modelo", [presentation]);
+
+        response.Should().Contain("Pollo: $12000 COP");
+        response.Should().Contain("Tocineta: $8500 COP");
+        response.Should().NotContain("estimados");
+    }
 }

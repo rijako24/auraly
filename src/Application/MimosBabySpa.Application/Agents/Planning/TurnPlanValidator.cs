@@ -17,6 +17,7 @@ public sealed class TurnPlanValidator
         var errors = new List<string>();
         ValidateFlowIntent(plan, scope, latestUserMessage, errors);
         ValidateFacts(plan, scope, latestUserMessage, errors);
+        ValidateOptionSelectorCoverage(plan, scope, latestUserMessage, errors);
         ValidateSignals(plan, scope, latestUserMessage, errors);
         ValidateResponseDirective(plan, scope, errors);
 
@@ -115,9 +116,33 @@ public sealed class TurnPlanValidator
 
             if (fact.Operation == TurnPlanOperations.Set && !ValueMatchesType(fact.Value, definition.Type))
                 errors.Add($"Fact '{fact.Key}' value does not match configured type '{definition.Type}'.");
+
+            if (fact.Operation == TurnPlanOperations.Set
+                && definition.Options.Count > 0
+                && (fact.Value.ValueKind != JsonValueKind.String
+                    || !definition.Options.Any(option => option.Value.Equals(fact.Value.GetString() ?? string.Empty, StringComparison.OrdinalIgnoreCase))))
+            {
+                errors.Add($"Fact '{fact.Key}' value is outside its configured canonical values.");
+            }
         }
     }
 
+    private static void ValidateOptionSelectorCoverage(
+        TurnPlan plan,
+        TurnPlanScope scope,
+        string message,
+        ICollection<string> errors)
+    {
+        var matches = OptionSelectorReferenceDetector.Find(scope, message);
+        if (matches.Count != 1)
+            return;
+
+        var match = matches[0];
+        if (plan.Facts.Any(fact => fact.Key.Equals(match.Fact.Key, StringComparison.OrdinalIgnoreCase)))
+            return;
+
+        errors.Add($"Fact '{match.Fact.Key}' references configured selector '{match.Option.Selector}' but has no canonical claim.");
+    }
     private static void ValidateSignals(
         TurnPlan plan,
         TurnPlanScope scope,

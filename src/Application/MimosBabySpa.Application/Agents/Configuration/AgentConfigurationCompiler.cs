@@ -38,6 +38,23 @@ public sealed partial class AgentConfigurationCompiler
             errors);
         var flowMap = UniqueBy(flows, value => value.Id, "flows", "duplicate_flow", errors);
 
+        foreach (var fact in config.FactSchema.Where(fact => fact.Options.Count > 0))
+        {
+            var path = $"factSchema[{fact.Key}].options";
+            if (!fact.Type.Equals("string", StringComparison.OrdinalIgnoreCase))
+                Error(errors, path, "canonical_options_require_string", "Canonical options require a string fact.");
+            if (fact.Options.Any(option => string.IsNullOrWhiteSpace(option.Value) || string.IsNullOrWhiteSpace(option.Label)))
+                Error(errors, path, "invalid_canonical_option", "Every canonical option requires a value and label.");
+            if (fact.Options.Select(option => option.Value).Distinct(StringComparer.OrdinalIgnoreCase).Count() != fact.Options.Count)
+                Error(errors, path, "duplicate_canonical_value", "Canonical option values must be unique.");
+            var selectors = fact.Options.Select(option => option.Selector).Where(selector => !string.IsNullOrWhiteSpace(selector)).ToList();
+            if (selectors.Distinct(StringComparer.OrdinalIgnoreCase).Count() != selectors.Count)
+                Error(errors, path, "duplicate_option_selector", "Canonical option selectors must be unique.");
+            if (!string.IsNullOrWhiteSpace(fact.DefaultValue)
+                && !fact.Options.Any(option => option.Value.Equals(fact.DefaultValue, StringComparison.OrdinalIgnoreCase)))
+                Error(errors, path, "default_outside_canonical_options", "The default value must match a configured option value.");
+        }
+
         if (flows.Count(value => AgentFlowCatalog.IsPrimary(value)) != 1)
             Error(errors, "flows", "primary_flow_count", "Exactly one primary flow is required.");
 
@@ -399,6 +416,10 @@ public sealed partial class AgentConfigurationCompiler
             return;
         if (!string.IsNullOrWhiteSpace(response.Template) && !config.Templates.ContainsKey(response.Template))
             Error(errors, path, "unknown_response_template", $"Template '{response.Template}' is not configured.");
+        if (!string.IsNullOrWhiteSpace(response.FallbackTemplate) && !config.Templates.ContainsKey(response.FallbackTemplate))
+            Error(errors, path, "unknown_response_fallback_template", $"Template '{response.FallbackTemplate}' is not configured.");
+        if (!string.IsNullOrWhiteSpace(response.ClarificationTemplate) && !config.Templates.ContainsKey(response.ClarificationTemplate))
+            Error(errors, path, "unknown_response_clarification_template", $"Template '{response.ClarificationTemplate}' is not configured.");
         if (!string.IsNullOrWhiteSpace(response.SendMessageSequence)
             && !config.MessageSequences.ContainsKey(response.SendMessageSequence))
             Error(errors, path, "unknown_response_sequence", $"Message sequence '{response.SendMessageSequence}' is not configured.");

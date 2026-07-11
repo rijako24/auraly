@@ -46,8 +46,10 @@ public sealed class DeterministicStageTransitionResolver
         if (stage.AdvanceWhenFacts.Count == 0)
             return StageTransitionDecision.Stay("no_advancement_rule");
 
-        var ready = stage.AdvanceWhenFacts.All(key =>
-            context.Facts.TryGetValue(key, out var value) && !string.IsNullOrWhiteSpace(value));
+        var ready = StageAdvanceFactReadiness.IsComplete(
+            stage,
+            context.Facts,
+            context.OperationContext?.Config?.FactSchema ?? []);
         if (!ready)
             return StageTransitionDecision.Stay("advance_facts_missing");
 

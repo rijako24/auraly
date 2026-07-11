@@ -313,7 +313,7 @@ var latestPayment = await _paymentLifecycle.GetLatestByConversationAsync(convers
 
         var currentStage = DeterministicConversationPosition.ResolveStage(
 
-            activeFlow, session.ConversationState, session.Facts);
+            activeFlow, session.ConversationState, session.Facts, config.FactSchema);
 
         if (currentStage is null)
 
@@ -605,23 +605,34 @@ var latestPayment = await _paymentLifecycle.GetLatestByConversationAsync(convers
 
             })), ct);
 
-        var trace = turn.Trace.Select((entry, index) => new AgentTurnTraceEntry
-
+        var trace = new List<AgentTurnTraceEntry>();
+        if (turn.Plan is not null)
         {
+            trace.Add(new AgentTurnTraceEntry
+            {
+                Kind = "turn_plan",
+                Iteration = 0,
+                StageId = stage.Id,
+                Content = JsonSerializer.Serialize(new
+                {
+                    plan = turn.Plan,
+                    route = turn.Route,
+                    visitedStages = turn.VisitedStages,
+                    resultingStage = turn.CurrentStageId
+                })
+            });
+        }
 
+        trace.AddRange(turn.Trace.Select((entry, index) => new AgentTurnTraceEntry
+        {
             Kind = entry.Skipped ? "operation_skipped" : "operation",
-
-            Iteration = index,
-
+            Iteration = index + 1,
             StageId = stage.Id,
-
+            ActionId = entry.ActionId,
             OperationId = entry.OperationId,
-
             OperationArgumentsJson = entry.ArgumentsJson,
-
             OperationOutcomeJson = entry.Outcome is null ? null : JsonSerializer.Serialize(entry.Outcome)
-
-        }).ToList();
+        }));
 
         return AgentTurnResult.Ok(
 
@@ -1029,7 +1040,7 @@ var latestPayment = await _paymentLifecycle.GetLatestByConversationAsync(convers
 
             stage.Id.Equals(session.ConversationState.ActiveStageId, StringComparison.OrdinalIgnoreCase))
 
-            ?? DeterministicConversationPosition.ResolveStage(activeFlow, session.ConversationState, session.Facts);
+            ?? DeterministicConversationPosition.ResolveStage(activeFlow, session.ConversationState, session.Facts, config.FactSchema);
 
         var stageName = ResolveStageName(currentStage);
 
@@ -1571,7 +1582,7 @@ var latestPayment = await _paymentLifecycle.GetLatestByConversationAsync(convers
 
         if (activeFlow.Stages.Count == 0) return;
 
-        var currentStage = DeterministicConversationPosition.ResolveStage(activeFlow, session.ConversationState, session.Facts);
+        var currentStage = DeterministicConversationPosition.ResolveStage(activeFlow, session.ConversationState, session.Facts, config.FactSchema);
 
         var currentIdx = activeFlow.Stages.ToList().FindIndex(s => s.Id == currentStage.Id);
 

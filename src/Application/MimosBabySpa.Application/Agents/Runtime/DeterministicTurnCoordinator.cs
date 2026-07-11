@@ -124,7 +124,7 @@ public sealed class DeterministicTurnCoordinator
         if (IsClarification(effectivePlan))
         {
             state.PendingTurnPlan = CreatePending(request, planningStage, effectivePlan, signature);
-            return ClarificationRequired(request, effectivePlan, effectivePlan.Response.AmbiguousFields, proposal);
+            return ClarificationRequired(request, planningStage, effectivePlan, effectivePlan.Response.AmbiguousFields, proposal);
         }
 
         if (pending is not null)
@@ -143,7 +143,7 @@ public sealed class DeterministicTurnCoordinator
             }
             else if (!ResolvesPending(effectivePlan, pending.AmbiguousFields))
             {
-                return ClarificationRequired(request, deferredPlan, pending.AmbiguousFields, proposal);
+                return ClarificationRequired(request, planningStage, deferredPlan, pending.AmbiguousFields, proposal);
             }
             else
             {
@@ -420,18 +420,28 @@ public sealed class DeterministicTurnCoordinator
 
     private static OperationContext CopyOperationContext(
         OperationContext source,
-        IReadOnlyDictionary<string, string> facts) => new()
+        IReadOnlyDictionary<string, string> facts)
     {
-        AgentId = source.AgentId,
-        BusinessId = source.BusinessId,
-        ConversationId = source.ConversationId,
-        BusinessToday = source.BusinessToday,
-        BusinessNow = source.BusinessNow,
-        Config = source.Config,
-        ConversationState = source.ConversationState,
-        Facts = facts
-    };
+        if (source.Session is not null)
+        {
+            source.Session.Facts.Clear();
+            foreach (var (key, value) in facts)
+                source.Session.Facts[key] = value;
+        }
 
+        return new OperationContext
+        {
+            AgentId = source.AgentId,
+            BusinessId = source.BusinessId,
+            ConversationId = source.ConversationId,
+            BusinessToday = source.BusinessToday,
+            BusinessNow = source.BusinessNow,
+            Config = source.Config,
+            ConversationState = source.ConversationState,
+            Facts = facts,
+            Session = source.Session
+        };
+    }
     private static Dictionary<string, string?> TransitionFactMutations(IReadOnlyList<StageEffectDefinition> effects)
     {
         var mutations = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
@@ -542,6 +552,7 @@ public sealed class DeterministicTurnCoordinator
 
     private static DeterministicTurnResult ClarificationRequired(
         DeterministicTurnRequest request,
+        AgentFlowStage stage,
         TurnPlan plan,
         IReadOnlyList<string> ambiguousFields,
         TurnPlanProposal proposal) => new()
@@ -556,7 +567,8 @@ public sealed class DeterministicTurnCoordinator
         Response = new StageResponseDefinition
         {
             Mode = "ask_clarification",
-            Guidance = $"Pregunta ?nicamente cu?l alternativa debe aplicarse para: {string.Join(", ", ambiguousFields)}. No confirmes ni ejecutes acciones hasta resolverla."
+            Guidance = $"Solicita la alternativa aplicable para: {string.Join(", ", ambiguousFields)}.",
+            Template = stage.Response.ClarificationTemplate
         }
     };
 

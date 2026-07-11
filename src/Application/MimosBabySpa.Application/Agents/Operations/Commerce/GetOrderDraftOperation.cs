@@ -12,7 +12,7 @@ public sealed class GetOrderDraftOperation : IAgentOperation
     public OperationDescriptor Descriptor { get; } = new(
         "commerce.get_order_draft",
         """{"type":"object","additionalProperties":false,"properties":{},"required":[]}""",
-        ["order.draft_loaded", "order_draft_missing"],
+        ["order.draft_loaded", "order.draft_empty", "order_draft_missing"],
         [], [], []);
 
     public async Task<OperationOutcome> ExecuteAsync(
@@ -25,6 +25,23 @@ public sealed class GetOrderDraftOperation : IAgentOperation
         var draft = await _commerce.GetDraftAsync(session, cancellationToken);
         return draft is null
             ? OperationOutcome.Fail("order_draft_missing", "There is no active order draft.", true)
-            : OperationOutcome.Ok("order.draft_loaded", new { order = draft });
+            : OperationOutcome.Ok(draft.Items.Count == 0 ? "order.draft_empty" : "order.draft_loaded", new
+            {
+                order = new
+                {
+                    currency = draft.Currency,
+                    subtotal = draft.Subtotal,
+                    discount_total = draft.DiscountTotal,
+                    tax_total = draft.TaxTotal,
+                    total = draft.Total,
+                    items = draft.Items.Select(item => new
+                    {
+                        name = item.ProductName,
+                        quantity = item.Quantity,
+                        unit_price = item.UnitPrice,
+                        line_total = item.LineTotal
+                    }).ToList()
+                }
+            });
     }
 }

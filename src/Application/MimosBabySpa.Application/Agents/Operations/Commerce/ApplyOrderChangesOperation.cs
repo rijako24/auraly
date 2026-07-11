@@ -88,7 +88,24 @@ public sealed class ApplyOrderChangesOperation : IAgentOperation
 
         var result = await _processor.ApplyAsync(session, commands, cancellationToken);
         return result.Success
-            ? OperationOutcome.Ok(result.Code, new { order = result.Snapshot })
+            ? OperationOutcome.Ok(result.Code, new
+            {
+                order = result.Snapshot is null ? null : new
+                {
+                    currency = result.Snapshot.Currency,
+                    subtotal = result.Snapshot.Subtotal,
+                    discount_total = result.Snapshot.DiscountTotal,
+                    tax_total = result.Snapshot.TaxTotal,
+                    total = result.Snapshot.Total,
+                    items = result.Snapshot.Items.Select(item => new
+                    {
+                        name = item.ProductName,
+                        quantity = item.Quantity,
+                        unit_price = item.UnitPrice,
+                        line_total = item.LineTotal
+                    }).ToList()
+                }
+            })
             : OperationOutcome.Fail(
                 result.Code,
                 result.Code == "cart.multiple_destinations"
@@ -96,6 +113,12 @@ public sealed class ApplyOrderChangesOperation : IAgentOperation
                     : "The requested order changes could not be applied atomically.",
                 true,
                 "order_changes_clarification",
-                new { issues = result.Issues });
+                new
+                {
+                    issues = result.Issues,
+                    product_text = result.Issues.FirstOrDefault()?.ProductText,
+                    candidates = result.Issues.FirstOrDefault()?.Candidates ?? [],
+                    product_options = result.Issues.FirstOrDefault()?.ProductCandidates ?? []
+                });
     }
 }

@@ -7,6 +7,7 @@ namespace MimosBabySpa.Application.Agents.Operations.Support;
 internal static class ProductSelectionMemory
 {
     private const string SelectedProductKey = "system.selected_product";
+    private const string CatalogProductsKey = "system.catalog_products";
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -29,6 +30,41 @@ internal static class ProductSelectionMemory
         return selected;
     }
 
+    public static async Task RememberCatalogAsync(
+        IConversationFactsService factsService,
+        AgentConversationContext ctx,
+        IReadOnlyList<ProductReference> products,
+        CancellationToken ct)
+    {
+        var candidates = products.Where(product => product.IsActive).Take(50).Select(ProductCandidate.From).ToList();
+        var value = JsonSerializer.Serialize(candidates, JsonOptions);
+        await factsService.SetAsync(
+            ctx.ConversationId, ctx.BusinessId, CatalogProductsKey, value, rememberAcrossRequests: false, ct);
+        ctx.Facts[CatalogProductsKey] = value;
+    }
+
+    public static IReadOnlyList<ProductReference> FindExactCatalogMatches(
+        AgentConversationContext ctx,
+        string productText)
+    {
+        if (!ctx.Facts.TryGetValue(CatalogProductsKey, out var raw) || string.IsNullOrWhiteSpace(raw))
+            return [];
+        try
+        {
+            var candidates = JsonSerializer.Deserialize<List<ProductCandidate>>(raw, JsonOptions) ?? [];
+            var requested = productText.Trim();
+            return candidates
+                .Where(candidate => candidate.Name.Equals(requested, StringComparison.OrdinalIgnoreCase)
+                    || (!string.IsNullOrWhiteSpace(candidate.Sku)
+                        && candidate.Sku.Equals(requested, StringComparison.OrdinalIgnoreCase)))
+                .Select(candidate => candidate.ToProductReference())
+                .ToList();
+        }
+        catch (JsonException)
+        {
+            return [];
+        }
+    }
     public static bool TryGetSelected(AgentConversationContext ctx, out ProductCandidate candidate) =>
         TryReadCandidate(ctx, SelectedProductKey, out candidate);
 
@@ -85,7 +121,8 @@ internal sealed record ProductCandidate(
     string? ExternalProductId,
     string? Sku,
     string Name,
-    decimal UnitPrice)
+    decimal UnitPrice,
+    string Currency = "COP")
 {
     public static ProductCandidate From(ProductReference product) =>
         new(
@@ -93,8 +130,21 @@ internal sealed record ProductCandidate(
             product.ExternalProductId,
             Truncate(product.Sku, 80),
             Truncate(product.Name, 140) ?? string.Empty,
-            product.EffectiveUnitPrice ?? product.UnitPrice);
+            product.EffectiveUnitPrice ?? product.UnitPrice,
+            product.Currency);
 
+    public ProductReference ToProductReference() =>
+        new(
+            ProductId,
+            ExternalProductId,
+            Sku,
+            Name,
+            null,
+            null,
+            UnitPrice,
+            Currency,
+            null,
+            UnitPrice);
     private static string? Truncate(string? value, int maxLength)
     {
         if (string.IsNullOrWhiteSpace(value))

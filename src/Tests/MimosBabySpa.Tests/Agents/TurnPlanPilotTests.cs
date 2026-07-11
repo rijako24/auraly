@@ -40,6 +40,39 @@ public sealed class TurnPlanPilotTests
     }
 
     [Fact]
+    public void Scope_UsesOnlyFactsExplicitlyCollectableByTheCurrentStage()
+    {
+        var selection = new AgentFlowStage
+        {
+            Id = "selection",
+            AdvanceWhenFacts = ["order_finalized"],
+            Collect = ["delivery_address", "payment_method"]
+        };
+        var confirmation = new AgentFlowStage
+        {
+            Id = "confirmation",
+            AdvanceWhenFacts = ["customer_confirmed"],
+            Collect = ["customer_confirmed"]
+        };
+        var config = new AgentConfig
+        {
+            FactSchema =
+            [
+                UserFact("order_finalized", "boolean"),
+                UserFact("delivery_address", "string"),
+                UserFact("payment_method", "string"),
+                UserFact("customer_confirmed", "boolean")
+            ],
+            Flows = [new AgentFlowDefinition { Id = "order", Type = FlowTypes.Primary, Stages = [selection, confirmation] }]
+        };
+
+        var scope = TurnPlanScopeBuilder.Build(config, selection, new Dictionary<string, string>(), "order");
+
+        scope.Facts.Keys.Should().BeEquivalentTo("order_finalized", "delivery_address", "payment_method");
+        scope.Facts.Keys.Should().NotContain("customer_confirmed");
+    }
+
+    [Fact]
     public async Task Planner_UsesStrictStructuredOutput_AndReturnsStructuredDomainSignal()
     {
         const string message = "Hoy no puedo, maÃ±ana sÃ­. Mi bebÃ© en 2 dÃ­as cumple 3 meses. Necesito 2 papas y 3 tocinetas.";
@@ -170,6 +203,51 @@ public sealed class TurnPlanPilotTests
         chat.CallCount.Should().Be(2);
     }
     [Fact]
+    public async Task Planner_UsesFocusedSemanticRepair_ForConfiguredOptionSelector()
+    {
+        const string message = "la a";
+        var initial = JsonSerializer.Serialize(new
+        {
+            flowIntent = new { candidateFlow = "order", confidence = 0.9, evidence = (string?)null },
+            facts = Array.Empty<object>(),
+            signals = Array.Empty<object>(),
+            decision = (object?)null,
+            response = new { mode = "continue", ambiguousFields = Array.Empty<string>() }
+        });
+        var focused = JsonSerializer.Serialize(new { selectedValue = "Hogar" });
+        var chat = new SequenceChatClient(initial, focused);
+        var customerType = new FactSchemaEntry
+        {
+            Key = "customer_type",
+            Label = "customer_type",
+            Type = "string",
+            Source = "user",
+            Options =
+            [
+                new FactValueOption { Value = "Hogar", Label = "Hogar", Selector = "A" },
+                new FactValueOption { Value = "Restaurante", Label = "Restaurante", Selector = "B" }
+            ]
+        };
+        var config = new AgentConfig
+        {
+            Flows = [new AgentFlowDefinition { Id = "order", Type = FlowTypes.Primary }],
+            FactSchema = [customerType]
+        };
+        var stage = new AgentFlowStage { Id = "customer_type", AdvanceWhenFacts = ["customer_type"] };
+        var scope = TurnPlanScopeBuilder.Build(config, stage, new Dictionary<string, string>());
+        var planner = new LlmTurnPlanner(chat, new TurnPlanValidator());
+
+        var proposal = await planner.PlanAsync(new TurnPlanningContext(
+            config, stage, scope, new Dictionary<string, string>(), message, DateTimeOffset.UtcNow, []));
+
+        proposal.Success.Should().BeTrue(string.Join("; ", proposal.Errors));
+        proposal.Plan!.Facts.Should().ContainSingle();
+        proposal.Plan.Facts[0].Key.Should().Be("customer_type");
+        proposal.Plan.Facts[0].Value.GetString().Should().Be("Hogar");
+        proposal.Plan.Facts[0].Evidence.Should().Be("A");
+        chat.CallCount.Should().Be(2);
+    }
+    [Fact]
     public void Validator_RejectsUnsupportedEvidenceAndOutOfScopeFacts()
     {
         var definition = UserFact("desired_date", "date");
@@ -195,6 +273,58 @@ public sealed class TurnPlanPilotTests
         result.Errors.Should().Contain(error => error.Contains("outside", StringComparison.OrdinalIgnoreCase));
     }
 
+    [Fact]
+    public void Validator_RejectsMissingCanonicalClaimForReferencedOptionSelector()
+    {
+        var definition = new FactSchemaEntry
+        {
+            Key = "customer_type",
+            Type = "string",
+            Source = "user",
+            Options = [new FactValueOption { Value = "Hogar", Label = "Hogar", Selector = "A" }]
+        };
+        var scope = new TurnPlanScope(
+            new Dictionary<string, FactSchemaEntry>(StringComparer.OrdinalIgnoreCase)
+            {
+                [definition.Key] = definition
+            },
+            new Dictionary<string, StageSignalDefinition>(StringComparer.OrdinalIgnoreCase));
+
+        var result = new TurnPlanValidator().Validate(new TurnPlan(), scope, "la a");
+
+        result.IsValid.Should().BeFalse();
+        result.Errors.Should().Contain(error => error.Contains("selector", StringComparison.OrdinalIgnoreCase));
+    }
+    [Fact]
+    public void Validator_RejectsFactValueOutsideConfiguredCanonicalValues()
+    {
+        var definition = new FactSchemaEntry
+        {
+            Key = "payment_method",
+            Type = "string",
+            Source = "user",
+            Options =
+            [
+                new FactValueOption { Value = "efectivo", Label = "Efectivo" },
+                new FactValueOption { Value = "transferencia", Label = "Transferencia" }
+            ]
+        };
+        var scope = new TurnPlanScope(
+            new Dictionary<string, FactSchemaEntry>(StringComparer.OrdinalIgnoreCase)
+            {
+                [definition.Key] = definition
+            },
+            new Dictionary<string, StageSignalDefinition>(StringComparer.OrdinalIgnoreCase));
+        var plan = new TurnPlan
+        {
+            Facts = [Claim("payment_method", "cash", "pago en cash")]
+        };
+
+        var result = new TurnPlanValidator().Validate(plan, scope, "pago en cash");
+
+        result.IsValid.Should().BeFalse();
+        result.Errors.Should().Contain(error => error.Contains("canonical", StringComparison.OrdinalIgnoreCase));
+    }
     [Fact]
     public void Validator_RejectsMutationForAFieldBeingClarified()
     {

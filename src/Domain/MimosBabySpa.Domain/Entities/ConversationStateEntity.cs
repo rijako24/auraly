@@ -14,6 +14,7 @@ public class ConversationStateEntity
     public DateTime? ActiveRequestStartedAtUtc { get; set; }
     public string? VerificationsJson { get; set; }
     public string? StageSnapshotsJson { get; set; }
+    public string? RuntimeStateJson { get; set; }
     public int Version { get; set; } = 1;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;

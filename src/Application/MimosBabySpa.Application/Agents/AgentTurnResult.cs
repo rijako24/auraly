@@ -43,6 +43,7 @@ public sealed class AgentTurnTraceEntry
     public string? StageId { get; init; }
     public string? Content { get; init; }
     public string? FinishReason { get; init; }
+    public string? ActionId { get; init; }
     public string? OperationId { get; init; }
     public string? OperationArgumentsJson { get; init; }
     public string? OperationOutcomeJson { get; init; }

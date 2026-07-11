@@ -72,16 +72,16 @@ public class ConversationStateManager : IConversationStateManager
         ConversationState state,
         CancellationToken cancellationToken = default)
     {
-        state.Version++;
-        state.UpdatedAt = DateTime.UtcNow;
-
+        var expectedVersion = state.Version;
         var existing = await _stateRepository.GetByConversationIdAsync(conversationId, cancellationToken);
-        if (existing is not null && existing.Version > state.Version)
+        if (existing is not null && existing.Version != expectedVersion)
         {
             throw new InvalidOperationException(
-                $"Conflict: DB version {existing.Version} > state version {state.Version}");
+                $"Conversation state conflict: expected version {expectedVersion}, database version {existing.Version}.");
         }
 
+        state.Version = expectedVersion + 1;
+        state.UpdatedAt = DateTime.UtcNow;
         var entity = existing ?? new ConversationStateEntity
         {
             ConversationId = conversationId,
@@ -98,22 +98,32 @@ public class ConversationStateManager : IConversationStateManager
         return state;
     }
 
-    private static ConversationState MapToModel(ConversationStateEntity entity) => new()
+    private static ConversationState MapToModel(ConversationStateEntity entity)
     {
-        ConversationId = entity.ConversationId,
-        BusinessId = entity.BusinessId,
-        Owner = entity.Owner,
-        LastEscalatedAt = entity.LastEscalatedAt,
-        ConsecutiveDegradedTurns = entity.ConsecutiveDegradedTurns,
-        LastUserMessage = entity.LastUserMessage,
-        LastBotMessage = entity.LastBotMessage,
-        ActiveRequestStartedAtUtc = entity.ActiveRequestStartedAtUtc,
-        Verifications = DeserializeVerifications(entity.VerificationsJson),
-        StageFactSnapshots = DeserializeStageSnapshots(entity.StageSnapshotsJson),
-        Version = entity.Version,
-        CreatedAt = entity.CreatedAt,
-        UpdatedAt = entity.UpdatedAt
-    };
+        var runtime = DeserializeRuntimeState(entity.RuntimeStateJson);
+        return new ConversationState
+        {
+            ConversationId = entity.ConversationId,
+            BusinessId = entity.BusinessId,
+            Owner = entity.Owner,
+            LastEscalatedAt = entity.LastEscalatedAt,
+            ConsecutiveDegradedTurns = entity.ConsecutiveDegradedTurns,
+            LastUserMessage = entity.LastUserMessage,
+            LastBotMessage = entity.LastBotMessage,
+            ActiveRequestStartedAtUtc = entity.ActiveRequestStartedAtUtc,
+            Verifications = DeserializeVerifications(entity.VerificationsJson),
+            StageFactSnapshots = DeserializeStageSnapshots(entity.StageSnapshotsJson),
+            ActiveFlowId = runtime.ActiveFlowId,
+            ActiveStageId = runtime.ActiveStageId,
+            FactVersions = new Dictionary<string, long>(runtime.FactVersions, StringComparer.OrdinalIgnoreCase),
+            PendingTurnPlan = runtime.PendingTurnPlan,
+            RequestGeneration = runtime.RequestGeneration,
+            ExecutedOperationKeys = new Dictionary<string, DateTime>(runtime.ExecutedOperationKeys, StringComparer.OrdinalIgnoreCase),
+            Version = entity.Version,
+            CreatedAt = entity.CreatedAt,
+            UpdatedAt = entity.UpdatedAt
+        };
+    }
 
     private static void MapToEntity(ConversationState state, ConversationStateEntity entity)
     {
@@ -130,6 +140,16 @@ public class ConversationStateManager : IConversationStateManager
         entity.StageSnapshotsJson = state.StageFactSnapshots.Count == 0
             ? null
             : JsonSerializer.Serialize(state.StageFactSnapshots, JsonOptions);
+        entity.RuntimeStateJson = JsonSerializer.Serialize(new DeterministicRuntimeState
+        {
+            SchemaVersion = 1,
+            ActiveFlowId = state.ActiveFlowId,
+            ActiveStageId = state.ActiveStageId,
+            FactVersions = state.FactVersions,
+            PendingTurnPlan = state.PendingTurnPlan,
+            RequestGeneration = state.RequestGeneration,
+            ExecutedOperationKeys = state.ExecutedOperationKeys
+        }, JsonOptions);
         entity.Version = state.Version;
         entity.UpdatedAt = state.UpdatedAt;
     }
@@ -164,5 +184,31 @@ public class ConversationStateManager : IConversationStateManager
         {
             return new Dictionary<string, Dictionary<string, string>>(StringComparer.Ordinal);
         }
+    }
+    private static DeterministicRuntimeState DeserializeRuntimeState(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+            return new DeterministicRuntimeState();
+
+        try
+        {
+            return JsonSerializer.Deserialize<DeterministicRuntimeState>(json, JsonOptions)
+                ?? new DeterministicRuntimeState();
+        }
+        catch (JsonException)
+        {
+            return new DeterministicRuntimeState();
+        }
+    }
+
+    private sealed class DeterministicRuntimeState
+    {
+        public int SchemaVersion { get; init; } = 1;
+        public string? ActiveFlowId { get; init; }
+        public string? ActiveStageId { get; init; }
+        public Dictionary<string, long> FactVersions { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+        public PendingTurnPlan? PendingTurnPlan { get; init; }
+        public long RequestGeneration { get; init; }
+        public Dictionary<string, DateTime> ExecutedOperationKeys { get; init; } = new(StringComparer.OrdinalIgnoreCase);
     }
 }

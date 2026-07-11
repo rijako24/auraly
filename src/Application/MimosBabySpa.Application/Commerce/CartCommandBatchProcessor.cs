@@ -23,10 +23,15 @@ public sealed record ResolvedCartCommand(
     decimal? Quantity,
     string ProductText);
 
+public sealed record CartCommandCandidate(string Name, decimal UnitPrice, string Currency);
+
 public sealed record CartCommandIssue(
     string Code,
     string ProductText,
-    IReadOnlyList<string> Candidates);
+    IReadOnlyList<string> Candidates)
+{
+    public IReadOnlyList<CartCommandCandidate> ProductCandidates { get; init; } = [];
+}
 
 public sealed record CartCommandBatchResult(
     bool Success,
@@ -123,7 +128,11 @@ public sealed class CartCommandBatchProcessor
                         [new CartCommandIssue(
                             candidates.Count == 0 ? "product_not_found" : "product_ambiguous",
                             command.ProductText,
-                            candidates.Select(product => product.Name).ToList())]);
+                            candidates.Select(product => product.Name).ToList())
+                        {
+                            ProductCandidates = candidates.Select(product => new CartCommandCandidate(
+                                product.Name, product.EffectiveUnitPrice ?? product.UnitPrice, product.Currency)).ToList()
+                        }]);
                 }
 
                 resolved.Add(new ResolvedCartCommand(command.Operation, selected, null, command.Quantity, command.ProductText));
@@ -148,7 +157,11 @@ public sealed class CartCommandBatchProcessor
                     [new CartCommandIssue(
                         candidates.Count == 0 ? "product_not_found" : "product_ambiguous",
                         command.ProductText,
-                        candidates.Select(product => product.Name).ToList())]);
+                        candidates.Select(product => product.Name).ToList())
+                        {
+                            ProductCandidates = candidates.Select(product => new CartCommandCandidate(
+                                product.Name, product.EffectiveUnitPrice ?? product.UnitPrice, product.Currency)).ToList()
+                        }]);
             }
 
             if (item is null)

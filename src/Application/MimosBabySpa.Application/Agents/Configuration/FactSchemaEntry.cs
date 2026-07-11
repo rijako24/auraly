@@ -22,6 +22,9 @@ public sealed class FactSchemaEntry
     /// <summary>Tenant-configured semantic normalization guidance for this fact.</summary>
     public string? ExtractionGuidance { get; init; }
 
+    /// <summary>Canonical options accepted for this fact, including their customer-facing label and selector.</summary>
+    public IReadOnlyList<FactValueOption> Options { get; init; } = [];
+
     public bool Required { get; init; }
 
     /// <summary>user | channel | system</summary>
@@ -65,4 +68,10 @@ public sealed class FactSchemaEntry
     /// </summary>
     public string? ValueSource { get; init; }
 
+}
+public sealed class FactValueOption
+{
+    public string Value { get; init; } = string.Empty;
+    public string Label { get; init; } = string.Empty;
+    public string? Selector { get; init; }
 }

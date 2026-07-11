@@ -728,7 +728,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
           "advanceWhenFacts": [
             "customer_confirmed"
           ],
-          "conversationGuidance": "Muestra un resumen breve con servicio, fecha, hora y nombre. Pide confirmacion. No llames create_reservation en esta etapa. Cuando el cliente confirme claramente, extrae customer_confirmed=true desde la confirmaci?n expl?cita y deja avanzar; no crees la cita en el mismo paso. Si falta o cambia fecha u hora, vuelve a validar disponibilidad antes de crear la cita.",
+          "conversationGuidance": "Muestra un resumen breve con servicio, fecha, hora y nombre. Pide confirmacion. Cuando el cliente confirme claramente, registra customer_confirmed=true desde la confirmaci?n expl?cita y deja avanzar. Si falta o cambia fecha u hora, vuelve a validar disponibilidad antes de crear la cita.",
           "collect": [
             "customer_confirmed"
           ]

@@ -1,4 +1,6 @@
 using FluentAssertions;
+using MimosBabySpa.Application.Agents;
+using MimosBabySpa.Application.Agents.Operations;
 using MimosBabySpa.Application.Agents.Configuration;
 using MimosBabySpa.Application.Agents.Runtime;
 using Xunit;
@@ -64,6 +66,35 @@ public sealed class DeterministicStageTransitionResolverTests
         result.TransitionId.Should().Be("needs_time");
     }
 
+    [Fact]
+    public void Resolve_DoesNotAdvanceWhenBooleanReadinessFactIsFalse()
+    {
+        var stage = new AgentFlowStage { Id = "selection", AdvanceWhenFacts = ["order_finalized"] };
+        var flow = new AgentFlowDefinition
+        {
+            Id = "order",
+            Stages = [stage, new AgentFlowStage { Id = "review" }]
+        };
+        var context = new DeterministicStageExecutionContext
+        {
+            Facts = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["order_finalized"] = "false"
+            },
+            OperationContext = new OperationContext
+            {
+                Config = new AgentConfig
+                {
+                    FactSchema = [new FactSchemaEntry { Key = "order_finalized", Type = "boolean", Source = "user" }]
+                }
+            }
+        };
+
+        var result = _resolver.Resolve(flow, stage, context);
+
+        result.ShouldTransition.Should().BeFalse();
+        result.Reason.Should().Be("advance_facts_missing");
+    }
     private static DeterministicStageExecutionContext Context(params (string Key, string Value)[] facts) => new()
     {
         Facts = facts.ToDictionary(value => value.Key, value => value.Value, StringComparer.OrdinalIgnoreCase)

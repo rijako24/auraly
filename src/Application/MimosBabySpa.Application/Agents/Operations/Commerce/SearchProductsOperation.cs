@@ -1,14 +1,22 @@
 using System.Text.Json;
 using MimosBabySpa.Application.Commerce;
 using MimosBabySpa.Application.Agents.Operations.Support;
+using MimosBabySpa.Application.Services;
 
 namespace MimosBabySpa.Application.Agents.Operations.Commerce;
 
 public sealed class SearchProductsOperation : IAgentOperation
 {
     private readonly ICommerceService _commerce;
+    private readonly IConversationFactsService? _factsService;
 
     public SearchProductsOperation(ICommerceService commerce) => _commerce = commerce;
+
+    public SearchProductsOperation(ICommerceService commerce, IConversationFactsService factsService)
+    {
+        _commerce = commerce;
+        _factsService = factsService;
+    }
 
     private const string InputSchema = """
         {
@@ -56,11 +64,23 @@ public sealed class SearchProductsOperation : IAgentOperation
             _ => await SearchManyAsync(ctx, queries, request, cancellationToken)
         };
 
+        if (_factsService is not null)
+            await ProductSelectionMemory.RememberCatalogAsync(_factsService, ctx, result.Products, cancellationToken);
+
         return OperationOutcome.Ok("products.found", new
         {
             source = result.Source,
             count = result.Products.Count,
-            products = result.Products,
+            products = result.Products.Select(product => new
+            {
+                name = product.Name,
+                description = product.Description,
+                category = product.CategoryName,
+                unit_price = product.EffectiveUnitPrice ?? product.UnitPrice,
+                currency = product.Currency,
+                promotion_name = product.PromotionName,
+                promotion_summary = product.PromotionSummary
+            }).ToList(),
             result.HasMore,
             applied_filters = result.AppliedFilters ?? ProductSearchAppliedFilters.From(request),
             clarification_candidates = Array.Empty<object>(),

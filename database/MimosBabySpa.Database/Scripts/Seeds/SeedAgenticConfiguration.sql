@@ -1015,7 +1015,8 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
           "conversationGuidance": "Confirma brevemente la seleccion ya definida: fecha y hora agendada, u horario oficial de inscripcion si aplica. Pide juntos los datos que falten para el registro: nombre de la persona que hace el registro y fecha de nacimiento del bebe. Si uno de esos datos ya esta en ESTADO ACTUAL, pide solo el que falta.",
           "collect": [
             "customer_name",
-            "baby_birth_date"
+            "baby_birth_date",
+            "customer_email"
           ]
         },
         {

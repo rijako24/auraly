@@ -96,6 +96,12 @@ public sealed class LlmTurnPlanner : ITurnPlanner
 
         }
 
+        if (firstValidation.Plan is not null
+            && firstValidation.Errors.Count > 0
+            && firstValidation.Errors.All(error => error.Contains("selector", StringComparison.OrdinalIgnoreCase)))
+        {
+            return await RepairOptionSelectionAsync(context, firstValidation.Plan, first, ct);
+        }
         var repairPrompt = prompt + Environment.NewLine + Environment.NewLine + JsonSerializer.Serialize(new
 
         {
@@ -160,6 +166,133 @@ public sealed class LlmTurnPlanner : ITurnPlanner
 
     }
 
+    private async Task<TurnPlanProposal> RepairOptionSelectionAsync(
+        TurnPlanningContext context,
+        TurnPlan previousPlan,
+        ChatCompletionResult first,
+        CancellationToken cancellationToken)
+    {
+        var references = OptionSelectorReferenceDetector.Find(context.Scope, context.LatestUserMessage);
+        if (references.Count != 1)
+            return new TurnPlanProposal(false, previousPlan, ["Option selector reference is not unique."], first.PromptTokens, first.CompletionTokens);
+
+        var fact = references[0].Fact;
+        var values = fact.Options.Select(option => option.Value).ToArray();
+        var schema = new Dictionary<string, object?>
+        {
+            ["type"] = "object",
+            ["additionalProperties"] = false,
+            ["properties"] = new Dictionary<string, object?>
+            {
+                ["selectedValue"] = new Dictionary<string, object?>
+                {
+                    ["anyOf"] = new object[]
+                    {
+                        new Dictionary<string, object?> { ["type"] = "string", ["enum"] = values },
+                        new Dictionary<string, object?> { ["type"] = "null" }
+                    }
+                }
+            },
+            ["required"] = new[] { "selectedValue" }
+        };
+        var structuredOutput = new ChatStructuredOutput
+        {
+            Name = "option_selection",
+            Description = "Canonical selection for one configured option fact.",
+            JsonSchema = JsonSerializer.Serialize(schema),
+            Strict = true
+        };
+        var prompt = JsonSerializer.Serialize(new
+        {
+            task = "Interpret whether the latest customer turn selects one configured option. Return its canonical value or null.",
+            fact = new
+            {
+                fact.Key,
+                fact.Label,
+                fact.ExtractionGuidance,
+                options = fact.Options.Select(option => new { option.Value, option.Label, option.Selector })
+            },
+            stage = new { context.Stage.Id, context.Stage.Goal, context.Stage.ConversationGuidance },
+            recentConversation = context.RecentConversation.Select(message => new
+            {
+                role = message.Role.ToString().ToLowerInvariant(),
+                content = message.Content
+            }),
+            latestUserMessage = context.LatestUserMessage
+        });
+        var focused = await CompleteAsync(prompt, structuredOutput, cancellationToken);
+        if (!focused.Success)
+        {
+            return new TurnPlanProposal(
+                false, previousPlan, [focused.ErrorMessage ?? "Option selection repair failed."],
+                first.PromptTokens + focused.PromptTokens,
+                first.CompletionTokens + focused.CompletionTokens);
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(focused.Content ?? string.Empty);
+            var root = document.RootElement;
+            if (!root.TryGetProperty("selectedValue", out var selected)
+                || selected.ValueKind != JsonValueKind.String)
+            {
+                return new TurnPlanProposal(
+                    false, previousPlan, ["Option selection repair did not resolve a canonical value."],
+                    first.PromptTokens + focused.PromptTokens,
+                    first.CompletionTokens + focused.CompletionTokens);
+            }
+
+            var selectedValue = selected.GetString() ?? string.Empty;
+            var referencedOption = references[0].Option;
+            if (!selectedValue.Equals(referencedOption.Value, StringComparison.OrdinalIgnoreCase))
+            {
+                return new TurnPlanProposal(
+                    false, previousPlan, ["Option selection repair did not confirm the referenced configured option."],
+                    first.PromptTokens + focused.PromptTokens,
+                    first.CompletionTokens + focused.CompletionTokens);
+            }
+            var evidence = referencedOption.Selector!;
+
+            var remainingAmbiguities = previousPlan.Response.AmbiguousFields
+                .Where(field => !field.Equals(fact.Key, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            var repairedPlan = new TurnPlan
+            {
+                FlowIntent = previousPlan.FlowIntent,
+                Facts = previousPlan.Facts
+                    .Where(claim => !claim.Key.Equals(fact.Key, StringComparison.OrdinalIgnoreCase))
+                    .Append(new PlannedFactClaim
+                    {
+                        Key = fact.Key,
+                        Operation = TurnPlanOperations.Set,
+                        Value = JsonSerializer.SerializeToElement(selectedValue),
+                        Evidence = evidence
+                    })
+                    .ToList(),
+                Signals = previousPlan.Signals,
+                Decision = previousPlan.Decision,
+                Response = new TurnPlanResponseDirective
+                {
+                    Mode = remainingAmbiguities.Count == 0 ? "continue" : "ask_clarification",
+                    AmbiguousFields = remainingAmbiguities
+                }
+            };
+            var validation = _validator.Validate(repairedPlan, context.Scope, context.LatestUserMessage);
+            return new TurnPlanProposal(
+                validation.IsValid,
+                repairedPlan,
+                validation.Errors,
+                first.PromptTokens + focused.PromptTokens,
+                first.CompletionTokens + focused.CompletionTokens);
+        }
+        catch (JsonException exception)
+        {
+            return new TurnPlanProposal(
+                false, previousPlan, [exception.Message],
+                first.PromptTokens + focused.PromptTokens,
+                first.CompletionTokens + focused.CompletionTokens);
+        }
+    }
     private Task<ChatCompletionResult> CompleteAsync(
 
         string prompt,
@@ -225,7 +358,8 @@ public sealed class LlmTurnPlanner : ITurnPlanner
 
             type = entry.Type,
 
-            extractionGuidance = entry.ExtractionGuidance
+            extractionGuidance = entry.ExtractionGuidance,
+            options = entry.Options.Select(option => new { option.Value, option.Label, option.Selector })
 
         });
 
@@ -276,6 +410,7 @@ public sealed class LlmTurnPlanner : ITurnPlanner
                 "When the customer explicitly contrasts alternative values or scenarios and says they are unsure which applies, do not choose either alternative. Emit no mutation for every materially disputed fact and list those fact ids in response.ambiguousFields.",
 
                 "facts may include advanceWhenFacts and collect facts. collect means optional early capture when the customer volunteered the value; it does not define what to ask.",
+                "When a fact declares options, resolve references to a configured selector and return the corresponding canonical value.",
 
                 "Return sparse arrays. Include each supported fact at most once and only when the customer explicitly provides, corrects or clears it.",
 

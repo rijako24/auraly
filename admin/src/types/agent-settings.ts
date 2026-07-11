@@ -15,7 +15,7 @@ export interface StageEffectDefinition {
   template?: string; dataPath?: string; mode?: string; priority?: string; sequence?: string;
   event?: string; reason?: string;
 }
-export interface StageResponseDefinition { mode?: string; guidance?: string; template?: string; sendMessageSequence?: string; }
+export interface StageResponseDefinition { mode?: string; guidance?: string; template?: string; fallbackTemplate?: string; clarificationTemplate?: string; sendMessageSequence?: string; }
 export interface StageOutcomeHandlerDefinition { effects?: StageEffectDefinition[]; response?: StageResponseDefinition; }
 export interface StageActionDefinition {
   id: string; operation: string; trigger?: "on_enter" | "when_ready" | "on_signal" | "on_fact_changed" | "manual";
@@ -39,7 +39,7 @@ export interface AgentGlobalAction {
   signal: StageSignalDefinition; actions?: StageActionDefinition[]; response?: StageResponseDefinition;
 }
 export interface FactSchemaEntry {
-  key: string; role?: string; label: string; type: string; extractionGuidance?: string; required?: boolean;
+  key: string; role?: string; label: string; type: string; extractionGuidance?: string; options?: { value: string; label: string; selector?: string }[]; required?: boolean;
   source?: string; showInCollectedInfo?: boolean; defaultValue?: string;
   scope?: "customer" | "request" | "ephemeral"; retentionDays?: number; expireOnBusinessDayChange?: boolean;
   dependsOn?: string[]; valueSource?: string;
@@ -48,7 +48,8 @@ export interface AgentHumanEscalationSettings { contacts?: string[]; }
 export interface ExternalEscalationContact { businessInboundContactId?: string; priority?: number; pickupAddress?: string; }
 export interface ExternalEscalationEvent {
   enabled?: boolean; contactType?: string; pickupAddress?: string; attemptTimeoutMinutes?: number; attemptCodePrefix?: string;
-  sendMessageSequence?: string; outcomeEvents?: Record<string, string>; contacts?: ExternalEscalationContact[];
+  sendMessageSequence?: string
+  suppressText?: boolean; outcomeEvents?: Record<string, string>; contacts?: ExternalEscalationContact[];
 }
 export interface ExternalEscalationDefinitions { enabled?: boolean; events?: Record<string, ExternalEscalationEvent>; }
 export interface AgentEscalationsSettings { human?: AgentHumanEscalationSettings; external?: ExternalEscalationDefinitions; }

@@ -982,6 +982,8 @@ static void PrintTurnTrace(IReadOnlyList<AgentTurnTraceEntry> trace)
 
     Console.WriteLine("--- TRACE LLM ---");
 
+    PrintTurnSummary(trace);
+
     Console.ResetColor();
 
     foreach (var entry in trace)
@@ -1022,6 +1024,7 @@ static void PrintTurnTrace(IReadOnlyList<AgentTurnTraceEntry> trace)
 
         {
 
+            Console.WriteLine($"action: {entry.ActionId ?? "(sin id)"}");
             Console.WriteLine($"operation: {entry.OperationId}({entry.OperationArgumentsJson})");
 
             Console.WriteLine("operation_result_visible_para_llm:");
@@ -1034,9 +1037,10 @@ static void PrintTurnTrace(IReadOnlyList<AgentTurnTraceEntry> trace)
 
         {
 
-            Console.WriteLine(entry.Kind == "system_prompt" ? "system_prompt:" : "respuesta_llm:");
-
-            Console.WriteLine(entry.Content);
+            Console.WriteLine(entry.Kind == "turn_plan" ? "turn_plan:" : "respuesta_llm:");
+            Console.WriteLine(entry.Kind == "turn_plan"
+                ? PrettyJson(entry.Content, jsonOptions)
+                : entry.Content);
 
         }
 
@@ -1046,6 +1050,47 @@ static void PrintTurnTrace(IReadOnlyList<AgentTurnTraceEntry> trace)
 
 }
 
+static void PrintTurnSummary(IReadOnlyList<AgentTurnTraceEntry> trace)
+{
+    var planEntry = trace.FirstOrDefault(entry => entry.Kind == "turn_plan" && !string.IsNullOrWhiteSpace(entry.Content));
+    Console.WriteLine("facts_extraidos:");
+    if (planEntry is null)
+    {
+        Console.WriteLine("- (sin TurnPlan)");
+    }
+    else
+    {
+        using var document = JsonDocument.Parse(planEntry.Content!);
+        var plan = document.RootElement.GetProperty("plan");
+        var facts = plan.GetProperty("Facts");
+        if (facts.GetArrayLength() == 0)
+            Console.WriteLine("- (ninguno)");
+        foreach (var fact in facts.EnumerateArray())
+            Console.WriteLine($"- {fact.GetProperty("Key").GetString()} {fact.GetProperty("Operation").GetString()} = {fact.GetProperty("Value")}");
+
+        Console.WriteLine("senales_extraidas:");
+        var signals = plan.GetProperty("Signals");
+        if (signals.GetArrayLength() == 0)
+            Console.WriteLine("- (ninguna)");
+        foreach (var signal in signals.EnumerateArray())
+            Console.WriteLine($"- {signal.GetProperty("Type").GetString()} = {signal.GetProperty("Value")}");
+    }
+
+    Console.WriteLine("acciones_ejecutadas:");
+    var executed = trace.Where(entry => entry.Kind == "operation").ToList();
+    if (executed.Count == 0)
+        Console.WriteLine("- (ninguna)");
+    foreach (var entry in executed)
+        Console.WriteLine($"- {entry.ActionId ?? "(sin id)"}: {entry.OperationId}");
+
+    Console.WriteLine("acciones_omitidas:");
+    var skipped = trace.Where(entry => entry.Kind == "operation_skipped").ToList();
+    if (skipped.Count == 0)
+        Console.WriteLine("- (ninguna)");
+    foreach (var entry in skipped)
+        Console.WriteLine($"- {entry.ActionId ?? "(sin id)"}: {entry.OperationId}");
+    Console.WriteLine();
+}
 static string PrettyJson(string? json, JsonSerializerOptions options)
 
 {

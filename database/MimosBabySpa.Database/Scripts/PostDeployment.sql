@@ -25,6 +25,7 @@
 :r .\Migrations\MigrateConversationLifecycle.sql
 :r .\Migrations\MigratePaymentSupersession.sql
 :r .\Migrations\MigrateFlowStageSnapshots.sql
+:r .\Migrations\MigrateDeterministicRuntimeState.sql
 :r .\Migrations\MigrateConversationCurrentStageName.sql
 :r .\Migrations\MigrateSchedulingPolicyToSettings.sql
 :r .\Migrations\MigrateSchedulingMinimumLeadTime.sql

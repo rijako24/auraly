@@ -9,6 +9,7 @@ CREATE TABLE [dbo].[ConversationStates] (
     [ActiveRequestStartedAtUtc] DATETIME2 NULL,
     [VerificationsJson] NVARCHAR(MAX) NULL,
     [StageSnapshotsJson] NVARCHAR(MAX) NULL,
+    [RuntimeStateJson] NVARCHAR(MAX) NULL,
     [Version] INT NOT NULL DEFAULT 1,
     [CreatedAt] DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
     [UpdatedAt] DATETIME2 NOT NULL,

@@ -57,6 +57,42 @@ public sealed class DeterministicResponseRendererTests
         composer.LastPresentations[0].Mode.Should().Be(FragmentRenderMode.Exclusive);
     }
     [Fact]
+    public async Task Render_FallbackTemplateWithoutAuthoritativePresentation_SkipsLlm()
+    {
+        var chat = new RecordingChatClient("invented catalog response");
+        var composer = new StubPresentationComposer("SAFE FALLBACK");
+        var renderer = new DeterministicResponseRenderer(chat, composer);
+
+        var response = await renderer.RenderAsync(Request(new DeterministicTurnResult
+        {
+            Success = true,
+            Response = new StageResponseDefinition { FallbackTemplate = "catalog_prompt" }
+        }));
+
+        response.Text.Should().Be("SAFE FALLBACK");
+        chat.CallCount.Should().Be(0);
+        composer.LastPresentations.Should().ContainSingle();
+        composer.LastPresentations[0].TemplateId.Should().Be("catalog_prompt");
+        composer.LastPresentations[0].Mode.Should().Be(FragmentRenderMode.Exclusive);
+    }
+    [Fact]
+    public async Task Render_SuppressedText_LeavesConfiguredSequenceAsTheOnlyChannelOutput()
+    {
+        var chat = new RecordingChatClient("duplicate confirmation");
+        var composer = new StubPresentationComposer();
+        var renderer = new DeterministicResponseRenderer(chat, composer);
+
+        var response = await renderer.RenderAsync(Request(new DeterministicTurnResult
+        {
+            Success = true,
+            Response = new StageResponseDefinition { SuppressText = true },
+            Sequences = ["order_created_customer"]
+        }));
+
+        response.Text.Should().BeEmpty();
+        chat.CallCount.Should().Be(0);
+    }
+    [Fact]
     public async Task Render_NormalOutcome_UsesLlmOnlyAsLanguageRenderer()
     {
         var chat = new RecordingChatClient("Respuesta natural");

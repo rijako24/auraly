@@ -4,6 +4,7 @@ using System.Text.RegularExpressions;
 using MimosBabySpa.Application.Agents;
 using MimosBabySpa.Application.Agents.Configuration;
 using MimosBabySpa.Application.Agents.Planning;
+using MimosBabySpa.Application.LLM;
 using MimosBabySpa.Application.Time;
 
 internal sealed class TurnPlanPilotRunner
@@ -159,7 +160,8 @@ internal sealed class TurnPlanPilotRunner
             var facts = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             var scope = TurnPlanScopeBuilder.Build(config, stage, facts);
             var proposal = await _planner.PlanAsync(
-                new TurnPlanningContext(config, stage, scope, facts, test.Message, businessNow, []),
+                new TurnPlanningContext(config, stage, scope, facts, test.Message, businessNow,
+                    test.History.Select(ToChatMessage).ToList()),
                 cancellationToken);
 
             var errors = ValidateEvaluation(test, proposal, businessNow);
@@ -187,6 +189,10 @@ internal sealed class TurnPlanPilotRunner
         return failures == 0 ? 0 : 1;
     }
 
+    private static ChatMessage ToChatMessage(ExtractorHistoryMessage message) =>
+        message.Role.Equals("assistant", StringComparison.OrdinalIgnoreCase)
+            ? ChatMessage.Assistant(message.Content)
+            : ChatMessage.User(message.Content);
     private static AgentConfig CreateExtractionEvaluationConfig(ExtractorEvaluationCase test)
     {
         var flowId = string.IsNullOrWhiteSpace(test.ExpectedFlow) ? "extraction" : test.ExpectedFlow;
@@ -384,6 +390,7 @@ internal sealed class TurnPlanPilotRunner
         public IReadOnlyList<FactSchemaEntry> FactSchema { get; init; } = [];
         public string Stage { get; init; } = string.Empty;
         public string Message { get; init; } = string.Empty;
+        public IReadOnlyList<ExtractorHistoryMessage> History { get; init; } = [];
         public string? ExpectedFlow { get; init; }
         public IReadOnlyList<ExpectedFact> ExpectedFacts { get; init; } = [];
         public IReadOnlyList<string> AbsentFacts { get; init; } = [];
@@ -391,6 +398,11 @@ internal sealed class TurnPlanPilotRunner
         public IReadOnlyList<string> ExpectedAmbiguousFields { get; init; } = [];
     }
 
+    private sealed class ExtractorHistoryMessage
+    {
+        public string Role { get; init; } = "user";
+        public string Content { get; init; } = string.Empty;
+    }
     private sealed class ExpectedFact
     {
         public string Key { get; init; } = string.Empty;

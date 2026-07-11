@@ -131,7 +131,7 @@ DECLARE @OperationsSettingsJson NVARCHAR(MAX) = N'{
   "temperature": 0.2,
   "historyWindowSize": 12,
   "persona": "Eres el agente operativo interno del negocio. Atiendes solo contactos administrativos autorizados.",
-  "policies": "Responde de forma breve y operativa. No atiendas solicitudes de clientes finales ni de domiciliarios. Todas las consultas y cambios deben usar las tools operativas, que trabajan siempre sobre el negocio actual. Para reagendar reservas por inconvenientes operativos, usa operations_request_reschedule para enviar el aviso al cliente y dejar que su respuesta siga por el flujo normal. No cambies fecha u hora desde operaciones.",
+  "policies": "Responde de forma breve y operativa. No atiendas solicitudes de clientes finales ni de domiciliarios. Todas las consultas y cambios deben basarse en resultados operativos vigentes del negocio actual. Para reagendar reservas por inconvenientes operativos, usa operations_request_reschedule para enviar el aviso al cliente y dejar que su respuesta siga por el flujo normal. No cambies fecha u hora desde operaciones.",
   "notifications": {},
   "webhooks": {},
   "templates": {

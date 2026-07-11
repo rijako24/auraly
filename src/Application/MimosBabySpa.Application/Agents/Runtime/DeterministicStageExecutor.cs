@@ -137,7 +137,7 @@ public sealed class DeterministicStageExecutor
                         {
                             presentations.Add(new OperationPresentation(
                                 effect.Template,
-                                ReadPresentationData(outcome.Data, effect.DataPath),
+                                ReadPresentationData(outcome, effect.DataPath),
                                 ParseMode(effect.Mode),
                                 ParsePriority(effect.Priority)));
                         }
@@ -251,22 +251,50 @@ public sealed class DeterministicStageExecutor
         return ElementText(current);
     }
 
-    private static IReadOnlyDictionary<string, object?> ReadPresentationData(JsonElement data, string? path)
+    private static IReadOnlyDictionary<string, object?> ReadPresentationData(OperationOutcome outcome, string? path)
     {
-        var selected = data;
-        if (!string.IsNullOrWhiteSpace(path))
+        var segments = (path ?? string.Empty)
+            .Split('.', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .ToList();
+        JsonElement selected;
+        if (segments.Count > 0 && segments[0].Equals("error", StringComparison.OrdinalIgnoreCase))
         {
-            foreach (var segment in path.Split('.', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-            {
-                if (selected.ValueKind != JsonValueKind.Object
-                    || !selected.TryGetProperty(segment, out selected))
-                    return new Dictionary<string, object?>();
-            }
+            segments.RemoveAt(0);
+            if (segments.Count > 0 && segments[0].Equals("context", StringComparison.OrdinalIgnoreCase))
+                segments.RemoveAt(0);
+            if (outcome.Error?.Context is not JsonElement errorContext)
+                return new Dictionary<string, object?>();
+            selected = errorContext;
+        }
+        else
+        {
+            selected = outcome.Data;
+        }
+
+        foreach (var segment in segments)
+        {
+            if (selected.ValueKind != JsonValueKind.Object
+                || !selected.TryGetProperty(segment, out selected))
+                return new Dictionary<string, object?>();
         }
         return selected.ValueKind == JsonValueKind.Object
-            ? selected.EnumerateObject().ToDictionary(value => value.Name, value => (object?)value.Value.Clone(), StringComparer.OrdinalIgnoreCase)
+            ? selected.EnumerateObject().ToDictionary(value => value.Name, value => ConvertJson(value.Value), StringComparer.OrdinalIgnoreCase)
             : new Dictionary<string, object?>();
     }
+    private static object? ConvertJson(JsonElement value) => value.ValueKind switch
+    {
+        JsonValueKind.Object => value.EnumerateObject().ToDictionary(
+            property => property.Name,
+            property => ConvertJson(property.Value),
+            StringComparer.OrdinalIgnoreCase),
+        JsonValueKind.Array => value.EnumerateArray().Select(ConvertJson).ToList(),
+        JsonValueKind.String => value.GetString(),
+        JsonValueKind.Number when value.TryGetDecimal(out var number) => number,
+        JsonValueKind.True => true,
+        JsonValueKind.False => false,
+        JsonValueKind.Null or JsonValueKind.Undefined => null,
+        _ => value.GetRawText()
+    };
 
     private static string? ElementText(JsonElement value) => value.ValueKind switch
     {

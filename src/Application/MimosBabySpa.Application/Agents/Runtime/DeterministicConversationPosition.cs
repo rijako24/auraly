@@ -13,7 +13,8 @@ public static class DeterministicConversationPosition
     public static AgentFlowStage ResolveStage(
         AgentFlowDefinition flow,
         ConversationState state,
-        IReadOnlyDictionary<string, string> facts)
+        IReadOnlyDictionary<string, string> facts,
+        IReadOnlyList<FactSchemaEntry> factSchema)
     {
         if (flow.Stages.Count == 0)
             throw new InvalidOperationException($"Flow '{flow.Id}' has no stages.");
@@ -26,15 +27,36 @@ public static class DeterministicConversationPosition
         for (var index = 0; index < configuredIndex; index++)
         {
             var stage = flow.Stages[index];
-            if (!IsComplete(stage, facts))
+            if (!StageAdvanceFactReadiness.IsComplete(stage, facts, factSchema))
                 return stage;
         }
 
         return flow.Stages[configuredIndex];
     }
+}
 
-    private static bool IsComplete(AgentFlowStage stage, IReadOnlyDictionary<string, string> facts) =>
+public static class StageAdvanceFactReadiness
+{
+    public static bool IsComplete(
+        AgentFlowStage stage,
+        IReadOnlyDictionary<string, string> facts,
+        IReadOnlyList<FactSchemaEntry> factSchema) =>
         stage.AdvanceWhenFacts.Count > 0
-        && stage.AdvanceWhenFacts.All(key =>
-            facts.TryGetValue(key, out var value) && !string.IsNullOrWhiteSpace(value));
+        && stage.AdvanceWhenFacts.All(key => IsSatisfied(key, facts, factSchema));
+
+    public static bool IsSatisfied(
+        string key,
+        IReadOnlyDictionary<string, string> facts,
+        IReadOnlyList<FactSchemaEntry> factSchema)
+    {
+        if (!facts.TryGetValue(key, out var value) || string.IsNullOrWhiteSpace(value))
+            return false;
+
+        var definition = factSchema.FirstOrDefault(fact =>
+            fact.Key.Equals(key, StringComparison.OrdinalIgnoreCase));
+        if (definition?.Type.Equals("boolean", StringComparison.OrdinalIgnoreCase) != true)
+            return true;
+
+        return bool.TryParse(value, out var parsed) && parsed;
+    }
 }

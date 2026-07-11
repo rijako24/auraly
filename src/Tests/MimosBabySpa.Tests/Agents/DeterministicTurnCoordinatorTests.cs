@@ -33,6 +33,7 @@ public sealed class DeterministicTurnCoordinatorTests
                 new OperationArgumentBinder()),
             new DeterministicStageTransitionResolver(new StageConditionEvaluator()));
         var config = Config();
+        var session = new AgentConversationContext();
 
         var result = await coordinator.ExecuteAsync(new DeterministicTurnRequest
         {
@@ -45,7 +46,8 @@ public sealed class DeterministicTurnCoordinatorTests
                 BusinessToday = new DateOnly(2026, 7, 10),
                 BusinessNow = DateTimeOffset.UtcNow,
                 Config = config,
-                ConversationState = new ConversationState()
+                ConversationState = new ConversationState(),
+                Session = session
             },
             CurrentFlowId = "primary",
             CurrentStageId = "capture",
@@ -56,7 +58,10 @@ public sealed class DeterministicTurnCoordinatorTests
         result.VisitedStages.Should().Equal("capture", "done");
         result.Facts["processed"].Should().Be("true");
         operation.Input.GetProperty("payload").GetArrayLength().Should().Be(2);
-        factStore.Batches.Should().ContainSingle(batch => batch["processed"] == "true");
+        operation.ReceivedSession.Should().BeSameAs(session);
+        operation.ReceivedSession!.Facts["address"].Should().Be("calle 5");
+        factStore.Batches.Count(batch =>
+            batch.TryGetValue("processed", out var value) && value == "true").Should().Be(1);
     }
 
     [Fact]
@@ -186,6 +191,13 @@ public sealed class DeterministicTurnCoordinatorTests
     private static TurnPlan Plan() => new()
     {
         FlowIntent = new PlannedFlowIntent { CandidateFlow = "primary", Confidence = 1 },
+        Facts = [new PlannedFactClaim
+        {
+            Key = "address",
+            Operation = TurnPlanOperations.Set,
+            Value = Json("\"calle 5\""),
+            Evidence = "dos elementos"
+        }],
         Signals =
         [
             new PlannedSignal
@@ -224,6 +236,7 @@ public sealed class DeterministicTurnCoordinatorTests
     {
         public const string Id = "generic.apply_changes";
         public JsonElement Input { get; private set; }
+        public AgentConversationContext? ReceivedSession { get; private set; }
         public OperationDescriptor Descriptor { get; } = new(
             Id,
             "{\"type\":\"object\",\"required\":[\"payload\"]}",
@@ -235,6 +248,7 @@ public sealed class DeterministicTurnCoordinatorTests
         public Task<OperationOutcome> ExecuteAsync(JsonElement input, OperationContext context, CancellationToken cancellationToken = default)
         {
             Input = input.Clone();
+            ReceivedSession = context.Session;
             return Task.FromResult(OperationOutcome.Ok("applied", new { }));
         }
     }

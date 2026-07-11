@@ -1,3 +1,4 @@
+using MimosBabySpa.Application.Agents.Operations.Support;
 using MimosBabySpa.Application.Agents;
 using MimosBabySpa.Application.Agents.Planning;
 using MimosBabySpa.Domain.Repositories;
@@ -15,6 +16,10 @@ public sealed class CommerceCartProductResolver : ICartProductResolver
         string productText,
         CancellationToken cancellationToken = default)
     {
+        var remembered = ProductSelectionMemory.FindExactCatalogMatches(context, productText);
+        if (remembered.Count > 0)
+            return remembered;
+
         var result = await _commerce.SearchProductsAsync(
             context,
             new ProductSearchRequest(productText, null, Limit: 10, IncludeStock: true),

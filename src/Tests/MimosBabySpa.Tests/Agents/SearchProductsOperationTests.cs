@@ -95,6 +95,31 @@ public class SearchProductsOperationTests
         json.Should().Contain("Mention available stock quantity only when a requested quantity is greater");
     }
     [Fact]
+    public async Task DisplayedCatalogProduct_IsResolvedFromTheSameAuthoritativeSnapshot()
+    {
+        var ctx = CreateContext();
+        var displayed = new ProductReference(
+            Guid.NewGuid(), "PO36", "PO36", "PECHUGA CAMPOLLO", null, "Pollo", 13541.35m, "COP", null);
+        _commerce
+            .Setup(c => c.SearchProductsAsync(ctx, It.IsAny<ProductSearchRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ProductSearchResult([displayed], "mantis"));
+        var facts = new Mock<IConversationFactsService>();
+        var operation = new SearchProductsOperation(_commerce.Object, facts.Object);
+        using var args = JsonDocument.Parse("""{"query":"pollo","limit":10}""");
+
+        await operation.ExecuteAsync(args.RootElement, new OperationContext { Session = ctx }, CancellationToken.None);
+        _commerce.Invocations.Clear();
+        var resolver = new CommerceCartProductResolver(_commerce.Object);
+
+        var matches = await resolver.FindAsync(ctx, "PECHUGA CAMPOLLO");
+
+        matches.Should().ContainSingle();
+        matches[0].Name.Should().Be("PECHUGA CAMPOLLO");
+        matches[0].UnitPrice.Should().Be(13541.35m);
+        _commerce.Verify(c => c.SearchProductsAsync(
+            It.IsAny<AgentConversationContext>(), It.IsAny<ProductSearchRequest>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+    [Fact]
     public async Task ExecuteAsync_WithDerivedQueries_SearchesEachCatalogQueryAndMergesProducts()
     {
         var ctx = CreateContext();

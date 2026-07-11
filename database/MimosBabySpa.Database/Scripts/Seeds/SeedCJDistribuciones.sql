@@ -204,775 +204,998 @@ WHERE BusinessId = @BusinessId
   );
 
 DECLARE @SettingsJson NVARCHAR(MAX) = N'{
-  "model": "gpt-4.1-mini",
-  "temperature": 0.62,
-  "historyWindowSize": 24,
-  "commerce": {
-    "enabled": true,
-    "provider": "Mantis"
-  },
-  "operatingHours": {
-    "enforce": true,
-    "outsideHours": {
-      "guidance": "Responde de forma breve, cordial y cerrada. Explica que el negocio esta fuera de horario y que el proximo horario habil es {{next_operating_window}}. Adapta el mensaje a lo que dijo el cliente, pero no solicites datos, no prometas ejecutar gestiones, no abras catalogos y no termines con preguntas."
-    }
-  },
-  "persona": "Eres el asistente comercial de CJ Distribuciones por WhatsApp. Atiendes pedidos de alimentos y productos de consumo para hogares, tiendas, minimercados, restaurantes, comidas rapidas y distribuidores. Hablas en espanol con tono claro, amable y practico. Guias la compra sin obligar al cliente a navegar menus y usas el catalogo como fuente de verdad.",
-  "policies": "## PRESENTACION\n\nHola! Bienvenido a CJ Distribuciones. Con gusto te ayudo a realizar tu pedido. Me indicas tu nombre o el nombre de tu establecimiento?",
-  "messageSequences": {
-    "order_created_customer": {
-      "messages": [
-        {
-          "body": "Gracias por tu pedido, {customer_name}. Lo recibimos correctamente y ya estamos coordinando la entrega."
-        }
-      ]
-    }
-  },
-  "globalActions": [
-    {
-      "id": "human_handoff",
-      "priority": 1000,
-      "goal": "Escalar a humano cuando el cliente lo pida, haya queja, caso mayorista especial o solicitud fuera del alcance.",
-      "conversationGuidance": "Detecta ?nicamente una solicitud expl?cita de atenci?n humana, una queja que requiera intervenci?n o una negociaci?n especial fuera del alcance configurado.",
-      "signal": {
-        "type": "human_escalation",
-        "description": "Solicitud expl?cita de hablar con una persona, queja que requiere intervenci?n o negociaci?n comercial especial fuera del alcance.",
-        "valueSchema": {
-          "type": "boolean"
-        }
-      },
-      "actions": [
-        {
-          "id": "request_human",
-          "operation": "escalation.request_human",
-          "trigger": "on_signal",
-          "signal": "human_escalation",
-          "arguments": {
-            "reason": "{{turn.message}}",
-            "last_user_message": "{{turn.message}}"
-          },
-          "onOutcome": {
-            "escalation.requested": {
-              "effects": [
-                {
-                  "type": "escalation.human",
-                  "reason": "customer_request"
-                }
-              ],
-              "response": {
-                "mode": "deterministic",
-                "guidance": "Informa brevemente que ser? atendido por una persona."
-              }
-            },
-            "escalation.notification_failed": {
-              "response": {
-                "mode": "deterministic",
-                "guidance": "Informa que registrar?s la solicitud para atenci?n humana sin prometer un tiempo exacto."
-              }
-            }
-          }
-        }
-      ]
-    }
-  ],
-  "factSchema": [
-    {
-      "key": "customer_name",
-      "role": "customer.name",
-      "label": "nombre del cliente o establecimiento",
-      "type": "string",
-      "required": true,
-      "source": "user",
-      "scope": "customer"
-    },
-    {
-      "key": "customer_type",
-      "role": "customer.type",
-      "label": "perfil del cliente",
-      "type": "string",
-      "required": true,
-      "source": "user",
-      "scope": "customer"
-    },
-    {
-      "key": "order_finalized",
-      "role": "order.finalized",
-      "label": "cliente finalizo el carrito",
-      "type": "boolean",
-      "required": true,
-      "source": "user",
-      "scope": "request",
-      "retentionDays": 1
-    },
-    {
-      "key": "cart_review_confirmed",
-      "role": "order.cart_review_confirmed",
-      "label": "carrito aprobado por el cliente",
-      "type": "boolean",
-      "required": true,
-      "source": "user",
-      "scope": "request",
-      "retentionDays": 1
-    },
-    {
-      "key": "delivery_method",
-      "role": "shipping.method",
-      "label": "modalidad de entrega",
-      "type": "string",
-      "required": true,
-      "source": "user",
-      "scope": "request",
-      "retentionDays": 1
-    },
-    {
-      "key": "city",
-      "role": "shipping.city",
-      "label": "ciudad de entrega",
-      "type": "string",
-      "required": true,
-      "source": "system",
-      "defaultValue": "Valledupar",
-      "scope": "request",
-      "retentionDays": 1
-    },
-    {
-      "key": "delivery_address",
-      "role": "shipping.address",
-      "label": "direccion de entrega o recogida",
-      "type": "string",
-      "required": true,
-      "source": "user",
-      "scope": "request",
-      "retentionDays": 1
-    },
-    {
-      "key": "delivery_phone",
-      "role": "customer.phone",
-      "label": "celular de entrega",
-      "type": "phone",
-      "required": true,
-      "source": "user",
-      "scope": "customer"
-    },
-    {
-      "key": "payment_method",
-      "role": "payment.method",
-      "label": "metodo de pago",
-      "type": "string",
-      "required": true,
-      "source": "user",
-      "scope": "request",
-      "retentionDays": 1
-    },
-    {
-      "key": "order_checkout_presented",
-      "role": "order.checkout_presented",
-      "label": "resumen final presentado",
-      "type": "boolean",
-      "required": false,
-      "source": "system",
-      "scope": "request",
-      "retentionDays": 1
-    },
-    {
-      "key": "system.recipe_catalog_queries",
-      "role": "system.recipe_catalog_queries",
-      "label": "consultas de catalogo derivadas de receta",
-      "type": "json",
-      "required": false,
-      "source": "system",
-      "scope": "request",
-      "retentionDays": 1
-    },
-    {
-      "key": "customer_confirmed",
-      "role": "confirmation.verbal",
-      "label": "confirmacion verbal del pedido",
-      "type": "boolean",
-      "required": false,
-      "source": "user",
-      "scope": "request",
-      "dependsOn": [
-        "order_checkout_presented",
-        "cart_review_confirmed",
-        "delivery_method",
-        "city",
-        "delivery_address",
-        "delivery_phone",
-        "customer_name",
-        "payment_method"
-      ],
-      "retentionDays": 1
-    }
-  ],
-  "notifications": {
-    "order_created": {
-      "enabled": false,
-      "recipients": [],
-      "sendMessageSequence": null
-    }
-  },
-  "webhooks": {},
-  "escalations": {
-    "human": {
-      "contacts": []
-    },
-    "external": {
-      "enabled": false,
-      "events": {}
-    }
-  },
-  "checkout": {
-    "currency": "COP",
-    "modes": {
-      "order": {
-        "paymentMethods": {
-          "efectivo": {
-            "label": "efectivo al recibir",
-            "aliases": [
-              "efectivo",
-              "contraentrega"
-            ],
-            "template": "order_checkout_no_payment"
-          },
-          "transferencia": {
-            "label": "transferencia manual",
-            "aliases": [
-              "transferencia",
-              "nequi",
-              "bancolombia"
-            ],
-            "template": "order_checkout_manual_transfer",
-            "manualConfirmationRequired": true,
-            "manualExpirationMinutes": 1440,
-            "confirmationOutcome": "order_paid"
-          }
-        },
-        "shipping": {
-          "enabled": true,
-          "localCity": "Valledupar",
-          "localCost": 6000,
-          "nationalCost": 25000
-        }
-      }
-    }
-  },
-  "templates": {
-    "order_checkout_no_payment": "*Resumen de tu pedido*\n{{#each line_items}}\n- {{name}} x{{quantity}}: ${{line_total}}\n{{/each}}\n- Envio: ${{shipping_cost}}\n- *Total: ${{total}} {{currency}}*\n\nEntrega:\n- Ciudad: {{city}}\n- Direccion: {{delivery_address}}\n- Celular: {{customer_phone}}\n{{#if customer_name}}\n- Nombre: {{customer_name}}\n{{/if}}\n\nMetodo de pago: efectivo al recibir\n\nConfirmas tu pedido con esta informacion?",
-    "order_checkout_manual_transfer": "*Resumen de tu pedido*\n{{#each line_items}}\n- {{name}} x{{quantity}}: ${{line_total}}\n{{/each}}\n- Envio: ${{shipping_cost}}\n- *Total: ${{total}} {{currency}}*\n\nEntrega:\n- Ciudad: {{city}}\n- Direccion: {{delivery_address}}\n- Celular: {{customer_phone}}\n{{#if customer_name}}\n- Nombre: {{customer_name}}\n{{/if}}\n\nMetodo de pago: transferencia manual\n\nTu pago queda pendiente de confirmacion manual. Un agente del equipo de CJ Distribuciones confirmara el pago; cuando se confirme, te notificaremos que el pedido fue creado."
-  },
-  "flows": [
-    {
-      "id": "order",
-      "type": "primary",
-      "routingGuidance": "Use this primary flow for CJ Distribuciones product orders, customer identification, profile classification, catalog-grounded recommendations, delivery data, payment method and order confirmation.",
-      "stages": [
-        {
-          "id": "customer_name",
-          "name": "Identificacion del cliente",
-          "goal": "Obtener el nombre del cliente o establecimiento antes de iniciar el pedido cuando no exista un nombre confiable.",
-          "advanceWhenFacts": [
-            "customer_name"
-          ],
-          "conversationGuidance": "Si falta customer_name y el cliente no lo informo en el mensaje actual, saluda exactamente: Hola! Bienvenido a CJ Distribuciones. Con gusto te ayudo a realizar tu pedido. Me indicas tu nombre o el nombre de tu establecimiento? Si ya lo dijo, continÃºa sin volver a pedirlo; el motor registra el dato extraÃ­do.",
-          "collect": [
-            "customer_name"
-          ]
-        },
-        {
-          "id": "customer_type",
-          "name": "Perfil del cliente",
-          "goal": "Clasificar el perfil comercial como Hogar, TiendaMinimercado, Restaurante, ComidaRapida o Distribuidor.",
-          "advanceWhenFacts": [
-            "customer_type"
-          ],
-          "conversationGuidance": "Si falta customer_type, pregunta: Mucho gusto, {customer_name}. Para brindarte informacion y recomendaciones mas adecuadas, cual de estas opciones describe mejor tu perfil? A. Hogar B. Tienda o minimercado C. Restaurante D. Comida rapida E. Distribuidor. Acepta respuestas naturales y registra el valor canonico. Si el cliente corrige el perfil posteriormente, actualizalo.",
-          "collect": [
-            "customer_type"
-          ]
-        },
-        {
-          "id": "product_selection",
-          "name": "Productos, catalogo y recomendaciones",
-          "goal": "Recibir pedidos abiertos, resolver productos reales del catalogo, recomendar de forma controlada y construir el carrito hasta que el cliente finalice.",
-          "advanceWhenFacts": [
-            "order_finalized"
-          ],
-          "conversationGuidance": "Cuando customer_name y customer_type existan, responde: Perfecto, {customer_name}. Puedes escribirme directamente los productos que necesitas o contarme que deseas preparar y te ayudo a encontrar opciones en nuestro catalogo. Para listas directas, bÃºsquedas, catÃ¡logo, precios, disponibilidad, surtido y complementos, responde Ãºnicamente con resultados oficiales producidos por las operaciones configuradas. Para listas, busca cada producto y cantidad, muestra referencias reales con nombre, presentacion y precio cuando el resultado vigente lo entregue; no muestres SKU, codigos internos ni unidades de stock en opciones normales; agrega solo coincidencias claras o confirmadas. Si hay ambiguedad, pide la referencia preferida usando candidatos reales. Si pides confirmacion sobre un producto pendiente despues de haber agregado otros, una respuesta afirmativa confirma solo ese producto pendiente; no vuelvas a agregar productos ya agregados salvo que el cliente pida mas unidades explicitamente. Para recetas o preparaciones, primero presenta el resultado de receta producido por la operaciÃ³n configurada y despuÃ©s los productos oficiales encontrados con las consultas de ingredientes derivadas, no con la frase completa del cliente. No respondas solo con links ni digas que si quiere luego buscas catalogo; en la misma respuesta muestra maximo dos ideas de receta y una seccion breve de ingredientes disponibles en catalogo con productos reales, presentacion y precio cuando la operaciÃ³n los entregue. No concluyas que no hay un ingrediente si no se busco como ingrediente separado. No muestres SKU, codigos internos ni unidades de stock salvo si el cliente pidio mas cantidad de la disponible, en cuyo caso informa la cantidad disponible y pregunta si desea incluir esa cantidad. Recomienda solo productos encontrados y pide confirmacion para agregarlos. Despues de agregar productos, puedes hacer una sola venta complementaria breve basada en catalogo y relacionada con lo pedido. Si el cliente indica que termino o pide total/factura, registra order_finalized=true de inmediato.",
-          "collect": [
-            "order_finalized",
-            "delivery_address"
-          ],
-          "signals": [
-            {
-              "type": "recipe_request",
-              "description": "El cliente pide ideas o recetas para preparar algo. El valor contiene Ãºnicamente el ingrediente o preparaciÃ³n principal expresada por el cliente.",
-              "valueSchema": {
-                "type": "string"
-              }
-            },
-            {
-              "type": "order_changes",
-              "description": "Cambios explÃ­citos del Ãºnico pedido activo. Extrae todos los productos y cantidades. destinationReference contiene la direcciÃ³n asociada al producto. Si aparecen dos direcciones diferentes, no elijas: marca delivery_address como ambiguo y conserva cada direcciÃ³n en su producto; el motor diferirÃ¡ todo el lote hasta que el cliente elija una direcciÃ³n para el pedido completo.",
-              "valueSchema": {
-                "type": "array",
-                "items": {
-                  "type": "object",
-                  "additionalProperties": false,
-                  "properties": {
-                    "operation": {
-                      "type": "string",
-                      "enum": [
-                        "add",
-                        "remove",
-                        "set_quantity"
-                      ]
+    "model":  "gpt-4.1-mini",
+    "temperature":  0.4,
+    "historyWindowSize":  24,
+    "commerce":  {
+                     "enabled":  true,
+                     "provider":  "Mantis"
+                 },
+    "operatingHours":  {
+                           "enforce":  true,
+                           "outsideHours":  {
+                                                "guidance":  "Responde de forma breve, cordial y cerrada. Explica que el negocio esta fuera de horario y que el proximo horario habil es {{next_operating_window}}. Adapta el mensaje a lo que dijo el cliente, pero no solicites datos, no prometas ejecutar gestiones, no abras catalogos y no termines con preguntas."
+                                            }
+                       },
+    "persona":  "Eres el asistente comercial de CJ Distribuciones por WhatsApp. Atiendes pedidos de alimentos y productos de consumo para hogares y negocios. Hablas en espanol con tono claro, amable, breve y practico. El saludo inicial y el cierre son los momentos para usar el nombre del cliente; en los turnos intermedios respondes directamente. El catalogo y los resultados de las operaciones son la fuente de verdad comercial.",
+    "policies":  "## PRESENTACION\n\n- Presentate como asistente de CJ Distribuciones con tono breve, amable y practico.\n- Reserva el nombre del cliente para el saludo inicial y el cierre; en los turnos intermedios responde directamente.\n- Presenta catalogos, precios, carrito, totales y estado del pedido exclusivamente desde resultados oficiales del turno.",
+    "messageSequences":  {
+                             "order_created_customer":  {
+                                                            "messages":  [
+                                                                             {
+                                                                                 "body":  "Gracias por tu pedido, {customer_name}. Lo recibimos correctamente y ya estamos coordinando la entrega."
+                                                                             }
+                                                                         ]
+                                                        }
+                         },
+    "globalActions":  [
+                          {
+                              "id":  "human_handoff",
+                              "priority":  1000,
+                              "goal":  "Escalar a humano cuando el cliente lo pida, haya queja, caso mayorista especial o solicitud fuera del alcance.",
+                              "conversationGuidance":  "Detecta ?nicamente una solicitud expl?cita de atenci?n humana, una queja que requiera intervenci?n o una negociaci?n especial fuera del alcance configurado.",
+                              "signal":  {
+                                             "type":  "human_escalation",
+                                             "description":  "Solicitud expl?cita de hablar con una persona, queja que requiere intervenci?n o negociaci?n comercial especial fuera del alcance.",
+                                             "valueSchema":  {
+                                                                 "type":  "boolean"
+                                                             }
+                                         },
+                              "actions":  [
+                                              {
+                                                  "id":  "request_human",
+                                                  "operation":  "escalation.request_human",
+                                                  "trigger":  "on_signal",
+                                                  "signal":  "human_escalation",
+                                                  "arguments":  {
+                                                                    "reason":  "{{turn.message}}",
+                                                                    "last_user_message":  "{{turn.message}}"
+                                                                },
+                                                  "onOutcome":  {
+                                                                    "escalation.requested":  {
+                                                                                                 "effects":  [
+                                                                                                                 {
+                                                                                                                     "type":  "escalation.human",
+                                                                                                                     "reason":  "customer_request"
+                                                                                                                 }
+                                                                                                             ],
+                                                                                                 "response":  {
+                                                                                                                  "mode":  "deterministic",
+                                                                                                                  "guidance":  "Informa brevemente que ser? atendido por una persona."
+                                                                                                              }
+                                                                                             },
+                                                                    "escalation.notification_failed":  {
+                                                                                                           "response":  {
+                                                                                                                            "mode":  "deterministic",
+                                                                                                                            "guidance":  "Informa que registrar?s la solicitud para atenci?n humana sin prometer un tiempo exacto."
+                                                                                                                        }
+                                                                                                       }
+                                                                }
+                                              }
+                                          ]
+                          }
+                      ],
+    "factSchema":  [
+                       {
+                           "key":  "customer_name",
+                           "role":  "customer.name",
+                           "label":  "nombre del cliente o establecimiento",
+                           "type":  "string",
+                           "required":  true,
+                           "source":  "user",
+                           "scope":  "customer"
+                       },
+                       {
+                           "key":  "customer_type",
+                           "role":  "customer.type",
+                           "label":  "perfil del cliente",
+                           "type":  "string",
+                           "required":  true,
+                           "source":  "user",
+                           "scope":  "customer",
+                           "options":  [
+                                           {
+                                               "label":  "Hogar",
+                                               "selector":  "A",
+                                               "value":  "Hogar"
+                                           },
+                                           {
+                                               "label":  "Tienda o minimercado",
+                                               "selector":  "B",
+                                               "value":  "TiendaMinimercado"
+                                           },
+                                           {
+                                               "label":  "Restaurante",
+                                               "selector":  "C",
+                                               "value":  "Restaurante"
+                                           },
+                                           {
+                                               "label":  "Comida rapida",
+                                               "selector":  "D",
+                                               "value":  "ComidaRapida"
+                                           },
+                                           {
+                                               "label":  "Distribuidor",
+                                               "selector":  "E",
+                                               "value":  "Distribuidor"
+                                           }
+                                       ]
+                       },
+                       {
+                           "key":  "order_finalized",
+                           "role":  "order.finalized",
+                           "label":  "cliente finalizo el carrito",
+                           "type":  "boolean",
+                           "required":  true,
+                           "source":  "user",
+                           "scope":  "request",
+                           "retentionDays":  1,
+                           "extractionGuidance":  "Representa que el cliente comunico que termino la seleccion de productos y desea continuar con el pedido."
+                       },
+                       {
+                           "key":  "cart_review_confirmed",
+                           "role":  "order.cart_review_confirmed",
+                           "label":  "carrito aprobado por el cliente",
+                           "type":  "boolean",
+                           "required":  true,
+                           "source":  "user",
+                           "scope":  "request",
+                           "retentionDays":  1,
+                           "extractionGuidance":  "Representa la aprobacion explicita del resumen vigente del carrito."
+                       },
+                       {
+                           "key":  "delivery_method",
+                           "role":  "shipping.method",
+                           "label":  "modalidad de entrega",
+                           "type":  "string",
+                           "required":  true,
+                           "source":  "user",
+                           "scope":  "request",
+                           "retentionDays":  1,
+                           "extractionGuidance":  "Normaliza la modalidad elegida al valor canonico configurado para entrega o recogida.",
+                           "options":  [
+                                           {
+                                               "value":  "domicilio",
+                                               "label":  "Domicilio"
+                                           },
+                                           {
+                                               "value":  "recogida",
+                                               "label":  "Recogida"
+                                           }
+                                       ]
+                       },
+                       {
+                           "key":  "city",
+                           "role":  "shipping.city",
+                           "label":  "ciudad de entrega",
+                           "type":  "string",
+                           "required":  true,
+                           "source":  "system",
+                           "defaultValue":  "Valledupar",
+                           "scope":  "request",
+                           "retentionDays":  1
+                       },
+                       {
+                           "key":  "delivery_address",
+                           "role":  "shipping.address",
+                           "label":  "direccion de entrega o recogida",
+                           "type":  "string",
+                           "required":  true,
+                           "source":  "user",
+                           "scope":  "request",
+                           "retentionDays":  1
+                       },
+                       {
+                           "key":  "delivery_phone",
+                           "role":  "customer.phone",
+                           "label":  "celular de entrega",
+                           "type":  "phone",
+                           "required":  true,
+                           "source":  "user",
+                           "scope":  "customer"
+                       },
+                       {
+                           "key":  "payment_method",
+                           "role":  "payment.method",
+                           "label":  "metodo de pago",
+                           "type":  "string",
+                           "required":  true,
+                           "source":  "user",
+                           "scope":  "request",
+                           "retentionDays":  1,
+                           "extractionGuidance":  "Normaliza la eleccion al metodo de pago canonico configurado.",
+                           "options":  [
+                                           {
+                                               "value":  "efectivo",
+                                               "label":  "Efectivo"
+                                           },
+                                           {
+                                               "value":  "transferencia",
+                                               "label":  "Transferencia"
+                                           }
+                                       ]
+                       },
+                       {
+                           "key":  "order_checkout_presented",
+                           "role":  "order.checkout_presented",
+                           "label":  "resumen final presentado",
+                           "type":  "boolean",
+                           "required":  false,
+                           "source":  "system",
+                           "scope":  "request",
+                           "retentionDays":  1
+                       },
+                       {
+                           "key":  "system.recipe_catalog_queries",
+                           "role":  "system.recipe_catalog_queries",
+                           "label":  "consultas de catalogo derivadas de receta",
+                           "type":  "json",
+                           "required":  false,
+                           "source":  "system",
+                           "scope":  "request",
+                           "retentionDays":  1
+                       },
+                       {
+                           "key":  "customer_confirmed",
+                           "role":  "confirmation.verbal",
+                           "label":  "confirmacion verbal del pedido",
+                           "type":  "boolean",
+                           "required":  false,
+                           "source":  "user",
+                           "scope":  "request",
+                           "dependsOn":  [
+                                             "order_checkout_presented",
+                                             "cart_review_confirmed",
+                                             "delivery_method",
+                                             "city",
+                                             "delivery_address",
+                                             "delivery_phone",
+                                             "customer_name",
+                                             "payment_method"
+                                         ],
+                           "retentionDays":  1,
+                           "extractionGuidance":  "Representa la confirmacion explicita del resumen final vigente."
+                       }
+                   ],
+    "notifications":  {
+                          "order_created":  {
+                                                "enabled":  false,
+                                                "recipients":  [
+
+                                                               ],
+                                                "sendMessageSequence":  null
+                                            }
+                      },
+    "webhooks":  {
+
+                 },
+    "escalations":  {
+                        "human":  {
+                                      "contacts":  [
+
+                                                   ]
+                                  },
+                        "external":  {
+                                         "enabled":  false,
+                                         "events":  {
+
+                                                    }
+                                     }
                     },
-                    "productText": {
-                      "type": "string"
-                    },
-                    "quantity": {
-                      "type": [
-                        "number",
-                        "null"
-                      ]
-                    },
-                    "destinationReference": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    }
+    "checkout":  {
+                     "currency":  "COP",
+                     "modes":  {
+                                   "order":  {
+                                                 "paymentMethods":  {
+                                                                        "efectivo":  {
+                                                                                         "label":  "efectivo al recibir",
+                                                                                         "aliases":  [
+                                                                                                         "efectivo",
+                                                                                                         "contraentrega"
+                                                                                                     ],
+                                                                                         "template":  "order_checkout_no_payment"
+                                                                                     },
+                                                                        "transferencia":  {
+                                                                                              "label":  "transferencia manual",
+                                                                                              "aliases":  [
+                                                                                                              "transferencia",
+                                                                                                              "nequi",
+                                                                                                              "bancolombia"
+                                                                                                          ],
+                                                                                              "template":  "order_checkout_manual_transfer",
+                                                                                              "manualConfirmationRequired":  true,
+                                                                                              "manualExpirationMinutes":  1440,
+                                                                                              "confirmationOutcome":  "order_paid"
+                                                                                          }
+                                                                    },
+                                                 "shipping":  {
+                                                                  "enabled":  true,
+                                                                  "localCity":  "Valledupar",
+                                                                  "localCost":  6000,
+                                                                  "nationalCost":  25000
+                                                              }
+                                             }
+                               }
+                 },
+    "templates":  {
+                      "order_checkout_no_payment":  "*Resumen de tu pedido*\n{{#each line_items}}\n- {{name}} x{{quantity}}: ${{line_total}}\n{{/each}}\n- Envio: ${{shipping_cost}}\n- *Total: ${{total}} {{currency}}*\n\nEntrega:\n- Ciudad: {{city}}\n- Direccion: {{delivery_address}}\n- Celular: {{customer_phone}}\n{{#if customer_name}}\n- Nombre: {{customer_name}}\n{{/if}}\n\nMetodo de pago: efectivo al recibir\n\nConfirmas tu pedido con esta informacion?",
+                      "order_checkout_manual_transfer":  "*Resumen de tu pedido*\n{{#each line_items}}\n- {{name}} x{{quantity}}: ${{line_total}}\n{{/each}}\n- Envio: ${{shipping_cost}}\n- *Total: ${{total}} {{currency}}*\n\nEntrega:\n- Ciudad: {{city}}\n- Direccion: {{delivery_address}}\n- Celular: {{customer_phone}}\n{{#if customer_name}}\n- Nombre: {{customer_name}}\n{{/if}}\n\nMetodo de pago: transferencia manual\n\nTu pago queda pendiente de confirmacion manual. Un agente del equipo de CJ Distribuciones confirmara el pago; cuando se confirme, te notificaremos que el pedido fue creado.",
+                      "catalog_results":  "*Productos disponibles*\r\n{{#each products}}\r\n- {{name}}: ${{unit_price}} {{currency}}\r\n{{/each}}\r\n\r\nIndica cuales deseas incluir y en que cantidad.",
+                      "recipe_results":  "*Ideas para preparar*\r\n{{#each results}}\r\n- {{Title}}\r\n  {{Url}}\r\n{{/each}}",
+                      "cart_snapshot":  "*Pedido actual*\r\n{{#each items}}\r\n- {{name}} x{{quantity}}: ${{line_total}}\r\n{{/each}}\r\n*Total: ${{total}} {{currency}}*\r\n\r\nPuedes seguir agregando productos o finalizar la seleccion.",
+                      "cart_review":  "*Resumen de tu pedido*\r\n{{#each items}}\r\n- {{name}} x{{quantity}}: ${{line_total}}\r\n{{/each}}\r\n*Total: ${{total}} {{currency}}*\r\n\r\nConfirma si esta correcto o indica el cambio que necesitas.",
+                      "product_ambiguity":  "Encontre varias referencias para {{product_text}}:\r\n{{#each product_options}}\r\n- {{Name}}: ${{UnitPrice}} {{Currency}}\r\n{{/each}}\r\n\r\nIndica cual deseas incluir.",
+                      "product_selection_prompt":  "Puedes indicar los productos y cantidades que necesitas o la preparacion para la que deseas recomendaciones.",
+                      "order_draft_unavailable":  "No fue posible consultar el pedido vigente en este momento. Intenta nuevamente para continuar con el resumen.",
+                      "customer_name_prompt":  "Hola! Bienvenido a CJ Distribuciones. Con gusto te ayudo a realizar tu pedido. Me indicas tu nombre o el nombre de tu establecimiento?",
+                      "customer_type_prompt":  "Mucho gusto, {{customer_name}}. Selecciona el perfil que describe tu compra:\r\nA. Hogar\r\nB. Tienda o minimercado\r\nC. Restaurante\r\nD. Comida rapida\r\nE. Distribuidor"
                   },
-                  "required": [
-                    "operation",
-                    "productText",
-                    "quantity",
-                    "destinationReference"
-                  ]
-                }
-              },
-              "ambiguityRules": [
-                {
-                  "type": "distinct_values",
-                  "valueProperty": "destinationReference",
-                  "field": "delivery_address",
-                  "minimumDistinctValues": 2
-                }
+    "flows":  [
+                  {
+                      "id":  "order",
+                      "type":  "primary",
+                      "routingGuidance":  "Use this primary flow for CJ Distribuciones product orders, customer identification, profile classification, catalog-grounded recommendations, delivery data, payment method and order confirmation.",
+                      "stages":  [
+                                     {
+                                         "id":  "customer_name",
+                                         "name":  "Identificacion del cliente",
+                                         "goal":  "Obtener el nombre del cliente o establecimiento antes de iniciar el pedido cuando no exista un nombre confiable.",
+                                         "advanceWhenFacts":  [
+                                                                  "customer_name"
+                                                              ],
+                                         "conversationGuidance":  "Si falta customer_name y el cliente no lo informo en el mensaje actual, saluda exactamente: Hola! Bienvenido a CJ Distribuciones. Con gusto te ayudo a realizar tu pedido. Me indicas tu nombre o el nombre de tu establecimiento? Si ya lo dijo, continÃºa sin volver a pedirlo; el motor registra el dato extraÃ­do.",
+                                         "collect":  [
+                                                         "customer_name"
+                                                     ],
+                                         "response":  {
+                                                          "fallbackTemplate":  "customer_name_prompt",
+                                                          "clarificationTemplate":  "customer_name_prompt"
+                                                      }
+                                     },
+                                     {
+                                         "id":  "customer_type",
+                                         "name":  "Perfil del cliente",
+                                         "goal":  "Clasificar el perfil comercial como Hogar, TiendaMinimercado, Restaurante, ComidaRapida o Distribuidor.",
+                                         "advanceWhenFacts":  [
+                                                                  "customer_type"
+                                                              ],
+                                         "conversationGuidance":  "Si falta customer_type, pregunta: Mucho gusto, {customer_name}. Para brindarte informacion y recomendaciones mas adecuadas, cual de estas opciones describe mejor tu perfil? A. Hogar B. Tienda o minimercado C. Restaurante D. Comida rapida E. Distribuidor. Acepta respuestas naturales y registra el valor canonico. Si el cliente corrige el perfil posteriormente, actualizalo.",
+                                         "collect":  [
+                                                         "customer_type"
+                                                     ],
+                                         "response":  {
+                                                          "fallbackTemplate":  "customer_type_prompt",
+                                                          "clarificationTemplate":  "customer_type_prompt"
+                                                      }
+                                     },
+                                     {
+                                         "id":  "product_selection",
+                                         "name":  "Productos, catalogo y recomendaciones",
+                                         "goal":  "Recibir pedidos abiertos, resolver productos reales del catalogo, recomendar de forma controlada y construir el carrito hasta que el cliente finalice.",
+                                         "advanceWhenFacts":  [
+                                                                  "order_finalized"
+                                                              ],
+                                         "conversationGuidance":  "Gestiona la seleccion abierta de productos mediante las senales configuradas. Las consultas comerciales se presentan con resultados autoritativos del catalogo. Las solicitudes de preparacion producen ideas de receta y productos relacionados del catalogo en el mismo turno. Los cambios confirmados se aplican al unico pedido activo y muestran su estado vigente. Cuando el cliente comunique que termino la seleccion, registra order_finalized=true.",
+                                         "collect":  [
+                                                         "order_finalized",
+                                                         "delivery_method",
+                                                         "delivery_address",
+                                                         "delivery_phone",
+                                                         "payment_method"
+                                                     ],
+                                         "signals":  [
+                                                         {
+                                                             "type":  "recipe_request",
+                                                             "description":  "Solicitud de ideas para preparar una comida. El valor contiene el ingrediente o la preparacion principal que debe buscarse.",
+                                                             "valueSchema":  {
+                                                                                 "type":  "string"
+                                                                             }
+                                                         },
+                                                         {
+                                                             "type":  "order_changes",
+                                                             "description":  "Cambios solicitados sobre el unico pedido activo. El valor conserva cada producto, operacion, cantidad y referencia de destino expresada por el cliente.",
+                                                             "valueSchema":  {
+                                                                                 "type":  "array",
+                                                                                 "items":  {
+                                                                                               "type":  "object",
+                                                                                               "additionalProperties":  false,
+                                                                                               "properties":  {
+                                                                                                                  "operation":  {
+                                                                                                                                    "type":  "string",
+                                                                                                                                    "enum":  [
+                                                                                                                                                 "add",
+                                                                                                                                                 "remove",
+                                                                                                                                                 "set_quantity"
+                                                                                                                                             ]
+                                                                                                                                },
+                                                                                                                  "productText":  {
+                                                                                                                                      "type":  "string"
+                                                                                                                                  },
+                                                                                                                  "quantity":  {
+                                                                                                                                   "type":  [
+                                                                                                                                                "number",
+                                                                                                                                                "null"
+                                                                                                                                            ]
+                                                                                                                               },
+                                                                                                                  "destinationReference":  {
+                                                                                                                                               "type":  [
+                                                                                                                                                            "string",
+                                                                                                                                                            "null"
+                                                                                                                                                        ]
+                                                                                                                                           }
+                                                                                                              },
+                                                                                               "required":  [
+                                                                                                                "operation",
+                                                                                                                "productText",
+                                                                                                                "quantity",
+                                                                                                                "destinationReference"
+                                                                                                            ]
+                                                                                           }
+                                                                             },
+                                                             "ambiguityRules":  [
+                                                                                    {
+                                                                                        "type":  "distinct_values",
+                                                                                        "valueProperty":  "destinationReference",
+                                                                                        "field":  "delivery_address",
+                                                                                        "minimumDistinctValues":  2
+                                                                                    }
+                                                                                ]
+                                                         },
+                                                         {
+                                                             "type":  "catalog_query",
+                                                             "description":  "Necesidad vigente de consultar productos, referencias, precios, disponibilidad o recomendaciones en el catalogo. El valor contiene terminos de busqueda concretos resueltos desde el turno y su contexto conversacional.",
+                                                             "valueSchema":  {
+                                                                                 "type":  "object",
+                                                                                 "additionalProperties":  false,
+                                                                                 "properties":  {
+                                                                                                    "queries":  {
+                                                                                                                    "type":  "array",
+                                                                                                                    "items":  {
+                                                                                                                                  "type":  "string"
+                                                                                                                              },
+                                                                                                                    "minItems":  1
+                                                                                                                }
+                                                                                                },
+                                                                                 "required":  [
+                                                                                                  "queries"
+                                                                                              ]
+                                                                             }
+                                                         }
+                                                     ],
+                                         "actions":  [
+                                                         {
+                                                             "id":  "search_recipe_request",
+                                                             "operation":  "commerce.search_recipes",
+                                                             "execution":  { "idempotency": "none" },
+                                                             "trigger":  "on_signal",
+                                                             "signal":  "recipe_request",
+                                                             "arguments":  {
+                                                                               "ingredient":  "{{signal.recipe_request.value}}",
+                                                                               "query":  "preparacion facil",
+                                                                               "limit":  2
+                                                                           },
+                                                             "onOutcome":  {
+                                                                               "recipes.found":  {
+                                                                                                     "effects":  [
+                                                                                                                     {
+                                                                                                                         "type":  "facts.set_from_outcome",
+                                                                                                                         "bindings":  {
+                                                                                                                                          "system.recipe_catalog_queries":  "catalog_search_queries"
+                                                                                                                                      }
+                                                                                                                     },
+                                                                                                                     {
+                                                                                                                         "type":  "presentation.add",
+                                                                                                                         "template":  "recipe_results",
+                                                                                                                         "mode":  "Exclusive",
+                                                                                                                         "priority":  "Required"
+                                                                                                                     }
+                                                                                                                 ],
+                                                                                                     "response":  {
+                                                                                                                      "guidance":  "Presenta mÃ¡ximo dos ideas devueltas y luego muestra Ãºnicamente ingredientes encontrados en el catÃ¡logo oficial."
+                                                                                                                  }
+                                                                                                 }
+                                                                           }
+                                                         },
+                                                         {
+                                                             "id":  "search_recipe_catalog_products",
+                                                             "operation":  "commerce.search_products",
+                                                             "execution":  { "idempotency": "none" },
+                                                             "trigger":  "when_ready",
+                                                             "condition":  {
+                                                                               "factPresent":  "system.recipe_catalog_queries"
+                                                                           },
+                                                             "arguments":  {
+                                                                               "queries":  "{{fact.system.recipe_catalog_queries}}",
+                                                                               "limit":  10
+                                                                           },
+                                                             "onOutcome":  {
+                                                                               "products.found":  {
+                                                                                                      "effects":  [
+                                                                                                                      {
+                                                                                                                          "type":  "facts.clear",
+                                                                                                                          "facts":  [
+                                                                                                                                        "system.recipe_catalog_queries"
+                                                                                                                                    ]
+                                                                                                                      },
+                                                                                                                      {
+                                                                                                                          "type":  "presentation.add",
+                                                                                                                          "template":  "catalog_results",
+                                                                                                                          "mode":  "Exclusive",
+                                                                                                                          "priority":  "Required"
+                                                                                                                      }
+                                                                                                                  ],
+                                                                                                      "response":  {
+                                                                                                                       "guidance":  "Muestra solo productos reales devueltos por catÃ¡logo, con presentaciÃ³n y precio cuando estÃ©n disponibles."
+                                                                                                                   }
+                                                                                                  }
+                                                                           }
+                                                         },
+                                                         {
+                                                             "id":  "apply_order_changes",
+                                                             "operation":  "commerce.apply_order_changes",
+                                                             "trigger":  "on_signal",
+                                                             "signal":  "order_changes",
+                                                             "arguments":  {
+                                                                               "commands":  "{{signal.order_changes.value}}"
+                                                                           },
+                                                             "onOutcome":  {
+                                                                               "cart.applied":  {
+                                                                                                    "response":  {
+                                                                                                                     "guidance":  "Confirma brevemente los cambios aplicados y continÃºa segÃºn el objetivo de la etapa."
+                                                                                                                 },
+                                                                                                    "effects":  [
+                                                                                                                    {
+                                                                                                                        "type":  "presentation.add",
+                                                                                                                        "template":  "cart_snapshot",
+                                                                                                                        "dataPath":  "order",
+                                                                                                                        "mode":  "Exclusive",
+                                                                                                                        "priority":  "Required"
+                                                                                                                    }
+                                                                                                                ]
+                                                                                                },
+                                                                               "cart.product_not_found":  {
+                                                                                                              "response":  {
+                                                                                                                               "mode":  "ask_clarification",
+                                                                                                                               "guidance":  "Indica que ese producto no se encontrÃ³ y pide una descripciÃ³n o referencia mÃ¡s precisa."
+                                                                                                                           }
+                                                                                                          },
+                                                                               "cart.product_ambiguous":  {
+                                                                                                              "response":  {
+                                                                                                                               "mode":  "ask_clarification",
+                                                                                                                               "guidance":  "Presenta Ãºnicamente los candidatos devueltos y pregunta cuÃ¡l referencia desea."
+                                                                                                                           },
+                                                                                                              "effects":  [
+                                                                                                                              {
+                                                                                                                                  "type": "presentation.add",
+                                                                                                                                  "template": "product_ambiguity",
+                                                                                                                                  "dataPath": "error.context",
+                                                                                                                                  "mode": "Exclusive",
+                                                                                                                                  "priority": "Required"
+                                                                                                                              }
+                                                                                                                          ]
+                                                                                                          },
+                                                                               "cart.item_not_found_or_ambiguous":  {
+                                                                                                                        "response":  {
+                                                                                                                                         "mode":  "ask_clarification",
+                                                                                                                                         "guidance":  "Aclara cuÃ¡l producto existente del pedido desea modificar."
+                                                                                                                                     }
+                                                                                                                    },
+                                                                               "cart.conflicting_commands":  {
+                                                                                                                 "response":  {
+                                                                                                                                  "mode":  "ask_clarification",
+                                                                                                                                  "guidance":  "Pide aclarar el cambio final para el producto repetido; no se aplicÃ³ ningÃºn cambio del lote."
+                                                                                                                              }
+                                                                                                             },
+                                                                               "cart.multiple_destinations":  {
+                                                                                                                  "response":  {
+                                                                                                                                   "mode":  "ask_clarification",
+                                                                                                                                   "guidance":  "No se aplicÃ³ ningÃºn cambio. Pregunta cuÃ¡l direcciÃ³n debe usarse para entregar todo el Ãºnico pedido."
+                                                                                                                               }
+                                                                                                              }
+                                                                           }
+                                                         },
+                                                         {
+                                                             "id":  "search_catalog_request",
+                                                             "operation":  "commerce.search_products",
+                                                             "execution":  { "idempotency": "none" },
+                                                             "trigger":  "on_signal",
+                                                             "signal":  "catalog_query",
+                                                             "arguments":  {
+                                                                               "queries":  "{{signal.catalog_query.value.queries}}",
+                                                                               "limit":  10
+                                                                           },
+                                                             "onOutcome":  {
+                                                                               "products.found":  {
+                                                                                                      "effects":  [
+                                                                                                                      {
+                                                                                                                          "type":  "presentation.add",
+                                                                                                                          "template":  "catalog_results",
+                                                                                                                          "mode":  "Exclusive",
+                                                                                                                          "priority":  "Required"
+                                                                                                                      }
+                                                                                                                  ]
+                                                                                                  }
+                                                                           }
+                                                         }
+                                                     ],
+                                         "response":  {
+                                                          "fallbackTemplate":  "product_selection_prompt"
+                                                      }
+                                     },
+                                     {
+                                         "id":  "cart_review",
+                                         "name":  "Resumen inicial del pedido",
+                                         "goal":  "Mostrar el carrito con productos y subtotales disponibles antes de pedir entrega o pago.",
+                                         "advanceWhenFacts":  [
+                                                                  "cart_review_confirmed"
+                                                              ],
+                                         "conversationGuidance":  "Presenta el estado autoritativo del carrito y obtiene la aprobacion explicita del resumen vigente. Los cambios solicitados se aplican mediante la operacion configurada y producen un resumen actualizado.",
+                                         "collect":  [
+                                                         "cart_review_confirmed",
+                                                         "delivery_method",
+                                                         "delivery_address",
+                                                         "delivery_phone",
+                                                         "payment_method"
+                                                     ],
+                                         "signals":  [
+                                                         {
+                                                             "type":  "order_changes",
+                                                             "description":  "Cambios explÃ­citos del Ãºnico pedido activo. Extrae todos los productos y cantidades. destinationReference contiene la direcciÃ³n asociada al producto. Si aparecen dos direcciones diferentes, no elijas: marca delivery_address como ambiguo y conserva cada direcciÃ³n en su producto; el motor diferirÃ¡ todo el lote hasta que el cliente elija una direcciÃ³n para el pedido completo.",
+                                                             "valueSchema":  {
+                                                                                 "type":  "array",
+                                                                                 "items":  {
+                                                                                               "type":  "object",
+                                                                                               "additionalProperties":  false,
+                                                                                               "properties":  {
+                                                                                                                  "operation":  {
+                                                                                                                                    "type":  "string",
+                                                                                                                                    "enum":  [
+                                                                                                                                                 "add",
+                                                                                                                                                 "remove",
+                                                                                                                                                 "set_quantity"
+                                                                                                                                             ]
+                                                                                                                                },
+                                                                                                                  "productText":  {
+                                                                                                                                      "type":  "string"
+                                                                                                                                  },
+                                                                                                                  "quantity":  {
+                                                                                                                                   "type":  [
+                                                                                                                                                "number",
+                                                                                                                                                "null"
+                                                                                                                                            ]
+                                                                                                                               },
+                                                                                                                  "destinationReference":  {
+                                                                                                                                               "type":  [
+                                                                                                                                                            "string",
+                                                                                                                                                            "null"
+                                                                                                                                                        ]
+                                                                                                                                           }
+                                                                                                              },
+                                                                                               "required":  [
+                                                                                                                "operation",
+                                                                                                                "productText",
+                                                                                                                "quantity",
+                                                                                                                "destinationReference"
+                                                                                                            ]
+                                                                                           }
+                                                                             },
+                                                             "ambiguityRules":  [
+                                                                                    {
+                                                                                        "type":  "distinct_values",
+                                                                                        "valueProperty":  "destinationReference",
+                                                                                        "field":  "delivery_address",
+                                                                                        "minimumDistinctValues":  2
+                                                                                    }
+                                                                                ]
+                                                         }
+                                                     ],
+                                         "actions":  [
+                                                         {
+                                                             "id":  "show_current_order_draft",
+                                                             "operation":  "commerce.get_order_draft",
+                                                             "trigger":  "when_ready",
+                                                             "arguments":  {
+
+                                                                           },
+                                                             "onOutcome":  {
+                                                                               "order.draft_loaded":  {
+                                                                                                          "response":  {
+                                                                                                                           "guidance":  "Muestra los Ã­tems, cantidades, subtotales y total devueltos, y pregunta si el pedido actual estÃ¡ correcto."
+                                                                                                                       },
+                                                                                                          "effects":  [
+                                                                                                                          {
+                                                                                                                              "type":  "presentation.add",
+                                                                                                                              "template":  "cart_review",
+                                                                                                                              "dataPath":  "order",
+                                                                                                                              "mode":  "Exclusive",
+                                                                                                                              "priority":  "Required"
+                                                                                                                          }
+                                                                                                                      ]
+                                                                                                      }
+,
+                                                                               "order.draft_empty":  {
+                                                                                                           "response":  { "fallbackTemplate":  "product_selection_prompt" },
+                                                                                                           "effects":  [
+                                                                                                                           {
+                                                                                                                               "type":  "facts.clear",
+                                                                                                                               "facts":  [ "order_finalized", "cart_review_confirmed" ]
+                                                                                                                           }
+                                                                                                                       ]
+                                                                                                       }                                                                           }
+                                                         },
+                                                         {
+                                                             "id":  "apply_order_changes",
+                                                             "operation":  "commerce.apply_order_changes",
+                                                             "trigger":  "on_signal",
+                                                             "signal":  "order_changes",
+                                                             "arguments":  {
+                                                                               "commands":  "{{signal.order_changes.value}}"
+                                                                           },
+                                                             "onOutcome":  {
+                                                                               "cart.applied":  {
+                                                                                                    "response":  {
+                                                                                                                     "guidance":  "Confirma brevemente los cambios aplicados y continÃºa segÃºn el objetivo de la etapa."
+                                                                                                                 },
+                                                                                                    "effects":  [
+                                                                                                                    {
+                                                                                                                        "type":  "presentation.add",
+                                                                                                                        "template":  "cart_review",
+                                                                                                                        "dataPath":  "order",
+                                                                                                                        "mode":  "Exclusive",
+                                                                                                                        "priority":  "Required"
+                                                                                                                    }
+                                                                                                                ]
+                                                                                                },
+                                                                               "cart.product_not_found":  {
+                                                                                                              "response":  {
+                                                                                                                               "mode":  "ask_clarification",
+                                                                                                                               "guidance":  "Indica que ese producto no se encontrÃ³ y pide una descripciÃ³n o referencia mÃ¡s precisa."
+                                                                                                                           }
+                                                                                                          },
+                                                                               "cart.product_ambiguous":  {
+                                                                                                              "response":  {
+                                                                                                                               "mode":  "ask_clarification",
+                                                                                                                               "guidance":  "Presenta Ãºnicamente los candidatos devueltos y pregunta cuÃ¡l referencia desea."
+                                                                                                                           },
+                                                                                                              "effects":  [
+                                                                                                                              {
+                                                                                                                                  "type": "presentation.add",
+                                                                                                                                  "template": "product_ambiguity",
+                                                                                                                                  "dataPath": "error.context",
+                                                                                                                                  "mode": "Exclusive",
+                                                                                                                                  "priority": "Required"
+                                                                                                                              }
+                                                                                                                          ]
+                                                                                                          },
+                                                                               "cart.item_not_found_or_ambiguous":  {
+                                                                                                                        "response":  {
+                                                                                                                                         "mode":  "ask_clarification",
+                                                                                                                                         "guidance":  "Aclara cuÃ¡l producto existente del pedido desea modificar."
+                                                                                                                                     }
+                                                                                                                    },
+                                                                               "cart.conflicting_commands":  {
+                                                                                                                 "response":  {
+                                                                                                                                  "mode":  "ask_clarification",
+                                                                                                                                  "guidance":  "Pide aclarar el cambio final para el producto repetido; no se aplicÃ³ ningÃºn cambio del lote."
+                                                                                                                              }
+                                                                                                             },
+                                                                               "cart.multiple_destinations":  {
+                                                                                                                  "response":  {
+                                                                                                                                   "mode":  "ask_clarification",
+                                                                                                                                   "guidance":  "No se aplicÃ³ ningÃºn cambio. Pregunta cuÃ¡l direcciÃ³n debe usarse para entregar todo el Ãºnico pedido."
+                                                                                                                               }
+                                                                                                              }
+                                                                           }
+                                                         }
+                                                     ],
+                                         "response":  {
+                                                          "fallbackTemplate":  "order_draft_unavailable"
+                                                      }
+                                     },
+                                     {
+                                         "id":  "order_data",
+                                         "name":  "Entrega",
+                                         "goal":  "Definir recogida o domicilio y obtener solo los datos faltantes requeridos por el checkout.",
+                                         "advanceWhenFacts":  [
+                                                                  "delivery_method",
+                                                                  "city",
+                                                                  "delivery_address",
+                                                                  "delivery_phone",
+                                                                  "customer_name"
+                                                              ],
+                                         "reentryOnFactChanged":  [
+                                                                      "delivery_method",
+                                                                      "city",
+                                                                      "delivery_address",
+                                                                      "delivery_phone",
+                                                                      "customer_name"
+                                                                  ],
+                                         "conversationGuidance":  "Despues de aprobar el carrito pregunta: Prefieres recoger tu pedido o recibirlo a domicilio? Si elige recogida, registra delivery_method=recogida y usa como delivery_address el punto de recogida configurado o Punto de recogida CJ Distribuciones - Valledupar, Cesar. Si elige domicilio, registra delivery_method=domicilio y solicita solo datos faltantes: direccion, barrio o referencia cuando aplique, telefono si no existe y nombre del receptor si falta. No pidas datos confiables ya disponibles. No pidas ciudad si ya existe por defecto; usa Valledupar salvo que el cliente indique otra ciudad.",
+                                         "collect":  [
+                                                         "delivery_method",
+                                                         "city",
+                                                         "delivery_address",
+                                                         "delivery_phone",
+                                                         "customer_name",
+                                                         "payment_method"
+                                                     ]
+                                     },
+                                     {
+                                         "id":  "payment_method",
+                                         "name":  "Metodo de pago",
+                                         "goal":  "Elegir uno de los metodos de pago configurados para CJ Distribuciones.",
+                                         "advanceWhenFacts":  [
+                                                                  "payment_method"
+                                                              ],
+                                         "conversationGuidance":  "Cuando la modalidad de entrega y datos requeridos esten completos, pregunta: Como deseas realizar el pago? Opciones configuradas: transferencia o efectivo. Registra payment_method=efectivo o payment_method=transferencia segun responda. No menciones metodos no configurados.",
+                                         "collect":  [
+                                                         "payment_method"
+                                                     ]
+                                     },
+                                     {
+                                         "id":  "summary",
+                                         "name":  "Resumen final del pedido",
+                                         "goal":  "Preparar y mostrar el resumen oficial con entrega, pago y total final del motor.",
+                                         "advanceWhenFacts":  [
+                                                                  "order_checkout_presented"
+                                                              ],
+                                         "reentryOnFactChanged":  [
+                                                                      "order_finalized",
+                                                                      "cart_review_confirmed",
+                                                                      "delivery_method",
+                                                                      "city",
+                                                                      "delivery_address",
+                                                                      "delivery_phone",
+                                                                      "customer_name",
+                                                                      "payment_method"
+                                                                  ],
+                                         "actions":  [
+                                                         {
+                                                             "id":  "prepare_order_checkout",
+                                                             "operation":  "commerce.prepare_checkout",
+                                                             "trigger":  "when_ready",
+                                                             "condition":  {
+                                                                               "all":  [
+                                                                                           {
+                                                                                               "factPresent":  "cart_review_confirmed"
+                                                                                           },
+                                                                                           {
+                                                                                               "factPresent":  "delivery_method"
+                                                                                           },
+                                                                                           {
+                                                                                               "factPresent":  "city"
+                                                                                           },
+                                                                                           {
+                                                                                               "factPresent":  "delivery_address"
+                                                                                           },
+                                                                                           {
+                                                                                               "factPresent":  "delivery_phone"
+                                                                                           },
+                                                                                           {
+                                                                                               "factPresent":  "customer_name"
+                                                                                           },
+                                                                                           {
+                                                                                               "factPresent":  "payment_method"
+                                                                                           },
+                                                                                           {
+                                                                                               "factMissing":  "order_checkout_presented"
+                                                                                           }
+                                                                                       ]
+                                                                           },
+                                                             "arguments":  {
+
+                                                                           },
+                                                             "onOutcome":  {
+                                                                               "order.checkout_ready":  {
+                                                                                                            "effects":  [
+                                                                                                                            {
+                                                                                                                                "type":  "fact.set",
+                                                                                                                                "fact":  "order_checkout_presented",
+                                                                                                                                "value":  true
+                                                                                                                            }
+                                                                                                                        ]
+                                                                                                        },
+                                                                               "order.checkout_payment_required":  {
+                                                                                                                       "effects":  [
+                                                                                                                                       {
+                                                                                                                                           "type":  "fact.set",
+                                                                                                                                           "fact":  "order_checkout_presented",
+                                                                                                                                           "value":  true
+                                                                                                                                       }
+                                                                                                                                   ]
+                                                                                                                   },
+                                                                               "order.checkout_pending_manual_payment":  {
+                                                                                                                             "effects":  [
+                                                                                                                                             {
+                                                                                                                                                 "type":  "fact.set",
+                                                                                                                                                 "fact":  "order_checkout_presented",
+                                                                                                                                                 "value":  true
+                                                                                                                                             }
+                                                                                                                                         ]
+                                                                                                                         }
+,
+                                                                               "order_draft_missing":  {
+                                                                                                            "response":  { "fallbackTemplate":  "order_draft_unavailable" },
+                                                                                                            "effects":  [
+                                                                                                                            {
+                                                                                                                                "type":  "facts.clear",
+                                                                                                                                "facts":  [ "order_finalized", "cart_review_confirmed", "order_checkout_presented" ]
+                                                                                                                            }
+                                                                                                                        ]
+                                                                                                        },
+                                                                               "missing_prerequisites":  {
+                                                                                                              "response":  { "fallbackTemplate":  "order_draft_unavailable" },
+                                                                                                              "effects":  [
+                                                                                                                              {
+                                                                                                                                  "type":  "facts.clear",
+                                                                                                                                  "facts":  [ "order_finalized", "cart_review_confirmed", "order_checkout_presented" ]
+                                                                                                                              }
+                                                                                                                          ]
+                                                                                                          }                                                                           }
+                                                         }
+                                                     ],
+                                         "conversationGuidance":  "Cuando ya existan items, carrito aprobado, entrega y metodo de pago, el motor prepara el checkout una sola vez. Si el metodo es efectivo, muestra el resumen autoritativo renderizado por el motor y pide confirmacion verbal. Si el metodo es transferencia, muestra el resumen autoritativo renderizado por el motor e informa que el pago queda pendiente de confirmacion manual por el equipo; no pidas comprobante, no pidas confirmacion adicional del pedido y no confirmes que el pedido fue creado. Si falla por configuracion no recuperable, escala a humano.",
+                                         "collect":  [
+                                                         "order_checkout_presented"
+                                                     ]
+                                     },
+                                     {
+                                         "id":  "order_confirmation",
+                                         "name":  "Confirmacion del pedido",
+                                         "goal":  "Crear el pedido despues de confirmacion del cliente.",
+                                         "advanceWhenFacts":  [
+                                                                  "customer_confirmed"
+                                                              ],
+                                         "actions":  [
+                                                         {
+                                                             "id":  "create_confirmed_cash_order",
+                                                             "operation":  "commerce.create_order",
+                                                             "trigger":  "when_ready",
+                                                             "condition":  {
+                                                                               "all":  [
+                                                                                           {
+                                                                                               "factEquals":  {
+                                                                                                                  "key":  "payment_method",
+                                                                                                                  "value":  "efectivo"
+                                                                                                              }
+                                                                                           },
+                                                                                           {
+                                                                                               "factEquals":  {
+                                                                                                                  "key":  "customer_confirmed",
+                                                                                                                  "value":  true
+                                                                                                              }
+                                                                                           }
+                                                                                       ]
+                                                                           },
+                                                             "arguments":  {
+                                                                               "customer_confirmed":  "{{fact.customer_confirmed}}"
+                                                                           },
+                                                             "onOutcome":  {
+                                                                               "order.created":  {
+                                                                                                     "effects":  [
+                                                                                                                     {
+                                                                                                                         "type":  "sequence.enqueue",
+                                                                                                                         "sequence":  "order_created_customer"
+                                                                                                                     },
+                                                                                                                     {
+                                                                                                                         "type":  "request.complete"
+                                                                                                                     }
+                                                                                                                 ],
+                                                                                                     "response":  {
+                                                                                                                      "suppressText":  true
+                                                                                                                  }
+                                                                                                 }
+                                                                           }
+                                                         }
+                                                     ],
+                                         "conversationGuidance":  "Si payment_method=transferencia, no pidas confirmacion verbal, no confirmes que el pedido fue creado y responde que el pago queda pendiente de confirmacion manual por el equipo de CJ Distribuciones; cuando el pago se confirme manualmente, el sistema notificara que el pedido fue creado. Si payment_method=efectivo y falta customer_confirmed, pide confirmacion verbal del resumen final y registrala solo cuando el cliente la entregue claramente. Con customer_confirmed=true y metodo efectivo, crea el pedido usando los facts vigentes y despues envia la secuencia order_created_customer. Si corrige datos, metodo de pago o carrito, aplica el cambio y presenta resumen actualizado. No afirmes pago recibido solo por una imagen o comprobante si el workflow no lo valida.",
+                                         "collect":  [
+                                                         "customer_confirmed"
+                                                     ]
+                                     }
+                                 ]
+                  }
               ]
-            }
-          ],
-          "actions": [
-            {
-              "id": "search_recipe_request",
-              "operation": "commerce.search_recipes",
-              "trigger": "on_signal",
-              "signal": "recipe_request",
-              "arguments": {
-                "ingredient": "{{signal.recipe_request.value}}",
-                "query": "preparacion facil",
-                "limit": 2
-              },
-              "onOutcome": {
-                "recipes.found": {
-                  "effects": [
-                    {
-                      "type": "facts.set_from_outcome",
-                      "bindings": {
-                        "system.recipe_catalog_queries": "catalog_search_queries"
-                      }
-                    }
-                  ],
-                  "response": {
-                    "guidance": "Presenta mÃ¡ximo dos ideas devueltas y luego muestra Ãºnicamente ingredientes encontrados en el catÃ¡logo oficial."
-                  }
-                }
-              }
-            },
-            {
-              "id": "search_recipe_catalog_products",
-              "operation": "commerce.search_products",
-              "trigger": "when_ready",
-              "condition": {
-                "factPresent": "system.recipe_catalog_queries"
-              },
-              "arguments": {
-                "queries": "{{fact.system.recipe_catalog_queries}}",
-                "limit": 10
-              },
-              "onOutcome": {
-                "products.found": {
-                  "effects": [
-                    {
-                      "type": "facts.clear",
-                      "facts": [
-                        "system.recipe_catalog_queries"
-                      ]
-                    }
-                  ],
-                  "response": {
-                    "guidance": "Muestra solo productos reales devueltos por catÃ¡logo, con presentaciÃ³n y precio cuando estÃ©n disponibles."
-                  }
-                }
-              }
-            },
-            {
-              "id": "apply_order_changes",
-              "operation": "commerce.apply_order_changes",
-              "trigger": "on_signal",
-              "signal": "order_changes",
-              "arguments": {
-                "commands": "{{signal.order_changes.value}}"
-              },
-              "onOutcome": {
-                "cart.applied": {
-                  "response": {
-                    "guidance": "Confirma brevemente los cambios aplicados y continÃºa segÃºn el objetivo de la etapa."
-                  }
-                },
-                "cart.product_not_found": {
-                  "response": {
-                    "mode": "ask_clarification",
-                    "guidance": "Indica que ese producto no se encontrÃ³ y pide una descripciÃ³n o referencia mÃ¡s precisa."
-                  }
-                },
-                "cart.product_ambiguous": {
-                  "response": {
-                    "mode": "ask_clarification",
-                    "guidance": "Presenta Ãºnicamente los candidatos devueltos y pregunta cuÃ¡l referencia desea."
-                  }
-                },
-                "cart.item_not_found_or_ambiguous": {
-                  "response": {
-                    "mode": "ask_clarification",
-                    "guidance": "Aclara cuÃ¡l producto existente del pedido desea modificar."
-                  }
-                },
-                "cart.conflicting_commands": {
-                  "response": {
-                    "mode": "ask_clarification",
-                    "guidance": "Pide aclarar el cambio final para el producto repetido; no se aplicÃ³ ningÃºn cambio del lote."
-                  }
-                },
-                "cart.multiple_destinations": {
-                  "response": {
-                    "mode": "ask_clarification",
-                    "guidance": "No se aplicÃ³ ningÃºn cambio. Pregunta cuÃ¡l direcciÃ³n debe usarse para entregar todo el Ãºnico pedido."
-                  }
-                }
-              }
-            }
-          ]
-        },
-        {
-          "id": "cart_review",
-          "name": "Resumen inicial del pedido",
-          "goal": "Mostrar el carrito con productos y subtotales disponibles antes de pedir entrega o pago.",
-          "advanceWhenFacts": [
-            "cart_review_confirmed"
-          ],
-          "conversationGuidance": "Cuando order_finalized=true y existan items, usa get_order_draft para mostrar: Tu pedido queda asi, con cada producto, presentacion, cantidad y subtotal si el resultado vigente lo entrega. Muestra el total calculado por el sistema si esta disponible. Pregunta: Esta correcto o deseas modificar algo? Si confirma, registra cart_review_confirmed=true. Si modifica, aplica los cambios extraÃ­dos mediante la operaciÃ³n configurada y vuelve a mostrar el resumen.",
-          "collect": [
-            "cart_review_confirmed",
-            "delivery_address"
-          ],
-          "signals": [
-            {
-              "type": "order_changes",
-              "description": "Cambios explÃ­citos del Ãºnico pedido activo. Extrae todos los productos y cantidades. destinationReference contiene la direcciÃ³n asociada al producto. Si aparecen dos direcciones diferentes, no elijas: marca delivery_address como ambiguo y conserva cada direcciÃ³n en su producto; el motor diferirÃ¡ todo el lote hasta que el cliente elija una direcciÃ³n para el pedido completo.",
-              "valueSchema": {
-                "type": "array",
-                "items": {
-                  "type": "object",
-                  "additionalProperties": false,
-                  "properties": {
-                    "operation": {
-                      "type": "string",
-                      "enum": [
-                        "add",
-                        "remove",
-                        "set_quantity"
-                      ]
-                    },
-                    "productText": {
-                      "type": "string"
-                    },
-                    "quantity": {
-                      "type": [
-                        "number",
-                        "null"
-                      ]
-                    },
-                    "destinationReference": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    }
-                  },
-                  "required": [
-                    "operation",
-                    "productText",
-                    "quantity",
-                    "destinationReference"
-                  ]
-                }
-              },
-              "ambiguityRules": [
-                {
-                  "type": "distinct_values",
-                  "valueProperty": "destinationReference",
-                  "field": "delivery_address",
-                  "minimumDistinctValues": 2
-                }
-              ]
-            }
-          ],
-          "actions": [
-            {
-              "id": "show_current_order_draft",
-              "operation": "commerce.get_order_draft",
-              "trigger": "when_ready",
-              "arguments": {},
-              "onOutcome": {
-                "order.draft_loaded": {
-                  "response": {
-                    "guidance": "Muestra los Ã­tems, cantidades, subtotales y total devueltos, y pregunta si el pedido actual estÃ¡ correcto."
-                  }
-                }
-              }
-            },
-            {
-              "id": "apply_order_changes",
-              "operation": "commerce.apply_order_changes",
-              "trigger": "on_signal",
-              "signal": "order_changes",
-              "arguments": {
-                "commands": "{{signal.order_changes.value}}"
-              },
-              "onOutcome": {
-                "cart.applied": {
-                  "response": {
-                    "guidance": "Confirma brevemente los cambios aplicados y continÃºa segÃºn el objetivo de la etapa."
-                  }
-                },
-                "cart.product_not_found": {
-                  "response": {
-                    "mode": "ask_clarification",
-                    "guidance": "Indica que ese producto no se encontrÃ³ y pide una descripciÃ³n o referencia mÃ¡s precisa."
-                  }
-                },
-                "cart.product_ambiguous": {
-                  "response": {
-                    "mode": "ask_clarification",
-                    "guidance": "Presenta Ãºnicamente los candidatos devueltos y pregunta cuÃ¡l referencia desea."
-                  }
-                },
-                "cart.item_not_found_or_ambiguous": {
-                  "response": {
-                    "mode": "ask_clarification",
-                    "guidance": "Aclara cuÃ¡l producto existente del pedido desea modificar."
-                  }
-                },
-                "cart.conflicting_commands": {
-                  "response": {
-                    "mode": "ask_clarification",
-                    "guidance": "Pide aclarar el cambio final para el producto repetido; no se aplicÃ³ ningÃºn cambio del lote."
-                  }
-                },
-                "cart.multiple_destinations": {
-                  "response": {
-                    "mode": "ask_clarification",
-                    "guidance": "No se aplicÃ³ ningÃºn cambio. Pregunta cuÃ¡l direcciÃ³n debe usarse para entregar todo el Ãºnico pedido."
-                  }
-                }
-              }
-            }
-          ]
-        },
-        {
-          "id": "order_data",
-          "name": "Entrega",
-          "goal": "Definir recogida o domicilio y obtener solo los datos faltantes requeridos por el checkout.",
-          "advanceWhenFacts": [
-            "delivery_method",
-            "city",
-            "delivery_address",
-            "delivery_phone",
-            "customer_name"
-          ],
-          "reentryOnFactChanged": [
-            "delivery_method",
-            "city",
-            "delivery_address",
-            "delivery_phone",
-            "customer_name"
-          ],
-          "conversationGuidance": "Despues de aprobar el carrito pregunta: Prefieres recoger tu pedido o recibirlo a domicilio? Si elige recogida, registra delivery_method=recogida y usa como delivery_address el punto de recogida configurado o Punto de recogida CJ Distribuciones - Valledupar, Cesar. Si elige domicilio, registra delivery_method=domicilio y solicita solo datos faltantes: direccion, barrio o referencia cuando aplique, telefono si no existe y nombre del receptor si falta. No pidas datos confiables ya disponibles. No pidas ciudad si ya existe por defecto; usa Valledupar salvo que el cliente indique otra ciudad.",
-          "collect": [
-            "delivery_method",
-            "city",
-            "delivery_address",
-            "delivery_phone",
-            "customer_name"
-          ]
-        },
-        {
-          "id": "payment_method",
-          "name": "Metodo de pago",
-          "goal": "Elegir uno de los metodos de pago configurados para CJ Distribuciones.",
-          "advanceWhenFacts": [
-            "payment_method"
-          ],
-          "conversationGuidance": "Cuando la modalidad de entrega y datos requeridos esten completos, pregunta: Como deseas realizar el pago? Opciones configuradas: transferencia o efectivo. Registra payment_method=efectivo o payment_method=transferencia segun responda. No menciones metodos no configurados.",
-          "collect": [
-            "payment_method"
-          ]
-        },
-        {
-          "id": "summary",
-          "name": "Resumen final del pedido",
-          "goal": "Preparar y mostrar el resumen oficial con entrega, pago y total final del motor.",
-          "advanceWhenFacts": [
-            "order_checkout_presented"
-          ],
-          "reentryOnFactChanged": [
-            "order_finalized",
-            "cart_review_confirmed",
-            "delivery_method",
-            "city",
-            "delivery_address",
-            "delivery_phone",
-            "customer_name",
-            "payment_method"
-          ],
-          "actions": [
-            {
-              "id": "prepare_order_checkout",
-              "operation": "commerce.prepare_checkout",
-              "trigger": "when_ready",
-              "condition": {
-                "all": [
-                  {
-                    "factPresent": "cart_review_confirmed"
-                  },
-                  {
-                    "factPresent": "delivery_method"
-                  },
-                  {
-                    "factPresent": "city"
-                  },
-                  {
-                    "factPresent": "delivery_address"
-                  },
-                  {
-                    "factPresent": "delivery_phone"
-                  },
-                  {
-                    "factPresent": "customer_name"
-                  },
-                  {
-                    "factPresent": "payment_method"
-                  },
-                  {
-                    "factMissing": "order_checkout_presented"
-                  }
-                ]
-              },
-              "arguments": {},
-              "onOutcome": {
-                "order.checkout_ready": {
-                  "effects": [
-                    {
-                      "type": "fact.set",
-                      "fact": "order_checkout_presented",
-                      "value": true
-                    }
-                  ]
-                },
-                "order.checkout_payment_required": {
-                  "effects": [
-                    {
-                      "type": "fact.set",
-                      "fact": "order_checkout_presented",
-                      "value": true
-                    }
-                  ]
-                },
-                "order.checkout_pending_manual_payment": {
-                  "effects": [
-                    {
-                      "type": "fact.set",
-                      "fact": "order_checkout_presented",
-                      "value": true
-                    }
-                  ]
-                }
-              }
-            }
-          ],
-          "conversationGuidance": "Cuando ya existan items, carrito aprobado, entrega y metodo de pago, el motor prepara el checkout una sola vez. Si el metodo es efectivo, muestra el resumen autoritativo renderizado por el motor y pide confirmacion verbal. Si el metodo es transferencia, muestra el resumen autoritativo renderizado por el motor e informa que el pago queda pendiente de confirmacion manual por el equipo; no pidas comprobante, no pidas confirmacion adicional del pedido y no confirmes que el pedido fue creado. Si falla por configuracion no recuperable, escala a humano.",
-          "collect": [
-            "order_checkout_presented"
-          ]
-        },
-        {
-          "id": "order_confirmation",
-          "name": "Confirmacion del pedido",
-          "goal": "Crear el pedido despues de confirmacion del cliente.",
-          "advanceWhenFacts": [
-            "customer_confirmed"
-          ],
-          "actions": [
-            {
-              "id": "create_confirmed_cash_order",
-              "operation": "commerce.create_order",
-              "trigger": "when_ready",
-              "condition": {
-                "all": [
-                  {
-                    "factEquals": {
-                      "key": "payment_method",
-                      "value": "efectivo"
-                    }
-                  },
-                  {
-                    "factEquals": {
-                      "key": "customer_confirmed",
-                      "value": true
-                    }
-                  }
-                ]
-              },
-              "arguments": {
-                "customer_confirmed": "{{fact.customer_confirmed}}"
-              },
-              "onOutcome": {
-                "order.created": {
-                  "effects": [
-                    {
-                      "type": "sequence.enqueue",
-                      "sequence": "order_created_customer"
-                    },
-                    {
-                      "type": "request.complete"
-                    }
-                  ],
-                  "response": {
-                    "guidance": "Confirma el pedido Ãºnicamente con los datos autoritativos devueltos por la operaciÃ³n."
-                  }
-                }
-              }
-            }
-          ],
-          "conversationGuidance": "Si payment_method=transferencia, no pidas confirmacion verbal, no confirmes que el pedido fue creado y responde que el pago queda pendiente de confirmacion manual por el equipo de CJ Distribuciones; cuando el pago se confirme manualmente, el sistema notificara que el pedido fue creado. Si payment_method=efectivo y falta customer_confirmed, pide confirmacion verbal del resumen final y registrala solo cuando el cliente la entregue claramente. Con customer_confirmed=true y metodo efectivo, crea el pedido usando los facts vigentes y despues envia la secuencia order_created_customer. Si corrige datos, metodo de pago o carrito, aplica el cambio y presenta resumen actualizado. No afirmes pago recibido solo por una imagen o comprobante si el workflow no lo valida.",
-          "collect": [
-            "customer_confirmed"
-          ]
-        }
-      ]
-    }
-  ]
 }';
 
 IF ISJSON(@SettingsJson) <> 1
@@ -988,7 +1211,7 @@ BEGIN
     VALUES
         (@AgentId, @BusinessId, @AgentTypeId, N'Asistente CJ Distribuciones',
          N'Asistente comercial para pedidos, clasificacion de cliente y recetas web para hogar.',
-         1, @SettingsJson, N'gpt-4.1-mini', 0.62, GETUTCDATE());
+         1, @SettingsJson, N'gpt-4.1-mini', 0.2, GETUTCDATE());
 END
 ELSE
 BEGIN
@@ -1000,7 +1223,7 @@ BEGIN
         IsActive = 1,
         SettingsJson = @SettingsJson,
         Model = N'gpt-4.1-mini',
-        Temperature = 0.62,
+        Temperature = 0.4,
         UpdatedAt = GETUTCDATE()
     WHERE AgentId = @AgentId;
 END

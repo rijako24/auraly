@@ -71,6 +71,95 @@ public sealed class DeterministicStageExecutorTests
         result.GetProperty("text").GetString().Should().Be("corte infantil");
     }
     [Fact]
+    public async Task PresentationEffect_ConvertsOutcomeJsonRecursivelyForTemplates()
+    {
+        var operation = new CatalogOutcomeOperation();
+        var executor = new DeterministicStageExecutor(
+            new AgentOperationRegistry([operation]),
+            new StageConditionEvaluator(),
+            new OperationArgumentBinder());
+        var stage = new AgentFlowStage
+        {
+            Id = "catalog",
+            Actions =
+            [
+                new StageActionDefinition
+                {
+                    Id = "search",
+                    Operation = operation.Descriptor.Id,
+                    OnOutcome = new Dictionary<string, StageOutcomeHandlerDefinition>
+                    {
+                        ["products.found"] = new()
+                        {
+                            Effects =
+                            [
+                                new StageEffectDefinition
+                                {
+                                    Type = StageEffectTypes.AddPresentation,
+                                    Template = "catalog_results",
+                                    Mode = "Exclusive",
+                                    Priority = "Required"
+                                }
+                            ]
+                        }
+                    }
+                }
+            ]
+        };
+
+        var result = await executor.ExecuteAsync(stage, StageActionTriggers.WhenReady, Context());
+
+        var presentation = result.Presentations.Should().ContainSingle().Subject;
+        var products = presentation.Data["products"].Should().BeAssignableTo<IReadOnlyList<object?>>().Subject;
+        var first = products.Should().ContainSingle().Subject.Should().BeAssignableTo<IReadOnlyDictionary<string, object?>>().Subject;
+        first["name"].Should().Be("Pollo");
+        first["unit_price"].Should().Be(12000m);
+    }
+    [Fact]
+    public async Task PresentationEffect_CanUseTypedOperationErrorContext()
+    {
+        var operation = new AmbiguousOutcomeOperation();
+        var executor = new DeterministicStageExecutor(
+            new AgentOperationRegistry([operation]),
+            new StageConditionEvaluator(),
+            new OperationArgumentBinder());
+        var stage = new AgentFlowStage
+        {
+            Id = "cart",
+            Actions =
+            [
+                new StageActionDefinition
+                {
+                    Id = "apply",
+                    Operation = operation.Descriptor.Id,
+                    OnOutcome = new Dictionary<string, StageOutcomeHandlerDefinition>
+                    {
+                        ["cart.product_ambiguous"] = new()
+                        {
+                            Effects =
+                            [
+                                new StageEffectDefinition
+                                {
+                                    Type = StageEffectTypes.AddPresentation,
+                                    Template = "product_ambiguity",
+                                    DataPath = "error.context",
+                                    Mode = "Exclusive",
+                                    Priority = "Required"
+                                }
+                            ]
+                        }
+                    }
+                }
+            ]
+        };
+
+        var result = await executor.ExecuteAsync(stage, StageActionTriggers.WhenReady, Context());
+
+        var presentation = result.Presentations.Should().ContainSingle().Subject;
+        presentation.Data["product_text"].Should().Be("pollo");
+        presentation.Data["product_options"].Should().BeAssignableTo<IReadOnlyList<object?>>();
+    }
+    [Fact]
     public async Task RecoverableFailure_RetriesUpToConfiguredMaximum()
     {
         var operation = new RecoverableThenSuccessfulOperation();
@@ -161,6 +250,43 @@ public sealed class DeterministicStageExecutorTests
         return document.RootElement.Clone();
     }
 
+    private sealed class CatalogOutcomeOperation : IAgentOperation
+    {
+        public OperationDescriptor Descriptor { get; } = new(
+            "test.catalog",
+            "{\"type\":\"object\",\"required\":[]}",
+            ["products.found"], [], [], []);
+
+        public Task<OperationOutcome> ExecuteAsync(
+            JsonElement input,
+            OperationContext context,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(OperationOutcome.Ok("products.found", new
+            {
+                products = new[] { new { name = "Pollo", unit_price = 12000m } }
+            }));
+    }
+    private sealed class AmbiguousOutcomeOperation : IAgentOperation
+    {
+        public OperationDescriptor Descriptor { get; } = new(
+            "test.ambiguous",
+            "{\"type\":\"object\",\"required\":[]}",
+            ["cart.product_ambiguous"], [], [], []);
+
+        public Task<OperationOutcome> ExecuteAsync(
+            JsonElement input,
+            OperationContext context,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(OperationOutcome.Fail(
+                "cart.product_ambiguous",
+                "ambiguous",
+                true,
+                context: new
+                {
+                    product_text = "pollo",
+                    product_options = new[] { new { Name = "Pechuga", UnitPrice = 12000m, Currency = "COP" } }
+                }));
+    }
     private sealed class RecoverableThenSuccessfulOperation : IAgentOperation
     {
         public int CallCount { get; private set; }

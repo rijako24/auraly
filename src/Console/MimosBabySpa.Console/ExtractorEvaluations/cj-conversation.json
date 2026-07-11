@@ -1,0 +1,61 @@
+{
+    "cases":  [
+                  {
+                      "id":  "cj_recipe_with_full_history",
+                      "message":  "quiero preparar pollo con tocineta",
+                      "stage":  "product_selection",
+                      "expectedFlow":  "order",
+                      "expectedSignals":  [
+                                              "recipe_request"
+                                          ],
+                      "seed":  "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+                      "history":  [
+                                      {
+                                          "content":  "hola quiero hacer un pedido",
+                                          "role":  "user"
+                                      },
+                                      {
+                                          "content":  "Hola. Indica tu nombre.",
+                                          "role":  "assistant"
+                                      },
+                                      {
+                                          "content":  "Richard",
+                                          "role":  "user"
+                                      },
+                                      {
+                                          "content":  "Selecciona tu perfil comercial.",
+                                          "role":  "assistant"
+                                      },
+                                      {
+                                          "content":  "la a",
+                                          "role":  "user"
+                                      },
+                                      {
+                                          "content":  "Puedes escribir los productos o contarme que deseas preparar.",
+                                          "role":  "assistant"
+                                      }
+                                  ]
+                  },
+                  {
+                      "id":  "cj_order_changes_with_full_history",
+                      "message":  "agrega 2 kilos de pollo y 400 gramos de tocineta",
+                      "stage":  "product_selection",
+                      "expectedFlow":  "order",
+                      "expectedSignals":  [
+                                              "order_changes"
+                                          ],
+                      "seed":  "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+                      "history":  [
+                                      {
+                                          "content":  "quiero preparar pollo con tocineta",
+                                          "role":  "user"
+                                      },
+                                      {
+                                          "content":  "Productos disponibles: pollo y tocineta con sus precios vigentes.",
+                                          "role":  "assistant"
+                                      }
+                                  ]
+                  }
+              ],
+    "repetitions":  3
+}
