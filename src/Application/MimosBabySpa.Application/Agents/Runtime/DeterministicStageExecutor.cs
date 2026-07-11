@@ -96,14 +96,16 @@ public sealed class DeterministicStageExecutor
                 trace.Add(new StageOperationTrace(action.Id, action.Operation, argumentsJson, string.Empty, false, true, "required_inputs_missing"));
                 continue;
             }
-            var executionKey = $"{stage.Id}:{action.Id}:{StableHash(argumentsJson)}";
-            if (!context.ExecutedActionKeys.Add(executionKey))
+            var executionKey = BuildExecutionKey(stage, action, argumentsJson, context.OperationContext.ConversationState?.RequestGeneration ?? 0);
+            if (executionKey is not null && context.ExecutedActionKeys.Contains(executionKey))
             {
                 trace.Add(new StageOperationTrace(action.Id, action.Operation, argumentsJson, string.Empty, false, true, "idempotent_replay"));
                 continue;
             }
 
-            var outcome = await operation.ExecuteAsync(boundArguments, context.OperationContext, cancellationToken);
+            var outcome = await ExecuteWithPolicyAsync(operation, boundArguments, context.OperationContext, action.Execution, cancellationToken);
+            if (outcome.Success && executionKey is not null)
+                context.ExecutedActionKeys.Add(executionKey);
             trace.Add(new StageOperationTrace(action.Id, action.Operation, argumentsJson, outcome.Code, outcome.Success, Outcome: outcome));
             presentations.AddRange(outcome.Presentations);
             operationEffects.AddRange(outcome.Effects);
@@ -173,6 +175,47 @@ public sealed class DeterministicStageExecutor
         };
     }
 
+    private static string? BuildExecutionKey(AgentFlowStage stage, StageActionDefinition action, string argumentsJson, long requestGeneration)
+    {
+        if (action.Execution.Idempotency.Equals(StageActionIdempotency.None, StringComparison.OrdinalIgnoreCase))
+            return null;
+        var input = action.Execution.Idempotency.Equals(StageActionIdempotency.OncePerRequest, StringComparison.OrdinalIgnoreCase)
+            ? string.Empty
+            : StableHash(argumentsJson);
+        return $"{requestGeneration}:{stage.Id}:{action.Id}:{input}";
+    }
+
+    private static async Task<OperationOutcome> ExecuteWithPolicyAsync(
+        IAgentOperation operation,
+        JsonElement arguments,
+        OperationContext context,
+        StageActionExecutionDefinition execution,
+        CancellationToken cancellationToken)
+    {
+        OperationOutcome? last = null;
+        for (var attempt = 1; attempt <= execution.MaxAttempts; attempt++)
+        {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeout.CancelAfter(TimeSpan.FromSeconds(execution.TimeoutSeconds));
+            try
+            {
+                last = await operation.ExecuteAsync(arguments, context, timeout.Token);
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                last = OperationOutcome.Fail("operation.timeout", "The operation exceeded its configured timeout.", true);
+            }
+            catch (Exception exception)
+            {
+                last = OperationOutcome.Fail("operation.exception", exception.Message, false);
+            }
+
+            if (last.Success || last.Error?.Recoverable != true || attempt == execution.MaxAttempts)
+                return last;
+        }
+
+        return last ?? OperationOutcome.Fail("operation.failed", "The operation did not produce an outcome.", false);
+    }
     private static bool RequiredInputsPresent(string inputSchema, JsonElement arguments)
     {
         try

@@ -1,7 +1,7 @@
 namespace MimosBabySpa.Application.Agents;
 
 /// <summary>
-/// Validaciones de fecha alineadas al reloj del negocio (AgentToolContext.BusinessToday).
+/// Validaciones de fecha alineadas al reloj del negocio (AgentConversationContext.BusinessToday).
 /// </summary>
 public static class AgentDateRules
 {

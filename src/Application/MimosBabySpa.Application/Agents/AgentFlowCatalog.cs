@@ -1,30 +1,11 @@
-﻿using MimosBabySpa.Application.Agents.Configuration;
+using MimosBabySpa.Application.Agents.Configuration;
 
 namespace MimosBabySpa.Application.Agents;
 
 internal static class AgentFlowCatalog
 {
-    public static IReadOnlyList<AgentFlowDefinition> EffectiveFlows(AgentConfig config)
-    {
-        if (config.Flows.Count > 0)
-            return config.Flows;
-
-        if (config.Flow.Stages.Count == 0)
-            return [];
-
-        return
-        [
-            new AgentFlowDefinition
-            {
-                Id = config.Flow.Id,
-                Type = string.IsNullOrWhiteSpace(config.Flow.Type) ? FlowTypes.Primary : config.Flow.Type,
-                RoutingGuidance = config.Flow.RoutingGuidance,
-                TtlSeconds = config.Flow.TtlSeconds,
-                StageDetection = config.Flow.StageDetection,
-                Stages = config.Flow.Stages
-            }
-        ];
-    }
+    public static IReadOnlyList<AgentFlowDefinition> EffectiveFlows(AgentConfig config) =>
+        config.Flows;
 
     public static string ResolvePrimaryFlowId(AgentConfig config) =>
         EffectiveFlows(config).FirstOrDefault(flow => IsPrimary(flow) && !string.IsNullOrWhiteSpace(flow.Id))?.Id

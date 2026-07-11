@@ -78,7 +78,7 @@ public sealed class CustomerReservationResolverTests
         public Guid ConversationId { get; } = Guid.NewGuid();
         public Mock<IReservationRepository> Reservations { get; } = new();
         public CustomerReservationResolver Resolver { get; }
-        public AgentToolContext Context { get; }
+        public AgentConversationContext Context { get; }
 
         public Fixture()
         {
@@ -95,7 +95,7 @@ public sealed class CustomerReservationResolverTests
                 .ReturnsAsync(CustomerReservationSession.None);
 
             Resolver = new CustomerReservationResolver(unitOfWork.Object, lifecycle.Object);
-            Context = new AgentToolContext
+            Context = new AgentConversationContext
             {
                 BusinessId = BusinessId,
                 ConversationId = ConversationId,

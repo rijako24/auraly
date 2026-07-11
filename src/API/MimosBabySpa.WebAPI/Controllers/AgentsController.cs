@@ -143,7 +143,7 @@ public class AgentsController : ControllerBase
                 EscalatedToHuman = false,
                 RequestCompleted = false,
                 TotalTokens = 0,
-                ToolCallCount = 0,
+                OperationCount = 0,
                 Facts = testFacts,
                 OutboundMessages = [],
                 Events = log.Events
@@ -160,7 +160,7 @@ public class AgentsController : ControllerBase
             EscalatedToHuman = result.EscalatedToHuman,
             RequestCompleted = result.RequestCompleted,
             TotalTokens = result.TotalTokens,
-            ToolCallCount = result.ToolCallCount,
+            OperationCount = result.OperationCount,
             Facts = testFacts,
             OutboundMessages = result.OutboundMessages,
             Events = log.Events

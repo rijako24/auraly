@@ -6,13 +6,11 @@
 --
 -- Crea/actualiza:
 --   * AgentType "Vendedor"
---   * Agent "Mimi Bot" con SettingsJson + SystemPromptMarkdown
 --   * BusinessWhatsAppNumbers.AgentId (link del numero al agente)
 --
 -- Notas de diseno:
 --   - Persona, flow, guards, factSchema y policies viven en Agents.SettingsJson.
---   - SystemPromptMarkdown queda vacio (legacy); el motor usa IPromptComposer.
---   - El catalogo NO se siembra como texto: get_service_catalog lo genera desde dbo.Services.
+--   - El catalogo NO se siembra como texto: la operaci?n de cat?logo lo genera desde dbo.Services.
 --
 -- Idempotente: usa MERGE / IF NOT EXISTS para que pueda ejecutarse multiples veces.
 -- Requisito previo: dbo.Businesses debe contener un negocio cuyo nombre
@@ -76,19 +74,16 @@ BEGIN
     VALUES (
         @AgentTypeId,
         N'Vendedor',
-        N'Agente de ventas y reservas - extracción estructurada y ejecución determinística del agendamiento.',
+        N'Agente de ventas y reservas - extracciÃ³n estructurada y ejecuciÃ³n determinÃ­stica del agendamiento.',
         1
     );
 END
 -- -- Agent configuration (SettingsJson = source of truth) ---------------------
 -- NOTA: SettingsJson en este script es la fuente de verdad del agente.
 --       Editar aqui (escapar comillas simples: ' -> '').
-DECLARE @SystemPrompt NVARCHAR(MAX) = N'';
 DECLARE @SettingsJson NVARCHAR(MAX) = N'{
   "model": "gpt-4.1-mini",
   "temperature": 0.7,
-  "maxToolIterations": 6,
-  "consecutiveErrorEscalationThreshold": 3,
   "persona": "## ROL E IDENTIDAD\n\nEres **Mimi** de **Mimo''s Baby Spa**.",
   "policies": "## REGLAS GLOBALES\n\n- Responde siempre en espanol con calidez, claridad y tono profesional.\n- Habla de bienestar y acompanamiento; evita promesas medicas o diagnosticos.\n- Mientras no exista reserva confirmada, evita palabras de confirmacion de reserva.\n- Cancelacion/reagendamiento sin costo con minimo 24 horas de anticipacion.\n- Instagram: @mimosbabyspa.\n\n## APERTURA\n\n- En cada apertura del dia, saluda natural, presentate como Mimi de Mimo''s Baby Spa y da la bienvenida.\n- Usa el nombre del cliente o del bebe si esta disponible.\n- Si el cliente ya pidio algo, usa solo una apertura breve antes de continuar con esa intencion.\n- Despues del saludo, sigue de forma natural con lo que el cliente pidio.\n- No uses saludos largos.",
   "messageSequences": {
@@ -330,20 +325,49 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "id": "human_escalation",
       "priority": 1000,
       "goal": "Escalar a una persona cuando el cliente lo pida, este inconforme, necesite cotizacion exacta de servicio variable o la solicitud salga del alcance del bot.",
-      "conversationGuidance": "Escala con resumen breve de la necesidad del cliente."
+      "conversationGuidance": "Detecta ?nicamente solicitudes expl?citas de atenci?n humana o situaciones configuradas que requieren intervenci?n.",
+      "signal": {
+        "type": "human_escalation",
+        "description": "Solicitud expl?cita de hablar con una persona, inconformidad que requiere intervenci?n o caso fuera del alcance configurado.",
+        "valueSchema": {
+          "type": "boolean"
+        }
+      },
+      "actions": [
+        {
+          "id": "request_human",
+          "operation": "escalation.request_human",
+          "trigger": "on_signal",
+          "signal": "human_escalation",
+          "arguments": {
+            "reason": "{{turn.message}}",
+            "last_user_message": "{{turn.message}}"
+          },
+          "onOutcome": {
+            "escalation.requested": {
+              "effects": [
+                {
+                  "type": "escalation.human",
+                  "reason": "customer_request"
+                }
+              ],
+              "response": {
+                "mode": "deterministic",
+                "guidance": "Informa brevemente que ser? atendido por una persona."
+              }
+            },
+            "escalation.notification_failed": {
+              "response": {
+                "mode": "deterministic",
+                "guidance": "Informa que registrar?s la solicitud para atenci?n humana sin prometer un tiempo exacto."
+              }
+            }
+          }
+        }
+      ]
     }
   ],
   "factSchema": [
-    {
-      "key": "session.engagement",
-      "role": "session.engagement",
-      "label": "contexto de engagement",
-      "type": "string",
-      "required": false,
-      "source": "session",
-      "scope": "ephemeral",
-      "expireOnBusinessDayChange": true
-    },
     {
       "key": "baby_name",
       "role": "baby.name",
@@ -351,27 +375,18 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "type": "string",
       "required": true,
       "source": "user",
-      "scope": "customer",
-      "aliases": [
-        "nombre bebe",
-        "nombre del bebe"
-      ]
+      "scope": "customer"
     },
     {
       "key": "baby_age_months",
       "role": "baby.age_months",
       "label": "edad del bebe (meses)",
       "type": "number",
-      "extractionGuidance": "Este fact representa la edad objetivo relevante para recomendar, informar o prestar el servicio, no necesariamente la edad vigente hoy. Si aparecen una edad actual y una futura y el cliente pide información, recomendación o reserva para la edad futura, guarda únicamente la edad futura. Si dice que el bebé cumplirá N meses próximamente en contexto de cumplemes, recomendación o reserva, guarda N. Solo si no puede identificarse qué edad corresponde al servicio, no extraigas el fact y pide aclaración.",
+      "extractionGuidance": "Este fact representa la edad objetivo relevante para recomendar, informar o prestar el servicio, no necesariamente la edad vigente hoy. Si aparecen una edad actual y una futura y el cliente pide informaciÃ³n, recomendaciÃ³n o reserva para la edad futura, guarda Ãºnicamente la edad futura. Si dice que el bebÃ© cumplirÃ¡ N meses prÃ³ximamente en contexto de cumplemes, recomendaciÃ³n o reserva, guarda N. Solo si no puede identificarse quÃ© edad corresponde al servicio, no extraigas el fact y pide aclaraciÃ³n.",
       "required": true,
       "source": "user",
       "scope": "customer",
-      "retentionDays": 7,
-      "aliases": [
-        "edad",
-        "meses",
-        "edad bebe"
-      ]
+      "retentionDays": 7
     },
     {
       "key": "baby_birth_date",
@@ -380,14 +395,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "type": "date",
       "required": false,
       "source": "user",
-      "scope": "customer",
-      "aliases": [
-        "fecha de nacimiento",
-        "fecha nacimiento",
-        "nacimiento",
-        "cuando nacio",
-        "cundo nacio"
-      ]
+      "scope": "customer"
     },
     {
       "key": "service",
@@ -425,13 +433,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "source": "user",
       "scope": "request",
       "retentionDays": 7,
-      "aliases": [
-        "fecha",
-        "dia",
-        "cuando",
-        "hoy",
-        "manana"
-      ],
       "expireOnBusinessDayChange": true
     },
     {
@@ -443,10 +444,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "source": "user",
       "scope": "request",
       "retentionDays": 7,
-      "aliases": [
-        "hora",
-        "horario"
-      ],
       "expireOnBusinessDayChange": true
     },
     {
@@ -460,11 +457,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "retentionDays": 7,
       "dependsOn": [
         "service"
-      ],
-      "aliases": [
-        "horario de inscripcion",
-        "horario fijo",
-        "horario taller"
       ]
     },
     {
@@ -502,13 +494,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "type": "string",
       "required": true,
       "source": "user",
-      "scope": "customer",
-      "aliases": [
-        "nombre",
-        "cliente",
-        "a nombre de",
-        "mi nombre"
-      ]
+      "scope": "customer"
     },
     {
       "key": "customer_phone",
@@ -517,13 +503,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "type": "phone",
       "required": true,
       "source": "channel",
-      "scope": "customer",
-      "aliases": [
-        "telefono",
-        "celular",
-        "whatsapp",
-        "numero"
-      ]
+      "scope": "customer"
     },
     {
       "key": "customer_email",
@@ -532,11 +512,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "type": "email",
       "required": false,
       "source": "user",
-      "scope": "customer",
-      "aliases": [
-        "email",
-        "correo"
-      ]
+      "scope": "customer"
     },
     {
       "key": "payment_method",
@@ -565,41 +541,8 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         "customer_name",
         "baby_birth_date",
         "fixed_schedule_label"
-      ],
-      "aliases": [
-        "confirmo",
-        "confirmo reserva",
-        "si confirmo",
-        "confirmado"
       ]
     }
-  ],
-  "guards": {
-    "capability:reservation.create": {
-      "requires": [
-        "verification:availability_checked",
-        "verification:customer_identified",
-        "verification:checkout_no_payment_prepared",
-        "state:no_pending_checkout",
-        "flag:verbal_confirmation"
-      ]
-    }
-  },
-  "enabledTools": [
-    "set_fact",
-    "get_service_catalog",
-    "resolve_service_selection",
-    "get_compatible_add_ons",
-    "get_service_fulfillment",
-    "check_availability",
-    "prepare_checkout",
-    "create_reservation",
-    "get_customer_reservations",
-    "manage_reservation",
-    "verify_payment",
-    "escalate_to_human",
-    "reset_flow_context",
-    "send_message_sequence"
   ],
   "escalations": {
     "human": {
@@ -626,19 +569,33 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
   },
   "flows": [
     {
-      "stageDetection": "automatic",
       "stages": [
         {
           "id": "discovery",
-          "name": "Conocer al bebé",
-          "goal": "Obtener nombre y edad objetivo relevante del bebé para personalizar la recomendación.",
-          "advanceWhenFacts": ["baby_name", "baby_age_months"],
-          "collect": ["baby_name", "baby_age_months", "service", "add_ons", "desired_date", "desired_time", "customer_name", "baby_birth_date", "customer_email"],
+          "name": "Conocer al bebÃ©",
+          "goal": "Obtener nombre y edad objetivo relevante del bebÃ© para personalizar la recomendaciÃ³n.",
+          "advanceWhenFacts": [
+            "baby_name",
+            "baby_age_months"
+          ],
+          "collect": [
+            "baby_name",
+            "baby_age_months",
+            "service",
+            "add_ons",
+            "desired_date",
+            "desired_time",
+            "customer_name",
+            "baby_birth_date",
+            "customer_email"
+          ],
           "signals": [
             {
               "type": "service_selection",
               "description": "Texto con el que el cliente elige o intenta elegir un plan o servicio concreto.",
-              "valueSchema": { "type": "string" }
+              "valueSchema": {
+                "type": "string"
+              }
             }
           ],
           "actions": [
@@ -647,42 +604,71 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
               "operation": "catalog.resolve_service",
               "trigger": "on_signal",
               "signal": "service_selection",
-              "condition": { "factMissing": "service" },
-              "arguments": { "text": "{{signal.service_selection.value}}" },
+              "condition": {
+                "factMissing": "service"
+              },
+              "arguments": {
+                "text": "{{signal.service_selection.value}}"
+              },
               "onOutcome": {
                 "catalog.service_resolved": {
                   "effects": [
-                    { "type": "facts.set_from_outcome", "bindings": { "service": "service" } }
+                    {
+                      "type": "facts.set_from_outcome",
+                      "bindings": {
+                        "service": "service"
+                      }
+                    }
                   ]
                 },
                 "catalog.service_unchanged": {},
                 "catalog.service_ambiguous": {
-                  "response": { "mode": "ask_clarification", "guidance": "Presenta únicamente los candidatos devueltos y pregunta cuál servicio desea." }
+                  "response": {
+                    "mode": "ask_clarification",
+                    "guidance": "Presenta Ãºnicamente los candidatos devueltos y pregunta cuÃ¡l servicio desea."
+                  }
                 },
                 "catalog.service_not_found": {
-                  "response": { "mode": "ask_clarification", "guidance": "Indica que no se encontró ese plan o servicio y continúa con el catálogo oficial." }
+                  "response": {
+                    "mode": "ask_clarification",
+                    "guidance": "Indica que no se encontrÃ³ ese plan o servicio y continÃºa con el catÃ¡logo oficial."
+                  }
                 }
               }
             }
           ],
-          "conversationGuidance": "En la apertura pide únicamente los datos que falten para avanzar: nombre del bebé y edad objetivo relevante para la recomendación o servicio. Captura también cualquier otro dato que el cliente dé por adelantado. Si menciona una edad actual y otra futura, aplica extractionGuidance de baby_age_months."
+          "conversationGuidance": "En la apertura pide Ãºnicamente los datos que falten para avanzar: nombre del bebÃ© y edad objetivo relevante para la recomendaciÃ³n o servicio. Captura tambiÃ©n cualquier otro dato que el cliente dÃ© por adelantado. Si menciona una edad actual y otra futura, aplica extractionGuidance de baby_age_months."
         },
         {
           "id": "service_selection",
-          "name": "Selección de servicio",
-          "goal": "Ayudar a elegir y resolver un servicio exacto del catálogo.",
-          "advanceWhenFacts": ["service"],
-          "collect": ["service", "add_ons", "desired_date", "desired_time", "customer_name", "baby_birth_date", "customer_email"],
+          "name": "SelecciÃ³n de servicio",
+          "goal": "Ayudar a elegir y resolver un servicio exacto del catÃ¡logo.",
+          "advanceWhenFacts": [
+            "service"
+          ],
+          "collect": [
+            "service",
+            "add_ons",
+            "desired_date",
+            "desired_time",
+            "customer_name",
+            "baby_birth_date",
+            "customer_email"
+          ],
           "signals": [
             {
               "type": "catalog_query",
-              "description": "El cliente pide categorías, planes, servicios, precios o información del catálogo.",
-              "valueSchema": { "type": "string" }
+              "description": "El cliente pide categorÃ­as, planes, servicios, precios o informaciÃ³n del catÃ¡logo.",
+              "valueSchema": {
+                "type": "string"
+              }
             },
             {
               "type": "service_selection",
               "description": "Texto con el que el cliente elige o intenta elegir un plan o servicio concreto.",
-              "valueSchema": { "type": "string" }
+              "valueSchema": {
+                "type": "string"
+              }
             }
           ],
           "actions": [
@@ -692,15 +678,30 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
               "trigger": "on_enter",
               "condition": {
                 "all": [
-                  { "factMissing": "service" },
-                  { "not": { "signalPresent": "catalog_query" } },
-                  { "not": { "signalPresent": "service_selection" } }
+                  {
+                    "factMissing": "service"
+                  },
+                  {
+                    "not": {
+                      "signalPresent": "catalog_query"
+                    }
+                  },
+                  {
+                    "not": {
+                      "signalPresent": "service_selection"
+                    }
+                  }
                 ]
               },
-              "arguments": { "query": "{{turn.message}}", "view": "categories" },
+              "arguments": {
+                "query": "{{turn.message}}",
+                "view": "categories"
+              },
               "onOutcome": {
                 "catalog.services_returned": {
-                  "response": { "guidance": "Presenta primero las categorías reales y pregunta cuál experiencia le interesa. Usa solo el catálogo devuelto." }
+                  "response": {
+                    "guidance": "Presenta primero las categorÃ­as reales y pregunta cuÃ¡l experiencia le interesa. Usa solo el catÃ¡logo devuelto."
+                  }
                 }
               }
             },
@@ -709,10 +710,15 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
               "operation": "catalog.get_services",
               "trigger": "on_signal",
               "signal": "catalog_query",
-              "arguments": { "query": "{{signal.catalog_query.value}}", "view": "auto" },
+              "arguments": {
+                "query": "{{signal.catalog_query.value}}",
+                "view": "auto"
+              },
               "onOutcome": {
                 "catalog.services_returned": {
-                  "response": { "guidance": "Responde exclusivamente con las categorías, servicios, precios y horarios devueltos por el catálogo." }
+                  "response": {
+                    "guidance": "Responde exclusivamente con las categorÃ­as, servicios, precios y horarios devueltos por el catÃ¡logo."
+                  }
                 }
               }
             },
@@ -721,64 +727,111 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
               "operation": "catalog.resolve_service",
               "trigger": "on_signal",
               "signal": "service_selection",
-              "condition": { "factMissing": "service" },
-              "arguments": { "text": "{{signal.service_selection.value}}" },
+              "condition": {
+                "factMissing": "service"
+              },
+              "arguments": {
+                "text": "{{signal.service_selection.value}}"
+              },
               "onOutcome": {
                 "catalog.service_resolved": {
                   "effects": [
-                    { "type": "facts.set_from_outcome", "bindings": { "service": "service" } }
+                    {
+                      "type": "facts.set_from_outcome",
+                      "bindings": {
+                        "service": "service"
+                      }
+                    }
                   ]
                 },
                 "catalog.service_unchanged": {},
                 "catalog.service_ambiguous": {
-                  "response": { "mode": "ask_clarification", "guidance": "Presenta solo los candidatos devueltos y pregunta cuál servicio desea." }
+                  "response": {
+                    "mode": "ask_clarification",
+                    "guidance": "Presenta solo los candidatos devueltos y pregunta cuÃ¡l servicio desea."
+                  }
                 },
                 "catalog.service_not_found": {
-                  "response": { "mode": "ask_clarification", "guidance": "Indica que no se encontró esa opción y ofrece el catálogo oficial." }
+                  "response": {
+                    "mode": "ask_clarification",
+                    "guidance": "Indica que no se encontrÃ³ esa opciÃ³n y ofrece el catÃ¡logo oficial."
+                  }
                 }
               }
             },
             {
               "id": "resolve_service_fulfillment",
               "operation": "catalog.get_service_fulfillment",
-              "condition": { "factMissing": "fulfillment_ready" },
-              "arguments": { "service": "{{fact.service}}" },
+              "condition": {
+                "factMissing": "fulfillment_ready"
+              },
+              "arguments": {
+                "service": "{{fact.service}}"
+              },
               "onOutcome": {
                 "catalog.fulfillment_reservation": {
                   "effects": [
-                    { "type": "facts.set_from_outcome", "bindings": { "fulfillment_ready": "fulfillmentReady" } },
-                    { "type": "facts.clear", "facts": ["fixed_schedule_label"] }
+                    {
+                      "type": "facts.set_from_outcome",
+                      "bindings": {
+                        "fulfillment_ready": "fulfillmentReady"
+                      }
+                    },
+                    {
+                      "type": "facts.clear",
+                      "facts": [
+                        "fixed_schedule_label"
+                      ]
+                    }
                   ]
                 },
                 "catalog.fulfillment_enrollment": {
                   "effects": [
-                    { "type": "facts.set_from_outcome", "bindings": { "fulfillment_ready": "fulfillmentReady", "fixed_schedule_label": "fixedScheduleLabel" } }
+                    {
+                      "type": "facts.set_from_outcome",
+                      "bindings": {
+                        "fulfillment_ready": "fulfillmentReady",
+                        "fixed_schedule_label": "fixedScheduleLabel"
+                      }
+                    }
                   ]
                 },
                 "catalog.fulfillment_missing_schedule": {
                   "effects": [
-                    { "type": "escalation.human", "reason": "service_fulfillment_missing_schedule" }
+                    {
+                      "type": "escalation.human",
+                      "reason": "service_fulfillment_missing_schedule"
+                    }
                   ]
                 },
                 "catalog.service_not_found": {
-                  "response": { "mode": "ask_clarification", "guidance": "Pide que elija nuevamente un servicio del catálogo vigente." }
+                  "response": {
+                    "mode": "ask_clarification",
+                    "guidance": "Pide que elija nuevamente un servicio del catÃ¡logo vigente."
+                  }
                 }
               }
             }
           ],
-          "conversationGuidance": "Explica categorías y servicios usando únicamente el outcome vigente del catálogo. No confirmes un servicio hasta que la resolución lo guarde de forma canónica."
+          "conversationGuidance": "Explica categorÃ­as y servicios usando Ãºnicamente el outcome vigente del catÃ¡logo. No confirmes un servicio hasta que la resoluciÃ³n lo guarde de forma canÃ³nica."
         },
         {
           "id": "addons_offering",
           "name": "Complementos",
-          "goal": "Resolver complementos del servicio elegido usando el catálogo vigente.",
-          "advanceWhenFacts": ["add_ons"],
-          "collect": ["add_ons"],
+          "goal": "Resolver complementos del servicio elegido usando el catÃ¡logo vigente.",
+          "advanceWhenFacts": [
+            "add_ons"
+          ],
+          "collect": [
+            "add_ons"
+          ],
           "signals": [
             {
               "type": "catalog_selection",
-              "description": "El cliente elige, rechaza o corrige un servicio o complemento del catálogo.",
-              "valueSchema": { "type": "string" }
+              "description": "El cliente elige, rechaza o corrige un servicio o complemento del catÃ¡logo.",
+              "valueSchema": {
+                "type": "string"
+              }
             }
           ],
           "actions": [
@@ -787,59 +840,94 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
               "operation": "catalog.resolve_service",
               "trigger": "on_signal",
               "signal": "catalog_selection",
-              "arguments": { "text": "{{signal.catalog_selection.value}}" },
+              "arguments": {
+                "text": "{{signal.catalog_selection.value}}"
+              },
               "onOutcome": {
                 "catalog.service_resolved": {
                   "effects": [
-                    { "type": "facts.set_from_outcome", "bindings": { "service": "service" } }
+                    {
+                      "type": "facts.set_from_outcome",
+                      "bindings": {
+                        "service": "service"
+                      }
+                    }
                   ]
                 },
                 "catalog.service_unchanged": {},
                 "catalog.add_on_detected": {
                   "effects": [
-                    { "type": "facts.set_from_outcome", "bindings": { "add_ons": "addOns" } }
+                    {
+                      "type": "facts.set_from_outcome",
+                      "bindings": {
+                        "add_ons": "addOns"
+                      }
+                    }
                   ]
                 },
                 "catalog.service_ambiguous": {
-                  "response": { "mode": "ask_clarification", "guidance": "Aclara cuál plan, servicio o complemento desea." }
+                  "response": {
+                    "mode": "ask_clarification",
+                    "guidance": "Aclara cuÃ¡l plan, servicio o complemento desea."
+                  }
                 },
                 "catalog.service_not_found": {
-                  "response": { "mode": "ask_clarification", "guidance": "Aclara cuál complemento del catálogo desea." }
+                  "response": {
+                    "mode": "ask_clarification",
+                    "guidance": "Aclara cuÃ¡l complemento del catÃ¡logo desea."
+                  }
                 }
               }
             },
             {
               "id": "get_compatible_add_ons",
               "operation": "catalog.get_compatible_add_ons",
-              "condition": { "factMissing": "add_ons" },
-              "arguments": { "service": "{{fact.service}}" },
+              "condition": {
+                "factMissing": "add_ons"
+              },
+              "arguments": {
+                "service": "{{fact.service}}"
+              },
               "onOutcome": {
                 "catalog.add_ons_available": {
-                  "response": { "guidance": "Presenta solo los complementos compatibles devueltos y pregunta cuál desea o si continúa sin complementos." }
+                  "response": {
+                    "guidance": "Presenta solo los complementos compatibles devueltos y pregunta cuÃ¡l desea o si continÃºa sin complementos."
+                  }
                 },
                 "catalog.no_add_ons": {
                   "effects": [
-                    { "type": "fact.set", "fact": "add_ons", "value": "ninguno" }
+                    {
+                      "type": "fact.set",
+                      "fact": "add_ons",
+                      "value": "ninguno"
+                    }
                   ]
                 }
               }
             }
           ],
-          "conversationGuidance": "Si el cliente rechaza complementos claramente, guarda add_ons=ninguno. No inventes decoraciones, fotografías ni precios que no estén en el outcome vigente."
+          "conversationGuidance": "Si el cliente rechaza complementos claramente, guarda add_ons=ninguno. No inventes decoraciones, fotografÃ­as ni precios que no estÃ©n en el outcome vigente."
         },
         {
           "id": "scheduling",
           "name": "Agenda",
           "goal": "Revisar disponibilidad y validar fecha y hora para una reserva por hora.",
-          "collect": ["desired_date", "desired_time"],
+          "collect": [
+            "desired_date",
+            "desired_time"
+          ],
           "actions": [
             {
               "id": "check_availability",
               "operation": "reservation.check_availability",
-                "condition": {
+              "condition": {
                 "all": [
-                  { "verificationMissing": "availability_checked" },
-                  { "factMissing": "fixed_schedule_label" }
+                  {
+                    "verificationMissing": "availability_checked"
+                  },
+                  {
+                    "factMissing": "fixed_schedule_label"
+                  }
                 ]
               },
               "arguments": {
@@ -849,18 +937,49 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
               },
               "onOutcome": {
                 "availability.exact_time_available": {
-                  "response": { "guidance": "Confirma brevemente que el horario está disponible y continúa con los datos faltantes." }
+                  "response": {
+                    "guidance": "Confirma brevemente que el horario estÃ¡ disponible y continÃºa con los datos faltantes."
+                  }
                 },
-                "availability.options_available": { "response": { "mode": "continue" } },
-                "availability.requested_time_unavailable": { "response": { "mode": "ask_clarification" } },
+                "availability.options_available": {
+                  "response": {
+                    "mode": "continue"
+                  }
+                },
+                "availability.requested_time_unavailable": {
+                  "response": {
+                    "mode": "ask_clarification"
+                  }
+                },
                 "availability.none": {
-                  "response": { "mode": "ask_clarification", "guidance": "Indica que no hay espacios ese día y pregunta por otra fecha." }
+                  "response": {
+                    "mode": "ask_clarification",
+                    "guidance": "Indica que no hay espacios ese dÃ­a y pregunta por otra fecha."
+                  }
                 },
-                "input.invalid_date": { "response": { "mode": "ask_clarification", "guidance": "Pide una fecha válida." } },
-                "input.past_date": { "response": { "mode": "ask_clarification", "guidance": "Pide una fecha de hoy en adelante." } },
-                "input.invalid_time": { "response": { "mode": "ask_clarification", "guidance": "Pide una hora válida." } },
+                "input.invalid_date": {
+                  "response": {
+                    "mode": "ask_clarification",
+                    "guidance": "Pide una fecha vÃ¡lida."
+                  }
+                },
+                "input.past_date": {
+                  "response": {
+                    "mode": "ask_clarification",
+                    "guidance": "Pide una fecha de hoy en adelante."
+                  }
+                },
+                "input.invalid_time": {
+                  "response": {
+                    "mode": "ask_clarification",
+                    "guidance": "Pide una hora vÃ¡lida."
+                  }
+                },
                 "catalog.service_unresolved": {
-                  "response": { "mode": "ask_clarification", "guidance": "Pide que elija nuevamente un servicio del catálogo vigente." }
+                  "response": {
+                    "mode": "ask_clarification",
+                    "guidance": "Pide que elija nuevamente un servicio del catÃ¡logo vigente."
+                  }
                 }
               }
             }
@@ -869,17 +988,21 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
             {
               "id": "fixed_schedule_selected",
               "priority": 20,
-              "condition": { "factPresent": "fixed_schedule_label" },
+              "condition": {
+                "factPresent": "fixed_schedule_label"
+              },
               "to": "customer_data"
             },
             {
               "id": "availability_verified",
               "priority": 10,
-              "condition": { "verificationActive": "availability_checked" },
+              "condition": {
+                "verificationActive": "availability_checked"
+              },
               "to": "customer_data"
             }
           ],
-          "conversationGuidance": "Si existe fixed_schedule_label, continúa sin consultar disponibilidad porque el servicio usa horario oficial de inscripción. Para reservas por hora, si falta fecha pregunta el día; con fecha y sin hora, la operación configurada muestra slots mediante template exclusivo; con hora exacta valida ese horario. No afirmes disponibilidad sin outcome vigente."
+          "conversationGuidance": "Si existe fixed_schedule_label, continÃºa sin consultar disponibilidad porque el servicio usa horario oficial de inscripciÃ³n. Para reservas por hora, si falta fecha pregunta el dÃ­a; con fecha y sin hora, la operaciÃ³n configurada muestra slots mediante template exclusivo; con hora exacta valida ese horario. No afirmes disponibilidad sin outcome vigente."
         },
         {
           "id": "customer_data",
@@ -905,17 +1028,35 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
               "operation": "reservation.prepare_checkout",
               "condition": {
                 "all": [
-                  { "factPresent": "service" },
-                  { "factPresent": "add_ons" },
-                  { "factPresent": "customer_name" },
-                  { "factPresent": "customer_phone" },
-                  { "factPresent": "baby_birth_date" },
-                  { "factPresent": "fulfillment_ready" },
-                  { "verificationMissing": "checkout_prepared" }
+                  {
+                    "factPresent": "service"
+                  },
+                  {
+                    "factPresent": "add_ons"
+                  },
+                  {
+                    "factPresent": "customer_name"
+                  },
+                  {
+                    "factPresent": "customer_phone"
+                  },
+                  {
+                    "factPresent": "baby_birth_date"
+                  },
+                  {
+                    "factPresent": "fulfillment_ready"
+                  },
+                  {
+                    "verificationMissing": "checkout_prepared"
+                  }
                 ],
                 "any": [
-                  { "verificationActive": "availability_checked" },
-                  { "factPresent": "fixed_schedule_label" }
+                  {
+                    "verificationActive": "availability_checked"
+                  },
+                  {
+                    "factPresent": "fixed_schedule_label"
+                  }
                 ]
               },
               "arguments": {
@@ -938,8 +1079,15 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
               "operation": "reservation.create",
               "condition": {
                 "all": [
-                  { "factEquals": { "key": "customer_confirmed", "value": true } },
-                  { "verificationActive": "checkout_no_payment_prepared" }
+                  {
+                    "factEquals": {
+                      "key": "customer_confirmed",
+                      "value": true
+                    }
+                  },
+                  {
+                    "verificationActive": "checkout_no_payment_prepared"
+                  }
                 ]
               },
               "arguments": {
@@ -955,7 +1103,9 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
               "onOutcome": {
                 "reservation.created": {
                   "effects": [
-                    { "type": "request.complete" }
+                    {
+                      "type": "request.complete"
+                    }
                   ]
                 }
               }
@@ -967,8 +1117,12 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
               "priority": 100,
               "condition": {
                 "all": [
-                  { "verificationMissing": "availability_checked" },
-                  { "factMissing": "fixed_schedule_label" }
+                  {
+                    "verificationMissing": "availability_checked"
+                  },
+                  {
+                    "factMissing": "fixed_schedule_label"
+                  }
                 ]
               },
               "to": "scheduling"
@@ -999,7 +1153,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "type": "secondary",
       "ttlSeconds": 900,
       "routingGuidance": "Use only when the customer clearly wants to manage an existing reservation: view it, confirm attendance, cancel it, or change its date, time, service or add-ons. Do not use it for an open booking request, a pending checkout summary or a pending payment link.",
-      "stageDetection": "automatic",
       "stages": [
         {
           "id": "reservation_management",
@@ -1009,63 +1162,149 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
             "desired_date",
             "desired_time"
           ],
-      "signals": [
-        {
-          "type": "reservation_management_request",
-          "description": "Solicitud explícita para consultar, cambiar, confirmar o cancelar una reserva existente. Usa apply_change solo cuando el cliente pide aplicar el cambio; no inventes reservation_id.",
-          "valueSchema": {
-            "type": "object",
-            "additionalProperties": false,
-            "properties": {
-              "action": { "type": "string", "enum": ["request_reschedule", "preview_change", "apply_change", "confirm_attendance", "cancel"] },
-              "reservation_id": { "type": ["string", "null"] },
-              "payment_transaction_id": { "type": ["string", "null"] },
-              "job_id": { "type": ["string", "null"] },
-              "service": { "type": ["string", "null"] },
-              "date": { "type": ["string", "null"] },
-              "time": { "type": ["string", "null"] },
-              "add_ons": { "type": ["string", "null"] },
-              "add_ons_mode": { "type": ["string", "null"], "enum": ["add", "remove", "replace", null] },
-              "customer_confirmed": { "type": ["boolean", "null"] },
-              "notes": { "type": ["string", "null"] }
+          "signals": [
+            {
+              "type": "reservation_management_request",
+              "description": "Solicitud explÃ­cita para consultar, cambiar, confirmar o cancelar una reserva existente. Usa apply_change solo cuando el cliente pide aplicar el cambio; no inventes reservation_id.",
+              "valueSchema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "action": {
+                    "type": "string",
+                    "enum": [
+                      "request_reschedule",
+                      "preview_change",
+                      "apply_change",
+                      "confirm_attendance",
+                      "cancel"
+                    ]
+                  },
+                  "reservation_id": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "payment_transaction_id": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "job_id": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "service": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "date": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "time": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "add_ons": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "add_ons_mode": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "enum": [
+                      "add",
+                      "remove",
+                      "replace",
+                      null
+                    ]
+                  },
+                  "customer_confirmed": {
+                    "type": [
+                      "boolean",
+                      "null"
+                    ]
+                  },
+                  "notes": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "action",
+                  "reservation_id",
+                  "payment_transaction_id",
+                  "job_id",
+                  "service",
+                  "date",
+                  "time",
+                  "add_ons",
+                  "add_ons_mode",
+                  "customer_confirmed",
+                  "notes"
+                ]
+              }
+            }
+          ],
+          "actions": [
+            {
+              "id": "list_reservations_on_entry",
+              "operation": "reservation.list",
+              "trigger": "on_enter",
+              "arguments": {},
+              "onOutcome": {
+                "reservation.listed": {
+                  "response": {
+                    "guidance": "Usa Ãºnicamente las reservas devueltas para identificar la solicitud del cliente; nunca pidas UUID."
+                  }
+                }
+              }
             },
-            "required": ["action", "reservation_id", "payment_transaction_id", "job_id", "service", "date", "time", "add_ons", "add_ons_mode", "customer_confirmed", "notes"]
-          }
-        }
-      ],
-      "actions": [
-        {
-          "id": "list_reservations_on_entry",
-          "operation": "reservation.list",
-          "trigger": "on_enter",
-          "arguments": {},
-          "onOutcome": {
-            "reservation.listed": { "response": { "guidance": "Usa únicamente las reservas devueltas para identificar la solicitud del cliente; nunca pidas UUID." } }
-          }
-        },
-        {
-          "id": "manage_reservation_request",
-          "operation": "reservation.manage",
-          "trigger": "on_signal",
-          "signal": "reservation_management_request",
-          "arguments": {
-            "action": "{{signal.reservation_management_request.value.action}}",
-            "reservation_id": "{{signal.reservation_management_request.value.reservation_id}}",
-            "payment_transaction_id": "{{signal.reservation_management_request.value.payment_transaction_id}}",
-            "job_id": "{{signal.reservation_management_request.value.job_id}}",
-            "service": "{{signal.reservation_management_request.value.service}}",
-            "date": "{{signal.reservation_management_request.value.date}}",
-            "time": "{{signal.reservation_management_request.value.time}}",
-            "add_ons": "{{signal.reservation_management_request.value.add_ons}}",
-            "add_ons_mode": "{{signal.reservation_management_request.value.add_ons_mode}}",
-            "customer_confirmed": "{{signal.reservation_management_request.value.customer_confirmed}}",
-            "notes": "{{signal.reservation_management_request.value.notes}}"
-          },
-          "onOutcome": {
-            "reservation.managed": { "response": { "guidance": "Comunica únicamente el resultado devuelto por la operación de gestión de reserva." } }
-          }
-        }
-      ],"conversationGuidance": "Este flow solo aplica a reservas existentes. Si el cliente pide cambiar fecha u hora de una reserva existente, el motor valida la disponibilidad y aplica el cambio con el nuevo dato si corresponde. Si pide cambiar servicio o adicionales de una reserva ya confirmada, el motor decide si coloca la reserva en espera y escala. Si hay varias reservas, usa únicamente las reservas vigentes devueltas por el motor o pide que la identifique por fecha, hora o servicio; nunca pidas UUID al cliente. No generes checkout nuevo para cambios de una reserva ya pagada. Si el cliente empieza una solicitud nueva, deja que el router vuelva al flow principal."
+            {
+              "id": "manage_reservation_request",
+              "operation": "reservation.manage",
+              "trigger": "on_signal",
+              "signal": "reservation_management_request",
+              "arguments": {
+                "action": "{{signal.reservation_management_request.value.action}}",
+                "reservation_id": "{{signal.reservation_management_request.value.reservation_id}}",
+                "payment_transaction_id": "{{signal.reservation_management_request.value.payment_transaction_id}}",
+                "job_id": "{{signal.reservation_management_request.value.job_id}}",
+                "service": "{{signal.reservation_management_request.value.service}}",
+                "date": "{{signal.reservation_management_request.value.date}}",
+                "time": "{{signal.reservation_management_request.value.time}}",
+                "add_ons": "{{signal.reservation_management_request.value.add_ons}}",
+                "add_ons_mode": "{{signal.reservation_management_request.value.add_ons_mode}}",
+                "customer_confirmed": "{{signal.reservation_management_request.value.customer_confirmed}}",
+                "notes": "{{signal.reservation_management_request.value.notes}}"
+              },
+              "onOutcome": {
+                "reservation.managed": {
+                  "response": {
+                    "guidance": "Comunica Ãºnicamente el resultado devuelto por la operaciÃ³n de gestiÃ³n de reserva."
+                  }
+                }
+              }
+            }
+          ],
+          "conversationGuidance": "Este flow solo aplica a reservas existentes. Si el cliente pide cambiar fecha u hora de una reserva existente, el motor valida la disponibilidad y aplica el cambio con el nuevo dato si corresponde. Si pide cambiar servicio o adicionales de una reserva ya confirmada, el motor decide si coloca la reserva en espera y escala. Si hay varias reservas, usa Ãºnicamente las reservas vigentes devueltas por el motor o pide que la identifique por fecha, hora o servicio; nunca pidas UUID al cliente. No generes checkout nuevo para cambios de una reserva ya pagada. Si el cliente empieza una solicitud nueva, deja que el router vuelva al flow principal."
         }
       ]
     }
@@ -1081,7 +1320,7 @@ BEGIN
     SET @AgentId = NEWID();
     INSERT INTO dbo.Agents
         (AgentId, BusinessId, AgentTypeId, Name, Description, IsActive,
-         SettingsJson, SystemPromptMarkdown, Model, Temperature, MaxToolIterations)
+         SettingsJson, Model, Temperature)
     VALUES (
         @AgentId,
         @BusinessId,
@@ -1089,11 +1328,7 @@ BEGIN
         N'Mimi Bot',
         N'Agente principal de Mimo''s Baby Spa: reservas, pagos y atencion al cliente.',
         1,
-        @SettingsJson,
-        @SystemPrompt,
-        N'gpt-4.1-mini',
-        0.7,
-        6
+        @SettingsJson, N'gpt-4.1-mini', 0.7
     );
 END
 ELSE
@@ -1101,10 +1336,8 @@ BEGIN
     UPDATE dbo.Agents
     SET Name                  = N'Mimi Bot',
         SettingsJson          = @SettingsJson,
-        SystemPromptMarkdown  = @SystemPrompt,
         Model                 = N'gpt-4.1-mini',
         Temperature           = 0.7,
-        MaxToolIterations     = 6,
         IsActive              = 1,
         UpdatedAt             = SYSUTCDATETIME()
     WHERE AgentId = @AgentId;

@@ -27,9 +27,9 @@ public sealed class ApplyOrderChangesOperation : IAgentOperation
                   "operation": { "type": "string", "enum": ["add", "remove", "set_quantity"] },
                   "productText": { "type": "string" },
                   "quantity": { "type": ["number", "null"] },
-                  "groupReference": { "type": ["string", "null"] }
+                  "destinationReference": { "type": ["string", "null"] }
                 },
-                "required": ["operation", "productText", "quantity", "groupReference"]
+                "required": ["operation", "productText", "quantity", "destinationReference"]
               }
             }
           },
@@ -40,7 +40,7 @@ public sealed class ApplyOrderChangesOperation : IAgentOperation
             "cart.applied",
             "cart.no_changes",
             "cart.conflicting_commands",
-            "cart.multiple_orders",
+            "cart.multiple_destinations",
             "cart.product_not_found",
             "cart.product_ambiguous",
             "cart.item_not_found_or_ambiguous",
@@ -74,7 +74,7 @@ public sealed class ApplyOrderChangesOperation : IAgentOperation
         if (commands is null)
             return OperationOutcome.Fail("cart.invalid_input", "commands could not be parsed.", true);
 
-        var session = context.Session ?? new AgentToolContext
+        var session = context.Session ?? new AgentConversationContext
         {
             AgentId = context.AgentId,
             BusinessId = context.BusinessId,
@@ -91,8 +91,8 @@ public sealed class ApplyOrderChangesOperation : IAgentOperation
             ? OperationOutcome.Ok(result.Code, new { order = result.Snapshot })
             : OperationOutcome.Fail(
                 result.Code,
-                result.Code == "cart.multiple_orders"
-                    ? "Only one order can be active at a time. Tell the customer to finish the current order before starting another one; no changes were applied."
+                result.Code == "cart.multiple_destinations"
+                    ? "Only one delivery address can apply to the active order. Ask which provided address should be used for the whole order; no changes were applied."
                     : "The requested order changes could not be applied atomically.",
                 true,
                 "order_changes_clarification",

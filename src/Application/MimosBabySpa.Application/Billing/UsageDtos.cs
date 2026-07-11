@@ -29,7 +29,7 @@ public sealed record UsageChargeRequest(
     UsageOperationType OperationType,
     int InputTokens = 0,
     int OutputTokens = 0,
-    int ToolCalls = 0,
+    int OperationCalls = 0,
     int OutboundMessages = 0,
     string Model = "",
     decimal AdditionalCostCop = 0,

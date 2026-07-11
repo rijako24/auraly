@@ -54,7 +54,7 @@ public sealed class OperationPresentationComposer : IOperationPresentationCompos
 
     private string Render(AgentConfig config, OperationPresentation presentation)
     {
-        var template = _templates.Resolve(config, presentation.TemplateId, []);
+        var template = _templates.Resolve(config, presentation.TemplateId);
         return string.IsNullOrWhiteSpace(template)
             ? string.Empty
             : _renderer.Render(template, presentation.Data);

@@ -76,23 +76,15 @@ END
 
 
 
-DECLARE @SolorzanoDeliverySystemPrompt NVARCHAR(MAX) = N'';
 
 
 
 DECLARE @SolorzanoDeliverySettingsJson NVARCHAR(MAX) = N'{
   "model": "gpt-4.1-mini",
   "temperature": 0.2,
-  "maxToolIterations": 4,
   "historyWindowSize": 12,
   "persona": "Eres el asistente de domicilios de Vinos Artesanales Solorzano. Atiendes solo a domiciliarios y coordinas si toman o rechazan pedidos asignados por WhatsApp.",
   "policies": "Responde breve y operativo. Tu funcion es resolver pedidos de domicilio pendientes. Usa el codigo del pedido cuando este disponible.",
-  "enabledTools": [
-    "search_order",
-    "accept_order_request",
-    "reject_order_request"
-  ],
-  "guards": {},
   "notifications": {},
   "webhooks": {},
   "escalations": {
@@ -113,7 +105,6 @@ DECLARE @SolorzanoDeliverySettingsJson NVARCHAR(MAX) = N'{
       "id": "order_request",
       "type": "primary",
       "routingGuidance": "Use this primary flow for external order request interactions with delivery contacts.",
-      "stageDetection": "automatic",
       "stages": [
         {
           "id": "order_request",
@@ -121,16 +112,73 @@ DECLARE @SolorzanoDeliverySettingsJson NVARCHAR(MAX) = N'{
           "goal": "Resolver si el domiciliario acepta o rechaza un pedido pendiente.",
           "advanceWhenFacts": [],
           "conversationGuidance": "Si el mensaje viene citado/respondiendo a una solicitud de domicilio, la cita identifica el pedido: si el contacto acepta/confirma/toma el pedido, acepta la solicitud; si rechaza o dice que no puede tomarlo, rechaza la solicitud. No pidas confirmacion ni motivo en esos casos. Busca el pedido solo cuando no haya cita ni payload interactivo, cuando necesites resolver por codigo PED/datos del pedido, o cuando haya varias ordenes pendientes; si hay ambiguedad, pide elegir mostrando request_code. Si el pedido esta vencido o no disponible, responde breve indicando que ya no puede gestionarse automaticamente. Tras aceptar agradece la confirmacion; tras rechazar indica que se registro el rechazo.",
-          "allowedActions": [
-            "search_order",
-            "accept_order_request",
-            "reject_order_request"
+          "collect": [],
+          "signals": [
+            {
+              "type": "order_lookup",
+              "description": "Consulta o referencia a una solicitud de domicilio pendiente.",
+              "valueSchema": {
+                "type": "string"
+              }
+            },
+            {
+              "type": "order_accept",
+              "description": "Aceptaci?n clara de la solicitud de domicilio pendiente.",
+              "valueSchema": {
+                "type": "string"
+              }
+            },
+            {
+              "type": "order_reject",
+              "description": "Rechazo claro de la solicitud de domicilio pendiente.",
+              "valueSchema": {
+                "type": "string"
+              }
+            }
           ],
-          "collect": []
+          "actions": [
+            {
+              "id": "search_order",
+              "operation": "internal.search_order",
+              "trigger": "on_signal",
+              "signal": "order_lookup",
+              "arguments": {
+                "query": "{{signal.order_lookup.value}}"
+              },
+              "onOutcome": {
+                "internal.order_loaded": {}
+              }
+            },
+            {
+              "id": "accept_order",
+              "operation": "internal.accept_order",
+              "trigger": "on_signal",
+              "signal": "order_accept",
+              "arguments": {
+                "response_text": "{{signal.order_accept.value}}"
+              },
+              "onOutcome": {
+                "internal.order_accepted": {}
+              }
+            },
+            {
+              "id": "reject_order",
+              "operation": "internal.reject_order",
+              "trigger": "on_signal",
+              "signal": "order_reject",
+              "arguments": {
+                "response_text": "{{signal.order_reject.value}}"
+              },
+              "onOutcome": {
+                "internal.order_rejected": {}
+              }
+            }
+          ]
         }
       ]
     }
-  ]
+  ],
+  "factSchema": []
 }';
 
 
@@ -153,7 +201,7 @@ BEGIN
 
         (AgentId, BusinessId, AgentTypeId, Name, Description, IsActive,
 
-         SettingsJson, SystemPromptMarkdown, Model, Temperature, MaxToolIterations, CreatedAt)
+         SettingsJson, Model, Temperature, CreatedAt)
 
     VALUES
 
@@ -161,7 +209,7 @@ BEGIN
 
          N'Agente para aceptar o rechazar pedidos enviados a domiciliarios de Solorzano.',
 
-         1, @SolorzanoDeliverySettingsJson, @SolorzanoDeliverySystemPrompt, N'gpt-4.1-mini', 0.2, 4, GETUTCDATE());
+         1, @SolorzanoDeliverySettingsJson, N'gpt-4.1-mini', 0.2, GETUTCDATE());
 
 END
 
@@ -183,13 +231,9 @@ BEGIN
 
         SettingsJson = @SolorzanoDeliverySettingsJson,
 
-        SystemPromptMarkdown = @SolorzanoDeliverySystemPrompt,
-
         Model = N'gpt-4.1-mini',
 
         Temperature = 0.2,
-
-        MaxToolIterations = 4,
 
         UpdatedAt = GETUTCDATE()
 
@@ -200,4 +244,3 @@ END
 
 
 PRINT N'SeedSolorzanoDomicilioAgent: agente de domicilios configurado para negocio ' + CAST(@SolorzanoDeliveryBusinessId AS NVARCHAR(36));
-

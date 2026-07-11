@@ -125,24 +125,6 @@ public sealed class ExternalEscalationServiceTests
     }
 
     [Fact]
-    public async Task EscalateToolAsync_ResolvesConfiguredEventFromToolName()
-    {
-        var contactId = Guid.NewGuid();
-        _contacts.Items.Add(CreateContact(contactId, Guid.NewGuid(), "domicilio", "+57 304 205 2007"));
-        var service = CreateService(CreateConfig(contactId));
-
-        var result = await service.EscalateToolAsync(
-            _sourceAgentId,
-            "create_order",
-            _targetId,
-            new Dictionary<string, string>());
-
-        result.Sent.Should().BeTrue();
-        _attempts.Items.Should().ContainSingle();
-        _attempts.Items[0].EventName.Should().Be("order_created");
-        _attempts.Items[0].TargetType.Should().Be("order_created");
-    }
-    [Fact]
     public async Task CompleteAttemptAsync_MarksAttemptAndPublishesConfiguredOutcome()
     {
         var contactId = Guid.NewGuid();
@@ -207,10 +189,10 @@ public sealed class ExternalEscalationServiceTests
 
         return new ExternalEscalationService(
             CreateUnitOfWork().Object,
-            configProvider.Object,
+            () => configProvider.Object,
             _sequenceResolver.Object,
             _whatsApp.Object,
-            _outcomes.Object);
+            () => _outcomes.Object);
     }
 
     private Mock<IUnitOfWork> CreateUnitOfWork()
@@ -242,7 +224,6 @@ public sealed class ExternalEscalationServiceTests
                     ["order_created"] = new()
                     {
                         Enabled = true,
-                        Tool = "create_order",
                         OutcomeEvents = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
                         {
                             [ExternalEscalationOutcomeKeys.Requested] = "delivery_requested",
@@ -428,7 +409,6 @@ public sealed class ExternalEscalationServiceTests
         public Task<IReadOnlyList<ExternalEscalationAttempt>> GetAttemptsForTargetAsync(Guid businessId, string eventName, string targetType, Guid targetId, CancellationToken ct = default) =>
             Task.FromResult<IReadOnlyList<ExternalEscalationAttempt>>(Items.Where(a => a.BusinessId == businessId && a.EventName == eventName && a.TargetType == targetType && a.TargetId == targetId).ToList());
 
-
         public Task<ExternalEscalationAttempt> AddAsync(ExternalEscalationAttempt attempt, CancellationToken ct = default)
         {
             Items.Add(attempt);
@@ -440,5 +420,3 @@ public sealed class ExternalEscalationServiceTests
 
     }
 }
-
-

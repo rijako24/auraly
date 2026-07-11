@@ -14,7 +14,7 @@ public sealed record CartCommand(
     string Operation,
     string ProductText,
     decimal? Quantity,
-    string? GroupReference);
+    string? DestinationReference);
 
 public sealed record ResolvedCartCommand(
     string Operation,
@@ -37,17 +37,17 @@ public sealed record CartCommandBatchResult(
 public interface ICartProductResolver
 {
     Task<IReadOnlyList<ProductReference>> FindAsync(
-        AgentToolContext context,
+        AgentConversationContext context,
         string productText,
         CancellationToken cancellationToken = default);
 }
 
 public interface ICartMutationStore
 {
-    Task<OrderSnapshot> GetCurrentAsync(AgentToolContext context, CancellationToken cancellationToken = default);
+    Task<OrderSnapshot> GetCurrentAsync(AgentConversationContext context, CancellationToken cancellationToken = default);
 
     Task<OrderSnapshot> ApplyAtomicallyAsync(
-        AgentToolContext context,
+        AgentConversationContext context,
         IReadOnlyList<ResolvedCartCommand> commands,
         CancellationToken cancellationToken = default);
 }
@@ -64,25 +64,27 @@ public sealed class CartCommandBatchProcessor
     }
 
     public async Task<CartCommandBatchResult> ApplyAsync(
-        AgentToolContext context,
+        AgentConversationContext context,
         IReadOnlyList<CartCommand> commands,
         CancellationToken cancellationToken = default)
     {
         if (commands.Count == 0)
             return new CartCommandBatchResult(true, "cart.no_changes", await _store.GetCurrentAsync(context, cancellationToken), []);
 
-        var groups = commands
-            .Select(command => command.GroupReference?.Trim())
+        var destinations = commands
+            .Select(command => command.DestinationReference?.Trim())
             .Where(group => !string.IsNullOrWhiteSpace(group))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
-        if (groups.Count > 1)
+        if (destinations.Count > 1
+            && (!context.Facts.TryGetValue("delivery_address", out var selectedDestination)
+                || string.IsNullOrWhiteSpace(selectedDestination)))
         {
             return new CartCommandBatchResult(
                 false,
-                "cart.multiple_orders",
+                "cart.multiple_destinations",
                 null,
-                [new CartCommandIssue("multiple_orders", string.Join(" | ", groups), groups!)]);
+                [new CartCommandIssue("multiple_destinations", string.Join(" | ", destinations), destinations!)]);
         }
 
         foreach (var command in commands)

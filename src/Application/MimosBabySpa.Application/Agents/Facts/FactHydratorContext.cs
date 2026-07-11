@@ -11,10 +11,4 @@ public sealed class FactHydratorContext
 
     /// <summary>Email del canal / conversación, si se conoce.</summary>
     public string? ConversationEmail { get; init; }
-
-    /// <summary>
-    /// Clave de engagement del turno actual.
-    /// Valores: "firstEver" | "returningCustomer" | "continuingSession"
-    /// </summary>
-    public string EngagementKey { get; init; } = "continuingSession";
 }

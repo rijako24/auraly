@@ -11,7 +11,7 @@ public sealed class CommerceCartProductResolver : ICartProductResolver
     public CommerceCartProductResolver(ICommerceService commerce) => _commerce = commerce;
 
     public async Task<IReadOnlyList<ProductReference>> FindAsync(
-        AgentToolContext context,
+        AgentConversationContext context,
         string productText,
         CancellationToken cancellationToken = default)
     {
@@ -34,11 +34,11 @@ public sealed class CommerceCartMutationStore : ICartMutationStore
         _unitOfWork = unitOfWork;
     }
 
-    public Task<OrderSnapshot> GetCurrentAsync(AgentToolContext context, CancellationToken cancellationToken = default) =>
+    public Task<OrderSnapshot> GetCurrentAsync(AgentConversationContext context, CancellationToken cancellationToken = default) =>
         _commerce.GetDraftAsync(context, cancellationToken);
 
     public Task<OrderSnapshot> ApplyAtomicallyAsync(
-        AgentToolContext context,
+        AgentConversationContext context,
         IReadOnlyList<ResolvedCartCommand> commands,
         CancellationToken cancellationToken = default) =>
         _unitOfWork.ExecuteInTransactionAsync(async () =>
@@ -59,7 +59,7 @@ public sealed class CommerceCartMutationStore : ICartMutationStore
         }, cancellationToken);
 
     private Task<OrderSnapshot> AddAsync(
-        AgentToolContext context,
+        AgentConversationContext context,
         ResolvedCartCommand command,
         CancellationToken cancellationToken)
     {

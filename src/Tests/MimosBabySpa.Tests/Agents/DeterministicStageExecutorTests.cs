@@ -70,6 +70,37 @@ public sealed class DeterministicStageExecutorTests
 
         result.GetProperty("text").GetString().Should().Be("corte infantil");
     }
+    [Fact]
+    public async Task RecoverableFailure_RetriesUpToConfiguredMaximum()
+    {
+        var operation = new RecoverableThenSuccessfulOperation();
+        var executor = new DeterministicStageExecutor(
+            new AgentOperationRegistry([operation]),
+            new StageConditionEvaluator(),
+            new OperationArgumentBinder());
+        var stage = new AgentFlowStage
+        {
+            Id = "retry",
+            Actions =
+            [
+                new StageActionDefinition
+                {
+                    Id = "retryable",
+                    Operation = operation.Descriptor.Id,
+                    Execution = new StageActionExecutionDefinition { MaxAttempts = 2, TimeoutSeconds = 5 },
+                    OnOutcome = new Dictionary<string, StageOutcomeHandlerDefinition>
+                    {
+                        ["completed"] = new()
+                    }
+                }
+            ]
+        };
+
+        var result = await executor.ExecuteAsync(stage, StageActionTriggers.WhenReady, Context());
+
+        operation.CallCount.Should().Be(2);
+        result.Trace.Should().ContainSingle(value => value.OutcomeCode == "completed" && value.Success);
+    }
     private static AgentFlowStage Stage() => new()
     {
         Id = "scheduling",
@@ -130,6 +161,25 @@ public sealed class DeterministicStageExecutorTests
         return document.RootElement.Clone();
     }
 
+    private sealed class RecoverableThenSuccessfulOperation : IAgentOperation
+    {
+        public int CallCount { get; private set; }
+        public OperationDescriptor Descriptor { get; } = new(
+            "test.retryable",
+            "{\"type\":\"object\",\"required\":[]}",
+            ["temporary", "completed"], [], [], []);
+
+        public Task<OperationOutcome> ExecuteAsync(
+            JsonElement input,
+            OperationContext context,
+            CancellationToken cancellationToken = default)
+        {
+            CallCount++;
+            return Task.FromResult(CallCount == 1
+                ? OperationOutcome.Fail("temporary", "retry", true)
+                : OperationOutcome.Ok("completed", new { }));
+        }
+    }
     private sealed class CapturingAvailabilityOperation : IAgentOperation
     {
         public int CallCount { get; private set; }

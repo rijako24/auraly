@@ -26,7 +26,7 @@ internal sealed class AgentTestUsageBillingService : IUsageBillingService
             request.ConversationId,
             request.InputTokens,
             request.OutputTokens,
-            request.ToolCalls,
+            request.OperationCalls,
             request.OutboundMessages,
             request.Model
         });

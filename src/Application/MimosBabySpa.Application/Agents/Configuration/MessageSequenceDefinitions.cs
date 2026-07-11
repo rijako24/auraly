@@ -106,10 +106,7 @@ public sealed class HumanEscalationDefinitions
 public sealed class ExternalEscalationEventDefinition
 {
     public bool Enabled { get; set; }
-
-    public string Tool { get; set; } = string.Empty;
-
-    public int AttemptTimeoutMinutes { get; set; } = 5;
+public int AttemptTimeoutMinutes { get; set; } = 5;
 
     public string AttemptCodePrefix { get; set; } = "EXT";
 
@@ -131,7 +128,6 @@ public sealed class ExternalEscalationContactDefinition
 
     public Guid? BusinessInboundContactId { get; set; }
 
-
     public string PickupAddress { get; set; } = string.Empty;
 }
 
@@ -143,4 +139,3 @@ public sealed class EventNotificationConfig
 
     public string? SendMessageSequence { get; set; }
 }
-

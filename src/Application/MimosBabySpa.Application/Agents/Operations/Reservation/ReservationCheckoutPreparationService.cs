@@ -3,7 +3,7 @@ using System.Text.Json;
 using MimosBabySpa.Application.Agents.Configuration;
 using MimosBabySpa.Application.Agents.Facts;
 using MimosBabySpa.Application.Agents.Gating;
-using MimosBabySpa.Application.Agents.Tools.Impl;
+using MimosBabySpa.Application.Agents.Operations.Support;
 using MimosBabySpa.Application.Services;
 using MimosBabySpa.Domain.Entities;
 using MimosBabySpa.Domain.Enums;

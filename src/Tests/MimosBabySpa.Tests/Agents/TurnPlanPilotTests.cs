@@ -42,14 +42,14 @@ public sealed class TurnPlanPilotTests
     [Fact]
     public async Task Planner_UsesStrictStructuredOutput_AndReturnsStructuredDomainSignal()
     {
-        const string message = "Hoy no puedo, mañana sí. Mi bebé en 2 días cumple 3 meses. Necesito 2 papas y 3 tocinetas.";
+        const string message = "Hoy no puedo, maÃ±ana sÃ­. Mi bebÃ© en 2 dÃ­as cumple 3 meses. Necesito 2 papas y 3 tocinetas.";
         var arguments = JsonSerializer.Serialize(new
         {
             flowIntent = new { candidateFlow = "booking", confidence = 0.96, evidence = (string?)null },
             facts = new object[]
             {
-                new { key = "desired_date", operation = "set", value = "2026-07-11", evidence = "mañana sí" },
-                new { key = "baby_age_months", operation = "set", value = 3, evidence = "Mi bebé en 2 días cumple 3 meses" }
+                new { key = "desired_date", operation = "set", value = "2026-07-11", evidence = "maÃ±ana sÃ­" },
+                new { key = "baby_age_months", operation = "set", value = 3, evidence = "Mi bebÃ© en 2 dÃ­as cumple 3 meses" }
             },
             signals = new object[]
             {
@@ -103,7 +103,6 @@ public sealed class TurnPlanPilotTests
         proposal.Plan!.Facts.Should().HaveCount(2);
         proposal.Plan.Signals.Should().ContainSingle();
         proposal.Plan.Signals[0].Value.GetArrayLength().Should().Be(2);
-        chat.CapturedTools.Should().BeEmpty();
         chat.CapturedOptions!.StructuredOutput.Should().NotBeNull();
         chat.CapturedOptions.StructuredOutput!.Name.Should().Be(TurnPlanJsonSchemaBuilder.SchemaName);
         chat.CapturedOptions.StructuredOutput.Strict.Should().BeTrue();
@@ -113,7 +112,7 @@ public sealed class TurnPlanPilotTests
     [Fact]
     public async Task Planner_RepairsInvalidAmbiguousMutationOnce_WithoutExecutingAnything()
     {
-        const string message = "tiene 2 meses y no sé si reservar para los 2 o para los 3";
+        const string message = "tiene 2 meses y no sÃ© si reservar para los 2 o para los 3";
         var invalid = JsonSerializer.Serialize(new
         {
             flowIntent = new { candidateFlow = "booking", confidence = 0.9, evidence = message },
@@ -189,7 +188,7 @@ public sealed class TurnPlanPilotTests
             ]
         };
 
-        var result = new TurnPlanValidator().Validate(plan, scope, "mañana a las diez");
+        var result = new TurnPlanValidator().Validate(plan, scope, "maÃ±ana a las diez");
 
         result.IsValid.Should().BeFalse();
         result.Errors.Should().Contain(error => error.Contains("evidence", StringComparison.OrdinalIgnoreCase));
@@ -219,7 +218,7 @@ public sealed class TurnPlanPilotTests
         var result = new TurnPlanValidator().Validate(
             plan,
             scope,
-            "tiene 2 meses pero quiero información para cuando tenga 3");
+            "tiene 2 meses pero quiero informaciÃ³n para cuando tenga 3");
 
         result.IsValid.Should().BeFalse();
         result.Errors.Should().Contain(error => error.Contains("cannot be mutated", StringComparison.OrdinalIgnoreCase));
@@ -274,7 +273,6 @@ public sealed class TurnPlanPilotTests
 
         public Task<ChatCompletionResult> CompleteAsync(
             IReadOnlyList<ChatMessage> messages,
-            IReadOnlyList<ChatToolDefinition>? tools = null,
             ChatCompletionOptions? options = null,
             CancellationToken cancellationToken = default)
         {
@@ -295,16 +293,13 @@ public sealed class TurnPlanPilotTests
 
         public StubChatClient(string arguments) => _arguments = arguments;
 
-        public IReadOnlyList<ChatToolDefinition> CapturedTools { get; private set; } = [];
         public ChatCompletionOptions? CapturedOptions { get; private set; }
 
         public Task<ChatCompletionResult> CompleteAsync(
             IReadOnlyList<ChatMessage> messages,
-            IReadOnlyList<ChatToolDefinition>? tools = null,
             ChatCompletionOptions? options = null,
             CancellationToken cancellationToken = default)
         {
-            CapturedTools = tools ?? [];
             CapturedOptions = options;
             return Task.FromResult(new ChatCompletionResult
             {

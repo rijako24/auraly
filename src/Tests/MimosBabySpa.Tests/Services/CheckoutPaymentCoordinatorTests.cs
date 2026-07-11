@@ -1,4 +1,4 @@
-﻿using FluentAssertions;
+using FluentAssertions;
 using Moq;
 using MimosBabySpa.Application.Agents;
 using MimosBabySpa.Application.Services;
@@ -23,7 +23,7 @@ public sealed class CheckoutPaymentCoordinatorTests
         lifecycle.Setup(p => p.DiscardPendingAsync(payment, It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         var coordinator = CreateCoordinator(lifecycle);
-        var ctx = new AgentToolContext
+        var ctx = new AgentConversationContext
         {
             ConversationId = Guid.NewGuid(),
             ActivePayment = payment
@@ -47,7 +47,7 @@ public sealed class CheckoutPaymentCoordinatorTests
         };
         var lifecycle = new Mock<IPaymentLifecycleService>();
         var coordinator = CreateCoordinator(lifecycle);
-        var ctx = new AgentToolContext
+        var ctx = new AgentConversationContext
         {
             ConversationId = Guid.NewGuid(),
             ActivePayment = payment
@@ -101,7 +101,7 @@ public sealed class CheckoutPaymentCoordinatorTests
         var quotes = new Mock<ICheckoutQuoteService>();
         quotes.Setup(q => q.ComputeHash(quote)).Returns("same-billable-quote");
         var coordinator = new CheckoutPaymentCoordinator(paymentLinks.Object, lifecycle.Object, quotes.Object);
-        var ctx = new AgentToolContext
+        var ctx = new AgentConversationContext
         {
             BusinessId = quote.BusinessId,
             ConversationId = quote.ConversationId,
@@ -172,7 +172,7 @@ public sealed class CheckoutPaymentCoordinatorTests
         var quotes = new Mock<ICheckoutQuoteService>();
         quotes.Setup(q => q.ComputeHash(quote)).Returns("new-billable-hash");
         var coordinator = new CheckoutPaymentCoordinator(paymentLinks.Object, lifecycle.Object, quotes.Object);
-        var ctx = new AgentToolContext
+        var ctx = new AgentConversationContext
         {
             BusinessId = quote.BusinessId,
             ConversationId = quote.ConversationId,
@@ -238,7 +238,7 @@ public sealed class CheckoutPaymentCoordinatorTests
         var quotes = new Mock<ICheckoutQuoteService>();
         quotes.Setup(q => q.ComputeHash(quote)).Returns("same-billable-quote");
         var coordinator = new CheckoutPaymentCoordinator(paymentLinks.Object, lifecycle.Object, quotes.Object);
-        var ctx = new AgentToolContext
+        var ctx = new AgentConversationContext
         {
             BusinessId = quote.BusinessId,
             ConversationId = quote.ConversationId,

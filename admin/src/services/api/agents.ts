@@ -33,7 +33,7 @@ export interface AgentTestTurnResponse {
   escalatedToHuman: boolean;
   reservationCreated: boolean;
   totalTokens: number;
-  toolCallCount: number;
+  operationCount: number;
   facts: Record<string, string>;
   outboundMessages: Array<{
     body?: string;

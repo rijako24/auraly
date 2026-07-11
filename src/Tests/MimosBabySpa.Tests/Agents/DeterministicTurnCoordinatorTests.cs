@@ -59,11 +59,72 @@ public sealed class DeterministicTurnCoordinatorTests
         factStore.Batches.Should().ContainSingle(batch => batch["processed"] == "true");
     }
 
+    [Fact]
+    public async Task Execute_DefersWholePlanUntilAmbiguousFactIsResolved()
+    {
+        var operation = new CapturingOperation();
+        var factStore = new RecordingFactStore();
+        var planner = new QueuePlanner(
+            new TurnPlan
+            {
+                FlowIntent = new PlannedFlowIntent { CandidateFlow = "primary", Confidence = 1 },
+                Signals = [new PlannedSignal { Type = "domain_changes", Value = Json("[\"uno\",\"dos\"]"), Evidence = "uno y dos" }],
+                Response = new TurnPlanResponseDirective { Mode = "ask_clarification", AmbiguousFields = ["address"] }
+            },
+            new TurnPlan
+            {
+                FlowIntent = new PlannedFlowIntent { CandidateFlow = "primary", Confidence = 1 },
+                Facts =
+                [
+                    new PlannedFactClaim
+                    {
+                        Key = "address", Operation = TurnPlanOperations.Set,
+                        Value = Json("\"Calle 10\""), Evidence = "Calle 10"
+                    }
+                ]
+            });
+        var coordinator = new DeterministicTurnCoordinator(
+            planner, new DeterministicFlowSelector(), new FactMutationBatchProcessor(), factStore,
+            new ConversationVerificationService(),
+            new DeterministicStageExecutor(new AgentOperationRegistry([operation]), new StageConditionEvaluator(), new OperationArgumentBinder()),
+            new DeterministicStageTransitionResolver(new StageConditionEvaluator()));
+        var config = Config();
+        var state = new ConversationState();
+        var context = new OperationContext
+        {
+            AgentId = Guid.NewGuid(), BusinessId = Guid.NewGuid(), ConversationId = Guid.NewGuid(),
+            BusinessToday = new DateOnly(2026, 7, 10), BusinessNow = DateTimeOffset.UtcNow,
+            Config = config, ConversationState = state
+        };
+
+        var first = await coordinator.ExecuteAsync(Request(config, context, new Dictionary<string, string>(), new Dictionary<string, long>()));
+        first.Trace.Should().BeEmpty();
+        state.PendingTurnPlan.Should().NotBeNull();
+
+        var second = await coordinator.ExecuteAsync(Request(config, context, first.Facts, first.FactVersions));
+        second.Success.Should().BeTrue(string.Join("; ", second.Errors));
+        second.Facts["address"].Should().Be("Calle 10");
+        operation.Input.GetProperty("payload").GetArrayLength().Should().Be(2);
+        state.PendingTurnPlan.Should().BeNull();
+    }
+
+    private static DeterministicTurnRequest Request(
+        AgentConfig config,
+        OperationContext context,
+        IReadOnlyDictionary<string, string> facts,
+        IReadOnlyDictionary<string, long> versions) => new()
+    {
+        Config = config, OperationContext = context, CurrentFacts = facts, FactVersions = versions,
+        CurrentFlowId = "primary", CurrentStageId = "capture", ActiveFlowId = "primary",
+        LatestUserMessage = "mensaje"
+    };
+
     private static AgentConfig Config()
     {
         var capture = new AgentFlowStage
         {
             Id = "capture",
+            Collect = ["address"],
             Signals =
             [
                 new StageSignalDefinition
@@ -107,7 +168,8 @@ public sealed class DeterministicTurnCoordinatorTests
         {
             FactSchema =
             [
-                new FactSchemaEntry { Key = "processed", Type = "boolean", Source = "system", Scope = FactScopes.Request }
+                new FactSchemaEntry { Key = "processed", Type = "boolean", Source = "system", Scope = FactScopes.Request },
+                new FactSchemaEntry { Key = "address", Type = "string", Source = "user", Scope = FactScopes.Request }
             ],
             Flows =
             [
@@ -139,6 +201,14 @@ public sealed class DeterministicTurnCoordinatorTests
     {
         using var document = JsonDocument.Parse(json);
         return document.RootElement.Clone();
+    }
+
+    private sealed class QueuePlanner : ITurnPlanner
+    {
+        private readonly Queue<TurnPlan> _plans;
+        public QueuePlanner(params TurnPlan[] plans) => _plans = new Queue<TurnPlan>(plans);
+        public Task<TurnPlanProposal> PlanAsync(TurnPlanningContext context, CancellationToken ct = default) =>
+            Task.FromResult(new TurnPlanProposal(true, _plans.Dequeue(), [], 0, 0));
     }
 
     private sealed class StubPlanner : ITurnPlanner

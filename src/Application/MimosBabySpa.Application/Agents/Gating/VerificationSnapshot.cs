@@ -58,7 +58,7 @@ public static class VerificationSnapshot
     }
 
     /// <summary>
-    /// Construye un snapshot explícito (p. ej. cuando la tool leyó args además de facts).
+    /// Construye un snapshot explícito (p. ej. cuando la operation leyó args además de facts).
     /// </summary>
     public static IReadOnlyDictionary<string, string> FromValues(
         params KeyValuePair<string, string>[] pairs)

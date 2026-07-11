@@ -22,7 +22,7 @@ public interface ICustomerReservationResolver
     /// Resuelve la reserva objetivo para tools post-booking. <paramref name="reservationIdFromArgs"/> es opcional.
     /// </summary>
     Task<ReservationResolveResult> ResolveAsync(
-        AgentToolContext ctx,
+        AgentConversationContext ctx,
         string? reservationIdFromArgs,
         CancellationToken ct = default);
 }

@@ -10,7 +10,7 @@ public sealed class UsageBillingService : IUsageBillingService
 {
     private const decimal DefaultGpt4oMiniInputCostCopPerToken = 0.00054m;
     private const decimal DefaultGpt4oMiniOutputCostCopPerToken = 0.00216m;
-    private const decimal DefaultToolCallCostCop = 0.25m;
+    private const decimal DefaultOperationCostCop = 0.25m;
     private const decimal DefaultOutboundSessionCostCop = 0.05m;
     private const decimal DefaultSafetyBufferPercent = 0.20m;
 
@@ -150,9 +150,9 @@ public sealed class UsageBillingService : IUsageBillingService
     {
         var inputCost = request.InputTokens * DefaultGpt4oMiniInputCostCopPerToken;
         var outputCost = request.OutputTokens * DefaultGpt4oMiniOutputCostCopPerToken;
-        var toolCost = request.ToolCalls * DefaultToolCallCostCop;
+        var operationCost = request.OperationCalls * DefaultOperationCostCop;
         var outboundCost = request.OutboundMessages * DefaultOutboundSessionCostCop;
-        var subtotal = inputCost + outputCost + toolCost + outboundCost + request.AdditionalCostCop;
+        var subtotal = inputCost + outputCost + operationCost + outboundCost + request.AdditionalCostCop;
         return Math.Round(subtotal * (1 + DefaultSafetyBufferPercent), 4);
     }
 

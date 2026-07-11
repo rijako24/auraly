@@ -150,7 +150,6 @@ public sealed class ExternalEscalationOutcomePublisherTests
                     ["order_created"] = new()
                     {
                         Enabled = true,
-                        Tool = "create_order",
                         OutcomeEvents = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
                         {
                             ["requested"] = "delivery_requested",

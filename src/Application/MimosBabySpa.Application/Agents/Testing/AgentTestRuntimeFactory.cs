@@ -7,8 +7,8 @@ using MimosBabySpa.Application.Agents.Facts;
 using MimosBabySpa.Application.Agents.Gating;
 using MimosBabySpa.Application.Agents.Runtime;
 using MimosBabySpa.Application.Agents.Templates;
-using MimosBabySpa.Application.Agents.Tools;
-using MimosBabySpa.Application.Agents.Tools.Impl;
+using MimosBabySpa.Application.Agents.Operations.Support;
+
 using MimosBabySpa.Application.Billing;
 using MimosBabySpa.Application.Services;
 using MimosBabySpa.Application.StateManagement;
@@ -31,7 +31,6 @@ public sealed class AgentTestRuntimeFactory : IAgentTestRuntimeFactory
     private readonly IPaymentLifecycleService _paymentLifecycle;
     private readonly IConversationService _conversationService;
     private readonly IConversationLifecycleService _lifecycleService;
-    private readonly IFlowStageDetector _flowStageDetector;
     private readonly IFactHydrator _factHydrator;
     private readonly ILogger<AgentConversationService> _conversationLogger;
 
@@ -48,7 +47,6 @@ public sealed class AgentTestRuntimeFactory : IAgentTestRuntimeFactory
         IPaymentLifecycleService paymentLifecycle,
         IConversationService conversationService,
         IConversationLifecycleService lifecycleService,
-        IFlowStageDetector flowStageDetector,
         IFactHydrator factHydrator,
         ILogger<AgentConversationService> conversationLogger)
     {
@@ -64,7 +62,6 @@ public sealed class AgentTestRuntimeFactory : IAgentTestRuntimeFactory
         _paymentLifecycle = paymentLifecycle;
         _conversationService = conversationService;
         _lifecycleService = lifecycleService;
-        _flowStageDetector = flowStageDetector;
         _factHydrator = factHydrator;
         _conversationLogger = conversationLogger;
     }
@@ -109,7 +106,6 @@ public sealed class AgentTestRuntimeFactory : IAgentTestRuntimeFactory
             _paymentLifecycle,
             _conversationService,
             _lifecycleService,
-            _flowStageDetector,
             _factHydrator,
             usageBilling,
             _conversationLogger,

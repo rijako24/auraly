@@ -3,7 +3,6 @@
 import { useCallback, useMemo, useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
 
-import { AgentFlowCanvas } from "@/components/agents/agent-flow-canvas";
 import { JsonEditor } from "@/components/forms/json-editor";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -13,29 +12,24 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
-import { AGENT_TOOLS_CATALOG } from "@/lib/agent-tools-catalog";
 import type { BusinessInboundContact } from "@/types/entities";
 import type {
-  AgentFlowStage,
   AgentSettings,
   FactSchemaEntry,
-  GuardDefinition,
 } from "@/types/agent-settings";
 
 type GlobalAction = NonNullable<AgentSettings["globalActions"]>[number];
 const HUMAN_ESCALATION_GLOBAL_ACTION_ID = "human_escalation";
-const HUMAN_ESCALATION_TOOL = "escalate_to_human";
+const HUMAN_ESCALATION_OPERATION = "escalation.request_human";
 const HUMAN_ESCALATION_GOAL = "Notificar al equipo humano sin desactivar el bot.";
 const isHumanEscalationAction = (action: GlobalAction) =>
-  action.id === HUMAN_ESCALATION_GLOBAL_ACTION_ID ||
-  (action.allowedTools ?? []).includes(HUMAN_ESCALATION_TOOL);
+  action.id === HUMAN_ESCALATION_GLOBAL_ACTION_ID;
 
 export type AgentEditorSection =
   | "identity"
   | "policies"
   | "flow"
   | "facts"
-  | "tools"
   | "external"
   | "messages"
   | "checkout"
@@ -53,11 +47,7 @@ interface AgentSettingsEditorProps {
 }
 
 export function AgentSettingsEditor({ value, onChange, availableInboundContacts = [], section }: AgentSettingsEditorProps) {
-  const [selectedStageId, setSelectedStageId] = useState<string | null>(
-    value.flow?.stages[0]?.id ?? null
-  );
-
-  const stages = value.flow?.stages ?? [];
+  const flows = value.flows ?? [];
   const factKeys = useMemo(
     () => (value.factSchema ?? []).map((f) => f.key),
     [value.factSchema]
@@ -68,69 +58,36 @@ export function AgentSettingsEditor({ value, onChange, availableInboundContacts 
     [value, onChange]
   );
 
-  const patchStages = useCallback(
-    (nextStages: AgentFlowStage[]) =>
-      patch({
-        flow: {
-          stageDetection: value.flow?.stageDetection ?? "automatic",
-          stages: nextStages,
-        },
-      }),
-    [patch, value.flow?.stageDetection]
-  );
-
-  const selectedStageIndex = stages.findIndex((s) => s.id === selectedStageId);
-  const selectedStage = selectedStageIndex >= 0 ? stages[selectedStageIndex] : null;
-
-  const updateStage = (index: number, partial: Partial<AgentFlowStage>) => {
-    const next = stages.map((s, i) => (i === index ? { ...s, ...partial } : s));
-    patchStages(next);
-  };
-
-  const addStage = () => {
-    const id = `stage_${stages.length + 1}`;
-    const next: AgentFlowStage = {
-      id,
-      goal: "",
-      allowedTools: [],
-      advanceWhenFacts: [],
-    };
-    patchStages([...stages, next]);
-    setSelectedStageId(id);
-  };
-
-  const removeStage = (index: number) => {
-    const next = stages.filter((_, i) => i !== index);
-    patchStages(next);
-    setSelectedStageId(next[0]?.id ?? null);
-  };
-
-  const toggleTool = (tool: string, list: string[] | undefined) => {
-    const set = new Set(list ?? []);
-    if (set.has(tool)) set.delete(tool);
-    else set.add(tool);
-    return [...set];
-  };
-
   const tabModeProps = section ? { value: section } : { defaultValue: "identity" };
   const sequenceNames = useMemo(() => Object.keys(value.messageSequences ?? {}), [value.messageSequences]);
   const humanEscalationAction = useMemo(
     () => (value.globalActions ?? []).find(isHumanEscalationAction),
     [value.globalActions]
   );
-  const setHumanEscalationHint = useCallback(
-    (hint: string) => {
+  const setHumanEscalationGuidance = useCallback(
+    (conversationGuidance: string) => {
       const actions = value.globalActions ?? [];
       const index = actions.findIndex(isHumanEscalationAction);
       const current = index >= 0 ? actions[index] : undefined;
-      const allowedTools = Array.from(new Set([...(current?.allowedTools ?? []), HUMAN_ESCALATION_TOOL]));
       const nextAction: GlobalAction = {
         id: current?.id || HUMAN_ESCALATION_GLOBAL_ACTION_ID,
         priority: current?.priority ?? 1000,
         goal: current?.goal?.trim() ? current.goal : HUMAN_ESCALATION_GOAL,
+        signal: current?.signal ?? {
+          type: "human_requested",
+          description: "El cliente pide hablar con una persona.",
+        },
+        actions: current?.actions?.length
+          ? current.actions
+          : [{
+              id: "notify_human",
+              operation: HUMAN_ESCALATION_OPERATION,
+              trigger: "on_signal",
+              signal: "human_requested",
+            }],
+        response: current?.response ?? { guidance: "Confirma que el equipo humano fue notificado." },
         ...current,
-        allowedTools,
-        hint,
+        conversationGuidance,
       };
       const nextActions =
         index >= 0
@@ -148,7 +105,6 @@ export function AgentSettingsEditor({ value, onChange, availableInboundContacts 
         <TabsTrigger value="policies">Políticas</TabsTrigger>
         <TabsTrigger value="flow">Flujo</TabsTrigger>
         <TabsTrigger value="facts">Datos (facts)</TabsTrigger>
-        <TabsTrigger value="tools">Tools y guards</TabsTrigger>
         <TabsTrigger value="external">Externos</TabsTrigger>
         <TabsTrigger value="messages">Mensajes</TabsTrigger>
         <TabsTrigger value="checkout">Checkout</TabsTrigger>
@@ -182,19 +138,6 @@ export function AgentSettingsEditor({ value, onChange, availableInboundContacts 
                 max={2}
                 value={value.temperature ?? 0.7}
                 onChange={(e) => patch({ temperature: parseFloat(e.target.value) })}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="maxToolIterations">Máx. iteraciones de tools</Label>
-              <Input
-                id="maxToolIterations"
-                type="number"
-                min={1}
-                max={20}
-                value={value.maxToolIterations ?? 6}
-                onChange={(e) =>
-                  patch({ maxToolIterations: parseInt(e.target.value, 10) })
-                }
               />
             </div>
             <div className="space-y-2">
@@ -245,190 +188,26 @@ export function AgentSettingsEditor({ value, onChange, availableInboundContacts 
       </TabsContent>
 
       <TabsContent value="flow" className="space-y-4">
-        <AgentFlowCanvas
-          stages={stages}
-          selectedStageId={selectedStageId}
-          onSelectStage={setSelectedStageId}
-        />
-
-        <div className="flex justify-end">
-          <Button type="button" variant="outline" size="sm" onClick={addStage}>
-            <Plus className="mr-1 h-4 w-4" />
-            Añadir etapa
-          </Button>
-        </div>
-
-        <div className="grid gap-4 lg:grid-cols-2">
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Etapas</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-2">
-              {stages.map((stage, index) => (
-                <button
-                  key={stage.id}
-                  type="button"
-                  onClick={() => setSelectedStageId(stage.id)}
-                  className={`flex w-full items-center justify-between rounded-md border px-3 py-2 text-left text-sm transition-colors hover:bg-muted/50 ${
-                    stage.id === selectedStageId ? "border-primary bg-muted/50" : ""
-                  }`}
-                >
-                  <span>
-                    <span className="font-medium">{stage.id}</span>
-                    <span className="ml-2 text-muted-foreground line-clamp-1">
-                      {stage.goal || "Sin objetivo"}
-                    </span>
-                  </span>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="shrink-0"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      removeStage(index);
-                    }}
-                  >
-                    <Trash2 className="h-4 w-4 text-destructive" />
-                  </Button>
-                </button>
-              ))}
-            </CardContent>
-          </Card>
-
-          {selectedStage && selectedStageIndex >= 0 && (
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-base">Editar: {selectedStage.id}</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <div className="space-y-2">
-                  <Label>ID</Label>
-                  <Input
-                    value={selectedStage.id}
-                    onChange={(e) =>
-                      updateStage(selectedStageIndex, { id: e.target.value })
-                    }
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Objetivo (goal)</Label>
-                  <Textarea
-                    value={selectedStage.goal}
-                    onChange={(e) =>
-                      updateStage(selectedStageIndex, { goal: e.target.value })
-                    }
-                  />
-                </div>
-
-                                <div className="space-y-2">
-                  <Label>Hint (instruccion al LLM)</Label>
-                  <Textarea
-                    className="min-h-[120px] font-mono text-xs"
-                    value={selectedStage.hint ?? ""}
-                    onChange={(e) =>
-                      updateStage(selectedStageIndex, { hint: e.target.value })
-                    }
-                  />
-                </div><div className="space-y-2">
-                  <Label>Tools permitidas</Label>
-                  <div className="flex flex-wrap gap-2">
-                    {AGENT_TOOLS_CATALOG.map((t) => {
-                      const on = (selectedStage.allowedTools ?? []).includes(t.name);
-                      return (
-                        <Badge
-                          key={t.name}
-                          variant={on ? "default" : "outline"}
-                          className="cursor-pointer"
-                          onClick={() =>
-                            updateStage(selectedStageIndex, {
-                              allowedTools: toggleTool(
-                                t.name,
-                                selectedStage.allowedTools
-                              ),
-                            })
-                          }
-                        >
-                          {t.name}
-                        </Badge>
-                      );
-                    })}
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  <Label>Facts para avanzar</Label>
-                  <div className="flex flex-wrap gap-2">
-                    {factKeys.map((key) => {
-                      const on = (selectedStage.advanceWhenFacts ?? []).includes(key);
-                      return (
-                        <Badge
-                          key={key}
-                          variant={on ? "default" : "outline"}
-                          className="cursor-pointer"
-                          onClick={() => {
-                            const set = new Set(selectedStage.advanceWhenFacts ?? []);
-                            if (set.has(key)) set.delete(key);
-                            else set.add(key);
-                            updateStage(selectedStageIndex, {
-                              advanceWhenFacts: [...set],
-                            });
-                          }}
-                        >
-                          {key}
-                        </Badge>
-                      );
-                    })}
-                    {factKeys.length === 0 && (
-                      <p className="text-xs text-muted-foreground">
-                        Define facts en la pestaña Datos.
-                      </p>
-                    )}
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          )}
-        </div>
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Flujos determin?sticos</CardTitle>
+            <CardDescription>
+              Cada etapa declara se?ales extra?bles, condiciones, operaciones, outcomes, transiciones y respuesta.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <JsonEditor
+              value={{ flows } as Record<string, unknown>}
+              onChange={(document) => patch({ flows: (document.flows as AgentSettings["flows"]) ?? [] })}
+            />
+          </CardContent>
+        </Card>
       </TabsContent>
 
       <TabsContent value="facts">
         <FactSchemaEditor
           entries={value.factSchema ?? []}
           onChange={(factSchema) => patch({ factSchema })}
-        />
-      </TabsContent>
-
-      <TabsContent value="tools" className="space-y-4">
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Tools habilitadas (enabledTools)</CardTitle>
-          </CardHeader>
-          <CardContent className="flex flex-wrap gap-2">
-            {AGENT_TOOLS_CATALOG.map((t) => {
-              const on = (value.enabledTools ?? []).includes(t.name);
-              return (
-                <Badge
-                  key={t.name}
-                  variant={on ? "default" : "outline"}
-                  className="cursor-pointer"
-                  onClick={() => {
-                    const set = new Set(value.enabledTools ?? []);
-                    if (set.has(t.name)) set.delete(t.name);
-                    else set.add(t.name);
-                    patch({ enabledTools: [...set] });
-                  }}
-                >
-                  {t.label}
-                </Badge>
-              );
-            })}
-          </CardContent>
-        </Card>
-
-        <GuardsEditor
-          guards={value.guards ?? {}}
-          enabledTools={value.enabledTools ?? []}
-          onChange={(guards) => patch({ guards })}
         />
       </TabsContent>
 
@@ -494,8 +273,8 @@ export function AgentSettingsEditor({ value, onChange, availableInboundContacts 
               <Label>Cuándo escalar</Label>
               <Textarea
                 className="min-h-[120px]"
-                value={humanEscalationAction?.hint ?? ""}
-                onChange={(e) => setHumanEscalationHint(e.target.value)}
+                value={humanEscalationAction?.conversationGuidance ?? ""}
+                onChange={(e) => setHumanEscalationGuidance(e.target.value)}
               />
             </div>
             <div className="space-y-2">
@@ -514,22 +293,6 @@ export function AgentSettingsEditor({ value, onChange, availableInboundContacts 
                           .filter(Boolean),
                       },
                     },
-                  })
-                }
-              />
-            </div>
-            <div className="space-y-2 pt-2">
-              <Label>Umbral errores consecutivos</Label>
-              <Input
-                type="number"
-                min={1}
-                value={value.consecutiveErrorEscalationThreshold ?? 3}
-                onChange={(e) =>
-                  patch({
-                    consecutiveErrorEscalationThreshold: parseInt(
-                      e.target.value,
-                      10
-                    ),
                   })
                 }
               />
@@ -628,14 +391,6 @@ function FactSchemaEditor({
                 onCheckedChange={(c) => update(index, { required: c === true })}
               />
               <Label>Requerido</Label>
-              <Checkbox
-                className="ml-4"
-                checked={entry.captureMode === "eager"}
-                onCheckedChange={(c) =>
-                  update(index, { captureMode: c === true ? "eager" : "onDemand" })
-                }
-              />
-              <Label>Captura eager</Label>
             </div>
           </div>
         ))}
@@ -682,9 +437,7 @@ function ExternalEscalationsEditor({
         attemptTimeoutMinutes: 15,
         attemptCodePrefix: "PED",
         sendMessageSequence: "",
-        attemptSentNotificationEvent: "",
-        acceptedNotificationEvent: "",
-        exhaustedNotificationEvent: "",
+        outcomeEvents: {},
         contacts: [],
       },
     }, true);
@@ -779,37 +532,14 @@ function ExternalEscalationsEditor({
                 </div>
               </div>
 
-              <div className="grid gap-2 sm:grid-cols-3">
-                <div className="space-y-1">
-                  <Label>Evento intento</Label>
-                  <Input
-                    placeholder="delivery_requested"
-                    value={event.attemptSentNotificationEvent ?? ""}
-                    onChange={(e) =>
-                      updateEvent({ ...event, attemptSentNotificationEvent: e.target.value })
-                    }
-                  />
-                </div>
-                <div className="space-y-1">
-                  <Label>Evento aceptado</Label>
-                  <Input
-                    placeholder="delivery_confirmed"
-                    value={event.acceptedNotificationEvent ?? ""}
-                    onChange={(e) =>
-                      updateEvent({ ...event, acceptedNotificationEvent: e.target.value })
-                    }
-                  />
-                </div>
-                <div className="space-y-1">
-                  <Label>Evento agotado</Label>
-                  <Input
-                    placeholder="delivery_unavailable"
-                    value={event.exhaustedNotificationEvent ?? ""}
-                    onChange={(e) =>
-                      updateEvent({ ...event, exhaustedNotificationEvent: e.target.value })
-                    }
-                  />
-                </div>
+              <div className="space-y-2">
+                <Label>Eventos por outcome</Label>
+                <JsonEditor
+                  value={(event.outcomeEvents ?? {}) as Record<string, unknown>}
+                  onChange={(outcomeEvents) =>
+                    updateEvent({ ...event, outcomeEvents: outcomeEvents as Record<string, string> })
+                  }
+                />
               </div>
 
               <div className="space-y-2">
@@ -835,7 +565,6 @@ function ExternalEscalationsEditor({
                           {
                             businessInboundContactId: firstAvailable?.businessInboundContactId ?? "",
                             priority: contacts.length + 1,
-                            retryEnabled: true,
                             pickupAddress: "",
                           },
                         ],
@@ -875,17 +604,6 @@ function ExternalEscalationsEditor({
                         updateEvent({ ...event, contacts: next });
                       }}
                     />
-                    <label className="flex h-9 items-center gap-2 rounded-md border px-3 text-sm">
-                      <Checkbox
-                        checked={contact.retryEnabled !== false}
-                        onCheckedChange={(checked) => {
-                          const next = [...contacts];
-                          next[index] = { ...contact, retryEnabled: checked === true };
-                          updateEvent({ ...event, contacts: next });
-                        }}
-                      />
-                      Reintenta
-                    </label>
                     <div className="flex gap-2">
                       <Input
                         placeholder="direccion override"
@@ -917,56 +635,6 @@ function ExternalEscalationsEditor({
             </div>
           );
         })}
-      </CardContent>
-    </Card>
-  );
-}
-
-function GuardsEditor({
-  guards,
-  enabledTools,
-  onChange,
-}: {
-  guards: Record<string, GuardDefinition>;
-  enabledTools: string[];
-  onChange: (g: Record<string, GuardDefinition>) => void;
-}) {
-  const tools = enabledTools.length > 0 ? enabledTools : Object.keys(guards);
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-base">Guards (precondiciones por tool)</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        {tools.map((toolName) => {
-          const requires = guards[toolName]?.requires ?? [];
-          return (
-            <div key={toolName} className="space-y-2 rounded-md border p-3">
-              <Label className="font-mono text-sm">{toolName}</Label>
-              <Textarea
-                className="font-mono text-xs"
-                placeholder="fact:service&#10;verification:availability_checked"
-                value={requires.join("\n")}
-                onChange={(e) => {
-                  const next = { ...guards };
-                  next[toolName] = {
-                    requires: e.target.value
-                      .split("\n")
-                      .map((s) => s.trim())
-                      .filter(Boolean),
-                  };
-                  onChange(next);
-                }}
-              />
-            </div>
-          );
-        })}
-        {tools.length === 0 && (
-          <p className="text-sm text-muted-foreground">
-            Habilita tools para configurar guards.
-          </p>
-        )}
       </CardContent>
     </Card>
   );

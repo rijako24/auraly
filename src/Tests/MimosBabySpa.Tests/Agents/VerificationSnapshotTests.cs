@@ -115,7 +115,7 @@ public sealed class ConversationVerificationServiceTests
             .Should().BeTrue();
     }
 
-    private static AgentToolContext CreateContext() => new()
+    private static AgentConversationContext CreateContext() => new()
     {
         BusinessId = Guid.NewGuid(),
         ConversationId = Guid.NewGuid(),

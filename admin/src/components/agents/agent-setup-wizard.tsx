@@ -19,7 +19,6 @@ const STEPS = [
   { id: "identity", title: "Rol e identidad", description: "Persona y modelo del agente" },
   { id: "policies", title: "Politicas", description: "Reglas operativas" },
   { id: "facts", title: "Datos (facts)", description: "Que informacion rastrea el agente" },
-  { id: "tools", title: "Tools y guards", description: "Herramientas y precondiciones" },
   { id: "flow", title: "Flujo", description: "Etapas del motor conversacional" },
   { id: "messages", title: "Mensajes", description: "Secuencias, notificaciones y webhooks" },
   { id: "checkout", title: "Checkout", description: "Pagos, comercio y modos de checkout" },
@@ -95,12 +94,8 @@ export function AgentSetupWizard({
                 {settings.model ?? "—"}
               </p>
               <p>
-                <span className="text-muted-foreground">Tools habilitadas:</span>{" "}
-                {settings.enabledTools?.length ?? 0}
-              </p>
-              <p>
                 <span className="text-muted-foreground">Etapas del flujo:</span>{" "}
-                {settings.flow?.stages?.length ?? 0}
+                {settings.flows?.reduce((total, flow) => total + (flow.stages?.length ?? 0), 0) ?? 0}
               </p>
               <p>
                 <span className="text-muted-foreground">Facts:</span>{" "}
@@ -115,7 +110,7 @@ export function AgentSetupWizard({
                   Falta definir la persona (paso Rol e identidad).
                 </p>
               )}
-              {(settings.flow?.stages?.length ?? 0) === 0 && (
+              {(settings.flows?.reduce((total, flow) => total + (flow.stages?.length ?? 0), 0) ?? 0) === 0 && (
                 <p className="text-amber-600 dark:text-amber-400">
                   No hay etapas en el flujo — el motor no guiará conversaciones por stages.
                 </p>

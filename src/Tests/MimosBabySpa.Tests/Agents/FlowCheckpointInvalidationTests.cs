@@ -11,7 +11,7 @@ public sealed class FlowCheckpointInvalidationTests
     [Fact]
     public void GetDerivedAdvanceFactsToClear_WhenReentryFactChanged_ReturnsOnlyDerivedAdvanceFacts()
     {
-        var ctx = new AgentToolContext
+        var ctx = new AgentConversationContext
         {
             Config = new AgentConfig
             {
@@ -21,7 +21,7 @@ public sealed class FlowCheckpointInvalidationTests
                     new FactSchemaEntry { Key = "customer_name", Source = "user" },
                     new FactSchemaEntry { Key = "order_checkout_presented", Source = "system" }
                 ],
-                Flow = new AgentFlowDefinition
+                Flows = [new AgentFlowDefinition
                 {
                     Stages =
                     [
@@ -32,7 +32,7 @@ public sealed class FlowCheckpointInvalidationTests
                             ReentryOnFactChanged = ["order_finalized"]
                         }
                     ]
-                }
+                }]
             }
         };
 
@@ -44,7 +44,7 @@ public sealed class FlowCheckpointInvalidationTests
     [Fact]
     public void GetInvalidations_WhenReentryFactChanged_ReturnsDerivedFactsAndStageSnapshots()
     {
-        var ctx = new AgentToolContext
+        var ctx = new AgentConversationContext
         {
             Config = new AgentConfig
             {
@@ -53,7 +53,7 @@ public sealed class FlowCheckpointInvalidationTests
                     new FactSchemaEntry { Key = "payment_method", Source = "user" },
                     new FactSchemaEntry { Key = "order_checkout_presented", Source = "system" }
                 ],
-                Flow = new AgentFlowDefinition
+                Flows = [new AgentFlowDefinition
                 {
                     Stages =
                     [
@@ -64,7 +64,7 @@ public sealed class FlowCheckpointInvalidationTests
                             ReentryOnFactChanged = ["payment_method"]
                         }
                     ]
-                }
+                }]
             }
         };
 
@@ -77,7 +77,7 @@ public sealed class FlowCheckpointInvalidationTests
     [Fact]
     public void GetDerivedAdvanceFactsToClear_WhenChangedFactIsNotAReentryDependency_ReturnsEmpty()
     {
-        var ctx = new AgentToolContext
+        var ctx = new AgentConversationContext
         {
             Config = new AgentConfig
             {
@@ -85,7 +85,7 @@ public sealed class FlowCheckpointInvalidationTests
                 [
                     new FactSchemaEntry { Key = "order_checkout_presented", Source = "system" }
                 ],
-                Flow = new AgentFlowDefinition
+                Flows = [new AgentFlowDefinition
                 {
                     Stages =
                     [
@@ -96,7 +96,7 @@ public sealed class FlowCheckpointInvalidationTests
                             ReentryOnFactChanged = ["order_finalized"]
                         }
                     ]
-                }
+                }]
             }
         };
 
@@ -108,7 +108,7 @@ public sealed class FlowCheckpointInvalidationTests
     [Fact]
     public void GetDerivedAdvanceFactsToClear_MatchesChangedFactsIgnoringCase()
     {
-        var ctx = new AgentToolContext
+        var ctx = new AgentConversationContext
         {
             Config = new AgentConfig
             {
@@ -116,7 +116,7 @@ public sealed class FlowCheckpointInvalidationTests
                 [
                     new FactSchemaEntry { Key = "summary_presented", Source = "system" }
                 ],
-                Flow = new AgentFlowDefinition
+                Flows = [new AgentFlowDefinition
                 {
                     Stages =
                     [
@@ -127,7 +127,7 @@ public sealed class FlowCheckpointInvalidationTests
                             ReentryOnFactChanged = ["Customer_Name"]
                         }
                     ]
-                }
+                }]
             }
         };
 
@@ -139,7 +139,7 @@ public sealed class FlowCheckpointInvalidationTests
     [Fact]
     public void GetInvalidations_WhenDependencyChanges_ClearsDependentRequestFactsTransitivelyAndResetsAffectedStages()
     {
-        var ctx = new AgentToolContext
+        var ctx = new AgentConversationContext
         {
             Config = new AgentConfig
             {
@@ -161,7 +161,7 @@ public sealed class FlowCheckpointInvalidationTests
                         DependsOn = ["desired_time"]
                     }
                 ],
-                Flow = new AgentFlowDefinition
+                Flows = [new AgentFlowDefinition
                 {
                     Stages =
                     [
@@ -172,7 +172,7 @@ public sealed class FlowCheckpointInvalidationTests
                             ReentryOnFactChanged = ["desired_time"]
                         }
                     ]
-                }
+                }]
             }
         };
 
@@ -185,7 +185,7 @@ public sealed class FlowCheckpointInvalidationTests
     [Fact]
     public void GetInvalidations_WhenDependencyChanges_DoesNotClearCustomerScopedFacts()
     {
-        var ctx = new AgentToolContext
+        var ctx = new AgentConversationContext
         {
             Config = new AgentConfig
             {

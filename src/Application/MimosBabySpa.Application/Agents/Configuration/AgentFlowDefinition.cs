@@ -13,9 +13,6 @@ public sealed class AgentFlowDefinition
     /// <summary>Optional active-flow retention window for secondary flows. Defaults are owned by the engine.</summary>
     public int? TtlSeconds { get; init; }
 
-    /// <summary>automatic | explicit (explicit reservado para futuro).</summary>
-    public string StageDetection { get; init; } = "automatic";
-
     public IReadOnlyList<AgentFlowStage> Stages { get; init; } = [];
 }
 

@@ -93,7 +93,7 @@ public class CommerceServiceTests
                 Task.FromResult(PromotionPricingResult.Empty(items)));
 
         var service = new CommerceService(unitOfWork.Object, adapterFactory.Object, promotions.Object, availability.Object);
-        var ctx = new AgentToolContext
+        var ctx = new AgentConversationContext
         {
             BusinessId = businessId,
             ConversationId = conversationId
@@ -149,7 +149,7 @@ public class CommerceServiceTests
             { IsActive = false });
 
         var service = new CommerceService(unitOfWork.Object, adapterFactory.Object, promotions.Object, availability.Object);
-        var ctx = new AgentToolContext
+        var ctx = new AgentConversationContext
         {
             BusinessId = businessId,
             ConversationId = conversationId

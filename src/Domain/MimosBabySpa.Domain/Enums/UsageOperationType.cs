@@ -4,7 +4,7 @@ public enum UsageOperationType
 {
     AgentTurn = 1,
     AiResponse = 2,
-    ToolCall = 3,
+    OperationExecution = 3,
     AudioTranscription = 4,
     WhatsappSessionMessage = 5,
     WhatsappUtilityTemplate = 6,

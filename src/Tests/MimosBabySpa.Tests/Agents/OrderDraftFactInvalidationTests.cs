@@ -1,7 +1,7 @@
 using FluentAssertions;
 using MimosBabySpa.Application.Agents;
 using MimosBabySpa.Application.Agents.Configuration;
-using MimosBabySpa.Application.Agents.Tools.Impl;
+using MimosBabySpa.Application.Agents.Operations.Support;
 using MimosBabySpa.Application.Services;
 using Xunit;
 
@@ -13,7 +13,7 @@ public sealed class OrderDraftFactInvalidationTests
     public async Task ClearOrderFinalizedAsync_UsesConfiguredFactRoleKey()
     {
         var factsService = new RecordingFactsService();
-        var ctx = new AgentToolContext
+        var ctx = new AgentConversationContext
         {
             ConversationId = Guid.NewGuid(),
             Config = new AgentConfig
@@ -39,7 +39,7 @@ public sealed class OrderDraftFactInvalidationTests
     public async Task ClearOrderFinalizedAsync_WhenRoleIsNotConfigured_DoesNotClearAnything()
     {
         var factsService = new RecordingFactsService();
-        var ctx = new AgentToolContext
+        var ctx = new AgentConversationContext
         {
             ConversationId = Guid.NewGuid(),
             Config = new AgentConfig(),

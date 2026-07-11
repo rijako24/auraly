@@ -101,13 +101,10 @@ public sealed class DeterministicResponseRenderer : IDeterministicResponseRender
         });
         var result = await _chat.CompleteAsync(
             [ChatMessage.System(prompt)],
-            tools: null,
             options: new ChatCompletionOptions
             {
                 Temperature = request.Config.Temperature,
-                MaxTokens = 1200,
-                ForceTextResponse = true
-            },
+                MaxTokens = 1200,},
             cancellationToken: cancellationToken);
 
         var response = result.Success ? result.Content : string.Empty;

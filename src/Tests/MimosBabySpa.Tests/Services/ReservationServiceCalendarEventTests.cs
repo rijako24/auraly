@@ -113,7 +113,7 @@ public class ReservationServiceCalendarEventTests
             ["business_type"] = "Spa",
             ["pain_point"] = "Agendar demos desde WhatsApp",
             ["availability_checked"] = "true",
-            ["session.engagement"] = "web"
+            ["system.internal_context"] = "web"
         };
         var schema = new List<FactSchemaEntry>
         {
@@ -124,7 +124,7 @@ public class ReservationServiceCalendarEventTests
             new() { Key = "business_type", Label = "Tipo de negocio", Source = "user", ShowInCollectedInfo = true },
             new() { Key = "pain_point", Label = "Problematica que quiere resolver", Source = "user", ShowInCollectedInfo = true },
             new() { Key = "availability_checked", Label = "disponibilidad validada", Source = "system" },
-            new() { Key = "session.engagement", Label = "contexto", Source = "session" }
+            new() { Key = "system.internal_context", Label = "contexto", Source = "session" }
         };
 
         var json = ReservationCustomAttributes.BuildJson(facts, schema);
@@ -145,7 +145,7 @@ public class ReservationServiceCalendarEventTests
             ["Problematica que quiere resolver"] = "Agendar demos desde WhatsApp"
         });
         json.Should().NotContain("availability_checked");
-        json.Should().NotContain("session.engagement");
+        json.Should().NotContain("system.internal_context");
     }
 
     private static CalendarEvent BuildCalendarEvent(

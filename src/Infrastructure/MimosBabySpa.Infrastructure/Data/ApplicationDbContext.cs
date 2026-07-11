@@ -96,8 +96,8 @@ public class ApplicationDbContext : DbContext
         {
             entity.HasKey(e => e.BusinessId);
             entity.Property(e => e.Name).IsRequired().HasMaxLength(200);
-            
-            // Información de contacto y descripción
+
+            // InformaciÃ³n de contacto y descripciÃ³n
             entity.Property(e => e.Description).HasMaxLength(2000);
             entity.Property(e => e.Address).HasMaxLength(500);
             entity.Property(e => e.Phone).HasMaxLength(50);
@@ -223,7 +223,7 @@ public class ApplicationDbContext : DbContext
                   .WithMany(b => b.Leads)
                   .HasForeignKey(e => e.BusinessId)
                   .OnDelete(DeleteBehavior.Restrict);
-            entity.HasIndex(e => new { e.BusinessId, e.UserNumber }); // Índice compuesto
+            entity.HasIndex(e => new { e.BusinessId, e.UserNumber }); // Ãndice compuesto
         });
 
         modelBuilder.Entity<Campaign>(entity =>
@@ -302,13 +302,13 @@ public class ApplicationDbContext : DbContext
             entity.HasOne(e => e.Conversation)
                   .WithMany()
                   .HasForeignKey(e => e.ConversationId)
-                  .OnDelete(DeleteBehavior.SetNull); // Si se elimina la conversación, el ConversationId se pone en null
+                  .OnDelete(DeleteBehavior.SetNull); // Si se elimina la conversaciÃ³n, el ConversationId se pone en null
             entity.HasIndex(e => e.BusinessId);
             entity.HasIndex(e => e.ServiceId);
             entity.HasIndex(e => e.EmployeeId);
             entity.HasIndex(e => new { e.BusinessId, e.ReservationDateTime });
-            entity.HasIndex(e => new { e.EmployeeId, e.ReservationDateTime }); // Índice compuesto para búsquedas de disponibilidad
-            entity.HasIndex(e => e.ConversationId); // Índice para búsquedas por conversación
+            entity.HasIndex(e => new { e.EmployeeId, e.ReservationDateTime }); // Ãndice compuesto para bÃºsquedas de disponibilidad
+            entity.HasIndex(e => e.ConversationId); // Ãndice para bÃºsquedas por conversaciÃ³n
         });
 
         // BusinessResource configuration
@@ -322,7 +322,7 @@ public class ApplicationDbContext : DbContext
                   .HasForeignKey(e => e.BusinessId)
                   .OnDelete(DeleteBehavior.Restrict);
             entity.HasIndex(e => e.BusinessId);
-            entity.HasIndex(e => new { e.BusinessId, e.ResourceName }).IsUnique(); // Un recurso único por nombre por negocio
+            entity.HasIndex(e => new { e.BusinessId, e.ResourceName }).IsUnique(); // Un recurso Ãºnico por nombre por negocio
         });
 
         modelBuilder.Entity<BusinessWorkingHour>(entity =>
@@ -1004,7 +1004,7 @@ public class ApplicationDbContext : DbContext
                   .WithMany()
                   .HasForeignKey(e => e.BusinessResourceId)
                   .OnDelete(DeleteBehavior.Restrict);
-            entity.HasIndex(e => new { e.ServiceId, e.BusinessResourceId }).IsUnique(); // Un uso único por servicio-recurso
+            entity.HasIndex(e => new { e.ServiceId, e.BusinessResourceId }).IsUnique(); // Un uso Ãºnico por servicio-recurso
         });
 
         // Employee configuration
@@ -1020,7 +1020,7 @@ public class ApplicationDbContext : DbContext
                   .HasForeignKey(e => e.BusinessId)
                   .OnDelete(DeleteBehavior.Restrict);
             entity.HasIndex(e => e.BusinessId);
-            entity.HasIndex(e => new { e.BusinessId, e.Name }); // Índice para búsquedas por nombre
+            entity.HasIndex(e => new { e.BusinessId, e.Name }); // Ãndice para bÃºsquedas por nombre
         });
 
         // EmployeeService configuration (many-to-many)
@@ -1040,7 +1040,7 @@ public class ApplicationDbContext : DbContext
                   .OnDelete(DeleteBehavior.Restrict);
             entity.HasIndex(e => e.EmployeeId);
             entity.HasIndex(e => e.ServiceId);
-            entity.HasIndex(e => new { e.EmployeeId, e.ServiceId }).IsUnique(); // Una relación única por par empleado-servicio
+            entity.HasIndex(e => new { e.EmployeeId, e.ServiceId }).IsUnique(); // Una relaciÃ³n Ãºnica por par empleado-servicio
         });
 
         // ConversationState configuration
@@ -1298,7 +1298,7 @@ public class ApplicationDbContext : DbContext
             entity.HasIndex(e => e.CorrelationId);
         });
 
-        // ── Generic Flow Engine ─────────────────────────────────────────────────────
+        // â”€â”€ Generic Flow Engine â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
         modelBuilder.Entity<SubscriptionPlan>(entity =>
         {
@@ -1408,7 +1408,6 @@ public class ApplicationDbContext : DbContext
             entity.Property(e => e.Kind).IsRequired().HasMaxLength(50);
             entity.Property(e => e.Description).HasMaxLength(500);
             entity.Property(e => e.SettingsJson).HasColumnType("NVARCHAR(MAX)");
-            entity.Property(e => e.SystemPromptMarkdown).HasColumnType("NVARCHAR(MAX)");
             entity.HasIndex(e => e.Key).IsUnique();
             entity.HasIndex(e => e.Kind);
         });
@@ -1447,7 +1446,6 @@ public class ApplicationDbContext : DbContext
             entity.Property(e => e.Description).HasMaxLength(500);
             entity.Property(e => e.Kind).IsRequired().HasMaxLength(50).HasDefaultValue("customer");
             entity.Property(e => e.SettingsJson).HasColumnType("NVARCHAR(MAX)");
-            entity.Property(e => e.SystemPromptMarkdown).HasColumnType("NVARCHAR(MAX)");
             entity.HasOne(e => e.Business)
                 .WithMany()
                 .HasForeignKey(e => e.BusinessId)

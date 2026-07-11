@@ -111,7 +111,7 @@ public sealed class RequestContextServiceTests
         facts[ConversationFactKeys.DesiredTime] = "10:00";
 
         var verifications = new ConversationVerificationService();
-        var toolContext = new AgentToolContext
+        var toolContext = new AgentConversationContext
         {
             BusinessId = Guid.NewGuid(),
             ConversationId = conversationId,

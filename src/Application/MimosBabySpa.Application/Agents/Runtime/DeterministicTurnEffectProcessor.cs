@@ -4,6 +4,7 @@ using MimosBabySpa.Application.Agents.Operations;
 using MimosBabySpa.Application.Services;
 using MimosBabySpa.Domain.Entities;
 using MimosBabySpa.Domain.Models;
+using MimosBabySpa.Domain.Repositories;
 
 namespace MimosBabySpa.Application.Agents.Runtime;
 
@@ -91,6 +92,53 @@ public sealed class ReservationCreatedOperationEventContextResolver : IOperation
         JsonValueKind.False => "false",
         _ => null
     };
+}
+
+public sealed class OrderCreatedOperationEventContextResolver : IOperationEventContextResolver
+{
+    private readonly IUnitOfWork _unitOfWork;
+
+    public OrderCreatedOperationEventContextResolver(IUnitOfWork unitOfWork) => _unitOfWork = unitOfWork;
+
+    public bool CanResolve(string eventName) =>
+        eventName.Equals("order_created", StringComparison.OrdinalIgnoreCase);
+
+    public async Task<MessageSequenceContext> ResolveAsync(
+        OperationEvent operationEvent,
+        IReadOnlyDictionary<string, string> facts,
+        CancellationToken cancellationToken = default)
+    {
+        var custom = new Dictionary<string, string>(facts, StringComparer.OrdinalIgnoreCase);
+        var orderId = ReadGuid(operationEvent.Payload, "orderId");
+        var businessId = ReadGuid(operationEvent.Payload, "businessId");
+        if (!orderId.HasValue || !businessId.HasValue)
+            return new MessageSequenceContext { Custom = custom };
+
+        var order = await _unitOfWork.Orders.GetByIdAsync(businessId.Value, orderId.Value, cancellationToken);
+        if (order is null)
+            return new MessageSequenceContext { Custom = custom };
+
+        custom["order_id"] = order.OrderId.ToString();
+        custom["order_number"] = order.ExternalDocumentNumber
+            ?? order.ExternalOrderId
+            ?? order.OrderId.ToString("N")[..8].ToUpperInvariant();
+        custom["customer_name"] = order.CustomerNameSnapshot ?? string.Empty;
+        custom["customer_phone"] = order.CustomerPhoneSnapshot ?? string.Empty;
+        custom["delivery_address"] = order.DeliveryAddressSnapshot ?? string.Empty;
+        custom["total"] = order.Total.ToString("0.##", CultureInfo.InvariantCulture);
+        custom["currency"] = order.Currency;
+        custom["items"] = string.Join(", ", order.Items.Select(item =>
+            $"{item.ProductNameSnapshot} x{item.Quantity.ToString("0.##", CultureInfo.InvariantCulture)}"));
+        return new MessageSequenceContext { Custom = custom };
+    }
+
+    private static Guid? ReadGuid(JsonElement payload, string property) =>
+        payload.ValueKind == JsonValueKind.Object
+        && payload.TryGetProperty(property, out var value)
+        && value.ValueKind == JsonValueKind.String
+        && Guid.TryParse(value.GetString(), out var parsed)
+            ? parsed
+            : null;
 }
 
 public sealed record DeterministicTurnEffectRequest(

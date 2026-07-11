@@ -23,7 +23,7 @@ public sealed class OperationContext
     public ConversationState ConversationState { get; init; } = null!;
     public IReadOnlyDictionary<string, string> Facts { get; init; }
         = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-    public AgentToolContext? Session { get; init; }
+    public AgentConversationContext? Session { get; init; }
 }
 
 public interface IAgentOperation

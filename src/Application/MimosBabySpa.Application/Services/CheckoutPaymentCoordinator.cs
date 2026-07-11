@@ -31,19 +31,19 @@ public interface ICheckoutPaymentCoordinator
         CancellationToken ct = default);
 
     Task<CheckoutPaymentDiscardResult> DiscardActiveCheckoutAsync(
-        AgentToolContext ctx,
+        AgentConversationContext ctx,
         CheckoutKind checkoutKind,
         CancellationToken ct = default);
 
     Task<CheckoutPaymentLinkResult> EnsurePaymentLinkAsync(
-        AgentToolContext ctx,
+        AgentConversationContext ctx,
         CheckoutQuote quote,
         string paymentPhone,
         string checkoutSnapshotJson,
         CancellationToken ct = default);
 
     Task<CheckoutPaymentLinkResult> EnsureManualPaymentAsync(
-        AgentToolContext ctx,
+        AgentConversationContext ctx,
         CheckoutQuote quote,
         string checkoutSnapshotJson,
         CancellationToken ct = default);
@@ -66,7 +66,7 @@ public sealed class CheckoutPaymentCoordinator : ICheckoutPaymentCoordinator
     }
 
     public async Task<CheckoutPaymentDiscardResult> DiscardActiveCheckoutAsync(
-        AgentToolContext ctx,
+        AgentConversationContext ctx,
         CheckoutKind checkoutKind,
         CancellationToken ct = default)
     {
@@ -99,7 +99,7 @@ public sealed class CheckoutPaymentCoordinator : ICheckoutPaymentCoordinator
     }
 
     public async Task<CheckoutPaymentLinkResult> EnsurePaymentLinkAsync(
-        AgentToolContext ctx,
+        AgentConversationContext ctx,
         CheckoutQuote quote,
         string paymentPhone,
         string checkoutSnapshotJson,
@@ -179,7 +179,7 @@ public sealed class CheckoutPaymentCoordinator : ICheckoutPaymentCoordinator
     }
 
     public async Task<CheckoutPaymentLinkResult> EnsureManualPaymentAsync(
-        AgentToolContext ctx,
+        AgentConversationContext ctx,
         CheckoutQuote quote,
         string checkoutSnapshotJson,
         CancellationToken ct = default)

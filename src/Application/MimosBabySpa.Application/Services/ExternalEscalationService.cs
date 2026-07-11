@@ -33,17 +33,17 @@ public sealed class BusinessInboundContactRouter : IBusinessInboundContactRouter
 public sealed class ExternalEscalationService : IExternalEscalationService
 {
     private readonly IUnitOfWork _unitOfWork;
-    private readonly IAgentConfigProvider _configProvider;
+    private readonly AgentConfigProviderAccessor _configProvider;
     private readonly IMessageSequenceResolver _sequenceResolver;
     private readonly IWhatsAppService _whatsApp;
-    private readonly IExternalEscalationOutcomePublisher _outcomes;
+    private readonly ExternalEscalationOutcomePublisherAccessor _outcomes;
 
     public ExternalEscalationService(
         IUnitOfWork unitOfWork,
-        IAgentConfigProvider configProvider,
+        AgentConfigProviderAccessor configProvider,
         IMessageSequenceResolver sequenceResolver,
         IWhatsAppService whatsApp,
-        IExternalEscalationOutcomePublisher outcomes)
+        ExternalEscalationOutcomePublisherAccessor outcomes)
     {
         _unitOfWork = unitOfWork;
         _configProvider = configProvider;
@@ -67,38 +67,9 @@ public sealed class ExternalEscalationService : IExternalEscalationService
             ct);
     }
 
-    public async Task<ExternalEscalationSendResult> EscalateToolAsync(
-        Guid sourceAgentId,
-        string toolName,
-        Guid targetId,
-        IReadOnlyDictionary<string, string> custom,
-        CancellationToken ct = default)
-    {
-        if (string.IsNullOrWhiteSpace(toolName))
-            return new ExternalEscalationSendResult(false, null, "tool_name_required");
-
-        var config = await _configProvider.GetConfigAsync(sourceAgentId, ct);
-        if (!config.Escalations.External.Enabled)
-            return new ExternalEscalationSendResult(false, null, "external_interaction_not_configured");
-
-        var eventName = config.Escalations.External.Events
-            .Where(pair => pair.Value.Enabled)
-            .Where(pair => pair.Value.Tool.Equals(toolName.Trim(), StringComparison.OrdinalIgnoreCase))
-            .OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase)
-            .Select(pair => pair.Key)
-            .FirstOrDefault();
-
-        if (string.IsNullOrWhiteSpace(eventName))
-            return new ExternalEscalationSendResult(false, null, "external_interaction_not_configured");
-
-        return await EscalateAsync(
-            new ExternalEscalationRequest(sourceAgentId, eventName, targetId, custom),
-            ct);
-    }
-
     public async Task<ExternalEscalationSendResult> EscalateAsync(ExternalEscalationRequest request, CancellationToken ct = default)
     {
-        var config = await _configProvider.GetConfigAsync(request.SourceAgentId, ct);
+        var config = await _configProvider().GetConfigAsync(request.SourceAgentId, ct);
         if (!config.Escalations.External.Enabled
             || !config.Escalations.External.Events.TryGetValue(request.EventName, out var definition)
             || !definition.Enabled)
@@ -161,14 +132,14 @@ public sealed class ExternalEscalationService : IExternalEscalationService
 
         if (definition.OutcomeEvents.ContainsKey(ExternalEscalationOutcomeKeys.Requested))
         {
-            var deliveryId = await _outcomes.EnqueueAsync(
+            var deliveryId = await _outcomes().EnqueueAsync(
                 config.BusinessId,
                 attempt.ExternalEscalationAttemptId,
                 ExternalEscalationOutcomeKeys.Requested,
                 customPayload,
                 ct);
             await _unitOfWork.SaveChangesAsync(ct);
-            await _outcomes.PublishAsync(deliveryId, ct);
+            await _outcomes().PublishAsync(deliveryId, ct);
         }
 
         return new ExternalEscalationSendResult(true, attempt.AttemptCode, null, attempt.ExternalEscalationAttemptId);
@@ -218,7 +189,7 @@ public sealed class ExternalEscalationService : IExternalEscalationService
             attempt.AcceptedAt = null;
         }
 
-        var deliveryId = await _outcomes.EnqueueAsync(
+        var deliveryId = await _outcomes().EnqueueAsync(
             request.BusinessId,
             attempt.ExternalEscalationAttemptId,
             outcomeKey,
@@ -227,7 +198,7 @@ public sealed class ExternalEscalationService : IExternalEscalationService
         await _unitOfWork.ExternalEscalationAttempts.UpdateAsync(attempt, ct);
         await _unitOfWork.SaveChangesAsync(ct);
 
-        await _outcomes.PublishAsync(deliveryId, ct);
+        await _outcomes().PublishAsync(deliveryId, ct);
 
         return new ExternalEscalationCompletionResult(true, attempt, "Escalacion completada.", outcomeKey, payload);
     }
@@ -252,7 +223,7 @@ public sealed class ExternalEscalationService : IExternalEscalationService
             attempt.CompletedAt = now;
             attempt.OutcomeKey = timedOutOutcome;
             attempt.ResponsePayloadJson = JsonSerializer.Serialize(payload);
-            await _outcomes.EnqueueAsync(
+            await _outcomes().EnqueueAsync(
                 attempt.BusinessId,
                 attempt.ExternalEscalationAttemptId,
                 timedOutOutcome,
@@ -478,4 +449,3 @@ public sealed class ExternalEscalationService : IExternalEscalationService
         }
     }
 }
-

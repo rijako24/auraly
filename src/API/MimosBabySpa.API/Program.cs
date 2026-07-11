@@ -30,8 +30,6 @@ using Azure.AI.OpenAI;
 
 using Microsoft.Extensions.Options;
 
-
-
 using MimosBabySpa.Application.BusinessRules;
 
 using MimosBabySpa.Application.Billing;
@@ -46,9 +44,7 @@ using MimosBabySpa.Application.Configuration;
 
 using MimosBabySpa.Application.StateManagement;
 
-
-
-// Agentic Engine (Function Calling)
+// Deterministic Agent Engine
 
 using MimosBabySpa.Application.Agents;
 
@@ -57,11 +53,10 @@ using MimosBabySpa.Application.Agents.Composition;
 using MimosBabySpa.Application.Agents.Facts;
 
 using MimosBabySpa.Application.Agents.Gating;
+
 using MimosBabySpa.Application.Agents.Runtime;
 
-using MimosBabySpa.Application.Agents.Tools;
-
-using MimosBabySpa.Application.Agents.Tools.Impl;
+using MimosBabySpa.Application.Agents.Operations.Support;
 
 using MimosBabySpa.Application.LLM;
 
@@ -73,8 +68,6 @@ using MimosBabySpa.Infrastructure.Commerce;
 
 using MimosBabySpa.Infrastructure.LLM;
 
-
-
 var host = new HostBuilder()
 
     .ConfigureFunctionsWorkerDefaults()
@@ -85,21 +78,13 @@ var host = new HostBuilder()
 
         var configuration = context.Configuration;
 
-
-
         // Database
 
         services.AddDbContext<ApplicationDbContext>(options =>
 
             options.UseSqlServer(configuration.GetConnectionString("DefaultConnection")));
 
-
-
         services.AddMemoryCache();
-
-        services.AddSingleton<AgentToolMetadataRegistry>();
-
-
 
         // Repositories
 
@@ -122,8 +107,6 @@ var host = new HostBuilder()
         services.AddScoped<IEnrollmentRepository, EnrollmentRepository>();
 
         services.AddScoped<IAgentRepository, AgentRepository>();
-
-
 
         // Application Services
 
@@ -162,6 +145,7 @@ services.AddScoped<ServiceSelectionResolver>();
         services.AddScoped<ReservationPricingResolver>();
 
         services.AddScoped<IPromotionPricingService, PromotionPricingService>();
+
         services.AddScoped<IServiceCatalogPricingService, ServiceCatalogPricingService>();
 
         services.AddScoped<IBusinessClock, BusinessClock>();
@@ -190,8 +174,6 @@ services.AddScoped<ServiceSelectionResolver>();
 
         services.AddScoped<ICommerceAdapterFactory, CommerceAdapterFactory>();
 
-
-
         // OpenAI Clients
 
         services.Configure<OpenAITextModelOptions>(configuration.GetSection(OpenAITextModelOptions.SectionName));
@@ -199,12 +181,12 @@ services.AddScoped<ServiceSelectionResolver>();
         services.Configure<OpenAIAudioModelOptions>(configuration.GetSection(OpenAIAudioModelOptions.SectionName));
 
         services.AddSingleton(_ =>
+
             configuration.GetSection(AudioTranscriptionQualityOptions.SectionName).Get<AudioTranscriptionQualityOptions>()
+
             ?? new AudioTranscriptionQualityOptions());
 
         services.AddSingleton<IAudioTranscriptionQualityEvaluator, AudioTranscriptionQualityEvaluator>();
-
-
 
         services.AddKeyedSingleton<AzureOpenAIClient>("Text", (sp, _) =>
 
@@ -242,8 +224,6 @@ services.AddScoped<ServiceSelectionResolver>();
 
         });
 
-
-
         // AI Service (audio transcription with Whisper)
 
         services.AddScoped<IAIService>(sp =>
@@ -260,31 +240,21 @@ services.AddScoped<ServiceSelectionResolver>();
 
         });
 
-
-
         // State Management
 
         services.AddScoped<IConversationStateManager, ConversationStateManager>();
-
-
 
         // Business Rules Engine
 
         services.AddScoped<IBusinessRuleEngine, BusinessRuleEngine>();
 
-
-
         // Supporting services
 
         services.AddSingleton<ILocalizationService, LocalizationService>();
 
-
-
         // Payment Link Service (Wompi)
 
         services.AddScoped<IPaymentLinkService, WompiPaymentLinkService>();
-
-
 
         // Payment Confirmation Handler (Webhook)
 
@@ -299,8 +269,6 @@ services.AddScoped<ServiceSelectionResolver>();
         services.AddScoped<IActiveAgentConfigResolver, ActiveAgentConfigResolver>();
 
         services.AddScoped<IEventNotificationDispatcher, EventNotificationDispatcher>();
-
-
 
         services.AddScoped<IConversationFactsService, ConversationFactsService>();
 
@@ -328,13 +296,9 @@ services.AddScoped<ServiceSelectionResolver>();
 
         services.AddScoped<IPaidCheckoutFulfillmentHandler, OrderPaidCheckoutFulfillmentHandler>();
 
-
-
         // Webhook signature validation (Wompi)
 
         services.AddSingleton<IWompiWebhookSignatureValidator, WompiWebhookSignatureValidator>();
-
-
 
         // Escalation y release (handover a humano)
 
@@ -348,14 +312,18 @@ services.AddScoped<ServiceSelectionResolver>();
 
         services.AddScoped<IBusinessInboundContactRouter, BusinessInboundContactRouter>();
 
-        services.AddScoped<IExternalEscalationService, ExternalEscalationService>();
+        services.AddScoped<AgentConfigProviderAccessor>(sp => () => sp.GetRequiredService<IAgentConfigProvider>());
+services.AddScoped<ExternalEscalationOutcomePublisherAccessor>(sp => () => sp.GetRequiredService<IExternalEscalationOutcomePublisher>());
+services.AddScoped<IExternalEscalationService, ExternalEscalationService>();
 
         services.AddScoped<IExternalEscalationOutcomePublisher, ExternalEscalationOutcomePublisher>();
 
         services.AddScoped<IInboundMessageBatchProcessor, InboundMessageBatchProcessor>();
 
         services.AddScoped<ITimedProcessScheduleProvider, SystemConfigurationTimedProcessScheduleProvider>();
+
         services.AddSingleton<ITimedProcessSchedulePolicy, TimedProcessSchedulePolicy>();
+
         services.AddScoped<ITimedProcessScheduler, TimedProcessScheduler>();
 
         services.AddScoped<ITimedProcess, PaymentLinkPollingProcess>();
@@ -364,9 +332,7 @@ services.AddScoped<ServiceSelectionResolver>();
 
         services.AddScoped<ITimedProcess, ReservationAutomationProcess>();
 
-
-
-        // -- AGENTIC ENGINE (Function Calling) -------------------------------------
+        // -- DETERMINISTIC AGENT ENGINE -------------------------------------
 
         services.AddScoped<IChatClient>(sp =>
 
@@ -382,11 +348,7 @@ services.AddScoped<ServiceSelectionResolver>();
 
         });
 
-
-
         services.AddScoped<IAgentConfigProvider, AgentConfigProvider>();
-
-
 
         // Hydrator: plugin model
 
@@ -394,144 +356,98 @@ services.AddScoped<ServiceSelectionResolver>();
 
         services.AddSingleton<IFactSourceResolver, MimosBabySpa.Application.Agents.Facts.Resolvers.ChannelEmailResolver>();
 
-        services.AddSingleton<IFactSourceResolver, MimosBabySpa.Application.Agents.Facts.Resolvers.EngagementResolver>();
-
         services.AddSingleton<IFactHydrator, FactHydrator>();
-
-        services.AddSingleton<IFlowStageDetector, FlowStageDetector>();
 
         services.AddScoped<IConversationVerificationService, ConversationVerificationService>();
 
-        services.AddScoped<IGuardEvaluator, GuardEvaluator>();
-
-        services.AddScoped<IToolCapabilityGate, ToolCapabilityGate>();
-services.AddSingleton<ITurnEventExtractor, NoOpTurnEventExtractor>();
-services.AddScoped<IFlowRuntimeStateResolver, FlowRuntimeStateResolver>();
-services.AddScoped<IFlowPolicyEngine, FlowPolicyEngine>();
-services.AddScoped<IFlowRouter, FlowRouter>();
-services.AddScoped<IFlowRuntimeOrchestrator, FlowRuntimeOrchestrator>();
-
         services.AddScoped<IOperatingHoursTurnPolicy, OperatingHoursTurnPolicy>();
-
-        services.AddScoped<IAgentTurnToolResolver, AgentTurnToolResolver>();
-
-        services.AddScoped<IPromptComposer, AgentPromptComposer>();
-
-
 
         services.AddScoped<IAgentTemplateResolver, AgentTemplateResolver>();
 
         services.AddScoped<ITemplateRenderer, PromptTemplateRenderer>();
 
-        services.AddScoped<IAgentTurnResponseComposer, AgentTurnResponseComposer>();
-
-
-
-        services.AddScoped<IAgentTool, CheckAvailabilityTool>();
-
-        services.AddScoped<IAgentTool, ResolvePricingTool>();
-
-        services.AddScoped<IAgentTool, PrepareCheckoutTool>();
-
-        services.AddScoped<IAgentTool, PrepareOrderCheckoutTool>();
-
-        services.AddScoped<IAgentTool, CreateReservationTool>();
-
-        services.AddScoped<IAgentTool, GetCustomerReservationsTool>();
-
-        services.AddScoped<IAgentTool, ManageReservationTool>();
-
-        services.AddScoped<IAgentTool, VerifyPaymentTool>();
-
-        services.AddScoped<IAgentTool, EscalateToHumanTool>();
-
-        services.AddScoped<IAgentTool, GetServiceCatalogTool>();
-
-services.AddScoped<IAgentTool, ResolveServiceSelectionTool>();
-
-        services.AddScoped<IAgentTool, GetCompatibleAddOnsTool>();
-
-        services.AddScoped<IAgentTool, GetServiceFulfillmentTool>();
-
-        services.AddScoped<IAgentTool, SearchProductsTool>();
-        services.AddScoped<IAgentTool, SearchWebRecipesTool>();
-
-        services.AddScoped<IAgentTool, AddOrderItemTool>();
-
-        services.AddScoped<IAgentTool, RemoveOrderItemTool>();
-
-        services.AddScoped<IAgentTool, UpdateOrderItemQuantityTool>();
-
-        services.AddScoped<IAgentTool, GetOrderDraftTool>();
-
-        services.AddScoped<IAgentTool, CreateOrderTool>();
-
-        services.AddScoped<IAgentTool, StartExternalInteractionTool>();
-
-        services.AddScoped<IAgentTool, SearchOrderTool>();
-
-        services.AddScoped<IAgentTool, AcceptOrderRequestTool>();
-
-        services.AddScoped<IAgentTool, RejectOrderRequestTool>();
-
-        services.AddScoped<IAgentTool, OperationsGetReservationsTool>();
-
-        services.AddScoped<IAgentTool, OperationsBlockAvailabilityTool>();
-
-        services.AddScoped<IAgentTool, OperationsRequestRescheduleTool>();
-
-        services.AddScoped<IAgentTool, OperationsBusinessMetricsTool>();
-
-        services.AddScoped<IAgentTool, OperationsCustomerHistoryTool>();
-
-        services.AddScoped<IAgentTool, SetFactTool>();
-
-        services.AddScoped<IAgentTool, ResetFlowContextTool>();
-
-        services.AddScoped<IAgentTool, SendMessageSequenceTool>();
-
-
-
-        services.AddScoped<AgentToolRegistry>();
-MimosBabySpa.Application.Agents.Operations.AgentMethodOperationRegistration.AddDeterministicAgentMethodOperations(services);
 services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Availability.CheckAvailabilityOperation>();
+
 services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Catalog.GetCompatibleAddOnsOperation>();
+
 services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Catalog.GetServiceFulfillmentOperation>();
+
 services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Catalog.ResolveServiceSelectionOperation>();
+
 services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Catalog.GetServiceCatalogOperation>();
+
+services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Commerce.SearchProductsOperation>();
+
+services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Commerce.SearchRecipesOperation>();
+
 services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Commerce.ApplyOrderChangesOperation>();
+
 services.AddScoped<MimosBabySpa.Application.Agents.Operations.Reservation.IReservationCheckoutPreparationService, MimosBabySpa.Application.Agents.Operations.Reservation.ReservationCheckoutPreparationService>();
+
+services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Commerce.CreateCommerceOrderOperation>();
+
+services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Commerce.PrepareCommerceCheckoutOperation>();
+
 services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Reservation.PrepareReservationCheckoutOperation>();
+
+services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Reservation.ManageReservationOperation>();
+
 services.AddScoped<MimosBabySpa.Application.Agents.Operations.Reservation.IReservationCreationService, MimosBabySpa.Application.Agents.Operations.Reservation.ReservationCreationService>();
+
 services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Reservation.CreateReservationOperation>();
+
+services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Reservation.ListCustomerReservationsOperation>();
+
+services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Commerce.GetOrderDraftOperation>();
+
+services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Escalation.RequestHumanEscalationOperation>();
+
+services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Conversation.ResetConversationRequestOperation>();
+
 services.AddScoped<MimosBabySpa.Application.Agents.Operations.AgentOperationRegistry>();
+
+MimosBabySpa.Application.Agents.Operations.Internal.InternalOperationRegistration.AddInternalAgentOperations(services);
+
 services.AddSingleton<MimosBabySpa.Application.Agents.Facts.FactMutationBatchProcessor>();
+
 services.AddSingleton<MimosBabySpa.Application.Agents.Runtime.IDeterministicFlowSelector, MimosBabySpa.Application.Agents.Runtime.DeterministicFlowSelector>();
+
 services.AddScoped<MimosBabySpa.Application.Commerce.ICartProductResolver, MimosBabySpa.Application.Commerce.CommerceCartProductResolver>();
+
 services.AddScoped<MimosBabySpa.Application.Commerce.ICartMutationStore, MimosBabySpa.Application.Commerce.CommerceCartMutationStore>();
+
 services.AddScoped<MimosBabySpa.Application.Commerce.CartCommandBatchProcessor>();
+
 services.AddScoped<MimosBabySpa.Application.Agents.Configuration.AgentConfigurationCompiler>();
+
 services.AddScoped<MimosBabySpa.Application.Agents.Runtime.StageConditionEvaluator>();
+
 services.AddScoped<MimosBabySpa.Application.Agents.Runtime.OperationArgumentBinder>();
+
 services.AddSingleton<MimosBabySpa.Application.Agents.Planning.TurnPlanValidator>();
+
 services.AddScoped<MimosBabySpa.Application.Agents.Planning.ITurnPlanner, MimosBabySpa.Application.Agents.Planning.LlmTurnPlanner>();
+
 services.AddScoped<MimosBabySpa.Application.Agents.Runtime.DeterministicStageExecutor>();
+
 services.AddScoped<MimosBabySpa.Application.Agents.Runtime.DeterministicStageTransitionResolver>();
+
 services.AddScoped<MimosBabySpa.Application.Agents.Runtime.DeterministicTurnCoordinator>();
+
 services.AddScoped<MimosBabySpa.Application.Agents.Runtime.IDeterministicResponseRenderer, MimosBabySpa.Application.Agents.Runtime.DeterministicResponseRenderer>();
+
 services.AddScoped<MimosBabySpa.Application.Agents.Runtime.IOperationEventContextResolver, MimosBabySpa.Application.Agents.Runtime.ReservationCreatedOperationEventContextResolver>();
+services.AddScoped<MimosBabySpa.Application.Agents.Runtime.IOperationEventContextResolver, MimosBabySpa.Application.Agents.Runtime.OrderCreatedOperationEventContextResolver>();
+
 services.AddScoped<MimosBabySpa.Application.Agents.Runtime.IDeterministicTurnEffectProcessor, MimosBabySpa.Application.Agents.Runtime.DeterministicTurnEffectProcessor>();
+
 services.AddScoped<MimosBabySpa.Application.Agents.Operations.IOperationPresentationComposer, MimosBabySpa.Application.Agents.Operations.OperationPresentationComposer>();
 
         services.AddScoped<IAgentConversationService, AgentConversationService>();
 
-
-
         // WhatsAppMessageProcessorService (usa AgentConversationService)
 
         services.AddScoped<IWhatsAppMessageProcessorService, WhatsAppMessageProcessorService>();
-
-
 
         // -- Infrastructure Services - WhatsApp -------------------------------------
 
@@ -557,8 +473,6 @@ services.AddScoped<MimosBabySpa.Application.Agents.Operations.IOperationPresenta
 
         });
 
-
-
         // Infrastructure Services - Blob Storage
 
         services.AddSingleton(sp =>
@@ -575,8 +489,6 @@ services.AddScoped<MimosBabySpa.Application.Agents.Operations.IOperationPresenta
 
         });
 
-
-
         services.AddScoped<IBlobStorageService>(sp =>
 
         {
@@ -587,21 +499,15 @@ services.AddScoped<MimosBabySpa.Application.Agents.Operations.IOperationPresenta
 
         });
 
-
-
         // Integrations Config Provider (Google Calendar, Wompi)
 
         services.AddScoped<IIntegrationsConfigProvider, IntegrationsConfigProvider>();
 
         services.AddScoped<ISchedulingPolicyProvider, SchedulingPolicyProvider>();
 
-
-
         // Release Link
 
         services.Configure<ReleaseLinkSettings>(configuration.GetSection(ReleaseLinkSettings.SectionName));
-
-
 
         // Calendar
 
@@ -618,7 +524,5 @@ services.AddScoped<MimosBabySpa.Application.Agents.Operations.IOperationPresenta
     })
 
     .Build();
-
-
 
 host.Run();

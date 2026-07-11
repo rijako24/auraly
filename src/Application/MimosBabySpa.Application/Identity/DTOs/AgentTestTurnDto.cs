@@ -26,7 +26,7 @@ public sealed class AgentTestTurnResponse
     public bool EscalatedToHuman { get; set; }
     public bool RequestCompleted { get; set; }
     public int TotalTokens { get; set; }
-    public int ToolCallCount { get; set; }
+    public int OperationCount { get; set; }
     public IReadOnlyDictionary<string, string> Facts { get; set; } =
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
     public IReadOnlyList<OutboundMessage> OutboundMessages { get; set; } = [];

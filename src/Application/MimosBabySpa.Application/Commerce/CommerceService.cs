@@ -29,7 +29,7 @@ public sealed class CommerceService : ICommerceService
         _availability = availability;
     }
 
-    public async Task<ProductSearchResult> SearchProductsAsync(AgentToolContext ctx, ProductSearchRequest request, CancellationToken ct = default)
+    public async Task<ProductSearchResult> SearchProductsAsync(AgentConversationContext ctx, ProductSearchRequest request, CancellationToken ct = default)
     {
         var adapterContext = await BuildContextAsync(ctx.BusinessId, ctx.AgentId, ctx.ConversationId, ctx.Config, ct);
         var adapter = _adapterFactory.Resolve(adapterContext.Provider);
@@ -40,7 +40,7 @@ public sealed class CommerceService : ICommerceService
         return await EnrichProductPromotionsAsync(ctx.BusinessId, result, ct);
     }
 
-    public async Task<OrderSnapshot> AddItemAsync(AgentToolContext ctx, AddOrderItemRequest request, CancellationToken ct = default)
+    public async Task<OrderSnapshot> AddItemAsync(AgentConversationContext ctx, AddOrderItemRequest request, CancellationToken ct = default)
     {
         if (request.Quantity <= 0)
             throw new InvalidOperationException("Quantity must be greater than zero.");
@@ -104,7 +104,7 @@ public sealed class CommerceService : ICommerceService
         return await BuildSnapshotAsync(draft, ct);
     }
 
-    public async Task<OrderSnapshot> RemoveItemAsync(AgentToolContext ctx, Guid orderItemId, CancellationToken ct = default)
+    public async Task<OrderSnapshot> RemoveItemAsync(AgentConversationContext ctx, Guid orderItemId, CancellationToken ct = default)
     {
         var draft = await GetActiveDraftAsync(ctx, ct)
             ?? throw new InvalidOperationException("No active order draft found.");
@@ -122,7 +122,7 @@ public sealed class CommerceService : ICommerceService
     }
 
     public async Task<OrderSnapshot> UpdateItemQuantityAsync(
-        AgentToolContext ctx,
+        AgentConversationContext ctx,
         Guid orderItemId,
         decimal quantity,
         CancellationToken ct = default)
@@ -149,13 +149,13 @@ public sealed class CommerceService : ICommerceService
         return await BuildSnapshotAsync(draft, ct);
     }
 
-    public async Task<OrderSnapshot> GetDraftAsync(AgentToolContext ctx, CancellationToken ct = default)
+    public async Task<OrderSnapshot> GetDraftAsync(AgentConversationContext ctx, CancellationToken ct = default)
     {
         var draft = await GetActiveDraftAsync(ctx, ct);
         return draft is null ? EmptyDraftSnapshot() : await BuildSnapshotAsync(draft, ct);
     }
 
-    public async Task<OrderSnapshot> CreateOrderAsync(AgentToolContext ctx, CreateOrderRequest request, CancellationToken ct = default)
+    public async Task<OrderSnapshot> CreateOrderAsync(AgentConversationContext ctx, CreateOrderRequest request, CancellationToken ct = default)
     {
         var draft = await GetActiveDraftAsync(ctx, ct)
             ?? throw new InvalidOperationException("No active order draft found.");
@@ -320,7 +320,7 @@ public sealed class CommerceService : ICommerceService
         return new CommerceAdapterContext(businessId, agentId ?? Guid.Empty, conversationId, provider, connection);
     }
 
-    private async Task<OrderDraft?> GetActiveDraftAsync(AgentToolContext ctx, CancellationToken ct)
+    private async Task<OrderDraft?> GetActiveDraftAsync(AgentConversationContext ctx, CancellationToken ct)
     {
         var activeDrafts = await _unitOfWork.OrderDrafts.GetActiveDraftsByConversationAsync(
             ctx.BusinessId,
@@ -340,7 +340,7 @@ public sealed class CommerceService : ICommerceService
         return current;
     }
 
-    private async Task<OrderDraft> GetOrCreateDraftAsync(AgentToolContext ctx, CommerceAdapterContext adapterContext, CancellationToken ct)
+    private async Task<OrderDraft> GetOrCreateDraftAsync(AgentConversationContext ctx, CommerceAdapterContext adapterContext, CancellationToken ct)
     {
         var existing = await GetActiveDraftAsync(ctx, ct);
         if (existing is not null)
@@ -434,8 +434,7 @@ public sealed class CommerceService : ICommerceService
         return result with { Products = products };
     }
 
-
-    private void ApplyCustomerData(AgentToolContext ctx, OrderDraft draft, CreateOrderRequest request)
+    private void ApplyCustomerData(AgentConversationContext ctx, OrderDraft draft, CreateOrderRequest request)
     {
         draft.CustomerNameSnapshot = Coalesce(request.CustomerName, draft.CustomerNameSnapshot, ctx.Conversation.CustomerName);
         draft.CustomerEmailSnapshot = Coalesce(request.CustomerEmail, draft.CustomerEmailSnapshot, ctx.Conversation.CustomerEmail);
@@ -577,7 +576,7 @@ public sealed class CommerceService : ICommerceService
         return evt;
     }
 
-    private static void ApplyOrderCheckoutMetadata(AgentToolContext ctx, OrderDraft draft)
+    private static void ApplyOrderCheckoutMetadata(AgentConversationContext ctx, OrderDraft draft)
     {
         var checkoutMode = ctx.Config?.Checkout.ResolveMode("order");
         var shipping = checkoutMode?.Shipping ?? new OrderCheckoutShippingDefinition();
@@ -688,7 +687,7 @@ public sealed class CommerceService : ICommerceService
         return null;
     }
 
-    private static string? GetFact(AgentToolContext ctx, string key) =>
+    private static string? GetFact(AgentConversationContext ctx, string key) =>
         ctx.Facts.TryGetValue(key, out var value) && !string.IsNullOrWhiteSpace(value) ? value : null;
 
     private static string? Coalesce(params string?[] values) =>

@@ -8,7 +8,6 @@ public class AgentTemplate
     public string Kind { get; set; } = string.Empty;
     public string? Description { get; set; }
     public string? SettingsJson { get; set; }
-    public string? SystemPromptMarkdown { get; set; }
     public bool IsSystemTemplate { get; set; } = true;
     public bool IsActive { get; set; } = true;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;

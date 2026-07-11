@@ -74,8 +74,7 @@ public sealed class CatalogDraftAiParser : ICatalogDraftParser
                 ChatMessage.System(system),
                 ChatMessage.User($"Extrae servicios de este documento:\n\n{text}")
             ],
-            tools: null,
-            options: new ChatCompletionOptions { Temperature = 0.2f, MaxTokens = 4000, ForceTextResponse = true },
+            options: new ChatCompletionOptions { Temperature = 0.2f, MaxTokens = 4000 },
             cancellationToken: ct);
 
         if (!result.Success || string.IsNullOrWhiteSpace(result.Content))

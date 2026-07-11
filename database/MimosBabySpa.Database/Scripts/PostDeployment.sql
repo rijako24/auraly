@@ -3,7 +3,7 @@
 --
 -- Hook SSDT que se ejecuta despues de publicar el dacpac.
 -- Orquesta los seeds idempotentes que dejan la BD lista para ejecutar
--- el motor agentico (OpenAI Function Calling).
+-- el motor conversacional determin?stico (extracci?n estructurada).
 --
 -- Orden:
 --   1. Admin user, rol y tenant base

@@ -72,6 +72,11 @@ public static class TurnPlanScopeBuilder
             if (!string.IsNullOrWhiteSpace(signal.Type))
                 signals.TryAdd(signal.Type, signal);
         }
+        foreach (var action in config.GlobalActions)
+        {
+            if (!string.IsNullOrWhiteSpace(action.Signal.Type))
+                signals.TryAdd(action.Signal.Type, action.Signal);
+        }
 
         var flowOptions = flows.ToDictionary(
             flow => flow.Id,
@@ -101,15 +106,7 @@ public static class TurnPlanScopeBuilder
         if (!entry.Source.Equals("user", StringComparison.OrdinalIgnoreCase))
             return false;
 
-        if (entry.ValueSource is not null
-            && (entry.ValueSource.Equals("catalog", StringComparison.OrdinalIgnoreCase)
-                || entry.ValueSource.Equals("tool", StringComparison.OrdinalIgnoreCase)
-                || entry.ValueSource.Equals("external", StringComparison.OrdinalIgnoreCase)))
-        {
-            return false;
-        }
-
-        return !string.Equals(entry.Role, "booking.service", StringComparison.OrdinalIgnoreCase)
-            && !entry.Key.Equals(ConversationFactKeys.Service, StringComparison.OrdinalIgnoreCase);
+        return string.IsNullOrWhiteSpace(entry.ValueSource)
+            || entry.ValueSource.Equals("user", StringComparison.OrdinalIgnoreCase);
     }
 }

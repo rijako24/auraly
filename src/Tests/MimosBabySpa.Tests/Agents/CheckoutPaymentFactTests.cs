@@ -2,7 +2,7 @@ using FluentAssertions;
 using MimosBabySpa.Application.Agents;
 using MimosBabySpa.Application.Agents.Configuration;
 using MimosBabySpa.Application.Agents.Facts;
-using MimosBabySpa.Application.Agents.Tools.Impl;
+using MimosBabySpa.Application.Agents.Operations.Support;
 using MimosBabySpa.Application.Services;
 using Moq;
 using Xunit;
@@ -15,7 +15,7 @@ public sealed class CheckoutPaymentFactTests
     public void Get_WhenPaymentMethodFactIsNotDeclared_IgnoresFallbackFact()
     {
         var roles = new FactRoleIndex([]);
-        var ctx = new AgentToolContext
+        var ctx = new AgentConversationContext
         {
             Facts = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {
@@ -33,7 +33,7 @@ public sealed class CheckoutPaymentFactTests
     {
         var facts = new Mock<IConversationFactsService>();
         var roles = new FactRoleIndex([]);
-        var ctx = new AgentToolContext
+        var ctx = new AgentConversationContext
         {
             ConversationId = Guid.NewGuid(),
             BusinessId = Guid.NewGuid(),
@@ -67,7 +67,7 @@ public sealed class CheckoutPaymentFactTests
         var roles = new FactRoleIndex([
             new FactSchemaEntry { Key = "payment_method", Role = "payment.method", Source = "user" }
         ]);
-        var ctx = new AgentToolContext
+        var ctx = new AgentConversationContext
         {
             Facts = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {

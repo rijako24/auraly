@@ -7,6 +7,15 @@ public sealed class StageSignalDefinition
     public string Type { get; init; } = string.Empty;
     public string Description { get; init; } = string.Empty;
     public JsonElement ValueSchema { get; init; }
+    public IReadOnlyList<SignalAmbiguityRuleDefinition> AmbiguityRules { get; init; } = [];
+}
+
+public sealed class SignalAmbiguityRuleDefinition
+{
+    public string Type { get; init; } = "distinct_values";
+    public string ValueProperty { get; init; } = string.Empty;
+    public string Field { get; init; } = string.Empty;
+    public int MinimumDistinctValues { get; init; } = 2;
 }
 public static class StageActionTriggers
 {
@@ -40,6 +49,18 @@ public sealed class StageActionExecutionDefinition
     public string Idempotency { get; init; } = "input_version";
     public int TimeoutSeconds { get; init; } = 30;
     public int MaxAttempts { get; init; } = 1;
+}
+
+public static class StageActionIdempotency
+{
+    public const string InputVersion = "input_version";
+    public const string OncePerRequest = "once_per_request";
+    public const string None = "none";
+
+    public static IReadOnlySet<string> All { get; } = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        InputVersion, OncePerRequest, None
+    };
 }
 
 public sealed class StageConditionDefinition

@@ -44,6 +44,39 @@ public sealed partial class AgentConfigurationCompiler
         var usedOperations = new Dictionary<string, IAgentOperation>(StringComparer.OrdinalIgnoreCase);
         foreach (var flow in flows)
             ValidateFlow(config, flow, facts, usedOperations, errors);
+        UniqueBy(config.GlobalActions, value => value.Id, "globalActions", "duplicate_global_action", errors);
+        UniqueBy(config.GlobalActions, value => value.Signal.Type, "globalActions", "duplicate_global_signal", errors);
+        foreach (var action in config.GlobalActions)
+        {
+            if (string.IsNullOrWhiteSpace(action.Signal.Type))
+                Error(errors, $"globalActions[{action.Id}].signal", "missing_signal", "A global action requires one semantic signal.");
+            if (action.Actions.Any(configured =>
+                    !configured.Trigger.Equals(StageActionTriggers.OnSignal, StringComparison.OrdinalIgnoreCase)))
+            {
+                Error(errors, $"globalActions[{action.Id}].actions", "invalid_global_trigger",
+                    "Global actions may only use the on_signal trigger.");
+            }
+
+            ValidateFlow(
+                config,
+                new AgentFlowDefinition
+                {
+                    Id = $"global:{action.Id}",
+                    Stages =
+                    [
+                        new AgentFlowStage
+                        {
+                            Id = action.Id,
+                            Signals = [action.Signal],
+                            Actions = action.Actions,
+                            Response = action.Response
+                        }
+                    ]
+                },
+                facts,
+                usedOperations,
+                errors);
+        }
 
         ValidateSignalConsistency(flows, errors);
         ValidateMessageSequences(config, errors);
@@ -102,13 +135,6 @@ public sealed partial class AgentConfigurationCompiler
         foreach (var stage in flow.Stages)
         {
             var stagePath = $"{path}.stages[{stage.Id}]";
-            if (stage.AllowedActions.Count > 0 || stage.EntryActions.Count > 0 || stage.AfterTool.Count > 0
-                || stage.AutoSetOnSkip.Count > 0 || !string.IsNullOrWhiteSpace(stage.SkipWhen)
-                || !string.IsNullOrWhiteSpace(stage.OnSuccess) || !string.IsNullOrWhiteSpace(stage.OnProblem))
-            {
-                Error(errors, stagePath, "legacy_stage_configuration",
-                    "allowedActions, entryActions, afterTool, autoSetOnSkip, skipWhen, onSuccess and onProblem are not supported by the deterministic engine. Use signals, actions, typed outcomes and transitions.");
-            }
 
             foreach (var fact in stage.AdvanceWhenFacts.Concat(stage.Collect).Distinct(StringComparer.OrdinalIgnoreCase))
             {
@@ -119,6 +145,19 @@ public sealed partial class AgentConfigurationCompiler
             var signals = UniqueBy(stage.Signals, value => value.Type, $"{stagePath}.signals", "duplicate_signal", errors);
             foreach (var signal in stage.Signals)
                 ValidateSignalSchema(signal, $"{stagePath}.signals[{signal.Type}]", errors);
+            foreach (var signal in stage.Signals)
+            foreach (var rule in signal.AmbiguityRules)
+            {
+                var rulePath = $"{stagePath}.signals[{signal.Type}].ambiguityRules";
+                if (!rule.Type.Equals("distinct_values", StringComparison.OrdinalIgnoreCase))
+                    Error(errors, rulePath, "unknown_ambiguity_rule", $"Ambiguity rule '{rule.Type}' is not supported.");
+                if (string.IsNullOrWhiteSpace(rule.ValueProperty))
+                    Error(errors, rulePath, "value_property_required", "A distinct_values rule requires valueProperty.");
+                if (rule.MinimumDistinctValues < 2)
+                    Error(errors, rulePath, "invalid_minimum", "minimumDistinctValues must be at least 2.");
+                if (!facts.ContainsKey(rule.Field) && !signals.ContainsKey(rule.Field))
+                    Error(errors, rulePath, "unknown_ambiguous_field", $"Ambiguous field '{rule.Field}' is not declared in the stage scope.");
+            }
 
             UniqueBy(stage.Actions, value => value.Id, $"{stagePath}.actions", "duplicate_action", errors);
             foreach (var action in stage.Actions)
@@ -157,6 +196,11 @@ public sealed partial class AgentConfigurationCompiler
             Error(errors, path, "unknown_signal", $"Action references undeclared signal '{action.Signal}'.");
         if (action.Execution.TimeoutSeconds <= 0 || action.Execution.MaxAttempts <= 0)
             Error(errors, path, "invalid_execution_policy", "timeoutSeconds and maxAttempts must be positive.");
+        if (!StageActionIdempotency.All.Contains(action.Execution.Idempotency))
+            Error(errors, path, "invalid_idempotency", $"Idempotency '{action.Execution.Idempotency}' is not supported.");
+        if (action.Execution.MaxAttempts > 1
+            && action.Execution.Idempotency.Equals(StageActionIdempotency.None, StringComparison.OrdinalIgnoreCase))
+            Error(errors, path, "retry_requires_idempotency", "maxAttempts greater than one requires an idempotency policy.");
 
         if (!_operations.TryGet(action.Operation, out var operation))
         {

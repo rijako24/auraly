@@ -486,16 +486,13 @@ END
 
 
 
-DECLARE @SystemPrompt NVARCHAR(MAX) = N'';
 
 
 
 DECLARE @SettingsJson NVARCHAR(MAX) = N'{
   "model": "gpt-4.1-mini",
   "temperature": 0.68,
-  "maxToolIterations": 8,
   "historyWindowSize": 24,
-  "consecutiveErrorEscalationThreshold": 3,
   "commerce": {
     "enabled": true,
     "provider": "Local"
@@ -648,8 +645,32 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "priority": 100,
       "goal": "Escalar a humano cuando el cliente lo pida, haya queja grave, distribuidor/mayorista o una situacion fuera del flujo normal.",
       "conversationGuidance": "Responde con una frase corta y cordial. Para distribuidor, menciona minimo 12 unidades y margen 25%. Luego escala a humano.",
-      "allowedActions": [
-        "escalate_to_human"
+      "signal": {
+        "type": "human_escalation",
+        "description": "Escalar a humano cuando el cliente lo pida, haya queja grave, distribuidor/mayorista o una situacion fuera del flujo normal.",
+        "valueSchema": {
+          "type": "string"
+        }
+      },
+      "actions": [
+        {
+          "id": "request_human",
+          "operation": "escalation.request_human",
+          "trigger": "on_signal",
+          "signal": "human_escalation",
+          "arguments": {
+            "reason": "{{signal.human_escalation.value}}",
+            "last_user_message": "{{turn.message}}"
+          },
+          "onOutcome": {
+            "escalation.requested": {},
+            "escalation.notification_failed": {
+              "response": {
+                "guidance": "Indica que el equipo continuar? la atenci?n."
+              }
+            }
+          }
+        }
       ]
     },
     {
@@ -657,14 +678,84 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "priority": 90,
       "goal": "Modificar el carrito actual cuando el cliente, despues de decir que no agregaba mas o despues de recibir el resumen/link, pida agregar, quitar o cambiar productos/cantidades.",
       "conversationGuidance": "Si el cliente quiere agregar, quitar, reducir cantidades, cambiar productos o ver opciones para modificar el pedido actual, esta accion tiene prioridad sobre pedir datos de envio o verificar pago. Si ya hubo resumen o link de pago, primero modifica el carrito y luego genera un resumen/link nuevo. Para cualquier cambio sobre carrito ya existente, consulta el pedido actual primero. Para cambiar la cantidad total de un producto ya en carrito, actualiza la cantidad con quantity igual a la cantidad final deseada. Para quitar un item completo, quita el producto sin quantity; para reducirlo a una cantidad final menor, quita producto con quantity igual a la cantidad final deseada. Si hay varios items y la referencia del producto queda ambigua, pregunta una sola vez usando los nombres de los productos del carrito. Para agregar producto nuevo o unidades adicionales, agrega solo producto vigente devuelto por busqueda de productos oficiales; si falta producto o la referencia viene de una lista anterior, consulta productos oficiales; si falta cantidad, pregunta solo cuantas unidades. Si pide otro tamano, presentacion, sabor u opciones parecidas, consulta productos oficiales antes de responder y menciona solo alternativas devueltas por la herramienta. Despues de agregar, quitar o actualizar cantidad exitosamente, consulta el pedido actual y muestra el carrito actualizado. Si el carrito quedo vacio, ayuda a elegir producto. Si el carrito tiene items y ya existen city, delivery_address, delivery_phone, customer_name y payment_method, registra order_finalized=true y luego prepara el resumen del pedido en el mismo turno para recalcular total y link; presenta el nuevo resumen/link como la version vigente del pedido. Si faltan datos de envio o metodo de pago, pide solo lo faltante.",
-      "allowedActions": [
-        "search_products",
-        "add_order_item",
-        "remove_order_item",
-        "update_order_item_quantity",
-        "get_order_draft",
-        "set_fact",
-        "prepare_order_checkout"
+      "signal": {
+        "type": "order_changes",
+        "description": "Cambios concretos sobre el ?nico pedido activo.",
+        "valueSchema": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "operation": {
+                "type": "string",
+                "enum": [
+                  "add",
+                  "remove",
+                  "set_quantity"
+                ]
+              },
+              "productText": {
+                "type": "string"
+              },
+              "quantity": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "destinationReference": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "operation",
+              "productText",
+              "quantity",
+              "destinationReference"
+            ]
+          }
+        }
+      },
+      "actions": [
+        {
+          "id": "apply_order_changes",
+          "operation": "commerce.apply_order_changes",
+          "trigger": "on_signal",
+          "signal": "order_changes",
+          "arguments": {
+            "commands": "{{signal.order_changes.value}}"
+          },
+          "onOutcome": {
+            "cart.applied": {},
+            "cart.multiple_destinations": {
+              "response": {
+                "mode": "ask_clarification"
+              }
+            },
+            "cart.product_ambiguous": {
+              "response": {
+                "mode": "ask_clarification"
+              }
+            },
+            "cart.item_not_found_or_ambiguous": {
+              "response": {
+                "mode": "ask_clarification"
+              }
+            }
+          }
+        }
       ]
     },
     {
@@ -672,22 +763,45 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "priority": 70,
       "goal": "Reiniciar el pedido actual si el cliente cambia completamente de producto o quiere empezar de nuevo.",
       "conversationGuidance": "Reinicia la solicitud solo cuando el cliente indique claramente que quiere cambiar el pedido completo, empezar de cero, cancelar el pedido anterior o hacer otro pedido independiente. Si habia resumen o link pendiente y el cliente abandona ese pedido, usa checkout_action=abandon. Para agregar o quitar productos del pedido actual, usa la accion transversal de modificar pedido.",
-      "allowedActions": [
-        "reset_flow_context",
-        "set_fact"
+      "signal": {
+        "type": "restart_request",
+        "description": "Reiniciar el pedido actual si el cliente cambia completamente de producto o quiere empezar de nuevo.",
+        "valueSchema": {
+          "type": "string"
+        }
+      },
+      "actions": [
+        {
+          "id": "reset_request",
+          "operation": "conversation.reset_request",
+          "trigger": "on_signal",
+          "signal": "restart_request",
+          "arguments": {},
+          "onOutcome": {
+            "conversation.request_reset": {
+              "effects": [
+                {
+                  "type": "facts.clear",
+                  "facts": [
+                    "occasion",
+                    "order_finalized",
+                    "gift_wrap",
+                    "city",
+                    "delivery_address",
+                    "payment_method",
+                    "order_checkout_presented",
+                    "customer_confirmed",
+                    "shipping_cost"
+                  ]
+                }
+              ]
+            }
+          }
+        }
       ]
     }
   ],
   "factSchema": [
-    {
-      "key": "session.engagement",
-      "role": "session.engagement",
-      "label": "contexto de engagement",
-      "type": "string",
-      "required": false,
-      "source": "session",
-      "scope": "ephemeral"
-    },
     {
       "key": "occasion",
       "role": "order.occasion",
@@ -696,13 +810,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "required": false,
       "source": "user",
       "scope": "request",
-      "aliases": [
-        "regalo",
-        "compartir",
-        "celebracion",
-        "ocasion",
-        "detalle"
-      ],
       "retentionDays": 1
     },
     {
@@ -713,14 +820,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "required": true,
       "source": "user",
       "scope": "request",
-      "aliases": [
-        "finalizar",
-        "cerrar pedido",
-        "no agregar mas",
-        "nada mas",
-        "solo eso",
-        "listo"
-      ],
       "retentionDays": 1
     },
     {
@@ -731,12 +830,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "required": false,
       "source": "user",
       "scope": "request",
-      "aliases": [
-        "regalo",
-        "tula",
-        "empaque",
-        "detalle"
-      ],
       "retentionDays": 1
     },
     {
@@ -748,11 +841,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "source": "system",
       "defaultValue": "Valledupar",
       "scope": "request",
-      "aliases": [
-        "ciudad",
-        "municipio",
-        "destino"
-      ],
       "retentionDays": 1
     },
     {
@@ -763,12 +851,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "required": true,
       "source": "user",
       "scope": "request",
-      "aliases": [
-        "direccion",
-        "domicilio",
-        "barrio",
-        "direccion de entrega"
-      ],
       "retentionDays": 1
     },
     {
@@ -778,14 +860,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "type": "phone",
       "required": true,
       "source": "user",
-      "scope": "customer",
-      "aliases": [
-        "telefono",
-        "celular",
-        "whatsapp",
-        "numero",
-        "contacto"
-      ]
+      "scope": "customer"
     },
     {
       "key": "customer_name",
@@ -794,14 +869,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "type": "string",
       "required": true,
       "source": "user",
-      "scope": "customer",
-      "aliases": [
-        "nombre",
-        "cliente",
-        "recibe",
-        "destinatario",
-        "nombre de quien recibe"
-      ]
+      "scope": "customer"
     },
     {
       "key": "payment_method",
@@ -811,10 +879,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "required": true,
       "source": "user",
       "scope": "request",
-      "aliases": [
-        "efectivo",
-        "transferencia"
-      ],
       "retentionDays": 1
     },
     {
@@ -844,12 +908,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         "delivery_phone",
         "customer_name",
         "payment_method"
-      ],
-      "aliases": [
-        "confirmo",
-        "confirmo pedido",
-        "si confirmo",
-        "confirmado"
       ]
     },
     {
@@ -862,29 +920,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "scope": "request",
       "retentionDays": 1
     }
-  ],
-  "guards": {
-    "capability:commerce.order_create": {
-      "requires": [
-        "verification:checkout_no_payment_prepared",
-        "state:no_pending_checkout",
-        "flag:verbal_confirmation"
-      ]
-    }
-  },
-  "enabledTools": [
-    "set_fact",
-    "search_products",
-    "add_order_item",
-    "remove_order_item",
-    "update_order_item_quantity",
-    "get_order_draft",
-    "prepare_order_checkout",
-    "verify_payment",
-    "create_order",
-    "send_message_sequence",
-    "reset_flow_context",
-    "escalate_to_human"
   ],
   "notifications": {
     "reservation_created": {
@@ -941,7 +976,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "events": {
         "order_created": {
           "enabled": false,
-          "tool": "create_order",
           "contactType": "domicilio",
           "pickupAddress": "Centro Comercial Guatapuri, Isla Vino Solorzano (frente a TOTTO)",
           "attemptTimeoutMinutes": 15,
@@ -1006,7 +1040,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "id": "order",
       "type": "primary",
       "routingGuidance": "Use this primary flow for new wine orders, product selection, delivery data, payment method, checkout summary and order confirmation.",
-      "stageDetection": "automatic",
       "stages": [
         {
           "id": "discovery",
@@ -1016,20 +1049,117 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
             "order_finalized"
           ],
           "conversationGuidance": "En saludos o informacion inicial, usa la tool search_products con query vino y limit 10. Luego presenta hasta 10 productos activos devueltos en el turno vigente sin mencionar precios, y cierra exactamente con: Que vino te gustaria degustar el dia de hoy?. Para recomendaciones por ocasion, opciones, precios, promociones, tamanos, presentaciones o sabores, consulta productos oficiales antes de responder; usa query vino, limit 5 cuando la ocasion sea general. Si el cliente selecciona por numero, precio, tamano, sabor, nombre parcial o descripcion, resuelve solo contra productos activos devueltos en el turno vigente; si no hay resultado vigente o la referencia no aparece, consulta productos oficiales antes de responder o agregar. Si hay una coincidencia razonable pero falta cantidad, pregunta cuantas unidades quiere. Agrega al carrito solo cuando producto y cantidad expresa esten claros. Despues de agregar producto exitosamente, muestra el carrito y pregunta: Quieres agregar algo mas a la compra? Si responde con una negacion y existe al menos un item, registra order_finalized=true; si el carrito esta vacio, ayuda a elegir un producto primero.",
-          "allowedActions": [
-            "search_products",
-            "add_order_item",
-            "set_fact"
-          ],
           "collect": [
             "order_finalized"
           ],
-          "entryActions": [
+          "signals": [
             {
-              "tool": "search_products",
+              "type": "product_search",
+              "description": "Consulta concreta de productos oficiales.",
+              "valueSchema": {
+                "type": "string"
+              }
+            },
+            {
+              "type": "cart_changes",
+              "description": "Cambios concretos del ?nico pedido activo.",
+              "valueSchema": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "operation": {
+                      "type": "string",
+                      "enum": [
+                        "add",
+                        "remove",
+                        "set_quantity"
+                      ]
+                    },
+                    "productText": {
+                      "type": "string"
+                    },
+                    "quantity": {
+                      "anyOf": [
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "destinationReference": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "operation",
+                    "productText",
+                    "quantity",
+                    "destinationReference"
+                  ]
+                }
+              }
+            }
+          ],
+          "actions": [
+            {
+              "id": "commerce_search_products_1",
+              "operation": "commerce.search_products",
               "arguments": {
                 "query": "{{user.message}}",
                 "limit": 10
+              },
+              "onOutcome": {
+                "products.found": {}
+              }
+            },
+            {
+              "id": "search_products",
+              "operation": "commerce.search_products",
+              "trigger": "on_signal",
+              "signal": "product_search",
+              "arguments": {
+                "query": "{{signal.product_search.value}}"
+              },
+              "onOutcome": {
+                "products.found": {}
+              }
+            },
+            {
+              "id": "apply_cart_changes",
+              "operation": "commerce.apply_order_changes",
+              "trigger": "on_signal",
+              "signal": "cart_changes",
+              "arguments": {
+                "commands": "{{signal.cart_changes.value}}"
+              },
+              "onOutcome": {
+                "cart.applied": {},
+                "cart.multiple_destinations": {
+                  "response": {
+                    "mode": "ask_clarification"
+                  }
+                },
+                "cart.product_ambiguous": {
+                  "response": {
+                    "mode": "ask_clarification"
+                  }
+                },
+                "cart.item_not_found_or_ambiguous": {
+                  "response": {
+                    "mode": "ask_clarification"
+                  }
+                }
               }
             }
           ]
@@ -1051,9 +1181,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
             "customer_name"
           ],
           "conversationGuidance": "Pide en una sola lista solo los datos de usuario que falten: Direccion de entrega, Celular de contacto y Nombre de quien recibe. No pidas ciudad si ya existe por defecto; usa Valledupar como ciudad local salvo que el cliente indique otra. Cuando el cliente responda, registra todos los datos que entregue en ese turno. Si todavia falta algun dato requerido, pide solo los faltantes juntos.",
-          "allowedActions": [
-            "set_fact"
-          ],
           "collect": [
             "city",
             "delivery_address",
@@ -1069,10 +1196,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
             "payment_method"
           ],
           "conversationGuidance": "Cuando ya existan items y datos completos de entrega, pregunta una sola cosa con estas dos opciones: efectivo al recibir o transferencia con link de pago. Si responde efectivo, registra payment_method=efectivo. Si responde transferencia o link de pago, registra payment_method=transferencia. Despues de guardar el metodo de pago, continua al resumen.",
-          "allowedActions": [
-            "set_fact",
-            "get_order_draft"
-          ],
           "collect": [
             "payment_method"
           ]
@@ -1092,42 +1215,52 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
             "customer_name",
             "payment_method"
           ],
-          "afterTool": [
-            {
-              "tool": "prepare_order_checkout",
-              "when": {
-                "path": "ok",
-                "equals": "true"
-              },
-              "setFacts": {
-                "order_checkout_presented": "true"
-              }
-            }
-          ],
           "conversationGuidance": "Cuando ya existan items, datos de entrega y metodo de pago, prepara el resumen del pedido una sola vez para calcular envio, total y renderizar el resumen oficial. Si devuelve resumen sin link, muestra el resumen y pide confirmacion verbal. Si devuelve link de pago, muestra el resumen/link y espera confirmacion automatica del webhook. Si falla por configuracion de pago, link de pago o error no recuperable, responde breve y escala a humano en ese mismo turno.",
-          "allowedActions": [
-            "prepare_order_checkout",
-            "get_order_draft",
-            "escalate_to_human"
-          ],
           "collect": [
             "order_checkout_presented"
           ],
-          "entryActions": [
+          "actions": [
             {
-              "tool": "prepare_order_checkout",
+              "id": "commerce_prepare_checkout_1",
+              "operation": "commerce.prepare_checkout",
               "arguments": {},
-              "when": {
-                "requiredFacts": [
-                  "city",
-                  "delivery_address",
-                  "delivery_phone",
-                  "customer_name",
-                  "payment_method"
-                ],
-                "missingFacts": [
-                  "order_checkout_presented"
-                ]
+              "onOutcome": {
+                "order.checkout_ready": {
+                  "effects": [
+                    {
+                      "type": "fact.set",
+                      "fact": "order_checkout_presented",
+                      "value": true
+                    }
+                  ]
+                },
+                "order.checkout_payment_required": {
+                  "effects": [
+                    {
+                      "type": "fact.set",
+                      "fact": "order_checkout_presented",
+                      "value": true
+                    }
+                  ]
+                },
+                "order.checkout_pending_manual_payment": {
+                  "effects": [
+                    {
+                      "type": "fact.set",
+                      "fact": "order_checkout_presented",
+                      "value": true
+                    }
+                  ]
+                },
+                "order.checkout_prepared": {
+                  "effects": [
+                    {
+                      "type": "fact.set",
+                      "fact": "order_checkout_presented",
+                      "value": true
+                    }
+                  ]
+                }
               }
             }
           ]
@@ -1136,17 +1269,13 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
           "id": "order_confirmation",
           "name": "Confirmacion del pedido",
           "goal": "Confirmar el pedido ya resumido o acompanar el pago pendiente segun el metodo elegido.",
-          "advanceWhenFacts": ["customer_confirmed"],
-          "conversationGuidance": "Si falta customer_confirmed, pide confirmacion verbal del resumen final y registrala solo cuando el cliente la entregue claramente. Si payment_method=efectivo y customer_confirmed=true, crea el pedido con los facts vigentes; cuando el pedido quede creado, envia la secuencia order_created_customer. Si payment_method=transferencia, espera la confirmacion automatica del webhook; si el cliente pregunta por el pago, verifica el pago. Si el cliente corrige datos, metodo de pago o carrito, aplica el cambio con la accion transversal de modificar pedido y presenta el resumen recalculado.",
-          "allowedActions": [
-            "create_order",
-            "send_message_sequence",
-            "verify_payment",
-            "get_order_draft",
-            "set_fact",
-            "escalate_to_human"
+          "advanceWhenFacts": [
+            "customer_confirmed"
           ],
-          "collect": ["customer_confirmed"]
+          "conversationGuidance": "Si falta customer_confirmed, pide confirmacion verbal del resumen final y registrala solo cuando el cliente la entregue claramente. Si payment_method=efectivo y customer_confirmed=true, crea el pedido con los facts vigentes; cuando el pedido quede creado, envia la secuencia order_created_customer. Si payment_method=transferencia, espera la confirmacion automatica del webhook; si el cliente pregunta por el pago, verifica el pago. Si el cliente corrige datos, metodo de pago o carrito, aplica el cambio con la accion transversal de modificar pedido y presenta el resumen recalculado.",
+          "collect": [
+            "customer_confirmed"
+          ]
         }
       ]
     }
@@ -1173,13 +1302,9 @@ UPDATE dbo.Agents
 
 SET SettingsJson         = @SettingsJson,
 
-    SystemPromptMarkdown = @SystemPrompt,
-
     Model                = N'gpt-4.1-mini',
 
     Temperature          = 0.68,
-
-    MaxToolIterations    = 8,
 
     Description          = N'Asesora comercial Vinos Artesanales Solorzano: venta por WhatsApp con pedido, envio y pago.',
 

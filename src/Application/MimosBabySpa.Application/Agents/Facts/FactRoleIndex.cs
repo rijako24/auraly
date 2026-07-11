@@ -3,20 +3,11 @@ using MimosBabySpa.Application.Agents.Configuration;
 namespace MimosBabySpa.Application.Agents.Facts;
 
 /// <summary>
-/// Índice de resolución de facts por rol semántico y por alias.
-///
-/// Permite buscar "customer.name" → key canónico "customer_name",
-/// o normalizar alias "nombre" → "customer_name" antes de persistir.
-///
-/// Es la puerta de entrada para migrar ConversationFactKeys hardcodeados
-/// hacia configuración dinámica por tenant, sin romper código existente.
+/// ?ndice determin?stico de facts por rol sem?ntico y clave can?nica.
 /// </summary>
 public sealed class FactRoleIndex
 {
     private readonly Dictionary<string, string> _roleToKey =
-        new(StringComparer.OrdinalIgnoreCase);
-
-    private readonly Dictionary<string, string> _aliasToKey =
         new(StringComparer.OrdinalIgnoreCase);
 
     private readonly IReadOnlyList<FactSchemaEntry> _schema;
@@ -34,8 +25,6 @@ public sealed class FactRoleIndex
             if (!string.IsNullOrWhiteSpace(entry.Role))
                 _roleToKey.TryAdd(entry.Role, entry.Key);
 
-            foreach (var alias in entry.Aliases)
-                _aliasToKey.TryAdd(alias, entry.Key);
         }
     }
 
@@ -46,21 +35,11 @@ public sealed class FactRoleIndex
     public string? KeyByRole(string role) =>
         _roleToKey.TryGetValue(role, out var key) ? key : null;
 
-    /// <summary>
-    /// Si el input es un alias conocido, devuelve el key canónico.
-    /// Si no es alias, devuelve el input tal cual (puede ser ya el key canónico).
-    /// </summary>
-    public string NormalizeKey(string rawKey) =>
-        _aliasToKey.TryGetValue(rawKey, out var canonical) ? canonical : rawKey;
-
-    /// <summary>
-    /// Devuelve la entrada de schema para un key (después de normalizar alias).
-    /// </summary>
+    /// <summary>Devuelve la entrada declarada para una clave can?nica.</summary>
     public FactSchemaEntry? EntryFor(string rawKey)
     {
-        var key = NormalizeKey(rawKey);
         return _schema.FirstOrDefault(e =>
-            e.Key.Equals(key, StringComparison.OrdinalIgnoreCase));
+            e.Key.Equals(rawKey, StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>

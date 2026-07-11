@@ -1,8 +1,8 @@
 namespace MimosBabySpa.Application.Agents.Configuration;
 
 /// <summary>
-/// Accion transversal declarada por tenant. Sus tools pueden usarse aunque
-/// la etapa activa tenga una whitelist distinta.
+/// Deterministic behavior available from every stage. The extractor may only emit
+/// its semantic signal; configured operations own all effects.
 /// </summary>
 public sealed class AgentGlobalAction
 {
@@ -10,8 +10,7 @@ public sealed class AgentGlobalAction
     public int Priority { get; init; }
     public string Goal { get; init; } = string.Empty;
     public string? ConversationGuidance { get; init; }
-
-    public IReadOnlyList<string> AllowedActions { get; init; } = [];
-
-    public IReadOnlyList<StageEntryAction> EntryActions { get; init; } = [];
+    public StageSignalDefinition Signal { get; init; } = new();
+    public IReadOnlyList<StageActionDefinition> Actions { get; init; } = [];
+    public StageResponseDefinition Response { get; init; } = new();
 }

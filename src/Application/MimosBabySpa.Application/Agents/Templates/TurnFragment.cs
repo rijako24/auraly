@@ -2,7 +2,7 @@ namespace MimosBabySpa.Application.Agents.Templates;
 
 /// <summary>
 /// Fragmento de mensaje pendiente de renderizar al finalizar el turno.
-/// La plantilla vive en el prompt del agente; los datos los aporta la tool.
+/// La plantilla vive en el prompt del agente; los datos los aporta la operation.
 /// </summary>
 public sealed record TurnFragment(
     string TemplateId,

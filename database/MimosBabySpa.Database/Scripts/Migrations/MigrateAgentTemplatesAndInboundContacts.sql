@@ -7,7 +7,6 @@ BEGIN
         [Kind]                 NVARCHAR(50)     NOT NULL,
         [Description]          NVARCHAR(500)    NULL,
         [SettingsJson]         NVARCHAR(MAX)    NULL,
-        [SystemPromptMarkdown] NVARCHAR(MAX)    NULL,
         [IsSystemTemplate]     BIT              NOT NULL DEFAULT 1,
         [IsActive]             BIT              NOT NULL DEFAULT 1,
         [CreatedAt]            DATETIME2        NOT NULL DEFAULT GETUTCDATE(),

@@ -9,12 +9,12 @@ internal sealed record FlowCheckpointInvalidationResult(
 internal static class FlowCheckpointInvalidation
 {
     public static List<string> GetDerivedAdvanceFactsToClear(
-        AgentToolContext ctx,
+        AgentConversationContext ctx,
         IReadOnlyCollection<string> changedFactKeys) =>
         GetInvalidations(ctx, changedFactKeys).FactsToClear.ToList();
 
     public static FlowCheckpointInvalidationResult GetInvalidations(
-        AgentToolContext ctx,
+        AgentConversationContext ctx,
         IReadOnlyCollection<string> changedFactKeys)
     {
         var changedKeys = NormalizeKeys(changedFactKeys);
@@ -31,7 +31,7 @@ internal static class FlowCheckpointInvalidation
             .Where(key => !string.IsNullOrWhiteSpace(key))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-        var initiallyAffectedStages = (ctx.Config?.Flow.Stages ?? [])
+        var initiallyAffectedStages = (ctx.Config?.Flows.SelectMany(flow => flow.Stages) ?? [])
             .Where(stage => stage.ReentryOnFactChanged.Any(initialSignals.Contains))
             .ToList();
 
@@ -49,7 +49,7 @@ internal static class FlowCheckpointInvalidation
             .ToList();
 
         var allSignals = UnionKeys(changedKeys, factsToClear);
-        var stageSnapshotsToReset = (ctx.Config?.Flow.Stages ?? [])
+        var stageSnapshotsToReset = (ctx.Config?.Flows.SelectMany(flow => flow.Stages) ?? [])
             .Where(stage => stage.ReentryOnFactChanged.Any(allSignals.Contains))
             .Select(stage => stage.Id)
             .Where(id => !string.IsNullOrWhiteSpace(id))

@@ -12,7 +12,7 @@ public interface IConversationVerificationService
         TimeSpan? ttl);
 
     void Record(
-        AgentToolContext ctx,
+        AgentConversationContext ctx,
         string factType,
         IReadOnlyDictionary<string, string> dependencyFacts,
         TimeSpan? ttl);
@@ -28,7 +28,7 @@ public sealed class ConversationVerificationService : IConversationVerificationS
     private const int MaxEntries = 50;
 
     public void Record(
-        AgentToolContext ctx,
+        AgentConversationContext ctx,
         string factType,
         IReadOnlyDictionary<string, string> dependencyFacts,
         TimeSpan? ttl) =>

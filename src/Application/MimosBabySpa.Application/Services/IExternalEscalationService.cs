@@ -1,4 +1,9 @@
+using MimosBabySpa.Application.Agents;
+
 namespace MimosBabySpa.Application.Services;
+
+public delegate IAgentConfigProvider AgentConfigProviderAccessor();
+public delegate IExternalEscalationOutcomePublisher ExternalEscalationOutcomePublisherAccessor();
 
 public interface IBusinessInboundContactRouter
 {
@@ -16,17 +21,9 @@ public interface IExternalEscalationService
         IReadOnlyDictionary<string, string> custom,
         CancellationToken ct = default);
 
-    Task<ExternalEscalationSendResult> EscalateToolAsync(
-        Guid sourceAgentId,
-        string toolName,
-        Guid targetId,
-        IReadOnlyDictionary<string, string> custom,
-        CancellationToken ct = default);
-
     Task<ExternalEscalationCompletionResult> CompleteAttemptAsync(
         ExternalEscalationCompletionRequest request,
         CancellationToken ct = default);
 
     Task<IReadOnlyList<ExternalEscalationExpiredAttempt>> ProcessExpiredAttemptsAsync(CancellationToken ct = default);
 }
-

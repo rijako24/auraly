@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using MimosBabySpa.Application.Agents.Configuration;
 using MimosBabySpa.Application.Agents.Facts;
@@ -7,6 +9,7 @@ using MimosBabySpa.Application.Agents.Planning;
 using MimosBabySpa.Application.LLM;
 using MimosBabySpa.Application.Services;
 
+using MimosBabySpa.Domain.Models;
 namespace MimosBabySpa.Application.Agents.Runtime;
 
 public sealed class DeterministicTurnRequest
@@ -106,23 +109,66 @@ public sealed class DeterministicTurnCoordinator
         if (!proposal.Success || proposal.Plan is null)
             return Failure(proposal.Errors, request.CurrentFacts, proposal.Plan);
 
+        var effectivePlan = proposal.Plan;
+        var state = request.OperationContext.ConversationState;
+        var signature = ConfigurationSignature(request.Config);
+        var pending = state.PendingTurnPlan;
+        if (pending is not null
+            && (pending.ExpiresAtUtc <= DateTime.UtcNow
+                || !pending.ConfigurationSignature.Equals(signature, StringComparison.Ordinal)))
+        {
+            state.PendingTurnPlan = null;
+            pending = null;
+        }
+
+        if (IsClarification(effectivePlan))
+        {
+            state.PendingTurnPlan = CreatePending(request, planningStage, effectivePlan, signature);
+            return ClarificationRequired(request, effectivePlan, effectivePlan.Response.AmbiguousFields, proposal);
+        }
+
+        if (pending is not null)
+        {
+            var switchesFlow = !string.IsNullOrWhiteSpace(effectivePlan.FlowIntent.CandidateFlow)
+                && !effectivePlan.FlowIntent.CandidateFlow.Equals(pending.FlowId, StringComparison.OrdinalIgnoreCase)
+                && effectivePlan.FlowIntent.Confidence >= 0.75;
+            if (switchesFlow)
+            {
+                state.PendingTurnPlan = null;
+            }
+            else if (!TurnPlanParser.TryParse(pending.PlanJson, out var deferredPlan, out _)
+                     || deferredPlan is null)
+            {
+                state.PendingTurnPlan = null;
+            }
+            else if (!ResolvesPending(effectivePlan, pending.AmbiguousFields))
+            {
+                return ClarificationRequired(request, deferredPlan, pending.AmbiguousFields, proposal);
+            }
+            else
+            {
+                effectivePlan = MergeDeferredPlan(deferredPlan, effectivePlan, pending.AmbiguousFields);
+                state.PendingTurnPlan = null;
+            }
+        }
+
         var route = _flows.Select(
             request.Config,
-            proposal.Plan,
+            effectivePlan,
             new FlowSelectionContext(request.ActiveFlowId, request.HasOpenPrimaryRequest));
         var flow = AgentFlowCatalog.Find(request.Config, route.ActiveFlowId);
         if (flow is null || flow.Stages.Count == 0)
-            return Failure($"Selected flow '{route.ActiveFlowId}' has no stages.", request.CurrentFacts, proposal.Plan, route);
+            return Failure($"Selected flow '{route.ActiveFlowId}' has no stages.", request.CurrentFacts, effectivePlan, route);
 
         var schema = request.Config.FactSchema.ToDictionary(fact => fact.Key, StringComparer.OrdinalIgnoreCase);
-        var factBatch = _facts.Apply(schema, proposal.Plan.Facts, request.CurrentFacts, request.FactVersions);
+        var factBatch = _facts.Apply(schema, effectivePlan.Facts, request.CurrentFacts, request.FactVersions);
         await PersistFactsAsync(request, schema, factBatch.Mutations, cancellationToken);
 
         var currentFacts = new Dictionary<string, string>(factBatch.NextFacts, StringComparer.OrdinalIgnoreCase);
         var versions = new Dictionary<string, long>(factBatch.Versions, StringComparer.OrdinalIgnoreCase);
         var changedFacts = new HashSet<string>(factBatch.ChangedFacts, StringComparer.OrdinalIgnoreCase);
         var verifications = ResolveActiveVerifications(request, currentFacts);
-        var signals = TurnPlanRuntimeMapper.ToSemanticSignals(proposal.Plan);
+        var signals = TurnPlanRuntimeMapper.ToSemanticSignals(effectivePlan);
         var selectedStage = ResolveSelectedStage(request, flow, route);
 
         var visited = new List<string>();
@@ -137,10 +183,61 @@ public sealed class DeterministicTurnCoordinator
         StageResponseDefinition? response = null;
         var seenStages = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
+        foreach (var globalAction in request.Config.GlobalActions
+                     .Where(action => signals.Any(signal => signal.Type.Equals(
+                         action.Signal.Type,
+                         StringComparison.OrdinalIgnoreCase)))
+                     .OrderByDescending(action => action.Priority))
+        {
+            var globalStage = new AgentFlowStage
+            {
+                Id = $"global:{globalAction.Id}",
+                Actions = globalAction.Actions,
+                Response = globalAction.Response
+            };
+            var globalContext = new DeterministicStageExecutionContext
+            {
+                OperationContext = CopyOperationContext(request.OperationContext, currentFacts),
+                Facts = currentFacts,
+                Signals = signals,
+                LatestUserMessage = request.LatestUserMessage,
+                ChangedFacts = changedFacts,
+                ActiveVerifications = verifications,
+                ExecutedActionKeys = request.ExecutedActionKeys
+            };
+            var execution = await _stages.ExecuteAsync(
+                globalStage,
+                StageActionTriggers.OnSignal,
+                globalContext,
+                cancellationToken);
+            trace.AddRange(execution.Trace);
+            presentations.AddRange(execution.Presentations);
+            operationEffects.AddRange(execution.OperationEffects);
+            domainEvents.AddRange(execution.DomainEvents);
+            foreach (var sequence in execution.Sequences)
+                sequences.Add(sequence);
+            foreach (var @event in execution.Events)
+                events.Add(@event);
+            escalate |= execution.EscalateToHuman
+                || execution.OperationEffects.OfType<EscalateHumanOperationEffect>().Any();
+            completed |= execution.RequestCompleted
+                || execution.OperationEffects.OfType<CompleteRequestOperationEffect>().Any();
+            response = execution.Response ?? response ?? globalAction.Response;
+
+            if (execution.FactMutations.Count > 0)
+            {
+                var globalBatch = _facts.ApplyMutations(schema, execution.FactMutations, currentFacts, versions);
+                await PersistFactsAsync(request, schema, globalBatch.Mutations, cancellationToken);
+                currentFacts = new Dictionary<string, string>(globalBatch.NextFacts, StringComparer.OrdinalIgnoreCase);
+                versions = new Dictionary<string, long>(globalBatch.Versions, StringComparer.OrdinalIgnoreCase);
+                changedFacts.UnionWith(globalBatch.ChangedFacts);
+            }
+        }
+
         for (var hop = 0; hop <= flow.Stages.Count; hop++)
         {
             if (!seenStages.Add(selectedStage.Id))
-                return Failure($"Stage transition cycle detected at '{selectedStage.Id}'.", currentFacts, proposal.Plan, route);
+                return Failure($"Stage transition cycle detected at '{selectedStage.Id}'.", currentFacts, effectivePlan, route);
             visited.Add(selectedStage.Id);
 
             var entering = hop > 0
@@ -244,7 +341,7 @@ public sealed class DeterministicTurnCoordinator
         return new DeterministicTurnResult
         {
             Success = true,
-            Plan = proposal.Plan,
+            Plan = effectivePlan,
             PromptTokens = proposal.PromptTokens,
             CompletionTokens = proposal.CompletionTokens,
             Route = route,
@@ -380,6 +477,101 @@ public sealed class DeterministicTurnCoordinator
         JsonValueKind.Number => value.GetRawText(),
         _ => null
     };
+
+    private static bool IsClarification(TurnPlan plan) =>
+        plan.Response.Mode.Equals("ask_clarification", StringComparison.OrdinalIgnoreCase)
+        && plan.Response.AmbiguousFields.Count > 0;
+
+    private static PendingTurnPlan CreatePending(
+        DeterministicTurnRequest request,
+        AgentFlowStage stage,
+        TurnPlan plan,
+        string signature)
+    {
+        var now = DateTime.UtcNow;
+        return new PendingTurnPlan
+        {
+            ConfigurationSignature = signature,
+            FlowId = string.IsNullOrWhiteSpace(plan.FlowIntent.CandidateFlow)
+                ? request.CurrentFlowId ?? string.Empty
+                : plan.FlowIntent.CandidateFlow,
+            StageId = stage.Id,
+            PlanJson = JsonSerializer.Serialize(plan),
+            AmbiguousFields = plan.Response.AmbiguousFields.Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
+            CreatedAtUtc = now,
+            ExpiresAtUtc = now.AddMinutes(15)
+        };
+    }
+
+    private static bool ResolvesPending(TurnPlan clarification, IReadOnlyList<string> fields) =>
+        fields.All(field =>
+            clarification.Facts.Any(fact => fact.Key.Equals(field, StringComparison.OrdinalIgnoreCase))
+            || clarification.Signals.Any(signal => signal.Type.Equals(field, StringComparison.OrdinalIgnoreCase))
+            || field.Equals("flowIntent", StringComparison.OrdinalIgnoreCase)
+                && !string.IsNullOrWhiteSpace(clarification.FlowIntent.Evidence)
+            || field.Equals("decision", StringComparison.OrdinalIgnoreCase)
+                && clarification.Decision is not null);
+
+    private static TurnPlan MergeDeferredPlan(
+        TurnPlan deferred,
+        TurnPlan clarification,
+        IReadOnlyList<string> ambiguousFields)
+    {
+        var ambiguous = ambiguousFields.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return new TurnPlan
+        {
+            FlowIntent = ambiguous.Contains("flowIntent") ? clarification.FlowIntent : deferred.FlowIntent,
+            Facts = deferred.Facts
+                .Where(fact => !ambiguous.Contains(fact.Key))
+                .Concat(clarification.Facts)
+                .GroupBy(fact => fact.Key, StringComparer.OrdinalIgnoreCase)
+                .Select(group => group.Last())
+                .ToList(),
+            Signals = deferred.Signals
+                .Where(signal => !ambiguous.Contains(signal.Type))
+                .Concat(clarification.Signals)
+                .GroupBy(signal => signal.Type, StringComparer.OrdinalIgnoreCase)
+                .Select(group => group.Last())
+                .ToList(),
+            Decision = ambiguous.Contains("decision")
+                ? clarification.Decision
+                : clarification.Decision ?? deferred.Decision,
+            Response = new TurnPlanResponseDirective { Mode = "continue", AmbiguousFields = [] }
+        };
+    }
+
+    private static DeterministicTurnResult ClarificationRequired(
+        DeterministicTurnRequest request,
+        TurnPlan plan,
+        IReadOnlyList<string> ambiguousFields,
+        TurnPlanProposal proposal) => new()
+    {
+        Success = true,
+        Plan = plan,
+        PromptTokens = proposal.PromptTokens,
+        CompletionTokens = proposal.CompletionTokens,
+        CurrentStageId = request.CurrentStageId,
+        Facts = new Dictionary<string, string>(request.CurrentFacts, StringComparer.OrdinalIgnoreCase),
+        FactVersions = new Dictionary<string, long>(request.FactVersions, StringComparer.OrdinalIgnoreCase),
+        Response = new StageResponseDefinition
+        {
+            Mode = "ask_clarification",
+            Guidance = $"Pregunta ?nicamente cu?l alternativa debe aplicarse para: {string.Join(", ", ambiguousFields)}. No confirmes ni ejecutes acciones hasta resolverla."
+        }
+    };
+
+    private static string ConfigurationSignature(AgentConfig config)
+    {
+        var source = string.Join("|",
+            config.AgentId,
+            string.Join(",", config.FactSchema.Select(fact => $"{fact.Key}:{fact.ValueSource}")),
+            string.Join(",", AgentFlowCatalog.EffectiveFlows(config).SelectMany(flow =>
+                flow.Stages.SelectMany(stage =>
+                    stage.Actions.Select(action => $"{flow.Id}:{stage.Id}:{action.Id}:{action.Operation}")))),
+            string.Join(",", config.GlobalActions.SelectMany(global =>
+                global.Actions.Select(action => $"{global.Id}:{action.Id}:{action.Operation}"))));
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(source)));
+    }
 
     private static DeterministicTurnResult Failure(
         string error,

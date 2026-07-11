@@ -82,8 +82,6 @@ public sealed class DeterministicResponseRendererTests
         response.Text.Should().Be("Respuesta natural");
         chat.CallCount.Should().Be(1);
         chat.Prompt.Should().Contain("Corte infantil: 30000");
-        chat.CapturedTools.Should().BeEmpty();
-        chat.Options!.ForceTextResponse.Should().BeTrue();
     }
 
     private static DeterministicResponseRequest Request(DeterministicTurnResult turn) => new(
@@ -113,18 +111,15 @@ public sealed class DeterministicResponseRendererTests
         public RecordingChatClient(string response) => _response = response;
         public int CallCount { get; private set; }
         public string Prompt { get; private set; } = string.Empty;
-        public IReadOnlyList<ChatToolDefinition> CapturedTools { get; private set; } = [];
         public ChatCompletionOptions? Options { get; private set; }
 
         public Task<ChatCompletionResult> CompleteAsync(
             IReadOnlyList<ChatMessage> messages,
-            IReadOnlyList<ChatToolDefinition>? tools = null,
             ChatCompletionOptions? options = null,
             CancellationToken cancellationToken = default)
         {
             CallCount++;
             Prompt = messages[0].Content ?? string.Empty;
-            CapturedTools = tools ?? [];
             Options = options;
             return Task.FromResult(new ChatCompletionResult
             {

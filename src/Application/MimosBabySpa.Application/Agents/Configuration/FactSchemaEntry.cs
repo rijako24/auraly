@@ -52,7 +52,6 @@ public sealed class FactSchemaEntry
     /// </summary>
     public bool ExpireOnBusinessDayChange { get; init; }
 
-
     /// <summary>
     /// Fact keys that must remain unchanged for this fact to stay valid.
     /// When any dependency changes, the engine may clear this fact and re-enter affected stages.
@@ -62,12 +61,8 @@ public sealed class FactSchemaEntry
 
     /// <summary>
     /// Optional authority that validates/canonicalizes user-provided values.
-    /// Example: catalog-backed facts are resolved by tools/catalog services, not aliases.
+    /// Example: catalog-backed facts are resolved by operations/catalog services, not aliases.
     /// </summary>
     public string? ValueSource { get; init; }
 
-    /// <summary>
-    /// Alias names that can be used to normalize set_fact keys for non-catalog facts.
-    /// </summary>
-    public IReadOnlyList<string> Aliases { get; init; } = [];
 }

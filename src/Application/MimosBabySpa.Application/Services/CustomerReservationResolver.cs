@@ -1,7 +1,7 @@
 using System.Globalization;
 using System.Text;
 using MimosBabySpa.Application.Agents;
-using MimosBabySpa.Application.Agents.Tools.Impl;
+using MimosBabySpa.Application.Agents.Operations.Support;
 using MimosBabySpa.Domain.Entities;
 using MimosBabySpa.Domain.Repositories;
 
@@ -27,7 +27,7 @@ public sealed class CustomerReservationResolver : ICustomerReservationResolver
     }
 
     public async Task<ReservationResolveResult> ResolveAsync(
-        AgentToolContext ctx,
+        AgentConversationContext ctx,
         string? reservationIdFromArgs,
         CancellationToken ct = default)
     {
@@ -53,11 +53,11 @@ public sealed class CustomerReservationResolver : ICustomerReservationResolver
             return resolvedFromSession;
 
         return ReservationResolveResult.Fail(
-            ToolResultHelper.ErrorWithLlm("no_manageable_reservation", "No confirmed reservation was found for this customer.", new { next_action = "collect_booking_request_or_handoff" }, recoverable: true));
+            OperationJsonHelper.ErrorWithLlm("no_manageable_reservation", "No confirmed reservation was found for this customer.", new { next_action = "collect_booking_request_or_handoff" }, recoverable: true));
     }
 
     private async Task<ReservationResolveResult> ResolveExplicitAsync(
-        AgentToolContext ctx,
+        AgentConversationContext ctx,
         Guid reservationId,
         CancellationToken ct)
     {
@@ -65,13 +65,13 @@ public sealed class CustomerReservationResolver : ICustomerReservationResolver
         if (reservation is null || reservation.BusinessId != ctx.BusinessId)
         {
             return ReservationResolveResult.Fail(
-                ToolResultHelper.Error("reservation_not_found", "Reservation was not found."));
+                OperationJsonHelper.Error("reservation_not_found", "Reservation was not found."));
         }
 
         if (!BelongsToConversationOrChannel(reservation, ctx))
         {
             return ReservationResolveResult.Fail(
-                ToolResultHelper.Error(
+                OperationJsonHelper.Error(
                     "reservation_not_accessible",
                     "This reservation does not belong to the current customer channel."));
         }
@@ -79,7 +79,7 @@ public sealed class CustomerReservationResolver : ICustomerReservationResolver
         if (!ReservationTemporalFormatter.IsManageableOnBusinessDay(reservation, ctx.BusinessToday))
         {
             return ReservationResolveResult.Fail(
-                ToolResultHelper.ErrorWithLlm("reservation_not_manageable", "This reservation is not an upcoming manageable reservation.", new { next_action = "get_customer_reservations" }, recoverable: true));
+                OperationJsonHelper.ErrorWithLlm("reservation_not_manageable", "This reservation is not an upcoming manageable reservation.", new { next_action = "get_customer_reservations" }, recoverable: true));
         }
 
         if (ctx.ManageableReservations.Count > 1
@@ -92,7 +92,7 @@ public sealed class CustomerReservationResolver : ICustomerReservationResolver
         return ReservationResolveResult.Ok(reservation);
     }
 
-    private static bool BelongsToConversationOrChannel(Reservation reservation, AgentToolContext ctx) =>
+    private static bool BelongsToConversationOrChannel(Reservation reservation, AgentConversationContext ctx) =>
         reservation.ConversationId == ctx.ConversationId
         || PhoneMatches(reservation.CustomerPhoneSnapshot, ctx.ChannelPhone);
 
@@ -214,7 +214,7 @@ public sealed class CustomerReservationResolver : ICustomerReservationResolver
             .Select(r => ReservationTemporalFormatter.FormatLine(r, businessToday))
             .ToList();
 
-        return ToolResultHelper.ErrorWithLlm("ambiguous_reservation", "This customer has more than one upcoming reservation.", new
+        return OperationJsonHelper.ErrorWithLlm("ambiguous_reservation", "This customer has more than one upcoming reservation.", new
             {
                 next_action = "select_reservation",
                 reservations = options

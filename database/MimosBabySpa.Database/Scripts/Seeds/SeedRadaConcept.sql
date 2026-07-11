@@ -344,826 +344,424 @@ END
 
 
 
-DECLARE @SystemPrompt NVARCHAR(MAX) = N'';
 
 
 
 DECLARE @SettingsJson NVARCHAR(MAX) = N'{
-
   "model": "gpt-4.1-mini",
-
   "temperature": 0.68,
-
-  "maxToolIterations": 8,
-
   "historyWindowSize": 24,
-
-  "consecutiveErrorEscalationThreshold": 3,
-
   "persona": "Eres el asistente comercial de Rada Concept por WhatsApp. Atiendes en espanol con tono cercano, elegante y profesional. Ayudas a entender el servicio adecuado y guias hacia una cita de asesoria sin presionar.\n\nResponde claro y breve. Usa listas cortas para explicar servicios, opciones, horarios o resumen de cita.",
-
   "policies": "## MARCA\n\n- Rada Concept crea espacios funcionales y esteticos para vivienda, mobiliario, remodelaciones y proyectos comerciales.\n- La cotizacion se define despues de entender el proyecto en una asesoria.\n\n## APERTURA\n\n- En cada apertura del dia, saluda natural, presentate como asistente de Rada Concept y da la bienvenida.\n- Usa el nombre del cliente si esta disponible.\n- Si el cliente ya pidio algo, usa solo una apertura breve antes de continuar con esa intencion.\n- Despues del saludo, sigue de forma natural con lo que el cliente pidio.\n- No uses saludos largos.",
-
   "templates": {
-
     "availability_slots": "{{#if intro_message}}\n{{intro_message}}\n\n{{/if}}\n*Espacios disponibles para {{date_formatted}}* ({{service_name}})\n\n{{#each options}}\n- {{this}}\n{{/each}}\n\nCual espacio prefieres?"
-
   },
-
   "messageSequences": {},
-
   "globalActions": [
-
     {
-
       "id": "human_handoff",
-
       "priority": 100,
-
       "goal": "Escalar a humano cuando el cliente lo pida, haya queja, solicitud fuera del alcance o necesite cotizacion detallada inmediata.",
-
       "conversationGuidance": "Responde con una frase breve y cordial, y escala a humano.",
-
-      "allowedActions": [
-
-        "escalate_to_human"
-
-      ]
-
-    },
-
-    {
-
-      "id": "restart_request",
-
-      "priority": 70,
-
-      "goal": "Reiniciar la solicitud actual cuando el cliente quiera cambiar completamente de servicio o empezar de nuevo.",
-
-      "conversationGuidance": "Reinicia la solicitud cuando el cliente indique claramente que quiere cambiar la solicitud completa. Conserva datos persistentes del cliente.",
-
-      "allowedActions": [
-
-        "reset_flow_context",
-
-        "set_fact"
-
-      ]
-
-    }
-
-  ],
-
-  "factSchema": [
-
-    {
-
-      "key": "session.engagement",
-
-      "role": "session.engagement",
-
-      "label": "contexto de engagement",
-
-      "type": "string",
-
-      "required": false,
-
-      "source": "session",
-
-      "scope": "ephemeral"
-
-    },
-
-    {
-
-      "key": "project_context",
-
-      "role": "project.context",
-
-      "label": "tipo de proyecto o necesidad",
-
-      "type": "string",
-
-      "required": true,
-
-      "source": "user",
-
-      "scope": "request",
-
-      "aliases": [
-
-        "proyecto",
-
-        "necesidad",
-
-        "tipo de servicio",
-
-        "vivienda",
-
-        "local",
-
-        "cocina",
-
-        "closet",
-
-        "remodelacion"
-
-      ]
-
-    },
-
-    {
-
-      "key": "service",
-
-      "role": "booking.service",
-
-      "label": "servicio de interes",
-
-      "type": "string",
-
-      "required": true,
-
-      "source": "user",
-
-      "scope": "request",
-
-      "aliases": [
-
-        "servicio",
-
-        "diseno",
-
-        "interior",
-
-        "arquitectonico",
-
-        "mobiliario",
-
-        "remodelacion",
-
-        "asesoria",
-
-        "espacio comercial"
-
-      ]
-
-    },
-
-    {
-
-      "key": "desired_date",
-
-      "role": "booking.date",
-
-      "label": "fecha deseada",
-
-      "type": "date",
-
-      "required": true,
-
-      "source": "user",
-
-      "scope": "request",
-
-      "aliases": [
-
-        "fecha",
-
-        "dia",
-
-        "cuando",
-
-        "manana",
-
-        "hoy"
-
-      ]
-
-    },
-
-    {
-
-      "key": "desired_time",
-
-      "role": "booking.time",
-
-      "label": "hora deseada",
-
-      "type": "time",
-
-      "required": true,
-
-      "source": "user",
-
-      "scope": "request",
-
-      "dependsOn": [
-
-        "service",
-
-        "desired_date"
-
-      ],
-
-      "aliases": [
-
-        "hora",
-
-        "horario"
-
-      ]
-
-    },
-
-    {
-
-      "key": "availability_checked",
-
-      "role": "booking.availability_checked",
-
-      "label": "disponibilidad validada",
-
-      "type": "string",
-
-      "required": false,
-
-      "source": "system",
-
-      "scope": "ephemeral",
-
-      "retentionDays": 1,
-
-      "dependsOn": [
-
-        "service",
-
-        "desired_date",
-
-        "desired_time"
-
-      ]
-
-    },
-
-    {
-
-      "key": "customer_name",
-
-      "role": "customer.name",
-
-      "label": "nombre del cliente",
-
-      "type": "string",
-
-      "required": true,
-
-      "source": "user",
-
-      "scope": "customer",
-
-      "aliases": [
-
-        "nombre",
-
-        "cliente",
-
-        "a nombre de"
-
-      ]
-
-    },
-
-    {
-
-      "key": "customer_phone",
-
-      "role": "customer.phone",
-
-      "label": "celular de contacto",
-
-      "type": "phone",
-
-      "required": false,
-
-      "source": "user",
-
-      "scope": "customer",
-
-      "aliases": [
-
-        "celular",
-
-        "telefono",
-
-        "whatsapp",
-
-        "numero"
-
-      ]
-
-    },
-
-    {
-
-      "key": "payment_method",
-
-      "role": "payment.method",
-
-      "label": "metodo de pago",
-
-      "type": "string",
-
-      "required": false,
-
-      "source": "system",
-
-      "scope": "request",
-
-      "expireOnBusinessDayChange": true
-
-    },
-
-    {
-
-      "key": "customer_confirmed",
-
-      "role": "confirmation.verbal",
-
-      "label": "confirmacion del cliente",
-
-      "type": "boolean",
-
-      "required": false,
-
-      "source": "user",
-
-      "scope": "request",
-
-      "retentionDays": 1,
-
-      "aliases": [
-
-        "confirmo",
-
-        "confirmacion",
-
-        "si confirmo"
-
-      ]
-
-    }
-
-  ],
-
-  "guards": {},
-
-  "enabledTools": [
-
-    "set_fact",
-
-    "resolve_service_selection",
-
-    "get_service_catalog",
-
-    "get_service_fulfillment",
-
-    "check_availability",
-
-    "create_reservation",
-
-    "reset_flow_context",
-
-    "escalate_to_human"
-
-  ],
-
-  "escalations": {
-
-    "human": {
-
-      "contacts": [
-
-        "+573007047440"
-
-      ]
-
-    },
-
-    "external": {
-
-      "enabled": false,
-
-      "events": {}
-
-    }
-
-  },
-
-  "notifications": {
-
-    "reservation_created": {
-
-      "enabled": false,
-
-      "recipients": [],
-
-      "sendMessageSequence": null
-
-    }
-
-  },
-
-  "checkout": {
-
-    "currency": "COP",
-
-    "modes": {}
-
-  },
-
-  "flows": [
-
-    {
-
-      "id": "booking",
-
-      "type": "primary",
-
-      "routingGuidance": "Use this primary flow for new Rada Concept design requests, service selection, scheduling, customer data and confirmation.",
-
-      "stageDetection": "automatic",
-
-      "stages": [
-
-        {
-
-          "id": "discovery",
-
-          "name": "Descubrimiento",
-
-          "goal": "Entender el tipo de servicio de interes.",
-
-          "advanceWhenFacts": [
-
-            "project_context"
-
-          ],
-
-          "conversationGuidance": "Si el mensaje del cliente es solo un saludo, pregunta en que tipo de servicio esta interesado. En ese turno no listes servicios completos de entrada. Si el cliente ya menciona una necesidad, proyecto o servicio, registra project_context cuando aplique y continua a seleccion de servicio.",
-
-          "allowedActions": [
-
-            "set_fact"
-
-          ],
-
-          "collect": [
-
-            "project_context"
-
-          ]
-
-        },
-
-        {
-
-          "id": "service_selection",
-
-          "name": "Seleccion de servicio",
-
-          "goal": "Explicar amablemente los servicios de Rada Concept y registrar el servicio de interes.",
-
-          "advanceWhenFacts": [
-
-            "service"
-
-          ],
-
-          "conversationGuidance": "Cuando el cliente responda el tipo de servicio, pida opciones o describa su proyecto, consulta el catalogo oficial. Explica maximo 1 a 3 servicios relevantes con alcance y beneficios, sin mencionar precios. Si pide precio, indica que la cotizacion se define despues de entender medidas, alcance y materiales en asesoria. Cuando el cliente elija un servicio exacto o uno claramente equivalente, registra service con el nombre canonico del catalogo. Si la necesidad puede corresponder a varias opciones, ayuda a escoger con una explicacion breve.",
-
-          "allowedActions": [
-
-            "get_service_catalog",
-
-            "resolve_service_selection",
-
-            "set_fact"
-
-          ],
-
-          "collect": [
-
-            "service"
-
-          ],
-
-          "entryActions": [
-
-            {
-
-              "tool": "get_service_catalog",
-
-              "arguments": {
-
-                "view": "auto",
-
-                "query": "{{user.message}}"
-
-              }
-
-            }
-
-          ]
-
-        },
-
-        {
-
-          "id": "scheduling",
-
-          "name": "Agenda",
-
-          "goal": "Revisar disponibilidad y acordar fecha y hora para la cita de asesoria.",
-
-          "afterTool": [
-
-            {
-
-              "tool": "check_availability",
-
-              "when": {
-
-                "path": "data.availability_checked",
-
-                "equals": "true"
-
-              },
-
-              "setFact": {
-
-                "key": "desired_date",
-
-                "value": "{{data.date}}"
-
-              }
-
-            },
-
-            {
-
-              "tool": "check_availability",
-
-              "when": {
-
-                "path": "data.availability_checked",
-
-                "equals": "true"
-
-              },
-
-              "setFact": {
-
-                "key": "desired_time",
-
-                "value": "{{data.time}}"
-
-              }
-
-            },
-
-            {
-
-              "tool": "check_availability",
-
-              "when": {
-
-                "path": "data.availability_checked",
-
-                "equals": "true"
-
-              },
-
-              "setFact": {
-
-                "key": "availability_checked",
-
-                "value": "true"
-
-              }
-
-            }
-
-          ],
-
-          "advanceWhenFacts": [
-
-            "availability_checked"
-
-          ],
-
-          "reentryOnFactChanged": [
-
-            "service",
-
-            "desired_date",
-
-            "desired_time"
-
-          ],
-
-          "conversationGuidance": "Primero resuelve el tipo de atencion con el servicio elegido. Para agenda, pide fecha si falta desired_date. Cuando tengas fecha, valida disponibilidad para mostrar horarios disponibles. Cuando el cliente elija hora, registra desired_time y valida disponibilidad con fecha y hora. Si el horario esta disponible, deja avanzar el flujo.",
-
-          "allowedActions": [
-
-            "get_service_fulfillment",
-
-            "check_availability",
-
-            "set_fact"
-
-          ],
-
-          "collect": [
-
-            "availability_checked"
-
-          ],
-
-          "entryActions": [
-
-            {
-
-              "tool": "check_availability",
-
-              "arguments": {
-
-                "service": "{{fact.service}}",
-
-                "date": "{{fact.desired_date}}",
-
-                "time": "{{fact.desired_time}}"
-
-              },
-
-              "when": {
-
-                "requiredFacts": [
-
-                  "service",
-
-                  "desired_date",
-
-                  "desired_time"
-
-                ],
-
-                "missingFacts": [
-
-                  "availability_checked"
-
-                ]
-
-              }
-
-            }
-
-          ]
-
-        },
-
-        {
-
-          "id": "customer_data",
-
-          "name": "Datos del cliente",
-
-          "goal": "Recoger datos minimos para crear la cita.",
-
-          "advanceWhenFacts": [
-
-            "customer_name",
-
-            "customer_phone"
-
-          ],
-
-          "conversationGuidance": "Pide en un solo mensaje los datos faltantes para la cita, en lista corta: nombre y celular de contacto. Si ya tienes uno de los datos, pide solo el que falta. Registra los datos entregados.",
-
-          "allowedActions": [
-
-            "set_fact"
-
-          ],
-
-          "collect": [
-
-            "customer_name",
-
-            "customer_phone"
-
-          ]
-
-        },
-
-        {
-
-          "id": "confirmation",
-
-          "name": "Confirmacion",
-
-          "goal": "Confirmar la cita de asesoria.",
-
-          "advanceWhenFacts": [
-
-            "customer_confirmed"
-
-          ],
-
-          "conversationGuidance": "Muestra un resumen breve con servicio, fecha, hora y nombre. Pide confirmacion. No llames create_reservation en esta etapa. Cuando el cliente confirme claramente, registra customer_confirmed=true con set_fact y deja avanzar; no crees la cita en el mismo paso. Si falta o cambia fecha u hora, vuelve a validar disponibilidad antes de crear la cita.",
-
-          "allowedActions": [
-
-            "set_fact",
-
-            "check_availability"
-
-          ],
-
-          "collect": [
-
-            "customer_confirmed"
-
-          ]
-
-        },
-
-        {
-
-          "id": "reservation_creation",
-
-          "name": "Creacion de cita",
-
-          "goal": "Crear la cita de asesoria solo despues de confirmacion verbal explicita.",
-
-          "advanceWhenFacts": [],
-
-          "conversationGuidance": "Crea la cita con customer_confirmed=true usando los datos ya validados. Despues de crearla, confirma con tono cordial que quedo agendada y cierra sin pedir datos extra.",
-
-          "allowedActions": [
-
-            "create_reservation",
-
-            "check_availability",
-
-            "set_fact"
-
-          ],
-
-          "collect": [],
-
-          "entryActions": [
-
-            {
-
-              "tool": "create_reservation",
-
-              "arguments": {
-
-                "customer_confirmed": true
-
-              },
-
-              "when": {
-
-                "requiredFacts": [
-
-                  "service",
-
-                  "desired_date",
-
-                  "desired_time",
-
-                  "customer_name",
-
-                  "customer_confirmed"
-
-                ]
-
-              }
-
-            }
-
-          ]
-
+      "signal": {
+        "type": "human_escalation",
+        "description": "Escalar a humano cuando el cliente lo pida, haya queja, solicitud fuera del alcance o necesite cotizacion detallada inmediata.",
+        "valueSchema": {
+          "type": "string"
         }
-
+      },
+      "actions": [
+        {
+          "id": "request_human",
+          "operation": "escalation.request_human",
+          "trigger": "on_signal",
+          "signal": "human_escalation",
+          "arguments": {
+            "reason": "{{signal.human_escalation.value}}",
+            "last_user_message": "{{turn.message}}"
+          },
+          "onOutcome": {
+            "escalation.requested": {},
+            "escalation.notification_failed": {
+              "response": {
+                "guidance": "Indica que el equipo continuar? la atenci?n."
+              }
+            }
+          }
+        }
       ]
-
+    },
+    {
+      "id": "restart_request",
+      "priority": 70,
+      "goal": "Reiniciar la solicitud actual cuando el cliente quiera cambiar completamente de servicio o empezar de nuevo.",
+      "conversationGuidance": "Reinicia la solicitud cuando el cliente indique claramente que quiere cambiar la solicitud completa. Conserva datos persistentes del cliente.",
+      "signal": {
+        "type": "restart_request",
+        "description": "Reiniciar la solicitud actual cuando el cliente quiera cambiar completamente de servicio o empezar de nuevo.",
+        "valueSchema": {
+          "type": "string"
+        }
+      },
+      "actions": [
+        {
+          "id": "reset_request",
+          "operation": "conversation.reset_request",
+          "trigger": "on_signal",
+          "signal": "restart_request",
+          "arguments": {},
+          "onOutcome": {
+            "conversation.request_reset": {
+              "effects": [
+                {
+                  "type": "facts.clear",
+                  "facts": [
+                    "project_context",
+                    "service",
+                    "desired_date",
+                    "desired_time",
+                    "payment_method",
+                    "customer_confirmed"
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      ]
     }
-
+  ],
+  "factSchema": [
+    {
+      "key": "project_context",
+      "role": "project.context",
+      "label": "tipo de proyecto o necesidad",
+      "type": "string",
+      "required": true,
+      "source": "user",
+      "scope": "request"
+    },
+    {
+      "key": "service",
+      "role": "booking.service",
+      "label": "servicio de interes",
+      "type": "string",
+      "required": true,
+      "source": "user",
+      "scope": "request"
+    },
+    {
+      "key": "desired_date",
+      "role": "booking.date",
+      "label": "fecha deseada",
+      "type": "date",
+      "required": true,
+      "source": "user",
+      "scope": "request"
+    },
+    {
+      "key": "desired_time",
+      "role": "booking.time",
+      "label": "hora deseada",
+      "type": "time",
+      "required": true,
+      "source": "user",
+      "scope": "request",
+      "dependsOn": [
+        "service",
+        "desired_date"
+      ]
+    },
+    {
+      "key": "availability_checked",
+      "role": "booking.availability_checked",
+      "label": "disponibilidad validada",
+      "type": "string",
+      "required": false,
+      "source": "system",
+      "scope": "ephemeral",
+      "retentionDays": 1,
+      "dependsOn": [
+        "service",
+        "desired_date",
+        "desired_time"
+      ]
+    },
+    {
+      "key": "customer_name",
+      "role": "customer.name",
+      "label": "nombre del cliente",
+      "type": "string",
+      "required": true,
+      "source": "user",
+      "scope": "customer"
+    },
+    {
+      "key": "customer_phone",
+      "role": "customer.phone",
+      "label": "celular de contacto",
+      "type": "phone",
+      "required": false,
+      "source": "user",
+      "scope": "customer"
+    },
+    {
+      "key": "payment_method",
+      "role": "payment.method",
+      "label": "metodo de pago",
+      "type": "string",
+      "required": false,
+      "source": "system",
+      "scope": "request",
+      "expireOnBusinessDayChange": true
+    },
+    {
+      "key": "customer_confirmed",
+      "role": "confirmation.verbal",
+      "label": "confirmacion del cliente",
+      "type": "boolean",
+      "required": false,
+      "source": "user",
+      "scope": "request",
+      "retentionDays": 1
+    }
+  ],
+  "escalations": {
+    "human": {
+      "contacts": [
+        "+573007047440"
+      ]
+    },
+    "external": {
+      "enabled": false,
+      "events": {}
+    }
+  },
+  "notifications": {
+    "reservation_created": {
+      "enabled": false,
+      "recipients": [],
+      "sendMessageSequence": null
+    }
+  },
+  "checkout": {
+    "currency": "COP",
+    "modes": {}
+  },
+  "flows": [
+    {
+      "id": "booking",
+      "type": "primary",
+      "routingGuidance": "Use this primary flow for new Rada Concept design requests, service selection, scheduling, customer data and confirmation.",
+      "stages": [
+        {
+          "id": "discovery",
+          "name": "Descubrimiento",
+          "goal": "Entender el tipo de servicio de interes.",
+          "advanceWhenFacts": [
+            "project_context"
+          ],
+          "conversationGuidance": "Si el mensaje del cliente es solo un saludo, pregunta en que tipo de servicio esta interesado. En ese turno no listes servicios completos de entrada. Si el cliente ya menciona una necesidad, proyecto o servicio, registra project_context cuando aplique y continua a seleccion de servicio.",
+          "collect": [
+            "project_context"
+          ]
+        },
+        {
+          "id": "service_selection",
+          "name": "Seleccion de servicio",
+          "goal": "Explicar amablemente los servicios de Rada Concept y registrar el servicio de interes.",
+          "advanceWhenFacts": [
+            "service"
+          ],
+          "conversationGuidance": "Cuando el cliente responda el tipo de servicio, pida opciones o describa su proyecto, consulta el catalogo oficial. Explica maximo 1 a 3 servicios relevantes con alcance y beneficios, sin mencionar precios. Si pide precio, indica que la cotizacion se define despues de entender medidas, alcance y materiales en asesoria. Cuando el cliente elija un servicio exacto o uno claramente equivalente, registra service con el nombre canonico del catalogo. Si la necesidad puede corresponder a varias opciones, ayuda a escoger con una explicacion breve.",
+          "collect": [
+            "service"
+          ],
+          "signals": [
+            {
+              "type": "service_selection",
+              "description": "Texto con el que el cliente elige o corrige un servicio concreto.",
+              "valueSchema": {
+                "type": "string"
+              }
+            }
+          ],
+          "actions": [
+            {
+              "id": "catalog_get_services_1",
+              "operation": "catalog.get_services",
+              "arguments": {
+                "view": "auto",
+                "query": "{{user.message}}"
+              },
+              "onOutcome": {
+                "catalog.services_returned": {}
+              }
+            },
+            {
+              "id": "resolve_service_selection",
+              "operation": "catalog.resolve_service",
+              "trigger": "on_signal",
+              "signal": "service_selection",
+              "arguments": {
+                "text": "{{signal.service_selection.value}}"
+              },
+              "onOutcome": {
+                "catalog.service_resolved": {
+                  "effects": [
+                    {
+                      "type": "facts.set_from_outcome",
+                      "bindings": {
+                        "service": "service"
+                      }
+                    }
+                  ]
+                },
+                "catalog.service_unchanged": {},
+                "catalog.add_on_detected": {},
+                "catalog.service_ambiguous": {
+                  "response": {
+                    "mode": "ask_clarification"
+                  }
+                },
+                "catalog.service_not_found": {
+                  "response": {
+                    "mode": "ask_clarification"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "id": "scheduling",
+          "name": "Agenda",
+          "goal": "Revisar disponibilidad y acordar fecha y hora para la cita de asesoria.",
+          "advanceWhenFacts": [],
+          "reentryOnFactChanged": [
+            "service",
+            "desired_date",
+            "desired_time"
+          ],
+          "conversationGuidance": "Primero resuelve el tipo de atencion con el servicio elegido. Para agenda, pide fecha si falta desired_date. Cuando tengas fecha, valida disponibilidad para mostrar horarios disponibles. Cuando el cliente elija hora, registra desired_time y valida disponibilidad con fecha y hora. Si el horario esta disponible, deja avanzar el flujo.",
+          "collect": [
+            "availability_checked"
+          ],
+          "actions": [
+            {
+              "id": "reservation_check_availability_1",
+              "operation": "reservation.check_availability",
+              "arguments": {
+                "service": "{{fact.service}}",
+                "date": "{{fact.desired_date}}",
+                "time": "{{fact.desired_time}}"
+              },
+              "onOutcome": {
+                "availability.exact_time_available": {
+                  "effects": [
+                    {
+                      "type": "fact.set",
+                      "fact": "availability_checked",
+                      "value": true
+                    }
+                  ]
+                },
+                "availability.options_available": {
+                  "effects": [
+                    {
+                      "type": "fact.set",
+                      "fact": "availability_checked",
+                      "value": true
+                    }
+                  ]
+                },
+                "availability.requested_time_unavailable": {
+                  "effects": [
+                    {
+                      "type": "fact.set",
+                      "fact": "availability_checked",
+                      "value": true
+                    }
+                  ]
+                },
+                "availability.none": {
+                  "effects": [
+                    {
+                      "type": "fact.set",
+                      "fact": "availability_checked",
+                      "value": true
+                    }
+                  ]
+                }
+              }
+            }
+          ],
+          "transitions": [
+            {
+              "id": "availability_verified",
+              "priority": 10,
+              "condition": {
+                "verificationActive": "availability_checked"
+              },
+              "to": "customer_data"
+            }
+          ]
+        },
+        {
+          "id": "customer_data",
+          "name": "Datos del cliente",
+          "goal": "Recoger datos minimos para crear la cita.",
+          "advanceWhenFacts": [
+            "customer_name",
+            "customer_phone"
+          ],
+          "conversationGuidance": "Pide en un solo mensaje los datos faltantes para la cita, en lista corta: nombre y celular de contacto. Si ya tienes uno de los datos, pide solo el que falta. Registra los datos entregados.",
+          "collect": [
+            "customer_name",
+            "customer_phone"
+          ]
+        },
+        {
+          "id": "confirmation",
+          "name": "Confirmacion",
+          "goal": "Confirmar la cita de asesoria.",
+          "advanceWhenFacts": [
+            "customer_confirmed"
+          ],
+          "conversationGuidance": "Muestra un resumen breve con servicio, fecha, hora y nombre. Pide confirmacion. No llames create_reservation en esta etapa. Cuando el cliente confirme claramente, extrae customer_confirmed=true desde la confirmaci?n expl?cita y deja avanzar; no crees la cita en el mismo paso. Si falta o cambia fecha u hora, vuelve a validar disponibilidad antes de crear la cita.",
+          "collect": [
+            "customer_confirmed"
+          ]
+        },
+        {
+          "id": "reservation_creation",
+          "name": "Creacion de cita",
+          "goal": "Crear la cita de asesoria solo despues de confirmacion verbal explicita.",
+          "advanceWhenFacts": [],
+          "conversationGuidance": "Crea la cita con customer_confirmed=true usando los datos ya validados. Despues de crearla, confirma con tono cordial que quedo agendada y cierra sin pedir datos extra.",
+          "collect": [],
+          "actions": [
+            {
+              "id": "reservation_create_1",
+              "operation": "reservation.create",
+              "arguments": {
+                "customer_confirmed": true,
+                "service": "{{fact.service}}",
+                "date": "{{fact.desired_date}}",
+                "time": "{{fact.desired_time}}",
+                "customer_name": "{{fact.customer_name}}",
+                "customer_phone": "{{fact.customer_phone}}"
+              },
+              "onOutcome": {
+                "reservation.created": {},
+                "reservation.idempotent_replay": {}
+              }
+            }
+          ]
+        }
+      ]
+    }
   ]
-
 }';
 
 
@@ -1186,7 +784,7 @@ BEGIN
 
         (AgentId, BusinessId, AgentTypeId, Name, Description, IsActive,
 
-         SettingsJson, SystemPromptMarkdown, Model, Temperature, MaxToolIterations, CreatedAt)
+         SettingsJson, Model, Temperature, CreatedAt)
 
     VALUES
 
@@ -1194,7 +792,7 @@ BEGIN
 
          N'Asistente comercial para explicar servicios de Rada Concept y agendar citas de asesoria.',
 
-         1, @SettingsJson, @SystemPrompt, N'gpt-4.1-mini', 0.68, 8, GETUTCDATE());
+         1, @SettingsJson, N'gpt-4.1-mini', 0.68, GETUTCDATE());
 
 END
 
@@ -1216,13 +814,9 @@ BEGIN
 
         SettingsJson = @SettingsJson,
 
-        SystemPromptMarkdown = @SystemPrompt,
-
         Model = N'gpt-4.1-mini',
 
         Temperature = 0.68,
-
-        MaxToolIterations = 8,
 
         UpdatedAt = GETUTCDATE()
 
@@ -1337,4 +931,3 @@ END
 PRINT N'SeedRadaConcept: negocio, servicios y agente configurados.';
 
 GO
-

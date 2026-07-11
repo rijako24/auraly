@@ -51,7 +51,7 @@ public sealed class CommerceServiceSearchTests
             new ProductCatalogAvailabilityService(unitOfWork.Object));
 
         var result = await service.SearchProductsAsync(
-            new AgentToolContext { BusinessId = businessId, ConversationId = Guid.NewGuid() },
+            new AgentConversationContext { BusinessId = businessId, ConversationId = Guid.NewGuid() },
             new ProductSearchRequest("vino", null, 10),
             CancellationToken.None);
 

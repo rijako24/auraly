@@ -1,11 +1,11 @@
-﻿using MimosBabySpa.Application.Agents.Configuration;
+using MimosBabySpa.Application.Agents.Configuration;
 using MimosBabySpa.Application.Commerce;
 
 namespace MimosBabySpa.Application.Agents;
 
 /// <summary>
 /// Configuracion de un agente cargada desde BD por turno (con cache).
-/// Fuente: Agents.SettingsJson (persona, flow, guards, etc.) con fallback legacy a SystemPromptMarkdown.
+/// Fuente ?nica: Agents.SettingsJson compilado antes de activarse.
 /// </summary>
 public sealed class AgentConfig
 {
@@ -19,10 +19,7 @@ public sealed class AgentConfig
     /// <summary>Politicas operativas en markdown (SettingsJson -> policies).</summary>
     public string Policies { get; init; } = string.Empty;
 
-    /// <summary>Flow default normalizado. Compatibilidad con SettingsJson.flow.</summary>
-    public AgentFlowDefinition Flow { get; init; } = new();
-
-/// <summary>Flows conversacionales disponibles para este agente. Si falta, se normaliza desde Flow.</summary>
+    /// <summary>Flows conversacionales compilados para este agente.</summary>
     public IReadOnlyList<AgentFlowDefinition> Flows { get; init; } = [];
 
     /// <summary>Acciones transversales disponibles sin depender de la etapa activa.</summary>
@@ -31,49 +28,22 @@ public sealed class AgentConfig
     /// <summary>Schema de facts rastreados por este agente.</summary>
     public IReadOnlyList<FactSchemaEntry> FactSchema { get; init; } = [];
 
-    /// <summary>Precondiciones declarativas por capability:<id> (SettingsJson -> guards).</summary>
-    public IReadOnlyDictionary<string, GuardDefinition> Guards { get; init; }
-        = new Dictionary<string, GuardDefinition>(StringComparer.OrdinalIgnoreCase);
-
     /// <summary>Plantillas de mensaje override por templateId.</summary>
     public IReadOnlyDictionary<string, string> Templates { get; init; }
         = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>Legacy: Agents.SystemPromptMarkdown. Usado solo si Persona esta vacia.</summary>
-    public string SystemPrompt { get; init; } = string.Empty;
-
-    /// <summary>Contenido base del prompt: Persona + Policies, o SystemPrompt legacy.</summary>
+    /// <summary>Contenido de estilo para el renderer; nunca contiene reglas de ejecuci?n.</summary>
     public string BasePrompt =>
-        !string.IsNullOrWhiteSpace(Persona)
-            ? string.IsNullOrWhiteSpace(Policies)
-                ? Persona.Trim()
-                : $"{Persona.Trim()}{Environment.NewLine}{Environment.NewLine}{Policies.Trim()}"
-            : SystemPrompt.Trim();
-
+        string.Join($"{Environment.NewLine}{Environment.NewLine}",
+            new[] { Persona.Trim(), Policies.Trim() }.Where(value => !string.IsNullOrWhiteSpace(value)));
 
     /// <summary>Deployment o model name de Azure OpenAI.</summary>
     public string Model { get; init; } = string.Empty;
 
     public float Temperature { get; init; } = 0.7f;
 
-    /// <summary>Maximo de iteraciones de tool calling por turno (anti-loop).</summary>
-    public int MaxToolIterations { get; init; } = 6;
-
     /// <summary>Maximo de mensajes del historial enviados al LLM por turno.</summary>
     public int HistoryWindowSize { get; init; } = 20;
-
-    /// <summary>
-    /// Nombres de tools habilitadas para este agente.
-    /// El registry filtra el set completo antes de enviar al modelo.
-    /// </summary>
-    public IReadOnlyList<string> EnabledToolNames { get; init; } = [];
-
-    /// <summary>
-    /// Umbral de tool errors consecutivos antes de auto-escalar a humano.
-    /// Default 3 (configurable por agente en SettingsJson).
-    /// </summary>
-    public int ConsecutiveErrorEscalationThreshold { get; init; } = 3;
-
 
     /// <summary>
     /// Catalogo de secuencias outbound nombradas (texto + adjuntos).

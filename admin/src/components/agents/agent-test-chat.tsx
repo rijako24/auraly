@@ -257,7 +257,7 @@ export function AgentTestChat({
                   <span className="truncate">
                     {formatTestEvent(event)}
                   </span>
-                  <Badge variant="outline">{isSetFactEvent(event) ? "set_fact" : "mock"}</Badge>
+                  <Badge variant="outline">{isFactEvent(event) ? "extractor" : "operation"}</Badge>
                 </div>
               ))}
             </div>
@@ -277,12 +277,12 @@ function formatTestEvent(event: AgentTestEvent) {
   return `${event.source} - ${event.type}`;
 }
 
-function isSetFactEvent(event: AgentTestEvent) {
-  return event.type === "fact_set" || event.source === "set_fact";
+function isFactEvent(event: AgentTestEvent) {
+  return event.type === "fact_set";
 }
 
 function getFactPayload(event: AgentTestEvent) {
-  if (!isSetFactEvent(event)) return null;
+  if (!isFactEvent(event)) return null;
 
   const payload = toRecord(event.payload);
   if (!payload) return null;
