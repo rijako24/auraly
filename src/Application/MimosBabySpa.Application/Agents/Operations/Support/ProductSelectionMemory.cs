@@ -46,15 +46,9 @@ internal static class ProductSelectionMemory
     }
 
     public static string NormalizeSearchReference(string productText)
-    {
-        var ignored = new HashSet<string>(StringComparer.Ordinal)
-        {
-            "de", "del", "el", "la", "los", "las", "un", "una", "unos", "unas"
-        };
-        return string.Join(' ', NormalizeWords(productText)
+        => string.Join(' ', NormalizeSelectionReference(productText)
             .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Where(token => !token.All(char.IsDigit) && !ignored.Contains(token)));
-    }
+            .Where(token => !token.All(char.IsDigit)));
     public static IReadOnlyList<ProductReference> FindCatalogMatches(
         AgentConversationContext ctx,
         string productText)
@@ -64,27 +58,30 @@ internal static class ProductSelectionMemory
         try
         {
             var candidates = JsonSerializer.Deserialize<List<ProductCandidate>>(raw, JsonOptions) ?? [];
-            var searchReference = NormalizeSearchReference(productText);
+            var searchReference = NormalizeSelectionReference(productText);
             var requested = NormalizeTokens(searchReference);
             if (requested.Count == 0)
                 return [];
+
+            var requestedWords = requested.Where(token => !token.All(char.IsDigit)).ToList();
+            var requestedNumbers = requested.Where(token => token.All(char.IsDigit)).ToList();
 
             var exact = candidates.Where(candidate =>
                     Normalize(candidate.Name).Equals(Normalize(searchReference), StringComparison.Ordinal)
                     || (!string.IsNullOrWhiteSpace(candidate.Sku)
                         && Normalize(candidate.Sku).Equals(Normalize(searchReference), StringComparison.Ordinal)))
                 .ToList();
-            var matches = exact.Count > 0
-                ? exact
-                : candidates.Where(candidate =>
-                    {
-                        var candidateTokens = NormalizeTokens(candidate.Name);
-                        return requested.All(token => candidateTokens.Any(value =>
-                            value.Equals(token, StringComparison.Ordinal)
-                            || value.StartsWith(token, StringComparison.Ordinal)
-                            || token.StartsWith(value, StringComparison.Ordinal)));
-                    })
-                    .ToList();
+            var matches = exact;
+            if (matches.Count == 0)
+            {
+                var textualMatches = candidates.Where(candidate =>
+                    TokensMatch(requestedWords, NormalizeTokens(candidate.Name))).ToList();
+                var numericMatches = requestedNumbers.Count == 0
+                    ? []
+                    : textualMatches.Where(candidate =>
+                        TokensMatch(requestedNumbers, NormalizeTokens(candidate.Name))).ToList();
+                matches = numericMatches.Count > 0 ? numericMatches : textualMatches;
+            }
 
             return matches.Select(candidate => candidate.ToProductReference()).ToList();
         }
@@ -101,8 +98,27 @@ internal static class ProductSelectionMemory
             .Distinct(StringComparer.Ordinal)
             .ToList();
 
+    private static bool TokensMatch(
+        IReadOnlyList<string> requested,
+        IReadOnlyList<string> candidate) =>
+        requested.All(token => candidate.Any(value =>
+            value.Equals(token, StringComparison.Ordinal)
+            || value.StartsWith(token, StringComparison.Ordinal)
+            || token.StartsWith(value, StringComparison.Ordinal)));
+
     private static string Normalize(string? value) =>
         NormalizeWords(value).Replace(" ", string.Empty, StringComparison.Ordinal);
+
+    private static string NormalizeSelectionReference(string? value)
+    {
+        var ignored = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "de", "del", "el", "la", "los", "las", "un", "una", "unos", "unas"
+        };
+        return string.Join(' ', NormalizeWords(value)
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(token => !ignored.Contains(token)));
+    }
 
     private static string NormalizeWords(string? value)
     {

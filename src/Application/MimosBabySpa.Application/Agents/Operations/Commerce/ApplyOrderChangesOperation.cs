@@ -108,7 +108,7 @@ public sealed class ApplyOrderChangesOperation : IAgentOperation
             await PendingCartCommandMemory.ClearAsync(_facts, session, cancellationToken);
         if (!result.Success
             && _facts is not null
-            && result.Code == "cart.product_ambiguous"
+            && result.Code is "cart.product_ambiguous" or "cart.product_not_found"
             && result.Issues.FirstOrDefault() is { } ambiguousIssue)
         {
             await PendingCartCommandMemory.SaveAsync(

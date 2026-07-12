@@ -17,7 +17,7 @@ public sealed class CommerceCartProductResolver : ICartProductResolver
         CancellationToken cancellationToken = default)
     {
         var searchReference = ProductSelectionMemory.NormalizeSearchReference(productText);
-        var remembered = ProductSelectionMemory.FindCatalogMatches(context, searchReference);
+        var remembered = ProductSelectionMemory.FindCatalogMatches(context, productText);
         if (remembered.Count > 0)
             return remembered;
 

@@ -298,6 +298,8 @@ public sealed class LlmTurnPlanner : ITurnPlanner
 
                 "When currentFacts contains a pending operation selection, interpret a short candidate choice as continuation of the configured mutation signal and identify the selected candidate at the highest specificity supported by the latest message and offered options. The deterministic operation owns restoration of the deferred batch.",
 
+                "When the latest assistant message presented product options and explicitly asked which one to add, a short latestUserMessage that uniquely identifies one offered option is a continuation of that add request, not a new catalog search. Emit the configured cart mutation signal with that product and preserve any explicitly stated quantity; use quantity 1 only when the pending add request already established that quantity or no other quantity was stated.",
+
                 "Ambiguity in one field never discards other explicit meaning. Still emit every independent configured signal and preserve its complete payload from latestUserMessage; report the ambiguous fact separately in response.ambiguousFields.",
 
                 "decision must be null unless the customer explicitly accepts, rejects or revises an existing artifact.",

@@ -21,32 +21,44 @@ internal static class PendingCartCommandMemory
 
         var pendingCommand = pending.Commands
             .First(command => SameReference(command.ProductText, pending.AmbiguousProductText));
-        var latestMatches = pending.ProductCandidates
-            .Where(candidate => IsReferenceMatch(context.LatestUserMessage ?? string.Empty, candidate.Name))
+        var latestMessage = context.LatestUserMessage ?? string.Empty;
+        var latestCandidateMatches = pending.ProductCandidates
+            .Where(candidate => IsReferenceMatch(latestMessage, candidate.Name))
             .ToList();
+        var latestCatalogMatches = ProductSelectionMemory.FindCatalogMatches(context, latestMessage);
         var incomingResolution = incoming
             .Select(command => new
             {
                 Command = command,
-                Matches = pending.ProductCandidates
+                CandidateMatches = pending.ProductCandidates
                     .Where(candidate => IsReferenceMatch(command.ProductText, candidate.Name))
-                    .ToList()
+                    .ToList(),
+                CatalogMatches = ProductSelectionMemory.FindCatalogMatches(context, command.ProductText)
             })
-            .FirstOrDefault(item => item.Matches.Count == 1);
-        var selected = latestMatches.Count == 1
-            ? latestMatches[0]
-            : incomingResolution?.Matches[0];
-        if (selected is null)
+            .FirstOrDefault(item => item.CandidateMatches.Count == 1 || item.CatalogMatches.Count == 1);
+
+        var selectedName = latestCandidateMatches.Count == 1
+            ? latestCandidateMatches[0].Name
+            : latestCatalogMatches.Count == 1
+                ? latestCatalogMatches[0].Name
+                : incomingResolution?.CandidateMatches.Count == 1
+                    ? incomingResolution.CandidateMatches[0].Name
+                    : incomingResolution?.CatalogMatches.Count == 1
+                        ? incomingResolution.CatalogMatches[0].Name
+                        : null;
+        if (selectedName is null)
             return [];
 
-        var replacement = pendingCommand with { ProductText = selected.Name };
+        var replacement = pendingCommand with { ProductText = selectedName };
         var merged = pending.Commands
             .Select(command => SameReference(command.ProductText, pending.AmbiguousProductText)
                 ? replacement
                 : command)
             .ToList();
         var continuationCommand = incomingResolution?.Command
-            ?? (latestMatches.Count == 1 && incoming.Count == 1 ? incoming[0] : null);
+            ?? ((latestCandidateMatches.Count == 1 || latestCatalogMatches.Count == 1) && incoming.Count == 1
+                ? incoming[0]
+                : null);
         merged.AddRange(incoming.Where(command => !ReferenceEquals(command, continuationCommand)));
         return merged;
     }
