@@ -522,12 +522,14 @@ var latestPayment = await _paymentLifecycle.GetLatestByConversationAsync(convers
             foreach (var action in executedActions)
             {
                 _logger.LogInformation(
-                    "Conv {ConvId} [ACTION_EXECUTED] Action={ActionId}, Operation={OperationId}, Success={Success}, Outcome={OutcomeCode}, Arguments={ArgumentsJson}",
+                    "Conv {ConvId} [ACTION_EXECUTED] Action={ActionId}, Operation={OperationId}, Success={Success}, Outcome={OutcomeCode}, ErrorCode={ErrorCode}, Error={ErrorMessage}, Arguments={ArgumentsJson}",
                     conversationId,
                     action.ActionId,
                     action.OperationId,
                     action.Success,
                     action.OutcomeCode,
+                    action.Outcome?.Error?.Code ?? "none",
+                    SanitizeOperationError(action.Outcome?.Error?.Message),
                     action.ArgumentsJson);
             }
         }
@@ -543,6 +545,17 @@ var latestPayment = await _paymentLifecycle.GetLatestByConversationAsync(convers
         }
     }
 
+    private static string SanitizeOperationError(string? message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+            return "none";
+
+        var singleLine = message
+            .Replace("\r", " ", StringComparison.Ordinal)
+            .Replace("\n", " ", StringComparison.Ordinal)
+            .Trim();
+        return singleLine.Length <= 500 ? singleLine : singleLine[..500];
+    }
     private async Task<AgentTurnResult> FinalizeDeterministicTurnAsync(
 
         AgentConfig config,

@@ -203,19 +203,28 @@ public sealed class TurnPlanPilotTests
         chat.CallCount.Should().Be(2);
     }
     [Fact]
-    public async Task Planner_UsesFocusedSemanticRepair_ForConfiguredOptionSelector()
+    public async Task Planner_ResolvesConfiguredOptionSelector_InSingleExtractorCall()
     {
         const string message = "la a";
         var initial = JsonSerializer.Serialize(new
         {
             flowIntent = new { candidateFlow = "order", confidence = 0.9, evidence = (string?)null },
-            facts = Array.Empty<object>(),
+            facts = new object[]
+            {
+                new
+                {
+                    key = "customer_type",
+                    operation = "set",
+                    value = "Hogar",
+                    confidence = 0.99,
+                    evidence = "a"
+                }
+            },
             signals = Array.Empty<object>(),
             decision = (object?)null,
             response = new { mode = "continue", ambiguousFields = Array.Empty<string>() }
         });
-        var focused = JsonSerializer.Serialize(new { selectedValue = "Hogar" });
-        var chat = new SequenceChatClient(initial, focused);
+        var chat = new SequenceChatClient(initial);
         var customerType = new FactSchemaEntry
         {
             Key = "customer_type",
@@ -244,8 +253,8 @@ public sealed class TurnPlanPilotTests
         proposal.Plan!.Facts.Should().ContainSingle();
         proposal.Plan.Facts[0].Key.Should().Be("customer_type");
         proposal.Plan.Facts[0].Value.GetString().Should().Be("Hogar");
-        proposal.Plan.Facts[0].Evidence.Should().Be("A");
-        chat.CallCount.Should().Be(2);
+        proposal.Plan.Facts[0].Evidence.Should().Be("a");
+        chat.CallCount.Should().Be(1);
     }
     [Fact]
     public async Task Planner_FailSoftRecovery_PreservesValidSignalAfterRepairStillFails()

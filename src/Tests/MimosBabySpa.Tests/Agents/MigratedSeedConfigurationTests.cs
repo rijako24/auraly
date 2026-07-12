@@ -46,6 +46,44 @@ public sealed class MigratedSeedConfigurationTests
                 $"{diagnostic.Path}:{diagnostic.Code}:{diagnostic.Message}")));
     }
 
+    [Fact]
+    public void CjCustomerFacingTemplates_AreConversationalAndReadableOnWhatsApp()
+    {
+        var root = FindSolutionRoot();
+        var path = Path.Combine(
+            root,
+            "database",
+            "MimosBabySpa.Database",
+            "Scripts",
+            "Seeds",
+            "SeedCJDistribuciones.sql");
+        var settingsJson = ExtractSettingsJson(File.ReadAllText(path), "SettingsJson");
+        var config = JsonSerializer.Deserialize<AgentConfig>(
+            settingsJson,
+            new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true,
+                Converters = { new JsonStringEnumConverter() }
+            })!;
+
+        config.BasePrompt.Should().Contain("cercana, empatica, natural y servicial");
+        config.BasePrompt.Should().Contain("parrafos cortos y espacios en blanco");
+
+        var customerName = config.Templates["customer_name_prompt"];
+        customerName.Should().Contain("\r\n\r\n");
+        customerName.Should().Contain("Que gusto saludarte");
+        customerName.Should().NotContain("Bienvenido a CJ Distribuciones. Con gusto");
+
+        var customerType = config.Templates["customer_type_prompt"];
+        customerType.Should().Contain("\r\n\r\n");
+        customerType.Should().Contain("Puedes responder con la letra o con el nombre");
+        customerType.Should().Contain("*A.* Hogar");
+
+        config.Templates["product_selection_prompt"].Should().Contain("\r\n\r\n");
+        config.Templates["catalog_results"].Should().Contain("\r\n\r\n*Productos disponibles*\r\n\r\n");
+        config.Templates["cart_snapshot"].Should().Contain("\r\n\r\n*Pedido actual*\r\n\r\n");
+        config.Templates["cart_review"].Should().Contain("\r\n\r\n*Resumen de tu pedido*\r\n\r\n");
+    }
     private static void AssertSemanticAndPresentationTextIsSeparated(AgentConfig config)
     {
         const string internalVocabulary = @"\b(tool|tools|herramienta|herramientas|prepare_checkout|create_reservation)\b";
