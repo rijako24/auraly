@@ -34,6 +34,7 @@ public sealed class AgentConfig
 
     /// <summary>Politica configurable de apertura de una nueva solicitud.</summary>
     public ConversationOpeningDefinitions ConversationOpening { get; init; } = new();
+    public FailureResponseDefinitions FailureResponses { get; init; } = new();
 
     /// <summary>Contenido de estilo para el renderer; nunca contiene reglas de ejecuci?n.</summary>
     public string BasePrompt =>
@@ -87,6 +88,12 @@ public sealed class ConversationOpeningDefinitions
 {
     public bool Enabled { get; init; }
     public string Guidance { get; init; } = string.Empty;
-    public string? FallbackTemplate { get; init; }
     public bool SkipWhenFirstStageHandlesOpening { get; init; } = true;
+    public bool AllowQuestions { get; init; }
+}
+
+public sealed class FailureResponseDefinitions
+{
+    public string LlmUnavailable { get; init; } =
+        "Lo siento, estoy experimentando problemas temporales. Por favor, intenta de nuevo en un momento.";
 }

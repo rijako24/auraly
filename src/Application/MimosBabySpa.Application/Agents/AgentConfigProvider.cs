@@ -54,6 +54,7 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
             FactSchema = settings.FactSchema ?? [],
             Templates = settings.Templates ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
             ConversationOpening = settings.ConversationOpening ?? new ConversationOpeningDefinitions(),
+            FailureResponses = settings.FailureResponses ?? new FailureResponseDefinitions(),
             Model = settings.Model ?? "gpt-4.1-mini",
             Temperature = settings.Temperature ?? 0.2f,
             HistoryWindowSize = settings.HistoryWindowSize ?? 20,
@@ -118,6 +119,7 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
         public IReadOnlyList<FactSchemaEntry>? FactSchema { get; set; }
         public Dictionary<string, string>? Templates { get; set; }
         public ConversationOpeningDefinitions? ConversationOpening { get; set; }
+        public FailureResponseDefinitions? FailureResponses { get; set; }
         public string? Model { get; set; }
         public float? Temperature { get; set; }
         public int? HistoryWindowSize { get; set; }

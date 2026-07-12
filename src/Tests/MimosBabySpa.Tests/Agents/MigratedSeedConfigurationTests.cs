@@ -67,9 +67,9 @@ public sealed class MigratedSeedConfigurationTests
             })!;
 
         config.ConversationOpening.Enabled.Should().BeTrue();
-        config.ConversationOpening.Guidance.Should().Contain("nueva solicitud");
-        config.ConversationOpening.FallbackTemplate.Should().Be("conversation_opening_fallback");
-        config.Templates["conversation_opening_fallback"].Should().Contain("nuevo pedido");
+        config.ConversationOpening.Guidance.Should().Contain("bienvenida a CJ Distribuciones");
+        config.ConversationOpening.AllowQuestions.Should().BeFalse();
+        config.FailureResponses.LlmUnavailable.Should().Contain("inconveniente temporal");
         config.BasePrompt.Should().Contain("cercana, empatica, natural y servicial");
         config.BasePrompt.Should().Contain("parrafos cortos y espacios en blanco");
 

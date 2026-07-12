@@ -132,12 +132,10 @@ public sealed class DeterministicResponseRendererTests
             ConversationOpening = new ConversationOpeningDefinitions
             {
                 Enabled = true,
-                Guidance = "Saluda con cercania",
-                FallbackTemplate = "request_opening"
+                Guidance = "Saluda con cercania"
             },
             Templates = new Dictionary<string, string>
             {
-                ["request_opening"] = "Hola, {{customer_name}}!",
                 ["product_prompt"] = "Que deseas pedir?"
             },
             Flows =
@@ -174,7 +172,46 @@ public sealed class DeterministicResponseRendererTests
     }
 
     [Fact]
-    public async Task Render_OpeningLlmFailure_UsesOptionalFallbackWithoutLosingAuthoritativeResponse()
+    public async Task Render_OpeningQuestionIsRejected_AndCannotDuplicateTheStagePrompt()
+    {
+        var chat = new RecordingChatClient("¡Hola Richard! Aquí estoy para ayudarte. ¿Qué te gustaría incluir hoy?");
+        var composer = new OperationPresentationComposer(new AgentTemplateResolver(), new PromptTemplateRenderer());
+        var renderer = new DeterministicResponseRenderer(chat, composer);
+        var config = new AgentConfig
+        {
+            ConversationOpening = new ConversationOpeningDefinitions
+            {
+                Enabled = true,
+                Guidance = "Saluda y da la bienvenida, sin preguntas",
+                AllowQuestions = false
+            },
+            Templates = new Dictionary<string, string>
+            {
+                ["product_prompt"] = "Cuentame que productos necesitas."
+            }
+        };
+        var turn = new DeterministicTurnResult
+        {
+            Success = true,
+            Facts = new Dictionary<string, string> { ["customer_name"] = "Richard" },
+            Response = new StageResponseDefinition { FallbackTemplate = "product_prompt" }
+        };
+
+        var response = await renderer.RenderAsync(new DeterministicResponseRequest(
+            config,
+            new AgentFlowStage { Id = "products" },
+            turn,
+            "hola",
+            [ChatMessage.User("hola")],
+            RequestOpeningRequired: true));
+
+        response.Success.Should().BeFalse();
+        response.Text.Should().BeEmpty();
+        response.ErrorMessage.Should().Contain("presentation policy");
+        chat.CallCount.Should().Be(1);
+    }
+    [Fact]
+    public async Task Render_OpeningLlmFailure_IsReportedToGeneralFailureHandler()
     {
         var chat = new FailingChatClient();
         var composer = new OperationPresentationComposer(new AgentTemplateResolver(), new PromptTemplateRenderer());
@@ -184,12 +221,10 @@ public sealed class DeterministicResponseRendererTests
             ConversationOpening = new ConversationOpeningDefinitions
             {
                 Enabled = true,
-                Guidance = "Saluda con cercania",
-                FallbackTemplate = "opening_fallback"
+                Guidance = "Saluda con cercania"
             },
             Templates = new Dictionary<string, string>
             {
-                ["opening_fallback"] = "Hola, {{customer_name}}!",
                 ["product_prompt"] = "Que deseas pedir?"
             }
         };
@@ -208,7 +243,9 @@ public sealed class DeterministicResponseRendererTests
             [ChatMessage.User("hola")],
             RequestOpeningRequired: true));
 
-        response.Text.Should().Be($"Hola, Richard!{Environment.NewLine}{Environment.NewLine}Que deseas pedir?");
+        response.Success.Should().BeFalse();
+        response.Text.Should().BeEmpty();
+        response.ErrorMessage.Should().Contain("simulated renderer failure");
         chat.CallCount.Should().Be(1);
     }
     [Fact]

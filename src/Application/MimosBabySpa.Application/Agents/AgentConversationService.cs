@@ -612,8 +612,21 @@ var latestPayment = await _paymentLifecycle.GetLatestByConversationAsync(convers
 
             ct);
 
-        if (openingPending && turn.Response?.SuppressText != true)
+        if (!rendered.Success)
+        {
+            _logger.LogWarning(
+                "Conv {ConvId}: LLM response rendering failed: {Error}",
+                session.ConversationId,
+                rendered.ErrorMessage ?? "unknown");
+            rendered = new DeterministicRenderedResponse(
+                config.FailureResponses.LlmUnavailable,
+                rendered.PromptTokens,
+                rendered.CompletionTokens);
+        }
+        else if (openingPending && turn.Response?.SuppressText != true)
+        {
             session.ConversationState.LastOpenedRequestGeneration = session.ConversationState.RequestGeneration;
+        }
 
         var effects = await _deterministicEffects.ProcessAsync(
 

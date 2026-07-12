@@ -42,13 +42,11 @@ public sealed partial class AgentConfigurationCompiler
             if (string.IsNullOrWhiteSpace(config.ConversationOpening.Guidance))
                 Error(errors, "conversationOpening.guidance", "guidance_required",
                     "Conversation opening guidance is required when the policy is enabled.");
-            if (!string.IsNullOrWhiteSpace(config.ConversationOpening.FallbackTemplate)
-                && !config.Templates.ContainsKey(config.ConversationOpening.FallbackTemplate))
-            {
-                Error(errors, "conversationOpening.fallbackTemplate", "unknown_template",
-                    $"Template '{config.ConversationOpening.FallbackTemplate}' is not configured.");
-            }
         }
+
+        if (string.IsNullOrWhiteSpace(config.FailureResponses.LlmUnavailable))
+            Error(errors, "failureResponses.llmUnavailable", "response_required",
+                "A generic LLM-unavailable response is required.");
 
         foreach (var fact in config.FactSchema.Where(fact => fact.Options.Count > 0))
         {

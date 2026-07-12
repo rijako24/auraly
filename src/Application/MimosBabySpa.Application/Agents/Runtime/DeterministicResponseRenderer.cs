@@ -15,7 +15,12 @@ public sealed record DeterministicResponseRequest(
     IReadOnlyList<ChatMessage> RecentConversation,
     bool RequestOpeningRequired = false);
 
-public sealed record DeterministicRenderedResponse(string Text, int PromptTokens, int CompletionTokens);
+public sealed record DeterministicRenderedResponse(
+    string Text,
+    int PromptTokens,
+    int CompletionTokens,
+    bool Success = true,
+    string? ErrorMessage = null);
 
 public interface IDeterministicResponseRenderer
 {
@@ -43,6 +48,8 @@ public sealed class DeterministicResponseRenderer : IDeterministicResponseRender
         var opening = request.RequestOpeningRequired
             ? await RenderConversationOpeningAsync(request, cancellationToken)
             : new DeterministicRenderedResponse(string.Empty, 0, 0);
+        if (!opening.Success)
+            return opening;
         if (!string.IsNullOrWhiteSpace(request.Turn.Response?.Template)
             && !presentations.Any(presentation =>
                 presentation.Mode == FragmentRenderMode.Exclusive
@@ -124,7 +131,14 @@ public sealed class DeterministicResponseRenderer : IDeterministicResponseRender
             },
             cancellationToken: cancellationToken);
 
-        var response = result.Success ? result.Content : string.Empty;
+        if (!result.Success)
+        {
+            return new DeterministicRenderedResponse(
+                string.Empty, result.PromptTokens, result.CompletionTokens, false,
+                result.ErrorMessage ?? "LLM response rendering failed.");
+        }
+
+        var response = result.Content;
         return new DeterministicRenderedResponse(
             Combine(opening.Text, _presentations.Compose(request.Config, response, presentations)),
             opening.PromptTokens + result.PromptTokens,
@@ -140,11 +154,13 @@ public sealed class DeterministicResponseRenderer : IDeterministicResponseRender
             task = "Write only a brief, natural opening for the new customer request. Return only the opening text.",
             persona = request.Config.BasePrompt,
             guidance = policy.Guidance,
+            allowQuestions = policy.AllowQuestions,
             rules = new[]
             {
                 "Do not mention internal state, requests, generations, stages, tools or configuration.",
                 "Do not claim catalog, availability, prices, totals, reservations, payments or completed actions.",
                 "Do not repeat the substantive answer or ask for data; the deterministic response that follows owns the next step.",
+                "When allowQuestions is false, do not include any question.",
                 "Use remembered customer facts only to personalize naturally.",
                 "Keep the opening concise and appropriate for WhatsApp."
             },
@@ -170,22 +186,16 @@ public sealed class DeterministicResponseRenderer : IDeterministicResponseRender
             cancellationToken: cancellationToken);
         if (result.Success && !string.IsNullOrWhiteSpace(result.Content))
         {
-            return new DeterministicRenderedResponse(
-                result.Content.Trim(), result.PromptTokens, result.CompletionTokens);
+            var opening = result.Content.Trim();
+            if (policy.AllowQuestions || (!opening.Contains('?') && !opening.Contains('¿')))
+                return new DeterministicRenderedResponse(opening, result.PromptTokens, result.CompletionTokens);
         }
 
-        if (string.IsNullOrWhiteSpace(policy.FallbackTemplate))
-            return new DeterministicRenderedResponse(string.Empty, result.PromptTokens, result.CompletionTokens);
-
-        var fallback = _presentations.Compose(
-            request.Config,
-            null,
-            [new OperationPresentation(
-                policy.FallbackTemplate,
-                request.Turn.Facts.ToDictionary(pair => pair.Key, pair => (object?)pair.Value, StringComparer.OrdinalIgnoreCase),
-                FragmentRenderMode.Exclusive,
-                FragmentPriority.Required)]);
-        return new DeterministicRenderedResponse(fallback, result.PromptTokens, result.CompletionTokens);
+        var reason = result.Success
+            ? "LLM opening violated the configured presentation policy."
+            : result.ErrorMessage ?? "LLM opening rendering failed.";
+        return new DeterministicRenderedResponse(
+            string.Empty, result.PromptTokens, result.CompletionTokens, false, reason);
     }
 
     private static string Combine(string prefix, string response)
