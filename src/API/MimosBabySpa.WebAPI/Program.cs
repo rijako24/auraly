@@ -522,6 +522,7 @@ builder.Services.AddScoped<MimosBabySpa.Application.Agents.Runtime.OperationArgu
 
 builder.Services.AddSingleton<MimosBabySpa.Application.Agents.Planning.TurnPlanValidator>();
 
+builder.Services.AddScoped<MimosBabySpa.Application.Agents.Planning.ITurnPlanningContextEnricher, MimosBabySpa.Application.Agents.Planning.CommerceCartPlanningContextEnricher>();
 builder.Services.AddScoped<MimosBabySpa.Application.Agents.Planning.ITurnPlanner, MimosBabySpa.Application.Agents.Planning.LlmTurnPlanner>();
 
 builder.Services.AddScoped<MimosBabySpa.Application.Agents.Runtime.DeterministicStageExecutor>();

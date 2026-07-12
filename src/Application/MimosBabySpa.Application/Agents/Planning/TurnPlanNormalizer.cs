@@ -21,7 +21,8 @@ public static class TurnPlanNormalizer
                 Key = claim.Key,
                 Operation = claim.Operation,
                 Value = JsonSerializer.SerializeToElement(canonical),
-                Evidence = claim.Evidence
+                Evidence = claim.Evidence,
+                Confidence = claim.Confidence
             };
         }).ToArray();
 

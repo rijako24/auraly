@@ -1,4 +1,3 @@
-using System.Globalization;
 using MimosBabySpa.Application.Configuration;
 using MimosBabySpa.Application.DTOs;
 using Microsoft.Extensions.Logging;
@@ -132,7 +131,7 @@ public class WhatsAppWebhookParserService : IWhatsAppWebhookParserService
                                 CustomerName = customerName,
                                 ProviderMessageId = message.Id,
                                 ReplyToProviderMessageId = message.Context?.Id,
-                                Facts = BuildAudioFacts(message.Facts, quality)
+                                Facts = message.Facts ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
                             });
 
                             _logger.LogInformation(
@@ -142,10 +141,22 @@ public class WhatsAppWebhookParserService : IWhatsAppWebhookParserService
                                 quality.ConfidenceScore,
                                 quality.Reason);
                         }
+                        else if (quality.Reliability == AudioTranscriptionReliability.Ambiguous
+                                 && !string.IsNullOrWhiteSpace(transcribedText))
+                        {
+                            _logger.LogInformation(
+                                "Audio ambiguo requiere confirmacion para {UserNumber}: Confidence={Confidence}, Reason={Reason}, Text={Transcription}",
+                                message.From,
+                                quality.ConfidenceScore,
+                                quality.Reason,
+                                transcribedText);
+
+                            await SendAmbiguousAudioReplyAsync(businessId, message.From, transcribedText);
+                        }
                         else if (!string.IsNullOrWhiteSpace(transcribedText))
                         {
                             _logger.LogWarning(
-                                "Audio rechazado para {UserNumber}: Reliability={Reliability}, Confidence={Confidence}, Reason={Reason}, Text={Transcription}",
+                                "Audio no confiable rechazado para {UserNumber}: Reliability={Reliability}, Confidence={Confidence}, Reason={Reason}, Text={Transcription}",
                                 message.From,
                                 quality.Reliability,
                                 quality.ConfidenceScore,
@@ -202,6 +213,24 @@ public class WhatsAppWebhookParserService : IWhatsAppWebhookParserService
         reply = new ResolvedInteractiveReply(normalizedId, normalizedTitle);
         return true;
     }
+    private async Task SendAmbiguousAudioReplyAsync(
+        Guid businessId,
+        string userNumber,
+        string transcription)
+    {
+        if (string.IsNullOrWhiteSpace(_audioQualityOptions.AmbiguousAudioReply))
+        {
+            await SendUnclearAudioReplyAsync(businessId, userNumber);
+            return;
+        }
+
+        var reply = _audioQualityOptions.AmbiguousAudioReply.Replace(
+            "{{transcription}}",
+            transcription,
+            StringComparison.OrdinalIgnoreCase);
+
+        await _whatsAppService.SendTextMessageAsync(businessId, userNumber, reply);
+    }
     private async Task SendUnclearAudioReplyAsync(Guid businessId, string userNumber)
     {
         if (string.IsNullOrWhiteSpace(_audioQualityOptions.UnclearAudioReply))
@@ -225,22 +254,5 @@ public class WhatsAppWebhookParserService : IWhatsAppWebhookParserService
         }
     }
 
-    private static IReadOnlyDictionary<string, string> BuildAudioFacts(
-        IReadOnlyDictionary<string, string>? source,
-        AudioTranscriptionQualityAssessment quality)
-    {
-        var facts = source is null
-            ? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-            : new Dictionary<string, string>(source, StringComparer.OrdinalIgnoreCase);
-
-        facts["system.input.modality"] = "audio";
-        facts["system.audio.reliability"] = quality.Reliability.ToString().ToLowerInvariant();
-        facts["system.audio.confidence"] = quality.ConfidenceScore.ToString("0.00", CultureInfo.InvariantCulture);
-
-        if (!string.IsNullOrWhiteSpace(quality.Reason))
-            facts["system.audio.reason"] = quality.Reason;
-
-        return facts;
-    }
     private sealed record ResolvedInteractiveReply(string Id, string Title);
 }

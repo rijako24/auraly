@@ -71,9 +71,10 @@ public static class TurnPlanJsonSchemaBuilder
                     ["key"] = new Dictionary<string, object?> { ["type"] = "string" },
                     ["operation"] = new Dictionary<string, object?> { ["type"] = "string" },
                     ["value"] = new Dictionary<string, object?> { ["type"] = "null" },
-                    ["evidence"] = EvidenceSchema()
+                    ["evidence"] = EvidenceSchema(),
+                    ["confidence"] = ConfidenceSchema()
                 },
-                ["required"] = new[] { "key", "operation", "value", "evidence" }
+                ["required"] = new[] { "key", "operation", "value", "evidence", "confidence" }
             };
         }
 
@@ -99,9 +100,10 @@ public static class TurnPlanJsonSchemaBuilder
             {
                 ["anyOf"] = new object[] { FactValueSchema(fact), new Dictionary<string, object?> { ["type"] = "null" } }
             },
-            ["evidence"] = EvidenceSchema()
+            ["evidence"] = EvidenceSchema(),
+            ["confidence"] = ConfidenceSchema()
         },
-        ["required"] = new[] { "key", "operation", "value", "evidence" }
+        ["required"] = new[] { "key", "operation", "value", "evidence", "confidence" }
     };
 
     private static Dictionary<string, object?> FactValueSchema(FactSchemaEntry fact)
@@ -130,9 +132,10 @@ public static class TurnPlanJsonSchemaBuilder
                 {
                     ["type"] = new Dictionary<string, object?> { ["type"] = "string" },
                     ["value"] = new Dictionary<string, object?> { ["type"] = "null" },
-                    ["evidence"] = EvidenceSchema()
+                    ["evidence"] = EvidenceSchema(),
+                    ["confidence"] = ConfidenceSchema()
                 },
-                ["required"] = new[] { "type", "value", "evidence" }
+                ["required"] = new[] { "type", "value", "evidence", "confidence" }
             };
         }
 
@@ -152,9 +155,10 @@ public static class TurnPlanJsonSchemaBuilder
             ["value"] = signal.ValueSchema.ValueKind == JsonValueKind.Object
                 ? signal.ValueSchema.Clone()
                 : new Dictionary<string, object?> { ["type"] = "string" },
-            ["evidence"] = EvidenceSchema()
+            ["evidence"] = EvidenceSchema(),
+            ["confidence"] = ConfidenceSchema()
         },
-        ["required"] = new[] { "type", "value", "evidence" }
+        ["required"] = new[] { "type", "value", "evidence", "confidence" }
     };
     private static Dictionary<string, object?> DecisionSchema() => new()
     {
@@ -194,6 +198,13 @@ public static class TurnPlanJsonSchemaBuilder
             schema["enum"] = values;
         return schema;
     }
+
+    private static Dictionary<string, object?> ConfidenceSchema() => new()
+    {
+        ["type"] = "number",
+        ["minimum"] = 0,
+        ["maximum"] = 1
+    };
 
     private static Dictionary<string, object?> EvidenceSchema() => new()
     {

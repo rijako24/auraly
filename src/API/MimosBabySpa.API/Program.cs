@@ -426,6 +426,7 @@ services.AddScoped<MimosBabySpa.Application.Agents.Runtime.OperationArgumentBind
 
 services.AddSingleton<MimosBabySpa.Application.Agents.Planning.TurnPlanValidator>();
 
+services.AddScoped<MimosBabySpa.Application.Agents.Planning.ITurnPlanningContextEnricher, MimosBabySpa.Application.Agents.Planning.CommerceCartPlanningContextEnricher>();
 services.AddScoped<MimosBabySpa.Application.Agents.Planning.ITurnPlanner, MimosBabySpa.Application.Agents.Planning.LlmTurnPlanner>();
 
 services.AddScoped<MimosBabySpa.Application.Agents.Runtime.DeterministicStageExecutor>();

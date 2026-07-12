@@ -45,6 +45,36 @@ public sealed class AgentConfigurationCompilerTests
             value.Path == "operatingHours.outsideHours" && value.Code == "response_required");
     }
 
+    [Fact]
+    public void Compile_WithNonPositiveFlowTtl_RejectsConfiguration()
+    {
+        var config = new AgentConfig
+        {
+            Flows =
+            [
+                new AgentFlowDefinition
+                {
+                    Id = "booking",
+                    Type = FlowTypes.Primary,
+                    Stages = [new AgentFlowStage { Id = "booking" }]
+                },
+                new AgentFlowDefinition
+                {
+                    Id = "management",
+                    Type = FlowTypes.Secondary,
+                    TtlSeconds = 0,
+                    Stages = [new AgentFlowStage { Id = "management" }]
+                }
+            ]
+        };
+
+        var compilation = Compiler().Compile(config);
+
+        compilation.IsValid.Should().BeFalse();
+        compilation.Diagnostics.Should().Contain(value =>
+            value.Path == "flows[management].ttlSeconds"
+            && value.Code == "invalid_flow_ttl");
+    }
     private static AgentConfigurationCompiler Compiler() => new(
         new AgentOperationRegistry([new AvailabilityOperationStub()]));
 

@@ -102,9 +102,8 @@ public sealed class AudioTranscriptionQualityEvaluator : IAudioTranscriptionQual
             flags);
     }
 
-    private bool ShouldAccept(AudioTranscriptionReliability reliability) =>
-        reliability == AudioTranscriptionReliability.Reliable
-        || (_options.AcceptAmbiguousTranscriptions && reliability == AudioTranscriptionReliability.Ambiguous);
+    private static bool ShouldAccept(AudioTranscriptionReliability reliability) =>
+        reliability == AudioTranscriptionReliability.Reliable;
 
     private static AudioTranscriptionReliability ResolveReliability(IReadOnlyList<string> flags)
     {

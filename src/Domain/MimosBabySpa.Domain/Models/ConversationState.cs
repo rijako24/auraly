@@ -19,6 +19,7 @@ public class ConversationState
     /// <summary>Durable deterministic cursor. It changes only after a compiled route or transition.</summary>
     public string? ActiveFlowId { get; set; }
     public string? ActiveStageId { get; set; }
+    public DateTime? ActiveFlowExpiresAtUtc { get; set; }
 
     /// <summary>Monotonic versions used to invalidate dependent facts and verifications.</summary>
     public Dictionary<string, long> FactVersions { get; set; } = new(StringComparer.OrdinalIgnoreCase);

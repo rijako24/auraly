@@ -151,7 +151,7 @@ public class WhatsAppWebhookFunctionTests
     }
 
     [Fact]
-    public async Task Run_PostRequest_WithDuplicateMessage_ShouldStillScheduleWakeupButNotInsertAgain()
+    public async Task Run_PostRequest_WithDuplicateMessage_ShouldNotScheduleOrChangeExistingReceipt()
     {
         var businessId = Guid.NewGuid();
         var webhookDto = CreateWebhookDto("wamid.duplicate", "1234567890", "Hola", null);
@@ -183,7 +183,13 @@ public class WhatsAppWebhookFunctionTests
             "1234567890",
             "wamid.duplicate",
             It.IsAny<DateTime>(),
-            It.IsAny<CancellationToken>()), Times.Once);
+            It.IsAny<CancellationToken>()), Times.Never);
+        _mockDeduplicationService.Verify(x => x.MarkQueuedAsync(
+            businessId,
+            "whatsapp",
+            "wamid.duplicate",
+            It.IsAny<DateTime>(),
+            It.IsAny<CancellationToken>()), Times.Never);
         _mockMessageProcessorService.Verify(x => x.ProcessIncomingMessageAsync(
             It.IsAny<Guid>(),
             It.IsAny<string>(),

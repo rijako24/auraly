@@ -212,7 +212,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                      "provider":  "Mantis"
                  },
     "operatingHours":  {
-                           "enforce":  true,
+                           "enforce":  false,
                            "outsideHours":  {
                                                 "guidance":  "Responde de forma breve, cordial y cerrada. Explica que el negocio esta fuera de horario y que el proximo horario habil es {{next_operating_window}}. Adapta el mensaje a lo que dijo el cliente, pero no solicites datos, no prometas ejecutar gestiones, no abras catalogos y no termines con preguntas."
                                             }
@@ -383,7 +383,8 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                            "required":  true,
                            "source":  "user",
                            "scope":  "request",
-                           "retentionDays":  1
+                           "retentionDays":  1,
+                           "extractionGuidance":  "Extrae solo la ubicacion fisica. Si el mismo mensaje incluye telefono o celular, excluye de la direccion el numero telefonico y expresiones de enlace como y el telefono es, y el numero es o variantes con errores ortograficos."
                        },
                        {
                            "key":  "delivery_phone",
@@ -521,6 +522,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                       "order_checkout_no_payment":  "*Resumen de tu pedido*\n{{#each line_items}}\n- {{name}} x{{quantity}}: ${{line_total}}\n{{/each}}\n- Envio: ${{shipping_cost}}\n- *Total: ${{total}} {{currency}}*\n\nEntrega:\n- Ciudad: {{city}}\n- Direccion: {{delivery_address}}\n- Celular: {{customer_phone}}\n{{#if customer_name}}\n- Nombre: {{customer_name}}\n{{/if}}\n\nMetodo de pago: efectivo al recibir\n\nConfirmas tu pedido con esta informacion?",
                       "order_checkout_manual_transfer":  "*Resumen de tu pedido*\n{{#each line_items}}\n- {{name}} x{{quantity}}: ${{line_total}}\n{{/each}}\n- Envio: ${{shipping_cost}}\n- *Total: ${{total}} {{currency}}*\n\nEntrega:\n- Ciudad: {{city}}\n- Direccion: {{delivery_address}}\n- Celular: {{customer_phone}}\n{{#if customer_name}}\n- Nombre: {{customer_name}}\n{{/if}}\n\nMetodo de pago: transferencia manual\n\nTu pago queda pendiente de confirmacion manual. Un agente del equipo de CJ Distribuciones confirmara el pago; cuando se confirme, te notificaremos que el pedido fue creado.",
                       "catalog_results":  "Estas son las opciones que encontre para ti:\r\n\r\n*Productos disponibles*\r\n{{#each products}}\r\n- {{name}}: ${{unit_price}} {{currency}}\r\n{{/each}}\r\n\r\nCuales te gustaria agregar y en que cantidad?",
+                      "catalog_no_results":  "Por ahora no encontre {{#if search_text}}{{search_text}}{{else}}productos para esa busqueda{{/if}} disponibles en nuestro catalogo. Si quieres, puedo buscar opciones parecidas o ayudarte a elegir otro producto.",
                       "recipe_results":  "Buena idea. Puedes inspirarte con estas preparaciones:\r\n\r\n*Ideas para preparar*\r\n{{#each results}}\r\n- {{Title}}\r\n  {{Url}}\r\n{{/each}}",
                       "cart_snapshot":  "Listo, asi va tu pedido:\r\n\r\n*Pedido actual*\r\n{{#each items}}\r\n- {{name}} x{{quantity}}: ${{line_total}}\r\n{{/each}}\r\n*Total: ${{total}} {{currency}}*\r\n\r\nPuedes agregar algo mas o decirme cuando este completo.",
                       "cart_review":  "Perfecto, revisemos juntos el pedido:\r\n\r\n*Resumen de tu pedido*\r\n{{#each items}}\r\n- {{name}} x{{quantity}}: ${{line_total}}\r\n{{/each}}\r\n*Total: ${{total}} {{currency}}*\r\n\r\nEsta correcto o deseas ajustar algo?",
@@ -677,6 +679,20 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                                                                                "limit":  10
                                                                            },
                                                              "onOutcome":  {
+                                                                               "products.not_found":  {
+                                                                                                          "effects":  [
+                                                                                                                          {
+                                                                                                                              "type":  "facts.clear",
+                                                                                                                              "facts":  ["system.recipe_catalog_queries"]
+                                                                                                                          },
+                                                                                                                          {
+                                                                                                                              "type":  "presentation.add",
+                                                                                                                              "template":  "catalog_no_results",
+                                                                                                                              "mode":  "Exclusive",
+                                                                                                                              "priority":  "Required"
+                                                                                                                          }
+                                                                                                                      ]
+                                                                                                      },
                                                                                "products.found":  {
                                                                                                       "effects":  [
                                                                                                                       {
@@ -787,6 +803,16 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                                                                                "limit":  10
                                                                            },
                                                              "onOutcome":  {
+                                                                               "products.not_found":  {
+                                                                                                          "effects":  [
+                                                                                                                          {
+                                                                                                                              "type":  "presentation.add",
+                                                                                                                              "template":  "catalog_no_results",
+                                                                                                                              "mode":  "Exclusive",
+                                                                                                                              "priority":  "Required"
+                                                                                                                          }
+                                                                                                                      ]
+                                                                                                      },
                                                                                "products.found":  {
                                                                                                       "effects":  [
                                                                                                                       {
@@ -806,14 +832,14 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                                      },
                                      {
                                          "id":  "cart_review",
-                                         "name":  "Resumen inicial del pedido",
-                                         "goal":  "Mostrar el carrito con productos y subtotales disponibles antes de pedir entrega o pago.",
+                                         "name":  "Transicion al cierre",
+                                         "goal":  "Continuar hacia entrega y pago sin mostrar un resumen intermedio.",
                                          "advanceWhenFacts":  [
-                                                                  "cart_review_confirmed"
+                                                                  "order_finalized"
                                                               ],
-                                         "conversationGuidance":  "Presenta el estado autoritativo del carrito y obtiene la aprobacion explicita del resumen vigente. Los cambios solicitados se aplican mediante la operacion configurada y producen un resumen actualizado.",
+                                         "conversationGuidance":  "Cuando el cliente termine de agregar productos, avanza directamente a modalidad y datos de entrega. No muestres ni solicites confirmacion de un resumen intermedio; el unico resumen de cierre se presenta despues de completar entrega y pago.",
                                          "collect":  [
-                                                         "cart_review_confirmed",
+                                                         "order_finalized",
                                                          "delivery_method",
                                                          "delivery_address",
                                                          "delivery_phone",
@@ -842,6 +868,9 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                                                              "id":  "show_current_order_draft",
                                                              "operation":  "commerce.get_order_draft",
                                                              "trigger":  "when_ready",
+                                                             "condition":  {
+                                                                               "factMissing":  "order_finalized"
+                                                                           },
                                                              "arguments":  {
 
                                                                            },
@@ -972,7 +1001,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                                                                       "delivery_phone",
                                                                       "customer_name"
                                                                   ],
-                                         "conversationGuidance":  "Despues de aprobar el carrito pregunta: Prefieres recoger tu pedido o recibirlo a domicilio? Si elige recogida, registra delivery_method=recogida y usa como delivery_address el punto de recogida configurado o Punto de recogida CJ Distribuciones - Valledupar, Cesar. Si elige domicilio, registra delivery_method=domicilio y solicita solo datos faltantes: direccion, barrio o referencia cuando aplique, telefono si no existe y nombre del receptor si falta. No pidas datos confiables ya disponibles. No pidas ciudad si ya existe por defecto; usa Valledupar salvo que el cliente indique otra ciudad.",
+                                         "conversationGuidance":  "Despues de que el cliente termine de agregar productos pregunta: Prefieres recoger tu pedido o recibirlo a domicilio? No muestres un resumen del carrito en esta etapa. Si elige recogida, registra delivery_method=recogida y usa como delivery_address el punto de recogida configurado o Punto de recogida CJ Distribuciones - Valledupar, Cesar. Si elige domicilio, registra delivery_method=domicilio y solicita solo datos faltantes: direccion, barrio o referencia cuando aplique, telefono si no existe y nombre del receptor si falta. No pidas datos confiables ya disponibles. No pidas ciudad si ya existe por defecto; usa Valledupar salvo que el cliente indique otra ciudad.",
                                          "collect":  [
                                                          "delivery_method",
                                                          "city",
@@ -1003,7 +1032,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                                                               ],
                                          "reentryOnFactChanged":  [
                                                                       "order_finalized",
-                                                                      "cart_review_confirmed",
                                                                       "delivery_method",
                                                                       "city",
                                                                       "delivery_address",
@@ -1019,7 +1047,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                                                              "condition":  {
                                                                                "all":  [
                                                                                            {
-                                                                                               "factPresent":  "cart_review_confirmed"
+                                                                                               "factPresent":  "order_finalized"
                                                                                            },
                                                                                            {
                                                                                                "factPresent":  "delivery_method"

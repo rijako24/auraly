@@ -1,0 +1,385 @@
+{
+  "cases": [
+    {
+      "id": "cj_address_phone_plain_phone",
+      "message": "calle 5n y el telefono es 3012926660",
+      "stage": "order_data",
+      "expectedFlow": "order",
+      "expectedFacts": [
+        {
+          "key": "delivery_address",
+          "value": "calle 5n"
+        },
+        {
+          "key": "delivery_phone",
+          "value": "3012926660"
+        }
+      ],
+      "seed": "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+      "history": [
+        {
+          "role": "assistant",
+          "content": "Prefieres recoger tu pedido o recibirlo a domicilio?"
+        },
+        {
+          "role": "user",
+          "content": "domicilio"
+        },
+        {
+          "role": "assistant",
+          "content": "Indica la direccion y el telefono de contacto."
+        }
+      ],
+      "initialFacts": {
+        "customer_name": "Richard",
+        "customer_type": "Hogar",
+        "order_finalized": "true",
+        "delivery_method": "domicilio",
+        "city": "Valledupar"
+      }
+    },
+    {
+      "id": "cj_address_phone_misspelled_phone",
+      "message": "calle 5n y el tekelofono es 3012926660",
+      "stage": "order_data",
+      "expectedFlow": "order",
+      "expectedFacts": [
+        {
+          "key": "delivery_address",
+          "value": "calle 5n"
+        },
+        {
+          "key": "delivery_phone",
+          "value": "3012926660"
+        }
+      ],
+      "seed": "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+      "history": [
+        {
+          "role": "assistant",
+          "content": "Prefieres recoger tu pedido o recibirlo a domicilio?"
+        },
+        {
+          "role": "user",
+          "content": "domicilio"
+        },
+        {
+          "role": "assistant",
+          "content": "Indica la direccion y el telefono de contacto."
+        }
+      ],
+      "initialFacts": {
+        "customer_name": "Richard",
+        "customer_type": "Hogar",
+        "order_finalized": "true",
+        "delivery_method": "domicilio",
+        "city": "Valledupar"
+      }
+    },
+    {
+      "id": "cj_address_phone_explicit_address",
+      "message": "mi direccion es calle 5n y mi telefono 3012926660",
+      "stage": "order_data",
+      "expectedFlow": "order",
+      "expectedFacts": [
+        {
+          "key": "delivery_address",
+          "value": "calle 5n"
+        },
+        {
+          "key": "delivery_phone",
+          "value": "3012926660"
+        }
+      ],
+      "seed": "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+      "history": [
+        {
+          "role": "assistant",
+          "content": "Prefieres recoger tu pedido o recibirlo a domicilio?"
+        },
+        {
+          "role": "user",
+          "content": "domicilio"
+        },
+        {
+          "role": "assistant",
+          "content": "Indica la direccion y el telefono de contacto."
+        }
+      ],
+      "initialFacts": {
+        "customer_name": "Richard",
+        "customer_type": "Hogar",
+        "order_finalized": "true",
+        "delivery_method": "domicilio",
+        "city": "Valledupar"
+      }
+    },
+    {
+      "id": "cj_address_phone_phone_first",
+      "message": "mi telefono es 3012926660 y la direccion es calle 5n",
+      "stage": "order_data",
+      "expectedFlow": "order",
+      "expectedFacts": [
+        {
+          "key": "delivery_address",
+          "value": "calle 5n"
+        },
+        {
+          "key": "delivery_phone",
+          "value": "3012926660"
+        }
+      ],
+      "seed": "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+      "history": [
+        {
+          "role": "assistant",
+          "content": "Prefieres recoger tu pedido o recibirlo a domicilio?"
+        },
+        {
+          "role": "user",
+          "content": "domicilio"
+        },
+        {
+          "role": "assistant",
+          "content": "Indica la direccion y el telefono de contacto."
+        }
+      ],
+      "initialFacts": {
+        "customer_name": "Richard",
+        "customer_type": "Hogar",
+        "order_finalized": "true",
+        "delivery_method": "domicilio",
+        "city": "Valledupar"
+      }
+    },
+    {
+      "id": "cj_address_phone_delivery_phrase",
+      "message": "para entregar en calle 5n, me llamas al 3012926660",
+      "stage": "order_data",
+      "expectedFlow": "order",
+      "expectedFacts": [
+        {
+          "key": "delivery_address",
+          "value": "calle 5n"
+        },
+        {
+          "key": "delivery_phone",
+          "value": "3012926660"
+        }
+      ],
+      "seed": "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+      "history": [
+        {
+          "role": "assistant",
+          "content": "Prefieres recoger tu pedido o recibirlo a domicilio?"
+        },
+        {
+          "role": "user",
+          "content": "domicilio"
+        },
+        {
+          "role": "assistant",
+          "content": "Indica la direccion y el telefono de contacto."
+        }
+      ],
+      "initialFacts": {
+        "customer_name": "Richard",
+        "customer_type": "Hogar",
+        "order_finalized": "true",
+        "delivery_method": "domicilio",
+        "city": "Valledupar"
+      }
+    },
+    {
+      "id": "cj_address_phone_lives_at",
+      "message": "vivo en calle 5n y mi numero es 3012926660",
+      "stage": "order_data",
+      "expectedFlow": "order",
+      "expectedFacts": [
+        {
+          "key": "delivery_address",
+          "value": "calle 5n"
+        },
+        {
+          "key": "delivery_phone",
+          "value": "3012926660"
+        }
+      ],
+      "seed": "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+      "history": [
+        {
+          "role": "assistant",
+          "content": "Prefieres recoger tu pedido o recibirlo a domicilio?"
+        },
+        {
+          "role": "user",
+          "content": "domicilio"
+        },
+        {
+          "role": "assistant",
+          "content": "Indica la direccion y el telefono de contacto."
+        }
+      ],
+      "initialFacts": {
+        "customer_name": "Richard",
+        "customer_type": "Hogar",
+        "order_finalized": "true",
+        "delivery_method": "domicilio",
+        "city": "Valledupar"
+      }
+    },
+    {
+      "id": "cj_address_phone_whatsapp",
+      "message": "calle 5n, whatsapp 3012926660",
+      "stage": "order_data",
+      "expectedFlow": "order",
+      "expectedFacts": [
+        {
+          "key": "delivery_address",
+          "value": "calle 5n"
+        },
+        {
+          "key": "delivery_phone",
+          "value": "3012926660"
+        }
+      ],
+      "seed": "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+      "history": [
+        {
+          "role": "assistant",
+          "content": "Prefieres recoger tu pedido o recibirlo a domicilio?"
+        },
+        {
+          "role": "user",
+          "content": "domicilio"
+        },
+        {
+          "role": "assistant",
+          "content": "Indica la direccion y el telefono de contacto."
+        }
+      ],
+      "initialFacts": {
+        "customer_name": "Richard",
+        "customer_type": "Hogar",
+        "order_finalized": "true",
+        "delivery_method": "domicilio",
+        "city": "Valledupar"
+      }
+    },
+    {
+      "id": "cj_address_phone_contact",
+      "message": "manda el pedido a calle 5n; contacto: 3012926660",
+      "stage": "order_data",
+      "expectedFlow": "order",
+      "expectedFacts": [
+        {
+          "key": "delivery_address",
+          "value": "calle 5n"
+        },
+        {
+          "key": "delivery_phone",
+          "value": "3012926660"
+        }
+      ],
+      "seed": "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+      "history": [
+        {
+          "role": "assistant",
+          "content": "Prefieres recoger tu pedido o recibirlo a domicilio?"
+        },
+        {
+          "role": "user",
+          "content": "domicilio"
+        },
+        {
+          "role": "assistant",
+          "content": "Indica la direccion y el telefono de contacto."
+        }
+      ],
+      "initialFacts": {
+        "customer_name": "Richard",
+        "customer_type": "Hogar",
+        "order_finalized": "true",
+        "delivery_method": "domicilio",
+        "city": "Valledupar"
+      }
+    },
+    {
+      "id": "cj_address_phone_house_phrase",
+      "message": "la casa queda en calle 5n y el cel es 3012926660",
+      "stage": "order_data",
+      "expectedFlow": "order",
+      "expectedFacts": [
+        {
+          "key": "delivery_address",
+          "value": "calle 5n"
+        },
+        {
+          "key": "delivery_phone",
+          "value": "3012926660"
+        }
+      ],
+      "seed": "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+      "history": [
+        {
+          "role": "assistant",
+          "content": "Prefieres recoger tu pedido o recibirlo a domicilio?"
+        },
+        {
+          "role": "user",
+          "content": "domicilio"
+        },
+        {
+          "role": "assistant",
+          "content": "Indica la direccion y el telefono de contacto."
+        }
+      ],
+      "initialFacts": {
+        "customer_name": "Richard",
+        "customer_type": "Hogar",
+        "order_finalized": "true",
+        "delivery_method": "domicilio",
+        "city": "Valledupar"
+      }
+    },
+    {
+      "id": "cj_address_phone_typos_both",
+      "message": "la direcsion es calle 5n y el tekelofono 3012926660",
+      "stage": "order_data",
+      "expectedFlow": "order",
+      "expectedFacts": [
+        {
+          "key": "delivery_address",
+          "value": "calle 5n"
+        },
+        {
+          "key": "delivery_phone",
+          "value": "3012926660"
+        }
+      ],
+      "seed": "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+      "history": [
+        {
+          "role": "assistant",
+          "content": "Prefieres recoger tu pedido o recibirlo a domicilio?"
+        },
+        {
+          "role": "user",
+          "content": "domicilio"
+        },
+        {
+          "role": "assistant",
+          "content": "Indica la direccion y el telefono de contacto."
+        }
+      ],
+      "initialFacts": {
+        "customer_name": "Richard",
+        "customer_type": "Hogar",
+        "order_finalized": "true",
+        "delivery_method": "domicilio",
+        "city": "Valledupar"
+      }
+    }
+  ],
+  "repetitions": 3
+}

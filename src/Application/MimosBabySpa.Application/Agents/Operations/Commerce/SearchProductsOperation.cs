@@ -37,7 +37,7 @@ public sealed class SearchProductsOperation : IAgentOperation
 
     public OperationDescriptor Descriptor { get; } = new(
         "commerce.search_products", InputSchema,
-        ["products.found", "products.search_failed"],
+        ["products.found", "products.not_found", "products.search_failed"],
         [], [], []);
 
     public async Task<OperationOutcome> ExecuteAsync(
@@ -67,10 +67,13 @@ public sealed class SearchProductsOperation : IAgentOperation
         if (_factsService is not null && result.Products.Count > 0)
             await ProductSelectionMemory.RememberCatalogAsync(_factsService, ctx, result.Products, cancellationToken);
 
-        return OperationOutcome.Ok("products.found", new
+        var outcomeCode = result.Products.Count == 0 ? "products.not_found" : "products.found";
+        return OperationOutcome.Ok(outcomeCode, new
         {
             source = result.Source,
             count = result.Products.Count,
+            search_terms = queries,
+            search_text = string.Join(", ", queries),
             products = result.Products.Select(product => new
             {
                 name = product.Name,

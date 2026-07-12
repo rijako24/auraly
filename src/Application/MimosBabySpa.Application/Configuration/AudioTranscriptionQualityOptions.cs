@@ -6,8 +6,6 @@ public sealed class AudioTranscriptionQualityOptions
 
     public bool Enabled { get; set; } = true;
 
-    public bool AcceptAmbiguousTranscriptions { get; set; } = false;
-
     public int MinimumLettersOrDigits { get; set; } = 2;
 
     public int MinimumCharactersWithoutSignals { get; set; } = 4;
@@ -25,6 +23,9 @@ public sealed class AudioTranscriptionQualityOptions
     public double AmbiguousCompressionRatioThreshold { get; set; } = 2.4;
 
     public double UnreliableCompressionRatioThreshold { get; set; } = 2.8;
+
+    public string AmbiguousAudioReply { get; set; } =
+        "Entendi: \"{{transcription}}\". Es eso lo que quisiste decir?";
 
     public string UnclearAudioReply { get; set; } =
         "No alcance a entender bien el audio. Me lo puedes repetir mas claro o escribirlo?";

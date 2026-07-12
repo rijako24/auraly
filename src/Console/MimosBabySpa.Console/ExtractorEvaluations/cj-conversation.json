@@ -255,21 +255,7 @@
                       "expectedSignals":  [
                                               "order_changes"
                                           ],
-                      "expectedSignalItems":  [
-                                                  {
-                                                      "type":  "order_changes",
-                                                      "count":  1,
-                                                      "products":  [
-                                                                       "mac pollo"
-                                                                   ],
-                                                      "operations":  [
-                                                                         "set_quantity"
-                                                                     ],
-                                                      "quantities":  [
-                                                                         1
-                                                                     ]
-                                                  }
-                                              ],
+                      "currentCart":  [{"name":"PECHUGA MAC POLLO","quantity":3},{"name":"PERNIL CAMPOLLO","quantity":1}],
                       "seed":  "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
                       "history":  [
                                       {
@@ -348,6 +334,7 @@
                                                                      ]
                                                   }
                                               ],
+                      "currentCart":  [{"name":"PECHUGA MAC POLLO","quantity":2},{"name":"PECHUGA CRIOLLA","quantity":2}],
                       "seed":  "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
                       "history":  [
                                       {

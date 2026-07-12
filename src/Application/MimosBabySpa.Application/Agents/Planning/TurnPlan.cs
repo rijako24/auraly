@@ -30,6 +30,7 @@ public sealed class PlannedFactClaim
     public string Operation { get; init; } = TurnPlanOperations.Set;
     public JsonElement Value { get; init; }
     public string Evidence { get; init; } = string.Empty;
+    public double Confidence { get; init; } = 1;
 }
 
 public sealed class PlannedSignal
@@ -37,6 +38,7 @@ public sealed class PlannedSignal
     public string Type { get; init; } = string.Empty;
     public JsonElement Value { get; init; }
     public string Evidence { get; init; } = string.Empty;
+    public double Confidence { get; init; } = 1;
 }
 
 public sealed class PlannedCustomerDecision

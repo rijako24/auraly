@@ -33,11 +33,26 @@ public sealed class DeterministicFlowSelector : IDeterministicFlowSelector
         if (candidate is null)
             return FlowRouteDecision.Primary(primary.Id, "unknown_planned_flow");
 
-        var confidence = Math.Clamp(plan.FlowIntent.Confidence, 0, 1);
+        var confidence = plan.FlowIntent.Confidence;
+        var active = AgentFlowCatalog.Find(config, context.ActiveFlowId);
+        if (active is not null && AgentFlowCatalog.IsSecondary(active))
+        {
+            var continuesActive = candidate.Id.Equals(active.Id, StringComparison.OrdinalIgnoreCase);
+            if (continuesActive || string.IsNullOrWhiteSpace(plan.FlowIntent.Evidence))
+            {
+                return new FlowRouteDecision(
+                    active.Id,
+                    "continue_secondary_flow",
+                    continuesActive
+                        ? "turn_plan_continues_active_flow"
+                        : "active_secondary_without_explicit_switch",
+                    confidence,
+                    false);
+            }
+        }
+
         if (AgentFlowCatalog.IsSecondary(candidate))
         {
-            if (confidence < FlowConventions.SecondaryFlowActivationThreshold)
-                return FlowRouteDecision.Primary(primary.Id, "secondary_below_activation_threshold");
 
             if (string.IsNullOrWhiteSpace(plan.FlowIntent.Evidence))
                 return FlowRouteDecision.Primary(primary.Id, "secondary_without_evidence");
@@ -51,8 +66,6 @@ public sealed class DeterministicFlowSelector : IDeterministicFlowSelector
                 false);
         }
 
-        if (confidence < FlowConventions.PrimaryFlowActivationThreshold)
-            return FlowRouteDecision.Primary(primary.Id, "primary_below_activation_threshold");
 
         return new FlowRouteDecision(
             candidate.Id,

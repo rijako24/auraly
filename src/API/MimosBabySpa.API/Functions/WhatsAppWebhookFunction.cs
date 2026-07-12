@@ -132,7 +132,11 @@ public class WhatsAppWebhookFunction
                             "Mensaje inbound duplicado recibido. BusinessId: {BusinessId}, WhatsAppMessageId: {WhatsAppMessageId}",
                             businessContext.BusinessId,
                             message.Id);
+                        // Service Bus duplicate detection is optional at the entity level.
+                        // The existing receipt already owns the original wake-up message.
+                        continue;
                     }
+
 
                     await _inboundQueueService.ScheduleDebounceAsync(
                         businessContext.BusinessId,

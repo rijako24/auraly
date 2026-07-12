@@ -10,6 +10,43 @@ public static class DeterministicConversationPosition
         ?? AgentFlowCatalog.PrimaryFlow(config)
         ?? throw new InvalidOperationException($"Agent '{config.AgentId}' has no compiled flow.");
 
+    public static bool ExpireSecondaryFlowIfNeeded(
+        AgentConfig config,
+        ConversationState state,
+        DateTime utcNow)
+    {
+        var active = AgentFlowCatalog.Find(config, state.ActiveFlowId);
+        if (active is null || !AgentFlowCatalog.IsSecondary(active))
+        {
+            state.ActiveFlowExpiresAtUtc = null;
+            return false;
+        }
+
+        if (state.ActiveFlowExpiresAtUtc is null)
+        {
+            state.ActiveFlowExpiresAtUtc = utcNow.Add(AgentFlowCatalog.ResolveTtl(active));
+            return false;
+        }
+
+        if (state.ActiveFlowExpiresAtUtc > utcNow)
+            return false;
+
+        state.ActiveFlowId = AgentFlowCatalog.ResolvePrimaryFlowId(config);
+        state.ActiveStageId = null;
+        state.ActiveFlowExpiresAtUtc = null;
+        return true;
+    }
+
+    public static void RefreshFlowLease(
+        AgentConfig config,
+        ConversationState state,
+        DateTime utcNow)
+    {
+        var active = AgentFlowCatalog.Find(config, state.ActiveFlowId);
+        state.ActiveFlowExpiresAtUtc = active is not null && AgentFlowCatalog.IsSecondary(active)
+            ? utcNow.Add(AgentFlowCatalog.ResolveTtl(active))
+            : null;
+    }
     public static AgentFlowStage ResolveStage(
         AgentFlowDefinition flow,
         ConversationState state,

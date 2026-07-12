@@ -34,6 +34,7 @@ public sealed class DeterministicTurnResult
 {
     public bool Success { get; init; }
     public IReadOnlyList<string> Errors { get; init; } = [];
+    public IReadOnlyList<string> PlanningWarnings { get; init; } = [];
     public TurnPlan? Plan { get; init; }
     public int PromptTokens { get; init; }
     public int CompletionTokens { get; init; }
@@ -64,6 +65,7 @@ public sealed class DeterministicTurnCoordinator
     private readonly IConversationVerificationService _verificationStore;
     private readonly DeterministicStageExecutor _stages;
     private readonly DeterministicStageTransitionResolver _transitions;
+    private readonly IReadOnlyList<ITurnPlanningContextEnricher> _contextEnrichers;
 
     public DeterministicTurnCoordinator(
         ITurnPlanner planner,
@@ -73,6 +75,19 @@ public sealed class DeterministicTurnCoordinator
         IConversationVerificationService verificationStore,
         DeterministicStageExecutor stages,
         DeterministicStageTransitionResolver transitions)
+        : this(planner, flows, facts, factStore, verificationStore, stages, transitions, [])
+    {
+    }
+
+    public DeterministicTurnCoordinator(
+        ITurnPlanner planner,
+        IDeterministicFlowSelector flows,
+        FactMutationBatchProcessor facts,
+        IConversationFactsService factStore,
+        IConversationVerificationService verificationStore,
+        DeterministicStageExecutor stages,
+        DeterministicStageTransitionResolver transitions,
+        IEnumerable<ITurnPlanningContextEnricher> contextEnrichers)
     {
         _planner = planner;
         _flows = flows;
@@ -81,8 +96,8 @@ public sealed class DeterministicTurnCoordinator
         _verificationStore = verificationStore;
         _stages = stages;
         _transitions = transitions;
+        _contextEnrichers = contextEnrichers.ToList();
     }
-
     public async Task<DeterministicTurnResult> ExecuteAsync(
         DeterministicTurnRequest request,
         CancellationToken cancellationToken = default)
@@ -96,6 +111,17 @@ public sealed class DeterministicTurnCoordinator
             planningStage,
             request.CurrentFacts,
             request.ActiveFlowId);
+        var structuredContext = new Dictionary<string, JsonElement>(StringComparer.OrdinalIgnoreCase);
+        foreach (var enricher in _contextEnrichers)
+        {
+            var fragment = await enricher.EnrichAsync(
+                request.Config,
+                request.OperationContext,
+                cancellationToken);
+            if (fragment is not null && !structuredContext.TryAdd(fragment.Key, fragment.Value))
+                return Failure($"Duplicate planning context key '{fragment.Key}'.", request.CurrentFacts);
+        }
+
         var proposal = await _planner.PlanAsync(
             new TurnPlanningContext(
                 request.Config,
@@ -104,7 +130,8 @@ public sealed class DeterministicTurnCoordinator
                 request.CurrentFacts,
                 request.LatestUserMessage,
                 request.OperationContext.BusinessNow,
-                request.RecentConversation),
+                request.RecentConversation,
+                structuredContext),
             cancellationToken);
         if (!proposal.Success || proposal.Plan is null)
             return Failure(proposal.Errors, request.CurrentFacts, proposal.Plan);
@@ -131,7 +158,7 @@ public sealed class DeterministicTurnCoordinator
         {
             var switchesFlow = !string.IsNullOrWhiteSpace(effectivePlan.FlowIntent.CandidateFlow)
                 && !effectivePlan.FlowIntent.CandidateFlow.Equals(pending.FlowId, StringComparison.OrdinalIgnoreCase)
-                && effectivePlan.FlowIntent.Confidence >= 0.75;
+                && !string.IsNullOrWhiteSpace(effectivePlan.FlowIntent.Evidence);
             if (switchesFlow)
             {
                 state.PendingTurnPlan = null;
@@ -342,6 +369,7 @@ public sealed class DeterministicTurnCoordinator
         {
             Success = true,
             Plan = effectivePlan,
+            PlanningWarnings = proposal.Warnings,
             PromptTokens = proposal.PromptTokens,
             CompletionTokens = proposal.CompletionTokens,
             Route = route,
@@ -559,6 +587,7 @@ public sealed class DeterministicTurnCoordinator
     {
         Success = true,
         Plan = plan,
+        PlanningWarnings = proposal.Warnings,
         PromptTokens = proposal.PromptTokens,
         CompletionTokens = proposal.CompletionTokens,
         CurrentStageId = request.CurrentStageId,

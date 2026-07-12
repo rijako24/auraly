@@ -410,6 +410,7 @@ services.AddScoped<IOperatingHoursTurnPolicy, OperatingHoursTurnPolicy>();
 
 services.AddSingleton<TurnPlanValidator>();
 
+services.AddScoped<ITurnPlanningContextEnricher, CommerceCartPlanningContextEnricher>();
 services.AddScoped<ITurnPlanner, LlmTurnPlanner>();
 
 services.AddScoped<TurnPlanPilotRunner>();

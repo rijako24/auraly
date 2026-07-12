@@ -309,6 +309,11 @@ var latestPayment = await _paymentLifecycle.GetLatestByConversationAsync(convers
 
         session.OperatingHours = operatingHours;
 
+        DeterministicConversationPosition.ExpireSecondaryFlowIfNeeded(
+            config,
+            session.ConversationState,
+            session.BusinessNow.UtcDateTime);
+
         var activeFlow = DeterministicConversationPosition.ResolveFlow(config, session.ConversationState);
 
         var currentStage = DeterministicConversationPosition.ResolveStage(
@@ -451,6 +456,8 @@ var latestPayment = await _paymentLifecycle.GetLatestByConversationAsync(convers
             },
 
             ct);
+        LogDeterministicTurnTrace(session.ConversationId, result);
+
 
         session.ConversationState.ExecutedOperationKeys = executedOperationKeys
             .TakeLast(500)
@@ -485,6 +492,55 @@ var latestPayment = await _paymentLifecycle.GetLatestByConversationAsync(convers
 
             config, session, userMessage, chatHistory, selectedStage, result, ct);
 
+    }
+
+    private void LogDeterministicTurnTrace(Guid conversationId, DeterministicTurnResult result)
+    {
+        if (result.PlanningWarnings.Count > 0)
+        {
+            _logger.LogWarning(
+                "Conv {ConvId} [PLAN_FAIL_SOFT] {Warnings}",
+                conversationId,
+                string.Join(" | ", result.PlanningWarnings));
+        }
+
+        var capturedFacts = result.Plan?.Facts
+            .Select(fact => $"{fact.Key}:{fact.Operation}={fact.Value.GetRawText()}")
+            .ToList() ?? [];
+        _logger.LogInformation(
+            "Conv {ConvId} [FACTS_CAPTURED] {Facts}",
+            conversationId,
+            capturedFacts.Count == 0 ? "none" : string.Join(" | ", capturedFacts));
+
+        var executedActions = result.Trace.Where(trace => !trace.Skipped).ToList();
+        if (executedActions.Count == 0)
+        {
+            _logger.LogInformation("Conv {ConvId} [ACTIONS_EXECUTED] none", conversationId);
+        }
+        else
+        {
+            foreach (var action in executedActions)
+            {
+                _logger.LogInformation(
+                    "Conv {ConvId} [ACTION_EXECUTED] Action={ActionId}, Operation={OperationId}, Success={Success}, Outcome={OutcomeCode}, Arguments={ArgumentsJson}",
+                    conversationId,
+                    action.ActionId,
+                    action.OperationId,
+                    action.Success,
+                    action.OutcomeCode,
+                    action.ArgumentsJson);
+            }
+        }
+
+        var skippedActions = result.Trace.Where(trace => trace.Skipped).ToList();
+        if (skippedActions.Count > 0)
+        {
+            _logger.LogDebug(
+                "Conv {ConvId} [ACTIONS_SKIPPED] {Actions}",
+                conversationId,
+                string.Join(" | ", skippedActions.Select(action =>
+                    $"{action.ActionId}:{action.OperationId} ({action.SkipReason})")));
+        }
     }
 
     private async Task<AgentTurnResult> FinalizeDeterministicTurnAsync(
@@ -522,6 +578,11 @@ var latestPayment = await _paymentLifecycle.GetLatestByConversationAsync(convers
             ?? session.ConversationState.ActiveFlowId;
 
         session.ConversationState.ActiveStageId = turn.CurrentStageId;
+
+        DeterministicConversationPosition.RefreshFlowLease(
+            config,
+            session.ConversationState,
+            session.BusinessNow.UtcDateTime);
 
         UpdateStageSnapshots(config, session);
 

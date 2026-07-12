@@ -42,12 +42,9 @@ public sealed class AudioTranscriptionQualityEvaluatorTests
     }
 
     [Fact]
-    public void Evaluate_CanAcceptAmbiguousAudioWhenConfigured()
+    public void Evaluate_DoesNotAcceptAmbiguousAudioAsNormalInput()
     {
-        var evaluator = new AudioTranscriptionQualityEvaluator(new AudioTranscriptionQualityOptions
-        {
-            AcceptAmbiguousTranscriptions = true
-        });
+        var evaluator = new AudioTranscriptionQualityEvaluator(new AudioTranscriptionQualityOptions());
         var transcription = BuildTranscription(
             text: "manana a las tres",
             averageLogProbability: -0.95,
@@ -57,7 +54,7 @@ public sealed class AudioTranscriptionQualityEvaluatorTests
         var result = evaluator.Evaluate(transcription);
 
         result.Reliability.Should().Be(AudioTranscriptionReliability.Ambiguous);
-        result.ShouldAccept.Should().BeTrue();
+        result.ShouldAccept.Should().BeFalse();
         result.Flags.Should().Contain("low_average_log_probability");
     }
 

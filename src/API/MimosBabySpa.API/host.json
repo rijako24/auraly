@@ -17,7 +17,8 @@
   "extensions": {
     "serviceBus": {
       "maxConcurrentSessions": 8,
-      "maxConcurrentCallsPerSession": 1
+      "maxConcurrentCallsPerSession": 1,
+      "maxAutoLockRenewalDuration": "00:10:00"
     }
   },
   "extensionBundle": {

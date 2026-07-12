@@ -108,6 +108,7 @@ public sealed partial class AgentConfigurationCompiler
                 []);
     }
 
+
     private void ValidateReservationAutomations(
         AgentConfig config,
         IDictionary<string, IAgentOperation> usedOperations,
@@ -148,6 +149,8 @@ public sealed partial class AgentConfigurationCompiler
         ICollection<AgentConfigurationDiagnostic> errors)
     {
         var path = $"flows[{flow.Id}]";
+        if (flow.TtlSeconds is <= 0)
+            Error(errors, $"{path}.ttlSeconds", "invalid_flow_ttl", "ttlSeconds must be positive when configured.");
         var stages = UniqueBy(flow.Stages, value => value.Id, $"{path}.stages", "duplicate_stage", errors);
         foreach (var stage in flow.Stages)
         {

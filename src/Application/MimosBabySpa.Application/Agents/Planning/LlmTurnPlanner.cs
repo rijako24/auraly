@@ -22,7 +22,9 @@ public sealed record TurnPlanningContext(
 
     DateTimeOffset BusinessNow,
 
-    IReadOnlyList<ChatMessage> RecentConversation);
+    IReadOnlyList<ChatMessage> RecentConversation,
+
+    IReadOnlyDictionary<string, JsonElement>? StructuredContext = null);
 
 public sealed record TurnPlanProposal(
 
@@ -34,7 +36,10 @@ public sealed record TurnPlanProposal(
 
     int PromptTokens,
 
-    int CompletionTokens);
+    int CompletionTokens)
+{
+    public IReadOnlyList<string> Warnings { get; init; } = [];
+}
 
 public interface ITurnPlanner
 
@@ -62,110 +67,85 @@ public sealed class LlmTurnPlanner : ITurnPlanner
 
     }
 
-    public async Task<TurnPlanProposal> PlanAsync(TurnPlanningContext context, CancellationToken ct = default)
-
+    public async Task<TurnPlanProposal> PlanAsync(
+        TurnPlanningContext context,
+        CancellationToken ct = default)
     {
-
         var structuredOutput = TurnPlanJsonSchemaBuilder.Build(context.Scope);
-
         var prompt = BuildPrompt(context);
-
         var first = await CompleteAsync(prompt, structuredOutput, ct);
-
         if (!first.Success)
-
             return Failure(first.ErrorMessage ?? "Turn planner LLM call failed.", first);
 
         var firstValidation = ParseAndValidate(first.Content, context);
-
         if (firstValidation.Errors.Count == 0 && firstValidation.Plan is not null)
-
-        {
-
-            return new TurnPlanProposal(
-
-                true,
-
-                firstValidation.Plan,
-
-                [],
-
-                first.PromptTokens,
-
-                first.CompletionTokens);
-
-        }
+            return new TurnPlanProposal(true, firstValidation.Plan, [], first.PromptTokens, first.CompletionTokens)
+            {
+                Warnings = firstValidation.Warnings
+            };
 
         if (firstValidation.Plan is not null
             && firstValidation.Errors.Count > 0
             && firstValidation.Errors.All(error => error.Contains("selector", StringComparison.OrdinalIgnoreCase)))
         {
-            return await RepairOptionSelectionAsync(context, firstValidation.Plan, first, ct);
+            var selectorRepair = await RepairOptionSelectionAsync(context, firstValidation.Plan, first, ct);
+            if (selectorRepair.Success)
+                return selectorRepair;
+            if (TryCreateFailSoftProposal(context, firstValidation.Plan,
+                    firstValidation.Errors.Concat(firstValidation.Warnings).Concat(selectorRepair.Errors),
+                    selectorRepair.PromptTokens, selectorRepair.CompletionTokens,
+                    out var selectorFallback))
+                return selectorFallback;
+            return selectorRepair;
         }
+
         var repairPrompt = prompt + Environment.NewLine + Environment.NewLine + JsonSerializer.Serialize(new
-
         {
-
             repair = "The previous structured plan was rejected. Return a corrected complete plan using the same JSON Schema. Do not answer the customer.",
-
             validationErrors = firstValidation.Errors,
-
             previousPlan = first.Content,
-
             rules = new[]
-
             {
-
                 "Remove every duplicate claim.",
-
                 "Never emit a fact or signal listed in response.ambiguousFields.",
-
                 "Do not discard an otherwise supported signal merely because a different fact is ambiguous; preserve the full supported signal payload.",
-
                 "ambiguousFields contains only semantically ambiguous fields mentioned by the customer, never ordinary missing stage data.",
-
-                "Do not invent replacement values or evidence."
-
+                "Do not invent replacement values or evidence.",
+                "When several facts are extracted from one utterance, keep their values semantically disjoint. Remove connectors, labels and content that belong to another extracted fact, including misspelled labels."
             }
-
         });
 
         var repaired = await CompleteAsync(repairPrompt, structuredOutput, ct);
-
+        var promptTokens = first.PromptTokens + repaired.PromptTokens;
+        var completionTokens = first.CompletionTokens + repaired.CompletionTokens;
         if (!repaired.Success)
-
         {
-
-            return new TurnPlanProposal(
-
-                false,
-
-                firstValidation.Plan,
-
-                firstValidation.Errors.Concat([repaired.ErrorMessage ?? "Turn plan repair call failed."]).ToList(),
-
-                first.PromptTokens + repaired.PromptTokens,
-
-                first.CompletionTokens + repaired.CompletionTokens);
-
+            var errors = firstValidation.Errors
+                .Concat([repaired.ErrorMessage ?? "Turn plan repair call failed."]).ToList();
+            var recoveryWarnings = errors.Concat(firstValidation.Warnings);
+            if (firstValidation.Plan is not null
+                && TryCreateFailSoftProposal(context, firstValidation.Plan, recoveryWarnings,
+                    promptTokens, completionTokens, out var repairCallFallback))
+                return repairCallFallback;
+            return new TurnPlanProposal(false, firstValidation.Plan, errors, promptTokens, completionTokens);
         }
 
         var repairedValidation = ParseAndValidate(repaired.Content, context);
+        if (repairedValidation.Errors.Count == 0 && repairedValidation.Plan is not null)
+            return new TurnPlanProposal(true, repairedValidation.Plan, [], promptTokens, completionTokens)
+            {
+                Warnings = repairedValidation.Warnings
+            };
 
-        return new TurnPlanProposal(
+        if (repairedValidation.Plan is not null
+            && TryCreateFailSoftProposal(context, repairedValidation.Plan,
+                repairedValidation.Errors.Concat(repairedValidation.Warnings), promptTokens, completionTokens,
+                out var semanticFallback))
+            return semanticFallback;
 
-            repairedValidation.Errors.Count == 0 && repairedValidation.Plan is not null,
-
-            repairedValidation.Plan,
-
-            repairedValidation.Errors,
-
-            first.PromptTokens + repaired.PromptTokens,
-
-            first.CompletionTokens + repaired.CompletionTokens);
-
+        return new TurnPlanProposal(false, repairedValidation.Plan,
+            repairedValidation.Errors, promptTokens, completionTokens);
     }
-
     private async Task<TurnPlanProposal> RepairOptionSelectionAsync(
         TurnPlanningContext context,
         TurnPlan previousPlan,
@@ -266,7 +246,8 @@ public sealed class LlmTurnPlanner : ITurnPlanner
                         Key = fact.Key,
                         Operation = TurnPlanOperations.Set,
                         Value = JsonSerializer.SerializeToElement(selectedValue),
-                        Evidence = evidence
+                        Evidence = evidence,
+                        Confidence = 1
                     })
                     .ToList(),
                 Signals = previousPlan.Signals,
@@ -319,7 +300,30 @@ public sealed class LlmTurnPlanner : ITurnPlanner
 
             cancellationToken: cancellationToken);
 
-    private (TurnPlan? Plan, IReadOnlyList<string> Errors) ParseAndValidate(
+    private bool TryCreateFailSoftProposal(
+        TurnPlanningContext context,
+        TurnPlan plan,
+        IEnumerable<string> warnings,
+        int promptTokens,
+        int completionTokens,
+        out TurnPlanProposal proposal)
+    {
+        proposal = new TurnPlanProposal(false, plan, [], promptTokens, completionTokens);
+        var validation = _validator.Validate(plan, context.Scope, context.LatestUserMessage);
+        if (!TurnPlanFailSoftRecovery.TryRecover(plan, validation, context.Scope, out var recovered))
+            return false;
+
+        var recoveredValidation = _validator.Validate(recovered, context.Scope, context.LatestUserMessage);
+        if (!recoveredValidation.IsValid)
+            return false;
+
+        proposal = new TurnPlanProposal(true, recovered, [], promptTokens, completionTokens)
+        {
+            Warnings = warnings.Concat(validation.Errors).Distinct(StringComparer.Ordinal).ToList()
+        };
+        return true;
+    }
+    private (TurnPlan? Plan, IReadOnlyList<string> Errors, IReadOnlyList<string> Warnings) ParseAndValidate(
 
         string? content,
 
@@ -329,12 +333,12 @@ public sealed class LlmTurnPlanner : ITurnPlanner
 
         if (!TurnPlanParser.TryParse(content, out var plan, out var parseError) || plan is null)
 
-            return (null, [parseError ?? "Turn plan could not be parsed."]);
+            return (null, [parseError ?? "Turn plan could not be parsed."], []);
 
         plan = TurnPlanNormalizer.Normalize(plan, context.Scope);
         var validation = _validator.Validate(plan, context.Scope, context.LatestUserMessage);
 
-        return (plan, validation.Errors);
+        return (plan, validation.Errors, []);
 
     }
 
@@ -407,10 +411,14 @@ public sealed class LlmTurnPlanner : ITurnPlanner
 
                 "Use semantic reasoning for corrections, negations, temporal references and references to previous messages.",
 
+                "structuredContext contains compact, authoritative, read-only runtime state when available. Use currentCart to resolve existing lines and distinguish incremental quantities from requested final quantities. Context alone never authorizes a mutation; latestUserMessage must request it.",
+
                 "When the customer explicitly contrasts alternative values or scenarios and says they are unsure which applies, do not choose either alternative. Emit no mutation for every materially disputed fact and list those fact ids in response.ambiguousFields.",
 
                 "facts may include advanceWhenFacts and collect facts. collect means optional early capture when the customer volunteered the value; it does not define what to ask.",
                 "When a fact declares options, resolve references to a configured selector and return the corresponding canonical value.",
+
+                "When latestUserMessage provides several facts in one utterance, infer their semantic boundaries. Each fact value must contain only its own value; exclude connectors, labels and content belonging to another extracted fact, even when a label is misspelled.",
 
                 "Return sparse arrays. Include each supported fact at most once and only when the customer explicitly provides, corrects or clears it.",
 
@@ -418,11 +426,17 @@ public sealed class LlmTurnPlanner : ITurnPlanner
 
                 "Evidence must be the shortest exact contiguous quote copied from latestUserMessage. Never paraphrase evidence.",
 
+                "For every fact and signal, confidence is your calibrated probability from 0 to 1 that the complete claim is explicitly supported by latestUserMessage after resolving context. Do not use confidence to bypass evidence requirements.",
+
+                "Signal confidence applies to the complete payload and should reflect the least-supported item. Confidence is diagnostic metadata; semantic support and ambiguity must still be represented explicitly in the plan.",
+
                 "Use canonical dates YYYY-MM-DD and times HH:mm based on businessNow. Apply each fact extractionGuidance exactly. Do not assume every temporal fact means the value current at businessNow; distinguish current values from values relevant to the requested service or future appointment. If that distinction is material and unclear, emit no mutation and ask for clarification.",
 
                 "Emit a configured semantic signal at most once and only when latestUserMessage supports it. A signal describes customer meaning; it never executes an operation.",
 
                 "Use recentConversation only to resolve contextual references in latestUserMessage. Every batch item must correspond to distinct customer meaning in latestUserMessage; preserve every independently requested item and quantity exactly once. Product ambiguity is resolved later by the deterministic operation.",
+                "Never create a mutation for an entity that latestUserMessage does not explicitly reference. Words such as only or solo constrain the mentioned entity; they do not authorize removing unmentioned entities unless the customer explicitly requests that removal.",
+
 
                 "When currentFacts contains a pending operation selection, interpret a short candidate choice as continuation of the configured mutation signal and identify the selected candidate at the highest specificity supported by the latest message and offered options. The deterministic operation owns restoration of the deferred batch.",
 
@@ -467,6 +481,10 @@ public sealed class LlmTurnPlanner : ITurnPlanner
             allowedSignals = context.Scope.Signals.Values.Select(signal => new { signal.Type, signal.Description, valueSchema = signal.ValueSchema }),
 
             currentFacts = context.CurrentFacts,
+
+            structuredContext = context.StructuredContext is { Count: > 0 }
+                ? context.StructuredContext
+                : null,
 
             recentConversation,
 

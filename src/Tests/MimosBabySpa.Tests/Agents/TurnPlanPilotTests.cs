@@ -248,6 +248,85 @@ public sealed class TurnPlanPilotTests
         chat.CallCount.Should().Be(2);
     }
     [Fact]
+    public async Task Planner_FailSoftRecovery_PreservesValidSignalAfterRepairStillFails()
+    {
+        const string message = "quiero preparar cerdo";
+        var invalidPlan = JsonSerializer.Serialize(new
+        {
+            flowIntent = new { candidateFlow = "order", confidence = 1, evidence = (string?)null },
+            facts = new object[]
+            {
+                new
+                {
+                    key = "delivery_address",
+                    operation = "set",
+                    value = "calle inventada",
+                    evidence = "evidencia ausente"
+                }
+            },
+            signals = new object[]
+            {
+                new
+                {
+                    type = "recipe_request",
+                    value = "cerdo",
+                    evidence = "preparar cerdo"
+                }
+            },
+            decision = (object?)null,
+            response = new { mode = "continue", ambiguousFields = Array.Empty<string>() }
+        });
+        var chat = new SequenceChatClient(invalidPlan, invalidPlan);
+        var planner = new LlmTurnPlanner(chat, new TurnPlanValidator());
+        var config = new AgentConfig
+        {
+            Flows =
+            [
+                new AgentFlowDefinition
+                {
+                    Id = "order",
+                    Type = FlowTypes.Primary
+                }
+            ],
+            FactSchema = [UserFact("delivery_address", "string")]
+        };
+        var stage = new AgentFlowStage
+        {
+            Id = "selection",
+            Collect = ["delivery_address"],
+            Signals =
+            [
+                new StageSignalDefinition
+                {
+                    Type = "recipe_request",
+                    ValueSchema = Schema("""{"type":"string"}""")
+                }
+            ]
+        };
+        var scope = TurnPlanScopeBuilder.Build(config, stage, new Dictionary<string, string>());
+        var context = new TurnPlanningContext(
+            config,
+            stage,
+            scope,
+            new Dictionary<string, string>(),
+            message,
+            DateTimeOffset.UtcNow,
+            []);
+
+        var proposal = await planner.PlanAsync(context);
+
+        proposal.Success.Should().BeTrue(string.Join("; ", proposal.Errors));
+        proposal.Errors.Should().BeEmpty();
+        proposal.Warnings.Should().Contain(error =>
+            error.Contains("delivery_address", StringComparison.OrdinalIgnoreCase));
+        proposal.Plan!.Facts.Should().BeEmpty();
+        proposal.Plan.Signals.Should().ContainSingle(signal => signal.Type == "recipe_request");
+        chat.CallCount.Should().Be(2);
+    }
+
+
+    [Fact]
+
     public void Validator_RejectsUnsupportedEvidenceAndOutOfScopeFacts()
     {
         var definition = UserFact("desired_date", "date");
@@ -295,6 +374,64 @@ public sealed class TurnPlanPilotTests
         result.IsValid.Should().BeFalse();
         result.Errors.Should().Contain(error => error.Contains("selector", StringComparison.OrdinalIgnoreCase));
     }
+    [Fact]
+    public void SelectorDetector_IgnoresSingleLetterInsideNaturalSentence()
+    {
+        var definition = new FactSchemaEntry
+        {
+            Key = "customer_type",
+            Type = "string",
+            Source = "user",
+            Options = [new FactValueOption { Value = "Hogar", Label = "Hogar", Selector = "A" }]
+        };
+        var scope = new TurnPlanScope(
+            new Dictionary<string, FactSchemaEntry>(StringComparer.OrdinalIgnoreCase)
+            {
+                [definition.Key] = definition
+            },
+            new Dictionary<string, StageSignalDefinition>(StringComparer.OrdinalIgnoreCase));
+
+        OptionSelectorReferenceDetector.Find(
+                scope,
+                "a bueno, ademas quier preparar cerdo con tocineta en salsa")
+            .Should().BeEmpty();
+    }
+
+    [Fact]
+    public void Validator_AcceptsEvidenceWithMinorWordCompletionDifference()
+    {
+        var signal = new StageSignalDefinition
+        {
+            Type = "recipe_request",
+            ValueSchema = Schema("""{"type":"string"}""")
+        };
+        var scope = new TurnPlanScope(
+            new Dictionary<string, FactSchemaEntry>(StringComparer.OrdinalIgnoreCase),
+            new Dictionary<string, StageSignalDefinition>(StringComparer.OrdinalIgnoreCase)
+            {
+                [signal.Type] = signal
+            });
+        var plan = new TurnPlan
+        {
+            Signals =
+            [
+                new PlannedSignal
+                {
+                    Type = "recipe_request",
+                    Value = JsonSerializer.SerializeToElement("cerdo con tocineta en salsa"),
+                    Evidence = "quiero preparar cerdo con tocineta en salsa"
+                }
+            ]
+        };
+
+        var result = new TurnPlanValidator().Validate(
+            plan,
+            scope,
+            "a bueno, ademas quier preparar cerdo con tocineta en salsa");
+
+        result.IsValid.Should().BeTrue(string.Join("; ", result.Errors));
+    }
+
     [Fact]
     public void Validator_RejectsFactValueOutsideConfiguredCanonicalValues()
     {

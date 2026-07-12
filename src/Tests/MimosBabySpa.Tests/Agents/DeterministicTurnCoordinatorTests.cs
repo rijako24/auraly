@@ -113,15 +113,89 @@ public sealed class DeterministicTurnCoordinatorTests
         state.PendingTurnPlan.Should().BeNull();
     }
 
+    [Fact]
+    public async Task Execute_SwitchesAwayFromPendingPlan_OnExplicitFlowEvidenceRegardlessOfConfidence()
+    {
+        var planner = new QueuePlanner(
+            new TurnPlan
+            {
+                FlowIntent = new PlannedFlowIntent { CandidateFlow = "primary", Confidence = 1 },
+                Response = new TurnPlanResponseDirective
+                {
+                    Mode = "ask_clarification",
+                    AmbiguousFields = ["address"]
+                }
+            },
+            new TurnPlan
+            {
+                FlowIntent = new PlannedFlowIntent
+                {
+                    CandidateFlow = "reservation_management",
+                    Confidence = 0.1,
+                    Evidence = "cambiar reserva"
+                }
+            });
+        var factStore = new RecordingFactStore();
+        var coordinator = new DeterministicTurnCoordinator(
+            planner,
+            new DeterministicFlowSelector(),
+            new FactMutationBatchProcessor(),
+            factStore,
+            new ConversationVerificationService(),
+            new DeterministicStageExecutor(
+                new AgentOperationRegistry([]),
+                new StageConditionEvaluator(),
+                new OperationArgumentBinder()),
+            new DeterministicStageTransitionResolver(new StageConditionEvaluator()));
+        var config = new AgentConfig
+        {
+            FactSchema = [new FactSchemaEntry { Key = "address", Type = "string", Source = "user" }],
+            Flows =
+            [
+                new AgentFlowDefinition
+                {
+                    Id = "primary",
+                    Type = FlowTypes.Primary,
+                    Stages = [new AgentFlowStage { Id = "capture", Collect = ["address"] }]
+                },
+                new AgentFlowDefinition
+                {
+                    Id = "reservation_management",
+                    Type = FlowTypes.Secondary,
+                    Stages = [new AgentFlowStage { Id = "manage" }]
+                }
+            ]
+        };
+        var state = new ConversationState();
+        var context = new OperationContext
+        {
+            BusinessNow = DateTimeOffset.Parse("2026-07-11T10:00:00-05:00"),
+            Config = config,
+            ConversationState = state
+        };
+
+        var first = await coordinator.ExecuteAsync(Request(
+            config, context, new Dictionary<string, string>(), new Dictionary<string, long>()));
+        first.Success.Should().BeTrue();
+        state.PendingTurnPlan.Should().NotBeNull();
+
+        var second = await coordinator.ExecuteAsync(Request(
+            config, context, first.Facts, first.FactVersions, "quiero cambiar reserva"));
+
+        second.Success.Should().BeTrue(string.Join("; ", second.Errors));
+        second.Route!.ActiveFlowId.Should().Be("reservation_management");
+        state.PendingTurnPlan.Should().BeNull();
+    }
     private static DeterministicTurnRequest Request(
         AgentConfig config,
         OperationContext context,
         IReadOnlyDictionary<string, string> facts,
-        IReadOnlyDictionary<string, long> versions) => new()
+        IReadOnlyDictionary<string, long> versions,
+        string latestUserMessage = "mensaje") => new()
     {
         Config = config, OperationContext = context, CurrentFacts = facts, FactVersions = versions,
         CurrentFlowId = "primary", CurrentStageId = "capture", ActiveFlowId = "primary",
-        LatestUserMessage = "mensaje"
+        LatestUserMessage = latestUserMessage
     };
 
     private static AgentConfig Config()

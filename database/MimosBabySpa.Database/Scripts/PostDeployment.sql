@@ -65,6 +65,8 @@
 GO
 :r .\Seeds\SeedSystemAgentTemplatesAndInboundContacts.sql
 GO
+:r .\Migrations\MigrateLuisWhatsAppToCJ.sql
+GO
 :r .\Migrations\MigrateAuditAgentTemplates.sql
 :r .\Seeds\SeedDefaultResources.sql
 :r .\Seeds\SeedWorkshopSchedulesInCatalog.sql

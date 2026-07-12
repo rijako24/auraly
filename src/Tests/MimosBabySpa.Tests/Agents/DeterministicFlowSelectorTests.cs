@@ -49,17 +49,52 @@ public sealed class DeterministicFlowSelectorTests
     }
 
     [Fact]
-    public void Select_RejectsSecondaryFlowBelowThreshold()
+    public void Select_UsesExplicitEvidenceInsteadOfConfidenceThreshold()
     {
         var result = _selector.Select(
             Config(),
             Plan("reservation_management", 0.5, "cambiar mi reserva"),
             new FlowSelectionContext(null, false));
 
-        result.ActiveFlowId.Should().Be("booking");
-        result.Reason.Should().Be("secondary_below_activation_threshold");
+        result.ActiveFlowId.Should().Be("reservation_management");
+        result.Decision.Should().Be("start_secondary_flow");
     }
 
+    [Fact]
+    public void Select_KeepsPrimaryFlow_WhenSecondaryHasNoExplicitEvidence()
+    {
+        var result = _selector.Select(
+            Config(),
+            Plan("reservation_management", 1, null),
+            new FlowSelectionContext(null, false));
+
+        result.ActiveFlowId.Should().Be("booking");
+        result.Reason.Should().Be("secondary_without_evidence");
+    }
+
+    [Fact]
+    public void Select_SwitchesFromSecondaryToPrimaryOnlyWithExplicitEvidence()
+    {
+        var result = _selector.Select(
+            Config(),
+            Plan("booking", 0.1, "quiero una cita nueva"),
+            new FlowSelectionContext("reservation_management", false));
+
+        result.ActiveFlowId.Should().Be("booking");
+        result.Decision.Should().Be("primary_flow");
+    }
+    [Fact]
+    public void Select_PreservesActiveSecondaryFlow_WhenCurrentTurnHasNoSwitchIntent()
+    {
+        var result = _selector.Select(
+            Config(),
+            Plan("booking", 0.9, null),
+            new FlowSelectionContext("reservation_management", false));
+
+        result.ActiveFlowId.Should().Be("reservation_management");
+        result.Decision.Should().Be("continue_secondary_flow");
+        result.Reason.Should().Be("active_secondary_without_explicit_switch");
+    }
     private static TurnPlan Plan(string flow, double confidence, string? evidence) => new()
     {
         FlowIntent = new PlannedFlowIntent

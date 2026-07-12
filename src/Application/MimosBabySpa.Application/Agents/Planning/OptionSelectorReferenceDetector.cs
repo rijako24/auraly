@@ -17,7 +17,22 @@ public static class OptionSelectorReferenceDetector
 
     private static bool Appears(string message, string selector)
     {
-        var pattern = $@"(?<![\p{{L}}\p{{N}}]){Regex.Escape(selector.Trim())}(?![\p{{L}}\p{{N}}])";
+        var trimmedSelector = selector.Trim();
+        if (trimmedSelector.Length == 1 && char.IsLetterOrDigit(trimmedSelector[0]))
+        {
+            var normalizedMessage = Regex.Replace(message.Trim(), @"[^\p{L}\p{N}]+", " ").Trim();
+            var explicitSelectionPattern = $@"^(?:"
+                + @"(?:opcion|opci?n|alternativa)\s+|"
+                + @"(?:la|elijo|escojo|prefiero)\s+|"
+                + @"quiero\s+(?:la\s+)?(?:(?:opcion|opci?n)\s+)?"
+                + $@")?{Regex.Escape(trimmedSelector)}(?:\s+por\s+favor)?$";
+            return Regex.IsMatch(
+                normalizedMessage,
+                explicitSelectionPattern,
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        }
+
+        var pattern = $@"(?<![\p{{L}}\p{{N}}]){Regex.Escape(trimmedSelector)}(?![\p{{L}}\p{{N}}])";
         return Regex.IsMatch(message, pattern, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
     }
 }

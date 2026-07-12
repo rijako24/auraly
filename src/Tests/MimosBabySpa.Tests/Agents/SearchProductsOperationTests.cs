@@ -32,9 +32,12 @@ public class SearchProductsOperationTests
         var operation = new SearchProductsOperation(_commerce.Object);
         using var args = JsonDocument.Parse("""{"query":"vino dulce","limit":10}""");
 
-        var json = (await operation.ExecuteAsync(args.RootElement, new OperationContext { Session = ctx }, CancellationToken.None)).Data.GetRawText();
+        var outcome = await operation.ExecuteAsync(args.RootElement, new OperationContext { Session = ctx }, CancellationToken.None);
+        var json = outcome.Data.GetRawText();
 
+        outcome.Code.Should().Be("products.not_found");
         json.Should().Contain("\"count\":0");
+        json.Should().Contain("\"search_text\":\"vino dulce\"");
         _commerce.Verify(c => c.SearchProductsAsync(
             ctx,
             It.Is<ProductSearchRequest>(request =>

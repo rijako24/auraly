@@ -159,9 +159,17 @@ internal sealed class TurnPlanPilotRunner
             var businessNow = DateTimeOffset.UtcNow.ToOffset(TimeSpan.FromHours(-5));
             var facts = new Dictionary<string, string>(test.InitialFacts, StringComparer.OrdinalIgnoreCase);
             var scope = TurnPlanScopeBuilder.Build(config, stage, facts);
+            var structuredContext = new Dictionary<string, JsonElement>(StringComparer.OrdinalIgnoreCase);
+            if (test.CurrentCart.Count > 0)
+            {
+                structuredContext["currentCart"] = JsonSerializer.SerializeToElement(new
+                {
+                    items = test.CurrentCart.Select(item => new { name = item.Name, quantity = item.Quantity })
+                });
+            }
             var proposal = await _planner.PlanAsync(
                 new TurnPlanningContext(config, stage, scope, facts, test.Message, businessNow,
-                    test.History.Select(ToChatMessage).ToList()),
+                    test.History.Select(ToChatMessage).ToList(), structuredContext),
                 cancellationToken);
 
             var errors = ValidateEvaluation(test, proposal, businessNow);
@@ -430,6 +438,7 @@ internal sealed class TurnPlanPilotRunner
         public string Stage { get; init; } = string.Empty;
         public string Message { get; init; } = string.Empty;
         public IReadOnlyList<ExtractorHistoryMessage> History { get; init; } = [];
+        public IReadOnlyList<ExtractorCartItem> CurrentCart { get; init; } = [];
         public IReadOnlyDictionary<string, string> InitialFacts { get; init; } = new Dictionary<string, string>();
         public string? ExpectedFlow { get; init; }
         public IReadOnlyList<ExpectedFact> ExpectedFacts { get; init; } = [];
@@ -444,6 +453,11 @@ internal sealed class TurnPlanPilotRunner
     {
         public string Role { get; init; } = "user";
         public string Content { get; init; } = string.Empty;
+    }
+    private sealed class ExtractorCartItem
+    {
+        public string Name { get; init; } = string.Empty;
+        public decimal Quantity { get; init; }
     }
     private sealed class ExpectedFact
     {
