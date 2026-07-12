@@ -121,6 +121,83 @@ public sealed class DeterministicResponseRendererTests
         chat.Prompt.Should().Contain("configured persona and policies");
     }
 
+    [Fact]
+    public async Task Render_NewRequestWithRememberedIdentity_PrependsConfiguredGreetingOnce()
+    {
+        var chat = new RecordingChatClient("should not be used");
+        var composer = new OperationPresentationComposer(new AgentTemplateResolver(), new PromptTemplateRenderer());
+        var renderer = new DeterministicResponseRenderer(chat, composer);
+        var config = new AgentConfig
+        {
+            ConversationOpeningTemplate = "request_opening",
+            Templates = new Dictionary<string, string>
+            {
+                ["request_opening"] = "Hola, {{customer_name}}!",
+                ["product_prompt"] = "Que deseas pedir?"
+            },
+            Flows =
+            [
+                new AgentFlowDefinition
+                {
+                    Id = "order",
+                    Type = FlowTypes.Primary,
+                    Stages =
+                    [
+                        new AgentFlowStage { Id = "identity" },
+                        new AgentFlowStage { Id = "products" }
+                    ]
+                }
+            ]
+        };
+        var turn = new DeterministicTurnResult
+        {
+            Success = true,
+            Facts = new Dictionary<string, string> { ["customer_name"] = "Richard" },
+            Response = new StageResponseDefinition { FallbackTemplate = "product_prompt" }
+        };
+
+        var response = await renderer.RenderAsync(new DeterministicResponseRequest(
+            config,
+            config.Flows[0].Stages[1],
+            turn,
+            "hola",
+            [ChatMessage.User("hola")]));
+
+        response.Text.Should().Be($"Hola, Richard!{Environment.NewLine}{Environment.NewLine}Que deseas pedir?");
+        chat.CallCount.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task Render_OngoingRequest_DoesNotRepeatConversationGreeting()
+    {
+        var chat = new RecordingChatClient("respuesta normal");
+        var composer = new OperationPresentationComposer(new AgentTemplateResolver(), new PromptTemplateRenderer());
+        var renderer = new DeterministicResponseRenderer(chat, composer);
+        var config = new AgentConfig
+        {
+            ConversationOpeningTemplate = "request_opening",
+            Templates = new Dictionary<string, string> { ["request_opening"] = "Hola de nuevo" },
+            Flows =
+            [
+                new AgentFlowDefinition
+                {
+                    Id = "order",
+                    Type = FlowTypes.Primary,
+                    Stages = [new AgentFlowStage { Id = "identity" }, new AgentFlowStage { Id = "products" }]
+                }
+            ]
+        };
+
+        var response = await renderer.RenderAsync(new DeterministicResponseRequest(
+            config,
+            config.Flows[0].Stages[1],
+            new DeterministicTurnResult { Success = true },
+            "quiero pollo",
+            [ChatMessage.Assistant("Hola"), ChatMessage.User("quiero pollo")]));
+
+        response.Text.Should().Be("respuesta normal");
+        chat.CallCount.Should().Be(1);
+    }
     private static DeterministicResponseRequest Request(DeterministicTurnResult turn) => new(
         new AgentConfig { Persona = "Habla con calidez" },
         new AgentFlowStage { Id = "stage", ConversationGuidance = "Pregunta solo lo necesario" },

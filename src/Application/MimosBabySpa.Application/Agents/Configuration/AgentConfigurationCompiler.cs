@@ -37,6 +37,12 @@ public sealed partial class AgentConfigurationCompiler
             "duplicate_fact",
             errors);
         var flowMap = UniqueBy(flows, value => value.Id, "flows", "duplicate_flow", errors);
+        if (!string.IsNullOrWhiteSpace(config.ConversationOpeningTemplate)
+            && !config.Templates.ContainsKey(config.ConversationOpeningTemplate))
+        {
+            Error(errors, "conversationOpeningTemplate", "unknown_template",
+                $"Template '{config.ConversationOpeningTemplate}' is not configured.");
+        }
 
         foreach (var fact in config.FactSchema.Where(fact => fact.Options.Count > 0))
         {

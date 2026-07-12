@@ -39,6 +39,7 @@ public sealed class DeterministicResponseRenderer : IDeterministicResponseRender
         var presentations = request.Turn.Presentations.ToList();
         if (request.Turn.Response?.SuppressText == true)
             return new DeterministicRenderedResponse(string.Empty, 0, 0);
+        var opening = RenderConversationOpening(request);
         if (!string.IsNullOrWhiteSpace(request.Turn.Response?.Template)
             && !presentations.Any(presentation =>
                 presentation.Mode == FragmentRenderMode.Exclusive
@@ -63,7 +64,7 @@ public sealed class DeterministicResponseRenderer : IDeterministicResponseRender
         if (presentations.Any(presentation => presentation.Mode == FragmentRenderMode.Exclusive))
         {
             return new DeterministicRenderedResponse(
-                _presentations.Compose(request.Config, null, presentations),
+                Combine(opening, _presentations.Compose(request.Config, null, presentations)),
                 0,
                 0);
         }
@@ -122,8 +123,37 @@ public sealed class DeterministicResponseRenderer : IDeterministicResponseRender
 
         var response = result.Success ? result.Content : string.Empty;
         return new DeterministicRenderedResponse(
-            _presentations.Compose(request.Config, response, presentations),
+            Combine(opening, _presentations.Compose(request.Config, response, presentations)),
             result.PromptTokens,
             result.CompletionTokens);
+    }
+    private string RenderConversationOpening(DeterministicResponseRequest request)
+    {
+        var template = request.Config.ConversationOpeningTemplate;
+        if (string.IsNullOrWhiteSpace(template)
+            || request.RecentConversation.Any(message => message.Role == ChatRole.Assistant)
+            || request.Config.Flows.Any(flow =>
+                flow.Stages.FirstOrDefault()?.Id.Equals(request.Stage.Id, StringComparison.OrdinalIgnoreCase) == true))
+        {
+            return string.Empty;
+        }
+
+        return _presentations.Compose(
+            request.Config,
+            null,
+            [new OperationPresentation(
+                template,
+                request.Turn.Facts.ToDictionary(pair => pair.Key, pair => (object?)pair.Value, StringComparer.OrdinalIgnoreCase),
+                FragmentRenderMode.Exclusive,
+                FragmentPriority.Required)]);
+    }
+
+    private static string Combine(string prefix, string response)
+    {
+        if (string.IsNullOrWhiteSpace(prefix))
+            return response.Trim();
+        if (string.IsNullOrWhiteSpace(response))
+            return prefix.Trim();
+        return $"{prefix.Trim()}{Environment.NewLine}{Environment.NewLine}{response.Trim()}";
     }
 }

@@ -32,6 +32,9 @@ public sealed class AgentConfig
     public IReadOnlyDictionary<string, string> Templates { get; init; }
         = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>Template opcional al iniciar una nueva solicitud con identidad recordada.</summary>
+    public string? ConversationOpeningTemplate { get; init; }
+
     /// <summary>Contenido de estilo para el renderer; nunca contiene reglas de ejecuci?n.</summary>
     public string BasePrompt =>
         string.Join($"{Environment.NewLine}{Environment.NewLine}",

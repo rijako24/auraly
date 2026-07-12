@@ -66,6 +66,8 @@ public sealed class MigratedSeedConfigurationTests
                 Converters = { new JsonStringEnumConverter() }
             })!;
 
+        config.ConversationOpeningTemplate.Should().Be("conversation_opening_greeting");
+        config.Templates["conversation_opening_greeting"].Should().Contain("nuevo pedido");
         config.BasePrompt.Should().Contain("cercana, empatica, natural y servicial");
         config.BasePrompt.Should().Contain("parrafos cortos y espacios en blanco");
 

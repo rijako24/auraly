@@ -518,7 +518,9 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                                              }
                                }
                  },
+    "conversationOpeningTemplate":  "conversation_opening_greeting",
     "templates":  {
+                      "conversation_opening_greeting":  "Hola{{#if customer_name}}, {{customer_name}}{{/if}}! 👋\r\n\r\nQue gusto saludarte. Con mucho gusto te ayudo con un nuevo pedido.",
                       "order_checkout_no_payment":  "*Resumen de tu pedido*\n{{#each line_items}}\n- {{name}} x{{quantity}}: ${{line_total}}\n{{/each}}\n- Envio: ${{shipping_cost}}\n- *Total: ${{total}} {{currency}}*\n\nEntrega:\n- Ciudad: {{city}}\n- Direccion: {{delivery_address}}\n- Celular: {{customer_phone}}\n{{#if customer_name}}\n- Nombre: {{customer_name}}\n{{/if}}\n\nMetodo de pago: efectivo al recibir\n\nConfirmas tu pedido con esta informacion?",
                       "order_checkout_manual_transfer":  "*Resumen de tu pedido*\n{{#each line_items}}\n- {{name}} x{{quantity}}: ${{line_total}}\n{{/each}}\n- Envio: ${{shipping_cost}}\n- *Total: ${{total}} {{currency}}*\n\nEntrega:\n- Ciudad: {{city}}\n- Direccion: {{delivery_address}}\n- Celular: {{customer_phone}}\n{{#if customer_name}}\n- Nombre: {{customer_name}}\n{{/if}}\n\nMetodo de pago: transferencia manual\n\nTu pago queda pendiente de confirmacion manual. Un agente del equipo de CJ Distribuciones confirmara el pago; cuando se confirme, te notificaremos que el pedido fue creado.",
                       "catalog_results":  "Claro, encontre estas opciones para ti:\r\n\r\n*Productos disponibles*\r\n\r\n{{#each products}}\r\n- {{name}}: ${{unit_price}} {{currency}}\r\n{{/each}}\r\n\r\nCual te gustaria agregar? Tambien puedes indicarme la cantidad.",
