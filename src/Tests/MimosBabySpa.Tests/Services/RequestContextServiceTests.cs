@@ -105,6 +105,7 @@ public sealed class RequestContextServiceTests
         state.Verifications.Should().BeEmpty();
         state.StageFactSnapshots.Should().BeEmpty();
         state.ActiveRequestStartedAtUtc.Should().NotBeNull();
+        state.RequestGeneration.Should().Be(1);
 
         facts[ConversationFactKeys.Service] = "Corte Kids";
         facts[ConversationFactKeys.DesiredDate] = "2026-06-21";

@@ -37,6 +37,7 @@ public sealed class ConversationStateManagerTests
                 ExpiresAtUtc = DateTime.UtcNow.AddMinutes(5)
             },
             RequestGeneration = 3,
+            LastOpenedRequestGeneration = 2,
             ExecutedOperationKeys = new Dictionary<string, DateTime>
             {
                 ["3:cart_review:load"] = DateTime.UtcNow
@@ -58,6 +59,7 @@ public sealed class ConversationStateManagerTests
         reloaded.PendingTurnPlan.Should().NotBeNull();
         reloaded.PendingTurnPlan!.AmbiguousFields.Should().Equal("delivery_address");
         reloaded.RequestGeneration.Should().Be(3);
+        reloaded.LastOpenedRequestGeneration.Should().Be(2);
         reloaded.ExecutedOperationKeys.Should().ContainKey("3:cart_review:load");
         repository.Entity!.RuntimeStateJson.Should().Contain("cart_review");
     }

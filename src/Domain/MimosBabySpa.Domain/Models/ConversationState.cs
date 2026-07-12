@@ -27,6 +27,7 @@ public class ConversationState
     /// <summary>Validated semantic plan deferred until the customer resolves an ambiguity.</summary>
     public PendingTurnPlan? PendingTurnPlan { get; set; }
     public long RequestGeneration { get; set; }
+    public long LastOpenedRequestGeneration { get; set; } = -1;
     public Dictionary<string, DateTime> ExecutedOperationKeys { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>

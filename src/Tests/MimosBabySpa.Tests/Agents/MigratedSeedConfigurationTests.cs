@@ -66,8 +66,10 @@ public sealed class MigratedSeedConfigurationTests
                 Converters = { new JsonStringEnumConverter() }
             })!;
 
-        config.ConversationOpeningTemplate.Should().Be("conversation_opening_greeting");
-        config.Templates["conversation_opening_greeting"].Should().Contain("nuevo pedido");
+        config.ConversationOpening.Enabled.Should().BeTrue();
+        config.ConversationOpening.Guidance.Should().Contain("nueva solicitud");
+        config.ConversationOpening.FallbackTemplate.Should().Be("conversation_opening_fallback");
+        config.Templates["conversation_opening_fallback"].Should().Contain("nuevo pedido");
         config.BasePrompt.Should().Contain("cercana, empatica, natural y servicial");
         config.BasePrompt.Should().Contain("parrafos cortos y espacios en blanco");
 

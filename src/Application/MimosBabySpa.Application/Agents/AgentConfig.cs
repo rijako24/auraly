@@ -32,8 +32,8 @@ public sealed class AgentConfig
     public IReadOnlyDictionary<string, string> Templates { get; init; }
         = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>Template opcional al iniciar una nueva solicitud con identidad recordada.</summary>
-    public string? ConversationOpeningTemplate { get; init; }
+    /// <summary>Politica configurable de apertura de una nueva solicitud.</summary>
+    public ConversationOpeningDefinitions ConversationOpening { get; init; } = new();
 
     /// <summary>Contenido de estilo para el renderer; nunca contiene reglas de ejecuci?n.</summary>
     public string BasePrompt =>
@@ -81,4 +81,12 @@ public sealed class AgentConfig
     public CommerceConfig Commerce { get; init; } = new();
 
     public OperatingHoursDefinitions OperatingHours { get; init; } = new();
+}
+
+public sealed class ConversationOpeningDefinitions
+{
+    public bool Enabled { get; init; }
+    public string Guidance { get; init; } = string.Empty;
+    public string? FallbackTemplate { get; init; }
+    public bool SkipWhenFirstStageHandlesOpening { get; init; } = true;
 }

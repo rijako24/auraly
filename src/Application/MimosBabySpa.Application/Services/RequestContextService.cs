@@ -75,6 +75,7 @@ public sealed class RequestContextService : IRequestContextService
         var cleared = await _facts.ClearFieldsAsync(conversationId, fieldsToClear, ct);
         RemoveFromMemory(inMemoryFacts, cleared);
         state.ActiveRequestStartedAtUtc = DateTime.UtcNow;
+        state.RequestGeneration++;
         ClearVolatileState(state);
 
         _logger.LogInformation(

@@ -12,7 +12,8 @@ public sealed record DeterministicResponseRequest(
     AgentFlowStage Stage,
     DeterministicTurnResult Turn,
     string LatestUserMessage,
-    IReadOnlyList<ChatMessage> RecentConversation);
+    IReadOnlyList<ChatMessage> RecentConversation,
+    bool RequestOpeningRequired = false);
 
 public sealed record DeterministicRenderedResponse(string Text, int PromptTokens, int CompletionTokens);
 
@@ -39,7 +40,9 @@ public sealed class DeterministicResponseRenderer : IDeterministicResponseRender
         var presentations = request.Turn.Presentations.ToList();
         if (request.Turn.Response?.SuppressText == true)
             return new DeterministicRenderedResponse(string.Empty, 0, 0);
-        var opening = RenderConversationOpening(request);
+        var opening = request.RequestOpeningRequired
+            ? await RenderConversationOpeningAsync(request, cancellationToken)
+            : new DeterministicRenderedResponse(string.Empty, 0, 0);
         if (!string.IsNullOrWhiteSpace(request.Turn.Response?.Template)
             && !presentations.Any(presentation =>
                 presentation.Mode == FragmentRenderMode.Exclusive
@@ -64,9 +67,9 @@ public sealed class DeterministicResponseRenderer : IDeterministicResponseRender
         if (presentations.Any(presentation => presentation.Mode == FragmentRenderMode.Exclusive))
         {
             return new DeterministicRenderedResponse(
-                Combine(opening, _presentations.Compose(request.Config, null, presentations)),
-                0,
-                0);
+                Combine(opening.Text, _presentations.Compose(request.Config, null, presentations)),
+                opening.PromptTokens,
+                opening.CompletionTokens);
         }
 
         var outcomes = request.Turn.Trace
@@ -123,29 +126,66 @@ public sealed class DeterministicResponseRenderer : IDeterministicResponseRender
 
         var response = result.Success ? result.Content : string.Empty;
         return new DeterministicRenderedResponse(
-            Combine(opening, _presentations.Compose(request.Config, response, presentations)),
-            result.PromptTokens,
-            result.CompletionTokens);
+            Combine(opening.Text, _presentations.Compose(request.Config, response, presentations)),
+            opening.PromptTokens + result.PromptTokens,
+            opening.CompletionTokens + result.CompletionTokens);
     }
-    private string RenderConversationOpening(DeterministicResponseRequest request)
+    private async Task<DeterministicRenderedResponse> RenderConversationOpeningAsync(
+        DeterministicResponseRequest request,
+        CancellationToken cancellationToken)
     {
-        var template = request.Config.ConversationOpeningTemplate;
-        if (string.IsNullOrWhiteSpace(template)
-            || request.RecentConversation.Any(message => message.Role == ChatRole.Assistant)
-            || request.Config.Flows.Any(flow =>
-                flow.Stages.FirstOrDefault()?.Id.Equals(request.Stage.Id, StringComparison.OrdinalIgnoreCase) == true))
+        var policy = request.Config.ConversationOpening;
+        var payload = new
         {
-            return string.Empty;
+            task = "Write only a brief, natural opening for the new customer request. Return only the opening text.",
+            persona = request.Config.BasePrompt,
+            guidance = policy.Guidance,
+            rules = new[]
+            {
+                "Do not mention internal state, requests, generations, stages, tools or configuration.",
+                "Do not claim catalog, availability, prices, totals, reservations, payments or completed actions.",
+                "Do not repeat the substantive answer or ask for data; the deterministic response that follows owns the next step.",
+                "Use remembered customer facts only to personalize naturally.",
+                "Keep the opening concise and appropriate for WhatsApp."
+            },
+            facts = request.Turn.Facts,
+            recentConversation = request.RecentConversation.Select(message => new
+            {
+                role = message.Role.ToString().ToLowerInvariant(),
+                content = message.Content
+            }),
+            latestUserMessage = request.LatestUserMessage
+        };
+        var prompt = JsonSerializer.Serialize(payload, new JsonSerializerOptions
+        {
+            Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+        });
+        var result = await _chat.CompleteAsync(
+            [ChatMessage.System(prompt)],
+            options: new ChatCompletionOptions
+            {
+                Temperature = request.Config.Temperature,
+                MaxTokens = 160
+            },
+            cancellationToken: cancellationToken);
+        if (result.Success && !string.IsNullOrWhiteSpace(result.Content))
+        {
+            return new DeterministicRenderedResponse(
+                result.Content.Trim(), result.PromptTokens, result.CompletionTokens);
         }
 
-        return _presentations.Compose(
+        if (string.IsNullOrWhiteSpace(policy.FallbackTemplate))
+            return new DeterministicRenderedResponse(string.Empty, result.PromptTokens, result.CompletionTokens);
+
+        var fallback = _presentations.Compose(
             request.Config,
             null,
             [new OperationPresentation(
-                template,
+                policy.FallbackTemplate,
                 request.Turn.Facts.ToDictionary(pair => pair.Key, pair => (object?)pair.Value, StringComparer.OrdinalIgnoreCase),
                 FragmentRenderMode.Exclusive,
                 FragmentPriority.Required)]);
+        return new DeterministicRenderedResponse(fallback, result.PromptTokens, result.CompletionTokens);
     }
 
     private static string Combine(string prefix, string response)

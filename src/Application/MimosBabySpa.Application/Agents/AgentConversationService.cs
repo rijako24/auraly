@@ -599,11 +599,21 @@ var latestPayment = await _paymentLifecycle.GetLatestByConversationAsync(convers
 
         UpdateStageSnapshots(config, session);
 
+        var openingPending = config.ConversationOpening.Enabled
+            && session.ConversationState.LastOpenedRequestGeneration < session.ConversationState.RequestGeneration;
+        var stageIsFlowOpening = config.Flows.Any(flow =>
+            flow.Stages.FirstOrDefault()?.Id.Equals(stage.Id, StringComparison.OrdinalIgnoreCase) == true);
+        var requestOpeningRequired = openingPending
+            && !(config.ConversationOpening.SkipWhenFirstStageHandlesOpening && stageIsFlowOpening);
+
         var rendered = await _deterministicRenderer.RenderAsync(
 
-            new DeterministicResponseRequest(config, stage, turn, userMessage, history),
+            new DeterministicResponseRequest(config, stage, turn, userMessage, history, requestOpeningRequired),
 
             ct);
+
+        if (openingPending && turn.Response?.SuppressText != true)
+            session.ConversationState.LastOpenedRequestGeneration = session.ConversationState.RequestGeneration;
 
         var effects = await _deterministicEffects.ProcessAsync(
 

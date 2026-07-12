@@ -118,6 +118,7 @@ public class ConversationStateManager : IConversationStateManager
             FactVersions = new Dictionary<string, long>(runtime.FactVersions, StringComparer.OrdinalIgnoreCase),
             PendingTurnPlan = runtime.PendingTurnPlan,
             RequestGeneration = runtime.RequestGeneration,
+            LastOpenedRequestGeneration = runtime.LastOpenedRequestGeneration,
             ExecutedOperationKeys = new Dictionary<string, DateTime>(runtime.ExecutedOperationKeys, StringComparer.OrdinalIgnoreCase),
             Version = entity.Version,
             CreatedAt = entity.CreatedAt,
@@ -148,6 +149,7 @@ public class ConversationStateManager : IConversationStateManager
             FactVersions = state.FactVersions,
             PendingTurnPlan = state.PendingTurnPlan,
             RequestGeneration = state.RequestGeneration,
+            LastOpenedRequestGeneration = state.LastOpenedRequestGeneration,
             ExecutedOperationKeys = state.ExecutedOperationKeys
         }, JsonOptions);
         entity.Version = state.Version;
@@ -209,6 +211,7 @@ public class ConversationStateManager : IConversationStateManager
         public Dictionary<string, long> FactVersions { get; init; } = new(StringComparer.OrdinalIgnoreCase);
         public PendingTurnPlan? PendingTurnPlan { get; init; }
         public long RequestGeneration { get; init; }
+        public long LastOpenedRequestGeneration { get; init; } = -1;
         public Dictionary<string, DateTime> ExecutedOperationKeys { get; init; } = new(StringComparer.OrdinalIgnoreCase);
     }
 }

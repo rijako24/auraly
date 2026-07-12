@@ -124,12 +124,17 @@ public sealed class DeterministicResponseRendererTests
     [Fact]
     public async Task Render_NewRequestWithRememberedIdentity_PrependsConfiguredGreetingOnce()
     {
-        var chat = new RecordingChatClient("should not be used");
+        var chat = new RecordingChatClient("Hola, Richard! Que gusto saludarte.");
         var composer = new OperationPresentationComposer(new AgentTemplateResolver(), new PromptTemplateRenderer());
         var renderer = new DeterministicResponseRenderer(chat, composer);
         var config = new AgentConfig
         {
-            ConversationOpeningTemplate = "request_opening",
+            ConversationOpening = new ConversationOpeningDefinitions
+            {
+                Enabled = true,
+                Guidance = "Saluda con cercania",
+                FallbackTemplate = "request_opening"
+            },
             Templates = new Dictionary<string, string>
             {
                 ["request_opening"] = "Hola, {{customer_name}}!",
@@ -161,12 +166,51 @@ public sealed class DeterministicResponseRendererTests
             config.Flows[0].Stages[1],
             turn,
             "hola",
-            [ChatMessage.User("hola")]));
+            [ChatMessage.User("hola")],
+            RequestOpeningRequired: true));
 
-        response.Text.Should().Be($"Hola, Richard!{Environment.NewLine}{Environment.NewLine}Que deseas pedir?");
-        chat.CallCount.Should().Be(0);
+        response.Text.Should().Be($"Hola, Richard! Que gusto saludarte.{Environment.NewLine}{Environment.NewLine}Que deseas pedir?");
+        chat.CallCount.Should().Be(1);
     }
 
+    [Fact]
+    public async Task Render_OpeningLlmFailure_UsesOptionalFallbackWithoutLosingAuthoritativeResponse()
+    {
+        var chat = new FailingChatClient();
+        var composer = new OperationPresentationComposer(new AgentTemplateResolver(), new PromptTemplateRenderer());
+        var renderer = new DeterministicResponseRenderer(chat, composer);
+        var config = new AgentConfig
+        {
+            ConversationOpening = new ConversationOpeningDefinitions
+            {
+                Enabled = true,
+                Guidance = "Saluda con cercania",
+                FallbackTemplate = "opening_fallback"
+            },
+            Templates = new Dictionary<string, string>
+            {
+                ["opening_fallback"] = "Hola, {{customer_name}}!",
+                ["product_prompt"] = "Que deseas pedir?"
+            }
+        };
+        var turn = new DeterministicTurnResult
+        {
+            Success = true,
+            Facts = new Dictionary<string, string> { ["customer_name"] = "Richard" },
+            Response = new StageResponseDefinition { FallbackTemplate = "product_prompt" }
+        };
+
+        var response = await renderer.RenderAsync(new DeterministicResponseRequest(
+            config,
+            new AgentFlowStage { Id = "products" },
+            turn,
+            "hola",
+            [ChatMessage.User("hola")],
+            RequestOpeningRequired: true));
+
+        response.Text.Should().Be($"Hola, Richard!{Environment.NewLine}{Environment.NewLine}Que deseas pedir?");
+        chat.CallCount.Should().Be(1);
+    }
     [Fact]
     public async Task Render_OngoingRequest_DoesNotRepeatConversationGreeting()
     {
@@ -175,7 +219,7 @@ public sealed class DeterministicResponseRendererTests
         var renderer = new DeterministicResponseRenderer(chat, composer);
         var config = new AgentConfig
         {
-            ConversationOpeningTemplate = "request_opening",
+            ConversationOpening = new ConversationOpeningDefinitions { Enabled = true, Guidance = "Saluda" },
             Templates = new Dictionary<string, string> { ["request_opening"] = "Hola de nuevo" },
             Flows =
             [
@@ -219,6 +263,23 @@ public sealed class DeterministicResponseRendererTests
         }
     }
 
+    private sealed class FailingChatClient : IChatClient
+    {
+        public int CallCount { get; private set; }
+
+        public Task<ChatCompletionResult> CompleteAsync(
+            IReadOnlyList<ChatMessage> messages,
+            ChatCompletionOptions? options = null,
+            CancellationToken cancellationToken = default)
+        {
+            CallCount++;
+            return Task.FromResult(new ChatCompletionResult
+            {
+                Success = false,
+                ErrorMessage = "simulated renderer failure"
+            });
+        }
+    }
     private sealed class RecordingChatClient : IChatClient
     {
         private readonly string _response;
