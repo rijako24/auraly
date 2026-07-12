@@ -49,6 +49,9 @@ public sealed class AgentConfig
     /// <summary>Maximo de mensajes del historial enviados al LLM por turno.</summary>
     public int HistoryWindowSize { get; init; } = 20;
 
+    /// <summary>Mensajes inmediatamente anteriores enviados al extractor semantico; el renderer conserva HistoryWindowSize.</summary>
+    public int ExtractorHistoryWindowSize { get; init; } = 2;
+
     /// <summary>
     /// Catalogo de secuencias outbound nombradas (texto + adjuntos).
     /// Fuente: SettingsJson -> messageSequences.

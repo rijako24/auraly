@@ -8,7 +8,7 @@ namespace MimosBabySpa.Application.Agents.Operations.Support;
 
 internal static class PendingCartCommandMemory
 {
-    private const string FactKey = "system.pending_cart_commands";
+    internal const string FactKey = "system.pending_cart_commands";
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     public static IReadOnlyList<CartCommand> MergeResolution(
@@ -98,9 +98,12 @@ internal static class PendingCartCommandMemory
         context.Facts.Remove(FactKey);
     }
 
-    public static PendingCartCommandBatch? Read(AgentConversationContext context)
+    public static PendingCartCommandBatch? Read(AgentConversationContext context) =>
+        Read(context.Facts);
+
+    public static PendingCartCommandBatch? Read(IReadOnlyDictionary<string, string> facts)
     {
-        if (!context.Facts.TryGetValue(FactKey, out var raw) || string.IsNullOrWhiteSpace(raw))
+        if (!facts.TryGetValue(FactKey, out var raw) || string.IsNullOrWhiteSpace(raw))
             return null;
         try
         {

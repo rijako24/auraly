@@ -77,8 +77,8 @@ public sealed class OperationPresentationComposerTests
 
         var response = composer.Compose(config, "Precios estimados por el modelo", [presentation]);
 
-        response.Should().Contain("Pollo: $12000 COP");
-        response.Should().Contain("Tocineta: $8500 COP");
+        response.Should().Contain("Pollo: $12,000.00 COP");
+        response.Should().Contain("Tocineta: $8,500.00 COP");
         response.Should().NotContain("estimados");
     }
 }

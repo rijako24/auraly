@@ -271,6 +271,12 @@ public sealed class LlmTurnPlanner : ITurnPlanner
 
                 "structuredContext contains compact, authoritative, read-only runtime state when available. Use currentCart to resolve existing lines and distinguish incremental quantities from requested final quantities. Context alone never authorizes a mutation; latestUserMessage must request it.",
 
+                "When structuredContext.shoppingContext exists, it is the authoritative record of catalog options explicitly offered during the active request. A named reference may select a product from any offer snapshot; ordinal or deictic references such as first, second, that one or this one apply only to the latest offer unless latestUserMessage names another snapshot or product.",
+
+                "When shoppingContext.interaction.expected_reply is resolve_pending_cart_selection and latestUserMessage identifies one offered or candidate product, emit the configured cart mutation signal using that product. This is an explicit continuation of the pending add, set or remove request even when latestUserMessage contains only the product name and no mutation verb. Preserve the pending quantity when the customer does not provide a replacement quantity.",
+
+                "Older failed searches and repeated catalog responses in recentConversation never override authoritative shoppingContext. Still distinguish selection from a genuine information request: questions about price, availability or options remain catalog queries unless the customer also asks to add, set or remove a product.",
+
                 "When the customer explicitly contrasts alternative values or scenarios and says they are unsure which applies, do not choose either alternative. Emit no mutation for every materially disputed fact and list those fact ids in response.ambiguousFields.",
 
                 "facts may include advanceWhenFacts and collect facts. collect means optional early capture when the customer volunteered the value; it does not define what to ask.",

@@ -58,6 +58,7 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
             Model = settings.Model ?? "gpt-4.1-mini",
             Temperature = settings.Temperature ?? 0.2f,
             HistoryWindowSize = settings.HistoryWindowSize ?? 20,
+            ExtractorHistoryWindowSize = settings.ExtractorHistoryWindowSize ?? 2,
             MessageSequences = settings.MessageSequences ?? new MessageSequenceCatalog(),
             Webhooks = settings.Webhooks ?? new WebhookDefinitions(),
             Notifications = settings.Notifications ?? new NotificationDefinitions(),
@@ -123,6 +124,7 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
         public string? Model { get; set; }
         public float? Temperature { get; set; }
         public int? HistoryWindowSize { get; set; }
+        public int? ExtractorHistoryWindowSize { get; set; }
         public EscalationDefinitions? Escalations { get; set; }
         public MessageSequenceCatalog? MessageSequences { get; set; }
         public WebhookDefinitions? Webhooks { get; set; }

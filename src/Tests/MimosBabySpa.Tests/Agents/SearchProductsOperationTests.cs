@@ -211,6 +211,74 @@ public class SearchProductsOperationTests
             It.Is<ProductSearchRequest>(request => request.Query == "quiero preparar un pocho"),
             It.IsAny<CancellationToken>()), Times.Never);
     }
+    [Fact]
+    public async Task SequentialSearches_KeepProductsFromEveryOfferInTheActiveRequest()
+    {
+        var ctx = CreateContext();
+        var pechuga = new ProductReference(
+            Guid.NewGuid(), "PO63", "PO63", "PECHUGA CRIOLLA", null, "Pollo", 14033.67m, "COP", 20m);
+        var cerdo = new ProductReference(
+            Guid.NewGuid(), "CE10", "CE10", "PIERNA DE CERDO CON PIEL Y HUESO", null, "Cerdo", 10319.16m, "COP", 15m);
+        _commerce
+            .Setup(c => c.SearchProductsAsync(ctx, It.IsAny<ProductSearchRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((AgentConversationContext _, ProductSearchRequest request, CancellationToken _) =>
+                request.Query == "pechuga"
+                    ? new ProductSearchResult([pechuga], "mantis")
+                    : new ProductSearchResult([cerdo], "mantis"));
+        var facts = new Mock<IConversationFactsService>();
+        var operation = new SearchProductsOperation(_commerce.Object, facts.Object);
+
+        using (var pechugaArgs = JsonDocument.Parse("""{"query":"pechuga","limit":10}"""))
+            await operation.ExecuteAsync(pechugaArgs.RootElement, new OperationContext { Session = ctx });
+        using (var cerdoArgs = JsonDocument.Parse("""{"query":"cerdo","limit":10}"""))
+            await operation.ExecuteAsync(cerdoArgs.RootElement, new OperationContext { Session = ctx });
+
+        _commerce.Invocations.Clear();
+        var resolver = new CommerceCartProductResolver(_commerce.Object);
+        var rememberedPechuga = await resolver.FindAsync(ctx, "pechuga criolla");
+        var rememberedCerdo = await resolver.FindAsync(ctx, "pierna con piel");
+
+        rememberedPechuga.Should().ContainSingle().Which.Name.Should().Be("PECHUGA CRIOLLA");
+        rememberedCerdo.Should().ContainSingle().Which.Name.Should().Be("PIERNA DE CERDO CON PIEL Y HUESO");
+        ctx.Facts["system.catalog_products"].Should().Contain("schemaVersion").And.Contain(":2");
+        ctx.Facts["system.catalog_products"].Should().Contain("searchTerms").And.Contain("pechuga");
+        ctx.Facts["system.catalog_products"].Should().Contain("searchTerms").And.Contain("cerdo");
+        _commerce.Verify(c => c.SearchProductsAsync(
+            It.IsAny<AgentConversationContext>(), It.IsAny<ProductSearchRequest>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+    [Fact]
+    public async Task OfferMemory_UsesConfiguredBoundsAndKeepsTheMostRecentSnapshots()
+    {
+        var ctx = CreateContext();
+        ctx.Config = new AgentConfig
+        {
+            Commerce = new CommerceConfig
+            {
+                Enabled = true,
+                OfferMemoryMaxSnapshots = 2,
+                OfferMemoryMaxProducts = 2
+            }
+        };
+        _commerce
+            .Setup(c => c.SearchProductsAsync(ctx, It.IsAny<ProductSearchRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((AgentConversationContext _, ProductSearchRequest request, CancellationToken _) =>
+                new ProductSearchResult(
+                    [new ProductReference(null, request.Query, request.Query, request.Query!.ToUpperInvariant(), null, null, 1m, "COP", 1m)],
+                    "mantis"));
+        var operation = new SearchProductsOperation(_commerce.Object, new Mock<IConversationFactsService>().Object);
+
+        foreach (var query in new[] { "pechuga", "cerdo", "salchicha" })
+        {
+            using var args = JsonDocument.Parse(JsonSerializer.Serialize(new { query, limit = 10 }));
+            await operation.ExecuteAsync(args.RootElement, new OperationContext { Session = ctx });
+        }
+
+        var memory = ctx.Facts["system.catalog_products"];
+        memory.Should().NotContain("PECHUGA");
+        memory.Should().Contain("CERDO");
+        memory.Should().Contain("SALCHICHA");
+        memory.Should().Contain("sequence").And.Contain(":3");
+    }
     private static AgentConversationContext CreateContext() => new()
     {
         BusinessId = Guid.NewGuid(),

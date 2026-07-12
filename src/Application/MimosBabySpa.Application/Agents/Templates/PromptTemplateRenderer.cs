@@ -1,4 +1,3 @@
-using System.Globalization;
 using System.Text.RegularExpressions;
 
 namespace MimosBabySpa.Application.Agents.Templates;
@@ -76,7 +75,7 @@ public sealed partial class PromptTemplateRenderer : ITemplateRenderer
         return VariableRegex().Replace(input, match =>
         {
             var name = match.Groups["name"].Value;
-            return data.TryGetValue(name, out var value) ? FormatValue(value) : string.Empty;
+            return data.TryGetValue(name, out var value) ? TemplateValueFormatter.Format(name, value) : string.Empty;
         });
     }
 
@@ -150,15 +149,6 @@ public sealed partial class PromptTemplateRenderer : ITemplateRenderer
             _ => true
         };
     }
-
-    private static string FormatValue(object? value) =>
-        value switch
-        {
-            null => string.Empty,
-            string s => s,
-            IFormattable f => f.ToString(null, CultureInfo.InvariantCulture) ?? string.Empty,
-            _ => value.ToString() ?? string.Empty
-        };
 
     [GeneratedRegex(@"\{\{#each\s+(?<name>[\w_]+)\}\}(?<body>[\s\S]*?)\{\{/each\}\}", RegexOptions.IgnoreCase)]
     private static partial Regex EachBlockRegex();

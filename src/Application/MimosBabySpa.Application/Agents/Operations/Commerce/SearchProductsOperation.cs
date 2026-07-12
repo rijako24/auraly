@@ -65,7 +65,7 @@ public sealed class SearchProductsOperation : IAgentOperation
         };
 
         if (_factsService is not null && result.Products.Count > 0)
-            await ProductSelectionMemory.RememberCatalogAsync(_factsService, ctx, result.Products, cancellationToken);
+            await ProductSelectionMemory.RememberCatalogAsync(_factsService, ctx, result.Products, queries, cancellationToken);
 
         var outcomeCode = result.Products.Count == 0 ? "products.not_found" : "products.found";
         return OperationOutcome.Ok(outcomeCode, new

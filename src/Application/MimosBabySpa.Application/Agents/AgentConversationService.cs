@@ -451,7 +451,7 @@ var latestPayment = await _paymentLifecycle.GetLatestByConversationAsync(convers
 
                 LatestUserMessage = userMessage,
 
-                RecentConversation = chatHistory,
+                RecentConversation = Planning.ExtractorConversationProjector.Project(config, chatHistory),
                 ExecutedActionKeys = executedOperationKeys
             },
 

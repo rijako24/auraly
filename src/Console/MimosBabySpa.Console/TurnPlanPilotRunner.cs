@@ -167,9 +167,12 @@ internal sealed class TurnPlanPilotRunner
                     items = test.CurrentCart.Select(item => new { name = item.Name, quantity = item.Quantity })
                 });
             }
+            var shoppingContext = CommerceSelectionPlanningContextEnricher.Build(facts);
+            if (shoppingContext is not null)
+                structuredContext[shoppingContext.Key] = shoppingContext.Value;
             var proposal = await _planner.PlanAsync(
                 new TurnPlanningContext(config, stage, scope, facts, test.Message, businessNow,
-                    test.History.Select(ToChatMessage).ToList(), structuredContext),
+                    ExtractorConversationProjector.Project(config, test.History.Select(ToChatMessage).ToList()), structuredContext),
                 cancellationToken);
 
             var errors = ValidateEvaluation(test, proposal, businessNow);

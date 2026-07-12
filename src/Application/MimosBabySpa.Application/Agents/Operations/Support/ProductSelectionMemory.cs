@@ -9,7 +9,6 @@ namespace MimosBabySpa.Application.Agents.Operations.Support;
 internal static class ProductSelectionMemory
 {
     private const string SelectedProductKey = "system.selected_product";
-    private const string CatalogProductsKey = "system.catalog_products";
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -32,18 +31,13 @@ internal static class ProductSelectionMemory
         return selected;
     }
 
-    public static async Task RememberCatalogAsync(
+    public static Task RememberCatalogAsync(
         IConversationFactsService factsService,
         AgentConversationContext ctx,
         IReadOnlyList<ProductReference> products,
-        CancellationToken ct)
-    {
-        var candidates = products.Where(product => product.IsActive).Take(50).Select(ProductCandidate.From).ToList();
-        var value = JsonSerializer.Serialize(candidates, JsonOptions);
-        await factsService.SetAsync(
-            ctx.ConversationId, ctx.BusinessId, CatalogProductsKey, value, rememberAcrossRequests: false, ct);
-        ctx.Facts[CatalogProductsKey] = value;
-    }
+        IReadOnlyList<string> searchTerms,
+        CancellationToken ct) =>
+        CatalogOfferMemory.RememberAsync(factsService, ctx, products, searchTerms, ct);
 
     public static string NormalizeSearchReference(string productText)
         => string.Join(' ', NormalizeSelectionReference(productText)
@@ -53,42 +47,37 @@ internal static class ProductSelectionMemory
         AgentConversationContext ctx,
         string productText)
     {
-        if (!ctx.Facts.TryGetValue(CatalogProductsKey, out var raw) || string.IsNullOrWhiteSpace(raw))
+        var memory = CatalogOfferMemory.Read(ctx.Facts);
+        if (memory is null)
             return [];
-        try
-        {
-            var candidates = JsonSerializer.Deserialize<List<ProductCandidate>>(raw, JsonOptions) ?? [];
-            var searchReference = NormalizeSelectionReference(productText);
-            var requested = NormalizeTokens(searchReference);
-            if (requested.Count == 0)
-                return [];
 
-            var requestedWords = requested.Where(token => !token.All(char.IsDigit)).ToList();
-            var requestedNumbers = requested.Where(token => token.All(char.IsDigit)).ToList();
-
-            var exact = candidates.Where(candidate =>
-                    Normalize(candidate.Name).Equals(Normalize(searchReference), StringComparison.Ordinal)
-                    || (!string.IsNullOrWhiteSpace(candidate.Sku)
-                        && Normalize(candidate.Sku).Equals(Normalize(searchReference), StringComparison.Ordinal)))
-                .ToList();
-            var matches = exact;
-            if (matches.Count == 0)
-            {
-                var textualMatches = candidates.Where(candidate =>
-                    TokensMatch(requestedWords, NormalizeTokens(candidate.Name))).ToList();
-                var numericMatches = requestedNumbers.Count == 0
-                    ? []
-                    : textualMatches.Where(candidate =>
-                        TokensMatch(requestedNumbers, NormalizeTokens(candidate.Name))).ToList();
-                matches = numericMatches.Count > 0 ? numericMatches : textualMatches;
-            }
-
-            return matches.Select(candidate => candidate.ToProductReference()).ToList();
-        }
-        catch (JsonException)
-        {
+        var candidates = CatalogOfferMemory.AllProducts(memory);
+        var searchReference = NormalizeSelectionReference(productText);
+        var requested = NormalizeTokens(searchReference);
+        if (requested.Count == 0)
             return [];
+
+        var requestedWords = requested.Where(token => !token.All(char.IsDigit)).ToList();
+        var requestedNumbers = requested.Where(token => token.All(char.IsDigit)).ToList();
+
+        var exact = candidates.Where(candidate =>
+                Normalize(candidate.Name).Equals(Normalize(searchReference), StringComparison.Ordinal)
+                || (!string.IsNullOrWhiteSpace(candidate.Sku)
+                    && Normalize(candidate.Sku).Equals(Normalize(searchReference), StringComparison.Ordinal)))
+            .ToList();
+        var matches = exact;
+        if (matches.Count == 0)
+        {
+            var textualMatches = candidates.Where(candidate =>
+                TokensMatch(requestedWords, NormalizeTokens(candidate.Name))).ToList();
+            var numericMatches = requestedNumbers.Count == 0
+                ? []
+                : textualMatches.Where(candidate =>
+                    TokensMatch(requestedNumbers, NormalizeTokens(candidate.Name))).ToList();
+            matches = numericMatches.Count > 0 ? numericMatches : textualMatches;
         }
+
+        return matches.Select(candidate => candidate.ToProductReference()).ToList();
     }
 
     private static IReadOnlyList<string> NormalizeTokens(string? value) =>
