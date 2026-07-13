@@ -104,11 +104,12 @@ public sealed class ApplyOrderChangesOperationTests
 
         session.LatestUserMessage = "Salchicha long x 550 gr";
         var resumed = await operation.ExecuteAsync(
-            Json("""{"commands":[{"operation":"add","productText":"SALCHICHA LONG X 550GR","quantity":1,"destinationReference":null}]}"""),
+            Json("""{"commands":[{"operation":"set_quantity","productText":"SALCHICHA LONG X 550GR","quantity":1,"destinationReference":null}]}"""),
             Context(session));
 
         resumed.Code.Should().Be("cart.applied");
         store.ApplyCalls.Should().Be(1);
+        store.Applied.Select(command => command.Operation).Should().OnlyContain(operation => operation == CartCommandOperations.Add);
         store.Applied.Select(command => (command.Product!.Name, command.Quantity)).Should().Equal(
             ("BUTIFARRA CUNIT X 500 GR", 1m),
             ("SALCHICHA LONG X 550GR", 1m),

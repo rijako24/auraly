@@ -150,6 +150,22 @@ public sealed class DeterministicTurnCoordinator
 
         if (IsClarification(effectivePlan))
         {
+            var switchesPendingFlow = pending is not null
+                && !string.IsNullOrWhiteSpace(effectivePlan.FlowIntent.CandidateFlow)
+                && !effectivePlan.FlowIntent.CandidateFlow.Equals(pending.FlowId, StringComparison.OrdinalIgnoreCase)
+                && !string.IsNullOrWhiteSpace(effectivePlan.FlowIntent.Evidence);
+            if (pending is not null
+                && !switchesPendingFlow
+                && TurnPlanParser.TryParse(pending.PlanJson, out var deferredClarification, out _)
+                && deferredClarification is not null)
+            {
+                var ambiguousFields = pending.AmbiguousFields
+                    .Concat(effectivePlan.Response.AmbiguousFields)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+                effectivePlan = CombineDeferredPlans(deferredClarification, effectivePlan, ambiguousFields);
+            }
+
             state.PendingTurnPlan = CreatePending(request, planningStage, effectivePlan, signature);
             return ClarificationRequired(request, planningStage, effectivePlan, effectivePlan.Response.AmbiguousFields, proposal);
         }
@@ -170,7 +186,23 @@ public sealed class DeterministicTurnCoordinator
             }
             else if (!ResolvesPending(effectivePlan, pending.AmbiguousFields))
             {
-                return ClarificationRequired(request, planningStage, deferredPlan, pending.AmbiguousFields, proposal);
+                var resolvedFields = ResolvedPendingFields(effectivePlan, pending.AmbiguousFields);
+                if (resolvedFields.Count > 0)
+                {
+                    var remainingFields = pending.AmbiguousFields
+                        .Where(field => !resolvedFields.Contains(field, StringComparer.OrdinalIgnoreCase))
+                        .ToList();
+                    var updatedDeferred = MarkAmbiguous(
+                        MergeDeferredPlan(deferredPlan, effectivePlan, resolvedFields),
+                        remainingFields);
+                    state.PendingTurnPlan = CreatePending(request, planningStage, updatedDeferred, signature);
+                    return ClarificationRequired(request, planningStage, updatedDeferred, remainingFields, proposal);
+                }
+
+                if (!HasIndependentMeaning(effectivePlan, pending.AmbiguousFields))
+                    return ClarificationRequired(request, planningStage, deferredPlan, pending.AmbiguousFields, proposal);
+
+                effectivePlan = KeepIndependentMeaning(effectivePlan, pending.AmbiguousFields);
             }
             else
             {
@@ -549,6 +581,87 @@ public sealed class DeterministicTurnCoordinator
                 && !string.IsNullOrWhiteSpace(clarification.FlowIntent.Evidence)
             || field.Equals("decision", StringComparison.OrdinalIgnoreCase)
                 && clarification.Decision is not null);
+
+    private static IReadOnlyList<string> ResolvedPendingFields(
+        TurnPlan plan,
+        IReadOnlyList<string> fields) =>
+        fields.Where(field =>
+                plan.Facts.Any(fact => fact.Key.Equals(field, StringComparison.OrdinalIgnoreCase))
+                || plan.Signals.Any(signal => signal.Type.Equals(field, StringComparison.OrdinalIgnoreCase))
+                || field.Equals("flowIntent", StringComparison.OrdinalIgnoreCase)
+                    && !string.IsNullOrWhiteSpace(plan.FlowIntent.Evidence)
+                || field.Equals("decision", StringComparison.OrdinalIgnoreCase)
+                    && plan.Decision is not null)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+    private static TurnPlan CombineDeferredPlans(
+        TurnPlan deferred,
+        TurnPlan current,
+        IReadOnlyList<string> ambiguousFields) =>
+        new()
+        {
+            FlowIntent = !string.IsNullOrWhiteSpace(current.FlowIntent.Evidence)
+                ? current.FlowIntent
+                : deferred.FlowIntent,
+            Facts = deferred.Facts
+                .Concat(current.Facts)
+                .GroupBy(fact => fact.Key, StringComparer.OrdinalIgnoreCase)
+                .Select(group => group.Last())
+                .ToList(),
+            Signals = deferred.Signals
+                .Concat(current.Signals)
+                .GroupBy(signal => signal.Type, StringComparer.OrdinalIgnoreCase)
+                .Select(group => group.Last())
+                .ToList(),
+            Decision = current.Decision ?? deferred.Decision,
+            Response = new TurnPlanResponseDirective
+            {
+                Mode = "ask_clarification",
+                AmbiguousFields = ambiguousFields
+            }
+        };
+
+    private static TurnPlan MarkAmbiguous(
+        TurnPlan plan,
+        IReadOnlyList<string> ambiguousFields) =>
+        new()
+        {
+            FlowIntent = plan.FlowIntent,
+            Facts = plan.Facts,
+            Signals = plan.Signals,
+            Decision = plan.Decision,
+            Response = new TurnPlanResponseDirective
+            {
+                Mode = "ask_clarification",
+                AmbiguousFields = ambiguousFields
+            }
+        };
+
+    private static bool HasIndependentMeaning(
+        TurnPlan plan,
+        IReadOnlyList<string> pendingFields)
+    {
+        var pending = pendingFields.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return plan.Facts.Any(fact => !pending.Contains(fact.Key))
+            || plan.Signals.Any(signal => !pending.Contains(signal.Type))
+            || plan.Decision is not null && !pending.Contains("decision");
+    }
+
+    private static TurnPlan KeepIndependentMeaning(
+        TurnPlan plan,
+        IReadOnlyList<string> pendingFields)
+    {
+        var pending = pendingFields.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return new TurnPlan
+        {
+            FlowIntent = plan.FlowIntent,
+            Facts = plan.Facts.Where(fact => !pending.Contains(fact.Key)).ToList(),
+            Signals = plan.Signals.Where(signal => !pending.Contains(signal.Type)).ToList(),
+            Decision = pending.Contains("decision") ? null : plan.Decision,
+            Response = new TurnPlanResponseDirective { Mode = "continue", AmbiguousFields = [] }
+        };
+    }
 
     private static TurnPlan MergeDeferredPlan(
         TurnPlan deferred,

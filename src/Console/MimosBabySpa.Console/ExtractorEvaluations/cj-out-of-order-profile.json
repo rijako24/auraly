@@ -1,0 +1,66 @@
+{
+    "cases":  [
+                  {
+                      "id":  "profile_selector_a_before_customer_name",
+                      "message":  "La a",
+                      "stage":  "customer_name",
+                      "expectedFlow":  "order",
+                      "expectedFacts":  [
+
+                                        ],
+                      "seed":  "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+                      "history":  [
+
+                                  ],
+                      "absentFacts":  [
+                                          "customer_type"
+                                      ],
+                      "expectedAmbiguousFields":  [
+                                                      "customer_type"
+                                                  ]
+                  },
+                  {
+                      "id":  "profile_selector_a_after_options",
+                      "message":  "La a",
+                      "stage":  "customer_type",
+                      "expectedFlow":  "order",
+                      "expectedFacts":  [
+                                            {
+                                                "key":  "customer_type",
+                                                "equals":  "Hogar"
+                                            }
+                                        ],
+                      "seed":  "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+                      "history":  [
+                                      {
+                                          "role":  "assistant",
+                                          "content":  "Para atenderte mejor, elige: A. Hogar, B. Tienda o minimercado, C. Restaurante, D. Comida rapida, E. Distribuidor."
+                                      }
+                                  ]
+                  },
+                  {
+                      "id":  "independent_name_after_profile_clarification",
+                      "message":  "Richard",
+                      "stage":  "customer_name",
+                      "expectedFlow":  "order",
+                      "expectedFacts":  [
+                                            {
+                                                "key":  "customer_name",
+                                                "equals":  "Richard"
+                                            }
+                                        ],
+                      "seed":  "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+                      "history":  [
+                                      {
+                                          "role":  "user",
+                                          "content":  "La a"
+                                      },
+                                      {
+                                          "role":  "assistant",
+                                          "content":  "Para comenzar, me compartes tu nombre o el nombre de tu negocio?"
+                                      }
+                                  ]
+                  }
+              ],
+    "repetitions":  10
+}

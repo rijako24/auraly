@@ -186,6 +186,289 @@ public sealed class DeterministicTurnCoordinatorTests
         second.Route!.ActiveFlowId.Should().Be("reservation_management");
         state.PendingTurnPlan.Should().BeNull();
     }
+    [Fact]
+    public async Task Execute_ProcessesIndependentFactWhileAnotherFieldRemainsPending()
+    {
+        var planner = new QueuePlanner(
+            new TurnPlan
+            {
+                FlowIntent = new PlannedFlowIntent { CandidateFlow = "primary", Confidence = 1 },
+                Response = new TurnPlanResponseDirective
+                {
+                    Mode = "ask_clarification",
+                    AmbiguousFields = ["customer_type"]
+                }
+            },
+            new TurnPlan
+            {
+                FlowIntent = new PlannedFlowIntent { CandidateFlow = "primary", Confidence = 1 },
+                Facts =
+                [
+                    new PlannedFactClaim
+                    {
+                        Key = "customer_name",
+                        Operation = TurnPlanOperations.Set,
+                        Value = Json("\"Richard\""),
+                        Evidence = "Richard"
+                    }
+                ]
+            },
+            new TurnPlan
+            {
+                FlowIntent = new PlannedFlowIntent { CandidateFlow = "primary", Confidence = 1 },
+                Facts =
+                [
+                    new PlannedFactClaim
+                    {
+                        Key = "customer_type",
+                        Operation = TurnPlanOperations.Set,
+                        Value = Json("\"Hogar\""),
+                        Evidence = "la a"
+                    }
+                ]
+            });
+        var factStore = new RecordingFactStore();
+        var coordinator = new DeterministicTurnCoordinator(
+            planner,
+            new DeterministicFlowSelector(),
+            new FactMutationBatchProcessor(),
+            factStore,
+            new ConversationVerificationService(),
+            new DeterministicStageExecutor(
+                new AgentOperationRegistry([]),
+                new StageConditionEvaluator(),
+                new OperationArgumentBinder()),
+            new DeterministicStageTransitionResolver(new StageConditionEvaluator()));
+        var customerNameStage = new AgentFlowStage
+        {
+            Id = "customer_name",
+            Collect = ["customer_name"],
+            AdvanceWhenFacts = ["customer_name"],
+            Response = new StageResponseDefinition { FallbackTemplate = "customer_name_prompt" }
+        };
+        var customerTypeStage = new AgentFlowStage
+        {
+            Id = "customer_type",
+            Collect = ["customer_type"],
+            AdvanceWhenFacts = ["customer_type"],
+            Response = new StageResponseDefinition { FallbackTemplate = "customer_type_prompt" }
+        };
+        var config = new AgentConfig
+        {
+            FactSchema =
+            [
+                new FactSchemaEntry { Key = "customer_name", Type = "string", Source = "user" },
+                new FactSchemaEntry { Key = "customer_type", Type = "string", Source = "user" }
+            ],
+            Flows =
+            [
+                new AgentFlowDefinition
+                {
+                    Id = "primary",
+                    Type = FlowTypes.Primary,
+                    Stages = [customerNameStage, customerTypeStage, new AgentFlowStage { Id = "done" }]
+                }
+            ]
+        };
+        var state = new ConversationState();
+        var operationContext = new OperationContext
+        {
+            BusinessNow = DateTimeOffset.UtcNow,
+            Config = config,
+            ConversationState = state
+        };
+
+        DeterministicTurnRequest Turn(
+            IReadOnlyDictionary<string, string> facts,
+            IReadOnlyDictionary<string, long> versions,
+            string stage,
+            string message) => new()
+            {
+                Config = config,
+                OperationContext = operationContext,
+                CurrentFacts = facts,
+                FactVersions = versions,
+                CurrentFlowId = "primary",
+                ActiveFlowId = "primary",
+                CurrentStageId = stage,
+                LatestUserMessage = message
+            };
+
+        var first = await coordinator.ExecuteAsync(Turn(
+            new Dictionary<string, string>(),
+            new Dictionary<string, long>(),
+            "customer_name",
+            "La a"));
+        first.CurrentStageId.Should().Be("customer_name");
+        state.PendingTurnPlan.Should().NotBeNull();
+
+        var second = await coordinator.ExecuteAsync(Turn(
+            first.Facts,
+            first.FactVersions,
+            first.CurrentStageId!,
+            "Richard"));
+        second.Facts["customer_name"].Should().Be("Richard");
+        second.CurrentStageId.Should().Be("customer_type");
+        second.Response!.FallbackTemplate.Should().Be("customer_type_prompt");
+        state.PendingTurnPlan.Should().NotBeNull();
+
+        var third = await coordinator.ExecuteAsync(Turn(
+            second.Facts,
+            second.FactVersions,
+            second.CurrentStageId!,
+            "la a"));
+        third.Facts["customer_name"].Should().Be("Richard");
+        third.Facts["customer_type"].Should().Be("Hogar");
+        state.PendingTurnPlan.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task Execute_AccumulatesNewAmbiguityWithoutReplacingExistingPendingPlan()
+    {
+        var planner = new QueuePlanner(
+            ClarificationPlan("address"),
+            ClarificationPlan("phone"));
+        var coordinator = Coordinator(planner);
+        var config = ClarificationConfig();
+        var state = new ConversationState();
+        var context = Context(config, state);
+
+        var first = await coordinator.ExecuteAsync(ClarificationRequest(
+            config, context, new Dictionary<string, string>(), new Dictionary<string, long>()));
+        var second = await coordinator.ExecuteAsync(ClarificationRequest(
+            config, context, first.Facts, first.FactVersions));
+
+        state.PendingTurnPlan.Should().NotBeNull();
+        state.PendingTurnPlan!.AmbiguousFields.Should().BeEquivalentTo("address", "phone");
+        TurnPlanParser.TryParse(state.PendingTurnPlan.PlanJson, out var pendingPlan, out _).Should().BeTrue();
+        pendingPlan!.Response.AmbiguousFields.Should().BeEquivalentTo("address", "phone");
+    }
+
+    [Fact]
+    public async Task Execute_AccumulatesPartialResolutionAndAsksOnlyForRemainingField()
+    {
+        var planner = new QueuePlanner(
+            new TurnPlan
+            {
+                FlowIntent = new PlannedFlowIntent { CandidateFlow = "primary", Confidence = 1 },
+                Response = new TurnPlanResponseDirective
+                {
+                    Mode = "ask_clarification",
+                    AmbiguousFields = ["address", "phone"]
+                }
+            },
+            FactPlan("address", "Calle 10"),
+            FactPlan("phone", "3001234567"));
+        var coordinator = Coordinator(planner);
+        var config = ClarificationConfig();
+        var state = new ConversationState();
+        var context = Context(config, state);
+
+        var first = await coordinator.ExecuteAsync(ClarificationRequest(
+            config, context, new Dictionary<string, string>(), new Dictionary<string, long>()));
+        var second = await coordinator.ExecuteAsync(ClarificationRequest(
+            config, context, first.Facts, first.FactVersions));
+
+        second.Facts.Should().NotContainKey("address");
+        state.PendingTurnPlan.Should().NotBeNull();
+        state.PendingTurnPlan!.AmbiguousFields.Should().Equal("phone");
+        TurnPlanParser.TryParse(state.PendingTurnPlan.PlanJson, out var partialPlan, out _).Should().BeTrue();
+        partialPlan!.Facts.Should().ContainSingle(fact => fact.Key == "address");
+
+        var third = await coordinator.ExecuteAsync(ClarificationRequest(
+            config, context, second.Facts, second.FactVersions));
+
+        third.Facts["address"].Should().Be("Calle 10");
+        third.Facts["phone"].Should().Be("3001234567");
+        state.PendingTurnPlan.Should().BeNull();
+    }
+
+    private static DeterministicTurnCoordinator Coordinator(ITurnPlanner planner) =>
+        new(
+            planner,
+            new DeterministicFlowSelector(),
+            new FactMutationBatchProcessor(),
+            new RecordingFactStore(),
+            new ConversationVerificationService(),
+            new DeterministicStageExecutor(
+                new AgentOperationRegistry([]),
+                new StageConditionEvaluator(),
+                new OperationArgumentBinder()),
+            new DeterministicStageTransitionResolver(new StageConditionEvaluator()));
+
+    private static AgentConfig ClarificationConfig() => new()
+    {
+        FactSchema =
+        [
+            new FactSchemaEntry { Key = "address", Type = "string", Source = "user" },
+            new FactSchemaEntry { Key = "phone", Type = "string", Source = "user" }
+        ],
+        Flows =
+        [
+            new AgentFlowDefinition
+            {
+                Id = "primary",
+                Type = FlowTypes.Primary,
+                Stages =
+                [
+                    new AgentFlowStage
+                    {
+                        Id = "capture",
+                        Collect = ["address", "phone"]
+                    }
+                ]
+            }
+        ]
+    };
+
+    private static OperationContext Context(AgentConfig config, ConversationState state) => new()
+    {
+        BusinessNow = DateTimeOffset.UtcNow,
+        Config = config,
+        ConversationState = state
+    };
+
+    private static DeterministicTurnRequest ClarificationRequest(
+        AgentConfig config,
+        OperationContext context,
+        IReadOnlyDictionary<string, string> facts,
+        IReadOnlyDictionary<string, long> versions) => new()
+        {
+            Config = config,
+            OperationContext = context,
+            CurrentFacts = facts,
+            FactVersions = versions,
+            CurrentFlowId = "primary",
+            ActiveFlowId = "primary",
+            CurrentStageId = "capture",
+            LatestUserMessage = "respuesta"
+        };
+
+    private static TurnPlan ClarificationPlan(string field) => new()
+    {
+        FlowIntent = new PlannedFlowIntent { CandidateFlow = "primary", Confidence = 1 },
+        Response = new TurnPlanResponseDirective
+        {
+            Mode = "ask_clarification",
+            AmbiguousFields = [field]
+        }
+    };
+
+    private static TurnPlan FactPlan(string key, string value) => new()
+    {
+        FlowIntent = new PlannedFlowIntent { CandidateFlow = "primary", Confidence = 1 },
+        Facts =
+        [
+            new PlannedFactClaim
+            {
+                Key = key,
+                Operation = TurnPlanOperations.Set,
+                Value = Json(JsonSerializer.Serialize(value)),
+                Evidence = value
+            }
+        ]
+    };
+
     private static DeterministicTurnRequest Request(
         AgentConfig config,
         OperationContext context,

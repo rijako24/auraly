@@ -280,7 +280,7 @@ public sealed class LlmTurnPlanner : ITurnPlanner
                 "When the customer explicitly contrasts alternative values or scenarios and says they are unsure which applies, do not choose either alternative. Emit no mutation for every materially disputed fact and list those fact ids in response.ambiguousFields.",
 
                 "facts may include advanceWhenFacts and collect facts. collect means optional early capture when the customer volunteered the value; it does not define what to ask.",
-                "When a fact declares options, treat each selector as an explicit alias of that option value. If latestUserMessage unambiguously refers to exactly one configured selector, emit that fact with the corresponding canonical value in this first plan and do not list it in response.ambiguousFields. Ask for clarification only when the customer reference can map to more than one option or remains semantically uncertain.",
+                "When a fact declares options, treat each selector as an explicit alias only when the immediately preceding assistant message presented those options. Then, if latestUserMessage unambiguously refers to exactly one configured selector, emit the fact with its canonical value and do not list it in response.ambiguousFields. Before the options are presented, a bare selector or letter is not sufficient evidence; an explicit option label or semantic value may still be captured early.",
 
                 "When latestUserMessage provides several facts in one utterance, infer their semantic boundaries. Each fact value must contain only its own value; exclude connectors, labels and content belonging to another extracted fact, even when a label is misspelled.",
 
