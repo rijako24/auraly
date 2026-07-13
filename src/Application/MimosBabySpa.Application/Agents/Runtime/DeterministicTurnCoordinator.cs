@@ -5,9 +5,12 @@ using MimosBabySpa.Application.Agents.Configuration;
 using MimosBabySpa.Application.Agents.Facts;
 using MimosBabySpa.Application.Agents.Gating;
 using MimosBabySpa.Application.Agents.Operations;
+using MimosBabySpa.Application.Agents.Operations.Commerce;
+using MimosBabySpa.Application.Agents.Operations.Support;
 using MimosBabySpa.Application.Agents.Planning;
 using MimosBabySpa.Application.LLM;
 using MimosBabySpa.Application.Services;
+using MimosBabySpa.Application.Commerce;
 
 using MimosBabySpa.Domain.Models;
 namespace MimosBabySpa.Application.Agents.Runtime;
@@ -136,7 +139,9 @@ public sealed class DeterministicTurnCoordinator
         if (!proposal.Success || proposal.Plan is null)
             return Failure(proposal.Errors, request.CurrentFacts, proposal.Plan);
 
-        var effectivePlan = proposal.Plan;
+        var effectivePlan = ProtectPendingCommerceSelection(
+            request.Config, request.CurrentFacts, request.LatestUserMessage, proposal.Plan);
+        var turnExecutedActionKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var state = request.OperationContext.ConversationState;
         var signature = ConfigurationSignature(request.Config);
         var pending = state.PendingTurnPlan;
@@ -262,7 +267,8 @@ public sealed class DeterministicTurnCoordinator
                 LatestUserMessage = request.LatestUserMessage,
                 ChangedFacts = changedFacts,
                 ActiveVerifications = verifications,
-                ExecutedActionKeys = request.ExecutedActionKeys
+                ExecutedActionKeys = request.ExecutedActionKeys,
+                TurnExecutedActionKeys = turnExecutedActionKeys
             };
             var execution = await _stages.ExecuteAsync(
                 globalStage,
@@ -321,7 +327,8 @@ public sealed class DeterministicTurnCoordinator
                 LatestUserMessage = request.LatestUserMessage,
                     ChangedFacts = changedFacts,
                     ActiveVerifications = verifications,
-                    ExecutedActionKeys = request.ExecutedActionKeys
+                    ExecutedActionKeys = request.ExecutedActionKeys,
+                    TurnExecutedActionKeys = turnExecutedActionKeys
                 };
                 var execution = await _stages.ExecuteAsync(selectedStage, trigger, executionContext, cancellationToken);
                 trace.AddRange(execution.Trace);
@@ -365,7 +372,8 @@ public sealed class DeterministicTurnCoordinator
                 LatestUserMessage = request.LatestUserMessage,
                 ChangedFacts = changedFacts,
                 ActiveVerifications = verifications,
-                ExecutedActionKeys = request.ExecutedActionKeys
+                ExecutedActionKeys = request.ExecutedActionKeys,
+                TurnExecutedActionKeys = turnExecutedActionKeys
             };
             var transition = _transitions.Resolve(flow, selectedStage, transitionContext);
             if (!transition.ShouldTransition || string.IsNullOrWhiteSpace(transition.TargetStageId))
@@ -582,6 +590,83 @@ public sealed class DeterministicTurnCoordinator
             || field.Equals("decision", StringComparison.OrdinalIgnoreCase)
                 && clarification.Decision is not null);
 
+    internal static TurnPlan ProtectPendingCommerceSelection(
+        AgentConfig config,
+        IReadOnlyDictionary<string, string> currentFacts,
+        string latestUserMessage,
+        TurnPlan plan)
+    {
+        if (!config.Commerce.Enabled || PendingCartCommandMemory.Read(currentFacts) is null)
+            return plan;
+
+        var finalizationKeys = config.FactSchema
+            .Where(fact => fact.Role?.Equals("order.finalized", StringComparison.OrdinalIgnoreCase) == true)
+            .Select(fact => fact.Key)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var finalizationRequested = plan.Facts.Any(fact => finalizationKeys.Contains(fact.Key)
+            && fact.Operation.Equals(TurnPlanOperations.Set, StringComparison.OrdinalIgnoreCase)
+            && IsTrue(fact.Value));
+        var emptyPlan = plan.Facts.Count == 0 && plan.Signals.Count == 0 && plan.Decision is null;
+        if (!finalizationRequested && !emptyPlan)
+            return plan;
+
+        var cartSignal = AgentFlowCatalog.EffectiveFlows(config)
+            .SelectMany(flow => flow.Stages)
+            .SelectMany(stage => stage.Actions)
+            .FirstOrDefault(action =>
+                action.Operation.Equals(ApplyOrderChangesOperation.OperationId, StringComparison.OrdinalIgnoreCase)
+                && !string.IsNullOrWhiteSpace(action.Signal))
+            ?.Signal;
+        var signals = plan.Signals.Select(signal =>
+        {
+            if (!finalizationRequested
+                || string.IsNullOrWhiteSpace(cartSignal)
+                || !signal.Type.Equals(cartSignal, StringComparison.OrdinalIgnoreCase)
+                || signal.Value.ValueKind != JsonValueKind.Array)
+                return signal;
+
+            var safeCommands = signal.Value.EnumerateArray()
+                .Where(command => !command.TryGetProperty("operation", out var operation)
+                    || operation.GetString()?.Equals(CartCommandOperations.CancelPending, StringComparison.OrdinalIgnoreCase) != true)
+                .Select(command => command.Clone())
+                .ToList();
+            return new PlannedSignal
+            {
+                Type = signal.Type,
+                Value = JsonSerializer.SerializeToElement(safeCommands),
+                Evidence = signal.Evidence,
+                Confidence = signal.Confidence
+            };
+        }).ToList();
+        if (!string.IsNullOrWhiteSpace(cartSignal)
+            && !signals.Any(signal => signal.Type.Equals(cartSignal, StringComparison.OrdinalIgnoreCase)))
+        {
+            signals.Add(new PlannedSignal
+            {
+                Type = cartSignal,
+                Value = JsonSerializer.SerializeToElement(Array.Empty<object>()),
+                Evidence = latestUserMessage,
+                Confidence = 1
+            });
+        }
+
+        return new TurnPlan
+        {
+            FlowIntent = plan.FlowIntent,
+            Facts = finalizationRequested
+                ? plan.Facts.Where(fact => !finalizationKeys.Contains(fact.Key)).ToList()
+                : plan.Facts,
+            Signals = signals,
+            Decision = plan.Decision,
+            Response = new TurnPlanResponseDirective { Mode = "continue", AmbiguousFields = [] }
+        };
+    }
+
+    private static bool IsTrue(JsonElement value) =>
+        value.ValueKind == JsonValueKind.True
+        || value.ValueKind == JsonValueKind.String
+            && bool.TryParse(value.GetString(), out var parsed)
+            && parsed;
     private static IReadOnlyList<string> ResolvedPendingFields(
         TurnPlan plan,
         IReadOnlyList<string> fields) =>

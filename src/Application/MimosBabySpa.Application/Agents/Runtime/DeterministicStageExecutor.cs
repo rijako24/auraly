@@ -17,6 +17,7 @@ public sealed class DeterministicStageExecutionContext
     public IReadOnlySet<string> ChangedFacts { get; init; } = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
     public IReadOnlySet<string> ActiveVerifications { get; init; } = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
     public ISet<string> ExecutedActionKeys { get; init; } = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    public ISet<string> TurnExecutedActionKeys { get; init; } = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 }
 
 public sealed record StageOperationTrace(
@@ -97,7 +98,11 @@ public sealed class DeterministicStageExecutor
                 continue;
             }
             var executionKey = BuildExecutionKey(stage, action, argumentsJson, context.OperationContext.ConversationState?.RequestGeneration ?? 0);
-            if (executionKey is not null && context.ExecutedActionKeys.Contains(executionKey))
+            var executionScope = action.Execution.Idempotency.Equals(
+                StageActionIdempotency.OncePerRequest, StringComparison.OrdinalIgnoreCase)
+                ? context.ExecutedActionKeys
+                : context.TurnExecutedActionKeys;
+            if (executionKey is not null && executionScope.Contains(executionKey))
             {
                 trace.Add(new StageOperationTrace(action.Id, action.Operation, argumentsJson, string.Empty, false, true, "idempotent_replay"));
                 continue;
@@ -105,7 +110,7 @@ public sealed class DeterministicStageExecutor
 
             var outcome = await ExecuteWithPolicyAsync(operation, boundArguments, context.OperationContext, action.Execution, cancellationToken);
             if (outcome.Success && executionKey is not null)
-                context.ExecutedActionKeys.Add(executionKey);
+                executionScope.Add(executionKey);
             trace.Add(new StageOperationTrace(action.Id, action.Operation, argumentsJson, outcome.Code, outcome.Success, Outcome: outcome));
             presentations.AddRange(outcome.Presentations);
             operationEffects.AddRange(outcome.Effects);
@@ -179,10 +184,9 @@ public sealed class DeterministicStageExecutor
     {
         if (action.Execution.Idempotency.Equals(StageActionIdempotency.None, StringComparison.OrdinalIgnoreCase))
             return null;
-        var input = action.Execution.Idempotency.Equals(StageActionIdempotency.OncePerRequest, StringComparison.OrdinalIgnoreCase)
-            ? string.Empty
-            : StableHash(argumentsJson);
-        return $"{requestGeneration}:{stage.Id}:{action.Id}:{input}";
+        return action.Execution.Idempotency.Equals(StageActionIdempotency.OncePerRequest, StringComparison.OrdinalIgnoreCase)
+            ? $"request:{requestGeneration}:{stage.Id}:{action.Id}"
+            : $"turn:{stage.Id}:{action.Id}:{StableHash(argumentsJson)}";
     }
 
     private static async Task<OperationOutcome> ExecuteWithPolicyAsync(

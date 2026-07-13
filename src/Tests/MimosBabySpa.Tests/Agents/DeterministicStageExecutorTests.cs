@@ -51,6 +51,47 @@ public sealed class DeterministicStageExecutorTests
     }
 
     [Fact]
+    public async Task InputVersion_SameActionAndInputs_ExecutesAgainInANewTurn()
+    {
+        var operation = new CapturingAvailabilityOperation();
+        var executor = new DeterministicStageExecutor(
+            new AgentOperationRegistry([operation]),
+            new StageConditionEvaluator(),
+            new OperationArgumentBinder());
+        var durableKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        await executor.ExecuteAsync(Stage(), StageActionTriggers.WhenReady, Context(durableKeys));
+        var nextTurn = await executor.ExecuteAsync(Stage(), StageActionTriggers.WhenReady, Context(durableKeys));
+
+        operation.CallCount.Should().Be(2);
+        nextTurn.Trace.Should().ContainSingle(value => !value.Skipped && value.Success);
+        durableKeys.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task OncePerRequest_SameAction_IsIdempotentAcrossTurns()
+    {
+        var operation = new CapturingAvailabilityOperation();
+        var executor = new DeterministicStageExecutor(
+            new AgentOperationRegistry([operation]),
+            new StageConditionEvaluator(),
+            new OperationArgumentBinder());
+        var durableKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        await executor.ExecuteAsync(
+            Stage(StageActionIdempotency.OncePerRequest),
+            StageActionTriggers.WhenReady,
+            Context(durableKeys));
+        var nextTurn = await executor.ExecuteAsync(
+            Stage(StageActionIdempotency.OncePerRequest),
+            StageActionTriggers.WhenReady,
+            Context(durableKeys));
+
+        operation.CallCount.Should().Be(1);
+        nextTurn.Trace.Should().ContainSingle(value => value.Skipped && value.SkipReason == "idempotent_replay");
+        durableKeys.Should().ContainSingle(key => key.StartsWith("request:", StringComparison.Ordinal));
+    }
+    [Fact]
     public void ArgumentBinder_BindsSemanticSignalValueWithoutExposingAnOperationToTheLlm()
     {
         var binder = new OperationArgumentBinder();
@@ -190,7 +231,7 @@ public sealed class DeterministicStageExecutorTests
         operation.CallCount.Should().Be(2);
         result.Trace.Should().ContainSingle(value => value.OutcomeCode == "completed" && value.Success);
     }
-    private static AgentFlowStage Stage() => new()
+    private static AgentFlowStage Stage(string idempotency = StageActionIdempotency.InputVersion) => new()
     {
         Id = "scheduling",
         Actions =
@@ -199,6 +240,7 @@ public sealed class DeterministicStageExecutorTests
             {
                 Id = "check_availability",
                 Operation = "reservation.check_availability",
+                Execution = new StageActionExecutionDefinition { Idempotency = idempotency },
                 Arguments = new Dictionary<string, JsonElement>(StringComparer.OrdinalIgnoreCase)
                 {
                     ["service"] = Json("{{fact.service}}"),
@@ -226,13 +268,15 @@ public sealed class DeterministicStageExecutorTests
         ]
     };
 
-    private static DeterministicStageExecutionContext Context() => new()
+    private static DeterministicStageExecutionContext Context(ISet<string>? durableKeys = null) => new()
     {
         Facts = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
             ["service"] = "Corte infantil",
             ["desired_date"] = "2026-07-11"
         },
+        ExecutedActionKeys = durableKeys ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+        TurnExecutedActionKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase),
         OperationContext = new OperationContext
         {
             AgentId = Guid.NewGuid(),

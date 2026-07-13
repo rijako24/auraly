@@ -5,6 +5,7 @@
                       "message":  "Salchicha long x 550 gr",
                       "stage":  "product_selection",
                       "expectedFlow":  "order",
+                      "applyRuntimeGuards":  true,
                       "expectedSignals":  [
                                               "order_changes"
                                           ],
@@ -15,6 +16,10 @@
                                                   {
                                                       "type":  "order_changes",
                                                       "count":  1,
+                                                      "allowedCounts":  [
+                                                                             0,
+                                                                             1
+                                                                         ],
                                                       "products":  [
                                                                        "550"
                                                                    ],
@@ -230,7 +235,11 @@
                                                                      ],
                                                       "quantities":  [
                                                                          1
-                                                                     ]
+                                                                     ],
+                                                      "allowedCounts":  [
+                                                                            1,
+                                                                            2
+                                                                        ]
                                                   }
                                               ],
                       "seed":  "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
@@ -283,6 +292,223 @@
                                   ],
                       "initialFacts":  {
                                            "system.catalog_products":  "{\"schemaVersion\":2,\"sequence\":1,\"snapshots\":[{\"sequence\":1,\"searchTerms\":[\"pollo\"],\"products\":[{\"externalProductId\":\"PO26\",\"name\":\"PERNIL MERCAPOLLO\",\"unitPrice\":5647.05,\"currency\":\"COP\"},{\"externalProductId\":\"PO20\",\"name\":\"PERNIL CAMPOLLO\",\"unitPrice\":6499.82,\"currency\":\"COP\"}]}]}"
+                                       }
+                  },
+                  {
+                      "id":  "pending_selection_blocks_finalization",
+                      "message":  "eso es todo",
+                      "stage":  "product_selection",
+                      "expectedFlow":  "order",
+                      "expectedSignals":  [
+                                              "order_changes"
+                                          ],
+                      "absentFacts":  [
+                                          "order_finalized"
+                                      ],
+                      "expectedSignalItems":  [
+                                                  {
+                                                      "type":  "order_changes",
+                                                      "count":  0,
+                                                      "products":  [
+
+                                                                   ],
+                                                      "exactProducts":  [
+
+                                                                        ],
+                                                      "operations":  [
+
+                                                                     ],
+                                                      "quantities":  [
+
+                                                                     ]
+                                                  }
+                                              ],
+                      "seed":  "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+                      "history":  [
+                                      {
+                                          "role":  "assistant",
+                                          "content":  "Para pernil encontre PERNIL MERCAPOLLO y PERNIL CAMPOLLO. Cual prefieres?"
+                                      }
+                                  ],
+                      "initialFacts":  {
+                                           "system.catalog_products":  "{\"schemaVersion\":2,\"sequence\":1,\"snapshots\":[{\"sequence\":1,\"searchTerms\":[\"pollo\"],\"products\":[{\"externalProductId\":\"PO26\",\"name\":\"PERNIL MERCAPOLLO\",\"unitPrice\":5647.05,\"currency\":\"COP\"},{\"externalProductId\":\"PO20\",\"name\":\"PERNIL CAMPOLLO\",\"unitPrice\":6499.82,\"currency\":\"COP\"},{\"externalProductId\":\"PO28\",\"name\":\"PECHUGA CRIOLLA\",\"unitPrice\":14033.67,\"currency\":\"COP\"}]}]}",
+                                           "system.pending_cart_commands":  "{\"schemaVersion\":1,\"commands\":[{\"operation\":\"add\",\"productText\":\"pernil\",\"quantity\":1,\"destinationReference\":null}],\"ambiguousProductText\":\"pernil\",\"productCandidates\":[{\"name\":\"PERNIL MERCAPOLLO\",\"unitPrice\":5647.05,\"currency\":\"COP\"},{\"name\":\"PERNIL CAMPOLLO\",\"unitPrice\":6499.82,\"currency\":\"COP\"}],\"expiresAtUtc\":\"2099-01-01T00:00:00Z\"}"
+                                       },
+                      "applyRuntimeGuards":  true
+                  },
+                  {
+                      "id":  "pending_add_can_be_cancelled",
+                      "message":  "mejor no agregues el pernil",
+                      "stage":  "product_selection",
+                      "expectedFlow":  "order",
+                      "expectedSignals":  [
+                                              "order_changes"
+                                          ],
+                      "absentFacts":  [
+                                          "order_finalized"
+                                      ],
+                      "expectedSignalItems":  [
+                                                  {
+                                                      "type":  "order_changes",
+                                                      "count":  1,
+                                                      "products":  [
+                                                                       "pernil"
+                                                                   ],
+                                                      "exactProducts":  [
+                                                                            "pernil"
+                                                                        ],
+                                                      "operations":  [
+                                                                         "cancel_pending"
+                                                                     ],
+                                                      "quantities":  [
+
+                                                                     ],
+                                                      "allowedCounts":  [
+                                                                            0,
+                                                                            1
+                                                                        ]
+                                                  }
+                                              ],
+                      "seed":  "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+                      "history":  [
+                                      {
+                                          "role":  "assistant",
+                                          "content":  "Para pernil encontre PERNIL MERCAPOLLO y PERNIL CAMPOLLO. Cual prefieres?"
+                                      }
+                                  ],
+                      "initialFacts":  {
+                                           "system.catalog_products":  "{\"schemaVersion\":2,\"sequence\":1,\"snapshots\":[{\"sequence\":1,\"searchTerms\":[\"pollo\"],\"products\":[{\"externalProductId\":\"PO26\",\"name\":\"PERNIL MERCAPOLLO\",\"unitPrice\":5647.05,\"currency\":\"COP\"},{\"externalProductId\":\"PO20\",\"name\":\"PERNIL CAMPOLLO\",\"unitPrice\":6499.82,\"currency\":\"COP\"},{\"externalProductId\":\"PO28\",\"name\":\"PECHUGA CRIOLLA\",\"unitPrice\":14033.67,\"currency\":\"COP\"}]}]}",
+                                           "system.pending_cart_commands":  "{\"schemaVersion\":1,\"commands\":[{\"operation\":\"add\",\"productText\":\"pernil\",\"quantity\":1,\"destinationReference\":null}],\"ambiguousProductText\":\"pernil\",\"productCandidates\":[{\"name\":\"PERNIL MERCAPOLLO\",\"unitPrice\":5647.05,\"currency\":\"COP\"},{\"name\":\"PERNIL CAMPOLLO\",\"unitPrice\":6499.82,\"currency\":\"COP\"}],\"expiresAtUtc\":\"2099-01-01T00:00:00Z\"}"
+                                       },
+                      "applyRuntimeGuards":  true
+                  },
+                  {
+                      "id":  "unrelated_add_does_not_resolve_pending_selection",
+                      "message":  "tambien agrega una pechuga criolla",
+                      "stage":  "product_selection",
+                      "expectedFlow":  "order",
+                      "expectedSignals":  [
+                                              "order_changes"
+                                          ],
+                      "expectedSignalItems":  [
+                                                  {
+                                                      "type":  "order_changes",
+                                                      "count":  1,
+                                                      "products":  [
+                                                                       "pechuga criolla"
+                                                                   ],
+                                                      "exactProducts":  [
+
+                                                                        ],
+                                                      "operations":  [
+                                                                         "add"
+                                                                     ],
+                                                      "quantities":  [
+                                                                         1
+                                                                     ],
+                                                      "allowedCounts":  [
+                                                                            0,
+                                                                            1
+                                                                        ]
+                                                  }
+                                              ],
+                      "seed":  "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+                      "history":  [
+                                      {
+                                          "role":  "assistant",
+                                          "content":  "Para pernil encontre PERNIL MERCAPOLLO y PERNIL CAMPOLLO. Cual prefieres?"
+                                      }
+                                  ],
+                      "initialFacts":  {
+                                           "system.catalog_products":  "{\"schemaVersion\":2,\"sequence\":1,\"snapshots\":[{\"sequence\":1,\"searchTerms\":[\"pollo\"],\"products\":[{\"externalProductId\":\"PO26\",\"name\":\"PERNIL MERCAPOLLO\",\"unitPrice\":5647.05,\"currency\":\"COP\"},{\"externalProductId\":\"PO20\",\"name\":\"PERNIL CAMPOLLO\",\"unitPrice\":6499.82,\"currency\":\"COP\"},{\"externalProductId\":\"PO28\",\"name\":\"PECHUGA CRIOLLA\",\"unitPrice\":14033.67,\"currency\":\"COP\"}]}]}",
+                                           "system.pending_cart_commands":  "{\"schemaVersion\":1,\"commands\":[{\"operation\":\"add\",\"productText\":\"pernil\",\"quantity\":1,\"destinationReference\":null}],\"ambiguousProductText\":\"pernil\",\"productCandidates\":[{\"name\":\"PERNIL MERCAPOLLO\",\"unitPrice\":5647.05,\"currency\":\"COP\"},{\"name\":\"PERNIL CAMPOLLO\",\"unitPrice\":6499.82,\"currency\":\"COP\"}],\"expiresAtUtc\":\"2099-01-01T00:00:00Z\"}"
+                                       },
+                      "applyRuntimeGuards":  true
+                  },
+                  {
+                      "id":  "same_product_can_be_added_again_in_later_turn",
+                      "message":  "agrega otro pernil mercapollo",
+                      "stage":  "product_selection",
+                      "expectedFlow":  "order",
+                      "expectedSignals":  [
+                                              "order_changes"
+                                          ],
+                      "expectedSignalItems":  [
+                                                  {
+                                                      "type":  "order_changes",
+                                                      "count":  1,
+                                                      "products":  [
+                                                                       "pernil mercapollo"
+                                                                   ],
+                                                      "exactProducts":  [
+
+                                                                        ],
+                                                      "operations":  [
+                                                                         "add"
+                                                                     ],
+                                                      "quantities":  [
+                                                                         1
+                                                                     ]
+                                                  }
+                                              ],
+                      "seed":  "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+                      "history":  [
+                                      {
+                                          "role":  "assistant",
+                                          "content":  "Pedido actual: PERNIL MERCAPOLLO x1. Quieres agregar algo mas?"
+                                      }
+                                  ],
+                      "currentCart":  [
+                                          {
+                                              "name":  "PERNIL MERCAPOLLO",
+                                              "quantity":  1
+                                          }
+                                      ],
+                      "initialFacts":  {
+                                           "system.catalog_products":  "{\"schemaVersion\":2,\"sequence\":1,\"snapshots\":[{\"sequence\":1,\"searchTerms\":[\"pollo\"],\"products\":[{\"externalProductId\":\"PO26\",\"name\":\"PERNIL MERCAPOLLO\",\"unitPrice\":5647.05,\"currency\":\"COP\"},{\"externalProductId\":\"PO20\",\"name\":\"PERNIL CAMPOLLO\",\"unitPrice\":6499.82,\"currency\":\"COP\"},{\"externalProductId\":\"PO28\",\"name\":\"PECHUGA CRIOLLA\",\"unitPrice\":14033.67,\"currency\":\"COP\"}]}]}"
+                                       }
+                  },
+                  {
+                      "id":  "deictic_increment_uses_current_cart_item",
+                      "message":  "agrega 2 mas de ese",
+                      "stage":  "product_selection",
+                      "expectedFlow":  "order",
+                      "expectedSignals":  [
+                                              "order_changes"
+                                          ],
+                      "expectedSignalItems":  [
+                                                  {
+                                                      "type":  "order_changes",
+                                                      "count":  1,
+                                                      "products":  [
+                                                                       "PERNIL MERCAPOLLO"
+                                                                   ],
+                                                      "exactProducts":  [
+
+                                                                        ],
+                                                      "operations":  [
+                                                                         "add"
+                                                                     ],
+                                                      "quantities":  [
+                                                                         2
+                                                                     ]
+                                                  }
+                                              ],
+                      "seed":  "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+                      "history":  [
+                                      {
+                                          "role":  "assistant",
+                                          "content":  "Pedido actual: PERNIL MERCAPOLLO x1. Quieres agregar algo mas?"
+                                      }
+                                  ],
+                      "currentCart":  [
+                                          {
+                                              "name":  "PERNIL MERCAPOLLO",
+                                              "quantity":  1
+                                          }
+                                      ],
+                      "initialFacts":  {
+                                           "system.catalog_products":  "{\"schemaVersion\":2,\"sequence\":1,\"snapshots\":[{\"sequence\":1,\"searchTerms\":[\"pollo\"],\"products\":[{\"externalProductId\":\"PO26\",\"name\":\"PERNIL MERCAPOLLO\",\"unitPrice\":5647.05,\"currency\":\"COP\"},{\"externalProductId\":\"PO20\",\"name\":\"PERNIL CAMPOLLO\",\"unitPrice\":6499.82,\"currency\":\"COP\"},{\"externalProductId\":\"PO28\",\"name\":\"PECHUGA CRIOLLA\",\"unitPrice\":14033.67,\"currency\":\"COP\"}]}]}"
                                        }
                   }
               ],

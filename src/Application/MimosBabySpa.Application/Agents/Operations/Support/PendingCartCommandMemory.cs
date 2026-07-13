@@ -11,21 +11,28 @@ internal static class PendingCartCommandMemory
     internal const string FactKey = "system.pending_cart_commands";
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
-    public static IReadOnlyList<CartCommand> MergeResolution(
+    public static PendingCartMergeResult MergeResolution(
         AgentConversationContext context,
         IReadOnlyList<CartCommand> incoming)
     {
         var pending = Read(context);
         if (pending is null)
-            return incoming;
+            return new PendingCartMergeResult(incoming, true);
 
         var pendingCommand = pending.Commands
-            .First(command => SameReference(command.ProductText, pending.AmbiguousProductText));
+            .FirstOrDefault(command => SameReference(command.ProductText, pending.AmbiguousProductText));
+        if (pendingCommand is null)
+            return new PendingCartMergeResult(incoming, true);
         var latestMessage = context.LatestUserMessage ?? string.Empty;
         var latestCandidateMatches = pending.ProductCandidates
             .Where(candidate => IsReferenceMatch(latestMessage, candidate.Name))
             .ToList();
-        var latestCatalogMatches = ProductSelectionMemory.FindCatalogMatches(context, latestMessage);
+        var candidateBoundResolution = pending.ProductCandidates.Count > 0;
+        var latestCatalogMatches = candidateBoundResolution
+            ? []
+            : ProductSelectionMemory.FindCatalogMatches(context, latestMessage)
+                .Where(candidate => HasMeaningfulOverlap(pending.AmbiguousProductText, candidate.Name))
+                .ToList();
         var incomingResolution = incoming
             .Select(command => new
             {
@@ -33,9 +40,25 @@ internal static class PendingCartCommandMemory
                 CandidateMatches = pending.ProductCandidates
                     .Where(candidate => IsReferenceMatch(command.ProductText, candidate.Name))
                     .ToList(),
-                CatalogMatches = ProductSelectionMemory.FindCatalogMatches(context, command.ProductText)
+                CatalogMatches = candidateBoundResolution
+                    ? []
+                    : ProductSelectionMemory.FindCatalogMatches(context, command.ProductText)
+                        .Where(candidate => HasMeaningfulOverlap(pending.AmbiguousProductText, candidate.Name))
+                        .ToList()
             })
             .FirstOrDefault(item => item.CandidateMatches.Count == 1 || item.CatalogMatches.Count == 1);
+
+        var cancellation = incoming.FirstOrDefault(command =>
+            command.Operation.Equals(CartCommandOperations.CancelPending, StringComparison.OrdinalIgnoreCase)
+            && SameReference(command.ProductText, pending.AmbiguousProductText));
+        if (cancellation is not null)
+        {
+            var remaining = pending.Commands
+                .Where(command => !SameReference(command.ProductText, pending.AmbiguousProductText))
+                .Concat(incoming.Where(command => !ReferenceEquals(command, cancellation)))
+                .ToList();
+            return new PendingCartMergeResult(remaining, true);
+        }
 
         var selectedName = latestCandidateMatches.Count == 1
             ? latestCandidateMatches[0].Name
@@ -47,7 +70,7 @@ internal static class PendingCartCommandMemory
                         ? incomingResolution.CatalogMatches[0].Name
                         : null;
         if (selectedName is null)
-            return [];
+            return new PendingCartMergeResult([], false);
 
         var replacement = pendingCommand with { ProductText = selectedName };
         var merged = pending.Commands
@@ -60,9 +83,35 @@ internal static class PendingCartCommandMemory
                 ? incoming[0]
                 : null);
         merged.AddRange(incoming.Where(command => !ReferenceEquals(command, continuationCommand)));
-        return merged;
+        return new PendingCartMergeResult(merged, true);
     }
 
+    public static IReadOnlyList<CartCommand> AccumulateUnresolved(
+        PendingCartCommandBatch pending,
+        IReadOnlyList<CartCommand> incoming)
+    {
+        var accumulated = pending.Commands.ToList();
+        foreach (var command in incoming)
+        {
+            if (SameReference(command.ProductText, pending.AmbiguousProductText))
+                continue;
+
+            var index = accumulated.FindIndex(existing =>
+                SameReference(existing.ProductText, command.ProductText));
+            if (index < 0)
+            {
+                accumulated.Add(command);
+                continue;
+            }
+
+            var existing = accumulated[index];
+            accumulated[index] = existing.Operation == CartCommandOperations.Add
+                && command.Operation == CartCommandOperations.Add
+                ? existing with { Quantity = (existing.Quantity ?? 0) + (command.Quantity ?? 0) }
+                : command;
+        }
+        return accumulated;
+    }
     public static async Task SaveAsync(
         IConversationFactsService facts,
         AgentConversationContext context,
@@ -123,6 +172,19 @@ internal static class PendingCartCommandMemory
         return tokens.Count > 0 && tokens.All(normalizedCandidate.Contains);
     }
 
+    private static bool HasMeaningfulOverlap(string pendingReference, string candidateName)
+    {
+        static bool IsMeaningful(string token) =>
+            token.Length >= 3 || token.Any(char.IsDigit);
+
+        var pendingTokens = NormalizeTokens(pendingReference)
+            .Where(IsMeaningful)
+            .ToHashSet(StringComparer.Ordinal);
+        return NormalizeTokens(candidateName)
+            .Where(IsMeaningful)
+            .Any(pendingTokens.Contains);
+    }
+
     private static bool SameReference(string left, string right) =>
         Normalize(left).Equals(Normalize(right), StringComparison.Ordinal);
 
@@ -145,6 +207,10 @@ internal static class PendingCartCommandMemory
         return new string(characters).Normalize(NormalizationForm.FormC);
     }
 }
+
+internal sealed record PendingCartMergeResult(
+    IReadOnlyList<CartCommand> Commands,
+    bool Resolved);
 
 internal sealed record PendingCartCommandBatch(
     int SchemaVersion,

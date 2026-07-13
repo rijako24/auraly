@@ -8,6 +8,7 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="MimosBabySpa.Tests" />
+    <InternalsVisibleTo Include="MimosBabySpa.Console" />
   </ItemGroup>
 
   <ItemGroup>

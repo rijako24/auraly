@@ -403,7 +403,8 @@ var latestPayment = await _paymentLifecycle.GetLatestByConversationAsync(convers
             session.ConversationState.FactVersions, StringComparer.OrdinalIgnoreCase);
 
         var executedOperationKeys = session.ConversationState.ExecutedOperationKeys
-            .Where(entry => entry.Value >= DateTime.UtcNow.AddDays(-30))
+            .Where(entry => entry.Value >= DateTime.UtcNow.AddDays(-30)
+                && entry.Key.StartsWith("request:", StringComparison.OrdinalIgnoreCase))
             .Select(entry => entry.Key)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var result = await _deterministicCoordinator.ExecuteAsync(

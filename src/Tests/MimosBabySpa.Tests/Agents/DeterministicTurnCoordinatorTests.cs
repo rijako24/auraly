@@ -9,6 +9,7 @@ using MimosBabySpa.Application.Agents.Planning;
 using MimosBabySpa.Application.Agents.Runtime;
 using MimosBabySpa.Application.LLM;
 using MimosBabySpa.Application.Services;
+using MimosBabySpa.Application.Commerce;
 using MimosBabySpa.Domain.Models;
 using Xunit;
 
@@ -383,6 +384,76 @@ public sealed class DeterministicTurnCoordinatorTests
         state.PendingTurnPlan.Should().BeNull();
     }
 
+    [Fact]
+    public void ProtectPendingCommerceSelection_DefersFinalizationAndSynthesizesConfiguredCartSignal()
+    {
+        var config = new AgentConfig
+        {
+            Commerce = new CommerceConfig { Enabled = true },
+            FactSchema = [new FactSchemaEntry { Key = "done", Role = "order.finalized", Type = "boolean" }],
+            Flows =
+            [
+                new AgentFlowDefinition
+                {
+                    Id = "order",
+                    Type = FlowTypes.Primary,
+                    Stages =
+                    [
+                        new AgentFlowStage
+                        {
+                            Id = "products",
+                            Signals = [new StageSignalDefinition { Type = "cart_mutation", ValueSchema = Json("{\"type\":\"array\"}") }],
+                            Actions =
+                            [
+                                new StageActionDefinition
+                                {
+                                    Id = "apply",
+                                    Operation = "commerce.apply_order_changes",
+                                    Signal = "cart_mutation"
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        };
+        var facts = new Dictionary<string, string>
+        {
+            ["system.pending_cart_commands"] = """
+                {"schemaVersion":1,"commands":[{"operation":"add","productText":"pernil","quantity":1,"destinationReference":null}],"ambiguousProductText":"pernil","productCandidates":[{"name":"PERNIL A","unitPrice":1,"currency":"COP"},{"name":"PERNIL B","unitPrice":2,"currency":"COP"}],"expiresAtUtc":"2099-01-01T00:00:00Z"}
+                """
+        };
+        var plan = new TurnPlan
+        {
+            Signals =
+            [
+                new PlannedSignal
+                {
+                    Type = "cart_mutation",
+                    Value = Json("[{\"operation\":\"cancel_pending\",\"productText\":\"pernil\",\"quantity\":null,\"destinationReference\":null}]"),
+                    Evidence = "eso es todo"
+                }
+            ],
+            Facts =
+            [
+                new PlannedFactClaim
+                {
+                    Key = "done",
+                    Operation = TurnPlanOperations.Set,
+                    Value = Json("true"),
+                    Evidence = "eso es todo"
+                }
+            ]
+        };
+
+        var protectedPlan = DeterministicTurnCoordinator.ProtectPendingCommerceSelection(
+            config, facts, "eso es todo", plan);
+
+        protectedPlan.Facts.Should().BeEmpty();
+        protectedPlan.Signals.Should().ContainSingle(signal =>
+            signal.Type == "cart_mutation" && signal.Value.ValueKind == JsonValueKind.Array
+            && signal.Value.GetArrayLength() == 0);
+    }
     private static DeterministicTurnCoordinator Coordinator(ITurnPlanner planner) =>
         new(
             planner,

@@ -7,6 +7,7 @@ public static class CartCommandOperations
 {
     public const string Add = "add";
     public const string Remove = "remove";
+    public const string CancelPending = "cancel_pending";
     public const string SetQuantity = "set_quantity";
 }
 

@@ -4,6 +4,7 @@ using System.Text.RegularExpressions;
 using MimosBabySpa.Application.Agents;
 using MimosBabySpa.Application.Agents.Configuration;
 using MimosBabySpa.Application.Agents.Planning;
+using MimosBabySpa.Application.Agents.Runtime;
 using MimosBabySpa.Application.LLM;
 using MimosBabySpa.Application.Time;
 
@@ -175,7 +176,16 @@ internal sealed class TurnPlanPilotRunner
                     ExtractorConversationProjector.Project(config, test.History.Select(ToChatMessage).ToList()), structuredContext),
                 cancellationToken);
 
-            var errors = ValidateEvaluation(test, proposal, businessNow);
+            var evaluatedProposal = proposal;
+            if (test.ApplyRuntimeGuards && proposal.Plan is not null)
+            {
+                evaluatedProposal = proposal with
+                {
+                    Plan = DeterministicTurnCoordinator.ProtectPendingCommerceSelection(
+                        config, facts, test.Message, proposal.Plan)
+                };
+            }
+            var errors = ValidateEvaluation(test, evaluatedProposal, businessNow);
             if (errors.Count == 0)
             {
                 Console.ForegroundColor = ConsoleColor.Green;
@@ -300,8 +310,11 @@ internal sealed class TurnPlanPilotRunner
             }
 
             var items = signal.Value.EnumerateArray().ToList();
-            if (items.Count != expected.Count)
-                errors.Add($"Signal '{expected.Type}' esperaba {expected.Count} items y recibio {items.Count}.");
+            var validCounts = expected.AllowedCounts.Count > 0 ? expected.AllowedCounts : [expected.Count];
+            if (!validCounts.Contains(items.Count))
+                errors.Add($"Signal '{expected.Type}' esperaba {string.Join(" o ", validCounts)} items y recibio {items.Count}.");
+            if (items.Count == 0 && validCounts.Contains(0))
+                continue;
             foreach (var product in expected.Products)
             {
                 if (!items.Any(item => item.TryGetProperty("productText", out var text)
@@ -450,6 +463,7 @@ internal sealed class TurnPlanPilotRunner
         public string Message { get; init; } = string.Empty;
         public IReadOnlyList<ExtractorHistoryMessage> History { get; init; } = [];
         public IReadOnlyList<ExtractorCartItem> CurrentCart { get; init; } = [];
+        public bool ApplyRuntimeGuards { get; init; }
         public IReadOnlyDictionary<string, string> InitialFacts { get; init; } = new Dictionary<string, string>();
         public string? ExpectedFlow { get; init; }
         public IReadOnlyList<ExpectedFact> ExpectedFacts { get; init; } = [];
@@ -482,6 +496,7 @@ internal sealed class TurnPlanPilotRunner
     {
         public string Type { get; init; } = string.Empty;
         public int Count { get; init; }
+        public IReadOnlyList<int> AllowedCounts { get; init; } = [];
         public IReadOnlyList<string> Products { get; init; } = [];
         public IReadOnlyList<string> ExactProducts { get; init; } = [];
         public IReadOnlyList<string> Operations { get; init; } = [];

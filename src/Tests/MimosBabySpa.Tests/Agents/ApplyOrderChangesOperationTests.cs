@@ -116,6 +116,283 @@ public sealed class ApplyOrderChangesOperationTests
             ("PECHUGA CAMPOLLO", 5m));
         session.Facts.Should().NotContainKey("system.pending_cart_commands");
     }
+
+    [Fact]
+    public async Task EmptyGuardSignal_ResolvesPendingSelectionFromLatestMessageAndCatalog()
+    {
+        var resolver = new StubResolver(new Dictionary<string, IReadOnlyList<ProductReference>>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["Long x 10"] = [],
+            ["SALCHICHA LONG X 550GR"] = [Product("SALCHICHA LONG X 550GR")]
+        });
+        var store = new StubStore();
+        var facts = new InMemoryFactsService();
+        var operation = new ApplyOrderChangesOperation(new CartCommandBatchProcessor(resolver, store), facts);
+        var session = Session();
+
+        var first = await operation.ExecuteAsync(
+            Json("""{"commands":[{"operation":"add","productText":"Long x 10","quantity":1,"destinationReference":null}]}"""),
+            Context(session));
+
+        first.Code.Should().Be("cart.product_not_found");
+        store.ApplyCalls.Should().Be(0);
+        session.Facts.Should().ContainKey("system.pending_cart_commands");
+        session.Facts["system.catalog_products"] = JsonSerializer.Serialize(new[]
+        {
+            new
+            {
+                product_id = (Guid?)null,
+                external_product_id = "CF59",
+                sku = "CF59",
+                name = "SALCHICHA LONG X 550GR",
+                unit_price = 16023.21m,
+                currency = "COP",
+                stock_quantity = (decimal?)49
+            },
+            new
+            {
+                product_id = (Guid?)null,
+                external_product_id = "CF20",
+                sku = "CF20",
+                name = "SALCHICHA LONG X 1100 G X 20UND",
+                unit_price = 28032.50m,
+                currency = "COP",
+                stock_quantity = (decimal?)113
+            }
+        });
+        session.LatestUserMessage = "Salchicha long x 550 gr";
+
+        var resumed = await operation.ExecuteAsync(Json("""{"commands":[]}"""), Context(session));
+
+        resumed.Code.Should().Be("cart.applied");
+        store.ApplyCalls.Should().Be(1);
+        store.Applied.Should().ContainSingle();
+        store.Applied[0].Product!.Name.Should().Be("SALCHICHA LONG X 550GR");
+        store.Applied[0].Quantity.Should().Be(1m);
+        session.Facts.Should().NotContainKey("system.pending_cart_commands");
+    }
+
+    [Fact]
+    public async Task PendingWithoutCandidates_DoesNotRewriteUnrelatedIndependentAdd()
+    {
+        var resolver = new StubResolver(new Dictionary<string, IReadOnlyList<ProductReference>>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["Long x 10"] = [],
+            ["PECHUGA CRIOLLA"] = [Product("PECHUGA CRIOLLA")]
+        });
+        var store = new StubStore();
+        var facts = new InMemoryFactsService();
+        var operation = new ApplyOrderChangesOperation(new CartCommandBatchProcessor(resolver, store), facts);
+        var session = Session();
+
+        var first = await operation.ExecuteAsync(
+            Json("""{"commands":[{"operation":"add","productText":"Long x 10","quantity":1,"destinationReference":null}]}"""),
+            Context(session));
+
+        first.Code.Should().Be("cart.product_not_found");
+        session.Facts["system.catalog_products"] = JsonSerializer.Serialize(new[]
+        {
+            new
+            {
+                product_id = (Guid?)null,
+                external_product_id = "P1",
+                sku = "P1",
+                name = "PECHUGA CRIOLLA",
+                unit_price = 14033.67m,
+                currency = "COP",
+                stock_quantity = (decimal?)100
+            }
+        });
+        session.LatestUserMessage = "tambien agrega una pechuga criolla";
+
+        var unrelated = await operation.ExecuteAsync(
+            Json("""{"commands":[{"operation":"add","productText":"PECHUGA CRIOLLA","quantity":1,"destinationReference":null}]}"""),
+            Context(session));
+
+        unrelated.Code.Should().Be("cart.product_ambiguous");
+        store.ApplyCalls.Should().Be(0);
+        var pending = session.Facts["system.pending_cart_commands"];
+        pending.Should().Contain("Long x 10");
+        pending.Should().Contain("PECHUGA CRIOLLA");
+        pending.Should().Contain(""""ambiguousProductText":"Long x 10"""");
+    }
+    [Fact]
+    public async Task PendingAmbiguity_DoesNotUseUnrelatedCatalogProductAsResolution_AndPreservesLaterAdds()
+    {
+        var resolver = new StubResolver(new Dictionary<string, IReadOnlyList<ProductReference>>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["pernil"] = [Product("PERNIL MERCAPOLLO"), Product("PERNIL CAMPOLLO")],
+            ["PERNIL MERCAPOLLO"] = [Product("PERNIL MERCAPOLLO")],
+            ["PECHUGA CRIOLLA"] = [Product("PECHUGA CRIOLLA")]
+        });
+        var store = new StubStore();
+        var operation = new ApplyOrderChangesOperation(
+            new CartCommandBatchProcessor(resolver, store),
+            new InMemoryFactsService());
+        var session = Session();
+
+        var ambiguous = await operation.ExecuteAsync(
+            Json("""{"commands":[{"operation":"add","productText":"pernil","quantity":1,"destinationReference":null}]}"""),
+            Context(session));
+        ambiguous.Code.Should().Be("cart.product_ambiguous");
+
+        session.LatestUserMessage = "tambien agrega una pechuga criolla";
+        var unrelated = await operation.ExecuteAsync(
+            Json("""{"commands":[{"operation":"add","productText":"PECHUGA CRIOLLA","quantity":1,"destinationReference":null}]}"""),
+            Context(session));
+
+        unrelated.Code.Should().Be("cart.product_ambiguous");
+        store.ApplyCalls.Should().Be(0);
+        session.Facts["system.pending_cart_commands"].Should().Contain("PECHUGA CRIOLLA");
+
+        var repeatedAdd = await operation.ExecuteAsync(
+            Json("""{"commands":[{"operation":"add","productText":"PECHUGA CRIOLLA","quantity":1,"destinationReference":null}]}"""),
+            Context(session));
+        repeatedAdd.Code.Should().Be("cart.product_ambiguous");
+
+        session.LatestUserMessage = "mercapollo";
+        var resolved = await operation.ExecuteAsync(
+            Json("""{"commands":[{"operation":"add","productText":"PERNIL MERCAPOLLO","quantity":1,"destinationReference":null}]}"""),
+            Context(session));
+
+        resolved.Code.Should().Be("cart.applied");
+        store.ApplyCalls.Should().Be(1);
+        store.Applied.Select(command => (command.Product!.Name, command.Quantity)).Should().Equal(
+            ("PERNIL MERCAPOLLO", 1m),
+            ("PECHUGA CRIOLLA", 2m));
+        session.Facts.Should().NotContainKey("system.pending_cart_commands");
+    }
+    [Fact]
+    public async Task ExpandedCatalogName_IsReducedToSupportedWords_WhenUserReferenceStillMatchesSeveralOffers()
+    {
+        var resolver = new StubResolver(new Dictionary<string, IReadOnlyList<ProductReference>>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["pernil"] = [Product("PERNIL MERCAPOLLO"), Product("PERNIL CAMPOLLO")],
+            ["PERNIL MERCAPOLLO"] = [Product("PERNIL MERCAPOLLO")]
+        });
+        var store = new StubStore();
+        var operation = new ApplyOrderChangesOperation(
+            new CartCommandBatchProcessor(resolver, store),
+            new InMemoryFactsService());
+        var session = Session();
+        session.LatestUserMessage = "agrega un pernil";
+        session.Facts["system.catalog_products"] = """
+            {"schemaVersion":2,"sequence":1,"snapshots":[{"sequence":1,"searchTerms":["pollo"],"products":[{"externalProductId":"1","name":"PERNIL MERCAPOLLO","unitPrice":1,"currency":"COP"},{"externalProductId":"2","name":"PERNIL CAMPOLLO","unitPrice":2,"currency":"COP"}]}]}
+            """;
+
+        var result = await operation.ExecuteAsync(
+            Json("""{"commands":[{"operation":"add","productText":"PERNIL MERCAPOLLO","quantity":1,"destinationReference":null}]}"""),
+            Context(session));
+
+        result.Code.Should().Be("cart.product_ambiguous");
+        store.ApplyCalls.Should().Be(0);
+        session.Facts["system.pending_cart_commands"].Should().Contain("\"ambiguousProductText\":\"pernil\"");
+    }
+
+    [Fact]
+    public async Task StopWords_DoNotSelectAnOtherwiseAmbiguousCatalogVariant()
+    {
+        var resolver = new StubResolver(new Dictionary<string, IReadOnlyList<ProductReference>>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["pechuga pollo"] = [Product("TROZOS DE PECHUGA DE POLLO"), Product("PECHUGA MAC POLLO")]
+        });
+        var store = new StubStore();
+        var operation = new ApplyOrderChangesOperation(
+            new CartCommandBatchProcessor(resolver, store),
+            new InMemoryFactsService());
+        var session = Session();
+        session.LatestUserMessage = "agrega pechuga de pollo";
+        session.Facts["system.catalog_products"] = """
+            {"schemaVersion":2,"sequence":1,"snapshots":[{"sequence":1,"searchTerms":["pechuga"],"products":[{"externalProductId":"1","name":"TROZOS DE PECHUGA DE POLLO","unitPrice":1,"currency":"COP"},{"externalProductId":"2","name":"PECHUGA MAC POLLO","unitPrice":2,"currency":"COP"}]}]}
+            """;
+
+        var result = await operation.ExecuteAsync(
+            Json("""{"commands":[{"operation":"add","productText":"TROZOS DE PECHUGA DE POLLO","quantity":1,"destinationReference":null}]}"""),
+            Context(session));
+
+        result.Code.Should().Be("cart.product_ambiguous");
+        store.ApplyCalls.Should().Be(0);
+        session.Facts["system.pending_cart_commands"].Should().Contain(""""ambiguousProductText":"pechuga pollo"""");
+    }
+    [Fact]
+    public async Task EmptyBatch_RePresentsPendingAmbiguityWithoutMutatingTheCart()
+    {
+        var resolver = new StubResolver(new Dictionary<string, IReadOnlyList<ProductReference>>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["pernil"] = [Product("PERNIL MERCAPOLLO"), Product("PERNIL CAMPOLLO")]
+        });
+        var store = new StubStore();
+        var operation = new ApplyOrderChangesOperation(
+            new CartCommandBatchProcessor(resolver, store),
+            new InMemoryFactsService());
+        var session = Session();
+
+        (await operation.ExecuteAsync(
+            Json("""{"commands":[{"operation":"add","productText":"pernil","quantity":1,"destinationReference":null}]}"""),
+            Context(session))).Code.Should().Be("cart.product_ambiguous");
+
+        session.LatestUserMessage = "eso es todo";
+        var blockedFinalization = await operation.ExecuteAsync(
+            Json("""{"commands":[]}"""),
+            Context(session));
+
+        blockedFinalization.Code.Should().Be("cart.product_ambiguous");
+        blockedFinalization.Error!.Context!.Value.GetProperty("product_options").GetArrayLength().Should().Be(2);
+        store.ApplyCalls.Should().Be(0);
+        session.Facts.Should().ContainKey("system.pending_cart_commands");
+    }
+    [Fact]
+    public async Task PendingAdd_CanBeCancelledWithoutMutatingTheCart()
+    {
+        var resolver = new StubResolver(new Dictionary<string, IReadOnlyList<ProductReference>>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["pernil"] = [Product("PERNIL MERCAPOLLO"), Product("PERNIL CAMPOLLO")]
+        });
+        var store = new StubStore();
+        var operation = new ApplyOrderChangesOperation(
+            new CartCommandBatchProcessor(resolver, store),
+            new InMemoryFactsService());
+        var session = Session();
+
+        (await operation.ExecuteAsync(
+            Json("""{"commands":[{"operation":"add","productText":"pernil","quantity":1,"destinationReference":null}]}"""),
+            Context(session))).Code.Should().Be("cart.product_ambiguous");
+
+        session.LatestUserMessage = "mejor no agregues el pernil";
+        var cancelled = await operation.ExecuteAsync(
+            Json("""{"commands":[{"operation":"cancel_pending","productText":"pernil","quantity":null,"destinationReference":null}]}"""),
+            Context(session));
+
+        cancelled.Success.Should().BeTrue();
+        cancelled.Code.Should().Be("cart.pending_cancelled");
+        store.ApplyCalls.Should().Be(0);
+        session.Facts.Should().NotContainKey("system.pending_cart_commands");
+    }
+    [Theory]
+    [InlineData("{\"schemaVersion\":1,\"commands\":[],\"ambiguousProductText\":\"pernil\",\"productCandidates\":[],\"expiresAtUtc\":\"2000-01-01T00:00:00Z\"}")]
+    [InlineData("not-json")]
+    public async Task ExpiredOrMalformedPendingMemory_IsClearedAndDoesNotBlockNewCommands(string pendingJson)
+    {
+        var resolver = new StubResolver(new Dictionary<string, IReadOnlyList<ProductReference>>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["PECHUGA CRIOLLA"] = [Product("PECHUGA CRIOLLA")]
+        });
+        var store = new StubStore();
+        var operation = new ApplyOrderChangesOperation(
+            new CartCommandBatchProcessor(resolver, store),
+            new InMemoryFactsService());
+        var session = Session();
+        session.Facts["system.pending_cart_commands"] = pendingJson;
+        session.LatestUserMessage = "agrega una pechuga criolla";
+
+        var result = await operation.ExecuteAsync(
+            Json("""{"commands":[{"operation":"add","productText":"PECHUGA CRIOLLA","quantity":1,"destinationReference":null}]}"""),
+            Context(session));
+
+        result.Code.Should().Be("cart.applied");
+        store.ApplyCalls.Should().Be(1);
+        session.Facts.Should().NotContainKey("system.pending_cart_commands");
+    }
     private static AgentConversationContext Session() => new()
     {
         BusinessId = Guid.NewGuid(),

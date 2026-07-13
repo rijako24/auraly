@@ -35,7 +35,7 @@ public sealed class ApplyOrderChangesOperation : IAgentOperation
                 "type": "object",
                 "additionalProperties": false,
                 "properties": {
-                  "operation": { "type": "string", "enum": ["add", "remove", "set_quantity"] },
+                  "operation": { "type": "string", "enum": ["add", "remove", "set_quantity", "cancel_pending"] },
                   "productText": { "type": "string" },
                   "quantity": { "type": ["number", "null"] },
                   "destinationReference": { "type": ["string", "null"] }
@@ -50,6 +50,7 @@ public sealed class ApplyOrderChangesOperation : IAgentOperation
         [
             "cart.applied",
             "cart.no_changes",
+            "cart.pending_cancelled",
             "cart.conflicting_commands",
             "cart.multiple_destinations",
             "cart.product_not_found",
@@ -98,10 +99,40 @@ public sealed class ApplyOrderChangesOperation : IAgentOperation
             Facts = new Dictionary<string, string>(context.Facts, StringComparer.OrdinalIgnoreCase)
         };
 
+        var groundedCommands = ProductSelectionMemory.PreserveCatalogAmbiguity(
+            session,
+            session.LatestUserMessage ?? string.Empty,
+            commands);
+        var hadPendingMemory = session.Facts.ContainsKey(PendingCartCommandMemory.FactKey);
         var pending = PendingCartCommandMemory.Read(session);
-        var effectiveCommands = PendingCartCommandMemory.MergeResolution(session, commands);
-        if (pending is not null && effectiveCommands.Count == 0)
+        if (pending is null && hadPendingMemory && _facts is not null)
+            await PendingCartCommandMemory.ClearAsync(_facts, session, cancellationToken);
+        var merge = PendingCartCommandMemory.MergeResolution(session, groundedCommands);
+        var effectiveCommands = merge.Commands;
+        if (pending is not null && !merge.Resolved)
+        {
+            if (_facts is not null)
+            {
+                var accumulated = PendingCartCommandMemory.AccumulateUnresolved(pending, groundedCommands);
+                await PendingCartCommandMemory.SaveAsync(
+                    _facts,
+                    session,
+                    accumulated,
+                    PendingIssue(pending),
+                    cancellationToken);
+            }
             return AmbiguousOutcome(PendingIssue(pending));
+        }
+
+        if (pending is not null && merge.Resolved && effectiveCommands.Count == 0)
+        {
+            if (_facts is not null)
+                await PendingCartCommandMemory.ClearAsync(_facts, session, cancellationToken);
+            return OperationOutcome.Ok("cart.pending_cancelled", new
+            {
+                product_text = pending.AmbiguousProductText
+            });
+        }
 
         var result = await _processor.ApplyAsync(session, effectiveCommands, cancellationToken);
         if (result.Success && _facts is not null && pending is not null)

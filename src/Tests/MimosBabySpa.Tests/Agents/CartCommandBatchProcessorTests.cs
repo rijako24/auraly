@@ -299,6 +299,126 @@ public sealed class CartCommandBatchProcessorTests
         final.Items.Should().Contain(item => item.ProductName == "ALA JUMBO MERCAPOLLO" && item.Quantity == 2);
         final.Items.Should().Contain(item => item.ProductName == "PERNIL CAMPOLLO" && item.Quantity == 3);
     }
+    [Fact]
+    public async Task Apply_MixedRemoveAndAmbiguousAdd_WritesNothingAtomically()
+    {
+        var current = new OrderSnapshot(
+            Guid.NewGuid(), OrderStatus.Draft, "COP", 10, 0, 0, 10,
+            [new OrderItemSnapshot(Guid.NewGuid(), null, "PC", "PC", "PECHUGA CRIOLLA", 1, 10, 10)]);
+        var resolver = new StubResolver(new Dictionary<string, IReadOnlyList<ProductReference>>
+        {
+            ["pernil"] = [Product("PERNIL A"), Product("PERNIL B")]
+        });
+        var store = new StubStore(current);
+        var processor = new CartCommandBatchProcessor(resolver, store);
+
+        var result = await processor.ApplyAsync(
+            new AgentConversationContext(),
+            [
+                new CartCommand(CartCommandOperations.Remove, "pechuga criolla", null, null),
+                Add("pernil", 1)
+            ]);
+
+        result.Code.Should().Be("cart.product_ambiguous");
+        store.ApplyCalls.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task Apply_DecreasingExistingQuantity_DoesNotQueryCatalog()
+    {
+        var current = new OrderSnapshot(
+            Guid.NewGuid(), OrderStatus.Draft, "COP", 30, 0, 0, 30,
+            [new OrderItemSnapshot(Guid.NewGuid(), null, "PC", "PC", "PECHUGA CRIOLLA", 3, 10, 30)]);
+        var resolver = new StubResolver(new Dictionary<string, IReadOnlyList<ProductReference>>());
+        var store = new StubStore(current);
+        var processor = new CartCommandBatchProcessor(resolver, store);
+
+        var result = await processor.ApplyAsync(
+            new AgentConversationContext(),
+            [new CartCommand(CartCommandOperations.SetQuantity, "pechuga criolla", 2, null)]);
+
+        result.Success.Should().BeTrue();
+        resolver.Calls.Should().Be(0);
+        store.Applied.Should().ContainSingle(command =>
+            command.Operation == CartCommandOperations.SetQuantity && command.Quantity == 2);
+    }
+
+    [Fact]
+    public async Task Apply_AmbiguousCartReferenceForRemoval_DoesNotRemoveEitherItem()
+    {
+        var current = new OrderSnapshot(
+            Guid.NewGuid(), OrderStatus.Draft, "COP", 20, 0, 0, 20,
+            [
+                new OrderItemSnapshot(Guid.NewGuid(), null, "P1", "P1", "PECHUGA CRIOLLA", 1, 10, 10),
+                new OrderItemSnapshot(Guid.NewGuid(), null, "P2", "P2", "PECHUGA CAMPOLLO", 1, 10, 10)
+            ]);
+        var store = new StubStore(current);
+        var processor = new CartCommandBatchProcessor(
+            new StubResolver(new Dictionary<string, IReadOnlyList<ProductReference>>()),
+            store);
+
+        var result = await processor.ApplyAsync(
+            new AgentConversationContext(),
+            [new CartCommand(CartCommandOperations.Remove, "pechuga", null, null)]);
+
+        result.Code.Should().Be("cart.item_not_found_or_ambiguous");
+        store.ApplyCalls.Should().Be(0);
+    }
+    [Fact]
+    public async Task Apply_RandomizedValidMultiTurnSequences_MatchReferenceCartModel()
+    {
+        var names = new[] { "PECHUGA CRIOLLA", "PERNIL CAMPOLLO", "ALA JUMBO" };
+        var resolver = new StubResolver(names.ToDictionary(
+            name => name,
+            name => (IReadOnlyList<ProductReference>)[Product(name, stock: 10000)],
+            StringComparer.OrdinalIgnoreCase));
+        var random = new Random(20260713);
+
+        for (var scenario = 0; scenario < 500; scenario++)
+        {
+            var store = new StatefulStore();
+            var processor = new CartCommandBatchProcessor(resolver, store);
+            var context = new AgentConversationContext();
+            var expected = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase);
+
+            for (var turn = 0; turn < 100; turn++)
+            {
+                var product = names[random.Next(names.Length)];
+                var operation = random.Next(3);
+                CartCommand command;
+                if (operation == 0)
+                {
+                    var quantity = random.Next(1, 4);
+                    command = Add(product, quantity);
+                    expected[product] = expected.GetValueOrDefault(product) + quantity;
+                }
+                else if (operation == 1)
+                {
+                    var quantity = random.Next(1, 16);
+                    command = new CartCommand(CartCommandOperations.SetQuantity, product, quantity, null);
+                    expected[product] = quantity;
+                }
+                else if (expected.ContainsKey(product))
+                {
+                    command = new CartCommand(CartCommandOperations.Remove, product, null, null);
+                    expected.Remove(product);
+                }
+                else
+                {
+                    command = Add(product, 1);
+                    expected[product] = 1;
+                }
+
+                var result = await processor.ApplyAsync(context, [command]);
+
+                result.Success.Should().BeTrue($"scenario {scenario}, turn {turn}, command {command}");
+                var actual = (await store.GetCurrentAsync(context)).Items
+                    .ToDictionary(item => item.ProductName, item => item.Quantity, StringComparer.OrdinalIgnoreCase);
+                actual.Should().BeEquivalentTo(expected,
+                    $"scenario {scenario}, turn {turn}, command {command}");
+            }
+        }
+    }
     private static CartCommand Add(string product, decimal quantity) =>
         new(CartCommandOperations.Add, product, quantity, null);
 

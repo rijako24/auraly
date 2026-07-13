@@ -234,6 +234,7 @@ public sealed class MigratedSeedConfigurationTests
             [
                 "cart.applied",
                 "cart.no_changes",
+                "cart.pending_cancelled",
                 "cart.conflicting_commands",
                 "cart.multiple_destinations",
                 "cart.product_not_found",

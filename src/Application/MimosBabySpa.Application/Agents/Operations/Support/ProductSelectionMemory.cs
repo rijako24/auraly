@@ -122,6 +122,48 @@ internal static class ProductSelectionMemory
             .Normalize(NormalizationForm.FormC)
             .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
     }
+    public static IReadOnlyList<CartCommand> PreserveCatalogAmbiguity(
+        AgentConversationContext context,
+        string latestUserMessage,
+        IReadOnlyList<CartCommand> commands)
+    {
+        var memory = CatalogOfferMemory.Read(context.Facts);
+        if (memory is null || commands.Count == 0)
+            return commands;
+
+        var candidates = CatalogOfferMemory.AllProducts(memory);
+        static bool IsMeaningful(string token) =>
+            token.Length >= 3 || token.Any(char.IsDigit);
+
+        var messageTokens = NormalizeTokens(latestUserMessage)
+            .Where(IsMeaningful).ToHashSet(StringComparer.Ordinal);
+        return commands.Select(command =>
+        {
+            var selected = candidates.FirstOrDefault(candidate =>
+                Normalize(candidate.Name).Equals(Normalize(command.ProductText), StringComparison.Ordinal)
+                || !string.IsNullOrWhiteSpace(candidate.Sku)
+                    && Normalize(candidate.Sku).Equals(Normalize(command.ProductText), StringComparison.Ordinal));
+            if (selected is null)
+                return command;
+
+            var selectedTokens = NormalizeTokens(selected.Name).Where(IsMeaningful).ToList();
+            var mentionedTokens = selectedTokens
+                .Where(messageTokens.Contains)
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+            if (mentionedTokens.Count == 0)
+                return command;
+
+            var compatible = candidates.Count(candidate =>
+            {
+                var candidateTokens = NormalizeTokens(candidate.Name).Where(IsMeaningful).ToList();
+                return mentionedTokens.All(token => candidateTokens.Contains(token, StringComparer.Ordinal));
+            });
+            return compatible > 1
+                ? command with { ProductText = string.Join(' ', mentionedTokens) }
+                : command;
+        }).ToList();
+    }
     public static bool TryGetSelected(AgentConversationContext ctx, out ProductCandidate candidate) =>
         TryReadCandidate(ctx, SelectedProductKey, out candidate);
 
