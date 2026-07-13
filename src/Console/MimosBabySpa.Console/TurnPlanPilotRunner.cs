@@ -310,6 +310,14 @@ internal sealed class TurnPlanPilotRunner
                     errors.Add($"Signal '{expected.Type}' no conservo la referencia '{product}'.");
                 }
             }
+            foreach (var product in expected.ExactProducts)
+            {
+                if (!items.Any(item => item.TryGetProperty("productText", out var text)
+                    && (text.GetString() ?? string.Empty).Equals(product, StringComparison.OrdinalIgnoreCase)))
+                {
+                    errors.Add($"Signal '{expected.Type}' no conservo literalmente la referencia '{product}'.");
+                }
+            }
             foreach (var operation in expected.Operations)
             {
                 if (!items.Any(item => item.TryGetProperty("operation", out var value)
@@ -475,6 +483,7 @@ internal sealed class TurnPlanPilotRunner
         public string Type { get; init; } = string.Empty;
         public int Count { get; init; }
         public IReadOnlyList<string> Products { get; init; } = [];
+        public IReadOnlyList<string> ExactProducts { get; init; } = [];
         public IReadOnlyList<string> Operations { get; init; } = [];
         public IReadOnlyList<decimal> Quantities { get; init; } = [];
     }

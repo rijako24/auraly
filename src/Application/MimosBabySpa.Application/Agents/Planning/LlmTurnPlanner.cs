@@ -299,6 +299,7 @@ public sealed class LlmTurnPlanner : ITurnPlanner
                 "Emit a configured semantic signal at most once and only when latestUserMessage supports it. A signal describes customer meaning; it never executes an operation.",
 
                 "Use recentConversation only to resolve contextual references in latestUserMessage. Every batch item must correspond to distinct customer meaning in latestUserMessage; preserve every independently requested item and quantity exactly once. Product ambiguity is resolved later by the deterministic operation.",
+                "For every cart mutation, productText must preserve the product reference expressed in latestUserMessage. Do not replace a generic, partial or ambiguous reference with a catalog product name merely because shoppingContext contains candidates. Expand it to an offered product name only when the customer's words, selector or unmistakable contextual reference identify exactly one option.",
                 "Never create a mutation for an entity that latestUserMessage does not explicitly reference. Words such as only or solo constrain the mentioned entity; they do not authorize removing unmentioned entities unless the customer explicitly requests that removal.",
 
 

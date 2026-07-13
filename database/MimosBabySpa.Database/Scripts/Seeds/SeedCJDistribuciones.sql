@@ -533,7 +533,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                       "product_selection_prompt":  "Perfecto, ya podemos armar tu pedido 🙌\r\n\r\nCuentame que productos y cantidades necesitas. Si aun no estas seguro, tambien puedes decirme que quieres preparar y te ayudo a encontrar opciones.",
                       "order_draft_unavailable":  "No fue posible consultar el pedido vigente en este momento. Intenta nuevamente para continuar con el resumen.",
                       "customer_name_prompt":  "Hola! 👋\r\n\r\nQue gusto saludarte. Soy el asistente de *CJ Distribuciones* y estoy aqui para ayudarte con tu pedido.\r\n\r\nPara comenzar, me compartes tu nombre o el nombre de tu negocio?",
-                      "customer_type_prompt":  "Gracias, {{customer_name}} 😊\r\n\r\nPara atenderte mejor, cual de estos perfiles describe tu compra? Puedes responder con la letra o con el nombre:\r\n\r\n*A.* Hogar\r\n*B.* Tienda o minimercado\r\n*C.* Restaurante\r\n*D.* Comida rapida\r\n*E.* Distribuidor"
+                      "customer_type_prompt":  "Para atenderte mejor, cual de estos perfiles describe tu compra? Puedes responder con la letra o con el nombre:\r\n\r\n*A.* Hogar\r\n*B.* Tienda o minimercado\r\n*C.* Restaurante\r\n*D.* Comida rapida\r\n*E.* Distribuidor"
                   },
     "flows":  [
                   {
@@ -565,7 +565,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                                          "advanceWhenFacts":  [
                                                                   "customer_type"
                                                               ],
-                                         "conversationGuidance":  "Si falta customer_type, agradece de forma natural y explica brevemente que conocer el perfil permite atender mejor la compra. Presenta las opciones en una lista legible, indica que puede responder con la letra o con el nombre y registra el valor canonico. Si el cliente corrige el perfil posteriormente, actualizalo.",
+                                         "conversationGuidance":  "Si falta customer_type, explica brevemente que conocer el perfil permite atender mejor la compra. Presenta las opciones en una lista legible, indica que puede responder con la letra o con el nombre y registra el valor canonico. No agradezcas ni confirmes el nombre salvo que el cliente lo haya proporcionado o corregido en el mensaje actual. Si el cliente corrige el perfil posteriormente, actualizalo.",
                                          "collect":  [
                                                          "customer_type"
                                                      ],

@@ -244,6 +244,46 @@
                                            "system.catalog_products":  "[{\"external_product_id\":\"CF59\",\"name\":\"SALCHICHA LONG X 550GR\",\"unit_price\":16023.21,\"currency\":\"COP\"},{\"external_product_id\":\"CF20\",\"name\":\"SALCHICHA LONG X 1100 G X 20UND\",\"unit_price\":28032.50,\"currency\":\"COP\"}]",
                                            "system.pending_cart_commands":  "{\"schemaVersion\":1,\"commands\":[{\"operation\":\"add\",\"productText\":\"Long x 10\",\"quantity\":1}],\"ambiguousProductText\":\"Long x 10\",\"productCandidates\":[],\"expiresAtUtc\":\"2099-01-01T00:00:00Z\"}"
                                        }
+                  },
+                  {
+                      "id":  "generic_reference_stays_generic_for_deterministic_resolution",
+                      "message":  "Agrega un pernil",
+                      "stage":  "product_selection",
+                      "expectedFlow":  "order",
+                      "expectedSignals":  [
+                                              "order_changes"
+                                          ],
+                      "absentSignals":  [
+                                            "catalog_query"
+                                        ],
+                      "expectedSignalItems":  [
+                                                  {
+                                                      "type":  "order_changes",
+                                                      "count":  1,
+                                                      "products":  [
+                                                                       "pernil"
+                                                                   ],
+                                                      "exactProducts":  [
+                                                                            "pernil"
+                                                                        ],
+                                                      "operations":  [
+                                                                         "add"
+                                                                     ],
+                                                      "quantities":  [
+                                                                         1
+                                                                     ]
+                                                  }
+                                              ],
+                      "seed":  "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+                      "history":  [
+                                      {
+                                          "role":  "assistant",
+                                          "content":  "Productos disponibles: PERNIL MERCAPOLLO y PERNIL CAMPOLLO. Cual te gustaria agregar?"
+                                      }
+                                  ],
+                      "initialFacts":  {
+                                           "system.catalog_products":  "{\"schemaVersion\":2,\"sequence\":1,\"snapshots\":[{\"sequence\":1,\"searchTerms\":[\"pollo\"],\"products\":[{\"externalProductId\":\"PO26\",\"name\":\"PERNIL MERCAPOLLO\",\"unitPrice\":5647.05,\"currency\":\"COP\"},{\"externalProductId\":\"PO20\",\"name\":\"PERNIL CAMPOLLO\",\"unitPrice\":6499.82,\"currency\":\"COP\"}]}]}"
+                                       }
                   }
               ],
     "repetitions":  5
