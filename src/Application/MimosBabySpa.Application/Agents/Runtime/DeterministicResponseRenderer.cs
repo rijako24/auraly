@@ -89,6 +89,29 @@ public sealed class DeterministicResponseRenderer : IDeterministicResponseRender
                 data = trace.Outcome!.Data,
                 error = trace.Outcome.Error
             });
+        var factDefinitions = request.Config.FactSchema.ToDictionary(
+            fact => fact.Key,
+            StringComparer.OrdinalIgnoreCase);
+        var pendingStageBlockers = request.Stage.AdvanceWhenFacts
+            .Where(key => !StageAdvanceFactReadiness.IsSatisfied(
+                key,
+                request.Turn.Facts,
+                request.Config.FactSchema))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Select(key =>
+            {
+                factDefinitions.TryGetValue(key, out var definition);
+                var source = definition?.Source ?? "user";
+                return new
+                {
+                    key,
+                    label = string.IsNullOrWhiteSpace(definition?.Label) ? key : definition.Label,
+                    guidance = definition?.ExtractionGuidance,
+                    source,
+                    canBeProvidedByCustomer = source.Equals("user", StringComparison.OrdinalIgnoreCase)
+                };
+            })
+            .ToList();
         var payload = new
         {
             task = "Write the customer-facing reply for this completed deterministic turn. Return only the reply text.",
@@ -99,6 +122,8 @@ public sealed class DeterministicResponseRenderer : IDeterministicResponseRender
                 "Treat operation outcomes as the only authority for catalog, availability, prices, totals, reservations, payments and external state.",
                 "Never claim success, confirmation, availability or payment unless a successful outcome explicitly supports it.",
                 "Follow responseGuidance and stage conversationGuidance. Ask only for data those instructions require.",
+                "stageReadiness.pendingBlockers is authoritative only for current-stage readiness. It does not decide what to ask and never proves that the whole request is complete.",
+                "Use responseGuidance and stage conversationGuidance to decide what to request. When they require a pending blocker whose canBeProvidedByCustomer is true, present it as necessary rather than optional. Never ask the customer to provide blockers whose canBeProvidedByCustomer is false. When pendingBlockers is empty, do not invent missing requirements.",
                 "When responseGuidance.mode is ask_clarification, ask only for the named ambiguity and never say that all data is ready or that the process can continue as complete.",
                 "Never describe a cart mutation as applied unless a successful commerce operation outcome in this turn supports it; conversation history and the user's request are not proof of execution.",
                 "Apply the configured persona and policies as the authority for voice, empathy, conversational style and WhatsApp presentation.",
@@ -111,6 +136,11 @@ public sealed class DeterministicResponseRenderer : IDeterministicResponseRender
                 request.Stage.ConversationGuidance
             },
             responseGuidance = request.Turn.Response,
+            stageReadiness = new
+            {
+                usesAdvanceFacts = request.Stage.AdvanceWhenFacts.Count > 0,
+                pendingBlockers = pendingStageBlockers
+            },
             facts = request.Turn.Facts,
             outcomes,
             recentConversation = request.RecentConversation.Select(message => new

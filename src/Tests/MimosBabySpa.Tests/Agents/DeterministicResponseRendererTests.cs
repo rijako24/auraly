@@ -295,6 +295,92 @@ public sealed class DeterministicResponseRendererTests
         chat.CallCount.Should().Be(1);
     }
     [Fact]
+    public async Task Render_ProjectsGenericStageReadinessWithoutTurningBlockersIntoQuestions()
+    {
+        var chat = new RecordingChatClient("respuesta natural");
+        var renderer = new DeterministicResponseRenderer(chat, new StubPresentationComposer());
+        var config = new AgentConfig
+        {
+            FactSchema =
+            [
+                new FactSchemaEntry { Key = "known_user_input", Label = "dato ya conocido", Source = "user" },
+                new FactSchemaEntry
+                {
+                    Key = "required_user_input",
+                    Label = "dato requerido del usuario",
+                    Source = "user",
+                    ExtractionGuidance = "Solicita el dato que falta."
+                },
+                new FactSchemaEntry
+                {
+                    Key = "optional_user_note",
+                    Label = "nota opcional",
+                    Source = "user",
+                    Required = false
+                },
+                new FactSchemaEntry
+                {
+                    Key = "channel_identity",
+                    Label = "identidad del canal",
+                    Source = "channel"
+                },
+                new FactSchemaEntry
+                {
+                    Key = "system_checkpoint",
+                    Label = "checkpoint del sistema",
+                    Source = "system"
+                }
+            ]
+        };
+        var stage = new AgentFlowStage
+        {
+            Id = "generic_stage",
+            AdvanceWhenFacts =
+            [
+                "known_user_input",
+                "required_user_input",
+                "channel_identity",
+                "system_checkpoint"
+            ]
+        };
+
+        var response = await renderer.RenderAsync(new DeterministicResponseRequest(
+            config,
+            stage,
+            new DeterministicTurnResult
+            {
+                Success = true,
+                Facts = new Dictionary<string, string> { ["known_user_input"] = "presente" }
+            },
+            "continuemos",
+            [ChatMessage.User("continuemos")]));
+
+        response.Success.Should().BeTrue();
+        using var prompt = JsonDocument.Parse(chat.Prompt);
+        var readiness = prompt.RootElement.GetProperty("stageReadiness");
+        readiness.GetProperty("usesAdvanceFacts").GetBoolean().Should().BeTrue();
+        var pending = readiness.GetProperty("pendingBlockers").EnumerateArray().ToList();
+        pending.Select(item => item.GetProperty("key").GetString())
+            .Should().BeEquivalentTo(["required_user_input", "channel_identity", "system_checkpoint"]);
+        pending.Should().NotContain(item =>
+            item.GetProperty("key").GetString() == "known_user_input"
+            || item.GetProperty("key").GetString() == "optional_user_note",
+            "known facts and optional facts outside advanceWhenFacts are not stage blockers");
+
+        var user = pending.Single(item => item.GetProperty("key").GetString() == "required_user_input");
+        user.GetProperty("canBeProvidedByCustomer").GetBoolean().Should().BeTrue();
+        user.GetProperty("guidance").GetString().Should().Contain("dato que falta");
+
+        var channel = pending.Single(item => item.GetProperty("key").GetString() == "channel_identity");
+        channel.GetProperty("canBeProvidedByCustomer").GetBoolean().Should().BeFalse();
+        var system = pending.Single(item => item.GetProperty("key").GetString() == "system_checkpoint");
+        system.GetProperty("canBeProvidedByCustomer").GetBoolean().Should().BeFalse();
+
+        chat.Prompt.Should().Contain("does not decide what to ask");
+        chat.Prompt.Should().Contain("present it as necessary rather than optional");
+    }
+
+    [Fact]
     public async Task Render_OngoingRequest_DoesNotRepeatConversationGreeting()
     {
         var chat = new RecordingChatClient("respuesta normal");
@@ -324,6 +410,10 @@ public sealed class DeterministicResponseRendererTests
 
         response.Text.Should().Be("respuesta normal");
         chat.CallCount.Should().Be(1);
+        using var prompt = JsonDocument.Parse(chat.Prompt);
+        var readiness = prompt.RootElement.GetProperty("stageReadiness");
+        readiness.GetProperty("usesAdvanceFacts").GetBoolean().Should().BeFalse();
+        readiness.GetProperty("pendingBlockers").GetArrayLength().Should().Be(0);
     }
     private static DeterministicResponseRequest Request(DeterministicTurnResult turn) => new(
         new AgentConfig { Persona = "Habla con calidez" },

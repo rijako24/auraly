@@ -599,28 +599,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                            "extractionGuidance":  "Extrae este dato solo cuando el mensaje identifica a una persona como quien recibe, receptor o contacto de entrega. Nunca lo conviertas en customer_name ni asumas que cambia la identidad del cliente."
                        },
                        {
-                           "key":  "delivery_location_status",
-                           "role":  "shipping.location_status",
-                           "label":  "ubicacion de entrega lista",
-                           "type":  "string",
-                           "required":  true,
-                           "source":  "user",
-                           "scope":  "request",
-                           "retentionDays":  1,
-                           "dependsOn":  [
-                                             "delivery_method",
-                                             "delivery_address",
-                                             "delivery_reference"
-                                         ],
-                           "extractionGuidance":  "Emite el unico valor canonico ready cuando la ubicacion ya permite continuar: si el cliente elige recogida en el punto configurado, o si para domicilio la direccion principal junto con los detalles vigentes identifica de forma suficiente el lugar. Una ubicacion que solo identifica una via, sin numero de inmueble, cruce, unidad, barrio ni referencia suficiente, no esta lista. Si currentFacts ya contiene delivery_address y el mensaje actual aporta el barrio, numero de inmueble, apartamento o referencia que se habia solicitado, emite ready en el mismo turno junto con delivery_reference. Si aun falta un detalle necesario, no emitas este fact y solicita solo ese detalle.",
-                           "options":  [
-                                           {
-                                               "value":  "ready",
-                                               "label":  "Ubicacion lista"
-                                           }
-                                       ]
-                       },
-                       {
                            "key":  "delivery_phone",
                            "role":  "customer.phone",
                            "label":  "celular de entrega",
@@ -688,7 +666,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                                              "delivery_address",
                                              "delivery_reference",
                                              "delivery_recipient_name",
-                                             "delivery_location_status",
                                              "delivery_phone",
                                              "customer_name",
                                              "payment_method"
@@ -727,7 +704,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                      "modes":  {
                                    "order":  {
                                                  "requiredFactRoles":  {
-                                                                           "delivery_location_status":  "shipping.location_status"
                                                                        },
                                                  "paymentMethods":  {
                                                                         "efectivo":  {
@@ -832,7 +808,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                                                          "delivery_address",
                                                          "delivery_reference",
                                                          "delivery_recipient_name",
-                                                         "delivery_location_status",
                                                          "delivery_phone",
                                                          "payment_method"
                                                      ],
@@ -1045,7 +1020,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                                                          "delivery_address",
                                                          "delivery_reference",
                                                          "delivery_recipient_name",
-                                                         "delivery_location_status",
                                                          "delivery_phone",
                                                          "payment_method"
                                                      ],
@@ -1200,7 +1174,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                                                                   "delivery_method",
                                                                   "city",
                                                                   "delivery_address",
-                                                                  "delivery_location_status",
                                                                   "delivery_phone",
                                                                   "customer_name"
                                                               ],
@@ -1210,18 +1183,16 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                                                                       "delivery_address",
                                                                       "delivery_reference",
                                                                       "delivery_recipient_name",
-                                                                      "delivery_location_status",
                                                                       "delivery_phone",
                                                                       "customer_name"
                                                                   ],
-                                         "conversationGuidance":  "Despues de que el cliente termine de agregar productos pregunta si prefiere recogida o domicilio, sin mostrar un resumen intermedio. Para recogida, registra la modalidad, el punto configurado como direccion y delivery_location_status=ready. Para domicilio, conserva por separado la direccion principal y delivery_reference; si la ubicacion es vaga o no permite localizar la entrega, solicita solo el detalle faltante y no marques delivery_location_status. Marca ready cuando el conjunto vigente ya sea suficiente. Captura delivery_recipient_name solo si el cliente identifica a otra persona como receptor; nunca reemplaces customer_name. Solicita el telefono solo si no existe y no pidas datos confiables ya disponibles. Usa la ciudad por defecto configurada salvo que el cliente indique otra.",
+                                         "conversationGuidance":  "Despues de que el cliente termine de agregar productos pregunta si prefiere recogida o domicilio, sin mostrar un resumen intermedio. Para recogida, registra la modalidad y el punto configurado como direccion. Para domicilio, solicita la direccion solo si no existe; delivery_reference es complementaria y opcional: capturala cuando el cliente la aporte, pero no la solicites ni detengas el flujo por no tenerla. Captura delivery_recipient_name solo si el cliente identifica a otra persona como receptor; nunca reemplaces customer_name. Solicita el telefono solo si no existe y no pidas datos confiables ya disponibles. Usa la ciudad por defecto configurada salvo que el cliente indique otra.",
                                          "collect":  [
                                                          "delivery_method",
                                                          "city",
                                                          "delivery_address",
                                                          "delivery_reference",
                                                          "delivery_recipient_name",
-                                                         "delivery_location_status",
                                                          "delivery_phone",
                                                          "payment_method"
                                                      ]
@@ -1252,7 +1223,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                                                                       "delivery_address",
                                                                       "delivery_reference",
                                                                       "delivery_recipient_name",
-                                                                      "delivery_location_status",
                                                                       "delivery_phone",
                                                                       "customer_name",
                                                                       "payment_method"
@@ -1275,9 +1245,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                                                                                            },
                                                                                            {
                                                                                                "factPresent":  "delivery_address"
-                                                                                           },
-                                                                                           {
-                                                                                               "factPresent":  "delivery_location_status"
                                                                                            },
                                                                                            {
                                                                                                "factPresent":  "delivery_phone"

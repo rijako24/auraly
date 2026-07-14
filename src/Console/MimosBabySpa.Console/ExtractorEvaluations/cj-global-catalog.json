@@ -48,7 +48,6 @@
         "delivery_method": "domicilio",
         "city": "Valledupar",
         "delivery_address": "Calle 5 # 10-20",
-        "delivery_location_status": "ready",
         "delivery_phone": "3012926660"
       }
     },
@@ -67,7 +66,6 @@
         "delivery_method": "domicilio",
         "city": "Valledupar",
         "delivery_address": "Calle 5 # 10-20",
-        "delivery_location_status": "ready",
         "delivery_phone": "3012926660",
         "payment_method": "efectivo",
         "order_checkout_presented": "true"
@@ -200,7 +198,7 @@
       "history": [{ "role": "assistant", "content": "Quieres pagar con el mismo metodo que tienes registrado o prefieres cambiarlo?" }],
       "initialFacts": {
         "customer_name": "Richard", "customer_type": "Hogar", "order_finalized": "true",
-        "delivery_method": "domicilio", "delivery_address": "Calle 5 # 10-20", "delivery_location_status": "ready",
+        "delivery_method": "domicilio", "delivery_address": "Calle 5 # 10-20",
         "delivery_phone": "3012926660", "payment_method": "efectivo"
       }
     },

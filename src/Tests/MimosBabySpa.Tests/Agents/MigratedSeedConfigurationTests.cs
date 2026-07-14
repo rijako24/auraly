@@ -145,16 +145,43 @@ public sealed class MigratedSeedConfigurationTests
         facts["delivery_recipient_name"].Role.Should().Be("shipping.recipient_name");
         facts["delivery_recipient_name"].Scope.Should().Be("request");
         facts["delivery_reference"].Role.Should().Be("shipping.reference");
-        facts["delivery_location_status"].Role.Should().Be("shipping.location_status");
-        facts["delivery_location_status"].Options.Should().ContainSingle(option => option.Value == "ready");
+        facts["delivery_reference"].Required.Should().BeFalse();
+        facts.Should().NotContainKey("delivery_location_status");
 
         var orderData = config.Flows.SelectMany(flow => flow.Stages)
             .Single(stage => stage.Id == "order_data");
-        orderData.Collect.Should().Contain(["delivery_reference", "delivery_recipient_name", "delivery_location_status"]);
-        orderData.Collect.Should().NotContain("customer_name");
-        orderData.AdvanceWhenFacts.Should().Contain("delivery_location_status");
-        config.Checkout.Modes["order"].RequiredFactRoles
-            .Should().Contain("delivery_location_status", "shipping.location_status");
+        orderData.Collect.Should().Contain(["delivery_reference", "delivery_recipient_name"]);
+        orderData.Collect.Should().NotContain(["customer_name", "delivery_location_status"]);
+        orderData.AdvanceWhenFacts.Should().NotContain("delivery_location_status");
+        orderData.ConversationGuidance.Should().Contain("complementaria y opcional")
+            .And.Contain("no la solicites ni detengas el flujo");
+        config.Checkout.Modes["order"].RequiredFactRoles.Should().BeEmpty();
+
+        var checkoutFacts = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["order_finalized"] = "true",
+            ["delivery_method"] = "domicilio",
+            ["city"] = "Valledupar",
+            ["delivery_address"] = "Calle 5",
+            ["delivery_phone"] = "3012926660",
+            ["customer_name"] = "Richard",
+            ["payment_method"] = "efectivo"
+        };
+        MimosBabySpa.Application.Agents.Runtime.StageAdvanceFactReadiness
+            .IsComplete(orderData, checkoutFacts, config.FactSchema)
+            .Should().BeTrue("a supplied address is sufficient and an optional reference cannot block payment");
+
+        var summary = config.Flows.SelectMany(flow => flow.Stages)
+            .Single(stage => stage.Id == "summary");
+        var prepareCheckout = summary.Actions.Single(action => action.Operation == "commerce.prepare_checkout");
+        new MimosBabySpa.Application.Agents.Runtime.StageConditionEvaluator()
+            .Evaluate(
+                prepareCheckout.Condition,
+                new MimosBabySpa.Application.Agents.Runtime.DeterministicStageExecutionContext
+                {
+                    Facts = checkoutFacts
+                })
+            .Should().BeTrue("after payment the official checkout summary must be eligible without a reference");
 
         config.Templates["catalog_results"].Should().Contain("\r\n\r\n*Productos disponibles*\r\n\r\n");
         config.Templates["cart_snapshot"].Should().Contain("\r\n\r\n*Pedido actual*\r\n\r\n");

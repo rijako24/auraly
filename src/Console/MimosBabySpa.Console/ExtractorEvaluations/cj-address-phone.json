@@ -16,8 +16,7 @@
         }
       ],
       "absentFacts": [
-        "customer_name",
-        "delivery_location_status"
+        "customer_name"
       ],
       "seed": "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
       "history": [
@@ -35,17 +34,13 @@
       }
     },
     {
-      "id": "cj_reference_completes_existing_address",
+      "id": "cj_reference_complements_existing_address",
       "message": "El barrio es Centro, casa 12 frente al parque",
       "stage": "order_data",
       "expectedFlow": "order",
       "expectedFacts": [
         {
           "key": "delivery_reference"
-        },
-        {
-          "key": "delivery_location_status",
-          "value": "ready"
         }
       ],
       "absentFacts": [
@@ -56,7 +51,7 @@
       "history": [
         {
           "role": "assistant",
-          "content": "La direccion Calle 5 aun es muy general. Indicame el barrio, numero de casa o una referencia."
+          "content": "La direccion registrada es Calle 5. Si quieres, puedes compartir una referencia adicional."
         }
       ],
       "initialFacts": {
@@ -84,10 +79,6 @@
         {
           "key": "delivery_phone",
           "value": "3012926660"
-        },
-        {
-          "key": "delivery_location_status",
-          "value": "ready"
         }
       ],
       "absentFacts": [
@@ -124,8 +115,7 @@
         }
       ],
       "absentFacts": [
-        "customer_name",
-        "delivery_location_status"
+        "customer_name"
       ],
       "absentAmbiguousFields": [
         "customer_name"
