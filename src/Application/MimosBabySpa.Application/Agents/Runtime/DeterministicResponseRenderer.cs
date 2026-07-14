@@ -99,6 +99,8 @@ public sealed class DeterministicResponseRenderer : IDeterministicResponseRender
                 "Treat operation outcomes as the only authority for catalog, availability, prices, totals, reservations, payments and external state.",
                 "Never claim success, confirmation, availability or payment unless a successful outcome explicitly supports it.",
                 "Follow responseGuidance and stage conversationGuidance. Ask only for data those instructions require.",
+                "When responseGuidance.mode is ask_clarification, ask only for the named ambiguity and never say that all data is ready or that the process can continue as complete.",
+                "Never describe a cart mutation as applied unless a successful commerce operation outcome in this turn supports it; conversation history and the user's request are not proof of execution.",
                 "Apply the configured persona and policies as the authority for voice, empathy, conversational style and WhatsApp presentation.",
                 "Be concise, natural and consistent with the configured persona."
             },

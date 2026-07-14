@@ -110,4 +110,21 @@ public class PromptTemplateRendererTests
         var result = _renderer.Render(template, data);
         result.Should().Contain("- Masaje: $30,000");
     }
+
+    [Theory]
+    [InlineData("pechugas", "Por ahora no encontre pechugas disponibles.")]
+    [InlineData(null, "Por ahora no encontre productos disponibles para esa busqueda.")]
+    public void Render_ProcessesIfElseBranches(string? searchText, string expected)
+    {
+        const string template = "Por ahora no encontre {{#if search_text}}{{search_text}} disponibles{{else}}productos disponibles para esa busqueda{{/if}}.";
+        var data = new Dictionary<string, object?>
+        {
+            ["search_text"] = searchText
+        };
+
+        var result = _renderer.Render(template, data);
+
+        result.Should().Be(expected);
+        result.Should().NotContain("{{else}}");
+    }
 }

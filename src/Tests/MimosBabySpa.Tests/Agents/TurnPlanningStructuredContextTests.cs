@@ -155,6 +155,7 @@ public sealed class TurnPlanningStructuredContextTests
         public Task<OrderSnapshot> AddItemAsync(AgentConversationContext ctx, AddOrderItemRequest request, CancellationToken ct = default) => throw new NotSupportedException();
         public Task<OrderSnapshot> RemoveItemAsync(AgentConversationContext ctx, Guid orderItemId, CancellationToken ct = default) => throw new NotSupportedException();
         public Task<OrderSnapshot> UpdateItemQuantityAsync(AgentConversationContext ctx, Guid orderItemId, decimal quantity, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<int> DiscardDraftsAsync(Guid businessId, Guid conversationId, CancellationToken ct = default) => throw new NotSupportedException();
         public Task<OrderSnapshot> CreateOrderAsync(AgentConversationContext ctx, CreateOrderRequest request, CancellationToken ct = default) => throw new NotSupportedException();
         public Task<OrderSnapshot> ConfirmPaidOrderAsync(Guid businessId, Guid paymentTransactionId, AgentConfig config, CancellationToken ct = default) => throw new NotSupportedException();
     }

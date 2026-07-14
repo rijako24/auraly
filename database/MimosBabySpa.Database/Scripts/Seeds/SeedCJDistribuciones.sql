@@ -168,6 +168,68 @@ WHERE BusinessId = @BusinessId
       WHERE p.Sku = dbo.Products.Sku
   );
 
+DECLARE @RecommendationRules TABLE
+(
+    ProductRecommendationRuleId UNIQUEIDENTIFIER NOT NULL,
+    MatchType INT NOT NULL,
+    SourceValue NVARCHAR(300) NOT NULL,
+    RecommendedExternalProductId NVARCHAR(300) NOT NULL,
+    RecommendedSku NVARCHAR(100) NULL,
+    RecommendedSearchText NVARCHAR(300) NULL,
+    RecommendationType INT NOT NULL,
+    Priority INT NOT NULL,
+    Reason NVARCHAR(500) NULL
+);
+
+INSERT INTO @RecommendationRules
+    (ProductRecommendationRuleId, MatchType, SourceValue, RecommendedExternalProductId,
+     RecommendedSku, RecommendedSearchText, RecommendationType, Priority, Reason)
+VALUES
+    ('C1D15A00-0000-0000-0000-000000000200', 0, N'PO28', N'CF127', N'CF127', N'tocineta', 0, 100, N'La tocineta es una buena opcion para complementar preparaciones con pechuga criolla.'),
+    ('C1D15A00-0000-0000-0000-000000000201', 0, N'PO08', N'CF127', N'CF127', N'tocineta', 0, 100, N'La tocineta combina bien con preparaciones hechas con pechuga.'),
+    ('C1D15A00-0000-0000-0000-000000000202', 0, N'PO39', N'CF127', N'CF127', N'tocineta', 0, 100, N'La tocineta combina bien con preparaciones hechas con pechuga.'),
+    ('C1D15A00-0000-0000-0000-000000000203', 0, N'PO29', N'CF127', N'CF127', N'tocineta', 0, 100, N'La tocineta combina bien con preparaciones hechas con pechuga.'),
+    ('C1D15A00-0000-0000-0000-000000000204', 0, N'PO36', N'SA30', N'SA30', N'tocineta', 0, 100, N'Esta salsa puede servirte para darle un sabor diferente a los trozos de pechuga.'),
+    ('C1D15A00-0000-0000-0000-000000000205', 0, N'CF59', N'CG29', N'CG29', N'papa', 0, 100, N'Las papas a la francesa son un acompanamiento practico para la salchicha.'),
+    ('C1D15A00-0000-0000-0000-000000000206', 1, N'CARNE DE POLLO', N'SA30', N'SA30', N'tocineta', 0, 50, N'Esta salsa es una opcion sencilla para acompanar productos de pollo.'),
+    ('C1D15A00-0000-0000-0000-000000000207', 1, N'CARNE DE CERDO', N'CF127', N'CF127', N'tocineta', 0, 50, N'La tocineta puede complementar distintas preparaciones de cerdo.'),
+    ('C1D15A00-0000-0000-0000-000000000208', 1, N'CARNES FRIAS', N'PA27', N'PA27', N'pan', 0, 50, N'El pan brioche es una opcion util para preparar hamburguesas, perros o sandwiches.'),
+    ('C1D15A00-0000-0000-0000-000000000209', 1, N'PRODUCTOS CONGELADOS', N'AC06', N'AC06', N'aceite', 0, 50, N'El aceite puede servirte para preparar varios productos congelados.');
+
+MERGE dbo.ProductRecommendationRules AS target
+USING @RecommendationRules AS source
+   ON target.BusinessId = @BusinessId
+  AND target.ProductRecommendationRuleId = source.ProductRecommendationRuleId
+WHEN MATCHED THEN
+    UPDATE SET
+        IntegrationConnectionId = @MantisCommerceConnectionId,
+        MatchType = source.MatchType,
+        SourceProductId = NULL,
+        SourceValue = source.SourceValue,
+        RecommendedProductId = NULL,
+        RecommendedExternalProductId = source.RecommendedExternalProductId,
+        RecommendedSku = source.RecommendedSku,
+        RecommendedSearchText = source.RecommendedSearchText,
+        RecommendationType = source.RecommendationType,
+        Priority = source.Priority,
+        Reason = source.Reason,
+        IsActive = 1,
+        StartsAtUtc = NULL,
+        EndsAtUtc = NULL,
+        UpdatedAt = GETUTCDATE()
+WHEN NOT MATCHED THEN
+    INSERT
+        (ProductRecommendationRuleId, BusinessId, IntegrationConnectionId, MatchType,
+         SourceProductId, SourceValue, RecommendedProductId, RecommendedExternalProductId,
+         RecommendedSku, RecommendationType, Priority, Reason, IsActive, StartsAtUtc,
+         EndsAtUtc, CreatedAt)
+    VALUES
+        (source.ProductRecommendationRuleId, @BusinessId, @MantisCommerceConnectionId,
+         source.MatchType, NULL, source.SourceValue, NULL, source.RecommendedExternalProductId,
+         source.RecommendedSku, source.RecommendationType, source.Priority, source.Reason,
+         1, NULL, NULL, GETUTCDATE());
+
+
 DECLARE @Hours TABLE (DayOfWeek INT NOT NULL, OpenTime TIME(0) NOT NULL, CloseTime TIME(0) NOT NULL);
 INSERT INTO @Hours (DayOfWeek, OpenTime, CloseTime)
 VALUES
@@ -273,6 +335,126 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                                                                 }
                                               }
                                           ]
+                          },
+                          {"id":"cart_mutation","priority":875,"goal":"Aplicar cambios explicitos al unico carrito activo desde cualquier etapa, sin depender del checkpoint conversacional.","conversationGuidance":"Detecta order_changes solo ante una instruccion explicita de agregar, quitar o cambiar cantidades. La consulta de opciones pertenece a catalog_query. Esta capacidad es el fallback transversal; una stage que declare la misma senal tiene precedencia y es su unico propietario durante ese turno.","signal":{"type":"order_changes","description":"Una mutacion explicita de uno o varios productos del unico pedido activo. Representa cada producto afectado con exactamente un comando: add cuando la cantidad es incremental o corresponde a un producto nuevo; set_quantity cuando la cantidad expresa el total final deseado para una linea existente; remove cuando se elimina por completo la linea, con quantity nulo. Cada comando corresponde a un producto afectado en el mensaje actual y se emite exactamente una vez. Conserva referencias parciales o contextuales, todas las cantidades y todos los productos del turno; el historial se usa para resolver la referencia, mientras las mutaciones provienen del mensaje actual. El motor resuelve catalogo, ambiguedad e inventario de forma autoritativa. Cuando exista una seleccion pendiente, la referencia elegida continua esa misma mutacion y el motor restaura el resto del lote.","valueSchema":{"type":"array","items":{"anyOf":[{"type":"object","additionalProperties":false,"properties":{"operation":{"type":"string","enum":["add"]},"productText":{"type":"string"},"quantity":{"type":"number"},"destinationReference":{"type":["string","null"]}},"required":["operation","productText","quantity","destinationReference"]},{"type":"object","additionalProperties":false,"properties":{"operation":{"type":"string","enum":["set_quantity"]},"productText":{"type":"string"},"quantity":{"type":"number"},"destinationReference":{"type":["string","null"]}},"required":["operation","productText","quantity","destinationReference"]},{"type":"object","additionalProperties":false,"properties":{"operation":{"type":"string","enum":["remove","cancel_pending"]},"productText":{"type":"string"},"quantity":{"type":"null"},"destinationReference":{"type":["string","null"]}},"required":["operation","productText","quantity","destinationReference"]}]}},"ambiguityRules":[{"type":"distinct_values","valueProperty":"destinationReference","field":"delivery_address","minimumDistinctValues":2}]},"actions":[{"id":"apply_order_changes","operation":"commerce.apply_order_changes","trigger":"on_signal","signal":"order_changes","arguments":{"commands":"{{signal.order_changes.value}}"},"onOutcome":{"cart.applied":{"response":{"guidance":"Confirma brevemente los cambios aplicados y continua segun el objetivo de la etapa."},"effects":[{"type":"facts.clear","facts":["order_finalized","cart_review_confirmed","order_checkout_presented","customer_confirmed"]},{"type":"presentation.add","template":"cart_snapshot","dataPath":"order","mode":"Exclusive","priority":"Required"}]},"cart.pending_cancelled":{"response":{"guidance":"Confirma brevemente que la seleccion pendiente fue cancelada y pregunta si desea continuar agregando otros productos."}},"cart.product_not_found":{"response":{"mode":"ask_clarification","guidance":"Indica que ese producto no se encontro y pide una descripcion o referencia mas precisa."}},"cart.product_ambiguous":{"response":{"mode":"ask_clarification","guidance":"Presenta unicamente los candidatos devueltos y pregunta cual referencia desea."},"effects":[{"type":"presentation.add","template":"product_ambiguity","dataPath":"error.context","mode":"Exclusive","priority":"Required"}]},"cart.insufficient_stock":{"response":{"mode":"ask_clarification","guidance":"Explica con claridad la cantidad disponible y pide una cantidad valida; ningun cambio del lote fue aplicado."},"effects":[{"type":"presentation.add","template":"insufficient_stock","dataPath":"error.context","mode":"Exclusive","priority":"Required"}]},"cart.item_not_found_or_ambiguous":{"response":{"mode":"ask_clarification","guidance":"Aclara cual producto existente del pedido desea modificar."}},"cart.conflicting_commands":{"response":{"mode":"ask_clarification","guidance":"Pide aclarar el cambio final para el producto repetido; no se aplico ningun cambio del lote."}},"cart.multiple_destinations":{"response":{"mode":"ask_clarification","guidance":"No se aplico ningun cambio. Pregunta cual direccion debe usarse para entregar todo el unico pedido."}}},"execution":{"idempotency":"none"}}]},
+                          {
+  "id": "known_fact_lookup",
+  "priority": 860,
+  "goal": "Responder preguntas del cliente sobre datos conversacionales ya persistidos que la configuracion autoriza revelar.",
+  "conversationGuidance": "Detecta known_fact_query cuando el cliente pregunta cual valor suyo o de su solicitud esta registrado, vigente o guardado. Resuelve referencias breves desde la pregunta inmediatamente anterior. Solo solicita claves incluidas en el enum y nunca uses esta senal para buscar productos, ejecutar cambios ni revelar facts tecnicos.",
+  "signal": {
+    "type": "known_fact_query",
+    "description": "Consulta de solo lectura sobre uno o varios datos del cliente o de la solicitud que ya estan persistidos y autorizados para mostrarse.",
+    "valueSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "fact_keys": {
+          "type": "array",
+          "items": { "type": "string", "enum": ["customer_name","customer_type","delivery_method","city","delivery_address","delivery_reference","delivery_recipient_name","delivery_phone","payment_method"] },
+          "minItems": 1,
+          "maxItems": 3
+        }
+      },
+      "required": ["fact_keys"]
+    }
+  },
+  "actions": [{
+    "id": "show_known_facts",
+    "operation": "conversation.get_known_facts",
+    "execution": { "idempotency": "none" },
+    "trigger": "on_signal",
+    "signal": "known_fact_query",
+    "arguments": { "fact_keys": "{{signal.known_fact_query.value.fact_keys}}" },
+    "onOutcome": {
+      "known_facts.found": { "effects": [{ "type": "presentation.add", "template": "known_facts", "mode": "Exclusive", "priority": "Required" }] },
+      "known_facts.not_found": { "effects": [{ "type": "presentation.add", "template": "known_facts_missing", "mode": "Exclusive", "priority": "Required" }] }
+    }
+  }]
+},
+                          {
+                              "id":  "catalog_lookup",
+                              "priority":  850,
+                              "goal":  "Consultar el catalogo oficial cuando el cliente pregunte por productos, disponibilidad, referencias, precios u opciones, sin depender de la etapa activa.",
+                              "conversationGuidance":  "Detecta catalog_query unicamente cuando el significado resuelto del mensaje solicita buscar mercancia comprable en el catalogo. Cada termino de queries debe ser una entrada valida para el buscador de productos e identificar un producto, categoria, ingrediente o preparacion que el cliente consulta, ya sea expresado en el mensaje vigente o resuelto desde una pregunta inmediatamente anterior que tambien era sobre productos. Si la pregunta pide recuperar o confirmar datos de entrega, direccion, recogida, pago, identidad, perfil, cliente u orden, emite cero catalog_query aunque use palabras como cual, tienes, disponible o registrado. Esta capacidad es transversal y puede ocurrir durante cualquier etapa, pero nunca funciona como respuesta generica a preguntas. Nunca respondas disponibilidad o nombres de productos desde conocimiento general.",
+                              "signal":  {
+                                             "type":  "catalog_query",
+                                             "description":  "Consulta inequivoca sobre mercancia comprable del catalogo: existencia, opciones, referencias, precios, disponibilidad o recomendaciones, sin una instruccion explicita de agregar cantidades al pedido. El valor contiene terminos de producto concretos resueltos desde el mensaje vigente; el contexto solo resuelve referencias comerciales que el cliente efectivamente consulta.",
+                                             "valueSchema":  {
+                                                                 "type":  "object",
+                                                                 "additionalProperties":  false,
+                                                                 "properties":  {
+                                                                                    "queries":  {
+                                                                                                    "type":  "array",
+                                                                                                    "items":  { "type":  "string" },
+                                                                                                    "minItems":  1
+                                                                                                }
+                                                                                },
+                                                                 "required":  [ "queries" ]
+                                                             }
+                                         },
+                              "actions":  [
+                                              {
+                                                  "id":  "search_catalog_request",
+                                                  "operation":  "commerce.search_products",
+                                                  "execution":  { "idempotency": "none" },
+                                                  "trigger":  "on_signal",
+                                                  "signal":  "catalog_query",
+                                                  "arguments":  {
+                                                                    "queries":  "{{signal.catalog_query.value.queries}}",
+                                                                    "limit":  10
+                                                                },
+                                                  "onOutcome":  {
+                                                                    "products.not_found":  {
+                                                                                               "effects":  [
+                                                                                                               {
+                                                                                                                   "type":  "presentation.add",
+                                                                                                                   "template":  "catalog_no_results",
+                                                                                                                   "mode":  "Exclusive",
+                                                                                                                   "priority":  "Required"
+                                                                                                               }
+                                                                                                           ]
+                                                                                           },
+                                                                    "products.found":  {
+                                                                                           "effects":  [
+                                                                                                           {
+                                                                                                               "type":  "presentation.add",
+                                                                                                               "template":  "catalog_results",
+                                                                                                               "mode":  "Exclusive",
+                                                                                                               "priority":  "Required"
+                                                                                                           }
+                                                                                                       ]
+                                                                                       }
+                                                                }
+                                              }
+                                          ]
+                          },
+                          {
+                              "id":  "restart_order_request",
+                              "priority":  900,
+                              "goal":  "Iniciar una solicitud de pedido nueva cuando el cliente indique inequivocamente que abandona la solicitud activa y quiere comenzar otra.",
+                              "conversationGuidance":  "Detecta restart_request solo ante intencion explicita de comenzar un pedido nuevo o empezar de nuevo. Tambien aplica cuando ya se finalizo la seleccion del pedido activo y el cliente vuelve a saludar diciendo inequivocamente que quiere hacer un pedido. No lo detectes por un saludo solo, por ajustes al carrito vigente, por consultas de productos ni por expresiones de finalizacion como solo eso.",
+                              "signal":  {
+                                             "type":  "restart_request",
+                                             "description":  "El cliente solicita abandonar la solicitud de pedido activa y comenzar un pedido nuevo desde cero.",
+                                             "valueSchema":  {
+                                                                 "type":  "boolean"
+                                                             }
+                                         },
+                              "actions":  [
+                                              {
+                                                  "id":  "reset_order_request",
+                                                  "operation":  "conversation.reset_request",
+                                                  "trigger":  "on_signal",
+                                                  "signal":  "restart_request",
+                                                  "arguments":  {
+
+                                                                },
+                                                  "execution":  {
+                                                                    "idempotency":  "none"
+                                                                }
+                                              }
+                                          ]
                           }
                       ],
     "factSchema":  [
@@ -283,7 +465,9 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                            "type":  "string",
                            "required":  true,
                            "source":  "user",
-                           "scope":  "customer"
+                           "customerReadable":  true,
+                           "scope":  "customer",
+                           "extractionGuidance":  "Representa exclusivamente la identidad del cliente o establecimiento que realiza la compra. No lo actualices con el nombre de quien recibe, un contacto de entrega, un beneficiario ni otra persona mencionada con un rol diferente."
                        },
                        {
                            "key":  "customer_type",
@@ -292,6 +476,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                            "type":  "string",
                            "required":  true,
                            "source":  "user",
+                           "customerReadable":  true,
                            "scope":  "customer",
                            "options":  [
                                            {
@@ -350,6 +535,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                            "type":  "string",
                            "required":  true,
                            "source":  "user",
+                           "customerReadable":  true,
                            "scope":  "request",
                            "retentionDays":  1,
                            "extractionGuidance":  "Normaliza la modalidad elegida al valor canonico configurado para entrega o recogida.",
@@ -371,6 +557,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                            "type":  "string",
                            "required":  true,
                            "source":  "system",
+                           "customerReadable":  true,
                            "defaultValue":  "Valledupar",
                            "scope":  "request",
                            "retentionDays":  1
@@ -382,9 +569,56 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                            "type":  "string",
                            "required":  true,
                            "source":  "user",
+                           "customerReadable":  true,
                            "scope":  "request",
                            "retentionDays":  1,
                            "extractionGuidance":  "Extrae solo la ubicacion fisica. Si el mismo mensaje incluye telefono o celular, excluye de la direccion el numero telefonico y expresiones de enlace como y el telefono es, y el numero es o variantes con errores ortograficos."
+                       },
+                       {
+                           "key":  "delivery_reference",
+                           "role":  "shipping.reference",
+                           "label":  "barrio, apartamento o referencia complementaria de entrega",
+                           "type":  "string",
+                           "required":  false,
+                           "source":  "user",
+                           "customerReadable":  true,
+                           "scope":  "request",
+                           "retentionDays":  1,
+                           "extractionGuidance":  "Extrae solo detalles complementarios para localizar la entrega, como barrio, urbanizacion, apartamento, interior, bloque, indicaciones o un punto de referencia. No copies el telefono ni el nombre del receptor."
+                       },
+                       {
+                           "key":  "delivery_recipient_name",
+                           "role":  "shipping.recipient_name",
+                           "label":  "nombre de quien recibe el pedido",
+                           "type":  "string",
+                           "required":  false,
+                           "source":  "user",
+                           "customerReadable":  true,
+                           "scope":  "request",
+                           "retentionDays":  1,
+                           "extractionGuidance":  "Extrae este dato solo cuando el mensaje identifica a una persona como quien recibe, receptor o contacto de entrega. Nunca lo conviertas en customer_name ni asumas que cambia la identidad del cliente."
+                       },
+                       {
+                           "key":  "delivery_location_status",
+                           "role":  "shipping.location_status",
+                           "label":  "ubicacion de entrega lista",
+                           "type":  "string",
+                           "required":  true,
+                           "source":  "user",
+                           "scope":  "request",
+                           "retentionDays":  1,
+                           "dependsOn":  [
+                                             "delivery_method",
+                                             "delivery_address",
+                                             "delivery_reference"
+                                         ],
+                           "extractionGuidance":  "Emite el unico valor canonico ready cuando la ubicacion ya permite continuar: si el cliente elige recogida en el punto configurado, o si para domicilio la direccion principal junto con los detalles vigentes identifica de forma suficiente el lugar. Una ubicacion que solo identifica una via, sin numero de inmueble, cruce, unidad, barrio ni referencia suficiente, no esta lista. Si currentFacts ya contiene delivery_address y el mensaje actual aporta el barrio, numero de inmueble, apartamento o referencia que se habia solicitado, emite ready en el mismo turno junto con delivery_reference. Si aun falta un detalle necesario, no emitas este fact y solicita solo ese detalle.",
+                           "options":  [
+                                           {
+                                               "value":  "ready",
+                                               "label":  "Ubicacion lista"
+                                           }
+                                       ]
                        },
                        {
                            "key":  "delivery_phone",
@@ -393,6 +627,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                            "type":  "phone",
                            "required":  true,
                            "source":  "user",
+                           "customerReadable":  true,
                            "scope":  "customer"
                        },
                        {
@@ -402,6 +637,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                            "type":  "string",
                            "required":  true,
                            "source":  "user",
+                           "customerReadable":  true,
                            "scope":  "request",
                            "retentionDays":  1,
                            "extractionGuidance":  "Normaliza la eleccion al metodo de pago canonico configurado.",
@@ -450,6 +686,9 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                                              "delivery_method",
                                              "city",
                                              "delivery_address",
+                                             "delivery_reference",
+                                             "delivery_recipient_name",
+                                             "delivery_location_status",
                                              "delivery_phone",
                                              "customer_name",
                                              "payment_method"
@@ -487,6 +726,9 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                      "currency":  "COP",
                      "modes":  {
                                    "order":  {
+                                                 "requiredFactRoles":  {
+                                                                           "delivery_location_status":  "shipping.location_status"
+                                                                       },
                                                  "paymentMethods":  {
                                                                         "efectivo":  {
                                                                                          "label":  "efectivo al recibir",
@@ -518,21 +760,23 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                                              }
                                }
                  },
-    "conversationOpening":  {"enabled": true, "guidance": "Escribe solamente una apertura social breve y cercana: saluda y da la bienvenida a CJ Distribuciones. Si conoces el nombre del cliente, puedes usarlo con moderacion. No menciones pedidos, ayuda, productos ni el siguiente paso; la respuesta que viene despues se encarga de continuar la conversacion.", "skipWhenFirstStageHandlesOpening": true, "allowQuestions": false},
+    "conversationOpening":  {"enabled": true, "guidance": "Escribe solamente una apertura social breve y cercana: saluda y da la bienvenida a CJ Distribuciones. Si conoces el nombre del cliente, puedes usarlo con moderacion. No menciones pedidos, ayuda, productos ni el siguiente paso; la respuesta que viene despues se encarga de continuar la conversacion.", "skipWhenFirstStageHandlesOpening": false, "allowQuestions": false},
     "failureResponses":  {"llmUnavailable": "Lo siento, en este momento tengo un inconveniente temporal para procesar tu mensaje. Por favor, intenta nuevamente en unos minutos."},
     "templates":  {
-                      "order_checkout_no_payment":  "*Resumen de tu pedido*\n{{#each line_items}}\n- {{name}} x{{quantity}}: ${{line_total}}\n{{/each}}\n- Envio: ${{shipping_cost}}\n- *Total: ${{total}} {{currency}}*\n\nEntrega:\n- Ciudad: {{city}}\n- Direccion: {{delivery_address}}\n- Celular: {{customer_phone}}\n{{#if customer_name}}\n- Nombre: {{customer_name}}\n{{/if}}\n\nMetodo de pago: efectivo al recibir\n\nConfirmas tu pedido con esta informacion?",
-                      "order_checkout_manual_transfer":  "*Resumen de tu pedido*\n{{#each line_items}}\n- {{name}} x{{quantity}}: ${{line_total}}\n{{/each}}\n- Envio: ${{shipping_cost}}\n- *Total: ${{total}} {{currency}}*\n\nEntrega:\n- Ciudad: {{city}}\n- Direccion: {{delivery_address}}\n- Celular: {{customer_phone}}\n{{#if customer_name}}\n- Nombre: {{customer_name}}\n{{/if}}\n\nMetodo de pago: transferencia manual\n\nTu pago queda pendiente de confirmacion manual. Un agente del equipo de CJ Distribuciones confirmara el pago; cuando se confirme, te notificaremos que el pedido fue creado.",
-                      "catalog_results":  "Claro, encontre estas opciones para ti:\r\n\r\n*Productos disponibles*\r\n\r\n{{#each products}}\r\n- {{name}}: ${{unit_price}} {{currency}}\r\n{{/each}}\r\n\r\nCual te gustaria agregar? Tambien puedes indicarme la cantidad.",
-                      "catalog_no_results":  "Por ahora no encontre {{#if search_text}}{{search_text}}{{else}}productos para esa busqueda{{/if}} en nuestro catalogo.\r\n\r\nSi quieres, puedo buscar una opcion parecida o ayudarte a elegir otro producto.",
+                      "order_checkout_no_payment":  "*Resumen de tu pedido*\n{{#each line_items}}\n- {{name}} x{{quantity}}: ${{line_total}}\n{{/each}}\n- Envio: ${{shipping_cost}}\n- *Total: ${{total}} {{currency}}*\n\nEntrega:\n- Ciudad: {{city}}\n- Direccion: {{delivery_address}}\n- Celular: {{customer_phone}}\n{{#if customer_name}}\n- Cliente: {{customer_name}}\n{{/if}}\n{{#if delivery_recipient_name}}\n- Recibe: {{delivery_recipient_name}}\n{{/if}}\n\nMetodo de pago: efectivo al recibir\n\nConfirmas tu pedido con esta informacion?",
+                      "order_checkout_manual_transfer":  "*Resumen de tu pedido*\n{{#each line_items}}\n- {{name}} x{{quantity}}: ${{line_total}}\n{{/each}}\n- Envio: ${{shipping_cost}}\n- *Total: ${{total}} {{currency}}*\n\nEntrega:\n- Ciudad: {{city}}\n- Direccion: {{delivery_address}}\n- Celular: {{customer_phone}}\n{{#if customer_name}}\n- Cliente: {{customer_name}}\n{{/if}}\n{{#if delivery_recipient_name}}\n- Recibe: {{delivery_recipient_name}}\n{{/if}}\n\nMetodo de pago: transferencia manual\n\nTu pago queda pendiente de confirmacion manual. Un agente del equipo de CJ Distribuciones confirmara el pago; cuando se confirme, te notificaremos que el pedido fue creado.",
+                      "catalog_results":  "Claro, encontre estas opciones para ti:\r\n\r\n*Productos disponibles*\r\n\r\n{{#each products}}\r\n- {{name}}: ${{unit_price}} {{currency}}\r\n{{/each}}\r\n\r\n{{#each recommendations}}\r\n\r\n*Tambien te puede servir*\r\n- {{name}}: ${{unit_price}} {{currency}}\r\n{{#if reason}}{{reason}}\r\n{{/if}}{{/each}}\r\n\r\nCual te gustaria agregar? Tambien puedes indicarme la cantidad.",
+                      "catalog_no_results":  "Por ahora no encontre {{#if search_text}}{{search_text}} disponibles{{else}}productos disponibles para esa busqueda{{/if}} en nuestro catalogo.\r\n\r\nSi quieres, puedo buscar una opcion parecida o ayudarte a elegir otro producto.",
+                      "known_facts":  "Claro. Esto es lo que tengo registrado:\r\n\r\n{{#each facts}}\r\n- {{label}}: {{value}}\r\n{{/each}}",
+                      "known_facts_missing":  "No tengo ese dato registrado todavia. Si quieres, puedes indicarmelo o actualizarlo.",
                       "recipe_results":  "Buena idea. Puedes inspirarte con estas preparaciones:\r\n\r\n*Ideas para preparar*\r\n{{#each results}}\r\n- {{Title}}\r\n  {{Url}}\r\n{{/each}}",
                       "cart_snapshot":  "Listo, ya actualice tu pedido 🙌\r\n\r\n*Pedido actual*\r\n\r\n{{#each items}}\r\n- {{name}} x{{quantity}}: ${{line_total}}\r\n{{/each}}\r\n\r\n*Total: ${{total}} {{currency}}*\r\n\r\nQuieres agregar algo mas? Cuando termines, solo dime que eso es todo.",
                       "cart_review":  "Perfecto, revisemos juntos que todo este bien:\r\n\r\n*Resumen de tu pedido*\r\n\r\n{{#each items}}\r\n- {{name}} x{{quantity}}: ${{line_total}}\r\n{{/each}}\r\n\r\n*Total: ${{total}} {{currency}}*\r\n\r\nLo ves correcto o quieres cambiar algo?",
                       "product_ambiguity":  "Quiero asegurarme de agregar la opcion correcta. Para {{product_text}} encontre:\r\n{{#each product_options}}\r\n- {{Name}}: ${{UnitPrice}} {{Currency}}\r\n{{/each}}\r\n\r\nCual prefieres? Conservare los demas productos de tu solicitud.",
                       "insufficient_stock":  "Puedo ayudarte con esa referencia, pero la cantidad solicitada supera el inventario disponible.\r\n\r\n- Producto: {{product_text}}\r\n- Solicitado en total: {{requested_quantity}}\r\n- Disponible: {{available_quantity}}\r\n\r\nPara este cambio, indica una cantidad de hasta {{maximum_command_quantity}}; los demas cambios del lote aun no se han aplicado.",
-                      "product_selection_prompt":  "Perfecto, ya podemos armar tu pedido 🙌\r\n\r\nCuentame que productos y cantidades necesitas. Si aun no estas seguro, tambien puedes decirme que quieres preparar y te ayudo a encontrar opciones.",
+                      "product_selection_prompt":  "Cuentame que productos y cantidades necesitas. Si aun no estas seguro, tambien puedes decirme que quieres preparar y te ayudo a encontrar opciones.",
                       "order_draft_unavailable":  "No fue posible consultar el pedido vigente en este momento. Intenta nuevamente para continuar con el resumen.",
-                      "customer_name_prompt":  "Hola! 👋\r\n\r\nQue gusto saludarte. Soy el asistente de *CJ Distribuciones* y estoy aqui para ayudarte con tu pedido.\r\n\r\nPara comenzar, me compartes tu nombre o el nombre de tu negocio?",
+                      "customer_name_prompt":  "Para comenzar, me compartes tu nombre o el nombre de tu negocio?",
                       "customer_type_prompt":  "Para atenderte mejor, cual de estos perfiles describe tu compra? Puedes responder con la letra o con el nombre:\r\n\r\n*A.* Hogar\r\n*B.* Tienda o minimercado\r\n*C.* Restaurante\r\n*D.* Comida rapida\r\n*E.* Distribuidor"
                   },
     "flows":  [
@@ -586,6 +830,9 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                                                          "order_finalized",
                                                          "delivery_method",
                                                          "delivery_address",
+                                                         "delivery_reference",
+                                                         "delivery_recipient_name",
+                                                         "delivery_location_status",
                                                          "delivery_phone",
                                                          "payment_method"
                                                      ],
@@ -612,26 +859,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                                                                                         "minimumDistinctValues":  2
                                                                                     }
                                                                                 ]
-                                                         },
-                                                         {
-                                                             "type":  "catalog_query",
-                                                             "description":  "Consulta de existencia, opciones, referencias, precios, disponibilidad o recomendaciones sin una instruccion explicita de agregar cantidades al pedido. El valor contiene terminos de busqueda concretos resueltos desde el turno y su contexto conversacional.",
-                                                             "valueSchema":  {
-                                                                                 "type":  "object",
-                                                                                 "additionalProperties":  false,
-                                                                                 "properties":  {
-                                                                                                    "queries":  {
-                                                                                                                    "type":  "array",
-                                                                                                                    "items":  {
-                                                                                                                                  "type":  "string"
-                                                                                                                              },
-                                                                                                                    "minItems":  1
-                                                                                                                }
-                                                                                                },
-                                                                                 "required":  [
-                                                                                                  "queries"
-                                                                                              ]
-                                                                             }
                                                          }
                                                      ],
                                          "actions":  [
@@ -798,39 +1025,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                                                                                                                                }
                                                                                                               }
                                                                            }
-                                                         },
-                                                         {
-                                                             "id":  "search_catalog_request",
-                                                             "operation":  "commerce.search_products",
-                                                             "execution":  { "idempotency": "none" },
-                                                             "trigger":  "on_signal",
-                                                             "signal":  "catalog_query",
-                                                             "arguments":  {
-                                                                               "queries":  "{{signal.catalog_query.value.queries}}",
-                                                                               "limit":  10
-                                                                           },
-                                                             "onOutcome":  {
-                                                                               "products.not_found":  {
-                                                                                                          "effects":  [
-                                                                                                                          {
-                                                                                                                              "type":  "presentation.add",
-                                                                                                                              "template":  "catalog_no_results",
-                                                                                                                              "mode":  "Exclusive",
-                                                                                                                              "priority":  "Required"
-                                                                                                                          }
-                                                                                                                      ]
-                                                                                                      },
-                                                                               "products.found":  {
-                                                                                                      "effects":  [
-                                                                                                                      {
-                                                                                                                          "type":  "presentation.add",
-                                                                                                                          "template":  "catalog_results",
-                                                                                                                          "mode":  "Exclusive",
-                                                                                                                          "priority":  "Required"
-                                                                                                                      }
-                                                                                                                  ]
-                                                                                                  }
-                                                                           }
                                                          }
                                                      ],
                                          "response":  {
@@ -849,6 +1043,9 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                                                          "order_finalized",
                                                          "delivery_method",
                                                          "delivery_address",
+                                                         "delivery_reference",
+                                                         "delivery_recipient_name",
+                                                         "delivery_location_status",
                                                          "delivery_phone",
                                                          "payment_method"
                                                      ],
@@ -1003,6 +1200,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                                                                   "delivery_method",
                                                                   "city",
                                                                   "delivery_address",
+                                                                  "delivery_location_status",
                                                                   "delivery_phone",
                                                                   "customer_name"
                                                               ],
@@ -1010,16 +1208,21 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                                                                       "delivery_method",
                                                                       "city",
                                                                       "delivery_address",
+                                                                      "delivery_reference",
+                                                                      "delivery_recipient_name",
+                                                                      "delivery_location_status",
                                                                       "delivery_phone",
                                                                       "customer_name"
                                                                   ],
-                                         "conversationGuidance":  "Despues de que el cliente termine de agregar productos pregunta: Prefieres recoger tu pedido o recibirlo a domicilio? No muestres un resumen del carrito en esta etapa. Si elige recogida, registra delivery_method=recogida y usa como delivery_address el punto de recogida configurado o Punto de recogida CJ Distribuciones - Valledupar, Cesar. Si elige domicilio, registra delivery_method=domicilio y solicita solo datos faltantes: direccion, barrio o referencia cuando aplique, telefono si no existe y nombre del receptor si falta. No pidas datos confiables ya disponibles. No pidas ciudad si ya existe por defecto; usa Valledupar salvo que el cliente indique otra ciudad.",
+                                         "conversationGuidance":  "Despues de que el cliente termine de agregar productos pregunta si prefiere recogida o domicilio, sin mostrar un resumen intermedio. Para recogida, registra la modalidad, el punto configurado como direccion y delivery_location_status=ready. Para domicilio, conserva por separado la direccion principal y delivery_reference; si la ubicacion es vaga o no permite localizar la entrega, solicita solo el detalle faltante y no marques delivery_location_status. Marca ready cuando el conjunto vigente ya sea suficiente. Captura delivery_recipient_name solo si el cliente identifica a otra persona como receptor; nunca reemplaces customer_name. Solicita el telefono solo si no existe y no pidas datos confiables ya disponibles. Usa la ciudad por defecto configurada salvo que el cliente indique otra.",
                                          "collect":  [
                                                          "delivery_method",
                                                          "city",
                                                          "delivery_address",
+                                                         "delivery_reference",
+                                                         "delivery_recipient_name",
+                                                         "delivery_location_status",
                                                          "delivery_phone",
-                                                         "customer_name",
                                                          "payment_method"
                                                      ]
                                      },
@@ -1047,6 +1250,9 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                                                                       "delivery_method",
                                                                       "city",
                                                                       "delivery_address",
+                                                                      "delivery_reference",
+                                                                      "delivery_recipient_name",
+                                                                      "delivery_location_status",
                                                                       "delivery_phone",
                                                                       "customer_name",
                                                                       "payment_method"
@@ -1069,6 +1275,9 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                                                                                            },
                                                                                            {
                                                                                                "factPresent":  "delivery_address"
+                                                                                           },
+                                                                                           {
+                                                                                               "factPresent":  "delivery_location_status"
                                                                                            },
                                                                                            {
                                                                                                "factPresent":  "delivery_phone"

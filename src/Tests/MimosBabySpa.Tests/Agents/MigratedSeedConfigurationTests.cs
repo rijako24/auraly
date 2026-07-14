@@ -37,7 +37,7 @@ public sealed class MigratedSeedConfigurationTests
         AssertSemanticAndPresentationTextIsSeparated(config);
 
         var compiler = new AgentConfigurationCompiler(new AgentOperationRegistry(
-            [new AvailabilityStub(), new CheckoutStub(), new CreationStub(), new OrderChangesStub(), new CatalogServicesStub(), new ResolveServiceStub(), new AddOnsStub(), new FulfillmentStub(), new MethodStub("reservation.list", "reservation.listed"), new MethodStub("reservation.manage", "reservation.managed"), new MethodStub("commerce.search_recipes", "recipes.found"), new MethodStub("commerce.search_products", "products.found", "products.not_found"), new MethodStub("commerce.get_order_draft", "order.draft_loaded", "order.draft_empty", "order_draft_missing"), new MethodStub("commerce.prepare_checkout", "order.checkout_prepared", "order.checkout_ready", "order.checkout_payment_required", "order.checkout_pending_manual_payment", "order_draft_missing", "missing_prerequisites"), new MethodStub("commerce.create_order", "order.created"), new MethodStub("escalation.request_human", "escalation.requested", "escalation.notification_failed"), new MethodStub("conversation.reset_request", "conversation.request_reset"), new MethodStub("internal.get_reservations", "internal.reservations_loaded"), new MethodStub("internal.block_availability", "internal.availability_blocked"), new MethodStub("internal.request_reschedule", "internal.reschedule_requested"), new MethodStub("internal.get_business_metrics", "internal.metrics_loaded"), new MethodStub("internal.get_customer_history", "internal.customer_history_loaded"), new MethodStub("internal.search_order", "internal.order_loaded"), new MethodStub("internal.accept_order", "internal.order_accepted"), new MethodStub("internal.reject_order", "internal.order_rejected")]));
+            [new AvailabilityStub(), new CheckoutStub(), new CreationStub(), new OrderChangesStub(), new CatalogServicesStub(), new ResolveServiceStub(), new AddOnsStub(), new FulfillmentStub(), new MethodStub("reservation.list", "reservation.listed"), new MethodStub("reservation.manage", "reservation.managed"), new MethodStub("commerce.search_recipes", "recipes.found"), new MethodStub("commerce.search_products", "products.found", "products.not_found"), new MethodStub("commerce.get_order_draft", "order.draft_loaded", "order.draft_empty", "order_draft_missing"), new MethodStub("commerce.prepare_checkout", "order.checkout_prepared", "order.checkout_ready", "order.checkout_payment_required", "order.checkout_pending_manual_payment", "order_draft_missing", "missing_prerequisites"), new MethodStub("commerce.create_order", "order.created"), new MethodStub("escalation.request_human", "escalation.requested", "escalation.notification_failed"), new MethodStub("conversation.reset_request", "conversation.request_reset"), new MethodStub("conversation.get_known_facts", "known_facts.found", "known_facts.not_found", "known_facts.forbidden"), new MethodStub("internal.get_reservations", "internal.reservations_loaded"), new MethodStub("internal.block_availability", "internal.availability_blocked"), new MethodStub("internal.request_reschedule", "internal.reschedule_requested"), new MethodStub("internal.get_business_metrics", "internal.metrics_loaded"), new MethodStub("internal.get_customer_history", "internal.customer_history_loaded"), new MethodStub("internal.search_order", "internal.order_loaded"), new MethodStub("internal.accept_order", "internal.order_accepted"), new MethodStub("internal.reject_order", "internal.order_rejected")]));
 
         var compilation = compiler.Compile(config!);
 
@@ -69,21 +69,93 @@ public sealed class MigratedSeedConfigurationTests
         config.ConversationOpening.Enabled.Should().BeTrue();
         config.ConversationOpening.Guidance.Should().Contain("bienvenida a CJ Distribuciones");
         config.ConversationOpening.AllowQuestions.Should().BeFalse();
+        config.ConversationOpening.SkipWhenFirstStageHandlesOpening.Should().BeFalse();
         config.FailureResponses.LlmUnavailable.Should().Contain("inconveniente temporal");
         config.BasePrompt.Should().Contain("cercana, empatica, natural y servicial");
         config.BasePrompt.Should().Contain("parrafos cortos y espacios en blanco");
+        var restart = config.GlobalActions.Should().ContainSingle(action =>
+            action.Signal.Type == "restart_request").Subject;
+        restart.Actions.Should().ContainSingle(action =>
+            action.Operation == "conversation.reset_request");
+        restart.ConversationGuidance.Should().Contain("No lo detectes por un saludo solo");
+
+        var catalogLookup = config.GlobalActions.Should().ContainSingle(action =>
+            action.Signal.Type == "catalog_query").Subject;
+        catalogLookup.Actions.Should().ContainSingle(action =>
+            action.Operation == "commerce.search_products"
+            && action.Signal == "catalog_query");
+        config.Flows.SelectMany(flow => flow.Stages)
+            .SelectMany(stage => stage.Signals)
+            .Should().NotContain(signal => signal.Type == "catalog_query",
+                "catalog lookup has one global owner and must not execute again inside a stage");
+        config.Flows.SelectMany(flow => flow.Stages)
+            .SelectMany(stage => stage.Actions)
+            .Should().NotContain(action => action.Signal == "catalog_query",
+                "global and stage actions must never compete for the same catalog turn");
+
+        var cartMutation = config.GlobalActions.Should().ContainSingle(action =>
+            action.Signal.Type == "order_changes").Subject;
+        var globalCartAction = cartMutation.Actions.Should().ContainSingle(action =>
+            action.Operation == "commerce.apply_order_changes"
+            && action.Signal == "order_changes").Subject;
+        globalCartAction.Execution.Idempotency.Should().Be(StageActionIdempotency.None);
+        globalCartAction.OnOutcome["cart.applied"].Effects.Should().Contain(effect =>
+            effect.Type == StageEffectTypes.ClearFacts
+            && effect.Facts.Contains("order_finalized")
+            && effect.Facts.Contains("order_checkout_presented"));
+        config.Flows.SelectMany(flow => flow.Stages)
+            .Where(stage => stage.Signals.Any(signal => signal.Type == "order_changes"))
+            .Select(stage => stage.Id)
+            .Should().BeEquivalentTo(["product_selection", "cart_review"],
+                "these stages intentionally override the global cart fallback");
+
+        foreach (var flow in config.Flows)
+        {
+            foreach (var stage in flow.Stages)
+            {
+                var scope = MimosBabySpa.Application.Agents.Planning.TurnPlanScopeBuilder.Build(
+                    config,
+                    stage,
+                    new Dictionary<string, string>(),
+                    flow.Id);
+                scope.Signals.Should().ContainKey("catalog_query",
+                    $"catalog queries must remain available while the active stage is '{stage.Id}'");
+                scope.Signals.Should().ContainKey("order_changes",
+                    $"cart mutations must remain available while the active stage is '{stage.Id}'");
+            }
+        }
+
 
         var customerName = config.Templates["customer_name_prompt"];
-        customerName.Should().Contain("\r\n\r\n");
-        customerName.Should().Contain("Que gusto saludarte");
-        customerName.Should().NotContain("Bienvenido a CJ Distribuciones. Con gusto");
+        customerName.Should().Be("Para comenzar, me compartes tu nombre o el nombre de tu negocio?");
+        customerName.Should().NotContain("Hola").And.NotContain("Bienvenido");
 
         var customerType = config.Templates["customer_type_prompt"];
         customerType.Should().Contain("\r\n\r\n");
         customerType.Should().Contain("Puedes responder con la letra o con el nombre");
         customerType.Should().Contain("*A.* Hogar");
 
-        config.Templates["product_selection_prompt"].Should().Contain("\r\n\r\n");
+        config.Templates["product_selection_prompt"].Should().StartWith("Cuentame que productos");
+        config.Templates["product_selection_prompt"].Should().NotContain("Perfecto, ya podemos armar");
+        config.Templates["order_checkout_no_payment"].Should().Contain("- Cliente: {{customer_name}}");
+        config.Templates["order_checkout_no_payment"].Should().Contain("- Recibe: {{delivery_recipient_name}}");
+
+        var facts = config.FactSchema.ToDictionary(fact => fact.Key, StringComparer.OrdinalIgnoreCase);
+        facts["customer_name"].ExtractionGuidance.Should().Contain("No lo actualices").And.Contain("recibe");
+        facts["delivery_recipient_name"].Role.Should().Be("shipping.recipient_name");
+        facts["delivery_recipient_name"].Scope.Should().Be("request");
+        facts["delivery_reference"].Role.Should().Be("shipping.reference");
+        facts["delivery_location_status"].Role.Should().Be("shipping.location_status");
+        facts["delivery_location_status"].Options.Should().ContainSingle(option => option.Value == "ready");
+
+        var orderData = config.Flows.SelectMany(flow => flow.Stages)
+            .Single(stage => stage.Id == "order_data");
+        orderData.Collect.Should().Contain(["delivery_reference", "delivery_recipient_name", "delivery_location_status"]);
+        orderData.Collect.Should().NotContain("customer_name");
+        orderData.AdvanceWhenFacts.Should().Contain("delivery_location_status");
+        config.Checkout.Modes["order"].RequiredFactRoles
+            .Should().Contain("delivery_location_status", "shipping.location_status");
+
         config.Templates["catalog_results"].Should().Contain("\r\n\r\n*Productos disponibles*\r\n\r\n");
         config.Templates["cart_snapshot"].Should().Contain("\r\n\r\n*Pedido actual*\r\n\r\n");
         config.Templates["cart_review"].Should().Contain("\r\n\r\n*Resumen de tu pedido*\r\n\r\n");

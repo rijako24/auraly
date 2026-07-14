@@ -10,4 +10,6 @@ public static class CheckoutSystemSlots
     public const string FixedSchedule = "fixed_schedule";
     public const string City = "city";
     public const string DeliveryAddress = "delivery_address";
+    public const string DeliveryReference = "delivery_reference";
+    public const string DeliveryRecipientName = "delivery_recipient_name";
 }

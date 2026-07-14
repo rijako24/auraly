@@ -2,6 +2,7 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using MimosBabySpa.Application.Commerce;
+using MimosBabySpa.Domain.Catalog;
 using MimosBabySpa.Domain.Entities;
 using MimosBabySpa.Domain.Enums;
 using MimosBabySpa.Domain.Repositories;
@@ -33,16 +34,6 @@ public sealed class MantisCommerceAdapter : ICommerceAdapter
         var pageSize = Math.Clamp(request.Limit > 0 ? request.Limit : settings.Catalog.DefaultPageSize, 1, settings.Catalog.MaxPageSize);
         var (products, hasMore) = await FetchProductsAsync(settings, request, request, pageSize, ct);
 
-        if (products.Count == 0)
-        {
-            foreach (var fallbackQuery in BuildFallbackQueries(request.Query))
-            {
-                var fallbackRequest = request with { Query = fallbackQuery };
-                (products, hasMore) = await FetchProductsAsync(settings, fallbackRequest, fallbackRequest, pageSize, ct);
-                if (products.Count > 0)
-                    break;
-            }
-        }
 
         if (settings.Catalog.CacheProducts && products.Count > 0)
         {
@@ -253,20 +244,6 @@ public sealed class MantisCommerceAdapter : ICommerceAdapter
             && MatchesFilter(product.ProductClassName, productClass);
     }
 
-    private static IEnumerable<string> BuildFallbackQueries(string? query)
-    {
-        if (string.IsNullOrWhiteSpace(query))
-            yield break;
-
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var token in query.Split([' ', ',', ';', ':', '/', '\\', '-', '_', '(', ')', '[', ']'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-        {
-            if (token.Length < 3 || !token.Any(char.IsLetter) || !seen.Add(token))
-                continue;
-
-            yield return token;
-        }
-    }
     private static bool HasMore(MantisPaginationDto? pagination, int returnedCount, int pageSize)
     {
         if (bool.TryParse(pagination?.NextPage, out var hasNextPage))
@@ -292,7 +269,7 @@ public sealed class MantisCommerceAdapter : ICommerceAdapter
         if (string.IsNullOrWhiteSpace(normalizedValue))
             return false;
 
-        var tokens = BuildFallbackQueries(term)
+        var tokens = CatalogSearchText.GetSearchTerms(term)
             .Select(NormalizeSearchText)
             .Where(token => token.Length >= 2)
             .ToArray();

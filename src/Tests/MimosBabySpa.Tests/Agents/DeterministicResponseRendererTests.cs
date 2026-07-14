@@ -172,6 +172,52 @@ public sealed class DeterministicResponseRendererTests
     }
 
     [Fact]
+    public async Task Render_FirstGreetingWithCatalogPresentation_PrependsOpeningAndSuppressesIdentityFallback()
+    {
+        var chat = new RecordingChatClient("Hola! Bienvenido a CJ Distribuciones.");
+        var composer = new StubPresentationComposer("CATALOGO OFICIAL");
+        var renderer = new DeterministicResponseRenderer(chat, composer);
+        var config = new AgentConfig
+        {
+            ConversationOpening = new ConversationOpeningDefinitions
+            {
+                Enabled = true,
+                Guidance = "Saluda y da la bienvenida a CJ Distribuciones",
+                AllowQuestions = false
+            }
+        };
+        var turn = new DeterministicTurnResult
+        {
+            Success = true,
+            Response = new StageResponseDefinition { FallbackTemplate = "customer_name_prompt" },
+            Presentations =
+            [
+                new OperationPresentation(
+                    "catalog_results",
+                    new Dictionary<string, object?>(),
+                    FragmentRenderMode.Exclusive,
+                    FragmentPriority.Required)
+            ]
+        };
+
+        var response = await renderer.RenderAsync(new DeterministicResponseRequest(
+            config,
+            new AgentFlowStage { Id = "customer_name" },
+            turn,
+            "hola, que pechugas tienes?",
+            [ChatMessage.User("hola, que pechugas tienes?")],
+            RequestOpeningRequired: true));
+
+        response.Text.Should().Be(
+            $"Hola! Bienvenido a CJ Distribuciones.{Environment.NewLine}{Environment.NewLine}CATALOGO OFICIAL");
+        chat.CallCount.Should().Be(1);
+        composer.LastPresentations.Should().ContainSingle();
+        composer.LastPresentations[0].TemplateId.Should().Be("catalog_results");
+        composer.LastPresentations.Should().NotContain(presentation =>
+            presentation.TemplateId == "customer_name_prompt");
+    }
+
+    [Fact]
     public async Task Render_OpeningQuestionIsRejected_AndCannotDuplicateTheStagePrompt()
     {
         var chat = new RecordingChatClient("¡Hola Richard! Aquí estoy para ayudarte. ¿Qué te gustaría incluir hoy?");

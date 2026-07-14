@@ -42,6 +42,7 @@ public class ApplicationDbContext : DbContext
     public DbSet<IntegrationConnection> IntegrationConnections { get; set; }
     public DbSet<ReservationIntegrationEvent> ReservationIntegrationEvents { get; set; }
     public DbSet<Product> Products { get; set; }
+    public DbSet<ProductRecommendationRule> ProductRecommendationRules { get; set; }
     public DbSet<Promotion> Promotions { get; set; }
     public DbSet<PromotionCondition> PromotionConditions { get; set; }
     public DbSet<PromotionBenefit> PromotionBenefits { get; set; }
@@ -493,6 +494,38 @@ public class ApplicationDbContext : DbContext
             entity.HasIndex(e => new { e.BusinessId, e.IntegrationConnectionId, e.ExternalProductId })
                 .IsUnique()
                 .HasFilter("[IntegrationConnectionId] IS NOT NULL AND [ExternalProductId] IS NOT NULL");
+        });
+
+        modelBuilder.Entity<ProductRecommendationRule>(entity =>
+        {
+            entity.HasKey(e => e.ProductRecommendationRuleId);
+            entity.Property(e => e.MatchType).HasConversion<int>();
+            entity.Property(e => e.RecommendationType).HasConversion<int>();
+            entity.Property(e => e.SourceValue).HasMaxLength(300);
+            entity.Property(e => e.RecommendedExternalProductId).HasMaxLength(300);
+            entity.Property(e => e.RecommendedSku).HasMaxLength(100);
+            entity.Property(e => e.RecommendedSearchText).HasMaxLength(300);
+            entity.Property(e => e.Reason).HasMaxLength(500);
+            entity.HasOne(e => e.Business)
+                .WithMany()
+                .HasForeignKey(e => e.BusinessId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.IntegrationConnection)
+                .WithMany()
+                .HasForeignKey(e => e.IntegrationConnectionId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.SourceProduct)
+                .WithMany()
+                .HasForeignKey(e => e.SourceProductId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.RecommendedProduct)
+                .WithMany()
+                .HasForeignKey(e => e.RecommendedProductId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasIndex(e => new { e.BusinessId, e.IsActive, e.Priority });
+            entity.HasIndex(e => e.IntegrationConnectionId);
+            entity.HasIndex(e => e.SourceProductId);
+            entity.HasIndex(e => e.RecommendedProductId);
         });
 
         modelBuilder.Entity<Promotion>(entity =>

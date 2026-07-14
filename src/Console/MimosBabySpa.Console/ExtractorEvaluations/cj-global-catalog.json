@@ -1,0 +1,223 @@
+{
+  "cases": [
+    {
+      "id": "catalog_query_in_product_selection",
+      "message": "que pechugas tienes?",
+      "stage": "product_selection",
+      "expectedFlow": "order",
+      "expectedSignals": ["catalog_query"],
+      "absentSignals": ["order_changes", "restart_request"],
+      "seed": "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql"
+    },
+    {
+      "id": "catalog_query_after_finishing_products",
+      "message": "que pechugas tienes?",
+      "stage": "order_data",
+      "expectedFlow": "order",
+      "expectedSignals": ["catalog_query"],
+      "absentSignals": ["order_changes", "restart_request"],
+      "seed": "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+      "history": [
+        {
+          "role": "user",
+          "content": "ya no quiero mas productos"
+        },
+        {
+          "role": "assistant",
+          "content": "Prefieres recoger tu pedido o que te lo enviemos a domicilio?"
+        }
+      ],
+      "initialFacts": {
+        "customer_name": "Richard",
+        "customer_type": "Hogar",
+        "order_finalized": "true"
+      }
+    },
+    {
+      "id": "catalog_query_during_payment",
+      "message": "antes de pagar, que cerdo tienes?",
+      "stage": "payment_method",
+      "expectedFlow": "order",
+      "expectedSignals": ["catalog_query"],
+      "absentSignals": ["order_changes", "restart_request"],
+      "seed": "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+      "initialFacts": {
+        "customer_name": "Richard",
+        "customer_type": "Hogar",
+        "order_finalized": "true",
+        "delivery_method": "domicilio",
+        "city": "Valledupar",
+        "delivery_address": "Calle 5 # 10-20",
+        "delivery_location_status": "ready",
+        "delivery_phone": "3012926660"
+      }
+    },
+    {
+      "id": "catalog_query_after_official_summary",
+      "message": "y que salchichas tienes?",
+      "stage": "summary",
+      "expectedFlow": "order",
+      "expectedSignals": ["catalog_query"],
+      "absentSignals": ["order_changes", "restart_request"],
+      "seed": "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+      "initialFacts": {
+        "customer_name": "Richard",
+        "customer_type": "Hogar",
+        "order_finalized": "true",
+        "delivery_method": "domicilio",
+        "city": "Valledupar",
+        "delivery_address": "Calle 5 # 10-20",
+        "delivery_location_status": "ready",
+        "delivery_phone": "3012926660",
+        "payment_method": "efectivo",
+        "order_checkout_presented": "true"
+      }
+    },
+    {
+      "id": "cart_add_after_finishing_products",
+      "message": "cambie de idea, agregame 2 pechugas criollas",
+      "stage": "order_data",
+      "expectedFlow": "order",
+      "expectedSignals": ["order_changes"],
+      "absentSignals": ["catalog_query", "restart_request"],
+      "expectedSignalItems": [
+        {
+          "type": "order_changes",
+          "count": 1,
+          "products": ["crioll"],
+          "operations": ["add"],
+          "quantities": [2]
+        }
+      ],
+      "seed": "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+      "initialFacts": {
+        "customer_name": "Richard",
+        "customer_type": "Hogar",
+        "order_finalized": "true"
+      }
+    },
+    {
+      "id": "cart_remove_after_official_summary",
+      "message": "mejor quita la salchicha del pedido",
+      "stage": "summary",
+      "expectedFlow": "order",
+      "expectedSignals": ["order_changes"],
+      "absentSignals": ["catalog_query", "restart_request"],
+      "expectedSignalItems": [
+        {
+          "type": "order_changes",
+          "count": 1,
+          "products": ["salchicha"],
+          "operations": ["remove"],
+          "quantities": []
+        }
+      ],
+      "seed": "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+      "initialFacts": {
+        "customer_name": "Richard",
+        "customer_type": "Hogar",
+        "order_finalized": "true",
+        "order_checkout_presented": "true"
+      },
+      "currentCart": [
+        {
+          "name": "SALCHICHA LONG X 1100 G X 20UND",
+          "quantity": 3
+        }
+      ]
+    },
+    {
+      "id": "mixed_cart_change_and_catalog_query_during_delivery",
+      "message": "agregame una pechuga criolla y que cerdo tienes?",
+      "stage": "order_data",
+      "expectedFlow": "order",
+      "expectedSignals": ["order_changes", "catalog_query"],
+      "absentSignals": ["restart_request"],
+      "expectedSignalItems": [
+        {
+          "type": "order_changes",
+          "count": 1,
+          "products": ["crioll"],
+          "operations": ["add"],
+          "quantities": [1]
+        }
+      ],
+      "seed": "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+      "initialFacts": {
+        "customer_name": "Richard",
+        "customer_type": "Hogar",
+        "order_finalized": "true"
+      }
+    },
+    {
+      "id": "catalog_query_in_first_greeting_before_identity",
+      "message": "hola, que pechugas tienes?",
+      "stage": "customer_name",
+      "expectedFlow": "order",
+      "expectedSignals": ["catalog_query"],
+      "absentSignals": ["order_changes", "restart_request"],
+      "seed": "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql"
+    },
+    {
+      "id": "saved_address_contextual_question_is_not_catalog",
+      "message": "Cual tienes registrada?",
+      "stage": "order_data",
+      "expectedFlow": "order",
+      "expectedSignals": ["known_fact_query"],
+      "absentSignals": ["catalog_query", "order_changes", "restart_request"],
+      "seed": "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+      "history": [
+        { "role": "user", "content": "domicilio" },
+        { "role": "assistant", "content": "Solo para confirmar, la direccion de entrega sigue siendo la misma que tenemos registrada o quieres actualizarla?" }
+      ],
+      "initialFacts": {
+        "customer_name": "Richard", "customer_type": "Hogar", "order_finalized": "true",
+        "delivery_method": "domicilio", "delivery_address": "Calle 5 # 10-20", "delivery_phone": "3012926660"
+      }
+    },
+    {
+      "id": "explicit_saved_address_question_is_not_catalog",
+      "message": "Cual direccion tienes registrada?",
+      "stage": "order_data",
+      "expectedFlow": "order",
+      "expectedSignals": ["known_fact_query"],
+      "absentSignals": ["catalog_query", "order_changes", "restart_request"],
+      "seed": "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+      "history": [{ "role": "assistant", "content": "La direccion de entrega sigue siendo la misma que tenemos registrada?" }],
+      "initialFacts": {
+        "customer_name": "Richard", "customer_type": "Hogar", "order_finalized": "true",
+        "delivery_method": "domicilio", "delivery_address": "Calle 5 # 10-20", "delivery_phone": "3012926660"
+      }
+    },
+    {
+      "id": "saved_payment_contextual_question_is_not_catalog",
+      "message": "Cual tienes registrado?",
+      "stage": "payment_method",
+      "expectedFlow": "order",
+      "expectedSignals": ["known_fact_query"],
+      "absentSignals": ["catalog_query", "order_changes", "restart_request"],
+      "seed": "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+      "history": [{ "role": "assistant", "content": "Quieres pagar con el mismo metodo que tienes registrado o prefieres cambiarlo?" }],
+      "initialFacts": {
+        "customer_name": "Richard", "customer_type": "Hogar", "order_finalized": "true",
+        "delivery_method": "domicilio", "delivery_address": "Calle 5 # 10-20", "delivery_location_status": "ready",
+        "delivery_phone": "3012926660", "payment_method": "efectivo"
+      }
+    },
+    {
+      "id": "contextual_product_followup_remains_catalog",
+      "message": "Y cuales tienes disponibles?",
+      "stage": "order_data",
+      "expectedFlow": "order",
+      "expectedSignals": ["catalog_query"],
+      "absentSignals": ["order_changes", "restart_request"],
+      "seed": "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+      "history": [
+        { "role": "user", "content": "quiero preparar pollo" },
+        { "role": "assistant", "content": "Te interesan opciones de pechuga?" }
+      ],
+      "initialFacts": { "customer_name": "Richard", "customer_type": "Hogar", "order_finalized": "true" }
+    }
+  ],
+  "repetitions": 3
+}

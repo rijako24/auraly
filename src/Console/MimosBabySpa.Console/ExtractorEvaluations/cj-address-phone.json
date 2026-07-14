@@ -1,6 +1,114 @@
 {
   "cases": [
     {
+      "id": "cj_receiver_does_not_replace_customer",
+      "message": "Calle 5 y el nombre de quien recibe es Jaime",
+      "stage": "order_data",
+      "expectedFlow": "order",
+      "expectedFacts": [
+        {
+          "key": "delivery_address",
+          "value": "Calle 5"
+        },
+        {
+          "key": "delivery_recipient_name",
+          "value": "Jaime"
+        }
+      ],
+      "absentFacts": [
+        "customer_name",
+        "delivery_location_status"
+      ],
+      "seed": "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+      "history": [
+        {
+          "role": "assistant",
+          "content": "Indica la direccion completa y, si recibe otra persona, su nombre."
+        }
+      ],
+      "initialFacts": {
+        "customer_name": "Richard",
+        "customer_type": "Hogar",
+        "order_finalized": "true",
+        "delivery_method": "domicilio",
+        "city": "Valledupar"
+      }
+    },
+    {
+      "id": "cj_reference_completes_existing_address",
+      "message": "El barrio es Centro, casa 12 frente al parque",
+      "stage": "order_data",
+      "expectedFlow": "order",
+      "expectedFacts": [
+        {
+          "key": "delivery_reference"
+        },
+        {
+          "key": "delivery_location_status",
+          "value": "ready"
+        }
+      ],
+      "absentFacts": [
+        "customer_name",
+        "delivery_recipient_name"
+      ],
+      "seed": "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+      "history": [
+        {
+          "role": "assistant",
+          "content": "La direccion Calle 5 aun es muy general. Indicame el barrio, numero de casa o una referencia."
+        }
+      ],
+      "initialFacts": {
+        "customer_name": "Richard",
+        "customer_type": "Hogar",
+        "order_finalized": "true",
+        "delivery_method": "domicilio",
+        "city": "Valledupar",
+        "delivery_address": "Calle 5"
+      }
+    },
+    {
+      "id": "cj_complete_address_receiver_and_phone",
+      "message": "La direccion completa es Carrera 12 # 8-45, apartamento 302; recibe Jaime y el telefono es 3012926660",
+      "stage": "order_data",
+      "expectedFlow": "order",
+      "expectedFacts": [
+        {
+          "key": "delivery_address"
+        },
+        {
+          "key": "delivery_recipient_name",
+          "value": "Jaime"
+        },
+        {
+          "key": "delivery_phone",
+          "value": "3012926660"
+        },
+        {
+          "key": "delivery_location_status",
+          "value": "ready"
+        }
+      ],
+      "absentFacts": [
+        "customer_name"
+      ],
+      "seed": "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+      "history": [
+        {
+          "role": "assistant",
+          "content": "Indica la direccion completa, telefono y nombre del receptor si es diferente."
+        }
+      ],
+      "initialFacts": {
+        "customer_name": "Richard",
+        "customer_type": "Hogar",
+        "order_finalized": "true",
+        "delivery_method": "domicilio",
+        "city": "Valledupar"
+      }
+    },
+    {
       "id": "cj_address_phone_plain_phone",
       "message": "calle 5n y el telefono es 3012926660",
       "stage": "order_data",
@@ -14,6 +122,13 @@
           "key": "delivery_phone",
           "value": "3012926660"
         }
+      ],
+      "absentFacts": [
+        "customer_name",
+        "delivery_location_status"
+      ],
+      "absentAmbiguousFields": [
+        "customer_name"
       ],
       "seed": "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
       "history": [

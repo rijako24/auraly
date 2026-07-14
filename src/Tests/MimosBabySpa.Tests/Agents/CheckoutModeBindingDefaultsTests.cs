@@ -50,6 +50,21 @@ public sealed class CheckoutModeBindingDefaultsTests
     }
 
     [Fact]
+    public void Resolve_ForOrder_ExposesOptionalShippingRolesWithoutMakingThemGloballyRequired()
+    {
+        var bindings = CheckoutModeBindingDefaults.Resolve(
+            CheckoutKind.Order,
+            new CheckoutModeDefinition());
+
+        bindings.RequiredFactRoles.Should().NotContainKey("delivery_reference");
+        bindings.RequiredFactRoles.Should().NotContainKey("delivery_recipient_name");
+        bindings.SystemFactBindings.Should().Contain("delivery_reference", "shipping.reference");
+        bindings.SystemFactBindings.Should().Contain("delivery_recipient_name", "shipping.recipient_name");
+        bindings.TemplateFactBindings.Should().Contain("delivery_reference", "shipping.reference");
+        bindings.TemplateFactBindings.Should().Contain("delivery_recipient_name", "shipping.recipient_name");
+    }
+
+    [Fact]
     public void Resolve_WithOverrides_MergesAdvancedBindings()
     {
         var mode = new CheckoutModeDefinition

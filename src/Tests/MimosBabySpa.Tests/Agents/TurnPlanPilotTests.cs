@@ -106,6 +106,15 @@ public sealed class TurnPlanPilotTests
         {
             Persona = "Asistente de prueba",
             Flows = [new AgentFlowDefinition { Id = "booking", Type = FlowTypes.Primary }],
+            GlobalActions =
+            [
+                new AgentGlobalAction
+                {
+                    Id = "restart",
+                    ConversationGuidance = "restart only from an explicit new request",
+                    Signal = new StageSignalDefinition { Type = "restart_request", ValueSchema = Schema("{\"type\":\"boolean\"}") }
+                }
+            ],
             FactSchema =
             [
                 UserFact("desired_date", "date"),
@@ -125,7 +134,10 @@ public sealed class TurnPlanPilotTests
             config,
             stage,
             scope,
-            new Dictionary<string, string>(),
+            new Dictionary<string, string>
+            {
+                ["customer_name"] = "Richard"
+            },
             message,
             new DateTimeOffset(2026, 7, 10, 10, 0, 0, TimeSpan.FromHours(-5)),
             []);
@@ -140,6 +152,14 @@ public sealed class TurnPlanPilotTests
         chat.CapturedOptions.StructuredOutput!.Name.Should().Be(TurnPlanJsonSchemaBuilder.SchemaName);
         chat.CapturedOptions.StructuredOutput.Strict.Should().BeTrue();
         chat.CapturedOptions.Temperature.Should().Be(0);
+        chat.CapturedMessages.Should().ContainSingle();
+        var extractorPayload = chat.CapturedMessages![0].Content;
+        extractorPayload.Should().Contain("\"currentFacts\":{\"customer_name\":\"Richard\"}");
+        extractorPayload.Should().Contain(
+            "already hydrated from persisted conversation facts and durable customer memory");
+        extractorPayload.Should().Contain("restart only from an explicit new request");
+
+
     }
 
     [Fact]
@@ -497,7 +517,7 @@ public sealed class TurnPlanPilotTests
             "tiene 2 meses pero quiero informaciÃ³n para cuando tenga 3");
 
         result.IsValid.Should().BeFalse();
-        result.Errors.Should().Contain(error => error.Contains("cannot be mutated", StringComparison.OrdinalIgnoreCase));
+        result.Errors.Should().Contain(error => error.Contains("cannot be set", StringComparison.OrdinalIgnoreCase));
     }
     private static JsonElement Schema(string json)
     {
@@ -570,6 +590,7 @@ public sealed class TurnPlanPilotTests
         public StubChatClient(string arguments) => _arguments = arguments;
 
         public ChatCompletionOptions? CapturedOptions { get; private set; }
+        public IReadOnlyList<ChatMessage>? CapturedMessages { get; private set; }
 
         public Task<ChatCompletionResult> CompleteAsync(
             IReadOnlyList<ChatMessage> messages,
@@ -577,6 +598,7 @@ public sealed class TurnPlanPilotTests
             CancellationToken cancellationToken = default)
         {
             CapturedOptions = options;
+            CapturedMessages = messages;
             return Task.FromResult(new ChatCompletionResult
             {
                 Success = true,

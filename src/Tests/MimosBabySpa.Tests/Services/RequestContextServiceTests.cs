@@ -1,9 +1,14 @@
+using System.Text.Json;
 using FluentAssertions;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using MimosBabySpa.Application.Agents;
 using MimosBabySpa.Application.Agents.Configuration;
 using MimosBabySpa.Application.Agents.Gating;
+using MimosBabySpa.Application.Agents.Operations;
+using MimosBabySpa.Application.Agents.Operations.Conversation;
+using MimosBabySpa.Application.Commerce;
+using MimosBabySpa.Domain.Enums;
 using MimosBabySpa.Application.Services;
 using MimosBabySpa.Application.Time;
 using MimosBabySpa.Domain.Entities;
@@ -243,6 +248,63 @@ public sealed class RequestContextServiceTests
         facts.Should().NotContainKey("availability_checked");
         state.Verifications.Should().BeEmpty();
         state.ActiveRequestStartedAtUtc.Should().Be(originalBoundary);
+    }
+
+
+    [Fact]
+    public async Task ResetRequest_ClearsRequestStateAndDraftButPreservesHydratedCustomerFacts()
+    {
+        var conversationId = Guid.NewGuid();
+        var businessId = Guid.NewGuid();
+        var facts = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["customer_name"] = "Richard",
+            ["order_finalized"] = "true"
+        };
+        var state = new ConversationState
+        {
+            ActiveFlowId = "order", ActiveStageId = "delivery", PendingTurnPlan = new PendingTurnPlan()
+        };
+        var requests = new Mock<IRequestContextService>();
+        requests.Setup(service => service.CompleteAsync(
+                conversationId, It.IsAny<AgentConfig>(), state, facts, "request_restarted",
+                It.IsAny<CancellationToken>()))
+            .Callback(() => facts.Remove("order_finalized"))
+            .ReturnsAsync(new RequestContextCleanupResult(
+                "request_restarted", ["order_finalized"], ["customer_name"]));
+        var commerce = new Mock<ICommerceService>();
+        commerce.Setup(service => service.DiscardDraftsAsync(
+                businessId, conversationId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(1);
+        var payments = new Mock<ICheckoutPaymentCoordinator>();
+        payments.Setup(service => service.DiscardActiveCheckoutAsync(
+                It.IsAny<CheckoutPaymentContext>(), It.IsAny<CheckoutKind>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CheckoutPaymentDiscardResult.None);
+        var operation = new ResetConversationRequestOperation(
+            requests.Object, commerce.Object, payments.Object);
+
+        var outcome = await operation.ExecuteAsync(
+            JsonDocument.Parse("{}").RootElement,
+            new OperationContext
+            {
+                BusinessId = businessId,
+                ConversationId = conversationId,
+                Config = new AgentConfig { Commerce = new CommerceConfig { Enabled = true } },
+                ConversationState = state,
+                Session = new AgentConversationContext { Facts = facts, ConversationState = state }
+            });
+
+        outcome.Success.Should().BeTrue();
+        outcome.Effects.Should().ContainSingle().Which.Should().BeOfType<ResetRequestOperationEffect>();
+        facts.Should().Contain("customer_name", "Richard");
+        facts.Should().NotContainKey("order_finalized");
+        state.ActiveFlowId.Should().BeNull();
+        state.ActiveStageId.Should().BeNull();
+        state.PendingTurnPlan.Should().BeNull();
+        payments.Verify(service => service.DiscardActiveCheckoutAsync(
+            It.IsAny<CheckoutPaymentContext>(), It.IsAny<CheckoutKind>(),
+            It.IsAny<CancellationToken>()), Times.Exactly(Enum.GetValues<CheckoutKind>().Length));
     }
 
     private static AgentConfig CreateConfig() => new()

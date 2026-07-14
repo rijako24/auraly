@@ -3,7 +3,7 @@ using System.Text.RegularExpressions;
 namespace MimosBabySpa.Application.Agents.Templates;
 
 /// <summary>
-/// Renderizador minimalista para plantillas del prompt: {{var}}, {{#if var}}, {{#each list}}.
+/// Renderizador minimalista para plantillas del prompt: {{var}}, {{#if var}}...{{else}}, {{#each list}}.
 /// </summary>
 public sealed partial class PromptTemplateRenderer : ITemplateRenderer
 {
@@ -60,7 +60,11 @@ public sealed partial class PromptTemplateRenderer : ITemplateRenderer
             var name = match.Groups["name"].Value;
             var inner = match.Groups["body"].Value.Trim();
 
-            if (!IsTruthy(data, name))
+            var branches = ElseRegex().Split(inner, 2);
+            inner = IsTruthy(data, name)
+                ? branches[0].Trim()
+                : branches.Length > 1 ? branches[1].Trim() : string.Empty;
+            if (inner.Length == 0)
                 return string.Empty;
 
             inner = RenderEachBlocks(inner, data);
@@ -155,6 +159,9 @@ public sealed partial class PromptTemplateRenderer : ITemplateRenderer
 
     [GeneratedRegex(@"\{\{#if\s+(?<name>[\w_]+)\}\}(?<body>[\s\S]*?)\{\{/if\}\}", RegexOptions.IgnoreCase)]
     private static partial Regex IfBlockRegex();
+    [GeneratedRegex(@"\{\{else\}\}", RegexOptions.IgnoreCase)]
+    private static partial Regex ElseRegex();
+
 
     [GeneratedRegex(@"\{\{(?<name>[\w_]+)\}\}", RegexOptions.IgnoreCase)]
     private static partial Regex VariableRegex();

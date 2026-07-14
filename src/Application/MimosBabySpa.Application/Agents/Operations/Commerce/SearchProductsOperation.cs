@@ -9,6 +9,7 @@ public sealed class SearchProductsOperation : IAgentOperation
 {
     private readonly ICommerceService _commerce;
     private readonly IConversationFactsService? _factsService;
+    private readonly ICatalogRecommendationService? _recommendations;
 
     public SearchProductsOperation(ICommerceService commerce) => _commerce = commerce;
 
@@ -16,6 +17,16 @@ public sealed class SearchProductsOperation : IAgentOperation
     {
         _commerce = commerce;
         _factsService = factsService;
+    }
+
+    public SearchProductsOperation(
+        ICommerceService commerce,
+        IConversationFactsService factsService,
+        ICatalogRecommendationService recommendations)
+    {
+        _commerce = commerce;
+        _factsService = factsService;
+        _recommendations = recommendations;
     }
 
     private const string InputSchema = """
@@ -64,8 +75,37 @@ public sealed class SearchProductsOperation : IAgentOperation
             _ => await SearchManyAsync(ctx, queries, request, cancellationToken)
         };
 
+        var previouslyRecommended = CatalogRecommendationMemory.Read(ctx.Facts)?.Products
+            .Select(product => product.ToProductReference())
+            .ToList() ?? [];
+        var recommendation = _recommendations is null || result.Products.Count == 0
+            ? null
+            : await _recommendations.ResolveAsync(ctx, result.Products, previouslyRecommended, cancellationToken);
+
         if (_factsService is not null && result.Products.Count > 0)
+        {
             await ProductSelectionMemory.RememberCatalogAsync(_factsService, ctx, result.Products, queries, cancellationToken);
+            if (recommendation is not null)
+                await CatalogRecommendationMemory.RememberAsync(_factsService, ctx, recommendation.Product, cancellationToken);
+        }
+
+        var recommendationItems = recommendation is null
+            ? Array.Empty<object>()
+            : new object[]
+            {
+                new
+                {
+                    name = recommendation.Product.Name,
+                    description = recommendation.Product.Description,
+                    category = recommendation.Product.CategoryName,
+                    unit_price = recommendation.Product.EffectiveUnitPrice ?? recommendation.Product.UnitPrice,
+                    currency = recommendation.Product.Currency,
+                    promotion_name = recommendation.Product.PromotionName,
+                    promotion_summary = recommendation.Product.PromotionSummary,
+                    relation_type = recommendation.Type.ToString(),
+                    reason = recommendation.Reason
+                }
+            };
 
         var outcomeCode = result.Products.Count == 0 ? "products.not_found" : "products.found";
         return OperationOutcome.Ok(outcomeCode, new
@@ -84,12 +124,13 @@ public sealed class SearchProductsOperation : IAgentOperation
                 promotion_name = product.PromotionName,
                 promotion_summary = product.PromotionSummary
             }).ToList(),
+            recommendations = recommendationItems,
             result.HasMore,
             applied_filters = result.AppliedFilters ?? ProductSearchAppliedFilters.From(request),
             clarification_candidates = Array.Empty<object>(),
             resolution_hint = (string?)null,
             selection_status = "catalog_results",
-            response_guidance = "When presenting product results to the customer, use only returned products and show product name/presentation plus unit_price with currency when available. Do not show SKU/code, external ids, raw catalog ids, or stock quantities/status in normal product options. Use SKU/code only internally for operation calls. Mention available stock quantity only when a requested quantity is greater than the returned available stock, then ask whether the customer wants the available quantity instead. Do not omit returned prices for sellable product options, and do not invent missing prices."
+            response_guidance = "Present products as the main catalog results and keep recommendations in a separate, clearly optional section. Present at most the single returned recommendation; never merge it into the main options or invent another one. Show product name/presentation plus unit_price with currency when available. Do not show SKU/code, external ids, raw catalog ids, or stock quantities/status in normal product options. Use SKU/code only internally for operation calls. Mention available stock quantity only when a requested quantity is greater than the returned available stock, then ask whether the customer wants the available quantity instead. Do not omit returned prices for sellable product options, and do not invent missing prices."
         });
     }
     private async Task<ProductSearchResult> SearchSingleAsync(AgentConversationContext ctx, ProductSearchRequest request, CancellationToken cancellationToken)

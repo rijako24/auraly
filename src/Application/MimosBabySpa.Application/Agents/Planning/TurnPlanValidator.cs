@@ -96,9 +96,11 @@ public sealed class TurnPlanValidator
                 "response.ambiguousFields must be empty unless response.mode is ask_clarification.",
                 TurnPlanIssueTarget.Response);
 
-        foreach (var fact in plan.Facts.Where(fact => ambiguous.Contains(fact.Key)))
+        foreach (var fact in plan.Facts.Where(fact =>
+                     ambiguous.Contains(fact.Key)
+                     && !fact.Operation.Equals(TurnPlanOperations.Clear, StringComparison.OrdinalIgnoreCase)))
             Add(issues, "fact.mutates_ambiguous",
-                $"Fact '{fact.Key}' cannot be mutated while it is ambiguous.",
+                $"Fact '{fact.Key}' cannot be set while it is ambiguous.",
                 TurnPlanIssueTarget.Fact, fact.Key, TurnPlanRecoveryAction.DropTarget);
         foreach (var signal in plan.Signals.Where(signal => ambiguous.Contains(signal.Type)))
             Add(issues, "signal.emits_ambiguous",

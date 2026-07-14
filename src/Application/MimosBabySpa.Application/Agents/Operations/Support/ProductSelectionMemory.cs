@@ -48,10 +48,11 @@ internal static class ProductSelectionMemory
         string productText)
     {
         var memory = CatalogOfferMemory.Read(ctx.Facts);
-        if (memory is null)
+        var recommendationMemory = CatalogRecommendationMemory.Read(ctx.Facts);
+        if (memory is null && recommendationMemory is null)
             return [];
 
-        var candidates = CatalogOfferMemory.AllProducts(memory);
+        var candidates = memory is null ? [] : CatalogOfferMemory.AllProducts(memory);
         var searchReference = NormalizeSelectionReference(productText);
         var requested = NormalizeTokens(searchReference);
         if (requested.Count == 0)
@@ -75,6 +76,27 @@ internal static class ProductSelectionMemory
                 : textualMatches.Where(candidate =>
                     TokensMatch(requestedNumbers, NormalizeTokens(candidate.Name))).ToList();
             matches = numericMatches.Count > 0 ? numericMatches : textualMatches;
+        }
+
+
+        if (matches.Count == 0 && recommendationMemory is not null)
+        {
+            candidates = recommendationMemory.Products;
+            matches = candidates.Where(candidate =>
+                    Normalize(candidate.Name).Equals(Normalize(searchReference), StringComparison.Ordinal)
+                    || (!string.IsNullOrWhiteSpace(candidate.Sku)
+                        && Normalize(candidate.Sku).Equals(Normalize(searchReference), StringComparison.Ordinal)))
+                .ToList();
+            if (matches.Count == 0)
+            {
+                var textualMatches = candidates.Where(candidate =>
+                    TokensMatch(requestedWords, NormalizeTokens(candidate.Name))).ToList();
+                var numericMatches = requestedNumbers.Count == 0
+                    ? []
+                    : textualMatches.Where(candidate =>
+                        TokensMatch(requestedNumbers, NormalizeTokens(candidate.Name))).ToList();
+                matches = numericMatches.Count > 0 ? numericMatches : textualMatches;
+            }
         }
 
         return matches.Select(candidate => candidate.ToProductReference()).ToList();

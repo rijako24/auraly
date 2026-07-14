@@ -1,5 +1,12 @@
 namespace MimosBabySpa.Application.Commerce;
 
+public sealed record ProductLookupRequest(
+    Guid? ProductId,
+    string? ExternalProductId,
+    string? Sku,
+    string? Name,
+    string? SearchText = null);
+
 public sealed record ProductSearchRequest(
     string? Query,
     string? Category,

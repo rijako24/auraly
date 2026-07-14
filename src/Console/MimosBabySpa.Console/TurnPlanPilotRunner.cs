@@ -351,6 +351,10 @@ internal sealed class TurnPlanPilotRunner
             if (!plan.Response.AmbiguousFields.Contains(ambiguous, StringComparer.OrdinalIgnoreCase))
                 errors.Add($"No marc? '{ambiguous}' como ambiguo.");
 
+        foreach (var absent in test.AbsentAmbiguousFields)
+            if (plan.Response.AmbiguousFields.Contains(absent, StringComparer.OrdinalIgnoreCase))
+                errors.Add($"'{absent}' no debia marcarse como ambiguo.");
+
         return errors;
     }
 
@@ -472,6 +476,7 @@ internal sealed class TurnPlanPilotRunner
         public IReadOnlyList<string> AbsentSignals { get; init; } = [];
         public IReadOnlyList<ExpectedSignalItems> ExpectedSignalItems { get; init; } = [];
         public IReadOnlyList<string> ExpectedAmbiguousFields { get; init; } = [];
+        public IReadOnlyList<string> AbsentAmbiguousFields { get; init; } = [];
     }
 
     private sealed class ExtractorHistoryMessage

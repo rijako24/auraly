@@ -133,6 +133,8 @@ public static class CheckoutModeBindingDefaults
             {
                 ["city"] = "shipping.city",
                 ["delivery_address"] = "shipping.address",
+                ["delivery_reference"] = "shipping.reference",
+                ["delivery_recipient_name"] = "shipping.recipient_name",
                 ["payer_name"] = "customer.name",
                 ["payment_phone"] = "customer.phone",
                 ["payer_email"] = "customer.email"
@@ -140,7 +142,9 @@ public static class CheckoutModeBindingDefaults
             CommonTemplateBindings(new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {
                 ["city"] = "shipping.city",
-                ["delivery_address"] = "shipping.address"
+                ["delivery_address"] = "shipping.address",
+                ["delivery_reference"] = "shipping.reference",
+                ["delivery_recipient_name"] = "shipping.recipient_name"
             }));
 
     private static Dictionary<string, string> CommonTemplateBindings(Dictionary<string, string> modeBindings)

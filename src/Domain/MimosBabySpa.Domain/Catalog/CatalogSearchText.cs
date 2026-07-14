@@ -39,6 +39,70 @@ public static class CatalogSearchText
             .ToList();
     }
 
+    public static IReadOnlyList<string> GetFallbackQueries(string? value, int maxCount = 8)
+    {
+        var terms = GetSearchTerms(value);
+        if (terms.Count == 0 || maxCount <= 0)
+            return [];
+
+        var results = new List<string>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var original = NormalizeCompact(value);
+
+        void Add(string candidate)
+        {
+            var trimmed = candidate.Trim();
+            var key = NormalizeCompact(trimmed);
+            if (trimmed.Length > 0
+                && key.Length > 0
+                && key != original
+                && seen.Add(key)
+                && results.Count < maxCount)
+            {
+                results.Add(trimmed);
+            }
+        }
+
+        for (var index = 0; index < terms.Count && results.Count < maxCount; index++)
+        {
+            foreach (var singular in GetSingularFallbacks(terms[index]))
+            {
+                var candidate = terms.ToArray();
+                candidate[index] = singular;
+                Add(string.Join(' ', candidate));
+            }
+        }
+
+        foreach (var term in terms)
+        {
+            Add(term);
+            foreach (var singular in GetSingularFallbacks(term))
+                Add(singular);
+        }
+
+        return results;
+    }
+
+    private static IEnumerable<string> GetSingularFallbacks(string term)
+    {
+        if (term.Length <= 3 || !term.All(char.IsLetter) || !term.EndsWith('s'))
+            yield break;
+
+        if (term.Length > 4 && term.EndsWith("ces", StringComparison.Ordinal))
+            yield return $"{term[..^3]}z";
+
+        var withoutS = term[..^1];
+        if (withoutS.Length >= 3)
+            yield return withoutS;
+
+        if (term.Length > 4 && term.EndsWith("es", StringComparison.Ordinal))
+        {
+            var withoutEs = term[..^2];
+            if (withoutEs.Length >= 3 && !withoutEs.Equals(withoutS, StringComparison.Ordinal))
+                yield return withoutEs;
+        }
+    }
+
     public static bool ContainsAllTerms(string? query, params string?[] values)
     {
         var terms = GetSearchTerms(query);

@@ -41,6 +41,8 @@ private readonly IUnitOfWork _unitOfWork;
             "customer_phone": { "type": "string" },
             "customer_document": { "type": "string" },
             "delivery_address": { "type": "string" },
+            "delivery_reference": { "type": "string" },
+            "delivery_recipient_name": { "type": "string" },
             "notes": { "type": "string" },
             "payment_method": { "type": "string" }
           }
@@ -94,6 +96,11 @@ private readonly IUnitOfWork _unitOfWork;
             ?? Get(arguments, "city");
         var deliveryAddress = Get(arguments, "delivery_address")
             ?? ResolveBinding(roles, ctx.Facts, bindings.SystemFactBindings, CheckoutSystemSlots.DeliveryAddress);
+        var deliveryReference = Get(arguments, "delivery_reference")
+            ?? ResolveBinding(roles, ctx.Facts, bindings.SystemFactBindings, CheckoutSystemSlots.DeliveryReference);
+        var deliveryRecipientName = Get(arguments, "delivery_recipient_name")
+            ?? ResolveBinding(roles, ctx.Facts, bindings.SystemFactBindings, CheckoutSystemSlots.DeliveryRecipientName);
+        var effectiveDeliveryAddress = ComposeDeliveryAddress(deliveryAddress, deliveryReference);
         var paymentPhone = Get(arguments, "customer_phone")
             ?? ResolveBinding(roles, ctx.Facts, bindings.SystemFactBindings, CheckoutSystemSlots.PaymentPhone);
         var payerName = Get(arguments, "customer_name")
@@ -130,7 +137,7 @@ private readonly IUnitOfWork _unitOfWork;
         order.CustomerEmailSnapshot = payerEmail;
         order.CustomerPhoneSnapshot = paymentPhone;
         order.CustomerDocumentSnapshot = customerDocument;
-        order.DeliveryAddressSnapshot = deliveryAddress;
+        order.DeliveryAddressSnapshot = effectiveDeliveryAddress;
         order.Notes = notes;
         order.Currency = currency;
         order.Total = orderTotal;
@@ -141,8 +148,8 @@ private readonly IUnitOfWork _unitOfWork;
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
         var quote = BuildQuote(ctx, order, items, shippingCost, totalCents, paymentSelection, currency);
-        var templateData = BuildTemplateData(order, items, shippingCost, currency, city, deliveryAddress, payerName, payerEmail, paymentPhone, ctx.Facts);
-        var checkoutSnapshotJson = BuildCheckoutSnapshot(order, items, shippingCost, city, deliveryAddress, payerName, payerEmail, paymentPhone, paymentSelection, ctx.Facts);
+        var templateData = BuildTemplateData(order, items, shippingCost, currency, city, effectiveDeliveryAddress, deliveryReference, deliveryRecipientName, payerName, payerEmail, paymentPhone, ctx.Facts);
+        var checkoutSnapshotJson = BuildCheckoutSnapshot(order, items, shippingCost, city, effectiveDeliveryAddress, deliveryReference, deliveryRecipientName, payerName, payerEmail, paymentPhone, paymentSelection, ctx.Facts);
 
         string? paymentLink = null;
         Guid? paymentTransactionId = null;
@@ -301,6 +308,8 @@ private readonly IUnitOfWork _unitOfWork;
         string currency,
         string? city,
         string? deliveryAddress,
+        string? deliveryReference,
+        string? deliveryRecipientName,
         string? customerName,
         string? customerEmail,
         string customerPhone,
@@ -317,6 +326,8 @@ private readonly IUnitOfWork _unitOfWork;
             ["currency"] = currency,
             ["city"] = city,
             ["delivery_address"] = deliveryAddress,
+            ["delivery_reference"] = deliveryReference,
+            ["delivery_recipient_name"] = deliveryRecipientName,
             ["customer_name"] = customerName,
             ["customer_email"] = customerEmail,
             ["customer_phone"] = customerPhone,
@@ -341,6 +352,8 @@ private readonly IUnitOfWork _unitOfWork;
         decimal shippingCost,
         string? city,
         string? deliveryAddress,
+        string? deliveryReference,
+        string? deliveryRecipientName,
         string? customerName,
         string? customerEmail,
         string customerPhone,
@@ -364,6 +377,8 @@ private readonly IUnitOfWork _unitOfWork;
             payment_percentage = paymentSelection.PaymentPercentage,
             city,
             delivery_address = deliveryAddress,
+            delivery_reference = deliveryReference,
+            delivery_recipient_name = deliveryRecipientName,
             line_items = items.Select(i => new
             {
                 order_item_id = i.OrderDraftItemId,
@@ -378,6 +393,19 @@ private readonly IUnitOfWork _unitOfWork;
         };
 
         return JsonSerializer.Serialize(snapshot);
+    }
+
+    internal static string? ComposeDeliveryAddress(string? address, string? reference)
+    {
+        var normalizedAddress = string.IsNullOrWhiteSpace(address) ? null : address.Trim();
+        var normalizedReference = string.IsNullOrWhiteSpace(reference) ? null : reference.Trim();
+        if (normalizedAddress is null)
+            return normalizedReference;
+        if (normalizedReference is null
+            || normalizedAddress.Contains(normalizedReference, StringComparison.OrdinalIgnoreCase))
+            return normalizedAddress;
+
+        return $"{normalizedAddress}. {normalizedReference}";
     }
 
     private static decimal ResolveShippingCost(OrderCheckoutShippingDefinition shipping, string? city)

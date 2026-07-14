@@ -141,6 +141,7 @@ public sealed class DeterministicTurnCoordinator
 
         var effectivePlan = ProtectPendingCommerceSelection(
             request.Config, request.CurrentFacts, request.LatestUserMessage, proposal.Plan);
+        effectivePlan = ReconcileKnownFactAmbiguities(request.Config, effectivePlan, request.CurrentFacts);
         var turnExecutedActionKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var state = request.OperationContext.ConversationState;
         var signature = ConfigurationSignature(request.Config);
@@ -247,10 +248,19 @@ public sealed class DeterministicTurnCoordinator
         StageResponseDefinition? response = null;
         var seenStages = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
+        // A stage declaration is an explicit override of the global default for that signal.
+        // This guarantees one deterministic owner per turn even when a capability has a
+        // stage-specific presentation in some checkpoints and a global fallback elsewhere.
+        var stageOwnedSignals = selectedStage.Signals
+            .Select(signal => signal.Type)
+            .Where(type => !string.IsNullOrWhiteSpace(type))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
         foreach (var globalAction in request.Config.GlobalActions
-                     .Where(action => signals.Any(signal => signal.Type.Equals(
-                         action.Signal.Type,
-                         StringComparison.OrdinalIgnoreCase)))
+                     .Where(action => !stageOwnedSignals.Contains(action.Signal.Type)
+                         && signals.Any(signal => signal.Type.Equals(
+                             action.Signal.Type,
+                             StringComparison.OrdinalIgnoreCase)))
                      .OrderByDescending(action => action.Priority))
         {
             var globalStage = new AgentFlowStage
@@ -297,6 +307,20 @@ public sealed class DeterministicTurnCoordinator
                 versions = new Dictionary<string, long>(globalBatch.Versions, StringComparer.OrdinalIgnoreCase);
                 changedFacts.UnionWith(globalBatch.ChangedFacts);
             }
+
+            var requestReset = execution.OperationEffects
+                .OfType<ResetRequestOperationEffect>()
+                .LastOrDefault();
+            if (requestReset is not null)
+            {
+                foreach (var key in requestReset.ClearedFacts)
+                {
+                    currentFacts.Remove(key);
+                    versions.Remove(key);
+                    changedFacts.Add(key);
+                }
+                selectedStage = flow.Stages[0];
+            }
         }
 
         for (var hop = 0; hop <= flow.Stages.Count; hop++)
@@ -324,7 +348,7 @@ public sealed class DeterministicTurnCoordinator
                     OperationContext = CopyOperationContext(request.OperationContext, currentFacts),
                     Facts = currentFacts,
                     Signals = signals,
-                LatestUserMessage = request.LatestUserMessage,
+                    LatestUserMessage = request.LatestUserMessage,
                     ChangedFacts = changedFacts,
                     ActiveVerifications = verifications,
                     ExecutedActionKeys = request.ExecutedActionKeys,
@@ -560,6 +584,47 @@ public sealed class DeterministicTurnCoordinator
         plan.Response.Mode.Equals("ask_clarification", StringComparison.OrdinalIgnoreCase)
         && plan.Response.AmbiguousFields.Count > 0;
 
+    internal static TurnPlan ReconcileKnownFactAmbiguities(
+        AgentConfig config,
+        TurnPlan plan,
+        IReadOnlyDictionary<string, string> currentFacts)
+    {
+        if (plan.Response.AmbiguousFields.Count == 0)
+            return plan;
+
+        var knownFactKeys = config.FactSchema
+            .Select(fact => fact.Key)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var explicitlyCleared = plan.Facts
+            .Where(fact => fact.Operation.Equals(TurnPlanOperations.Clear, StringComparison.OrdinalIgnoreCase))
+            .Select(fact => fact.Key)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var unresolved = plan.Response.AmbiguousFields
+            .Where(field => !knownFactKeys.Contains(field)
+                || explicitlyCleared.Contains(field)
+                || !currentFacts.TryGetValue(field, out var value)
+                || string.IsNullOrWhiteSpace(value))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (unresolved.Count == plan.Response.AmbiguousFields.Count)
+            return plan;
+
+        return new TurnPlan
+        {
+            FlowIntent = plan.FlowIntent,
+            Facts = plan.Facts,
+            Signals = plan.Signals,
+            Decision = plan.Decision,
+            Response = new TurnPlanResponseDirective
+            {
+                Mode = unresolved.Count == 0 ? "continue" : "ask_clarification",
+                AmbiguousFields = unresolved
+            }
+        };
+    }
+
     private static PendingTurnPlan CreatePending(
         DeterministicTurnRequest request,
         AgentFlowStage stage,
@@ -782,22 +847,22 @@ public sealed class DeterministicTurnCoordinator
         TurnPlan plan,
         IReadOnlyList<string> ambiguousFields,
         TurnPlanProposal proposal) => new()
-    {
-        Success = true,
-        Plan = plan,
-        PlanningWarnings = proposal.Warnings,
-        PromptTokens = proposal.PromptTokens,
-        CompletionTokens = proposal.CompletionTokens,
-        CurrentStageId = request.CurrentStageId,
-        Facts = new Dictionary<string, string>(request.CurrentFacts, StringComparer.OrdinalIgnoreCase),
-        FactVersions = new Dictionary<string, long>(request.FactVersions, StringComparer.OrdinalIgnoreCase),
-        Response = new StageResponseDefinition
         {
-            Mode = "ask_clarification",
-            Guidance = $"Solicita la alternativa aplicable para: {string.Join(", ", ambiguousFields)}.",
-            Template = stage.Response.ClarificationTemplate
-        }
-    };
+            Success = true,
+            Plan = plan,
+            PlanningWarnings = proposal.Warnings,
+            PromptTokens = proposal.PromptTokens,
+            CompletionTokens = proposal.CompletionTokens,
+            CurrentStageId = request.CurrentStageId,
+            Facts = new Dictionary<string, string>(request.CurrentFacts, StringComparer.OrdinalIgnoreCase),
+            FactVersions = new Dictionary<string, long>(request.FactVersions, StringComparer.OrdinalIgnoreCase),
+            Response = new StageResponseDefinition
+            {
+                Mode = "ask_clarification",
+                Guidance = $"Solicita la alternativa aplicable para: {string.Join(", ", ambiguousFields)}.",
+                Template = stage.Response.ClarificationTemplate
+            }
+        };
 
     private static string ConfigurationSignature(AgentConfig config)
     {
@@ -823,11 +888,11 @@ public sealed class DeterministicTurnCoordinator
         IReadOnlyDictionary<string, string> facts,
         TurnPlan? plan = null,
         FlowRouteDecision? route = null) => new()
-    {
-        Success = false,
-        Errors = errors,
-        Plan = plan,
-        Route = route,
-        Facts = facts
-    };
+        {
+            Success = false,
+            Errors = errors,
+            Plan = plan,
+            Route = route,
+            Facts = facts
+        };
 }

@@ -10,6 +10,7 @@ public interface ICommerceService
     Task<OrderSnapshot> RemoveItemAsync(AgentConversationContext ctx, Guid orderItemId, CancellationToken ct = default);
     Task<OrderSnapshot> UpdateItemQuantityAsync(AgentConversationContext ctx, Guid orderItemId, decimal quantity, CancellationToken ct = default);
     Task<OrderSnapshot> GetDraftAsync(AgentConversationContext ctx, CancellationToken ct = default);
+    Task<int> DiscardDraftsAsync(Guid businessId, Guid conversationId, CancellationToken ct = default);
     Task<OrderSnapshot> CreateOrderAsync(AgentConversationContext ctx, CreateOrderRequest request, CancellationToken ct = default);
     Task<OrderSnapshot> ConfirmPaidOrderAsync(Guid businessId, Guid paymentTransactionId, AgentConfig config, CancellationToken ct = default);
 }

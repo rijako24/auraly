@@ -10,7 +10,7 @@ using MimosBabySpa.Domain.Repositories;
 
 namespace MimosBabySpa.Application.Commerce;
 
-public sealed class CommerceService : ICommerceService
+public sealed class CommerceService : ICommerceService, IProductLookupService
 {
     private readonly IUnitOfWork _unitOfWork;
     private readonly ICommerceAdapterFactory _adapterFactory;
@@ -33,12 +33,71 @@ public sealed class CommerceService : ICommerceService
     {
         var adapterContext = await BuildContextAsync(ctx.BusinessId, ctx.AgentId, ctx.ConversationId, ctx.Config, ct);
         var adapter = _adapterFactory.Resolve(adapterContext.Provider);
-        var result = await adapter.SearchProductsAsync(request, adapterContext, ct);
-        result = result.AppliedFilters is null
-            ? result with { AppliedFilters = ProductSearchAppliedFilters.From(request) }
-            : result;
-        result = _availability.FilterSellable(result);
+        var result = _availability.FilterSellable(
+            await adapter.SearchProductsAsync(request, adapterContext, ct));
+        if (result.Products.Count == 0)
+        {
+            foreach (var fallbackQuery in CatalogSearchText.GetFallbackQueries(request.Query))
+            {
+                var fallbackRequest = request with { Query = fallbackQuery };
+                var fallbackResult = _availability.FilterSellable(
+                    await adapter.SearchProductsAsync(fallbackRequest, adapterContext, ct));
+                if (fallbackResult.Products.Count == 0)
+                    continue;
+
+                result = fallbackResult;
+                break;
+            }
+        }
+
+        result = result with { AppliedFilters = ProductSearchAppliedFilters.From(request) };
         return await EnrichProductPromotionsAsync(ctx.BusinessId, result, ct);
+    }
+
+    public async Task<ProductReference?> GetProductAsync(
+        AgentConversationContext ctx,
+        ProductLookupRequest request,
+        CancellationToken ct = default)
+    {
+        var adapterContext = await BuildContextAsync(ctx.BusinessId, ctx.AgentId, ctx.ConversationId, ctx.Config, ct);
+        var adapter = _adapterFactory.Resolve(adapterContext.Provider);
+        var lookup = new AddOrderItemRequest(
+            request.ProductId,
+            request.ExternalProductId,
+            request.Sku,
+            request.Name,
+            1m,
+            null);
+        var product = await adapter.GetProductAsync(lookup, adapterContext, ct);
+        if (product is null && !string.IsNullOrWhiteSpace(request.SearchText))
+        {
+            var candidates = _availability.FilterSellable(await adapter.SearchProductsAsync(
+                new ProductSearchRequest(request.SearchText, null, 10), adapterContext, ct));
+            product = candidates.Products.FirstOrDefault(candidate => MatchesLookupIdentity(candidate, request));
+        }
+        product ??= await FindCachedProductAsync(lookup, adapterContext, ct);
+        if (product is null || !_availability.IsSellable(product))
+            return null;
+
+        var result = await EnrichProductPromotionsAsync(
+            ctx.BusinessId,
+            new ProductSearchResult([product], adapterContext.Provider.ToString().ToLowerInvariant()),
+            ct);
+        return result.Products.FirstOrDefault();
+    }
+
+    private static bool MatchesLookupIdentity(ProductReference product, ProductLookupRequest request)
+    {
+        if (request.ProductId.HasValue && product.ProductId == request.ProductId)
+            return true;
+        if (!string.IsNullOrWhiteSpace(request.ExternalProductId)
+            && string.Equals(product.ExternalProductId, request.ExternalProductId, StringComparison.OrdinalIgnoreCase))
+            return true;
+        if (!string.IsNullOrWhiteSpace(request.Sku)
+            && string.Equals(product.Sku, request.Sku, StringComparison.OrdinalIgnoreCase))
+            return true;
+        return !string.IsNullOrWhiteSpace(request.Name)
+               && string.Equals(product.Name, request.Name, StringComparison.OrdinalIgnoreCase);
     }
 
     public async Task<OrderSnapshot> AddItemAsync(AgentConversationContext ctx, AddOrderItemRequest request, CancellationToken ct = default)
@@ -175,6 +234,21 @@ public sealed class CommerceService : ICommerceService
     {
         var draft = await GetActiveDraftAsync(ctx, ct);
         return draft is null ? EmptyDraftSnapshot() : await BuildSnapshotAsync(draft, ct);
+    }
+
+    public async Task<int> DiscardDraftsAsync(
+        Guid businessId,
+        Guid conversationId,
+        CancellationToken ct = default)
+    {
+        var drafts = await _unitOfWork.OrderDrafts.GetActiveDraftsByConversationAsync(
+            businessId, conversationId, ct);
+        foreach (var draft in drafts)
+            await _unitOfWork.OrderDrafts.DeleteAsync(draft, ct);
+
+        if (drafts.Count > 0)
+            await _unitOfWork.SaveChangesAsync(ct);
+        return drafts.Count;
     }
 
     public async Task<OrderSnapshot> CreateOrderAsync(AgentConversationContext ctx, CreateOrderRequest request, CancellationToken ct = default)

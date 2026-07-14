@@ -117,8 +117,10 @@ public sealed class ApplyOrderChangesOperationTests
         session.Facts.Should().NotContainKey("system.pending_cart_commands");
     }
 
-    [Fact]
-    public async Task EmptyGuardSignal_ResolvesPendingSelectionFromLatestMessageAndCatalog()
+    [Theory]
+    [InlineData("""{"commands":[]}""")]
+    [InlineData("""{"commands":[{"operation":"add","productText":"Long x 10","quantity":1,"destinationReference":null}]}""")]
+    public async Task GuardSignal_ResolvesPendingSelectionFromLatestMessageAndCatalog(string incomingJson)
     {
         var resolver = new StubResolver(new Dictionary<string, IReadOnlyList<ProductReference>>(StringComparer.OrdinalIgnoreCase)
         {
@@ -162,7 +164,7 @@ public sealed class ApplyOrderChangesOperationTests
         });
         session.LatestUserMessage = "Salchicha long x 550 gr";
 
-        var resumed = await operation.ExecuteAsync(Json("""{"commands":[]}"""), Context(session));
+        var resumed = await operation.ExecuteAsync(Json(incomingJson), Context(session));
 
         resumed.Code.Should().Be("cart.applied");
         store.ApplyCalls.Should().Be(1);

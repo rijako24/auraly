@@ -20,8 +20,9 @@ public sealed class CommerceSelectionPlanningContextEnricher : ITurnPlanningCont
     public static TurnPlanningContextFragment? Build(IReadOnlyDictionary<string, string> facts)
     {
         var offerMemory = CatalogOfferMemory.Read(facts);
+        var recommendationMemory = CatalogRecommendationMemory.Read(facts);
         var pending = PendingCartCommandMemory.Read(facts);
-        if (offerMemory is null && pending is null)
+        if (offerMemory is null && recommendationMemory is null && pending is null)
             return null;
 
         var latestSequence = offerMemory?.Snapshots.Max(snapshot => snapshot.Sequence);
@@ -55,7 +56,8 @@ public sealed class CommerceSelectionPlanningContextEnricher : ITurnPlanningCont
                 is_latest = snapshot.Sequence == latestSequence,
                 search_terms = snapshot.SearchTerms,
                 products = snapshot.Products.Select(product => product.Name).ToArray()
-            }).ToArray() ?? []
+            }).ToArray() ?? [],
+            recommendations = recommendationMemory?.Products.Select(product => product.Name).ToArray() ?? []
         });
 
         return new TurnPlanningContextFragment("shoppingContext", value);

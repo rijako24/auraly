@@ -30,6 +30,10 @@ public sealed class FactSchemaEntry
     /// <summary>user | channel | system</summary>
     public string Source { get; init; } = "user";
 
+    /// <summary>True when this fact may be disclosed back to the customer through configured read operations.</summary>
+    public bool CustomerReadable { get; init; }
+
+
     /// <summary>True when this fact should be shown in reservation calendar/email collected info.</summary>
     [JsonPropertyName("showInCollectedInfo")]
     public bool ShowInCollectedInfo { get; init; }

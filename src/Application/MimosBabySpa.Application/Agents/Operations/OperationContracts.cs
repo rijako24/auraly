@@ -53,6 +53,9 @@ public abstract record OperationEffect(string Type);
 
 public sealed record CompleteRequestOperationEffect() : OperationEffect("request.complete");
 public sealed record EscalateHumanOperationEffect() : OperationEffect("escalation.human");
+public sealed record ResetRequestOperationEffect(IReadOnlyList<string> ClearedFacts)
+    : OperationEffect("request.reset");
+
 
 public sealed record SaveVerificationEffect(
     string VerificationType,

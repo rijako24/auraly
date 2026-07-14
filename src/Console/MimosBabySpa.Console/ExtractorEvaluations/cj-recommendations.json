@@ -1,0 +1,118 @@
+{
+  "cases": [
+    {
+      "id": "explicit_recommended_product_can_be_added",
+      "message": "agregame la tocineta recomendada",
+      "stage": "product_selection",
+      "expectedFlow": "order",
+      "expectedSignals": ["order_changes"],
+      "absentSignals": ["catalog_query"],
+      "expectedSignalItems": [
+        {
+          "type": "order_changes",
+          "count": 1,
+          "products": ["tocineta"],
+          "operations": ["add"],
+          "quantities": [1]
+        }
+      ],
+      "seed": "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+      "history": [
+        {
+          "role": "assistant",
+          "content": "Productos disponibles: PECHUGA CRIOLLA y PECHUGA MAC POLLO. Tambien te puede servir TOCINETA CJ 1K. Cual te gustaria agregar?"
+        }
+      ],
+      "initialFacts": {
+        "system.catalog_products": "{\"schemaVersion\":2,\"sequence\":1,\"snapshots\":[{\"sequence\":1,\"searchTerms\":[\"pechuga\"],\"products\":[{\"externalProductId\":\"PO28\",\"name\":\"PECHUGA CRIOLLA\",\"unitPrice\":14033.67,\"currency\":\"COP\"},{\"externalProductId\":\"PO08\",\"name\":\"PECHUGA MAC POLLO\",\"unitPrice\":13001.08,\"currency\":\"COP\"}]}]}",
+        "system.catalog_recommendations": "{\"schemaVersion\":1,\"products\":[{\"externalProductId\":\"CF127\",\"sku\":\"CF127\",\"name\":\"TOCINETA CJ 1K\",\"unitPrice\":19099.41,\"currency\":\"COP\",\"stockQuantity\":509}]}"
+      }
+    },
+    {
+      "id": "deictic_recommended_product_can_be_added",
+      "message": "si, agregame esa recomendacion",
+      "stage": "product_selection",
+      "expectedFlow": "order",
+      "expectedSignals": ["order_changes"],
+      "absentSignals": ["catalog_query"],
+      "expectedSignalItems": [
+        {
+          "type": "order_changes",
+          "count": 1,
+          "products": ["tocineta"],
+          "operations": ["add"],
+          "quantities": [1]
+        }
+      ],
+      "seed": "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+      "history": [
+        {
+          "role": "assistant",
+          "content": "Tambien te puede servir TOCINETA CJ 1K por $19.099 COP. Te gustaria agregarla?"
+        }
+      ],
+      "initialFacts": {
+        "system.catalog_products": "{\"schemaVersion\":2,\"sequence\":1,\"snapshots\":[{\"sequence\":1,\"searchTerms\":[\"pechuga\"],\"products\":[{\"externalProductId\":\"PO28\",\"name\":\"PECHUGA CRIOLLA\",\"unitPrice\":14033.67,\"currency\":\"COP\"}]}]}",
+        "system.catalog_recommendations": "{\"schemaVersion\":1,\"products\":[{\"externalProductId\":\"CF127\",\"sku\":\"CF127\",\"name\":\"TOCINETA CJ 1K\",\"unitPrice\":19099.41,\"currency\":\"COP\",\"stockQuantity\":509}]}"
+      }
+    },
+    {
+      "id": "main_catalog_product_remains_selectable",
+      "message": "dame 2 pechugas criollas",
+      "stage": "product_selection",
+      "expectedFlow": "order",
+      "expectedSignals": ["order_changes"],
+      "absentSignals": ["catalog_query"],
+      "expectedSignalItems": [
+        {
+          "type": "order_changes",
+          "count": 1,
+          "products": ["crioll"],
+          "operations": ["add"],
+          "quantities": [2]
+        }
+      ],
+      "seed": "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+      "history": [
+        {
+          "role": "assistant",
+          "content": "Productos disponibles: PECHUGA CRIOLLA y PECHUGA MAC POLLO. Tambien te puede servir TOCINETA CJ 1K."
+        }
+      ],
+      "initialFacts": {
+        "system.catalog_products": "{\"schemaVersion\":2,\"sequence\":1,\"snapshots\":[{\"sequence\":1,\"searchTerms\":[\"pechuga\"],\"products\":[{\"externalProductId\":\"PO28\",\"name\":\"PECHUGA CRIOLLA\",\"unitPrice\":14033.67,\"currency\":\"COP\"},{\"externalProductId\":\"PO08\",\"name\":\"PECHUGA MAC POLLO\",\"unitPrice\":13001.08,\"currency\":\"COP\"}]}]}",
+        "system.catalog_recommendations": "{\"schemaVersion\":1,\"products\":[{\"externalProductId\":\"CF127\",\"sku\":\"CF127\",\"name\":\"TOCINETA CJ 1K\",\"unitPrice\":19099.41,\"currency\":\"COP\",\"stockQuantity\":509}]}"
+      }
+    },
+    {
+      "id": "overlapping_recommendation_does_not_resolve_generic_main_reference",
+      "message": "agrega una pechuga",
+      "stage": "product_selection",
+      "expectedFlow": "order",
+      "expectedSignals": ["order_changes"],
+      "absentSignals": ["catalog_query"],
+      "expectedSignalItems": [
+        {
+          "type": "order_changes",
+          "count": 1,
+          "products": ["pechuga"],
+          "exactProducts": ["pechuga"],
+          "operations": ["add"],
+          "quantities": [1]
+        }
+      ],
+      "seed": "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+      "history": [
+        {
+          "role": "assistant",
+          "content": "Productos disponibles: PECHUGA CRIOLLA y PECHUGA MAC POLLO. Como recomendacion opcional tengo PECHUGA CON TOCINETA."
+        }
+      ],
+      "initialFacts": {
+        "system.catalog_products": "{\"schemaVersion\":2,\"sequence\":1,\"snapshots\":[{\"sequence\":1,\"searchTerms\":[\"pechuga\"],\"products\":[{\"externalProductId\":\"PO28\",\"name\":\"PECHUGA CRIOLLA\",\"unitPrice\":14033.67,\"currency\":\"COP\"},{\"externalProductId\":\"PO08\",\"name\":\"PECHUGA MAC POLLO\",\"unitPrice\":13001.08,\"currency\":\"COP\"}]}]}",
+        "system.catalog_recommendations": "{\"schemaVersion\":1,\"products\":[{\"externalProductId\":\"PO99\",\"sku\":\"PO99\",\"name\":\"PECHUGA CON TOCINETA\",\"unitPrice\":21000,\"currency\":\"COP\",\"stockQuantity\":20}]}"
+      }
+    }
+  ],
+  "repetitions": 3
+}

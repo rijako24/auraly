@@ -362,6 +362,34 @@
                       "history":  [
 
                                   ]
+                  },
+                  {
+                      "id":  "cj_restarts_finalized_selection_as_new_order",
+                      "message":  "Hola quiero hacer un pedido",
+                      "stage":  "order_data",
+                      "expectedFlow":  "order",
+                      "expectedSignals":  [
+                                              "restart_request"
+                                          ],
+                      "absentFacts":  [
+                                            "customer_name"
+                                        ],
+                      "absentSignals":  [
+                                              "order_changes"
+                                          ],
+                      "seed":  "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+                      "history":  [
+                                      {
+                                          "role":  "assistant",
+                                          "content":  "Prefieres recoger tu pedido o recibirlo a domicilio?"
+                                      }
+                                  ],
+                      "initialFacts":  {
+                                           "customer_name":  "Richard",
+                                           "customer_type":  "Hogar",
+                                           "order_finalized":  "true",
+                                           "delivery_method":  "domicilio"
+                                       }
                   }
               ],
     "repetitions":  3

@@ -250,6 +250,13 @@ public sealed class LlmTurnPlanner : ITurnPlanner
             routingGuidance = flow.RoutingGuidance
 
         });
+        var globalSignalGuidance = context.Config.GlobalActions
+            .Where(action => !string.IsNullOrWhiteSpace(action.Signal.Type))
+            .GroupBy(action => action.Signal.Type, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(
+                group => group.Key,
+                group => group.First().ConversationGuidance,
+                StringComparer.OrdinalIgnoreCase);
 
         var payload = new
 
@@ -269,6 +276,12 @@ public sealed class LlmTurnPlanner : ITurnPlanner
 
                 "Use semantic reasoning for corrections, negations, temporal references and references to previous messages.",
 
+                "When latestUserMessage directly answers or clarifies the immediately preceding assistant question, interpret it within that question's semantic domain before considering any new intent. Do not emit an unrelated signal merely because words in the answer overlap that signal's description. Every emitted signal must be unequivocally supported by the resolved meaning of latestUserMessage.",
+
+
+                "currentFacts is authoritative runtime state already hydrated from persisted conversation facts and durable customer memory before extraction. A non-empty current value is known and must not be requested, re-emitted, or listed in response.ambiguousFields merely because the latest message omits it.",
+
+                "If latestUserMessage explicitly invalidates or corrects an existing currentFact but leaves its replacement ambiguous, emit a clear mutation for that fact with exact evidence and list the fact in response.ambiguousFields. Otherwise preserve the existing fact unchanged.",
                 "structuredContext contains compact, authoritative, read-only runtime state when available. Use currentCart to resolve existing lines and distinguish incremental quantities from requested final quantities. Context alone never authorizes a mutation; latestUserMessage must request it.",
 
                 "When structuredContext.shoppingContext exists, it is the authoritative record of catalog options explicitly offered during the active request. A named reference may select a product from any offer snapshot; ordinal or deictic references such as first, second, that one or this one apply only to the latest offer unless latestUserMessage names another snapshot or product.",
@@ -280,6 +293,8 @@ public sealed class LlmTurnPlanner : ITurnPlanner
                 "Older failed searches and repeated catalog responses in recentConversation never override authoritative shoppingContext. Still distinguish selection from a genuine information request: questions about price, availability or options remain catalog queries unless the customer also asks to add, set or remove a product.",
 
                 "When the customer explicitly contrasts alternative values or scenarios and says they are unsure which applies, do not choose either alternative. Emit no mutation for every materially disputed fact and list those fact ids in response.ambiguousFields.",
+
+                "The no-mutation ambiguity rule means no set mutation. When ambiguous new information explicitly invalidates a non-empty currentFact, the sole permitted mutation for that field is clear so the engine does not silently rely on information the customer has withdrawn.",
 
                 "facts may include advanceWhenFacts and collect facts. collect means optional early capture when the customer volunteered the value; it does not define what to ask.",
                 "When a fact declares options, treat each selector as an explicit alias only when the immediately preceding assistant message presented those options. Then, if latestUserMessage unambiguously refers to exactly one configured selector, emit the fact with its canonical value and do not list it in response.ambiguousFields. Before the options are presented, a bare selector or letter is not sufficient evidence; an explicit option label or semantic value may still be captured early.",
@@ -299,6 +314,8 @@ public sealed class LlmTurnPlanner : ITurnPlanner
                 "Use canonical dates YYYY-MM-DD and times HH:mm based on businessNow. Apply each fact extractionGuidance exactly. Do not assume every temporal fact means the value current at businessNow; distinguish current values from values relevant to the requested service or future appointment. If that distinction is material and unclear, emit no mutation and ask for clarification.",
 
                 "Emit a configured semantic signal at most once and only when latestUserMessage supports it. A signal describes customer meaning; it never executes an operation.",
+
+                "allowedSignals is a closed list of executable business meanings, not a taxonomy that must classify every customer question. Zero signals is the correct result when no signal contract unequivocally matches. Never force-fit an informational question into the nearest available signal; the signal value must be valid input for the business capability described by that signal.",
 
                 "Use recentConversation only to resolve contextual references in latestUserMessage. Every batch item must correspond to distinct customer meaning in latestUserMessage; preserve every independently requested item and quantity exactly once. Product ambiguity is resolved later by the deterministic operation.",
                 "For every cart mutation, productText must preserve the product reference expressed in latestUserMessage. Do not replace a generic, partial or ambiguous reference with a catalog product name merely because shoppingContext contains candidates. Expand it to an offered product name only when the customer's words, selector or unmistakable contextual reference identify exactly one option.",
@@ -348,7 +365,13 @@ public sealed class LlmTurnPlanner : ITurnPlanner
 
             allowedFacts = factDefinitions,
 
-            allowedSignals = context.Scope.Signals.Values.Select(signal => new { signal.Type, signal.Description, valueSchema = signal.ValueSchema }),
+            allowedSignals = context.Scope.Signals.Values.Select(signal => new
+            {
+                signal.Type,
+                signal.Description,
+                guidance = globalSignalGuidance.GetValueOrDefault(signal.Type),
+                valueSchema = signal.ValueSchema
+            }),
 
             currentFacts = context.CurrentFacts,
 

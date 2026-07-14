@@ -18,6 +18,255 @@ namespace MimosBabySpa.Tests.Agents;
 public sealed class DeterministicTurnCoordinatorTests
 {
     [Fact]
+    public void ReconcileKnownFactAmbiguities_UsesHydratedFactsButPreservesExplicitCorrections()
+    {
+        var knownFacts = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["customer_name"] = "Richard"
+        };
+        var config = new AgentConfig
+        {
+            FactSchema = [new FactSchemaEntry { Key = "customer_name", Type = "string" }]
+        };
+        var spuriousAmbiguity = new TurnPlan
+        {
+            Response = new TurnPlanResponseDirective
+            {
+                Mode = "ask_clarification", AmbiguousFields = ["customer_name"]
+            }
+        };
+
+        var reconciled = DeterministicTurnCoordinator.ReconcileKnownFactAmbiguities(
+            config, spuriousAmbiguity, knownFacts);
+
+        reconciled.Response.Mode.Should().Be("continue");
+        reconciled.Response.AmbiguousFields.Should().BeEmpty();
+
+        var explicitCorrection = new TurnPlan
+        {
+            Facts =
+            [
+                new PlannedFactClaim
+                {
+                    Key = "customer_name", Operation = TurnPlanOperations.Clear,
+                    Value = Json("null"), Evidence = "ese no es mi nombre"
+                }
+            ],
+            Response = new TurnPlanResponseDirective
+            {
+                Mode = "ask_clarification", AmbiguousFields = ["customer_name"]
+            }
+        };
+
+        var preserved = DeterministicTurnCoordinator.ReconcileKnownFactAmbiguities(
+            config, explicitCorrection, knownFacts);
+
+        preserved.Response.Mode.Should().Be("ask_clarification");
+        preserved.Response.AmbiguousFields.Should().Equal("customer_name");
+    }
+
+
+    [Fact]
+    public async Task Execute_RequestResetEffect_ReentersFirstStageAndDropsOnlyClearedFacts()
+    {
+        var resetOperation = new ResetEffectOperation(["order_finalized"]);
+        var coordinator = new DeterministicTurnCoordinator(
+            new StubPlanner(new TurnPlan
+            {
+                FlowIntent = new PlannedFlowIntent { CandidateFlow = "order", Confidence = 1 },
+                Signals =
+                [
+                    new PlannedSignal
+                    {
+                        Type = "restart_request", Value = Json("true"),
+                        Evidence = "quiero hacer un pedido nuevo", Confidence = 1
+                    }
+                ]
+            }),
+            new DeterministicFlowSelector(),
+            new FactMutationBatchProcessor(),
+            new RecordingFactStore(),
+            new ConversationVerificationService(),
+            new DeterministicStageExecutor(
+                new AgentOperationRegistry([resetOperation]),
+                new StageConditionEvaluator(),
+                new OperationArgumentBinder()),
+            new DeterministicStageTransitionResolver(new StageConditionEvaluator()));
+        var config = new AgentConfig
+        {
+            FactSchema =
+            [
+                new FactSchemaEntry { Key = "customer_name", Type = "string", Scope = FactScopes.Customer },
+                new FactSchemaEntry { Key = "order_finalized", Type = "boolean", Scope = FactScopes.Request }
+            ],
+            GlobalActions =
+            [
+                new AgentGlobalAction
+                {
+                    Id = "restart",
+                    Signal = new StageSignalDefinition { Type = "restart_request", ValueSchema = Json("{\"type\":\"boolean\"}") },
+                    Actions =
+                    [
+                        new StageActionDefinition
+                        {
+                            Id = "reset", Operation = resetOperation.Descriptor.Id,
+                            Trigger = StageActionTriggers.OnSignal, Signal = "restart_request"
+                        }
+                    ]
+                }
+            ],
+            Flows =
+            [
+                new AgentFlowDefinition
+                {
+                    Id = "order", Type = FlowTypes.Primary,
+                    Stages =
+                    [
+                        new AgentFlowStage { Id = "start", Collect = ["customer_name"] },
+                        new AgentFlowStage { Id = "delivery", Collect = ["order_finalized"] }
+                    ]
+                }
+            ]
+        };
+        var facts = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["customer_name"] = "Richard", ["order_finalized"] = "true"
+        };
+
+        var result = await coordinator.ExecuteAsync(new DeterministicTurnRequest
+        {
+            Config = config,
+            OperationContext = Context(config, new ConversationState()),
+            CurrentFacts = facts,
+            CurrentFlowId = "order", ActiveFlowId = "order", CurrentStageId = "delivery",
+            LatestUserMessage = "quiero hacer un pedido nuevo"
+        });
+
+        result.Success.Should().BeTrue(string.Join("; ", result.Errors));
+        result.VisitedStages.Should().StartWith("start");
+        result.CurrentStageId.Should().Be("start");
+        result.Facts.Should().Contain("customer_name", "Richard");
+        result.Facts.Should().NotContainKey("order_finalized");
+    }
+
+    [Theory]
+    [InlineData("selection")]
+    [InlineData("delivery")]
+    public async Task Execute_GlobalSignal_UsesStageOverrideOtherwiseGlobalFallbackExactlyOnce(string currentStage)
+    {
+        var operation = new CapturingOperation();
+        var plan = new TurnPlan
+        {
+            FlowIntent = new PlannedFlowIntent { CandidateFlow = "order", Confidence = 1 },
+            Signals =
+            [
+                new PlannedSignal
+                {
+                    Type = "catalog_query",
+                    Value = Json("{\"queries\":[\"pechuga\"]}"),
+                    Evidence = "que pechugas tienes",
+                    Confidence = 1
+                }
+            ]
+        };
+        var coordinator = new DeterministicTurnCoordinator(
+            new StubPlanner(plan),
+            new DeterministicFlowSelector(),
+            new FactMutationBatchProcessor(),
+            new RecordingFactStore(),
+            new ConversationVerificationService(),
+            new DeterministicStageExecutor(
+                new AgentOperationRegistry([operation]),
+                new StageConditionEvaluator(),
+                new OperationArgumentBinder()),
+            new DeterministicStageTransitionResolver(new StageConditionEvaluator()));
+        var config = new AgentConfig
+        {
+            GlobalActions =
+            [
+                new AgentGlobalAction
+                {
+                    Id = "catalog_lookup",
+                    Signal = new StageSignalDefinition
+                    {
+                        Type = "catalog_query",
+                        ValueSchema = Json("{\"type\":\"object\"}")
+                    },
+                    Actions =
+                    [
+                        new StageActionDefinition
+                        {
+                            Id = "search_catalog",
+                            Operation = CapturingOperation.Id,
+                            Trigger = StageActionTriggers.OnSignal,
+                            Signal = "catalog_query",
+                            Arguments = new Dictionary<string, JsonElement>
+                            {
+                                ["payload"] = Json("\"{{turn.message}}\"")
+                            }
+                        }
+                    ]
+                }
+            ],
+            Flows =
+            [
+                new AgentFlowDefinition
+                {
+                    Id = "order",
+                    Type = FlowTypes.Primary,
+                    Stages =
+                    [
+                        new AgentFlowStage
+                        {
+                            Id = "selection",
+                            Signals =
+                            [
+                                new StageSignalDefinition
+                                {
+                                    Type = "catalog_query",
+                                    ValueSchema = Json("{\"type\":\"object\"}")
+                                }
+                            ],
+                            Actions =
+                            [
+                                new StageActionDefinition
+                                {
+                                    Id = "stage_catalog",
+                                    Operation = CapturingOperation.Id,
+                                    Trigger = StageActionTriggers.OnSignal,
+                                    Signal = "catalog_query",
+                                    Arguments = new Dictionary<string, JsonElement>
+                                    {
+                                        ["payload"] = Json("\"{{turn.message}}\"")
+                                    }
+                                }
+                            ]
+                        },
+                        new AgentFlowStage { Id = "delivery" }
+                    ]
+                }
+            ]
+        };
+
+        var result = await coordinator.ExecuteAsync(new DeterministicTurnRequest
+        {
+            Config = config,
+            OperationContext = Context(config, new ConversationState()),
+            CurrentFacts = new Dictionary<string, string>(),
+            CurrentFlowId = "order",
+            ActiveFlowId = "order",
+            CurrentStageId = currentStage,
+            LatestUserMessage = "que pechugas tienes"
+        });
+
+        result.Success.Should().BeTrue(string.Join("; ", result.Errors));
+        operation.CallCount.Should().Be(1);
+        var trace = result.Trace.Should()
+            .ContainSingle(value => value.OperationId == CapturingOperation.Id).Subject;
+        trace.ActionId.Should().Be(currentStage == "selection" ? "stage_catalog" : "search_catalog");
+    }
+
+    [Fact]
     public async Task Execute_MapsStructuredSignalToConfiguredOperation_AndAdvancesDeterministically()
     {
         var operation = new CapturingOperation();
@@ -665,6 +914,7 @@ public sealed class DeterministicTurnCoordinatorTests
         public const string Id = "generic.apply_changes";
         public JsonElement Input { get; private set; }
         public AgentConversationContext? ReceivedSession { get; private set; }
+        public int CallCount { get; private set; }
         public OperationDescriptor Descriptor { get; } = new(
             Id,
             "{\"type\":\"object\",\"required\":[\"payload\"]}",
@@ -676,9 +926,25 @@ public sealed class DeterministicTurnCoordinatorTests
         public Task<OperationOutcome> ExecuteAsync(JsonElement input, OperationContext context, CancellationToken cancellationToken = default)
         {
             Input = input.Clone();
+            CallCount++;
             ReceivedSession = context.Session;
             return Task.FromResult(OperationOutcome.Ok("applied", new { }));
         }
+    }
+
+    private sealed class ResetEffectOperation(IReadOnlyList<string> clearedFacts) : IAgentOperation
+    {
+        public OperationDescriptor Descriptor { get; } = new(
+            "test.reset_request",
+            "{\"type\":\"object\",\"additionalProperties\":false,\"properties\":{}}",
+            ["conversation.request_reset"], [], [], []);
+
+        public Task<OperationOutcome> ExecuteAsync(
+            JsonElement input, OperationContext context, CancellationToken cancellationToken = default) =>
+            Task.FromResult(OperationOutcome.Ok(
+                "conversation.request_reset",
+                new { reset = true },
+                effects: [new ResetRequestOperationEffect(clearedFacts)]));
     }
 
     private sealed class RecordingFactStore : IConversationFactsService

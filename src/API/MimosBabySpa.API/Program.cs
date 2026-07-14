@@ -162,6 +162,10 @@ services.AddScoped<ServiceSelectionResolver>();
 
         services.AddScoped<ICommerceService, CommerceService>();
 
+        services.AddScoped<IProductLookupService>(provider => (IProductLookupService)provider.GetRequiredService<ICommerceService>());
+
+        services.AddScoped<ICatalogRecommendationService, CatalogRecommendationService>();
+
         services.AddScoped<ICommerceAdapter, LocalCommerceAdapter>();
 
         services.AddHttpClient<SiigoCommerceAdapter>();
@@ -399,6 +403,7 @@ services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, M
 services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Reservation.ListCustomerReservationsOperation>();
 
 services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Commerce.GetOrderDraftOperation>();
+services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Conversation.GetKnownFactsOperation>();
 
 services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Escalation.RequestHumanEscalationOperation>();
 
