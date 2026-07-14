@@ -91,7 +91,6 @@ public sealed class ConversationOpeningDefinitions
 {
     public bool Enabled { get; init; }
     public string Guidance { get; init; } = string.Empty;
-    public bool SkipWhenFirstStageHandlesOpening { get; init; } = true;
     public bool AllowQuestions { get; init; }
 }
 

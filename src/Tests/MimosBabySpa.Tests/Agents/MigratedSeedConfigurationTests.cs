@@ -77,7 +77,6 @@ public sealed class MigratedSeedConfigurationTests
             .And.Contain("No menciones el tipo de cliente, ciudad, direccion, telefono")
             .And.Contain("compras anteriores");
         config.ConversationOpening.AllowQuestions.Should().BeFalse();
-        config.ConversationOpening.SkipWhenFirstStageHandlesOpening.Should().BeFalse();
         config.FailureResponses.LlmUnavailable.Should().Contain("inconveniente temporal");
         config.BasePrompt.Should().Contain("cercana, empatica, natural y servicial");
         config.BasePrompt.Should().Contain("parrafos cortos y espacios en blanco");
