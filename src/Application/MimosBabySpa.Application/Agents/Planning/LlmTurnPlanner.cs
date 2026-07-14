@@ -194,6 +194,7 @@ public sealed class LlmTurnPlanner : ITurnPlanner
             return (null, [parseError ?? "Turn plan could not be parsed."], []);
 
         plan = TurnPlanNormalizer.Normalize(plan, context.Scope);
+        plan = CommerceTurnPlanSafety.Normalize(plan, context);
         var validation = _validator.Validate(plan, context.Scope, context.LatestUserMessage);
 
         return (plan, validation.Errors, []);
@@ -292,6 +293,8 @@ public sealed class LlmTurnPlanner : ITurnPlanner
 
                 "Older failed searches and repeated catalog responses in recentConversation never override authoritative shoppingContext. Still distinguish selection from a genuine information request: questions about price, availability or options remain catalog queries unless the customer also asks to add, set or remove a product.",
 
+                "Questions such as whether a product exists, is available, is sold, what options exist or what it costs are catalog queries, never cart mutations. Do not infer an add command or quantity 1 from a catalog question.",
+
                 "When the customer explicitly contrasts alternative values or scenarios and says they are unsure which applies, do not choose either alternative. Emit no mutation for every materially disputed fact and list those fact ids in response.ambiguousFields.",
 
                 "The no-mutation ambiguity rule means no set mutation. When ambiguous new information explicitly invalidates a non-empty currentFact, the sole permitted mutation for that field is clear so the engine does not silently rely on information the customer has withdrawn.",
@@ -325,7 +328,7 @@ public sealed class LlmTurnPlanner : ITurnPlanner
 
                 "When currentFacts contains a pending operation selection, interpret a short candidate choice as continuation of the configured mutation signal and identify the selected candidate at the highest specificity supported by the latest message and offered options. The deterministic operation owns restoration of the deferred batch.",
 
-                "When the latest assistant message presented product options and explicitly asked which one to add, a short latestUserMessage that uniquely identifies one offered option is a continuation of that add request, not a new catalog search. Emit the configured cart mutation signal with that product and preserve any explicitly stated quantity; use quantity 1 only when the pending add request already established that quantity or no other quantity was stated.",
+                "When shoppingContext.interaction.expected_reply is catalog_follow_up, a short reply that only identifies one offered product resolves the catalog selection but does not authorize a cart mutation. If that reply has no requested quantity, emit no cart mutation and let the response ask for quantity; never invent quantity 1. Once the customer provides the quantity, emit the configured cart mutation signal and resolve the product from the immediately preceding catalog selection.",
 
                 "Ambiguity in one field never discards other explicit meaning. Still emit every independent configured signal and preserve its complete payload from latestUserMessage; report the ambiguous fact separately in response.ambiguousFields.",
 

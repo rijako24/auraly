@@ -13,6 +13,151 @@ namespace MimosBabySpa.Tests.Agents;
 public sealed class ApplyOrderChangesOperationTests
 {
     [Fact]
+    public async Task UniqueAllTermMatches_ApplyWholeBatchWithoutCreatingPendingAmbiguity()
+    {
+        var resolver = new StubResolver(new Dictionary<string, IReadOnlyList<ProductReference>>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["pechuga mac pollo"] =
+            [
+                Product("PECHUGA MAC POLLO"),
+                Product("PECHUGA CRIOLLA"),
+                Product("PECHUGA MERCAPOLLO")
+            ],
+            ["salchicha ranchera super"] =
+            [
+                Product("SALCHICHA RANCHERA SUPER X 525 GR X 7 UND"),
+                Product("SALCHICHA LONG X 550GR"),
+                Product("SALCHICHA CAZADORA")
+            ]
+        });
+        var store = new StubStore();
+        var operation = new ApplyOrderChangesOperation(
+            new CartCommandBatchProcessor(resolver, store),
+            new InMemoryFactsService());
+        var session = Session();
+        session.LatestUserMessage = "2 pechuga mac pollo y 3 salchicha ranchera super";
+
+        var result = await operation.ExecuteAsync(
+            Json("""{"commands":[{"operation":"add","productText":"pechuga mac pollo","quantity":2,"destinationReference":null},{"operation":"add","productText":"salchicha ranchera super","quantity":3,"destinationReference":null}]}"""),
+            Context(session));
+
+        result.Code.Should().Be("cart.applied");
+        store.ApplyCalls.Should().Be(1);
+        store.Applied.Select(command => (command.Product!.Name, command.Quantity)).Should().Equal(
+            ("PECHUGA MAC POLLO", 2m),
+            ("SALCHICHA RANCHERA SUPER X 525 GR X 7 UND", 3m));
+        session.Facts.Should().NotContainKey("system.pending_cart_commands");
+    }
+
+    [Theory]
+    [InlineData("2 trozos de pechuga y una criolla")]
+    [InlineData("dos trozos de pechuga y una criolla")]
+    public async Task ExplicitQuantityInClarification_ReplacesPendingDefaultQuantity(string clarification)
+    {
+        var resolver = new StubResolver(new Dictionary<string, IReadOnlyList<ProductReference>>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["pechuga"] =
+            [
+                Product("TROZOS DE PECHUGA DE POLLO"),
+                Product("PECHUGA MAC POLLO"),
+                Product("PECHUGA CRIOLLA"),
+                Product("PECHUGA MERCAPOLLO")
+            ],
+            ["TROZOS DE PECHUGA DE POLLO"] = [Product("TROZOS DE PECHUGA DE POLLO")],
+            ["PECHUGA CRIOLLA"] = [Product("PECHUGA CRIOLLA")]
+        });
+        var store = new StubStore();
+        var operation = new ApplyOrderChangesOperation(
+            new CartCommandBatchProcessor(resolver, store),
+            new InMemoryFactsService());
+        var session = Session();
+        session.LatestUserMessage = "tienes pechuga";
+
+        var ambiguous = await operation.ExecuteAsync(
+            Json("""{"commands":[{"operation":"add","productText":"pechuga","quantity":1,"destinationReference":null}]}"""),
+            Context(session));
+
+        ambiguous.Code.Should().Be("cart.product_ambiguous");
+        session.LatestUserMessage = clarification;
+
+        var resolved = await operation.ExecuteAsync(
+            Json("""{"commands":[{"operation":"add","productText":"TROZOS DE PECHUGA DE POLLO","quantity":2,"destinationReference":null},{"operation":"add","productText":"PECHUGA CRIOLLA","quantity":1,"destinationReference":null}]}"""),
+            Context(session));
+
+        resolved.Code.Should().Be("cart.applied");
+        store.ApplyCalls.Should().Be(1);
+        store.Applied.Select(command => (command.Product!.Name, command.Quantity)).Should().Equal(
+            ("TROZOS DE PECHUGA DE POLLO", 2m),
+            ("PECHUGA CRIOLLA", 1m));
+        session.Facts.Should().NotContainKey("system.pending_cart_commands");
+    }
+
+    [Fact]
+    public async Task ClarificationWithoutExplicitQuantity_PreservesPendingQuantity()
+    {
+        var resolver = new StubResolver(new Dictionary<string, IReadOnlyList<ProductReference>>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["pernil"] = [Product("PERNIL MERCAPOLLO"), Product("PERNIL CAMPOLLO")],
+            ["PERNIL MERCAPOLLO"] = [Product("PERNIL MERCAPOLLO")]
+        });
+        var store = new StubStore();
+        var operation = new ApplyOrderChangesOperation(
+            new CartCommandBatchProcessor(resolver, store),
+            new InMemoryFactsService());
+        var session = Session();
+        session.LatestUserMessage = "agrega 3 perniles";
+
+        var ambiguous = await operation.ExecuteAsync(
+            Json("""{"commands":[{"operation":"add","productText":"pernil","quantity":3,"destinationReference":null}]}"""),
+            Context(session));
+
+        ambiguous.Code.Should().Be("cart.product_ambiguous");
+        session.LatestUserMessage = "mercapollo";
+
+        var resolved = await operation.ExecuteAsync(
+            Json("""{"commands":[{"operation":"add","productText":"PERNIL MERCAPOLLO","quantity":1,"destinationReference":null}]}"""),
+            Context(session));
+
+        resolved.Code.Should().Be("cart.applied");
+        store.Applied.Should().ContainSingle();
+        store.Applied[0].Product!.Name.Should().Be("PERNIL MERCAPOLLO");
+        store.Applied[0].Quantity.Should().Be(3);
+    }
+
+    [Fact]
+    public async Task QuantityForAnotherProduct_DoesNotReplacePendingQuantity()
+    {
+        var resolver = new StubResolver(new Dictionary<string, IReadOnlyList<ProductReference>>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["pernil"] = [Product("PERNIL MERCAPOLLO"), Product("PERNIL CAMPOLLO")],
+            ["PERNIL MERCAPOLLO"] = [Product("PERNIL MERCAPOLLO")],
+            ["PECHUGA CRIOLLA"] = [Product("PECHUGA CRIOLLA")]
+        });
+        var store = new StubStore();
+        var operation = new ApplyOrderChangesOperation(
+            new CartCommandBatchProcessor(resolver, store),
+            new InMemoryFactsService());
+        var session = Session();
+        session.LatestUserMessage = "agrega 3 perniles";
+
+        var ambiguous = await operation.ExecuteAsync(
+            Json("""{"commands":[{"operation":"add","productText":"pernil","quantity":3,"destinationReference":null}]}"""),
+            Context(session));
+
+        ambiguous.Code.Should().Be("cart.product_ambiguous");
+        session.LatestUserMessage = "mercapollo y agrega una pechuga criolla";
+
+        var resolved = await operation.ExecuteAsync(
+            Json("""{"commands":[{"operation":"add","productText":"PERNIL MERCAPOLLO","quantity":1,"destinationReference":null},{"operation":"add","productText":"PECHUGA CRIOLLA","quantity":1,"destinationReference":null}]}"""),
+            Context(session));
+
+        resolved.Code.Should().Be("cart.applied");
+        store.Applied.Select(command => (command.Product!.Name, command.Quantity)).Should().Equal(
+            ("PERNIL MERCAPOLLO", 3m),
+            ("PECHUGA CRIOLLA", 1m));
+    }
+
+    [Fact]
     public async Task AmbiguousReference_UsesLiteralReplyAndPreservesEntireOriginalBatch_WhenLlmReferenceDegrades()
     {
         var resolver = new StubResolver(new Dictionary<string, IReadOnlyList<ProductReference>>(StringComparer.OrdinalIgnoreCase)

@@ -148,7 +148,12 @@ public sealed class MigratedSeedConfigurationTests
         var productSelectionStage = config.Flows.SelectMany(flow => flow.Stages)
             .Single(stage => stage.Id == "product_selection");
         productSelectionStage.ConversationGuidance.Should().Contain("sin repetir la bienvenida")
-            .And.Contain("ni mencionar su perfil, ubicacion o categorias supuestas");
+            .And.Contain("ni mencionar su perfil, ubicacion o categorias supuestas")
+            .And.Contain("Elegir una referencia ofrecida por una consulta no la agrega al pedido")
+            .And.Contain("nunca supongas una unidad");
+        config.Templates["catalog_results"].Should()
+            .Contain("Cual te interesa y cuantas unidades deseas agregar?")
+            .And.NotContain("Cual te gustaria agregar?");
         config.Templates["order_checkout_no_payment"].Should().Contain("- Recibe: {{delivery_recipient_name}}");
 
         var facts = config.FactSchema.ToDictionary(fact => fact.Key, StringComparer.OrdinalIgnoreCase);

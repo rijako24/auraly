@@ -227,7 +227,17 @@ public sealed class CartCommandBatchProcessor
             .ToList();
         if (exact.Count == 1)
             return exact[0];
-        return candidates.Count == 1 ? candidates[0] : null;
+        if (candidates.Count == 1)
+            return candidates[0];
+
+        var requestedTerms = ResolutionTerms(text);
+        if (requestedTerms.Count == 0)
+            return null;
+
+        var strongMatches = candidates.Where(candidate =>
+                requestedTerms.IsSubsetOf(ResolutionTerms($"{candidate.Name} {candidate.Sku}")))
+            .ToList();
+        return strongMatches.Count == 1 ? strongMatches[0] : null;
     }
 
     private static OrderItemSnapshot? SelectSingleItem(string text, IReadOnlyList<OrderItemSnapshot> items)
@@ -303,6 +313,52 @@ public sealed class CartCommandBatchProcessor
             .Where(term => term.Length > 1 && !decimal.TryParse(term, out _))
             .Select(Singularize)
             .ToHashSet(StringComparer.Ordinal);
+
+    private static IReadOnlySet<string> ResolutionTerms(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return new HashSet<string>(StringComparer.Ordinal);
+
+        var decomposed = value.Trim().ToLowerInvariant().Normalize(NormalizationForm.FormD);
+        var normalized = new StringBuilder(decomposed.Length);
+        foreach (var character in decomposed)
+        {
+            if (CharUnicodeInfo.GetUnicodeCategory(character) == UnicodeCategory.NonSpacingMark)
+                continue;
+
+            normalized.Append(char.IsLetterOrDigit(character) ? character : ' ');
+        }
+
+        var ignored = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "a", "al", "con", "de", "del", "el", "en", "la", "las", "los", "o", "para", "por", "un", "una", "y", "x"
+        };
+        return normalized.ToString()
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .SelectMany(SplitAlphaNumericToken)
+            .Where(term => !ignored.Contains(term))
+            .Where(term => term.Length > 1 || term.All(char.IsDigit))
+            .Select(Singularize)
+            .ToHashSet(StringComparer.Ordinal);
+    }
+
+    private static IEnumerable<string> SplitAlphaNumericToken(string token)
+    {
+        if (token.Length == 0)
+            yield break;
+
+        var start = 0;
+        for (var index = 1; index < token.Length; index++)
+        {
+            if (char.IsDigit(token[index]) == char.IsDigit(token[index - 1]))
+                continue;
+
+            yield return token[start..index];
+            start = index;
+        }
+
+        yield return token[start..];
+    }
 
     private static string Singularize(string value) =>
         value.Length > 3 && value.EndsWith('s') ? value[..^1] : value;

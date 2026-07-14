@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using MimosBabySpa.Application.Commerce;
 using MimosBabySpa.Application.Services;
 
@@ -72,7 +73,11 @@ internal static class PendingCartCommandMemory
         if (selectedName is null)
             return new PendingCartMergeResult([], false);
 
-        var replacement = pendingCommand with { ProductText = selectedName };
+        var resolvingCommand = incomingResolution?.Command;
+        var replacement = resolvingCommand is not null
+            && HasExplicitQuantityForReference(latestMessage, resolvingCommand)
+                ? pendingCommand with { ProductText = selectedName, Quantity = resolvingCommand.Quantity }
+                : pendingCommand with { ProductText = selectedName };
         var merged = pending.Commands
             .Select(command => SameReference(command.ProductText, pending.AmbiguousProductText)
                 ? replacement
@@ -163,6 +168,86 @@ internal static class PendingCartCommandMemory
         {
             return null;
         }
+    }
+
+    private static bool HasExplicitQuantityForReference(string message, CartCommand command)
+    {
+        if (command.Quantity is not { } quantity || string.IsNullOrWhiteSpace(message))
+            return false;
+
+        var referenceTerms = NormalizeTokens(command.ProductText)
+            .Where(term => term.Length >= 3)
+            .ToHashSet(StringComparer.Ordinal);
+        if (referenceTerms.Count == 0)
+            return false;
+
+        var clauses = Regex.Split(
+            message,
+            @"(?<!\d),(?!\d)|;|\b(?:y|e|tambi?n|tambien|adem?s|ademas)\b",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        foreach (var clause in clauses)
+        {
+            var clauseTerms = NormalizeTokens(clause).ToHashSet(StringComparer.Ordinal);
+            if (!referenceTerms.Overlaps(clauseTerms))
+                continue;
+            if (ContainsExplicitQuantity(clause, quantity))
+                return true;
+        }
+
+        return false;
+    }
+
+    private static bool ContainsExplicitQuantity(string clause, decimal expected)
+    {
+        var numericMatches = Regex.Matches(
+            clause,
+            @"(?<![\p{L}\d])\d+(?:[.,]\d+)?(?![\p{L}\d])",
+            RegexOptions.CultureInvariant);
+        foreach (Match match in numericMatches)
+        {
+            if (decimal.TryParse(
+                    match.Value.Replace(',', '.'),
+                    NumberStyles.Number,
+                    CultureInfo.InvariantCulture,
+                    out var parsed)
+                && parsed == expected)
+            {
+                return true;
+            }
+        }
+
+        return NormalizeWords(clause)
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Any(token => TryReadQuantityWord(token, out var parsed) && parsed == expected);
+    }
+
+    private static bool TryReadQuantityWord(string token, out decimal value)
+    {
+        value = token switch
+        {
+            "un" or "una" or "uno" => 1m,
+            "dos" => 2m,
+            "tres" => 3m,
+            "cuatro" => 4m,
+            "cinco" => 5m,
+            "seis" => 6m,
+            "siete" => 7m,
+            "ocho" => 8m,
+            "nueve" => 9m,
+            "diez" => 10m,
+            "once" => 11m,
+            "doce" => 12m,
+            "trece" => 13m,
+            "catorce" => 14m,
+            "quince" => 15m,
+            "dieciseis" => 16m,
+            "diecisiete" => 17m,
+            "dieciocho" => 18m,
+            "diecinueve" => 19m,
+            "veinte" => 20m,
+            _ => 0m
+        };
+        return value > 0;
     }
 
     private static bool IsReferenceMatch(string reference, string candidate)

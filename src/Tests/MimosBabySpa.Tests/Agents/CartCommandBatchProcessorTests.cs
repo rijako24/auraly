@@ -51,6 +51,101 @@ public sealed class CartCommandBatchProcessorTests
     }
 
     [Fact]
+    public async Task Apply_SelectsUniqueAllTermMatchAmongGenericFallbackCandidates()
+    {
+        var resolver = new StubResolver(new Dictionary<string, IReadOnlyList<ProductReference>>
+        {
+            ["salchicha ranchera super"] =
+            [
+                Product("SALCHICHA RANCHERA SUPER X 525 GR X 7 UND"),
+                Product("SALCHICHA LONG X 550GR"),
+                Product("SALCHICHA LONG X 1100 G X 20UND"),
+                Product("SALCHICHA CAZADORA"),
+                Product("SALCHICHA CUNIT MANGUERA XL X 10 UND")
+            ]
+        });
+        var store = new StubStore(EmptySnapshot());
+        var processor = new CartCommandBatchProcessor(resolver, store);
+
+        var result = await processor.ApplyAsync(
+            new AgentConversationContext(),
+            [Add("salchicha ranchera super", 3)]);
+
+        result.Success.Should().BeTrue();
+        store.Applied.Should().ContainSingle();
+        store.Applied[0].Product!.Name.Should().Be("SALCHICHA RANCHERA SUPER X 525 GR X 7 UND");
+        store.Applied[0].Quantity.Should().Be(3);
+    }
+
+    [Fact]
+    public async Task Apply_RemainsAmbiguous_WhenMultipleCandidatesContainEveryRequestedTerm()
+    {
+        var resolver = new StubResolver(new Dictionary<string, IReadOnlyList<ProductReference>>
+        {
+            ["salchicha long"] =
+            [
+                Product("SALCHICHA LONG X 550GR"),
+                Product("SALCHICHA LONG X 1100 G X 20UND"),
+                Product("SALCHICHA CAZADORA")
+            ]
+        });
+        var store = new StubStore(EmptySnapshot());
+        var processor = new CartCommandBatchProcessor(resolver, store);
+
+        var result = await processor.ApplyAsync(
+            new AgentConversationContext(),
+            [Add("salchicha long", 1)]);
+
+        result.Code.Should().Be("cart.product_ambiguous");
+        store.ApplyCalls.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task Apply_UsesNumericTermsToResolveAUniquePresentation()
+    {
+        var resolver = new StubResolver(new Dictionary<string, IReadOnlyList<ProductReference>>
+        {
+            ["salchicha long 550"] =
+            [
+                Product("SALCHICHA LONG X 550GR"),
+                Product("SALCHICHA LONG X 1100 G X 20UND")
+            ]
+        });
+        var store = new StubStore(EmptySnapshot());
+        var processor = new CartCommandBatchProcessor(resolver, store);
+
+        var result = await processor.ApplyAsync(
+            new AgentConversationContext(),
+            [Add("salchicha long 550", 1)]);
+
+        result.Success.Should().BeTrue();
+        store.Applied.Should().ContainSingle();
+        store.Applied[0].Product!.Name.Should().Be("SALCHICHA LONG X 550GR");
+    }
+
+    [Fact]
+    public async Task Apply_DoesNotResolveUsingPartialTokenPrefixes()
+    {
+        var resolver = new StubResolver(new Dictionary<string, IReadOnlyList<ProductReference>>
+        {
+            ["salchicha sup"] =
+            [
+                Product("SALCHICHA RANCHERA SUPER"),
+                Product("SALCHICHA LONG")
+            ]
+        });
+        var store = new StubStore(EmptySnapshot());
+        var processor = new CartCommandBatchProcessor(resolver, store);
+
+        var result = await processor.ApplyAsync(
+            new AgentConversationContext(),
+            [Add("salchicha sup", 1)]);
+
+        result.Code.Should().Be("cart.product_ambiguous");
+        store.ApplyCalls.Should().Be(0);
+    }
+
+    [Fact]
     public async Task Apply_RejectsConflictingCommandsForSameProductBeforeResolution()
     {
         var resolver = new StubResolver(new Dictionary<string, IReadOnlyList<ProductReference>>());
