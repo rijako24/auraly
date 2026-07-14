@@ -67,7 +67,13 @@ public sealed class MigratedSeedConfigurationTests
             })!;
 
         config.ConversationOpening.Enabled.Should().BeTrue();
-        config.ConversationOpening.Guidance.Should().Contain("bienvenida a CJ Distribuciones");
+        config.ConversationOpening.Guidance.Should()
+            .Contain("una sola bienvenida")
+            .And.Contain("bienvenida a CJ Distribuciones")
+            .And.Contain("uno o dos emojis")
+            .And.Contain("si no lo conoces, no inventes ninguno")
+            .And.Contain("una linea en blanco")
+            .And.Contain("No digas 'aqui estoy para lo que necesites'");
         config.ConversationOpening.AllowQuestions.Should().BeFalse();
         config.ConversationOpening.SkipWhenFirstStageHandlesOpening.Should().BeFalse();
         config.FailureResponses.LlmUnavailable.Should().Contain("inconveniente temporal");
@@ -133,6 +139,14 @@ public sealed class MigratedSeedConfigurationTests
             "product_selection_prompt",
             "order_draft_unavailable");
         config.Templates["order_checkout_no_payment"].Should().Contain("- Cliente: {{customer_name}}");
+        var customerNameStage = config.Flows.SelectMany(flow => flow.Stages)
+            .Single(stage => stage.Id == "customer_name");
+        customerNameStage.ConversationGuidance.Should()
+            .Contain("No repitas el saludo ni la bienvenida")
+            .And.NotContain("openingDirective");
+        var productSelectionStage = config.Flows.SelectMany(flow => flow.Stages)
+            .Single(stage => stage.Id == "product_selection");
+        productSelectionStage.ConversationGuidance.Should().Contain("sin repetir la bienvenida");
         config.Templates["order_checkout_no_payment"].Should().Contain("- Recibe: {{delivery_recipient_name}}");
 
         var facts = config.FactSchema.ToDictionary(fact => fact.Key, StringComparer.OrdinalIgnoreCase);

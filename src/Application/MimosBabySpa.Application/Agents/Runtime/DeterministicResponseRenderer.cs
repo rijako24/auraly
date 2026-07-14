@@ -45,11 +45,8 @@ public sealed class DeterministicResponseRenderer : IDeterministicResponseRender
         var presentations = request.Turn.Presentations.ToList();
         if (request.Turn.Response?.SuppressText == true)
             return new DeterministicRenderedResponse(string.Empty, 0, 0);
-        var opening = request.RequestOpeningRequired
-            ? await RenderConversationOpeningAsync(request, cancellationToken)
-            : new DeterministicRenderedResponse(string.Empty, 0, 0);
-        if (!opening.Success)
-            return opening;
+        var openingRequired = request.RequestOpeningRequired
+            && request.Config.ConversationOpening.Enabled;
         if (!string.IsNullOrWhiteSpace(request.Turn.Response?.Template)
             && !presentations.Any(presentation =>
                 presentation.Mode == FragmentRenderMode.Exclusive
@@ -64,6 +61,11 @@ public sealed class DeterministicResponseRenderer : IDeterministicResponseRender
 
         if (presentations.Any(presentation => presentation.Mode == FragmentRenderMode.Exclusive))
         {
+            var opening = openingRequired
+                ? await RenderConversationOpeningAsync(request, cancellationToken)
+                : new DeterministicRenderedResponse(string.Empty, 0, 0);
+            if (!opening.Success)
+                return opening;
             return new DeterministicRenderedResponse(
                 Combine(opening.Text, _presentations.Compose(request.Config, null, presentations)),
                 opening.PromptTokens,
@@ -124,6 +126,9 @@ public sealed class DeterministicResponseRenderer : IDeterministicResponseRender
                 "Use responseDirective and stage conversationGuidance to decide what to request. When they require a pending blocker whose canBeProvidedByCustomer is true, present it as necessary rather than optional and use its configured options when present. Never ask the customer to provide blockers whose canBeProvidedByCustomer is false. When pendingBlockers is empty, do not invent missing requirements.",
                 "When responseDirective.mode is ask_clarification, ask only for the named ambiguity and never say that all data is ready or that the process can continue as complete.",
                 "Never describe a cart mutation as applied unless a successful commerce operation outcome in this turn supports it; conversation history and the user's request are not proof of execution.",
+                "When openingDirective.required is true, begin with exactly one brief opening that follows its guidance, then continue with the stage response in the same reply. Never greet a second time.",
+                "Separate a required opening from the substantive continuation with one blank line. openingDirective.allowQuestions governs only the opening paragraph; the continuation may ask the single question required by the stage.",
+                "When openingDirective.required is false, do not add a separate ceremonial welcome; answer naturally according to the stage and recent conversation.",
                 "Apply the configured persona and policies as the authority for voice, empathy, conversational style and WhatsApp presentation.",
                 "Be concise, natural and consistent with the configured persona."
             },
@@ -134,6 +139,12 @@ public sealed class DeterministicResponseRenderer : IDeterministicResponseRender
                 request.Stage.ConversationGuidance
             },
             responseDirective = request.Turn.Response,
+            openingDirective = new
+            {
+                required = openingRequired,
+                guidance = openingRequired ? request.Config.ConversationOpening.Guidance : null,
+                allowQuestions = request.Config.ConversationOpening.AllowQuestions
+            },
             stageReadiness = new
             {
                 usesAdvanceFacts = request.Stage.AdvanceWhenFacts.Count > 0,
@@ -170,9 +181,9 @@ public sealed class DeterministicResponseRenderer : IDeterministicResponseRender
 
         var response = result.Content;
         return new DeterministicRenderedResponse(
-            Combine(opening.Text, _presentations.Compose(request.Config, response, presentations)),
-            opening.PromptTokens + result.PromptTokens,
-            opening.CompletionTokens + result.CompletionTokens);
+            _presentations.Compose(request.Config, response, presentations),
+            result.PromptTokens,
+            result.CompletionTokens);
     }
     private async Task<DeterministicRenderedResponse> RenderConversationOpeningAsync(
         DeterministicResponseRequest request,

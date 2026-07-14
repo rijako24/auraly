@@ -736,7 +736,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                                              }
                                }
                  },
-    "conversationOpening":  {"enabled": true, "guidance": "Escribe solamente una apertura social breve y cercana: saluda y da la bienvenida a CJ Distribuciones. Si conoces el nombre del cliente, puedes usarlo con moderacion. No menciones pedidos, ayuda, productos ni el siguiente paso; la respuesta que viene despues se encarga de continuar la conversacion.", "skipWhenFirstStageHandlesOpening": false, "allowQuestions": false},
+    "conversationOpening":  {"enabled": true, "guidance": "Escribe una sola bienvenida calida como primer parrafo: saluda, da la bienvenida a CJ Distribuciones y expresa que es un gusto saludarle. Si conoces el nombre del cliente, usalo una sola vez; si no lo conoces, no inventes ninguno. Puedes usar uno o dos emojis naturales. No digas ''aqui estoy para lo que necesites'' ni hagas preguntas en este primer parrafo. La continuacion, separada por una linea en blanco, debe seguir el objetivo de la etapa.", "skipWhenFirstStageHandlesOpening": false, "allowQuestions": false},
     "failureResponses":  {"llmUnavailable": "Lo siento, en este momento tengo un inconveniente temporal para procesar tu mensaje. Por favor, intenta nuevamente en unos minutos."},
     "templates":  {
                       "order_checkout_no_payment":  "*Resumen de tu pedido*\n{{#each line_items}}\n- {{name}} x{{quantity}}: ${{line_total}}\n{{/each}}\n- Envio: ${{shipping_cost}}\n- *Total: ${{total}} {{currency}}*\n\nEntrega:\n- Ciudad: {{city}}\n- Direccion: {{delivery_address}}\n- Celular: {{customer_phone}}\n{{#if customer_name}}\n- Cliente: {{customer_name}}\n{{/if}}\n{{#if delivery_recipient_name}}\n- Recibe: {{delivery_recipient_name}}\n{{/if}}\n\nMetodo de pago: efectivo al recibir\n\nConfirmas tu pedido con esta informacion?",
@@ -764,7 +764,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                                          "advanceWhenFacts":  [
                                                                   "customer_name"
                                                               ],
-                                         "conversationGuidance":  "Si falta customer_name y el cliente no lo informo en el mensaje actual, dale una bienvenida calida y breve, explica que puedes ayudarle con su pedido y solicita su nombre o el nombre de su negocio. Separa saludo, ayuda y pregunta en parrafos cortos. Si ya lo dijo, continua sin volver a pedirlo; el motor registra el dato extraido.",
+                                         "conversationGuidance":  "Si falta customer_name y el cliente no lo informo en el mensaje actual, explica con cercania que puedes ayudarle con su pedido y solicita su nombre o el nombre de su negocio. No repitas el saludo ni la bienvenida en la continuacion. Separa la explicacion y la pregunta en parrafos cortos. Si ya lo dijo, continua sin volver a pedirlo; el motor registra el dato extraido.",
                                          "collect":  [
                                                          "customer_name",
                                                          "customer_type"
@@ -789,7 +789,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                                          "advanceWhenFacts":  [
                                                                   "order_finalized"
                                                               ],
-                                         "conversationGuidance":  "Acompana al cliente de forma cercana mientras elige productos. Las consultas comerciales se presentan con resultados autoritativos del catalogo. Las solicitudes de preparacion producen ideas de receta y productos relacionados en el mismo turno. Cuando solicite productos y cantidades, conserva el lote completo para que el motor lo aplique al unico pedido activo. Tras cada cambio presenta el estado vigente con una transicion natural. Cuando el cliente comunique que termino la seleccion, registra order_finalized=true.",
+                                         "conversationGuidance":  "Acompana al cliente de forma cercana mientras elige productos. Al abrir una solicitud sin una consulta o seleccion concreta, explica que estas para ayudarle con su pedido y pregunta que desea el dia de hoy, sin repetir la bienvenida. Las consultas comerciales se presentan con resultados autoritativos del catalogo. Las solicitudes de preparacion producen ideas de receta y productos relacionados en el mismo turno. Cuando solicite productos y cantidades, conserva el lote completo para que el motor lo aplique al unico pedido activo. Tras cada cambio presenta el estado vigente con una transicion natural. Cuando el cliente comunique que termino la seleccion, registra order_finalized=true.",
                                          "collect":  [
                                                          "order_finalized",
                                                          "delivery_method",

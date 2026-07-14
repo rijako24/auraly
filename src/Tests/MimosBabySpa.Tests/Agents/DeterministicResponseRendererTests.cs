@@ -121,11 +121,11 @@ public sealed class DeterministicResponseRendererTests
     }
 
     [Fact]
-    public async Task Render_NewRequestWithRememberedIdentity_PrependsConfiguredGreetingOnce()
+    public async Task Render_NewRequestWithRememberedIdentity_WritesOpeningAndContinuationInOneCall()
     {
-        var chat = new RecordingChatClient(
-            "Hola, Richard! Que gusto saludarte.",
-            "Que deseas pedir?");
+        var expected = $"¡Hola Richard! Bienvenido a CJ Distribuciones, un gusto saludarte 👋{Environment.NewLine}{Environment.NewLine}"
+            + "Aquí estoy para ayudarte con tu pedido. ¿Qué deseas el día de hoy? 😊";
+        var chat = new RecordingChatClient(expected);
         var composer = new OperationPresentationComposer(new AgentTemplateResolver(), new PromptTemplateRenderer());
         var renderer = new DeterministicResponseRenderer(chat, composer);
         var config = new AgentConfig
@@ -164,8 +164,10 @@ public sealed class DeterministicResponseRendererTests
             [ChatMessage.User("hola")],
             RequestOpeningRequired: true));
 
-        response.Text.Should().Be($"Hola, Richard! Que gusto saludarte.{Environment.NewLine}{Environment.NewLine}Que deseas pedir?");
-        chat.CallCount.Should().Be(2);
+        response.Text.Should().Be(expected);
+        chat.CallCount.Should().Be(1);
+        chat.Prompt.Should().Contain("openingDirective").And.Contain("\"required\":true");
+        chat.Prompt.Should().Contain("Never greet a second time");
     }
 
     [Fact]
@@ -212,9 +214,11 @@ public sealed class DeterministicResponseRendererTests
     }
 
     [Fact]
-    public async Task Render_OpeningQuestionIsRejected_AndCannotDuplicateTheStagePrompt()
+    public async Task Render_NewRequestWithoutName_UsesGenericOpeningAndLetsStageRequestTheName()
     {
-        var chat = new RecordingChatClient("¡Hola Richard! Aquí estoy para ayudarte. ¿Qué te gustaría incluir hoy?");
+        var expected = $"¡Hola! Bienvenido a CJ Distribuciones, es un gusto saludarte 👋{Environment.NewLine}{Environment.NewLine}"
+            + "Estoy aquí para ayudarte con tu pedido. Para comenzar, ¿me compartes tu nombre o el de tu negocio? 😊";
+        var chat = new RecordingChatClient(expected);
         var composer = new OperationPresentationComposer(new AgentTemplateResolver(), new PromptTemplateRenderer());
         var renderer = new DeterministicResponseRenderer(chat, composer);
         var config = new AgentConfig
@@ -222,27 +226,30 @@ public sealed class DeterministicResponseRendererTests
             ConversationOpening = new ConversationOpeningDefinitions
             {
                 Enabled = true,
-                Guidance = "Saluda y da la bienvenida, sin preguntas",
+                Guidance = "Saluda y da la bienvenida sin inventar un nombre",
                 AllowQuestions = false
             }
         };
         var turn = new DeterministicTurnResult
         {
-            Success = true,
-            Facts = new Dictionary<string, string> { ["customer_name"] = "Richard" }
+            Success = true
         };
 
         var response = await renderer.RenderAsync(new DeterministicResponseRequest(
             config,
-            new AgentFlowStage { Id = "products" },
+            new AgentFlowStage
+            {
+                Id = "customer_name",
+                Goal = "Obtener el nombre del cliente.",
+                ConversationGuidance = "Solicita el nombre o el nombre del negocio."
+            },
             turn,
             "hola",
             [ChatMessage.User("hola")],
             RequestOpeningRequired: true));
 
-        response.Success.Should().BeFalse();
-        response.Text.Should().BeEmpty();
-        response.ErrorMessage.Should().Contain("presentation policy");
+        response.Success.Should().BeTrue();
+        response.Text.Should().Be(expected).And.NotContain("Richard");
         chat.CallCount.Should().Be(1);
     }
     [Fact]
