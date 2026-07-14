@@ -57,23 +57,22 @@ public sealed class DeterministicResponseRendererTests
         composer.LastPresentations[0].Mode.Should().Be(FragmentRenderMode.Exclusive);
     }
     [Fact]
-    public async Task Render_FallbackTemplateWithoutAuthoritativePresentation_SkipsLlm()
+    public async Task Render_WithoutExplicitPresentation_UsesLlmAsTheNormalPath()
     {
-        var chat = new RecordingChatClient("invented catalog response");
-        var composer = new StubPresentationComposer("SAFE FALLBACK");
+        var chat = new RecordingChatClient("respuesta natural");
+        var composer = new StubPresentationComposer();
         var renderer = new DeterministicResponseRenderer(chat, composer);
 
         var response = await renderer.RenderAsync(Request(new DeterministicTurnResult
         {
             Success = true,
-            Response = new StageResponseDefinition { FallbackTemplate = "catalog_prompt" }
+            Response = new StageResponseDefinition { Guidance = "Ayuda al cliente a continuar." }
         }));
 
-        response.Text.Should().Be("SAFE FALLBACK");
-        chat.CallCount.Should().Be(0);
-        composer.LastPresentations.Should().ContainSingle();
-        composer.LastPresentations[0].TemplateId.Should().Be("catalog_prompt");
-        composer.LastPresentations[0].Mode.Should().Be(FragmentRenderMode.Exclusive);
+        response.Text.Should().Be("respuesta natural");
+        chat.CallCount.Should().Be(1);
+        composer.LastPresentations.Should().BeEmpty();
+        chat.Prompt.Should().Contain("responseDirective").And.NotContain("responseGuidance");
     }
     [Fact]
     public async Task Render_SuppressedText_LeavesConfiguredSequenceAsTheOnlyChannelOutput()
@@ -124,7 +123,9 @@ public sealed class DeterministicResponseRendererTests
     [Fact]
     public async Task Render_NewRequestWithRememberedIdentity_PrependsConfiguredGreetingOnce()
     {
-        var chat = new RecordingChatClient("Hola, Richard! Que gusto saludarte.");
+        var chat = new RecordingChatClient(
+            "Hola, Richard! Que gusto saludarte.",
+            "Que deseas pedir?");
         var composer = new OperationPresentationComposer(new AgentTemplateResolver(), new PromptTemplateRenderer());
         var renderer = new DeterministicResponseRenderer(chat, composer);
         var config = new AgentConfig
@@ -133,10 +134,6 @@ public sealed class DeterministicResponseRendererTests
             {
                 Enabled = true,
                 Guidance = "Saluda con cercania"
-            },
-            Templates = new Dictionary<string, string>
-            {
-                ["product_prompt"] = "Que deseas pedir?"
             },
             Flows =
             [
@@ -156,7 +153,7 @@ public sealed class DeterministicResponseRendererTests
         {
             Success = true,
             Facts = new Dictionary<string, string> { ["customer_name"] = "Richard" },
-            Response = new StageResponseDefinition { FallbackTemplate = "product_prompt" }
+            Response = new StageResponseDefinition { Guidance = "Pregunta que desea pedir." }
         };
 
         var response = await renderer.RenderAsync(new DeterministicResponseRequest(
@@ -168,7 +165,7 @@ public sealed class DeterministicResponseRendererTests
             RequestOpeningRequired: true));
 
         response.Text.Should().Be($"Hola, Richard! Que gusto saludarte.{Environment.NewLine}{Environment.NewLine}Que deseas pedir?");
-        chat.CallCount.Should().Be(1);
+        chat.CallCount.Should().Be(2);
     }
 
     [Fact]
@@ -189,7 +186,6 @@ public sealed class DeterministicResponseRendererTests
         var turn = new DeterministicTurnResult
         {
             Success = true,
-            Response = new StageResponseDefinition { FallbackTemplate = "customer_name_prompt" },
             Presentations =
             [
                 new OperationPresentation(
@@ -213,8 +209,6 @@ public sealed class DeterministicResponseRendererTests
         chat.CallCount.Should().Be(1);
         composer.LastPresentations.Should().ContainSingle();
         composer.LastPresentations[0].TemplateId.Should().Be("catalog_results");
-        composer.LastPresentations.Should().NotContain(presentation =>
-            presentation.TemplateId == "customer_name_prompt");
     }
 
     [Fact]
@@ -230,17 +224,12 @@ public sealed class DeterministicResponseRendererTests
                 Enabled = true,
                 Guidance = "Saluda y da la bienvenida, sin preguntas",
                 AllowQuestions = false
-            },
-            Templates = new Dictionary<string, string>
-            {
-                ["product_prompt"] = "Cuentame que productos necesitas."
             }
         };
         var turn = new DeterministicTurnResult
         {
             Success = true,
-            Facts = new Dictionary<string, string> { ["customer_name"] = "Richard" },
-            Response = new StageResponseDefinition { FallbackTemplate = "product_prompt" }
+            Facts = new Dictionary<string, string> { ["customer_name"] = "Richard" }
         };
 
         var response = await renderer.RenderAsync(new DeterministicResponseRequest(
@@ -268,17 +257,12 @@ public sealed class DeterministicResponseRendererTests
             {
                 Enabled = true,
                 Guidance = "Saluda con cercania"
-            },
-            Templates = new Dictionary<string, string>
-            {
-                ["product_prompt"] = "Que deseas pedir?"
             }
         };
         var turn = new DeterministicTurnResult
         {
             Success = true,
-            Facts = new Dictionary<string, string> { ["customer_name"] = "Richard" },
-            Response = new StageResponseDefinition { FallbackTemplate = "product_prompt" }
+            Facts = new Dictionary<string, string> { ["customer_name"] = "Richard" }
         };
 
         var response = await renderer.RenderAsync(new DeterministicResponseRequest(
@@ -294,6 +278,28 @@ public sealed class DeterministicResponseRendererTests
         response.ErrorMessage.Should().Contain("simulated renderer failure");
         chat.CallCount.Should().Be(1);
     }
+
+    [Fact]
+    public async Task Render_TransientLlmFailure_DoesNotBecomePersistentStageFallback()
+    {
+        var chat = new TransientFailureChatClient("respuesta recuperada");
+        var renderer = new DeterministicResponseRenderer(chat, new StubPresentationComposer());
+        var request = Request(new DeterministicTurnResult
+        {
+            Success = true,
+            Response = new StageResponseDefinition { Guidance = "Continua naturalmente." }
+        });
+
+        var failed = await renderer.RenderAsync(request);
+        var recovered = await renderer.RenderAsync(request);
+
+        failed.Success.Should().BeFalse();
+        failed.Text.Should().BeEmpty();
+        recovered.Success.Should().BeTrue();
+        recovered.Text.Should().Be("respuesta recuperada");
+        chat.CallCount.Should().Be(2);
+    }
+
     [Fact]
     public async Task Render_ProjectsGenericStageReadinessWithoutTurningBlockersIntoQuestions()
     {
@@ -309,7 +315,12 @@ public sealed class DeterministicResponseRendererTests
                     Key = "required_user_input",
                     Label = "dato requerido del usuario",
                     Source = "user",
-                    ExtractionGuidance = "Solicita el dato que falta."
+                    ExtractionGuidance = "Solicita el dato que falta.",
+                    Options =
+                    [
+                        new FactValueOption { Value = "first", Label = "Primera opcion", Selector = "A" },
+                        new FactValueOption { Value = "second", Label = "Segunda opcion", Selector = "B" }
+                    ]
                 },
                 new FactSchemaEntry
                 {
@@ -370,6 +381,11 @@ public sealed class DeterministicResponseRendererTests
         var user = pending.Single(item => item.GetProperty("key").GetString() == "required_user_input");
         user.GetProperty("canBeProvidedByCustomer").GetBoolean().Should().BeTrue();
         user.GetProperty("guidance").GetString().Should().Contain("dato que falta");
+        var options = user.GetProperty("options").EnumerateArray().ToList();
+        options.Should().HaveCount(2);
+        options[0].GetProperty("value").GetString().Should().Be("first");
+        options[0].GetProperty("label").GetString().Should().Be("Primera opcion");
+        options[0].GetProperty("selector").GetString().Should().Be("A");
 
         var channel = pending.Single(item => item.GetProperty("key").GetString() == "channel_identity");
         channel.GetProperty("canBeProvidedByCustomer").GetBoolean().Should().BeFalse();
@@ -436,6 +452,34 @@ public sealed class DeterministicResponseRendererTests
         }
     }
 
+    private sealed class TransientFailureChatClient(string recoveredResponse) : IChatClient
+    {
+        public int CallCount { get; private set; }
+
+        public Task<ChatCompletionResult> CompleteAsync(
+            IReadOnlyList<ChatMessage> messages,
+            ChatCompletionOptions? options = null,
+            CancellationToken cancellationToken = default)
+        {
+            CallCount++;
+            if (CallCount == 1)
+            {
+                return Task.FromResult(new ChatCompletionResult
+                {
+                    Success = false,
+                    ErrorMessage = "transient renderer failure"
+                });
+            }
+
+            return Task.FromResult(new ChatCompletionResult
+            {
+                Success = true,
+                Content = recoveredResponse,
+                AssistantMessage = ChatMessage.Assistant(recoveredResponse)
+            });
+        }
+    }
+
     private sealed class FailingChatClient : IChatClient
     {
         public int CallCount { get; private set; }
@@ -455,8 +499,8 @@ public sealed class DeterministicResponseRendererTests
     }
     private sealed class RecordingChatClient : IChatClient
     {
-        private readonly string _response;
-        public RecordingChatClient(string response) => _response = response;
+        private readonly IReadOnlyList<string> _responses;
+        public RecordingChatClient(params string[] responses) => _responses = responses;
         public int CallCount { get; private set; }
         public string Prompt { get; private set; } = string.Empty;
         public ChatCompletionOptions? Options { get; private set; }
@@ -467,13 +511,14 @@ public sealed class DeterministicResponseRendererTests
             CancellationToken cancellationToken = default)
         {
             CallCount++;
+            var response = _responses[Math.Min(CallCount - 1, _responses.Count - 1)];
             Prompt = messages[0].Content ?? string.Empty;
             Options = options;
             return Task.FromResult(new ChatCompletionResult
             {
                 Success = true,
-                Content = _response,
-                AssistantMessage = ChatMessage.Assistant(_response)
+                Content = response,
+                AssistantMessage = ChatMessage.Assistant(response)
             });
         }
     }

@@ -493,15 +493,13 @@ public sealed class DeterministicTurnCoordinatorTests
         {
             Id = "customer_name",
             Collect = ["customer_name"],
-            AdvanceWhenFacts = ["customer_name"],
-            Response = new StageResponseDefinition { FallbackTemplate = "customer_name_prompt" }
+            AdvanceWhenFacts = ["customer_name"]
         };
         var customerTypeStage = new AgentFlowStage
         {
             Id = "customer_type",
             Collect = ["customer_type"],
-            AdvanceWhenFacts = ["customer_type"],
-            Response = new StageResponseDefinition { FallbackTemplate = "customer_type_prompt" }
+            AdvanceWhenFacts = ["customer_type"]
         };
         var config = new AgentConfig
         {
@@ -559,7 +557,6 @@ public sealed class DeterministicTurnCoordinatorTests
             "Richard"));
         second.Facts["customer_name"].Should().Be("Richard");
         second.CurrentStageId.Should().Be("customer_type");
-        second.Response!.FallbackTemplate.Should().Be("customer_type_prompt");
         state.PendingTurnPlan.Should().NotBeNull();
 
         var third = await coordinator.ExecuteAsync(Turn(

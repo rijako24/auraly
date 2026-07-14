@@ -749,11 +749,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                       "cart_snapshot":  "Listo, ya actualice tu pedido 🙌\r\n\r\n*Pedido actual*\r\n\r\n{{#each items}}\r\n- {{name}} x{{quantity}}: ${{line_total}}\r\n{{/each}}\r\n\r\n*Total: ${{total}} {{currency}}*\r\n\r\nQuieres agregar algo mas? Cuando termines, solo dime que eso es todo.",
                       "cart_review":  "Perfecto, revisemos juntos que todo este bien:\r\n\r\n*Resumen de tu pedido*\r\n\r\n{{#each items}}\r\n- {{name}} x{{quantity}}: ${{line_total}}\r\n{{/each}}\r\n\r\n*Total: ${{total}} {{currency}}*\r\n\r\nLo ves correcto o quieres cambiar algo?",
                       "product_ambiguity":  "Quiero asegurarme de agregar la opcion correcta. Para {{product_text}} encontre:\r\n{{#each product_options}}\r\n- {{Name}}: ${{UnitPrice}} {{Currency}}\r\n{{/each}}\r\n\r\nCual prefieres? Conservare los demas productos de tu solicitud.",
-                      "insufficient_stock":  "Puedo ayudarte con esa referencia, pero la cantidad solicitada supera el inventario disponible.\r\n\r\n- Producto: {{product_text}}\r\n- Solicitado en total: {{requested_quantity}}\r\n- Disponible: {{available_quantity}}\r\n\r\nPara este cambio, indica una cantidad de hasta {{maximum_command_quantity}}; los demas cambios del lote aun no se han aplicado.",
-                      "product_selection_prompt":  "Cuentame que productos y cantidades necesitas. Si aun no estas seguro, tambien puedes decirme que quieres preparar y te ayudo a encontrar opciones.",
-                      "order_draft_unavailable":  "No fue posible consultar el pedido vigente en este momento. Intenta nuevamente para continuar con el resumen.",
-                      "customer_name_prompt":  "Para comenzar, me compartes tu nombre o el nombre de tu negocio?",
-                      "customer_type_prompt":  "Para atenderte mejor, cual de estos perfiles describe tu compra? Puedes responder con la letra o con el nombre:\r\n\r\n*A.* Hogar\r\n*B.* Tienda o minimercado\r\n*C.* Restaurante\r\n*D.* Comida rapida\r\n*E.* Distribuidor"
+                      "insufficient_stock":  "Puedo ayudarte con esa referencia, pero la cantidad solicitada supera el inventario disponible.\r\n\r\n- Producto: {{product_text}}\r\n- Solicitado en total: {{requested_quantity}}\r\n- Disponible: {{available_quantity}}\r\n\r\nPara este cambio, indica una cantidad de hasta {{maximum_command_quantity}}; los demas cambios del lote aun no se han aplicado."
                   },
     "flows":  [
                   {
@@ -772,11 +768,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                                          "collect":  [
                                                          "customer_name",
                                                          "customer_type"
-                                                     ],
-                                         "response":  {
-                                                          "fallbackTemplate":  "customer_name_prompt",
-                                                          "clarificationTemplate":  "customer_name_prompt"
-                                                      }
+                                                     ]
                                      },
                                      {
                                          "id":  "customer_type",
@@ -788,11 +780,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                                          "conversationGuidance":  "Si falta customer_type, explica brevemente que conocer el perfil permite atender mejor la compra. Presenta las opciones en una lista legible, indica que puede responder con la letra o con el nombre y registra el valor canonico. No agradezcas ni confirmes el nombre salvo que el cliente lo haya proporcionado o corregido en el mensaje actual. Si el cliente corrige el perfil posteriormente, actualizalo.",
                                          "collect":  [
                                                          "customer_type"
-                                                     ],
-                                         "response":  {
-                                                          "fallbackTemplate":  "customer_type_prompt",
-                                                          "clarificationTemplate":  "customer_type_prompt"
-                                                      }
+                                                     ]
                                      },
                                      {
                                          "id":  "product_selection",
@@ -1001,10 +989,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                                                                                                               }
                                                                            }
                                                          }
-                                                     ],
-                                         "response":  {
-                                                          "fallbackTemplate":  "product_selection_prompt"
-                                                      }
+                                                     ]
                                      },
                                      {
                                          "id":  "cart_review",
@@ -1069,7 +1054,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                                                                                                       }
 ,
                                                                                "order.draft_empty":  {
-                                                                                                           "response":  { "fallbackTemplate":  "product_selection_prompt" },
+                                                                                                           "response":  { "guidance":  "Informa que el pedido vigente esta vacio y ayuda al cliente a elegir productos antes de continuar." },
                                                                                                            "effects":  [
                                                                                                                            {
                                                                                                                                "type":  "facts.clear",
@@ -1161,10 +1146,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                                                                                                               }
                                                                            }
                                                          }
-                                                     ],
-                                         "response":  {
-                                                          "fallbackTemplate":  "order_draft_unavailable"
-                                                      }
+                                                     ]
                                      },
                                      {
                                          "id":  "order_data",
@@ -1293,7 +1275,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                                                                                                                          }
 ,
                                                                                "order_draft_missing":  {
-                                                                                                            "response":  { "fallbackTemplate":  "order_draft_unavailable" },
+                                                                                                            "response":  { "guidance":  "Informa que no fue posible recuperar el pedido vigente y pide intentar nuevamente para continuar." },
                                                                                                             "effects":  [
                                                                                                                             {
                                                                                                                                 "type":  "facts.clear",
@@ -1302,7 +1284,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                                                                                                                         ]
                                                                                                         },
                                                                                "missing_prerequisites":  {
-                                                                                                              "response":  { "fallbackTemplate":  "order_draft_unavailable" },
+                                                                                                              "response":  { "guidance":  "Informa que faltan datos vigentes para preparar el resumen y solicita unicamente el siguiente dato requerido por la etapa." },
                                                                                                               "effects":  [
                                                                                                                               {
                                                                                                                                   "type":  "facts.clear",

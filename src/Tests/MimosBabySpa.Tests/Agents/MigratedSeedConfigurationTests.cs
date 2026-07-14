@@ -126,17 +126,12 @@ public sealed class MigratedSeedConfigurationTests
         }
 
 
-        var customerName = config.Templates["customer_name_prompt"];
-        customerName.Should().Be("Para comenzar, me compartes tu nombre o el nombre de tu negocio?");
-        customerName.Should().NotContain("Hola").And.NotContain("Bienvenido");
-
-        var customerType = config.Templates["customer_type_prompt"];
-        customerType.Should().Contain("\r\n\r\n");
-        customerType.Should().Contain("Puedes responder con la letra o con el nombre");
-        customerType.Should().Contain("*A.* Hogar");
-
-        config.Templates["product_selection_prompt"].Should().StartWith("Cuentame que productos");
-        config.Templates["product_selection_prompt"].Should().NotContain("Perfecto, ya podemos armar");
+        settingsJson.Should().NotContain("fallbackTemplate").And.NotContain("clarificationTemplate");
+        config.Templates.Should().NotContainKeys(
+            "customer_name_prompt",
+            "customer_type_prompt",
+            "product_selection_prompt",
+            "order_draft_unavailable");
         config.Templates["order_checkout_no_payment"].Should().Contain("- Cliente: {{customer_name}}");
         config.Templates["order_checkout_no_payment"].Should().Contain("- Recibe: {{delivery_recipient_name}}");
 

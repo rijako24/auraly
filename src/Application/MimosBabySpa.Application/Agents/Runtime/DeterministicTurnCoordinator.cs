@@ -859,8 +859,7 @@ public sealed class DeterministicTurnCoordinator
             Response = new StageResponseDefinition
             {
                 Mode = "ask_clarification",
-                Guidance = $"Solicita la alternativa aplicable para: {string.Join(", ", ambiguousFields)}.",
-                Template = stage.Response.ClarificationTemplate
+                Guidance = $"Solicita la alternativa aplicable para: {string.Join(", ", ambiguousFields)}."
             }
         };
 

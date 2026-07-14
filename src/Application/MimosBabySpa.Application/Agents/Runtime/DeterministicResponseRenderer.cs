@@ -62,15 +62,6 @@ public sealed class DeterministicResponseRenderer : IDeterministicResponseRender
                 FragmentPriority.Required));
         }
 
-        if (presentations.Count == 0
-            && !string.IsNullOrWhiteSpace(request.Turn.Response?.FallbackTemplate))
-        {
-            presentations.Add(new OperationPresentation(
-                request.Turn.Response.FallbackTemplate,
-                request.Turn.Facts.ToDictionary(pair => pair.Key, pair => (object?)pair.Value, StringComparer.OrdinalIgnoreCase),
-                FragmentRenderMode.Exclusive,
-                FragmentPriority.Required));
-        }
         if (presentations.Any(presentation => presentation.Mode == FragmentRenderMode.Exclusive))
         {
             return new DeterministicRenderedResponse(
@@ -108,6 +99,13 @@ public sealed class DeterministicResponseRenderer : IDeterministicResponseRender
                     label = string.IsNullOrWhiteSpace(definition?.Label) ? key : definition.Label,
                     guidance = definition?.ExtractionGuidance,
                     source,
+                    options = (definition?.Options ?? [])
+                        .Select(option => new
+                        {
+                            value = option.Value,
+                            label = option.Label,
+                            selector = option.Selector
+                        }),
                     canBeProvidedByCustomer = source.Equals("user", StringComparison.OrdinalIgnoreCase)
                 };
             })
@@ -121,10 +119,10 @@ public sealed class DeterministicResponseRenderer : IDeterministicResponseRender
                 "Do not execute, propose or mention operations, tools, JSON, facts, stages or internal state.",
                 "Treat operation outcomes as the only authority for catalog, availability, prices, totals, reservations, payments and external state.",
                 "Never claim success, confirmation, availability or payment unless a successful outcome explicitly supports it.",
-                "Follow responseGuidance and stage conversationGuidance. Ask only for data those instructions require.",
+                "Follow responseDirective and stage conversationGuidance. Ask only for data those instructions require.",
                 "stageReadiness.pendingBlockers is authoritative only for current-stage readiness. It does not decide what to ask and never proves that the whole request is complete.",
-                "Use responseGuidance and stage conversationGuidance to decide what to request. When they require a pending blocker whose canBeProvidedByCustomer is true, present it as necessary rather than optional. Never ask the customer to provide blockers whose canBeProvidedByCustomer is false. When pendingBlockers is empty, do not invent missing requirements.",
-                "When responseGuidance.mode is ask_clarification, ask only for the named ambiguity and never say that all data is ready or that the process can continue as complete.",
+                "Use responseDirective and stage conversationGuidance to decide what to request. When they require a pending blocker whose canBeProvidedByCustomer is true, present it as necessary rather than optional and use its configured options when present. Never ask the customer to provide blockers whose canBeProvidedByCustomer is false. When pendingBlockers is empty, do not invent missing requirements.",
+                "When responseDirective.mode is ask_clarification, ask only for the named ambiguity and never say that all data is ready or that the process can continue as complete.",
                 "Never describe a cart mutation as applied unless a successful commerce operation outcome in this turn supports it; conversation history and the user's request are not proof of execution.",
                 "Apply the configured persona and policies as the authority for voice, empathy, conversational style and WhatsApp presentation.",
                 "Be concise, natural and consistent with the configured persona."
@@ -135,7 +133,7 @@ public sealed class DeterministicResponseRenderer : IDeterministicResponseRender
                 request.Stage.Goal,
                 request.Stage.ConversationGuidance
             },
-            responseGuidance = request.Turn.Response,
+            responseDirective = request.Turn.Response,
             stageReadiness = new
             {
                 usesAdvanceFacts = request.Stage.AdvanceWhenFacts.Count > 0,

@@ -97,8 +97,6 @@ public sealed class StageEffectDefinition
     public Dictionary<string, string> Bindings { get; init; } = new(StringComparer.OrdinalIgnoreCase);
     public IReadOnlyList<string> Facts { get; init; } = [];
     public string? Template { get; init; }
-    public string? FallbackTemplate { get; init; }
-    public string? ClarificationTemplate { get; init; }
     public string? DataPath { get; init; }
     public string? Mode { get; init; }
     public string? Priority { get; init; }
@@ -139,8 +137,6 @@ public sealed class StageResponseDefinition
     public string? Mode { get; init; }
     public string? Guidance { get; init; }
     public string? Template { get; init; }
-    public string? FallbackTemplate { get; init; }
-    public string? ClarificationTemplate { get; init; }
     public string? SendMessageSequence { get; init; }
     public bool SuppressText { get; init; }
 }

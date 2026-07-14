@@ -15,7 +15,7 @@ export interface StageEffectDefinition {
   template?: string; dataPath?: string; mode?: string; priority?: string; sequence?: string;
   event?: string; reason?: string;
 }
-export interface StageResponseDefinition { mode?: string; guidance?: string; template?: string; fallbackTemplate?: string; clarificationTemplate?: string; sendMessageSequence?: string; }
+export interface StageResponseDefinition { mode?: string; guidance?: string; template?: string; sendMessageSequence?: string; suppressText?: boolean; }
 export interface StageOutcomeHandlerDefinition { effects?: StageEffectDefinition[]; response?: StageResponseDefinition; }
 export interface StageActionDefinition {
   id: string; operation: string; trigger?: "on_enter" | "when_ready" | "on_signal" | "on_fact_changed" | "manual";

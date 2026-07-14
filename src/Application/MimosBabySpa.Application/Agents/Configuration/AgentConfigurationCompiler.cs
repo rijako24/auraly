@@ -429,10 +429,6 @@ public sealed partial class AgentConfigurationCompiler
             return;
         if (!string.IsNullOrWhiteSpace(response.Template) && !config.Templates.ContainsKey(response.Template))
             Error(errors, path, "unknown_response_template", $"Template '{response.Template}' is not configured.");
-        if (!string.IsNullOrWhiteSpace(response.FallbackTemplate) && !config.Templates.ContainsKey(response.FallbackTemplate))
-            Error(errors, path, "unknown_response_fallback_template", $"Template '{response.FallbackTemplate}' is not configured.");
-        if (!string.IsNullOrWhiteSpace(response.ClarificationTemplate) && !config.Templates.ContainsKey(response.ClarificationTemplate))
-            Error(errors, path, "unknown_response_clarification_template", $"Template '{response.ClarificationTemplate}' is not configured.");
         if (!string.IsNullOrWhiteSpace(response.SendMessageSequence)
             && !config.MessageSequences.ContainsKey(response.SendMessageSequence))
             Error(errors, path, "unknown_response_sequence", $"Message sequence '{response.SendMessageSequence}' is not configured.");

@@ -148,7 +148,10 @@
                       "expectedSignalItems":  [
                                                   {
                                                       "type":  "order_changes",
-                                                      "count":  1,
+                                                      "allowedCounts":  [
+                                                                             0,
+                                                                             1
+                                                                         ],
                                                       "products":  [
 
                                                                    ]
@@ -165,6 +168,7 @@
                                           "content":  "Para pernil encontre PERNIL MERCAPOLLO y PERNIL CAMPOLLO. Cual prefieres? Conservare los demas productos de tu solicitud."
                                       }
                                   ],
+                      "applyRuntimeGuards":  true,
                       "initialFacts":  {
                                            "system.pending_cart_commands":  "{\"schemaVersion\":1,\"commands\":[{\"operation\":\"add\",\"productText\":\"pernil\",\"quantity\":1,\"destinationReference\":null},{\"operation\":\"add\",\"productText\":\"alas\",\"quantity\":2,\"destinationReference\":null},{\"operation\":\"add\",\"productText\":\"pechuga\",\"quantity\":1,\"destinationReference\":null}],\"ambiguousProductText\":\"pernil\",\"productCandidates\":[{\"name\":\"PERNIL MERCAPOLLO\",\"unitPrice\":5647.05,\"currency\":\"COP\"},{\"name\":\"PERNIL CAMPOLLO\",\"unitPrice\":6499.82,\"currency\":\"COP\"}],\"expiresAtUtc\":\"2099-01-01T00:00:00Z\"}"
                                        }
@@ -389,6 +393,44 @@
                                            "customer_type":  "Hogar",
                                            "order_finalized":  "true",
                                            "delivery_method":  "domicilio"
+                                       }
+                  },
+                  {
+                      "id":  "cj_declines_optional_delivery_reference",
+                      "message":  "no",
+                      "stage":  "order_data",
+                      "expectedFlow":  "order",
+                      "absentFacts":  [
+                                            "delivery_reference",
+                                            "delivery_address",
+                                            "delivery_phone"
+                                        ],
+                      "absentSignals":  [
+                                              "order_changes",
+                                              "catalog_query",
+                                              "recipe_request",
+                                              "restart_request",
+                                              "known_fact_query"
+                                          ],
+                      "absentAmbiguousFields":  [
+                                                     "delivery_reference"
+                                                 ],
+                      "seed":  "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+                      "history":  [
+                                      {
+                                          "role":  "assistant",
+                                          "content":  "Ya tengo tu direccion y telefono. Deseas agregar un barrio, apartamento o referencia complementaria antes de confirmar el pedido?"
+                                      }
+                                  ],
+                      "initialFacts":  {
+                                           "order_finalized":  "true",
+                                           "cart_review_confirmed":  "true",
+                                           "delivery_method":  "domicilio",
+                                           "city":  "Valledupar",
+                                           "delivery_address":  "Calle 5N",
+                                           "delivery_phone":  "3012926660",
+                                           "customer_name":  "Richard",
+                                           "payment_method":  "efectivo"
                                        }
                   }
               ],
