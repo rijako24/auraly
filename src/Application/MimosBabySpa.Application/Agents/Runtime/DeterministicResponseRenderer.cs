@@ -112,6 +112,19 @@ public sealed class DeterministicResponseRenderer : IDeterministicResponseRender
                 };
             })
             .ToList();
+        var openingPersonalizationFacts = request.Config.FactSchema
+            .Where(definition => definition.Role?.Equals(
+                "customer.name",
+                StringComparison.OrdinalIgnoreCase) == true)
+            .Where(definition => request.Turn.Facts.TryGetValue(definition.Key, out var value)
+                && !string.IsNullOrWhiteSpace(value))
+            .Select(definition => new
+            {
+                key = definition.Key,
+                role = definition.Role,
+                value = request.Turn.Facts[definition.Key]
+            })
+            .ToList();
         var payload = new
         {
             task = "Write the customer-facing reply for this completed deterministic turn. Return only the reply text.",
@@ -128,6 +141,7 @@ public sealed class DeterministicResponseRenderer : IDeterministicResponseRender
                 "Never describe a cart mutation as applied unless a successful commerce operation outcome in this turn supports it; conversation history and the user's request are not proof of execution.",
                 "When openingDirective.required is true, begin with exactly one brief opening that follows its guidance, then continue with the stage response in the same reply. Never greet a second time.",
                 "Separate a required opening from the substantive continuation with one blank line. openingDirective.allowQuestions governs only the opening paragraph; the continuation may ask the single question required by the stage.",
+                "When openingDirective.required is true, volunteer only openingDirective.allowedPersonalizationFacts for social personalization. Other facts remain available for stage logic, but do not mention them unless the latest user message asks for them, an operation outcome requires them, or the stage must use them to make progress.",
                 "When openingDirective.required is false, do not add a separate ceremonial welcome; answer naturally according to the stage and recent conversation.",
                 "Apply the configured persona and policies as the authority for voice, empathy, conversational style and WhatsApp presentation.",
                 "Be concise, natural and consistent with the configured persona."
@@ -143,7 +157,8 @@ public sealed class DeterministicResponseRenderer : IDeterministicResponseRender
             {
                 required = openingRequired,
                 guidance = openingRequired ? request.Config.ConversationOpening.Guidance : null,
-                allowQuestions = request.Config.ConversationOpening.AllowQuestions
+                allowQuestions = request.Config.ConversationOpening.AllowQuestions,
+                allowedPersonalizationFacts = openingPersonalizationFacts
             },
             stageReadiness = new
             {

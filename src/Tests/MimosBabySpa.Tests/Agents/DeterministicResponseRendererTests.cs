@@ -135,6 +135,11 @@ public sealed class DeterministicResponseRendererTests
                 Enabled = true,
                 Guidance = "Saluda con cercania"
             },
+            FactSchema =
+            [
+                new FactSchemaEntry { Key = "customer_name", Role = "customer.name", Type = "string" },
+                new FactSchemaEntry { Key = "city", Role = "shipping.city", Type = "string" }
+            ],
             Flows =
             [
                 new AgentFlowDefinition
@@ -152,7 +157,11 @@ public sealed class DeterministicResponseRendererTests
         var turn = new DeterministicTurnResult
         {
             Success = true,
-            Facts = new Dictionary<string, string> { ["customer_name"] = "Richard" },
+            Facts = new Dictionary<string, string>
+            {
+                ["customer_name"] = "Richard",
+                ["city"] = "Valledupar"
+            },
             Response = new StageResponseDefinition { Guidance = "Pregunta que desea pedir." }
         };
 
@@ -168,6 +177,10 @@ public sealed class DeterministicResponseRendererTests
         chat.CallCount.Should().Be(1);
         chat.Prompt.Should().Contain("openingDirective").And.Contain("\"required\":true");
         chat.Prompt.Should().Contain("Never greet a second time");
+        chat.Prompt.Should().Contain("allowedPersonalizationFacts")
+            .And.Contain("\"role\":\"customer.name\"");
+        chat.Prompt.Should().Contain("\"city\":\"Valledupar\"")
+            .And.Contain("do not mention them unless");
     }
 
     [Fact]

@@ -73,7 +73,9 @@ public sealed class MigratedSeedConfigurationTests
             .And.Contain("uno o dos emojis")
             .And.Contain("si no lo conoces, no inventes ninguno")
             .And.Contain("una linea en blanco")
-            .And.Contain("No digas 'aqui estoy para lo que necesites'");
+            .And.Contain("No digas 'aqui estoy para lo que necesites'")
+            .And.Contain("No menciones el tipo de cliente, ciudad, direccion, telefono")
+            .And.Contain("compras anteriores");
         config.ConversationOpening.AllowQuestions.Should().BeFalse();
         config.ConversationOpening.SkipWhenFirstStageHandlesOpening.Should().BeFalse();
         config.FailureResponses.LlmUnavailable.Should().Contain("inconveniente temporal");
@@ -146,7 +148,8 @@ public sealed class MigratedSeedConfigurationTests
             .And.NotContain("openingDirective");
         var productSelectionStage = config.Flows.SelectMany(flow => flow.Stages)
             .Single(stage => stage.Id == "product_selection");
-        productSelectionStage.ConversationGuidance.Should().Contain("sin repetir la bienvenida");
+        productSelectionStage.ConversationGuidance.Should().Contain("sin repetir la bienvenida")
+            .And.Contain("ni mencionar su perfil, ubicacion o categorias supuestas");
         config.Templates["order_checkout_no_payment"].Should().Contain("- Recibe: {{delivery_recipient_name}}");
 
         var facts = config.FactSchema.ToDictionary(fact => fact.Key, StringComparer.OrdinalIgnoreCase);
