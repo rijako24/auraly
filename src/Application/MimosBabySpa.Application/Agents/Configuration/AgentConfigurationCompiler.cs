@@ -110,12 +110,59 @@ public sealed partial class AgentConfigurationCompiler
         ValidateExternalEscalations(config, errors);
         ValidateOperatingHours(config, errors);
         ValidateReservationAutomations(config, usedOperations, errors);
+        ValidateInteractiveActions(config, usedOperations, errors);
 
         return errors.Count > 0
             ? new AgentConfigurationCompilation(null, errors)
             : new AgentConfigurationCompilation(
                 new CompiledAgentConfiguration(config, flowMap, facts, usedOperations),
                 []);
+    }
+
+    private void ValidateInteractiveActions(
+        AgentConfig config,
+        IDictionary<string, IAgentOperation> usedOperations,
+        ICollection<AgentConfigurationDiagnostic> errors)
+    {
+        foreach (var (scope, outcomes) in config.InteractiveActions)
+        {
+            var scopePath = $"interactiveActions[{scope}]";
+            if (string.IsNullOrWhiteSpace(scope))
+            {
+                Error(errors, scopePath, "interactive_scope_required", "Interactive action scope is required.");
+                continue;
+            }
+
+            foreach (var (outcome, action) in outcomes)
+            {
+                var actionPath = $"{scopePath}[{outcome}]";
+                if (string.IsNullOrWhiteSpace(outcome))
+                {
+                    Error(errors, actionPath, "interactive_outcome_required", "Interactive action outcome is required.");
+                    continue;
+                }
+
+                if (!_operations.TryGet(action.Operation, out var operation))
+                {
+                    Error(errors, actionPath, "unknown_operation", $"Operation '{action.Operation}' is not registered.");
+                    continue;
+                }
+
+                usedOperations[operation.Descriptor.Id] = operation;
+                ValidateRequiredArgumentBindings(operation.Descriptor.InputSchema, action.Arguments.Keys, actionPath, errors);
+                foreach (var templateId in operation.Descriptor.RequiredTemplateIds)
+                {
+                    if (!config.Templates.ContainsKey(templateId))
+                        Error(errors, actionPath, "required_template_missing", $"Operation '{operation.Descriptor.Id}' requires template '{templateId}'.");
+                }
+
+                if (!string.IsNullOrWhiteSpace(action.SendMessageSequence)
+                    && !config.MessageSequences.ContainsKey(action.SendMessageSequence))
+                {
+                    Error(errors, actionPath, "unknown_sequence", $"Message sequence '{action.SendMessageSequence}' is not configured.");
+                }
+            }
+        }
     }
 
 

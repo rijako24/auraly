@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useMemo, useState } from "react";
 import type { ChangeEvent } from "react";
@@ -86,7 +86,7 @@ function parseImportedRecipients(value: string): ImportedCampaignRecipientReques
   if (lines.length === 0) return [];
 
   const first = splitRow(lines[0]);
-  const hasHeader = first.some((cell) => ["phone", "telefono", "telÃ©fono"].includes(cell.toLowerCase()));
+  const hasHeader = first.some((cell) => ["phone", "telefono", "teléfono"].includes(cell.toLowerCase()));
   const headers = hasHeader ? first.map((h) => h.trim()) : ["phone", "name"];
   const rows = hasHeader ? lines.slice(1) : lines;
 
@@ -311,7 +311,7 @@ export default function CampaignsPage() {
   const columns: ColumnDef<Campaign>[] = useMemo(() => [
     {
       accessorKey: "name",
-      header: "CampaÃ±a",
+      header: "Campaña",
       cell: ({ row }) => (
         <div>
           <div className="font-medium">{row.original.name}</div>
@@ -455,15 +455,15 @@ export default function CampaignsPage() {
 
     try {
       await createCampaign.mutateAsync(payload);
-      toast.success("CampaÃ±a encolada");
+      toast.success("Campaña encolada");
       setDialogOpen(false);
       resetForm();
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "No se pudo crear la campaÃ±a");
+      toast.error(error instanceof Error ? error.message : "No se pudo crear la campaña");
     }
   }
 
-  if (!selectedBusinessId) return <PageError message="Selecciona un negocio para administrar campaÃ±as." />;
+  if (!selectedBusinessId) return <PageError message="Selecciona un negocio para administrar campañas." />;
   if (isLoading) return <PageLoading />;
   if (isError) return <PageError onRetry={refetch} />;
 
@@ -471,17 +471,17 @@ export default function CampaignsPage() {
     <div className="space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">CampaÃ±as</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Campañas</h1>
           <p className="text-muted-foreground">Mensajes masivos por WhatsApp</p>
         </div>
         <Button onClick={() => setDialogOpen(true)}>
           <Plus className="mr-2 h-4 w-4" />
-          Nueva campaÃ±a
+          Nueva campaña
         </Button>
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard title="CampaÃ±as" value={stats.total} icon={Megaphone} />
+        <StatCard title="Campañas" value={stats.total} icon={Megaphone} />
         <StatCard title="Activas" value={stats.active} icon={CalendarClock} />
         <StatCard title="Enviados" value={stats.sent} icon={Send} />
         <StatCard title="Fallidos" value={stats.failed} icon={Upload} />
@@ -491,7 +491,7 @@ export default function CampaignsPage() {
         columns={columns}
         data={campaigns}
         searchKey="name"
-        searchPlaceholder="Buscar campaÃ±a..."
+        searchPlaceholder="Buscar campaña..."
         viewMode="table"
         cardRenderer={cardRenderer}
         enableRowSelection={false}
@@ -512,7 +512,7 @@ export default function CampaignsPage() {
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-3xl">
           <DialogHeader>
-            <DialogTitle>Nueva campaÃ±a</DialogTitle>
+            <DialogTitle>Nueva campaña</DialogTitle>
             <DialogDescription>Configura audiencia y plantilla</DialogDescription>
           </DialogHeader>
 
@@ -527,7 +527,7 @@ export default function CampaignsPage() {
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="Segment">Segmento</SelectItem>
-                  <SelectItem value="Import">ImportaciÃ³n</SelectItem>
+                  <SelectItem value="Import">Importación</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -545,7 +545,7 @@ export default function CampaignsPage() {
                   </Select>
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="inactive-days">DÃ­as</Label>
+                  <Label htmlFor="inactive-days">Días</Label>
                   <Input
                     id="inactive-days"
                     type="number"
@@ -631,7 +631,7 @@ export default function CampaignsPage() {
               <Input id="parameter-keys" value={parameterKeys} onChange={(e) => setParameterKeys(e.target.value)} />
             </div>
             <div className="space-y-2 sm:col-span-2">
-              <Label htmlFor="scheduled-at">ProgramaciÃ³n</Label>
+              <Label htmlFor="scheduled-at">Programación</Label>
               <Input
                 id="scheduled-at"
                 type="datetime-local"

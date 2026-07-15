@@ -8,8 +8,8 @@ import "./globals.css";
 
 
 export const metadata: Metadata = {
-  title: "AURALY",
-  description: "Panel de administracion de AURALY",
+  title: "Auraly | Admin",
+  description: "Panel de administración de Auraly",
   icons: {
     icon: "/brand/auraly-mark.png",
     shortcut: "/brand/auraly-mark.png",
@@ -27,8 +27,8 @@ export default function RootLayout({
       <body className="font-sans antialiased">
         <ThemeProvider
           attribute="class"
-          defaultTheme="system"
-          enableSystem
+          defaultTheme="light"
+          enableSystem={false}
           disableTransitionOnChange
         >
           <QueryProvider>

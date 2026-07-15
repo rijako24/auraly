@@ -43,6 +43,18 @@ DECLARE @DeliverySettingsJson NVARCHAR(MAX) = N'{
     "currency": "COP",
     "modes": {}
   },
+  "interactiveActions": {
+    "external_interaction": {
+      "accepted": {
+        "operation": "internal.accept_order",
+        "arguments": { "response_text": "{raw_payload}" }
+      },
+      "declined": {
+        "operation": "internal.reject_order",
+        "arguments": { "response_text": "{raw_payload}" }
+      }
+    }
+  },
   "flows": [
     {
       "id": "order_request",

@@ -65,6 +65,8 @@
 GO
 :r .\Seeds\SeedSystemAgentTemplatesAndInboundContacts.sql
 GO
+:r .\Seeds\SeedCJPaymentApprovalAgent.sql
+GO
 :r .\Migrations\MigrateLuisWhatsAppToCJ.sql
 GO
 :r .\Migrations\MigrateAuditAgentTemplates.sql

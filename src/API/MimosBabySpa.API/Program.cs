@@ -445,6 +445,7 @@ services.AddScoped<MimosBabySpa.Application.Agents.Runtime.IDeterministicRespons
 
 services.AddScoped<MimosBabySpa.Application.Agents.Runtime.IOperationEventContextResolver, MimosBabySpa.Application.Agents.Runtime.ReservationCreatedOperationEventContextResolver>();
 services.AddScoped<MimosBabySpa.Application.Agents.Runtime.IOperationEventContextResolver, MimosBabySpa.Application.Agents.Runtime.OrderCreatedOperationEventContextResolver>();
+services.AddScoped<MimosBabySpa.Application.Agents.Runtime.IOperationEventContextResolver, MimosBabySpa.Application.Agents.Runtime.ManualPaymentRequestedOperationEventContextResolver>();
 
 services.AddScoped<MimosBabySpa.Application.Agents.Runtime.IDeterministicTurnEffectProcessor, MimosBabySpa.Application.Agents.Runtime.DeterministicTurnEffectProcessor>();
 

@@ -214,7 +214,7 @@ function getNormalizedConversationStage(stageName?: string | null): string {
 }
 
 export function getConversationStageColor(): string {
-  return "border text-white";
+  return "border font-medium";
 }
 
 export function getConversationStageStyle(stageName?: string | null): Record<string, string> {
@@ -225,7 +225,7 @@ export function getConversationStageStyle(stageName?: string | null): Record<str
     backgroundColor: `${color}26`,
     borderColor: color,
     boxShadow: `0 0 0 1px ${color}33`,
-    color: "#ffffff",
+    color,
   };
 }
 

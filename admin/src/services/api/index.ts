@@ -23,3 +23,5 @@ export { promotionsApi } from "./promotions";
 
 export { systemConfigurationsApi } from "./system-configurations";
 
+
+export { productsApi } from "./products";

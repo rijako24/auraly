@@ -27,7 +27,7 @@ export function ThemeToggle({ className }: { className?: string }) {
             variant="ghost"
             size="icon"
             onClick={toggleTheme}
-            className={cn("relative h-9 w-9 rounded-lg transition-transform", className)}
+            className={cn("relative h-9 w-9 rounded-lg border border-border/80 bg-muted/50 transition-all hover:bg-accent hover:text-accent-foreground", className)}
             aria-label="Alternar tema"
           >
             <Sun className="h-4 w-4 rotate-0 scale-100 transition-all dark:-rotate-90 dark:scale-0" />

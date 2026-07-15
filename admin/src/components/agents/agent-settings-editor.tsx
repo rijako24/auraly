@@ -4,6 +4,7 @@ import { useCallback, useMemo, useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
 
 import { JsonEditor } from "@/components/forms/json-editor";
+
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -35,8 +36,7 @@ export type AgentEditorSection =
   | "checkout"
   | "actions"
   | "templates"
-  | "safety"
-  | "advanced";
+  | "safety";
 
 interface AgentSettingsEditorProps {
   value: AgentSettings;
@@ -111,7 +111,6 @@ export function AgentSettingsEditor({ value, onChange, availableInboundContacts 
         <TabsTrigger value="actions">Acciones</TabsTrigger>
         <TabsTrigger value="templates">Templates</TabsTrigger>
         <TabsTrigger value="safety">Seguridad</TabsTrigger>
-        <TabsTrigger value="advanced">JSON</TabsTrigger>
       </TabsList>
 
       <TabsContent value="identity" className="space-y-4">
@@ -297,21 +296,6 @@ export function AgentSettingsEditor({ value, onChange, availableInboundContacts 
                 }
               />
             </div>
-          </CardContent>
-        </Card>
-      </TabsContent>
-
-      <TabsContent value="advanced">
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">SettingsJson completo</CardTitle>
-            <CardDescription>Modo avanzado — edición directa del documento</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <JsonEditor
-              value={value as unknown as Record<string, unknown>}
-              onChange={(v) => onChange(v as unknown as AgentSettings)}
-            />
           </CardContent>
         </Card>
       </TabsContent>

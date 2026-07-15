@@ -6,7 +6,7 @@ import { useParams } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 
 import { AgentOperationalModeControl } from "@/components/agents/agent-operational-mode-control";
-import { AgentSetupWizard } from "@/components/agents/agent-setup-wizard";
+import { HumanAgentConfigWizard } from "@/components/agents/human-agent-config-wizard";
 import { Button } from "@/components/ui/button";
 import { PageError } from "@/components/ui/page-error";
 import { PageLoading } from "@/components/ui/page-loading";
@@ -66,15 +66,13 @@ export default function AgentSetupPage() {
 
       <AgentOperationalModeControl businessId={agent.businessId} />
 
-      <AgentSetupWizard
+      <HumanAgentConfigWizard
         agent={agent}
-        businessId={businessId}
         settings={settings}
         onSettingsChange={(next) => {
           setSettings(next);
           setDirty(true);
         }}
-        availableInboundContacts={inboundContacts ?? []}
         onSave={async () => {
           await updateMutation.mutateAsync(settings);
           setDirty(false);

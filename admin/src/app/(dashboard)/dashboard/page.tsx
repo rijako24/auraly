@@ -59,8 +59,9 @@ export default function DashboardPage() {
 
   if (!businessId) {
     return (
-      <div className="space-y-6">
-        <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
+      <div className="mx-auto max-w-[1600px] space-y-7">
+        <p className="mb-1 text-sm font-medium text-primary">Vista general</p>
+          <h1 className="text-3xl font-semibold tracking-tight">Resumen</h1>
         <p className="text-muted-foreground">
           Selecciona un negocio en el selector superior para ver el resumen.
         </p>
@@ -77,14 +78,15 @@ export default function DashboardPage() {
   const recentReservations = recentReservationsQuery.data ?? [];
 
   return (
-    <div className="space-y-6">
+    <div className="mx-auto max-w-[1600px] space-y-7">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
-          <p className="text-muted-foreground">Resumen financiero y operativo.</p>
+          <p className="mb-1 text-sm font-medium text-primary">Vista general</p>
+          <h1 className="text-3xl font-semibold tracking-tight">Resumen</h1>
+          <p className="mt-1 text-muted-foreground">Resumen financiero y operativo de tu negocio.</p>
         </div>
         <Select value={period} onValueChange={setPeriod}>
-          <SelectTrigger className="w-[180px]"><SelectValue placeholder="Periodo" /></SelectTrigger>
+          <SelectTrigger className="w-[180px] bg-card shadow-sm"><SelectValue placeholder="Periodo" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="today">Hoy</SelectItem>
             <SelectItem value="7d">Ultimos 7 dias</SelectItem>
@@ -94,7 +96,7 @@ export default function DashboardPage() {
         </Select>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard title="Ingresos totales" value={formatCurrency(stats?.totalRevenue ?? 0)} change={stats?.revenueGrowth} icon={DollarSign} />
         <StatCard title="Reservas" value={stats?.totalReservations ?? 0} change={stats?.reservationGrowth} icon={CalendarDays} />
         <StatCard title="Nuevos leads" value={stats?.totalLeads ?? 0} change={stats?.leadGrowth} icon={Users} />
@@ -148,7 +150,7 @@ export default function DashboardPage() {
         </CardContent>
       </Card>
 
-      <div className="grid gap-6 lg:grid-cols-2">
+      <div className="grid gap-6 xl:grid-cols-2">
         <Card>
           <CardHeader>
             <CardTitle>Vista general</CardTitle>

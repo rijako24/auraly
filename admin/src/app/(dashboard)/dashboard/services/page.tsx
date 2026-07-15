@@ -213,7 +213,7 @@ export default function ServicesPage() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Servicios</h1>
           <p className="text-muted-foreground">
-            Gestiona los servicios ofrecidos en tu spa para bebés
+            Gestiona los servicios ofrecidos por el negocio seleccionado
           </p>
         </div>
         <Button asChild>

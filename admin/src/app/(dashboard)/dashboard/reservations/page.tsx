@@ -10,6 +10,8 @@ import { StatCard } from "@/components/cards/stat-card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
+import { DatePicker } from "@/components/ui/date-picker";
+import { Label } from "@/components/ui/label";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { PageLoading } from "@/components/ui/page-loading";
 import { PageError } from "@/components/ui/page-error";
@@ -20,7 +22,9 @@ import { useReservations } from "@/hooks/use-reservations";
 
 export default function ReservationsPage() {
   const [viewMode, setViewMode] = useState<"table" | "card" | "list">("table");
-  const { data, isLoading, isError, refetch } = useReservations();
+  const [startDate, setStartDate] = useState(todayInputValue);
+  const [endDate, setEndDate] = useState(todayInputValue);
+  const { data, isLoading, isError, refetch } = useReservations({ startDate: `${startDate}T00:00:00`, endDate: `${endDate}T23:59:59`, page: 1, pageSize: 100 });
   const reservations = data?.items ?? [];
 
   const stats = useMemo(() => ({
@@ -77,14 +81,20 @@ export default function ReservationsPage() {
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Reservaciones</h1>
-          <p className="text-muted-foreground">Gestiona las reservaciones de tu spa para bebés</p>
+          <p className="text-muted-foreground">Gestiona las reservaciones del negocio seleccionado</p>
         </div>
         <div className="flex gap-2">
           <Button variant="outline" asChild><Link href="/dashboard/reservations/calendar"><CalendarDays className="mr-2 h-4 w-4" />Calendario</Link></Button>
           <Button asChild><Link href="/dashboard/reservations/new"><Plus className="mr-2 h-4 w-4" />Nueva Reservación</Link></Button>
         </div>
       </div>
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <Card>
+        <CardContent className="grid gap-3 pt-5 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
+          <div className="space-y-1.5"><Label>Desde</Label><DatePicker value={startDate} onChange={setStartDate} /></div>
+          <div className="space-y-1.5"><Label>Hasta</Label><DatePicker value={endDate} onChange={setEndDate} /></div>
+          <Button variant="outline" onClick={() => { const today = todayInputValue(); setStartDate(today); setEndDate(today); }}>Hoy</Button>
+        </CardContent>
+      </Card>      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard title="Total" value={stats.total} icon={CalendarDays} />
         <StatCard title="Pendientes" value={stats.pending} icon={Clock} />
         <StatCard title="Confirmadas" value={stats.confirmed} icon={CheckCircle} />
@@ -93,4 +103,10 @@ export default function ReservationsPage() {
       <DataTable columns={columns} data={reservations} searchKey="reservationId" searchPlaceholder="Buscar por ID..." facetedFilters={facetedFilters} viewMode={viewMode} onViewModeChange={setViewMode} cardRenderer={cardRenderer} enableRowSelection={false} />
     </div>
   );
+}
+
+function todayInputValue() {
+  const date = new Date();
+  date.setMinutes(date.getMinutes() - date.getTimezoneOffset());
+  return date.toISOString().slice(0, 10);
 }

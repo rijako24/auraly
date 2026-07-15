@@ -4,15 +4,14 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   ChevronRight,
-  PanelLeftClose,
-  PanelLeftOpen,
+  ChevronsLeft,
+  ChevronsRight,
 } from "lucide-react";
 
 import { AuralyLogo } from "@/components/brand/auraly-logo";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import {
   Tooltip,
@@ -61,13 +60,13 @@ export function Sidebar() {
   return (
     <aside
       className={cn(
-        "relative flex h-screen flex-col border-r border-sidebar-border bg-sidebar-background transition-all duration-300 ease-in-out",
-        isCollapsed ? "w-[52px]" : "w-56"
+        "relative flex h-dvh shrink-0 flex-col overflow-visible border-r border-sidebar-border bg-sidebar-background transition-[width] duration-200 ease-out will-change-[width] motion-reduce:transition-none",
+        isCollapsed ? "w-[60px]" : "w-64"
       )}
     >
       <TooltipProvider delayDuration={0}>
         {/* Logo / Brand */}
-        <div className="flex h-14 shrink-0 items-center border-b border-sidebar-border px-3">
+        <div className="flex h-[72px] shrink-0 items-center border-b border-sidebar-border px-4">
           {isCollapsed ? (
             <Tooltip>
               <TooltipTrigger asChild>
@@ -91,31 +90,31 @@ export function Sidebar() {
         </div>
 
         {/* Navigation */}
-        <ScrollArea className="flex-1 py-3">
-          <div className="space-y-1 px-2">
+        <div className="flex-1 overflow-y-auto py-5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          <div className={cn(isCollapsed ? "space-y-0 px-2 py-4" : "space-y-3 px-3")}>
             {filteredGroups.map((group) => (
               <Collapsible key={group.label} defaultOpen className="group">
                 <CollapsibleTrigger asChild>
                   {isCollapsed ? (
-                    <div className="flex items-center justify-center w-9 h-9 rounded-md" />
+                    <div className="hidden" />
                   ) : (
-                    <button className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-xs font-medium text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent transition-colors">
+                    <button className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-sidebar-foreground/55 hover:text-sidebar-foreground hover:bg-sidebar-accent transition-colors">
                       <ChevronRight className="h-3.5 w-3.5 transition-transform group-data-[state=open]:rotate-90" />
                       {group.label}
                     </button>
                   )}
                 </CollapsibleTrigger>
                 <CollapsibleContent>
-                  <div className={cn("mt-1 space-y-0.5", !isCollapsed && "pl-4 pr-1")}>
+                  <div className={cn(isCollapsed ? "space-y-1" : "mt-1 space-y-0.5 pl-4 pr-1")}>
                     {group.items.map((item) => {
                       if (!("href" in item)) return null;
                       const Icon = item.icon;
-                      const isActive = pathname === item.href || pathname.startsWith(item.href + "/");
+                      const isActive = item.href === "/dashboard" ? pathname === item.href : pathname === item.href || pathname.startsWith(item.href + "/");
 
                       const linkContent = (
                         <>
                           <Icon className={cn("h-4 w-4 shrink-0", isCollapsed && "mx-auto")} />
-                          {!isCollapsed && <span className="truncate">{item.name}</span>}
+                          {<span className={cn("min-w-0 overflow-hidden whitespace-nowrap transition-[max-width,opacity,transform] duration-150 ease-out", isCollapsed ? "max-w-0 translate-x-1 opacity-0" : "max-w-[12rem] translate-x-0 opacity-100")}>{item.name}</span>}
                         </>
                       );
 
@@ -123,11 +122,11 @@ export function Sidebar() {
                         <Link
                           href={item.href}
                           className={cn(
-                            "flex items-center gap-2.5 rounded-md px-2 py-2 text-sm font-medium transition-colors",
+                            "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-[padding,gap,background-color,color] duration-150 ease-out",
                             isActive
                               ? "bg-sidebar-accent text-sidebar-accent-foreground"
                               : "text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
-                            isCollapsed && "justify-center px-2"
+                            isCollapsed && "justify-center gap-0 px-2"
                           )}
                         >
                           {linkContent}
@@ -148,7 +147,7 @@ export function Sidebar() {
               </Collapsible>
             ))}
           </div>
-        </ScrollArea>
+        </div>
 
         <Separator className="opacity-50" />
 
@@ -202,13 +201,13 @@ export function Sidebar() {
               <Button
                 variant="outline"
                 size="icon"
-                className="h-6 w-6 rounded-full border-sidebar-border bg-sidebar-background shadow-sm hover:bg-sidebar-accent"
+                className="h-7 w-7 rounded-full border-sidebar-border bg-sidebar-background shadow-md transition-transform duration-200 hover:scale-110 hover:bg-sidebar-accent"
                 onClick={() => setCollapsed(!isCollapsed)}
               >
                 {isCollapsed ? (
-                  <PanelLeftOpen className="h-3 w-3" />
+                  <ChevronsRight className="h-4 w-4 animate-in fade-in zoom-in-75 duration-200" />
                 ) : (
-                  <PanelLeftClose className="h-3 w-3" />
+                  <ChevronsLeft className="h-4 w-4 animate-in fade-in zoom-in-75 duration-200" />
                 )}
               </Button>
             </TooltipTrigger>

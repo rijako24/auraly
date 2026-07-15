@@ -13,8 +13,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
+import { DatePicker } from "@/components/ui/date-picker";
 import { Label } from "@/components/ui/label";
+import { TimePicker } from "@/components/ui/time-picker";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -170,9 +171,9 @@ export function AvailabilityBlocksEditor() {
               </Select>
             </div>
             <div className="grid gap-3 sm:grid-cols-3">
-              <div className="grid gap-2"><Label>Fecha</Label><Input type="date" value={form.date} onChange={(event) => setForm((current) => ({ ...current, date: event.target.value }))} /></div>
-              <div className="grid gap-2"><Label>Inicio</Label><Input type="time" value={form.startTime ?? ""} onChange={(event) => setForm((current) => ({ ...current, startTime: event.target.value || null }))} /></div>
-              <div className="grid gap-2"><Label>Fin</Label><Input type="time" value={form.endTime ?? ""} onChange={(event) => setForm((current) => ({ ...current, endTime: event.target.value || null }))} /></div>
+              <div className="grid gap-2"><Label>Fecha</Label><DatePicker value={form.date} onChange={(date) => setForm((current) => ({ ...current, date }))} /></div>
+              <div className="grid gap-2"><Label>Inicio</Label><TimePicker value={form.startTime} onChange={(startTime) => setForm((current) => ({ ...current, startTime }))} /></div>
+              <div className="grid gap-2"><Label>Fin</Label><TimePicker value={form.endTime} onChange={(endTime) => setForm((current) => ({ ...current, endTime }))} /></div>
             </div>
             <div className="grid gap-2"><Label>Motivo</Label><Textarea value={form.reason} onChange={(event) => setForm((current) => ({ ...current, reason: event.target.value }))} /></div>
             <div className="flex items-center gap-2"><Switch checked={form.isActive} onCheckedChange={(isActive) => setForm((current) => ({ ...current, isActive }))} /><Label>Activo</Label></div>

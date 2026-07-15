@@ -18,6 +18,7 @@ import { DataTable } from "@/components/tables/data-table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { DatePicker } from "@/components/ui/date-picker";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -240,19 +241,19 @@ export default function OrdersPage() {
             }}
             placeholder="Filtrar por cliente"
           />
-          <Input
-            type="date"
+          <DatePicker
             value={createdFrom}
-            onChange={(event) => {
-              setCreatedFrom(event.target.value);
+            placeholder="Desde"
+            onChange={(date) => {
+              setCreatedFrom(date);
               setPage(1);
             }}
           />
-          <Input
-            type="date"
+          <DatePicker
             value={createdTo}
-            onChange={(event) => {
-              setCreatedTo(event.target.value);
+            placeholder="Hasta"
+            onChange={(date) => {
+              setCreatedTo(date);
               setPage(1);
             }}
           />

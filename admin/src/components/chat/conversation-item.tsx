@@ -35,13 +35,13 @@ export function ConversationItem({
       type="button"
       onClick={onClick}
       className={cn(
-        "flex w-full items-start gap-3 rounded-lg p-2.5 text-left transition-colors sm:p-3",
-        "hover:bg-muted/80 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2",
-        isActive && "bg-muted"
+        "flex w-full items-start gap-3 px-3 py-3 pr-7 text-left transition-colors sm:px-4 sm:pr-8",
+        "hover:bg-[#f5f6f6] focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset dark:hover:bg-muted/50",
+        isActive && "bg-[#e9edef] dark:bg-muted"
       )}
     >
       <div className="relative flex-shrink-0">
-        <Avatar className="h-10 w-10 sm:h-11 sm:w-11">
+        <Avatar className="h-11 w-11 sm:h-12 sm:w-12">
           <AvatarFallback className="bg-primary/10 text-primary text-sm font-medium">
             {getInitials(displayName)}
           </AvatarFallback>
@@ -54,10 +54,10 @@ export function ConversationItem({
       </div>
       <div className="min-w-0 flex-1 overflow-hidden">
         <div className="flex items-center justify-between gap-2">
-          <span className="truncate font-medium text-foreground">
+          <span className="min-w-0 flex-1 truncate font-medium text-foreground">
             {displayName}
           </span>
-          <span className="flex-shrink-0 text-xs text-muted-foreground">
+          <span className="w-12 flex-shrink-0 whitespace-nowrap text-right text-xs text-muted-foreground">
             {formatRelativeTime(conversation.timestamp)}
           </span>
         </div>
@@ -71,7 +71,7 @@ export function ConversationItem({
             {truncate(conversation.lastMessage ?? "Sin mensajes", 40)}
           </span>
         </div>
-        <div className="mt-2">
+        <div className="mt-1.5">
           <Badge
             variant="secondary"
             style={stageStyle}

@@ -193,11 +193,6 @@ export function AgentSetupWizard({
             </Button>
           )}
         </div>
-        <Button variant="ghost" size="sm" asChild>
-          <Link href={`/dashboard/agents/${agent.agentId}`}>
-            Modo avanzado (todas las pestañas)
-          </Link>
-        </Button>
       </div>
     </div>
   );

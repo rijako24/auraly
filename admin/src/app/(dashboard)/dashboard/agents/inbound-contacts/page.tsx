@@ -116,7 +116,7 @@ export default function InboundContactsPage() {
   const contacts = contactsQuery.data ?? [];
   const agents = agentsQuery.data ?? [];
   const inboundAgents = useMemo(
-    () => agents.filter((agent) => agent.isActive && agent.kind !== "customer"),
+    () => agents.filter((agent) => agent.kind !== "customer"),
     [agents]
   );
   const agentsForType = inboundAgents.filter((agent) => agent.kind === form.type);
@@ -273,7 +273,7 @@ export default function InboundContactsPage() {
           <h1 className="text-2xl font-semibold tracking-tight">Contactos inbound</h1>
           <p className="text-muted-foreground">Numeros internos que enrutan a agentes de operaciones o domicilios</p>
         </div>
-        <Button onClick={openCreate} disabled={inboundAgents.length === 0}>
+        <Button onClick={openCreate} disabled={!selectedBusinessId || agentsQuery.isLoading}>
           <Plus className="mr-2 h-4 w-4" />
           Nuevo contacto
         </Button>

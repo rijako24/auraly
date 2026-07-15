@@ -64,6 +64,7 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
             Notifications = settings.Notifications ?? new NotificationDefinitions(),
             Escalations = settings.Escalations ?? new EscalationDefinitions(),
             ReservationAutomations = settings.ReservationAutomations ?? new ReservationAutomationDefinitions(),
+            InteractiveActions = settings.InteractiveActions ?? new InteractiveActionDefinitions(),
             ReservationManagement = settings.ReservationManagement ?? new ReservationManagementDefinitions(),
             Checkout = settings.Checkout ?? new CheckoutDefinitions(),
             Commerce = settings.Commerce ?? new CommerceConfig(),
@@ -130,6 +131,7 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
         public WebhookDefinitions? Webhooks { get; set; }
         public NotificationDefinitions? Notifications { get; set; }
         public ReservationAutomationDefinitions? ReservationAutomations { get; set; }
+        public InteractiveActionDefinitions? InteractiveActions { get; set; }
         public ReservationManagementDefinitions? ReservationManagement { get; set; }
         public CheckoutDefinitions? Checkout { get; set; }
         public CommerceConfig? Commerce { get; set; }

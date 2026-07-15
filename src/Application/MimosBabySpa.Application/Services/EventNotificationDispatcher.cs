@@ -115,7 +115,7 @@ public sealed class EventNotificationDispatcher : IEventNotificationDispatcher
             return;
         }
 
-        var recipients = await ResolveRecipientsAsync(notification.Recipients, context.Custom);
+        var recipients = await ResolveRecipientsAsync(businessId, notification.Recipients, context.Custom, ct);
 
         if (recipients.Count == 0)
         {
@@ -154,8 +154,10 @@ public sealed class EventNotificationDispatcher : IEventNotificationDispatcher
             businessId);
     }
     private async Task<IReadOnlyList<NotificationRecipient>> ResolveRecipientsAsync(
+        Guid businessId,
         IReadOnlyList<string> configuredRecipients,
-        IReadOnlyDictionary<string, string> custom)
+        IReadOnlyDictionary<string, string> custom,
+        CancellationToken ct)
     {
         var sourceConversationId = TryReadGuid(custom, "source_conversation_id");
         var recipients = new List<NotificationRecipient>();
@@ -166,6 +168,24 @@ public sealed class EventNotificationDispatcher : IEventNotificationDispatcher
             var raw = configured?.Trim();
             if (string.IsNullOrWhiteSpace(raw))
                 continue;
+
+            if (raw.StartsWith("inbound:", StringComparison.OrdinalIgnoreCase))
+            {
+                var selector = raw["inbound:".Length..].Trim();
+                if (string.IsNullOrWhiteSpace(selector))
+                    continue;
+
+                var contacts = await _unitOfWork.BusinessInboundContacts.GetActiveByBusinessAsync(businessId, ct);
+                foreach (var contact in contacts.Where(contact =>
+                             contact.Type.Equals(selector, StringComparison.OrdinalIgnoreCase)
+                             || contact.Key.Equals(selector, StringComparison.OrdinalIgnoreCase)))
+                {
+                    var contactPhone = contact.PhoneNumber.Trim();
+                    if (!string.IsNullOrWhiteSpace(contactPhone) && seen.Add(contactPhone))
+                        recipients.Add(new NotificationRecipient(contactPhone, null));
+                }
+                continue;
+            }
 
             var phone = ResolveCustomPlaceholders(raw, custom).Trim();
             if (string.IsNullOrWhiteSpace(phone) || phone.Contains('{') || phone.Contains('}'))

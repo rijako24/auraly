@@ -288,7 +288,21 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                                                                                  "body":  "Gracias por tu pedido, {customer_name}. Lo recibimos correctamente y ya estamos coordinando la entrega."
                                                                              }
                                                                          ]
-                                                        }
+                                                        },
+                             "manual_payment_approval_request":  {
+                                                                       "messages":  [
+                                                                                        {
+                                                                                            "type":  "text",
+                                                                                            "body":  "*Pago manual pendiente*\n\nPedido: {order_number}\nCliente: {customer_name}\nTelefono: {customer_phone}\nEntrega: {delivery_address}\nProductos: {items}\nTotal: ${amount} {currency}\n\nValida el pago antes de confirmarlo.",
+                                                                                            "buttons":  [
+                                                                                                            {
+                                                                                                                "id":  "manual_payment:confirm:{payment_transaction_id}",
+                                                                                                                "title":  "Confirmar pago"
+                                                                                                            }
+                                                                                                        ]
+                                                                                        }
+                                                                                    ]
+                                                                   }
                          },
     "globalActions":  [
                           {
@@ -681,7 +695,14 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
 
                                                                ],
                                                 "sendMessageSequence":  null
-                                            }
+                                            },
+                          "manual_payment_requested":  {
+                                                           "enabled":  true,
+                                                           "recipients":  [
+                                                                              "inbound:payment_approver"
+                                                                          ],
+                                                           "sendMessageSequence":  "manual_payment_approval_request"
+                                                       }
                       },
     "webhooks":  {
 

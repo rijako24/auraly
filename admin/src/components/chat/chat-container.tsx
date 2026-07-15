@@ -48,15 +48,15 @@ export function ChatContainer({
 
   return (
     <div className="flex h-full w-full flex-1 flex-col">
-      <ScrollArea className="min-h-0 flex-1 overflow-y-auto px-2.5 sm:px-4">
-        <div className="flex min-h-full flex-col gap-3 py-3 sm:gap-4 sm:py-4">
+      <ScrollArea className="whatsapp-chat-surface min-h-0 flex-1 overflow-y-auto px-3 sm:px-8">
+        <div className="mx-auto flex min-h-full max-w-5xl flex-col gap-2 py-4 sm:gap-3 sm:py-6">
           {messages.map((msg) => (
             <ChatBubble key={msg.messageId} message={msg} />
           ))}
           <div ref={scrollRef} aria-hidden />
         </div>
       </ScrollArea>
-      <div className="flex-shrink-0 border-t border-border bg-background p-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))] sm:p-3">
+      <div className="flex-shrink-0 border-t border-border/70 bg-[#f0f2f5] p-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))] dark:bg-muted/60 sm:px-4 sm:py-3">
         <form onSubmit={handleSubmit} className="flex items-center gap-2">
           <Button
             type="button"
@@ -71,12 +71,12 @@ export function ChatContainer({
             ref={inputRef}
             placeholder={placeholder}
             disabled={disabled}
-            className={cn("h-11 flex-1")}
+            className={cn("h-11 flex-1 rounded-xl border-0 bg-background px-4 shadow-none focus-visible:ring-1")}
           />
           <Button
             type="submit"
             size="icon"
-            className="h-11 w-11 flex-shrink-0"
+            className="h-10 w-10 flex-shrink-0 rounded-full bg-primary text-primary-foreground hover:bg-primary/90"
             disabled={disabled}
           >
             <Send className="h-5 w-5" />

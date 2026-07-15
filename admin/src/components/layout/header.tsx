@@ -20,7 +20,7 @@ export function Header({ onMobileMenuClick, className }: HeaderProps) {
   return (
     <header
       className={cn(
-        "sticky top-0 z-40 flex min-h-14 shrink-0 items-center gap-2 border-b border-border bg-background/95 px-2 py-2 backdrop-blur supports-[backdrop-filter]:bg-background/60 sm:gap-3 sm:px-4 lg:gap-4",
+        "sticky top-0 z-40 flex min-h-[72px] shrink-0 items-center gap-2 border-b border-border/80 bg-card/95 px-2 py-3 backdrop-blur supports-[backdrop-filter]:bg-card/80 sm:gap-3 sm:px-5 lg:gap-4",
         className
       )}
     >

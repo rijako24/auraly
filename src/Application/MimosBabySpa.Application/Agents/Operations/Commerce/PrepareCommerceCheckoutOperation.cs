@@ -255,7 +255,24 @@ private readonly IUnitOfWork _unitOfWork;
                 is_order_confirmed = false
             },
             [presentation],
-            effects);
+            effects,
+            domainEvents: quote.RequiresManualConfirmation && paymentTransactionId.HasValue
+                ?
+                [
+                    OperationEvent.Create("manual_payment_requested", new
+                    {
+                        payment_transaction_id = paymentTransactionId.Value,
+                        order_draft_id = order.OrderDraftId,
+                        order_number = ShortId(order.OrderDraftId),
+                        customer_name = payerName,
+                        customer_phone = paymentPhone,
+                        delivery_address = effectiveDeliveryAddress,
+                        amount = Money(orderTotal),
+                        currency,
+                        items = string.Join(", ", items.Select(item => $"{item.ProductNameSnapshot} x{item.Quantity:N0}"))
+                    })
+                ]
+                : []);
     }
 
     private static CheckoutQuote BuildQuote(

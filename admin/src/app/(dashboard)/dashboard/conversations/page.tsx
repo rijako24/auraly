@@ -8,6 +8,7 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
+import { useAgents } from "@/hooks/use-agents";
 import { ChatContainer } from "@/components/chat/chat-container";
 import { ConversationList } from "@/components/chat/conversation-list";
 import { PageError } from "@/components/ui/page-error";
@@ -41,6 +42,8 @@ export default function ConversationsPage() {
   const isMobile = useMediaQuery("(max-width: 768px)");
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedAgentId, setSelectedAgentId] = useState<string>("");
+  const { data: agentsData } = useAgents();
   const { data: conversationsData, isLoading, isError, refetch } = useConversations();
   const { data: selectedConversation } = useConversationWithMessages(selectedId);
   const sendWebMessage = useSendWebConversationMessage();
@@ -55,6 +58,15 @@ export default function ConversationsPage() {
     );
   }, [conversationsData]);
 
+  const agents = [...(agentsData ?? [])]
+    .sort((left, right) => {
+      const leftRank = left.isActive && left.kind === "customer" ? 0 : left.isActive ? 1 : 2;
+      const rightRank = right.isActive && right.kind === "customer" ? 0 : right.isActive ? 1 : 2;
+      if (leftRank !== rightRank) return leftRank - rightRank;
+      return left.name.localeCompare(right.name);
+    });
+  const selectedAgent = agents.find((agent) => agent.agentId === selectedAgentId) ?? null;
+  useEffect(() => { if (agents.length > 0 && !agents.some((agent) => agent.agentId === selectedAgentId)) setSelectedAgentId(agents[0].agentId); }, [agents, selectedAgentId]);
   const messages = selectedConversation?.messages ?? [];
   const showList = isMobile ? !selectedId : true;
   const showChat = isMobile ? !!selectedId : true;
@@ -62,6 +74,12 @@ export default function ConversationsPage() {
   const stageColor = getConversationStageColor();
   const stageStyle = getConversationStageStyle(selectedConversation?.currentStageName);
   const botEnabled = selectedConversation?.botEnabled ?? selectedConversation?.owner !== "Human";
+
+  useEffect(() => {
+    setSelectedId(null);
+    setSelectedAgentId("");
+    setSearchQuery("");
+  }, [selectedBusinessId]);
 
   useEffect(() => {
     if (!isMobile && !selectedId && conversations.length > 0) {
@@ -114,18 +132,21 @@ export default function ConversationsPage() {
   return (
     <div
       className={cn(
-        "relative flex h-[calc(100dvh-6rem)] overflow-hidden rounded-lg border border-border bg-card",
-        "max-lg:-mx-3 max-lg:h-[calc(100dvh-4.5rem)] max-lg:rounded-none max-lg:border-x-0 sm:max-lg:-mx-4"
+        "relative flex h-full min-h-0 overflow-hidden rounded-xl border border-border/80 bg-card shadow-sm",
+        "max-lg:-mx-3 max-lg:rounded-none max-lg:border-x-0 sm:max-lg:-mx-4"
       )}
     >
       <div
         className={cn(
-          "flex w-[360px] max-w-full flex-shrink-0 flex-col overflow-hidden",
+          "flex w-[400px] max-w-full flex-shrink-0 flex-col overflow-hidden",
           isMobile && "absolute inset-0 z-10 w-full",
           isMobile && !showList && "hidden"
         )}
       >
         <ConversationList
+          agents={agents}
+          selectedAgentId={selectedAgentId}
+          onAgentChange={setSelectedAgentId}
           conversations={conversations}
           selectedId={selectedId}
           onSelect={handleSelectConversation}
@@ -137,14 +158,14 @@ export default function ConversationsPage() {
 
       <div
         className={cn(
-          "flex min-w-0 flex-1 flex-col overflow-hidden bg-background",
+          "flex min-w-0 flex-1 flex-col overflow-hidden bg-[#efeae2] dark:bg-background",
           isMobile && "absolute inset-0 z-10",
           isMobile && !showChat && "hidden"
         )}
       >
         {selectedConversation ? (
           <>
-            <div className="flex flex-shrink-0 items-center gap-2 border-b border-border bg-muted/30 px-2.5 py-2.5 sm:gap-3 sm:px-4 sm:py-3">
+            <div className="flex flex-shrink-0 items-center gap-2 border-b border-border bg-[#f0f2f5] px-2.5 py-2.5 dark:bg-muted/60 sm:gap-3 sm:px-4 sm:py-3">
               <Button
                 variant="ghost"
                 size="icon"
@@ -166,6 +187,7 @@ export default function ConversationsPage() {
                 <p className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
                   <Phone className="h-3.5 w-3.5 flex-shrink-0" />
                   <span className="truncate">{selectedConversation.userNumber}</span>
+                  {selectedAgent && <span className="min-w-0 truncate border-l border-border pl-1.5 text-primary" title={selectedAgent.name}>{selectedAgent.name}</span>}
                 </p>
               </div>
               <Badge

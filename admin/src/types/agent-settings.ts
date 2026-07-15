@@ -74,25 +74,30 @@ export interface ReservationAutomationConfig {
   actions?: Record<string, ReservationAutomationActionConfig>;
 }
 export interface ReservationAutomationDefinitions { confirmation?: ReservationAutomationConfig | null; reminder?: ReservationAutomationConfig | null; }
+export interface InteractiveActionConfig { operation: string; arguments?: Record<string, unknown>; sendMessageSequence?: string | null; }
+export type InteractiveActionDefinitions = Record<string, Record<string, InteractiveActionConfig>>;
 export interface WompiWebhookOutcomeConfig { sendMessageSequence?: string | null; }
 export interface WebhookDefinitions { wompi?: Record<string, WompiWebhookOutcomeConfig>; }
 export interface EventNotificationConfig { enabled?: boolean; recipients?: string[]; sendMessageSequence?: string | null; }
 export type AgentNotificationDefinitions = Record<string, EventNotificationConfig>;
 export interface AgentCommerceSettings { enabled?: boolean; provider?: "Local" | "Siigo" | "CustomHttp" | "Mantis"; }
 export interface AgentOperatingHoursSettings { enforce?: boolean; outsideHours?: StageResponseDefinition; }
+export interface ConversationOpeningSettings { enabled?: boolean; guidance?: string; allowQuestions?: boolean; }
+export interface FailureResponseSettings { llmUnavailable?: string; }
 
 export interface AgentSettings {
-  model?: string; temperature?: number; historyWindowSize?: number; persona?: string; policies?: string;
+  model?: string; temperature?: number; historyWindowSize?: number; extractorHistoryWindowSize?: number; persona?: string; policies?: string; conversationOpening?: ConversationOpeningSettings; failureResponses?: FailureResponseSettings;
   flows?: AgentFlowDefinition[]; globalActions?: AgentGlobalAction[]; factSchema?: FactSchemaEntry[];
   templates?: Record<string, string>; messageSequences?: Record<string, MessageSequence>; webhooks?: WebhookDefinitions;
   notifications?: AgentNotificationDefinitions; reservationAutomations?: ReservationAutomationDefinitions;
+  interactiveActions?: InteractiveActionDefinitions;
   reservationManagement?: Record<string, unknown>; escalations?: AgentEscalationsSettings; checkout?: CheckoutDefinitions;
   commerce?: AgentCommerceSettings; operatingHours?: AgentOperatingHoursSettings;
 }
 export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
-  model: "gpt-4.1-mini", temperature: 0.2, historyWindowSize: 20, persona: "", policies: "", flows: [],
+  model: "gpt-4.1-mini", temperature: 0.2, historyWindowSize: 20, extractorHistoryWindowSize: 2, persona: "", policies: "", conversationOpening: { enabled: false, guidance: "", allowQuestions: true }, failureResponses: { llmUnavailable: "Lo siento, estoy experimentando problemas temporales. Por favor, intenta de nuevo en un momento." }, flows: [],
   globalActions: [], factSchema: [], templates: {}, messageSequences: {}, webhooks: { wompi: {} }, notifications: {},
-  reservationAutomations: {}, reservationManagement: {}, escalations: { human: { contacts: [] }, external: { enabled: false, events: {} } },
+  reservationAutomations: {}, interactiveActions: {}, reservationManagement: {}, escalations: { human: { contacts: [] }, external: { enabled: false, events: {} } },
   checkout: { currency: "COP", modes: {} }, commerce: { enabled: false, provider: "Local" },
   operatingHours: { enforce: false, outsideHours: {} },
 };
@@ -107,7 +112,7 @@ export function parseAgentSettings(raw: unknown): AgentSettings {
   return {
     ...DEFAULT_AGENT_SETTINGS, ...s, flows: s.flows ?? [], globalActions: s.globalActions ?? [], factSchema: s.factSchema ?? [],
     templates: s.templates ?? {}, messageSequences: s.messageSequences ?? {}, webhooks: s.webhooks ?? { wompi: {} },
-    notifications: s.notifications ?? {}, reservationAutomations: s.reservationAutomations ?? {}, reservationManagement: s.reservationManagement ?? {},
+    notifications: s.notifications ?? {}, reservationAutomations: s.reservationAutomations ?? {}, interactiveActions: s.interactiveActions ?? {}, reservationManagement: s.reservationManagement ?? {},
     escalations: s.escalations ?? DEFAULT_AGENT_SETTINGS.escalations, checkout: s.checkout ?? DEFAULT_AGENT_SETTINGS.checkout,
     commerce: s.commerce ?? DEFAULT_AGENT_SETTINGS.commerce, operatingHours: s.operatingHours ?? DEFAULT_AGENT_SETTINGS.operatingHours,
   };

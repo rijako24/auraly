@@ -765,7 +765,7 @@ var latestPayment = await _paymentLifecycle.GetLatestByConversationAsync(convers
 
             return null;
 
-        if (!TryGetConfiguredReservationAutomationAction(config, interactive, out var action)
+        if (!TryGetConfiguredInteractiveAction(config, interactive, out var action)
 
             || action is null
 
@@ -775,7 +775,7 @@ var latestPayment = await _paymentLifecycle.GetLatestByConversationAsync(convers
 
             _logger.LogDebug(
 
-                "Conv {ConvId}: interactive payload '{Payload}' has no configured reservation automation operation; continuing normal flow",
+                "Conv {ConvId}: interactive payload '{Payload}' has no configured deterministic operation; continuing normal flow",
 
                 session.ConversationId,
 
@@ -925,23 +925,40 @@ var latestPayment = await _paymentLifecycle.GetLatestByConversationAsync(convers
 
     }
 
-    private static bool TryGetConfiguredReservationAutomationAction(
+    private static bool TryGetConfiguredInteractiveAction(
 
         AgentConfig config,
 
         InteractivePayloadAction interactive,
 
-        out ReservationAutomationActionConfig? action)
+        out InteractiveActionConfig? action)
 
     {
 
         action = null;
 
+        if (config.InteractiveActions.TryGetValue(interactive.Scope, out var outcomes)
+            && outcomes.TryGetValue(interactive.Outcome, out action))
+        {
+            return true;
+        }
+
         if (!interactive.Scope.Equals("reservation_attendance", StringComparison.OrdinalIgnoreCase))
 
             return false;
 
-        return config.ReservationAutomations.Confirmation?.Actions.TryGetValue(interactive.Outcome, out action) == true;
+        var confirmation = config.ReservationAutomations.Confirmation;
+        if (confirmation is null
+            || !confirmation.Actions.TryGetValue(interactive.Outcome, out var legacyAction))
+            return false;
+
+        action = new InteractiveActionConfig
+        {
+            Operation = legacyAction.Operation,
+            Arguments = legacyAction.Arguments,
+            SendMessageSequence = legacyAction.SendMessageSequence
+        };
+        return true;
 
     }
 

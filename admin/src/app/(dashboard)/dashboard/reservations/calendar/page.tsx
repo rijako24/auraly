@@ -221,26 +221,19 @@ export default function ReservationsCalendarPage() {
                 >
                   <span className="block font-medium">{date}</span>
                   {count > 0 && (
-                    <div className="mt-1 flex flex-wrap gap-0.5">
-                      {dayReservations.slice(0, 3).map((reservation) => (
-                        <div
+                    <div className="mt-1.5 space-y-1">
+                      {dayReservations.slice(0, 4).map((reservation) => (
+                        <Link
                           key={reservation.reservationId}
-                          className={cn(
-                            "h-1.5 w-1.5 flex-shrink-0 rounded-full",
-                            STATUS_DOT_COLORS[reservation.status] ?? "bg-gray-400"
-                          )}
-                          title={`${reservation.serviceName || "Sin servicio"} - ${
-                            ReservationStatusLabels[
-                              reservation.status as keyof typeof ReservationStatusLabels
-                            ] ?? "Sin estado"
-                          }`}
-                        />
+                          href={`/dashboard/reservations/${reservation.reservationId}`}
+                          onClick={(event) => event.stopPropagation()}
+                          className={cn("block truncate rounded border border-current/15 px-1.5 py-1 text-xs font-medium leading-snug shadow-sm", ReservationStatusColors[reservation.status as keyof typeof ReservationStatusColors])}
+                          title={`${reservation.reservationDateTime ? formatDateTime(reservation.reservationDateTime) : "Sin hora"} · ${reservation.serviceName || "Reserva"}`}
+                        >
+                          {reservation.reservationDateTime ? new Date(reservation.reservationDateTime).toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit" }) : "--:--"} {reservation.serviceName || "Reserva"}
+                        </Link>
                       ))}
-                      {count > 3 && (
-                        <span className="text-[10px] text-muted-foreground">
-                          +{count - 3}
-                        </span>
-                      )}
+                      {count > 4 && <span className="block px-1 text-xs font-medium text-primary">+{count - 4} más</span>}
                     </div>
                   )}
                 </button>

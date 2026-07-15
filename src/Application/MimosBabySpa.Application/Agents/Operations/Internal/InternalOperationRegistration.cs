@@ -14,6 +14,8 @@ public static class InternalOperationRegistration
         services.AddScoped<IAgentOperation, SearchOrderOperation>();
         services.AddScoped<IAgentOperation, AcceptOrderRequestOperation>();
         services.AddScoped<IAgentOperation, RejectOrderRequestOperation>();
+        services.AddScoped<IAgentOperation, ConfirmManualPaymentOperation>();
+        services.AddScoped<IAgentOperation, SearchManualPaymentsOperation>();
         return services;
     }
 }

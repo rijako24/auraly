@@ -78,6 +78,12 @@ public sealed class AgentConfig
 
     public ReservationAutomationDefinitions ReservationAutomations { get; init; } = new();
 
+    /// <summary>
+    /// Acciones deterministas disparadas por payloads interactivos scope:outcome:sourceId.
+    /// Fuente: SettingsJson -> interactiveActions.
+    /// </summary>
+    public InteractiveActionDefinitions InteractiveActions { get; init; } = new();
+
     public ReservationManagementDefinitions ReservationManagement { get; init; } = new();
 
     public CheckoutDefinitions Checkout { get; init; } = new();

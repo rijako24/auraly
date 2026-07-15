@@ -68,20 +68,6 @@ export default function BusinessSettingsPage() {
             <WorkingHoursEditor value={workingHours} onChange={setWorkingHours} />
           </CardContent>
         </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-base">
-              <CalendarClock className="h-4 w-4" />
-              Bloqueos de disponibilidad
-            </CardTitle>
-            <CardDescription>
-              Cierres o bloqueos puntuales para todo el negocio o un empleado.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <AvailabilityBlocksEditor />
-          </CardContent>
-        </Card>
 
 
         <Card>
@@ -101,6 +87,20 @@ export default function BusinessSettingsPage() {
           </CardContent>
         </Card>
       </div>
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <CalendarClock className="h-4 w-4" />
+            Bloqueos de disponibilidad
+          </CardTitle>
+          <CardDescription>
+            Cierres o bloqueos puntuales para todo el negocio o un empleado. Se muestran después del horario habitual.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <AvailabilityBlocksEditor />
+        </CardContent>
+      </Card>
     </div>
   );
 }

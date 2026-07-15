@@ -96,6 +96,16 @@ var configuration = new ConfigurationBuilder()
 
     .Build();
 
+if (args is ["payment-approval-smoke"])
+
+{
+
+    Environment.ExitCode = await MimosBabySpa.Console.PaymentApprovalConsoleScenario.RunAsync();
+
+    return;
+
+}
+
 static void AddEnvironmentOverride(IDictionary<string, string?> values, string key, string environmentName)
 
 {

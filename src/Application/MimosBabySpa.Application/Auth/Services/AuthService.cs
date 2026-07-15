@@ -268,7 +268,7 @@ public class AuthService : IAuthService
         return new LoginResponse(
             AccessToken: accessToken,
             RefreshToken: refreshTokenValue,
-            AccessTokenExpiresAt: DateTime.UtcNow.AddMinutes(30),
+            AccessTokenExpiresAt: DateTime.UtcNow.AddDays(1),
             User: new AuthUserDto(
                 user.UserId, user.TenantId, user.Username, user.Email,
                 user.FirstName, user.LastName, user.AvatarUrl,

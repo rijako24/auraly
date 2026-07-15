@@ -21,7 +21,7 @@ export function getAuthCookieOptions(maxAgeSeconds: number) {
 }
 
 export function getAccessTokenCookieOptions() {
-  return getAuthCookieOptions(30 * 60); // 30 minutes
+  return getAuthCookieOptions(24 * 60 * 60); // 24 hours
 }
 
 export function getRefreshTokenCookieOptions() {

@@ -32,7 +32,7 @@ public class AgentRepository : IAgentRepository
     public async Task<IReadOnlyList<Agent>> GetByBusinessAsync(Guid businessId, CancellationToken ct = default) =>
         await _db.Agents
             .Include(a => a.AgentType)
-            .Where(a => a.BusinessId == businessId && a.IsActive)
+            .Where(a => a.BusinessId == businessId)
             .OrderBy(a => a.Name)
             .ToListAsync(ct);
 

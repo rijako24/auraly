@@ -13,8 +13,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
+import { DatePicker } from "@/components/ui/date-picker";
 import { Label } from "@/components/ui/label";
+import { TimePicker } from "@/components/ui/time-picker";
 import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
@@ -149,12 +150,12 @@ export function ScheduleExceptionsEditor({ employeeId }: ScheduleExceptionsEdito
             <DialogDescription>Ajusta una fecha puntual para este empleado.</DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 py-2">
-            <div className="grid gap-2"><Label>Fecha</Label><Input type="date" value={form.date} onChange={(event) => setForm((current) => ({ ...current, date: event.target.value }))} /></div>
+            <div className="grid gap-2"><Label>Fecha</Label><DatePicker value={form.date} onChange={(date) => setForm((current) => ({ ...current, date }))} /></div>
             <div className="flex items-center gap-2"><Switch checked={form.isClosed} onCheckedChange={(isClosed) => setForm((current) => ({ ...current, isClosed }))} /><Label>Cerrado todo el dia</Label></div>
             {!form.isClosed && (
               <div className="grid gap-3 sm:grid-cols-2">
-                <div className="grid gap-2"><Label>Apertura</Label><Input type="time" value={form.openTime ?? ""} onChange={(event) => setForm((current) => ({ ...current, openTime: event.target.value || null }))} /></div>
-                <div className="grid gap-2"><Label>Cierre</Label><Input type="time" value={form.closeTime ?? ""} onChange={(event) => setForm((current) => ({ ...current, closeTime: event.target.value || null }))} /></div>
+                <div className="grid gap-2"><Label>Apertura</Label><TimePicker value={form.openTime} onChange={(openTime) => setForm((current) => ({ ...current, openTime }))} /></div>
+                <div className="grid gap-2"><Label>Cierre</Label><TimePicker value={form.closeTime} onChange={(closeTime) => setForm((current) => ({ ...current, closeTime }))} /></div>
               </div>
             )}
             <div className="grid gap-2"><Label>Motivo</Label><Textarea value={form.reason ?? ""} onChange={(event) => setForm((current) => ({ ...current, reason: event.target.value }))} /></div>

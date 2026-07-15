@@ -76,7 +76,7 @@ export default function NewTenantPage() {
                 id="name"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                placeholder="Ej: Mimos Baby Spa"
+                placeholder="Ej: Mi negocio"
                 className={errors.name ? "border-destructive" : ""}
                 required
               />

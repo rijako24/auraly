@@ -82,6 +82,7 @@ Premisas para prompts:
 | `messageSequences` | Catalogo nombrado de mensajes outbound y adjuntos. |
 | `webhooks` | Mapeo de outcomes externos hacia acciones/secuencias. |
 | `notifications` | Notificaciones internas por evento del motor. |
+| `interactiveActions` | Acciones deterministas para respuestas interactivas identificadas por scope y outcome. |
 | `reservationAutomations` | Automatizaciones de confirmacion, recordatorio u otras acciones de reserva. |
 | `reservationManagement` | Politica generica para cambios sobre reservas existentes. |
 | `checkout` | Modos de checkout, moneda, metodos de pago, shipping y bindings. |
@@ -248,11 +249,24 @@ Reglas:
 | `notifications.<event>.enabled` | Activa notificacion interna. |
 | `notifications.<event>.recipients` | Destinatarios configurados. |
 | `notifications.<event>.sendMessageSequence` | Secuencia que se envia a destinatarios. |
+| `interactiveActions.<scope>.<outcome>` | Operacion y argumentos que ejecuta directamente un boton interactivo. |
 | `reservationAutomations.confirmation` | Automatizacion asociada a confirmaciones. |
 | `reservationAutomations.reminder` | Automatizacion asociada a recordatorios. |
 | `reservationAutomations.*.trigger` | Momento/condicion de disparo. |
 | `reservationAutomations.*.actions` | Acciones declarativas por outcome/caso. |
 | `reservationAutomations.*.sendMessageSequence` | Secuencia por defecto. |
+
+Los botones usan el payload `scope:outcome:sourceId`. El motor busca primero
+`interactiveActions.<scope>.<outcome>` y ejecuta su operacion sin pasar por el
+planner. `sourceId` debe ser el identificador inmutable del recurso que se va a
+modificar; puede inyectarse en argumentos con `{source_id}`. De esta forma, cada
+boton conserva su correlacion aunque existan varios mensajes pendientes.
+
+Los destinatarios de notificaciones pueden ser telefonos explicitos, valores de
+contexto o selectores `inbound:<tipo-o-clave>`. El selector resuelve el contacto
+entrante activo configurado para el negocio y permite mantener un unico numero
+WhatsApp del negocio mientras se enrutan remitentes autorizados a agentes
+especializados.
 
 ## Checkout
 

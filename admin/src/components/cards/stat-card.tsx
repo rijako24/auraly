@@ -46,16 +46,16 @@ export function StatCard({
   return (
     <Card
       className={cn(
-        "relative overflow-hidden transition-shadow hover:shadow-md",
+        "group relative overflow-hidden transition-all hover:-translate-y-0.5 hover:shadow-md",
         className
       )}
     >
-      <div className="absolute inset-0 bg-gradient-to-br from-primary/5 via-transparent to-primary/10 pointer-events-none" />
+      <div className="absolute inset-0 bg-gradient-to-br from-primary/[0.03] via-transparent to-primary/[0.06] pointer-events-none" />
       <CardHeader className="flex flex-row items-center justify-between pb-2">
         <p className="text-sm font-medium text-muted-foreground">{title}</p>
         <Icon
           className={cn(
-            "h-4 w-4 text-muted-foreground",
+            "h-5 w-5",
             iconClassName
           )}
         />

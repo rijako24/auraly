@@ -16,7 +16,7 @@ export function ChatBubble({ message }: ChatBubbleProps) {
   return (
     <div
       className={cn(
-        "flex gap-3",
+        "flex",
         isBot ? "flex-row-reverse" : "flex-row"
       )}
     >
@@ -32,16 +32,16 @@ export function ChatBubble({ message }: ChatBubbleProps) {
       </Avatar>
       <div
         className={cn(
-          "flex max-w-[80%] flex-col gap-0.5",
+          "flex max-w-[85%] flex-col gap-0.5 sm:max-w-[72%]",
           isBot ? "items-end" : "items-start"
         )}
       >
         <div
           className={cn(
-            "rounded-2xl px-4 py-2.5 text-sm shadow-sm",
+            "rounded-lg px-3 py-2 text-sm shadow-sm",
             isBot
-              ? "rounded-tr-md bg-primary text-primary-foreground"
-              : "rounded-tl-md bg-muted text-foreground"
+              ? "rounded-tr-none bg-[#d9fdd3] text-slate-800 dark:bg-primary dark:text-primary-foreground"
+              : "rounded-tl-none bg-background text-foreground"
           )}
         >
           <p className="whitespace-pre-wrap break-words">{message.messageText}</p>

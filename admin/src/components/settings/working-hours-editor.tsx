@@ -2,7 +2,7 @@
 
 import { Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { TimePicker } from "@/components/ui/time-picker";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import type { WorkingHour } from "@/types/entities";
@@ -48,7 +48,7 @@ export function WorkingHoursEditor({ value, onChange }: WorkingHoursEditorProps)
         {sorted.map((item, index) => (
           <div
             key={`${item.workingHourId ?? "new"}-${index}`}
-            className="grid grid-cols-[1.2fr_110px_110px_70px_40px] items-center gap-2"
+            className="grid grid-cols-[minmax(180px,1.2fr)_136px_136px_70px_40px] items-center gap-2"
           >
             <Select
               value={String(item.dayOfWeek)}
@@ -65,16 +65,8 @@ export function WorkingHoursEditor({ value, onChange }: WorkingHoursEditorProps)
                 ))}
               </SelectContent>
             </Select>
-            <Input
-              type="time"
-              value={item.openTime}
-              onChange={(event) => updateAt(index, { openTime: event.target.value })}
-            />
-            <Input
-              type="time"
-              value={item.closeTime}
-              onChange={(event) => updateAt(index, { closeTime: event.target.value })}
-            />
+            <TimePicker value={item.openTime} onChange={(openTime) => updateAt(index, { openTime })} />
+            <TimePicker value={item.closeTime} onChange={(closeTime) => updateAt(index, { closeTime })} />
             <div className="flex justify-center">
               <Switch
                 checked={item.isActive}

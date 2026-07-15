@@ -11,7 +11,6 @@ import {
   MessageSquare,
   Megaphone,
   Package,
-  Plug,
   Settings,
   Shield,
   ShoppingCart,
@@ -42,6 +41,7 @@ export const navigation: NavEntry[] = [
   { name: "Analytics", href: "/dashboard/analytics", icon: BarChart3, permission: "dashboard.read" },
   { type: "separator", label: "Negocio" },
   { name: "Servicios", href: "/dashboard/services", icon: Package, permission: "services.read" },
+  { name: "Productos", href: "/dashboard/products", icon: Package, permission: "products.read" },
   { name: "Promociones", href: "/dashboard/promotions", icon: BadgePercent, permission: "promotions.read" },
   { name: "Empleados", href: "/dashboard/employees", icon: Users, permission: "employees.read" },
   { type: "separator", label: "Operaciones" },
@@ -63,6 +63,5 @@ export const navigation: NavEntry[] = [
   { name: "Auditoria", href: "/dashboard/audit-logs", icon: FileSearch, permission: "audit_logs.read" },
   { type: "separator", label: "Configuracion" },
   { name: "Configuracion", href: "/dashboard/settings", icon: Settings, permission: "business_config.read" },
-  { name: "Integraciones", href: "/dashboard/settings/integrations", icon: Plug, permission: "business_config.read" },
 ];
 
