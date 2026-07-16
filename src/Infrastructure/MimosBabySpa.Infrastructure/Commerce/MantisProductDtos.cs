@@ -80,3 +80,30 @@ internal static class MantisProductMapper
     private static bool? ParseBool(string? value) =>
         bool.TryParse(value, out var parsed) ? parsed : null;
 }
+internal sealed class MantisCustomerSearchResponse
+{
+    public string? ErrorKey { get; init; }
+    public List<MantisCustomerDto> SDTConsultarClientesCasalins { get; init; } = [];
+    public MantisPaginationDto? SDTPaginadoCasalins { get; init; }
+}
+
+internal sealed class MantisCustomerDto
+{
+    public string? BarrioCliente { get; init; }
+    public string? CelularCliente { get; init; }
+    public string? CiudadCliente { get; init; }
+    public string? DireccionCliente { get; init; }
+    public string? LlaveCliente { get; init; }
+    public string? LlaveNit { get; init; }
+    public string? NombreCliente { get; init; }
+    public string? RutaCliente { get; init; }
+    public string? TelefonoClientes { get; init; }
+    public string? ZonaCliente { get; init; }
+}
+
+internal sealed record MantisCustomerIdentity(
+    string LlaveNit,
+    string LlaveCliente,
+    string? Name,
+    string? CellPhone,
+    string? Telephone);

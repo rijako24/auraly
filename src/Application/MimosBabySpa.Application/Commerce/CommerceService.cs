@@ -31,7 +31,7 @@ public sealed class CommerceService : ICommerceService, IProductLookupService
 
     public async Task<ProductSearchResult> SearchProductsAsync(AgentConversationContext ctx, ProductSearchRequest request, CancellationToken ct = default)
     {
-        var adapterContext = await BuildContextAsync(ctx.BusinessId, ctx.AgentId, ctx.ConversationId, ctx.Config, ct);
+        var adapterContext = await BuildContextAsync(ctx.BusinessId, ctx.AgentId, ctx.ConversationId, ctx.Config, ctx.ChannelPhone, ctx.CommerceCustomer, ct);
         var adapter = _adapterFactory.Resolve(adapterContext.Provider);
         var result = _availability.FilterSellable(
             await adapter.SearchProductsAsync(request, adapterContext, ct));
@@ -59,7 +59,7 @@ public sealed class CommerceService : ICommerceService, IProductLookupService
         ProductLookupRequest request,
         CancellationToken ct = default)
     {
-        var adapterContext = await BuildContextAsync(ctx.BusinessId, ctx.AgentId, ctx.ConversationId, ctx.Config, ct);
+        var adapterContext = await BuildContextAsync(ctx.BusinessId, ctx.AgentId, ctx.ConversationId, ctx.Config, ctx.ChannelPhone, ctx.CommerceCustomer, ct);
         var adapter = _adapterFactory.Resolve(adapterContext.Provider);
         var lookup = new AddOrderItemRequest(
             request.ProductId,
@@ -105,7 +105,7 @@ public sealed class CommerceService : ICommerceService, IProductLookupService
         if (request.Quantity <= 0)
             throw new InvalidOperationException("Quantity must be greater than zero.");
 
-        var adapterContext = await BuildContextAsync(ctx.BusinessId, ctx.AgentId, ctx.ConversationId, ctx.Config, ct);
+        var adapterContext = await BuildContextAsync(ctx.BusinessId, ctx.AgentId, ctx.ConversationId, ctx.Config, ctx.ChannelPhone, ctx.CommerceCustomer, ct);
         var adapter = _adapterFactory.Resolve(adapterContext.Provider);
         var product = await adapter.GetProductAsync(request, adapterContext, ct)
             ?? await FindCachedProductAsync(request, adapterContext, ct)
@@ -201,7 +201,7 @@ public sealed class CommerceService : ICommerceService, IProductLookupService
 
         if (quantity > item.Quantity)
         {
-            var adapterContext = await BuildContextAsync(ctx.BusinessId, ctx.AgentId, ctx.ConversationId, ctx.Config, ct);
+            var adapterContext = await BuildContextAsync(ctx.BusinessId, ctx.AgentId, ctx.ConversationId, ctx.Config, ctx.ChannelPhone, ctx.CommerceCustomer, ct);
             var adapter = _adapterFactory.Resolve(adapterContext.Provider);
             var lookup = new AddOrderItemRequest(
                 item.ProductId,
@@ -266,7 +266,7 @@ public sealed class CommerceService : ICommerceService, IProductLookupService
             return await BuildSnapshotAsync(draft, ct);
         }
 
-        var adapterContext = await BuildContextAsync(ctx.BusinessId, ctx.AgentId, ctx.ConversationId, ctx.Config, ct);
+        var adapterContext = await BuildContextAsync(ctx.BusinessId, ctx.AgentId, ctx.ConversationId, ctx.Config, draft.CustomerPhoneSnapshot, ctx.CommerceCustomer, ct);
         var order = await ConvertDraftToOrderAsync(draft, adapterContext, customerConfirmed: true, ct);
         await SyncExternalOrderIfNeededAsync(order, adapterContext, ct);
         await _unitOfWork.SaveChangesAsync(ct);
@@ -289,7 +289,7 @@ public sealed class CommerceService : ICommerceService, IProductLookupService
 
         var draft = await _unitOfWork.OrderDrafts.GetByPaymentTransactionIdAsync(businessId, paymentTransactionId, ct)
             ?? throw new InvalidOperationException("Order draft not found for paid checkout.");
-        var adapterContext = await BuildContextAsync(draft.BusinessId, draft.AgentId, draft.ConversationId, config, ct);
+        var adapterContext = await BuildContextAsync(draft.BusinessId, draft.AgentId, draft.ConversationId, config, draft.CustomerPhoneSnapshot, null, ct);
         var order = await ConvertDraftToOrderAsync(draft, adapterContext, customerConfirmed: true, ct);
         order.PaymentTransactionId = paymentTransactionId;
         order.Status = OrderStatus.Confirmed;
@@ -396,6 +396,8 @@ public sealed class CommerceService : ICommerceService, IProductLookupService
         Guid? agentId,
         Guid conversationId,
         AgentConfig? config,
+        string? customerPhone,
+        CommerceCustomerReference? customer,
         CancellationToken ct)
     {
         var provider = config?.Commerce.Provider ?? CommerceProvider.Local;
@@ -413,7 +415,14 @@ public sealed class CommerceService : ICommerceService, IProductLookupService
         if (connection is not null && !connection.IsEnabled)
             throw new InvalidOperationException($"Commerce connection '{provider}' is disabled.");
 
-        return new CommerceAdapterContext(businessId, agentId ?? Guid.Empty, conversationId, provider, connection);
+        return new CommerceAdapterContext(
+            businessId,
+            agentId ?? Guid.Empty,
+            conversationId,
+            provider,
+            connection,
+            customerPhone,
+            customer);
     }
 
     private async Task<OrderDraft?> GetActiveDraftAsync(AgentConversationContext ctx, CancellationToken ct)

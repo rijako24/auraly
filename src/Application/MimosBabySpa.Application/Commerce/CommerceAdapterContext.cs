@@ -8,4 +8,20 @@ public sealed record CommerceAdapterContext(
     Guid AgentId,
     Guid? ConversationId,
     CommerceProvider Provider,
-    IntegrationConnection? Connection);
+    IntegrationConnection? Connection,
+    string? CustomerPhone = null,
+    CommerceCustomerReference? Customer = null);
+
+public sealed record CommerceCustomerReference(
+    CommerceProvider Provider,
+    string ExternalAccountId,
+    string ExternalCustomerId,
+    string? Name,
+    string Phone);
+
+public interface ICommerceCustomerLookup
+{
+    Task<CommerceCustomerReference?> FindCustomerAsync(
+        CommerceAdapterContext context,
+        CancellationToken ct = default);
+}

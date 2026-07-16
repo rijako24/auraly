@@ -260,6 +260,7 @@ services.AddScoped<IUsageBillingService, ConsoleUsageBillingService>();
 services.AddScoped<IProductCatalogAvailabilityService, ProductCatalogAvailabilityService>();
 
 services.AddScoped<ICommerceService, CommerceService>();
+services.AddScoped<ICommerceCustomerResolver, CommerceCustomerResolver>();
 
 services.AddScoped<IProductLookupService>(provider => (IProductLookupService)provider.GetRequiredService<ICommerceService>());
 

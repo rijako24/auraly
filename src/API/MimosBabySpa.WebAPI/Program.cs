@@ -239,6 +239,7 @@ builder.Services.AddScoped<ICatalogContentGenerator, CatalogContentGenerator>();
 builder.Services.AddScoped<IProductCatalogAvailabilityService, ProductCatalogAvailabilityService>();
 
 builder.Services.AddScoped<ICommerceService, CommerceService>();
+builder.Services.AddScoped<ICommerceCustomerResolver, CommerceCustomerResolver>();
 
 builder.Services.AddScoped<IProductLookupService>(provider => (IProductLookupService)provider.GetRequiredService<ICommerceService>());
 

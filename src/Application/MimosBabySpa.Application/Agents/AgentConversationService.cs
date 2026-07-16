@@ -1,3 +1,4 @@
+using MimosBabySpa.Application.Commerce;
 using System.Text.Json;
 
 using System.Text.RegularExpressions;
@@ -97,6 +98,8 @@ public sealed class AgentConversationService : IAgentConversationService
     private readonly IDeterministicResponseRenderer _deterministicRenderer;
 
     private readonly IDeterministicTurnEffectProcessor _deterministicEffects;
+    private readonly ICommerceCustomerResolver? _commerceCustomers;
+
 
     private readonly ILogger<AgentConversationService> _logger;
 
@@ -138,7 +141,8 @@ public sealed class AgentConversationService : IAgentConversationService
 
         IDeterministicResponseRenderer deterministicRenderer,
 
-        IDeterministicTurnEffectProcessor deterministicEffects)
+        IDeterministicTurnEffectProcessor deterministicEffects,
+        ICommerceCustomerResolver? commerceCustomers = null)
 
     {
 
@@ -179,6 +183,8 @@ public sealed class AgentConversationService : IAgentConversationService
         _deterministicRenderer = deterministicRenderer;
 
         _deterministicEffects = deterministicEffects;
+        _commerceCustomers = commerceCustomers;
+
 
     }
 
@@ -1276,6 +1282,55 @@ var latestPayment = await _paymentLifecycle.GetLatestByConversationAsync(convers
 
         }
 
+        CommerceCustomerReference? commerceCustomer = null;
+        if (_commerceCustomers is not null)
+        {
+            try
+            {
+                commerceCustomer = await _commerceCustomers.ResolveAsync(
+                    config.BusinessId,
+                    config.AgentId,
+                    conversationId,
+                    resolvedPhone,
+                    config,
+                    ct);
+            }
+            catch (Exception exception)
+            {
+                _logger.LogWarning(
+                    exception,
+                    "External commerce customer lookup failed. BusinessId={BusinessId}, ConversationId={ConversationId}",
+                    config.BusinessId,
+                    conversationId);
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(commerceCustomer?.Name))
+        {
+            var externalName = commerceCustomer.Name.Trim();
+            var nameEntry = config.FactSchema.FirstOrDefault(entry =>
+                IsFactRoleOrKey(entry, "customer.name", ConversationFactKeys.CustomerName));
+            if (nameEntry is not null
+                && (!mutableFacts.TryGetValue(nameEntry.Key, out var knownName)
+                    || string.IsNullOrWhiteSpace(knownName)))
+            {
+                mutableFacts[nameEntry.Key] = externalName;
+                await _factsService.SetAsync(
+                    conversationId,
+                    config.BusinessId,
+                    nameEntry.Key,
+                    externalName,
+                    nameEntry.ShouldRememberAcrossRequests(),
+                    ct);
+            }
+
+            if (string.IsNullOrWhiteSpace(conversation.CustomerName))
+            {
+                conversation.CustomerName = externalName;
+                await _conversationService.UpdateConversationAsync(conversation, ct);
+            }
+        }
+
         // Hidratar facts de fuente=channel/session antes de construir el contexto
 
         _factHydrator.Hydrate(config.FactSchema, mutableFacts, new FactHydratorContext
@@ -1311,6 +1366,7 @@ var latestPayment = await _paymentLifecycle.GetLatestByConversationAsync(convers
             PreviousBusinessDay = rollover.PreviousBusinessDay,
 
             RolloverClearedFacts = rollover.ClearedFacts,
+            CommerceCustomer = commerceCustomer,
 
             ChannelPhone = resolvedPhone,
 

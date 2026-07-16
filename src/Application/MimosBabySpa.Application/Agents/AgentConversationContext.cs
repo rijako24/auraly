@@ -1,4 +1,5 @@
 using MimosBabySpa.Domain.Entities;
+using MimosBabySpa.Application.Commerce;
 using MimosBabySpa.Domain.Models;
 
 namespace MimosBabySpa.Application.Agents;
@@ -18,6 +19,7 @@ public sealed class AgentConversationContext
     public DateOnly? PreviousBusinessDay { get; init; }
     public IReadOnlyList<string> RolloverClearedFacts { get; init; } = [];
     public string ChannelPhone { get; init; } = string.Empty;
+    public CommerceCustomerReference? CommerceCustomer { get; set; }
     public string LatestUserMessage { get; set; } = string.Empty;
     public string? ProviderMessageId { get; init; }
     public string? ReplyToProviderMessageId { get; init; }
