@@ -20,11 +20,12 @@ public sealed partial class CommerceCartProductResolver
         string productText,
         CancellationToken cancellationToken = default)
     {
+        var searchReference = ProductSelectionMemory.NormalizeSearchReference(productText);
         var remembered = ProductSelectionMemory.FindCatalogMatches(context, productText);
         if (remembered.Count > 0)
         {
             return ProductResolutionEngine.Resolve(
-                productText,
+                searchReference,
                 remembered.Select(product => new RetrievedProductCandidate(
                     product, ProductMatchSource.RememberedCatalog)).ToList());
         }
@@ -37,6 +38,6 @@ public sealed partial class CommerceCartProductResolver
             retrieved.AddRange(await _candidateRetriever.RetrieveAsync(
                 context, productText, cancellationToken));
         }
-        return ProductResolutionEngine.Resolve(productText, retrieved);
+        return ProductResolutionEngine.Resolve(searchReference, retrieved);
     }
 }

@@ -80,6 +80,13 @@ public static class CatalogSearchText
                 Add(singular);
         }
 
+        foreach (var term in terms.Where(term => term.Length >= 7))
+        {
+            var longestPrefix = Math.Min(6, term.Length - 1);
+            for (var length = longestPrefix; length >= 4 && results.Count < maxCount; length--)
+                Add(term[..length]);
+        }
+
         return results;
     }
 

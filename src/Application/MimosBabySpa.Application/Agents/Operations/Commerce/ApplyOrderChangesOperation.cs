@@ -163,7 +163,8 @@ public sealed class ApplyOrderChangesOperation : IAgentOperation
         {
             var issues = nextPending.Where(item => item.Issue is not null).Select(item => item.Issue!).ToList();
             if (result.AppliedCommands.Count > 0)
-                return ClarificationOutcome("cart.partially_applied", result.Snapshot, issues);
+                return ClarificationOutcome(
+                    "cart.partially_applied", result.Snapshot, issues, result.AppliedCommands);
             return ClarificationOutcome(ToOutcomeCode(issues.FirstOrDefault()?.Code), result.Snapshot, issues);
         }
 
@@ -224,7 +225,8 @@ public sealed class ApplyOrderChangesOperation : IAgentOperation
     private static OperationOutcome ClarificationOutcome(
         string code,
         OrderSnapshot? snapshot,
-        IReadOnlyList<CartCommandIssue> issues)
+        IReadOnlyList<CartCommandIssue> issues,
+        IReadOnlyList<ResolvedCartCommand>? appliedCommands = null)
     {
         var first = issues.FirstOrDefault();
         return OperationOutcome.Fail(
@@ -245,6 +247,17 @@ public sealed class ApplyOrderChangesOperation : IAgentOperation
                     unit_price = item.UnitPrice, line_total = item.LineTotal
                 }).ToList() ?? [],
                 issues,
+                applied_items = (appliedCommands ?? [])
+                    .Select(command => new
+                    {
+                        operation = command.Operation,
+                        name = command.Product?.Name ?? command.ProductText,
+                        quantity = command.Quantity,
+                        unit_price = command.Product?.EffectiveUnitPrice ?? command.Product?.UnitPrice
+                    })
+                    .ToList(),
+                applied_item_count = appliedCommands?.Count ?? 0,
+                unresolved_item_count = issues.Count,
                 product_text = first?.ProductText,
                 candidates = first?.Candidates ?? [],
                 product_options = first?.ProductCandidates ?? [],

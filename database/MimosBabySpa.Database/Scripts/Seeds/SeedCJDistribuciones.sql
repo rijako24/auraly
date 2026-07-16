@@ -1378,12 +1378,19 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                   }
               ]
 }';
-DECLARE @PartialCartOutcome NVARCHAR(MAX) = N'{"response":{"mode":"ask_clarification","guidance":"Confirma lo aplicado y solicita solamente la referencia pendiente."},"effects":[{"type":"presentation.add","template":"cart_partial","dataPath":"error.context","mode":"Exclusive","priority":"Required"}]}';
+DECLARE @PartialCartOutcome NVARCHAR(MAX) = N'{"response":{"mode":"ask_clarification","guidance":"Informa los cambios aplicados en este turno, conserva el carrito completo por separado, enumera todas las referencias pendientes y solicita primero la confirmacion principal."},"effects":[{"type":"presentation.add","template":"cart_partial","dataPath":"error.context","mode":"Exclusive","priority":"Required"}]}';
 DECLARE @ProductSuggestionOutcome NVARCHAR(MAX) = N'{"response":{"mode":"ask_clarification","guidance":"Presenta la sugerencia devuelta y pide confirmacion explicita antes de agregarla."},"effects":[{"type":"presentation.add","template":"product_ambiguity","dataPath":"error.context","mode":"Exclusive","priority":"Required"}]}';
-DECLARE @ProductUnavailableOutcome NVARCHAR(MAX) = N'{"response":{"mode":"ask_clarification","guidance":"Indica que la referencia identificada no esta disponible y solicita otra opcion; no afirmes que fue agregada."}}';
+DECLARE @ProductUnavailableOutcome NVARCHAR(MAX) = N'{"response":{"mode":"ask_clarification","guidance":"Indica que la referencia identificada no esta disponible y solicita otra opcion; no afirmes que fue agregada."},"effects":[{"type":"presentation.add","template":"cart_product_unavailable","dataPath":"error.context","mode":"Exclusive","priority":"Required"}]}';
+DECLARE @ProductNotFoundOutcome NVARCHAR(MAX) = N'{"response":{"mode":"ask_clarification","guidance":"Indica las referencias que no tuvieron coincidencia segura y solicita datos mas precisos; no afirmes que el carrito cambio."},"effects":[{"type":"presentation.add","template":"cart_not_found","dataPath":"error.context","mode":"Exclusive","priority":"Required"}]}';
 
 SET @SettingsJson = JSON_MODIFY(@SettingsJson, '$.templates.cart_partial',
-    N'Listo, agregue lo que pude identificar:\r\n\r\n*Pedido actual*\r\n{{#each items}}\r\n- {{name}} x{{quantity}}: ${{line_total}}\r\n{{/each}}\r\n\r\n*Total: ${{total}} {{currency}}*\r\n\r\nMe falta confirmar "{{product_text}}".\r\n{{#each product_options}}\r\n- Te refieres a {{Name}}: ${{UnitPrice}} {{Currency}}?\r\n{{/each}}\r\n\r\nSi no es ninguna opcion, indicame el nombre, marca, presentacion o codigo del producto.');
+    N'Listo. Esto si quedo actualizado en tu pedido:\r\n{{#each applied_items}}\r\n- {{name}}{{#if quantity}} x{{quantity}}{{/if}}\r\n{{/each}}\r\n\r\n*Pedido actual*\r\n{{#each items}}\r\n- {{name}} x{{quantity}}: ${{line_total}}\r\n{{/each}}\r\n\r\n*Total: ${{total}} {{currency}}*\r\n\r\nNo encontre una coincidencia segura para:\r\n{{#each issues}}\r\n- {{ProductText}}\r\n{{/each}}\r\n\r\nPrimero necesito confirmar "{{product_text}}".\r\n{{#each product_options}}\r\n- Te refieres a {{Name}}: ${{UnitPrice}} {{Currency}}?\r\n{{/each}}\r\n\r\nSi no es ninguna opcion, indicame el nombre, marca, presentacion o codigo del producto.');
+
+SET @SettingsJson = JSON_MODIFY(@SettingsJson, '$.templates.cart_not_found',
+    N'No agregue estas referencias porque no encontre una coincidencia segura:\r\n{{#each issues}}\r\n- {{ProductText}}\r\n{{/each}}\r\n\r\nIndicame el nombre, marca, presentacion o codigo de una de ellas para identificarla.');
+
+SET @SettingsJson = JSON_MODIFY(@SettingsJson, '$.templates.cart_product_unavailable',
+    N'Reconozco la referencia "{{product_text}}", pero actualmente no tiene disponibilidad comercial para agregarla.\r\n\r\nNo hice cambios al pedido por esta referencia. Puedes indicarme otra marca, presentacion o producto.');
 
 IF JSON_VALUE(@SettingsJson, '$.globalActions[1].actions[0].operation') <> 'commerce.apply_order_changes'
     THROW 51000, 'SeedCJDistribuciones: ruta global de carrito inesperada.', 1;
@@ -1407,6 +1414,7 @@ BEGIN
     SET @SettingsJson = JSON_MODIFY(@SettingsJson, @CartOutcomePath + N'."cart.partially_applied"', JSON_QUERY(@PartialCartOutcome));
     SET @SettingsJson = JSON_MODIFY(@SettingsJson, @CartOutcomePath + N'."cart.product_suggestion"', JSON_QUERY(@ProductSuggestionOutcome));
     SET @SettingsJson = JSON_MODIFY(@SettingsJson, @CartOutcomePath + N'."cart.product_unavailable"', JSON_QUERY(@ProductUnavailableOutcome));
+    SET @SettingsJson = JSON_MODIFY(@SettingsJson, @CartOutcomePath + N'."cart.product_not_found"', JSON_QUERY(@ProductNotFoundOutcome));
     FETCH NEXT FROM CartOutcomeCursor INTO @CartOutcomePath;
 END
 CLOSE CartOutcomeCursor;

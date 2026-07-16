@@ -1,0 +1,243 @@
+INFORME DE FALLOS DE LA API MANTIS - CJ DISTRIBUCIONES
+Fecha de verificacion: 2026-07-16
+Entorno Mantis observado: MantisFiccCasalinsPruWeb
+Coleccion de referencia: Casalins.postman_collection (1).json
+
+Objetivo
+========
+Documentar los fallos reproducidos directamente contra Mantis que afectan la
+identificacion, precio, inventario y creacion de pedidos desde el carrito de CJ.
+No se incluyen tokens, cadenas de conexion, telefonos ni otras credenciales.
+
+Resumen ejecutivo
+=================
+Mantis reconoce parte de los nombres y reporta TotalItems, pero en varios casos
+omite por completo SDTConArtCasalins. Cuando si devuelve los articulos para un
+cliente que no fue encontrado en Mantis, los devuelve con DispProducto=false,
+PrecioProducto=0.00 y ExiProducto=0.00. En esas condiciones Talkio puede
+reconocer la identidad, pero no puede agregar el producto sin inventar precio o
+disponibilidad.
+
+FALLO M-01: TotalItems positivo con arreglo de productos ausente
+================================================================
+Severidad: Critica
+Endpoint: pwsConsultarArticuloCasalins
+
+Comportamiento observado:
+- La respuesta informa TotalItems > 0.
+- La propiedad SDTConArtCasalins no aparece en el JSON.
+- No es posible conocer codigo, nombre, precio ni inventario a partir de esa
+  respuesta.
+
+Casos reproducidos con CantPag=5:
+- RIPIO: TotalItems=2, arreglo ausente.
+- CHICHARRON: TotalItems=2, arreglo ausente.
+- CHAMPI: TotalItems=2, arreglo ausente.
+- LECHE DE COCO: TotalItems=2, arreglo ausente.
+- RANCHERA: TotalItems=3, arreglo ausente.
+
+Ejemplo de estructura recibida:
+{"ErrorKey":"","SDTPaginadoCasalins":{"NextPage":"True","PagaSize":5,
+"Page":1,"PreviousPage":"False","TotalItems":2,"TotalPages":0}}
+
+Impacto:
+- El consumidor interpreta que no hay candidatos aunque Mantis diga que si.
+- Ripio, chicharron y champinones aparecian como no encontrados.
+
+Workaround implementado en Talkio:
+- Si TotalItems > 0 y el arreglo esta vacio, consultar paginas de CantPag=1
+  hasta recuperar el limite solicitado.
+- La solucion es generica y no contiene nombres ni codigos quemados.
+
+Correccion requerida en Mantis:
+- Incluir siempre SDTConArtCasalins cuando TotalItems > 0.
+- Mantener consistencia entre TotalItems, TotalPages, NextPage y cantidad real.
+
+FALLO M-02: CantPag altera o elimina los resultados
+===================================================
+Severidad: Critica
+Endpoint: pwsConsultarArticuloCasalins
+
+Comportamiento observado:
+- Para consultas con dos resultados, CantPag=1 devuelve un articulo.
+- CantPag=2 puede devolver solo uno de los dos.
+- CantPag=3, 4, 5 o 20 puede omitir el arreglo completo.
+- El resultado depende incorrectamente del tamano de pagina.
+
+Evidencia:
+- RIPIO, total 2:
+  - CantPag=1: PAPA RIPIO KRUMER.
+  - CantPag=2: solo PAPA RIPIO PREMIUM 1K.
+  - CantPag=3 o superior: ningun arreglo.
+- CHICHARRON, total 2:
+  - CantPag=1: CHICHARRONCITOS X PESO.
+  - CantPag=2: solo CHICHARRON X UND.
+  - CantPag=3 o superior: ningun arreglo.
+- CHAMPI, total 2:
+  - CantPag=1: CHAMPIÑONES GALON 2840 GR.
+  - CantPag=2: solo CHAMPIÑONES LATA X 400 GR.
+  - CantPag=3 o superior: ningun arreglo.
+- RANCHERA, total 3:
+  - CantPag=1: una referencia.
+  - CantPag=2: dos referencias.
+  - CantPag=3: solo una referencia.
+  - CantPag=4 o superior: ningun arreglo.
+
+Correccion requerida en Mantis:
+- CantPag debe limitar la cantidad, no cambiar el conjunto ni suprimirlo.
+- Pagina 1 con CantPag >= TotalItems debe devolver todos los resultados.
+
+FALLO M-03: Metadatos de paginacion inconsistentes
+==================================================
+Severidad: Alta
+Endpoint: pwsConsultarArticuloCasalins
+
+Comportamiento observado:
+- TotalItems=2 puede venir con TotalPages=0 y NextPage=True.
+- TotalItems=3 y CantPag=2 puede venir con TotalPages=1 aunque matematicamente
+  deben existir dos paginas.
+- Estos valores impiden recorrer el catalogo de forma confiable.
+
+Correccion requerida en Mantis:
+- TotalPages = techo(TotalItems / CantPag).
+- NextPage debe corresponder a Page < TotalPages.
+
+FALLO M-04: Productos devueltos sin informacion comercial util
+================================================================
+Severidad: Critica
+Endpoint: pwsConsultarArticuloCasalins
+
+Comportamiento observado para cliente no resuelto:
+- Mantis devuelve CodigoProducto y NombreProducto.
+- DispProducto=false.
+- PrecioProducto=0.00.
+- ExiProducto=0.00.
+
+Ejemplos observados:
+- JAMON CUNIT X 500GR.
+- CHORIZO SALSAN X 20 UND 1K.
+- MAIZ SUPER DULCE x500gr.
+- LECHE DE COCO KARIX 400.
+- Varias referencias de papa, ranchera, ripio y champinones.
+
+La misma respuesta false/0/0 tambien se observo usando las llaves de ejemplo
+de la coleccion (LlaveNit=10013, LlaveCliente=6826). Por tanto esas llaves no
+pueden usarse como cliente generico ni como fuente de precio base.
+
+Impacto:
+- No existe precio seguro para agregar al carrito.
+- No existe inventario seguro para validar cantidades.
+- Tratar estos ceros como catalogo maestro desactiva productos previamente
+  validos.
+
+Proteccion implementada en Talkio:
+- Una observacion false/0/0 se considera comercialmente incompleta.
+- Nunca puede degradar un snapshot local que siga vendible.
+- Si solo existe esa identidad, se informa como referencia reconocida pero no
+  disponible; no se agrega y no se inventa precio.
+
+Correccion requerida en Mantis:
+- Definir y documentar un contexto de precio general para clientes nuevos, o
+  devolver un codigo explicito que diferencie "cliente sin tarifa" de
+  "producto inactivo/sin inventario".
+- No usar false/0/0 para representar simultaneamente ausencia de tarifa y falta
+  real de disponibilidad.
+
+FALLO M-05: Busqueda de clientes no encuentra clientes de las conversaciones
+===========================================================================
+Severidad: Alta
+Endpoint: pwsConsultarClientesCasalins
+
+Comportamiento observado:
+- La busqueda por celular nacional y por numero con prefijo de pais no encontro
+  a los clientes usados en las conversaciones verificadas de CJ.
+- Sin LlaveNit y LlaveCliente, la consulta de productos cae al comportamiento
+  false/0/0 descrito en M-04.
+- Crear pedido en modo real no es posible sin ambas llaves.
+
+Proteccion implementada en Talkio:
+- Se normaliza el telefono al largo nacional configurado.
+- Si el cliente existe, sus llaves se reutilizan en busqueda de productos y
+  creacion del pedido.
+- Si no existe, no se envian llaves parciales ni se crea un pedido invalido.
+
+Correccion requerida en Mantis / definicion requerida por CJ:
+- Confirmar formatos aceptados para CelCliente y TelCliente.
+- Definir el flujo oficial para clientes nuevos antes de consultar precios o
+  crear pedidos.
+- Confirmar si debe existir un cliente generico de contado y suministrar sus
+  llaves solo si representa realmente la lista de precio general.
+
+FALLO M-06: Busqueda exacta depende demasiado del texto registrado
+==================================================================
+Severidad: Media
+Endpoint: pwsConsultarArticuloCasalins
+
+Comportamiento observado:
+- RANCHERA SALSAN: TotalItems=0, aunque existen referencias RANCHERA y productos
+  de marca SALSAN por separado.
+- LECHE DE COCO KARY: TotalItems=0; LECHE DE COCO devuelve KARIX y CHEFS CHOICE.
+- CAJA DE PAPAS: TotalItems=0; PAPA devuelve multiples referencias.
+- CHAMPIÑON exacto puede dar 0, mientras CHAMPI reporta resultados.
+
+Impacto:
+- Variantes, marcas aproximadas, singular/plural o descripciones del cliente no
+  siempre producen candidatos en Mantis.
+
+Solucion implementada en Talkio:
+- Indice lexical local, aliases de negocio/cliente y similitud controlada.
+- Los aliases enriquecen el catalogo pero no excluyen productos sin alias.
+- Una confirmacion explicita puede aprender un alias para conversaciones futuras.
+- No se autoasigna un producto cuando faltan datos o hay varias opciones.
+
+Recomendacion para Mantis:
+- Soportar busqueda normalizada por singular/plural, acentos y prefijos.
+- Permitir aliases oficiales por articulo o exponer un endpoint de catalogo
+  completo y estable para indexacion local.
+
+FALLO T-01 (TALKIO, YA CORREGIDO): degradacion del snapshot local
+================================================================
+Severidad original: Critica
+
+Comportamiento anterior:
+- Talkio persistia una respuesta contextual false/0/0 como si fuera el catalogo
+  autoritativo.
+- Cada busqueda podia dejar otro producto inactivo, con precio y stock cero.
+
+Correccion aplicada:
+- Las respuestas comercialmente incompletas no modifican snapshots vendibles.
+- Se recuperaron 17 productos con evidencia historica valida mediante una copia
+  puntual de Azure SQL; no se inventaron valores.
+- Los resultados especificos de un cliente no reemplazan el precio base.
+- Hay pruebas de regresion para impedir que este fallo reaparezca.
+
+FALLO T-02 (TALKIO, YA CORREGIDO): confirmacion conversacional falsa
+===================================================================
+Severidad original: Critica
+
+Comportamiento anterior:
+- Ante product_not_found, el modelo podia redactar que el producto fue agregado
+  aunque el carrito no hubiera cambiado.
+- La respuesta parcial mezclaba el carrito completo con los cambios del turno.
+- Algunas plantillas mostraban secuencias literales \r\n.
+
+Correccion aplicada:
+- product_not_found y product_unavailable usan presentaciones deterministas y
+  exclusivas.
+- La respuesta parcial separa applied_items del pedido completo.
+- Solo se muestran cambios que la operacion confirmo realmente.
+- El renderer convierte escapes de plantilla en saltos reales sin alterar datos
+  proporcionados por el cliente.
+
+Estado esperado despues de las correcciones
+===========================================
+1. Un producto vendible conocido no puede ser desactivado por false/0/0.
+2. Un TotalItems positivo sin arreglo activa el fallback CantPag=1.
+3. Una identidad encontrada pero sin precio/stock se reporta como no disponible,
+   nunca como agregada.
+4. Una referencia realmente desconocida pide nombre, marca, presentacion o codigo.
+5. Los productos seguros del lote se aplican y se muestran en el mismo mensaje;
+   las referencias pendientes se conservan para confirmacion.
+6. Para agregar todos los productos de un cliente nuevo, Mantis debe entregar un
+   precio y una disponibilidad validos o CJ debe definir un contexto general de
+   precios mediante llaves oficiales.

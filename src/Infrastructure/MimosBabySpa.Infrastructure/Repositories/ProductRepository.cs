@@ -106,17 +106,15 @@ public sealed partial class ProductRepository : IProductRepository
             p.ExternalProductId == externalProductId,
             ct);
 
-    public async Task<Product> CreateAsync(Product product, CancellationToken ct = default)
+    public Task<Product> CreateAsync(Product product, CancellationToken ct = default)
     {
         _context.Products.Add(product);
-        await SyncSearchTermsAsync(product, ct);
-        return product;
+        return Task.FromResult(product);
     }
 
-    public async Task<Product> UpdateAsync(Product product, CancellationToken ct = default)
+    public Task<Product> UpdateAsync(Product product, CancellationToken ct = default)
     {
         _context.Products.Update(product);
-        await SyncSearchTermsAsync(product, ct);
-        return product;
+        return Task.FromResult(product);
     }
 }

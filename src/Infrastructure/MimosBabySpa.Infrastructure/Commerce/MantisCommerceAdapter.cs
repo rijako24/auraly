@@ -100,25 +100,27 @@ public sealed class MantisCommerceAdapter : ICommerceAdapter, ICommerceCustomerL
         MantisCustomerIdentity? customer,
         CancellationToken ct)
     {
-        var payload = BuildProductSearchPayload(searchRequest, pageSize, customer, settings.Catalog.Warehouse);
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        timeout.CancelAfter(TimeSpan.FromSeconds(settings.RequestTimeoutSeconds));
-        using var httpRequest = CreateRequest(
-            settings,
-            settings.Catalog.SearchEndpoint,
-            payload);
+        var mantisResponse = await FetchProductPageAsync(
+            settings, searchRequest, pageSize, customer, ct);
+        IReadOnlyList<MantisProductDto> productDtos = mantisResponse.SDTConArtCasalins;
+        var reportedTotal = mantisResponse.SDTPaginadoCasalins?.TotalItems ?? 0;
+        if (productDtos.Count == 0 && reportedTotal > 0)
+        {
+            var recovered = new List<MantisProductDto>();
+            var firstItemPage = (Math.Max(searchRequest.Page, 1) - 1) * pageSize + 1;
+            var lastItemPage = Math.Min(
+                reportedTotal,
+                firstItemPage + Math.Clamp(matchRequest.Limit, 1, 50) - 1);
+            for (var itemPage = firstItemPage; itemPage <= lastItemPage; itemPage++)
+            {
+                var singlePage = await FetchProductPageAsync(
+                    settings, searchRequest with { Page = itemPage }, 1, customer, ct);
+                recovered.AddRange(singlePage.SDTConArtCasalins);
+            }
+            productDtos = recovered;
+        }
 
-        var response = await _httpClient.SendAsync(httpRequest, timeout.Token);
-        var responseText = await response.Content.ReadAsStringAsync(ct);
-        if (!response.IsSuccessStatusCode)
-            throw new HttpRequestException($"Mantis product search failed ({(int)response.StatusCode}): {responseText}");
-
-        var mantisResponse = JsonSerializer.Deserialize<MantisProductSearchResponse>(responseText, MantisJsonOptions)
-            ?? new MantisProductSearchResponse();
-        if (!string.IsNullOrWhiteSpace(mantisResponse.ErrorKey))
-            throw new InvalidOperationException($"Mantis product search failed: {mantisResponse.ErrorKey}");
-
-        var products = mantisResponse.SDTConArtCasalins
+        var products = productDtos
             .Select(product => MantisProductMapper.ToProductReference(product, settings.Currency))
             .OfType<ProductReference>()
             .Where(product => ProductMatches(product, matchRequest))
@@ -126,6 +128,31 @@ public sealed class MantisCommerceAdapter : ICommerceAdapter, ICommerceCustomerL
             .ToList();
 
         return (products, HasMore(mantisResponse.SDTPaginadoCasalins, products.Count, pageSize));
+    }
+
+    private async Task<MantisProductSearchResponse> FetchProductPageAsync(
+        MantisSettings settings,
+        ProductSearchRequest request,
+        int pageSize,
+        MantisCustomerIdentity? customer,
+        CancellationToken ct)
+    {
+        var payload = BuildProductSearchPayload(request, pageSize, customer, settings.Catalog.Warehouse);
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeout.CancelAfter(TimeSpan.FromSeconds(settings.RequestTimeoutSeconds));
+        using var httpRequest = CreateRequest(
+            settings,
+            settings.Catalog.SearchEndpoint,
+            payload);
+        var response = await _httpClient.SendAsync(httpRequest, timeout.Token);
+        var responseText = await response.Content.ReadAsStringAsync(ct);
+        if (!response.IsSuccessStatusCode)
+            throw new HttpRequestException($"Mantis product search failed ({(int)response.StatusCode}): {responseText}");
+        var mantisResponse = JsonSerializer.Deserialize<MantisProductSearchResponse>(responseText, MantisJsonOptions)
+            ?? new MantisProductSearchResponse();
+        if (!string.IsNullOrWhiteSpace(mantisResponse.ErrorKey))
+            throw new InvalidOperationException($"Mantis product search failed: {mantisResponse.ErrorKey}");
+        return mantisResponse;
     }
     public async Task<ProductReference?> GetProductAsync(AddOrderItemRequest request, CommerceAdapterContext ctx, CancellationToken ct = default)
     {
@@ -470,6 +497,18 @@ public sealed class MantisCommerceAdapter : ICommerceAdapter, ICommerceCustomerL
             return reference with { ProductId = product.ProductId };
         }
 
+        if (IsCommerciallyIncomplete(reference) && IsSellableSnapshot(existing))
+        {
+            return reference with
+            {
+                ProductId = existing.ProductId,
+                UnitPrice = existing.UnitPrice,
+                Currency = existing.Currency,
+                StockQuantity = existing.StockQuantity,
+                IsActive = existing.IsActive
+            };
+        }
+
         existing.Sku = reference.Sku;
         existing.Name = reference.Name;
         existing.Description = reference.Description;
@@ -484,6 +523,12 @@ public sealed class MantisCommerceAdapter : ICommerceAdapter, ICommerceCustomerL
         await _unitOfWork.Products.UpdateAsync(existing, ct);
         return reference with { ProductId = existing.ProductId };
     }
+
+    private static bool IsCommerciallyIncomplete(ProductReference reference) =>
+        !reference.IsActive && reference.UnitPrice <= 0m && (reference.StockQuantity ?? 0m) <= 0m;
+
+    private static bool IsSellableSnapshot(Product product) =>
+        product.IsActive && (!product.ManageStock || (product.StockQuantity ?? 0m) > 0m);
     private async Task<ProductReference> AttachExistingSnapshotIdAsync(
         CommerceAdapterContext ctx,
         ProductReference reference,

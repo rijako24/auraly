@@ -40,9 +40,26 @@ internal static class ProductSelectionMemory
         CatalogOfferMemory.RememberAsync(factsService, ctx, products, searchTerms, ct);
 
     public static string NormalizeSearchReference(string productText)
-        => string.Join(' ', NormalizeSelectionReference(productText)
+    {
+        var normalized = NormalizeSelectionReference(productText);
+        var exclusionMarkers = new[]
+        {
+            " aclarando que no ", " pero que no ", " pero no ",
+            " que no sea ", " que no fuera ", " no quiero que sea "
+        };
+        var exclusionIndex = exclusionMarkers
+            .Select(marker => normalized.IndexOf(marker, StringComparison.Ordinal))
+            .Where(index => index >= 0)
+            .DefaultIfEmpty(-1)
+            .Min();
+        if (exclusionIndex > 0)
+            normalized = normalized[..exclusionIndex];
+
+        return string.Join(' ', normalized
             .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Where(token => !token.All(char.IsDigit)));
+    }
+
     public static IReadOnlyList<ProductReference> FindCatalogMatches(
         AgentConversationContext ctx,
         string productText)

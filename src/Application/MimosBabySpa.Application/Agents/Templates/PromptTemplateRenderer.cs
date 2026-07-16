@@ -12,7 +12,7 @@ public sealed partial class PromptTemplateRenderer : ITemplateRenderer
         if (string.IsNullOrEmpty(template))
             return string.Empty;
 
-        var result = template;
+        var result = NormalizeEscapedNewlines(template);
         result = RenderEachBlocks(result, data);
         result = RenderIfBlocks(result, data);
         result = ReplaceVariables(result, data);
@@ -110,6 +110,12 @@ public sealed partial class PromptTemplateRenderer : ITemplateRenderer
 
         return string.Join(Environment.NewLine, normalized);
     }
+
+    private static string NormalizeEscapedNewlines(string template) =>
+        template
+            .Replace("\\r\\n", "\n", StringComparison.Ordinal)
+            .Replace("\\n", "\n", StringComparison.Ordinal)
+            .Replace("\\r", "\n", StringComparison.Ordinal);
 
     private static IReadOnlyDictionary<string, object?> MergeScope(
         IReadOnlyDictionary<string, object?> parent,

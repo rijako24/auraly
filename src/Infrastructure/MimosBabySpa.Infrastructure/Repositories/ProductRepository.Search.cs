@@ -35,66 +35,65 @@ public sealed partial class ProductRepository
             return [];
 
         limit = Math.Clamp(limit, 1, 250);
-        var productIds = await _context.ProductSearchTerms
+        var indexedMatches = await _context.ProductSearchTerms
             .AsNoTracking()
-            .Where(term => term.BusinessId == businessId && keys.Contains(term.Term))
+            .Where(term => term.BusinessId == businessId
+                && keys.Contains(term.Term))
             .GroupBy(term => term.ProductId)
             .OrderByDescending(group => group.Count())
-            .Select(group => group.Key)
-            .Take(limit)
+            .Select(group => new { ProductId = group.Key, Hits = group.Count() })
+            .Take(Math.Min(limit * 4, 1000))
             .ToListAsync(ct);
 
-        if (productIds.Count > 0)
-        {
-            return await _context.Products.AsNoTracking()
-                .Where(product => product.BusinessId == businessId && product.IsActive && productIds.Contains(product.ProductId))
-                .Take(limit)
-                .ToListAsync(ct);
-        }
+        var indexedScores = indexedMatches.ToDictionary(match => match.ProductId, match => match.Hits);
+        var indexedIds = indexedScores.Keys.ToArray();
+        var candidates = indexedIds.Length == 0
+            ? new Dictionary<Guid, Product>()
+            : (await _context.Products.AsNoTracking()
+                .Where(product => product.BusinessId == businessId
+                    && indexedIds.Contains(product.ProductId))
+                .ToListAsync(ct))
+                .ToDictionary(product => product.ProductId);
 
-        // Compatibility fallback for products created before the lexical index existed.
-        var fallback = new Dictionary<Guid, Product>();
+        // Native product identity is always searched. ProductSearchTerms enriches
+        // discovery and ranking; it is deliberately not an eligibility gate.
         foreach (var key in keys.OrderByDescending(value => value.Length).Take(6))
         {
             var matches = await _context.Products.AsNoTracking()
-                .Where(product => product.BusinessId == businessId && product.IsActive
-                    && (product.Name.Contains(key)
-                        || product.Sku != null && product.Sku.Contains(key)
-                        || product.ExternalProductId != null && product.ExternalProductId.Contains(key)
-                        || product.CategoryName != null && product.CategoryName.Contains(key)))
+                .Where(product => product.BusinessId == businessId
+                    && (product.Name.ToLower().Contains(key)
+                        || product.Sku != null && product.Sku.ToLower().Contains(key)
+                        || product.ExternalProductId != null && product.ExternalProductId.ToLower().Contains(key)
+                        || product.CategoryName != null && product.CategoryName.ToLower().Contains(key)))
                 .Take(limit)
                 .ToListAsync(ct);
             foreach (var product in matches)
-                fallback.TryAdd(product.ProductId, product);
-            if (fallback.Count >= limit)
-                break;
+                candidates.TryAdd(product.ProductId, product);
         }
-        return fallback.Values.Take(limit).ToList();
+
+        return candidates.Values
+            .Select(product => new
+            {
+                Product = product,
+                DirectScore = DirectIdentityScore(product, keys),
+                IndexScore = indexedScores.GetValueOrDefault(product.ProductId)
+            })
+            .OrderByDescending(candidate => candidate.Product.IsActive)
+            .ThenByDescending(candidate => candidate.DirectScore)
+            .ThenByDescending(candidate => candidate.IndexScore)
+            .ThenBy(candidate => candidate.Product.Name)
+            .Take(limit)
+            .Select(candidate => candidate.Product)
+            .ToList();
     }
 
-    private async Task SyncSearchTermsAsync(Product product, CancellationToken ct)
+    private static int DirectIdentityScore(Product product, IReadOnlyCollection<string> keys)
     {
-        var desired = ProductSearchText.GetIndexTerms(
+        var identityTerms = ProductSearchText.GetIndexTerms(
             product.Name,
             product.Sku,
             product.ExternalProductId,
             product.CategoryName);
-        var existing = await _context.ProductSearchTerms
-            .Where(term => term.BusinessId == product.BusinessId && term.ProductId == product.ProductId)
-            .ToListAsync(ct);
-        var desiredSet = desired.ToHashSet(StringComparer.Ordinal);
-        var existingSet = existing.Select(term => term.Term).ToHashSet(StringComparer.Ordinal);
-
-        _context.ProductSearchTerms.RemoveRange(existing.Where(term => !desiredSet.Contains(term.Term)));
-        foreach (var term in desiredSet.Except(existingSet, StringComparer.Ordinal))
-        {
-            _context.ProductSearchTerms.Add(new ProductSearchTerm
-            {
-                BusinessId = product.BusinessId,
-                ProductId = product.ProductId,
-                Term = term,
-                CreatedAt = DateTime.UtcNow
-            });
-        }
+        return keys.Count(identityTerms.Contains);
     }
 }

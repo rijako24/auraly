@@ -46,6 +46,8 @@ public static class ProductResolutionEngine
     private const double CandidateThreshold = 0.56d;
     private const double SuggestionThreshold = 0.68d;
     private const double SuggestionMargin = 0.12d;
+    private const double MeaningfulTermSimilarity = 0.62d;
+    private const double MinimumSemanticCoverage = 0.70d;
 
     public static ProductResolution Resolve(
         string requestedText,
@@ -132,13 +134,29 @@ public static class ProductResolutionEngine
                 candidate.Product,
                 Score(requestedText, candidate.Product),
                 candidate.Source))
+            .Where(candidate => HasMinimumSemanticCoverage(requestedText, candidate.Product))
             .Where(candidate => candidate.Score >= CandidateThreshold)
             .OrderByDescending(candidate => candidate.Score)
             .ThenBy(candidate => candidate.Product.Name, StringComparer.OrdinalIgnoreCase)
             .Take(5)
             .ToList();
+
         if (scored.Count == 0)
+        {
+            var unavailable = allCandidates
+                .Where(candidate => !candidate.Product.IsActive)
+                .Select(candidate => new ProductResolutionCandidate(
+                    candidate.Product, Score(requestedText, candidate.Product), candidate.Source))
+                .Where(candidate => candidate.Score >= SuggestionThreshold)
+                .OrderByDescending(candidate => candidate.Score)
+                .ThenBy(candidate => candidate.Product.Name, StringComparer.OrdinalIgnoreCase)
+                .Take(3)
+                .ToList();
+            if (unavailable.Count > 0)
+                return new ProductResolution(
+                    ProductResolutionStatus.Unavailable, null, unavailable, requestedText);
             return ProductResolution.NotFound(requestedText);
+        }
 
         var exactTermMatches = scored
             .Where(candidate => ContainsEveryRequestedTerm(requestedText, candidate.Product))
@@ -212,6 +230,28 @@ public static class ProductResolutionEngine
         var requested = ProductSearchText.GetTokens(requestedText).ToHashSet(StringComparer.Ordinal);
         var offered = ProductSearchText.GetTokens($"{product.Name} {product.Sku} {product.ExternalProductId}").ToHashSet(StringComparer.Ordinal);
         return requested.Count > 0 && requested.IsSubsetOf(offered);
+    }
+
+    private static bool HasMinimumSemanticCoverage(string requestedText, ProductReference product)
+    {
+        var requested = ProductSearchText.GetTokens(requestedText)
+            .Where(token => !token.All(char.IsDigit))
+            .ToList();
+        var offered = ProductSearchText.GetTokens(
+                $"{product.Name} {product.Sku} {product.ExternalProductId} {product.CategoryName}")
+            .Where(token => !token.All(char.IsDigit))
+            .ToList();
+        if (requested.Count == 0 || offered.Count == 0)
+            return false;
+
+        var covered = requested.Count(token => offered.Any(candidate =>
+            ProductSearchText.TokenSimilarity(token, candidate) >= MeaningfulTermSimilarity
+            || token.Length >= 3 && token.Length < candidate.Length
+                && candidate.StartsWith(token, StringComparison.Ordinal)));
+        var required = requested.Count == 1
+            ? 1
+            : (int)Math.Ceiling(requested.Count * MinimumSemanticCoverage);
+        return covered >= required;
     }
 
     private static string ProductIdentity(ProductReference product) =>
