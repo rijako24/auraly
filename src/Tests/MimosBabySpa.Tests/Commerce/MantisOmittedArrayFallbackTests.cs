@@ -13,10 +13,10 @@ namespace MimosBabySpa.Tests.Commerce;
 public sealed class MantisOmittedArrayFallbackTests
 {
     [Fact]
-    public async Task SearchProducts_WhenTotalIsReportedButArrayIsMissing_ReadsSingleItemPages()
+    public async Task SearchProducts_WhenReportedPageIsIncomplete_ReadsSingleItemPages()
     {
         var handler = new SequenceHandler(
-            """{"ErrorKey":"","SDTPaginadoCasalins":{"TotalItems":2}}""",
+            ProductPage("CG40", "PAPA RIPIO KRUMER"),
             ProductPage("CG40", "PAPA RIPIO KRUMER"),
             ProductPage("CG41", "PAPA RIPIO PREMIUM 1K"));
         var businessId = Guid.NewGuid();

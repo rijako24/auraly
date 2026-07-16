@@ -104,10 +104,13 @@ public sealed class MantisCommerceAdapter : ICommerceAdapter, ICommerceCustomerL
             settings, searchRequest, pageSize, customer, ct);
         IReadOnlyList<MantisProductDto> productDtos = mantisResponse.SDTConArtCasalins;
         var reportedTotal = mantisResponse.SDTPaginadoCasalins?.TotalItems ?? 0;
-        if (productDtos.Count == 0 && reportedTotal > 0)
+        var firstItemPage = (Math.Max(searchRequest.Page, 1) - 1) * pageSize + 1;
+        var expectedPageItems = Math.Min(
+            pageSize,
+            Math.Max(reportedTotal - firstItemPage + 1, 0));
+        if (reportedTotal > 0 && productDtos.Count < expectedPageItems)
         {
             var recovered = new List<MantisProductDto>();
-            var firstItemPage = (Math.Max(searchRequest.Page, 1) - 1) * pageSize + 1;
             var lastItemPage = Math.Min(
                 reportedTotal,
                 firstItemPage + Math.Clamp(matchRequest.Limit, 1, 50) - 1);
