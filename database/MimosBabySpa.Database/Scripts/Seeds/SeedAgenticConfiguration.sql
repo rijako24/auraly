@@ -85,7 +85,12 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
   "model": "gpt-4.1-mini",
   "temperature": 0.7,
   "persona": "## ROL E IDENTIDAD\n\nEres **Mimi** de **Mimo''s Baby Spa**.",
-  "policies": "## EXPERIENCIA CONVERSACIONAL\n\n- Responde primero a la intencion real de la persona y conserva la continuidad con el turno anterior.\n- Reconoce elecciones, avances o inquietudes de forma natural solo cuando aporte valor; varia las transiciones para mantener una conversacion fluida.\n- Usa el nombre con moderacion, principalmente en una apertura, un momento de tranquilidad o un cierre significativo.\n- Consulta la conversacion reciente para evitar repetir saludos, nombres, agradecimientos o la misma explicacion en turnos consecutivos.\n- Adapta el tono al mensaje recibido y manten una actitud humana, atenta, empatica y profesional.\n- Ante confusion, inconvenientes o incertidumbre, demuestra comprension y explica el siguiente paso con claridad.\n- En WhatsApp, usa mensajes breves, parrafos cortos y listas legibles cuando ayuden a entender opciones o resumenes.\n- Formula una sola pregunta enfocada cuando sea necesaria para avanzar.\n\n## REGLAS GLOBALES\n\n- Responde siempre en espanol con calidez, claridad y tono profesional.\n- Habla de bienestar y acompanamiento; evita promesas medicas o diagnosticos.\n- Mientras no exista reserva confirmada, evita palabras de confirmacion de reserva.\n- Cancelacion/reagendamiento sin costo con minimo 24 horas de anticipacion.\n- Instagram: @mimosbabyspa.\n\n## APERTURA\n\n- En cada apertura del dia, saluda natural, presentate como Mimi de Mimo''s Baby Spa y da la bienvenida.\n- Usa el nombre del cliente o del bebe si esta disponible.\n- Si el cliente ya pidio algo, usa solo una apertura breve antes de continuar con esa intencion.\n- Despues del saludo, sigue de forma natural con lo que el cliente pidio.\n- No uses saludos largos.",
+  "policies": "## EXPERIENCIA CONVERSACIONAL\n\n- Responde primero a la intencion real de la persona y conserva la continuidad con el turno anterior.\n- Reconoce elecciones, avances o inquietudes de forma natural solo cuando aporte valor; varia las transiciones para mantener una conversacion fluida.\n- Usa el nombre con moderacion, principalmente en una apertura, un momento de tranquilidad o un cierre significativo.\n- Consulta la conversacion reciente para evitar repetir saludos, nombres, agradecimientos o la misma explicacion en turnos consecutivos.\n- Adapta el tono al mensaje recibido y manten una actitud humana, atenta, empatica y profesional.\n- Ante confusion, inconvenientes o incertidumbre, demuestra comprension y explica el siguiente paso con claridad.\n- En WhatsApp, usa mensajes breves, parrafos cortos y listas legibles cuando ayuden a entender opciones o resumenes.\n- Formula una sola pregunta enfocada cuando sea necesaria para avanzar.\n\n## REGLAS GLOBALES\n\n- Responde siempre en espanol con calidez, claridad y tono profesional.\n- Habla de bienestar y acompanamiento; evita promesas medicas o diagnosticos.\n- Mientras no exista reserva confirmada, evita palabras de confirmacion de reserva.\n- Cancelacion/reagendamiento sin costo con minimo 24 horas de anticipacion.\n- Instagram: @mimosbabyspa.",
+  "conversationOpening": {
+    "enabled": true,
+    "guidance": "Escribe solamente una apertura social breve y cercana: saluda, presentate como Mimi de Mimo''s Baby Spa y da la bienvenida. Si conoces el nombre del cliente, puedes usarlo con moderacion; no uses el nombre del bebe como si fuera la persona que escribe. No menciones servicios, reservas, ayuda ni el siguiente paso, y no hagas preguntas en este primer parrafo. La respuesta que viene despues se encarga de continuar la conversacion.",
+    "allowQuestions": false
+  },
   "messageSequences": {
     "addons_catalog_image": {
       "messages": [
@@ -393,6 +398,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "role": "baby.birth_date",
       "label": "fecha de nacimiento del bebe",
       "type": "date",
+      "extractionGuidance": "Extrae la fecha de nacimiento explicita del bebe cuando el cliente diga nacio, fecha de nacimiento o una expresion equivalente. Acepta fechas naturales y normalizalas como fecha. No la infieras solamente a partir de la edad.",
       "required": false,
       "source": "user",
       "scope": "customer"
@@ -410,10 +416,23 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "expireOnBusinessDayChange": true
     },
     {
+      "key": "service_search_query",
+      "role": "catalog.service_query",
+      "label": "busqueda de servicios",
+      "type": "string",
+      "extractionGuidance": "Guarda el concepto, necesidad, categoria o nombre por el que el cliente pide consultar servicios antes de elegir uno. Conserva terminos utiles del cliente como hidroterapia, masaje, cumplemes, Planes Baby Spa o el nombre de un servicio. Hidroterapia es una caracteristica o criterio de busqueda, no un servicio canonico, por lo que nunca debe guardarse en service. No extraigas este fact cuando el cliente este eligiendo explicitamente una opcion que ya fue presentada.",
+      "required": false,
+      "source": "user",
+      "scope": "request",
+      "retentionDays": 7,
+      "expireOnBusinessDayChange": true
+    },
+    {
       "key": "add_ons",
       "role": "booking.addons",
       "label": "complementos",
       "type": "string",
+      "extractionGuidance": "Guarda unicamente complementos concretos elegidos por el cliente. Si rechaza todos los complementos o dice sin complementos, no inventes un nombre: emite la senal addons_declined para que la configuracion guarde add_ons=ninguno.",
       "required": false,
       "source": "user",
       "scope": "request",
@@ -492,6 +511,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "role": "customer.name",
       "label": "nombre del cliente",
       "type": "string",
+      "extractionGuidance": "Siempre extrae el nombre completo del adulto que hace el registro cuando aparezca explicitamente: papa, mama, acudiente o cliente. Ejemplos: el papa se llama Carlos Ramirez, la mama se llama Laura Gomez o mi nombre es Carlos Ramirez. Guarda el nombre y apellidos del adulto aunque el mismo mensaje tambien incluya datos del bebe. No confundas este nombre con el nombre del bebe.",
       "required": true,
       "source": "user",
       "scope": "customer"
@@ -581,7 +601,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
           "collect": [
             "baby_name",
             "baby_age_months",
-            "service",
+            "service_search_query",
             "add_ons",
             "desired_date",
             "desired_time",
@@ -589,55 +609,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
             "baby_birth_date",
             "customer_email"
           ],
-          "signals": [
-            {
-              "type": "service_selection",
-              "description": "Texto con el que el cliente elige o intenta elegir un plan o servicio concreto.",
-              "valueSchema": {
-                "type": "string"
-              }
-            }
-          ],
-          "actions": [
-            {
-              "id": "resolve_early_service",
-              "operation": "catalog.resolve_service",
-              "trigger": "on_signal",
-              "signal": "service_selection",
-              "condition": {
-                "factMissing": "service"
-              },
-              "arguments": {
-                "text": "{{signal.service_selection.value}}"
-              },
-              "onOutcome": {
-                "catalog.service_resolved": {
-                  "effects": [
-                    {
-                      "type": "facts.set_from_outcome",
-                      "bindings": {
-                        "service": "service"
-                      }
-                    }
-                  ]
-                },
-                "catalog.service_unchanged": {},
-                "catalog.service_ambiguous": {
-                  "response": {
-                    "mode": "ask_clarification",
-                    "guidance": "Presenta Ãºnicamente los candidatos devueltos y pregunta cuÃ¡l servicio desea."
-                  }
-                },
-                "catalog.service_not_found": {
-                  "response": {
-                    "mode": "ask_clarification",
-                    "guidance": "Indica que no se encontrÃ³ ese plan o servicio y continÃºa con el catÃ¡logo oficial."
-                  }
-                }
-              }
-            }
-          ],
-          "conversationGuidance": "En la apertura pide Ãºnicamente los datos que falten para avanzar: nombre del bebÃ© y edad objetivo relevante para la recomendaciÃ³n o servicio. Captura tambiÃ©n cualquier otro dato que el cliente dÃ© por adelantado. Si menciona una edad actual y otra futura, aplica extractionGuidance de baby_age_months."
+          "conversationGuidance": "Pide unicamente los datos que falten para avanzar: nombre del bebe y edad objetivo relevante para la recomendacion o servicio. Captura cualquier otro dato que el cliente entregue por adelantado. Si menciona una necesidad, caracteristica, categoria o nombre de servicio, conserva esa consulta en service_search_query para mostrar resultados despues de obtener nombre y edad; no la conviertas en una seleccion. Hidroterapia es un criterio de busqueda, no un servicio. Si menciona una edad actual y otra futura, aplica extractionGuidance de baby_age_months."
         },
         {
           "id": "service_selection",
@@ -647,6 +619,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
             "service"
           ],
           "collect": [
+            "service_search_query",
             "service",
             "add_ons",
             "desired_date",
@@ -658,20 +631,58 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
           "signals": [
             {
               "type": "catalog_query",
-              "description": "El cliente pide categorÃ­as, planes, servicios, precios o informaciÃ³n del catÃ¡logo.",
+              "description": "El cliente pide conocer, buscar o comparar categorias, planes o servicios; pregunta por precios o beneficios; menciona una necesidad, una caracteristica como hidroterapia o masaje, una categoria, o el nombre de un servicio sin estar eligiendo una opcion ya presentada.",
               "valueSchema": {
                 "type": "string"
               }
             },
             {
               "type": "service_selection",
-              "description": "Texto con el que el cliente elige o intenta elegir un plan o servicio concreto.",
+              "description": "El cliente elige de forma explicita una opcion concreta que ya fue presentada, por nombre, numero o selector. Frases de consulta o interes no son seleccion. Hidroterapia nunca es un servicio ni una seleccion; es un criterio de busqueda.",
               "valueSchema": {
                 "type": "string"
               }
             }
           ],
           "actions": [
+            {
+              "id": "show_requested_services_on_entry",
+              "operation": "catalog.get_services",
+              "condition": {
+                "all": [
+                  {
+                    "factMissing": "service"
+                  },
+                  {
+                    "factPresent": "service_search_query"
+                  },
+                  {
+                    "not": {
+                      "signalPresent": "catalog_query"
+                    }
+                  }
+                ]
+              },
+              "arguments": {
+                "query": "{{fact.service_search_query}}",
+                "view": "auto"
+              },
+              "onOutcome": {
+                "catalog.services_returned": {
+                  "effects": [
+                    {
+                      "type": "facts.clear",
+                      "facts": [
+                        "service_search_query"
+                      ]
+                    }
+                  ],
+                  "response": {
+                    "guidance": "Muestra de inmediato todos los servicios devueltos que coincidan con la consulta conservada, con su descripcion breve, precio y duracion disponibles. No pidas permiso para mostrarlos. Luego pregunta cual servicio desea elegir."
+                  }
+                }
+              }
+            },
             {
               "id": "show_catalog_on_entry",
               "operation": "catalog.get_services",
@@ -680,6 +691,9 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                 "all": [
                   {
                     "factMissing": "service"
+                  },
+                  {
+                    "factMissing": "service_search_query"
                   },
                   {
                     "not": {
@@ -716,8 +730,16 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
               },
               "onOutcome": {
                 "catalog.services_returned": {
+                  "effects": [
+                    {
+                      "type": "facts.clear",
+                      "facts": [
+                        "service_search_query"
+                      ]
+                    }
+                  ],
                   "response": {
-                    "guidance": "Responde exclusivamente con las categorÃ­as, servicios, precios y horarios devueltos por el catÃ¡logo."
+                    "guidance": "Muestra de inmediato los servicios devueltos cuando existan coincidencias, con descripcion breve, precio y duracion disponibles; no preguntes si desea verlos. Si el outcome devuelve categorias, presenta esas categorias. Termina preguntando cual servicio desea elegir."
                   }
                 }
               }
@@ -828,13 +850,55 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
           "signals": [
             {
               "type": "catalog_selection",
-              "description": "El cliente elige, rechaza o corrige un servicio o complemento del catÃ¡logo.",
+              "description": "El cliente elige o corrige por nombre un servicio o complemento concreto del catalogo. No emitas esta senal cuando rechaza todos los complementos o dice sin complementos.",
               "valueSchema": {
                 "type": "string"
+              }
+            },
+            {
+              "type": "addons_declined",
+              "description": "El cliente rechaza claramente todos los complementos, dice sin complementos, ninguno, no gracias o que desea continuar solo con el servicio base.",
+              "valueSchema": {
+                "type": "boolean"
               }
             }
           ],
           "actions": [
+            {
+              "id": "mark_no_add_ons",
+              "operation": "catalog.get_compatible_add_ons",
+              "trigger": "on_signal",
+              "signal": "addons_declined",
+              "arguments": {
+                "service": "{{fact.service}}"
+              },
+              "onOutcome": {
+                "catalog.add_ons_available": {
+                  "effects": [
+                    {
+                      "type": "fact.set",
+                      "fact": "add_ons",
+                      "value": "ninguno"
+                    }
+                  ],
+                  "response": {
+                    "guidance": "Confirma brevemente que continua sin complementos y pregunta directamente que dia desea agendar. No pidas permiso para avanzar."
+                  }
+                },
+                "catalog.no_add_ons": {
+                  "effects": [
+                    {
+                      "type": "fact.set",
+                      "fact": "add_ons",
+                      "value": "ninguno"
+                    }
+                  ],
+                  "response": {
+                    "guidance": "Confirma brevemente que continua sin complementos y pregunta directamente que dia desea agendar. No pidas permiso para avanzar."
+                  }
+                }
+              }
+            },
             {
               "id": "resolve_catalog_selection",
               "operation": "catalog.resolve_service",
@@ -863,7 +927,10 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                         "add_ons": "addOns"
                       }
                     }
-                  ]
+                  ],
+                  "response": {
+                    "guidance": "Confirma brevemente el complemento seleccionado y pregunta unicamente que dia desea agendar. No pidas la hora todavia; despues de recibir el dia, la operacion mostrara los slots disponibles."
+                  }
                 },
                 "catalog.service_ambiguous": {
                   "response": {
@@ -880,6 +947,17 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
               }
             },
             {
+              "id": "get_selected_service_details",
+              "operation": "catalog.get_services",
+              "condition": {
+                "factMissing": "add_ons"
+              },
+              "arguments": {
+                "query": "{{fact.service}}",
+                "view": "services"
+              }
+            },
+            {
               "id": "get_compatible_add_ons",
               "operation": "catalog.get_compatible_add_ons",
               "condition": {
@@ -891,7 +969,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
               "onOutcome": {
                 "catalog.add_ons_available": {
                   "response": {
-                    "guidance": "Presenta solo los complementos compatibles devueltos y pregunta cuÃ¡l desea o si continÃºa sin complementos."
+                    "guidance": "Confirma primero, en una frase breve, el servicio seleccionado y resume sus beneficios usando exclusivamente el servicio del catalogo devuelto cuyo nombre coincide con fact.service. Despues presenta solo los complementos compatibles devueltos y pregunta cual desea o si continua sin complementos."
                   }
                 },
                 "catalog.no_add_ons": {
@@ -901,12 +979,15 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                       "fact": "add_ons",
                       "value": "ninguno"
                     }
-                  ]
+                  ],
+                  "response": {
+                    "guidance": "Confirma en una frase breve el servicio seleccionado y resume sus beneficios usando exclusivamente el servicio del catalogo devuelto cuyo nombre coincide con fact.service. Indica brevemente que no tiene complementos disponibles y continua con el siguiente dato requerido por la etapa vigente."
+                  }
                 }
               }
             }
           ],
-          "conversationGuidance": "Si el cliente rechaza complementos claramente, guarda add_ons=ninguno. No inventes decoraciones, fotografÃ­as ni precios que no estÃ©n en el outcome vigente."
+          "conversationGuidance": "Si el cliente rechaza complementos claramente, emite addons_declined=true; la accion configurada guardara add_ons=ninguno y avanzara a preguntar el dia. No inventes decoraciones, fotografias ni precios que no esten en el outcome vigente."
         },
         {
           "id": "scheduling",
@@ -914,7 +995,9 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
           "goal": "Revisar disponibilidad y validar fecha y hora para una reserva por hora.",
           "collect": [
             "desired_date",
-            "desired_time"
+            "desired_time",
+            "customer_name",
+            "baby_birth_date"
           ],
           "actions": [
             {
@@ -1002,7 +1085,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
               "to": "customer_data"
             }
           ],
-          "conversationGuidance": "Si existe fixed_schedule_label, continÃºa sin consultar disponibilidad porque el servicio usa horario oficial de inscripciÃ³n. Para reservas por hora, si falta fecha pregunta el dÃ­a; con fecha y sin hora, la operaciÃ³n configurada muestra slots mediante template exclusivo; con hora exacta valida ese horario. No afirmes disponibilidad sin outcome vigente."
+          "conversationGuidance": "Si existe fixed_schedule_label, continua sin consultar disponibilidad porque el servicio usa horario oficial de inscripcion. Para reservas por hora, si falta fecha pregunta unicamente el dia; con fecha y sin hora, la operacion configurada muestra slots mediante template exclusivo; con hora exacta valida ese horario. No afirmes disponibilidad sin outcome vigente. Cuando la hora ya este validada, pide juntos el nombre del papa, mama o persona que registra y la fecha de nacimiento del bebe. Considera cada dato registrado unicamente si aparece en ESTADO ACTUAL despues de la extraccion; si falta uno, pide solo ese y nunca afirmes que ya lo guardaste."
         },
         {
           "id": "customer_data",
@@ -1012,7 +1095,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
             "customer_name",
             "baby_birth_date"
           ],
-          "conversationGuidance": "Confirma brevemente la seleccion ya definida: fecha y hora agendada, u horario oficial de inscripcion si aplica. Pide juntos los datos que falten para el registro: nombre de la persona que hace el registro y fecha de nacimiento del bebe. Si uno de esos datos ya esta en ESTADO ACTUAL, pide solo el que falta.",
+          "conversationGuidance": "Confirma brevemente la seleccion ya definida: fecha y hora agendada, u horario oficial de inscripcion si aplica. Pide juntos los datos que falten para el registro: nombre del papa, mama o persona que hace el registro y fecha de nacimiento del bebe. Si uno de esos datos ya esta en ESTADO ACTUAL, pide solo el que falta. Considera un dato registrado unicamente si aparece en ESTADO ACTUAL despues de la extraccion; nunca afirmes que lo registraste basandote solo en el texto del mensaje.",
           "collect": [
             "customer_name",
             "baby_birth_date",
@@ -1311,6 +1394,10 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
     }
   ]
 }';
+
+IF ISJSON(@SettingsJson) <> 1
+    THROW 51000, 'SeedAgenticConfiguration: SettingsJson invalido.', 1;
+
 -- -- Agent (Mimi Bot) ---------------------------------------------------------
 DECLARE @AgentId UNIQUEIDENTIFIER;
 SELECT @AgentId = AgentId

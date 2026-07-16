@@ -86,9 +86,11 @@ public sealed class ApplyOrderChangesOperationTests
 
         resolved.Code.Should().Be("cart.applied");
         store.ApplyCalls.Should().Be(1);
-        store.Applied.Select(command => (command.Product!.Name, command.Quantity)).Should().Equal(
-            ("TROZOS DE PECHUGA DE POLLO", 2m),
-            ("PECHUGA CRIOLLA", 1m));
+        store.Applied.Should().HaveCount(2);
+        store.Applied.Should().Contain(command =>
+            command.Product!.Name == "TROZOS DE PECHUGA DE POLLO" && command.Quantity == 2m);
+        store.Applied.Should().Contain(command =>
+            command.Product!.Name == "PECHUGA CRIOLLA" && command.Quantity == 1m);
         session.Facts.Should().NotContainKey("system.pending_cart_commands");
     }
 
@@ -158,7 +160,7 @@ public sealed class ApplyOrderChangesOperationTests
     }
 
     [Fact]
-    public async Task AmbiguousReference_UsesLiteralReplyAndPreservesEntireOriginalBatch_WhenLlmReferenceDegrades()
+    public async Task AmbiguousReference_AppliesSafeItemsAndKeepsOnlyUnresolvedItemPending()
     {
         var resolver = new StubResolver(new Dictionary<string, IReadOnlyList<ProductReference>>(StringComparer.OrdinalIgnoreCase)
         {
@@ -176,8 +178,10 @@ public sealed class ApplyOrderChangesOperationTests
             Json("""{"commands":[{"operation":"add","productText":"pernil","quantity":1,"destinationReference":null},{"operation":"add","productText":"alas","quantity":2,"destinationReference":null},{"operation":"add","productText":"pechuga","quantity":1,"destinationReference":null}]}"""),
             Context(session));
 
-        first.Code.Should().Be("cart.product_ambiguous");
-        store.ApplyCalls.Should().Be(0);
+        first.Code.Should().Be("cart.partially_applied");
+        store.ApplyCalls.Should().Be(1);
+        store.Applied.Select(command => command.Product!.Name).Should()
+            .BeEquivalentTo("ALA JUMBO MERCAPOLLO", "PECHUGA CAMPOLLO");
 
         session.LatestUserMessage = "mixto";
         var resumed = await operation.ExecuteAsync(
@@ -185,17 +189,16 @@ public sealed class ApplyOrderChangesOperationTests
             Context(session));
 
         resumed.Code.Should().Be("cart.applied");
-        store.ApplyCalls.Should().Be(1);
+        store.ApplyCalls.Should().Be(2);
+        store.Applied.Should().ContainSingle();
         store.Applied[0].Operation.Should().Be(CartCommandOperations.Add);
-        store.Applied.Select(command => (command.Product!.Name, command.Quantity)).Should().Equal(
-            ("PERNIL MIXTO MAC POLLO", 1m),
-            ("ALA JUMBO MERCAPOLLO", 2m),
-            ("PECHUGA CAMPOLLO", 1m));
+        store.Applied[0].Product!.Name.Should().Be("PERNIL MIXTO MAC POLLO");
+        store.Applied[0].Quantity.Should().Be(1m);
         session.Facts.Should().NotContainKey("system.pending_cart_commands");
     }
 
     [Fact]
-    public async Task NotFoundAfterAmbiguity_MovesPendingReference_AndCatalogSelectionRestoresWholeBatch()
+    public async Task MultipleUnresolvedItems_AreResolvedIndependentlyWithoutReapplyingSafeItems()
     {
         var resolver = new StubResolver(new Dictionary<string, IReadOnlyList<ProductReference>>(StringComparer.OrdinalIgnoreCase)
         {
@@ -213,16 +216,22 @@ public sealed class ApplyOrderChangesOperationTests
         var first = await operation.ExecuteAsync(
             Json("""{"commands":[{"operation":"add","productText":"butifarra","quantity":1,"destinationReference":null},{"operation":"add","productText":"Long x 10","quantity":1,"destinationReference":null},{"operation":"add","productText":"pechuga","quantity":5,"destinationReference":null}]}"""),
             Context(session));
-        first.Code.Should().Be("cart.product_ambiguous");
+        first.Code.Should().Be("cart.partially_applied");
+        store.ApplyCalls.Should().Be(1);
+        store.Applied.Should().ContainSingle(command =>
+            command.Product!.Name == "PECHUGA CAMPOLLO" && command.Quantity == 5m);
 
         session.LatestUserMessage = "Cunit x 500";
         var second = await operation.ExecuteAsync(
             Json("""{"commands":[{"operation":"add","productText":"BUTIFARRA CUNIT X 500 GR","quantity":1,"destinationReference":null}]}"""),
             Context(session));
 
-        second.Code.Should().Be("cart.product_not_found");
+        second.Code.Should().Be("cart.partially_applied");
+        store.ApplyCalls.Should().Be(2);
+        store.Applied.Should().ContainSingle(command =>
+            command.Product!.Name == "BUTIFARRA CUNIT X 500 GR" && command.Quantity == 1m);
         session.Facts["system.pending_cart_commands"].Should().Contain("Long x 10");
-        session.Facts["system.pending_cart_commands"].Should().NotContain("\"ambiguousProductText\":\"butifarra\"");
+        session.Facts["system.pending_cart_commands"].Should().Contain("\"alreadyApplied\":true");
         session.Facts["system.catalog_products"] = JsonSerializer.Serialize(new[]
         {
             new
@@ -253,12 +262,11 @@ public sealed class ApplyOrderChangesOperationTests
             Context(session));
 
         resumed.Code.Should().Be("cart.applied");
-        store.ApplyCalls.Should().Be(1);
+        store.ApplyCalls.Should().Be(3);
+        store.Applied.Should().ContainSingle();
         store.Applied.Select(command => command.Operation).Should().OnlyContain(operation => operation == CartCommandOperations.Add);
-        store.Applied.Select(command => (command.Product!.Name, command.Quantity)).Should().Equal(
-            ("BUTIFARRA CUNIT X 500 GR", 1m),
-            ("SALCHICHA LONG X 550GR", 1m),
-            ("PECHUGA CAMPOLLO", 5m));
+        store.Applied[0].Product!.Name.Should().Be("SALCHICHA LONG X 550GR");
+        store.Applied[0].Quantity.Should().Be(1m);
         session.Facts.Should().NotContainKey("system.pending_cart_commands");
     }
 
@@ -356,12 +364,13 @@ public sealed class ApplyOrderChangesOperationTests
             Json("""{"commands":[{"operation":"add","productText":"PECHUGA CRIOLLA","quantity":1,"destinationReference":null}]}"""),
             Context(session));
 
-        unrelated.Code.Should().Be("cart.product_ambiguous");
-        store.ApplyCalls.Should().Be(0);
+        unrelated.Code.Should().Be("cart.partially_applied");
+        store.ApplyCalls.Should().Be(1);
+        store.Applied.Should().ContainSingle(command => command.Product!.Name == "PECHUGA CRIOLLA");
         var pending = session.Facts["system.pending_cart_commands"];
         pending.Should().Contain("Long x 10");
-        pending.Should().Contain("PECHUGA CRIOLLA");
-        pending.Should().Contain(""""ambiguousProductText":"Long x 10"""");
+        pending.Should().Contain("\"schemaVersion\":2");
+        pending.Should().Contain("\"alreadyApplied\":true");
     }
     [Fact]
     public async Task PendingAmbiguity_DoesNotUseUnrelatedCatalogProductAsResolution_AndPreservesLaterAdds()
@@ -388,14 +397,17 @@ public sealed class ApplyOrderChangesOperationTests
             Json("""{"commands":[{"operation":"add","productText":"PECHUGA CRIOLLA","quantity":1,"destinationReference":null}]}"""),
             Context(session));
 
-        unrelated.Code.Should().Be("cart.product_ambiguous");
-        store.ApplyCalls.Should().Be(0);
-        session.Facts["system.pending_cart_commands"].Should().Contain("PECHUGA CRIOLLA");
+        unrelated.Code.Should().Be("cart.partially_applied");
+        store.ApplyCalls.Should().Be(1);
+        store.Applied.Should().ContainSingle(command => command.Product!.Name == "PECHUGA CRIOLLA");
+        session.Facts["system.pending_cart_commands"].Should().Contain("\"alreadyApplied\":true");
 
         var repeatedAdd = await operation.ExecuteAsync(
             Json("""{"commands":[{"operation":"add","productText":"PECHUGA CRIOLLA","quantity":1,"destinationReference":null}]}"""),
             Context(session));
-        repeatedAdd.Code.Should().Be("cart.product_ambiguous");
+        repeatedAdd.Code.Should().Be("cart.partially_applied");
+        store.ApplyCalls.Should().Be(2);
+        store.Applied.Should().ContainSingle(command => command.Product!.Name == "PECHUGA CRIOLLA");
 
         session.LatestUserMessage = "mercapollo";
         var resolved = await operation.ExecuteAsync(
@@ -403,10 +415,9 @@ public sealed class ApplyOrderChangesOperationTests
             Context(session));
 
         resolved.Code.Should().Be("cart.applied");
-        store.ApplyCalls.Should().Be(1);
-        store.Applied.Select(command => (command.Product!.Name, command.Quantity)).Should().Equal(
-            ("PERNIL MERCAPOLLO", 1m),
-            ("PECHUGA CRIOLLA", 2m));
+        store.ApplyCalls.Should().Be(3);
+        store.Applied.Should().ContainSingle(command =>
+            command.Product!.Name == "PERNIL MERCAPOLLO" && command.Quantity == 1m);
         session.Facts.Should().NotContainKey("system.pending_cart_commands");
     }
     [Fact]
@@ -540,11 +551,35 @@ public sealed class ApplyOrderChangesOperationTests
         store.ApplyCalls.Should().Be(1);
         session.Facts.Should().NotContainKey("system.pending_cart_commands");
     }
-    private static AgentConversationContext Session() => new()
+    [Fact]
+    public async Task RepeatedProviderMessage_ReplaysReceiptWithoutApplyingCartTwice()
+    {
+        var resolver = new StubResolver(new Dictionary<string, IReadOnlyList<ProductReference>>(
+            StringComparer.OrdinalIgnoreCase)
+        {
+            ["PECHUGA CRIOLLA"] = [Product("PECHUGA CRIOLLA")]
+        });
+        var store = new IdempotentStubStore();
+        var operation = new ApplyOrderChangesOperation(
+            new CartCommandBatchProcessor(resolver, store), new InMemoryFactsService());
+        var session = Session("wamid.same-message");
+        var input = Json("""{"commands":[{"operation":"add","productText":"PECHUGA CRIOLLA","quantity":1,"destinationReference":null}]}""");
+
+        var first = await operation.ExecuteAsync(input, Context(session));
+        var replay = await operation.ExecuteAsync(input, Context(session));
+
+        first.Code.Should().Be("cart.applied");
+        replay.Code.Should().Be("cart.applied");
+        store.ApplyCalls.Should().Be(1);
+        store.Keys.Should().ContainSingle(key => !string.IsNullOrWhiteSpace(key));
+    }
+
+    private static AgentConversationContext Session(string? providerMessageId = null) => new()
     {
         BusinessId = Guid.NewGuid(),
         ConversationId = Guid.NewGuid(),
-        ConversationState = new()
+        ConversationState = new(),
+        ProviderMessageId = providerMessageId
     };
 
     private static OperationContext Context(AgentConversationContext session) => new()
@@ -595,6 +630,38 @@ public sealed class ApplyOrderChangesOperationTests
             ApplyCalls++;
             Applied = commands;
             return Task.FromResult(Snapshot());
+        }
+
+        private static OrderSnapshot Snapshot() =>
+            new(Guid.Empty, OrderStatus.Draft, "COP", 0, 0, 0, 0, []);
+    }
+
+    private sealed class IdempotentStubStore : ICartMutationStore
+    {
+        private readonly Dictionary<string, OrderSnapshot> _receipts = new(StringComparer.Ordinal);
+        public int ApplyCalls { get; private set; }
+        public IReadOnlyCollection<string> Keys => _receipts.Keys;
+
+        public Task<OrderSnapshot> GetCurrentAsync(
+            AgentConversationContext context, CancellationToken cancellationToken = default) =>
+            Task.FromResult(Snapshot());
+
+        public Task<OrderSnapshot> ApplyAtomicallyAsync(
+            AgentConversationContext context, IReadOnlyList<ResolvedCartCommand> commands,
+            CancellationToken cancellationToken = default) =>
+            throw new InvalidOperationException("The idempotent path must be used.");
+
+        public Task<CartMutationApplyResult> ApplyIdempotentlyAsync(
+            AgentConversationContext context, IReadOnlyList<ResolvedCartCommand> commands,
+            string? idempotencyKey, CancellationToken cancellationToken = default)
+        {
+            idempotencyKey.Should().NotBeNullOrWhiteSpace();
+            if (_receipts.TryGetValue(idempotencyKey!, out var receipt))
+                return Task.FromResult(new CartMutationApplyResult(receipt, true));
+            ApplyCalls++;
+            var snapshot = Snapshot();
+            _receipts[idempotencyKey!] = snapshot;
+            return Task.FromResult(new CartMutationApplyResult(snapshot, false));
         }
 
         private static OrderSnapshot Snapshot() =>

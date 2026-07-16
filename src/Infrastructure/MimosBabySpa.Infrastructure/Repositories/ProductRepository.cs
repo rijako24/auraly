@@ -6,7 +6,7 @@ using MimosBabySpa.Infrastructure.Data;
 
 namespace MimosBabySpa.Infrastructure.Repositories;
 
-public sealed class ProductRepository : IProductRepository
+public sealed partial class ProductRepository : IProductRepository
 {
     private readonly ApplicationDbContext _context;
 
@@ -106,15 +106,17 @@ public sealed class ProductRepository : IProductRepository
             p.ExternalProductId == externalProductId,
             ct);
 
-    public Task<Product> CreateAsync(Product product, CancellationToken ct = default)
+    public async Task<Product> CreateAsync(Product product, CancellationToken ct = default)
     {
         _context.Products.Add(product);
-        return Task.FromResult(product);
+        await SyncSearchTermsAsync(product, ct);
+        return product;
     }
 
-    public Task<Product> UpdateAsync(Product product, CancellationToken ct = default)
+    public async Task<Product> UpdateAsync(Product product, CancellationToken ct = default)
     {
         _context.Products.Update(product);
-        return Task.FromResult(product);
+        await SyncSearchTermsAsync(product, ct);
+        return product;
     }
 }

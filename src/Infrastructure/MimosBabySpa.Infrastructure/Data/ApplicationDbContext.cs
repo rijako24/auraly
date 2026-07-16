@@ -42,6 +42,9 @@ public class ApplicationDbContext : DbContext
     public DbSet<IntegrationConnection> IntegrationConnections { get; set; }
     public DbSet<ReservationIntegrationEvent> ReservationIntegrationEvents { get; set; }
     public DbSet<Product> Products { get; set; }
+    public DbSet<ProductAlias> ProductAliases { get; set; }
+    public DbSet<ProductSearchTerm> ProductSearchTerms { get; set; }
+    public DbSet<CartMutationReceipt> CartMutationReceipts { get; set; }
     public DbSet<ProductRecommendationRule> ProductRecommendationRules { get; set; }
     public DbSet<Promotion> Promotions { get; set; }
     public DbSet<PromotionCondition> PromotionConditions { get; set; }
@@ -496,8 +499,10 @@ public class ApplicationDbContext : DbContext
                 .HasFilter("[IntegrationConnectionId] IS NOT NULL AND [ExternalProductId] IS NOT NULL");
         });
 
+        ProductSearchModelConfiguration.Configure(modelBuilder);
         modelBuilder.Entity<ProductRecommendationRule>(entity =>
         {
+        CartMutationModelConfiguration.Configure(modelBuilder);
             entity.HasKey(e => e.ProductRecommendationRuleId);
             entity.Property(e => e.MatchType).HasConversion<int>();
             entity.Property(e => e.RecommendationType).HasConversion<int>();

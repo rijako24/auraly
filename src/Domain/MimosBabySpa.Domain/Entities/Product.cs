@@ -25,4 +25,6 @@ public class Product
 
     public virtual Business Business { get; set; } = null!;
     public virtual IntegrationConnection? IntegrationConnection { get; set; }
+    public virtual ICollection<ProductAlias> Aliases { get; set; } = new List<ProductAlias>();
+    public virtual ICollection<ProductSearchTerm> SearchTerms { get; set; } = new List<ProductSearchTerm>();
 }

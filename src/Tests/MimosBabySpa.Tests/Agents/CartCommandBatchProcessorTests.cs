@@ -31,7 +31,7 @@ public sealed class CartCommandBatchProcessorTests
     }
 
     [Fact]
-    public async Task Apply_WritesNothing_WhenAnyProductIsAmbiguous()
+    public async Task Apply_AppliesSafeProducts_AndReturnsAmbiguityForOnlyTheUnresolvedProduct()
     {
         var resolver = new StubResolver(new Dictionary<string, IReadOnlyList<ProductReference>>
         {
@@ -46,8 +46,10 @@ public sealed class CartCommandBatchProcessorTests
             [Add("papas", 2), Add("vino", 1)]);
 
         result.Success.Should().BeFalse();
-        result.Code.Should().Be("cart.product_ambiguous");
-        store.ApplyCalls.Should().Be(0);
+        result.Code.Should().Be("cart.partially_applied");
+        store.ApplyCalls.Should().Be(1);
+        store.Applied.Should().ContainSingle(command => command.Product!.Name == "Papas" && command.Quantity == 2);
+        result.Issues.Should().ContainSingle(issue => issue.Code == "product_ambiguous" && issue.ProductText == "vino");
     }
 
     [Fact]
@@ -253,7 +255,7 @@ public sealed class CartCommandBatchProcessorTests
         store.Applied.Should().HaveCount(2);
     }
     [Fact]
-    public async Task Apply_RejectsWholeBatchBeforeWriting_WhenRequestedQuantityExceedsStock()
+    public async Task Apply_AppliesInStockLines_AndLeavesOnlyInsufficientStockLinePending()
     {
         var resolver = new StubResolver(new Dictionary<string, IReadOnlyList<ProductReference>>
         {
@@ -268,13 +270,14 @@ public sealed class CartCommandBatchProcessorTests
             [Add("papas", 2), Add("tocinetas", 3)]);
 
         result.Success.Should().BeFalse();
-        result.Code.Should().Be("cart.insufficient_stock");
+        result.Code.Should().Be("cart.partially_applied");
         result.Issues.Should().ContainSingle();
         result.Issues[0].ProductText.Should().Be("Tocinetas");
         result.Issues[0].RequestedQuantity.Should().Be(3);
         result.Issues[0].AvailableQuantity.Should().Be(2);
         result.Issues[0].MaximumCommandQuantity.Should().Be(2);
-        store.ApplyCalls.Should().Be(0);
+        store.ApplyCalls.Should().Be(1);
+        store.Applied.Should().ContainSingle(command => command.Product!.Name == "Papas");
     }
 
     [Fact]
@@ -414,8 +417,9 @@ public sealed class CartCommandBatchProcessorTests
                 Add("pernil", 1)
             ]);
 
-        result.Code.Should().Be("cart.product_ambiguous");
-        store.ApplyCalls.Should().Be(0);
+        result.Code.Should().Be("cart.partially_applied");
+        store.ApplyCalls.Should().Be(1);
+        store.Applied.Should().ContainSingle(command => command.Operation == CartCommandOperations.Remove);
     }
 
     [Fact]

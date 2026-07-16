@@ -22,6 +22,10 @@ public interface IProductRepository
 
     Task<Product?> GetByIdAsync(Guid businessId, Guid productId, CancellationToken ct = default);
     Task<Product?> GetByExternalIdAsync(Guid businessId, Guid integrationConnectionId, string externalProductId, CancellationToken ct = default);
+    Task<Product?> GetByAnyExternalIdAsync(Guid businessId, string externalProductId, CancellationToken ct = default);
+    Task<Product?> GetBySkuAsync(Guid businessId, string sku, CancellationToken ct = default);
+    Task<IReadOnlyList<Product>> SearchByIndexTermsAsync(Guid businessId, IReadOnlyCollection<string> terms, int limit, CancellationToken ct = default);
+    Task<IReadOnlyList<Product>> GetIdentityCatalogAsync(Guid businessId, CancellationToken ct = default);
     Task<Product> CreateAsync(Product product, CancellationToken ct = default);
     Task<Product> UpdateAsync(Product product, CancellationToken ct = default);
 }

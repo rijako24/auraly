@@ -1,5 +1,6 @@
 using System.Reflection;
 using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection;
 using MimosBabySpa.Application.Agents;
 using MimosBabySpa.Application.Agents.Operations;
 using MimosBabySpa.Application.Agents.Operations.Internal;
@@ -22,7 +23,10 @@ internal static class PaymentApprovalConsoleScenario
         var repository = PaymentRepositoryProxy.Create(payments);
         var unitOfWork = UnitOfWorkProxy.Create(repository);
         var confirmation = PaymentConfirmationProxy.Create(payments);
-        var confirmOperation = new ConfirmManualPaymentOperation(unitOfWork, confirmation);
+        using var serviceProvider = new ServiceCollection()
+            .AddSingleton(confirmation)
+            .BuildServiceProvider();
+        var confirmOperation = new ConfirmManualPaymentOperation(unitOfWork, serviceProvider);
         var searchOperation = new SearchManualPaymentsOperation(unitOfWork);
         var context = new OperationContext
         {

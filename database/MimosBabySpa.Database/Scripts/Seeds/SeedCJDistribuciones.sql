@@ -1378,6 +1378,40 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                   }
               ]
 }';
+DECLARE @PartialCartOutcome NVARCHAR(MAX) = N'{"response":{"mode":"ask_clarification","guidance":"Confirma lo aplicado y solicita solamente la referencia pendiente."},"effects":[{"type":"presentation.add","template":"cart_partial","dataPath":"error.context","mode":"Exclusive","priority":"Required"}]}';
+DECLARE @ProductSuggestionOutcome NVARCHAR(MAX) = N'{"response":{"mode":"ask_clarification","guidance":"Presenta la sugerencia devuelta y pide confirmacion explicita antes de agregarla."},"effects":[{"type":"presentation.add","template":"product_ambiguity","dataPath":"error.context","mode":"Exclusive","priority":"Required"}]}';
+DECLARE @ProductUnavailableOutcome NVARCHAR(MAX) = N'{"response":{"mode":"ask_clarification","guidance":"Indica que la referencia identificada no esta disponible y solicita otra opcion; no afirmes que fue agregada."}}';
+
+SET @SettingsJson = JSON_MODIFY(@SettingsJson, '$.templates.cart_partial',
+    N'Listo, agregue lo que pude identificar:\r\n\r\n*Pedido actual*\r\n{{#each items}}\r\n- {{name}} x{{quantity}}: ${{line_total}}\r\n{{/each}}\r\n\r\n*Total: ${{total}} {{currency}}*\r\n\r\nMe falta confirmar "{{product_text}}".\r\n{{#each product_options}}\r\n- Te refieres a {{Name}}: ${{UnitPrice}} {{Currency}}?\r\n{{/each}}\r\n\r\nSi no es ninguna opcion, indicame el nombre, marca, presentacion o codigo del producto.');
+
+IF JSON_VALUE(@SettingsJson, '$.globalActions[1].actions[0].operation') <> 'commerce.apply_order_changes'
+    THROW 51000, 'SeedCJDistribuciones: ruta global de carrito inesperada.', 1;
+IF JSON_VALUE(@SettingsJson, '$.flows[0].stages[2].actions[2].operation') <> 'commerce.apply_order_changes'
+    THROW 51000, 'SeedCJDistribuciones: ruta product_selection de carrito inesperada.', 1;
+IF JSON_VALUE(@SettingsJson, '$.flows[0].stages[3].actions[1].operation') <> 'commerce.apply_order_changes'
+    THROW 51000, 'SeedCJDistribuciones: ruta cart_review de carrito inesperada.', 1;
+
+DECLARE @CartOutcomePaths TABLE (Path NVARCHAR(400) NOT NULL);
+INSERT INTO @CartOutcomePaths (Path) VALUES
+    (N'$.globalActions[1].actions[0].onOutcome'),
+    (N'$.flows[0].stages[2].actions[2].onOutcome'),
+    (N'$.flows[0].stages[3].actions[1].onOutcome');
+
+DECLARE @CartOutcomePath NVARCHAR(400);
+DECLARE CartOutcomeCursor CURSOR LOCAL FAST_FORWARD FOR SELECT Path FROM @CartOutcomePaths;
+OPEN CartOutcomeCursor;
+FETCH NEXT FROM CartOutcomeCursor INTO @CartOutcomePath;
+WHILE @@FETCH_STATUS = 0
+BEGIN
+    SET @SettingsJson = JSON_MODIFY(@SettingsJson, @CartOutcomePath + N'."cart.partially_applied"', JSON_QUERY(@PartialCartOutcome));
+    SET @SettingsJson = JSON_MODIFY(@SettingsJson, @CartOutcomePath + N'."cart.product_suggestion"', JSON_QUERY(@ProductSuggestionOutcome));
+    SET @SettingsJson = JSON_MODIFY(@SettingsJson, @CartOutcomePath + N'."cart.product_unavailable"', JSON_QUERY(@ProductUnavailableOutcome));
+    FETCH NEXT FROM CartOutcomeCursor INTO @CartOutcomePath;
+END
+CLOSE CartOutcomeCursor;
+DEALLOCATE CartOutcomeCursor;
+
 
 IF ISJSON(@SettingsJson) <> 1
 BEGIN

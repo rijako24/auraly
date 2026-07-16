@@ -38,6 +38,9 @@
     <Build Include="Tables\EmployeeScheduleExceptions.sql" />
     <Build Include="Tables\IntegrationConnections.sql" />
     <Build Include="Tables\Products.sql" />
+    <Build Include="Tables\CartMutationReceipts.sql" />
+    <Build Include="Tables\ProductAliases.sql" />
+    <Build Include="Tables\ProductSearchTerms.sql" />
     <Build Include="Tables\ProductRecommendationRules.sql" />
     <Build Include="Tables\Promotions.sql" />
     <Build Include="Tables\PromotionConditions.sql" />

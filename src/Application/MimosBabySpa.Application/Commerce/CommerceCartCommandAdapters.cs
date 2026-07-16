@@ -5,7 +5,7 @@ using MimosBabySpa.Domain.Repositories;
 
 namespace MimosBabySpa.Application.Commerce;
 
-public sealed class CommerceCartProductResolver : ICartProductResolver
+public sealed partial class CommerceCartProductResolver : ICartProductResolver
 {
     private readonly ICommerceService _commerce;
 
@@ -29,7 +29,7 @@ public sealed class CommerceCartProductResolver : ICartProductResolver
     }
 }
 
-public sealed class CommerceCartMutationStore : ICartMutationStore
+public sealed partial class CommerceCartMutationStore : ICartMutationStore
 {
     private readonly ICommerceService _commerce;
     private readonly IUnitOfWork _unitOfWork;

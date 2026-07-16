@@ -144,7 +144,11 @@ public sealed class CjPaymentApprovalAgentTests
         var unitOfWork = new Mock<IUnitOfWork>();
         unitOfWork.SetupGet(value => value.PaymentTransactions).Returns(repository.Object);
         var confirmation = new Mock<IPaymentConfirmationHandler>();
-        return (new ConfirmManualPaymentOperation(unitOfWork.Object, confirmation.Object), unitOfWork, confirmation);
+        var serviceProvider = new Mock<IServiceProvider>();
+        serviceProvider
+            .Setup(value => value.GetService(typeof(IPaymentConfirmationHandler)))
+            .Returns(confirmation.Object);
+        return (new ConfirmManualPaymentOperation(unitOfWork.Object, serviceProvider.Object), unitOfWork, confirmation);
     }
 
     private static PaymentTransaction PendingPayment(Guid businessId, string orderNumber) => new()

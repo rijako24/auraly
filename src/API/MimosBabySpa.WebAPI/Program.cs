@@ -393,6 +393,8 @@ builder.Services.AddScoped<IBusinessAdminService, BusinessAdminService>();
 builder.Services.AddScoped<IServiceAdminService, ServiceAdminService>();
 
 builder.Services.AddScoped<IProductAdminService, ProductAdminService>();
+builder.Services.AddScoped<IProductAliasAdminService, ProductAliasAdminService>();
+builder.Services.AddScoped<IProductCatalogAdminService, ProductCatalogAdminService>();
 
 builder.Services.AddScoped<IPromotionAdminService, PromotionAdminService>();
 
@@ -514,6 +516,9 @@ builder.Services.AddSingleton<MimosBabySpa.Application.Agents.Facts.FactMutation
 builder.Services.AddSingleton<MimosBabySpa.Application.Agents.Runtime.IDeterministicFlowSelector, MimosBabySpa.Application.Agents.Runtime.DeterministicFlowSelector>();
 
 builder.Services.AddScoped<MimosBabySpa.Application.Commerce.ICartProductResolver, MimosBabySpa.Application.Commerce.CommerceCartProductResolver>();
+builder.Services.AddScoped<MimosBabySpa.Application.Commerce.IProductCandidateRetriever, MimosBabySpa.Application.Commerce.LocalProductCandidateRetriever>();
+builder.Services.AddScoped<MimosBabySpa.Application.Commerce.IProductAliasService, MimosBabySpa.Application.Commerce.ProductAliasService>();
+builder.Services.AddScoped<MimosBabySpa.Application.Commerce.IProductCatalogSyncService, MimosBabySpa.Application.Commerce.ProductCatalogSyncService>();
 
 builder.Services.AddScoped<MimosBabySpa.Application.Commerce.ICartMutationStore, MimosBabySpa.Application.Commerce.CommerceCartMutationStore>();
 
