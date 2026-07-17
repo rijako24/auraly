@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using MimosBabySpa.Application.Configuration;
 
 namespace MimosBabySpa.Application.Services;
@@ -65,7 +66,32 @@ public sealed class AudioTranscriptionQualityEvaluator : IAudioTranscriptionQual
 
         var reliability = ResolveReliability(flags);
         var score = CalculateScore(averageLogProbability, maxNoSpeechProbability, maxCompressionRatio);
+        if (reliability == AudioTranscriptionReliability.Ambiguous
+            && HasStrongStructuredContent(text, flags))
+        {
+            flags.Add("structured_transcript_recovery");
+            reliability = AudioTranscriptionReliability.Reliable;
+            score = Math.Max(score, 0.72m);
+        }
         return Build(reliability, score, flags);
+    }
+
+    private bool HasStrongStructuredContent(string text, IReadOnlyList<string> flags)
+    {
+        if (!_options.EnableStructuredTranscriptRecovery
+            || flags.Count != 1
+            || !flags[0].Equals("low_average_log_probability", StringComparison.OrdinalIgnoreCase)
+            || text.Length < _options.StructuredTranscriptMinimumCharacters)
+            return false;
+
+        var tokens = Regex.Matches(text, @"[\p{L}\p{N}]+")
+            .Select(match => match.Value)
+            .ToList();
+        var numericTokens = tokens.Count(token => token.Any(char.IsDigit));
+        var clauseSeparators = text.Count(character => character is '.' or ',' or ';' or ':');
+        return tokens.Count >= _options.StructuredTranscriptMinimumTokens
+            && numericTokens >= _options.StructuredTranscriptMinimumNumericTokens
+            && clauseSeparators >= 2;
     }
 
     private AudioTranscriptionQualityAssessment EvaluateWithoutSegments(

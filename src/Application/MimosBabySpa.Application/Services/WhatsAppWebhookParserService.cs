@@ -1,3 +1,6 @@
+using System.Globalization;
+using System.Text;
+using System.Text.Json;
 using MimosBabySpa.Application.Configuration;
 using MimosBabySpa.Application.DTOs;
 using Microsoft.Extensions.Logging;
@@ -6,11 +9,16 @@ namespace MimosBabySpa.Application.Services;
 
 public class WhatsAppWebhookParserService : IWhatsAppWebhookParserService
 {
+    internal const string PendingAudioConfirmationFactKey = "system.pending_audio_confirmation";
+
     private readonly IWhatsAppService _whatsAppService;
     private readonly IAIService _aiService;
     private readonly IBusinessIdentificationService _businessIdentificationService;
     private readonly IAudioTranscriptionQualityEvaluator _audioQualityEvaluator;
     private readonly AudioTranscriptionQualityOptions _audioQualityOptions;
+    private readonly IConversationService _conversationService;
+    private readonly IConversationFactsService _conversationFacts;
+    private readonly IMessageService _messageService;
     private readonly ILogger<WhatsAppWebhookParserService> _logger;
 
     public WhatsAppWebhookParserService(
@@ -19,6 +27,9 @@ public class WhatsAppWebhookParserService : IWhatsAppWebhookParserService
         IAudioTranscriptionQualityEvaluator audioQualityEvaluator,
         AudioTranscriptionQualityOptions audioQualityOptions,
         IBusinessIdentificationService businessIdentificationService,
+        IConversationService conversationService,
+        IConversationFactsService conversationFacts,
+        IMessageService messageService,
         ILogger<WhatsAppWebhookParserService> logger)
     {
         _whatsAppService = whatsAppService;
@@ -27,6 +38,9 @@ public class WhatsAppWebhookParserService : IWhatsAppWebhookParserService
         _logger = logger;
         _audioQualityEvaluator = audioQualityEvaluator;
         _audioQualityOptions = audioQualityOptions;
+        _conversationService = conversationService;
+        _conversationFacts = conversationFacts;
+        _messageService = messageService;
     }
 
     public async Task<IEnumerable<IncomingMessage>> ExtractAllMessagesFromEntryAsync(Entry entry, Guid businessId)
@@ -51,10 +65,15 @@ public class WhatsAppWebhookParserService : IWhatsAppWebhookParserService
                 // Mensaje de texto
                 if (message.Type == "text" && message.Text != null)
                 {
+                    var resolvedText = await ResolvePendingAudioConfirmationAsync(
+                        businessId, message.From, customerName, message.Text.Body);
+                    if (resolvedText is null)
+                        continue;
+
                     result.Add(new IncomingMessage
                     {
                         UserNumber = message.From,
-                        MessageText = message.Text.Body,
+                        MessageText = resolvedText,
                         CustomerName = customerName,
                         ProviderMessageId = message.Id,
                         ReplyToProviderMessageId = message.Context?.Id,
@@ -156,7 +175,16 @@ public class WhatsAppWebhookParserService : IWhatsAppWebhookParserService
                                 quality.Reason,
                                 transcribedText);
 
-                            await SendAmbiguousAudioReplyAsync(businessId, message.From, transcribedText);
+                            var conversation = await _conversationService.GetOrCreateConversationAsync(
+                                businessId, message.From, customerName);
+                            var pending = new PendingAudioConfirmation(
+                                transcribedText,
+                                DateTime.UtcNow.AddMinutes(Math.Clamp(
+                                    _audioQualityOptions.AmbiguousConfirmationTtlMinutes, 1, 60)));
+                            await _conversationFacts.SetAsync(conversation.ConversationId, businessId,
+                                PendingAudioConfirmationFactKey, JsonSerializer.Serialize(pending));
+                            await SendAmbiguousAudioReplyAsync(
+                                businessId, message.From, transcribedText, conversation.ConversationId);
                         }
                         else if (!string.IsNullOrWhiteSpace(transcribedText))
                         {
@@ -218,10 +246,80 @@ public class WhatsAppWebhookParserService : IWhatsAppWebhookParserService
         reply = new ResolvedInteractiveReply(normalizedId, normalizedTitle);
         return true;
     }
+
+    private async Task<string?> ResolvePendingAudioConfirmationAsync(
+        Guid businessId,
+        string userNumber,
+        string? customerName,
+        string messageText)
+    {
+        var confirmation = ClassifyConfirmation(messageText);
+        if (confirmation == AudioConfirmationAnswer.None)
+            return messageText;
+
+        var conversation = await _conversationService.GetOrCreateConversationAsync(
+            businessId, userNumber, customerName);
+        var json = await _conversationFacts.GetAsync(
+            conversation.ConversationId, PendingAudioConfirmationFactKey);
+        if (string.IsNullOrWhiteSpace(json))
+            return messageText;
+
+        PendingAudioConfirmation? pending;
+        try
+        {
+            pending = JsonSerializer.Deserialize<PendingAudioConfirmation>(json);
+        }
+        catch (JsonException)
+        {
+            pending = null;
+        }
+
+        await _conversationFacts.ClearFieldsAsync(
+            conversation.ConversationId, [PendingAudioConfirmationFactKey]);
+
+        if (pending is null || pending.ExpiresAtUtc <= DateTime.UtcNow)
+            return messageText;
+
+        if (confirmation == AudioConfirmationAnswer.Affirmative)
+        {
+            _logger.LogInformation(
+                "Confirmacion de audio aplicada para ConversationId={ConversationId}",
+                conversation.ConversationId);
+            return pending.Transcription;
+        }
+
+        await SendUnclearAudioReplyAsync(businessId, userNumber);
+        return null;
+    }
+
+    private static AudioConfirmationAnswer ClassifyConfirmation(string text)
+    {
+        var normalized = NormalizeConfirmation(text);
+        if (normalized is "si" or "correcto" or "correcta" or "exacto" or "exacta"
+            or "eso es" or "asi es" or "confirmo" or "confirmado")
+            return AudioConfirmationAnswer.Affirmative;
+        if (normalized is "no" or "no es" or "incorrecto" or "incorrecta")
+            return AudioConfirmationAnswer.Negative;
+        return AudioConfirmationAnswer.None;
+    }
+
+    private static string NormalizeConfirmation(string value)
+    {
+        var decomposed = (value ?? string.Empty).Normalize(NormalizationForm.FormD);
+        var builder = new StringBuilder(decomposed.Length);
+        foreach (var character in decomposed)
+        {
+            if (CharUnicodeInfo.GetUnicodeCategory(character) != UnicodeCategory.NonSpacingMark)
+                builder.Append(char.IsLetterOrDigit(character) ? char.ToLowerInvariant(character) : ' ');
+        }
+        return string.Join(' ', builder.ToString().Split(
+            ' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+    }
     private async Task SendAmbiguousAudioReplyAsync(
         Guid businessId,
         string userNumber,
-        string transcription)
+        string transcription,
+        Guid conversationId)
     {
         if (string.IsNullOrWhiteSpace(_audioQualityOptions.AmbiguousAudioReply))
         {
@@ -234,6 +332,7 @@ public class WhatsAppWebhookParserService : IWhatsAppWebhookParserService
             transcription,
             StringComparison.OrdinalIgnoreCase);
 
+        await _messageService.SaveMessageAsync(conversationId, "Bot", reply);
         await _whatsAppService.SendTextMessageAsync(businessId, userNumber, reply);
     }
     private async Task SendUnclearAudioReplyAsync(Guid businessId, string userNumber)
@@ -258,6 +357,10 @@ public class WhatsAppWebhookParserService : IWhatsAppWebhookParserService
             _logger.LogWarning(replyEx, "No se pudo enviar respuesta de audio no claro al usuario {UserNumber}", userNumber);
         }
     }
+
+    private sealed record PendingAudioConfirmation(string Transcription, DateTime ExpiresAtUtc);
+
+    private enum AudioConfirmationAnswer { None, Affirmative, Negative }
 
     private sealed record ResolvedInteractiveReply(string Id, string Title);
 }

@@ -24,6 +24,16 @@ public sealed class AudioTranscriptionQualityOptions
 
     public double UnreliableCompressionRatioThreshold { get; set; } = 2.8;
 
+    public bool EnableStructuredTranscriptRecovery { get; set; } = true;
+
+    public int StructuredTranscriptMinimumCharacters { get; set; } = 80;
+
+    public int StructuredTranscriptMinimumTokens { get; set; } = 12;
+
+    public int StructuredTranscriptMinimumNumericTokens { get; set; } = 2;
+
+    public int AmbiguousConfirmationTtlMinutes { get; set; } = 15;
+
     public string AmbiguousAudioReply { get; set; } =
         "Entendi: \"{{transcription}}\". Es eso lo que quisiste decir?";
 

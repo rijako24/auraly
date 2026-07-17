@@ -115,6 +115,9 @@ public sealed class WhatsAppInteractiveReplyParserTests
         new AudioTranscriptionQualityEvaluator(new AudioTranscriptionQualityOptions()),
         new AudioTranscriptionQualityOptions(),
         Mock.Of<IBusinessIdentificationService>(),
+        Mock.Of<IConversationService>(),
+        Mock.Of<IConversationFactsService>(),
+        Mock.Of<IMessageService>(),
         NullLogger<WhatsAppWebhookParserService>.Instance);
 
     private static Entry EntryWith(Message message) => new()

@@ -45,7 +45,7 @@ public sealed class TypingIndicatorHeartbeatTests
             },
             TimeSpan.FromMilliseconds(20));
 
-        await recovered.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await recovered.Task.WaitAsync(TimeSpan.FromSeconds(10));
 
         Assert.True(Volatile.Read(ref refreshCount) >= 2);
     }

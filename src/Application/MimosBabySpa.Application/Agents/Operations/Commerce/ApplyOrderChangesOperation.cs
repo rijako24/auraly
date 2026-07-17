@@ -137,7 +137,7 @@ public sealed class ApplyOrderChangesOperation : IAgentOperation
             foreach (var applied in result.AppliedCommands)
             {
                 var appliedCommand = new CartCommand(
-                    applied.Operation, applied.ProductText, applied.Quantity, null);
+                    applied.Operation, applied.Product?.Name ?? applied.ProductText, applied.Quantity, null);
                 var workItem = FindWorkItem(merge.WorkItems, appliedCommand);
                 nextPending.Add(new PendingCartItem(
                     appliedCommand,

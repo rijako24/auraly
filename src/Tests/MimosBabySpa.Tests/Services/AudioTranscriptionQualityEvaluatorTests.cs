@@ -58,6 +58,23 @@ public sealed class AudioTranscriptionQualityEvaluatorTests
         result.Flags.Should().Contain("low_average_log_probability");
     }
 
+    [Fact]
+    public void Evaluate_AcceptsLongStructuredOrder_WhenOnlyWeakSignalIsLowLogProbability()
+    {
+        var evaluator = new AudioTranscriptionQualityEvaluator(new AudioTranscriptionQualityOptions());
+        var transcription = BuildTranscription(
+            text: "Para el jamon cuny dame 6. Para el maiz dame 2 maiz congelado. Para las tocinetas dame 3 salsa tocineta. Para papa farm fries dame 2 y para ripio dame 5.",
+            averageLogProbability: -0.95,
+            noSpeechProbability: 0.10,
+            compressionRatio: 1.2);
+
+        var result = evaluator.Evaluate(transcription);
+
+        result.Reliability.Should().Be(AudioTranscriptionReliability.Reliable);
+        result.ShouldAccept.Should().BeTrue();
+        result.Flags.Should().Contain("structured_transcript_recovery");
+    }
+
     private static AudioTranscriptionResult BuildTranscription(
         string text,
         double averageLogProbability,
