@@ -22,6 +22,13 @@ public class ConsoleWhatsAppService : IWhatsAppService
         return Task.CompletedTask;
     }
 
+    public Task<IAsyncDisposable> StartTypingIndicatorAsync(
+        Guid businessId,
+        string? phoneNumberId,
+        string? whatsAppMessageId,
+        CancellationToken cancellationToken = default) =>
+        Task.FromResult<IAsyncDisposable>(NoopAsyncDisposable.Instance);
+
     public Task SendTextMessageAsync(Guid businessId, string to, string message)
     {
         System.Console.WriteLine();
@@ -101,5 +108,12 @@ public class ConsoleWhatsAppService : IWhatsAppService
     {
         // Para la consola, siempre retornamos true
         return Task.FromResult(true);
+    }
+
+    private sealed class NoopAsyncDisposable : IAsyncDisposable
+    {
+        public static readonly NoopAsyncDisposable Instance = new();
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 }

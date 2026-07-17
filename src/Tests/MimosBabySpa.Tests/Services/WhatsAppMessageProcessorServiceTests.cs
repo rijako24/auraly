@@ -21,7 +21,8 @@ public sealed class WhatsAppMessageProcessorServiceTests
         const string userNumber = "573023823535";
         const string messageText = "Aceptar";
         const string payload = "external_interaction:accepted:1559bd32-ec0b-4356-b98e-d2e754391c29";
-        var inboundMetadata = new AgentInboundMetadata("wamid.inbound", "wamid.assignment", payload);
+        var inboundMetadata = new AgentInboundMetadata(
+            "wamid.inbound", "wamid.assignment", payload, RecipientPhoneNumberId: "phone-id");
 
         var conversation = new Conversation
         {
@@ -57,12 +58,20 @@ public sealed class WhatsAppMessageProcessorServiceTests
                 inboundMetadata))
             .ReturnsAsync(AgentTurnResult.Ok(string.Empty));
 
+        var typingSession = new Mock<IAsyncDisposable>();
+        typingSession.Setup(s => s.DisposeAsync()).Returns(ValueTask.CompletedTask);
+        var whatsApp = new Mock<IWhatsAppService>();
+        whatsApp
+            .Setup(s => s.StartTypingIndicatorAsync(
+                businessId, "phone-id", "wamid.inbound", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(typingSession.Object);
+
         var processor = new WhatsAppMessageProcessorService(
             conversationService.Object,
             stateManager.Object,
             Mock.Of<IMessageService>(),
             leadService.Object,
-            Mock.Of<IWhatsAppService>(),
+            whatsApp.Object,
             agent.Object,
             Mock.Of<IAgentRepository>(),
             Mock.Of<IBlobStorageService>(),
@@ -78,6 +87,8 @@ public sealed class WhatsAppMessageProcessorServiceTests
             inboundMetadata);
 
         agent.VerifyAll();
+        whatsApp.VerifyAll();
+        typingSession.Verify(s => s.DisposeAsync(), Times.Once);
         leadService.VerifyNoOtherCalls();
     }
 

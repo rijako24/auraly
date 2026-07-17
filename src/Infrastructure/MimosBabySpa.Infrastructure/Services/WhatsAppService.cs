@@ -17,6 +17,7 @@ public class WhatsAppService : IWhatsAppService
     private readonly ILogger<WhatsAppService> _logger;
     private readonly string _verifyToken;
     private readonly int _maxTextMessageLength;
+    private readonly TimeSpan _typingIndicatorRefreshInterval;
 
     public WhatsAppService(
         HttpClient httpClient,
@@ -37,10 +38,61 @@ public class WhatsAppService : IWhatsAppService
 
         _verifyToken = options.VerifyToken;
         _maxTextMessageLength = Math.Clamp(options.MaxTextMessageLength, 500, 4096);
+        _typingIndicatorRefreshInterval = TimeSpan.FromSeconds(
+            Math.Clamp(options.TypingIndicatorRefreshIntervalSeconds, 5, 20));
         _httpClient.BaseAddress = new Uri(options.ApiBaseUrl.TrimEnd('/') + "/");
     }
 
-    public async Task AcknowledgeMessageAsync(string phoneNumberId, string accessToken, string whatsAppMessageId)
+    public Task AcknowledgeMessageAsync(string phoneNumberId, string accessToken, string whatsAppMessageId) =>
+        SendTypingIndicatorAsync(phoneNumberId, accessToken, whatsAppMessageId, CancellationToken.None);
+
+    public async Task<IAsyncDisposable> StartTypingIndicatorAsync(
+        Guid businessId,
+        string? phoneNumberId,
+        string? whatsAppMessageId,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(phoneNumberId) || string.IsNullOrWhiteSpace(whatsAppMessageId))
+            return NoopAsyncDisposable.Instance;
+
+        try
+        {
+            var credentials = await _credentialResolver.ResolveAsync(
+                businessId,
+                phoneNumberId.Trim(),
+                cancellationToken);
+            if (credentials is null)
+                return NoopAsyncDisposable.Instance;
+
+            return new TypingIndicatorHeartbeat(
+                ct => SendTypingIndicatorAsync(
+                    credentials.PhoneNumberId,
+                    credentials.AccessToken,
+                    whatsAppMessageId.Trim(),
+                    ct),
+                _typingIndicatorRefreshInterval,
+                cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return NoopAsyncDisposable.Instance;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "No se pudo iniciar indicador de escritura para BusinessId={BusinessId}, MessageId={MessageId}",
+                businessId,
+                whatsAppMessageId);
+            return NoopAsyncDisposable.Instance;
+        }
+    }
+
+    private async Task SendTypingIndicatorAsync(
+        string phoneNumberId,
+        string accessToken,
+        string whatsAppMessageId,
+        CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(whatsAppMessageId) || string.IsNullOrWhiteSpace(phoneNumberId))
             return;
@@ -64,12 +116,16 @@ public class WhatsAppService : IWhatsAppService
             };
             request.Headers.Add("Authorization", $"Bearer {accessToken}");
 
-            var response = await _httpClient.SendAsync(request);
-            var responseBody = await response.Content.ReadAsStringAsync();
+            var response = await _httpClient.SendAsync(request, cancellationToken);
+            var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
             if (!response.IsSuccessStatusCode)
                 _logger.LogWarning(
                     "Acknowledge falló para PhoneNumberId={PhoneNumberId}, MessageId={MessageId}: Status={Status}, Response={Response}",
                     phoneNumberId, whatsAppMessageId, response.StatusCode, responseBody);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // La respuesta ya va a enviarse o el procesamiento fue cancelado.
         }
         catch (Exception ex)
         {
@@ -455,6 +511,11 @@ public class WhatsAppService : IWhatsAppService
             return null;
         }
     }
+
+    private sealed class NoopAsyncDisposable : IAsyncDisposable
+    {
+        public static readonly NoopAsyncDisposable Instance = new();
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
 }
-
-

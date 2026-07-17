@@ -21,4 +21,7 @@ public class WhatsAppWebhookOptions
     /// Límite operativo por mensaje. Las respuestas largas se dividen por secciones completas.
     /// </summary>
     public int MaxTextMessageLength { get; set; } = 1800;
+
+    /// <summary>Intervalo de renovacion; debe permanecer por debajo de los 25 segundos de Meta.</summary>
+    public int TypingIndicatorRefreshIntervalSeconds { get; set; } = 15;
 }

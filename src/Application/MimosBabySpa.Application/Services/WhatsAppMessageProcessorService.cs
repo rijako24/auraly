@@ -109,12 +109,25 @@ public class WhatsAppMessageProcessorService : IWhatsAppMessageProcessorService
         }
 
         // 3. Procesar con el motor agentico
-        var result = await _agentService.ProcessMessageAsync(
-            agentId.Value,
-            conversation.ConversationId,
-            messageText,
-            userNumber,
-            inboundMetadata: inboundMetadata);
+        AgentTurnResult result;
+        var typingSession = await _whatsAppService.StartTypingIndicatorAsync(
+            businessId,
+            inboundMetadata?.RecipientPhoneNumberId,
+            inboundMetadata?.ProviderMessageId);
+        try
+        {
+            result = await _agentService.ProcessMessageAsync(
+                agentId.Value,
+                conversation.ConversationId,
+                messageText,
+                userNumber,
+                inboundMetadata: inboundMetadata);
+        }
+        finally
+        {
+            if (typingSession is not null)
+                await typingSession.DisposeAsync();
+        }
 
         if (!result.Success)
         {

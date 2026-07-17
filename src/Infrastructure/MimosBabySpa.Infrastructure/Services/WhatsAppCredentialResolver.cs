@@ -35,4 +35,36 @@ public class WhatsAppCredentialResolver : IWhatsAppCredentialResolver
             active.WhatsAppAccessToken,
             active.WhatsAppBusinessAccountId);
     }
+
+    public async Task<WhatsAppCredentials?> ResolveAsync(
+        Guid businessId,
+        string whatsAppPhoneNumberId,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(whatsAppPhoneNumberId))
+            return await ResolveAsync(businessId, cancellationToken);
+
+        var normalizedPhoneNumberId = whatsAppPhoneNumberId.Trim();
+        var numbers = await _unitOfWork.BusinessWhatsAppNumbers.GetByBusinessIdAsync(businessId);
+        var active = numbers.FirstOrDefault(number =>
+            number.IsActive &&
+            string.Equals(
+                number.WhatsAppPhoneNumberId?.Trim(),
+                normalizedPhoneNumberId,
+                StringComparison.Ordinal));
+
+        if (active is null)
+        {
+            _logger.LogWarning(
+                "Negocio {BusinessId} no tiene activo el numero receptor WhatsApp {PhoneNumberId}",
+                businessId,
+                normalizedPhoneNumberId);
+            return null;
+        }
+
+        return new WhatsAppCredentials(
+            active.WhatsAppPhoneNumberId,
+            active.WhatsAppAccessToken,
+            active.WhatsAppBusinessAccountId);
+    }
 }

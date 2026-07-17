@@ -11,6 +11,16 @@ public interface IWhatsAppService
     /// </summary>
     Task AcknowledgeMessageAsync(string phoneNumberId, string accessToken, string whatsAppMessageId);
 
+    /// <summary>
+    /// Mantiene visible el indicador de escritura hasta que la sesion sea liberada.
+    /// Es best-effort y no bloquea el procesamiento si el canal no esta disponible.
+    /// </summary>
+    Task<IAsyncDisposable> StartTypingIndicatorAsync(
+        Guid businessId,
+        string? phoneNumberId,
+        string? whatsAppMessageId,
+        CancellationToken cancellationToken = default);
+
     Task SendTextMessageAsync(Guid businessId, string to, string message);
     Task<string?> SendButtonMessageAsync(Guid businessId, string to, string message, IReadOnlyList<OutboundButton> buttons);
     Task<string?> SendTemplateMessageAsync(
