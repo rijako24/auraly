@@ -268,18 +268,15 @@ public sealed class ApplyOrderChangesOperation : IAgentOperation
                             ? $"{issue.ProductText} — {product.Name}"
                             : issue.ProductText
                     }).ToList(),
-                ambiguous_options = issues.Where(issue => issue.Code == "product_ambiguous")
-                    .SelectMany(issue => issue.ProductCandidates.Select(product => new
+                ambiguous_groups = issues.Where(issue => issue.Code == "product_ambiguous")
+                    .Select(issue => new
                     {
                         product_text = issue.ProductText,
-                        name = product.Name,
-                        unit_price = product.UnitPrice,
-                        currency = product.Currency,
-                        is_available = product.IsAvailable,
-                        availability_text = product.IsAvailable
-                            ? $"${product.UnitPrice.ToString("N2", CultureInfo.InvariantCulture)} {product.Currency}"
-                            : "sin existencia"
-                    })).ToList(),
+                        options_text = string.Join("\r\n", issue.ProductCandidates.Select(product =>
+                            $"- {product.Name} — {(product.IsAvailable
+                                ? $"${product.UnitPrice.ToString("N2", CultureInfo.InvariantCulture)} {product.Currency}"
+                                : "sin existencia")}"))
+                    }).ToList(),
                 suggested_options = issues.Where(issue => issue.Code == "product_suggestion")
                     .SelectMany(issue => issue.ProductCandidates.Select(product => new
                     {

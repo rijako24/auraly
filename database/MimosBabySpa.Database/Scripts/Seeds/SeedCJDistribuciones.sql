@@ -1394,6 +1394,16 @@ SET @SettingsJson = JSON_MODIFY(@SettingsJson, '$.templates.cart_partial',
     REPLACE(JSON_VALUE(@SettingsJson, '$.templates.cart_partial'),
         N'{{product_text}}{{#if recognized_name}} ({{recognized_name}}){{/if}}', N'{{description}}'));
 
+SET @SettingsJson = JSON_MODIFY(@SettingsJson, '$.templates.cart_partial',
+    REPLACE(JSON_VALUE(@SettingsJson, '$.templates.cart_partial'),
+        N'{{#if ambiguous_options}}\r\n*Necesito que elijas*\r\n{{#each ambiguous_options}}\r\n- Para {{product_text}}: {{name}} — {{availability_text}}\r\n{{/each}}\r\n{{/if}}',
+        N'{{#if ambiguous_groups}}\r\n*Necesito que elijas*\r\n{{#each ambiguous_groups}}\r\nPara {{product_text}}, necesito que me confirmes una de estas opciones:\r\n{{options_text}}\r\n{{/each}}\r\n{{/if}}'));
+
+SET @SettingsJson = JSON_MODIFY(@SettingsJson, '$.templates.cart_partial',
+    REPLACE(JSON_VALUE(@SettingsJson, '$.templates.cart_partial'),
+        N'*Pedido actual*\r\n{{#each items}}\r\n- {{name}} x{{quantity}}: ${{line_total}}\r\n{{/each}}\r\n\r\n*Total: ${{total}} {{currency}}*\r\n\r\n',
+        N'*Total actual del pedido: ${{total}} {{currency}}*\r\n\r\n'));
+
 SET @SettingsJson = JSON_MODIFY(@SettingsJson, '$.templates.cart_not_found',
     N'No agregue estas referencias porque no encontre una coincidencia segura:\r\n{{#each issues}}\r\n- {{ProductText}}\r\n{{/each}}\r\n\r\nIndicame el nombre, marca, presentacion o codigo de una de ellas para identificarla.');
 

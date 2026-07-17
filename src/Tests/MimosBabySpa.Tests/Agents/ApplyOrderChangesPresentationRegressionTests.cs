@@ -61,7 +61,11 @@ public sealed class ApplyOrderChangesPresentationRegressionTests
         context.GetProperty("items").EnumerateArray().ToList().Should().HaveCount(2);
         context.GetProperty("suggested_options").GetArrayLength().Should().Be(1);
         context.GetProperty("unavailable_items").GetArrayLength().Should().Be(1);
-        context.GetProperty("ambiguous_options").GetArrayLength().Should().Be(2);
+        var ambiguousGroups = context.GetProperty("ambiguous_groups").EnumerateArray().ToList();
+        ambiguousGroups.Should().ContainSingle();
+        ambiguousGroups[0].GetProperty("product_text").GetString().Should().Be("maiz");
+        ambiguousGroups[0].GetProperty("options_text").GetString()
+            .Should().ContainAll("MAIZ DULCE", "MAIZ CONGELADO");
         context.GetProperty("not_found_items").GetArrayLength().Should().Be(0);
     }
 
