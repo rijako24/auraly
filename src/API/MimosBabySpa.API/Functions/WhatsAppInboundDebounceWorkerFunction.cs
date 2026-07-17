@@ -91,20 +91,23 @@ public sealed class WhatsAppInboundDebounceWorkerFunction
         try
         {
             var allMessages = await ParsePendingMessagesAsync(wakeup.BusinessId, pending);
-            if (allMessages.Count > 0)
+            foreach (var channelBatch in allMessages
+                .GroupBy(message => message.RecipientPhoneNumberId ?? string.Empty))
             {
+                var messages = channelBatch.ToList();
                 var result = await _batchProcessor.ProcessAsync(
                     wakeup.BusinessId,
-                    allMessages,
+                    messages,
                     ct);
 
-                if (allMessages.Count > 1)
+                if (messages.Count > 1)
                 {
                     _logger.LogInformation(
-                        "Debounce inbound: procesado lote de {Count} mensajes con {InteractiveCount} mensaje(s) interactivo(s) en negocio {BusinessId}",
+                        "Debounce inbound: procesado lote de {Count} mensajes con {InteractiveCount} mensaje(s) interactivo(s) en negocio {BusinessId}, receptor {RecipientPhoneNumberId}",
                         result.MessageCount,
                         result.InteractiveMessageCount,
-                        wakeup.BusinessId);
+                        wakeup.BusinessId,
+                        channelBatch.Key);
                 }
             }
 

@@ -9,6 +9,15 @@ public static class ProductSearchText
     {
         "a", "al", "con", "de", "del", "el", "en", "la", "las", "los", "o", "para", "por", "un", "una", "y", "x"
     };
+    private static readonly HashSet<string> MeasurementUnits = new(StringComparer.Ordinal)
+    {
+        "g", "kg", "mg", "ml", "l", "cl", "cc", "oz", "lb", "und", "unidad", "unidades"
+    };
+    private static readonly HashSet<string> CommercialPackagingWords = new(StringComparer.Ordinal)
+    {
+        "bolsa", "bulto", "caja", "canasta", "display", "paquet", "paquete"
+    };
+
 
     private static readonly string[] DerivationalSuffixes =
     [
@@ -27,7 +36,7 @@ public static class ProductSearchText
             .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .SelectMany(SplitAlphaNumeric)
             .Where(term => !StopWords.Contains(term))
-            .Where(term => term.Length > 1 || term.All(char.IsDigit))
+            .Where(term => term.Length > 1 || term.All(char.IsDigit) || MeasurementUnits.Contains(term))
             .Select(Singularize)
             .Distinct(StringComparer.Ordinal)
             .ToList();
@@ -44,6 +53,11 @@ public static class ProductSearchText
         }
         return keys;
     }
+
+    public static IReadOnlyList<string> GetMatchingTokens(string? value) =>
+        GetTokens(value)
+            .Where(token => !CommercialPackagingWords.Contains(token))
+            .ToList();
 
     public static IReadOnlyCollection<string> GetIndexTerms(params string?[] values)
     {
@@ -73,7 +87,12 @@ public static class ProductSearchText
             : 0d;
         var dice = NGramDice(left, right, 3);
         var edit = NormalizedLevenshtein(left, right);
-        return Math.Max(prefixScore, Math.Max(dice * 0.9d, edit * 0.82d));
+        var phoneticLeft = GetPhoneticKey(left);
+        var phoneticRight = GetPhoneticKey(right);
+        var phoneticEdit = phoneticLeft.Length == 0 || phoneticRight.Length == 0
+            ? 0d
+            : NormalizedLevenshtein(phoneticLeft, phoneticRight) * 0.82d;
+        return Math.Max(phoneticEdit, Math.Max(prefixScore, Math.Max(dice * 0.9d, edit * 0.82d)));
     }
 
     public static string NormalizeWords(string? value)
@@ -108,7 +127,43 @@ public static class ProductSearchText
             return;
         keys.Add(token);
         if (token.Length >= 5 && token.All(char.IsLetter))
+        {
             keys.Add(token[..4]);
+            foreach (var gram in GetCharacterNGrams(token, 3))
+                keys.Add($"g:{gram}");
+
+            var phonetic = GetPhoneticKey(token);
+            if (phonetic.Length >= 3)
+                keys.Add($"p:{phonetic}");
+        }
+    }
+
+    private static IEnumerable<string> GetCharacterNGrams(string token, int size)
+    {
+        var limit = Math.Min(token.Length - size + 1, 24);
+        for (var index = 0; index < limit; index++)
+            yield return token.Substring(index, size);
+    }
+
+    private static string GetPhoneticKey(string token)
+    {
+        var builder = new StringBuilder(token.Length);
+        token = token.Replace("qu", "k", StringComparison.Ordinal);
+        foreach (var character in token)
+        {
+            var normalized = character switch
+            {
+                'b' or 'v' => 'b',
+                'c' or 'k' or 'q' => 'k',
+                'g' or 'j' => 'j',
+                'y' => 'i',
+                'z' => 's',
+                _ => character
+            };
+            if (builder.Length == 0 || builder[^1] != normalized)
+                builder.Append(normalized);
+        }
+        return builder.ToString().Replace("h", string.Empty, StringComparison.Ordinal);
     }
 
     private static IEnumerable<string> GetStems(string token)

@@ -37,7 +37,9 @@
     <Build Include="Tables\EmployeeWorkingHours.sql" />
     <Build Include="Tables\EmployeeScheduleExceptions.sql" />
     <Build Include="Tables\IntegrationConnections.sql" />
+    <Build Include="Tables\IntegrationChannelWarehouses.sql" />
     <Build Include="Tables\Products.sql" />
+    <Build Include="Tables\ExternalCommerceCustomers.sql" />
     <Build Include="Tables\CartMutationReceipts.sql" />
     <Build Include="Tables\ProductAliases.sql" />
     <Build Include="Tables\ProductSearchTerms.sql" />

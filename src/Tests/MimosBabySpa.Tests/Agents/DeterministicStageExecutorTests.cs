@@ -51,6 +51,26 @@ public sealed class DeterministicStageExecutorTests
     }
 
     [Fact]
+    public async Task InputVersion_RecoverableFailure_IsDeduplicatedAcrossStagesWithinTurn()
+    {
+        var operation = new AmbiguousOutcomeOperation();
+        var executor = new DeterministicStageExecutor(
+            new AgentOperationRegistry([operation]),
+            new StageConditionEvaluator(),
+            new OperationArgumentBinder());
+        var context = Context();
+
+        await executor.ExecuteAsync(AmbiguousStage("global:cart_mutation"), StageActionTriggers.WhenReady, context);
+        var replay = await executor.ExecuteAsync(
+            AmbiguousStage("product_selection"),
+            StageActionTriggers.WhenReady,
+            context);
+
+        operation.CallCount.Should().Be(1);
+        replay.Trace.Should().ContainSingle(value => value.Skipped && value.SkipReason == "idempotent_replay");
+    }
+
+    [Fact]
     public async Task InputVersion_SameActionAndInputs_ExecutesAgainInANewTurn()
     {
         var operation = new CapturingAvailabilityOperation();
@@ -231,6 +251,20 @@ public sealed class DeterministicStageExecutorTests
         operation.CallCount.Should().Be(2);
         result.Trace.Should().ContainSingle(value => value.OutcomeCode == "completed" && value.Success);
     }
+    private static AgentFlowStage AmbiguousStage(string stageId) => new()
+    {
+        Id = stageId,
+        Actions =
+        [
+            new StageActionDefinition
+            {
+                Id = "apply_order_changes",
+                Operation = "test.ambiguous",
+                Execution = new StageActionExecutionDefinition { Idempotency = StageActionIdempotency.InputVersion }
+            }
+        ]
+    };
+
     private static AgentFlowStage Stage(string idempotency = StageActionIdempotency.InputVersion) => new()
     {
         Id = "scheduling",
@@ -312,6 +346,7 @@ public sealed class DeterministicStageExecutorTests
     }
     private sealed class AmbiguousOutcomeOperation : IAgentOperation
     {
+        public int CallCount { get; private set; }
         public OperationDescriptor Descriptor { get; } = new(
             "test.ambiguous",
             "{\"type\":\"object\",\"required\":[]}",
@@ -320,8 +355,10 @@ public sealed class DeterministicStageExecutorTests
         public Task<OperationOutcome> ExecuteAsync(
             JsonElement input,
             OperationContext context,
-            CancellationToken cancellationToken = default) =>
-            Task.FromResult(OperationOutcome.Fail(
+            CancellationToken cancellationToken = default)
+        {
+            CallCount++;
+            return Task.FromResult(OperationOutcome.Fail(
                 "cart.product_ambiguous",
                 "ambiguous",
                 true,
@@ -330,6 +367,7 @@ public sealed class DeterministicStageExecutorTests
                     product_text = "pollo",
                     product_options = new[] { new { Name = "Pechuga", UnitPrice = 12000m, Currency = "COP" } }
                 }));
+        }
     }
     private sealed class RecoverableThenSuccessfulOperation : IAgentOperation
     {

@@ -13,7 +13,7 @@ namespace MimosBabySpa.Tests.Commerce;
 public sealed class MantisIncompleteSnapshotRegressionTests
 {
     [Fact]
-    public async Task AnonymousSearch_DoesNotDowngradeExistingSellableSnapshot()
+    public async Task AnonymousSearch_NeverSubstitutesLiveResponseWithCachedCommercialData()
     {
         const string responseJson = """
             {
@@ -70,9 +70,9 @@ public sealed class MantisIncompleteSnapshotRegressionTests
 
         result.Products.Should().ContainSingle();
         result.Products[0].ProductId.Should().Be(existing.ProductId);
-        result.Products[0].UnitPrice.Should().Be(18900m);
-        result.Products[0].StockQuantity.Should().Be(12m);
-        result.Products[0].IsActive.Should().BeTrue();
+        result.Products[0].UnitPrice.Should().Be(0m);
+        result.Products[0].StockQuantity.Should().Be(0m);
+        result.Products[0].IsActive.Should().BeFalse();
         existing.UnitPrice.Should().Be(18900m);
         existing.StockQuantity.Should().Be(12m);
         existing.IsActive.Should().BeTrue();

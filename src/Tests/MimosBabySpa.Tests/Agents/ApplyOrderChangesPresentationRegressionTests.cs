@@ -27,6 +27,17 @@ public sealed class ApplyOrderChangesPresentationRegressionTests
         var issues = new[]
         {
             new CartCommandIssue("product_suggestion", "jamonada", ["JAMON CUNIT"])
+            {
+                ProductCandidates = [new("JAMON CUNIT", 10m, "COP")]
+            },
+            new CartCommandIssue("product_unavailable", "chorizo", ["CHORIZO SALSAN"])
+            {
+                ProductCandidates = [new("CHORIZO SALSAN", 0m, "COP")]
+            },
+            new CartCommandIssue("product_ambiguous", "maiz", ["MAIZ DULCE", "MAIZ CONGELADO"])
+            {
+                ProductCandidates = [new("MAIZ DULCE", 8m, "COP"), new("MAIZ CONGELADO", 9m, "COP")]
+            }
         };
         var applied = new[]
         {
@@ -42,11 +53,16 @@ public sealed class ApplyOrderChangesPresentationRegressionTests
         var context = outcome.Error!.Context!.Value;
 
         context.GetProperty("applied_item_count").GetInt32().Should().Be(1);
-        context.GetProperty("unresolved_item_count").GetInt32().Should().Be(1);
+        context.GetProperty("unresolved_item_count").GetInt32().Should().Be(3);
+        context.GetProperty("item_result_count").GetInt32().Should().Be(4);
         var appliedItems = context.GetProperty("applied_items").EnumerateArray().ToList();
         appliedItems.Should().ContainSingle();
         appliedItems[0].GetProperty("name").GetString().Should().Be(appliedProduct.Name);
         context.GetProperty("items").EnumerateArray().ToList().Should().HaveCount(2);
+        context.GetProperty("suggested_options").GetArrayLength().Should().Be(1);
+        context.GetProperty("unavailable_items").GetArrayLength().Should().Be(1);
+        context.GetProperty("ambiguous_options").GetArrayLength().Should().Be(2);
+        context.GetProperty("not_found_items").GetArrayLength().Should().Be(0);
     }
 
     private static ProductReference Product(string name, string sku) =>

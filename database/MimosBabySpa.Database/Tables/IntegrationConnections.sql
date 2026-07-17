@@ -11,12 +11,17 @@ CREATE TABLE [dbo].[IntegrationConnections] (
     [IsEnabled] BIT NOT NULL DEFAULT 0,
     [LastSyncAt] DATETIME2 NULL,
     [LastError] NVARCHAR(4000) NULL,
+    [CatalogSyncNextPage] INT NOT NULL CONSTRAINT [DF_IntegrationConnections_CatalogSyncNextPage] DEFAULT 1,
+    [CatalogDeltaCursorDate] DATE NULL,
+    [CustomerSyncNextPage] INT NOT NULL CONSTRAINT [DF_IntegrationConnections_CustomerSyncNextPage] DEFAULT 1,
     [CreatedAt] DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
     [UpdatedAt] DATETIME2 NULL,
     CONSTRAINT [FK_IntegrationConnections_Businesses] FOREIGN KEY ([BusinessId])
         REFERENCES [dbo].[Businesses] ([BusinessId])
         ON DELETE NO ACTION,
-    CONSTRAINT [CK_IntegrationConnections_ConnectionType] CHECK ([ConnectionType] IN (0, 1))
+    CONSTRAINT [CK_IntegrationConnections_ConnectionType] CHECK ([ConnectionType] IN (0, 1)),
+    CONSTRAINT [CK_IntegrationConnections_CatalogSyncNextPage] CHECK ([CatalogSyncNextPage] >= 0),
+    CONSTRAINT [CK_IntegrationConnections_CustomerSyncNextPage] CHECK ([CustomerSyncNextPage] >= 1)
 );
 
 GO

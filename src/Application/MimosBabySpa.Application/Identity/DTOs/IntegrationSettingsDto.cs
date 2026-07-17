@@ -100,3 +100,20 @@ public record UpdateSiigoCommerceIntegrationRequest(
     int DefaultCustomerBranchOffice,
     string? Username,
     string? AccessKey);
+
+public record MantisChannelWarehouseDto(
+    Guid BusinessWhatsAppNumberId,
+    string PhoneNumber,
+    string WhatsAppPhoneNumberId,
+    string? WarehouseCode,
+    string? WarehouseName,
+    bool IsActive);
+
+public record UpdateMantisChannelWarehousesRequest(
+    IReadOnlyList<UpdateMantisChannelWarehouseRequest> Channels);
+
+public record UpdateMantisChannelWarehouseRequest(
+    Guid BusinessWhatsAppNumberId,
+    string WarehouseCode,
+    string? WarehouseName,
+    bool IsActive = true);

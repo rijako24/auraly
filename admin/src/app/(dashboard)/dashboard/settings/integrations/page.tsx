@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import Link from "next/link";
-import { ArrowLeft, CalendarDays, CreditCard, Save } from "lucide-react";
+import { ArrowLeft, Building2, CalendarDays, CreditCard, PackageSearch, Save } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -22,6 +22,9 @@ import {
 import { Switch } from "@/components/ui/switch";
 import {
   useIntegrationSettings,
+  useMantisWarehouses,
+  useRefreshMantisProduct,
+  useUpdateMantisWarehouses,
   useUpdateGoogleCalendarIntegration,
   useUpdateWompiIntegration,
 } from "@/hooks/use-integrations";
@@ -32,6 +35,16 @@ export default function IntegrationsSettingsPage() {
   const { data, isLoading, isError, refetch } = useIntegrationSettings();
   const updateGoogle = useUpdateGoogleCalendarIntegration();
   const updateWompi = useUpdateWompiIntegration();
+  const refreshMantis = useRefreshMantisProduct();
+  const mantisWarehousesQuery = useMantisWarehouses();
+  const updateMantisWarehouses = useUpdateMantisWarehouses();
+  const [mantisWarehouses, setMantisWarehouses] = useState<
+    NonNullable<typeof mantisWarehousesQuery.data>
+  >([]);
+  const [mantisQuery, setMantisQuery] = useState("");
+  const [mantisResult, setMantisResult] = useState<{
+    productsFound: number; productsChanged: number;
+  } | null>(null);
 
   const [google, setGoogle] = useState({
     isEnabled: false,
@@ -54,6 +67,10 @@ export default function IntegrationsSettingsPage() {
     eventsSecret: "",
     integritySecret: "",
   });
+
+  useEffect(() => {
+    if (mantisWarehousesQuery.data) setMantisWarehouses(mantisWarehousesQuery.data);
+  }, [mantisWarehousesQuery.data]);
 
   useEffect(() => {
     if (!data) return;
@@ -295,6 +312,108 @@ export default function IntegrationsSettingsPage() {
             >
               <Save className="mr-2 h-4 w-4" />
               Guardar Wompi
+            </Button>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Building2 className="h-4 w-4" />
+              Bodega Mantis por número
+            </CardTitle>
+            <CardDescription>
+              Cada número receptor usa únicamente su bodega. Sin esta configuración el carrito se bloquea para evitar sumar inventario de otras bodegas.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {mantisWarehouses.map((channel, index) => (
+              <div className="space-y-3 rounded-md border p-3" key={channel.businessWhatsAppNumberId}>
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-medium">{channel.phoneNumber}</p>
+                    <p className="text-xs text-muted-foreground">{channel.whatsAppPhoneNumberId}</p>
+                  </div>
+                  <Switch
+                    checked={channel.isActive}
+                    onCheckedChange={(isActive) => setMantisWarehouses((current) =>
+                      current.map((item, itemIndex) => itemIndex === index ? { ...item, isActive } : item)
+                    )}
+                  />
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <Field label="Código de bodega">
+                    <Input value={channel.warehouseCode ?? ""} placeholder="Ej. 2"
+                      onChange={(event) => setMantisWarehouses((current) =>
+                        current.map((item, itemIndex) => itemIndex === index
+                          ? { ...item, warehouseCode: event.target.value } : item))} />
+                  </Field>
+                  <Field label="Nombre de bodega">
+                    <Input value={channel.warehouseName ?? ""} placeholder="Ej. SAN MARTIN"
+                      onChange={(event) => setMantisWarehouses((current) =>
+                        current.map((item, itemIndex) => itemIndex === index
+                          ? { ...item, warehouseName: event.target.value } : item))} />
+                  </Field>
+                </div>
+              </div>
+            ))}
+            {!mantisWarehousesQuery.isLoading && mantisWarehouses.length === 0 && (
+              <p className="text-sm text-muted-foreground">No hay números de WhatsApp activos.</p>
+            )}
+            <Button onClick={() => updateMantisWarehouses.mutate(mantisWarehouses)}
+              disabled={updateMantisWarehouses.isPending || mantisWarehouses.length === 0
+                || mantisWarehouses.some((channel) => channel.isActive && !channel.warehouseCode?.trim())}>
+              <Save className="mr-2 h-4 w-4" />
+              Guardar bodegas
+            </Button>
+          </CardContent>
+        </Card>
+
+              <PackageSearch className="h-4 w-4" />
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              Cat?logo Mantis
+            </CardTitle>
+            <CardDescription>
+              Busca un nombre o c?digo en Mantis y actualiza solamente su identidad local.
+              El precio y la existencia siempre se consultan en vivo al vender.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <Field label="Nombre o c?digo del producto">
+              <Input
+                value={mantisQuery}
+                placeholder="Ej. jamonada Cunni Chef"
+                onChange={(event) => {
+                  setMantisQuery(event.target.value);
+                  setMantisResult(null);
+                }}
+                onKeyDown={async (event) => {
+                  if (event.key !== "Enter" || !mantisQuery.trim()) return;
+                  setMantisResult(await refreshMantis.mutateAsync(mantisQuery.trim()));
+                }}
+              />
+            </Field>
+            {mantisResult && (
+              <p className="text-sm text-muted-foreground">
+                Encontrados: {mantisResult.productsFound}. Identidades actualizadas:{" "}
+                {mantisResult.productsChanged}.
+              </p>
+            )}
+            {refreshMantis.isError && (
+              <p className="text-sm text-destructive">
+                No fue posible actualizar el producto. Verifica la conexi?n Mantis.
+              </p>
+            )}
+            <Button
+              onClick={async () =>
+                setMantisResult(await refreshMantis.mutateAsync(mantisQuery.trim()))
+              }
+              disabled={refreshMantis.isPending || !mantisQuery.trim()}
+            >
+              <PackageSearch className="mr-2 h-4 w-4" />
+              Buscar y actualizar producto
             </Button>
           </CardContent>
         </Card>

@@ -44,6 +44,7 @@ public class WhatsAppWebhookParserService : IWhatsAppWebhookParserService
                 continue;
 
             var customerName = change.Value.Contacts?.FirstOrDefault()?.Profile?.Name;
+            var recipientPhoneNumberId = change.Value.Metadata?.PhoneNumberId;
 
             foreach (var message in change.Value.Messages)
             {
@@ -57,7 +58,8 @@ public class WhatsAppWebhookParserService : IWhatsAppWebhookParserService
                         CustomerName = customerName,
                         ProviderMessageId = message.Id,
                         ReplyToProviderMessageId = message.Context?.Id,
-                        Facts = message.Facts ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                        Facts = message.Facts ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+                        RecipientPhoneNumberId = recipientPhoneNumberId
                     });
                 }
                 else if (message.Type == "interactive"
@@ -71,7 +73,8 @@ public class WhatsAppWebhookParserService : IWhatsAppWebhookParserService
                         ProviderMessageId = message.Id,
                         ReplyToProviderMessageId = message.Context?.Id,
                         Facts = message.Facts ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
-                        InteractivePayload = interactiveReply.Id
+                        InteractivePayload = interactiveReply.Id,
+                        RecipientPhoneNumberId = recipientPhoneNumberId
                     });
                 }
                 else if (message.Type == "button" && message.Button != null)
@@ -84,7 +87,8 @@ public class WhatsAppWebhookParserService : IWhatsAppWebhookParserService
                         ProviderMessageId = message.Id,
                         ReplyToProviderMessageId = message.Context?.Id,
                         Facts = message.Facts ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
-                        InteractivePayload = message.Button.Payload
+                        InteractivePayload = message.Button.Payload,
+                        RecipientPhoneNumberId = recipientPhoneNumberId
                     });
                 }
                 // Mensaje de voz (voice) o audio - transcribir
@@ -131,7 +135,8 @@ public class WhatsAppWebhookParserService : IWhatsAppWebhookParserService
                                 CustomerName = customerName,
                                 ProviderMessageId = message.Id,
                                 ReplyToProviderMessageId = message.Context?.Id,
-                                Facts = message.Facts ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                                Facts = message.Facts ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+                                RecipientPhoneNumberId = recipientPhoneNumberId
                             });
 
                             _logger.LogInformation(

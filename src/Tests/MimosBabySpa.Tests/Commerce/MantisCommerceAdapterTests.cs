@@ -112,7 +112,7 @@ public sealed class MantisCommerceAdapterTests
         handler.LastRequestJson.Should().Contain("\"CantPag\":5");
         handler.LastRequestJson.Should().Contain("\"LlaveNit\":\"\"");
         handler.LastRequestJson.Should().Contain("\"LlaveCliente\":\"\"");
-        handler.LastRequestJson.Should().Contain("\"Bodega\":\"1\"");
+        handler.LastRequestJson.Should().Contain("\"Bodega\":\"\"");
         var product = result.Products[0];
         product.ExternalProductId.Should().Be("PO08");
         product.Sku.Should().Be("PO08");
@@ -128,9 +128,58 @@ public sealed class MantisCommerceAdapterTests
         product.RawPayloadJson.Should().Contain("PECHUGA MAC POLLO");
     }
 
+    [Fact]
+    public async Task GetProductIdentityPageAsync_WhenMantisReturnsShortPage_DoesNotFanOutPerItem()
+    {
+        const string responseJson = """
+            {
+              "ErrorKey": "",
+              "SDTConArtCasalins": [{
+                "CodigoProducto": "P001",
+                "NombreProducto": "PRODUCTO UNO",
+                "MonedaProducto": "COP"
+              }],
+              "SDTPaginadoCasalins": {
+                "NextPage": "True",
+                "Page": 12,
+                "PagaSize": 20,
+                "TotalItems": 783
+              }
+            }
+            """;
+        var handler = new JsonHttpMessageHandler(responseJson);
+        var businessId = Guid.NewGuid();
+        var connection = CreateConnection(
+            businessId,
+            """{"baseUrl":"https://mantis.example/rest/","genericCustomer":{"llaveNit":"5702","llaveCliente":"1"},"catalog":{"searchEndpoint":"products","maxPageSize":20}}""");
+        var adapter = new MantisCommerceAdapter(new HttpClient(handler), Mock.Of<IUnitOfWork>());
+        var context = new CommerceAdapterContext(
+            businessId,
+            Guid.Empty,
+            null,
+            CommerceProvider.Mantis,
+            connection);
+
+        var result = await ((ICommerceProductIdentitySource)adapter).GetProductIdentityPageAsync(
+            context,
+            page: 12,
+            pageSize: 20,
+            CancellationToken.None);
+
+        result.Products.Should().ContainSingle();
+        result.HasMore.Should().BeTrue();
+        handler.RequestCount.Should().Be(1);
+        handler.LastRequestJson.Should().Contain("\"Pagina\":12");
+        handler.LastRequestJson.Should().Contain("\"CantPag\":20");
+        handler.LastRequestJson.Should().Contain("\"Nomproducto\":\"\"");
+        handler.LastRequestJson.Should().Contain("\"LlaveNit\":\"5702\"");
+        handler.LastRequestJson.Should().Contain("\"LlaveCliente\":\"1\"");
+        handler.LastRequestJson.Should().Contain("\"Bodega\":\"\"");
+    }
+
 
     [Fact]
-    public async Task SearchProductsAsync_UsesKnownCustomerKeysAndCachesLookupWithinScope()
+    public async Task SearchProductsAsync_UsesPersistedCustomerIdentityAcrossCalls()
     {
         const string customerJson = """
             {
@@ -138,7 +187,7 @@ public sealed class MantisCommerceAdapterTests
               "SDTConsultarClientesCasalins": [{
                 "CelularCliente": "3001234567",
                 "LlaveNit": "10013",
-                "LlaveCliente": "6826",
+                "LlaveCliente": 6826,
                 "NombreCliente": "Cliente especial"
               }]
             }
@@ -157,7 +206,6 @@ public sealed class MantisCommerceAdapterTests
             }
             """;
         var handler = new SequenceHttpMessageHandler(customerJson, productJson, productJson);
-        var adapter = new MantisCommerceAdapter(new HttpClient(handler), Mock.Of<IUnitOfWork>());
         var businessId = Guid.NewGuid();
         var connection = CreateConnection(
             businessId,
@@ -168,6 +216,40 @@ public sealed class MantisCommerceAdapterTests
               "catalog": { "searchEndpoint": "products", "cacheProducts": false, "warehouse": "7" }
             }
             """);
+        var localCustomer = new ExternalCommerceCustomer
+        {
+            ExternalCommerceCustomerId = Guid.NewGuid(),
+            BusinessId = businessId,
+            IntegrationConnectionId = connection.IntegrationConnectionId,
+            ExternalAccountId = "10013",
+            ExternalCustomerId = "6826",
+            Name = "Cliente especial",
+            PhoneNormalized = "3001234567",
+            Phone = "3001234567",
+            IsActive = true
+        };
+        var customers = new Mock<IExternalCommerceCustomerRepository>();
+        customers.SetupSequence(repository => repository.FindActiveByPhoneAsync(
+                businessId,
+                connection.IntegrationConnectionId,
+                "3001234567",
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync([])
+            .ReturnsAsync([localCustomer]);
+        customers.Setup(repository => repository.GetByExternalKeysAsync(
+                businessId,
+                connection.IntegrationConnectionId,
+                "10013",
+                "6826",
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ExternalCommerceCustomer?)null);
+        customers.Setup(repository => repository.CreateAsync(
+                It.IsAny<ExternalCommerceCustomer>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ExternalCommerceCustomer customer, CancellationToken _) => customer);
+        var unitOfWork = new Mock<IUnitOfWork>();
+        unitOfWork.SetupGet(value => value.ExternalCommerceCustomers).Returns(customers.Object);
+        unitOfWork.Setup(value => value.SaveChangesAsync(It.IsAny<CancellationToken>())).ReturnsAsync(1);
+        var adapter = new MantisCommerceAdapter(new HttpClient(handler), unitOfWork.Object);
         var ctx = new CommerceAdapterContext(
             businessId,
             Guid.NewGuid(),
@@ -392,7 +474,7 @@ public sealed class MantisCommerceAdapterTests
     }
 
     [Fact]
-    public async Task SearchProductsAsync_WhenCustomerHasOnlyOneKey_UsesBasePriceContract()
+    public async Task SearchProductsAsync_WhenCustomerHasOnlyOneKey_UsesConfiguredGenericCustomer()
     {
         const string incompleteCustomerJson = """
             {
@@ -415,7 +497,9 @@ public sealed class MantisCommerceAdapterTests
               }]
             }
             """;
-        var handler = new SequenceHttpMessageHandler(incompleteCustomerJson, productJson);
+        var handler = new SequenceHttpMessageHandler(
+            incompleteCustomerJson, incompleteCustomerJson, incompleteCustomerJson, incompleteCustomerJson,
+            productJson);
         var adapter = new MantisCommerceAdapter(new HttpClient(handler), Mock.Of<IUnitOfWork>());
         var businessId = Guid.NewGuid();
         var connection = CreateConnection(
@@ -423,6 +507,7 @@ public sealed class MantisCommerceAdapterTests
             """
             {
               "baseUrl": "https://mantis.example/rest/",
+              "genericCustomer": { "llaveNit": "5702", "llaveCliente": "1" },
               "customer": { "searchEndpoint": "customers" },
               "catalog": { "searchEndpoint": "products", "cacheProducts": false }
             }
@@ -433,7 +518,8 @@ public sealed class MantisCommerceAdapterTests
             null,
             CommerceProvider.Mantis,
             connection,
-            "3001234567");
+            "3001234567",
+            WarehouseCode: "2");
 
         var result = await adapter.SearchProductsAsync(
             new ProductSearchRequest("jamon", null, 5),
@@ -441,16 +527,79 @@ public sealed class MantisCommerceAdapterTests
             CancellationToken.None);
 
         result.Products.Should().ContainSingle();
-        handler.Requests.Should().HaveCount(2);
-        handler.Requests[1].Json.Should().Contain("\"LlaveNit\":\"\"");
-        handler.Requests[1].Json.Should().Contain("\"LlaveCliente\":\"\"");
+        handler.Requests.Should().HaveCount(5);
+        handler.Requests[4].Json.Should().Contain("\"LlaveNit\":\"5702\"");
+        handler.Requests[4].Json.Should().Contain("\"LlaveCliente\":\"1\"");
+        handler.Requests[4].Json.Should().Contain("\"Bodega\":\"2\"");
     }
 
     [Fact]
-    public async Task CreateOrderAsync_WhenCustomerDoesNotExist_DoesNotSendOrder()
+    public async Task SearchProductsAsync_FindsCustomerByInternationalTelephoneFallback()
+    {
+        const string emptyJson = """{"ErrorKey":"","SDTConsultarClientesCasalins":[]}""";
+        const string customerJson = """
+            {
+              "ErrorKey": "",
+              "SDTConsultarClientesCasalins": [{
+                "TelefonoClientes": "573001234567",
+                "LlaveNit": "10013",
+                "LlaveCliente": "6826"
+              }]
+            }
+            """;
+        const string productJson = """
+            {
+              "ErrorKey": "",
+              "SDTConArtCasalins": [{
+                "CodigoProducto": "CF17",
+                "DispProducto": "true",
+                "NombreProducto": "JAMON CUNIT X 500GR",
+                "PrecioProducto": "15000",
+                "MonedaProducto": "COP"
+              }]
+            }
+            """;
+        var handler = new SequenceHttpMessageHandler(
+            emptyJson, emptyJson, emptyJson, customerJson, productJson);
+        var adapter = new MantisCommerceAdapter(new HttpClient(handler), Mock.Of<IUnitOfWork>());
+        var businessId = Guid.NewGuid();
+        var connection = CreateConnection(
+            businessId,
+            """
+            {
+              "baseUrl": "https://mantis.example/rest/",
+              "customer": { "searchEndpoint": "customers", "countryCode": "57" },
+              "catalog": { "searchEndpoint": "products", "cacheProducts": false }
+            }
+            """);
+        var ctx = new CommerceAdapterContext(
+            businessId,
+            Guid.NewGuid(),
+            null,
+            CommerceProvider.Mantis,
+            connection,
+            "+57 300 123 4567");
+
+        var result = await adapter.SearchProductsAsync(
+            new ProductSearchRequest("jamon", null, 5),
+            ctx,
+            CancellationToken.None);
+
+        result.Products.Should().ContainSingle();
+        handler.Requests.Should().HaveCount(5);
+        handler.Requests[3].Json.Should().Contain("\"CelCliente\":\"\"");
+        handler.Requests[3].Json.Should().Contain("\"TelCliente\":\"573001234567\"");
+        handler.Requests[4].Json.Should().Contain("\"LlaveNit\":\"10013\"");
+        handler.Requests[4].Json.Should().Contain("\"LlaveCliente\":\"6826\"");
+    }
+    [Fact]
+    public async Task CreateOrderAsync_WhenCustomerDoesNotExist_SendsConfiguredGenericCustomerAndWarehouse()
     {
         const string unknownCustomerJson = """{"ErrorKey":"","SDTConsultarClientesCasalins":[]}""";
-        var handler = new SequenceHttpMessageHandler(unknownCustomerJson);
+        const string orderJson = """{"ErrorKey":[],"bPedNum":"APED-GENERIC-1"}""";
+        var handler = new SequenceHttpMessageHandler(
+            unknownCustomerJson, unknownCustomerJson, unknownCustomerJson, unknownCustomerJson,
+            orderJson);
         var adapter = new MantisCommerceAdapter(new HttpClient(handler), Mock.Of<IUnitOfWork>());
         var businessId = Guid.NewGuid();
         var connection = CreateConnection(
@@ -459,6 +608,7 @@ public sealed class MantisCommerceAdapterTests
             {
               "baseUrl": "https://mantis.example/rest/",
               "customer": { "searchEndpoint": "customers" },
+              "genericCustomer": { "llaveNit": "5702", "llaveCliente": "1" },
               "order": { "createEndpoint": "orders", "mockCreateOrders": false }
             }
             """);
@@ -473,20 +623,23 @@ public sealed class MantisCommerceAdapterTests
             null,
             CommerceProvider.Mantis,
             connection,
-            order.CustomerPhoneSnapshot);
+            order.CustomerPhoneSnapshot,
+            WarehouseCode: "2");
 
-        var action = () => adapter.CreateOrderAsync(
+        var result = await adapter.CreateOrderAsync(
             order,
             [new OrderItem { Sku = "CF17", ProductNameSnapshot = "JAMON", Quantity = 1 }],
             ctx,
             CancellationToken.None);
 
-        await action.Should().ThrowAsync<InvalidOperationException>()
-            .WithMessage("*customer was not found*");
-        handler.Requests.Should().ContainSingle();
-        handler.Requests[0].Path.Should().EndWith("/customers");
+        result.ExternalOrderId.Should().Be("APED-GENERIC-1");
+        handler.Requests.Should().HaveCount(5);
+        handler.Requests.Take(4).Should().OnlyContain(request => request.Path.EndsWith("/customers"));
+        handler.Requests[4].Path.Should().EndWith("/orders");
+        handler.Requests[4].Json.Should().Contain("\"LlaveNit\":\"5702\"");
+        handler.Requests[4].Json.Should().Contain("\"LlaveCliente\":\"1\"");
+        handler.Requests[4].Json.Should().Contain("\"bodega\":\"2\"");
     }
-
     private static IntegrationConnection CreateConnection(Guid businessId, string settingsJson) =>
         new()
         {
@@ -526,6 +679,66 @@ public sealed class MantisCommerceAdapterTests
         }
     }
 
+    [Fact]
+    public async Task GetProductAsync_WhenMantisReportsItemButOmitsArray_UsesActiveLocalIdentityForGenericCustomer()
+    {
+        const string responseJson = """
+            {
+              "ErrorKey": "",
+              "SDTPaginadoCasalins": {
+                "NextPage": "True",
+                "PagaSize": 10,
+                "Page": 1,
+                "TotalItems": 1,
+                "TotalPages": 0
+              }
+            }
+            """;
+        var businessId = Guid.NewGuid();
+        var connectionId = Guid.NewGuid();
+        var product = new Product
+        {
+            ProductId = Guid.NewGuid(),
+            BusinessId = businessId,
+            IntegrationConnectionId = connectionId,
+            ExternalProductId = "CF16",
+            Sku = "CF16",
+            Name = "JAMON CUNICHEF X500GR",
+            Currency = "COP",
+            IsActive = true
+        };
+        var products = new Mock<IProductRepository>();
+        products.Setup(repository => repository.GetByExternalIdAsync(
+                businessId, connectionId, "CF16", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(product);
+        var unitOfWork = new Mock<IUnitOfWork>();
+        unitOfWork.SetupGet(value => value.Products).Returns(products.Object);
+        var handler = new JsonHttpMessageHandler(responseJson);
+        var adapter = new MantisCommerceAdapter(new HttpClient(handler), unitOfWork.Object);
+        var connection = new IntegrationConnection
+        {
+            IntegrationConnectionId = connectionId,
+            BusinessId = businessId,
+            Provider = (int)CommerceProvider.Mantis,
+            Capability = (int)CommerceCapability.CatalogAndOrders,
+            IsEnabled = true,
+            SettingsJson = """{"baseUrl":"https://mantis.example/rest/","catalog":{"searchEndpoint":"products","maxPageSize":20}}""",
+            SecretsJson = """{"authorizationToken":"token"}"""
+        };
+        var context = new CommerceAdapterContext(
+            businessId, Guid.Empty, null, CommerceProvider.Mantis, connection);
+
+        var result = await adapter.GetProductAsync(
+            new AddOrderItemRequest(product.ProductId, "CF16", "CF16", product.Name, 1m, null),
+            context,
+            CancellationToken.None);
+
+        result.Should().NotBeNull();
+        result!.ProductId.Should().Be(product.ProductId);
+        result.Sku.Should().Be("CF16");
+        handler.LastRequestJson.Should().Contain("\"codproducto\":\"CF16\"");
+    }
+
     private sealed class JsonHttpMessageHandler : HttpMessageHandler
     {
         private readonly string _json;
@@ -533,11 +746,13 @@ public sealed class MantisCommerceAdapterTests
         public JsonHttpMessageHandler(string json) => _json = json;
 
         public string? LastRequestJson { get; private set; }
+        public int RequestCount { get; private set; }
 
         protected override async Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
             CancellationToken cancellationToken)
         {
+            RequestCount++;
             LastRequestJson = request.Content is null
                 ? null
                 : await request.Content.ReadAsStringAsync(cancellationToken);

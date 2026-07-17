@@ -30,6 +30,7 @@ public class UnitOfWork : IUnitOfWork
     private IScheduledAutomationJobRepository? _scheduledAutomationJobs;
     private IReservationAttendanceResponseRepository? _reservationAttendanceResponses;
     private IIntegrationConnectionRepository? _integrationConnections;
+    private IExternalCommerceCustomerRepository? _externalCommerceCustomers;
     private IReservationIntegrationEventRepository? _reservationIntegrationEvents;
     private IExternalEscalationAttemptRepository? _externalEscalationAttempts;
     private IExternalEscalationOutcomeDeliveryRepository? _externalEscalationOutcomeDeliveries;
@@ -142,6 +143,9 @@ public class UnitOfWork : IUnitOfWork
 
     public IIntegrationConnectionRepository IntegrationConnections =>
         _integrationConnections ??= new IntegrationConnectionRepository(_context);
+
+    public IExternalCommerceCustomerRepository ExternalCommerceCustomers =>
+        _externalCommerceCustomers ??= new ExternalCommerceCustomerRepository(_context);
 
     public IReservationIntegrationEventRepository ReservationIntegrationEvents =>
         _reservationIntegrationEvents ??= new ReservationIntegrationEventRepository(_context);

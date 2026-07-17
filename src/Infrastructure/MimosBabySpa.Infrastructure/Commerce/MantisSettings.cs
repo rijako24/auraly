@@ -9,6 +9,7 @@ internal sealed class MantisSettings
     public string AuthorizationToken { get; init; } = string.Empty;
     public int RequestTimeoutSeconds { get; init; } = 30;
     public string Currency { get; init; } = "COP";
+    public MantisGenericCustomerSettings GenericCustomer { get; init; } = new();
     public MantisCatalogSettings Catalog { get; init; } = new();
     public MantisCustomerSettings Customer { get; init; } = new();
     public MantisOrderSettings Order { get; init; } = new();
@@ -20,6 +21,11 @@ internal sealed class MantisSettings
         var catalog = Read(settings, "catalog");
         var order = Read(settings, "order");
         var customer = Read(settings, "customer");
+        var genericCustomer = Read(settings, "genericCustomer");
+        var configuredWarehouse = GetString(
+            settings,
+            "warehouse",
+            GetString(catalog, "warehouse", GetString(order, "warehouse", string.Empty)));
 
         return new MantisSettings
         {
@@ -27,6 +33,11 @@ internal sealed class MantisSettings
             AuthorizationToken = GetString(secrets, "authorizationToken", GetString(settings, "authorizationToken")),
             RequestTimeoutSeconds = GetInt(settings, "requestTimeoutSeconds", 30),
             Currency = GetString(settings, "currency", "COP"),
+            GenericCustomer = new MantisGenericCustomerSettings
+            {
+                LlaveNit = GetString(genericCustomer, "llaveNit", string.Empty),
+                LlaveCliente = GetString(genericCustomer, "llaveCliente", string.Empty)
+            },
             Customer = new MantisCustomerSettings
             {
                 SearchEndpoint = GetString(customer, "searchEndpoint", "pwsConsultarClientesCasalins"),
@@ -38,14 +49,13 @@ internal sealed class MantisSettings
             {
                 SearchEndpoint = GetString(catalog, "searchEndpoint", "pwsConsultarArticuloCasalins"),
                 DefaultPageSize = GetInt(catalog, "defaultPageSize", 5),
-                MaxPageSize = GetInt(catalog, "maxPageSize", 5),
-                CacheProducts = GetBool(catalog, "cacheProducts", true),
-                Warehouse = GetString(catalog, "warehouse", GetString(order, "warehouse", "1"))
+                MaxPageSize = GetInt(catalog, "maxPageSize", 20),
+                Warehouse = configuredWarehouse
             },
             Order = new MantisOrderSettings
             {
                 CreateEndpoint = GetString(order, "createEndpoint", "pwsCrearPedidoCasalins"),
-                Warehouse = GetString(order, "warehouse", "1"),
+                Warehouse = configuredWarehouse,
                 MockCreateOrders = GetBool(order, "mockCreateOrders", true)
             }
         };
@@ -89,10 +99,15 @@ internal sealed class MantisCatalogSettings
 {
     public string SearchEndpoint { get; init; } = "pwsConsultarArticuloCasalins";
     public int DefaultPageSize { get; init; } = 5;
-    public int MaxPageSize { get; init; } = 5;
-    public bool CacheProducts { get; init; } = true;
-    public string Warehouse { get; init; } = "1";
+    public int MaxPageSize { get; init; } = 20;
+    public string Warehouse { get; init; } = string.Empty;
 }
+internal sealed class MantisGenericCustomerSettings
+{
+    public string LlaveNit { get; init; } = string.Empty;
+    public string LlaveCliente { get; init; } = string.Empty;
+}
+
 
 internal sealed class MantisCustomerSettings
 {
@@ -105,6 +120,6 @@ internal sealed class MantisCustomerSettings
 internal sealed class MantisOrderSettings
 {
     public string CreateEndpoint { get; init; } = "pwsCrearPedidoCasalins";
-    public string Warehouse { get; init; } = "1";
+    public string Warehouse { get; init; } = string.Empty;
     public bool MockCreateOrders { get; init; } = true;
 }

@@ -17,6 +17,9 @@ public static partial class CommerceTurnPlanSafety
 
     public static TurnPlan Normalize(TurnPlan plan, TurnPlanningContext context)
     {
+        plan = RecoverExplicitOrderList(plan, context);
+        plan = RemoveUnsupportedFinalization(plan, context);
+
         var orderChanges = plan.Signals.FirstOrDefault(signal =>
             signal.Type.Equals(OrderChangesSignal, StringComparison.OrdinalIgnoreCase));
         if (orderChanges is null || !TryReadCommands(orderChanges.Value, out var commands))
@@ -38,6 +41,132 @@ public static partial class CommerceTurnPlanSafety
 
         return plan;
     }
+
+    private static TurnPlan RecoverExplicitOrderList(TurnPlan plan, TurnPlanningContext context)
+    {
+        if (!context.Scope.Signals.ContainsKey(OrderChangesSignal)
+            || IsCatalogInquiry(NormalizeText(context.LatestUserMessage))
+            || !TryParseOrderList(context.LatestUserMessage, out var commands))
+            return plan;
+
+        // A deterministic list is authoritative even when the planner emitted only
+        // the first bullet. A valid but truncated signal must not discard the rest.
+        var recovered = new PlannedSignal
+        {
+            Type = OrderChangesSignal,
+            Value = JsonSerializer.SerializeToElement(commands.Select(command => new
+            {
+                operation = "add",
+                productText = command.ProductText,
+                quantity = command.Quantity,
+                destinationReference = (string?)null
+            })),
+            Evidence = context.LatestUserMessage.Trim(),
+            Confidence = 1
+        };
+        var signals = plan.Signals.ToList();
+        var existingIndex = signals.FindIndex(signal =>
+            signal.Type.Equals(OrderChangesSignal, StringComparison.OrdinalIgnoreCase));
+        if (existingIndex >= 0)
+            signals[existingIndex] = recovered;
+        else
+            signals.Add(recovered);
+
+        return CopyWithSignals(plan, signals);
+    }
+
+    private static bool TryParseOrderList(string message, out IReadOnlyList<CartCommandCandidate> commands)
+    {
+        commands = [];
+        var parsed = new List<CartCommandCandidate>();
+        var bulletLines = 0;
+        var meaningfulLines = 0;
+
+        foreach (var rawLine in message.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
+        {
+            var line = rawLine.Trim();
+            if (line.Length == 0)
+                continue;
+
+            meaningfulLines++;
+            if (BulletPrefixRegex().IsMatch(line))
+                bulletLines++;
+
+            var match = OrderListLineRegex().Match(line);
+            if (!match.Success
+                || !decimal.TryParse(
+                    match.Groups["quantity"].Value.Replace(',', '.'),
+                    NumberStyles.Number,
+                    CultureInfo.InvariantCulture,
+                    out var quantity)
+                || quantity <= 0)
+                continue;
+
+            var productText = match.Groups["product"].Value.Trim().TrimEnd(',', ';');
+            if (productText.Length < 2 || !productText.Any(char.IsLetter))
+                continue;
+
+            parsed.Add(new CartCommandCandidate("add", productText, quantity));
+        }
+
+        // A multi-line quantity list is an order request even when the customer omits
+        // verbs such as "agrega" or "dame". Requiring two bullets avoids turning
+        // numbered prose, recipes or ordinary single-product catalog questions into carts.
+        if (parsed.Count < 2
+            || bulletLines < 2
+            || parsed.Count != meaningfulLines)
+            return false;
+
+        commands = parsed;
+        return true;
+    }
+
+    private static TurnPlan RemoveUnsupportedFinalization(TurnPlan plan, TurnPlanningContext context)
+    {
+        if (!context.Config.Commerce.Enabled || HasCurrentCartItems(context.StructuredContext))
+            return plan;
+
+        var finalizationKeys = context.Config.FactSchema
+            .Where(fact => fact.Role?.Equals("order.finalized", StringComparison.OrdinalIgnoreCase) == true)
+            .Select(fact => fact.Key)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (finalizationKeys.Count == 0)
+            return plan;
+
+        var facts = plan.Facts
+            .Where(fact => !finalizationKeys.Contains(fact.Key)
+                || !fact.Operation.Equals(TurnPlanOperations.Set, StringComparison.OrdinalIgnoreCase)
+                || !IsTrue(fact.Value))
+            .ToList();
+        if (facts.Count == plan.Facts.Count)
+            return plan;
+
+        return new TurnPlan
+        {
+            FlowIntent = plan.FlowIntent,
+            Facts = facts,
+            Signals = plan.Signals,
+            Decision = plan.Decision,
+            Response = plan.Response
+        };
+    }
+
+    private static bool HasCurrentCartItems(IReadOnlyDictionary<string, JsonElement>? context)
+    {
+        if (context is null
+            || !context.TryGetValue("currentCart", out var cart)
+            || cart.ValueKind != JsonValueKind.Object
+            || !cart.TryGetProperty("items", out var items)
+            || items.ValueKind != JsonValueKind.Array)
+            return false;
+
+        return items.GetArrayLength() > 0;
+    }
+
+    private static bool IsTrue(JsonElement value) => value.ValueKind == JsonValueKind.True
+        || value.ValueKind == JsonValueKind.String
+        && bool.TryParse(value.GetString(), out var parsed)
+        && parsed;
 
     private static TurnPlan ReplaceInquiryMutationWithCatalogQuery(
         TurnPlan plan,
@@ -155,6 +284,12 @@ public static partial class CommerceTurnPlanSafety
 
     [GeneratedRegex(@"^\s*(?:\d+(?:[.,]\d+)?|un|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|trece|catorce|quince|dieciseis|diecisiete|dieciocho|diecinueve|veinte)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex QuantityPrefixRegex();
+
+    [GeneratedRegex(@"^\s*[-*•▪◦]\s*", RegexOptions.CultureInvariant)]
+    private static partial Regex BulletPrefixRegex();
+
+    [GeneratedRegex(@"^\s*[-*•▪◦]\s*(?<quantity>\d+(?:[.,]\d+)?)\s*(?:x\b\s*)?(?<product>[^\r\n]+?)\s*$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex OrderListLineRegex();
 
     private sealed record CartCommandCandidate(string Operation, string ProductText, decimal? Quantity);
 }

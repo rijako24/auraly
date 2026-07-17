@@ -45,6 +45,15 @@ public sealed class InboundMessageBatchProcessor : IInboundMessageBatchProcessor
                 $"Se detectaron mensajes de multiples usuarios en un debounce: {string.Join(", ", distinctUserNumbers)}");
         }
 
+        var distinctRecipients = messages
+            .Select(message => message.RecipientPhoneNumberId?.Trim())
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        if (distinctRecipients.Count > 1)
+            throw new InvalidOperationException("Se detectaron mensajes dirigidos a varios n?meros de WhatsApp en un mismo lote.");
+
+
         var userNumber = messages.First().UserNumber;
         var customerName = messages.LastOrDefault(m => !string.IsNullOrWhiteSpace(m.CustomerName))?.CustomerName;
         var indexedMessages = messages
@@ -132,7 +141,8 @@ public sealed class InboundMessageBatchProcessor : IInboundMessageBatchProcessor
                 message.ProviderMessageId,
                 message.ReplyToProviderMessageId,
                 message.InteractivePayload,
-                NormalizeFacts(message.Facts));
+                NormalizeFacts(message.Facts),
+                message.RecipientPhoneNumberId);
 
     private static AgentInboundMetadata? BuildMetadata(IReadOnlyList<IncomingMessage> messages)
     {
@@ -144,7 +154,8 @@ public sealed class InboundMessageBatchProcessor : IInboundMessageBatchProcessor
             lastMessage.ProviderMessageId,
             lastMessage.ReplyToProviderMessageId,
             lastMessage.InteractivePayload,
-            MergeFacts(messages));
+            MergeFacts(messages),
+            lastMessage.RecipientPhoneNumberId);
     }
 
     private static IReadOnlyDictionary<string, string> MergeFacts(IEnumerable<IncomingMessage> messages)

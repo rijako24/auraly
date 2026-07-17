@@ -46,6 +46,77 @@ public sealed class MantisOmittedArrayFallbackTests
         handler.RequestBodies[2].Should().Contain("\"Pagina\":2").And.Contain("\"CantPag\":1");
     }
 
+    [Fact]
+    public async Task SearchProducts_WhenNextPageIsTrue_ContinuesDespiteShortPage()
+    {
+        const string response = """
+            {
+              "ErrorKey": "",
+              "SDTConArtCasalins": [{
+                "CodigoProducto": "CF17",
+                "NombreProducto": "JAMON CUNIT X 500GR",
+                "DispProducto": "true",
+                "PrecioProducto": "18900"
+              }],
+              "SDTPaginadoCasalins": { "NextPage": "True", "Page": 1, "PagaSize": 20 }
+            }
+            """;
+        var businessId = Guid.NewGuid();
+        var connection = new IntegrationConnection
+        {
+            IntegrationConnectionId = Guid.NewGuid(),
+            BusinessId = businessId,
+            SettingsJson = """{"baseUrl":"https://mantis.example/rest/","catalog":{"searchEndpoint":"products","maxPageSize":20}}""",
+            SecretsJson = """{"authorizationToken":"token"}"""
+        };
+        var handler = new SequenceHandler(response);
+        var adapter = new MantisCommerceAdapter(
+            new HttpClient(handler), Mock.Of<IUnitOfWork>());
+
+        var result = await adapter.SearchProductsAsync(
+            new ProductSearchRequest(null, null, 20),
+            new CommerceAdapterContext(
+                businessId, Guid.NewGuid(), null, CommerceProvider.Mantis, connection));
+        handler.RequestBodies[0].Should().Contain("\"Nomproducto\":\"\"");
+
+        result.HasMore.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task SearchProducts_WhenMantisIsTransientlyUnavailable_RetriesPage()
+    {
+        const string response = """
+            {
+              "ErrorKey": "",
+              "SDTConArtCasalins": [{
+                "CodigoProducto": "CF17",
+                "NombreProducto": "JAMON CUNIT X 500GR",
+                "DispProducto": "true",
+                "PrecioProducto": "18900"
+              }],
+              "SDTPaginadoCasalins": { "NextPage": "False" }
+            }
+            """;
+        var businessId = Guid.NewGuid();
+        var connection = new IntegrationConnection
+        {
+            IntegrationConnectionId = Guid.NewGuid(),
+            BusinessId = businessId,
+            SettingsJson = """{"baseUrl":"https://mantis.example/rest/","requestTimeoutSeconds":2,"catalog":{"searchEndpoint":"products"}}""",
+            SecretsJson = """{"authorizationToken":"token"}"""
+        };
+        var handler = new TransientThenSuccessHandler(response);
+        var adapter = new MantisCommerceAdapter(new HttpClient(handler), Mock.Of<IUnitOfWork>());
+
+        var result = await adapter.SearchProductsAsync(
+            new ProductSearchRequest("CF17", null, 1),
+            new CommerceAdapterContext(
+                businessId, Guid.NewGuid(), null, CommerceProvider.Mantis, connection));
+
+        result.Products.Should().ContainSingle();
+        handler.RequestCount.Should().Be(2);
+    }
+
     private static string ProductPage(string code, string name) => $$"""
         {
           "ErrorKey": "",
@@ -74,6 +145,30 @@ public sealed class MantisOmittedArrayFallbackTests
             {
                 Content = new StringContent(_responses.Dequeue())
             };
+        }
+    }
+
+    private sealed class TransientThenSuccessHandler(string json) : HttpMessageHandler
+    {
+        public int RequestCount { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            RequestCount++;
+            if (RequestCount == 1)
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
+                {
+                    Content = new StringContent("{}")
+                });
+            }
+
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(json)
+            });
         }
     }
 }

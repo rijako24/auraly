@@ -23,4 +23,5 @@ public sealed record AgentInboundMetadata(
     string? ProviderMessageId,
     string? ReplyToProviderMessageId,
     string? InteractivePayload,
-    IReadOnlyDictionary<string, string>? Facts = null);
+    IReadOnlyDictionary<string, string>? Facts = null,
+    string? RecipientPhoneNumberId = null);

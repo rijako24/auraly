@@ -14,6 +14,7 @@ CREATE TABLE [dbo].[Products] (
     [StockQuantity] DECIMAL(18, 2) NULL,
     [IsActive] BIT NOT NULL DEFAULT 1,
     [RawPayloadJson] NVARCHAR(MAX) NULL,
+    [SearchIndexVersion] INT NOT NULL DEFAULT 0,
     [LastSyncedAt] DATETIME2 NULL,
     [CreatedAt] DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
     [UpdatedAt] DATETIME2 NULL,

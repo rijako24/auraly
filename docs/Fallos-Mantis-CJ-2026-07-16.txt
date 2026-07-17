@@ -1,262 +1,78 @@
-INFORME DE FALLOS EXCLUSIVOS DE LA API MANTIS - CJ DISTRIBUCIONES
-Fecha de verificacion: 2026-07-16
-Entorno verificado: MantisFiccCasalinsPruWeb
-Coleccion recibida: Casalins.postman_collection (1).json
+INFORME DE FALLOS VIGENTES DE LA API MANTIS - CJ DISTRIBUCIONES
+Fecha de última verificación: 2026-07-16
+Entorno: MantisFiccCasalinsPruWeb
 
 ALCANCE
 -------
-Este documento contiene unicamente comportamientos defectuosos o contratos
-pendientes de la API Mantis.
-
-No se incluyen tokens, telefonos, cadenas de conexion ni credenciales.
-
-
-M-01. TOTALITEMS POSITIVO PERO NO VIENE SDTCONARTCASALINS
-=========================================================
-Severidad: Critica
-Endpoint: pwsConsultarArticuloCasalins
-
-Comportamiento reproducido:
-- La respuesta informa TotalItems mayor que cero.
-- La propiedad SDTConArtCasalins no aparece en el JSON.
-- Sin ese arreglo no se reciben codigo, nombre, precio ni inventario.
-
-Casos reproducidos con CantPag=5:
-- RIPIO: TotalItems=2 y arreglo ausente.
-- CHICHARRON: TotalItems=2 y arreglo ausente.
-- CHAMPI: TotalItems=2 y arreglo ausente.
-- LECHE DE COCO: TotalItems=2 y arreglo ausente.
-- RANCHERA: TotalItems=3 y arreglo ausente.
-
-Ejemplo real de la estructura recibida:
-{"ErrorKey":"","SDTPaginadoCasalins":{"NextPage":"True","PagaSize":5,
-"Page":1,"PreviousPage":"False","TotalItems":2,"TotalPages":0}}
-
-Resultado esperado:
-- Si TotalItems es mayor que cero, SDTConArtCasalins debe existir y contener los
-  elementos correspondientes a la pagina solicitada.
-- Si ocurre un error al construir el arreglo, la API debe devolver un ErrorKey
-  explicito y no reportar una consulta exitosa.
+Este documento contiene únicamente fallos de Mantis que aún no cuentan con una
+prueba end-to-end exitosa. No incluye errores de Talkio, credenciales, teléfonos
+ni cadenas de conexión.
 
 
-M-02. CANTPAG CAMBIA, RECORTA O ELIMINA EL CONJUNTO DE RESULTADOS
-================================================================
-Severidad: Critica
-Endpoint: pwsConsultarArticuloCasalins
-
-Comportamiento reproducido:
-- Para una consulta con dos resultados, CantPag=1 devuelve un articulo.
-- CantPag=2 puede devolver solamente uno de los dos.
-- CantPag=3, 4, 5 o 20 puede eliminar completamente el arreglo.
-- El conjunto cambia segun el tamaño de pagina, aunque la busqueda es la misma.
-
-Evidencia:
-
-RIPIO, TotalItems=2:
-- CantPag=1: PAPA RIPIO KRUMER.
-- CantPag=2: solamente PAPA RIPIO PREMIUM 1K.
-- CantPag=3 o superior: no viene SDTConArtCasalins.
-
-CHICHARRON, TotalItems=2:
-- CantPag=1: CHICHARRONCITOS X PESO.
-- CantPag=2: solamente CHICHARRON X UND.
-- CantPag=3 o superior: no viene SDTConArtCasalins.
-
-CHAMPI, TotalItems=2:
-- CantPag=1: CHAMPIÑONES GALON 2840 GR.
-- CantPag=2: solamente CHAMPIÑONES LATA X 400 GR.
-- CantPag=3 o superior: no viene SDTConArtCasalins.
-
-RANCHERA, TotalItems=3:
-- CantPag=1: una referencia.
-- CantPag=2: dos referencias.
-- CantPag=3: solamente una referencia.
-- CantPag=4 o superior: no viene SDTConArtCasalins.
-
-Resultado esperado:
-- Pagina=1 y CantPag mayor o igual a TotalItems debe devolver todos los
-  resultados.
-- CantPag solamente debe limitar la cantidad por pagina; nunca debe cambiar el
-  conjunto, el orden ni eliminar el arreglo.
-
-
-M-03. METADATOS DE PAGINACION INCONSISTENTES
-============================================
-Severidad: Alta
-Endpoint: pwsConsultarArticuloCasalins
-
-Comportamiento reproducido:
-- TotalItems=2 puede venir con TotalPages=0 y NextPage=True.
-- TotalItems=3 con CantPag=2 puede venir con TotalPages=1, aunque deben existir
-  dos paginas.
-- NextPage puede indicar que hay pagina siguiente mientras TotalPages indica que
-  no existe.
-
-Resultado esperado:
-- TotalPages debe ser techo(TotalItems / CantPag).
-- NextPage debe ser True solamente cuando Page sea menor que TotalPages.
-- PagaSize debe corresponder al CantPag solicitado o documentarse claramente si
-  representa otro valor.
-
-
-M-04. PRODUCTOS DEVUELTOS COMO FALSE / PRECIO 0 / EXISTENCIA 0
-==============================================================
-Severidad: Critica
-Endpoint: pwsConsultarArticuloCasalins
-
-Comportamiento reproducido cuando no se logra resolver el cliente:
-- Mantis devuelve CodigoProducto y NombreProducto.
-- DispProducto=false.
-- PrecioProducto=0.00.
-- ExiProducto=0.00.
-
-Ejemplos observados:
-- JAMON CUNIT X 500GR.
-- CHORIZO SALSAN X 20 UND 1K.
-- MAIZ SUPER DULCE x500gr.
-- LECHE DE COCO KARIX 400.
-- PAPA RIPIO KRUMER.
-- PAPA RIPIO PREMIUM 1K.
-- CHICHARRON X UND.
-- CHICHARRONCITOS X PESO.
-- CHAMPIÑONES GALON 2840 GR.
-- CHAMPIÑONES LATA X 400 GR.
-
-El mismo patron false/0/0 se observo usando las llaves de ejemplo incluidas en
-la coleccion: LlaveNit=10013 y LlaveCliente=6826.
-
-Problema de contrato:
-- No es posible distinguir entre producto realmente inactivo, producto sin
-  inventario, cliente sin lista de precios o llaves invalidas.
-- PrecioProducto=0.00 no permite construir un pedido comercial valido.
-
-Solucion minima solicitada a Mantis:
-- Agregar un campo o ErrorKey que indique claramente uno de estos estados:
-  CLIENTE_SIN_TARIFA, LLAVES_INVALIDAS, PRODUCTO_INACTIVO o SIN_INVENTARIO.
-- Si existe precio general para clientes nuevos, documentar las llaves oficiales
-  del cliente general y devolver su precio real.
-- No representar cuatro causas distintas con el mismo false/0/0.
-
-
-M-05. BUSQUEDA DE CLIENTE POR TELEFONO NO DEVUELVE LAS LLAVES
-=============================================================
-Severidad: Critica
-Endpoint: pwsConsultarClientesCasalins
-
-Comportamiento reproducido:
-- La busqueda usando el celular nacional no encontro los clientes verificados.
-- La busqueda usando el mismo numero con prefijo de pais tampoco los encontro.
-- La API no devuelve LlaveNit ni LlaveCliente cuando no encuentra coincidencia.
-
-Impacto directo:
-- No se puede consultar la lista de precios especial del cliente.
-- No se puede construir una solicitud valida para crear pedido.
-
-Solucion minima solicitada a Mantis:
-- Aceptar y normalizar ambos formatos: numero nacional y numero con prefijo 57.
-- Buscar el mismo valor tanto en CelCliente como en TelCliente.
-- Documentar el formato exacto requerido.
-- Cuando no exista el cliente, devolver un ErrorKey estable, por ejemplo
-  CLIENTE_NO_ENCONTRADO, en vez de una respuesta vacia indistinguible.
-
-
-M-06. EL ENDPOINT DE CREAR PEDIDO ESTA FALLANDO
-===============================================
-Severidad: Critica
+M-01. CREAR PEDIDO NO TIENE UNA PRUEBA EXITOSA Y VERIFICABLE
+============================================================
+Severidad: Crítica
 Endpoint: pwsCrearPedidoCasalins
-Estado: No existe una prueba end-to-end exitosa confirmada con la API actual.
 
-Comportamiento observado:
-- El flujo real de crear pedido no logra completarse para los clientes
-  verificados.
-- El endpoint exige LlaveNit y LlaveCliente, pero la busqueda de cliente no las
-  devuelve para esos telefonos.
-- Sin ambas llaves no se puede enviar un pedido valido.
-- No se ha obtenido un numero de pedido real y verificable en bPedNum para este
-  flujo.
+Fallo vigente:
+- No se ha obtenido una respuesta exitosa con bPedNum no vacío usando el contrato
+  actual de Mantis.
+- Por lo tanto, tampoco se ha podido demostrar que el pedido se creó una sola vez
+  con el cliente, bodega, artículos y cantidades enviados.
+- Los errores no entregan un código estable que permita distinguir llaves
+  inválidas, artículo sin inventario, bodega inválida o fallo interno.
 
-Contrato esperado segun la coleccion:
-- Entrada:
-  - LlaveNit.
-  - LlaveCliente.
-  - Articulos con CodigoArticulos y CantidadArticulos.
-  - bodega.
-  - PedObs.
-- Salida exitosa:
-  - bPedNum no vacio.
+Solución mínima solicitada a Mantis:
+1. Entregar un cliente de pruebas con LlaveNit y LlaveCliente válidas.
+2. Entregar una bodega y un CodigoArticulos disponibles para una prueba controlada.
+3. Devolver siempre bPedNum no vacío cuando la creación sea exitosa.
+4. Devolver ErrorKey estable y descriptivo cuando falle.
+5. Documentar el mecanismo de idempotencia para que un reintento por timeout no
+   cree un pedido duplicado.
 
-Problemas que Mantis debe corregir o aclarar:
-1. Proporcionar un cliente de pruebas cuyas LlaveNit y LlaveCliente sean validas.
-2. Proporcionar al menos un CodigoArticulos con inventario para una prueba
-   controlada.
-3. Garantizar que una creacion exitosa devuelva siempre bPedNum.
-4. Cuando falle, devolver ErrorKey como texto estable y descriptivo, no una
-   respuesta HTTP 200 ambigua o sin numero de pedido.
-5. Confirmar si la operacion es idempotente y qué campo evita pedidos duplicados
-   cuando el consumidor reintenta por timeout.
-6. Confirmar si bodega es obligatoria y cuáles valores son validos.
-
-Criterio de aceptacion propuesto:
-- Con llaves y articulo de pruebas suministrados por Mantis, una solicitud debe
-  crear exactamente un pedido.
-- La respuesta debe contener bPedNum.
-- Consultar ese bPedNum en pwsConsultarPedidoCasalins debe devolver el mismo
-  cliente, articulo y cantidad.
-- Repetir la misma solicitud con una clave idempotente definida no debe crear un
+Criterio de aceptación:
+- Una solicitud válida crea exactamente un pedido y devuelve bPedNum.
+- Reintentar la misma operación con la identidad idempotente acordada no crea un
   segundo pedido.
 
 
-M-07. LA BUSQUEDA POR NOMBRE ES DEMASIADO LITERAL
-=================================================
-Severidad: Media
-Endpoint: pwsConsultarArticuloCasalins
+M-02. CONSULTAR PEDIDO NO DEVUELVE RESULTADO NI ERROR ÚTIL
+==========================================================
+Severidad: Crítica
+Endpoint: pwsConsultarPedidoCasalins
 
-Comportamiento reproducido:
-- RANCHERA SALSAN devuelve TotalItems=0, aunque existen referencias RANCHERA y
-  productos SALSAN por separado.
-- LECHE DE COCO KARY devuelve TotalItems=0, mientras LECHE DE COCO devuelve
-  KARIX y CHEFS CHOICE.
-- CAJA DE PAPAS devuelve TotalItems=0, mientras PAPA devuelve varias referencias.
-- CHAMPIÑON puede devolver cero, mientras CHAMPI reporta dos referencias.
+Fallo reproducido:
+- Consultar el NroPedido APED000036 incluido en la colección entregada por Mantis
+  devolvió únicamente {"ErrorKey":null}.
+- Consultar por cliente y rango de fechas produjo la misma respuesta sin cabecera,
+  detalle, artículos, cantidades ni explicación.
+- No es posible diferenciar pedido inexistente, filtro inválido o fallo interno.
 
-No se solicita que Mantis implemente aliases, embeddings, aprendizaje ni una
-busqueda inteligente completa. Eso puede manejarse fuera de Mantis.
+Impacto:
+- No se puede verificar el pedido retornado por CrearPedido.
+- No se puede importar historial de compras para aprender preferencias del cliente.
 
-Solucion minima y simple solicitada a Mantis:
-- Normalizar mayusculas/minusculas y acentos.
-- Hacer que Nomproducto busque por contenido parcial, equivalente a
-  "contiene el texto", y no solamente por frase completa exacta.
-- Permitir prefijos de minimo cuatro caracteres. Ejemplo: CHAMPI debe encontrar
-  CHAMPIÑONES.
-- Mantener el mismo orden y paginacion para una misma consulta.
-- Si no hay coincidencia, devolver TotalItems=0 y un arreglo vacio, no omitir la
-  propiedad.
+Solución mínima solicitada a Mantis:
+1. Documentar los formatos exactos de NroPedido, IdeClientes, FechaInicial y
+   FechaFinal.
+2. Entregar un NroPedido de pruebas vigente.
+3. En éxito, devolver cliente, fecha, bodega y detalle con código y cantidad.
+4. Si no existe, devolver un ErrorKey estable como PEDIDO_NO_ENCONTRADO.
 
-Con esta mejora basica Mantis solo debe entregar candidatos consistentes. La
-resolucion de aliases, errores de escritura y preferencias del cliente puede
-realizarse en la aplicacion consumidora.
+Criterio de aceptación:
+- Consultar el bPedNum retornado por CrearPedido devuelve exactamente el cliente,
+  la bodega, los códigos y las cantidades enviados al crearlo.
 
 
-PRIORIDAD RECOMENDADA PARA MANTIS
-================================
-1. M-06: lograr una creacion de pedido real y verificable.
-2. M-01 y M-02: devolver siempre el arreglo completo de la pagina.
-3. M-04 y M-05: diferenciar cliente sin tarifa y entregar llaves correctamente.
-4. M-03: corregir metadatos de paginacion.
-5. M-07: implementar busqueda parcial basica y normalizacion de acentos.
-
-
-PRUEBA MINIMA QUE SE SOLICITA A MANTIS
-======================================
-Mantis debe entregar un juego de datos de pruebas compuesto por:
-- Un telefono de cliente conocido.
-- Su LlaveNit y LlaveCliente esperadas.
-- Un articulo disponible con precio e inventario.
-- Una bodega valida.
+PRUEBA END-TO-END PENDIENTE PARA CERRAR AMBOS FALLOS
+====================================================
+Mantis debe suministrar:
+- LlaveNit y LlaveCliente válidas.
+- Una bodega válida.
+- Un artículo con inventario.
 
 Con esos datos deben pasar, en orden:
-1. Consultar cliente por telefono y obtener ambas llaves.
-2. Consultar el articulo usando ambas llaves y obtener precio mayor que cero,
-   existencia mayor que cero y DispProducto=true.
-3. Crear pedido y recibir bPedNum.
-4. Consultar el pedido por bPedNum y verificar cliente, articulo y cantidad.
+1. Crear el pedido y recibir bPedNum.
+2. Consultar ese bPedNum.
+3. Verificar cliente, bodega, artículo y cantidad.
+4. Reintentar de forma idempotente y comprobar que no se duplicó.

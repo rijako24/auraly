@@ -25,7 +25,8 @@ public sealed record CartCommandCandidate(
     Guid? ProductId = null,
     string? ExternalProductId = null,
     string? Sku = null,
-    double? Score = null);
+    double? Score = null,
+    bool IsAvailable = true);
 
 public sealed record CartCommandIssue(string Code, string ProductText, IReadOnlyList<string> Candidates)
 {
@@ -239,7 +240,8 @@ public sealed class CartCommandBatchProcessor
                 candidate.Product.ProductId,
                 candidate.Product.ExternalProductId,
                 candidate.Product.Sku,
-                candidate.Score)).ToList()
+                candidate.Score,
+                candidate.Product.IsActive)).ToList()
         });
     }
 

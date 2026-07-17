@@ -267,12 +267,22 @@ public sealed class ProductAliasService : IProductAliasService
             businessId, productId, scope, customerKey, normalizedAlias, ct);
         if (existing is null)
         {
+            var requiresSecondCustomerConfirmation =
+                scope == ProductAliasScope.Customer
+                && status == ProductAliasStatus.Active
+                && mode == ProductAliasResolutionMode.AutoResolve;
             await _unitOfWork.ProductAliases.CreateAsync(new ProductAlias
             {
                 ProductAliasId = Guid.NewGuid(), BusinessId = businessId, ProductId = productId,
                 Scope = scope, CustomerKey = customerKey, Alias = rawAlias.Trim(),
                 NormalizedAlias = normalizedAlias, Kind = ProductAliasKind.Alias,
-                ResolutionMode = mode, Source = ProductAliasSource.Learned, Status = status,
+                ResolutionMode = requiresSecondCustomerConfirmation
+                    ? ProductAliasResolutionMode.SuggestOnly
+                    : mode,
+                Source = ProductAliasSource.Learned,
+                Status = requiresSecondCustomerConfirmation
+                    ? ProductAliasStatus.Pending
+                    : status,
                 UsageCount = 1, LastConfirmedAt = DateTime.UtcNow, CreatedAt = DateTime.UtcNow
             }, ct);
             return;
@@ -280,7 +290,8 @@ public sealed class ProductAliasService : IProductAliasService
         existing.UsageCount++;
         existing.LastConfirmedAt = DateTime.UtcNow;
         existing.UpdatedAt = DateTime.UtcNow;
-        if (scope == ProductAliasScope.Customer && status == ProductAliasStatus.Active
+        if (scope == ProductAliasScope.Customer && existing.UsageCount >= 2
+            && status == ProductAliasStatus.Active
             && mode == ProductAliasResolutionMode.AutoResolve)
         {
             existing.Status = ProductAliasStatus.Active;

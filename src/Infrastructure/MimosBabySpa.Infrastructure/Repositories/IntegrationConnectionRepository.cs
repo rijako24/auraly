@@ -67,6 +67,56 @@ public class IntegrationConnectionRepository : IIntegrationConnectionRepository
                 ct);
     }
 
+    public async Task<IReadOnlyList<IntegrationConnection>> GetEnabledCommerceConnectionsAsync(
+        CommerceProvider provider,
+        CommerceCapability capability = CommerceCapability.CatalogAndOrders,
+        CancellationToken ct = default) =>
+        await _context.IntegrationConnections
+            .Where(connection =>
+                connection.ConnectionType == ConnectionType.Commerce
+                && connection.Provider == (int)provider
+                && connection.Capability == (int)capability
+                && connection.IsEnabled)
+            .OrderBy(connection => connection.BusinessId)
+            .ToListAsync(ct);
+
+    public Task<IntegrationChannelWarehouse?> GetChannelWarehouseAsync(
+        Guid businessId, Guid integrationConnectionId, Guid businessWhatsAppNumberId,
+        CancellationToken ct = default) =>
+        _context.IntegrationChannelWarehouses.FirstOrDefaultAsync(mapping =>
+            mapping.BusinessId == businessId
+            && mapping.IntegrationConnectionId == integrationConnectionId
+            && mapping.BusinessWhatsAppNumberId == businessWhatsAppNumberId, ct);
+
+    public async Task<IReadOnlyList<IntegrationChannelWarehouse>> GetChannelWarehousesAsync(
+        Guid businessId, Guid integrationConnectionId, CancellationToken ct = default) =>
+        await _context.IntegrationChannelWarehouses
+            .Where(mapping => mapping.BusinessId == businessId
+                && mapping.IntegrationConnectionId == integrationConnectionId)
+            .OrderBy(mapping => mapping.BusinessWhatsAppNumberId)
+            .ToListAsync(ct);
+
+    public async Task<IntegrationChannelWarehouse> UpsertChannelWarehouseAsync(
+        IntegrationChannelWarehouse warehouse, CancellationToken ct = default)
+    {
+        var existing = await GetChannelWarehouseAsync(
+            warehouse.BusinessId,
+            warehouse.IntegrationConnectionId,
+            warehouse.BusinessWhatsAppNumberId,
+            ct);
+        if (existing is null)
+        {
+            _context.IntegrationChannelWarehouses.Add(warehouse);
+            return warehouse;
+        }
+
+        existing.WarehouseCode = warehouse.WarehouseCode;
+        existing.WarehouseName = warehouse.WarehouseName;
+        existing.IsActive = warehouse.IsActive;
+        existing.UpdatedAt = DateTime.UtcNow;
+        return existing;
+    }
+
     public Task<IntegrationConnection> CreateAsync(IntegrationConnection connection, CancellationToken ct = default)
     {
         _context.IntegrationConnections.Add(connection);

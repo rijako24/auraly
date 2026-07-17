@@ -628,18 +628,56 @@ Console.WriteLine();
 var userPhone = CreateTestUserPhone();
 
 var customerName = Environment.GetEnvironmentVariable("TALKIO_CONSOLE_CUSTOMER_NAME");
+var recipientPhoneNumberId = Environment.GetEnvironmentVariable(
+    "TALKIO_CONSOLE_RECIPIENT_PHONE_NUMBER_ID")?.Trim();
+var singleTurnMode = args.Any(value =>
+    value.Equals("single-turn", StringComparison.OrdinalIgnoreCase));
+
+string? singleTurnMessage = null;
+if (singleTurnMode)
+{
+    var encodedMessage = Environment.GetEnvironmentVariable("TALKIO_CONSOLE_MESSAGE_BASE64");
+    if (string.IsNullOrWhiteSpace(encodedMessage))
+    {
+        Console.Error.WriteLine(
+            "TALKIO_CONSOLE_MESSAGE_BASE64 is required in single-turn mode.");
+        Environment.ExitCode = 2;
+        return;
+    }
+
+    try
+    {
+        singleTurnMessage = System.Text.Encoding.UTF8.GetString(
+            Convert.FromBase64String(encodedMessage));
+    }
+    catch (FormatException)
+    {
+        Console.Error.WriteLine("TALKIO_CONSOLE_MESSAGE_BASE64 is not valid Base64.");
+        Environment.ExitCode = 2;
+        return;
+    }
+}
+
 
 while (true)
 
 {
 
-    Console.ForegroundColor = ConsoleColor.Cyan;
-
-    Console.Write("Tu: ");
-
-    Console.ResetColor();
-
-    string? input = Console.ReadLine();
+    string? input;
+    if (singleTurnMode)
+    {
+        input = singleTurnMessage;
+        Console.ForegroundColor = ConsoleColor.Cyan;
+        Console.WriteLine("Tu: [mensaje multilinea de prueba]");
+        Console.ResetColor();
+    }
+    else
+    {
+        Console.ForegroundColor = ConsoleColor.Cyan;
+        Console.Write("Tu: ");
+        Console.ResetColor();
+        input = Console.ReadLine();
+    }
 
     if (string.IsNullOrWhiteSpace(input))
 
@@ -754,7 +792,14 @@ while (true)
             conversation.ConversationId,
             input,
             userPhone,
-            cancellationToken: CancellationToken.None);
+            cancellationToken: CancellationToken.None,
+            inboundMetadata: string.IsNullOrWhiteSpace(recipientPhoneNumberId)
+                ? null
+                : new AgentInboundMetadata(
+                    null,
+                    null,
+                    null,
+                    RecipientPhoneNumberId: recipientPhoneNumberId));
 
         Console.ForegroundColor = ConsoleColor.Green;
 
@@ -840,6 +885,12 @@ while (true)
 
         }
 
+        if (singleTurnMode)
+        {
+            Environment.ExitCode = result.Success ? 0 : 1;
+            break;
+        }
+
     }
     catch (Exception ex)
 
@@ -856,6 +907,12 @@ while (true)
         Console.ResetColor();
 
         Console.WriteLine();
+
+        if (singleTurnMode)
+        {
+            Environment.ExitCode = 1;
+            break;
+        }
 
     }
 

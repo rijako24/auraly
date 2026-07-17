@@ -420,6 +420,7 @@ services.AddSingleton<MimosBabySpa.Application.Agents.Runtime.IDeterministicFlow
 
 services.AddScoped<MimosBabySpa.Application.Commerce.ICartProductResolver, MimosBabySpa.Application.Commerce.CommerceCartProductResolver>();
 services.AddScoped<MimosBabySpa.Application.Commerce.IProductCandidateRetriever, MimosBabySpa.Application.Commerce.LocalProductCandidateRetriever>();
+services.AddScoped<MimosBabySpa.Application.Commerce.IProductCatalogSyncService, MimosBabySpa.Application.Commerce.ProductCatalogSyncService>();
 services.AddScoped<MimosBabySpa.Application.Commerce.IProductAliasService, MimosBabySpa.Application.Commerce.ProductAliasService>();
 
 services.AddScoped<MimosBabySpa.Application.Commerce.ICartMutationStore, MimosBabySpa.Application.Commerce.CommerceCartMutationStore>();

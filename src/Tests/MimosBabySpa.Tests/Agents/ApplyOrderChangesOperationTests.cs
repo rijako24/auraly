@@ -3,6 +3,8 @@ using FluentAssertions;
 using MimosBabySpa.Application.Agents;
 using MimosBabySpa.Application.Agents.Operations;
 using MimosBabySpa.Application.Agents.Operations.Commerce;
+using MimosBabySpa.Application.Agents.Configuration;
+using MimosBabySpa.Application.Agents.Planning;
 using MimosBabySpa.Application.Commerce;
 using MimosBabySpa.Application.Services;
 using MimosBabySpa.Domain.Enums;
@@ -574,6 +576,61 @@ public sealed class ApplyOrderChangesOperationTests
         store.Keys.Should().ContainSingle(key => !string.IsNullOrWhiteSpace(key));
     }
 
+    [Fact]
+    public async Task RichardExactMessage_RecoversAndAppliesAllElevenResolvableProducts()
+    {
+        const string message = """
+            * 10 jamonada CUNICHEF
+            * 5 paquetes de chorizo Salsan
+            * 2 maíz
+            * 3 tocinetas
+            * 2 ranchera Salsan, aclarando que no fuera la salchicha pequeña
+            * 2 súper ranchera
+            * 1 caja de papas
+            * 1 ripio
+            * 5 chicharrón
+            * 1 champiñón
+            * 3 leche de coco Kary
+            """;
+        var signalDefinition = new StageSignalDefinition { Type = "order_changes" };
+        var planningContext = new TurnPlanningContext(
+            new AgentConfig { Commerce = new CommerceConfig { Enabled = true } },
+            new AgentFlowStage(),
+            new TurnPlanScope(
+                new Dictionary<string, FactSchemaEntry>(),
+                new Dictionary<string, StageSignalDefinition>
+                {
+                    ["order_changes"] = signalDefinition
+                }),
+            new Dictionary<string, string>(),
+            message,
+            DateTimeOffset.Parse("2026-07-16T15:46:00-05:00"),
+            []);
+        var normalized = CommerceTurnPlanSafety.Normalize(new TurnPlan(), planningContext);
+        var commands = normalized.Signals.Should().ContainSingle().Subject.Value;
+        var candidates = commands.EnumerateArray().ToDictionary(
+            command => command.GetProperty("productText").GetString()!,
+            command => (IReadOnlyList<ProductReference>)
+            [Product(command.GetProperty("productText").GetString()!.ToUpperInvariant())],
+            StringComparer.OrdinalIgnoreCase);
+        var store = new StubStore();
+        var operation = new ApplyOrderChangesOperation(
+            new CartCommandBatchProcessor(new StubResolver(candidates), store),
+            new InMemoryFactsService());
+        var session = Session("wamid.richard-list");
+        session.LatestUserMessage = message;
+
+        var result = await operation.ExecuteAsync(
+            JsonSerializer.SerializeToElement(new { commands }),
+            Context(session));
+
+        result.Code.Should().Be("cart.applied");
+        store.ApplyCalls.Should().Be(1);
+        store.Applied.Select(command => command.Quantity).Should().Equal(
+            10m, 5m, 2m, 3m, 2m, 2m, 1m, 1m, 5m, 1m, 3m);
+        store.Applied.Should().HaveCount(11);
+        session.Facts.Should().NotContainKey("system.pending_cart_commands");
+    }
     private static AgentConversationContext Session(string? providerMessageId = null) => new()
     {
         BusinessId = Guid.NewGuid(),

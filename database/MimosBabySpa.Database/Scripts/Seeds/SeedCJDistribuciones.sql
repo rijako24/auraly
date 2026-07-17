@@ -76,7 +76,7 @@ USING (
         CAST(0 AS INT) AS Capability,
         N'Mantis Commerce CJ Distribuciones' AS [Name],
         N'Mantis' AS AccountIdentifier,
-        N'{"baseUrl":"http://93.189.95.109:8080/MantisFiccCasalinsPruWeb/rest/","currency":"COP","requestTimeoutSeconds":30,"catalog":{"searchEndpoint":"pwsConsultarArticuloCasalins","defaultPageSize":5,"maxPageSize":5,"cacheProducts":true},"order":{"createEndpoint":"pwsCrearPedidoCasalins","warehouse":"1","mockCreateOrders":true}}' AS SettingsJson,
+        N'{"baseUrl":"http://93.189.95.109:8080/MantisFiccCasalinsPruWeb/rest/","currency":"COP","requestTimeoutSeconds":30,"genericCustomer":{"llaveNit":"5702","llaveCliente":"1"},"catalog":{"searchEndpoint":"pwsConsultarArticuloCasalins","defaultPageSize":5,"maxPageSize":20},"order":{"createEndpoint":"pwsCrearPedidoCasalins","mockCreateOrders":false}}' AS SettingsJson,
         CAST(NULL AS NVARCHAR(MAX)) AS SecretsJson,
         CAST(1 AS BIT) AS IsEnabled
 ) AS source
@@ -1378,13 +1378,21 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                   }
               ]
 }';
-DECLARE @PartialCartOutcome NVARCHAR(MAX) = N'{"response":{"mode":"ask_clarification","guidance":"Informa los cambios aplicados en este turno, conserva el carrito completo por separado, enumera todas las referencias pendientes y solicita primero la confirmacion principal."},"effects":[{"type":"presentation.add","template":"cart_partial","dataPath":"error.context","mode":"Exclusive","priority":"Required"}]}';
+DECLARE @PartialCartOutcome NVARCHAR(MAX) = N'{"response":{"mode":"ask_clarification","guidance":"Da un resultado explicito para cada referencia del lote usando la presentacion deterministica: agregada, sin existencia, ambigua, sugerida, cantidad insuficiente o no encontrada. No omitas referencias ni las mezcles entre categorias."},"effects":[{"type":"presentation.add","template":"cart_partial","dataPath":"error.context","mode":"Exclusive","priority":"Required"}]}';
 DECLARE @ProductSuggestionOutcome NVARCHAR(MAX) = N'{"response":{"mode":"ask_clarification","guidance":"Presenta la sugerencia devuelta y pide confirmacion explicita antes de agregarla."},"effects":[{"type":"presentation.add","template":"product_ambiguity","dataPath":"error.context","mode":"Exclusive","priority":"Required"}]}';
 DECLARE @ProductUnavailableOutcome NVARCHAR(MAX) = N'{"response":{"mode":"ask_clarification","guidance":"Indica que la referencia identificada no esta disponible y solicita otra opcion; no afirmes que fue agregada."},"effects":[{"type":"presentation.add","template":"cart_product_unavailable","dataPath":"error.context","mode":"Exclusive","priority":"Required"}]}';
 DECLARE @ProductNotFoundOutcome NVARCHAR(MAX) = N'{"response":{"mode":"ask_clarification","guidance":"Indica las referencias que no tuvieron coincidencia segura y solicita datos mas precisos; no afirmes que el carrito cambio."},"effects":[{"type":"presentation.add","template":"cart_not_found","dataPath":"error.context","mode":"Exclusive","priority":"Required"}]}';
 
 SET @SettingsJson = JSON_MODIFY(@SettingsJson, '$.templates.cart_partial',
-    N'Listo. Esto si quedo actualizado en tu pedido:\r\n{{#each applied_items}}\r\n- {{name}}{{#if quantity}} x{{quantity}}{{/if}}\r\n{{/each}}\r\n\r\n*Pedido actual*\r\n{{#each items}}\r\n- {{name}} x{{quantity}}: ${{line_total}}\r\n{{/each}}\r\n\r\n*Total: ${{total}} {{currency}}*\r\n\r\nNo encontre una coincidencia segura para:\r\n{{#each issues}}\r\n- {{ProductText}}\r\n{{/each}}\r\n\r\nPrimero necesito confirmar "{{product_text}}".\r\n{{#each product_options}}\r\n- Te refieres a {{Name}}: ${{UnitPrice}} {{Currency}}?\r\n{{/each}}\r\n\r\nSi no es ninguna opcion, indicame el nombre, marca, presentacion o codigo del producto.');
+    N'Procesé cada producto de tu solicitud:\r\n{{#if applied_items}}\r\n*Agregados*\r\n{{#each applied_items}}\r\n- {{name}} — cantidad: {{quantity}}\r\n{{/each}}\r\n{{/if}}\r\n{{#if unavailable_items}}\r\n*Sin existencia*\r\n{{#each unavailable_items}}\r\n- {{product_text}}{{#if recognized_name}} ({{recognized_name}}){{/if}}\r\n{{/each}}\r\n{{/if}}\r\n{{#if insufficient_stock_items}}\r\n*Existencia insuficiente*\r\n{{#each insufficient_stock_items}}\r\n- {{product_text}}: solicitaste {{requested_quantity}} y hay {{available_quantity}}; puedes pedir hasta {{maximum_command_quantity}}\r\n{{/each}}\r\n{{/if}}\r\n{{#if ambiguous_options}}\r\n*Necesito que elijas*\r\n{{#each ambiguous_options}}\r\n- Para {{product_text}}: {{name}} — ${{unit_price}} {{currency}}\r\n{{/each}}\r\n{{/if}}\r\n{{#if suggested_options}}\r\n*Necesito confirmar*\r\n{{#each suggested_options}}\r\n- Para {{product_text}}: ¿te refieres a {{name}} — ${{unit_price}} {{currency}}?\r\n{{/each}}\r\n{{/if}}\r\n{{#if not_found_items}}\r\n*No encontrados*\r\n{{#each not_found_items}}\r\n- {{product_text}}\r\n{{/each}}\r\n{{/if}}\r\n*Pedido actual*\r\n{{#each items}}\r\n- {{name}} x{{quantity}}: ${{line_total}}\r\n{{/each}}\r\n\r\n*Total: ${{total}} {{currency}}*\r\n\r\nIndícame las elecciones o una referencia más precisa para los pendientes.');
+
+SET @SettingsJson = JSON_MODIFY(@SettingsJson, '$.templates.cart_partial',
+    REPLACE(JSON_VALUE(@SettingsJson, '$.templates.cart_partial'),
+        N'— ${{unit_price}} {{currency}}', N'— {{availability_text}}'));
+
+SET @SettingsJson = JSON_MODIFY(@SettingsJson, '$.templates.cart_partial',
+    REPLACE(JSON_VALUE(@SettingsJson, '$.templates.cart_partial'),
+        N'{{product_text}}{{#if recognized_name}} ({{recognized_name}}){{/if}}', N'{{description}}'));
 
 SET @SettingsJson = JSON_MODIFY(@SettingsJson, '$.templates.cart_not_found',
     N'No agregue estas referencias porque no encontre una coincidencia segura:\r\n{{#each issues}}\r\n- {{ProductText}}\r\n{{/each}}\r\n\r\nIndicame el nombre, marca, presentacion o codigo de una de ellas para identificarla.');
@@ -1398,6 +1406,25 @@ IF JSON_VALUE(@SettingsJson, '$.flows[0].stages[2].actions[2].operation') <> 'co
     THROW 51000, 'SeedCJDistribuciones: ruta product_selection de carrito inesperada.', 1;
 IF JSON_VALUE(@SettingsJson, '$.flows[0].stages[3].actions[1].operation') <> 'commerce.apply_order_changes'
     THROW 51000, 'SeedCJDistribuciones: ruta cart_review de carrito inesperada.', 1;
+
+DECLARE @CartExecutionPaths TABLE (Path NVARCHAR(400) NOT NULL);
+INSERT INTO @CartExecutionPaths (Path) VALUES
+    (N'$.globalActions[1].actions[0].execution'),
+    (N'$.flows[0].stages[2].actions[2].execution'),
+    (N'$.flows[0].stages[3].actions[1].execution');
+
+DECLARE @CartExecutionPath NVARCHAR(400);
+DECLARE CartExecutionCursor CURSOR LOCAL FAST_FORWARD FOR SELECT Path FROM @CartExecutionPaths;
+OPEN CartExecutionCursor;
+FETCH NEXT FROM CartExecutionCursor INTO @CartExecutionPath;
+WHILE @@FETCH_STATUS = 0
+BEGIN
+    SET @SettingsJson = JSON_MODIFY(@SettingsJson, @CartExecutionPath,
+        JSON_QUERY(N'{"idempotency":"input_version","timeoutSeconds":240,"maxAttempts":1}'));
+    FETCH NEXT FROM CartExecutionCursor INTO @CartExecutionPath;
+END;
+CLOSE CartExecutionCursor;
+DEALLOCATE CartExecutionCursor;
 
 DECLARE @CartOutcomePaths TABLE (Path NVARCHAR(400) NOT NULL);
 INSERT INTO @CartOutcomePaths (Path) VALUES

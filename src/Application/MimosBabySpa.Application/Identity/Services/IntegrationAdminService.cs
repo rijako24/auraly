@@ -265,6 +265,86 @@ public class IntegrationAdminService : IIntegrationAdminService
         return connection;
     }
 
+    public async Task<IReadOnlyList<MantisChannelWarehouseDto>> GetMantisChannelWarehousesAsync(
+        Guid tenantId,
+        Guid businessId,
+        CancellationToken ct = default)
+    {
+        await EnsureBusinessBelongsToTenantAsync(tenantId, businessId, ct);
+        var connection = await _unitOfWork.IntegrationConnections.GetCommerceConnectionAsync(
+            businessId,
+            CommerceProvider.Mantis,
+            CommerceCapability.CatalogAndOrders,
+            ct);
+        var numbers = (await _unitOfWork.BusinessWhatsAppNumbers.GetByBusinessIdAsync(businessId))
+            .Where(number => number.IsActive)
+            .OrderBy(number => number.PhoneNumber)
+            .ToList();
+        var mappings = connection is null
+            ? []
+            : await _unitOfWork.IntegrationConnections.GetChannelWarehousesAsync(
+                businessId, connection.IntegrationConnectionId, ct);
+
+        return numbers.Select(number =>
+        {
+            var mapping = mappings.FirstOrDefault(candidate =>
+                candidate.BusinessWhatsAppNumberId == number.BusinessWhatsAppNumberId);
+            return new MantisChannelWarehouseDto(
+                number.BusinessWhatsAppNumberId,
+                number.PhoneNumber,
+                number.WhatsAppPhoneNumberId,
+                mapping?.WarehouseCode,
+                mapping?.WarehouseName,
+                mapping?.IsActive == true);
+        }).ToList();
+    }
+
+    public async Task<IReadOnlyList<MantisChannelWarehouseDto>> UpdateMantisChannelWarehousesAsync(
+        Guid tenantId,
+        Guid businessId,
+        UpdateMantisChannelWarehousesRequest request,
+        CancellationToken ct = default)
+    {
+        await EnsureBusinessBelongsToTenantAsync(tenantId, businessId, ct);
+        var connection = await _unitOfWork.IntegrationConnections.GetCommerceConnectionAsync(
+            businessId,
+            CommerceProvider.Mantis,
+            CommerceCapability.CatalogAndOrders,
+            ct) ?? throw new InvalidOperationException("The Mantis commerce connection is not configured.");
+        var numbers = (await _unitOfWork.BusinessWhatsAppNumbers.GetByBusinessIdAsync(businessId))
+            .ToDictionary(number => number.BusinessWhatsAppNumberId);
+
+        foreach (var channel in request.Channels ?? [])
+        {
+            if (!numbers.TryGetValue(channel.BusinessWhatsAppNumberId, out var number)
+                || number.BusinessId != businessId)
+            {
+                throw new InvalidOperationException("A WhatsApp number does not belong to this business.");
+            }
+            if (channel.IsActive && string.IsNullOrWhiteSpace(channel.WarehouseCode))
+                throw new InvalidOperationException("An active Mantis channel warehouse requires a warehouse code.");
+
+            await _unitOfWork.IntegrationConnections.UpsertChannelWarehouseAsync(
+                new IntegrationChannelWarehouse
+                {
+                    IntegrationChannelWarehouseId = Guid.NewGuid(),
+                    BusinessId = businessId,
+                    IntegrationConnectionId = connection.IntegrationConnectionId,
+                    BusinessWhatsAppNumberId = channel.BusinessWhatsAppNumberId,
+                    WarehouseCode = channel.WarehouseCode.Trim(),
+                    WarehouseName = string.IsNullOrWhiteSpace(channel.WarehouseName)
+                        ? null
+                        : channel.WarehouseName.Trim(),
+                    IsActive = channel.IsActive,
+                    CreatedAt = DateTime.UtcNow
+                },
+                ct);
+        }
+
+        await _unitOfWork.SaveChangesAsync(ct);
+        return await GetMantisChannelWarehousesAsync(tenantId, businessId, ct);
+    }
+
     private async Task EnsureBusinessBelongsToTenantAsync(Guid tenantId, Guid businessId, CancellationToken ct)
     {
         var business = await _unitOfWork.Businesses.GetByIdAsync(businessId)

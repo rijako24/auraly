@@ -12,4 +12,5 @@ public class IncomingMessage
     public string? ReplyToProviderMessageId { get; set; }
     public string? InteractivePayload { get; set; }
     public IReadOnlyDictionary<string, string> Facts { get; set; } = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+    public string? RecipientPhoneNumberId { get; set; }
 }

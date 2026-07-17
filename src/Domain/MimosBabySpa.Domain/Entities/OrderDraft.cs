@@ -9,6 +9,7 @@ public class OrderDraft
     public Guid? AgentId { get; set; }
     public Guid ConversationId { get; set; }
     public Guid? IntegrationConnectionId { get; set; }
+    public string? CommerceWarehouseCode { get; set; }
     public Guid? PaymentTransactionId { get; set; }
     public OrderSource Source { get; set; } = OrderSource.Bot;
     public OrderFulfillmentMode FulfillmentMode { get; set; } = OrderFulfillmentMode.Local;

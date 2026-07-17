@@ -20,4 +20,14 @@ public sealed class ProductCatalogSyncController : ControllerBase
     public async Task<ActionResult<ProductCatalogSyncResult>> Sync(
         Guid businessId, [FromBody] ProductCatalogSyncRequest request, CancellationToken ct) =>
         Ok(await _service.SyncAsync(User.GetTenantId(), businessId, request, ct));
+    [HttpPost("refresh-product")]
+    [PermissionAuthorize("products.update")]
+    public async Task<ActionResult<ProductIdentityRefreshResult>> RefreshProduct(
+        Guid businessId,
+        [FromBody] RefreshProductRequest request,
+        CancellationToken ct) =>
+        Ok(await _service.RefreshProductAsync(User.GetTenantId(), businessId, request.Query, ct));
+
+    public sealed record RefreshProductRequest(string Query);
+
 }

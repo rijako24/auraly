@@ -165,6 +165,8 @@ public sealed class ApplyOrderChangesOperation : IAgentOperation
             if (result.AppliedCommands.Count > 0)
                 return ClarificationOutcome(
                     "cart.partially_applied", result.Snapshot, issues, result.AppliedCommands);
+            if (issues.Count > 1)
+                return ClarificationOutcome("cart.partially_applied", result.Snapshot, issues);
             return ClarificationOutcome(ToOutcomeCode(issues.FirstOrDefault()?.Code), result.Snapshot, issues);
         }
 
@@ -228,11 +230,12 @@ public sealed class ApplyOrderChangesOperation : IAgentOperation
         IReadOnlyList<CartCommandIssue> issues,
         IReadOnlyList<ResolvedCartCommand>? appliedCommands = null)
     {
+        appliedCommands ??= [];
         var first = issues.FirstOrDefault();
         return OperationOutcome.Fail(
             code,
             code == "cart.partially_applied"
-                ? "Safe order changes were applied; unresolved products still require clarification."
+                ? "Every requested order change was evaluated; unresolved products still require clarification."
                 : "One or more order changes require clarification.",
             true,
             "order_changes_clarification",
@@ -247,7 +250,7 @@ public sealed class ApplyOrderChangesOperation : IAgentOperation
                     unit_price = item.UnitPrice, line_total = item.LineTotal
                 }).ToList() ?? [],
                 issues,
-                applied_items = (appliedCommands ?? [])
+                applied_items = appliedCommands
                     .Select(command => new
                     {
                         operation = command.Operation,
@@ -256,8 +259,49 @@ public sealed class ApplyOrderChangesOperation : IAgentOperation
                         unit_price = command.Product?.EffectiveUnitPrice ?? command.Product?.UnitPrice
                     })
                     .ToList(),
-                applied_item_count = appliedCommands?.Count ?? 0,
+                unavailable_items = issues.Where(issue => issue.Code == "product_unavailable")
+                    .Select(issue => new
+                    {
+                        product_text = issue.ProductText,
+                        recognized_name = issue.ProductCandidates.FirstOrDefault()?.Name,
+                        description = issue.ProductCandidates.FirstOrDefault() is { } product
+                            ? $"{issue.ProductText} — {product.Name}"
+                            : issue.ProductText
+                    }).ToList(),
+                ambiguous_options = issues.Where(issue => issue.Code == "product_ambiguous")
+                    .SelectMany(issue => issue.ProductCandidates.Select(product => new
+                    {
+                        product_text = issue.ProductText,
+                        name = product.Name,
+                        unit_price = product.UnitPrice,
+                        currency = product.Currency,
+                        is_available = product.IsAvailable,
+                        availability_text = product.IsAvailable
+                            ? $"${product.UnitPrice.ToString("N2", CultureInfo.InvariantCulture)} {product.Currency}"
+                            : "sin existencia"
+                    })).ToList(),
+                suggested_options = issues.Where(issue => issue.Code == "product_suggestion")
+                    .SelectMany(issue => issue.ProductCandidates.Select(product => new
+                    {
+                        product_text = issue.ProductText,
+                        name = product.Name,
+                        unit_price = product.UnitPrice,
+                        currency = product.Currency,
+                        availability_text = $"${product.UnitPrice.ToString("N2", CultureInfo.InvariantCulture)} {product.Currency}"
+                    })).ToList(),
+                insufficient_stock_items = issues.Where(issue => issue.Code == "insufficient_stock")
+                    .Select(issue => new
+                    {
+                        product_text = issue.ProductText,
+                        requested_quantity = issue.RequestedQuantity,
+                        available_quantity = issue.AvailableQuantity,
+                        maximum_command_quantity = issue.MaximumCommandQuantity
+                    }).ToList(),
+                not_found_items = issues.Where(issue => issue.Code is "product_not_found" or "item_not_found_or_ambiguous")
+                    .Select(issue => new { product_text = issue.ProductText }).ToList(),
+                applied_item_count = appliedCommands.Count,
                 unresolved_item_count = issues.Count,
+                item_result_count = appliedCommands.Count + issues.Count,
                 product_text = first?.ProductText,
                 candidates = first?.Candidates ?? [],
                 product_options = first?.ProductCandidates ?? [],

@@ -3,6 +3,7 @@ using FluentAssertions;
 using MimosBabySpa.Application.Agents;
 using MimosBabySpa.Application.Agents.Configuration;
 using MimosBabySpa.Application.Agents.Planning;
+using MimosBabySpa.Application.Commerce;
 using Xunit;
 
 namespace MimosBabySpa.Tests.Agents;
@@ -99,6 +100,85 @@ public sealed class CommerceTurnPlanSafetyTests
                 ("salchicha ranchera super", 3m),
                 ("pechuga criolla", 1m));
     }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void RichardExactBulletList_WhenPlannerOmitsOrTruncatesSignal_RecoversEveryCommand(bool plannerReturnsOnlyFirst)
+    {
+        const string message = """
+            * 10 jamonada CUNICHEF
+            * 5 paquetes de chorizo Salsan
+            * 2 maíz
+            * 3 tocinetas
+            * 2 ranchera Salsan, aclarando que no fuera la salchicha pequeña
+            * 2 súper ranchera
+            * 1 caja de papas
+            * 1 ripio
+            * 5 chicharrón
+            * 1 champiñón
+            * 3 leche de coco Kary
+            """;
+
+        var plannerOutput = plannerReturnsOnlyFirst
+            ? Plan(OrderChanges("jamonada CUNICHEF", 10m, message))
+            : Plan();
+        var normalized = CommerceTurnPlanSafety.Normalize(plannerOutput, Context(message));
+
+        normalized.Signals.Should().ContainSingle(signal => signal.Type == "order_changes");
+        normalized.Signals[0].Evidence.Should().Be(message.Trim());
+        normalized.Signals[0].Value.EnumerateArray()
+            .Select(command => (
+                command.GetProperty("productText").GetString(),
+                command.GetProperty("quantity").GetDecimal()))
+            .Should().Equal(
+                ("jamonada CUNICHEF", 10m),
+                ("paquetes de chorizo Salsan", 5m),
+                ("maíz", 2m),
+                ("tocinetas", 3m),
+                ("ranchera Salsan, aclarando que no fuera la salchicha pequeña", 2m),
+                ("súper ranchera", 2m),
+                ("caja de papas", 1m),
+                ("ripio", 1m),
+                ("chicharrón", 5m),
+                ("champiñón", 1m),
+                ("leche de coco Kary", 3m));
+    }
+
+    [Fact]
+    public void CatalogQuestionWithBulletQuantities_DoesNotInventCartMutation()
+    {
+        const string message = """
+            ¿Tienen disponibles estos productos?
+            * 2 jamonadas
+            * 3 tocinetas
+            """;
+
+        var normalized = CommerceTurnPlanSafety.Normalize(Plan(), Context(message));
+
+        normalized.Signals.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void FinalizationWithoutAuthoritativeCart_IsRemoved()
+    {
+        var normalized = CommerceTurnPlanSafety.Normalize(
+            PlanWithFinalization(),
+            CommerceFinalizationContext(hasCart: false));
+
+        normalized.Facts.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void FinalizationWithAuthoritativeCart_IsPreserved()
+    {
+        var normalized = CommerceTurnPlanSafety.Normalize(
+            PlanWithFinalization(),
+            CommerceFinalizationContext(hasCart: true));
+
+        normalized.Facts.Should().ContainSingle(fact => fact.Key == "order_finalized");
+    }
+
     private static TurnPlan Plan(params PlannedSignal[] signals) => new()
     {
         Signals = signals,
@@ -121,6 +201,57 @@ public sealed class CommerceTurnPlanSafetyTests
         Evidence = evidence,
         Confidence = 0.95
     };
+
+    private static TurnPlan PlanWithFinalization() => new()
+    {
+        Facts =
+        [
+            new PlannedFactClaim
+            {
+                Key = "order_finalized",
+                Operation = TurnPlanOperations.Set,
+                Value = JsonSerializer.SerializeToElement(true),
+                Evidence = "solo eso"
+            }
+        ],
+        Response = new TurnPlanResponseDirective()
+    };
+
+    private static TurnPlanningContext CommerceFinalizationContext(bool hasCart)
+    {
+        var fact = new FactSchemaEntry
+        {
+            Key = "order_finalized",
+            Role = "order.finalized",
+            Type = "boolean"
+        };
+        var config = new AgentConfig
+        {
+            Commerce = new CommerceConfig { Enabled = true },
+            FactSchema = [fact]
+        };
+        IReadOnlyDictionary<string, JsonElement>? structuredContext = hasCart
+            ? new Dictionary<string, JsonElement>
+            {
+                ["currentCart"] = JsonSerializer.SerializeToElement(new
+                {
+                    items = new[] { new { name = "PRODUCTO", quantity = 1m } }
+                })
+            }
+            : null;
+
+        return new TurnPlanningContext(
+            config,
+            new AgentFlowStage(),
+            new TurnPlanScope(
+                new Dictionary<string, FactSchemaEntry> { [fact.Key] = fact },
+                new Dictionary<string, StageSignalDefinition>()),
+            new Dictionary<string, string>(),
+            "solo eso",
+            DateTimeOffset.Parse("2026-07-16T15:00:00-05:00"),
+            [],
+            structuredContext);
+    }
 
     private static TurnPlanningContext Context(string message, bool catalogFollowUp = false)
     {

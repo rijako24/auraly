@@ -4,6 +4,7 @@ CREATE TABLE [dbo].[OrderDrafts] (
     [AgentId] UNIQUEIDENTIFIER NULL,
     [ConversationId] UNIQUEIDENTIFIER NOT NULL,
     [IntegrationConnectionId] UNIQUEIDENTIFIER NULL,
+    [CommerceWarehouseCode] NVARCHAR(100) NULL,
     [PaymentTransactionId] UNIQUEIDENTIFIER NULL,
     [Source] INT NOT NULL DEFAULT 0,
     [FulfillmentMode] INT NOT NULL DEFAULT 0,

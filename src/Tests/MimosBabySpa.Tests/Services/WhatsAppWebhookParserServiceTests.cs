@@ -31,6 +31,7 @@ public sealed class WhatsAppWebhookParserServiceTests
                     Field = "messages",
                     Value = new Value
                     {
+                        Metadata = new WebhookMetadata { PhoneNumberId = "receiver-san-martin" },
                         Contacts =
                         [
                             new Contact { Profile = new Profile { Name = "Geral" } }
@@ -65,6 +66,7 @@ public sealed class WhatsAppWebhookParserServiceTests
         message.ReplyToProviderMessageId.Should().Be("wamid.outbound");
         message.ProviderMessageId.Should().Be("wamid.inbound");
         message.CustomerName.Should().Be("Geral");
+        message.RecipientPhoneNumberId.Should().Be("receiver-san-martin");
     }
 
     [Fact]

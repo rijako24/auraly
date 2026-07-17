@@ -13,8 +13,10 @@ export const integrationKeys = {
   all: ["integrations"] as const,
   settings: (businessId: string | null | undefined) =>
     [...integrationKeys.all, "settings", businessId] as const,
-};
+  mantisWarehouses: (businessId: string | null | undefined) =>
+    [...integrationKeys.all, "mantis-warehouses", businessId] as const,
 
+};
 export function useIntegrationSettings(businessIdOverride?: string | null) {
   const selectedBusinessId = useBusinessContextStore((s) => s.selectedBusinessId);
   const businessId = businessIdOverride ?? selectedBusinessId;
@@ -65,5 +67,36 @@ export function useUpdateOperationalMode(businessIdOverride?: string | null) {
         queryKey: integrationKeys.settings(businessId),
       });
     },
+  });
+}
+
+export function useRefreshMantisProduct() {
+  const businessId = useBusinessContextStore((s) => s.selectedBusinessId);
+  return useMutation({
+    mutationFn: (query: string) => {
+      if (!businessId) throw new Error("Selecciona un negocio.");
+      return integrationsApi.refreshMantisProduct(businessId, query);
+    },
+  });
+}
+
+export function useMantisWarehouses() {
+  const businessId = useBusinessContextStore((s) => s.selectedBusinessId);
+  return useQuery({
+    queryKey: integrationKeys.mantisWarehouses(businessId),
+    queryFn: () => integrationsApi.getMantisWarehouses(businessId!),
+    enabled: !!businessId,
+  });
+}
+
+export function useUpdateMantisWarehouses() {
+  const businessId = useBusinessContextStore((s) => s.selectedBusinessId);
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (channels: Parameters<typeof integrationsApi.updateMantisWarehouses>[1]) =>
+      integrationsApi.updateMantisWarehouses(businessId!, channels),
+    onSuccess: () => queryClient.invalidateQueries({
+      queryKey: integrationKeys.mantisWarehouses(businessId),
+    }),
   });
 }

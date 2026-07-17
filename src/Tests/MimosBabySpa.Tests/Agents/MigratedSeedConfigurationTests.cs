@@ -57,7 +57,8 @@ public sealed class MigratedSeedConfigurationTests
             "Scripts",
             "Seeds",
             "SeedCJDistribuciones.sql");
-        var settingsJson = ExtractSettingsJson(File.ReadAllText(path), "SettingsJson");
+        var seedSql = File.ReadAllText(path);
+        var settingsJson = ExtractSettingsJson(seedSql, "SettingsJson");
         var config = JsonSerializer.Deserialize<AgentConfig>(
             settingsJson,
             new JsonSerializerOptions
@@ -115,6 +116,13 @@ public sealed class MigratedSeedConfigurationTests
             .Select(stage => stage.Id)
             .Should().BeEquivalentTo(["product_selection", "cart_review"],
                 "these stages intentionally override the global cart fallback");
+        seedSql.Should()
+            .Contain("(N'$.globalActions[1].actions[0].execution')")
+            .And.Contain("(N'$.flows[0].stages[2].actions[2].execution')")
+            .And.Contain("(N'$.flows[0].stages[3].actions[1].execution')")
+            .And.Contain(
+                "JSON_QUERY(N'{\"idempotency\":\"input_version\",\"timeoutSeconds\":240,\"maxAttempts\":1}')",
+                "all CJ cart mutation owners must receive the long-running external batch policy");
 
         foreach (var flow in config.Flows)
         {

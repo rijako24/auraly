@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using MimosBabySpa.Application.Commerce;
 
 namespace MimosBabySpa.Infrastructure.Commerce;
@@ -34,6 +35,8 @@ internal sealed class MantisProductDto
     public string? PresProducto { get; init; }
     public string? SubCategoriaProducto { get; init; }
     public string? TipoProducto { get; init; }
+    public string? FechaCreacion { get; init; }
+    public string? FechaModificacion { get; init; }
 }
 
 internal static class MantisProductMapper
@@ -107,3 +110,32 @@ internal sealed record MantisCustomerIdentity(
     string? Name,
     string? CellPhone,
     string? Telephone);
+
+internal sealed class FlexibleStringJsonConverter : JsonConverter<string?>
+{
+    public override string? Read(
+        ref Utf8JsonReader reader,
+        Type typeToConvert,
+        JsonSerializerOptions options) =>
+        reader.TokenType switch
+        {
+            JsonTokenType.Null => null,
+            JsonTokenType.String => reader.GetString(),
+            JsonTokenType.Number => ReadNumber(ref reader),
+            JsonTokenType.True => bool.TrueString,
+            JsonTokenType.False => bool.FalseString,
+            _ => throw new JsonException($"Cannot convert {reader.TokenType} to string.")
+        };
+
+    public override void Write(
+        Utf8JsonWriter writer,
+        string? value,
+        JsonSerializerOptions options) =>
+        writer.WriteStringValue(value);
+
+    private static string ReadNumber(ref Utf8JsonReader reader)
+    {
+        using var document = JsonDocument.ParseValue(ref reader);
+        return document.RootElement.GetRawText();
+    }
+}

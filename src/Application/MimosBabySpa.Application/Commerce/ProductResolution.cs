@@ -184,13 +184,17 @@ public static class ProductResolutionEngine
         return new ProductResolution(
             ProductResolutionStatus.Ambiguous,
             null,
-            scored.Take(3).ToList(),
+            scored.Take(5).ToList(),
             requestedText);
     }
 
     public static double Score(string requestedText, ProductReference product)
     {
-        var requested = ProductSearchText.GetTokens(requestedText);
+        // Packaging words broaden discovery but are not identity evidence when the
+        // supplier name omits the package. ContainsEveryRequestedTerm still uses
+        // all tokens, so an unmatched package can only be suggested, never silently
+        // auto-selected.
+        var requested = ProductSearchText.GetMatchingTokens(requestedText);
         var offered = ProductSearchText.GetTokens($"{product.Name} {product.Sku} {product.ExternalProductId} {product.CategoryName}");
         if (requested.Count == 0 || offered.Count == 0)
             return 0d;
@@ -234,7 +238,7 @@ public static class ProductResolutionEngine
 
     private static bool HasMinimumSemanticCoverage(string requestedText, ProductReference product)
     {
-        var requested = ProductSearchText.GetTokens(requestedText)
+        var requested = ProductSearchText.GetMatchingTokens(requestedText)
             .Where(token => !token.All(char.IsDigit))
             .ToList();
         var offered = ProductSearchText.GetTokens(

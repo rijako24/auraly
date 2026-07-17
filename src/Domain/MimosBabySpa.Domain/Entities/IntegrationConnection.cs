@@ -16,6 +16,9 @@ public class IntegrationConnection
     public bool IsEnabled { get; set; }
     public DateTime? LastSyncAt { get; set; }
     public string? LastError { get; set; }
+    public int CatalogSyncNextPage { get; set; } = 1;
+    public DateTime? CatalogDeltaCursorDate { get; set; }
+    public int CustomerSyncNextPage { get; set; } = 1;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? UpdatedAt { get; set; }
 

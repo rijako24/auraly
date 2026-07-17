@@ -26,6 +26,7 @@ public interface IUnitOfWork : IDisposable
     IScheduledAutomationJobRepository ScheduledAutomationJobs { get; }
     IReservationAttendanceResponseRepository ReservationAttendanceResponses { get; }
     IIntegrationConnectionRepository IntegrationConnections { get; }
+    IExternalCommerceCustomerRepository ExternalCommerceCustomers { get; }
     IReservationIntegrationEventRepository ReservationIntegrationEvents { get; }
     IExternalEscalationAttemptRepository ExternalEscalationAttempts { get; }
     IExternalEscalationOutcomeDeliveryRepository ExternalEscalationOutcomeDeliveries { get; }

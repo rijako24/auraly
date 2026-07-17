@@ -26,4 +26,17 @@ public sealed class ProductCatalogAdminService : IProductCatalogAdminService
             throw new NotFoundException(nameof(Business), businessId);
         return await _sync.SyncAsync(businessId, request, ct);
     }
+    public async Task<ProductIdentityRefreshResult> RefreshProductAsync(
+        Guid tenantId,
+        Guid businessId,
+        string query,
+        CancellationToken ct = default)
+    {
+        var business = await _unitOfWork.Businesses.GetByIdAsync(businessId)
+            ?? throw new NotFoundException(nameof(Business), businessId);
+        if (business.TenantId != tenantId)
+            throw new NotFoundException(nameof(Business), businessId);
+        return await _sync.RefreshProductAsync(businessId, query, ct: ct);
+    }
+
 }

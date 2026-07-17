@@ -18,6 +18,33 @@ public sealed partial class ProductRepository
         await _context.Products.AsNoTracking()
             .Where(product => product.BusinessId == businessId).ToListAsync(ct);
 
+    public async Task ReplaceSearchTermsAsync(Product product, CancellationToken ct = default)
+    {
+        var existing = await _context.ProductSearchTerms
+            .Where(term => term.BusinessId == product.BusinessId && term.ProductId == product.ProductId)
+            .ToListAsync(ct);
+        var desired = ProductSearchText.GetIndexTerms(
+                product.Name,
+                product.Sku,
+                product.ExternalProductId,
+                product.CategoryName,
+                product.Description)
+            .Where(term => term.Length <= 100)
+            .ToHashSet(StringComparer.Ordinal);
+
+        _context.ProductSearchTerms.RemoveRange(existing.Where(term => !desired.Contains(term.Term)));
+        var existingTerms = existing.Select(term => term.Term).ToHashSet(StringComparer.Ordinal);
+        _context.ProductSearchTerms.AddRange(desired
+            .Where(term => !existingTerms.Contains(term))
+            .Select(term => new ProductSearchTerm
+            {
+                BusinessId = product.BusinessId,
+                ProductId = product.ProductId,
+                Term = term,
+                CreatedAt = DateTime.UtcNow
+            }));
+    }
+
     public async Task<IReadOnlyList<Product>> SearchByIndexTermsAsync(
         Guid businessId,
         IReadOnlyCollection<string> terms,

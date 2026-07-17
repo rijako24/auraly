@@ -36,6 +36,16 @@ public sealed class ConversationStateManagerTests
                 CreatedAtUtc = DateTime.UtcNow,
                 ExpiresAtUtc = DateTime.UtcNow.AddMinutes(5)
             },
+            CommerceCustomer = new ExternalCommerceCustomerIdentity
+            {
+                Provider = 2,
+                ExternalAccountId = "account-key",
+                ExternalCustomerId = "customer-key",
+                Name = "Cliente Mantis",
+                Phone = "3001234567",
+                ResolvedAtUtc = DateTime.UtcNow
+            },
+            CommerceCustomerLookupGeneration = 3,
             RequestGeneration = 3,
             LastOpenedRequestGeneration = 2,
             ExecutedOperationKeys = new Dictionary<string, DateTime>
@@ -58,6 +68,10 @@ public sealed class ConversationStateManagerTests
         reloaded.FactVersions["order_finalized"].Should().Be(4);
         reloaded.PendingTurnPlan.Should().NotBeNull();
         reloaded.PendingTurnPlan!.AmbiguousFields.Should().Equal("delivery_address");
+        reloaded.CommerceCustomer.Should().NotBeNull();
+        reloaded.CommerceCustomer!.ExternalAccountId.Should().Be("account-key");
+        reloaded.CommerceCustomer.ExternalCustomerId.Should().Be("customer-key");
+        reloaded.CommerceCustomerLookupGeneration.Should().Be(3);
         reloaded.RequestGeneration.Should().Be(3);
         reloaded.LastOpenedRequestGeneration.Should().Be(2);
         reloaded.ExecutedOperationKeys.Should().ContainKey("3:cart_review:load");

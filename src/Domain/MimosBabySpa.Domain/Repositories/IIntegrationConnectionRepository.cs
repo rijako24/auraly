@@ -20,6 +20,19 @@ public interface IIntegrationConnectionRepository
         CommerceProvider provider,
         CommerceCapability capability = CommerceCapability.CatalogAndOrders,
         CancellationToken ct = default);
+    Task<IReadOnlyList<IntegrationConnection>> GetEnabledCommerceConnectionsAsync(
+        CommerceProvider provider,
+        CommerceCapability capability = CommerceCapability.CatalogAndOrders,
+        CancellationToken ct = default);
+    Task<IntegrationChannelWarehouse?> GetChannelWarehouseAsync(
+        Guid businessId,
+        Guid integrationConnectionId,
+        Guid businessWhatsAppNumberId,
+        CancellationToken ct = default);
+    Task<IReadOnlyList<IntegrationChannelWarehouse>> GetChannelWarehousesAsync(
+        Guid businessId, Guid integrationConnectionId, CancellationToken ct = default);
+    Task<IntegrationChannelWarehouse> UpsertChannelWarehouseAsync(
+        IntegrationChannelWarehouse warehouse, CancellationToken ct = default);
     Task<IntegrationConnection> CreateAsync(IntegrationConnection connection, CancellationToken ct = default);
     Task<IntegrationConnection> UpdateAsync(IntegrationConnection connection, CancellationToken ct = default);
 }

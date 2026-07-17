@@ -1,5 +1,4 @@
 using System.Globalization;
-using System.Collections.Concurrent;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -11,16 +10,21 @@ using MimosBabySpa.Domain.Repositories;
 
 namespace MimosBabySpa.Infrastructure.Commerce;
 
-public sealed class MantisCommerceAdapter : ICommerceAdapter, ICommerceCustomerLookup
+public sealed class MantisCommerceAdapter :
+    ICommerceAdapter,
+    ICommerceCustomerLookup,
+    ICommerceProductIdentitySource,
+    ICommerceProductDeltaIdentitySource,
+    ICommerceCustomerIdentitySource
 {
     private static readonly JsonSerializerOptions MantisJsonOptions = new()
     {
-        PropertyNameCaseInsensitive = true
+        PropertyNameCaseInsensitive = true,
+        Converters = { new FlexibleStringJsonConverter() }
     };
 
     private readonly HttpClient _httpClient;
     private readonly IUnitOfWork _unitOfWork;
-    private readonly ConcurrentDictionary<string, Task<MantisCustomerIdentity?>> _customerLookups = new(StringComparer.Ordinal);
 
     public MantisCommerceAdapter(HttpClient httpClient, IUnitOfWork unitOfWork)
     {
@@ -37,6 +41,7 @@ public sealed class MantisCommerceAdapter : ICommerceAdapter, ICommerceCustomerL
         var settings = MantisSettings.From(connection);
         var customer = await ResolveCustomerIdentityAsync(
             settings,
+            context.BusinessId,
             connection.IntegrationConnectionId,
             context.CustomerPhone,
             ct);
@@ -62,35 +67,97 @@ public sealed class MantisCommerceAdapter : ICommerceAdapter, ICommerceCustomerL
                     null)
                 : null;
 
+    private static MantisCustomerIdentity? ToMantisIdentity(MantisGenericCustomerSettings customer) =>
+        !string.IsNullOrWhiteSpace(customer.LlaveNit)
+        && !string.IsNullOrWhiteSpace(customer.LlaveCliente)
+            ? new MantisCustomerIdentity(
+                customer.LlaveNit.Trim(),
+                customer.LlaveCliente.Trim(),
+                null,
+                null,
+                null)
+            : null;
+
+
 
     public async Task<ProductSearchResult> SearchProductsAsync(ProductSearchRequest request, CommerceAdapterContext ctx, CancellationToken ct = default)
     {
         var connection = RequireConnection(ctx);
         var settings = MantisSettings.From(connection);
         var customer = ToMantisIdentity(ctx.Customer)
-            ?? await ResolveCustomerIdentityAsync(settings, connection.IntegrationConnectionId, ctx.CustomerPhone, ct);
+            ?? await ResolveCustomerIdentityAsync(settings, ctx.BusinessId, connection.IntegrationConnectionId, ctx.CustomerPhone, ct)
+            ?? ToMantisIdentity(settings.GenericCustomer);
         var pageSize = Math.Clamp(request.Limit > 0 ? request.Limit : settings.Catalog.DefaultPageSize, 1, settings.Catalog.MaxPageSize);
-        var (products, hasMore) = await FetchProductsAsync(settings, request, request, pageSize, customer, ct);
+        var (products, hasMore) = await FetchProductsAsync(settings, request, request, pageSize, customer, Clean(ctx.WarehouseCode) ?? settings.Catalog.Warehouse, ct);
 
-        if (settings.Catalog.CacheProducts && products.Count > 0)
+        if (products.Count > 0)
         {
             var cached = new List<ProductReference>(products.Count);
-            if (customer is null)
-            {
-                foreach (var product in products)
-                    cached.Add(await UpsertSnapshotAsync(ctx, product, ct));
-                await _unitOfWork.SaveChangesAsync(ct);
-            }
-            else
-            {
-                foreach (var product in products)
-                    cached.Add(await AttachExistingSnapshotIdAsync(ctx, product, ct));
-            }
+            foreach (var product in products)
+                cached.Add(await AttachExistingSnapshotIdAsync(ctx, product, ct));
 
             products = cached;
         }
 
         return new ProductSearchResult(products, "mantis", hasMore, ProductSearchAppliedFilters.From(request));
+    }
+
+    public async Task<ProductIdentityPage> GetProductIdentityPageAsync(
+        CommerceAdapterContext context,
+        int page,
+        int pageSize,
+        CancellationToken ct = default)
+    {
+        var connection = RequireConnection(context);
+        var settings = MantisSettings.From(connection);
+        var effectivePageSize = Math.Clamp(pageSize, 1, settings.Catalog.MaxPageSize);
+        var request = new ProductSearchRequest(
+            null,
+            null,
+            effectivePageSize,
+            IncludeStock: false,
+            Page: Math.Max(page, 1));
+        var response = await FetchProductPageAsync(settings, request, effectivePageSize, ToMantisIdentity(settings.GenericCustomer), settings.Catalog.Warehouse, ct);
+        var products = (response.SDTConArtCasalins ?? [])
+            .Select(product => MantisProductMapper.ToProductReference(product, settings.Currency))
+            .OfType<ProductReference>()
+            .ToList();
+        return new ProductIdentityPage(
+            products,
+            HasMore(response.SDTPaginadoCasalins, products.Count, effectivePageSize));
+    }
+
+
+    public async Task<ProductIdentityPage> GetProductIdentityDeltaPageAsync(
+        CommerceAdapterContext context,
+        DateTime changedOnUtc,
+        int page,
+        int pageSize,
+        CancellationToken ct = default)
+    {
+        var connection = RequireConnection(context);
+        var settings = MantisSettings.From(connection);
+        var effectivePageSize = Math.Clamp(pageSize, 1, settings.Catalog.MaxPageSize);
+        var request = new ProductSearchRequest(
+            null,
+            null,
+            effectivePageSize,
+            IncludeStock: false,
+            Page: Math.Max(page, 1));
+        var response = await FetchProductPageAsync(
+            settings,
+            request,
+            effectivePageSize,
+            ToMantisIdentity(settings.GenericCustomer),
+            settings.Catalog.Warehouse,
+            ct,
+            modificationDate: changedOnUtc.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
+        var products = (response.SDTConArtCasalins ?? [])
+            .Select(product => MantisProductMapper.ToProductReference(product, settings.Currency))
+            .OfType<ProductReference>()
+            .ToList();
+        return new ProductIdentityPage(products,
+            HasMore(response.SDTPaginadoCasalins, products.Count, effectivePageSize));
     }
     private async Task<(List<ProductReference> Products, bool HasMore)> FetchProductsAsync(
         MantisSettings settings,
@@ -98,11 +165,12 @@ public sealed class MantisCommerceAdapter : ICommerceAdapter, ICommerceCustomerL
         ProductSearchRequest matchRequest,
         int pageSize,
         MantisCustomerIdentity? customer,
+        string warehouse,
         CancellationToken ct)
     {
         var mantisResponse = await FetchProductPageAsync(
-            settings, searchRequest, pageSize, customer, ct);
-        IReadOnlyList<MantisProductDto> productDtos = mantisResponse.SDTConArtCasalins;
+            settings, searchRequest, pageSize, customer, warehouse, ct);
+        IReadOnlyList<MantisProductDto> productDtos = mantisResponse.SDTConArtCasalins ?? [];
         var reportedTotal = mantisResponse.SDTPaginadoCasalins?.TotalItems ?? 0;
         var firstItemPage = (Math.Max(searchRequest.Page, 1) - 1) * pageSize + 1;
         var expectedPageItems = Math.Min(
@@ -117,7 +185,7 @@ public sealed class MantisCommerceAdapter : ICommerceAdapter, ICommerceCustomerL
             for (var itemPage = firstItemPage; itemPage <= lastItemPage; itemPage++)
             {
                 var singlePage = await FetchProductPageAsync(
-                    settings, searchRequest with { Page = itemPage }, 1, customer, ct);
+                    settings, searchRequest with { Page = itemPage }, 1, customer, warehouse, ct);
                 recovered.AddRange(singlePage.SDTConArtCasalins);
             }
             productDtos = recovered;
@@ -138,19 +206,19 @@ public sealed class MantisCommerceAdapter : ICommerceAdapter, ICommerceCustomerL
         ProductSearchRequest request,
         int pageSize,
         MantisCustomerIdentity? customer,
-        CancellationToken ct)
+        string warehouse,
+        CancellationToken ct,
+        string creationDate = "",
+        string modificationDate = "")
     {
-        var payload = BuildProductSearchPayload(request, pageSize, customer, settings.Catalog.Warehouse);
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        timeout.CancelAfter(TimeSpan.FromSeconds(settings.RequestTimeoutSeconds));
-        using var httpRequest = CreateRequest(
+        var payload = BuildProductSearchPayload(
+            request, pageSize, customer, warehouse, creationDate, modificationDate);
+        var responseText = await PostJsonWithRetryAsync(
             settings,
             settings.Catalog.SearchEndpoint,
-            payload);
-        var response = await _httpClient.SendAsync(httpRequest, timeout.Token);
-        var responseText = await response.Content.ReadAsStringAsync(ct);
-        if (!response.IsSuccessStatusCode)
-            throw new HttpRequestException($"Mantis product search failed ({(int)response.StatusCode}): {responseText}");
+            payload,
+            "product search",
+            ct);
         var mantisResponse = JsonSerializer.Deserialize<MantisProductSearchResponse>(responseText, MantisJsonOptions)
             ?? new MantisProductSearchResponse();
         if (!string.IsNullOrWhiteSpace(mantisResponse.ErrorKey))
@@ -166,9 +234,15 @@ public sealed class MantisCommerceAdapter : ICommerceAdapter, ICommerceCustomerL
                 ctx,
                 ct);
 
-            return result.Products.FirstOrDefault(p =>
+            var matched = result.Products.FirstOrDefault(p =>
                 EqualsIgnoreCase(p.ExternalProductId, request.ExternalProductId) ||
                 EqualsIgnoreCase(p.Sku, request.Sku));
+            if (matched is not null)
+                return matched;
+
+            return result.HasMore
+                ? await FindLocalGenericIdentityAsync(request, ctx, ct)
+                : null;
         }
 
         if (!string.IsNullOrWhiteSpace(request.Name))
@@ -180,8 +254,47 @@ public sealed class MantisCommerceAdapter : ICommerceAdapter, ICommerceCustomerL
 
         return null;
     }
+
+    private async Task<ProductReference?> FindLocalGenericIdentityAsync(
+        AddOrderItemRequest request,
+        CommerceAdapterContext context,
+        CancellationToken ct)
+    {
+        // A customer-specific quote must always come from Mantis. Falling back to
+        // a generic local snapshot here would silently apply the wrong price list.
+        if (context.Customer is not null || context.Connection is null)
+            return null;
+
+        Product? product = null;
+        if (!string.IsNullOrWhiteSpace(request.ExternalProductId))
+        {
+            product = await _unitOfWork.Products.GetByExternalIdAsync(
+                context.BusinessId,
+                context.Connection.IntegrationConnectionId,
+                request.ExternalProductId,
+                ct);
+        }
+        if (product is null && !string.IsNullOrWhiteSpace(request.Sku))
+            product = await _unitOfWork.Products.GetBySkuAsync(context.BusinessId, request.Sku, ct);
+        if (product is null || !product.IsActive)
+            return null;
+
+        return new ProductReference(
+            product.ProductId,
+            product.ExternalProductId,
+            product.Sku,
+            product.Name,
+            product.Description,
+            product.CategoryName,
+            product.UnitPrice,
+            product.Currency,
+            product.StockQuantity,
+            RawPayloadJson: product.RawPayloadJson)
+        { IsActive = true };
+    }
     private async Task<MantisCustomerIdentity?> ResolveCustomerIdentityAsync(
         MantisSettings settings,
+        Guid businessId,
         Guid connectionId,
         string? phone,
         CancellationToken ct)
@@ -190,33 +303,84 @@ public sealed class MantisCommerceAdapter : ICommerceAdapter, ICommerceCustomerL
         if (string.IsNullOrWhiteSpace(normalizedPhone))
             return null;
 
-        var cacheKey = $"{connectionId:N}:{normalizedPhone}";
-        var lookup = _customerLookups.GetOrAdd(
-            cacheKey,
-            _ => FetchCustomerIdentityAsync(settings, normalizedPhone, ct));
-        try
+        var customerRepository = _unitOfWork.ExternalCommerceCustomers;
+        var local = customerRepository is null
+            ? []
+            : await customerRepository.FindActiveByPhoneAsync(businessId, connectionId, normalizedPhone, ct);
+        if (local.Count == 1)
         {
-            return await lookup.WaitAsync(ct);
+            var customer = local[0];
+            return new MantisCustomerIdentity(
+                customer.ExternalAccountId,
+                customer.ExternalCustomerId,
+                customer.Name,
+                customer.Phone,
+                null);
         }
-        catch
+        if (local.Count > 1)
+            return null;
+
+        var remote = await FetchCustomerIdentityAsync(settings, normalizedPhone, ct);
+        if (remote is null)
+            return null;
+
+        if (customerRepository is null)
+            return remote;
+
+        var now = DateTime.UtcNow;
+        var existing = await customerRepository.GetByExternalKeysAsync(
+            businessId,
+            connectionId,
+            remote.LlaveNit,
+            remote.LlaveCliente,
+            ct);
+        if (existing is null)
         {
-            _customerLookups.TryRemove(cacheKey, out _);
-            throw;
+            await customerRepository.CreateAsync(new ExternalCommerceCustomer
+            {
+                ExternalCommerceCustomerId = Guid.NewGuid(),
+                BusinessId = businessId,
+                IntegrationConnectionId = connectionId,
+                ExternalAccountId = remote.LlaveNit,
+                ExternalCustomerId = remote.LlaveCliente,
+                Name = remote.Name,
+                PhoneNormalized = normalizedPhone,
+                Phone = remote.CellPhone ?? remote.Telephone,
+                IsActive = true,
+                LastSyncedAt = now,
+                CreatedAt = now
+            }, ct);
         }
+        else
+        {
+            existing.Name = remote.Name;
+            existing.PhoneNormalized = normalizedPhone;
+            existing.Phone = remote.CellPhone ?? remote.Telephone;
+            existing.IsActive = true;
+            existing.LastSyncedAt = now;
+            existing.UpdatedAt = now;
+            await customerRepository.UpdateAsync(existing, ct);
+        }
+
+        await _unitOfWork.SaveChangesAsync(ct);
+        return remote;
     }
 
-    private async Task<MantisCustomerIdentity?> FetchCustomerIdentityAsync(
-        MantisSettings settings,
-        string normalizedPhone,
-        CancellationToken ct)
+    public async Task<ExternalCustomerIdentityPage> GetCustomerIdentityPageAsync(
+        CommerceAdapterContext context,
+        int page,
+        int pageSize,
+        CancellationToken ct = default)
     {
+        var settings = MantisSettings.From(RequireConnection(context));
+        var take = Math.Clamp(pageSize, 1, 20);
         var payload = new
         {
-            Pagina = 1,
-            CantPag = settings.Customer.LookupPageSize,
+            Pagina = Math.Max(page, 1),
+            CantPag = take,
             IdeCliente = string.Empty,
             NomCliente = string.Empty,
-            CelCliente = normalizedPhone,
+            CelCliente = string.Empty,
             CiuCliente = string.Empty,
             ZonCliente = string.Empty,
             BarCliente = string.Empty,
@@ -224,42 +388,114 @@ public sealed class MantisCommerceAdapter : ICommerceAdapter, ICommerceCustomerL
             TelCliente = string.Empty
         };
 
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        timeout.CancelAfter(TimeSpan.FromSeconds(settings.RequestTimeoutSeconds));
-        using var request = CreateRequest(settings, settings.Customer.SearchEndpoint, payload);
-        using var response = await _httpClient.SendAsync(request, timeout.Token);
-        var responseText = await response.Content.ReadAsStringAsync(timeout.Token);
-        if (!response.IsSuccessStatusCode)
-            throw new HttpRequestException($"Mantis customer lookup failed ({(int)response.StatusCode}).");
+        var responseText = await PostJsonWithRetryAsync(
+            settings, settings.Customer.SearchEndpoint, payload,
+            "customer synchronization", ct);
 
-        var mantisResponse = JsonSerializer.Deserialize<MantisCustomerSearchResponse>(responseText, MantisJsonOptions)
+        var result = JsonSerializer.Deserialize<MantisCustomerSearchResponse>(responseText, MantisJsonOptions)
             ?? new MantisCustomerSearchResponse();
-        if (!string.IsNullOrWhiteSpace(mantisResponse.ErrorKey))
-            throw new InvalidOperationException($"Mantis customer lookup failed: {mantisResponse.ErrorKey}");
+        if (!string.IsNullOrWhiteSpace(result.ErrorKey))
+            throw new InvalidOperationException($"Mantis customer synchronization failed: {result.ErrorKey}");
 
-        var matches = mantisResponse.SDTConsultarClientesCasalins
-            .Where(customer =>
-                PhoneMatches(customer.CelularCliente, normalizedPhone, settings.Customer)
-                || PhoneMatches(customer.TelefonoClientes, normalizedPhone, settings.Customer))
-            .Where(customer =>
-                !string.IsNullOrWhiteSpace(customer.LlaveNit)
+        var customers = result.SDTConsultarClientesCasalins
+            .Where(customer => !string.IsNullOrWhiteSpace(customer.LlaveNit)
                 && !string.IsNullOrWhiteSpace(customer.LlaveCliente))
-            .Select(customer => new MantisCustomerIdentity(
-                customer.LlaveNit!.Trim(),
-                customer.LlaveCliente!.Trim(),
-                Clean(customer.NombreCliente),
-                Clean(customer.CelularCliente),
-                Clean(customer.TelefonoClientes)))
-            .GroupBy(customer => $"{customer.LlaveNit}:{customer.LlaveCliente}", StringComparer.Ordinal)
+            .Select(customer =>
+            {
+                var phone = Clean(customer.CelularCliente) ?? Clean(customer.TelefonoClientes);
+                var normalized = NormalizeCustomerPhone(phone, settings.Customer);
+                return normalized is null
+                    ? null
+                    : new ExternalCustomerIdentityReference(
+                        customer.LlaveNit!.Trim(),
+                        customer.LlaveCliente!.Trim(),
+                        Clean(customer.NombreCliente),
+                        normalized,
+                        phone);
+            })
+            .OfType<ExternalCustomerIdentityReference>()
+            .GroupBy(customer => $"{customer.ExternalAccountId}:{customer.ExternalCustomerId}", StringComparer.Ordinal)
             .Select(group => group.First())
             .ToList();
 
-        return matches.Count switch
+        var pagination = result.SDTPaginadoCasalins;
+        var hasMore = bool.TryParse(pagination?.NextPage, out var next)
+            ? next
+            : result.SDTConsultarClientesCasalins.Count >= take;
+        return new ExternalCustomerIdentityPage(customers, hasMore);
+    }
+
+    private async Task<MantisCustomerIdentity?> FetchCustomerIdentityAsync(
+        MantisSettings settings,
+        string normalizedPhone,
+        CancellationToken ct)
+    {
+        var countryCode = new string(settings.Customer.CountryCode.Where(char.IsDigit).ToArray());
+        var internationalPhone = countryCode.Length > 0
+            && normalizedPhone.Length == settings.Customer.NationalPhoneLength
+                ? countryCode + normalizedPhone
+                : normalizedPhone;
+        var attempts = new[] { normalizedPhone, internationalPhone }
+            .Distinct(StringComparer.Ordinal)
+            .SelectMany(phone => new[]
+            {
+                (Cell: phone, Telephone: string.Empty),
+                (Cell: string.Empty, Telephone: phone)
+            });
+
+        foreach (var attempt in attempts)
         {
-            0 => null,
-            1 => matches[0],
-            _ => throw new InvalidOperationException("Mantis returned more than one customer for the same phone.")
-        };
+            var payload = new
+            {
+                Pagina = 1,
+                CantPag = settings.Customer.LookupPageSize,
+                IdeCliente = string.Empty,
+                NomCliente = string.Empty,
+                CelCliente = attempt.Cell,
+                CiuCliente = string.Empty,
+                ZonCliente = string.Empty,
+                BarCliente = string.Empty,
+                RutCliente = string.Empty,
+                TelCliente = attempt.Telephone
+            };
+
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeout.CancelAfter(TimeSpan.FromSeconds(settings.RequestTimeoutSeconds));
+            using var request = CreateRequest(settings, settings.Customer.SearchEndpoint, payload);
+            using var response = await _httpClient.SendAsync(request, timeout.Token);
+            var responseText = await response.Content.ReadAsStringAsync(timeout.Token);
+            if (!response.IsSuccessStatusCode)
+                throw new HttpRequestException($"Mantis customer lookup failed ({(int)response.StatusCode}).");
+
+            var mantisResponse = JsonSerializer.Deserialize<MantisCustomerSearchResponse>(responseText, MantisJsonOptions)
+                ?? new MantisCustomerSearchResponse();
+            if (!string.IsNullOrWhiteSpace(mantisResponse.ErrorKey))
+                throw new InvalidOperationException($"Mantis customer lookup failed: {mantisResponse.ErrorKey}");
+
+            var matches = mantisResponse.SDTConsultarClientesCasalins
+                .Where(customer =>
+                    PhoneMatches(customer.CelularCliente, normalizedPhone, settings.Customer)
+                    || PhoneMatches(customer.TelefonoClientes, normalizedPhone, settings.Customer))
+                .Where(customer =>
+                    !string.IsNullOrWhiteSpace(customer.LlaveNit)
+                    && !string.IsNullOrWhiteSpace(customer.LlaveCliente))
+                .Select(customer => new MantisCustomerIdentity(
+                    customer.LlaveNit!.Trim(),
+                    customer.LlaveCliente!.Trim(),
+                    Clean(customer.NombreCliente),
+                    Clean(customer.CelularCliente),
+                    Clean(customer.TelefonoClientes)))
+                .GroupBy(customer => $"{customer.LlaveNit}:{customer.LlaveCliente}", StringComparer.Ordinal)
+                .Select(group => group.First())
+                .ToList();
+
+            if (matches.Count == 1)
+                return matches[0];
+            if (matches.Count > 1)
+                return null;
+        }
+
+        return null;
     }
 
     private static bool PhoneMatches(string? candidate, string normalizedPhone, MantisCustomerSettings settings) =>
@@ -333,12 +569,11 @@ public sealed class MantisCommerceAdapter : ICommerceAdapter, ICommerceCustomerL
 
         var customer = ToMantisIdentity(ctx.Customer) ?? await ResolveCustomerIdentityAsync(
             settings,
+            order.BusinessId,
             connection.IntegrationConnectionId,
             order.CustomerPhoneSnapshot ?? ctx.CustomerPhone,
-            ct);
-        if (customer is null)
-            throw new InvalidOperationException("Mantis customer was not found for the order phone.");
-
+            ct)
+            ?? ToMantisIdentity(settings.GenericCustomer);
         var articles = items.Select(item => new
             {
                 CodigoArticulos = Clean(item.Sku) ?? Clean(item.ExternalProductId),
@@ -352,10 +587,10 @@ public sealed class MantisCommerceAdapter : ICommerceAdapter, ICommerceCustomerL
 
         var payload = new
         {
-            customer.LlaveNit,
-            customer.LlaveCliente,
+            LlaveNit = customer?.LlaveNit ?? string.Empty,
+            LlaveCliente = customer?.LlaveCliente ?? string.Empty,
             Articulos = articles,
-            bodega = settings.Order.Warehouse,
+            bodega = Clean(ctx.WarehouseCode) ?? settings.Order.Warehouse,
             PedObs = string.IsNullOrWhiteSpace(order.Notes)
                 ? $"Creado por Talkio. Ref {order.OrderId:N}"
                 : order.Notes.Trim()
@@ -421,6 +656,66 @@ public sealed class MantisCommerceAdapter : ICommerceAdapter, ICommerceCustomerL
         return null;
     }
 
+    private async Task<string> PostJsonWithRetryAsync(
+        MantisSettings settings,
+        string endpoint,
+        object payload,
+        string operation,
+        CancellationToken ct)
+    {
+        Exception? lastFailure = null;
+        const int maxAttempts = 3;
+        for (var attempt = 1; attempt <= maxAttempts; attempt++)
+        {
+            try
+            {
+                using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                timeout.CancelAfter(TimeSpan.FromSeconds(settings.RequestTimeoutSeconds));
+                using var request = CreateRequest(settings, endpoint, payload);
+                using var response = await _httpClient.SendAsync(
+                    request, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
+                var responseText = await response.Content.ReadAsStringAsync(timeout.Token);
+                if (response.IsSuccessStatusCode)
+                    return responseText;
+
+                var status = (int)response.StatusCode;
+                var failure = new HttpRequestException(
+                    $"Mantis {operation} failed ({status}).",
+                    null,
+                    response.StatusCode);
+                if (attempt == maxAttempts || !IsTransientStatus(status))
+                    throw failure;
+                lastFailure = failure;
+            }
+            catch (OperationCanceledException exception) when (!ct.IsCancellationRequested)
+            {
+                lastFailure = exception;
+                if (attempt == maxAttempts)
+                {
+                    throw new TimeoutException(
+                        $"Mantis {operation} timed out after {maxAttempts} attempts.",
+                        exception);
+                }
+            }
+            catch (HttpRequestException exception) when (
+                attempt < maxAttempts
+                && (!exception.StatusCode.HasValue
+                    || IsTransientStatus((int)exception.StatusCode.Value)))
+            {
+                lastFailure = exception;
+            }
+
+            await Task.Delay(TimeSpan.FromMilliseconds(500 * attempt), ct);
+        }
+
+        throw new HttpRequestException(
+            $"Mantis {operation} failed after {maxAttempts} attempts.",
+            lastFailure);
+    }
+
+    private static bool IsTransientStatus(int status) =>
+        status is 408 or 429 || status >= 500;
+
     private static HttpRequestMessage CreateRequest(MantisSettings settings, string endpoint, object payload)
     {
         if (string.IsNullOrWhiteSpace(settings.AuthorizationToken))
@@ -442,11 +737,13 @@ public sealed class MantisCommerceAdapter : ICommerceAdapter, ICommerceCustomerL
         ProductSearchRequest request,
         int pageSize,
         MantisCustomerIdentity? customer,
-        string warehouse)
+        string warehouse,
+        string creationDate = "",
+        string modificationDate = "")
     {
         var query = request.Query?.Trim();
         var code = LooksLikeCode(query) ? query : string.Empty;
-        var name = string.IsNullOrWhiteSpace(query) || LooksLikeCode(query) ? "VACIO" : query;
+        var name = string.IsNullOrWhiteSpace(query) || LooksLikeCode(query) ? string.Empty : query;
 
         return new
         {
@@ -461,86 +758,22 @@ public sealed class MantisCommerceAdapter : ICommerceAdapter, ICommerceCustomerL
             Tipoproducto = string.Empty,
             LlaveNit = customer?.LlaveNit ?? string.Empty,
             LlaveCliente = customer?.LlaveCliente ?? string.Empty,
-            Bodega = warehouse
+            Bodega = warehouse,
+            FechaCreacion = creationDate,
+            FechaModificacion = modificationDate
         };
     }
 
-    private async Task<ProductReference> UpsertSnapshotAsync(CommerceAdapterContext ctx, ProductReference reference, CancellationToken ct)
-    {
-        var connectionId = ctx.Connection?.IntegrationConnectionId
-            ?? throw new InvalidOperationException("Mantis product snapshot requires a connection.");
-
-        if (string.IsNullOrWhiteSpace(reference.ExternalProductId))
-            return reference;
-
-        var existing = await _unitOfWork.Products.GetByExternalIdAsync(ctx.BusinessId, connectionId, reference.ExternalProductId, ct);
-        if (existing is null)
-        {
-            var product = new Product
-            {
-                ProductId = Guid.NewGuid(),
-                BusinessId = ctx.BusinessId,
-                IntegrationConnectionId = connectionId,
-                ExternalProductId = reference.ExternalProductId,
-                Source = ProductSource.External,
-                Sku = reference.Sku,
-                Name = reference.Name,
-                Description = reference.Description,
-                CategoryName = reference.CategoryName,
-                UnitPrice = reference.UnitPrice,
-                Currency = reference.Currency,
-                ManageStock = true,
-                StockQuantity = reference.StockQuantity,
-                IsActive = reference.IsActive,
-                RawPayloadJson = reference.RawPayloadJson,
-                LastSyncedAt = DateTime.UtcNow,
-                CreatedAt = DateTime.UtcNow
-            };
-            await _unitOfWork.Products.CreateAsync(product, ct);
-            return reference with { ProductId = product.ProductId };
-        }
-
-        if (IsCommerciallyIncomplete(reference) && IsSellableSnapshot(existing))
-        {
-            return reference with
-            {
-                ProductId = existing.ProductId,
-                UnitPrice = existing.UnitPrice,
-                Currency = existing.Currency,
-                StockQuantity = existing.StockQuantity,
-                IsActive = existing.IsActive
-            };
-        }
-
-        existing.Sku = reference.Sku;
-        existing.Name = reference.Name;
-        existing.Description = reference.Description;
-        existing.CategoryName = reference.CategoryName;
-        existing.UnitPrice = reference.UnitPrice;
-        existing.Currency = reference.Currency;
-        existing.StockQuantity = reference.StockQuantity;
-        existing.IsActive = reference.IsActive;
-        existing.RawPayloadJson = reference.RawPayloadJson;
-        existing.LastSyncedAt = DateTime.UtcNow;
-        existing.UpdatedAt = DateTime.UtcNow;
-        await _unitOfWork.Products.UpdateAsync(existing, ct);
-        return reference with { ProductId = existing.ProductId };
-    }
-
-    private static bool IsCommerciallyIncomplete(ProductReference reference) =>
-        !reference.IsActive && reference.UnitPrice <= 0m && (reference.StockQuantity ?? 0m) <= 0m;
-
-    private static bool IsSellableSnapshot(Product product) =>
-        product.IsActive && (!product.ManageStock || (product.StockQuantity ?? 0m) > 0m);
     private async Task<ProductReference> AttachExistingSnapshotIdAsync(
         CommerceAdapterContext ctx,
         ProductReference reference,
         CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(reference.ExternalProductId) || ctx.Connection is null)
+        var products = _unitOfWork.Products;
+        if (products is null || string.IsNullOrWhiteSpace(reference.ExternalProductId) || ctx.Connection is null)
             return reference;
 
-        var existing = await _unitOfWork.Products.GetByExternalIdAsync(
+        var existing = await products.GetByExternalIdAsync(
             ctx.BusinessId,
             ctx.Connection.IntegrationConnectionId,
             reference.ExternalProductId,
@@ -573,7 +806,7 @@ public sealed class MantisCommerceAdapter : ICommerceAdapter, ICommerceCustomerL
     private static bool HasMore(MantisPaginationDto? pagination, int returnedCount, int pageSize)
     {
         if (bool.TryParse(pagination?.NextPage, out var hasNextPage))
-            return hasNextPage && returnedCount >= pageSize;
+            return hasNextPage;
 
         return returnedCount >= pageSize;
     }

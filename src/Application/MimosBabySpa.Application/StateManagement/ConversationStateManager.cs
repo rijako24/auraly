@@ -120,6 +120,8 @@ public class ConversationStateManager : IConversationStateManager
             RequestGeneration = runtime.RequestGeneration,
             LastOpenedRequestGeneration = runtime.LastOpenedRequestGeneration,
             ExecutedOperationKeys = new Dictionary<string, DateTime>(runtime.ExecutedOperationKeys, StringComparer.OrdinalIgnoreCase),
+            CommerceCustomer = runtime.CommerceCustomer,
+            CommerceCustomerLookupGeneration = runtime.CommerceCustomerLookupGeneration,
             Version = entity.Version,
             CreatedAt = entity.CreatedAt,
             UpdatedAt = entity.UpdatedAt
@@ -150,7 +152,9 @@ public class ConversationStateManager : IConversationStateManager
             PendingTurnPlan = state.PendingTurnPlan,
             RequestGeneration = state.RequestGeneration,
             LastOpenedRequestGeneration = state.LastOpenedRequestGeneration,
-            ExecutedOperationKeys = state.ExecutedOperationKeys
+            ExecutedOperationKeys = state.ExecutedOperationKeys,
+            CommerceCustomer = state.CommerceCustomer,
+            CommerceCustomerLookupGeneration = state.CommerceCustomerLookupGeneration
         }, JsonOptions);
         entity.Version = state.Version;
         entity.UpdatedAt = state.UpdatedAt;
@@ -213,5 +217,7 @@ public class ConversationStateManager : IConversationStateManager
         public long RequestGeneration { get; init; }
         public long LastOpenedRequestGeneration { get; init; } = -1;
         public Dictionary<string, DateTime> ExecutedOperationKeys { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+        public ExternalCommerceCustomerIdentity? CommerceCustomer { get; init; }
+        public long CommerceCustomerLookupGeneration { get; init; } = -1;
     }
 }

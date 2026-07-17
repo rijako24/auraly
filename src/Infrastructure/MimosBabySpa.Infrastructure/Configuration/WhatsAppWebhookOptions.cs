@@ -16,4 +16,9 @@ public class WhatsAppWebhookOptions
     /// URL base de la API de WhatsApp Cloud (incluye versión). Ej: https://graph.facebook.com/v25.0/
     /// </summary>
     public string ApiBaseUrl { get; set; } = null!;
+
+    /// <summary>
+    /// Límite operativo por mensaje. Las respuestas largas se dividen por secciones completas.
+    /// </summary>
+    public int MaxTextMessageLength { get; set; } = 1800;
 }

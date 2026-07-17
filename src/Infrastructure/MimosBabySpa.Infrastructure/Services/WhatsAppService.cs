@@ -16,6 +16,7 @@ public class WhatsAppService : IWhatsAppService
     private readonly IWhatsAppCredentialResolver _credentialResolver;
     private readonly ILogger<WhatsAppService> _logger;
     private readonly string _verifyToken;
+    private readonly int _maxTextMessageLength;
 
     public WhatsAppService(
         HttpClient httpClient,
@@ -35,6 +36,7 @@ public class WhatsAppService : IWhatsAppService
             throw new InvalidOperationException("WhatsApp:Webhook:VerifyToken es obligatorio.");
 
         _verifyToken = options.VerifyToken;
+        _maxTextMessageLength = Math.Clamp(options.MaxTextMessageLength, 500, 4096);
         _httpClient.BaseAddress = new Uri(options.ApiBaseUrl.TrimEnd('/') + "/");
     }
 
@@ -78,6 +80,14 @@ public class WhatsAppService : IWhatsAppService
     public async Task SendTextMessageAsync(Guid businessId, string to, string message)
     {
         var credentials = await ResolveCredentialsAsync(businessId);
+        var chunks = WhatsAppTextMessageSplitter.Split(message, _maxTextMessageLength);
+        foreach (var chunk in chunks)
+            await SendTextChunkAsync(to, chunk, credentials);
+        _logger.LogInformation("Mensaje enviado a {To} en {ChunkCount} parte(s)", to, chunks.Count);
+    }
+
+    private async Task SendTextChunkAsync(string to, string message, WhatsAppCredentials credentials)
+    {
 
         var payload = new
         {
@@ -110,8 +120,6 @@ public class WhatsAppService : IWhatsAppService
                 message?.Length ?? 0);
             throw new DomainValidationException("WhatsApp", BuildWhatsAppDeliveryErrorMessage(responseBody));
         }
-
-        _logger.LogInformation("Mensaje enviado a {To}", to);
     }
 
     public async Task<string?> SendButtonMessageAsync(

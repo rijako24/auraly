@@ -10,7 +10,8 @@ public sealed record CommerceAdapterContext(
     CommerceProvider Provider,
     IntegrationConnection? Connection,
     string? CustomerPhone = null,
-    CommerceCustomerReference? Customer = null);
+    CommerceCustomerReference? Customer = null,
+    string? WarehouseCode = null);
 
 public sealed record CommerceCustomerReference(
     CommerceProvider Provider,

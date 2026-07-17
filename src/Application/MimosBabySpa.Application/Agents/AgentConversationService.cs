@@ -1186,6 +1186,36 @@ var latestPayment = await _paymentLifecycle.GetLatestByConversationAsync(convers
 
     }
 
+    private static CommerceCustomerReference? RestoreCommerceCustomer(
+        AgentConfig config,
+        ConversationState state)
+    {
+        var customer = state.CommerceCustomer;
+        if (!config.Commerce.Enabled
+            || customer is null
+            || customer.Provider != (int)config.Commerce.Provider
+            || string.IsNullOrWhiteSpace(customer.ExternalAccountId)
+            || string.IsNullOrWhiteSpace(customer.ExternalCustomerId))
+            return null;
+
+        return new CommerceCustomerReference(
+            config.Commerce.Provider,
+            customer.ExternalAccountId,
+            customer.ExternalCustomerId,
+            customer.Name,
+            customer.Phone);
+    }
+
+    private static ExternalCommerceCustomerIdentity PersistCommerceCustomer(
+        CommerceCustomerReference customer) => new()
+    {
+        Provider = (int)customer.Provider,
+        ExternalAccountId = customer.ExternalAccountId,
+        ExternalCustomerId = customer.ExternalCustomerId,
+        Name = customer.Name,
+        Phone = customer.Phone,
+        ResolvedAtUtc = DateTime.UtcNow
+    };
     private async Task<AgentConversationContext> LoadTurnSessionAsync(
 
         AgentConfig config,
@@ -1209,7 +1239,37 @@ var latestPayment = await _paymentLifecycle.GetLatestByConversationAsync(convers
             ?? throw new InvalidOperationException($"Conversation {conversationId} not found.");
 
         var resolvedPhone = channelPhone?.Trim() ?? conversation.UserNumber;
-
+        var customerLookupCompleted =
+            state.CommerceCustomerLookupGeneration == state.RequestGeneration;
+        var commerceCustomer = customerLookupCompleted
+            ? RestoreCommerceCustomer(config, state)
+            : null;
+        if (!customerLookupCompleted && _commerceCustomers is not null)
+        {
+            try
+            {
+                commerceCustomer = await _commerceCustomers.ResolveAsync(
+                    config.BusinessId,
+                    config.AgentId,
+                    conversationId,
+                    resolvedPhone,
+                    config,
+                    ct);
+                state.CommerceCustomer = commerceCustomer is null
+                    ? null
+                    : PersistCommerceCustomer(commerceCustomer);
+                state.CommerceCustomerLookupGeneration = state.RequestGeneration;
+                await _stateManager.SaveStateAsync(conversationId, state, ct);
+            }
+            catch (Exception exception)
+            {
+                _logger.LogWarning(
+                    exception,
+                    "External commerce customer lookup failed. BusinessId={BusinessId}, ConversationId={ConversationId}",
+                    config.BusinessId,
+                    conversationId);
+            }
+        }
         var factRecords = await _factsService.GetAllRecordsAsync(conversationId, ct);
 
         var mutableFacts = factRecords.ToDictionary(r => r.Key, r => r.Value, StringComparer.OrdinalIgnoreCase);
@@ -1282,29 +1342,6 @@ var latestPayment = await _paymentLifecycle.GetLatestByConversationAsync(convers
 
         }
 
-        CommerceCustomerReference? commerceCustomer = null;
-        if (_commerceCustomers is not null)
-        {
-            try
-            {
-                commerceCustomer = await _commerceCustomers.ResolveAsync(
-                    config.BusinessId,
-                    config.AgentId,
-                    conversationId,
-                    resolvedPhone,
-                    config,
-                    ct);
-            }
-            catch (Exception exception)
-            {
-                _logger.LogWarning(
-                    exception,
-                    "External commerce customer lookup failed. BusinessId={BusinessId}, ConversationId={ConversationId}",
-                    config.BusinessId,
-                    conversationId);
-            }
-        }
-
         if (!string.IsNullOrWhiteSpace(commerceCustomer?.Name))
         {
             var externalName = commerceCustomer.Name.Trim();
@@ -1369,6 +1406,7 @@ var latestPayment = await _paymentLifecycle.GetLatestByConversationAsync(convers
             CommerceCustomer = commerceCustomer,
 
             ChannelPhone = resolvedPhone,
+            RecipientPhoneNumberId = inboundMetadata?.RecipientPhoneNumberId,
 
             ProviderMessageId = inboundMetadata?.ProviderMessageId,
 

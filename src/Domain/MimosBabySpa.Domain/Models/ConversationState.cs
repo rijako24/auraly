@@ -30,6 +30,10 @@ public class ConversationState
     public long LastOpenedRequestGeneration { get; set; } = -1;
     public Dictionary<string, DateTime> ExecutedOperationKeys { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>External commerce identity resolved from the channel phone for this conversation.</summary>
+    public ExternalCommerceCustomerIdentity? CommerceCustomer { get; set; }
+    public long CommerceCustomerLookupGeneration { get; set; } = -1;
+
     /// <summary>
     /// Snapshots de los facts en el momento en que cada etapa fue completada por primera vez.
     /// Clave: stageId · Valor: factKey → factValue al momento de completarse.
@@ -58,4 +62,13 @@ public enum ConversationOwner
 {
     Bot,
     Human
+}
+public sealed class ExternalCommerceCustomerIdentity
+{
+    public int Provider { get; set; }
+    public string ExternalAccountId { get; set; } = string.Empty;
+    public string ExternalCustomerId { get; set; } = string.Empty;
+    public string? Name { get; set; }
+    public string Phone { get; set; } = string.Empty;
+    public DateTime ResolvedAtUtc { get; set; }
 }

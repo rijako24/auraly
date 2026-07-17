@@ -89,7 +89,7 @@ public sealed class ProductAliasServiceTests
     }
 
     [Fact]
-    public async Task ConfirmedExpression_LearnsCustomerAliasAndQueuesBusinessAliasForReview()
+    public async Task ConfirmedExpression_RequiresTwoCustomerConfirmationsAndQueuesBusinessAliasForReview()
     {
         var businessId = Guid.NewGuid();
         var target = Product(businessId, "JAMON CUNIT X 500GR", "CF17");
@@ -99,6 +99,14 @@ public sealed class ProductAliasServiceTests
                 It.IsAny<ProductAlias>(), It.IsAny<CancellationToken>()))
             .Callback<ProductAlias, CancellationToken>((alias, _) => created.Add(alias))
             .ReturnsAsync((ProductAlias alias, CancellationToken _) => alias);
+        fixture.Aliases.Setup(repository => repository.GetMappingAsync(
+                businessId, target.ProductId, It.IsAny<ProductAliasScope>(),
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((Guid _, Guid _, ProductAliasScope scope, string customerKey,
+                string normalizedAlias, CancellationToken _) => created.FirstOrDefault(alias =>
+                    alias.Scope == scope
+                    && alias.CustomerKey == customerKey
+                    && alias.NormalizedAlias == normalizedAlias));
         var context = new AgentConversationContext
         {
             BusinessId = businessId,
@@ -111,16 +119,23 @@ public sealed class ProductAliasServiceTests
                 target.Name, null, null, target.UnitPrice, target.Currency, target.StockQuantity));
 
         created.Should().HaveCount(2);
-        created.Should().ContainSingle(alias =>
+        var customerAlias = created.Should().ContainSingle(alias =>
             alias.Scope == ProductAliasScope.Customer
-            && alias.Status == ProductAliasStatus.Active
-            && alias.ResolutionMode == ProductAliasResolutionMode.AutoResolve
-            && alias.CustomerKey == "573001234567");
+            && alias.Status == ProductAliasStatus.Pending
+            && alias.ResolutionMode == ProductAliasResolutionMode.SuggestOnly
+            && alias.CustomerKey == "573001234567").Subject;
         created.Should().ContainSingle(alias =>
             alias.Scope == ProductAliasScope.Business
             && alias.Status == ProductAliasStatus.Pending
             && alias.ResolutionMode == ProductAliasResolutionMode.SuggestOnly);
-        fixture.UnitOfWork.Verify(unit => unit.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Once);
+        await fixture.Service.LearnConfirmedAsync(context, "jamonada cunichef",
+            new ProductReference(target.ProductId, target.ExternalProductId, target.Sku,
+                target.Name, null, null, target.UnitPrice, target.Currency, target.StockQuantity));
+
+        customerAlias.UsageCount.Should().Be(2);
+        customerAlias.Status.Should().Be(ProductAliasStatus.Active);
+        customerAlias.ResolutionMode.Should().Be(ProductAliasResolutionMode.AutoResolve);
+        fixture.UnitOfWork.Verify(unit => unit.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Exactly(2));
     }
 
     private static AliasFixture Fixture(

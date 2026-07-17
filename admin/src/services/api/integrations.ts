@@ -30,6 +30,21 @@ export interface UpdateOperationalMode {
   mode: OperationalMode;
 }
 
+export interface ProductIdentityRefreshResult {
+  productsFound: number;
+  productsChanged: number;
+  completedAtUtc: string;
+}
+
+export interface MantisChannelWarehouse {
+  businessWhatsAppNumberId: string;
+  phoneNumber: string;
+  whatsAppPhoneNumberId: string;
+  warehouseCode: string | null;
+  warehouseName: string | null;
+  isActive: boolean;
+}
+
 export const integrationsApi = {
   getSettings: (businessId: string) =>
     apiClient.get<IntegrationSettings>(`/businesses/${businessId}/integrations`),
@@ -50,5 +65,22 @@ export const integrationsApi = {
     apiClient.put<IntegrationSettings>(
       `/businesses/${businessId}/integrations/operational-mode`,
       data
+    ),
+  refreshMantisProduct: (businessId: string, query: string) =>
+    apiClient.post<ProductIdentityRefreshResult>(
+      "/businesses/" + businessId + "/products/catalog/refresh-product",
+      { query }
+    ),
+  getMantisWarehouses: (businessId: string) =>
+    apiClient.get<MantisChannelWarehouse[]>(
+      `/businesses/${businessId}/integrations/commerce/mantis/warehouses`
+    ),
+  updateMantisWarehouses: (
+    businessId: string,
+    channels: MantisChannelWarehouse[]
+  ) =>
+    apiClient.put<MantisChannelWarehouse[]>(
+      `/businesses/${businessId}/integrations/commerce/mantis/warehouses`,
+      { channels }
     ),
 };

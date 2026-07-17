@@ -40,6 +40,8 @@ public class ApplicationDbContext : DbContext
     public DbSet<ScheduledAutomationJob> ScheduledAutomationJobs { get; set; }
     public DbSet<ReservationAttendanceResponse> ReservationAttendanceResponses { get; set; }
     public DbSet<IntegrationConnection> IntegrationConnections { get; set; }
+    public DbSet<IntegrationChannelWarehouse> IntegrationChannelWarehouses { get; set; }
+    public DbSet<ExternalCommerceCustomer> ExternalCommerceCustomers { get; set; }
     public DbSet<ReservationIntegrationEvent> ReservationIntegrationEvents { get; set; }
     public DbSet<Product> Products { get; set; }
     public DbSet<ProductAlias> ProductAliases { get; set; }
@@ -206,7 +208,7 @@ public class ApplicationDbContext : DbContext
         {
             entity.HasKey(e => e.MessageId);
             entity.Property(e => e.Sender).IsRequired().HasMaxLength(20);
-            entity.Property(e => e.MessageText).IsRequired().HasMaxLength(2000);
+            entity.Property(e => e.MessageText).IsRequired().HasColumnType("nvarchar(max)");
             entity.HasOne(e => e.Conversation)
                   .WithMany(c => c.Messages)
                   .HasForeignKey(e => e.ConversationId)
@@ -461,6 +463,9 @@ public class ApplicationDbContext : DbContext
             entity.Property(e => e.SettingsJson).IsRequired().HasColumnType("NVARCHAR(MAX)");
             entity.Property(e => e.SecretsJson).HasColumnType("NVARCHAR(MAX)");
             entity.Property(e => e.LastError).HasMaxLength(4000);
+            entity.Property(e => e.CatalogSyncNextPage).HasDefaultValue(1);
+            entity.Property(e => e.CustomerSyncNextPage).HasDefaultValue(1);
+            entity.Property(e => e.CatalogDeltaCursorDate).HasColumnType("date");
             entity.HasOne(e => e.Business)
                   .WithMany()
                   .HasForeignKey(e => e.BusinessId)
@@ -468,6 +473,29 @@ public class ApplicationDbContext : DbContext
             entity.HasIndex(e => new { e.BusinessId, e.ConnectionType, e.Provider, e.Capability }).IsUnique();
             entity.HasIndex(e => e.BusinessId);
         });
+        modelBuilder.Entity<IntegrationChannelWarehouse>(entity =>
+        {
+            entity.HasKey(mapping => mapping.IntegrationChannelWarehouseId);
+            entity.Property(mapping => mapping.WarehouseCode).IsRequired().HasMaxLength(100);
+            entity.Property(mapping => mapping.WarehouseName).HasMaxLength(200);
+            entity.HasOne(mapping => mapping.Business).WithMany()
+                .HasForeignKey(mapping => mapping.BusinessId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(mapping => mapping.IntegrationConnection).WithMany()
+                .HasForeignKey(mapping => mapping.IntegrationConnectionId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(mapping => mapping.BusinessWhatsAppNumber).WithMany()
+                .HasForeignKey(mapping => mapping.BusinessWhatsAppNumberId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasIndex(mapping => new
+                {
+                    mapping.IntegrationConnectionId,
+                    mapping.BusinessWhatsAppNumberId
+                })
+                .IsUnique();
+            entity.HasIndex(mapping => mapping.BusinessId);
+        });
+
 
         modelBuilder.Entity<Product>(entity =>
         {
@@ -497,6 +525,34 @@ public class ApplicationDbContext : DbContext
             entity.HasIndex(e => new { e.BusinessId, e.IntegrationConnectionId, e.ExternalProductId })
                 .IsUnique()
                 .HasFilter("[IntegrationConnectionId] IS NOT NULL AND [ExternalProductId] IS NOT NULL");
+        });
+
+        modelBuilder.Entity<ExternalCommerceCustomer>(entity =>
+        {
+            entity.HasKey(customer => customer.ExternalCommerceCustomerId);
+            entity.Property(customer => customer.ExternalAccountId).IsRequired().HasMaxLength(150);
+            entity.Property(customer => customer.ExternalCustomerId).IsRequired().HasMaxLength(150);
+            entity.Property(customer => customer.Name).HasMaxLength(250);
+            entity.Property(customer => customer.PhoneNormalized).IsRequired().HasMaxLength(50);
+            entity.Property(customer => customer.Phone).HasMaxLength(50);
+            entity.HasOne(customer => customer.Business).WithMany()
+                .HasForeignKey(customer => customer.BusinessId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(customer => customer.IntegrationConnection).WithMany()
+                .HasForeignKey(customer => customer.IntegrationConnectionId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasIndex(customer => new
+            {
+                customer.BusinessId,
+                customer.IntegrationConnectionId,
+                customer.ExternalAccountId,
+                customer.ExternalCustomerId
+            }).IsUnique();
+            entity.HasIndex(customer => new
+            {
+                customer.BusinessId,
+                customer.IntegrationConnectionId,
+                customer.PhoneNormalized,
+                customer.IsActive
+            });
         });
 
         ProductSearchModelConfiguration.Configure(modelBuilder);
@@ -651,6 +707,7 @@ public class ApplicationDbContext : DbContext
             entity.Property(e => e.Source).HasConversion<int>();
             entity.Property(e => e.FulfillmentMode).HasConversion<int>();
             entity.Property(e => e.Status).HasConversion<int>();
+            entity.Property(e => e.CommerceWarehouseCode).HasMaxLength(100);
             entity.Property(e => e.CustomerNameSnapshot).HasMaxLength(150);
             entity.Property(e => e.CustomerEmailSnapshot).HasMaxLength(200);
             entity.Property(e => e.CustomerPhoneSnapshot).HasMaxLength(50);
@@ -708,6 +765,7 @@ public class ApplicationDbContext : DbContext
             entity.HasKey(e => e.OrderDraftId);
             entity.Property(e => e.Source).HasConversion<int>();
             entity.Property(e => e.FulfillmentMode).HasConversion<int>();
+            entity.Property(e => e.CommerceWarehouseCode).HasMaxLength(100);
             entity.Property(e => e.CustomerNameSnapshot).HasMaxLength(150);
             entity.Property(e => e.CustomerEmailSnapshot).HasMaxLength(200);
             entity.Property(e => e.CustomerPhoneSnapshot).HasMaxLength(50);

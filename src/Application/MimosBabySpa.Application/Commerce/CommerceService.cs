@@ -16,37 +16,92 @@ public sealed class CommerceService : ICommerceService, IProductLookupService
     private readonly ICommerceAdapterFactory _adapterFactory;
     private readonly IPromotionPricingService _promotions;
     private readonly IProductCatalogAvailabilityService _availability;
+    private readonly IProductCandidateRetriever? _candidateRetriever;
 
     public CommerceService(
         IUnitOfWork unitOfWork,
         ICommerceAdapterFactory adapterFactory,
         IPromotionPricingService promotions,
-        IProductCatalogAvailabilityService availability)
+        IProductCatalogAvailabilityService availability,
+        IProductCandidateRetriever? candidateRetriever = null)
     {
         _unitOfWork = unitOfWork;
         _adapterFactory = adapterFactory;
         _promotions = promotions;
         _availability = availability;
+        _candidateRetriever = candidateRetriever;
     }
 
     public async Task<ProductSearchResult> SearchProductsAsync(AgentConversationContext ctx, ProductSearchRequest request, CancellationToken ct = default)
     {
-        var adapterContext = await BuildContextAsync(ctx.BusinessId, ctx.AgentId, ctx.ConversationId, ctx.Config, ctx.ChannelPhone, ctx.CommerceCustomer, ct);
+        var adapterContext = await BuildContextAsync(ctx.BusinessId, ctx.AgentId, ctx.ConversationId, ctx.Config, ctx.ChannelPhone, ctx.CommerceCustomer, ctx.RecipientPhoneNumberId, ct);
         var adapter = _adapterFactory.Resolve(adapterContext.Provider);
-        var result = _availability.FilterSellable(
-            await adapter.SearchProductsAsync(request, adapterContext, ct));
-        if (result.Products.Count == 0)
+        ProductSearchResult result;
+        if (adapterContext.Provider == CommerceProvider.Mantis)
         {
-            foreach (var fallbackQuery in CatalogSearchText.GetFallbackQueries(request.Query))
+            IReadOnlyList<ProductReference> local;
+            if (!string.IsNullOrWhiteSpace(request.Query) && _candidateRetriever is not null)
             {
-                var fallbackRequest = request with { Query = fallbackQuery };
-                var fallbackResult = _availability.FilterSellable(
-                    await adapter.SearchProductsAsync(fallbackRequest, adapterContext, ct));
-                if (fallbackResult.Products.Count == 0)
-                    continue;
+                local = (await _candidateRetriever.RetrieveAsync(ctx, request.Query, ct))
+                    .GroupBy(candidate => candidate.Product.ProductId?.ToString("N")
+                        ?? candidate.Product.ExternalProductId
+                        ?? candidate.Product.Sku
+                        ?? candidate.Product.Name, StringComparer.OrdinalIgnoreCase)
+                    .Select(group => group
+                        .OrderByDescending(candidate => candidate.ExactAlias)
+                        .ThenByDescending(candidate => candidate.CanAutoResolve)
+                        .First().Product)
+                    .OrderByDescending(product => ProductResolutionEngine.Score(request.Query, product))
+                    .Take(Math.Clamp(request.Limit, 1, 50))
+                    .ToList();
+            }
+            else
+            {
+                local = (await _unitOfWork.Products.GetIdentityCatalogAsync(ctx.BusinessId, ct))
+                    .Where(product => product.IsActive)
+                    .Take(Math.Clamp(request.Limit, 1, 50))
+                    .Select(ToProductReference)
+                    .ToList();
+            }
 
-                result = fallbackResult;
-                break;
+            var quoted = new List<ProductReference>();
+            foreach (var identity in local)
+            {
+                var live = await adapter.GetProductAsync(
+                    new AddOrderItemRequest(
+                        identity.ProductId,
+                        identity.ExternalProductId,
+                        identity.Sku,
+                        identity.Name,
+                        1m,
+                        null),
+                    adapterContext,
+                    ct);
+                if (live is null || !_availability.IsSellable(live))
+                    continue;
+                if (!MatchesSearchFilters(live, request))
+                    continue;
+                quoted.Add(!live.ProductId.HasValue && identity.ProductId.HasValue
+                    ? live with { ProductId = identity.ProductId }
+                    : live);
+            }
+            result = new ProductSearchResult(quoted, "local-identity+mantis-live");
+        }
+        else
+        {
+            result = _availability.FilterSellable(
+                await adapter.SearchProductsAsync(request, adapterContext, ct));
+            if (result.Products.Count == 0)
+            {
+                foreach (var fallbackQuery in CatalogSearchText.GetFallbackQueries(request.Query))
+                {
+                    var fallbackResult = _availability.FilterSellable(
+                        await adapter.SearchProductsAsync(request with { Query = fallbackQuery }, adapterContext, ct));
+                    if (fallbackResult.Products.Count == 0)
+                        continue;
+                    result = fallbackResult;
+                    break;
+                }
             }
         }
 
@@ -59,7 +114,7 @@ public sealed class CommerceService : ICommerceService, IProductLookupService
         ProductLookupRequest request,
         CancellationToken ct = default)
     {
-        var adapterContext = await BuildContextAsync(ctx.BusinessId, ctx.AgentId, ctx.ConversationId, ctx.Config, ctx.ChannelPhone, ctx.CommerceCustomer, ct);
+        var adapterContext = await BuildContextAsync(ctx.BusinessId, ctx.AgentId, ctx.ConversationId, ctx.Config, ctx.ChannelPhone, ctx.CommerceCustomer, ctx.RecipientPhoneNumberId, ct);
         var adapter = _adapterFactory.Resolve(adapterContext.Provider);
         var lookup = new AddOrderItemRequest(
             request.ProductId,
@@ -69,13 +124,16 @@ public sealed class CommerceService : ICommerceService, IProductLookupService
             1m,
             null);
         var product = await adapter.GetProductAsync(lookup, adapterContext, ct);
-        if (product is null && !string.IsNullOrWhiteSpace(request.SearchText))
+        if (product is null
+            && adapterContext.Provider != CommerceProvider.Mantis
+            && !string.IsNullOrWhiteSpace(request.SearchText))
         {
             var candidates = _availability.FilterSellable(await adapter.SearchProductsAsync(
                 new ProductSearchRequest(request.SearchText, null, 10), adapterContext, ct));
             product = candidates.Products.FirstOrDefault(candidate => MatchesLookupIdentity(candidate, request));
         }
-        product ??= await FindCachedProductAsync(lookup, adapterContext, ct);
+        if (product is null && adapterContext.Provider != CommerceProvider.Mantis)
+            product = await FindCachedProductAsync(lookup, adapterContext, ct);
         if (product is null || !_availability.IsSellable(product))
             return null;
 
@@ -85,6 +143,31 @@ public sealed class CommerceService : ICommerceService, IProductLookupService
             ct);
         return result.Products.FirstOrDefault();
     }
+
+    private static ProductReference ToProductReference(Product product) =>
+        new(
+            product.ProductId,
+            product.ExternalProductId,
+            product.Sku,
+            product.Name,
+            product.Description,
+            product.CategoryName,
+            0m,
+            product.Currency,
+            null)
+        { IsActive = product.IsActive };
+
+    private static bool MatchesSearchFilters(ProductReference product, ProductSearchRequest request) =>
+        MatchesFilter(product.CategoryName, request.Category)
+        && MatchesFilter(product.FamilyName, request.Family)
+        && MatchesFilter(product.SubcategoryName, request.Subcategory)
+        && MatchesFilter(product.ProductClassName, request.ProductClass);
+
+    private static bool MatchesFilter(string? value, string? filter) =>
+        string.IsNullOrWhiteSpace(filter)
+        || !string.IsNullOrWhiteSpace(value)
+            && ProductSearchText.NormalizeWords(value)
+                .Contains(ProductSearchText.NormalizeWords(filter), StringComparison.Ordinal);
 
     private static bool MatchesLookupIdentity(ProductReference product, ProductLookupRequest request)
     {
@@ -105,17 +188,21 @@ public sealed class CommerceService : ICommerceService, IProductLookupService
         if (request.Quantity <= 0)
             throw new InvalidOperationException("Quantity must be greater than zero.");
 
-        var adapterContext = await BuildContextAsync(ctx.BusinessId, ctx.AgentId, ctx.ConversationId, ctx.Config, ctx.ChannelPhone, ctx.CommerceCustomer, ct);
+        var adapterContext = await BuildContextAsync(ctx.BusinessId, ctx.AgentId, ctx.ConversationId, ctx.Config, ctx.ChannelPhone, ctx.CommerceCustomer, ctx.RecipientPhoneNumberId, ct);
         var adapter = _adapterFactory.Resolve(adapterContext.Provider);
-        var product = await adapter.GetProductAsync(request, adapterContext, ct)
-            ?? await FindCachedProductAsync(request, adapterContext, ct)
-            ?? throw new InvalidOperationException("Product not found.");
+        var product = await adapter.GetProductAsync(request, adapterContext, ct);
+        if (product is null && adapterContext.Provider != CommerceProvider.Mantis)
+            product = await FindCachedProductAsync(request, adapterContext, ct);
+        if (product is null)
+            throw new InvalidOperationException("Product not found.");
 
         if (!_availability.IsSellable(product))
             throw new InvalidOperationException("Product inactive.");
 
         var draft = await GetOrCreateDraftAsync(ctx, adapterContext, ct);
-        var unitPrice = request.UnitPrice ?? product.UnitPrice;
+        var unitPrice = adapterContext.Provider == CommerceProvider.Mantis
+            ? product.UnitPrice
+            : request.UnitPrice ?? product.UnitPrice;
         var existingItems = await _unitOfWork.OrderDraftItems.GetByDraftIdAsync(ctx.BusinessId, draft.OrderDraftId, ct);
         var existingItem = existingItems.FirstOrDefault(item => IsSameOrderProduct(item, product));
         EnsureRequestedQuantityFitsStock(product, request.Quantity, existingItem?.Quantity ?? 0m);
@@ -201,7 +288,7 @@ public sealed class CommerceService : ICommerceService, IProductLookupService
 
         if (quantity > item.Quantity)
         {
-            var adapterContext = await BuildContextAsync(ctx.BusinessId, ctx.AgentId, ctx.ConversationId, ctx.Config, ctx.ChannelPhone, ctx.CommerceCustomer, ct);
+            var adapterContext = await BuildContextAsync(ctx.BusinessId, ctx.AgentId, ctx.ConversationId, ctx.Config, ctx.ChannelPhone, ctx.CommerceCustomer, ctx.RecipientPhoneNumberId, ct);
             var adapter = _adapterFactory.Resolve(adapterContext.Provider);
             var lookup = new AddOrderItemRequest(
                 item.ProductId,
@@ -266,7 +353,8 @@ public sealed class CommerceService : ICommerceService, IProductLookupService
             return await BuildSnapshotAsync(draft, ct);
         }
 
-        var adapterContext = await BuildContextAsync(ctx.BusinessId, ctx.AgentId, ctx.ConversationId, ctx.Config, draft.CustomerPhoneSnapshot, ctx.CommerceCustomer, ct);
+        var adapterContext = await BuildContextAsync(ctx.BusinessId, ctx.AgentId, ctx.ConversationId, ctx.Config, draft.CustomerPhoneSnapshot, ctx.CommerceCustomer, ctx.RecipientPhoneNumberId, ct);
+        adapterContext = adapterContext with { WarehouseCode = draft.CommerceWarehouseCode ?? adapterContext.WarehouseCode };
         var order = await ConvertDraftToOrderAsync(draft, adapterContext, customerConfirmed: true, ct);
         await SyncExternalOrderIfNeededAsync(order, adapterContext, ct);
         await _unitOfWork.SaveChangesAsync(ct);
@@ -289,7 +377,8 @@ public sealed class CommerceService : ICommerceService, IProductLookupService
 
         var draft = await _unitOfWork.OrderDrafts.GetByPaymentTransactionIdAsync(businessId, paymentTransactionId, ct)
             ?? throw new InvalidOperationException("Order draft not found for paid checkout.");
-        var adapterContext = await BuildContextAsync(draft.BusinessId, draft.AgentId, draft.ConversationId, config, draft.CustomerPhoneSnapshot, null, ct);
+        var adapterContext = await BuildContextAsync(draft.BusinessId, draft.AgentId, draft.ConversationId, config, draft.CustomerPhoneSnapshot, null, null, ct);
+        adapterContext = adapterContext with { WarehouseCode = draft.CommerceWarehouseCode };
         var order = await ConvertDraftToOrderAsync(draft, adapterContext, customerConfirmed: true, ct);
         order.PaymentTransactionId = paymentTransactionId;
         order.Status = OrderStatus.Confirmed;
@@ -398,6 +487,7 @@ public sealed class CommerceService : ICommerceService, IProductLookupService
         AgentConfig? config,
         string? customerPhone,
         CommerceCustomerReference? customer,
+        string? recipientPhoneNumberId,
         CancellationToken ct)
     {
         var provider = config?.Commerce.Provider ?? CommerceProvider.Local;
@@ -422,7 +512,49 @@ public sealed class CommerceService : ICommerceService, IProductLookupService
             provider,
             connection,
             customerPhone,
-            customer);
+            customer,
+            await ResolveWarehouseCodeAsync(businessId, provider, connection, recipientPhoneNumberId, ct));
+    }
+
+    private async Task<string?> ResolveWarehouseCodeAsync(
+        Guid businessId,
+        CommerceProvider provider,
+        IntegrationConnection? connection,
+        string? recipientPhoneNumberId,
+        CancellationToken ct)
+    {
+        if (provider != CommerceProvider.Mantis)
+            return null;
+
+        if (connection is null)
+            throw new InvalidOperationException("The Mantis commerce connection is not configured.");
+        if (string.IsNullOrWhiteSpace(recipientPhoneNumberId))
+        {
+            throw new InvalidOperationException(
+                "The receiving WhatsApp number is required to resolve the Mantis warehouse.");
+        }
+
+        var number = await _unitOfWork.BusinessWhatsAppNumbers.GetByWhatsAppPhoneNumberIdAsync(
+            recipientPhoneNumberId.Trim());
+        if (number is null || number.BusinessId != businessId)
+        {
+            throw new InvalidOperationException(
+                "The receiving WhatsApp number is not configured for this business.");
+        }
+
+        var mapping = await _unitOfWork.IntegrationConnections.GetChannelWarehouseAsync(
+            businessId,
+            connection.IntegrationConnectionId,
+            number.BusinessWhatsAppNumberId,
+            ct);
+        var warehouse = mapping?.WarehouseCode?.Trim();
+        if (mapping?.IsActive != true || string.IsNullOrWhiteSpace(warehouse))
+        {
+            throw new InvalidOperationException(
+                "The receiving WhatsApp number does not have an active Mantis warehouse configured in the integration.");
+        }
+
+        return warehouse;
     }
 
     private async Task<OrderDraft?> GetActiveDraftAsync(AgentConversationContext ctx, CancellationToken ct)
@@ -449,7 +581,22 @@ public sealed class CommerceService : ICommerceService, IProductLookupService
     {
         var existing = await GetActiveDraftAsync(ctx, ct);
         if (existing is not null)
+        {
+            if (adapterContext.Provider == CommerceProvider.Mantis
+                && !string.IsNullOrWhiteSpace(adapterContext.WarehouseCode))
+            {
+                if (string.IsNullOrWhiteSpace(existing.CommerceWarehouseCode))
+                {
+                    existing.CommerceWarehouseCode = adapterContext.WarehouseCode;
+                    existing.UpdatedAt = DateTime.UtcNow;
+                    await _unitOfWork.OrderDrafts.UpdateAsync(existing, ct);
+                    await _unitOfWork.SaveChangesAsync(ct);
+                }
+                else if (!existing.CommerceWarehouseCode.Equals(adapterContext.WarehouseCode, StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException("The active cart belongs to a different Mantis warehouse.");
+            }
             return existing;
+        }
 
         var draft = new OrderDraft
         {
@@ -459,6 +606,7 @@ public sealed class CommerceService : ICommerceService, IProductLookupService
             ConversationId = ctx.ConversationId,
             IntegrationConnectionId = adapterContext.Connection?.IntegrationConnectionId,
             Source = OrderSource.Bot,
+            CommerceWarehouseCode = adapterContext.WarehouseCode,
             FulfillmentMode = adapterContext.Provider == CommerceProvider.Local ? OrderFulfillmentMode.Local : OrderFulfillmentMode.External,
             Currency = GetConnectionCurrency(adapterContext.Connection) ?? "COP",
             CreatedAt = DateTime.UtcNow
@@ -557,7 +705,7 @@ public sealed class CommerceService : ICommerceService, IProductLookupService
         if (draftItems.Count == 0)
             throw new InvalidOperationException("Order has no items.");
 
-        await EnsureOrderProductsSellableAsync(draft.BusinessId, draftItems, ct);
+        await EnsureOrderProductsSellableAsync(draft.BusinessId, draftItems, adapterContext, ct);
 
         var order = new Order
         {
@@ -567,6 +715,7 @@ public sealed class CommerceService : ICommerceService, IProductLookupService
             ConversationId = draft.ConversationId,
             IntegrationConnectionId = draft.IntegrationConnectionId,
             PaymentTransactionId = draft.PaymentTransactionId,
+            CommerceWarehouseCode = draft.CommerceWarehouseCode,
             Source = draft.Source,
             FulfillmentMode = draft.FulfillmentMode,
             Status = customerConfirmed
@@ -618,11 +767,43 @@ public sealed class CommerceService : ICommerceService, IProductLookupService
         return order;
     }
 
-    private async Task EnsureOrderProductsSellableAsync(Guid businessId, IReadOnlyList<OrderDraftItem> items, CancellationToken ct)
+    private async Task EnsureOrderProductsSellableAsync(
+        Guid businessId,
+        IReadOnlyList<OrderDraftItem> items,
+        CommerceAdapterContext adapterContext,
+        CancellationToken ct)
     {
         var unavailable = await _availability.FindUnavailableDraftItemsAsync(businessId, items, ct);
         if (unavailable.Count > 0)
             throw new InvalidOperationException("Product inactive.");
+
+        if (adapterContext.Provider == CommerceProvider.Local)
+            return;
+
+        var adapter = _adapterFactory.Resolve(adapterContext.Provider);
+        foreach (var item in items)
+        {
+            var live = await adapter.GetProductAsync(
+                new AddOrderItemRequest(
+                    item.ProductId,
+                    item.ExternalProductId,
+                    item.Sku,
+                    item.ProductNameSnapshot,
+                    item.Quantity,
+                    null),
+                adapterContext,
+                ct);
+            if (live is null || !_availability.IsSellable(live))
+                throw new InvalidOperationException("Product inactive.");
+            if (live.StockQuantity.HasValue && item.Quantity > live.StockQuantity.Value)
+            {
+                throw new InsufficientProductStockException(
+                    live.Name,
+                    item.Quantity,
+                    live.StockQuantity.Value,
+                    0m);
+            }
+        }
     }
 
     private async Task SyncExternalOrderIfNeededAsync(Order order, CommerceAdapterContext adapterContext, CancellationToken ct)

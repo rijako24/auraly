@@ -109,7 +109,11 @@ public sealed class DeterministicStageExecutor
             }
 
             var outcome = await ExecuteWithPolicyAsync(operation, boundArguments, context.OperationContext, action.Execution, cancellationToken);
-            if (outcome.Success && executionKey is not null)
+            // Input-version idempotency is turn-scoped: a recoverable clarification is
+            // still a completed execution and must not run again after a stage transition.
+            // Once-per-request keys remain success-only so a later turn can retry failures.
+            if (executionKey is not null && (outcome.Success || action.Execution.Idempotency.Equals(
+                    StageActionIdempotency.InputVersion, StringComparison.OrdinalIgnoreCase)))
                 executionScope.Add(executionKey);
             trace.Add(new StageOperationTrace(action.Id, action.Operation, argumentsJson, outcome.Code, outcome.Success, Outcome: outcome));
             presentations.AddRange(outcome.Presentations);
@@ -186,7 +190,7 @@ public sealed class DeterministicStageExecutor
             return null;
         return action.Execution.Idempotency.Equals(StageActionIdempotency.OncePerRequest, StringComparison.OrdinalIgnoreCase)
             ? $"request:{requestGeneration}:{stage.Id}:{action.Id}"
-            : $"turn:{stage.Id}:{action.Id}:{StableHash(argumentsJson)}";
+            : $"turn:{action.Operation}:{action.Id}:{StableHash(argumentsJson)}";
     }
 
     private static async Task<OperationOutcome> ExecuteWithPolicyAsync(
