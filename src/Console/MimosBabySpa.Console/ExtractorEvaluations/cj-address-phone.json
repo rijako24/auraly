@@ -484,6 +484,52 @@
         "delivery_method": "domicilio",
         "city": "Valledupar"
       }
+    },
+    {
+      "id": "cj_grouped_delivery_data",
+      "message": "Direccion Carrera 12 # 8-45; referencia barrio Centro frente al parque; recibe Jaime; celular 3012926660",
+      "stage": "order_data",
+      "expectedFlow": "order",
+      "expectedFacts": [
+        { "key": "delivery_address" },
+        { "key": "delivery_reference" },
+        { "key": "delivery_recipient_name", "value": "Jaime" },
+        { "key": "delivery_phone", "value": "3012926660" }
+      ],
+      "absentFacts": ["customer_name"],
+      "seed": "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+      "history": [
+        { "role": "assistant", "content": "Confirma en un solo mensaje la direccion, referencia, nombre de quien recibe y celular de entrega." }
+      ],
+      "initialFacts": {
+        "customer_name": "Richard",
+        "customer_type": "Hogar",
+        "order_finalized": "true",
+        "delivery_method": "domicilio",
+        "city": "Valledupar"
+      }
+    },
+    {
+      "id": "cj_payment_method_card_terminal",
+      "message": "Pago con datáfono",
+      "stage": "payment_method",
+      "expectedFlow": "order",
+      "expectedFacts": [
+        { "key": "payment_method", "value": "datafono" }
+      ],
+      "seed": "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+      "history": [
+        { "role": "assistant", "content": "Como deseas pagar? Efectivo, transferencia o datafono." }
+      ],
+      "initialFacts": {
+        "customer_name": "Richard",
+        "customer_type": "Hogar",
+        "order_finalized": "true",
+        "delivery_method": "domicilio",
+        "city": "Valledupar",
+        "delivery_address": "Carrera 12 # 8-45",
+        "delivery_phone": "3012926660"
+      }
     }
   ],
   "repetitions": 3

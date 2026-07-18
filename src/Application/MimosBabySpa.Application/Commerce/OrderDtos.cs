@@ -27,7 +27,8 @@ public sealed record OrderItemSnapshot(
     string ProductName,
     decimal Quantity,
     decimal UnitPrice,
-    decimal LineTotal);
+    decimal LineTotal,
+    string? RequestedName = null);
 
 public sealed record OrderSnapshot(
     Guid OrderId,

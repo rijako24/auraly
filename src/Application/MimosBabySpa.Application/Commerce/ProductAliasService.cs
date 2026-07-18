@@ -229,7 +229,9 @@ public sealed class ProductAliasService : IProductAliasService
         if (product is null || IsNativeIdentity(normalized, product))
             return;
 
-        var customerKey = LocalProductCandidateRetriever.NormalizeCustomerKey(context.ChannelPhone);
+        var customerKey = CommerceCustomerAliasKey.Resolve(
+            context.CommerceCustomer,
+            context.ChannelPhone);
         var customerConflicts = customerKey.Length == 0
             ? []
             : await _unitOfWork.ProductAliases.FindConflictsAsync(

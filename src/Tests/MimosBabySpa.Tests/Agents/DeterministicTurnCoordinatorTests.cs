@@ -631,11 +631,288 @@ public sealed class DeterministicTurnCoordinatorTests
     }
 
     [Fact]
+    public void ProtectPendingCommerceSelection_RemovesPendingReplayNotGroundedInCurrentMessage()
+    {
+        var config = PendingGuardConfig();
+        var facts = new Dictionary<string, string>
+        {
+            ["system.pending_cart_commands"] = """
+                {"schemaVersion":1,"commands":[{"operation":"add","productText":"pernil","quantity":1,"destinationReference":null}],"ambiguousProductText":"pernil","productCandidates":[{"name":"PERNIL A","unitPrice":1,"currency":"COP"},{"name":"PERNIL B","unitPrice":2,"currency":"COP"}],"expiresAtUtc":"2099-01-01T00:00:00Z"}
+                """
+        };
+        var plan = new TurnPlan
+        {
+            Signals =
+            [
+                new PlannedSignal
+                {
+                    Type = "cart_mutation",
+                    Value = Json("""[{"operation":"add","productText":"pernil","quantity":1,"destinationReference":null},{"operation":"add","productText":"pechuga criolla","quantity":1,"destinationReference":null}]"""),
+                    Evidence = "tambien agrega una pechuga criolla"
+                }
+            ]
+        };
+
+        var protectedPlan = DeterministicTurnCoordinator.ProtectPendingCommerceSelection(
+            config, facts, "tambien agrega una pechuga criolla", plan);
+
+        var commands = protectedPlan.Signals.Should().ContainSingle().Subject.Value;
+        commands.GetArrayLength().Should().Be(1);
+        commands[0].GetProperty("productText").GetString().Should().Be("pechuga criolla");
+    }
+    [Fact]
+    public void ProtectPendingCommerceSelection_RoutesBareConfirmationBackToCartInsteadOfCatalog()
+    {
+        var config = new AgentConfig
+        {
+            Commerce = PendingCommercePolicy("product_unavailable", "product_not_found"),
+            Flows =
+            [
+                new AgentFlowDefinition
+                {
+                    Id = "order",
+                    Type = FlowTypes.Primary,
+                    Stages =
+                    [
+                        new AgentFlowStage
+                        {
+                            Id = "products",
+                            Signals = [new StageSignalDefinition { Type = "cart_mutation", ValueSchema = Json("{\"type\":\"array\"}") }],
+                            Actions =
+                            [
+                                new StageActionDefinition
+                                {
+                                    Id = "apply",
+                                    Operation = "commerce.apply_order_changes",
+                                    Signal = "cart_mutation"
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        };
+        var facts = new Dictionary<string, string>
+        {
+            ["system.pending_cart_commands"] = """
+                {"schemaVersion":1,"commands":[{"operation":"add","productText":"tocinetas","quantity":2,"destinationReference":null}],"ambiguousProductText":"tocinetas","productCandidates":[{"name":"SALSA TOCINETA 1000GR","unitPrice":1,"currency":"COP"},{"name":"SALSA TOCINETA 200 GR","unitPrice":2,"currency":"COP"}],"expiresAtUtc":"2099-01-01T00:00:00Z"}
+                """
+        };
+        var plan = new TurnPlan
+        {
+            Signals =
+            [
+                new PlannedSignal
+                {
+                    Type = "catalog_query",
+                    Value = Json("[{\"query\":\"tocineta\"}]"),
+                    Evidence = "Si"
+                }
+            ]
+        };
+
+        var protectedPlan = DeterministicTurnCoordinator.ProtectPendingCommerceSelection(
+            config, facts, "Si", plan);
+
+        protectedPlan.Signals.Should().ContainSingle(signal =>
+            signal.Type == "cart_mutation" && signal.Value.GetArrayLength() == 0);
+    }
+    [Fact]
+    public void ProtectPendingCommerceSelection_FinalizesAndDiscardsOnlyConfiguredPendingItems()
+    {
+        var config = new AgentConfig
+        {
+            Commerce = PendingCommercePolicy("supplier_backorder"),
+            FactSchema = [new FactSchemaEntry { Key = "done", Role = "order.finalized", Type = "boolean" }],
+            Flows =
+            [
+                new AgentFlowDefinition
+                {
+                    Id = "order",
+                    Type = FlowTypes.Primary,
+                    Stages =
+                    [
+                        new AgentFlowStage
+                        {
+                            Id = "products",
+                            Signals = [new StageSignalDefinition { Type = "cart_mutation", ValueSchema = Json("{\"type\":\"array\"}") }],
+                            Actions =
+                            [
+                                new StageActionDefinition
+                                {
+                                    Id = "apply",
+                                    Operation = "commerce.apply_order_changes",
+                                    Signal = "cart_mutation"
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        };
+        var facts = new Dictionary<string, string>
+        {
+            ["system.pending_cart_commands"] = """
+                {
+                  "schemaVersion":2,
+                  "items":[{
+                    "command":{"operation":"add","productText":"paquetes de chorizo Salsan","quantity":5,"destinationReference":null},
+                    "originalProductText":"paquetes de chorizo Salsan",
+                    "issue":{"code":"supplier_backorder","productText":"paquetes de chorizo Salsan","candidates":["CHORIZO SALSAN X 20 UND"],"productCandidates":[{"name":"CHORIZO SALSAN X 20 UND","unitPrice":0,"currency":"COP","isAvailable":false}]},
+                    "requiresResolution":true,
+                    "alreadyApplied":false
+                  }],
+                  "expiresAtUtc":"2099-01-01T00:00:00Z"
+                }
+                """
+        };
+
+        var protectedPlan = DeterministicTurnCoordinator.ProtectPendingCommerceSelection(
+            config, facts, "Por ahora solo eso", new TurnPlan());
+
+        protectedPlan.Facts.Should().ContainSingle(fact =>
+            fact.Key == "done" && fact.Value.ValueKind == JsonValueKind.True);
+        protectedPlan.Signals.Should().ContainSingle(signal =>
+            signal.Type == "cart_mutation"
+            && signal.Value.GetArrayLength() == 1
+            && signal.Value[0].GetProperty("operation").GetString() == "cancel_pending"
+            && signal.Value[0].GetProperty("productText").GetString() == "paquetes de chorizo Salsan");
+    }
+    [Fact]
+    public void ProtectPendingCommerceSelection_BareAffirmationFinalizesWhenEveryPendingIssueIsDiscardable()
+    {
+        var config = new AgentConfig
+        {
+            Commerce = PendingCommercePolicy("product_unavailable", "product_not_found"),
+            FactSchema = [new FactSchemaEntry { Key = "done", Role = "order.finalized", Type = "boolean" }],
+            Flows =
+            [
+                new AgentFlowDefinition
+                {
+                    Id = "order",
+                    Type = FlowTypes.Primary,
+                    Stages =
+                    [
+                        new AgentFlowStage
+                        {
+                            Id = "products",
+                            Signals = [new StageSignalDefinition { Type = "cart_mutation", ValueSchema = Json("{\"type\":\"array\"}") }],
+                            Actions =
+                            [
+                                new StageActionDefinition
+                                {
+                                    Id = "apply",
+                                    Operation = "commerce.apply_order_changes",
+                                    Signal = "cart_mutation"
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        };
+        var facts = new Dictionary<string, string>
+        {
+            ["system.pending_cart_commands"] = """
+                {
+                  "schemaVersion":2,
+                  "items":[
+                    {
+                      "command":{"operation":"add","productText":"paquetes de chorizo Salsan","quantity":5,"destinationReference":null},
+                      "originalProductText":"paquetes de chorizo Salsan",
+                      "issue":{"code":"product_unavailable","productText":"paquetes de chorizo Salsan","candidates":["CHORIZO SALSAN X 20 UND"],"productCandidates":[{"name":"CHORIZO SALSAN X 20 UND","unitPrice":0,"currency":"COP","isAvailable":false}]},
+                      "requiresResolution":true,
+                      "alreadyApplied":false
+                    },
+                    {
+                      "command":{"operation":"add","productText":"ranchera Salsan","quantity":2,"destinationReference":null},
+                      "originalProductText":"ranchera Salsan",
+                      "issue":{"code":"product_not_found","productText":"ranchera Salsan","candidates":[],"productCandidates":[]},
+                      "requiresResolution":true,
+                      "alreadyApplied":false
+                    }
+                  ],
+                  "expiresAtUtc":"2099-01-01T00:00:00Z"
+                }
+                """
+        };
+
+        var protectedPlan = DeterministicTurnCoordinator.ProtectPendingCommerceSelection(
+            config, facts, "Sí", new TurnPlan());
+
+        protectedPlan.Facts.Should().ContainSingle(fact =>
+            fact.Key == "done" && fact.Value.ValueKind == JsonValueKind.True);
+        var commands = protectedPlan.Signals.Should().ContainSingle(signal =>
+            signal.Type == "cart_mutation").Subject.Value;
+        commands.GetArrayLength().Should().Be(2);
+        commands.EnumerateArray().Should().OnlyContain(command =>
+            command.GetProperty("operation").GetString() == "cancel_pending");
+        commands.EnumerateArray().Select(command => command.GetProperty("productText").GetString())
+            .Should().BeEquivalentTo("paquetes de chorizo Salsan", "ranchera Salsan");
+    }
+    [Fact]
+    public void ProtectPendingCommerceSelection_DoesNotTreatEsoEsTodoAsPendingCancellation()
+    {
+        var config = new AgentConfig
+        {
+            Commerce = PendingCommercePolicy(),
+            Flows =
+            [
+                new AgentFlowDefinition
+                {
+                    Id = "order",
+                    Type = FlowTypes.Primary,
+                    Stages =
+                    [
+                        new AgentFlowStage
+                        {
+                            Id = "products",
+                            Signals = [new StageSignalDefinition { Type = "cart_mutation", ValueSchema = Json("{\"type\":\"array\"}") }],
+                            Actions =
+                            [
+                                new StageActionDefinition
+                                {
+                                    Id = "apply",
+                                    Operation = "commerce.apply_order_changes",
+                                    Signal = "cart_mutation"
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        };
+        var facts = new Dictionary<string, string>
+        {
+            ["system.pending_cart_commands"] = """
+                {"schemaVersion":1,"commands":[{"operation":"add","productText":"pernil","quantity":1,"destinationReference":null}],"ambiguousProductText":"pernil","productCandidates":[{"name":"PERNIL A","unitPrice":1,"currency":"COP"},{"name":"PERNIL B","unitPrice":2,"currency":"COP"}],"expiresAtUtc":"2099-01-01T00:00:00Z"}
+                """
+        };
+        var plan = new TurnPlan
+        {
+            Signals =
+            [
+                new PlannedSignal
+                {
+                    Type = "cart_mutation",
+                    Value = Json("[{\"operation\":\"cancel_pending\",\"productText\":\"pernil\",\"quantity\":null,\"destinationReference\":null}]"),
+                    Evidence = "bueno eso es todo gracias"
+                }
+            ]
+        };
+
+        var protectedPlan = DeterministicTurnCoordinator.ProtectPendingCommerceSelection(
+            config, facts, "bueno eso es todo gracias", plan);
+
+        protectedPlan.Signals.Should().ContainSingle(signal =>
+            signal.Type == "cart_mutation" && signal.Value.GetArrayLength() == 0);
+    }
+    [Fact]
     public void ProtectPendingCommerceSelection_DefersFinalizationAndSynthesizesConfiguredCartSignal()
     {
         var config = new AgentConfig
         {
-            Commerce = new CommerceConfig { Enabled = true },
+            Commerce = PendingCommercePolicy(),
             FactSchema = [new FactSchemaEntry { Key = "done", Role = "order.finalized", Type = "boolean" }],
             Flows =
             [
@@ -700,6 +977,195 @@ public sealed class DeterministicTurnCoordinatorTests
             signal.Type == "cart_mutation" && signal.Value.ValueKind == JsonValueKind.Array
             && signal.Value.GetArrayLength() == 0);
     }
+    [Fact]
+    public void ProtectPendingCommerceSelection_RecoversContextualInsufficientStockQuantity()
+    {
+        var config = PendingGuardConfig();
+        var facts = RichardPendingFacts();
+
+        var protectedPlan = DeterministicTurnCoordinator.ProtectPendingCommerceSelection(
+            config,
+            facts,
+            "Bueno, para el que no tiene asistencia suficiente en la Moncuní, dame 5 y listo.",
+            new TurnPlan());
+
+        var command = protectedPlan.Signals.Should().ContainSingle(signal =>
+            signal.Type == "cart_mutation").Subject.Value.EnumerateArray().Should().ContainSingle().Subject;
+        command.GetProperty("operation").GetString().Should().Be("add");
+        command.GetProperty("productText").GetString().Should().Be("jamonada CUNICHEF");
+        command.GetProperty("quantity").GetDecimal().Should().Be(5m);
+    }
+
+    [Fact]
+    public void ProtectPendingCommerceSelection_CancelsUniquelyPresentedPendingItem()
+    {
+        var config = PendingGuardConfig();
+        var facts = RichardPendingFacts();
+
+        var protectedPlan = DeterministicTurnCoordinator.ProtectPendingCommerceSelection(
+            config,
+            facts,
+            "Bueno sin ese",
+            new TurnPlan(),
+            "No agregué ranchera Salsan porque no encontré una referencia exacta.");
+
+        var command = protectedPlan.Signals.Should().ContainSingle(signal =>
+            signal.Type == "cart_mutation").Subject.Value.EnumerateArray().Should().ContainSingle().Subject;
+        command.GetProperty("operation").GetString().Should().Be("cancel_pending");
+        command.GetProperty("productText").GetString().Should().Be("ranchera Salsan");
+    }
+
+    [Fact]
+    public void ProtectPendingCommerceSelection_DoesNotCancelWhenLastBotPresentedMultiplePendingItems()
+    {
+        var config = PendingGuardConfig();
+        var facts = RichardPendingFacts();
+
+        var protectedPlan = DeterministicTurnCoordinator.ProtectPendingCommerceSelection(
+            config,
+            facts,
+            "Bueno sin ese",
+            new TurnPlan(),
+            "No agregué paquetes de chorizo Salsan ni ranchera Salsan.");
+
+        protectedPlan.Signals.Should().ContainSingle(signal =>
+            signal.Type == "cart_mutation" && signal.Value.GetArrayLength() == 0);
+    }
+    [Fact]
+    public void ProtectPendingCommerceSelection_NoQuieroMasProductos_FinalizesDiscardablePendingItems()
+    {
+        var config = PendingGuardConfig();
+        var facts = new Dictionary<string, string>
+        {
+            ["system.pending_cart_commands"] = """
+                {
+                  "schemaVersion":2,
+                  "items":[
+                    {
+                      "command":{"operation":"add","productText":"paquetes de chorizo Salsan","quantity":5,"destinationReference":null},
+                      "originalProductText":"paquetes de chorizo Salsan",
+                      "issue":{"code":"product_unavailable","productText":"paquetes de chorizo Salsan","candidates":["CHORIZO SALSAN X 20 UND"],"productCandidates":[]},
+                      "requiresResolution":true,
+                      "alreadyApplied":false
+                    },
+                    {
+                      "command":{"operation":"add","productText":"ranchera Salsan","quantity":2,"destinationReference":null},
+                      "originalProductText":"ranchera Salsan",
+                      "issue":{"code":"product_not_found","productText":"ranchera Salsan","candidates":[],"productCandidates":[]},
+                      "requiresResolution":true,
+                      "alreadyApplied":false
+                    }
+                  ],
+                  "expiresAtUtc":"2099-01-01T00:00:00Z"
+                }
+                """
+        };
+
+        var protectedPlan = DeterministicTurnCoordinator.ProtectPendingCommerceSelection(
+            config, facts, "No quiero más productos", new TurnPlan());
+
+        protectedPlan.Facts.Should().ContainSingle(fact =>
+            fact.Key == "done" && fact.Value.ValueKind == JsonValueKind.True);
+        var commands = protectedPlan.Signals.Should().ContainSingle(signal =>
+            signal.Type == "cart_mutation").Subject.Value;
+        commands.GetArrayLength().Should().Be(2);
+        commands.EnumerateArray().Should().OnlyContain(command =>
+            command.GetProperty("operation").GetString() == "cancel_pending");
+    }
+
+    [Fact]
+    public void ProtectPendingCommerceSelection_CartReviewRequestIsReadOnlyEvenWithPendingIssues()
+    {
+        var config = PendingGuardConfig();
+        var plan = new TurnPlan
+        {
+            Signals =
+            [
+                new PlannedSignal
+                {
+                    Type = "cart_mutation",
+                    Value = Json("[{\"operation\":\"cancel_pending\",\"productText\":\"ranchera Salsan\"}]"),
+                    Evidence = "Como queda el carrito asi"
+                }
+            ]
+        };
+
+        var protectedPlan = DeterministicTurnCoordinator.ProtectPendingCommerceSelection(
+            config, RichardPendingFacts(), "Como queda el carrito asi", plan);
+
+        var signal = protectedPlan.Signals.Should().ContainSingle().Subject;
+        signal.Type.Should().Be("cart_review_request");
+        signal.Value.ValueKind.Should().Be(JsonValueKind.Object);
+        protectedPlan.Facts.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void ProtectPendingCommerceSelection_SemanticFinalizationDiscardsEveryUnresolvedIssue()
+    {
+        var config = PendingGuardConfig(discardAllOnExplicitFinalization: true);
+        const string message = "Con lo que está en el carrito podemos continuar";
+        var plan = new TurnPlan
+        {
+            Facts =
+            [
+                new PlannedFactClaim
+                {
+                    Key = "done",
+                    Operation = TurnPlanOperations.Set,
+                    Value = Json("true"),
+                    Evidence = message
+                }
+            ]
+        };
+
+        var protectedPlan = DeterministicTurnCoordinator.ProtectPendingCommerceSelection(
+            config, RichardPendingFacts(), message, plan);
+
+        protectedPlan.Facts.Should().ContainSingle(fact =>
+            fact.Key == "done" && fact.Value.ValueKind == JsonValueKind.True);
+        var commands = protectedPlan.Signals.Should().ContainSingle(signal =>
+            signal.Type == "cart_mutation").Subject.Value;
+        commands.GetArrayLength().Should().Be(3);
+        commands.EnumerateArray().Should().OnlyContain(command =>
+            command.GetProperty("operation").GetString() == CartCommandOperations.CancelPending);
+        commands.EnumerateArray().Select(command => command.GetProperty("productText").GetString())
+            .Should().BeEquivalentTo(
+                "paquetes de chorizo Salsan",
+                "ranchera Salsan",
+                "jamonada CUNICHEF");
+    }
+    private static Dictionary<string, string> RichardPendingFacts() => new()
+    {
+        ["system.pending_cart_commands"] = """
+            {
+              "schemaVersion":2,
+              "items":[
+                {
+                  "command":{"operation":"add","productText":"paquetes de chorizo Salsan","quantity":5,"destinationReference":null},
+                  "originalProductText":"paquetes de chorizo Salsan",
+                  "issue":{"code":"product_unavailable","productText":"paquetes de chorizo Salsan","candidates":["CHORIZO SALSAN X 20 UND"],"productCandidates":[]},
+                  "requiresResolution":true,
+                  "alreadyApplied":false
+                },
+                {
+                  "command":{"operation":"add","productText":"ranchera Salsan","quantity":2,"destinationReference":null},
+                  "originalProductText":"ranchera Salsan",
+                  "issue":{"code":"product_not_found","productText":"ranchera Salsan","candidates":[],"productCandidates":[]},
+                  "requiresResolution":true,
+                  "alreadyApplied":false
+                },
+                {
+                  "command":{"operation":"add","productText":"jamonada CUNICHEF","quantity":10,"destinationReference":null},
+                  "originalProductText":"jamonada CUNICHEF",
+                  "issue":{"code":"insufficient_stock","productText":"jamonada CUNICHEF","candidates":["JAMON CUNIT X 500GR"],"productCandidates":[],"maximumCommandQuantity":7},
+                  "requiresResolution":true,
+                  "alreadyApplied":false
+                }
+              ],
+              "expiresAtUtc":"2099-01-01T00:00:00Z"
+            }
+            """
+    };
     private static DeterministicTurnCoordinator Coordinator(ITurnPlanner planner) =>
         new(
             planner,
@@ -883,6 +1349,101 @@ public sealed class DeterministicTurnCoordinatorTests
         ]
     };
 
+    private static AgentConfig PendingGuardConfig(bool discardAllOnExplicitFinalization = false) => new()
+    {
+        Commerce = PendingCommercePolicy(discardAllOnExplicitFinalization, "product_unavailable", "product_not_found"),
+        FactSchema = [new FactSchemaEntry { Key = "done", Role = "order.finalized", Type = "boolean" }],
+        GlobalActions =
+        [
+            new AgentGlobalAction
+            {
+                Id = "cart_review",
+                Signal = new StageSignalDefinition
+                {
+                    Type = "cart_review_request",
+                    ValueSchema = Json("{\"type\":\"object\"}")
+                },
+                Actions =
+                [
+                    new StageActionDefinition
+                    {
+                        Id = "show_cart",
+                        Operation = "commerce.get_order_draft",
+                        Trigger = StageActionTriggers.OnSignal,
+                        Signal = "cart_review_request"
+                    }
+                ]
+            }
+        ],
+        Flows =
+        [
+            new AgentFlowDefinition
+            {
+                Id = "order",
+                Type = FlowTypes.Primary,
+                Stages =
+                [
+                    new AgentFlowStage
+                    {
+                        Id = "products",
+                        Signals =
+                        [
+                            new StageSignalDefinition
+                            {
+                                Type = "cart_mutation",
+                                ValueSchema = Json("{\"type\":\"array\"}")
+                            }
+                        ],
+                        Actions =
+                        [
+                            new StageActionDefinition
+                            {
+                                Id = "apply",
+                                Operation = "commerce.apply_order_changes",
+                                Signal = "cart_mutation"
+                            }
+                        ]
+                    }
+                ]
+            }
+        ]
+    };
+    private static CommerceConfig PendingCommercePolicy(params string[] discardOnFinalizeIssueCodes) =>
+        PendingCommercePolicy(false, discardOnFinalizeIssueCodes);
+
+    private static CommerceConfig PendingCommercePolicy(
+        bool discardAllOnExplicitFinalization,
+        params string[] discardOnFinalizeIssueCodes) => new()
+    {
+        Enabled = true,
+        Conversation = new CommerceConversationPolicy
+        {
+            ContextualConfirmationPhrases = ["si"],
+            CartReviewRules =
+            [
+                new CommercePhraseRule
+                {
+                    Phrase = "como queda el carrito",
+                    Match = CommercePhraseMatchModes.Contains
+                }
+            ],
+            FinalizationRules =
+            [
+                new CommercePhraseRule { Phrase = "eso es todo", Match = CommercePhraseMatchModes.Contains },
+                new CommercePhraseRule { Phrase = "solo eso", Match = CommercePhraseMatchModes.Suffix },
+                new CommercePhraseRule { Phrase = "solo seria eso" },
+                new CommercePhraseRule { Phrase = "no quiero mas productos" }
+            ]
+        },
+        PendingCart = new PendingCartPolicy
+        {
+            DiscardOnFinalizeIssueCodes = discardOnFinalizeIssueCodes,
+            DiscardAllOnExplicitFinalization = discardAllOnExplicitFinalization,
+            FinalizeConfirmationPhrases = ["si"],
+            CancellationRules = [new CommercePhraseRule { Phrase = "sin ese", Match = CommercePhraseMatchModes.Contains }],
+            QuantityCorrectionPhrases = ["dame"]
+        }
+    };
     private static JsonElement Json(string json)
     {
         using var document = JsonDocument.Parse(json);

@@ -49,12 +49,13 @@ public sealed class ApplyOrderChangesPresentationRegressionTests
 
         var outcome = (OperationOutcome)method!.Invoke(
             null,
-            new object?[] { "cart.partially_applied", snapshot, issues, applied })!;
+            new object?[] { "cart.partially_applied", snapshot, issues, applied, false, false })!;
         var context = outcome.Error!.Context!.Value;
 
         context.GetProperty("applied_item_count").GetInt32().Should().Be(1);
         context.GetProperty("unresolved_item_count").GetInt32().Should().Be(3);
-        context.GetProperty("item_result_count").GetInt32().Should().Be(4);
+context.GetProperty("item_result_count").GetInt32().Should().Be(4);
+        context.GetProperty("can_finalize_with_pending").GetBoolean().Should().BeFalse();
         var appliedItems = context.GetProperty("applied_items").EnumerateArray().ToList();
         appliedItems.Should().ContainSingle();
         appliedItems[0].GetProperty("name").GetString().Should().Be(appliedProduct.Name);
@@ -69,6 +70,35 @@ public sealed class ApplyOrderChangesPresentationRegressionTests
         context.GetProperty("not_found_items").GetArrayLength().Should().Be(0);
     }
 
+    [Fact]
+    public void FollowUpRemoval_IsIncludedInConciseAppliedChanges()
+    {
+        var snapshot = new OrderSnapshot(
+            Guid.NewGuid(), OrderStatus.Draft, "COP", 0m, 0m, 0m, 0m, []);
+        var removed = new ResolvedCartCommand(
+            CartCommandOperations.Remove, Product("CHICHARRON X 500 GR", "CHI"), Guid.NewGuid(), null, "chicharrón");
+        var method = typeof(ApplyOrderChangesOperation).GetMethod(
+            "ClarificationOutcome", BindingFlags.NonPublic | BindingFlags.Static);
+
+        var outcome = (OperationOutcome)method!.Invoke(
+            null,
+            new object?[]
+            {
+                "cart.partially_applied",
+                snapshot,
+                new[] { new CartCommandIssue("product_not_found", "otro producto", []) },
+                new[] { removed },
+                false,
+                true
+            })!;
+        var displayed = outcome.Error!.Context!.Value
+            .GetProperty("display_applied_items").EnumerateArray().Should().ContainSingle().Subject;
+
+        displayed.GetProperty("removed").GetBoolean().Should().BeTrue();
+        displayed.GetProperty("name").GetString().Should().Be("CHICHARRON X 500 GR");
+        displayed.GetProperty("requested_name").GetString().Should().Be("chicharrón");
+        displayed.GetProperty("operation").GetString().Should().Be(CartCommandOperations.Remove);
+    }
     private static ProductReference Product(string name, string sku) =>
         new(Guid.NewGuid(), sku, sku, name, null, null, 10m, "COP", 100m);
 }

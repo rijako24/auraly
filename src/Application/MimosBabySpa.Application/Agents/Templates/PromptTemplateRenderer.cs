@@ -1,86 +1,91 @@
-using System.Text.RegularExpressions;
+using System.Collections;
+using System.Text;
 
 namespace MimosBabySpa.Application.Agents.Templates;
 
 /// <summary>
 /// Renderizador minimalista para plantillas del prompt: {{var}}, {{#if var}}...{{else}}, {{#each list}}.
+/// Los bloques se analizan de forma recursiva para admitir anidamiento sin exponer tags al cliente.
 /// </summary>
-public sealed partial class PromptTemplateRenderer : ITemplateRenderer
+public sealed class PromptTemplateRenderer : ITemplateRenderer
 {
     public string Render(string template, IReadOnlyDictionary<string, object?> data)
     {
         if (string.IsNullOrEmpty(template))
             return string.Empty;
 
-        var result = NormalizeEscapedNewlines(template);
-        result = RenderEachBlocks(result, data);
-        result = RenderIfBlocks(result, data);
-        result = ReplaceVariables(result, data);
+        var result = RenderSection(NormalizeEscapedNewlines(template), data);
         return NormalizeBlankLines(result.TrimEnd());
     }
 
-    private static string RenderEachBlocks(string input, IReadOnlyDictionary<string, object?> data)
+    private static string RenderSection(string input, IReadOnlyDictionary<string, object?> data)
     {
-        return EachBlockRegex().Replace(input, match =>
+        var result = new StringBuilder(input.Length);
+        var position = 0;
+        while (position < input.Length)
         {
-            var listName = match.Groups["name"].Value;
-            var inner = match.Groups["body"].Value.Trim();
-
-            if (!data.TryGetValue(listName, out var raw) || raw is null)
-                return string.Empty;
-
-            if (raw is not System.Collections.IEnumerable items || raw is string)
-                return string.Empty;
-
-            var renderedItems = new List<string>();
-            foreach (var item in items)
+            var tagStart = input.IndexOf("{{", position, StringComparison.Ordinal);
+            if (tagStart < 0)
             {
-                if (item is null)
-                    continue;
-                var scope = MergeScope(data, item);
-                var block = inner;
-                block = RenderIfBlocks(block, scope);
-                block = ReplaceVariables(block, scope);
-                renderedItems.Add(block);
+                result.Append(input, position, input.Length - position);
+                break;
             }
 
-            return renderedItems.Count == 0
-                ? string.Empty
-                : string.Join(Environment.NewLine, renderedItems);
-        });
-    }
+            result.Append(input, position, tagStart - position);
+            if (!TryReadTag(input, tagStart, out var tag))
+            {
+                result.Append(input, tagStart, input.Length - tagStart);
+                break;
+            }
 
-    private static string RenderIfBlocks(string input, IReadOnlyDictionary<string, object?> data)
-    {
-        if (!IfBlockRegex().IsMatch(input))
-            return input;
+            if (tag.Token.StartsWith("#if ", StringComparison.OrdinalIgnoreCase))
+            {
+                var name = tag.Token[4..].Trim();
+                var block = FindBlock(input, tag.End, "if");
+                var branchEnd = block.ElseStart ?? block.CloseStart;
+                var selected = IsTruthy(data, name)
+                    ? input[tag.End..branchEnd]
+                    : block.ElseEnd is int elseEnd
+                        ? input[elseEnd..block.CloseStart]
+                        : string.Empty;
+                result.Append(RenderSection(selected.Trim(), data));
+                position = block.CloseEnd;
+                continue;
+            }
 
-        return IfBlockRegex().Replace(input, match =>
-        {
-            var name = match.Groups["name"].Value;
-            var inner = match.Groups["body"].Value.Trim();
+            if (tag.Token.StartsWith("#each ", StringComparison.OrdinalIgnoreCase))
+            {
+                var name = tag.Token[6..].Trim();
+                var block = FindBlock(input, tag.End, "each");
+                var body = input[tag.End..block.CloseStart].Trim();
+                if (data.TryGetValue(name, out var raw)
+                    && raw is IEnumerable items
+                    && raw is not string)
+                {
+                    var renderedItems = new List<string>();
+                    foreach (var item in items)
+                    {
+                        if (item is not null)
+                            renderedItems.Add(RenderSection(body, MergeScope(data, item)));
+                    }
 
-            var branches = ElseRegex().Split(inner, 2);
-            inner = IsTruthy(data, name)
-                ? branches[0].Trim()
-                : branches.Length > 1 ? branches[1].Trim() : string.Empty;
-            if (inner.Length == 0)
-                return string.Empty;
+                    result.AppendJoin(Environment.NewLine, renderedItems.Where(value => value.Length > 0));
+                }
 
-            inner = RenderEachBlocks(inner, data);
-            inner = RenderIfBlocks(inner, data);
-            inner = ReplaceVariables(inner, data);
-            return inner;
-        });
-    }
+                position = block.CloseEnd;
+                continue;
+            }
 
-    private static string ReplaceVariables(string input, IReadOnlyDictionary<string, object?> data)
-    {
-        return VariableRegex().Replace(input, match =>
-        {
-            var name = match.Groups["name"].Value;
-            return data.TryGetValue(name, out var value) ? TemplateValueFormatter.Format(name, value) : string.Empty;
-        });
+            if (tag.Token is "else" or "/if" or "/each")
+                throw new FormatException($"Unexpected template tag '{{{{{tag.Token}}}}}'.");
+
+            result.Append(data.TryGetValue(tag.Token, out var value)
+                ? TemplateValueFormatter.Format(tag.Token, value)
+                : string.Empty);
+            position = tag.End;
+        }
+
+        return result.ToString();
     }
 
     private static string NormalizeBlankLines(string text)
@@ -155,20 +160,65 @@ public sealed partial class PromptTemplateRenderer : ITemplateRenderer
             long l => l != 0,
             decimal d => d != 0,
             double d => Math.Abs(d) > double.Epsilon,
-            IEnumerable<object> e => e.Any(),
+            IEnumerable enumerable => enumerable.Cast<object?>().Any(),
             _ => true
         };
     }
 
-    [GeneratedRegex(@"\{\{#each\s+(?<name>[\w_]+)\}\}(?<body>[\s\S]*?)\{\{/each\}\}", RegexOptions.IgnoreCase)]
-    private static partial Regex EachBlockRegex();
+    private static TemplateBlock FindBlock(string input, int contentStart, string blockName)
+    {
+        var depth = 1;
+        int? elseStart = null;
+        int? elseEnd = null;
+        var position = contentStart;
+        while (position < input.Length)
+        {
+            var tagStart = input.IndexOf("{{", position, StringComparison.Ordinal);
+            if (tagStart < 0 || !TryReadTag(input, tagStart, out var tag))
+                break;
 
-    [GeneratedRegex(@"\{\{#if\s+(?<name>[\w_]+)\}\}(?<body>[\s\S]*?)\{\{/if\}\}", RegexOptions.IgnoreCase)]
-    private static partial Regex IfBlockRegex();
-    [GeneratedRegex(@"\{\{else\}\}", RegexOptions.IgnoreCase)]
-    private static partial Regex ElseRegex();
+            if (tag.Token.Equals($"#{blockName}", StringComparison.OrdinalIgnoreCase)
+                || tag.Token.StartsWith($"#{blockName} ", StringComparison.OrdinalIgnoreCase))
+            {
+                depth++;
+            }
+            else if (tag.Token.Equals($"/{blockName}", StringComparison.OrdinalIgnoreCase))
+            {
+                depth--;
+                if (depth == 0)
+                    return new TemplateBlock(tagStart, tag.End, elseStart, elseEnd);
+            }
+            else if (blockName.Equals("if", StringComparison.OrdinalIgnoreCase)
+                && depth == 1
+                && tag.Token.Equals("else", StringComparison.OrdinalIgnoreCase))
+            {
+                elseStart = tagStart;
+                elseEnd = tag.End;
+            }
 
+            position = tag.End;
+        }
 
-    [GeneratedRegex(@"\{\{(?<name>[\w_]+)\}\}", RegexOptions.IgnoreCase)]
-    private static partial Regex VariableRegex();
+        throw new FormatException($"Template block '{{{{#{blockName}}}}}' is not closed.");
+    }
+
+    private static bool TryReadTag(string input, int start, out TemplateTag tag)
+    {
+        var end = input.IndexOf("}}", start + 2, StringComparison.Ordinal);
+        if (end < 0)
+        {
+            tag = default;
+            return false;
+        }
+
+        tag = new TemplateTag(input[(start + 2)..end].Trim(), end + 2);
+        return true;
+    }
+
+    private readonly record struct TemplateTag(string Token, int End);
+    private readonly record struct TemplateBlock(
+        int CloseStart,
+        int CloseEnd,
+        int? ElseStart,
+        int? ElseEnd);
 }

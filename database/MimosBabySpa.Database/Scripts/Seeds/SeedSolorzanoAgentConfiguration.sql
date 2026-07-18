@@ -495,7 +495,24 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
   "historyWindowSize": 24,
   "commerce": {
     "enabled": true,
-    "provider": "Local"
+    "provider": "Local",
+    "conversation": {
+      "contextualConfirmationPhrases": ["si", "si esa", "si es esa", "si ese", "si es ese", "si esta", "si es esta", "si este", "si es este", "si correcto", "si correcta", "confirmo", "correcto", "correcta", "esa", "ese", "esta", "este", "esa misma", "ese mismo", "la primera", "el primero"],
+      "finalizationRules": [{"phrase":"eso es todo","match":"contains"}, {"phrase":"solo eso","match":"suffix"}, {"phrase":"seria solo eso","match":"exact"}, {"phrase":"solo seria eso","match":"exact"}, {"phrase":"nada mas","match":"exact"}, {"phrase":"no quiero nada mas","match":"exact"}, {"phrase":"terminamos","match":"exact"}],
+      "candidateSelectionPhrases": ["esta", "esa", "primera", "primero", "segunda", "segundo", "tercera", "tercero", "ultima", "ultimo"],
+      "clauseSeparators": ["y", "e", "tambien", "ademas"],
+      "additionalRequestPhrases": ["otra", "otro", "adicional", "adicionales", "mas", "nuevamente", "tambien agrega", "tambien agregame", "tambien anade"],
+      "quantityWords": {"un":1, "una":1, "uno":1, "dos":2, "tres":3, "cuatro":4, "cinco":5, "seis":6, "siete":7, "ocho":8, "nueve":9, "diez":10, "once":11, "doce":12, "trece":13, "catorce":14, "quince":15, "dieciseis":16, "diecisiete":17, "dieciocho":18, "diecinueve":19, "veinte":20}
+    },
+    "pendingCart": {
+      "discardOnFinalizeIssueCodes": ["product_unavailable"]
+    },
+    "matching": {
+      "exactNameDominanceMinimumMatches": 2,
+      "candidateMentionSimilarity": 0.8,
+      "pendingReferenceSimilarity": 0.78,
+      "candidateSelectionSimilarity": 0.6
+    }
   },
   "operatingHours": {
     "enforce": true,

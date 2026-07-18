@@ -45,39 +45,27 @@ La DI principal esta en `src/API/MimosBabySpa.API/Program.cs`. Antes de asumir q
 
 Carpeta principal: `src/Application/MimosBabySpa.Application/Agents`.
 
-Flujo general:
+Flujo actual:
 
-1. `WhatsAppMessageProcessorService` identifica negocio/conversacion y delega al agente.
-2. `AgentConversationService` carga configuracion, estado, facts y contexto.
-3. `AgentPromptComposer` arma el prompt desde persona, politicas, flow, facts, catalogo/contexto y guardrails.
-4. `AzureOpenAIChatClient` ejecuta chat/function calling.
-5. `AgentToolRegistry` expone herramientas permitidas por agente/stage.
-6. El resultado se persiste y se envia por WhatsApp con servicios outbound.
-
-Herramientas actuales en `Agents/Tools/Impl`:
-
-- `CheckAvailabilityTool`
-- `ResolvePricingTool`
-- `ResolveCheckoutQuoteTool`
-- `PrepareCheckoutTool`
-- `CreateReservationTool`
-- `AssignPaidSlotTool`
-- `RescheduleReservationTool`
-- `SuspendReservationTool`
-- `GeneratePaymentLinkTool`
-- `VerifyPaymentTool`
-- `EscalateToHumanTool`
-- `GetServiceCatalogTool`
-- `SetFactTool`
-- `SendMessageSequenceTool`
+1. `WhatsAppMessageProcessorService` resuelve negocio, conversacion y agente; inbound controla recibos, idempotencia y debounce.
+2. `AgentConversationService` carga configuracion, historial, facts, memoria y estado.
+3. `AgentConfigProvider` y `AgentConfigurationCompiler` deserializan y validan `Agents.SettingsJson`.
+4. `DeterministicConversationPosition` y `TurnPlanScopeBuilder` determinan flow, etapa y contrato permitido.
+5. `LlmTurnPlanner` propone un `TurnPlan` estructurado con facts, signals, decision y directiva de respuesta; no cambia estado directamente.
+6. `DeterministicTurnCoordinator` valida el plan, aplica protecciones, gobierna facts, selecciones pendientes y transiciones.
+7. `DeterministicStageExecutor` ejecuta las `IAgentOperation` registradas en `Agents/Operations`.
+8. Los outcomes agregan efectos y presentaciones autoritativas. `DeterministicResponseRenderer` compone la respuesta y `DeterministicTurnEffectProcessor` persiste/envia efectos.
 
 Configuracion del agente:
 
 - Fuente de verdad: `Agents.SettingsJson` en base de datos.
-- Seed principal: `database/MimosBabySpa.Database/Scripts/Seeds/SeedAgenticConfiguration.sql`.
-- `SystemPromptMarkdown` es legacy/fallback; no deberia ser la fuente principal.
-- Persona, policies, tools habilitadas, flow, guards, factSchema, templates, checkout y webhooks viven en `SettingsJson`.
-- El catalogo no debe duplicarse en prompts: `get_service_catalog` lo arma desde tablas de servicios.
+- Seeds por tenant: `database/MimosBabySpa.Database/Scripts/Seeds`.
+- `SystemPromptMarkdown` es legacy/fallback; no debe gobernar reglas deterministas.
+- Persona, policies, flows, facts, signals, operaciones, outcomes, templates, checkout, commerce y webhooks viven en `SettingsJson`.
+- El catalogo no se duplica en prompts: operaciones y adapters lo consultan desde tablas o integraciones.
+- La memoria efimera `system.pending_cart_commands` conserva lotes que necesitan aclaracion; el cierre principal se extrae semanticamente mediante el fact con rol `order.finalized`, mientras `commerce.pendingCart` define respaldos deterministas, descartes contextuales y si una finalizacion explicita puede excluir todos los pendientes. `cartReviewRules` protege consultas de solo lectura. Los reemplazos se enlazan semanticamente mediante `replacement_reference`; `productReplacementRules` solo actua como respaldo, el retiro del producto anterior se difiere hasta elegir una opcion inequivoca con cantidad y nunca se inventa cantidad al responder solo “agregame”.
+
+Manual detallado: `docs/agent-engine-manual.md`.
 
 ## Datos y dominio
 

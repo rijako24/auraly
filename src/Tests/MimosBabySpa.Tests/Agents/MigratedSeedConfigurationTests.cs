@@ -5,6 +5,8 @@ using FluentAssertions;
 using MimosBabySpa.Application.Agents;
 using MimosBabySpa.Application.Agents.Configuration;
 using MimosBabySpa.Application.Agents.Operations;
+using MimosBabySpa.Application.Agents.Templates;
+using MimosBabySpa.Application.Commerce;
 using Xunit;
 
 namespace MimosBabySpa.Tests.Agents;
@@ -67,6 +69,21 @@ public sealed class MigratedSeedConfigurationTests
                 Converters = { new JsonStringEnumConverter() }
             })!;
 
+        config.Commerce.Conversation.ContextualConfirmationPhrases.Should().Contain("si esa");
+        config.Commerce.Conversation.FinalizationRules.Should().Contain(rule =>
+            rule.Phrase == "eso es todo" && rule.Match == CommercePhraseMatchModes.Contains);
+        config.Commerce.Conversation.QuantityWords["dos"].Should().Be(2m);
+        config.Commerce.PendingCart.DiscardOnFinalizeIssueCodes.Should()
+            .BeEquivalentTo("product_unavailable", "product_not_found");
+        config.Commerce.PendingCart.DiscardAllOnExplicitFinalization.Should().BeTrue();
+        config.Commerce.Conversation.CartReviewRules.Should().Contain(rule =>
+            rule.Phrase == "como queda el carrito" && rule.Match == CommercePhraseMatchModes.Contains);
+        config.Commerce.Conversation.ProductReplacementRules.Should().Contain(rule =>
+            rule.Phrase == "no es el producto" && rule.Match == CommercePhraseMatchModes.Contains);        config.Commerce.Conversation.ProductReplacementRules.Should().Contain(rule =>
+            rule.Phrase == "no lo quiero" && rule.Match == CommercePhraseMatchModes.Contains);        config.Commerce.PendingCart.FinalizeConfirmationPhrases.Should().Contain("si");
+        seedSql.Should().Contain("{{#if can_finalize_with_pending}}")
+            .And.Contain("¿Eso sería todo o deseas agregar algo más?");
+        config.Commerce.Matching.ExactNameDominanceMinimumMatches.Should().Be(2);
         config.ConversationOpening.Enabled.Should().BeTrue();
         config.ConversationOpening.Guidance.Should()
             .Contain("una sola bienvenida")
@@ -87,6 +104,12 @@ public sealed class MigratedSeedConfigurationTests
             action.Operation == "conversation.reset_request");
         restart.ConversationGuidance.Should().Contain("No lo detectes por un saludo solo");
 
+        seedSql.Should().Contain("\"id\":\"cart_review_request\"")
+            .And.Contain("\"operation\":\"commerce.get_order_draft\"")
+            .And.Contain("$.templates.cart_changes_applied")
+            .And.Contain("$.templates.cart_on_request")
+            .And.Contain("replacement_reference")
+            .And.Contain("{{#if removed}}");
         var catalogLookup = config.GlobalActions.Should().ContainSingle(action =>
             action.Signal.Type == "catalog_query").Subject;
         catalogLookup.Actions.Should().ContainSingle(action =>
@@ -123,6 +146,15 @@ public sealed class MigratedSeedConfigurationTests
             .And.Contain(
                 "JSON_QUERY(N'{\"idempotency\":\"input_version\",\"timeoutSeconds\":240,\"maxAttempts\":1}')",
                 "all CJ cart mutation owners must receive the long-running external batch policy");
+
+        var createOrder = config.Flows
+            .SelectMany(flow => flow.Stages)
+            .SelectMany(stage => stage.Actions)
+            .Should().ContainSingle(action =>
+                action.Operation == "commerce.create_order").Subject;
+        createOrder.Execution.Idempotency.Should().Be(
+            StageActionIdempotency.OncePerRequest,
+            "an explicit confirmation replay must never create a duplicate order");
 
         foreach (var flow in config.Flows)
         {
@@ -177,9 +209,82 @@ public sealed class MigratedSeedConfigurationTests
         orderData.Collect.Should().Contain(["delivery_reference", "delivery_recipient_name"]);
         orderData.Collect.Should().NotContain(["customer_name", "delivery_location_status"]);
         orderData.AdvanceWhenFacts.Should().NotContain("delivery_location_status");
-        orderData.ConversationGuidance.Should().Contain("complementaria y opcional")
-            .And.Contain("no la solicites ni detengas el flujo");
+        orderData.ConversationGuidance.Should()
+            .Contain("un solo mensaje breve y estructurado")
+            .And.Contain("direccion completa")
+            .And.Contain("referencia complementaria")
+            .And.Contain("nombre de quien recibe")
+            .And.Contain("celular de entrega")
+            .And.Contain("no envies una pregunta separada por cada dato")
+            .And.Contain("opcional")
+            .And.Contain("nunca debe detener el flujo");
         config.Checkout.Modes["order"].RequiredFactRoles.Should().BeEmpty();
+        facts["payment_method"].Options.Select(option => option.Value)
+            .Should().BeEquivalentTo("efectivo", "transferencia", "datafono");
+        var paymentStage = config.Flows.SelectMany(flow => flow.Stages)
+            .Single(stage => stage.Id == "payment_method");
+        paymentStage.ConversationGuidance.Should()
+            .Contain("efectivo, transferencia o datafono")
+            .And.Contain("payment_method=datafono");
+        var cardTerminal = config.Checkout.Modes["order"].PaymentMethods["datafono"];
+        cardTerminal.Template.Should().Be("order_checkout_card_terminal");
+        cardTerminal.ManualConfirmationRequired.Should().BeFalse();
+        cardTerminal.Aliases.Should().Contain(["datafono", "datáfono", "tarjeta"]);
+        foreach (var templateId in new[]
+                 {
+                     "cart_snapshot",
+                     "cart_review",
+                     "order_checkout_no_payment",
+                     "order_checkout_card_terminal",
+                     "order_checkout_manual_transfer"
+                 })
+        {
+            config.Templates[templateId].Should().Contain(
+                "{{requested_name}} ({{name}})",
+                $"template '{templateId}' should show the requested label beside its resolved catalog product");
+        }
+        var renderedCheckout = new PromptTemplateRenderer().Render(
+            config.Templates["order_checkout_no_payment"],
+            new Dictionary<string, object?>
+            {
+                ["line_items"] = new List<object>
+                {
+                    new Dictionary<string, object?>
+                    {
+                        ["requested_name"] = "papas",
+                        ["name"] = "PAPA FARM FRITES 3/8 X 2.5 KG",
+                        ["quantity"] = "2",
+                        ["line_total"] = "20,000.00"
+                    }
+                },
+                ["shipping_cost"] = "0.00",
+                ["total"] = "20,000.00",
+                ["currency"] = "COP",
+                ["city"] = "Valledupar",
+                ["delivery_address"] = "Calle 5",
+                ["customer_phone"] = "3012926660"
+            });
+        renderedCheckout.Should().Contain(
+            "papas (PAPA FARM FRITES 3/8 X 2.5 KG) x2");
+        config.Templates["order_checkout_card_terminal"].Should()
+            .Contain("Metodo de pago: datafono al recibir")
+            .And.Contain("Llevaremos el datafono")
+            .And.Contain("Confirmas tu pedido con esta informacion?");
+        var confirmationStage = config.Flows.SelectMany(flow => flow.Stages)
+            .Single(stage => stage.Id == "order_confirmation");
+        var deliveryPaymentConfirmation = confirmationStage.Actions.Single(action =>
+            action.Id == "create_confirmed_delivery_payment_order");
+        deliveryPaymentConfirmation.Operation.Should().Be("commerce.create_order");
+        deliveryPaymentConfirmation.Arguments["customer_confirmed"].GetString()
+            .Should().Be("{{fact.customer_confirmed}}");
+        deliveryPaymentConfirmation.Condition!.All.Should().Contain(condition =>
+            condition.Any.Any(option => option.FactEquals != null
+                && option.FactEquals.Key == "payment_method"
+                && option.FactEquals.Value.GetString() == "datafono"));
+        deliveryPaymentConfirmation.Condition.All.Should().Contain(condition =>
+            condition.FactEquals != null
+            && condition.FactEquals.Key == "customer_confirmed"
+            && condition.FactEquals.Value.ValueKind == JsonValueKind.True);
 
         var checkoutFacts = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {

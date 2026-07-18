@@ -11,27 +11,35 @@ internal static class FlowCheckpointInvalidation
     public static List<string> GetDerivedAdvanceFactsToClear(
         AgentConversationContext ctx,
         IReadOnlyCollection<string> changedFactKeys) =>
-        GetInvalidations(ctx, changedFactKeys).FactsToClear.ToList();
+        GetInvalidations(ctx.Config, changedFactKeys).FactsToClear.ToList();
 
     public static FlowCheckpointInvalidationResult GetInvalidations(
         AgentConversationContext ctx,
+        IReadOnlyCollection<string> changedFactKeys) =>
+        GetInvalidations(ctx.Config, changedFactKeys);
+
+    public static FlowCheckpointInvalidationResult GetInvalidations(
+        AgentConfig? config,
         IReadOnlyCollection<string> changedFactKeys)
     {
         var changedKeys = NormalizeKeys(changedFactKeys);
         if (changedKeys.Count == 0)
             return new FlowCheckpointInvalidationResult([], []);
 
-        var factSchema = ctx.Config?.FactSchema ?? [];
+        var factSchema = config?.FactSchema ?? [];
         var dependencyClears = ResolveDependencyClears(factSchema, changedKeys);
         var initialSignals = UnionKeys(changedKeys, dependencyClears);
 
         var derivedFacts = factSchema
-            .Where(entry => !entry.Source.Equals("user", StringComparison.OrdinalIgnoreCase))
+            .Where(entry =>
+                (entry.Source.Equals("system", StringComparison.OrdinalIgnoreCase)
+                    || entry.Source.Equals("session", StringComparison.OrdinalIgnoreCase))
+                && string.IsNullOrWhiteSpace(entry.DefaultValue))
             .Select(entry => entry.Key)
             .Where(key => !string.IsNullOrWhiteSpace(key))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-        var initiallyAffectedStages = (ctx.Config?.Flows.SelectMany(flow => flow.Stages) ?? [])
+        var initiallyAffectedStages = (config?.Flows.SelectMany(flow => flow.Stages) ?? [])
             .Where(stage => stage.ReentryOnFactChanged.Any(initialSignals.Contains))
             .ToList();
 
@@ -49,7 +57,7 @@ internal static class FlowCheckpointInvalidation
             .ToList();
 
         var allSignals = UnionKeys(changedKeys, factsToClear);
-        var stageSnapshotsToReset = (ctx.Config?.Flows.SelectMany(flow => flow.Stages) ?? [])
+        var stageSnapshotsToReset = (config?.Flows.SelectMany(flow => flow.Stages) ?? [])
             .Where(stage => stage.ReentryOnFactChanged.Any(allSignals.Contains))
             .Select(stage => stage.Id)
             .Where(id => !string.IsNullOrWhiteSpace(id))

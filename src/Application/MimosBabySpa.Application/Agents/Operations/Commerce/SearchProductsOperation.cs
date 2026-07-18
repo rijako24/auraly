@@ -2,6 +2,7 @@ using System.Text.Json;
 using MimosBabySpa.Application.Commerce;
 using MimosBabySpa.Application.Agents.Operations.Support;
 using MimosBabySpa.Application.Services;
+using MimosBabySpa.Domain.Catalog;
 
 namespace MimosBabySpa.Application.Agents.Operations.Commerce;
 
@@ -41,7 +42,8 @@ public sealed class SearchProductsOperation : IAgentOperation
             "product_class": { "type": "string" },
             "limit": { "type": "integer", "minimum": 1, "maximum": 50 },
             "page": { "type": "integer", "minimum": 1 },
-            "include_stock": { "type": "boolean" }
+            "include_stock": { "type": "boolean" },
+            "replacement_reference": { "description": "Optional original cart reference that this catalog query intends to replace.", "type": ["string", "null"] }
           }
         }
         """;
@@ -66,6 +68,9 @@ public sealed class SearchProductsOperation : IAgentOperation
         var limit = OperationJsonHelper.TryGetInt(arguments, "limit", out var l) ? l : 10;
         var page = OperationJsonHelper.TryGetInt(arguments, "page", out var p) ? p : 1;
         var includeStock = !OperationJsonHelper.TryGetBool(arguments, "include_stock", out var s) || s;
+        var replacementReference = OperationJsonHelper.TryGetString(arguments, "replacement_reference", out var rr)
+            ? rr
+            : null;
         var queries = ReadQueries(arguments, query);
         var request = new ProductSearchRequest(query, category, limit, includeStock, family, subcategory, productClass, page);
         var result = queries.Count switch
@@ -84,7 +89,8 @@ public sealed class SearchProductsOperation : IAgentOperation
 
         if (_factsService is not null && result.Products.Count > 0)
         {
-            await ProductSelectionMemory.RememberCatalogAsync(_factsService, ctx, result.Products, queries, cancellationToken);
+            await ProductSelectionMemory.RememberCatalogAsync(
+                _factsService, ctx, result.Products, queries, cancellationToken, replacementReference);
             if (recommendation is not null)
                 await CatalogRecommendationMemory.RememberAsync(_factsService, ctx, recommendation.Product, cancellationToken);
         }
@@ -145,7 +151,30 @@ public sealed class SearchProductsOperation : IAgentOperation
                 cancellationToken);
         }
 
-        return result;
+        return PreferExactNameMatches(result, request.Query, ctx.Config?.Commerce.Matching);
+    }
+
+    private static ProductSearchResult PreferExactNameMatches(
+        ProductSearchResult result,
+        string? query,
+        ProductMatchingPolicy? matchingPolicy)
+    {
+        var minimumMatches = matchingPolicy?.ExactNameDominanceMinimumMatches ?? 0;
+        var queryTokens = ProductSearchText.GetMatchingTokens(query);
+        if (minimumMatches <= 0 || queryTokens.Count == 0 || result.Products.Count < minimumMatches)
+            return result;
+
+        var exactMatches = result.Products
+            .Where(product =>
+            {
+                var nameTokens = ProductSearchText.GetMatchingTokens(product.Name);
+                return queryTokens.All(nameTokens.Contains);
+            })
+            .ToList();
+
+        return exactMatches.Count < minimumMatches || exactMatches.Count == result.Products.Count
+            ? result
+            : result with { Products = exactMatches };
     }
 
     private async Task<ProductSearchResult> SearchManyAsync(

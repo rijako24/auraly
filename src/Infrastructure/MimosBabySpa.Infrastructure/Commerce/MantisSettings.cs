@@ -55,8 +55,8 @@ internal sealed class MantisSettings
             Order = new MantisOrderSettings
             {
                 CreateEndpoint = GetString(order, "createEndpoint", "pwsCrearPedidoCasalins"),
-                Warehouse = configuredWarehouse,
-                MockCreateOrders = GetBool(order, "mockCreateOrders", true)
+                QueryEndpoint = GetString(order, "queryEndpoint", "pwsConsultarPedidoCasalins"),
+                Warehouse = configuredWarehouse
             }
         };
     }
@@ -88,11 +88,6 @@ internal sealed class MantisSettings
 
     private static int GetInt(Dictionary<string, JsonElement> values, string key, int fallback) =>
         values.TryGetValue(key, out var value) && value.TryGetInt32(out var number) ? number : fallback;
-
-    private static bool GetBool(Dictionary<string, JsonElement> values, string key, bool fallback) =>
-        values.TryGetValue(key, out var value)
-            ? value.ValueKind == JsonValueKind.True || (value.ValueKind != JsonValueKind.False && bool.TryParse(value.ToString(), out var parsed) && parsed)
-            : fallback;
 }
 
 internal sealed class MantisCatalogSettings
@@ -120,6 +115,6 @@ internal sealed class MantisCustomerSettings
 internal sealed class MantisOrderSettings
 {
     public string CreateEndpoint { get; init; } = "pwsCrearPedidoCasalins";
+    public string QueryEndpoint { get; init; } = "pwsConsultarPedidoCasalins";
     public string Warehouse { get; init; } = string.Empty;
-    public bool MockCreateOrders { get; init; } = true;
 }

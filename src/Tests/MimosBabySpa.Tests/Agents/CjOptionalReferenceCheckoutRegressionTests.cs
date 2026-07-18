@@ -30,18 +30,44 @@ public sealed class CjOptionalReferenceCheckoutRegressionTests
         Project(second.Result).Should().BeEquivalentTo(Project(first.Result), options => options.WithStrictOrdering());
     }
 
-    private static async Task<ScenarioResult> ExecuteScenarioAsync()
+    [Fact]
+    public async Task CardTerminalSelection_RequiresTheSameVerbalConfirmationAsCash()
+    {
+        var awaitingConfirmation = await ExecuteScenarioAsync("datafono");
+        var confirmed = await ExecuteScenarioAsync("datafono", customerConfirmed: true);
+
+        awaitingConfirmation.Result.Success.Should().BeTrue(string.Join("; ", awaitingConfirmation.Result.Errors));
+        awaitingConfirmation.Result.VisitedStages.Should().ContainInOrder(
+            "order_data", "payment_method", "summary", "order_confirmation");
+        awaitingConfirmation.CheckoutCallCount.Should().Be(1);
+        awaitingConfirmation.CreateCallCount.Should().Be(0);
+        awaitingConfirmation.Result.Presentations.Should().ContainSingle(presentation =>
+            presentation.TemplateId == "order_checkout_card_terminal");
+        awaitingConfirmation.Result.RequestCompleted.Should().BeFalse();
+
+        confirmed.CreateCallCount.Should().Be(1, JsonSerializer.Serialize(Project(confirmed.Result)));
+        confirmed.Result.Trace.Should().Contain(trace =>
+            trace.ActionId == "create_confirmed_delivery_payment_order"
+            && trace.OperationId == "commerce.create_order"
+            && trace.OutcomeCode == "order.created"
+            && trace.Success);
+        confirmed.Result.RequestCompleted.Should().BeTrue();
+    }
+    private static async Task<ScenarioResult> ExecuteScenarioAsync(
+        string paymentMethod = "efectivo",
+        bool customerConfirmed = false)
     {
         var config = LoadCjConfig();
-        var checkout = new ObservableCheckoutOperation();
+        var checkout = new ObservableCheckoutOperation(paymentMethod);
+        var creation = new ObservableCreateOrderOperation();
         var coordinator = new DeterministicTurnCoordinator(
-            new NoMutationPlanner(),
+            new NoMutationPlanner(customerConfirmed),
             new DeterministicFlowSelector(),
             new FactMutationBatchProcessor(),
             new RecordingFactStore(),
             new ConversationVerificationService(),
             new DeterministicStageExecutor(
-                new AgentOperationRegistry([checkout]),
+                new AgentOperationRegistry([checkout, creation]),
                 new StageConditionEvaluator(),
                 new OperationArgumentBinder()),
             new DeterministicStageTransitionResolver(new StageConditionEvaluator()));
@@ -54,8 +80,13 @@ public sealed class CjOptionalReferenceCheckoutRegressionTests
             ["delivery_address"] = "Calle 5N",
             ["delivery_phone"] = "3012926660",
             ["customer_name"] = "Richard",
-            ["payment_method"] = "efectivo"
+            ["payment_method"] = paymentMethod
         };
+        if (customerConfirmed)
+        {
+            facts["order_checkout_presented"] = "true";
+        }
+
         var conversationId = Guid.Parse("0c83d9d0-cce7-47ad-9e66-c2cfbeeb9f2b");
 
         var result = await coordinator.ExecuteAsync(new DeterministicTurnRequest
@@ -75,12 +106,12 @@ public sealed class CjOptionalReferenceCheckoutRegressionTests
             FactVersions = facts.ToDictionary(pair => pair.Key, _ => 1L, StringComparer.OrdinalIgnoreCase),
             CurrentFlowId = "order",
             ActiveFlowId = "order",
-            CurrentStageId = "order_data",
+            CurrentStageId = customerConfirmed ? "order_confirmation" : "order_data",
             HasOpenPrimaryRequest = true,
             LatestUserMessage = "no"
         });
 
-        return new ScenarioResult(result, checkout.CallCount);
+        return new ScenarioResult(result, checkout.CallCount, creation.CallCount);
     }
 
     private static void AssertCompletedCheckout(DeterministicTurnResult result, int checkoutCallCount)
@@ -167,7 +198,7 @@ public sealed class CjOptionalReferenceCheckoutRegressionTests
         throw new DirectoryNotFoundException("Could not locate MimosBabySpa.sln.");
     }
 
-    private sealed class NoMutationPlanner : ITurnPlanner
+    private sealed class NoMutationPlanner(bool confirmOrder = false) : ITurnPlanner
     {
         public Task<TurnPlanProposal> PlanAsync(TurnPlanningContext context, CancellationToken ct = default) =>
             Task.FromResult(new TurnPlanProposal(
@@ -178,7 +209,20 @@ public sealed class CjOptionalReferenceCheckoutRegressionTests
                     {
                         CandidateFlow = "order",
                         Confidence = 1
-                    }
+                    },
+                    Facts = confirmOrder
+                        ?
+                        [
+                            new PlannedFactClaim
+                            {
+                                Key = "customer_confirmed",
+                                Operation = TurnPlanOperations.Set,
+                                Value = JsonSerializer.SerializeToElement(true),
+                                Evidence = "si",
+                                Confidence = 1
+                            }
+                        ]
+                        : []
                 },
                 [],
                 0,
@@ -187,6 +231,9 @@ public sealed class CjOptionalReferenceCheckoutRegressionTests
 
     private sealed class ObservableCheckoutOperation : IAgentOperation
     {
+        private readonly string _paymentMethod;
+
+        public ObservableCheckoutOperation(string paymentMethod) => _paymentMethod = paymentMethod;
         public int CallCount { get; private set; }
 
         public OperationDescriptor Descriptor { get; } = new(
@@ -194,7 +241,7 @@ public sealed class CjOptionalReferenceCheckoutRegressionTests
             "{\"type\":\"object\",\"required\":[]}",
             ["order.checkout_ready"],
             [],
-            ["order_checkout_no_payment"],
+            ["order_checkout_no_payment", "order_checkout_card_terminal"],
             []);
 
         public Task<OperationOutcome> ExecuteAsync(
@@ -203,12 +250,15 @@ public sealed class CjOptionalReferenceCheckoutRegressionTests
             CancellationToken cancellationToken = default)
         {
             CallCount++;
+            var template = _paymentMethod.Equals("datafono", StringComparison.OrdinalIgnoreCase)
+                ? "order_checkout_card_terminal"
+                : "order_checkout_no_payment";
             return Task.FromResult(OperationOutcome.Ok(
                 "order.checkout_ready",
                 new { total = 86370m },
                 [
                     new OperationPresentation(
-                        "order_checkout_no_payment",
+                        template,
                         new Dictionary<string, object?>
                         {
                             ["customer_name"] = "Richard",
@@ -222,6 +272,33 @@ public sealed class CjOptionalReferenceCheckoutRegressionTests
         }
     }
 
+    private sealed class ObservableCreateOrderOperation : IAgentOperation
+    {
+        public int CallCount { get; private set; }
+
+        public OperationDescriptor Descriptor { get; } = new(
+            "commerce.create_order",
+            "{\"type\":\"object\",\"required\":[\"customer_confirmed\"]}",
+            ["order.created"],
+            [],
+            [],
+            []);
+
+        public Task<OperationOutcome> ExecuteAsync(
+            JsonElement input,
+            OperationContext context,
+            CancellationToken cancellationToken = default)
+        {
+            var confirmation = input.GetProperty("customer_confirmed");
+            var confirmed = confirmation.ValueKind == JsonValueKind.True
+                || confirmation.ValueKind == JsonValueKind.String
+                    && bool.TryParse(confirmation.GetString(), out var parsed)
+                    && parsed;
+            confirmed.Should().BeTrue();
+            CallCount++;
+            return Task.FromResult(OperationOutcome.Ok("order.created", new { order_id = "CJ-1" }));
+        }
+    }
     private sealed class RecordingFactStore : IConversationFactsService
     {
         public Task ApplyBatchAsync(
@@ -239,5 +316,5 @@ public sealed class CjOptionalReferenceCheckoutRegressionTests
         public Task<IReadOnlyList<string>> ClearFieldsAsync(Guid conversationId, IReadOnlyCollection<string> fields, CancellationToken ct = default) => throw new NotImplementedException();
     }
 
-    private sealed record ScenarioResult(DeterministicTurnResult Result, int CheckoutCallCount);
+    private sealed record ScenarioResult(DeterministicTurnResult Result, int CheckoutCallCount, int CreateCallCount);
 }

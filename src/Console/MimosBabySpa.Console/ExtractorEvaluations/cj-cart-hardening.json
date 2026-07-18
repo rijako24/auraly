@@ -1,0 +1,199 @@
+{
+  "cases": [
+    {
+      "id": "long_order_preserves_every_requested_line",
+      "message": "Agrégame 5 bolsas de papa a la francesa, 2 salchichas rancheras, 3 chorizos santarrosanos, 4 tocinetas ahumadas, 6 maíces tiernos, 2 perniles, 3 pechugas y 1 chicharrón.",
+      "stage": "product_selection",
+      "expectedFlow": "order",
+      "expectedSignals": ["order_changes"],
+      "absentSignals": ["catalog_query"],
+      "expectedSignalItems": [{
+        "type": "order_changes",
+        "count": 8,
+        "products": ["papa", "ranchera", "chorizo", "tocineta", "ma", "pernil", "pechuga", "chicharr"],
+        "operations": ["add"],
+        "quantities": [1, 2, 3, 4, 5, 6]
+      }],
+      "seed": "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql"
+    },
+    {
+      "id": "semantic_rejection_of_corn_searches_replacement_options",
+      "message": "Ese maíz ya no lo quiero; muéstrame otros maíces para cambiarlo.",
+      "stage": "product_selection",
+      "expectedFlow": "order",
+      "expectedSignals": ["catalog_query"],
+      "absentSignals": ["order_changes"],
+      "currentCart": [
+        { "name": "MAIZ TIERNO CONGELADO", "quantity": 6 },
+        { "name": "PAPA A LA FRANCESA", "quantity": 5 }
+      ],
+      "history": [{
+        "role": "assistant",
+        "content": "Pedido actual: MAIZ TIERNO CONGELADO x6 y PAPA A LA FRANCESA x5. ¿Deseas agregar o cambiar algo?"
+      }],
+      "seed": "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql"
+    },
+    {
+      "id": "offered_corn_without_quantity_does_not_mutate",
+      "message": "El maíz super dulce.",
+      "stage": "product_selection",
+      "expectedFlow": "order",
+      "absentSignals": ["order_changes", "catalog_query"],
+      "currentCart": [
+        { "name": "MAIZ TIERNO CONGELADO", "quantity": 6 },
+        { "name": "PAPA A LA FRANCESA", "quantity": 5 }
+      ],
+      "history": [{
+        "role": "assistant",
+        "content": "Para reemplazar el maíz encontré MAIZ SUPER DULCE y MAIZ DULCE EN MAZORCA. ¿Cuál prefieres y en qué cantidad?"
+      }],
+      "initialFacts": {
+        "system.catalog_products": "{\"schemaVersion\":2,\"sequence\":1,\"snapshots\":[{\"sequence\":1,\"searchTerms\":[\"maiz\"],\"replacementReference\":\"MAIZ TIERNO CONGELADO\",\"products\":[{\"externalProductId\":\"M01\",\"name\":\"MAIZ SUPER DULCE\",\"unitPrice\":9000,\"currency\":\"COP\"},{\"externalProductId\":\"M02\",\"name\":\"MAIZ DULCE EN MAZORCA\",\"unitPrice\":8000,\"currency\":\"COP\"}]}]}"
+      },
+      "seed": "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql"
+    },
+    {
+      "id": "affirmative_add_without_quantity_never_invents_one",
+      "message": "Sí, agrégame ese.",
+      "stage": "product_selection",
+      "expectedFlow": "order",
+      "absentSignals": ["order_changes", "catalog_query"],
+      "history": [
+        { "role": "assistant", "content": "Tengo MAIZ SUPER DULCE y MAIZ DULCE EN MAZORCA. ¿Cuál prefieres?" },
+        { "role": "user", "content": "El maíz super dulce." },
+        { "role": "assistant", "content": "Perfecto, ¿cuántas unidades de MAIZ SUPER DULCE deseas?" }
+      ],
+      "initialFacts": {
+        "system.catalog_products": "[{\"external_product_id\":\"M01\",\"name\":\"MAIZ SUPER DULCE\",\"unit_price\":9000,\"currency\":\"COP\"},{\"external_product_id\":\"M02\",\"name\":\"MAIZ DULCE EN MAZORCA\",\"unit_price\":8000,\"currency\":\"COP\"}]"
+      },
+      "seed": "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql"
+    },
+    {
+      "id": "explicit_quantity_completes_selected_corn",
+      "message": "Sí, agrégame 3 de ese.",
+      "stage": "product_selection",
+      "expectedFlow": "order",
+      "expectedSignals": ["order_changes"],
+      "absentSignals": ["catalog_query"],
+      "expectedSignalItems": [{
+        "type": "order_changes",
+        "count": 1,
+        "products": ["MAIZ SUPER DULCE"],
+        "operations": ["add"],
+        "quantities": [3]
+      }],
+      "history": [
+        { "role": "assistant", "content": "Tengo MAIZ SUPER DULCE y MAIZ DULCE EN MAZORCA. ¿Cuál prefieres?" },
+        { "role": "user", "content": "El maíz super dulce." },
+        { "role": "assistant", "content": "Perfecto, ¿cuántas unidades de MAIZ SUPER DULCE deseas?" }
+      ],
+      "initialFacts": {
+        "system.catalog_products": "[{\"external_product_id\":\"M01\",\"name\":\"MAIZ SUPER DULCE\",\"unit_price\":9000,\"currency\":\"COP\"},{\"external_product_id\":\"M02\",\"name\":\"MAIZ DULCE EN MAZORCA\",\"unit_price\":8000,\"currency\":\"COP\"}]"
+      },
+      "seed": "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql"
+    },
+    {
+      "id": "remove_existing_product",
+      "message": "Sácame por completo el chicharrón del pedido.",
+      "stage": "product_selection",
+      "expectedFlow": "order",
+      "expectedSignals": ["order_changes"],
+      "absentSignals": ["catalog_query"],
+      "expectedSignalItems": [{
+        "type": "order_changes",
+        "count": 1,
+        "products": ["chicharr"],
+        "operations": ["remove"]
+      }],
+      "currentCart": [
+        { "name": "CHICHARRON CARNUDO", "quantity": 1 },
+        { "name": "MAIZ SUPER DULCE", "quantity": 3 }
+      ],
+      "seed": "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql"
+    },
+    {
+      "id": "ask_for_breast_options_is_read_only_catalog_search",
+      "message": "¿Qué opciones de pechuga tienes?",
+      "stage": "product_selection",
+      "expectedFlow": "order",
+      "expectedSignals": ["catalog_query"],
+      "absentSignals": ["order_changes"],
+      "currentCart": [{ "name": "MAIZ SUPER DULCE", "quantity": 3 }],
+      "seed": "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql"
+    },
+    {
+      "id": "selected_breast_without_quantity_does_not_mutate",
+      "message": "Sí, agrégame la criolla.",
+      "stage": "product_selection",
+      "expectedFlow": "order",
+      "absentSignals": ["order_changes", "catalog_query"],
+      "history": [{
+        "role": "assistant",
+        "content": "Tengo PECHUGA CRIOLLA y PECHUGA MAC POLLO. ¿Cuál deseas agregar y en qué cantidad?"
+      }],
+      "initialFacts": {
+        "system.catalog_products": "[{\"external_product_id\":\"PO63\",\"name\":\"PECHUGA CRIOLLA\",\"unit_price\":14033.67,\"currency\":\"COP\"},{\"external_product_id\":\"PO62\",\"name\":\"PECHUGA MAC POLLO\",\"unit_price\":13001.08,\"currency\":\"COP\"}]"
+      },
+      "seed": "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql"
+    },
+    {
+      "id": "quantity_after_breast_selection_adds_exact_variant",
+      "message": "Ponme 4 de esa.",
+      "stage": "product_selection",
+      "expectedFlow": "order",
+      "expectedSignals": ["order_changes"],
+      "absentSignals": ["catalog_query"],
+      "expectedSignalItems": [{
+        "type": "order_changes",
+        "count": 1,
+        "products": ["PECHUGA CRIOLLA"],
+        "operations": ["add"],
+        "quantities": [4]
+      }],
+      "history": [
+        { "role": "assistant", "content": "Tengo PECHUGA CRIOLLA y PECHUGA MAC POLLO. ¿Cuál deseas agregar y en qué cantidad?" },
+        { "role": "user", "content": "La criolla." },
+        { "role": "assistant", "content": "¿Cuántas unidades de PECHUGA CRIOLLA deseas?" }
+      ],
+      "initialFacts": {
+        "system.catalog_products": "[{\"external_product_id\":\"PO63\",\"name\":\"PECHUGA CRIOLLA\",\"unit_price\":14033.67,\"currency\":\"COP\"},{\"external_product_id\":\"PO62\",\"name\":\"PECHUGA MAC POLLO\",\"unit_price\":13001.08,\"currency\":\"COP\"}]"
+      },
+      "seed": "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql"
+    },
+    {
+      "id": "change_total_quantity_of_existing_line",
+      "message": "De la pechuga criolla déjame solo 2 en total.",
+      "stage": "product_selection",
+      "expectedFlow": "order",
+      "expectedSignals": ["order_changes"],
+      "absentSignals": ["catalog_query"],
+      "expectedSignalItems": [{
+        "type": "order_changes",
+        "count": 1,
+        "products": ["pechuga criolla"],
+        "operations": ["set_quantity"],
+        "quantities": [2]
+      }],
+      "currentCart": [{ "name": "PECHUGA CRIOLLA", "quantity": 4 }],
+      "seed": "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql"
+    },
+    {
+      "id": "increment_existing_line",
+      "message": "Agrégame una pechuga criolla más.",
+      "stage": "product_selection",
+      "expectedFlow": "order",
+      "expectedSignals": ["order_changes"],
+      "absentSignals": ["catalog_query"],
+      "expectedSignalItems": [{
+        "type": "order_changes",
+        "count": 1,
+        "products": ["pechuga criolla"],
+        "operations": ["add"],
+        "quantities": [1]
+      }],
+      "currentCart": [{ "name": "PECHUGA CRIOLLA", "quantity": 2 }],
+      "seed": "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql"
+    }
+  ],
+  "repetitions": 3
+}

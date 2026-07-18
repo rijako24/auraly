@@ -36,9 +36,10 @@ internal static class ProductSelectionMemory
         AgentConversationContext ctx,
         IReadOnlyList<ProductReference> products,
         IReadOnlyList<string> searchTerms,
-        CancellationToken ct) =>
-        CatalogOfferMemory.RememberAsync(factsService, ctx, products, searchTerms, ct);
-
+        CancellationToken ct,
+        string? replacementReference = null) =>
+        CatalogOfferMemory.RememberAsync(
+            factsService, ctx, products, searchTerms, ct, replacementReference);
     public static string NormalizeSearchReference(string productText)
     {
         var normalized = NormalizeSelectionReference(productText);
@@ -171,38 +172,172 @@ internal static class ProductSelectionMemory
             return commands;
 
         var candidates = CatalogOfferMemory.AllProducts(memory);
+        var latestOffer = memory.Snapshots.OrderByDescending(snapshot => snapshot.Sequence).First();
         static bool IsMeaningful(string token) =>
             token.Length >= 3 || token.Any(char.IsDigit);
 
         var messageTokens = NormalizeTokens(latestUserMessage)
             .Where(IsMeaningful).ToHashSet(StringComparer.Ordinal);
-        return commands.Select(command =>
+        var isOfferFollowUp = IsOfferFollowUp(context, latestOffer);
+        var mentionedSelection = isOfferFollowUp
+            ? FindUniqueMentionedProduct(context, latestOffer.Products, messageTokens)
+            : null;
+        var normalizedCommands = new List<CartCommand>();
+        foreach (var command in commands)
         {
-            var selected = candidates.FirstOrDefault(candidate =>
-                Normalize(candidate.Name).Equals(Normalize(command.ProductText), StringComparison.Ordinal)
-                || !string.IsNullOrWhiteSpace(candidate.Sku)
+            var exactSelection = candidates.FirstOrDefault(candidate =>
+                    Normalize(candidate.Name).Equals(Normalize(command.ProductText), StringComparison.Ordinal)
+                    || !string.IsNullOrWhiteSpace(candidate.Sku)
                     && Normalize(candidate.Sku).Equals(Normalize(command.ProductText), StringComparison.Ordinal));
-            if (selected is null)
-                return command;
-
-            var selectedTokens = NormalizeTokens(selected.Name).Where(IsMeaningful).ToList();
-            var mentionedTokens = selectedTokens
-                .Where(messageTokens.Contains)
-                .Distinct(StringComparer.Ordinal)
-                .ToList();
-            if (mentionedTokens.Count == 0)
-                return command;
-
-            var compatible = candidates.Count(candidate =>
+            var selected = exactSelection
+                ?? (mentionedSelection is not null
+                    && CanGroundMentionedSelection(
+                        command.ProductText,
+                        mentionedSelection)
+                        ? mentionedSelection
+                        : null);
+            var normalizedCommand = command;
+            if (selected is not null)
             {
-                var candidateTokens = NormalizeTokens(candidate.Name).Where(IsMeaningful).ToList();
-                return mentionedTokens.All(token => candidateTokens.Contains(token, StringComparer.Ordinal));
-            });
-            return compatible > 1
-                ? command with { ProductText = string.Join(' ', mentionedTokens) }
-                : command;
-        }).ToList();
+                var selectedTokens = NormalizeTokens(selected.Name).Where(IsMeaningful).ToList();
+                var mentionedTokens = selectedTokens
+                    .Where(messageTokens.Contains)
+                    .Distinct(StringComparer.Ordinal)
+                    .ToList();
+                if (mentionedTokens.Count > 0)
+                {
+                    var compatible = candidates.Count(candidate =>
+                    {
+                        var candidateTokens = NormalizeTokens(candidate.Name).Where(IsMeaningful).ToList();
+                        return mentionedTokens.All(token => candidateTokens.Contains(token, StringComparer.Ordinal));
+                    });
+                    normalizedCommand = compatible > 1
+                        ? command with { ProductText = string.Join(' ', mentionedTokens) }
+                        : command with { ProductText = selected.Name };
+                }
+            }
+
+            if (selected is null
+                && isOfferFollowUp
+                && !string.IsNullOrWhiteSpace(latestOffer.ReplacementReference)
+                && command.Operation is CartCommandOperations.Add or CartCommandOperations.SetQuantity
+                && command.Quantity is > 0m)
+            {
+                normalizedCommands.Add(new CartCommand(
+                    CartCommandOperations.Add,
+                    BuildOfferRefinement(latestOffer, messageTokens),
+                    command.Quantity,
+                    command.DestinationReference));
+                continue;
+            }
+            if (selected is not null
+                && isOfferFollowUp
+                && !string.IsNullOrWhiteSpace(latestOffer.ReplacementReference)
+                && command.Operation is CartCommandOperations.Add or CartCommandOperations.SetQuantity
+                && command.Quantity is > 0m)
+            {
+                var replaced = CartItemPresentationMemory.FindUniqueByReference(
+                    context.Facts, latestOffer.ReplacementReference, context.Config?.Commerce.Matching);
+                if (replaced is not null && !SameProduct(replaced, selected))
+                {
+                    normalizedCommands.Add(new CartCommand(
+                        CartCommandOperations.Remove, replaced.ResolvedName, null, null));
+                    normalizedCommands.Add(new CartCommand(
+                        CartCommandOperations.Add, selected.Name, command.Quantity, command.DestinationReference));
+                    continue;
+                }
+            }
+
+            normalizedCommands.Add(normalizedCommand);
+        }
+        return normalizedCommands;
     }
+
+    private static bool CanGroundMentionedSelection(
+        string productText,
+        ProductCandidate mentionedSelection)
+    {
+        var commandTokens = NormalizeTokens(productText)
+            .Where(token => token.Length >= 3 || token.Any(char.IsDigit))
+            .ToHashSet(StringComparer.Ordinal);
+        if (commandTokens.Count == 0)
+            return true;
+
+        var contextualTokens = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "ese", "esa", "eso", "este", "esta", "aquel", "aquella",
+            "mismo", "misma", "producto", "opcion"
+        };
+        if (commandTokens.All(contextualTokens.Contains))
+            return true;
+
+        var selectedTokens = NormalizeTokens(mentionedSelection.Name)
+            .Where(token => token.Length >= 3 || token.Any(char.IsDigit))
+            .ToHashSet(StringComparer.Ordinal);
+        return commandTokens.Any(selectedTokens.Contains);
+    }
+
+    private static string BuildOfferRefinement(
+        CatalogOfferSnapshot offer,
+        IReadOnlySet<string> messageTokens)
+    {
+        var candidateTokens = offer.Products
+            .SelectMany(product => NormalizeTokens(product.Name))
+            .Where(token => token.Length >= 3 || token.Any(char.IsDigit))
+            .ToHashSet(StringComparer.Ordinal);
+        var refinement = messageTokens
+            .Where(candidateTokens.Contains)
+            .Where(token => !token.All(char.IsDigit))
+            .ToList();
+        if (refinement.Count > 0)
+            return string.Join(' ', refinement);
+        return offer.SearchTerms.FirstOrDefault(term => !string.IsNullOrWhiteSpace(term))
+            ?? offer.ReplacementReference
+            ?? string.Empty;
+    }
+    private static ProductCandidate? FindUniqueMentionedProduct(
+        AgentConversationContext context,
+        IReadOnlyList<ProductCandidate> candidates,
+        IReadOnlySet<string> messageTokens)
+    {
+        var minimum = Math.Max(2, context.Config?.Commerce.Matching.ExactNameDominanceMinimumMatches ?? 0);
+        var scored = candidates.Select(candidate => new
+        {
+            Candidate = candidate,
+            Score = NormalizeTokens(candidate.Name)
+                .Where(token => token.Length >= 3 || token.Any(char.IsDigit))
+                .Count(token => messageTokens.Contains(token))
+        }).Where(value => value.Score >= minimum).ToList();
+        if (scored.Count == 0)
+            return null;
+        var maximum = scored.Max(value => value.Score);
+        var best = scored.Where(value => value.Score == maximum).ToList();
+        return best.Count == 1 ? best[0].Candidate : null;
+    }
+
+    private static bool IsOfferFollowUp(
+        AgentConversationContext context,
+        CatalogOfferSnapshot offer)
+    {
+        var lastBotMessage = context.ConversationState?.LastBotMessage;
+        if (string.IsNullOrWhiteSpace(lastBotMessage))
+            return false;
+        var botTokens = NormalizeTokens(lastBotMessage).ToHashSet(StringComparer.Ordinal);
+        return offer.Products.Count(product => NormalizeTokens(product.Name)
+            .Where(token => token.Length >= 3 || token.Any(char.IsDigit))
+            .All(botTokens.Contains)) >= Math.Min(2, offer.Products.Count);
+    }
+
+    private static bool SameProduct(
+        CartItemPresentationEntry entry,
+        ProductCandidate candidate) =>
+        entry.ProductId.HasValue && candidate.ProductId == entry.ProductId
+        || !string.IsNullOrWhiteSpace(entry.ExternalProductId)
+            && candidate.ExternalProductId?.Equals(entry.ExternalProductId, StringComparison.OrdinalIgnoreCase) == true
+        || !string.IsNullOrWhiteSpace(entry.Sku)
+            && candidate.Sku?.Equals(entry.Sku, StringComparison.OrdinalIgnoreCase) == true
+        || Normalize(entry.ResolvedName).Equals(Normalize(candidate.Name), StringComparison.Ordinal);
+
     public static bool TryGetSelected(AgentConversationContext ctx, out ProductCandidate candidate) =>
         TryReadCandidate(ctx, SelectedProductKey, out candidate);
 

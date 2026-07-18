@@ -26,11 +26,48 @@ public sealed class LocalProductCandidateRetriever : IProductCandidateRetriever
         CancellationToken cancellationToken = default)
     {
         var normalizedAlias = ProductSearchText.NormalizeAlias(productText);
-        var customerKey = NormalizeCustomerKey(context.ChannelPhone);
-        var aliases = normalizedAlias.Length == 0
-            ? []
-            : await _unitOfWork.ProductAliases.FindActiveAsync(
-                context.BusinessId, normalizedAlias, customerKey, cancellationToken);
+        var externalCustomerKey = CommerceCustomerAliasKey.FromExternalCustomer(
+            context.CommerceCustomer);
+        var legacyCustomerKey = NormalizeCustomerKey(context.ChannelPhone);
+        var customerKeys = new[] { externalCustomerKey, legacyCustomerKey }
+            .Where(key => key.Length > 0)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        IReadOnlyList<ProductAlias> aliases = [];
+        if (normalizedAlias.Length > 0)
+        {
+            if (customerKeys.Count == 0)
+            {
+                aliases = await _unitOfWork.ProductAliases.FindActiveAsync(
+                    context.BusinessId, normalizedAlias, string.Empty, cancellationToken);
+            }
+            else
+            {
+                aliases = await _unitOfWork.ProductAliases.FindActiveAsync(
+                    context.BusinessId, normalizedAlias, customerKeys[0], cancellationToken);
+                for (var index = 1;
+                     index < customerKeys.Count
+                     && !aliases.Any(alias => alias.Scope == ProductAliasScope.Customer);
+                     index++)
+                {
+                    var fallback = await _unitOfWork.ProductAliases.FindActiveAsync(
+                        context.BusinessId,
+                        normalizedAlias,
+                        customerKeys[index],
+                        cancellationToken);
+                    var customerAliases = fallback
+                        .Where(alias => alias.Scope == ProductAliasScope.Customer)
+                        .ToList();
+                    if (customerAliases.Count > 0)
+                    {
+                        aliases = aliases
+                            .Where(alias => alias.Scope == ProductAliasScope.Business)
+                            .Concat(customerAliases)
+                            .ToList();
+                    }
+                }
+            }
+        }
         var effectiveAliases = aliases.Any(alias => alias.Scope == ProductAliasScope.Customer)
             ? aliases.Where(alias => alias.Scope == ProductAliasScope.Customer).ToList()
             : aliases;

@@ -208,4 +208,44 @@ public sealed class FlowCheckpointInvalidationTests
         result.FactsToClear.Should().BeEmpty();
         result.StageSnapshotsToReset.Should().BeEmpty();
     }
+
+    [Fact]
+    public void GetInvalidations_WhenAdvanceFactIsAnAuthoritativeSystemDefault_PreservesIt()
+    {
+        var ctx = new AgentConversationContext
+        {
+            Config = new AgentConfig
+            {
+                FactSchema =
+                [
+                    new FactSchemaEntry { Key = "delivery_address", Source = "user" },
+                    new FactSchemaEntry
+                    {
+                        Key = "city",
+                        Source = "system",
+                        DefaultValue = "Valledupar"
+                    }
+                ],
+                Flows =
+                [
+                    new AgentFlowDefinition
+                    {
+                        Stages =
+                        [
+                            new AgentFlowStage
+                            {
+                                Id = "order_data",
+                                AdvanceWhenFacts = ["delivery_address", "city"],
+                                ReentryOnFactChanged = ["delivery_address", "city"]
+                            }
+                        ]
+                    }
+                ]
+            }
+        };
+
+        var result = FlowCheckpointInvalidation.GetInvalidations(ctx, ["delivery_address"]);
+
+        result.FactsToClear.Should().NotContain("city");
+    }
 }

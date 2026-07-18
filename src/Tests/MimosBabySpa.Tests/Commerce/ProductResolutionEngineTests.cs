@@ -27,6 +27,57 @@ public sealed class ProductResolutionEngineTests
     }
 
     [Fact]
+    public void Resolve_UniqueCustomerHabit_AutoResolvesWithoutBeingAffectedByLargerCatalog()
+    {
+        var habitual = Product("SALCHICHA RANCHERA X 500GR", "CF01");
+        var catalogAlternatives = new[]
+        {
+            Product("SALCHICHA LONG X 550GR", "CF59"),
+            Product("SALCHICHA LONG X 1100GR", "CF20"),
+            Product("SALCHICHA PREMIUM X 500GR", "CF21"),
+            Product("SALCHICHA PERRO X 1KG", "CF22")
+        };
+        var retrieved = new List<RetrievedProductCandidate>
+        {
+            new(habitual, ProductMatchSource.CustomerAlias, ExactAlias: true, CanAutoResolve: true)
+        };
+        retrieved.AddRange(catalogAlternatives.Select(product =>
+            new RetrievedProductCandidate(product, ProductMatchSource.LocalLexicalIndex)));
+
+        var result = ProductResolutionEngine.Resolve("salchicha", retrieved);
+
+        result.Status.Should().Be(ProductResolutionStatus.Resolved);
+        result.Selected.Should().Be(habitual);
+    }
+
+    [Fact]
+    public void Resolve_AmbiguousCustomerHabit_PresentsHistoricalOptionsBeforeCatalogExploration()
+    {
+        var habitual = new[]
+        {
+            Product("SALCHICHA RANCHERA X 500GR", "CF01"),
+            Product("SALCHICHA LONG X 550GR", "CF59"),
+            Product("SALCHICHA LONG X 1100GR", "CF20")
+        };
+        var otherCatalogProducts = new[]
+        {
+            Product("SALCHICHA PREMIUM X 500GR", "CF21"),
+            Product("SALCHICHA PERRO X 1KG", "CF22")
+        };
+        var retrieved = habitual.Select(product =>
+                new RetrievedProductCandidate(product, ProductMatchSource.CustomerAlias, ExactAlias: true))
+            .Concat(otherCatalogProducts.Select(product =>
+                new RetrievedProductCandidate(product, ProductMatchSource.LocalLexicalIndex)))
+            .ToList();
+
+        var result = ProductResolutionEngine.Resolve("salchicha", retrieved);
+
+        result.Status.Should().Be(ProductResolutionStatus.Ambiguous);
+        result.Candidates.Select(candidate => candidate.Product).Should().Equal(habitual);
+    }
+
+
+    [Fact]
     public void Resolve_SuggestOnlyAlias_NeverAutoAdds()
     {
         var product = Product("JAMON CUNIT X 500GR", "CF17");

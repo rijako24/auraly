@@ -1,4 +1,5 @@
 using MimosBabySpa.Application.Agents.Operations;
+using MimosBabySpa.Application.Commerce;
 
 namespace MimosBabySpa.Application.Agents.Configuration;
 
@@ -111,6 +112,7 @@ public sealed partial class AgentConfigurationCompiler
         ValidateOperatingHours(config, errors);
         ValidateReservationAutomations(config, usedOperations, errors);
         ValidateInteractiveActions(config, usedOperations, errors);
+        ValidateCommerce(config, errors);
 
         return errors.Count > 0
             ? new AgentConfigurationCompilation(null, errors)
@@ -119,6 +121,89 @@ public sealed partial class AgentConfigurationCompiler
                 []);
     }
 
+    private static void ValidateCommerce(
+        AgentConfig config,
+        ICollection<AgentConfigurationDiagnostic> errors)
+    {
+        var conversation = config.Commerce.Conversation;
+        ValidateTerms("commerce.conversation.contextualConfirmationPhrases", conversation.ContextualConfirmationPhrases);
+        ValidatePhraseRules("commerce.conversation.finalizationRules", conversation.FinalizationRules);
+        ValidatePhraseRules("commerce.conversation.cartReviewRules", conversation.CartReviewRules);
+        ValidatePhraseRules("commerce.conversation.productReplacementRules", conversation.ProductReplacementRules);
+        ValidateTerms("commerce.conversation.candidateSelectionPhrases", conversation.CandidateSelectionPhrases);
+        ValidateTerms("commerce.conversation.clauseSeparators", conversation.ClauseSeparators);
+        ValidateTerms("commerce.conversation.additionalRequestPhrases", conversation.AdditionalRequestPhrases);
+        ValidateTerms("commerce.pendingCart.discardOnFinalizeIssueCodes",
+            config.Commerce.PendingCart.DiscardOnFinalizeIssueCodes);
+        ValidateTerms("commerce.pendingCart.finalizeConfirmationPhrases",
+            config.Commerce.PendingCart.FinalizeConfirmationPhrases);
+        ValidatePhraseRules("commerce.pendingCart.cancellationRules",
+            config.Commerce.PendingCart.CancellationRules);
+        ValidateTerms("commerce.pendingCart.quantityCorrectionPhrases",
+            config.Commerce.PendingCart.QuantityCorrectionPhrases);
+
+        if (conversation.QuantityWords.Any(pair =>
+                string.IsNullOrWhiteSpace(pair.Key) || pair.Value <= 0m))
+        {
+            Error(errors, "commerce.conversation.quantityWords", "invalid_quantity_word",
+                "Configured quantity words require a non-empty phrase and a positive quantity.");
+        }
+
+        var matching = config.Commerce.Matching;
+        if (matching.ExactNameDominanceMinimumMatches < 0)
+        {
+            Error(errors, "commerce.matching.exactNameDominanceMinimumMatches",
+                "invalid_matching_threshold", "The exact-match minimum cannot be negative.");
+        }
+        ValidateSimilarity("commerce.matching.candidateMentionSimilarity",
+            matching.CandidateMentionSimilarity);
+        ValidateSimilarity("commerce.matching.pendingReferenceSimilarity",
+            matching.PendingReferenceSimilarity);
+        ValidateSimilarity("commerce.matching.candidateSelectionSimilarity",
+            matching.CandidateSelectionSimilarity);
+
+        void ValidatePhraseRules(string path, IReadOnlyList<CommercePhraseRule> rules)
+        {
+            if (rules.Any(rule => string.IsNullOrWhiteSpace(rule.Phrase)
+                    || !CommercePhraseMatchModes.All.Contains(rule.Match)))
+            {
+                Error(errors, path, "invalid_phrase_rule",
+                    "Phrase rules require text and a supported match mode.");
+            }
+            if (rules.Where(rule => !string.IsNullOrWhiteSpace(rule.Phrase))
+                    .Select(rule => $"{rule.Match}:{rule.Phrase}")
+                    .Distinct(StringComparer.OrdinalIgnoreCase).Count()
+                != rules.Count(rule => !string.IsNullOrWhiteSpace(rule.Phrase)))
+            {
+                Error(errors, path, "duplicate_policy_term",
+                    "Phrase rules must be unique by match mode and phrase.");
+            }
+        }
+        void ValidateTerms(string path, IReadOnlyList<string> terms)
+        {
+            if (terms.Any(string.IsNullOrWhiteSpace))
+            {
+                Error(errors, path, "invalid_policy_term",
+                    "Policy terms cannot be empty.");
+            }
+            if (terms.Where(term => !string.IsNullOrWhiteSpace(term))
+                    .Distinct(StringComparer.OrdinalIgnoreCase).Count()
+                != terms.Count(term => !string.IsNullOrWhiteSpace(term)))
+            {
+                Error(errors, path, "duplicate_policy_term",
+                    "Policy terms must be unique.");
+            }
+        }
+
+        void ValidateSimilarity(string path, double value)
+        {
+            if (!double.IsFinite(value) || value is < 0d or > 1d)
+            {
+                Error(errors, path, "invalid_matching_threshold",
+                    "Similarity thresholds must be between 0 and 1.");
+            }
+        }
+    }
     private void ValidateInteractiveActions(
         AgentConfig config,
         IDictionary<string, IAgentOperation> usedOperations,

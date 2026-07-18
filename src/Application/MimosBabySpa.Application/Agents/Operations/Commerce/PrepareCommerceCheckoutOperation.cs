@@ -351,6 +351,8 @@ private readonly IUnitOfWork _unitOfWork;
             ["line_items"] = items.Select(i => (object)new Dictionary<string, object?>
             {
                 ["name"] = i.ProductNameSnapshot,
+                ["requested_name"] = CartItemPresentationMemory.FindRequestedName(
+                    facts, i.ProductId, i.ExternalProductId, i.Sku, i.ProductNameSnapshot),
                 ["quantity"] = i.Quantity.ToString("N0", CultureInfo.InvariantCulture),
                 ["unit_price"] = Money(i.UnitPrice),
                 ["line_total"] = Money(i.LineTotal)
@@ -402,6 +404,8 @@ private readonly IUnitOfWork _unitOfWork;
                 product_id = i.ProductId,
                 sku = i.Sku,
                 name = i.ProductNameSnapshot,
+                requested_name = CartItemPresentationMemory.FindRequestedName(
+                    facts, i.ProductId, i.ExternalProductId, i.Sku, i.ProductNameSnapshot),
                 quantity = i.Quantity,
                 unit_price = i.UnitPrice,
                 line_total = i.LineTotal

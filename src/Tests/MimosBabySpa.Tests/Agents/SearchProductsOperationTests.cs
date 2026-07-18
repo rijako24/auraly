@@ -4,9 +4,11 @@ using Moq;
 using MimosBabySpa.Application.Agents;
 using MimosBabySpa.Application.Agents.Operations;
 using MimosBabySpa.Application.Agents.Operations.Commerce;
+using MimosBabySpa.Application.Agents.Operations.Support;
 using MimosBabySpa.Application.Commerce;
 using MimosBabySpa.Application.Services;
 using MimosBabySpa.Domain.Entities;
+using MimosBabySpa.Domain.Enums;
 using ConversationStateModel = MimosBabySpa.Domain.Models.ConversationState;
 using Xunit;
 
@@ -96,6 +98,54 @@ public class SearchProductsOperationTests
         json.Should().Contain("currency");
         json.Should().Contain("Do not show SKU/code");
         json.Should().Contain("Mention available stock quantity only when a requested quantity is greater");
+    }
+    [Fact]
+    public async Task ExecuteAsync_WhenExactRancheraMatchesExist_FiltersFuzzyNoiseAndKeepsRecommendation()
+    {
+        var ctx = CreateContext();
+        ctx.Config = new AgentConfig
+        {
+            Commerce = new CommerceConfig
+            {
+                Enabled = true,
+                Matching = new ProductMatchingPolicy { ExactNameDominanceMinimumMatches = 2 }
+            }
+        };
+        var ranchera = new ProductReference(Guid.NewGuid(), "CF1", "CF1", "SALCH RANCHERA X 5 UND", null, "Carnes frias", 12000m, "COP", 5m);
+        var rancheraSuper = new ProductReference(Guid.NewGuid(), "CF2", "CF2", "SALCHICHA RANCHERA SUPER", null, "Carnes frias", 18000m, "COP", 5m);
+        var manguera = new ProductReference(Guid.NewGuid(), "CF3", "CF3", "SALCHI MANGUERA LARGA", null, "Carnes frias", 10000m, "COP", 5m);
+        var panelera = new ProductReference(Guid.NewGuid(), "SA1", "SA1", "SALSA PANELERA", null, "Salsas", 8000m, "COP", 5m);
+        var brioche = new ProductReference(Guid.NewGuid(), "PA1", "PA1", "PAN BURGER BRIOCHE", null, "Pan", 9000m, "COP", 5m);
+        _commerce
+            .Setup(service => service.SearchProductsAsync(ctx, It.IsAny<ProductSearchRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ProductSearchResult([ranchera, rancheraSuper, manguera, panelera], "mantis"));
+        var recommendations = new Mock<ICatalogRecommendationService>();
+        recommendations
+            .Setup(service => service.ResolveAsync(
+                ctx,
+                It.Is<IReadOnlyList<ProductReference>>(products => products.Count == 2),
+                It.IsAny<IReadOnlyList<ProductReference>>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CatalogProductRecommendation(
+                brioche,
+                ProductRecommendationType.Complement,
+                "Complementa las rancheras."));
+        var operation = new SearchProductsOperation(
+            _commerce.Object,
+            new Mock<IConversationFactsService>().Object,
+            recommendations.Object);
+        using var args = JsonDocument.Parse("""{"query":"rancheras","limit":10}""");
+
+        var outcome = await operation.ExecuteAsync(args.RootElement, new OperationContext { Session = ctx });
+        using var data = JsonDocument.Parse(outcome.Data.GetRawText());
+
+        data.RootElement.GetProperty("count").GetInt32().Should().Be(2);
+        data.RootElement.GetProperty("products").EnumerateArray()
+            .Select(product => product.GetProperty("name").GetString())
+            .Should().Equal("SALCH RANCHERA X 5 UND", "SALCHICHA RANCHERA SUPER");
+        data.RootElement.GetProperty("recommendations").GetArrayLength().Should().Be(1);
+        data.RootElement.GetProperty("recommendations")[0].GetProperty("name").GetString()
+            .Should().Be("PAN BURGER BRIOCHE");
     }
     [Fact]
     public async Task DisplayedCatalogProduct_IsResolvedFromTheSameAuthoritativeSnapshot()
@@ -278,6 +328,40 @@ public class SearchProductsOperationTests
         memory.Should().Contain("CERDO");
         memory.Should().Contain("SALCHICHA");
         memory.Should().Contain("sequence").And.Contain(":3");
+    }
+    [Fact]
+    public async Task SemanticReplacementReference_IsRememberedWithoutMatchingAnyPhraseRule()
+    {
+        var ctx = CreateContext();
+        ctx.LatestUserMessage = "Ese maíz ya no me convence; muéstrame otros";
+        ctx.Config = new AgentConfig
+        {
+            Commerce = new CommerceConfig
+            {
+                Enabled = true,
+                Conversation = new CommerceConversationPolicy { ProductReplacementRules = [] }
+            }
+        };
+        var options = new[]
+        {
+            new ProductReference(null, "M1", "M1", "MAIZ SUPER DULCE X 500 GR", null, null, 8_000m, "COP", 20m),
+            new ProductReference(null, "M2", "M2", "MAIZ TIERNO X 1 KG", null, null, 9_000m, "COP", 20m)
+        };
+        _commerce
+            .Setup(service => service.SearchProductsAsync(
+                ctx, It.IsAny<ProductSearchRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ProductSearchResult(options, "mantis"));
+        var operation = new SearchProductsOperation(
+            _commerce.Object, new Mock<IConversationFactsService>().Object);
+        using var args = JsonDocument.Parse(
+            """{"query":"maiz","replacement_reference":"maíz","limit":10}""");
+
+        await operation.ExecuteAsync(args.RootElement, new OperationContext { Session = ctx });
+
+        var offer = CatalogOfferMemory.Read(ctx.Facts)!.Snapshots.Single();
+        offer.ReplacementReference.Should().Be("maíz");
+        offer.Products.Select(product => product.Name).Should().Equal(
+            "MAIZ SUPER DULCE X 500 GR", "MAIZ TIERNO X 1 KG");
     }
     private static AgentConversationContext CreateContext() => new()
     {

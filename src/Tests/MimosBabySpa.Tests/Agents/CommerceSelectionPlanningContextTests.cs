@@ -1,5 +1,6 @@
 using FluentAssertions;
 using MimosBabySpa.Application.Agents.Planning;
+using MimosBabySpa.Application.Commerce;
 using Xunit;
 
 namespace MimosBabySpa.Tests.Agents;
@@ -58,6 +59,55 @@ public sealed class CommerceSelectionPlanningContextTests
         fragment.Value.GetProperty("offers")[1].GetProperty("is_latest").GetBoolean().Should().BeTrue();
     }
 
+    [Fact]
+    public void ProjectsEveryUnresolvedCartItemInsteadOfOnlyTheFirstOne()
+    {
+        var facts = new Dictionary<string, string>
+        {
+            ["system.pending_cart_commands"] = """
+                {
+                  "schemaVersion":2,
+                  "items":[
+                    {
+                      "command":{"operation":"add","productText":"paquetes de chorizo Salsan","quantity":5,"destinationReference":null},
+                      "originalProductText":"paquetes de chorizo Salsan",
+                      "issue":{"code":"product_unavailable","productText":"paquetes de chorizo Salsan","candidates":["CHORIZO SALSAN"],"productCandidates":[{"name":"CHORIZO SALSAN","unitPrice":0,"currency":"COP","isAvailable":false}]},
+                      "requiresResolution":true,
+                      "alreadyApplied":false
+                    },
+                    {
+                      "command":{"operation":"add","productText":"tocinetas","quantity":3,"destinationReference":null},
+                      "originalProductText":"tocinetas",
+                      "issue":{"code":"product_ambiguous","productText":"tocinetas","candidates":["SALSA TOCINETA 1000GR","SALSA TOCINETA 200 GR"],"productCandidates":[{"name":"SALSA TOCINETA 1000GR","unitPrice":10,"currency":"COP","isAvailable":true},{"name":"SALSA TOCINETA 200 GR","unitPrice":5,"currency":"COP","isAvailable":true}]},
+                      "requiresResolution":true,
+                      "alreadyApplied":false
+                    }
+                  ],
+                  "expiresAtUtc":"2099-01-01T00:00:00Z"
+                }
+                """
+        };
+
+        var fragment = CommerceSelectionPlanningContextEnricher.Build(
+            facts,
+            new CommerceConfig
+            {
+                PendingCart = new PendingCartPolicy
+                {
+                    DiscardOnFinalizeIssueCodes = ["supplier_backorder"]
+                }
+            });
+
+        var interaction = fragment!.Value.GetProperty("interaction");
+        interaction.GetProperty("deferred_command_count").GetInt32().Should().Be(2);
+        interaction.GetProperty("discard_on_finalize_issue_codes")[0].GetString()
+            .Should().Be("supplier_backorder");
+        var pendingItems = interaction.GetProperty("pending_items");
+        pendingItems.GetArrayLength().Should().Be(2);
+        pendingItems[0].GetProperty("issue_code").GetString().Should().Be("product_unavailable");
+        pendingItems[1].GetProperty("requested_product").GetString().Should().Be("tocinetas");
+        pendingItems[1].GetProperty("candidates").GetArrayLength().Should().Be(2);
+    }
     [Fact]
     public void ReadsLegacyCatalogAsTheLatestOffer()
     {

@@ -80,7 +80,28 @@ export interface WompiWebhookOutcomeConfig { sendMessageSequence?: string | null
 export interface WebhookDefinitions { wompi?: Record<string, WompiWebhookOutcomeConfig>; }
 export interface EventNotificationConfig { enabled?: boolean; recipients?: string[]; sendMessageSequence?: string | null; }
 export type AgentNotificationDefinitions = Record<string, EventNotificationConfig>;
-export interface AgentCommerceSettings { enabled?: boolean; provider?: "Local" | "Siigo" | "CustomHttp" | "Mantis"; }
+export interface CommercePhraseRule { phrase: string; match?: "exact" | "contains" | "prefix" | "suffix"; }
+export interface AgentCommerceConversationSettings {
+  contextualConfirmationPhrases?: string[]; finalizationRules?: CommercePhraseRule[];
+  cartReviewRules?: CommercePhraseRule[]; productReplacementRules?: CommercePhraseRule[];
+  candidateSelectionPhrases?: string[]; clauseSeparators?: string[]; additionalRequestPhrases?: string[];
+  quantityWords?: Record<string, number>;
+}
+export interface AgentPendingCartSettings {
+  discardOnFinalizeIssueCodes?: string[]; finalizeConfirmationPhrases?: string[];
+  cancellationRules?: CommercePhraseRule[]; quantityCorrectionPhrases?: string[];
+  discardAllOnExplicitFinalization?: boolean;
+}
+export interface AgentProductMatchingSettings {
+  exactNameDominanceMinimumMatches?: number; candidateMentionSimilarity?: number;
+  pendingReferenceSimilarity?: number; candidateSelectionSimilarity?: number;
+}
+export interface AgentCommerceSettings {
+  enabled?: boolean; provider?: "Local" | "Siigo" | "CustomHttp" | "Mantis";
+  offerMemoryMaxSnapshots?: number; offerMemoryMaxProducts?: number;
+  conversation?: AgentCommerceConversationSettings; pendingCart?: AgentPendingCartSettings;
+  matching?: AgentProductMatchingSettings;
+}
 export interface AgentOperatingHoursSettings { enforce?: boolean; outsideHours?: StageResponseDefinition; }
 export interface ConversationOpeningSettings { enabled?: boolean; guidance?: string; allowQuestions?: boolean; }
 export interface FailureResponseSettings { llmUnavailable?: string; }

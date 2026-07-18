@@ -52,7 +52,7 @@ public sealed class ProductCatalogSyncServiceTests
         created.ManageStock.Should().BeFalse();
         created.StockQuantity.Should().BeNull();
         created.RawPayloadJson.Should().BeNull();
-        created.IsActive.Should().BeTrue();
+        created.IsActive.Should().BeFalse();
         fixture.Products.Verify(repository => repository.ReplaceSearchTermsAsync(
             created, It.IsAny<CancellationToken>()), Times.Once);
     }
@@ -106,6 +106,57 @@ public sealed class ProductCatalogSyncServiceTests
             It.IsAny<Product>(), It.IsAny<CancellationToken>()), Times.Never);
         fixture.Products.Verify(repository => repository.ReplaceSearchTermsAsync(
             It.IsAny<Product>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task SyncAsync_WhenRemoteProductBecomesUnavailable_DeactivatesLocalIdentity()
+    {
+        var fixture = new SyncFixture();
+        var existing = new Product
+        {
+            ProductId = Guid.NewGuid(),
+            BusinessId = fixture.BusinessId,
+            IntegrationConnectionId = fixture.Connection.IntegrationConnectionId,
+            ExternalProductId = "CF17",
+            Sku = "CF17",
+            Name = "JAMON CUNIT X 500GR",
+            Description = "GRAMOS JAMONES REFRIGERADOS",
+            CategoryName = "CARNES",
+            UnitPrice = 0m,
+            Currency = "COP",
+            ManageStock = false,
+            IsActive = true,
+            SearchIndexVersion = 2
+        };
+        fixture.Products.Setup(repository => repository.GetByExternalIdAsync(
+                fixture.BusinessId,
+                fixture.Connection.IntegrationConnectionId,
+                "CF17",
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(existing);
+        fixture.Adapter.Setup(adapter => adapter.SearchProductsAsync(
+                It.IsAny<ProductSearchRequest>(),
+                It.IsAny<CommerceAdapterContext>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ProductSearchResult([
+                new ProductReference(
+                    null, "CF17", "CF17", "JAMON CUNIT X 500GR",
+                    "GRAMOS", "CARNES", 99_999m, "COP", 0m,
+                    FamilyName: "JAMONES",
+                    SubcategoryName: "REFRIGERADOS")
+                { IsActive = false }
+            ], "mantis"));
+
+        var result = await fixture.Service.SyncAsync(
+            fixture.BusinessId,
+            new ProductCatalogSyncRequest(Provider: CommerceProvider.Mantis));
+
+        result.ProductsChanged.Should().Be(1);
+        existing.IsActive.Should().BeFalse();
+        fixture.Products.Verify(repository => repository.UpdateAsync(
+            existing, It.IsAny<CancellationToken>()), Times.Once);
+        fixture.Products.Verify(repository => repository.ReplaceSearchTermsAsync(
+            existing, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]

@@ -301,7 +301,7 @@ public sealed class ProductCatalogSyncService : IProductCatalogSyncService
                     ManageStock = false,
                     StockQuantity = null,
                     SearchIndexVersion = CurrentSearchIndexVersion,
-                    IsActive = true,
+                    IsActive = reference.IsActive,
                     RawPayloadJson = null,
                     LastSyncedAt = now,
                     CreatedAt = now
@@ -325,7 +325,7 @@ public sealed class ProductCatalogSyncService : IProductCatalogSyncService
                 || existing.UnitPrice != 0m
                 || existing.ManageStock
                 || existing.StockQuantity.HasValue
-                || !existing.IsActive
+                || existing.IsActive != reference.IsActive
                 || existing.RawPayloadJson is not null
                 || existing.SearchIndexVersion != CurrentSearchIndexVersion;
             if (!identityChanged)
@@ -339,7 +339,7 @@ public sealed class ProductCatalogSyncService : IProductCatalogSyncService
             existing.Currency = currency;
             existing.ManageStock = false;
             existing.StockQuantity = null;
-            existing.IsActive = true;
+            existing.IsActive = reference.IsActive;
             existing.RawPayloadJson = null;
             existing.SearchIndexVersion = CurrentSearchIndexVersion;
             existing.LastSyncedAt = DateTime.UtcNow;

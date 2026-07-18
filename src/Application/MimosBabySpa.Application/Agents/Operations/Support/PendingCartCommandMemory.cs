@@ -31,6 +31,10 @@ internal static class PendingCartCommandMemory
         var confirmations = new List<PendingAliasConfirmation>();
         var cancelledAny = false;
         var latestMessage = context.LatestUserMessage ?? string.Empty;
+        var conversationPolicy = context.Config?.Commerce.Conversation ?? new CommerceConversationPolicy();
+        var matchingPolicy = context.Config?.Commerce.Matching ?? new ProductMatchingPolicy();
+        var confirmedCandidate = FindConfirmedCandidate(
+            context, pending, latestMessage, conversationPolicy, matchingPolicy);
 
         foreach (var completed in pending.Items.Where(item => item.AlreadyApplied))
         {
@@ -39,7 +43,7 @@ internal static class PendingCartCommandMemory
                 && (SameReference(command.ProductText, completed.Command.ProductText)
                     || SameReference(command.ProductText, completed.OriginalProductText)
                     || IsPendingRefinement(completed.OriginalProductText, command.ProductText)));
-            if (related is not null && !IsExplicitAdditionalRequest(latestMessage, related.ProductText))
+            if (related is not null && !IsExplicitAdditionalRequest(latestMessage, related.ProductText, conversationPolicy, matchingPolicy))
             {
                 if (related.Operation == CartCommandOperations.SetQuantity
                     || related.Quantity is > 1m && related.Quantity != completed.Command.Quantity)
@@ -58,8 +62,8 @@ internal static class PendingCartCommandMemory
                 command.Operation.Equals(completed.Command.Operation, StringComparison.OrdinalIgnoreCase)
                 && command.Quantity == completed.Command.Quantity
                 && (SameReference(command.ProductText, completed.Command.ProductText)
-                    || IsPlausibleRefinement(completed.Command.ProductText, command.ProductText)));
-            if (replay is not null && !IsExplicitAdditionalRequest(latestMessage, replay.ProductText))
+                    || IsPlausibleRefinement(completed.Command.ProductText, command.ProductText, matchingPolicy)));
+            if (replay is not null && !IsExplicitAdditionalRequest(latestMessage, replay.ProductText, conversationPolicy, matchingPolicy))
                 remainingIncoming.Remove(replay);
         }
 
@@ -86,6 +90,9 @@ internal static class PendingCartCommandMemory
             }
 
             var candidates = item.Issue?.ProductCandidates ?? [];
+            var previousTurnSelection = confirmedCandidate is null
+                ? null
+                : candidates.FirstOrDefault(candidate => SameReference(candidate.Name, confirmedCandidate.Name));
             var relatedIncoming = remainingIncoming.FirstOrDefault(command =>
                 command.Operation is CartCommandOperations.Add or CartCommandOperations.SetQuantity
                 && (SameReference(command.ProductText, item.Command.ProductText)
@@ -102,40 +109,44 @@ internal static class PendingCartCommandMemory
                 var replacement = item.Command with { ProductText = item.Issue.ProductText };
                 if (relatedIncoming.Operation == CartCommandOperations.SetQuantity
                     || relatedIncoming.Quantity is > 1m && relatedIncoming.Quantity != item.Command.Quantity
-                    || HasExplicitQuantityForReference(latestMessage, relatedIncoming))
+                    || HasExplicitQuantityForReference(latestMessage, relatedIncoming, conversationPolicy))
                     replacement = replacement with { Quantity = relatedIncoming.Quantity };
                 work.Add(new(replacement, item.OriginalProductText));
                 remainingIncoming.Remove(relatedIncoming);
                 continue;
             }
 
-            var latestMatches = candidates.Where(candidate => IsReferenceMatch(latestMessage, candidate.Name)).ToList();
+            var latestMatches = candidates
+                .Where(candidate => IsReferenceMatch(latestMessage, candidate.Name, matchingPolicy))
+                .ToList();
             var selectionAttempts = remainingIncoming
                 .Select(command => new
                 {
                     Command = command,
-                    Matches = candidates.Where(candidate => IsReferenceMatch(command.ProductText, candidate.Name)).ToList()
+                    Matches = candidates
+                        .Where(candidate => IsReferenceMatch(command.ProductText, candidate.Name, matchingPolicy))
+                        .ToList()
                 })
                 .ToList();
             var incomingSelection = selectionAttempts.FirstOrDefault(value => value.Matches.Count == 1
                 && (candidates.Count == 1
-                    || HasGroundedCandidateDiscriminator(latestMessage, value.Matches[0], candidates)));
+                    || HasGroundedCandidateDiscriminator(latestMessage, value.Matches[0], candidates, conversationPolicy, matchingPolicy)));
             var ungroundedSelection = selectionAttempts.FirstOrDefault(value => value.Matches.Count == 1
                 && candidates.Count > 1
-                && !HasGroundedCandidateDiscriminator(latestMessage, value.Matches[0], candidates));
-            var selected = latestMatches.Count == 1
+                && !HasGroundedCandidateDiscriminator(latestMessage, value.Matches[0], candidates, conversationPolicy, matchingPolicy));
+            var selected = previousTurnSelection ?? (latestMatches.Count == 1
                 ? latestMatches[0]
-                : incomingSelection?.Matches.Count == 1 ? incomingSelection.Matches[0] : null;
+                : incomingSelection?.Matches.Count == 1 ? incomingSelection.Matches[0] : null);
             if (selected is not null)
             {
                 var resolvingCommand = incomingSelection?.Command
                     ?? remainingIncoming.FirstOrDefault(command =>
                         SameReference(command.ProductText, item.Command.ProductText)
-                        || IsPlausibleRefinement(item.Command.ProductText, command.ProductText));
+                        || IsPlausibleRefinement(item.Command.ProductText, command.ProductText, matchingPolicy));
                 var replacement = item.Command with { ProductText = selected.Name };
                 if (resolvingCommand is not null && (resolvingCommand.Operation == CartCommandOperations.SetQuantity
                     || resolvingCommand.Quantity is > 1m && resolvingCommand.Quantity != item.Command.Quantity
-                    || HasExplicitQuantityForReference(latestMessage, resolvingCommand)))
+                    || HasExplicitQuantityForReference(latestMessage, resolvingCommand, conversationPolicy)))
                     replacement = replacement with { Quantity = resolvingCommand.Quantity };
                 work.Add(new(replacement, item.OriginalProductText));
                 confirmations.Add(new(item.OriginalProductText, selected.Name));
@@ -146,7 +157,13 @@ internal static class PendingCartCommandMemory
             if (ungroundedSelection is not null)
             {
                 remainingIncoming.Remove(ungroundedSelection.Command);
-                remaining.Add(item);
+                var unresolvedItem = item;
+                if (HasExplicitQuantityForReference(latestMessage, ungroundedSelection.Command, conversationPolicy))
+                    unresolvedItem = item with
+                    {
+                        Command = item.Command with { Quantity = ungroundedSelection.Command.Quantity }
+                    };
+                remaining.Add(unresolvedItem);
                 continue;
             }
 
@@ -154,7 +171,7 @@ internal static class PendingCartCommandMemory
             if (candidates.Count == 0)
             {
                 var catalogMatches = ProductSelectionMemory.FindCatalogMatches(context, latestMessage)
-                    .Where(product => IsPlausibleRefinement(item.Command.ProductText, product.Name))
+                    .Where(product => IsPlausibleRefinement(item.Command.ProductText, product.Name, matchingPolicy))
                     .ToList();
                 if (catalogMatches.Count == 1)
                 {
@@ -162,7 +179,7 @@ internal static class PendingCartCommandMemory
                     work.Add(new(item.Command with { ProductText = selectedProduct.Name }, item.OriginalProductText));
                     var continuation = remainingIncoming.FirstOrDefault(command =>
                         SameReference(command.ProductText, item.Command.ProductText)
-                        || IsPlausibleRefinement(item.Command.ProductText, command.ProductText));
+                        || IsPlausibleRefinement(item.Command.ProductText, command.ProductText, matchingPolicy));
                     if (continuation is not null)
                         remainingIncoming.Remove(continuation);
                     confirmations.Add(new(item.OriginalProductText, selectedProduct.Name));
@@ -172,11 +189,11 @@ internal static class PendingCartCommandMemory
 
                 var refinement = remainingIncoming.FirstOrDefault(command =>
                     command.Operation is CartCommandOperations.Add or CartCommandOperations.SetQuantity
-                    && IsPlausibleRefinement(item.Command.ProductText, command.ProductText));
+                    && IsPlausibleRefinement(item.Command.ProductText, command.ProductText, matchingPolicy));
                 if (refinement is not null)
                 {
                     var replacement = item.Command with { ProductText = refinement.ProductText };
-                    if (HasExplicitQuantityForReference(latestMessage, refinement))
+                    if (HasExplicitQuantityForReference(latestMessage, refinement, conversationPolicy))
                         replacement = replacement with { Quantity = refinement.Quantity };
                     work.Add(new(replacement, item.OriginalProductText));
                     remainingIncoming.Remove(refinement);
@@ -189,7 +206,7 @@ internal static class PendingCartCommandMemory
                 var replacement = item.Command with { ProductText = relatedIncoming.ProductText };
                 if (relatedIncoming.Operation == CartCommandOperations.SetQuantity
                     || relatedIncoming.Quantity is > 1m && relatedIncoming.Quantity != item.Command.Quantity
-                    || HasExplicitQuantityForReference(latestMessage, relatedIncoming))
+                    || HasExplicitQuantityForReference(latestMessage, relatedIncoming, conversationPolicy))
                     replacement = replacement with { Quantity = relatedIncoming.Quantity };
                 work.Add(new(replacement, item.OriginalProductText));
                 remainingIncoming.Remove(relatedIncoming);
@@ -274,11 +291,172 @@ internal static class PendingCartCommandMemory
         }
     }
 
-    public static CartCommandIssue PrimaryIssue(IReadOnlyList<PendingCartItem> items) =>
-        items.Select(item => item.Issue).FirstOrDefault(issue => issue is not null)
+    public static CartCommandIssue PrimaryIssue(
+        IReadOnlyList<PendingCartItem> items,
+        string? latestMessage = null,
+        ProductMatchingPolicy? matchingPolicy = null) =>
+        items
+            .Where(item => item.Issue is not null)
+            .OrderByDescending(item => PendingMatchScore(
+                item, latestMessage ?? string.Empty, matchingPolicy ?? new ProductMatchingPolicy()))
+            .Select(item => item.Issue!)
+            .FirstOrDefault()
         ?? new CartCommandIssue("product_not_found", items.FirstOrDefault()?.OriginalProductText ?? string.Empty, []);
 
-    private static bool IsPlausibleRefinement(string previous, string incoming)
+    public static PendingCartItem? FindReferencedItem(
+        IReadOnlyList<PendingCartItem> items,
+        string? message,
+        ProductMatchingPolicy? matchingPolicy = null)
+    {
+        var policy = matchingPolicy ?? new ProductMatchingPolicy();
+        var matches = items
+            .Where(item => item.RequiresResolution)
+            .Select(item => new
+            {
+                Item = item,
+                Score = PendingMatchScore(item, message ?? string.Empty, policy)
+            })
+            .Where(match => match.Score > 0)
+            .ToList();
+        if (matches.Count == 0)
+            return null;
+
+        var maximumScore = matches.Max(match => match.Score);
+        var bestMatches = matches
+            .Where(match => match.Score == maximumScore)
+            .Select(match => match.Item)
+            .ToList();
+        return bestMatches.Count == 1 ? bestMatches[0] : null;
+    }
+
+    public static PendingCartItem? FindUniquelyReferencedItem(
+        IReadOnlyList<PendingCartItem> items,
+        string? message,
+        ProductMatchingPolicy? matchingPolicy = null)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+            return null;
+        var policy = matchingPolicy ?? new ProductMatchingPolicy();
+        var matches = items.Where(item => item.RequiresResolution
+            && new[]
+            {
+                item.OriginalProductText,
+                item.Command.ProductText,
+                item.Issue?.ProductText ?? string.Empty
+            }
+            .Concat(item.Issue?.ProductCandidates.Select(candidate => candidate.Name) ?? [])
+            .Any(reference => IsCandidateExplicitlyMentioned(message, reference, policy)))
+            .ToList();
+        return matches.Count == 1 ? matches[0] : null;
+    }
+    public static bool TryReadSingleQuantity(
+        string? message,
+        CommerceConversationPolicy? conversationPolicy,
+        out decimal quantity)
+    {
+        var values = new HashSet<decimal>();
+        if (!string.IsNullOrWhiteSpace(message))
+        {
+            foreach (Match match in Regex.Matches(
+                message,
+                @"(?<![\p{L}\d])\d+(?:[.,]\d+)?(?![\p{L}\d])",
+                RegexOptions.CultureInvariant))
+            {
+                if (decimal.TryParse(
+                        match.Value.Replace(',', '.'),
+                        NumberStyles.Number,
+                        CultureInfo.InvariantCulture,
+                        out var parsed)
+                    && parsed > 0m)
+                    values.Add(parsed);
+            }
+
+            if (conversationPolicy is not null)
+            {
+                foreach (var token in ProductSearchText.GetTokens(message))
+                {
+                    if (TryReadQuantityWord(token, conversationPolicy, out var parsed)
+                        && parsed > 0m)
+                        values.Add(parsed);
+                }
+            }
+        }
+
+        quantity = values.Count == 1 ? values.Single() : 0m;
+        return values.Count == 1;
+    }
+
+    internal static bool IsContextualConfirmation(
+        string message,
+        CommerceConversationPolicy? conversationPolicy) =>
+        CommerceConversationMatcher.IsExactPhrase(
+            message, conversationPolicy?.ContextualConfirmationPhrases);
+
+    private static CartCommandCandidate? FindConfirmedCandidate(
+        AgentConversationContext context,
+        PendingCartCommandBatch pending,
+        string latestMessage,
+        CommerceConversationPolicy conversationPolicy,
+        ProductMatchingPolicy matchingPolicy)
+    {
+        if (!IsContextualConfirmation(latestMessage, conversationPolicy))
+            return null;
+        var previousAssistantMessage = context.ConversationState?.LastBotMessage;
+        if (string.IsNullOrWhiteSpace(previousAssistantMessage))
+            return null;
+
+        var matches = pending.Items
+            .Where(item => item.RequiresResolution)
+            .SelectMany(item => item.Issue?.ProductCandidates ?? [])
+            .Where(candidate => IsCandidateExplicitlyMentioned(
+                previousAssistantMessage, candidate.Name, matchingPolicy))
+            .GroupBy(candidate => CatalogSearchText.NormalizeCompact(candidate.Name), StringComparer.Ordinal)
+            .Select(group => group.First())
+            .ToList();
+        return matches.Count == 1 ? matches[0] : null;
+    }
+
+    private static bool IsCandidateExplicitlyMentioned(
+        string message,
+        string candidate,
+        ProductMatchingPolicy matchingPolicy)
+    {
+        var messageTokens = ProductSearchText.GetMatchingTokens(message);
+        var candidateTokens = ProductSearchText.GetMatchingTokens(candidate);
+        return candidateTokens.Count > 0 && candidateTokens.All(token => messageTokens.Any(messageToken =>
+            token == messageToken
+            || ProductSearchText.TokenSimilarity(token, messageToken)
+                >= matchingPolicy.CandidateMentionSimilarity));
+    }
+
+    private static int PendingMatchScore(
+        PendingCartItem item,
+        string message,
+        ProductMatchingPolicy matchingPolicy)
+    {
+        var messageTokens = ProductSearchText.GetMatchingTokens(message);
+        if (messageTokens.Count == 0)
+            return 0;
+        var references = new[]
+            {
+                item.OriginalProductText,
+                item.Command.ProductText,
+                item.Issue?.ProductText ?? string.Empty
+            }
+            .Concat(item.Issue?.ProductCandidates.Select(candidate => candidate.Name) ?? []);
+        return references.Max(reference => ProductSearchText.GetMatchingTokens(reference).Sum(token =>
+            messageTokens.Contains(token, StringComparer.Ordinal)
+                ? 10
+                : messageTokens.Any(messageToken => ProductSearchText.TokenSimilarity(token, messageToken)
+                    >= matchingPolicy.PendingReferenceSimilarity)
+                    ? 1
+                    : 0));
+    }
+
+    private static bool IsPlausibleRefinement(
+        string previous,
+        string incoming,
+        ProductMatchingPolicy matchingPolicy)
     {
         var previousTokens = ProductSearchText.GetTokens(previous);
         var incomingTokens = ProductSearchText.GetTokens(incoming);
@@ -286,7 +464,8 @@ internal static class PendingCartCommandMemory
             return false;
         return previousTokens.Any(left => incomingTokens.Any(right =>
             left.Equals(right, StringComparison.Ordinal)
-            || ProductSearchText.TokenSimilarity(left, right) >= 0.78d));
+            || ProductSearchText.TokenSimilarity(left, right)
+                >= matchingPolicy.PendingReferenceSimilarity));
     }
 
     private static bool IsPendingRefinement(string previous, string incoming)
@@ -301,7 +480,9 @@ internal static class PendingCartCommandMemory
     private static bool HasGroundedCandidateDiscriminator(
         string message,
         CartCommandCandidate selected,
-        IReadOnlyList<CartCommandCandidate> candidates)
+        IReadOnlyList<CartCommandCandidate> candidates,
+        CommerceConversationPolicy conversationPolicy,
+        ProductMatchingPolicy matchingPolicy)
     {
         var messageTokens = ProductSearchText.GetMatchingTokens(message);
         var selectedTokens = ProductSearchText.GetMatchingTokens(selected.Name);
@@ -311,73 +492,105 @@ internal static class PendingCartCommandMemory
             .ToList();
         var distinctive = selectedTokens.Where(token => otherTokenSets.All(other =>
             !other.Any(otherToken => token == otherToken
-                || ProductSearchText.TokenSimilarity(token, otherToken) >= 0.8d)));
+                || ProductSearchText.TokenSimilarity(token, otherToken)
+                    >= matchingPolicy.CandidateMentionSimilarity)));
         if (distinctive.Any(token => messageTokens.Any(messageToken =>
             token == messageToken
             || !token.All(char.IsDigit) && !messageToken.All(char.IsDigit)
-                && ProductSearchText.TokenSimilarity(token, messageToken) >= 0.6d)))
+                && ProductSearchText.TokenSimilarity(token, messageToken)
+                    >= matchingPolicy.CandidateSelectionSimilarity)))
             return true;
 
-        var normalized = ProductSearchText.NormalizeWords(message);
-        return messageTokens.Count <= 8 && Regex.IsMatch(normalized,
-            @"\b(esta|esa|primera|primero|segunda|segundo|tercera|tercero|ultima|ultimo)\b",
-            RegexOptions.CultureInvariant);
+        return messageTokens.Count <= 8
+            && CommerceConversationMatcher.ContainsPhrase(
+                message, conversationPolicy.CandidateSelectionPhrases);
     }
 
-    private static bool HasExplicitQuantityForReference(string message, CartCommand command)
+    private static bool HasExplicitQuantityForReference(
+        string message,
+        CartCommand command,
+        CommerceConversationPolicy conversationPolicy)
     {
         if (command.Quantity is not { } quantity || string.IsNullOrWhiteSpace(message))
             return false;
-        var referenceTerms = ProductSearchText.GetTokens(command.ProductText).Where(term => term.Length >= 3).ToHashSet(StringComparer.Ordinal);
+        var referenceTerms = ProductSearchText.GetTokens(command.ProductText)
+            .Where(term => term.Length >= 3)
+            .ToHashSet(StringComparer.Ordinal);
         if (referenceTerms.Count == 0)
             return false;
-        var clauses = Regex.Split(message, @"(?<!\d),(?!\d)|;|\b(?:y|e|tambien|ademas)\b",
-            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        var clauses = CommerceConversationMatcher.SplitClauses(
+            message, conversationPolicy.ClauseSeparators);
         return clauses.Any(clause =>
-            referenceTerms.Overlaps(ProductSearchText.GetTokens(clause)) && ContainsExplicitQuantity(clause, quantity));
+            referenceTerms.Overlaps(ProductSearchText.GetTokens(clause))
+            && ContainsExplicitQuantity(clause, quantity, conversationPolicy));
     }
 
-    private static bool ContainsExplicitQuantity(string clause, decimal expected)
+    private static bool ContainsExplicitQuantity(
+        string clause,
+        decimal expected,
+        CommerceConversationPolicy conversationPolicy)
     {
-        foreach (Match match in Regex.Matches(clause, @"(?<![\p{L}\d])\d+(?:[.,]\d+)?(?![\p{L}\d])", RegexOptions.CultureInvariant))
+        foreach (Match match in Regex.Matches(
+            clause,
+            @"(?<![\p{L}\d])\d+(?:[.,]\d+)?(?![\p{L}\d])",
+            RegexOptions.CultureInvariant))
         {
-            if (decimal.TryParse(match.Value.Replace(',', '.'), NumberStyles.Number, CultureInfo.InvariantCulture, out var parsed)
+            if (decimal.TryParse(
+                    match.Value.Replace(',', '.'),
+                    NumberStyles.Number,
+                    CultureInfo.InvariantCulture,
+                    out var parsed)
                 && parsed == expected)
                 return true;
         }
-        return ProductSearchText.GetTokens(clause).Any(token => TryReadQuantityWord(token, out var value) && value == expected);
+        return ProductSearchText.GetTokens(clause)
+            .Any(token => TryReadQuantityWord(token, conversationPolicy, out var value)
+                && value == expected);
     }
 
-    private static bool TryReadQuantityWord(string token, out decimal value)
+    private static bool TryReadQuantityWord(
+        string token,
+        CommerceConversationPolicy conversationPolicy,
+        out decimal value)
     {
-        value = token switch
+        var normalized = ProductSearchText.NormalizeWords(token);
+        foreach (var quantityWord in conversationPolicy.QuantityWords)
         {
-            "un" or "una" or "uno" => 1m, "dos" => 2m, "tres" => 3m, "cuatro" => 4m,
-            "cinco" => 5m, "seis" => 6m, "siete" => 7m, "ocho" => 8m, "nueve" => 9m,
-            "diez" => 10m, "once" => 11m, "doce" => 12m, "trece" => 13m, "catorce" => 14m,
-            "quince" => 15m, "dieciseis" => 16m, "diecisiete" => 17m, "dieciocho" => 18m,
-            "diecinueve" => 19m, "veinte" => 20m, _ => 0m
-        };
-        return value > 0;
+            if (!normalized.Equals(
+                    ProductSearchText.NormalizeWords(quantityWord.Key),
+                    StringComparison.Ordinal))
+                continue;
+            value = quantityWord.Value;
+            return true;
+        }
+        value = 0m;
+        return false;
     }
 
-    private static bool IsReferenceMatch(string reference, string candidate)
+    private static bool IsReferenceMatch(
+        string reference,
+        string candidate,
+        ProductMatchingPolicy matchingPolicy)
     {
         var tokens = ProductSearchText.GetTokens(reference);
         var candidateTokens = ProductSearchText.GetTokens(candidate);
         return tokens.Count > 0 && tokens.All(token => candidateTokens.Any(candidateToken =>
-            token == candidateToken || ProductSearchText.TokenSimilarity(token, candidateToken) >= 0.6d));
-    }
-    private static bool IsExplicitAdditionalRequest(string message, string productText)
-    {
-        var normalized = ProductSearchText.NormalizeWords(message);
-        if (!IsPlausibleRefinement(message, productText))
-            return false;
-        return Regex.IsMatch(normalized,
-            @"\b(otra|otro|adicional|adicionales|mas|nuevamente)\b|\btambien\s+(?:agrega|agregame|anade)\b",
-            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+            token == candidateToken
+            || ProductSearchText.TokenSimilarity(token, candidateToken)
+                >= matchingPolicy.CandidateSelectionSimilarity));
     }
 
+    private static bool IsExplicitAdditionalRequest(
+        string message,
+        string productText,
+        CommerceConversationPolicy conversationPolicy,
+        ProductMatchingPolicy matchingPolicy)
+    {
+        if (!IsPlausibleRefinement(message, productText, matchingPolicy))
+            return false;
+        return CommerceConversationMatcher.ContainsPhrase(
+            message, conversationPolicy.AdditionalRequestPhrases);
+    }
 
     private static bool SameReference(string left, string right) =>
         CatalogSearchText.NormalizeCompact(left) == CatalogSearchText.NormalizeCompact(right);

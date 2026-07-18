@@ -51,6 +51,31 @@ public sealed class ApplyOrderChangesOperationTests
         session.Facts.Should().NotContainKey("system.pending_cart_commands");
     }
 
+    [Fact]
+    public async Task RequestedProductLabel_IsPreservedBesideResolvedCatalogName()
+    {
+        const string resolvedName = "PAPA FARM FRITES 3/8 X 2.5 KG";
+        var resolver = new StubResolver(new Dictionary<string, IReadOnlyList<ProductReference>>(
+            StringComparer.OrdinalIgnoreCase)
+        {
+            ["papas"] = [Product(resolvedName)]
+        });
+        var operation = new ApplyOrderChangesOperation(
+            new CartCommandBatchProcessor(resolver, new PresentationSnapshotStore()),
+            new InMemoryFactsService());
+        var session = Session();
+        session.LatestUserMessage = "dame 2 papas";
+
+        var result = await operation.ExecuteAsync(
+            Json("""{"commands":[{"operation":"add","productText":"papas","quantity":2,"destinationReference":null}]}"""),
+            Context(session));
+
+        result.Code.Should().Be("cart.applied");
+        var item = result.Data.GetProperty("order").GetProperty("items")[0];
+        item.GetProperty("requested_name").GetString().Should().Be("papas");
+        item.GetProperty("name").GetString().Should().Be(resolvedName);
+        session.Facts.Should().ContainKey(CartItemPresentationMemory.FactKey);
+    }
     [Theory]
     [InlineData("2 trozos de pechuga y una criolla")]
     [InlineData("dos trozos de pechuga y una criolla")]
@@ -525,6 +550,12 @@ public sealed class ApplyOrderChangesOperationTests
 
         cancelled.Success.Should().BeTrue();
         cancelled.Code.Should().Be("cart.pending_cancelled");
+        using (var data = JsonDocument.Parse(cancelled.Data.GetRawText()))
+        {
+            data.RootElement.GetProperty("discarded_items").GetArrayLength().Should().Be(1);
+            data.RootElement.GetProperty("discarded_items")[0]
+                .GetProperty("product_text").GetString().Should().Be("pernil");
+        }
         store.ApplyCalls.Should().Be(0);
         session.Facts.Should().NotContainKey("system.pending_cart_commands");
     }
@@ -576,6 +607,184 @@ public sealed class ApplyOrderChangesOperationTests
         store.Keys.Should().ContainSingle(key => !string.IsNullOrWhiteSpace(key));
     }
 
+    [Fact]
+    public async Task RichardFollowUp_ConfirmationAppliesTocinetaWhileUnavailableChorizoRemainsNonBlocking()
+    {
+        const string selected = "SALSA TOCINETA ADEREZOS 1000GR";
+        var resolver = new StubResolver(new Dictionary<string, IReadOnlyList<ProductReference>>(
+            StringComparer.OrdinalIgnoreCase)
+        {
+            [selected] = [Product(selected)]
+        });
+        var store = new StubStore();
+        var operation = new ApplyOrderChangesOperation(
+            new CartCommandBatchProcessor(resolver, store), new InMemoryFactsService());
+        var session = Session("wamid.richard-confirmation");
+        session.LatestUserMessage = "Si";
+        session.ConversationState.LastBotMessage =
+            $"Perfecto, entonces agrego 2 unidades de {selected}, es correcto?";
+        session.Facts["system.pending_cart_commands"] = """
+            {
+              "schemaVersion":2,
+              "items":[
+                {
+                  "command":{"operation":"add","productText":"paquetes de chorizo Salsan","quantity":5,"destinationReference":null},
+                  "originalProductText":"paquetes de chorizo Salsan",
+                  "issue":{"code":"product_unavailable","productText":"paquetes de chorizo Salsan","candidates":["CHORIZO SALSAN X 20 UND"],"productCandidates":[{"name":"CHORIZO SALSAN X 20 UND","unitPrice":0,"currency":"COP","isAvailable":false}]},
+                  "requiresResolution":true,
+                  "alreadyApplied":false
+                },
+                {
+                  "command":{"operation":"add","productText":"tocinetas","quantity":2,"destinationReference":null},
+                  "originalProductText":"tocinetas",
+                  "issue":{"code":"product_ambiguous","productText":"tocinetas","candidates":["SALSA TOCINETA ADEREZOS 1000GR","SALSA TOCINETA ADEREZOS 200 GR"],"productCandidates":[{"name":"SALSA TOCINETA ADEREZOS 1000GR","unitPrice":10,"currency":"COP","isAvailable":true},{"name":"SALSA TOCINETA ADEREZOS 200 GR","unitPrice":5,"currency":"COP","isAvailable":true}]},
+                  "requiresResolution":true,
+                  "alreadyApplied":false
+                }
+              ],
+              "expiresAtUtc":"2099-01-01T00:00:00Z"
+            }
+            """;
+
+        var result = await operation.ExecuteAsync(Json("{\"commands\":[]}"), Context(session));
+
+        result.Code.Should().Be("cart.partially_applied");
+        store.ApplyCalls.Should().Be(1);
+        store.Applied.Should().ContainSingle(command =>
+            command.Product!.Name == selected && command.Quantity == 2m);
+        session.Facts["system.pending_cart_commands"].Should().Contain("paquetes de chorizo Salsan");
+        session.Facts["system.pending_cart_commands"].Should().Contain("\"originalProductText\":\"tocinetas\"");
+        session.Facts["system.pending_cart_commands"].Should().Contain("\"alreadyApplied\":true");
+    }
+    [Fact]
+    public async Task RichardFollowUp_QuantityCorrectionAppliesInsufficientStockAndLeavesOnlyDiscardableIssues()
+    {
+        const string selected = "JAMON CUNIT X 500GR";
+        var resolver = new StubResolver(new Dictionary<string, IReadOnlyList<ProductReference>>(
+            StringComparer.OrdinalIgnoreCase)
+        {
+            [selected] = [Product(selected)]
+        });
+        var store = new PresentationSnapshotStore();
+        var operation = new ApplyOrderChangesOperation(
+            new CartCommandBatchProcessor(resolver, store), new InMemoryFactsService());
+        var session = Session(
+            "wamid.richard-stock-correction",
+            new PendingCartPolicy
+            {
+                DiscardOnFinalizeIssueCodes = ["product_unavailable", "product_not_found"]
+            });
+        session.LatestUserMessage =
+            "Bueno, para el que no tiene asistencia suficiente en la Moncuní, dame 5 y listo.";
+        session.Facts["system.pending_cart_commands"] = """
+            {
+              "schemaVersion":2,
+              "items":[
+                {
+                  "command":{"operation":"add","productText":"paquetes de chorizo Salsan","quantity":5,"destinationReference":null},
+                  "originalProductText":"paquetes de chorizo Salsan",
+                  "issue":{"code":"product_unavailable","productText":"paquetes de chorizo Salsan","candidates":["CHORIZO SALSAN X 20 UND"],"productCandidates":[]},
+                  "requiresResolution":true,
+                  "alreadyApplied":false
+                },
+                {
+                  "command":{"operation":"add","productText":"ranchera Salsan","quantity":2,"destinationReference":null},
+                  "originalProductText":"ranchera Salsan",
+                  "issue":{"code":"product_not_found","productText":"ranchera Salsan","candidates":[],"productCandidates":[]},
+                  "requiresResolution":true,
+                  "alreadyApplied":false
+                },
+                {
+                  "command":{"operation":"add","productText":"jamonada CUNICHEF","quantity":10,"destinationReference":null},
+                  "originalProductText":"jamonada CUNICHEF",
+                  "issue":{"code":"insufficient_stock","productText":"JAMON CUNIT X 500GR","candidates":["JAMON CUNIT X 500GR"],"productCandidates":[],"maximumCommandQuantity":7},
+                  "requiresResolution":true,
+                  "alreadyApplied":false
+                }
+              ],
+              "expiresAtUtc":"2099-01-01T00:00:00Z"
+            }
+            """;
+
+        var result = await operation.ExecuteAsync(
+            Json("""{"commands":[{"operation":"add","productText":"jamonada CUNICHEF","quantity":5,"destinationReference":null}]}"""),
+            Context(session));
+
+        result.Code.Should().Be("cart.partially_applied");
+        var context = result.Error!.Context!.Value;
+        context.GetProperty("applied_items").EnumerateArray().Should().ContainSingle(item =>
+            item.GetProperty("name").GetString() == selected
+            && item.GetProperty("quantity").GetDecimal() == 5m);
+        context.GetProperty("can_finalize_with_pending").GetBoolean().Should().BeTrue();
+        context.GetProperty("unresolved_item_count").GetInt32().Should().Be(2);
+    }
+
+    [Fact]
+    public async Task RichardFollowUp_OnlyDiscardableIssuesRemain_OffersFinalizationInsteadOfMoreClarification()
+    {
+        const string selected = "TOCINETA CJ 1K";
+        var resolver = new StubResolver(new Dictionary<string, IReadOnlyList<ProductReference>>(
+            StringComparer.OrdinalIgnoreCase)
+        {
+            [selected] = [Product(selected)]
+        });
+        var operation = new ApplyOrderChangesOperation(
+            new CartCommandBatchProcessor(resolver, new PresentationSnapshotStore()),
+            new InMemoryFactsService());
+        var session = Session(
+            "wamid.richard-ready-to-finish",
+            new PendingCartPolicy
+            {
+                DiscardOnFinalizeIssueCodes = ["product_unavailable", "product_not_found"],
+                FinalizeConfirmationPhrases = ["si"]
+            });
+        session.LatestUserMessage = "Sí, esa";
+        session.ConversationState.LastBotMessage =
+            $"Perfecto, entonces agrego 3 unidades de {selected}, es correcto?";
+        session.Facts["system.pending_cart_commands"] = """
+            {
+              "schemaVersion":2,
+              "items":[
+                {
+                  "command":{"operation":"add","productText":"paquetes de chorizo Salsan","quantity":5,"destinationReference":null},
+                  "originalProductText":"paquetes de chorizo Salsan",
+                  "issue":{"code":"product_unavailable","productText":"paquetes de chorizo Salsan","candidates":["CHORIZO SALSAN X 20 UND"],"productCandidates":[{"name":"CHORIZO SALSAN X 20 UND","unitPrice":0,"currency":"COP","isAvailable":false}]},
+                  "requiresResolution":true,
+                  "alreadyApplied":false
+                },
+                {
+                  "command":{"operation":"add","productText":"ranchera Salsan","quantity":2,"destinationReference":null},
+                  "originalProductText":"ranchera Salsan",
+                  "issue":{"code":"product_not_found","productText":"ranchera Salsan","candidates":[],"productCandidates":[]},
+                  "requiresResolution":true,
+                  "alreadyApplied":false
+                },
+                {
+                  "command":{"operation":"add","productText":"tocinetas","quantity":3,"destinationReference":null},
+                  "originalProductText":"tocinetas",
+                  "issue":{"code":"product_ambiguous","productText":"tocinetas","candidates":["TOCINETA CJ 1K","TOCINETA COMPLETA"],"productCandidates":[{"name":"TOCINETA CJ 1K","unitPrice":10,"currency":"COP","isAvailable":true},{"name":"TOCINETA COMPLETA","unitPrice":12,"currency":"COP","isAvailable":true}]},
+                  "requiresResolution":true,
+                  "alreadyApplied":false
+                }
+              ],
+              "expiresAtUtc":"2099-01-01T00:00:00Z"
+            }
+            """;
+
+        var result = await operation.ExecuteAsync(Json("{\"commands\":[]}"), Context(session));
+
+        result.Code.Should().Be("cart.partially_applied");
+        var context = result.Error!.Context!.Value;
+        context.GetProperty("can_finalize_with_pending").GetBoolean().Should().BeTrue();
+        context.GetProperty("unresolved_item_count").GetInt32().Should().Be(2);
+        using var pendingDocument = JsonDocument.Parse(session.Facts["system.pending_cart_commands"]);
+        var unresolvedNames = pendingDocument.RootElement.GetProperty("items").EnumerateArray()
+            .Where(item => item.GetProperty("requiresResolution").GetBoolean())
+            .Select(item => item.GetProperty("originalProductText").GetString())
+            .ToList();
+        unresolvedNames.Should().BeEquivalentTo(
+            "paquetes de chorizo Salsan", "ranchera Salsan");
+    }
     [Fact]
     public async Task RichardExactMessage_RecoversAndAppliesAllElevenResolvableProducts()
     {
@@ -631,12 +840,29 @@ public sealed class ApplyOrderChangesOperationTests
         store.Applied.Should().HaveCount(11);
         session.Facts.Should().NotContainKey("system.pending_cart_commands");
     }
-    private static AgentConversationContext Session(string? providerMessageId = null) => new()
+    private static AgentConversationContext Session(
+        string? providerMessageId = null,
+        PendingCartPolicy? pendingCart = null) => new()
     {
         BusinessId = Guid.NewGuid(),
         ConversationId = Guid.NewGuid(),
         ConversationState = new(),
-        ProviderMessageId = providerMessageId
+        ProviderMessageId = providerMessageId,
+        Config = new AgentConfig
+        {
+            Commerce = new CommerceConfig
+            {
+                Enabled = true,
+                Conversation = new CommerceConversationPolicy
+                {
+                    ContextualConfirmationPhrases = ["si", "si esa", "si es esa", "confirmo"],
+                    CandidateSelectionPhrases = ["esta", "esa", "primera", "primero"],
+                    ClauseSeparators = ["y", "e", "tambien", "ademas"],
+                    AdditionalRequestPhrases = ["otra", "otro", "adicional", "mas", "nuevamente", "tambien agrega"]
+                },
+                PendingCart = pendingCart ?? new PendingCartPolicy()
+            }
+        }
     };
 
     private static OperationContext Context(AgentConversationContext session) => new()
@@ -669,6 +895,44 @@ public sealed class ApplyOrderChangesOperationTests
             Task.FromResult(_products.TryGetValue(productText, out var products) ? products : (IReadOnlyList<ProductReference>)[]);
     }
 
+    private sealed class PresentationSnapshotStore : ICartMutationStore
+    {
+        public Task<OrderSnapshot> GetCurrentAsync(
+            AgentConversationContext context,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(Snapshot([]));
+
+        public Task<OrderSnapshot> ApplyAtomicallyAsync(
+            AgentConversationContext context,
+            IReadOnlyList<ResolvedCartCommand> commands,
+            CancellationToken cancellationToken = default)
+        {
+            var items = commands
+                .Where(command => command.Product is not null)
+                .Select(command => new OrderItemSnapshot(
+                    Guid.NewGuid(),
+                    command.Product!.ProductId,
+                    command.Product.ExternalProductId,
+                    command.Product.Sku,
+                    command.Product.Name,
+                    command.Quantity ?? 0m,
+                    command.Product.UnitPrice,
+                    (command.Quantity ?? 0m) * command.Product.UnitPrice))
+                .ToList();
+            return Task.FromResult(Snapshot(items));
+        }
+
+        private static OrderSnapshot Snapshot(IReadOnlyList<OrderItemSnapshot> items) =>
+            new(
+                Guid.NewGuid(),
+                OrderStatus.Draft,
+                "COP",
+                items.Sum(item => item.LineTotal),
+                0m,
+                0m,
+                items.Sum(item => item.LineTotal),
+                items);
+    }
     private sealed class StubStore : ICartMutationStore
     {
         public int ApplyCalls { get; private set; }

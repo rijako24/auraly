@@ -19,6 +19,7 @@ public static partial class CommerceTurnPlanSafety
     {
         plan = RecoverExplicitOrderList(plan, context);
         plan = RemoveUnsupportedFinalization(plan, context);
+        plan = DeferRemovalUntilCatalogReplacementIsSelected(plan);
 
         var orderChanges = plan.Signals.FirstOrDefault(signal =>
             signal.Type.Equals(OrderChangesSignal, StringComparison.OrdinalIgnoreCase));
@@ -29,18 +30,112 @@ public static partial class CommerceTurnPlanSafety
         if (IsCatalogInquiry(normalizedMessage) && !HasExplicitMutationVerb(normalizedMessage))
             return ReplaceInquiryMutationWithCatalogQuery(plan, context, orderChanges, commands);
 
-        if (IsCatalogFollowUp(context)
-            && commands.Count > 0
-            && commands.All(command => command.Operation.Equals("add", StringComparison.OrdinalIgnoreCase)
-                && command.Quantity == 1m)
-            && !HasExplicitMutationVerb(normalizedMessage)
-            && !StartsWithExplicitQuantity(normalizedMessage))
-        {
-            return CopyWithSignals(plan, plan.Signals.Where(signal => !ReferenceEquals(signal, orderChanges)));
-        }
+        if (IsCatalogFollowUp(context) && !HasExplicitRequestedQuantity(normalizedMessage))
+            return RemoveUnsupportedCatalogFollowUpMutations(plan, orderChanges, commands);
 
         return plan;
     }
+
+    private static TurnPlan RemoveUnsupportedCatalogFollowUpMutations(
+        TurnPlan plan,
+        PlannedSignal orderChanges,
+        IReadOnlyList<CartCommandCandidate> commands)
+    {
+        var rawCommands = orderChanges.Value.EnumerateArray().ToArray();
+        var retained = rawCommands
+            .Zip(commands)
+            .Where(pair =>
+                !pair.Second.Operation.Equals("add", StringComparison.OrdinalIgnoreCase)
+                && !pair.Second.Operation.Equals("set_quantity", StringComparison.OrdinalIgnoreCase))
+            .Select(pair => pair.First.Clone())
+            .ToArray();
+        if (retained.Length == rawCommands.Length)
+            return plan;
+
+        var signals = plan.Signals
+            .Where(signal => !ReferenceEquals(signal, orderChanges))
+            .ToList();
+        if (retained.Length > 0)
+        {
+            var index = plan.Signals
+                .TakeWhile(signal => !ReferenceEquals(signal, orderChanges))
+                .Count();
+            signals.Insert(
+                Math.Min(index, signals.Count),
+                new PlannedSignal
+                {
+                    Type = orderChanges.Type,
+                    Value = JsonSerializer.SerializeToElement(retained),
+                    Evidence = orderChanges.Evidence,
+                    Confidence = orderChanges.Confidence
+                });
+        }
+
+        return CopyWithSignals(plan, signals);
+    }
+
+    private static TurnPlan DeferRemovalUntilCatalogReplacementIsSelected(TurnPlan plan)
+    {
+        var catalogQuery = plan.Signals.LastOrDefault(signal =>
+            signal.Type.Equals(CatalogQuerySignal, StringComparison.OrdinalIgnoreCase));
+        var orderChanges = plan.Signals.LastOrDefault(signal =>
+            signal.Type.Equals(OrderChangesSignal, StringComparison.OrdinalIgnoreCase));
+        if (catalogQuery is null
+            || orderChanges is null
+            || catalogQuery.Value.ValueKind != JsonValueKind.Object
+            || !catalogQuery.Value.TryGetProperty("replacement_reference", out var replacementElement)
+            || replacementElement.ValueKind != JsonValueKind.String
+            || string.IsNullOrWhiteSpace(replacementElement.GetString())
+            || orderChanges.Value.ValueKind != JsonValueKind.Array)
+            return plan;
+
+        var replacementReference = replacementElement.GetString()!;
+        var retainedItems = orderChanges.Value.EnumerateArray()
+            .Where(item => !IsDeferredReplacementRemoval(item, replacementReference))
+            .Select(item => item.Clone())
+            .ToArray();
+        if (retainedItems.Length == orderChanges.Value.GetArrayLength())
+            return plan;
+
+        var signals = plan.Signals.Where(signal => !ReferenceEquals(signal, orderChanges)).ToList();
+        if (retainedItems.Length > 0)
+        {
+            var replacementSignal = new PlannedSignal
+            {
+                Type = orderChanges.Type,
+                Value = JsonSerializer.SerializeToElement(retainedItems),
+                Evidence = orderChanges.Evidence,
+                Confidence = orderChanges.Confidence
+            };
+            var catalogIndex = signals.FindIndex(signal => ReferenceEquals(signal, catalogQuery));
+            signals.Insert(catalogIndex < 0 ? signals.Count : catalogIndex, replacementSignal);
+        }
+
+        return CopyWithSignals(plan, signals);
+    }
+
+    private static bool IsDeferredReplacementRemoval(JsonElement item, string replacementReference)
+    {
+        if (item.ValueKind != JsonValueKind.Object
+            || !item.TryGetProperty("operation", out var operation)
+            || operation.ValueKind != JsonValueKind.String
+            || operation.GetString()?.Equals("remove", StringComparison.OrdinalIgnoreCase) != true
+            || !item.TryGetProperty("productText", out var productText)
+            || productText.ValueKind != JsonValueKind.String)
+            return false;
+
+        var commandReference = NormalizeReference(productText.GetString() ?? string.Empty);
+        var replacement = NormalizeReference(replacementReference);
+        if (commandReference.Length == 0 || replacement.Length == 0)
+            return false;
+
+        return commandReference.Equals(replacement, StringComparison.Ordinal)
+            || $" {commandReference} ".Contains($" {replacement} ", StringComparison.Ordinal)
+            || $" {replacement} ".Contains($" {commandReference} ", StringComparison.Ordinal);
+    }
+
+    private static string NormalizeReference(string value) =>
+        Regex.Replace(NormalizeText(value), @"[^\p{L}\p{N}]+", " ").Trim();
 
     private static TurnPlan RecoverExplicitOrderList(TurnPlan plan, TurnPlanningContext context)
     {
@@ -263,6 +358,12 @@ public static partial class CommerceTurnPlanSafety
 
     private static bool StartsWithExplicitQuantity(string message) => QuantityPrefixRegex().IsMatch(message);
 
+    private static bool HasExplicitRequestedQuantity(string message) =>
+        StartsWithExplicitQuantity(message)
+        || MutationQuantityRegex().IsMatch(message)
+        || UnitQuantityRegex().IsMatch(message)
+        || TrailingQuantityRegex().IsMatch(message);
+
     private static string NormalizeText(string value)
     {
         var decomposed = value.ToLowerInvariant().Normalize(NormalizationForm.FormD);
@@ -284,6 +385,14 @@ public static partial class CommerceTurnPlanSafety
 
     [GeneratedRegex(@"^\s*(?:\d+(?:[.,]\d+)?|un|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|trece|catorce|quince|dieciseis|diecisiete|dieciocho|diecinueve|veinte)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex QuantityPrefixRegex();
+    [GeneratedRegex(@"\b(?:agrega(?:me|nos)?|anade(?:me|nos)?|pon(?:me|nos)?|dame|danos|incluye|quiero|necesito)\s+(?:(?:de|del|la|el|las|los|esa|ese|esas|esos)\s+){0,2}(?:\d+(?:[.,]\d+)?|un|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|trece|catorce|quince|dieciseis|diecisiete|dieciocho|diecinueve|veinte)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex MutationQuantityRegex();
+
+    [GeneratedRegex(@"\b(?:\d+(?:[.,]\d+)?|un|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|trece|catorce|quince|dieciseis|diecisiete|dieciocho|diecinueve|veinte)\s+(?:unidad(?:es)?|paquete(?:s)?|caja(?:s)?|bolsa(?:s)?|pieza(?:s)?)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex UnitQuantityRegex();
+    [GeneratedRegex(@"\b(?:\d+(?:[.,]\d+)?|un|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|trece|catorce|quince|dieciseis|diecisiete|dieciocho|diecinueve|veinte)\s*(?:[,;]|$)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex TrailingQuantityRegex();
+
 
     [GeneratedRegex(@"^\s*[-*•▪◦]\s*", RegexOptions.CultureInvariant)]
     private static partial Regex BulletPrefixRegex();

@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using MimosBabySpa.Application.Agents.Composition;
 using MimosBabySpa.Application.Agents.Configuration;
 using MimosBabySpa.Application.Agents.Facts;
 using MimosBabySpa.Application.Agents.Gating;
@@ -12,6 +13,7 @@ using MimosBabySpa.Application.LLM;
 using MimosBabySpa.Application.Services;
 using MimosBabySpa.Application.Commerce;
 
+using MimosBabySpa.Domain.Catalog;
 using MimosBabySpa.Domain.Models;
 namespace MimosBabySpa.Application.Agents.Runtime;
 
@@ -140,7 +142,11 @@ public sealed class DeterministicTurnCoordinator
             return Failure(proposal.Errors, request.CurrentFacts, proposal.Plan);
 
         var effectivePlan = ProtectPendingCommerceSelection(
-            request.Config, request.CurrentFacts, request.LatestUserMessage, proposal.Plan);
+            request.Config,
+            request.CurrentFacts,
+            request.LatestUserMessage,
+            proposal.Plan,
+            request.OperationContext.ConversationState.LastBotMessage);
         effectivePlan = ReconcileKnownFactAmbiguities(request.Config, effectivePlan, request.CurrentFacts);
         var turnExecutedActionKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var state = request.OperationContext.ConversationState;
@@ -232,9 +238,29 @@ public sealed class DeterministicTurnCoordinator
         var currentFacts = new Dictionary<string, string>(factBatch.NextFacts, StringComparer.OrdinalIgnoreCase);
         var versions = new Dictionary<string, long>(factBatch.Versions, StringComparer.OrdinalIgnoreCase);
         var changedFacts = new HashSet<string>(factBatch.ChangedFacts, StringComparer.OrdinalIgnoreCase);
+        var reentryInvalidation = FlowCheckpointInvalidation.GetInvalidations(
+            request.Config,
+            changedFacts);
+        if (reentryInvalidation.FactsToClear.Count > 0)
+        {
+            var reentryMutations = reentryInvalidation.FactsToClear.ToDictionary(
+                key => key,
+                _ => (string?)null,
+                StringComparer.OrdinalIgnoreCase);
+            var reentryBatch = _facts.ApplyMutations(schema, reentryMutations, currentFacts, versions);
+            await PersistFactsAsync(request, schema, reentryBatch.Mutations, cancellationToken);
+            currentFacts = new Dictionary<string, string>(reentryBatch.NextFacts, StringComparer.OrdinalIgnoreCase);
+            versions = new Dictionary<string, long>(reentryBatch.Versions, StringComparer.OrdinalIgnoreCase);
+            changedFacts.UnionWith(reentryBatch.ChangedFacts);
+        }
         var verifications = ResolveActiveVerifications(request, currentFacts);
         var signals = TurnPlanRuntimeMapper.ToSemanticSignals(effectivePlan);
-        var selectedStage = ResolveSelectedStage(request, flow, route);
+        var selectedStage = ResolveSelectedStage(
+            request,
+            flow,
+            route,
+            currentFacts,
+            reentryInvalidation.FactsToClear.Count > 0);
 
         var visited = new List<string>();
         var trace = new List<StageOperationTrace>();
@@ -498,14 +524,26 @@ public sealed class DeterministicTurnCoordinator
     private static AgentFlowStage ResolveSelectedStage(
         DeterministicTurnRequest request,
         AgentFlowDefinition selectedFlow,
-        FlowRouteDecision route)
+        FlowRouteDecision route,
+        IReadOnlyDictionary<string, string> currentFacts,
+        bool resolveReentry)
     {
         if (selectedFlow.Id.Equals(request.CurrentFlowId, StringComparison.OrdinalIgnoreCase))
         {
             var current = selectedFlow.Stages.FirstOrDefault(stage =>
                 stage.Id.Equals(request.CurrentStageId, StringComparison.OrdinalIgnoreCase));
             if (current is not null)
-                return current;
+            {
+                if (!resolveReentry)
+                    return current;
+                var position = new ConversationState
+                {
+                    ActiveStageId = current.Id,
+                    ActiveFlowId = selectedFlow.Id
+                };
+                return DeterministicConversationPosition.ResolveStage(
+                    selectedFlow, position, currentFacts, request.Config.FactSchema);
+            }
         }
         return selectedFlow.Stages[0];
     }
@@ -659,10 +697,17 @@ public sealed class DeterministicTurnCoordinator
         AgentConfig config,
         IReadOnlyDictionary<string, string> currentFacts,
         string latestUserMessage,
-        TurnPlan plan)
+        TurnPlan plan,
+        string? lastBotMessage = null)
     {
-        if (!config.Commerce.Enabled || PendingCartCommandMemory.Read(currentFacts) is null)
+        if (!config.Commerce.Enabled)
             return plan;
+        plan = RecoverCartReviewIntent(config, latestUserMessage, plan);
+        var pending = PendingCartCommandMemory.Read(currentFacts);
+        if (pending is null)
+            return plan;
+        var contextualConfirmation = PendingCartCommandMemory.IsContextualConfirmation(
+            latestUserMessage, config.Commerce.Conversation);
 
         var finalizationKeys = config.FactSchema
             .Where(fact => fact.Role?.Equals("order.finalized", StringComparison.OrdinalIgnoreCase) == true)
@@ -670,11 +715,9 @@ public sealed class DeterministicTurnCoordinator
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var finalizationRequested = plan.Facts.Any(fact => finalizationKeys.Contains(fact.Key)
             && fact.Operation.Equals(TurnPlanOperations.Set, StringComparison.OrdinalIgnoreCase)
-            && IsTrue(fact.Value));
-        var emptyPlan = plan.Facts.Count == 0 && plan.Signals.Count == 0 && plan.Decision is null;
-        if (!finalizationRequested && !emptyPlan)
-            return plan;
-
+            && IsTrue(fact.Value))
+            || CommerceConversationMatcher.Matches(
+                latestUserMessage, config.Commerce.Conversation.FinalizationRules);
         var cartSignal = AgentFlowCatalog.EffectiveFlows(config)
             .SelectMany(flow => flow.Stages)
             .SelectMany(stage => stage.Actions)
@@ -682,9 +725,96 @@ public sealed class DeterministicTurnCoordinator
                 action.Operation.Equals(ApplyOrderChangesOperation.OperationId, StringComparison.OrdinalIgnoreCase)
                 && !string.IsNullOrWhiteSpace(action.Signal))
             ?.Signal;
-        var signals = plan.Signals.Select(signal =>
+        plan = RemoveUngroundedPendingReplays(
+            plan, pending, latestUserMessage, cartSignal, config.Commerce.Matching);
+        plan = RecoverPendingCartIntent(
+            config, pending, latestUserMessage, lastBotMessage, plan, cartSignal);
+        var discardOnFinalizeCodes = config.Commerce.PendingCart.DiscardOnFinalizeIssueCodes
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var discardAllOnExplicitFinalization = finalizationRequested
+            && config.Commerce.PendingCart.DiscardAllOnExplicitFinalization;
+        var discardableItems = pending.Items
+            .Where(item => item.RequiresResolution
+                && (discardAllOnExplicitFinalization
+                    || item.Issue is not null
+                    && discardOnFinalizeCodes.Contains(item.Issue.Code)))
+            .ToList();
+        var blockingItems = pending.Items
+            .Where(item => item.RequiresResolution && !discardableItems.Contains(item))
+            .ToList();
+        var finalizeConfirmation = discardableItems.Count > 0
+            && blockingItems.Count == 0
+            && CommerceConversationMatcher.IsExactPhrase(
+                latestUserMessage, config.Commerce.PendingCart.FinalizeConfirmationPhrases);
+        var shouldFinalizeDiscardablePending = finalizationRequested || finalizeConfirmation;
+        if (shouldFinalizeDiscardablePending && discardableItems.Count > 0 && blockingItems.Count == 0)
         {
-            if (!finalizationRequested
+            var finalizationSignals = plan.Signals
+                .Where(signal => string.IsNullOrWhiteSpace(cartSignal)
+                    || !signal.Type.Equals(cartSignal, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            if (!string.IsNullOrWhiteSpace(cartSignal))
+            {
+                var commands = plan.Signals
+                    .Where(signal => signal.Type.Equals(cartSignal, StringComparison.OrdinalIgnoreCase)
+                        && signal.Value.ValueKind == JsonValueKind.Array)
+                    .SelectMany(signal => signal.Value.EnumerateArray())
+                    .Where(command => !command.TryGetProperty("operation", out var operation)
+                        || operation.GetString()?.Equals(CartCommandOperations.CancelPending, StringComparison.OrdinalIgnoreCase) != true)
+                    .Select(command => command.Clone())
+                    .ToList();
+                commands.AddRange(discardableItems.Select(item => JsonSerializer.SerializeToElement(new
+                {
+                    operation = CartCommandOperations.CancelPending,
+                    productText = item.OriginalProductText,
+                    quantity = (decimal?)null,
+                    destinationReference = (string?)null
+                })));
+                finalizationSignals.Add(new PlannedSignal
+                {
+                    Type = cartSignal,
+                    Value = JsonSerializer.SerializeToElement(commands),
+                    Evidence = latestUserMessage,
+                    Confidence = 1
+                });
+            }
+
+            var finalizationFacts = plan.Facts.ToList();
+            if (finalizationKeys.Count == 1 && !finalizationFacts.Any(fact => finalizationKeys.Contains(fact.Key)))
+            {
+                finalizationFacts.Add(new PlannedFactClaim
+                {
+                    Key = finalizationKeys.Single(),
+                    Operation = TurnPlanOperations.Set,
+                    Value = JsonSerializer.SerializeToElement(true),
+                    Evidence = latestUserMessage,
+                    Confidence = 1
+                });
+            }
+
+            return new TurnPlan
+            {
+                FlowIntent = plan.FlowIntent,
+                Facts = finalizationFacts,
+                Signals = finalizationSignals,
+                Decision = plan.Decision,
+                Response = new TurnPlanResponseDirective { Mode = "continue", AmbiguousFields = [] }
+            };
+        }
+        var emptyPlan = plan.Facts.Count == 0 && plan.Signals.Count == 0 && plan.Decision is null;
+        if (emptyPlan && IsUnrelatedCatalogSelectionWithoutQuantity(
+                config, currentFacts, pending, latestUserMessage))
+            return plan;
+        if (!finalizationRequested && !emptyPlan && !contextualConfirmation)
+            return plan;
+
+
+        var sourceSignals = contextualConfirmation
+            ? plan.Signals.Where(signal => signal.Type.Equals(cartSignal, StringComparison.OrdinalIgnoreCase))
+            : plan.Signals;
+        var signals = sourceSignals.Select(signal =>
+        {
+            if ((!finalizationRequested && !contextualConfirmation)
                 || string.IsNullOrWhiteSpace(cartSignal)
                 || !signal.Type.Equals(cartSignal, StringComparison.OrdinalIgnoreCase)
                 || signal.Value.ValueKind != JsonValueKind.Array)
@@ -727,6 +857,279 @@ public sealed class DeterministicTurnCoordinator
         };
     }
 
+    private static bool IsUnrelatedCatalogSelectionWithoutQuantity(
+        AgentConfig config,
+        IReadOnlyDictionary<string, string> currentFacts,
+        PendingCartCommandBatch pending,
+        string latestUserMessage)
+    {
+        if (PendingCartCommandMemory.TryReadSingleQuantity(
+                latestUserMessage,
+                config.Commerce.Conversation,
+                out _))
+            return false;
+
+        var context = new AgentConversationContext { Config = config };
+        foreach (var (key, value) in currentFacts)
+            context.Facts[key] = value;
+        var selectedProducts = ProductSelectionMemory.FindCatalogMatches(
+            context,
+            latestUserMessage);
+        if (selectedProducts.Count == 0)
+            return false;
+
+        var pendingCandidates = pending.Items
+            .Where(item => item.RequiresResolution)
+            .SelectMany(item => item.Issue?.ProductCandidates ?? [])
+            .ToList();
+        return !selectedProducts.Any(selected => pendingCandidates.Any(candidate =>
+            SameProduct(candidate, selected)));
+    }
+
+    private static bool SameProduct(
+        CartCommandCandidate candidate,
+        ProductReference product)
+    {
+        if (candidate.ProductId.HasValue && product.ProductId.HasValue)
+            return candidate.ProductId.Value == product.ProductId.Value;
+        if (!string.IsNullOrWhiteSpace(candidate.ExternalProductId)
+            && !string.IsNullOrWhiteSpace(product.ExternalProductId))
+        {
+            return candidate.ExternalProductId.Equals(
+                product.ExternalProductId,
+                StringComparison.OrdinalIgnoreCase);
+        }
+        if (!string.IsNullOrWhiteSpace(candidate.Sku)
+            && !string.IsNullOrWhiteSpace(product.Sku))
+            return candidate.Sku.Equals(product.Sku, StringComparison.OrdinalIgnoreCase);
+        return candidate.Name.Equals(product.Name, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static TurnPlan RecoverCartReviewIntent(
+        AgentConfig config,
+        string latestUserMessage,
+        TurnPlan plan)
+    {
+        if (!CommerceConversationMatcher.Matches(
+                latestUserMessage, config.Commerce.Conversation.CartReviewRules))
+            return plan;
+
+        var globalAction = config.GlobalActions.FirstOrDefault(candidate =>
+            candidate.Actions.Any(action => action.Operation.Equals(
+                GetOrderDraftOperation.OperationId, StringComparison.OrdinalIgnoreCase)));
+        var signal = globalAction?.Signal.Type
+            ?? AgentFlowCatalog.EffectiveFlows(config)
+                .SelectMany(flow => flow.Stages)
+                .SelectMany(stage => stage.Actions)
+                .FirstOrDefault(action => action.Operation.Equals(
+                    GetOrderDraftOperation.OperationId, StringComparison.OrdinalIgnoreCase))
+                ?.Signal;
+        if (string.IsNullOrWhiteSpace(signal))
+            return plan;
+
+        var finalizationKeys = config.FactSchema
+            .Where(fact => fact.Role?.Equals("order.finalized", StringComparison.OrdinalIgnoreCase) == true)
+            .Select(fact => fact.Key)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return new TurnPlan
+        {
+            FlowIntent = plan.FlowIntent,
+            Facts = plan.Facts.Where(fact => !finalizationKeys.Contains(fact.Key)).ToList(),
+            Signals =
+            [
+                new PlannedSignal
+                {
+                    Type = signal,
+                    Value = JsonSerializer.SerializeToElement(new { }),
+                    Evidence = latestUserMessage,
+                    Confidence = 1
+                }
+            ],
+            Decision = plan.Decision,
+            Response = new TurnPlanResponseDirective { Mode = "continue", AmbiguousFields = [] }
+        };
+    }
+    private static TurnPlan RecoverPendingCartIntent(
+        AgentConfig config,
+        PendingCartCommandBatch pending,
+        string latestUserMessage,
+        string? lastBotMessage,
+        TurnPlan plan,
+        string? cartSignal)
+    {
+        if (string.IsNullOrWhiteSpace(cartSignal)
+            || plan.Signals.Any(signal =>
+                signal.Type.Equals(cartSignal, StringComparison.OrdinalIgnoreCase)
+                && signal.Value.ValueKind == JsonValueKind.Array
+                && signal.Value.GetArrayLength() > 0))
+            return plan;
+
+        var unresolved = pending.Items.Where(item => item.RequiresResolution).ToList();
+        CartCommand? recoveredCommand = null;
+        if (CommerceConversationMatcher.Matches(
+                latestUserMessage, config.Commerce.PendingCart.CancellationRules))
+        {
+            var target = PendingCartCommandMemory.FindReferencedItem(
+                    unresolved, latestUserMessage, config.Commerce.Matching)
+                ?? PendingCartCommandMemory.FindUniquelyReferencedItem(
+                    unresolved, lastBotMessage, config.Commerce.Matching)
+                ?? (unresolved.Count == 1 ? unresolved[0] : null);
+            if (target is not null)
+            {
+                recoveredCommand = new CartCommand(
+                    CartCommandOperations.CancelPending,
+                    target.OriginalProductText,
+                    null,
+                    null);
+            }
+        }
+
+        if (recoveredCommand is null
+            && CommerceConversationMatcher.ContainsPhrase(
+                latestUserMessage, config.Commerce.PendingCart.QuantityCorrectionPhrases)
+            && PendingCartCommandMemory.TryReadSingleQuantity(
+                latestUserMessage, config.Commerce.Conversation, out var quantity))
+        {
+            var insufficientStockItems = unresolved
+                .Where(item => item.Issue?.Code.Equals(
+                    "insufficient_stock", StringComparison.OrdinalIgnoreCase) == true)
+                .ToList();
+            var target = PendingCartCommandMemory.FindReferencedItem(
+                    insufficientStockItems, latestUserMessage, config.Commerce.Matching)
+                ?? (insufficientStockItems.Count == 1 ? insufficientStockItems[0] : null);
+            if (target is not null
+                && (target.Issue?.MaximumCommandQuantity is not { } maximum
+                    || quantity <= maximum))
+            {
+                var operation = target.Command.Operation is CartCommandOperations.Add
+                    or CartCommandOperations.SetQuantity
+                    ? target.Command.Operation
+                    : CartCommandOperations.Add;
+                recoveredCommand = new CartCommand(
+                    operation,
+                    target.OriginalProductText,
+                    quantity,
+                    target.Command.DestinationReference);
+            }
+        }
+
+        if (recoveredCommand is null)
+            return plan;
+
+        var command = recoveredCommand;
+        return new TurnPlan
+        {
+            FlowIntent = plan.FlowIntent,
+            Facts = plan.Facts,
+            Signals =
+            [
+                new PlannedSignal
+                {
+                    Type = cartSignal,
+                    Value = JsonSerializer.SerializeToElement(new[]
+                    {
+                        new
+                        {
+                            operation = command.Operation,
+                            productText = command.ProductText,
+                            quantity = command.Quantity,
+                            destinationReference = command.DestinationReference
+                        }
+                    }),
+                    Evidence = latestUserMessage,
+                    Confidence = 1
+                }
+            ],
+            Decision = plan.Decision,
+            Response = new TurnPlanResponseDirective { Mode = "continue", AmbiguousFields = [] }
+        };
+    }
+    private static TurnPlan RemoveUngroundedPendingReplays(
+        TurnPlan plan,
+        PendingCartCommandBatch pending,
+        string latestUserMessage,
+        string? cartSignal,
+        ProductMatchingPolicy matchingPolicy)
+    {
+        if (string.IsNullOrWhiteSpace(cartSignal))
+            return plan;
+
+        var changed = false;
+        var signals = plan.Signals.Select(signal =>
+        {
+            if (!signal.Type.Equals(cartSignal, StringComparison.OrdinalIgnoreCase)
+                || signal.Value.ValueKind != JsonValueKind.Array)
+                return signal;
+
+            var commands = signal.Value.EnumerateArray().ToList();
+            var grounded = commands.Where(command =>
+            {
+                if (!command.TryGetProperty("operation", out var operation)
+                    || operation.GetString() is not (CartCommandOperations.Add or CartCommandOperations.SetQuantity)
+                    || !command.TryGetProperty("productText", out var productTextElement))
+                    return true;
+                var productText = productTextElement.GetString() ?? string.Empty;
+                return !pending.Items.Any(item => item.RequiresResolution
+                    && IsSamePendingReference(item, productText)
+                    && !MessageReferencesPendingItem(latestUserMessage, item, matchingPolicy));
+            }).Select(command => command.Clone()).ToList();
+            if (grounded.Count == commands.Count)
+                return signal;
+            changed = true;
+            return new PlannedSignal
+            {
+                Type = signal.Type,
+                Value = JsonSerializer.SerializeToElement(grounded),
+                Evidence = signal.Evidence,
+                Confidence = signal.Confidence
+            };
+        }).ToList();
+
+        if (!changed)
+            return plan;
+        return new TurnPlan
+        {
+            FlowIntent = plan.FlowIntent,
+            Facts = plan.Facts,
+            Signals = signals,
+            Decision = plan.Decision,
+            Response = plan.Response
+        };
+    }
+
+    private static bool IsSamePendingReference(PendingCartItem item, string productText)
+    {
+        var normalized = CatalogSearchText.NormalizeCompact(productText);
+        return normalized.Length > 0 && new[]
+        {
+            item.OriginalProductText,
+            item.Command.ProductText,
+            item.Issue?.ProductText ?? string.Empty
+        }.Any(reference => normalized == CatalogSearchText.NormalizeCompact(reference));
+    }
+
+    private static bool MessageReferencesPendingItem(
+        string message,
+        PendingCartItem item,
+        ProductMatchingPolicy matchingPolicy)
+    {
+        var messageTokens = ProductSearchText.GetMatchingTokens(message);
+        if (messageTokens.Count == 0)
+            return false;
+        return new[]
+        {
+            item.OriginalProductText,
+            item.Command.ProductText,
+            item.Issue?.ProductText ?? string.Empty
+        }.Any(reference =>
+        {
+            var referenceTokens = ProductSearchText.GetMatchingTokens(reference);
+            return referenceTokens.Count > 0 && referenceTokens.All(token =>
+                messageTokens.Any(messageToken => token == messageToken
+                    || ProductSearchText.TokenSimilarity(token, messageToken)
+                        >= matchingPolicy.PendingReferenceSimilarity));
+        });
+    }
     private static bool IsTrue(JsonElement value) =>
         value.ValueKind == JsonValueKind.True
         || value.ValueKind == JsonValueKind.String

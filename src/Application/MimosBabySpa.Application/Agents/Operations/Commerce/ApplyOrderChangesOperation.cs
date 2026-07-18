@@ -100,6 +100,12 @@ public sealed class ApplyOrderChangesOperation : IAgentOperation
         var pending = PendingCartCommandMemory.Read(session);
         if (pending is null && hadPendingFact && _facts is not null)
             await PendingCartCommandMemory.ClearAsync(_facts, session, cancellationToken);
+        var discardedPending = pending?.Items
+            .Where(item => commands.Any(command =>
+                command.Operation.Equals(CartCommandOperations.CancelPending, StringComparison.OrdinalIgnoreCase)
+                && CatalogSearchText.NormalizeCompact(command.ProductText)
+                    == CatalogSearchText.NormalizeCompact(item.OriginalProductText)))
+            .ToList() ?? [];
 
         var merge = PendingCartCommandMemory.MergeResolution(session, grounded);
         if (merge.WorkItems.Count == 0)
@@ -108,19 +114,44 @@ public sealed class ApplyOrderChangesOperation : IAgentOperation
             {
                 if (_facts is not null)
                     await PendingCartCommandMemory.SaveAsync(_facts, session, merge.RemainingItems, cancellationToken);
-                return PendingOutcome(PendingCartCommandMemory.PrimaryIssue(merge.RemainingItems));
+                return PendingOutcome(PendingCartCommandMemory.PrimaryIssue(
+                    merge.RemainingItems,
+                    session.LatestUserMessage,
+                    session.Config?.Commerce.Matching));
             }
             if (merge.CancelledAny)
             {
                 if (_facts is not null)
                     await PendingCartCommandMemory.ClearAsync(_facts, session, cancellationToken);
-                return OperationOutcome.Ok("cart.pending_cancelled", new { });
+                return OperationOutcome.Ok("cart.pending_cancelled", new
+                {
+                    discarded_items = discardedPending.Select(item => new
+                    {
+                        product_text = item.OriginalProductText,
+                        recognized_name = item.Issue?.ProductCandidates.FirstOrDefault()?.Name,
+                        reason = item.Issue?.Code
+                    }).ToList()
+                });
             }
         }
 
         var workCommands = merge.WorkItems.Select(item => item.Command).ToList();
         var mutationKey = BuildMutationKey(session, workCommands);
         var result = await _processor.ApplyAsync(session, workCommands, mutationKey, cancellationToken);
+        var presentationRequests = result.AppliedCommands.Select(command =>
+        {
+            var workItem = merge.WorkItems.FirstOrDefault(item =>
+                CatalogSearchText.NormalizeCompact(item.Command.ProductText)
+                    == CatalogSearchText.NormalizeCompact(command.ProductText));
+            return new CartItemPresentationRequest(
+                command,
+                workItem?.OriginalProductText ?? command.ProductText);
+        }).ToList();
+        result = result with
+        {
+            Snapshot = await CartItemPresentationMemory.UpdateAndDecorateAsync(
+                _facts, session, result.Snapshot, presentationRequests, cancellationToken)
+        };
         var nextPending = merge.RemainingItems.ToList();
         foreach (var unresolved in result.UnresolvedItems)
         {
@@ -162,16 +193,36 @@ public sealed class ApplyOrderChangesOperation : IAgentOperation
         if (nextPending.Count > 0)
         {
             var issues = nextPending.Where(item => item.Issue is not null).Select(item => item.Issue!).ToList();
+            var canFinalizeWithPending = CanFinalizeWithPending(
+                nextPending, result.Snapshot, session.Config?.Commerce.PendingCart);
             if (result.AppliedCommands.Count > 0)
                 return ClarificationOutcome(
-                    "cart.partially_applied", result.Snapshot, issues, result.AppliedCommands);
+                    "cart.partially_applied", result.Snapshot, issues, result.AppliedCommands,
+                    canFinalizeWithPending, isPendingFollowUp: pending is not null);
+            if (pending is not null)
+            {
+                var primary = PendingCartCommandMemory.PrimaryIssue(
+                    nextPending, session.LatestUserMessage, session.Config?.Commerce.Matching);
+                return ClarificationOutcome(
+                    ToOutcomeCode(primary.Code), result.Snapshot, [primary],
+                    canFinalizeWithPending: canFinalizeWithPending,
+                    isPendingFollowUp: true);
+            }
             if (issues.Count > 1)
-                return ClarificationOutcome("cart.partially_applied", result.Snapshot, issues);
-            return ClarificationOutcome(ToOutcomeCode(issues.FirstOrDefault()?.Code), result.Snapshot, issues);
+                return ClarificationOutcome(
+                    "cart.partially_applied", result.Snapshot, issues,
+                    canFinalizeWithPending: canFinalizeWithPending);
+            return ClarificationOutcome(
+                ToOutcomeCode(issues.FirstOrDefault()?.Code), result.Snapshot, issues,
+                canFinalizeWithPending: canFinalizeWithPending);
         }
 
         if (result.Success)
-            return OperationOutcome.Ok(result.Code, new { order = ToOrder(result.Snapshot) });
+            return OperationOutcome.Ok(result.Code, new
+            {
+                order = ToOrder(result.Snapshot),
+                applied_items = PresentableAppliedItems(result.Snapshot, result.AppliedCommands)
+            });
         return FailureOutcome(result);
     }
 
@@ -218,6 +269,22 @@ public sealed class ApplyOrderChangesOperation : IAgentOperation
         return result;
     }
 
+    private static bool CanFinalizeWithPending(
+        IReadOnlyList<PendingCartItem> pendingItems,
+        OrderSnapshot? snapshot,
+        PendingCartPolicy? policy)
+    {
+        if (snapshot?.Items.Count is not > 0)
+            return false;
+        var unresolved = pendingItems.Where(item => item.RequiresResolution).ToList();
+        if (unresolved.Count == 0)
+            return false;
+        var discardableCodes = (policy?.DiscardOnFinalizeIssueCodes ?? [])
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return unresolved.All(item => item.Issue is not null
+            && discardableCodes.Contains(item.Issue.Code));
+    }
+
     private static OperationOutcome FailureOutcome(CartCommandBatchResult result) =>
         ClarificationOutcome(result.Code, result.Snapshot, result.Issues);
 
@@ -228,7 +295,9 @@ public sealed class ApplyOrderChangesOperation : IAgentOperation
         string code,
         OrderSnapshot? snapshot,
         IReadOnlyList<CartCommandIssue> issues,
-        IReadOnlyList<ResolvedCartCommand>? appliedCommands = null)
+        IReadOnlyList<ResolvedCartCommand>? appliedCommands = null,
+        bool canFinalizeWithPending = false,
+        bool isPendingFollowUp = false)
     {
         appliedCommands ??= [];
         var first = issues.FirstOrDefault();
@@ -246,8 +315,11 @@ public sealed class ApplyOrderChangesOperation : IAgentOperation
                 total = snapshot?.Total,
                 items = snapshot?.Items.Select(item => new
                 {
-                    name = item.ProductName, quantity = item.Quantity,
-                    unit_price = item.UnitPrice, line_total = item.LineTotal
+                    name = item.ProductName,
+                    requested_name = item.RequestedName,
+                    quantity = item.Quantity,
+                    unit_price = item.UnitPrice,
+                    line_total = item.LineTotal
                 }).ToList() ?? [],
                 issues,
                 applied_items = appliedCommands
@@ -255,6 +327,7 @@ public sealed class ApplyOrderChangesOperation : IAgentOperation
                     {
                         operation = command.Operation,
                         name = command.Product?.Name ?? command.ProductText,
+                        requested_name = FindPresentableRequestedName(snapshot, command),
                         quantity = command.Quantity,
                         unit_price = command.Product?.EffectiveUnitPrice ?? command.Product?.UnitPrice
                     })
@@ -296,9 +369,12 @@ public sealed class ApplyOrderChangesOperation : IAgentOperation
                     }).ToList(),
                 not_found_items = issues.Where(issue => issue.Code is "product_not_found" or "item_not_found_or_ambiguous")
                     .Select(issue => new { product_text = issue.ProductText }).ToList(),
+                display_applied_items = PresentableAppliedItems(snapshot, appliedCommands),
+                is_pending_follow_up = isPendingFollowUp,
                 applied_item_count = appliedCommands.Count,
                 unresolved_item_count = issues.Count,
                 item_result_count = appliedCommands.Count + issues.Count,
+                can_finalize_with_pending = canFinalizeWithPending,
                 product_text = first?.ProductText,
                 candidates = first?.Candidates ?? [],
                 product_options = first?.ProductCandidates ?? [],
@@ -311,6 +387,21 @@ public sealed class ApplyOrderChangesOperation : IAgentOperation
             });
     }
 
+    private static IReadOnlyList<object> PresentableAppliedItems(
+        OrderSnapshot? snapshot,
+        IReadOnlyList<ResolvedCartCommand> commands) =>
+        commands
+            .Select(command => (object)new
+            {
+                operation = command.Operation,
+                removed = command.Operation.Equals(
+                    CartCommandOperations.Remove, StringComparison.OrdinalIgnoreCase),
+                name = command.Product?.Name ?? command.ProductText,
+                requested_name = FindPresentableRequestedName(snapshot, command),
+                quantity = command.Quantity,
+                unit_price = command.Product?.EffectiveUnitPrice ?? command.Product?.UnitPrice
+            })
+            .ToList();
     private static object? ToOrder(OrderSnapshot? snapshot) => snapshot is null ? null : new
     {
         currency = snapshot.Currency,
@@ -321,12 +412,40 @@ public sealed class ApplyOrderChangesOperation : IAgentOperation
         items = snapshot.Items.Select(item => new
         {
             name = item.ProductName,
+            requested_name = item.RequestedName,
             quantity = item.Quantity,
             unit_price = item.UnitPrice,
             line_total = item.LineTotal
         }).ToList()
     };
 
+    private static string? FindPresentableRequestedName(
+        OrderSnapshot? snapshot,
+        ResolvedCartCommand command) =>
+        FindRequestedName(snapshot, command)
+        ?? (command.Operation.Equals(CartCommandOperations.Remove, StringComparison.OrdinalIgnoreCase)
+            && !string.IsNullOrWhiteSpace(command.ProductText)
+                ? command.ProductText
+                : null);
+    private static string? FindRequestedName(
+        OrderSnapshot? snapshot,
+        ResolvedCartCommand command)
+    {
+        if (snapshot is null)
+            return null;
+        var item = snapshot.Items.FirstOrDefault(candidate =>
+            command.OrderItemId.HasValue && candidate.OrderItemId == command.OrderItemId.Value
+            || command.Product is not null
+                && (command.Product.ProductId.HasValue && candidate.ProductId == command.Product.ProductId
+                    || !string.IsNullOrWhiteSpace(command.Product.ExternalProductId)
+                        && candidate.ExternalProductId?.Equals(
+                            command.Product.ExternalProductId, StringComparison.OrdinalIgnoreCase) == true
+                    || !string.IsNullOrWhiteSpace(command.Product.Sku)
+                        && candidate.Sku?.Equals(command.Product.Sku, StringComparison.OrdinalIgnoreCase) == true
+                    || CatalogSearchText.NormalizeCompact(candidate.ProductName)
+                        == CatalogSearchText.NormalizeCompact(command.Product.Name)));
+        return item?.RequestedName;
+    }
     private static string ToOutcomeCode(string? issueCode) => issueCode switch
     {
         "product_suggestion" => "cart.product_suggestion",

@@ -19,7 +19,8 @@ internal static class CatalogOfferMemory
         AgentConversationContext context,
         IReadOnlyList<ProductReference> products,
         IReadOnlyList<string> searchTerms,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? explicitReplacementReference = null)
     {
         var active = products.Where(product => product.IsActive)
             .Select(ProductCandidate.From)
@@ -29,7 +30,13 @@ internal static class CatalogOfferMemory
         if (active.Count == 0)
             return;
 
-        var existing = Read(context.Facts);
+        var hasSingleSearchTerm = searchTerms.Count(term => !string.IsNullOrWhiteSpace(term)) == 1;
+        var replacementReference = hasSingleSearchTerm && !string.IsNullOrWhiteSpace(explicitReplacementReference)
+            ? explicitReplacementReference.Trim()
+            : hasSingleSearchTerm && CommerceConversationMatcher.Matches(
+                context.LatestUserMessage, context.Config?.Commerce.Conversation.ProductReplacementRules)
+                ? searchTerms.First(term => !string.IsNullOrWhiteSpace(term)).Trim()
+                : null;        var existing = Read(context.Facts);
         var sequence = (existing?.Sequence ?? 0) + 1;
         var snapshots = (existing?.Snapshots ?? [])
             .Append(new CatalogOfferSnapshot(
@@ -39,7 +46,8 @@ internal static class CatalogOfferMemory
                     .Select(term => term.Trim())
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .ToList(),
-                active))
+                active,
+                replacementReference))
             .ToList();
 
         var maxSnapshots = Math.Clamp(context.Config?.Commerce.OfferMemoryMaxSnapshots ?? 8, 1, 50);
@@ -143,4 +151,5 @@ internal sealed record CatalogOfferSnapshot(
     long Sequence,
     DateTime? OfferedAtUtc,
     IReadOnlyList<string> SearchTerms,
-    IReadOnlyList<ProductCandidate> Products);
+    IReadOnlyList<ProductCandidate> Products,
+    string? ReplacementReference = null);

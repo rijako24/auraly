@@ -15,7 +15,8 @@ public sealed class MantisCommerceAdapter :
     ICommerceCustomerLookup,
     ICommerceProductIdentitySource,
     ICommerceProductDeltaIdentitySource,
-    ICommerceCustomerIdentitySource
+    ICommerceCustomerIdentitySource,
+    ICommerceOrderHistorySource
 {
     private static readonly JsonSerializerOptions MantisJsonOptions = new()
     {
@@ -425,6 +426,37 @@ public sealed class MantisCommerceAdapter :
         return new ExternalCustomerIdentityPage(customers, hasMore);
     }
 
+    public async Task<IReadOnlyList<CommerceOrderHistoryRecord>> GetOrderHistoryAsync(
+        CommerceAdapterContext context,
+        CommerceOrderHistoryQuery query,
+        CancellationToken ct = default)
+    {
+        var settings = MantisSettings.From(RequireConnection(context));
+        var payload = new
+        {
+            NroPedido = Clean(query.ExternalOrderId) ?? string.Empty,
+            IdeClientes = Clean(query.ExternalCustomerLookupId) ?? string.Empty,
+            FechaInicial = query.From?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) ?? string.Empty,
+            FechaFinal = query.To?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) ?? string.Empty
+        };
+        var responseText = await PostJsonWithRetryAsync(
+            settings,
+            settings.Order.QueryEndpoint,
+            payload,
+            "order history query",
+            ct);
+        var response = JsonSerializer.Deserialize<MantisOrderHistoryResponse>(
+                responseText,
+                MantisJsonOptions)
+            ?? new MantisOrderHistoryResponse();
+        if (!string.IsNullOrWhiteSpace(response.ErrorKey))
+            throw new InvalidOperationException($"Mantis order history query failed: {response.ErrorKey}");
+
+        return (response.SDTConsultarPedidoCasalins ?? [])
+            .Select(MantisOrderHistoryMapper.ToRecord)
+            .OfType<CommerceOrderHistoryRecord>()
+            .ToList();
+    }
     private async Task<MantisCustomerIdentity?> FetchCustomerIdentityAsync(
         MantisSettings settings,
         string normalizedPhone,
@@ -536,37 +568,6 @@ public sealed class MantisCommerceAdapter :
     {
         var connection = RequireConnection(ctx);
         var settings = MantisSettings.From(connection);
-        if (settings.Order.MockCreateOrders)
-        {
-            var mockPayload = new
-            {
-                provider = "mantis",
-                mode = "mock",
-                order_id = order.OrderId,
-                customer = new
-                {
-                    name = order.CustomerNameSnapshot,
-                    document = order.CustomerDocumentSnapshot,
-                    phone = order.CustomerPhoneSnapshot,
-                    address = order.DeliveryAddressSnapshot
-                },
-                items = items.Select(item => new
-                {
-                    code = item.Sku ?? item.ExternalProductId,
-                    name = item.ProductNameSnapshot,
-                    quantity = item.Quantity
-                }),
-                total = order.Total,
-                created_at = DateTime.UtcNow
-            };
-
-            return new CreateExternalOrderResult(
-                $"mantis-mock-{order.OrderId:N}",
-                null,
-                "mocked",
-                JsonSerializer.Serialize(mockPayload, CommerceJson.Options));
-        }
-
         var customer = ToMantisIdentity(ctx.Customer) ?? await ResolveCustomerIdentityAsync(
             settings,
             order.BusinessId,

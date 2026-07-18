@@ -3,6 +3,7 @@ using FluentAssertions;
 using MimosBabySpa.Application.Agents;
 using MimosBabySpa.Application.Agents.Configuration;
 using MimosBabySpa.Application.Agents.Operations;
+using MimosBabySpa.Application.Commerce;
 using Xunit;
 
 namespace MimosBabySpa.Tests.Agents;
@@ -74,6 +75,53 @@ public sealed class AgentConfigurationCompilerTests
         compilation.Diagnostics.Should().Contain(value =>
             value.Path == "flows[management].ttlSeconds"
             && value.Code == "invalid_flow_ttl");
+    }
+    [Fact]
+    public void Compile_WithInvalidCommerceConversationPolicy_RejectsConfiguration()
+    {
+        var config = new AgentConfig
+        {
+            Commerce = new CommerceConfig
+            {
+                Enabled = true,
+                Conversation = new CommerceConversationPolicy
+                {
+                    FinalizationRules =
+                    [
+                        new CommercePhraseRule { Phrase = "done" },
+                        new CommercePhraseRule { Phrase = "done" }
+                    ],
+                    QuantityWords = new Dictionary<string, decimal> { ["pair"] = 0m }
+                },
+                PendingCart = new PendingCartPolicy
+                {
+                    FinalizeConfirmationPhrases = ["si", "SI"]
+                },
+                Matching = new ProductMatchingPolicy
+                {
+                    CandidateMentionSimilarity = 1.1d
+                }
+            },
+            Flows =
+            [
+                new AgentFlowDefinition
+                {
+                    Id = "order",
+                    Type = FlowTypes.Primary,
+                    Stages = [new AgentFlowStage { Id = "order" }]
+                }
+            ]
+        };
+
+        var compilation = Compiler().Compile(config);
+
+        compilation.IsValid.Should().BeFalse();
+        compilation.Diagnostics.Should().Contain(value => value.Code == "duplicate_policy_term");
+        compilation.Diagnostics.Should().Contain(value =>
+            value.Path == "commerce.pendingCart.finalizeConfirmationPhrases"
+            && value.Code == "duplicate_policy_term");
+        compilation.Diagnostics.Should().Contain(value => value.Code == "invalid_quantity_word");
+        compilation.Diagnostics.Should().Contain(value => value.Code == "invalid_matching_threshold");
     }
     private static AgentConfigurationCompiler Compiler() => new(
         new AgentOperationRegistry([new AvailabilityOperationStub()]));

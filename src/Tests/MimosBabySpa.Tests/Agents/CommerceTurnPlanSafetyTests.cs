@@ -25,6 +25,33 @@ public sealed class CommerceTurnPlanSafetyTests
     }
 
     [Fact]
+    public void ReplacementCatalogQuery_DefersOnlyTheRemovalOfTheRejectedReference()
+    {
+        var removals = new PlannedSignal
+        {
+            Type = "order_changes",
+            Value = JsonSerializer.SerializeToElement(new object[]
+            {
+                new { operation = "remove", productText = "maiz", quantity = (decimal?)null, destinationReference = (string?)null },
+                new { operation = "remove", productText = "chicharron", quantity = (decimal?)null, destinationReference = (string?)null }
+            }),
+            Evidence = "ese maiz no lo quiero, muestrame otros; y saca el chicharron",
+            Confidence = 0.98
+        };
+
+        var normalized = CommerceTurnPlanSafety.Normalize(
+            Plan(removals, CatalogQuery("maiz", "maiz")),
+            Context("ese maiz no lo quiero, muestrame otros; y saca el chicharron"));
+
+        normalized.Signals.Should().HaveCount(2);
+        var commands = normalized.Signals.Single(signal => signal.Type == "order_changes").Value;
+        commands.GetArrayLength().Should().Be(1);
+        commands[0].GetProperty("operation").GetString().Should().Be("remove");
+        commands[0].GetProperty("productText").GetString().Should().Be("chicharron");
+        normalized.Signals.Should().ContainSingle(signal => signal.Type == "catalog_query");
+    }
+
+    [Fact]
     public void CatalogInquiry_WithExplicitMutation_KeepsCartCommand()
     {
         var normalized = CommerceTurnPlanSafety.Normalize(
@@ -44,6 +71,96 @@ public sealed class CommerceTurnPlanSafetyTests
         normalized.Signals.Should().BeEmpty();
     }
 
+    [Theory]
+    [InlineData("sí, agrégame")]
+    [InlineData("agrégame esa")]
+    [InlineData("ponme la primera")]
+    [InlineData("inclúyela")]
+    [InlineData("quiero esa")]
+    [InlineData("esa misma")]
+    [InlineData("ranchera super x 525 gr x 7 und, agrégame")]
+    public void CatalogSelectionWithoutRequestedQuantity_DropsInventedOneEvenWithMutationVerb(string message)
+    {
+        var normalized = CommerceTurnPlanSafety.Normalize(
+            Plan(OrderChanges("SALCHICHA RANCHERA SUPER X 525 GR X 7 UND", 1, message)),
+            Context(message, catalogFollowUp: true));
+
+        normalized.Signals.Should().BeEmpty();
+    }
+
+    [Theory]
+    [InlineData("add", 6)]
+    [InlineData("set_quantity", 6)]
+    public void CatalogSelectionWithoutRequestedQuantity_DropsAnyInventedMutationQuantity(
+        string operation,
+        decimal inventedQuantity)
+    {
+        var signal = new PlannedSignal
+        {
+            Type = "order_changes",
+            Value = JsonSerializer.SerializeToElement(new[]
+            {
+                new
+                {
+                    operation,
+                    productText = "MAIZ SUPER DULCE",
+                    quantity = inventedQuantity,
+                    destinationReference = (string?)null
+                }
+            }),
+            Evidence = "El maíz super dulce.",
+            Confidence = 0.95
+        };
+
+        var normalized = CommerceTurnPlanSafety.Normalize(
+            Plan(signal),
+            Context("El maíz super dulce.", catalogFollowUp: true));
+
+        normalized.Signals.Should().BeEmpty(
+            "a catalog selection does not authorize reusing a previous line quantity");
+    }
+
+    [Fact]
+    public void CatalogSelectionWithoutQuantity_PreservesIndependentRemovalButDropsInventedReplacement()
+    {
+        var signal = new PlannedSignal
+        {
+            Type = "order_changes",
+            Value = JsonSerializer.SerializeToElement(new object[]
+            {
+                new { operation = "set_quantity", productText = "MAIZ SUPER DULCE", quantity = 6m, destinationReference = (string?)null },
+                new { operation = "remove", productText = "CHICHARRON CARNUDO", quantity = (decimal?)null, destinationReference = (string?)null }
+            }),
+            Evidence = "El maíz super dulce y saca el chicharrón.",
+            Confidence = 0.95
+        };
+
+        var normalized = CommerceTurnPlanSafety.Normalize(
+            Plan(signal),
+            Context("El maíz super dulce y saca el chicharrón.", catalogFollowUp: true));
+
+        var command = normalized.Signals.Should().ContainSingle().Subject.Value
+            .EnumerateArray().Should().ContainSingle().Subject;
+        command.GetProperty("operation").GetString().Should().Be("remove");
+        command.GetProperty("productText").GetString().Should().Be("CHICHARRON CARNUDO");
+    }
+
+    [Theory]
+    [InlineData("sí, agrégame 3", 3)]
+    [InlineData("agrégame una", 1)]
+    [InlineData("ponme dos de esa", 2)]
+    [InlineData("la primera, 4 unidades", 4)]
+    [InlineData("5 de esa", 5)]
+    [InlineData("quiero 6", 6)]
+    public void CatalogSelectionWithRequestedQuantity_KeepsMutation(string message, decimal quantity)
+    {
+        var normalized = CommerceTurnPlanSafety.Normalize(
+            Plan(OrderChanges("PECHUGA CRIOLLA", quantity, message)),
+            Context(message, catalogFollowUp: true));
+
+        normalized.Signals.Should().ContainSingle(signal => signal.Type == "order_changes");
+        normalized.Signals[0].Value[0].GetProperty("quantity").GetDecimal().Should().Be(quantity);
+    }
     [Fact]
     public void CatalogSelectionWithLeadingQuantity_KeepsCartCommand()
     {
@@ -183,6 +300,18 @@ public sealed class CommerceTurnPlanSafetyTests
     {
         Signals = signals,
         Response = new TurnPlanResponseDirective()
+    };
+
+    private static PlannedSignal CatalogQuery(string query, string? replacementReference) => new()
+    {
+        Type = "catalog_query",
+        Value = JsonSerializer.SerializeToElement(new
+        {
+            queries = new[] { query },
+            replacement_reference = replacementReference
+        }),
+        Evidence = query,
+        Confidence = 0.95
     };
 
     private static PlannedSignal OrderChanges(string productText, decimal quantity, string evidence) => new()

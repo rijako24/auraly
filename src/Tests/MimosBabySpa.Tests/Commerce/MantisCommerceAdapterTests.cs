@@ -13,27 +13,11 @@ namespace MimosBabySpa.Tests.Commerce;
 public sealed class MantisCommerceAdapterTests
 {
     [Fact]
-    public async Task CreateOrderAsync_ReturnsMockedResultWithoutCallingMantis()
+    public async Task CreateOrderAsync_DefaultConfigurationCallsRealEndpoint()
     {
-        var handler = new FailingHttpMessageHandler();
+        const string orderJson = """{"ErrorKey":[],"EstadoPedido":"created","bPedNum":"OPHG003359"}""";
+        var handler = new JsonHttpMessageHandler(orderJson);
         var adapter = new MantisCommerceAdapter(new HttpClient(handler), Mock.Of<IUnitOfWork>());
-        var order = new Order
-        {
-            OrderId = Guid.NewGuid(),
-            CustomerNameSnapshot = "Richard",
-            CustomerPhoneSnapshot = "3012926660",
-            DeliveryAddressSnapshot = "Conjunto Barcelona",
-            Total = 123000m
-        };
-        var items = new[]
-        {
-            new OrderItem
-            {
-                Sku = "SKU-1",
-                ProductNameSnapshot = "Arroz",
-                Quantity = 2
-            }
-        };
         var businessId = Guid.NewGuid();
         var connection = new IntegrationConnection
         {
@@ -42,25 +26,36 @@ public sealed class MantisCommerceAdapterTests
             Provider = (int)CommerceProvider.Mantis,
             Capability = (int)CommerceCapability.CatalogAndOrders,
             IsEnabled = true,
-            SettingsJson = """{"baseUrl":"https://mantis.example/rest/","order":{"mockCreateOrders":true}}""",
+            SettingsJson = """{"baseUrl":"https://mantis.example/rest/","order":{"createEndpoint":"orders"}}""",
             SecretsJson = """{"authorizationToken":"token"}"""
         };
-        var ctx = new CommerceAdapterContext(
+        var order = new Order { OrderId = Guid.NewGuid(), Notes = "Pedido de prueba" };
+        var context = new CommerceAdapterContext(
             businessId,
             Guid.NewGuid(),
-            ConversationId: null,
+            null,
             CommerceProvider.Mantis,
-            Connection: connection);
+            connection,
+            Customer: new CommerceCustomerReference(
+                CommerceProvider.Mantis,
+                "10013",
+                "6826",
+                "Cliente",
+                "3001234567"),
+            WarehouseCode: "1");
 
-        var result = await adapter.CreateOrderAsync(order, items, ctx, CancellationToken.None);
+        var result = await adapter.CreateOrderAsync(
+            order,
+            [new OrderItem { Sku = "PV31", ProductNameSnapshot = "PAPA RIPIO KRUMER", Quantity = 1 }],
+            context,
+            CancellationToken.None);
 
-        handler.RequestCount.Should().Be(0);
-        result.ExternalOrderId.Should().StartWith("mantis-mock-");
-        result.ExternalStatus.Should().Be("mocked");
-        result.ResponseJson.Should().Contain("\"mode\":\"mock\"");
+        handler.RequestCount.Should().Be(1);
+        handler.LastRequestPath.Should().EndWith("/orders");
+        handler.LastRequestJson.Should().Contain("\"CodigoArticulos\":\"PV31\"");
+        result.ExternalOrderId.Should().Be("OPHG003359");
+        result.ExternalStatus.Should().Be("created");
     }
-
-
     [Fact]
     public async Task SearchProductsAsync_MapsMantisContractToProductReference()
     {
@@ -303,7 +298,7 @@ public sealed class MantisCommerceAdapterTests
             {
               "baseUrl": "https://mantis.example/rest/",
               "customer": { "searchEndpoint": "customers" },
-              "order": { "createEndpoint": "orders", "warehouse": "4", "mockCreateOrders": false }
+              "order": { "createEndpoint": "orders", "warehouse": "4" }
             }
             """);
         var order = new Order
@@ -609,7 +604,7 @@ public sealed class MantisCommerceAdapterTests
               "baseUrl": "https://mantis.example/rest/",
               "customer": { "searchEndpoint": "customers" },
               "genericCustomer": { "llaveNit": "5702", "llaveCliente": "1" },
-              "order": { "createEndpoint": "orders", "mockCreateOrders": false }
+              "order": { "createEndpoint": "orders" }
             }
             """);
         var order = new Order
@@ -746,6 +741,7 @@ public sealed class MantisCommerceAdapterTests
         public JsonHttpMessageHandler(string json) => _json = json;
 
         public string? LastRequestJson { get; private set; }
+        public string? LastRequestPath { get; private set; }
         public int RequestCount { get; private set; }
 
         protected override async Task<HttpResponseMessage> SendAsync(
@@ -753,6 +749,7 @@ public sealed class MantisCommerceAdapterTests
             CancellationToken cancellationToken)
         {
             RequestCount++;
+            LastRequestPath = request.RequestUri?.AbsolutePath;
             LastRequestJson = request.Content is null
                 ? null
                 : await request.Content.ReadAsStringAsync(cancellationToken);
