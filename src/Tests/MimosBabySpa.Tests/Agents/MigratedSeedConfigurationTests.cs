@@ -18,6 +18,7 @@ public sealed class MigratedSeedConfigurationTests
     [InlineData("SeedAgenticConfiguration.sql", "SettingsJson")]
     [InlineData("SeedCJDistribuciones.sql", "SettingsJson")]
     [InlineData("SeedAuraly.sql", "SettingsJson")]
+    [InlineData("SeedMedidental.sql", "SettingsJson")]
     [InlineData("SeedRadaConcept.sql", "SettingsJson")]
     [InlineData("SeedSolorzanoAgentConfiguration.sql", "SettingsJson")]
     [InlineData("SeedSolorzanoDomicilioAgent.sql", "SolorzanoDeliverySettingsJson")]

@@ -61,6 +61,8 @@ public sealed class SearchProductsOperation : IAgentOperation
         var ctx = context.Session
             ?? throw new InvalidOperationException("commerce.search_products requires a conversation session.");
         var query = OperationJsonHelper.TryGetString(arguments, "query", out var q) ? q : null;
+        if (ProductSearchText.IsCatalogBrowseQuery(query))
+            query = null;
         var category = OperationJsonHelper.TryGetString(arguments, "category", out var c) ? c : null;
         var family = OperationJsonHelper.TryGetString(arguments, "family", out var f) ? f : null;
         var subcategory = OperationJsonHelper.TryGetString(arguments, "subcategory", out var sc) ? sc : null;
@@ -235,6 +237,7 @@ public sealed class SearchProductsOperation : IAgentOperation
 
         return values
             .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Where(value => !ProductSearchText.IsCatalogBrowseQuery(value))
             .Select(value => value.Trim())
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .Take(8)

@@ -180,6 +180,43 @@ public sealed class ApplyOrderChangesOperationTests
     }
 
     [Fact]
+    public async Task MedidentalOsseoClarification_ByModelNumberPreservesTwoUnitsWithEmptyPlanBatch()
+    {
+        const string selected = "Motor de implantes 3G Osseo 200";
+        var resolver = new StubResolver(new Dictionary<string, IReadOnlyList<ProductReference>>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["osseo"] =
+            [
+                Product("Motor de implantes 3G Osseo 100"),
+                Product(selected)
+            ],
+            [selected] = [Product(selected)]
+        });
+        var store = new StubStore();
+        var operation = new ApplyOrderChangesOperation(
+            new CartCommandBatchProcessor(resolver, store),
+            new InMemoryFactsService());
+        var session = Session();
+        session.LatestUserMessage = "dame dos osseo";
+
+        var ambiguous = await operation.ExecuteAsync(
+            Json("""{"commands":[{"operation":"add","productText":"osseo","quantity":2,"destinationReference":null}]}"""),
+            Context(session));
+
+        ambiguous.Code.Should().Be("cart.product_ambiguous");
+        session.LatestUserMessage = "3G osseo 200";
+
+        var resolved = await operation.ExecuteAsync(
+            Json("""{"commands":[]}"""),
+            Context(session));
+
+        resolved.Code.Should().Be("cart.applied");
+        store.Applied.Should().ContainSingle(command =>
+            command.Product!.Name == selected && command.Quantity == 2m);
+        session.Facts.Should().NotContainKey("system.pending_cart_commands");
+    }
+
+    [Fact]
     public async Task QuantityForAnotherProduct_DoesNotReplacePendingQuantity()
     {
         var resolver = new StubResolver(new Dictionary<string, IReadOnlyList<ProductReference>>(StringComparer.OrdinalIgnoreCase)

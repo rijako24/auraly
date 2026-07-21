@@ -101,6 +101,48 @@ public sealed class CommerceCartProductResolverLocalFirstTests
         result.Candidates.Should().ContainSingle(candidate => candidate.Product.Name == local.Name);
     }
 
+    [Theory]
+    [InlineData("osseo de 200")]
+    [InlineData("3G osseo 200")]
+    [InlineData("Motor de implantes 3G Osseo 200")]
+    public async Task ResolveAsync_MedidentalModelNumberIsIdentityEvidenceAndSelectsExactVariant(string requestedText)
+    {
+        var osseo100 = Product("MD-OSSEO-100", "Motor de implantes 3G Osseo 100", 0m);
+        var osseo200 = Product("MD-OSSEO-200", "Motor de implantes 3G Osseo 200", 0m);
+        var commerce = new Mock<ICommerceService>();
+        var lookup = commerce.As<IProductLookupService>();
+        lookup.Setup(service => service.GetProductAsync(
+                It.IsAny<AgentConversationContext>(),
+                It.IsAny<ProductLookupRequest>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync((AgentConversationContext _, ProductLookupRequest request, CancellationToken _) =>
+                request.Sku == "MD-OSSEO-200" ? osseo200 with { UnitPrice = 25m } : osseo100);
+        var candidates = new Mock<IProductCandidateRetriever>();
+        candidates.Setup(service => service.RetrieveAsync(
+                It.IsAny<AgentConversationContext>(),
+                requestedText,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync([
+                new RetrievedProductCandidate(osseo100, ProductMatchSource.LocalLexicalIndex),
+                new RetrievedProductCandidate(osseo200, ProductMatchSource.LocalLexicalIndex)
+            ]);
+        var resolver = new CommerceCartProductResolver(commerce.Object, candidates.Object);
+
+        var result = await resolver.ResolveAsync(Context(), requestedText);
+
+        result.Status.Should().Be(ProductResolutionStatus.Resolved);
+        result.Selected!.Sku.Should().Be("MD-OSSEO-200");
+        result.Selected.UnitPrice.Should().Be(25m);
+        lookup.Verify(service => service.GetProductAsync(
+            It.IsAny<AgentConversationContext>(),
+            It.Is<ProductLookupRequest>(request => request.Sku == "MD-OSSEO-200"),
+            It.IsAny<CancellationToken>()), Times.Once);
+        lookup.Verify(service => service.GetProductAsync(
+            It.IsAny<AgentConversationContext>(),
+            It.Is<ProductLookupRequest>(request => request.Sku == "MD-OSSEO-100"),
+            It.IsAny<CancellationToken>()), Times.Never);
+    }
+
     private static AgentConversationContext Context() =>
         new() { BusinessId = Guid.NewGuid(), ConversationId = Guid.NewGuid() };
 

@@ -57,8 +57,7 @@ internal static class ProductSelectionMemory
             normalized = normalized[..exclusionIndex];
 
         return string.Join(' ', normalized
-            .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Where(token => !token.All(char.IsDigit)));
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
     }
 
     public static IReadOnlyList<ProductReference> FindCatalogMatches(

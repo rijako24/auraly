@@ -191,21 +191,6 @@ DECLARE @RecommendationRules TABLE
     Reason NVARCHAR(500) NULL
 );
 
-INSERT INTO @RecommendationRules
-    (ProductRecommendationRuleId, MatchType, SourceValue, RecommendedExternalProductId,
-     RecommendedSku, RecommendedSearchText, RecommendationType, Priority, Reason)
-VALUES
-    ('D3E4A700-0000-0000-0000-000000000200', 0, N'PO28', N'CF127', N'CF127', N'tocineta', 0, 100, N'La tocineta es una buena opcion para complementar preparaciones con pechuga criolla.'),
-    ('D3E4A700-0000-0000-0000-000000000201', 0, N'PO08', N'CF127', N'CF127', N'tocineta', 0, 100, N'La tocineta combina bien con preparaciones hechas con pechuga.'),
-    ('D3E4A700-0000-0000-0000-000000000202', 0, N'PO39', N'CF127', N'CF127', N'tocineta', 0, 100, N'La tocineta combina bien con preparaciones hechas con pechuga.'),
-    ('D3E4A700-0000-0000-0000-000000000203', 0, N'PO29', N'CF127', N'CF127', N'tocineta', 0, 100, N'La tocineta combina bien con preparaciones hechas con pechuga.'),
-    ('D3E4A700-0000-0000-0000-000000000204', 0, N'PO36', N'SA30', N'SA30', N'tocineta', 0, 100, N'Esta salsa puede servirte para darle un sabor diferente a los trozos de pechuga.'),
-    ('D3E4A700-0000-0000-0000-000000000205', 0, N'CF59', N'CG29', N'CG29', N'papa', 0, 100, N'Las papas a la francesa son un acompanamiento practico para la salchicha.'),
-    ('D3E4A700-0000-0000-0000-000000000206', 1, N'CARNE DE POLLO', N'SA30', N'SA30', N'tocineta', 0, 50, N'Esta salsa es una opcion sencilla para acompanar productos de pollo.'),
-    ('D3E4A700-0000-0000-0000-000000000207', 1, N'CARNE DE CERDO', N'CF127', N'CF127', N'tocineta', 0, 50, N'La tocineta puede complementar distintas preparaciones de cerdo.'),
-    ('D3E4A700-0000-0000-0000-000000000208', 1, N'CARNES FRIAS', N'PA27', N'PA27', N'pan', 0, 50, N'El pan brioche es una opcion util para preparar hamburguesas, perros o sandwiches.'),
-    ('D3E4A700-0000-0000-0000-000000000209', 1, N'PRODUCTOS CONGELADOS', N'AC06', N'AC06', N'aceite', 0, 50, N'El aceite puede servirte para preparar varios productos congelados.');
-
 MERGE dbo.ProductRecommendationRules AS target
 USING @RecommendationRules AS source
    ON target.BusinessId = @BusinessId
@@ -237,7 +222,12 @@ WHEN NOT MATCHED THEN
         (source.ProductRecommendationRuleId, @BusinessId, @LocalCommerceConnectionId,
          source.MatchType, NULL, source.SourceValue, NULL, source.RecommendedExternalProductId,
          source.RecommendedSku, source.RecommendationType, source.Priority, source.Reason,
-         1, NULL, NULL, GETUTCDATE());
+         1, NULL, NULL, GETUTCDATE())
+WHEN NOT MATCHED BY SOURCE
+     AND target.BusinessId = @BusinessId
+     AND target.IntegrationConnectionId = @LocalCommerceConnectionId THEN
+    DELETE;
+
 
 
 DECLARE @Hours TABLE (DayOfWeek INT NOT NULL, OpenTime TIME(0) NOT NULL, CloseTime TIME(0) NOT NULL);
@@ -417,10 +407,10 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                               "id":  "catalog_lookup",
                               "priority":  850,
                               "goal":  "Consultar el catalogo oficial cuando el cliente pregunte por productos, disponibilidad, referencias, precios u opciones, sin depender de la etapa activa.",
-                              "conversationGuidance":  "Detecta catalog_query unicamente cuando el significado resuelto del mensaje solicita buscar mercancia comprable en el catalogo. Cada termino de queries debe ser una entrada valida para el buscador de productos e identificar un producto, categoria, ingrediente o preparacion que el cliente consulta, ya sea expresado en el mensaje vigente o resuelto desde una pregunta inmediatamente anterior que tambien era sobre productos. Si la pregunta pide recuperar o confirmar datos de entrega, direccion, recogida, pago, identidad, perfil, cliente u orden, emite cero catalog_query aunque use palabras como cual, tienes, disponible o registrado. Esta capacidad es transversal y puede ocurrir durante cualquier etapa, pero nunca funciona como respuesta generica a preguntas. Nunca respondas disponibilidad o nombres de productos desde conocimiento general.",
+                              "conversationGuidance":  "Detecta catalog_query cuando el cliente solicita explorar el catalogo o consultar mercancia comprable. Para una pregunta abierta como que productos tienen, emite queries como una lista vacia. Cuando mencione productos, categorias o referencias concretas, incluye un termino util por cada busqueda. No uses palabras genericas como productos, catalogo, opciones o referencias como terminos. Si la pregunta pide recuperar o confirmar datos de entrega, direccion, recogida, pago, identidad, perfil, cliente u orden, emite cero catalog_query. Nunca respondas disponibilidad, nombres ni precios desde conocimiento general.",
                               "signal":  {
                                              "type":  "catalog_query",
-                                             "description":  "Consulta inequivoca sobre mercancia comprable del catalogo: existencia, opciones, referencias, precios, disponibilidad o recomendaciones, sin una instruccion explicita de agregar cantidades al pedido. El valor contiene terminos de producto concretos resueltos desde el mensaje vigente; el contexto solo resuelve referencias comerciales que el cliente efectivamente consulta.",
+                                             "description":  "Consulta de mercancia comprable del catalogo. Usa queries vacio para explorar una muestra amplia del catalogo y terminos concretos para buscar productos, categorias, referencias, precios o disponibilidad.",
                                              "valueSchema":  {
                                                                  "type":  "object",
                                                                  "additionalProperties":  false,
@@ -428,7 +418,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                                                                                     "queries":  {
                                                                                                     "type":  "array",
                                                                                                     "items":  { "type":  "string" },
-                                                                                                    "minItems":  1
+                                                                                                    "minItems":  0
                                                                                                 }
                                                                                 },
                                                                  "required":  [ "queries" ]
@@ -767,7 +757,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                       "order_checkout_no_payment":  "*Resumen de tu pedido*\n{{#each line_items}}\n- {{name}} x{{quantity}}: ${{line_total}}\n{{/each}}\n- Envio: ${{shipping_cost}}\n- *Total: ${{total}} {{currency}}*\n\nEntrega:\n- Ciudad: {{city}}\n- Direccion: {{delivery_address}}\n- Celular: {{customer_phone}}\n{{#if customer_name}}\n- Cliente: Doc\n{{/if}}\n{{#if delivery_recipient_name}}\n- Recibe: {{delivery_recipient_name}}\n{{/if}}\n\nMetodo de pago: efectivo al recibir\n\nConfirmas tu pedido con esta informacion?",
                       "order_checkout_card_terminal":  "*Resumen de tu pedido*\n{{#each line_items}}\n- {{name}} x{{quantity}}: ${{line_total}}\n{{/each}}\n- Envio: ${{shipping_cost}}\n- *Total: ${{total}} {{currency}}*\n\nEntrega:\n- Ciudad: {{city}}\n- Direccion: {{delivery_address}}\n- Celular: {{customer_phone}}\n{{#if customer_name}}\n- Cliente: Doc\n{{/if}}\n{{#if delivery_recipient_name}}\n- Recibe: {{delivery_recipient_name}}\n{{/if}}\n\nMetodo de pago: datafono al recibir\n\nLlevaremos el datafono para realizar el pago al momento de la entrega. Confirmas tu pedido con esta informacion?",
                       "order_checkout_manual_transfer":  "*Resumen de tu pedido*\n{{#each line_items}}\n- {{name}} x{{quantity}}: ${{line_total}}\n{{/each}}\n- Envio: ${{shipping_cost}}\n- *Total: ${{total}} {{currency}}*\n\nEntrega:\n- Ciudad: {{city}}\n- Direccion: {{delivery_address}}\n- Celular: {{customer_phone}}\n{{#if customer_name}}\n- Cliente: Doc\n{{/if}}\n{{#if delivery_recipient_name}}\n- Recibe: {{delivery_recipient_name}}\n{{/if}}\n\nMetodo de pago: transferencia manual\n\nTu pago queda pendiente de confirmacion manual. Un agente del equipo de Medidental confirmara el pago; cuando se confirme, te notificaremos que el pedido fue creado.",
-                      "catalog_results":  "Claro, encontre estas opciones para ti:\r\n\r\n*Productos disponibles*\r\n\r\n{{#each products}}\r\n- {{name}}: ${{unit_price}} {{currency}}\r\n{{/each}}\r\n\r\n{{#each recommendations}}\r\n\r\n*Tambien te puede servir*\r\n- {{name}}: ${{unit_price}} {{currency}}\r\n{{#if reason}}{{reason}}\r\n{{/if}}{{/each}}\r\n\r\nCual te interesa y cuantas unidades deseas agregar?",
+                      "catalog_results":  "{{#if search_text}}Claro, encontre estas opciones para ti:\r\n\r\n*Productos disponibles*\r\n\r\n{{#each products}}\r\n- {{name}}: ${{unit_price}} {{currency}}\r\n{{/each}}\r\n\r\n{{#each recommendations}}\r\n\r\n*Tambien te puede servir*\r\n- {{name}}: ${{unit_price}} {{currency}}\r\n{{#if reason}}{{reason}}\r\n{{/if}}{{/each}}\r\n\r\nCual te interesa y cuantas unidades deseas agregar?{{else}}Contamos con una gran variedad de productos odontologicos. Estos son algunos:\r\n\r\n{{#each products}}\r\n- {{name}}\r\n{{/each}}\r\n\r\nPor cual producto estas interesado?{{/if}}",
                       "catalog_no_results":  "Por ahora no encontre {{#if search_text}}{{search_text}} disponibles{{else}}productos disponibles para esa busqueda{{/if}} en nuestro catalogo.\r\n\r\nSi quieres, puedo buscar una opcion parecida o ayudarte a elegir otro producto.",
                       "known_facts":  "Claro. Esto es lo que tengo registrado:\r\n\r\n{{#each facts}}\r\n- {{label}}: {{value}}\r\n{{/each}}",
                       "known_facts_missing":  "No tengo ese dato registrado todavia. Si quieres, puedes indicarmelo o actualizarlo.",
@@ -1490,6 +1480,6 @@ BEGIN
     WHERE AgentId = @AgentId;
 END
 
-PRINT N'SeedMedidental: negocio, Mantis y agente configurados.';
+PRINT N'SeedMedidental: negocio, comercio local y agente configurados.';
 
 GO

@@ -17,6 +17,10 @@ public static class ProductSearchText
     {
         "bolsa", "bulto", "caja", "canasta", "display", "paquet", "paquete"
     };
+    private static readonly HashSet<string> CatalogBrowseWords = new(StringComparer.Ordinal)
+    {
+        "catalog", "catalogo", "catalogue", "inventario", "mercancia", "opcion", "producto", "referencia", "variedad"
+    };
 
 
     private static readonly string[] DerivationalSuffixes =
@@ -26,6 +30,13 @@ public static class ProductSearchText
 
     public static string NormalizeAlias(string? value) =>
         string.Join(' ', GetTokens(value));
+
+    public static bool IsCatalogBrowseQuery(string? value)
+    {
+        var tokens = GetTokens(value);
+        return tokens.Count > 0
+               && tokens.All(CatalogBrowseWords.Contains);
+    }
 
     public static IReadOnlyList<string> GetTokens(string? value)
     {

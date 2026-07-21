@@ -54,6 +54,85 @@ public class SearchProductsOperationTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_MedidentalOpenCatalogWithEmptyQueries_ListsAnUnfilteredSample()
+    {
+        var ctx = CreateContext();
+        var products = new[]
+        {
+            new ProductReference(
+                Guid.NewGuid(), null, "MD-OSSEO-100", "Motor de implantes 3G Osseo 100",
+                null, "Implantologia", 0m, "COP", null),
+            new ProductReference(
+                Guid.NewGuid(), null, "MD-POWERLED-L9", "Lampara de fotocurado 3G PowerLED L9",
+                null, "Fotocurado", 0m, "COP", null)
+        };
+        _commerce
+            .Setup(service => service.SearchProductsAsync(
+                ctx,
+                It.IsAny<ProductSearchRequest>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ProductSearchResult(products, "local"));
+
+        var operation = new SearchProductsOperation(_commerce.Object);
+        using var args = JsonDocument.Parse("""{"queries":[],"limit":5}""");
+
+        var outcome = await operation.ExecuteAsync(
+            args.RootElement,
+            new OperationContext { Session = ctx },
+            CancellationToken.None);
+
+        outcome.Code.Should().Be("products.found");
+        outcome.Data.GetProperty("search_text").GetString().Should().BeEmpty();
+        outcome.Data.GetProperty("products").GetArrayLength().Should().Be(2);
+        _commerce.Verify(service => service.SearchProductsAsync(
+            ctx,
+            It.Is<ProductSearchRequest>(request =>
+                request.Query == null
+                && request.Category == null
+                && request.Limit == 5),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Theory]
+    [InlineData("productos")]
+    [InlineData("catalogo")]
+    [InlineData("cat\u00e1logo")]
+    [InlineData("opciones")]
+    [InlineData("referencias")]
+    public async Task ExecuteAsync_MedidentalGenericCatalogTerm_IsCanonicalizedAsOpenBrowse(string genericTerm)
+    {
+        var ctx = CreateContext();
+        var product = new ProductReference(
+            Guid.NewGuid(), null, "MD-OSSEO-200", "Motor de implantes 3G Osseo 200",
+            null, "Implantologia", 0m, "COP", null);
+        _commerce
+            .Setup(service => service.SearchProductsAsync(
+                ctx,
+                It.IsAny<ProductSearchRequest>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ProductSearchResult([product], "local"));
+
+        var operation = new SearchProductsOperation(_commerce.Object);
+        var args = JsonSerializer.SerializeToElement(new
+        {
+            queries = new[] { genericTerm },
+            limit = 5
+        });
+
+        var outcome = await operation.ExecuteAsync(
+            args,
+            new OperationContext { Session = ctx },
+            CancellationToken.None);
+
+        outcome.Code.Should().Be("products.found");
+        outcome.Data.GetProperty("search_text").GetString().Should().BeEmpty();
+        _commerce.Verify(service => service.SearchProductsAsync(
+            ctx,
+            It.Is<ProductSearchRequest>(request => request.Query == null && request.Limit == 5),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
     public async Task ExecuteAsync_WithProducts_IncludesResponseGuidanceForPricesAndStock()
     {
         var ctx = CreateContext();
