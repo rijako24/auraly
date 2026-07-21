@@ -52,6 +52,32 @@ public sealed class ApplyOrderChangesOperationTests
     }
 
     [Fact]
+    public async Task DecimalWeight_IsAppliedWithoutRounding()
+    {
+        const string productName = "POLLO ENTERO X KG";
+        var resolver = new StubResolver(new Dictionary<string, IReadOnlyList<ProductReference>>(
+            StringComparer.OrdinalIgnoreCase)
+        {
+            ["pollo entero"] = [Product(productName)]
+        });
+        var store = new StubStore();
+        var operation = new ApplyOrderChangesOperation(
+            new CartCommandBatchProcessor(resolver, store),
+            new InMemoryFactsService());
+        var session = Session();
+        session.LatestUserMessage = "dame un kilo y medio de pollo entero";
+
+        var result = await operation.ExecuteAsync(
+            Json("""{"commands":[{"operation":"add","productText":"pollo entero","quantity":1.5,"destinationReference":null}]}"""),
+            Context(session));
+
+        result.Code.Should().Be("cart.applied");
+        store.Applied.Should().ContainSingle();
+        store.Applied[0].Product!.Name.Should().Be(productName);
+        store.Applied[0].Quantity.Should().Be(1.5m);
+    }
+
+    [Fact]
     public async Task RequestedProductLabel_IsPreservedBesideResolvedCatalogName()
     {
         const string resolvedName = "PAPA FARM FRITES 3/8 X 2.5 KG";

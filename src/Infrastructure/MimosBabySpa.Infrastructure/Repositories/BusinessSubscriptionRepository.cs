@@ -16,8 +16,7 @@ public sealed class BusinessSubscriptionRepository : IBusinessSubscriptionReposi
         await _context.BusinessSubscriptions
             .Include(s => s.SubscriptionPlan)
             .Where(s => s.BusinessId == businessId
-                        && s.Status == SubscriptionStatus.Active
-                        && s.CurrentPeriodEnd > DateTime.UtcNow)
+                        && s.Status == SubscriptionStatus.Active)
             .OrderByDescending(s => s.CurrentPeriodStart)
             .FirstOrDefaultAsync(ct);
 

@@ -1,6 +1,6 @@
 using System.Text.Json;
-using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
+using MimosBabySpa.Application.Agents;
 using MimosBabySpa.Application.Common.Exceptions;
 using MimosBabySpa.Application.Common.Interfaces;
 using MimosBabySpa.Application.Identity.DTOs;
@@ -22,7 +22,7 @@ public sealed class AgentAdminService : IAgentAdminService
     private readonly IUnitOfWork _unitOfWork;
     private readonly IAuditService _auditService;
     private readonly ICorrelationIdProvider _correlationIdProvider;
-    private readonly IMemoryCache _cache;
+    private readonly IAgentConfigProvider _configProvider;
     private readonly ILogger<AgentAdminService> _logger;
 
     public AgentAdminService(
@@ -30,14 +30,14 @@ public sealed class AgentAdminService : IAgentAdminService
         IUnitOfWork unitOfWork,
         IAuditService auditService,
         ICorrelationIdProvider correlationIdProvider,
-        IMemoryCache cache,
+        IAgentConfigProvider configProvider,
         ILogger<AgentAdminService> logger)
     {
         _agentRepository = agentRepository;
         _unitOfWork = unitOfWork;
         _auditService = auditService;
         _correlationIdProvider = correlationIdProvider;
-        _cache = cache;
+        _configProvider = configProvider;
         _logger = logger;
     }
 
@@ -176,6 +176,51 @@ public sealed class AgentAdminService : IAgentAdminService
         await _auditService.LogAsync("Deactivate", nameof(BusinessInboundContact), contactId.ToString(), oldState, MapToInboundContactDto(contact), ct);
     }
 
+    public async Task<AgentDto> CreateAsync(
+        Guid tenantId,
+        bool canAccessAllTenants,
+        Guid businessId,
+        CreateAgentRequest request,
+        CancellationToken ct = default)
+    {
+        await EnsureBusinessBelongsToTenantAsync(tenantId, canAccessAllTenants, businessId, ct);
+
+        var name = RequireTrimmed(request.Name, "Name", "El nombre del agente es obligatorio.");
+        if (name.Length > 200)
+            throw new DomainValidationException("Name", "El nombre del agente no puede superar 200 caracteres.");
+        if (await _agentRepository.NameExistsAsync(businessId, name, ct))
+            throw new ConflictException($"Ya existe un agente con el nombre '{name}' en este negocio.");
+
+        var description = string.IsNullOrWhiteSpace(request.Description)
+            ? null
+            : request.Description.Trim();
+        if (description?.Length > 500)
+            throw new DomainValidationException("Description", "La descripcion no puede superar 500 caracteres.");
+
+        var agentType = await _agentRepository.GetDefaultTypeAsync(ct)
+            ?? throw new InvalidOperationException("No existe un tipo de agente activo para crear el borrador.");
+        var agent = new Agent
+        {
+            BusinessId = businessId,
+            AgentTypeId = agentType.AgentTypeId,
+            Name = name,
+            Description = description,
+            Kind = "customer",
+            IsActive = false,
+            SettingsJson = CreateDraftSettingsJson(name)
+        };
+
+        await _agentRepository.AddAsync(agent, ct);
+        var dto = MapToDto(agent);
+        await _auditService.LogAsync("Create", nameof(Agent), agent.AgentId.ToString(), null, dto, ct);
+        _logger.LogInformation(
+            "Draft agent {AgentId} created for business {BusinessId} [CorrelationId: {CorrelationId}]",
+            agent.AgentId,
+            businessId,
+            _correlationIdProvider.CorrelationId);
+        return dto;
+    }
+
     public async Task<AgentDto> GetByIdAsync(Guid tenantId, bool canAccessAllTenants, Guid agentId, CancellationToken ct = default)
     {
         var agent = await GetAgentForTenantAsync(tenantId, canAccessAllTenants, agentId, ct);
@@ -193,7 +238,24 @@ public sealed class AgentAdminService : IAgentAdminService
         agent.UpdatedAt = DateTime.UtcNow;
 
         await _agentRepository.UpdateAsync(agent, ct);
-        _cache.Remove($"agent_config_{agentId}");
+        _configProvider.Invalidate(agentId);
+
+        if (agent.IsActive)
+        {
+            try
+            {
+                await _configProvider.GetConfigForAdminAsync(agentId, ct);
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                agent.SettingsJson = oldJson;
+                await _agentRepository.UpdateAsync(agent, ct);
+                _configProvider.Invalidate(agentId);
+                throw new DomainValidationException(
+                    "Settings",
+                    $"La configuracion no es valida y no fue aplicada: {exception.Message}");
+            }
+        }
 
         await _auditService.LogAsync(
             "Update",
@@ -209,6 +271,85 @@ public sealed class AgentAdminService : IAgentAdminService
 
         return MapToDto(agent);
     }
+
+    public async Task<AgentDto> UpdateStatusAsync(
+        Guid tenantId,
+        bool canAccessAllTenants,
+        Guid agentId,
+        UpdateAgentStatusRequest request,
+        CancellationToken ct = default)
+    {
+        var agent = await GetAgentForTenantAsync(tenantId, canAccessAllTenants, agentId, ct);
+        if (agent.IsActive == request.IsActive)
+            return MapToDto(agent);
+
+        if (request.IsActive)
+        {
+            try
+            {
+                await _configProvider.GetConfigForAdminAsync(agentId, ct);
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                throw new DomainValidationException(
+                    "Settings",
+                    $"No se puede publicar el agente: {exception.Message}");
+            }
+        }
+
+        var oldState = new { agent.IsActive };
+        agent.IsActive = request.IsActive;
+        await _agentRepository.UpdateAsync(agent, ct);
+        _configProvider.Invalidate(agentId);
+
+        var dto = MapToDto(agent);
+        await _auditService.LogAsync("UpdateStatus", nameof(Agent), agentId.ToString(), oldState, new { agent.IsActive }, ct);
+        return dto;
+    }
+
+    internal static string CreateDraftSettingsJson(string agentName) =>
+        JsonSerializer.Serialize(new
+        {
+            model = "gpt-4.1-mini",
+            temperature = 0.2,
+            historyWindowSize = 20,
+            extractorHistoryWindowSize = 2,
+            persona = $"Eres {agentName}, asistente virtual del negocio. Habla de forma clara, cordial y breve.",
+            policies = "Atiende solo con informacion autorizada del negocio. Si no puedes resolver una solicitud, ofrece escalar a una persona.",
+            conversationOpening = new
+            {
+                enabled = true,
+                guidance = "Saluda brevemente, presentate y pregunta en que puedes ayudar.",
+                allowQuestions = true
+            },
+            flows = new[]
+            {
+                new
+                {
+                    id = "main",
+                    type = "primary",
+                    routingGuidance = "Use this primary flow for the normal customer journey.",
+                    stages = new[]
+                    {
+                        new
+                        {
+                            id = "start",
+                            name = "Inicio",
+                            goal = "Comprender la necesidad del cliente y orientarlo con la informacion configurada.",
+                            collect = Array.Empty<string>(),
+                            advanceWhenFacts = Array.Empty<string>(),
+                            signals = Array.Empty<object>(),
+                            actions = Array.Empty<object>(),
+                            transitions = Array.Empty<object>(),
+                            response = new { guidance = "Responde la solicitud y pide solo la informacion necesaria para avanzar." }
+                        }
+                    }
+                }
+            },
+            factSchema = Array.Empty<object>(),
+            globalActions = Array.Empty<object>(),
+            templates = new Dictionary<string, string>()
+        }, JsonOptions);
 
     private async Task<BusinessInboundContact> GetInboundContactForBusinessAsync(Guid businessId, Guid contactId, CancellationToken ct)
     {

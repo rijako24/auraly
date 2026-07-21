@@ -1,23 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { MessageCircle, Settings2, Sparkles } from "lucide-react";
+import { MessageCircle, Plus, Settings2, Sparkles } from "lucide-react";
 
 import { AgentOperationalModeControl } from "@/components/agents/agent-operational-mode-control";
-import { AgentTestChat } from "@/components/agents/agent-test-chat";
 import { PageError } from "@/components/ui/page-error";
 import { PageLoading } from "@/components/ui/page-loading";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
 import { useAgents } from "@/hooks/use-agents";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 
@@ -41,12 +32,20 @@ export default function AgentsPage() {
 
   return (
     <div className="space-y-6">
-      <div>
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div>
         <h1 className="text-2xl font-semibold tracking-tight">Agente IA</h1>
         <p className="text-muted-foreground">
           Configura persona, flujo por etapas, facts, tools y guards según el motor
           agentic (<code className="text-xs">SettingsJson</code>).
         </p>
+        </div>
+        <Button asChild>
+          <Link href="/dashboard/agents/new">
+            <Plus className="mr-2 h-4 w-4" />
+            Crear agente
+          </Link>
+        </Button>
       </div>
       <AgentOperationalModeControl businessId={businessId} />
 
@@ -55,6 +54,9 @@ export default function AgentsPage() {
           <CardContent className="flex flex-col items-center gap-3 py-12 text-center">
             <Sparkles className="h-10 w-10 text-muted-foreground" />
             <p className="text-muted-foreground">
+              Todav&iacute;a no hay agentes para este negocio. Crea el primero y config&uacute;ralo paso a paso.
+            </p>
+            <p className="hidden">
               No hay agentes activos para este negocio. Créalos desde la base de datos
               o el seed <code className="text-xs">SeedAgenticConfiguration.sql</code>.
             </p>
@@ -96,23 +98,12 @@ export default function AgentsPage() {
                       Modo avanzado
                     </Link>
                   </Button>
-                  <Dialog>
-                    <DialogTrigger asChild>
-                      <Button type="button" variant="secondary">
-                        <MessageCircle className="mr-2 h-4 w-4" />
-                        Probar
-                      </Button>
-                    </DialogTrigger>
-                    <DialogContent className="max-w-3xl">
-                      <DialogHeader>
-                        <DialogTitle>Probar {agent.name}</DialogTitle>
-                        <DialogDescription>
-                          Ejecuta turnos reales del agente sin guardar mensajes.
-                        </DialogDescription>
-                      </DialogHeader>
-                      <AgentTestChat agent={agent} />
-                    </DialogContent>
-                  </Dialog>
+                  <Button asChild variant="secondary">
+                    <Link href={`/dashboard/agents/${agent.agentId}/setup`}>
+                      <MessageCircle className="mr-2 h-4 w-4" />
+                      Configurar y probar
+                    </Link>
+                  </Button>
                 </div>
               </CardContent>
             </Card>

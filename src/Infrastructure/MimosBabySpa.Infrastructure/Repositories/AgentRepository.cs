@@ -43,6 +43,16 @@ public class AgentRepository : IAgentRepository
             .OrderBy(a => a.Name)
             .FirstOrDefaultAsync(ct);
 
+    public async Task<AgentType?> GetDefaultTypeAsync(CancellationToken ct = default) =>
+        await _db.AgentTypes
+            .Where(type => type.IsActive)
+            .OrderByDescending(type => type.Name == "Vendedor")
+            .ThenBy(type => type.Name)
+            .FirstOrDefaultAsync(ct);
+
+    public Task<bool> NameExistsAsync(Guid businessId, string name, CancellationToken ct = default) =>
+        _db.Agents.AnyAsync(agent => agent.BusinessId == businessId && agent.Name == name, ct);
+
     public async Task<Agent> AddAsync(Agent agent, CancellationToken ct = default)
     {
         agent.AgentId = Guid.NewGuid();

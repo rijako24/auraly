@@ -30,8 +30,25 @@ public sealed class BusinessUsagePeriodRepository : IBusinessUsagePeriodReposito
     public async Task<BusinessUsagePeriod> AddAsync(BusinessUsagePeriod period, CancellationToken ct = default)
     {
         _context.BusinessUsagePeriods.Add(period);
-        await _context.SaveChangesAsync(ct);
-        return period;
+        try
+        {
+            await _context.SaveChangesAsync(ct);
+            return period;
+        }
+        catch (DbUpdateException)
+        {
+            _context.Entry(period).State = EntityState.Detached;
+            var concurrentlyCreated = await _context.BusinessUsagePeriods
+                .Include(value => value.BusinessSubscription)
+                .FirstOrDefaultAsync(value =>
+                    value.BusinessSubscriptionId == period.BusinessSubscriptionId
+                    && value.PeriodStart == period.PeriodStart
+                    && value.PeriodEnd == period.PeriodEnd,
+                    ct);
+            if (concurrentlyCreated is not null)
+                return concurrentlyCreated;
+            throw;
+    }
     }
 
     public async Task UpdateAsync(BusinessUsagePeriod period, CancellationToken ct = default)

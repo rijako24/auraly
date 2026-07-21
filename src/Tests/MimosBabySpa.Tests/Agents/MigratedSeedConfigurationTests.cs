@@ -49,6 +49,200 @@ public sealed class MigratedSeedConfigurationTests
     }
 
     [Fact]
+    public void AuralyDemoFlow_UsesDeterministicAvailabilityAndReservationGuards()
+    {
+        var root = FindSolutionRoot();
+        var path = Path.Combine(
+            root,
+            "database",
+            "MimosBabySpa.Database",
+            "Scripts",
+            "Seeds",
+            "SeedAuraly.sql");
+        var seedSql = File.ReadAllText(path);
+        var config = JsonSerializer.Deserialize<AgentConfig>(
+            ExtractSettingsJson(seedSql, "SettingsJson"),
+            new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true,
+                UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
+                Converters = { new JsonStringEnumConverter() }
+            })!;
+
+        config.Temperature.Should().Be(0.2f);
+        config.ExtractorHistoryWindowSize.Should().Be(2);
+        config.ConversationOpening.Enabled.Should().BeTrue();
+        config.ConversationOpening.Guidance.Replace("\r\n", "\n").Should()
+            .Contain("\U0001F44B Hola, soy Aly de AURALY.\n\n\u00A1Un gusto saludarte!\n\n")
+            .And.Contain("como podemos ayudarte")
+            .And.Contain("acompanarte a agendar una demo en vivo");
+        config.Persona.Should().Contain("el bot de AURALY").And.Contain("podemos ayudarte");
+        config.Policies.Should().Contain("precios, costos, planes o tarifas")
+            .And.Contain("en la demo se les dara toda la informacion comercial")
+            .And.Contain("No inventes ni anticipes montos");
+        config.ConversationOpening.AllowQuestions.Should().BeFalse();
+        seedSql.Should().NotContain("SystemPromptMarkdown");
+        seedSql.Should().Contain(
+            "CurrentPeriodStart     = DATEFROMPARTS(YEAR(SYSUTCDATETIME()), MONTH(SYSUTCDATETIME()), 1)");
+        seedSql.Should().Contain(
+            "CurrentPeriodEnd       = DATEADD(MONTH, 1, DATEFROMPARTS(YEAR(SYSUTCDATETIME()), MONTH(SYSUTCDATETIME()), 1))");
+
+        var pricingInformation = config.GlobalActions.Single(action => action.Id == "pricing_information");
+        pricingInformation.Signal.Type.Should().Be("pricing_question");
+        pricingInformation.Actions.Should().BeEmpty();
+        pricingInformation.Response.Template.Should().Be("pricing_demo_information");
+        config.Templates["pricing_demo_information"].Should().Contain("En la demo").And.Contain("precios y planes");
+        var confirmationReplay = config.GlobalActions.Single(action => action.Id == "booking_confirmation_replay");
+        confirmationReplay.Signal.Type.Should().Be("booking_confirmation_replay");
+        confirmationReplay.Actions.Should().BeEmpty();
+        confirmationReplay.Response.Template.Should().Be("booking_already_confirmed");
+        config.Templates["booking_already_confirmed"].Should().Contain("ya quedo agendada");
+        var humanHandoff = config.GlobalActions.Single(action => action.Id == "human_handoff");
+        humanHandoff.Actions.Single(action => action.Operation == "escalation.request_human")
+            .OnOutcome["escalation.requested"].Response!.Template.Should().Be("human_handoff_ack");
+        config.Templates["human_handoff_ack"].Should().Contain("equipo AURALY");
+
+        var facts = config.FactSchema.ToDictionary(fact => fact.Key, StringComparer.OrdinalIgnoreCase);
+        facts["service"].DefaultValue.Should().Be("Demo AURALY");
+        facts["main_channel"].DefaultValue.Should().Be("WhatsApp");
+        facts["availability_checked"].Type.Should().Be("boolean");
+        facts["company_name"].ShowInCollectedInfo.Should().BeTrue();
+        facts["business_type"].ShowInCollectedInfo.Should().BeTrue();
+        facts["pain_point"].ShowInCollectedInfo.Should().BeTrue();
+        facts["pain_point"].Label.Should().Be("proceso que quiere automatizar o mejorar");
+        facts["pain_point"].ExtractionGuidance.Should()
+            .Contain("descripcion breve pero completa")
+            .And.Contain("No la reduzcas a una categoria cerrada");
+        config.Templates["demo_confirmation"].Should().Contain("{{business_type}}").And.Contain("{{pain_point}}");
+        config.Templates["value_explanation"].Should()
+            .Contain("\u2728")
+            .And.Contain("\U0001F4AC")
+            .And.Contain("\U0001F4C5")
+            .And.Contain("\U0001F514")
+            .And.NotContain("{{business_type}}")
+            .And.NotContain("{{pain_point}}")
+            .And.NotContain("Entendi que");
+        config.Templates["discovery_question"].Should()
+            .Contain("{{#if business_type}}")
+            .And.Contain("{{#if company_name}}")
+            .And.Contain("\u00BFComo se llama tu empresa?")
+            .And.Contain("\u00BFQue tipo de negocio tienes?")
+            .And.Contain("\U0001F4AC")
+            .And.NotContain("\U0001F44B Hola, soy Aly de AURALY.")
+            .And.NotContain("Por ejemplo");
+        var initialDiscovery = new PromptTemplateRenderer().Render(
+            config.Templates["discovery_question"],
+            new Dictionary<string, object?>()).Replace("\r\n", "\n");
+        initialDiscovery.Should()
+            .Contain("\u00BFComo se llama tu empresa?")
+            .And.Contain("\u00BFQue tipo de negocio tienes?")
+            .And.Contain("\u00BFQue proceso te gustaria automatizar o mejorar en WhatsApp?");
+        initialDiscovery.Split('\n').Count(line => line.StartsWith("\u2022 ")).Should().Be(3);
+        facts["business_profile_url"].Required.Should().BeFalse();
+        facts["business_profile_url"].Label.Should().Be("Facebook e Instagram");
+        facts["business_profile_url"].ExtractionGuidance.Should().Contain("uno o ambos perfiles");
+        facts["social_profiles_answered"].Type.Should().Be("boolean");
+        facts["social_profiles_answered"].Scope.Should().Be("request");
+        config.Templates["customer_data_question"].Should()
+            .Contain("\U0001F4CB").And.NotContain("Facebook").And.NotContain("Instagram");
+        config.Templates["social_profiles_question"].Should()
+            .Contain("\U0001F517")
+            .And.Contain("Facebook")
+            .And.Contain("Instagram")
+            .And.Contain("Es opcional");
+        config.Templates["demo_confirmation"].Should()
+            .Contain("Facebook/Instagram: {{business_profile_url}}");
+        var customerDataQuestion = new PromptTemplateRenderer().Render(
+            config.Templates["customer_data_question"],
+            new Dictionary<string, object?>());
+        var normalizedCustomerDataQuestion = customerDataQuestion.Replace("\r\n", "\n");
+        normalizedCustomerDataQuestion.Should().Contain("\u2022 Tu nombre\n\u2022 Tu correo");
+        facts["business_profile_url"].ShowInCollectedInfo.Should().BeTrue();
+        facts["customer_confirmed"].DependsOn.Should().Contain(
+            ["service", "desired_date", "desired_time", "customer_name", "company_name", "customer_email"]);
+
+        var stages = config.Flows.Single(flow => flow.Type == "primary")
+            .Stages.ToDictionary(stage => stage.Id, StringComparer.OrdinalIgnoreCase);
+        stages["discovery"].Response.Template.Should().Be("discovery_question");
+        stages["discovery"].AdvanceWhenFacts.Should().Contain("company_name");
+        stages["discovery"].ConversationGuidance.Should()
+            .Contain("un solo mensaje estructurado")
+            .And.Contain("nombre propio de la empresa")
+            .And.Contain("que quiere automatizar o mejorar")
+            .And.Contain("No ofrezcas ejemplos ni una lista cerrada");
+        var valueExplanation = stages["value_explanation"];
+        valueExplanation.ConversationGuidance.Should()
+            .Contain("Antes de pedir o usar una fecha")
+            .And.Contain("Explica el flujo que vivirian el cliente y el equipo");
+        var catalog = valueExplanation.Actions.Single(action => action.Operation == "catalog.get_services");
+        catalog.Trigger.Should().Be(StageActionTriggers.OnEnter);
+        catalog.OnOutcome["catalog.services_returned"].Response!.Template.Should().Be("value_explanation");
+        var scheduling = stages["scheduling"];
+        scheduling.Collect.Should().Contain(["desired_date", "desired_time"]);
+        scheduling.Collect.Should().NotContain("availability_checked");
+        scheduling.AdvanceWhenFacts.Should().Equal("availability_checked");
+        scheduling.Signals.Should().BeEmpty("a time choice must not be interpreted as a service selection");
+        var availability = scheduling.Actions.Single(action => action.Operation == "reservation.check_availability");
+        availability.Condition.Should().NotBeNull();
+        availability.Condition!.Not.Should().NotBeNull();
+        availability.Condition.Not!.Any.Should().Contain(condition =>
+            condition.FactChanged == "business_type");
+        availability.Condition.Not.Any.Should().Contain(condition =>
+            condition.FactChanged == "pain_point");
+        availability.OnOutcome["availability.exact_time_available"].Effects.Should().ContainSingle(effect =>
+            effect.Type == StageEffectTypes.SetFact
+            && effect.Fact == "availability_checked"
+            && effect.Value.ValueKind == JsonValueKind.True);
+        availability.OnOutcome["availability.options_available"].Effects.Should().BeEmpty();
+        stages["customer_data"].Collect.Should().NotContain("business_profile_url");
+        stages["customer_data"].ConversationGuidance.Should()
+            .Contain("No pidas redes sociales en esta etapa");
+        stages["customer_data"].Response.Template.Should().Be("customer_data_question");
+        var socialProfiles = stages["social_profiles"];
+        socialProfiles.AdvanceWhenFacts.Should().Equal("social_profiles_answered");
+        socialProfiles.Collect.Should().Contain(["business_profile_url", "social_profiles_answered"]);
+        socialProfiles.ConversationGuidance.Should()
+            .Contain("despues de validar fecha y hora y antes del resumen")
+            .And.Contain("Nunca bloquees el agendamiento");
+        socialProfiles.Response.Template.Should().Be("social_profiles_question");
+        socialProfiles.Transitions.Should().Contain(transition => transition.To == "confirmation");
+        availability.OnOutcome["availability.requested_time_unavailable"].Effects.Should().ContainSingle(effect =>
+            effect.Type == StageEffectTypes.ClearFacts
+            && effect.Facts.Contains("desired_time"));
+        config.Templates["availability_slots"].Should().Contain("{{#if intro_message}}{{intro_message}}{{/if}}\n\n*");
+        availability.OnOutcome["availability.none"].Effects.Should().ContainSingle();
+        availability.OnOutcome["availability.none"].Response!.Template.Should().Be("availability_none");
+        availability.OnOutcome["input.past_date"].Effects.Should().ContainSingle();
+        availability.OnOutcome["input.past_date"].Response!.Template.Should().Be("past_date_invalid");
+        availability.OnOutcome["input.invalid_date"].Response!.Template.Should().Be("date_invalid");
+        availability.OnOutcome["input.invalid_time"].Response!.Template.Should().Be("time_invalid");
+
+        var create = stages["reservation_creation"].Actions.Single(action => action.Operation == "reservation.create");
+        create.Execution.Idempotency.Should().Be(StageActionIdempotency.OncePerRequest);
+        create.Arguments.Should().ContainKey("customer_email");
+        create.Condition!.All.Should().Contain(condition => condition.FactEquals != null
+            && condition.FactEquals.Key == "customer_confirmed"
+            && condition.FactEquals.Value.ValueKind == JsonValueKind.True);
+        create.Condition.All.Should().Contain(condition => condition.VerificationActive == "availability_checked");
+        create.OnOutcome["reservation.created"].Effects.Should().Contain(effect =>
+            effect.Type == StageEffectTypes.CompleteRequest);
+        create.OnOutcome["reservation.created"].Response!.Template.Should().Be("demo_created");
+
+        var reservationNotification = config.Notifications["reservation_created"];
+        reservationNotification.Enabled.Should().BeTrue();
+        reservationNotification.Recipients.Should().Equal("573012926660");
+        reservationNotification.SendMessageSequence.Should().Be("internal_demo_scheduled");
+        var internalNotification = config.MessageSequences["internal_demo_scheduled"];
+        internalNotification.Messages.Should().ContainSingle();
+        internalNotification.Messages.Single().Body.Should()
+            .Contain("{CustomerName}")
+            .And.Contain("{company_name}")
+            .And.Contain("{business_type}")
+            .And.Contain("{pain_point}")
+            .And.NotContain("{business_profile_url}");
+    }
+
+    [Fact]
     public void CjCustomerFacingTemplates_AreConversationalAndReadableOnWhatsApp()
     {
         var root = FindSolutionRoot();

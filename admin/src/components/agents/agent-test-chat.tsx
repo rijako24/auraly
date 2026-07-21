@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
-import { MessageCircle, RotateCcw, Send, UserRound } from "lucide-react";
+import { MessageCircle, RotateCcw, Save, Send, UserRound } from "lucide-react";
 import { useMutation } from "@tanstack/react-query";
 import { toast } from "sonner";
 
@@ -20,6 +20,8 @@ import { Textarea } from "@/components/ui/textarea";
 interface AgentTestChatProps {
   agent: Agent;
   hasUnsavedChanges?: boolean;
+  onSaveChanges?: () => Promise<void>;
+  savingChanges?: boolean;
   className?: string;
   compact?: boolean;
 }
@@ -34,22 +36,29 @@ type AgentTestEvent = {
 export function AgentTestChat({
   agent,
   hasUnsavedChanges = false,
+  onSaveChanges,
+  savingChanges = false,
   className,
   compact = false,
 }: AgentTestChatProps) {
   const [customerName, setCustomerName] = useState("Cliente de prueba");
-  const [customerPhone, setCustomerPhone] = useState("+573001112233");
+  const [customerPhone, setCustomerPhone] = useState("");
   const [input, setInput] = useState("");
   const [facts, setFacts] = useState<Record<string, string>>({});
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const [events, setEvents] = useState<AgentTestEvent[]>([]);
+  const [savingForTest, setSavingForTest] = useState(false);
   const [messages, setMessages] = useState<AgentTestChatMessage[]>([
     {
       role: "assistant",
       content: `Hola, soy ${agent.name}. Escribe un mensaje para probar el flujo.`,
     },
   ]);
+
+  useEffect(() => {
+    setCustomerPhone(createIsolatedTestPhone());
+  }, []);
 
   const visibleHistory = useMemo(
     () => messages.filter((m) => !m.content.startsWith("Hola, soy ")),
@@ -113,7 +122,7 @@ export function AgentTestChat({
 
   const sendMessage = () => {
     const text = input.trim();
-    if (!text || mutation.isPending) return;
+    if (!text || mutation.isPending || hasUnsavedChanges || savingChanges) return;
 
     setInput("");
     setEvents([]);
@@ -143,7 +152,25 @@ export function AgentTestChat({
     ]);
     setEvents([]);
     setFacts({});
+    setCustomerPhone(createIsolatedTestPhone());
   };
+
+  const handleSaveForTest = async () => {
+    if (!onSaveChanges || savingForTest || savingChanges) return;
+
+    setSavingForTest(true);
+    try {
+      await onSaveChanges();
+      handleReset();
+      toast.success("Cambios guardados. Ya puedes probar el agente.");
+    } catch {
+      toast.error("No se pudieron guardar los cambios");
+    } finally {
+      setSavingForTest(false);
+    }
+  };
+
+  const testBlocked = hasUnsavedChanges || savingChanges || savingForTest;
 
   return (
     <Card className={cn("overflow-hidden", className)}>
@@ -153,12 +180,25 @@ export function AgentTestChat({
             <MessageCircle className="h-4 w-4 text-primary" />
             Probar agente
           </CardTitle>
-          <Badge variant="secondary">No guarda mensajes</Badge>
+          <Badge variant="secondary">Motor real, efectos simulados</Badge>
         </div>
         {hasUnsavedChanges && (
-          <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
-            Hay cambios pendientes. Guarda para probar esa configuracion.
-          </p>
+          <div className="space-y-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
+            <p>Hay cambios pendientes. Gu&aacute;rdalos para que el chat use esa configuraci&oacute;n.</p>
+            {onSaveChanges && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-7 bg-background"
+                onClick={handleSaveForTest}
+                disabled={savingChanges || savingForTest}
+              >
+                <Save className="mr-1 h-3.5 w-3.5" />
+                {savingChanges || savingForTest ? "Guardando..." : "Guardar para probar"}
+              </Button>
+            )}
+          </div>
         )}
         <div className="grid gap-2 sm:grid-cols-2">
           <div className="space-y-1">
@@ -171,13 +211,16 @@ export function AgentTestChat({
             />
           </div>
           <div className="space-y-1">
-            <Label htmlFor={`test-phone-${agent.agentId}`}>Telefono</Label>
+            <Label htmlFor={`test-phone-${agent.agentId}`}>Tel&eacute;fono de WhatsApp simulado</Label>
             <Input
               id={`test-phone-${agent.agentId}`}
               value={customerPhone}
               onChange={(event) => setCustomerPhone(event.target.value)}
               placeholder="+573001112233"
             />
+            <p className="text-[11px] leading-4 text-muted-foreground">
+              Reiniciar crea una identidad nueva. Escribe un n&uacute;mero existente para probar su memoria.
+            </p>
           </div>
         </div>
       </CardHeader>
@@ -224,9 +267,9 @@ export function AgentTestChat({
             placeholder="Escribe como cliente para validar el flujo"
             className={cn(
               "min-h-[72px] resize-none",
-              mutation.isPending && "cursor-wait opacity-70"
+              (mutation.isPending || testBlocked) && "cursor-wait opacity-70"
             )}
-            readOnly={mutation.isPending}
+            readOnly={mutation.isPending || testBlocked}
           />
           <div className="flex items-center justify-between gap-2">
             <Button type="button" variant="ghost" size="sm" onClick={handleReset}>
@@ -237,7 +280,7 @@ export function AgentTestChat({
               <UserRound className="h-3.5 w-3.5" />
               {visibleHistory.length} mensajes de contexto
             </div>
-            <Button type="submit" disabled={!input.trim() || mutation.isPending}>
+            <Button type="submit" disabled={!input.trim() || !customerPhone.trim() || mutation.isPending || testBlocked}>
               <Send className="mr-1 h-4 w-4" />
               Enviar
             </Button>
@@ -266,6 +309,11 @@ export function AgentTestChat({
       </CardContent>
     </Card>
   );
+}
+
+function createIsolatedTestPhone() {
+  const source = `${Date.now()}${Math.floor(Math.random() * 1_000_000_000)}`;
+  return `+573${source.slice(-9)}`;
 }
 
 function formatTestEvent(event: AgentTestEvent) {

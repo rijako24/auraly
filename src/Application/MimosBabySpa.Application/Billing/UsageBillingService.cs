@@ -125,6 +125,20 @@ public sealed class UsageBillingService : IUsageBillingService
         if (subscription is null)
             return null;
 
+        if (subscription.CurrentPeriodEnd <= now)
+        {
+            if (!subscription.AutoRenew)
+                return null;
+
+            RenewSubscriptionPeriod(subscription, now);
+            await _unitOfWork.BusinessSubscriptions.UpdateAsync(subscription, ct);
+
+            _logger.LogInformation(
+                "Business {BusinessId}: subscription period auto-renewed through {CurrentPeriodEnd}",
+                businessId,
+                subscription.CurrentPeriodEnd);
+        }
+
         var period = await _unitOfWork.BusinessUsagePeriods.GetCurrentAsync(subscription.BusinessSubscriptionId, now, ct);
         if (period is not null || !createIfMissing)
             return period;
@@ -142,8 +156,33 @@ public sealed class UsageBillingService : IUsageBillingService
             VariableCostExtraCop = subscription.ExtraVariableCostCop,
             Status = UsagePeriodStatus.Open,
             CreatedAt = now,
-            UpdatedAt = now
+            UpdatedAt = now,
+            BusinessSubscription = subscription
         }, ct);
+    }
+
+    private static void RenewSubscriptionPeriod(BusinessSubscription subscription, DateTime utcNow)
+    {
+        if (subscription.CurrentPeriodEnd <= subscription.CurrentPeriodStart)
+        {
+            subscription.CurrentPeriodStart = new DateTime(
+                utcNow.Year,
+                utcNow.Month,
+                1,
+                0,
+                0,
+                0,
+                DateTimeKind.Utc);
+            subscription.CurrentPeriodEnd = subscription.CurrentPeriodStart.AddMonths(1);
+            return;
+        }
+
+        do
+        {
+            subscription.CurrentPeriodStart = subscription.CurrentPeriodEnd;
+            subscription.CurrentPeriodEnd = subscription.CurrentPeriodEnd.AddMonths(1);
+        }
+        while (subscription.CurrentPeriodEnd <= utcNow);
     }
 
     private decimal EstimateCostCop(UsageChargeRequest request)

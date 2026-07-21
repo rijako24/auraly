@@ -7,6 +7,11 @@ export interface AgentTestChatMessage {
   content: string;
 }
 
+export interface CreateAgentRequest {
+  name: string;
+  description?: string;
+}
+
 export interface AgentTestTurnRequest {
   message: string;
   customerPhone?: string;
@@ -53,6 +58,9 @@ export const agentsApi = {
   listByBusiness: (businessId: string) =>
     apiClient.get<Agent[]>(`/businesses/${businessId}/agents`),
 
+  create: (businessId: string, data: CreateAgentRequest) =>
+    apiClient.post<Agent>(`/businesses/${businessId}/agents`, data),
+
   listInboundContactsByBusiness: (businessId: string, includeInactive = false) =>
     apiClient.get<BusinessInboundContact[]>(`/businesses/${businessId}/inbound-contacts`, includeInactive ? { includeInactive } : undefined),
   createInboundContact: (businessId: string, data: BusinessInboundContactPayload) =>
@@ -66,6 +74,9 @@ export const agentsApi = {
 
   updateSettings: (agentId: string, settings: AgentSettings) =>
     apiClient.put<Agent>(`/agents/${agentId}/settings`, { settings }),
+
+  updateStatus: (agentId: string, isActive: boolean) =>
+    apiClient.put<Agent>(`/agents/${agentId}/status`, { isActive }),
 
   testTurn: (agentId: string, request: AgentTestTurnRequest) =>
     apiClient.post<AgentTestTurnResponse>(`/agents/${agentId}/test-turn`, request),

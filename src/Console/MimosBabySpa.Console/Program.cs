@@ -619,7 +619,7 @@ Console.WriteLine("  Usa     --trace para ver TurnPlan, operaciones y respuestas
 
 Console.WriteLine("  Usa     pilot-seed-turn-plan para inspeccionar una extraccion real");
 Console.WriteLine("  Usa     eval-seed-extractor para ejecutar una suite de extraccion");
-Console.WriteLine("  Usa     mimos, luis o cj para seleccionar el agente interactivo");
+Console.WriteLine("  Usa     auraly, mimos, luis o cj para seleccionar el agente interactivo");
 
 Console.WriteLine();
 
@@ -1045,6 +1045,9 @@ static ConsoleAgentOptions? ResolveRequestedConsoleAgent(string[] args)
         if (normalized is "mimos" or "mimi" or "mimobot")
             return ConsoleAgentOptions.Mimos();
 
+        if (normalized is "auraly" or "aly")
+            return ConsoleAgentOptions.Auraly();
+
     }
 
     return null;
@@ -1281,6 +1284,14 @@ internal sealed record ConsoleAgentOptions(
         "Mimi Bot",
         "Mimi",
         ["Mimi Bot", "Mimo Bot"]);
+
+    public static ConsoleAgentOptions Auraly() => new(
+        Guid.Parse("A0A10000-0000-0000-0000-000000000001"),
+        "AURALY",
+        Guid.Parse("A0A10000-0000-0000-0000-000000000002"),
+        "Aly",
+        "Aly",
+        ["AURALY"]);
 
     public static ConsoleAgentOptions LuisPetit() => new(
 

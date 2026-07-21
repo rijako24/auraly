@@ -41,6 +41,7 @@ export interface AgentGlobalAction {
 export interface FactSchemaEntry {
   key: string; role?: string; label: string; type: string; extractionGuidance?: string; options?: { value: string; label: string; selector?: string }[]; required?: boolean;
   source?: string; showInCollectedInfo?: boolean; defaultValue?: string;
+  customerReadable?: boolean;
   scope?: "customer" | "request" | "ephemeral"; retentionDays?: number; expireOnBusinessDayChange?: boolean;
   dependsOn?: string[]; valueSource?: string;
 }
@@ -54,7 +55,10 @@ export interface ExternalEscalationEvent {
 export interface ExternalEscalationDefinitions { enabled?: boolean; events?: Record<string, ExternalEscalationEvent>; }
 export interface AgentEscalationsSettings { human?: AgentHumanEscalationSettings; external?: ExternalEscalationDefinitions; }
 export interface CheckoutPaymentDefinition { type?: string; percentage?: number; }
-export interface CheckoutPaymentMethodDefinition { label?: string; aliases?: string[]; payment?: CheckoutPaymentDefinition | null; template?: string; confirmationOutcome?: string; }
+export interface CheckoutPaymentMethodDefinition {
+  label?: string; aliases?: string[]; payment?: CheckoutPaymentDefinition | null; template?: string; confirmationOutcome?: string;
+  manualConfirmationRequired?: boolean; manualExpirationMinutes?: number;
+}
 export interface OrderCheckoutShippingDefinition { enabled?: boolean; localCity?: string; localCost?: number; nationalCost?: number; }
 export interface CheckoutModeDefinition {
   paymentMethods?: Record<string, CheckoutPaymentMethodDefinition>; shipping?: OrderCheckoutShippingDefinition;

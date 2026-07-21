@@ -36,6 +36,49 @@ public sealed class DeterministicResponseRendererTests
         chat.CallCount.Should().Be(0);
     }
 
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public async Task Render_UrgentExclusiveTemplate_SuppressesConversationOpening(bool escalated, bool failedOutcome)
+    {
+        var chat = new RecordingChatClient("should not be used");
+        var composer = new StubPresentationComposer("TRANSFERENCIA");
+        var renderer = new DeterministicResponseRenderer(chat, composer);
+        var config = new AgentConfig
+        {
+            ConversationOpening = new ConversationOpeningDefinitions
+            {
+                Enabled = true,
+                Guidance = "Saluda y pregunta por el negocio."
+            }
+        };
+        var turn = new DeterministicTurnResult
+        {
+            Success = true,
+            EscalateToHuman = escalated,
+            Trace = failedOutcome
+                ?
+                [
+                    new StageOperationTrace(
+                        "check", "reservation.check_availability", "{}", "input.past_date", false,
+                        Outcome: OperationOutcome.Fail("input.past_date", "past"))
+                ]
+                : [],
+            Response = new StageResponseDefinition { Template = "human_handoff_ack" }
+        };
+
+        var response = await renderer.RenderAsync(new DeterministicResponseRequest(
+            config,
+            new AgentFlowStage { Id = "discovery" },
+            turn,
+            "Quiero hablar con una persona",
+            [ChatMessage.User("Quiero hablar con una persona")],
+            RequestOpeningRequired: true));
+
+        response.Text.Should().Be("TRANSFERENCIA");
+        chat.CallCount.Should().Be(0);
+    }
+
     [Fact]
     public async Task Render_ConfiguredResponseTemplate_IsExclusiveAndSkipsLlm()
     {

@@ -152,6 +152,8 @@ public sealed class CommerceTurnPlanSafetyTests
     [InlineData("la primera, 4 unidades", 4)]
     [InlineData("5 de esa", 5)]
     [InlineData("quiero 6", 6)]
+    [InlineData("entonces agrega 1.5k", 1.5)]
+    [InlineData("entonces agrega 1,5 kg", 1.5)]
     public void CatalogSelectionWithRequestedQuantity_KeepsMutation(string message, decimal quantity)
     {
         var normalized = CommerceTurnPlanSafety.Normalize(

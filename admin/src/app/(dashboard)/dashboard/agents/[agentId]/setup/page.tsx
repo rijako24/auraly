@@ -6,11 +6,11 @@ import { useParams } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 
 import { AgentOperationalModeControl } from "@/components/agents/agent-operational-mode-control";
-import { HumanAgentConfigWizard } from "@/components/agents/human-agent-config-wizard";
+import { AgentSetupWizard } from "@/components/agents/agent-setup-wizard";
 import { Button } from "@/components/ui/button";
 import { PageError } from "@/components/ui/page-error";
 import { PageLoading } from "@/components/ui/page-loading";
-import { useAgent, useBusinessInboundContacts, useUpdateAgentSettings } from "@/hooks/use-agents";
+import { useAgent, useBusinessInboundContacts, useUpdateAgentSettings, useUpdateAgentStatus } from "@/hooks/use-agents";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 import {
   parseAgentSettingsFromAgent,
@@ -24,6 +24,7 @@ export default function AgentSetupPage() {
   const { data: agent, isLoading, isError, refetch } = useAgent(agentId);
   const { data: inboundContacts } = useBusinessInboundContacts();
   const updateMutation = useUpdateAgentSettings(agentId);
+  const statusMutation = useUpdateAgentStatus(agentId);
   const [settings, setSettings] = useState<AgentSettings | null>(null);
   const [dirty, setDirty] = useState(false);
 
@@ -32,6 +33,29 @@ export default function AgentSetupPage() {
     setSettings(parseAgentSettingsFromAgent(agent));
     setDirty(false);
   }, [agent]);
+
+  useEffect(() => {
+    if (!dirty) return;
+
+    const warnBeforeLeaving = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+
+    window.addEventListener("beforeunload", warnBeforeLeaving);
+    return () => window.removeEventListener("beforeunload", warnBeforeLeaving);
+  }, [dirty]);
+
+  const saveSettings = async () => {
+    if (!settings) return;
+    await updateMutation.mutateAsync(settings);
+    setDirty(false);
+  };
+
+  const publishAgent = async () => {
+    if (dirty) await saveSettings();
+    await statusMutation.mutateAsync(true);
+  };
 
   if (!businessId) {
     return (
@@ -66,18 +90,18 @@ export default function AgentSetupPage() {
 
       <AgentOperationalModeControl businessId={agent.businessId} />
 
-      <HumanAgentConfigWizard
+      <AgentSetupWizard
+        businessId={agent.businessId}
         agent={agent}
         settings={settings}
         onSettingsChange={(next) => {
           setSettings(next);
           setDirty(true);
         }}
-        onSave={async () => {
-          await updateMutation.mutateAsync(settings);
-          setDirty(false);
-        }}
-        saving={updateMutation.isPending}
+        onSave={saveSettings}
+        onPublish={publishAgent}
+        availableInboundContacts={inboundContacts ?? []}
+        saving={updateMutation.isPending || statusMutation.isPending}
         dirty={dirty}
       />
     </div>

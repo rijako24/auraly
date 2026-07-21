@@ -93,7 +93,7 @@ public sealed class AgentTestRuntimeFactory : IAgentTestRuntimeFactory
         var usageBilling = new AgentTestUsageBillingService(log);
 
         return new AgentConversationService(
-            _configProvider,
+            new AdminAgentConfigProvider(_configProvider),
             operationRegistry,
             _stateManager,
             _messageService,
@@ -112,6 +112,17 @@ public sealed class AgentTestRuntimeFactory : IAgentTestRuntimeFactory
             coordinator,
             _serviceProvider.GetRequiredService<IDeterministicResponseRenderer>(),
             new AgentTestTurnEffectProcessor());
+    }
+
+    private sealed class AdminAgentConfigProvider(IAgentConfigProvider inner) : IAgentConfigProvider
+    {
+        public Task<AgentConfig> GetConfigAsync(Guid agentId, CancellationToken ct = default) =>
+            inner.GetConfigForAdminAsync(agentId, ct);
+
+        public Task<AgentConfig> GetConfigForAdminAsync(Guid agentId, CancellationToken ct = default) =>
+            inner.GetConfigForAdminAsync(agentId, ct);
+
+        public void Invalidate(Guid agentId) => inner.Invalidate(agentId);
     }
 
 }

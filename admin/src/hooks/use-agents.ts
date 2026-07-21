@@ -24,6 +24,20 @@ export function useAgents() {
   });
 }
 
+export function useCreateAgent() {
+  const queryClient = useQueryClient();
+  const businessId = useBusinessContextStore((s) => s.selectedBusinessId);
+
+  return useMutation({
+    mutationFn: (payload: { name: string; description?: string }) =>
+      agentsApi.create(businessId!, payload),
+    onSuccess: (data) => {
+      queryClient.setQueryData(agentKeys.detail(data.agentId), data);
+      queryClient.invalidateQueries({ queryKey: agentKeys.list(businessId) });
+    },
+  });
+}
+
 export function useBusinessInboundContacts(options?: { includeInactive?: boolean }) {
   const businessId = useBusinessContextStore((s) => s.selectedBusinessId);
   const includeInactive = options?.includeInactive ?? false;
@@ -49,6 +63,18 @@ export function useUpdateAgentSettings(agentId: string) {
   return useMutation({
     mutationFn: (settings: AgentSettings) =>
       agentsApi.updateSettings(agentId, settings),
+    onSuccess: (data) => {
+      queryClient.setQueryData(agentKeys.detail(agentId), data);
+      queryClient.invalidateQueries({ queryKey: agentKeys.lists() });
+    },
+  });
+}
+
+export function useUpdateAgentStatus(agentId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (isActive: boolean) => agentsApi.updateStatus(agentId, isActive),
     onSuccess: (data) => {
       queryClient.setQueryData(agentKeys.detail(agentId), data);
       queryClient.invalidateQueries({ queryKey: agentKeys.lists() });

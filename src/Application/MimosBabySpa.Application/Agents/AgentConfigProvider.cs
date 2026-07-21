@@ -29,14 +29,26 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
         _compiler = compiler;
     }
 
-    public async Task<AgentConfig> GetConfigAsync(Guid agentId, CancellationToken ct = default)
+    public Task<AgentConfig> GetConfigAsync(Guid agentId, CancellationToken ct = default) =>
+        GetConfigCoreAsync(agentId, includeInactive: false, ct);
+
+    public Task<AgentConfig> GetConfigForAdminAsync(Guid agentId, CancellationToken ct = default) =>
+        GetConfigCoreAsync(agentId, includeInactive: true, ct);
+
+    private async Task<AgentConfig> GetConfigCoreAsync(
+        Guid agentId,
+        bool includeInactive,
+        CancellationToken ct)
     {
-        var cacheKey = $"{CachePrefix}{agentId}";
+        var cacheKey = includeInactive ? $"{CachePrefix}admin_{agentId}" : $"{CachePrefix}{agentId}";
         if (_cache.TryGetValue<AgentConfig>(cacheKey, out var cached))
             return cached!;
 
-        var agent = await _agents.GetByIdAsync(agentId, ct)
-            ?? throw new InvalidOperationException($"Agent {agentId} not found.");
+        var agent = includeInactive
+            ? await _agents.GetByIdForAdminAsync(agentId, ct)
+            : await _agents.GetByIdAsync(agentId, ct);
+        if (agent is null)
+            throw new InvalidOperationException($"Agent {agentId} not found.");
         var settings = ParseSettings(agent.SettingsJson, agentId);
         if (settings.Flows is not { Count: > 0 })
             throw new InvalidOperationException($"Agent configuration {agentId} must declare at least one flow.");
@@ -90,7 +102,11 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
         return config;
     }
 
-    public void Invalidate(Guid agentId) => _cache.Remove($"{CachePrefix}{agentId}");
+    public void Invalidate(Guid agentId)
+    {
+        _cache.Remove($"{CachePrefix}{agentId}");
+        _cache.Remove($"{CachePrefix}admin_{agentId}");
+    }
 
     private static AgentSettings ParseSettings(string? json, Guid agentId)
     {

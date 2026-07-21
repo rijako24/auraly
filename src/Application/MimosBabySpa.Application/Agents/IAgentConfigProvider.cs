@@ -7,4 +7,6 @@ namespace MimosBabySpa.Application.Agents;
 public interface IAgentConfigProvider
 {
     Task<AgentConfig> GetConfigAsync(Guid agentId, CancellationToken ct = default);
+    Task<AgentConfig> GetConfigForAdminAsync(Guid agentId, CancellationToken ct = default);
+    void Invalidate(Guid agentId);
 }

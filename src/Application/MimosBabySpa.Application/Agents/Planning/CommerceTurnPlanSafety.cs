@@ -385,7 +385,7 @@ public static partial class CommerceTurnPlanSafety
 
     [GeneratedRegex(@"^\s*(?:\d+(?:[.,]\d+)?|un|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|trece|catorce|quince|dieciseis|diecisiete|dieciocho|diecinueve|veinte)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex QuantityPrefixRegex();
-    [GeneratedRegex(@"\b(?:agrega(?:me|nos)?|anade(?:me|nos)?|pon(?:me|nos)?|dame|danos|incluye|quiero|necesito)\s+(?:(?:de|del|la|el|las|los|esa|ese|esas|esos)\s+){0,2}(?:\d+(?:[.,]\d+)?|un|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|trece|catorce|quince|dieciseis|diecisiete|dieciocho|diecinueve|veinte)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"\b(?:agrega(?:me|nos)?|anade(?:me|nos)?|pon(?:me|nos)?|dame|danos|incluye|quiero|necesito)\s+(?:(?:de|del|la|el|las|los|esa|ese|esas|esos)\s+){0,2}(?:\d+(?:[.,]\d+)?(?:\s*(?:k|kg|kgs|lb|lbs))?|un|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|trece|catorce|quince|dieciseis|diecisiete|dieciocho|diecinueve|veinte)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex MutationQuantityRegex();
 
     [GeneratedRegex(@"\b(?:\d+(?:[.,]\d+)?|un|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|trece|catorce|quince|dieciseis|diecisiete|dieciocho|diecinueve|veinte)\s+(?:unidad(?:es)?|paquete(?:s)?|caja(?:s)?|bolsa(?:s)?|pieza(?:s)?)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]

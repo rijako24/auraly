@@ -44,6 +44,14 @@
                       "expectedSignals":  [
                                               "order_changes"
                                           ],
+                      "expectedSignalItems":  [
+                                                  {
+                                                      "type":  "order_changes",
+                                                      "count":  2,
+                                                      "products":  ["pollo", "tocineta"],
+                                                      "quantities":  [2, 400]
+                                                  }
+                                              ],
                       "seed":  "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
                       "history":  [
                                       {
@@ -53,6 +61,65 @@
                                       {
                                           "content":  "Productos disponibles: pollo y tocineta con sus precios vigentes.",
                                           "role":  "assistant"
+                                      }
+                                  ]
+                  },
+                  {
+                      "id":  "cj_decimal_weight_in_words",
+                      "message":  "dame un kilo y medio de pollo entero",
+                      "stage":  "product_selection",
+                      "expectedFlow":  "order",
+                      "expectedSignals":  ["order_changes"],
+                      "expectedSignalItems":  [
+                                                  {
+                                                      "type":  "order_changes",
+                                                      "count":  1,
+                                                      "products":  ["pollo"],
+                                                      "operations":  ["add"],
+                                                      "quantities":  [1.5]
+                                                  }
+                                              ],
+                      "seed":  "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+                      "history":  []
+                  },
+                  {
+                      "id":  "cj_decimal_pound_in_words",
+                      "message":  "dame una libra y media de tocineta",
+                      "stage":  "product_selection",
+                      "expectedFlow":  "order",
+                      "expectedSignals":  ["order_changes"],
+                      "expectedSignalItems":  [
+                                                  {
+                                                      "type":  "order_changes",
+                                                      "count":  1,
+                                                      "products":  ["tocineta"],
+                                                      "operations":  ["add"],
+                                                      "quantities":  [1.5]
+                                                  }
+                                              ],
+                      "seed":  "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+                      "history":  []
+                  },
+                  {
+                      "id":  "cj_decimal_weight_compact_follow_up",
+                      "message":  "entonces agrega 1.5k",
+                      "stage":  "product_selection",
+                      "expectedFlow":  "order",
+                      "expectedSignals":  ["order_changes"],
+                      "expectedSignalItems":  [
+                                                  {
+                                                      "type":  "order_changes",
+                                                      "count":  1,
+                                                      "products":  ["pollo"],
+                                                      "operations":  ["add"],
+                                                      "quantities":  [1.5]
+                                                  }
+                                              ],
+                      "seed":  "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+                      "history":  [
+                                      {
+                                          "role":  "assistant",
+                                          "content":  "Te ofreci Pollo entero x kg con su precio vigente. Cuanto deseas?"
                                       }
                                   ]
                   },

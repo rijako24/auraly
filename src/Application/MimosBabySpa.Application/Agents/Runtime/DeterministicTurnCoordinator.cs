@@ -272,7 +272,7 @@ public sealed class DeterministicTurnCoordinator
         var escalate = false;
         var completed = false;
         StageResponseDefinition? response = null;
-        var seenStages = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var seenStageStates = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
         // A stage declaration is an explicit override of the global default for that signal.
         // This guarantees one deterministic owner per turn even when a capability has a
@@ -351,8 +351,16 @@ public sealed class DeterministicTurnCoordinator
 
         for (var hop = 0; hop <= flow.Stages.Count; hop++)
         {
-            if (!seenStages.Add(selectedStage.Id))
+            var stageState = StageProgressSignature(currentFacts, verifications);
+            if (seenStageStates.TryGetValue(selectedStage.Id, out var previousState))
+            {
+                if (!previousState.Equals(stageState, StringComparison.Ordinal))
+                    break;
+
                 return Failure($"Stage transition cycle detected at '{selectedStage.Id}'.", currentFacts, effectivePlan, route);
+            }
+
+            seenStageStates[selectedStage.Id] = stageState;
             visited.Add(selectedStage.Id);
 
             var entering = hop > 0
@@ -478,6 +486,17 @@ public sealed class DeterministicTurnCoordinator
             Response = resolvedResponse
         };
     }
+
+    private static string StageProgressSignature(
+        IReadOnlyDictionary<string, string> facts,
+        IReadOnlySet<string> verifications) =>
+        JsonSerializer.Serialize(new
+        {
+            Facts = facts
+                .OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase)
+                .Select(pair => new { pair.Key, pair.Value }),
+            Verifications = verifications.OrderBy(value => value, StringComparer.OrdinalIgnoreCase)
+        });
 
     private HashSet<string> ResolveActiveVerifications(
         DeterministicTurnRequest request,

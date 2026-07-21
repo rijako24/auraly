@@ -46,7 +46,11 @@ public sealed class DeterministicResponseRenderer : IDeterministicResponseRender
         if (request.Turn.Response?.SuppressText == true)
             return new DeterministicRenderedResponse(string.Empty, 0, 0);
         var openingRequired = request.RequestOpeningRequired
-            && request.Config.ConversationOpening.Enabled;
+            && request.Config.ConversationOpening.Enabled
+            && !request.Turn.EscalateToHuman
+            && !string.Equals(request.Turn.Response?.Mode, "ask_clarification", StringComparison.OrdinalIgnoreCase)
+            && !request.Turn.Trace.Any(trace =>
+                !trace.Skipped && trace.Outcome is not null && !trace.Success);
         if (!string.IsNullOrWhiteSpace(request.Turn.Response?.Template)
             && !presentations.Any(presentation =>
                 presentation.Mode == FragmentRenderMode.Exclusive

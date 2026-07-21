@@ -65,6 +65,101 @@ public sealed class DeterministicTurnCoordinatorTests
         preserved.Response.AmbiguousFields.Should().Equal("customer_name");
     }
 
+    [Fact]
+    public async Task Execute_ProgressingTransitionLoop_ReturnsAtRevisitedCheckpoint()
+    {
+        var config = TransitionLoopConfig(progressOnFirstTransition: true);
+        var result = await Coordinator(new StubPlanner(new TurnPlan
+        {
+            FlowIntent = new PlannedFlowIntent { CandidateFlow = "primary", Confidence = 1 }
+        })).ExecuteAsync(new DeterministicTurnRequest
+        {
+            Config = config,
+            OperationContext = Context(config, new ConversationState()),
+            CurrentFacts = new Dictionary<string, string>(),
+            CurrentFlowId = "primary",
+            ActiveFlowId = "primary",
+            CurrentStageId = "a",
+            LatestUserMessage = "corrijo el horario"
+        });
+
+        result.Success.Should().BeTrue(string.Join("; ", result.Errors));
+        result.VisitedStages.Should().Equal("a", "b");
+        result.CurrentStageId.Should().Be("a");
+        result.Facts["revalidated"].Should().Be("true");
+    }
+
+    [Fact]
+    public async Task Execute_TransitionLoopWithoutProgress_RemainsAnError()
+    {
+        var config = TransitionLoopConfig(progressOnFirstTransition: false);
+        var result = await Coordinator(new StubPlanner(new TurnPlan
+        {
+            FlowIntent = new PlannedFlowIntent { CandidateFlow = "primary", Confidence = 1 }
+        })).ExecuteAsync(new DeterministicTurnRequest
+        {
+            Config = config,
+            OperationContext = Context(config, new ConversationState()),
+            CurrentFacts = new Dictionary<string, string>(),
+            CurrentFlowId = "primary",
+            ActiveFlowId = "primary",
+            CurrentStageId = "a",
+            LatestUserMessage = "mensaje"
+        });
+
+        result.Success.Should().BeFalse();
+        result.Errors.Should().ContainSingle(error => error.Contains("cycle detected", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static AgentConfig TransitionLoopConfig(bool progressOnFirstTransition) => new()
+    {
+        FactSchema =
+        [
+            new FactSchemaEntry
+            {
+                Key = "revalidated", Type = "boolean", Source = "system", Scope = FactScopes.Ephemeral
+            }
+        ],
+        Flows =
+        [
+            new AgentFlowDefinition
+            {
+                Id = "primary",
+                Type = FlowTypes.Primary,
+                Stages =
+                [
+                    new AgentFlowStage
+                    {
+                        Id = "a",
+                        Transitions =
+                        [
+                            new StageTransitionDefinition
+                            {
+                                Id = "a_to_b", To = "b",
+                                Effects = progressOnFirstTransition
+                                    ?
+                                    [
+                                        new StageEffectDefinition
+                                        {
+                                            Type = StageEffectTypes.SetFact,
+                                            Fact = "revalidated",
+                                            Value = Json("true")
+                                        }
+                                    ]
+                                    : []
+                            }
+                        ]
+                    },
+                    new AgentFlowStage
+                    {
+                        Id = "b",
+                        Transitions = [new StageTransitionDefinition { Id = "b_to_a", To = "a" }]
+                    }
+                ]
+            }
+        ]
+    };
+
 
     [Fact]
     public async Task Execute_RequestResetEffect_ReentersFirstStageAndDropsOnlyClearedFacts()

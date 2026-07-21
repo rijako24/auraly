@@ -30,6 +30,18 @@ public class AgentsController : ControllerBase
     public async Task<ActionResult<IReadOnlyList<AgentDto>>> GetByBusiness(Guid businessId, CancellationToken ct) =>
         Ok(await _service.GetByBusinessIdAsync(User.GetTenantId(), User.HasPermission("tenants.read"), businessId, ct));
 
+    [HttpPost("api/businesses/{businessId:guid}/agents")]
+    [PermissionAuthorize("agents.update")]
+    public async Task<ActionResult<AgentDto>> Create(
+        Guid businessId,
+        [FromBody] CreateAgentRequest request,
+        CancellationToken ct)
+    {
+        var result = await _service.CreateAsync(
+            User.GetTenantId(), User.HasPermission("tenants.read"), businessId, request, ct);
+        return CreatedAtAction(nameof(GetById), new { agentId = result.AgentId }, result);
+    }
+
     [HttpGet("api/businesses/{businessId:guid}/inbound-contacts")]
     [PermissionAuthorize("agents.read")]
     public async Task<ActionResult<IReadOnlyList<BusinessInboundContactDto>>> GetInboundContactsByBusiness(
@@ -84,6 +96,14 @@ public class AgentsController : ControllerBase
         CancellationToken ct) =>
         Ok(await _service.UpdateSettingsAsync(User.GetTenantId(), User.HasPermission("tenants.read"), agentId, request, ct));
 
+    [HttpPut("api/agents/{agentId:guid}/status")]
+    [PermissionAuthorize("agents.update")]
+    public async Task<ActionResult<AgentDto>> UpdateStatus(
+        Guid agentId,
+        [FromBody] UpdateAgentStatusRequest request,
+        CancellationToken ct) =>
+        Ok(await _service.UpdateStatusAsync(User.GetTenantId(), User.HasPermission("tenants.read"), agentId, request, ct));
+
     [HttpPost("api/agents/{agentId:guid}/test-turn")]
     [PermissionAuthorize("agents.read")]
     public async Task<ActionResult<AgentTestTurnResponse>> TestTurn(
@@ -99,7 +119,7 @@ public class AgentsController : ControllerBase
 
         var agent = await _service.GetByIdAsync(User.GetTenantId(), User.HasPermission("tenants.read"), agentId, ct);
         var customerPhone = string.IsNullOrWhiteSpace(request.CustomerPhone)
-            ? ($"+57000{Guid.NewGuid():N}")[..18]
+            ? CreateIsolatedTestPhone()
             : request.CustomerPhone.Trim();
 
         await using var tx = await db.Database.BeginTransactionAsync(ct);
@@ -195,4 +215,7 @@ public class AgentsController : ControllerBase
             || role.Equals("bot", StringComparison.OrdinalIgnoreCase)
                 ? "bot"
                 : "user";
+
+    private static string CreateIsolatedTestPhone() =>
+        $"+573{Random.Shared.NextInt64(100_000_000, 1_000_000_000):000000000}";
 }

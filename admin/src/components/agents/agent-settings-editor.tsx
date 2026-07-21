@@ -36,7 +36,8 @@ export type AgentEditorSection =
   | "checkout"
   | "actions"
   | "templates"
-  | "safety";
+  | "safety"
+  | "advanced";
 
 interface AgentSettingsEditorProps {
   value: AgentSettings;
@@ -76,6 +77,7 @@ export function AgentSettingsEditor({ value, onChange, availableInboundContacts 
         signal: current?.signal ?? {
           type: "human_requested",
           description: "El cliente pide hablar con una persona.",
+          valueSchema: { type: "string" },
         },
         actions: current?.actions?.length
           ? current.actions
@@ -84,6 +86,10 @@ export function AgentSettingsEditor({ value, onChange, availableInboundContacts 
               operation: HUMAN_ESCALATION_OPERATION,
               trigger: "on_signal",
               signal: "human_requested",
+              arguments: {
+                reason: "{{signal.human_requested.value}}",
+                last_user_message: "{{user.message}}",
+              },
             }],
         response: current?.response ?? { guidance: "Confirma que el equipo humano fue notificado." },
         ...current,
@@ -111,6 +117,7 @@ export function AgentSettingsEditor({ value, onChange, availableInboundContacts 
         <TabsTrigger value="actions">Acciones</TabsTrigger>
         <TabsTrigger value="templates">Templates</TabsTrigger>
         <TabsTrigger value="safety">Seguridad</TabsTrigger>
+        <TabsTrigger value="advanced">Configuracion completa</TabsTrigger>
       </TabsList>
 
       <TabsContent value="identity" className="space-y-4">
@@ -296,6 +303,23 @@ export function AgentSettingsEditor({ value, onChange, availableInboundContacts 
                 }
               />
             </div>
+          </CardContent>
+        </Card>
+      </TabsContent>
+
+      <TabsContent value="advanced" className="space-y-4">
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">SettingsJson completo</CardTitle>
+            <CardDescription>
+              Acceso a todas las propiedades aceptadas por el motor. Usa los pasos guiados para lo habitual y esta vista para ajustes avanzados.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <JsonEditor
+              value={value as unknown as Record<string, unknown>}
+              onChange={(document) => onChange(document as unknown as AgentSettings)}
+            />
           </CardContent>
         </Card>
       </TabsContent>

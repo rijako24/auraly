@@ -61,8 +61,10 @@ public class ReservationServiceCalendarEventTests
             [ConversationFactKeys.Service] = "Demo AURALY",
             [ConversationFactKeys.DesiredDate] = "2026-07-07",
             [ConversationFactKeys.DesiredTime] = "16:00",
+            ["company_name"] = "Luna Bebe",
             ["business_type"] = "Spa",
             ["pain_point"] = "Agendar demos desde WhatsApp",
+            ["business_profile_url"] = "@lunabebe.qa",
             ["availability_checked"] = "true"
         };
         var schema = new List<FactSchemaEntry>
@@ -71,8 +73,10 @@ public class ReservationServiceCalendarEventTests
             new() { Key = ConversationFactKeys.Service, Label = "servicio", Source = "user" },
             new() { Key = ConversationFactKeys.DesiredDate, Label = "fecha deseada", Source = "user" },
             new() { Key = ConversationFactKeys.DesiredTime, Label = "hora deseada", Source = "user" },
+            new() { Key = "company_name", Label = "empresa", Source = "user", ShowInCollectedInfo = true },
             new() { Key = "business_type", Label = "Tipo de negocio", Source = "user", ShowInCollectedInfo = true },
             new() { Key = "pain_point", Label = "Problematica que quiere resolver", Source = "user", ShowInCollectedInfo = true },
+            new() { Key = "business_profile_url", Label = "Facebook e Instagram", Source = "user", ShowInCollectedInfo = true },
             new() { Key = "availability_checked", Label = "disponibilidad validada", Source = "system" }
         };
         var reservation = new Reservation
@@ -92,8 +96,10 @@ public class ReservationServiceCalendarEventTests
         calendarEvent.Description.Should().Contain("Servicio: Demo AURALY");
         calendarEvent.Description.Should().Contain("Fecha: 07/07/2026");
         calendarEvent.Description.Should().Contain("Hora: 16:00");
+        calendarEvent.Description.Should().Contain("empresa: Luna Bebe");
         calendarEvent.Description.Should().Contain("Tipo de negocio: Spa");
         calendarEvent.Description.Should().Contain("Problematica que quiere resolver: Agendar demos desde WhatsApp");
+        calendarEvent.Description.Should().Contain("Facebook e Instagram: @lunabebe.qa");
         calendarEvent.Description.Should().NotContain("nombre del cliente: Geraldine");
         calendarEvent.Description.Should().NotContain("servicio: Demo AURALY");
         calendarEvent.Description.Should().NotContain("fecha deseada: 2026-07-07");
@@ -110,8 +116,10 @@ public class ReservationServiceCalendarEventTests
             [ConversationFactKeys.Service] = "Demo AURALY",
             [ConversationFactKeys.DesiredDate] = "2026-07-07",
             [ConversationFactKeys.DesiredTime] = "16:00",
+            ["company_name"] = "Luna Bebe",
             ["business_type"] = "Spa",
             ["pain_point"] = "Agendar demos desde WhatsApp",
+            ["business_profile_url"] = "@lunabebe.qa",
             ["availability_checked"] = "true",
             ["system.internal_context"] = "web"
         };
@@ -121,8 +129,10 @@ public class ReservationServiceCalendarEventTests
             new() { Key = ConversationFactKeys.Service, Role = "booking.service", Label = "servicio", Source = "user" },
             new() { Key = ConversationFactKeys.DesiredDate, Role = "booking.date", Label = "fecha deseada", Source = "user" },
             new() { Key = ConversationFactKeys.DesiredTime, Role = "booking.time", Label = "hora deseada", Source = "user" },
+            new() { Key = "company_name", Label = "empresa", Source = "user", ShowInCollectedInfo = true },
             new() { Key = "business_type", Label = "Tipo de negocio", Source = "user", ShowInCollectedInfo = true },
             new() { Key = "pain_point", Label = "Problematica que quiere resolver", Source = "user", ShowInCollectedInfo = true },
+            new() { Key = "business_profile_url", Label = "Facebook e Instagram", Source = "user", ShowInCollectedInfo = true },
             new() { Key = "availability_checked", Label = "disponibilidad validada", Source = "system" },
             new() { Key = "system.internal_context", Label = "contexto", Source = "session" }
         };
@@ -136,13 +146,17 @@ public class ReservationServiceCalendarEventTests
             [ConversationFactKeys.Service] = "Demo AURALY",
             [ConversationFactKeys.DesiredDate] = "2026-07-07",
             [ConversationFactKeys.DesiredTime] = "16:00",
+            ["company_name"] = "Luna Bebe",
             ["business_type"] = "Spa",
-            ["pain_point"] = "Agendar demos desde WhatsApp"
+            ["pain_point"] = "Agendar demos desde WhatsApp",
+            ["business_profile_url"] = "@lunabebe.qa"
         });
         payload[ReservationCustomAttributes.CollectedInfoPropertyName].Should().BeEquivalentTo(new Dictionary<string, string>
         {
+            ["empresa"] = "Luna Bebe",
             ["Tipo de negocio"] = "Spa",
-            ["Problematica que quiere resolver"] = "Agendar demos desde WhatsApp"
+            ["Problematica que quiere resolver"] = "Agendar demos desde WhatsApp",
+            ["Facebook e Instagram"] = "@lunabebe.qa"
         });
         json.Should().NotContain("availability_checked");
         json.Should().NotContain("system.internal_context");

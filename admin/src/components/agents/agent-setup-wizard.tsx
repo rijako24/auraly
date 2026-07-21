@@ -26,6 +26,7 @@ const STEPS = [
   { id: "actions", title: "Acciones", description: "Acciones transversales del agente" },
   { id: "templates", title: "Templates", description: "Plantillas del motor" },
   { id: "safety", title: "Seguridad", description: "Kill switch y escalacion" },
+  { id: "advanced", title: "Completa", description: "Todas las propiedades de SettingsJson" },
   { id: "review", title: "Revision", description: "Confirmar y guardar" },
 ] as const;
 
@@ -37,6 +38,7 @@ interface AgentSetupWizardProps {
   settings: AgentSettings;
   onSettingsChange: (next: AgentSettings) => void;
   onSave: () => Promise<void>;
+  onPublish?: () => Promise<void>;
   availableInboundContacts?: BusinessInboundContact[];
   saving: boolean;
   dirty: boolean;
@@ -48,6 +50,7 @@ export function AgentSetupWizard({
   settings,
   onSettingsChange,
   onSave,
+  onPublish,
   availableInboundContacts = [],
   saving,
   dirty,
@@ -67,6 +70,15 @@ export function AgentSetupWizard({
       toast.success("Configuración guardada");
     } catch {
       toast.error("No se pudo guardar");
+    }
+  };
+
+  const handlePublish = async () => {
+    try {
+      await (onPublish ? onPublish() : onSave());
+      toast.success(onPublish ? "Agente publicado" : "Configuracion guardada");
+    } catch {
+      toast.error(onPublish ? "No se pudo publicar el agente" : "No se pudo guardar");
     }
   };
 
@@ -160,13 +172,15 @@ export function AgentSetupWizard({
         ))}
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_380px] xl:grid-cols-[minmax(0,1fr)_420px]">
         <div className="min-w-0">{renderStep()}</div>
         <AgentTestChat
           agent={agent}
           hasUnsavedChanges={dirty}
+          onSaveChanges={onSave}
+          savingChanges={saving}
           compact
-          className="xl:sticky xl:top-4 xl:self-start"
+          className="lg:sticky lg:top-4 lg:self-start"
         />
       </div>
 
@@ -187,9 +201,9 @@ export function AgentSetupWizard({
               <ArrowRight className="ml-1 h-4 w-4" />
             </Button>
           ) : (
-            <Button type="button" onClick={handleSave} disabled={saving || !dirty}>
+            <Button type="button" onClick={handlePublish} disabled={saving}>
               <Save className="mr-1 h-4 w-4" />
-              {saving ? "Guardando..." : "Guardar configuracion"}
+              {saving ? "Publicando..." : onPublish ? "Publicar agente" : "Guardar configuracion"}
             </Button>
           )}
         </div>

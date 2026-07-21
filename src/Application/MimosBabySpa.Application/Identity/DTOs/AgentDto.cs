@@ -68,3 +68,10 @@ public sealed class UpdateAgentSettingsRequest
     /// <summary>Documento completo de SettingsJson (persona, flow, guards, etc.).</summary>
     public JsonElement Settings { get; init; }
 }
+
+public sealed record CreateAgentRequest(
+    string Name,
+    string? Description);
+
+public sealed record UpdateAgentStatusRequest(
+    bool IsActive);

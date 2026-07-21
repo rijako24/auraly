@@ -1,0 +1,73 @@
+{
+  "business": {
+    "name": "CJ Distribuciones",
+    "locale": "es-CO",
+    "timezone": "America/Bogota",
+    "channels": ["whatsapp"]
+  },
+  "objectives": [
+    "Interpret an image-only reply to the payment-method question as transfer evidence",
+    "Notify the configured payment approver with the authoritative order and payment summary",
+    "Confirm only the payment identified by the interactive button even when another inbound message is batched"
+  ],
+  "processes": [
+    {
+      "id": "order",
+      "type": "primary",
+      "goal": "Complete one valid CJ order",
+      "routing_guidance": "",
+      "steps": [
+        {
+          "id": "payment_method",
+          "goal": "Resolve transfer from an image-only reply at the payment checkpoint",
+          "accepts_facts": ["latest inbound message type"],
+          "requires_facts": ["valid cart", "delivery data"],
+          "signals": [],
+          "actions": [
+            {
+              "capability": "prepare manual payment",
+              "side_effect": true,
+              "confirmation": "external_manual_approval",
+              "authority": "checkout payment coordinator"
+            }
+          ],
+          "success_to": "summary",
+          "exceptions": ["image outside payment checkpoint", "duplicate inbound message"]
+        }
+      ]
+    }
+  ],
+  "data": [
+    {
+      "name": "latest inbound message type",
+      "source": "whatsapp channel",
+      "scope": "ephemeral",
+      "authority": "webhook parser"
+    }
+  ],
+  "integrations": [
+    {
+      "name": "manual payment approval notification",
+      "side_effect": true,
+      "idempotency": "payment transaction id"
+    }
+  ],
+  "cross_cutting": [],
+  "checkout": {
+    "manual_approval_required": true,
+    "button_correlation": "payment transaction id"
+  },
+  "operating_hours": {},
+  "escalations": [
+    {
+      "event": "manual_payment_requested",
+      "recipient": "configured inbound payment approver"
+    }
+  ],
+  "exact_messages": [],
+  "assumptions": [
+    "The image itself need not be forwarded; the approver receives the configured authoritative order/payment summary and correlated confirmation button.",
+    "An image implies transfer only while CJ is at the payment-method checkpoint."
+  ],
+  "open_questions": []
+}
