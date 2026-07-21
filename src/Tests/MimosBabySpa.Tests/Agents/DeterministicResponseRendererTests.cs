@@ -13,6 +13,45 @@ namespace MimosBabySpa.Tests.Agents;
 public sealed class DeterministicResponseRendererTests
 {
     [Fact]
+    public async Task RenderFollowUp_UsesCurrentStageAndHistoryWithoutPlanningOperations()
+    {
+        var chat = new RecordingChatClient("\u00bfTe gustar\u00eda continuar con la opci\u00f3n familiar?");
+        var renderer = new DeterministicResponseRenderer(chat, new StubPresentationComposer());
+        var config = new AgentConfig
+        {
+            Persona = "Habla con calidez.",
+            ConversationFollowUp = new ConversationFollowUpDefinitions
+            {
+                Enabled = true,
+                Guidance = "Recuerda la decisi?n pendiente sin presionar."
+            },
+            FactSchema =
+            [
+                new FactSchemaEntry { Key = "plan", Label = "plan", Type = "string", Source = "user" }
+            ]
+        };
+        var stage = new AgentFlowStage
+        {
+            Id = "choose_plan",
+            Goal = "El cliente elige un plan.",
+            AdvanceWhenFacts = ["plan"]
+        };
+
+        var result = await renderer.RenderFollowUpAsync(new DeterministicFollowUpRequest(
+            config,
+            stage,
+            new Dictionary<string, string>(),
+            "Tenemos plan individual y familiar. \u00bfCu\u00e1l prefieres?",
+            [ChatMessage.Assistant("Tenemos plan individual y familiar. \u00bfCu\u00e1l prefieres?")]));
+
+        result.Text.Should().Be("\u00bfTe gustar\u00eda continuar con la opci\u00f3n familiar?");
+        chat.Prompt.Should().Contain("Recuerda la decisi?n pendiente sin presionar.");
+        chat.Prompt.Should().Contain("Tenemos plan individual y familiar");
+        chat.Prompt.Should().Contain("Do not invent new facts");
+        chat.Options!.MaxTokens.Should().Be(160);
+    }
+
+    [Fact]
     public async Task Render_ExclusivePresentation_SkipsLlmAndReturnsTemplateOnly()
     {
         var chat = new RecordingChatClient("should not be used");

@@ -34,6 +34,13 @@ public interface IInboundMessageDeduplicationService
         string userNumber,
         CancellationToken ct = default);
 
+    Task<bool> HasConversationMessageReceivedAfterAsync(
+        Guid businessId,
+        string provider,
+        string userNumber,
+        DateTime receivedAfterUtc,
+        CancellationToken ct = default);
+
     Task MarkProcessingAsync(
         Guid businessId,
         string provider,

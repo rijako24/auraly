@@ -141,6 +141,7 @@ Los nombres de productos y las formas concretas de hablar no estan quemados en e
 | `templates` | Textos estructurados y overrides por `templateId`. | `{}` |
 | `conversationOpening` | Politica del primer turno: `enabled`, `guidance`, `allowQuestions`. | Desactivada |
 | `failureResponses` | Respuestas genericas de infraestructura, hoy `llmUnavailable`. | Mensaje generico |
+| `conversationFollowUp` | Retoma contextual de una espera declarada por una respuesta. | Desactivada |
 | `model` | Deployment/model de Azure OpenAI. | `gpt-4.1-mini` |
 | `temperature` | Variabilidad del planner/renderer. En transacciones conviene `0.1`–`0.2`. | `0.2` |
 | `historyWindowSize` | Mensajes entregados al renderer/contexto general. | `20` |
@@ -304,7 +305,7 @@ Efectos soportados:
 | `escalation.human` | Entrega la gestion a una persona. |
 | `request.complete` | Cierra la solicitud vigente. |
 
-`response` y las respuestas de outcomes aceptan `mode`, `guidance`, `template`, `sendMessageSequence` y `suppressText`. `guidance` solo gobierna redaccion. `template` y `sendMessageSequence` deben existir.
+`response` y las respuestas de outcomes aceptan `mode`, `guidance`, `template`, `sendMessageSequence`, `suppressText` y `awaitCustomerReply`. `guidance` solo gobierna redaccion. `template` y `sendMessageSequence` deben existir. `awaitCustomerReply` es semantica de maquina: declara que la respuesta entregada deja una espera del cliente; no contiene el texto futuro ni programa nada por si sola.
 
 Las presentaciones `Required` obligan a incluir el fragmento. `Exclusive` evita que el renderer mezcle otra reconstruccion libre. Totales, catalogos, disponibilidad, carritos, checkout y clasificaciones deben preferir presentaciones autoritativas.
 
@@ -486,6 +487,20 @@ La integracion externa permanece detras de interfaces genericas. El seed configu
 - `sendMessageSequence`: secuencia directa.
 
 Si se activa, debe existir al menos una respuesta y toda referencia debe ser valida. La politica bloquea operaciones; no debe usarse una guidance para reautorizarlas.
+
+## Conversation Follow-up
+
+`conversationFollowUp` configura una unica retoma por espera:
+
+- `enabled`;
+- `delayMinutes`, entre 1 minuto y 30 dias;
+- `guidance`, usada por el renderer existente para redactar desde el contexto vigente;
+- `fallbackSequence`, opcional y validada contra `messageSequences`;
+- `respectOperatingHours`, que difiere el envio a la siguiente apertura cuando `operatingHours.enforce` esta activo.
+
+Una espera nace solo despues de entregar con exito una respuesta con `awaitCustomerReply: true`. Se persiste en `ConversationState` junto con una fecha indexada; no existe una tabla de jobs paralela. Al vencer, el proceso temporizado comprueba que siguen iguales el mensaje fuente, owner, solicitud, flow y stage, y que no existe ningun inbound posterior, incluso si aun esta en debounce.
+
+La retoma no ejecuta planner ni operaciones: el renderer escribe un solo mensaje breve a partir de la etapa, facts e historial actuales. La fecha se elimina antes del envio mediante versionado optimista, por lo que esa espera no puede producir una segunda retoma. Si el cliente responde, el inbound elimina la espera antes del turno; la respuesta nueva del bot puede declarar otra espera independiente.
 
 ## Escalations
 

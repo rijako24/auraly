@@ -47,6 +47,54 @@ public sealed class AgentConfigurationCompilerTests
     }
 
     [Fact]
+    public void Compile_WithAwaitCustomerReplyButDisabledPolicy_RejectsConfiguration()
+    {
+        var compilation = Compiler().Compile(Config(
+            ["availability.options_available"],
+            includeTemplate: true,
+            awaitCustomerReply: true));
+
+        compilation.IsValid.Should().BeFalse();
+        compilation.Diagnostics.Should().Contain(value =>
+            value.Code == "conversation_follow_up_disabled");
+    }
+
+    [Fact]
+    public void Compile_WithEnabledConversationFollowUpAndAwaitingResponse_Succeeds()
+    {
+        var compilation = Compiler().Compile(Config(
+            ["availability.options_available"],
+            includeTemplate: true,
+            awaitCustomerReply: true,
+            followUpEnabled: true));
+
+        compilation.IsValid.Should().BeTrue(
+            string.Join("; ", compilation.Diagnostics.Select(value => value.Message)));
+    }
+
+    [Fact]
+    public void Compile_WithInvalidConversationFollowUpDelay_RejectsConfiguration()
+    {
+        var baseline = Config(["availability.options_available"], includeTemplate: true);
+        var config = new AgentConfig
+        {
+            FactSchema = baseline.FactSchema,
+            Templates = baseline.Templates,
+            Flows = baseline.Flows,
+            ConversationFollowUp = new ConversationFollowUpDefinitions
+            {
+                Enabled = true,
+                DelayMinutes = 0
+            }
+        };
+
+        var compilation = Compiler().Compile(config);
+
+        compilation.Diagnostics.Should().Contain(value =>
+            value.Code == "invalid_follow_up_delay");
+    }
+
+    [Fact]
     public void Compile_WithNonPositiveFlowTtl_RejectsConfiguration()
     {
         var config = new AgentConfig
@@ -126,7 +174,11 @@ public sealed class AgentConfigurationCompilerTests
     private static AgentConfigurationCompiler Compiler() => new(
         new AgentOperationRegistry([new AvailabilityOperationStub()]));
 
-    private static AgentConfig Config(IReadOnlyList<string> outcomes, bool includeTemplate)
+    private static AgentConfig Config(
+        IReadOnlyList<string> outcomes,
+        bool includeTemplate,
+        bool awaitCustomerReply = false,
+        bool followUpEnabled = false)
     {
         var templates = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         if (includeTemplate)
@@ -134,6 +186,10 @@ public sealed class AgentConfigurationCompilerTests
 
         return new AgentConfig
         {
+            ConversationFollowUp = new ConversationFollowUpDefinitions
+            {
+                Enabled = followUpEnabled
+            },
             FactSchema =
             [
                 new FactSchemaEntry
@@ -163,6 +219,11 @@ public sealed class AgentConfigurationCompilerTests
                             Id = "availability",
                             AdvanceWhenFacts = ["availability_checked"],
                             Collect = ["desired_date"],
+                            Response = new StageResponseDefinition
+                            {
+                                Guidance = "Pide al cliente la fecha.",
+                                AwaitCustomerReply = awaitCustomerReply
+                            },
                             Actions =
                             [
                                 new StageActionDefinition

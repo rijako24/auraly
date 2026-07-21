@@ -268,6 +268,9 @@ services.AddScoped<ServiceSelectionResolver>();
         services.AddScoped<IMediaUrlResolver, BlobMediaUrlResolver>();
 
         services.AddScoped<IOutboundMessageDispatcher, OutboundMessageDispatcher>();
+        services.AddScoped<ConversationFollowUpService>();
+        services.AddScoped<IConversationFollowUpService>(sp =>
+            sp.GetRequiredService<ConversationFollowUpService>());
 
         services.AddScoped<IMessageSequenceResolver, MessageSequenceResolver>();
 
@@ -336,6 +339,8 @@ services.AddScoped<IExternalEscalationService, ExternalEscalationService>();
         services.AddScoped<ITimedProcess, ExternalEscalationExpirationProcess>();
 
         services.AddScoped<ITimedProcess, ReservationAutomationProcess>();
+        services.AddScoped<ITimedProcess>(sp =>
+            sp.GetRequiredService<ConversationFollowUpService>());
 
         // -- DETERMINISTIC AGENT ENGINE -------------------------------------
 

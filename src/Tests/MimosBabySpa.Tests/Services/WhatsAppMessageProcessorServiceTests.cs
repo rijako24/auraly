@@ -77,6 +77,7 @@ public sealed class WhatsAppMessageProcessorServiceTests
             Mock.Of<IBlobStorageService>(),
             Mock.Of<IOutboundMessageDispatcher>(),
             router.Object,
+            Mock.Of<IConversationFollowUpService>(),
             NullLogger<WhatsAppMessageProcessorService>.Instance);
 
         await processor.ProcessIncomingMessageAsync(
@@ -150,6 +151,7 @@ public sealed class WhatsAppMessageProcessorServiceTests
             Mock.Of<IBlobStorageService>(),
             Mock.Of<IOutboundMessageDispatcher>(),
             Mock.Of<IBusinessInboundContactRouter>(),
+            Mock.Of<IConversationFollowUpService>(),
             NullLogger<WhatsAppMessageProcessorService>.Instance);
 
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => processor.ProcessIncomingMessageAsync(

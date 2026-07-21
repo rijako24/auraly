@@ -117,6 +117,9 @@ public class ConversationStateManager : IConversationStateManager
             ActiveStageId = runtime.ActiveStageId,
             FactVersions = new Dictionary<string, long>(runtime.FactVersions, StringComparer.OrdinalIgnoreCase),
             PendingTurnPlan = runtime.PendingTurnPlan,
+            FollowUpDueAtUtc = entity.FollowUpDueAtUtc,
+            PendingCustomerReply = runtime.PendingCustomerReply,
+            CustomerReplyExpectationVersion = runtime.CustomerReplyExpectationVersion,
             RequestGeneration = runtime.RequestGeneration,
             LastOpenedRequestGeneration = runtime.LastOpenedRequestGeneration,
             ExecutedOperationKeys = new Dictionary<string, DateTime>(runtime.ExecutedOperationKeys, StringComparer.OrdinalIgnoreCase),
@@ -150,12 +153,15 @@ public class ConversationStateManager : IConversationStateManager
             ActiveStageId = state.ActiveStageId,
             FactVersions = state.FactVersions,
             PendingTurnPlan = state.PendingTurnPlan,
+            PendingCustomerReply = state.PendingCustomerReply,
+            CustomerReplyExpectationVersion = state.CustomerReplyExpectationVersion,
             RequestGeneration = state.RequestGeneration,
             LastOpenedRequestGeneration = state.LastOpenedRequestGeneration,
             ExecutedOperationKeys = state.ExecutedOperationKeys,
             CommerceCustomer = state.CommerceCustomer,
             CommerceCustomerLookupGeneration = state.CommerceCustomerLookupGeneration
         }, JsonOptions);
+        entity.FollowUpDueAtUtc = state.FollowUpDueAtUtc;
         entity.Version = state.Version;
         entity.UpdatedAt = state.UpdatedAt;
     }
@@ -214,6 +220,8 @@ public class ConversationStateManager : IConversationStateManager
         public string? ActiveStageId { get; init; }
         public Dictionary<string, long> FactVersions { get; init; } = new(StringComparer.OrdinalIgnoreCase);
         public PendingTurnPlan? PendingTurnPlan { get; init; }
+        public PendingCustomerReply? PendingCustomerReply { get; init; }
+        public long CustomerReplyExpectationVersion { get; init; }
         public long RequestGeneration { get; init; }
         public long LastOpenedRequestGeneration { get; init; } = -1;
         public Dictionary<string, DateTime> ExecutedOperationKeys { get; init; } = new(StringComparer.OrdinalIgnoreCase);

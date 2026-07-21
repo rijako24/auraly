@@ -48,6 +48,18 @@ public sealed class ConversationStateManagerTests
             CommerceCustomerLookupGeneration = 3,
             RequestGeneration = 3,
             LastOpenedRequestGeneration = 2,
+            FollowUpDueAtUtc = DateTime.UtcNow.AddHours(2),
+            CustomerReplyExpectationVersion = 7,
+            PendingCustomerReply = new PendingCustomerReply
+            {
+                Version = 7,
+                AgentId = Guid.NewGuid(),
+                RequestGeneration = 3,
+                FlowId = "order",
+                StageId = "cart_review",
+                SourceMessageId = Guid.NewGuid(),
+                WaitingSinceUtc = DateTime.UtcNow
+            },
             ExecutedOperationKeys = new Dictionary<string, DateTime>
             {
                 ["3:cart_review:load"] = DateTime.UtcNow
@@ -74,6 +86,10 @@ public sealed class ConversationStateManagerTests
         reloaded.CommerceCustomerLookupGeneration.Should().Be(3);
         reloaded.RequestGeneration.Should().Be(3);
         reloaded.LastOpenedRequestGeneration.Should().Be(2);
+        reloaded.FollowUpDueAtUtc.Should().Be(state.FollowUpDueAtUtc);
+        reloaded.CustomerReplyExpectationVersion.Should().Be(7);
+        reloaded.PendingCustomerReply.Should().NotBeNull();
+        reloaded.PendingCustomerReply!.SourceMessageId.Should().Be(state.PendingCustomerReply!.SourceMessageId);
         reloaded.ExecutedOperationKeys.Should().ContainKey("3:cart_review:load");
         repository.Entity!.RuntimeStateJson.Should().Contain("cart_review");
     }
@@ -113,5 +129,12 @@ public sealed class ConversationStateManagerTests
             Entity = entity;
             return Task.CompletedTask;
         }
+
+        public Task<IReadOnlyList<Guid>> GetDueFollowUpConversationIdsAsync(
+            DateTime utcNow,
+            int limit,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyList<Guid>>(
+                Entity?.FollowUpDueAtUtc <= utcNow ? [Entity.ConversationId] : []);
     }
 }

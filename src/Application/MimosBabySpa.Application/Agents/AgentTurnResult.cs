@@ -7,6 +7,7 @@ public sealed class AgentTurnResult
     public string? ErrorMessage { get; init; }
     public bool EscalatedToHuman { get; init; }
     public bool RequestCompleted { get; init; }
+    public bool AwaitsCustomerReply { get; init; }
     public int TotalTokens { get; init; }
     public int OperationCount { get; init; }
     public IReadOnlyList<OutboundMessage> OutboundMessages { get; init; } = [];
@@ -16,6 +17,7 @@ public sealed class AgentTurnResult
         string response,
         bool escalated = false,
         bool requestCompleted = false,
+        bool awaitsCustomerReply = false,
         int tokens = 0,
         int operationCount = 0,
         IReadOnlyList<OutboundMessage>? outboundMessages = null,
@@ -26,6 +28,7 @@ public sealed class AgentTurnResult
             Response = response,
             EscalatedToHuman = escalated,
             RequestCompleted = requestCompleted,
+            AwaitsCustomerReply = awaitsCustomerReply,
             TotalTokens = tokens,
             OperationCount = operationCount,
             OutboundMessages = outboundMessages ?? [],

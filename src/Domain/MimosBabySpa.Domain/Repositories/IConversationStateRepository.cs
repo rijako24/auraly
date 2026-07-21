@@ -16,4 +16,9 @@ public interface IConversationStateRepository
     /// Guarda o actualiza el estado de conversación
     /// </summary>
     Task SaveAsync(ConversationStateEntity entity, CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyList<Guid>> GetDueFollowUpConversationIdsAsync(
+        DateTime utcNow,
+        int limit,
+        CancellationToken cancellationToken = default);
 }

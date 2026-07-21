@@ -619,7 +619,7 @@ Console.WriteLine("  Usa     --trace para ver TurnPlan, operaciones y respuestas
 
 Console.WriteLine("  Usa     pilot-seed-turn-plan para inspeccionar una extraccion real");
 Console.WriteLine("  Usa     eval-seed-extractor para ejecutar una suite de extraccion");
-Console.WriteLine("  Usa     auraly, mimos, luis o cj para seleccionar el agente interactivo");
+Console.WriteLine("  Usa     medidental, auraly, mimos, luis o cj para seleccionar el agente interactivo");
 
 Console.WriteLine();
 
@@ -1038,6 +1038,10 @@ static ConsoleAgentOptions? ResolveRequestedConsoleAgent(string[] args)
 
             return ConsoleAgentOptions.CjDistribuciones();
 
+        if (normalized is "medidental" or "medi")
+
+            return ConsoleAgentOptions.Medidental();
+
         if (normalized is "luis" or "luispetit")
 
             return ConsoleAgentOptions.LuisPetit();
@@ -1245,7 +1249,7 @@ internal sealed record ConsoleAgentOptions(
 
     {
 
-        var defaults = CjDistribuciones();
+        var defaults = Medidental();
 
         var businessId = GetGuid(
 
@@ -1320,6 +1324,20 @@ internal sealed record ConsoleAgentOptions(
         "CJ",
 
         ["Asistente CJ Distribuciones", "CJ"]);
+
+    public static ConsoleAgentOptions Medidental() => new(
+
+        Guid.Parse("D3E4A700-0000-0000-0000-000000000010"),
+
+        "Medidental",
+
+        Guid.Parse("D3E4A700-0000-0000-0000-000000000020"),
+
+        "Asistente Medidental",
+
+        "Medidental",
+
+        ["Asistente Medidental", "Medidental"]);
 
     private static Guid GetGuid(string name, string fallback)
 

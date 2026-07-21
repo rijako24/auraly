@@ -4,6 +4,7 @@ import { useCallback, useMemo, useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
 
 import { JsonEditor } from "@/components/forms/json-editor";
+import { ConversationFollowUpSettingsEditor } from "@/components/agents/conversation-follow-up-settings";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -30,6 +31,7 @@ export type AgentEditorSection =
   | "identity"
   | "policies"
   | "flow"
+  | "followUp"
   | "facts"
   | "external"
   | "messages"
@@ -110,6 +112,7 @@ export function AgentSettingsEditor({ value, onChange, availableInboundContacts 
         <TabsTrigger value="identity">Identidad</TabsTrigger>
         <TabsTrigger value="policies">Políticas</TabsTrigger>
         <TabsTrigger value="flow">Flujo</TabsTrigger>
+        <TabsTrigger value="followUp">Retomas</TabsTrigger>
         <TabsTrigger value="facts">Datos (facts)</TabsTrigger>
         <TabsTrigger value="external">Externos</TabsTrigger>
         <TabsTrigger value="messages">Mensajes</TabsTrigger>
@@ -208,6 +211,10 @@ export function AgentSettingsEditor({ value, onChange, availableInboundContacts 
             />
           </CardContent>
         </Card>
+      </TabsContent>
+
+      <TabsContent value="followUp" className="space-y-4">
+        <ConversationFollowUpSettingsEditor settings={value} onChange={onChange} />
       </TabsContent>
 
       <TabsContent value="facts">

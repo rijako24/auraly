@@ -37,6 +37,7 @@ public class ConversationStateRepository : IConversationStateRepository
             existing.VerificationsJson = entity.VerificationsJson;
             existing.StageSnapshotsJson = entity.StageSnapshotsJson;
             existing.RuntimeStateJson = entity.RuntimeStateJson;
+            existing.FollowUpDueAtUtc = entity.FollowUpDueAtUtc;
             existing.Version = entity.Version;
             existing.UpdatedAt = entity.UpdatedAt;
             _context.ConversationStates.Update(existing);
@@ -46,6 +47,27 @@ public class ConversationStateRepository : IConversationStateRepository
             _context.ConversationStates.Add(entity);
         }
 
-        await _context.SaveChangesAsync(cancellationToken);
+        try
+        {
+            await _context.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateConcurrencyException exception)
+        {
+            throw new InvalidOperationException("Conversation state conflict during persistence.", exception);
+        }
+    }
+
+    public async Task<IReadOnlyList<Guid>> GetDueFollowUpConversationIdsAsync(
+        DateTime utcNow,
+        int limit,
+        CancellationToken cancellationToken = default)
+    {
+        return await _context.ConversationStates
+            .AsNoTracking()
+            .Where(state => state.FollowUpDueAtUtc != null && state.FollowUpDueAtUtc <= utcNow)
+            .OrderBy(state => state.FollowUpDueAtUtc)
+            .Select(state => state.ConversationId)
+            .Take(limit)
+            .ToListAsync(cancellationToken);
     }
 }

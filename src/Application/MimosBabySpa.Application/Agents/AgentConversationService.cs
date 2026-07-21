@@ -613,6 +613,7 @@ var latestPayment = await _paymentLifecycle.GetLatestByConversationAsync(convers
             new DeterministicResponseRequest(config, stage, turn, userMessage, history, openingPending),
 
             ct);
+        var responseSupportsFollowUp = rendered.Success;
 
         if (!rendered.Success)
         {
@@ -737,7 +738,14 @@ var latestPayment = await _paymentLifecycle.GetLatestByConversationAsync(convers
 
             rendered.Text,
 
+            escalated: turn.EscalateToHuman,
+
             requestCompleted: turn.RequestCompleted,
+
+            awaitsCustomerReply: turn.Response?.AwaitCustomerReply == true
+                && responseSupportsFollowUp
+                && !turn.RequestCompleted
+                && !turn.EscalateToHuman,
 
             tokens: promptTokens + completionTokens,
 

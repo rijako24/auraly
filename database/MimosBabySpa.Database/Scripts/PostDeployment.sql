@@ -26,6 +26,7 @@
 :r .\Migrations\MigratePaymentSupersession.sql
 :r .\Migrations\MigrateFlowStageSnapshots.sql
 :r .\Migrations\MigrateDeterministicRuntimeState.sql
+:r .\Migrations\MigrateConversationFollowUp.sql
 :r .\Migrations\MigrateConversationCurrentStageName.sql
 :r .\Migrations\MigrateSchedulingPolicyToSettings.sql
 :r .\Migrations\MigrateSchedulingMinimumLeadTime.sql
@@ -63,11 +64,15 @@
 :r .\Seeds\SeedSolorzanoDomicilioAgent.sql
 :r .\Seeds\SeedCJDistribuciones.sql
 GO
+:r .\Seeds\SeedMedidental.sql
+GO
 :r .\Seeds\SeedSystemAgentTemplatesAndInboundContacts.sql
 GO
 :r .\Seeds\SeedCJPaymentApprovalAgent.sql
 GO
 :r .\Migrations\MigrateLuisWhatsAppToCJ.sql
+GO
+:r .\Migrations\MigrateCJWhatsAppToMedidental.sql
 GO
 :r .\Migrations\MigrateAuditAgentTemplates.sql
 :r .\Seeds\SeedDefaultResources.sql

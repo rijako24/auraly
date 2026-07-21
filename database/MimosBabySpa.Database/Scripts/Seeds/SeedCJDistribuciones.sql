@@ -302,6 +302,12 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                                                 "guidance":  "Responde de forma breve, cordial y cerrada. Explica que el negocio esta fuera de horario y que el proximo horario habil es {{next_operating_window}}. Adapta el mensaje a lo que dijo el cliente, pero no solicites datos, no prometas ejecutar gestiones, no abras catalogos y no termines con preguntas."
                                             }
                        },
+    "conversationFollowUp":  {
+                                  "enabled":  true,
+                                  "delayMinutes":  120,
+                                  "guidance":  "Retoma con calidez y brevedad la pregunta, eleccion o confirmacion concreta que sigue pendiente en el pedido. Usa el contexto vigente y formula una sola pregunta enfocada. No repitas catalogos, carritos ni resumenes completos; no agregues urgencia, descuentos, disponibilidad inventada ni promesas, y no modifiques el pedido.",
+                                  "respectOperatingHours":  true
+                              },
     "persona":  "Eres el asistente comercial de CJ Distribuciones por WhatsApp. Atiendes pedidos de alimentos y productos de consumo para hogares y negocios. Hablas en espanol de forma cercana, empatica, natural y servicial, como una persona atenta que acompana al cliente a armar su pedido. Usas parrafos cortos y espacios en blanco para que el mensaje sea facil de leer en WhatsApp. Evitas sonar como formulario, menu automatico o instruccion rigida. Puedes usar un emoji amable de manera ocasional, sin exagerar. El saludo inicial y el cierre son los momentos para usar el nombre del cliente; en los turnos intermedios respondes directamente. El catalogo y los resultados de las operaciones son la fuente de verdad comercial.",
     "policies":  "## EXPERIENCIA CONVERSACIONAL\n\n- Responde primero a la intencion real de la persona y conserva la continuidad con el turno anterior.\n- Reconoce elecciones, avances o inquietudes de forma natural solo cuando aporte valor; varia las transiciones para mantener una conversacion fluida.\n- Usa el nombre con moderacion, principalmente en una apertura, un momento de tranquilidad o un cierre significativo.\n- Consulta la conversacion reciente para evitar repetir saludos, nombres, agradecimientos o la misma explicacion en turnos consecutivos.\n- Adapta el tono al mensaje recibido y manten una actitud humana, atenta, empatica y profesional.\n- Ante confusion, inconvenientes o incertidumbre, demuestra comprension y explica el siguiente paso con claridad.\n- En WhatsApp, usa mensajes breves, parrafos cortos y listas legibles cuando ayuden a entender opciones o resumenes.\n- Formula una sola pregunta enfocada cuando sea necesaria para avanzar.\n\n## PRESENTACION\n\n- Presentate como asistente de CJ Distribuciones con tono breve, amable y practico.\n- Reserva el nombre del cliente para el saludo inicial y el cierre; en los turnos intermedios responde directamente.\n- Presenta catalogos, precios, carrito, totales y estado del pedido exclusivamente desde resultados oficiales del turno.",
     "messageSequences":  {
@@ -449,6 +455,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                                                                 },
                                                   "onOutcome":  {
                                                                     "products.not_found":  {
+                                                                                               "response":  { "awaitCustomerReply":  true },
                                                                                                "effects":  [
                                                                                                                {
                                                                                                                    "type":  "presentation.add",
@@ -459,6 +466,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                                                                                                            ]
                                                                                            },
                                                                     "products.found":  {
+                                                                                           "response":  { "awaitCustomerReply":  true },
                                                                                            "effects":  [
                                                                                                            {
                                                                                                                "type":  "presentation.add",
@@ -826,6 +834,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                                          "id":  "customer_name",
                                          "name":  "Identificacion del cliente",
                                          "goal":  "Obtener el nombre del cliente o establecimiento antes de iniciar el pedido cuando no exista un nombre confiable.",
+                                         "response":  { "awaitCustomerReply":  true },
                                          "advanceWhenFacts":  [
                                                                   "customer_name"
                                                               ],
@@ -839,6 +848,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                                          "id":  "customer_type",
                                          "name":  "Perfil del cliente",
                                          "goal":  "Clasificar el perfil comercial como Hogar, TiendaMinimercado, Restaurante, ComidaRapida o Distribuidor.",
+                                         "response":  { "awaitCustomerReply":  true },
                                          "advanceWhenFacts":  [
                                                                   "customer_type"
                                                               ],
@@ -851,6 +861,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                                          "id":  "product_selection",
                                          "name":  "Productos, catalogo y recomendaciones",
                                          "goal":  "Recibir pedidos abiertos, resolver productos reales del catalogo, recomendar de forma controlada y construir el carrito hasta que el cliente finalice.",
+                                         "response":  { "awaitCustomerReply":  true },
                                          "advanceWhenFacts":  [
                                                                   "order_finalized"
                                                               ],
@@ -937,6 +948,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                                                                            },
                                                              "onOutcome":  {
                                                                                "products.not_found":  {
+                                                                                                          "response":  { "awaitCustomerReply":  true },
                                                                                                           "effects":  [
                                                                                                                           {
                                                                                                                               "type":  "facts.clear",
@@ -966,6 +978,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                                                                                                                       }
                                                                                                                   ],
                                                                                                       "response":  {
+                                                                                                                       "awaitCustomerReply":  true,
                                                                                                                        "guidance":  "Muestra solo productos reales devueltos por catÃ¡logo, con presentaciÃ³n y precio cuando estÃ©n disponibles."
                                                                                                                    }
                                                                                                   }
@@ -1105,6 +1118,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                                                              "onOutcome":  {
                                                                                "order.draft_loaded":  {
                                                                                                           "response":  {
+                                                                                                                            "awaitCustomerReply":  true,
                                                                                                                            "guidance":  "Muestra los Ã­tems, cantidades, subtotales y total devueltos, y pregunta si el pedido actual estÃ¡ correcto."
                                                                                                                        },
                                                                                                           "effects":  [
@@ -1217,6 +1231,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                                          "id":  "order_data",
                                          "name":  "Entrega",
                                          "goal":  "Definir recogida o domicilio y obtener solo los datos faltantes requeridos por el checkout.",
+                                         "response":  { "awaitCustomerReply":  true },
                                          "advanceWhenFacts":  [
                                                                   "delivery_method",
                                                                   "city",
@@ -1248,6 +1263,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                                          "id":  "payment_method",
                                          "name":  "Metodo de pago",
                                          "goal":  "Elegir uno de los metodos de pago configurados para CJ Distribuciones.",
+                                         "response":  { "awaitCustomerReply":  true },
                                          "advanceWhenFacts":  [
                                                                   "payment_method"
                                                               ],
@@ -1312,6 +1328,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                                                                            },
                                                              "onOutcome":  {
                                                                                "order.checkout_ready":  {
+                                                                                                             "response":  { "awaitCustomerReply":  true },
                                                                                                             "effects":  [
                                                                                                                             {
                                                                                                                                 "type":  "fact.set",
@@ -1321,6 +1338,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                                                                                                                         ]
                                                                                                         },
                                                                                "order.checkout_payment_required":  {
+                                                                                                                        "response":  { "awaitCustomerReply":  true },
                                                                                                                        "effects":  [
                                                                                                                                        {
                                                                                                                                            "type":  "fact.set",
@@ -1453,6 +1471,16 @@ SET @SettingsJson = JSON_MODIFY(@SettingsJson, '$.templates.cart_on_request',
 ¿Deseas agregar o cambiar algo mas?');
 
 SET @SettingsJson = JSON_MODIFY(@SettingsJson, 'append $.globalActions', JSON_QUERY(N'{"id":"cart_review_request","priority":874,"goal":"Mostrar el carrito vigente cuando el cliente solicite verlo, sin mutarlo ni intentar resolver referencias pendientes.","conversationGuidance":"Emite cart_review_request ante cualquier solicitud de ver, revisar o saber como va el carrito o pedido actual. Es una consulta de solo lectura y nunca debe convertirse en order_changes.","signal":{"type":"cart_review_request","description":"Solicitud de solo lectura para presentar el carrito vigente.","valueSchema":{"type":"object","additionalProperties":false,"properties":{}}},"actions":[{"id":"show_current_cart","operation":"commerce.get_order_draft","trigger":"on_signal","signal":"cart_review_request","arguments":{},"onOutcome":{"order.draft_loaded":{"response":{"guidance":"Presenta el carrito vigente y pregunta si desea agregar o cambiar algo."},"effects":[{"type":"presentation.add","template":"cart_on_request","dataPath":"order","mode":"Exclusive","priority":"Required"}]},"order.draft_empty":{"response":{"guidance":"Indica brevemente que el carrito esta vacio y pregunta que desea agregar."}},"order_draft_missing":{"response":{"guidance":"Indica brevemente que aun no hay un carrito activo y pregunta que desea agregar."}}},"execution":{"idempotency":"none"}}]}'));
+DECLARE @CartReviewGlobalActionIndex INT;
+SELECT @CartReviewGlobalActionIndex = TRY_CONVERT(INT, [key])
+FROM OPENJSON(@SettingsJson, '$.globalActions')
+WHERE JSON_VALUE([value], '$.id') = 'cart_review_request';
+IF @CartReviewGlobalActionIndex IS NULL
+    THROW 51000, 'SeedCJDistribuciones: accion global de consulta de carrito no encontrada.', 1;
+DECLARE @CartReviewGlobalActionPath NVARCHAR(200) = CONCAT('$.globalActions[', @CartReviewGlobalActionIndex, ']');
+SET @SettingsJson = JSON_MODIFY(@SettingsJson, @CartReviewGlobalActionPath + N'.actions[0].onOutcome."order.draft_loaded".response.awaitCustomerReply', CAST(1 AS bit));
+SET @SettingsJson = JSON_MODIFY(@SettingsJson, @CartReviewGlobalActionPath + N'.actions[0].onOutcome."order.draft_empty".response.awaitCustomerReply', CAST(1 AS bit));
+SET @SettingsJson = JSON_MODIFY(@SettingsJson, @CartReviewGlobalActionPath + N'.actions[0].onOutcome."order_draft_missing".response.awaitCustomerReply', CAST(1 AS bit));
 
 DECLARE @CartAppliedOutcome NVARCHAR(MAX) = N'{"response":{"guidance":"Confirma unicamente los cambios aplicados y pregunta si desea agregar algo mas."},"effects":[{"type":"facts.clear","facts":["order_finalized","cart_review_confirmed","order_checkout_presented","customer_confirmed"]},{"type":"presentation.add","template":"cart_changes_applied","mode":"Exclusive","priority":"Required"}]}';DECLARE @PartialCartOutcome NVARCHAR(MAX) = N'{"response":{"mode":"ask_clarification","guidance":"Da un resultado explicito para cada referencia del lote usando la presentacion deterministica: agregada, sin existencia, ambigua, sugerida, cantidad insuficiente o no encontrada. No omitas referencias ni las mezcles entre categorias."},"effects":[{"type":"presentation.add","template":"cart_partial","dataPath":"error.context","mode":"Exclusive","priority":"Required"}]}';
 DECLARE @ProductSuggestionOutcome NVARCHAR(MAX) = N'{"response":{"mode":"ask_clarification","guidance":"Presenta la sugerencia devuelta y pide confirmacion explicita antes de agregarla."},"effects":[{"type":"presentation.add","template":"product_ambiguity","dataPath":"error.context","mode":"Exclusive","priority":"Required"}]}';
@@ -1542,10 +1570,24 @@ BEGIN
     SET @SettingsJson = JSON_MODIFY(@SettingsJson, @CartOutcomePath + N'."cart.product_suggestion"', JSON_QUERY(@ProductSuggestionOutcome));
     SET @SettingsJson = JSON_MODIFY(@SettingsJson, @CartOutcomePath + N'."cart.product_unavailable"', JSON_QUERY(@ProductUnavailableOutcome));
     SET @SettingsJson = JSON_MODIFY(@SettingsJson, @CartOutcomePath + N'."cart.product_not_found"', JSON_QUERY(@ProductNotFoundOutcome));
+    SET @SettingsJson = JSON_MODIFY(@SettingsJson, @CartOutcomePath + N'."cart.applied".response.awaitCustomerReply', CAST(1 AS bit));
+    SET @SettingsJson = JSON_MODIFY(@SettingsJson, @CartOutcomePath + N'."cart.partially_applied".response.awaitCustomerReply', CAST(1 AS bit));
+    SET @SettingsJson = JSON_MODIFY(@SettingsJson, @CartOutcomePath + N'."cart.product_suggestion".response.awaitCustomerReply', CAST(1 AS bit));
+    SET @SettingsJson = JSON_MODIFY(@SettingsJson, @CartOutcomePath + N'."cart.product_unavailable".response.awaitCustomerReply', CAST(1 AS bit));
+    SET @SettingsJson = JSON_MODIFY(@SettingsJson, @CartOutcomePath + N'."cart.product_not_found".response.awaitCustomerReply', CAST(1 AS bit));
+    SET @SettingsJson = JSON_MODIFY(@SettingsJson, @CartOutcomePath + N'."cart.pending_cancelled".response.awaitCustomerReply', CAST(1 AS bit));
+    SET @SettingsJson = JSON_MODIFY(@SettingsJson, @CartOutcomePath + N'."cart.product_ambiguous".response.awaitCustomerReply', CAST(1 AS bit));
+    SET @SettingsJson = JSON_MODIFY(@SettingsJson, @CartOutcomePath + N'."cart.insufficient_stock".response.awaitCustomerReply', CAST(1 AS bit));
+    SET @SettingsJson = JSON_MODIFY(@SettingsJson, @CartOutcomePath + N'."cart.item_not_found_or_ambiguous".response.awaitCustomerReply', CAST(1 AS bit));
+    SET @SettingsJson = JSON_MODIFY(@SettingsJson, @CartOutcomePath + N'."cart.conflicting_commands".response.awaitCustomerReply', CAST(1 AS bit));
+    SET @SettingsJson = JSON_MODIFY(@SettingsJson, @CartOutcomePath + N'."cart.multiple_destinations".response.awaitCustomerReply', CAST(1 AS bit));
     FETCH NEXT FROM CartOutcomeCursor INTO @CartOutcomePath;
 END
 CLOSE CartOutcomeCursor;
 DEALLOCATE CartOutcomeCursor;
+SET @SettingsJson = JSON_MODIFY(@SettingsJson, '$.flows[0].stages[3].actions[0].onOutcome."order.draft_empty".response.awaitCustomerReply', CAST(1 AS bit));
+SET @SettingsJson = JSON_MODIFY(@SettingsJson, '$.flows[0].stages[6].actions[0].onOutcome."order_draft_missing".response.awaitCustomerReply', CAST(1 AS bit));
+SET @SettingsJson = JSON_MODIFY(@SettingsJson, '$.flows[0].stages[6].actions[0].onOutcome."missing_prerequisites".response.awaitCustomerReply', CAST(1 AS bit));
 
 
 IF ISJSON(@SettingsJson) <> 1

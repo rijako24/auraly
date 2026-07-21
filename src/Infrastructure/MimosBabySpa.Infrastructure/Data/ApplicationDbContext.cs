@@ -1150,6 +1150,7 @@ public class ApplicationDbContext : DbContext
             entity.Property(e => e.VerificationsJson).HasColumnType("NVARCHAR(MAX)");
             entity.Property(e => e.StageSnapshotsJson).HasColumnType("NVARCHAR(MAX)");
             entity.Property(e => e.RuntimeStateJson).HasColumnType("NVARCHAR(MAX)");
+            entity.Property(e => e.FollowUpDueAtUtc);
             entity.Property(e => e.Version).IsRequired().HasDefaultValue(1).IsConcurrencyToken();
             entity.Property(e => e.UpdatedAt).IsRequired();
             entity.Property(e => e.CreatedAt).IsRequired();
@@ -1161,6 +1162,8 @@ public class ApplicationDbContext : DbContext
                   .WithMany()
                   .HasForeignKey(e => e.BusinessId)
                   .OnDelete(DeleteBehavior.Restrict);
+            entity.HasIndex(e => e.FollowUpDueAtUtc)
+                  .HasFilter("[FollowUpDueAtUtc] IS NOT NULL");
             entity.HasIndex(e => e.BusinessId);
             entity.HasIndex(e => e.ConversationId).IsUnique();
         });

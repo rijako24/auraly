@@ -193,6 +193,7 @@ builder.Services.AddScoped<IUsageBillingService, UsageBillingService>();
 builder.Services.AddScoped<IMessageService, MessageService>();
 
 builder.Services.AddScoped<IOutboundMessageDispatcher, OutboundMessageDispatcher>();
+builder.Services.AddScoped<IConversationFollowUpService, ConversationFollowUpService>();
 
 builder.Services.AddScoped<IInboundMessageDeduplicationService, InboundMessageDeduplicationService>();
 

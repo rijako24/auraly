@@ -188,6 +188,23 @@ public class InboundMessageDeduplicationService : IInboundMessageDeduplicationSe
             .ToListAsync(ct);
     }
 
+    public Task<bool> HasConversationMessageReceivedAfterAsync(
+        Guid businessId,
+        string provider,
+        string userNumber,
+        DateTime receivedAfterUtc,
+        CancellationToken ct = default)
+    {
+        var normalizedProvider = NormalizeProvider(provider);
+        var normalizedUserNumber = userNumber.Trim();
+        return _context.InboundMessageReceipts.AnyAsync(receipt =>
+            receipt.BusinessId == businessId
+            && receipt.Provider == normalizedProvider
+            && receipt.UserNumber == normalizedUserNumber
+            && receipt.ReceivedAtUtc > receivedAfterUtc,
+            ct);
+    }
+
     public async Task MarkProcessingAsync(
         Guid businessId,
         string provider,

@@ -30,6 +30,13 @@ public class ConversationState
     public long LastOpenedRequestGeneration { get; set; } = -1;
     public Dictionary<string, DateTime> ExecutedOperationKeys { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>Indexed projection used to discover a due customer-reply wait.</summary>
+    public DateTime? FollowUpDueAtUtc { get; set; }
+
+    /// <summary>The only customer-reply wait owned by this conversation.</summary>
+    public PendingCustomerReply? PendingCustomerReply { get; set; }
+    public long CustomerReplyExpectationVersion { get; set; }
+
     /// <summary>External commerce identity resolved from the channel phone for this conversation.</summary>
     public ExternalCommerceCustomerIdentity? CommerceCustomer { get; set; }
     public long CommerceCustomerLookupGeneration { get; set; } = -1;
@@ -56,6 +63,20 @@ public sealed class PendingTurnPlan
     public IReadOnlyList<string> AmbiguousFields { get; set; } = [];
     public DateTime CreatedAtUtc { get; set; }
     public DateTime ExpiresAtUtc { get; set; }
+}
+
+public sealed class PendingCustomerReply
+{
+    public long Version { get; set; }
+    public Guid AgentId { get; set; }
+    public long RequestGeneration { get; set; }
+    public string FlowId { get; set; } = string.Empty;
+    public string StageId { get; set; } = string.Empty;
+    public Guid SourceMessageId { get; set; }
+    public DateTime WaitingSinceUtc { get; set; }
+    public DateTime? ClaimedAtUtc { get; set; }
+    public DateTime? FollowUpSentAtUtc { get; set; }
+    public string? TerminalReason { get; set; }
 }
 
 public enum ConversationOwner

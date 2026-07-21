@@ -36,6 +36,9 @@ public sealed class AgentConfig
     public ConversationOpeningDefinitions ConversationOpening { get; init; } = new();
     public FailureResponseDefinitions FailureResponses { get; init; } = new();
 
+    /// <summary>Policy for resuming a conversation that is waiting for the customer.</summary>
+    public ConversationFollowUpDefinitions ConversationFollowUp { get; init; } = new();
+
     /// <summary>Contenido de estilo para el renderer; nunca contiene reglas de ejecuci?n.</summary>
     public string BasePrompt =>
         string.Join($"{Environment.NewLine}{Environment.NewLine}",

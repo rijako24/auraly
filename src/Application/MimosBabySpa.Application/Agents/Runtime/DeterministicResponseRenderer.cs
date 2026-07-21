@@ -15,6 +15,13 @@ public sealed record DeterministicResponseRequest(
     IReadOnlyList<ChatMessage> RecentConversation,
     bool RequestOpeningRequired = false);
 
+public sealed record DeterministicFollowUpRequest(
+    AgentConfig Config,
+    AgentFlowStage Stage,
+    IReadOnlyDictionary<string, string> Facts,
+    string LastBotMessage,
+    IReadOnlyList<ChatMessage> RecentConversation);
+
 public sealed record DeterministicRenderedResponse(
     string Text,
     int PromptTokens,
@@ -25,6 +32,7 @@ public sealed record DeterministicRenderedResponse(
 public interface IDeterministicResponseRenderer
 {
     Task<DeterministicRenderedResponse> RenderAsync(DeterministicResponseRequest request, CancellationToken cancellationToken = default);
+    Task<DeterministicRenderedResponse> RenderFollowUpAsync(DeterministicFollowUpRequest request, CancellationToken cancellationToken = default);
 }
 
 public sealed class DeterministicResponseRenderer : IDeterministicResponseRenderer
@@ -204,6 +212,88 @@ public sealed class DeterministicResponseRenderer : IDeterministicResponseRender
             result.PromptTokens,
             result.CompletionTokens);
     }
+
+    public async Task<DeterministicRenderedResponse> RenderFollowUpAsync(
+        DeterministicFollowUpRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var factDefinitions = request.Config.FactSchema.ToDictionary(
+            fact => fact.Key,
+            StringComparer.OrdinalIgnoreCase);
+        var pendingBlockers = request.Stage.AdvanceWhenFacts
+            .Where(key => !StageAdvanceFactReadiness.IsSatisfied(
+                key,
+                request.Facts,
+                request.Config.FactSchema))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Select(key =>
+            {
+                factDefinitions.TryGetValue(key, out var definition);
+                return new
+                {
+                    key,
+                    label = string.IsNullOrWhiteSpace(definition?.Label) ? key : definition.Label,
+                    canBeProvidedByCustomer = (definition?.Source ?? "user")
+                        .Equals("user", StringComparison.OrdinalIgnoreCase)
+                };
+            })
+            .ToList();
+        var payload = new
+        {
+            task = "Write one brief customer-facing follow-up for a conversation that is still waiting for the customer. Return only the message text.",
+            persona = request.Config.BasePrompt,
+            guidance = request.Config.ConversationFollowUp.Guidance,
+            rules = new[]
+            {
+                "Resume only the pending question or decision already present in the conversation.",
+                "Do not invent new facts, prices, availability, operations, urgency, discounts or promises.",
+                "Do not claim that anything was executed, reserved, paid or confirmed.",
+                "Do not mention internal state, stages, follow-ups, timers, tools or configuration.",
+                "Ask at most one concise question and keep the message appropriate for WhatsApp."
+            },
+            stage = new
+            {
+                request.Stage.Id,
+                request.Stage.Goal,
+                request.Stage.ConversationGuidance
+            },
+            pendingBlockers,
+            lastBotMessage = request.LastBotMessage,
+            recentConversation = request.RecentConversation.Select(message => new
+            {
+                role = message.Role.ToString().ToLowerInvariant(),
+                content = message.Content
+            })
+        };
+        var prompt = JsonSerializer.Serialize(payload, new JsonSerializerOptions
+        {
+            Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+        });
+        var result = await _chat.CompleteAsync(
+            [ChatMessage.System(prompt)],
+            options: new ChatCompletionOptions
+            {
+                Temperature = request.Config.Temperature,
+                MaxTokens = 160
+            },
+            cancellationToken: cancellationToken);
+
+        if (!result.Success || string.IsNullOrWhiteSpace(result.Content))
+        {
+            return new DeterministicRenderedResponse(
+                string.Empty,
+                result.PromptTokens,
+                result.CompletionTokens,
+                false,
+                result.ErrorMessage ?? "LLM follow-up rendering failed.");
+        }
+
+        return new DeterministicRenderedResponse(
+            result.Content.Trim(),
+            result.PromptTokens,
+            result.CompletionTokens);
+    }
+
     private async Task<DeterministicRenderedResponse> RenderConversationOpeningAsync(
         DeterministicResponseRequest request,
         CancellationToken cancellationToken)

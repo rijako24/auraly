@@ -12,7 +12,7 @@ SET NOCOUNT ON;
 DECLARE @TenantId UNIQUEIDENTIFIER = 'D3E4A700-0000-0000-0000-000000000001';
 DECLARE @BusinessId UNIQUEIDENTIFIER = 'D3E4A700-0000-0000-0000-000000000010';
 DECLARE @AgentId UNIQUEIDENTIFIER = 'D3E4A700-0000-0000-0000-000000000020';
-DECLARE @MantisCommerceConnectionId UNIQUEIDENTIFIER = 'D3E4A700-0000-0000-0000-000000000030';
+DECLARE @LocalCommerceConnectionId UNIQUEIDENTIFIER = 'D3E4A700-0000-0000-0000-000000000030';
 DECLARE @AgentTypeId UNIQUEIDENTIFIER;
 
 SELECT TOP (1) @AgentTypeId = AgentTypeId
@@ -69,14 +69,14 @@ END
 MERGE dbo.IntegrationConnections AS target
 USING (
     SELECT
-        @MantisCommerceConnectionId AS IntegrationConnectionId,
+        @LocalCommerceConnectionId AS IntegrationConnectionId,
         @BusinessId AS BusinessId,
         CAST(1 AS INT) AS ConnectionType,
-        CAST(3 AS INT) AS Provider,
+        CAST(0 AS INT) AS Provider,
         CAST(0 AS INT) AS Capability,
-        N'Mantis Commerce Medidental' AS [Name],
-        N'Mantis' AS AccountIdentifier,
-        N'{"baseUrl":"http://93.189.95.109:8080/MantisFiccCasalinsPruWeb/rest/","currency":"COP","requestTimeoutSeconds":30,"genericCustomer":{"llaveNit":"5702","llaveCliente":"1"},"catalog":{"searchEndpoint":"pwsConsultarArticuloCasalins","defaultPageSize":5,"maxPageSize":20},"order":{"createEndpoint":"pwsCrearPedidoCasalins","mockCreateOrders":false}}' AS SettingsJson,
+        N'Comercio local Medidental' AS [Name],
+        N'local' AS AccountIdentifier,
+        N'{"currency":"COP","manageStock":false}' AS SettingsJson,
         CAST(NULL AS NVARCHAR(MAX)) AS SecretsJson,
         CAST(1 AS BIT) AS IsEnabled
 ) AS source
@@ -148,7 +148,7 @@ USING @Products AS source
   AND target.Sku = source.Sku
 WHEN MATCHED THEN
     UPDATE SET
-        IntegrationConnectionId = @MantisCommerceConnectionId,
+        IntegrationConnectionId = @LocalCommerceConnectionId,
         ExternalProductId = NULL,
         Source = 0,
         [Name] = source.[Name],
@@ -165,7 +165,7 @@ WHEN NOT MATCHED THEN
     INSERT (ProductId, BusinessId, IntegrationConnectionId, ExternalProductId, Source, Sku, [Name],
             [Description], CategoryName, UnitPrice, Currency, ManageStock, StockQuantity,
             IsActive, RawPayloadJson, LastSyncedAt, CreatedAt)
-    VALUES (source.ProductId, @BusinessId, @MantisCommerceConnectionId, NULL, 0, source.Sku, source.[Name],
+    VALUES (source.ProductId, @BusinessId, @LocalCommerceConnectionId, NULL, 0, source.Sku, source.[Name],
             source.[Description], source.CategoryName, source.UnitPrice, source.Currency, 0, source.StockQuantity,
             source.IsActive, NULL, NULL, GETUTCDATE());
 
@@ -212,7 +212,7 @@ USING @RecommendationRules AS source
   AND target.ProductRecommendationRuleId = source.ProductRecommendationRuleId
 WHEN MATCHED THEN
     UPDATE SET
-        IntegrationConnectionId = @MantisCommerceConnectionId,
+        IntegrationConnectionId = @LocalCommerceConnectionId,
         MatchType = source.MatchType,
         SourceProductId = NULL,
         SourceValue = source.SourceValue,
@@ -234,7 +234,7 @@ WHEN NOT MATCHED THEN
          RecommendedSku, RecommendationType, Priority, Reason, IsActive, StartsAtUtc,
          EndsAtUtc, CreatedAt)
     VALUES
-        (source.ProductRecommendationRuleId, @BusinessId, @MantisCommerceConnectionId,
+        (source.ProductRecommendationRuleId, @BusinessId, @LocalCommerceConnectionId,
          source.MatchType, NULL, source.SourceValue, NULL, source.RecommendedExternalProductId,
          source.RecommendedSku, source.RecommendationType, source.Priority, source.Reason,
          1, NULL, NULL, GETUTCDATE());
@@ -281,7 +281,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
     "historyWindowSize":  24,
     "commerce":  {
                      "enabled":  true,
-                     "provider":  "Mantis",
+                     "provider":  "Local",
                      "conversation":  {
                                           "contextualConfirmationPhrases":  ["si", "si esa", "si es esa", "si ese", "si es ese", "si esta", "si es esta", "si este", "si es este", "si correcto", "si correcta", "confirmo", "correcto", "correcta", "esa", "ese", "esta", "este", "esa misma", "ese mismo", "la primera", "el primero"],
                                           "finalizationRules":  [{"phrase":"eso es todo","match":"contains"}, {"phrase":"solo eso","match":"suffix"}, {"phrase":"seria solo eso","match":"exact"}, {"phrase":"solo seria eso","match":"exact"}, {"phrase":"nada mas","match":"exact"}, {"phrase":"no quiero nada mas","match":"exact"}, {"phrase":"terminamos","match":"exact"}],

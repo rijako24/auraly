@@ -1,0 +1,90 @@
+{
+  "business": {
+    "name": "CJ Distribuciones",
+    "locale": "es-CO",
+    "timezone": "America/Bogota",
+    "channels": ["whatsapp"]
+  },
+  "objectives": [
+    "Retomar una sola vez una pregunta, eleccion o confirmacion del pedido que el cliente dejo sin responder durante 120 minutos",
+    "Permitir una nueva retoma solo despues de que el cliente responda y una respuesta posterior del bot vuelva a dejar una espera real"
+  ],
+  "processes": [
+    {
+      "id": "order",
+      "type": "primary",
+      "goal": "Completar un pedido valido de CJ sin duplicar mensajes ni reabrir cierres",
+      "steps": [
+        {
+          "id": "await_customer_reply",
+          "goal": "Declarar en la respuesta que el turno queda esperando una respuesta del cliente",
+          "requires_facts": ["respuesta saliente entregada"],
+          "signals": [],
+          "actions": [],
+          "success_to": "resume_pending_context"
+        },
+        {
+          "id": "resume_pending_context",
+          "goal": "Retomar brevemente la pregunta, eleccion o confirmacion vigente si la espera sigue siendo valida al vencer",
+          "requires_facts": ["espera vigente", "ultimo mensaje sigue siendo del bot"],
+          "signals": [],
+          "actions": [
+            {
+              "capability": "send contextual conversation follow-up",
+              "side_effect": true,
+              "confirmation": "not_required",
+              "authority": "conversation follow-up policy"
+            }
+          ],
+          "success_to": "complete",
+          "exceptions": [
+            "el cliente respondio",
+            "la solicitud, flujo o etapa cambiaron",
+            "la respuesta fue informativa, terminal, de error cerrado o de escalacion",
+            "la retoma de esta espera ya fue consumida"
+          ]
+        }
+      ]
+    }
+  ],
+  "data": [
+    {
+      "key": "pending_customer_reply",
+      "source": "system",
+      "scope": "request",
+      "authority": "conversation state"
+    },
+    {
+      "key": "follow_up_due_at",
+      "source": "system",
+      "scope": "request",
+      "authority": "conversation state"
+    }
+  ],
+  "integrations": [
+    {
+      "name": "WhatsApp outbound delivery",
+      "side_effect": true,
+      "idempotency": "source outbound message and pending wait identity"
+    }
+  ],
+  "cross_cutting": [
+    {
+      "policy": "conversation_follow_up",
+      "delay_minutes": 120,
+      "maximum_per_wait": 1,
+      "respect_operating_hours": true
+    }
+  ],
+  "operating_hours": {
+    "follow_existing_enforcement": true
+  },
+  "escalations": [],
+  "exact_messages": [],
+  "assumptions": [
+    "La politica se activa solo en el agente comercial SeedCJDistribuciones; el agente interno de aprobacion de pagos no conversa con el cliente y queda fuera.",
+    "Las retomas se redactan desde el contexto vigente; no se configura un mensaje generico ni una llamada anticipada al LLM.",
+    "La configuracion actual de CJ no aplica restriccion horaria, pero la politica respetara operatingHours si se habilita en el futuro."
+  ],
+  "open_questions": []
+}

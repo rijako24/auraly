@@ -20,6 +20,7 @@ const STEPS = [
   { id: "policies", title: "Politicas", description: "Reglas operativas" },
   { id: "facts", title: "Datos (facts)", description: "Que informacion rastrea el agente" },
   { id: "flow", title: "Flujo", description: "Etapas del motor conversacional" },
+  { id: "followUp", title: "Retomas", description: "Cuando y que conversacion debe retomar el bot" },
   { id: "messages", title: "Mensajes", description: "Secuencias, notificaciones y webhooks" },
   { id: "checkout", title: "Checkout", description: "Pagos, comercio y modos de checkout" },
   { id: "external", title: "Externos", description: "Escalaciones e interacciones inbound" },
@@ -112,6 +113,10 @@ export function AgentSetupWizard({
               <p>
                 <span className="text-muted-foreground">Facts:</span>{" "}
                 {settings.factSchema?.length ?? 0}
+              </p>
+              <p>
+                <span className="text-muted-foreground">Retomas:</span>{" "}
+                {settings.conversationFollowUp?.enabled ? "Activas - " + (settings.conversationFollowUp?.delayMinutes ?? 120) + " min" : "Desactivadas"}
               </p>
               <p>
                 <span className="text-muted-foreground">Catálogo importado:</span>{" "}

@@ -19,6 +19,7 @@ public class WhatsAppMessageProcessorService : IWhatsAppMessageProcessorService
     private readonly IBlobStorageService _blobStorageService;
     private readonly IOutboundMessageDispatcher _outboundDispatcher;
     private readonly IBusinessInboundContactRouter _businessInboundContactRouter;
+    private readonly IConversationFollowUpService _conversationFollowUps;
     private readonly ILogger<WhatsAppMessageProcessorService> _logger;
 
     public WhatsAppMessageProcessorService(
@@ -32,6 +33,7 @@ public class WhatsAppMessageProcessorService : IWhatsAppMessageProcessorService
         IBlobStorageService blobStorageService,
         IOutboundMessageDispatcher outboundDispatcher,
         IBusinessInboundContactRouter businessInboundContactRouter,
+        IConversationFollowUpService conversationFollowUps,
         ILogger<WhatsAppMessageProcessorService> logger)
     {
         _conversationService = conversationService;
@@ -44,6 +46,7 @@ public class WhatsAppMessageProcessorService : IWhatsAppMessageProcessorService
         _blobStorageService = blobStorageService;
         _outboundDispatcher = outboundDispatcher;
         _businessInboundContactRouter = businessInboundContactRouter;
+        _conversationFollowUps = conversationFollowUps;
         _logger = logger;
     }
 
@@ -80,6 +83,7 @@ public class WhatsAppMessageProcessorService : IWhatsAppMessageProcessorService
 
         // 1. Obtener/crear conversación; los contactos inbound no generan lead de cliente
         var conversation = await _conversationService.GetOrCreateConversationAsync(businessId, userNumber, customerName);
+        await _conversationFollowUps.CancelPendingAsync(conversation.ConversationId);
         Lead? lead = null;
         if (inboundRoute is null)
             lead = await _leadService.GetOrCreateLeadAsync(businessId, userNumber, customerName);
@@ -110,6 +114,7 @@ public class WhatsAppMessageProcessorService : IWhatsAppMessageProcessorService
 
         // 3. Procesar con el motor agentico
         AgentTurnResult result;
+        var waitingSinceUtc = DateTime.UtcNow;
         var typingSession = await _whatsAppService.StartTypingIndicatorAsync(
             businessId,
             inboundMetadata?.RecipientPhoneNumberId,
@@ -152,6 +157,15 @@ public class WhatsAppMessageProcessorService : IWhatsAppMessageProcessorService
                 result.OutboundMessages,
                 conversation.ConversationId,
                 throwOnFailure: true);
+        }
+
+        if (result.AwaitsCustomerReply
+            && (!string.IsNullOrWhiteSpace(result.Response) || result.OutboundMessages.Count > 0))
+        {
+            await _conversationFollowUps.ScheduleAfterDeliveredTurnAsync(
+                agentId.Value,
+                conversation,
+                waitingSinceUtc);
         }
     }
 

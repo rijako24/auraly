@@ -10,6 +10,7 @@ CREATE TABLE [dbo].[ConversationStates] (
     [VerificationsJson] NVARCHAR(MAX) NULL,
     [StageSnapshotsJson] NVARCHAR(MAX) NULL,
     [RuntimeStateJson] NVARCHAR(MAX) NULL,
+    [FollowUpDueAtUtc] DATETIME2 NULL,
     [Version] INT NOT NULL DEFAULT 1,
     [CreatedAt] DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
     [UpdatedAt] DATETIME2 NOT NULL,
@@ -28,5 +29,11 @@ CREATE UNIQUE INDEX [IX_ConversationStates_ConversationId] ON [dbo].[Conversatio
 GO
 
 CREATE INDEX [IX_ConversationStates_BusinessId] ON [dbo].[ConversationStates] ([BusinessId]);
+
+GO
+
+CREATE INDEX [IX_ConversationStates_FollowUpDueAtUtc]
+    ON [dbo].[ConversationStates] ([FollowUpDueAtUtc])
+    WHERE [FollowUpDueAtUtc] IS NOT NULL;
 
 GO

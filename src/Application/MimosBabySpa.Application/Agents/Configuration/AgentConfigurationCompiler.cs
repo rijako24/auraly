@@ -109,6 +109,7 @@ public sealed partial class AgentConfigurationCompiler
         ValidateSignalConsistency(flows, errors);
         ValidateMessageSequences(config, errors);
         ValidateExternalEscalations(config, errors);
+        ValidateConversationFollowUp(config, errors);
         ValidateOperatingHours(config, errors);
         ValidateReservationAutomations(config, usedOperations, errors);
         ValidateInteractiveActions(config, usedOperations, errors);
@@ -380,6 +381,14 @@ public sealed partial class AgentConfigurationCompiler
                 Error(errors, outcomePath, "unknown_outcome", $"Operation '{action.Operation}' does not declare outcome '{outcomeCode}'.");
             ValidateEffects(config, handler.Effects, facts, outcomePath, errors);
             ValidateResponse(config, handler.Response, outcomePath, errors);
+            if (handler.Response?.AwaitCustomerReply == true
+                && handler.Effects.Any(effect =>
+                    effect.Type.Equals(StageEffectTypes.CompleteRequest, StringComparison.OrdinalIgnoreCase)
+                    || effect.Type.Equals(StageEffectTypes.EscalateHuman, StringComparison.OrdinalIgnoreCase)))
+            {
+                Error(errors, outcomePath, "terminal_response_cannot_await_reply",
+                    "A response cannot await a customer reply after completing or escalating the request.");
+            }
         }
 
         foreach (var template in operation.Descriptor.RequiredTemplateIds)
@@ -559,11 +568,40 @@ public sealed partial class AgentConfigurationCompiler
     {
         if (response is null)
             return;
+        if (response.AwaitCustomerReply && !config.ConversationFollowUp.Enabled)
+            Error(errors, path, "conversation_follow_up_disabled",
+                "awaitCustomerReply requires conversationFollowUp.enabled=true.");
+        if (response.AwaitCustomerReply
+            && response.SuppressText
+            && string.IsNullOrWhiteSpace(response.SendMessageSequence))
+            Error(errors, path, "await_reply_requires_visible_response",
+                "awaitCustomerReply requires a customer-visible response or message sequence.");
         if (!string.IsNullOrWhiteSpace(response.Template) && !config.Templates.ContainsKey(response.Template))
             Error(errors, path, "unknown_response_template", $"Template '{response.Template}' is not configured.");
         if (!string.IsNullOrWhiteSpace(response.SendMessageSequence)
             && !config.MessageSequences.ContainsKey(response.SendMessageSequence))
             Error(errors, path, "unknown_response_sequence", $"Message sequence '{response.SendMessageSequence}' is not configured.");
+    }
+
+    private static void ValidateConversationFollowUp(
+        AgentConfig config,
+        ICollection<AgentConfigurationDiagnostic> errors)
+    {
+        var followUp = config.ConversationFollowUp;
+        if (!followUp.Enabled)
+            return;
+
+        if (followUp.DelayMinutes is < 1 or > 43200)
+            Error(errors, "conversationFollowUp.delayMinutes", "invalid_follow_up_delay",
+                "delayMinutes must be between 1 minute and 30 days.");
+        if (string.IsNullOrWhiteSpace(followUp.Guidance)
+            && string.IsNullOrWhiteSpace(followUp.FallbackSequence))
+            Error(errors, "conversationFollowUp", "follow_up_content_required",
+                "Contextual guidance or a fallback sequence is required.");
+        if (!string.IsNullOrWhiteSpace(followUp.FallbackSequence)
+            && !config.MessageSequences.ContainsKey(followUp.FallbackSequence))
+            Error(errors, "conversationFollowUp.fallbackSequence", "unknown_sequence",
+                $"Message sequence '{followUp.FallbackSequence}' is not configured.");
     }
 
     private static void ValidateOperatingHours(

@@ -15,7 +15,7 @@ export interface StageEffectDefinition {
   template?: string; dataPath?: string; mode?: string; priority?: string; sequence?: string;
   event?: string; reason?: string;
 }
-export interface StageResponseDefinition { mode?: string; guidance?: string; template?: string; sendMessageSequence?: string; suppressText?: boolean; }
+export interface StageResponseDefinition { mode?: string; guidance?: string; template?: string; sendMessageSequence?: string; suppressText?: boolean; awaitCustomerReply?: boolean; }
 export interface StageOutcomeHandlerDefinition { effects?: StageEffectDefinition[]; response?: StageResponseDefinition; }
 export interface StageActionDefinition {
   id: string; operation: string; trigger?: "on_enter" | "when_ready" | "on_signal" | "on_fact_changed" | "manual";
@@ -109,9 +109,10 @@ export interface AgentCommerceSettings {
 export interface AgentOperatingHoursSettings { enforce?: boolean; outsideHours?: StageResponseDefinition; }
 export interface ConversationOpeningSettings { enabled?: boolean; guidance?: string; allowQuestions?: boolean; }
 export interface FailureResponseSettings { llmUnavailable?: string; }
+export interface ConversationFollowUpSettings { enabled?: boolean; delayMinutes?: number; guidance?: string; fallbackSequence?: string; respectOperatingHours?: boolean; }
 
 export interface AgentSettings {
-  model?: string; temperature?: number; historyWindowSize?: number; extractorHistoryWindowSize?: number; persona?: string; policies?: string; conversationOpening?: ConversationOpeningSettings; failureResponses?: FailureResponseSettings;
+  model?: string; temperature?: number; historyWindowSize?: number; extractorHistoryWindowSize?: number; persona?: string; policies?: string; conversationOpening?: ConversationOpeningSettings; failureResponses?: FailureResponseSettings; conversationFollowUp?: ConversationFollowUpSettings;
   flows?: AgentFlowDefinition[]; globalActions?: AgentGlobalAction[]; factSchema?: FactSchemaEntry[];
   templates?: Record<string, string>; messageSequences?: Record<string, MessageSequence>; webhooks?: WebhookDefinitions;
   notifications?: AgentNotificationDefinitions; reservationAutomations?: ReservationAutomationDefinitions;
@@ -120,7 +121,7 @@ export interface AgentSettings {
   commerce?: AgentCommerceSettings; operatingHours?: AgentOperatingHoursSettings;
 }
 export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
-  model: "gpt-4.1-mini", temperature: 0.2, historyWindowSize: 20, extractorHistoryWindowSize: 2, persona: "", policies: "", conversationOpening: { enabled: false, guidance: "", allowQuestions: true }, failureResponses: { llmUnavailable: "Lo siento, estoy experimentando problemas temporales. Por favor, intenta de nuevo en un momento." }, flows: [],
+  model: "gpt-4.1-mini", temperature: 0.2, historyWindowSize: 20, extractorHistoryWindowSize: 2, persona: "", policies: "", conversationOpening: { enabled: false, guidance: "", allowQuestions: true }, failureResponses: { llmUnavailable: "Lo siento, estoy experimentando problemas temporales. Por favor, intenta de nuevo en un momento." }, conversationFollowUp: { enabled: false, delayMinutes: 120, guidance: "Retoma brevemente la conversacion desde la pregunta pendiente, sin repetir toda la respuesta.", respectOperatingHours: true }, flows: [],
   globalActions: [], factSchema: [], templates: {}, messageSequences: {}, webhooks: { wompi: {} }, notifications: {},
   reservationAutomations: {}, interactiveActions: {}, reservationManagement: {}, escalations: { human: { contacts: [] }, external: { enabled: false, events: {} } },
   checkout: { currency: "COP", modes: {} }, commerce: { enabled: false, provider: "Local" },
@@ -138,6 +139,10 @@ export function parseAgentSettings(raw: unknown): AgentSettings {
     ...DEFAULT_AGENT_SETTINGS, ...s, flows: s.flows ?? [], globalActions: s.globalActions ?? [], factSchema: s.factSchema ?? [],
     templates: s.templates ?? {}, messageSequences: s.messageSequences ?? {}, webhooks: s.webhooks ?? { wompi: {} },
     notifications: s.notifications ?? {}, reservationAutomations: s.reservationAutomations ?? {}, interactiveActions: s.interactiveActions ?? {}, reservationManagement: s.reservationManagement ?? {},
+    conversationFollowUp: {
+      ...DEFAULT_AGENT_SETTINGS.conversationFollowUp,
+      ...s.conversationFollowUp,
+    },
     escalations: s.escalations ?? DEFAULT_AGENT_SETTINGS.escalations, checkout: s.checkout ?? DEFAULT_AGENT_SETTINGS.checkout,
     commerce: s.commerce ?? DEFAULT_AGENT_SETTINGS.commerce, operatingHours: s.operatingHours ?? DEFAULT_AGENT_SETTINGS.operatingHours,
   };

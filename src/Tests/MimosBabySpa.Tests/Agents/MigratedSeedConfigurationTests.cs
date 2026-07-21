@@ -510,6 +510,88 @@ public sealed class MigratedSeedConfigurationTests
         config.Templates["cart_snapshot"].Should().Contain("\r\n\r\n*Pedido actual*\r\n\r\n");
         config.Templates["cart_review"].Should().Contain("\r\n\r\n*Resumen de tu pedido*\r\n\r\n");
     }
+
+    [Fact]
+    public void CjConversationFollowUp_OnlyMarksCustomerOwnedWaits()
+    {
+        var root = FindSolutionRoot();
+        var path = Path.Combine(
+            root,
+            "database",
+            "MimosBabySpa.Database",
+            "Scripts",
+            "Seeds",
+            "SeedCJDistribuciones.sql");
+        var seedSql = File.ReadAllText(path);
+        var config = JsonSerializer.Deserialize<AgentConfig>(
+            ExtractSettingsJson(seedSql, "SettingsJson"),
+            new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true,
+                UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
+                Converters = { new JsonStringEnumConverter() }
+            })!;
+
+        config.ConversationFollowUp.Enabled.Should().BeTrue();
+        config.ConversationFollowUp.DelayMinutes.Should().Be(120);
+        config.ConversationFollowUp.RespectOperatingHours.Should().BeTrue();
+        config.ConversationFollowUp.FallbackSequence.Should().BeNullOrWhiteSpace(
+            "CJ retakes the pending context instead of sending a generic canned message");
+        config.ConversationFollowUp.Guidance.Should()
+            .Contain("pregunta, eleccion o confirmacion concreta")
+            .And.Contain("una sola pregunta enfocada")
+            .And.Contain("No repitas catalogos, carritos ni resumenes completos")
+            .And.Contain("no modifiques el pedido");
+
+        var order = config.Flows.Single(flow => flow.Id == "order");
+        order.Stages
+            .Where(stage => stage.Response.AwaitCustomerReply)
+            .Select(stage => stage.Id)
+            .Should().BeEquivalentTo(
+                "customer_name",
+                "customer_type",
+                "product_selection",
+                "order_data",
+                "payment_method");
+
+        var catalogLookup = config.GlobalActions.Single(action => action.Id == "catalog_lookup")
+            .Actions.Single(action => action.Id == "search_catalog_request");
+        catalogLookup.OnOutcome["products.found"].Response!.AwaitCustomerReply.Should().BeTrue();
+        catalogLookup.OnOutcome["products.not_found"].Response!.AwaitCustomerReply.Should().BeTrue();
+
+        var productSearch = order.Stages.Single(stage => stage.Id == "product_selection")
+            .Actions.Single(action => action.Id == "search_recipe_catalog_products");
+        productSearch.OnOutcome["products.found"].Response!.AwaitCustomerReply.Should().BeTrue();
+        productSearch.OnOutcome["products.not_found"].Response!.AwaitCustomerReply.Should().BeTrue();
+
+        var cartReview = order.Stages.Single(stage => stage.Id == "cart_review")
+            .Actions.Single(action => action.Id == "show_current_order_draft");
+        cartReview.OnOutcome["order.draft_loaded"].Response!.AwaitCustomerReply.Should().BeTrue();
+
+        var checkout = order.Stages.Single(stage => stage.Id == "summary")
+            .Actions.Single(action => action.Id == "prepare_order_checkout");
+        checkout.OnOutcome["order.checkout_ready"].Response!.AwaitCustomerReply.Should().BeTrue();
+        checkout.OnOutcome["order.checkout_payment_required"].Response!.AwaitCustomerReply.Should().BeTrue();
+        checkout.OnOutcome["order.checkout_pending_manual_payment"].Response.Should().BeNull(
+            "manual transfer approval waits on CJ's internal team, not on the customer");
+
+        var terminalResponse = order.Stages.Single(stage => stage.Id == "order_confirmation")
+            .Actions.Single(action => action.Id == "create_confirmed_delivery_payment_order")
+            .OnOutcome["order.created"].Response!;
+        terminalResponse.AwaitCustomerReply.Should().BeFalse();
+        terminalResponse.SuppressText.Should().BeTrue();
+        config.GlobalActions.Single(action => action.Id == "human_handoff")
+            .Actions.Single()
+            .OnOutcome["escalation.requested"].Response!
+            .AwaitCustomerReply.Should().BeFalse();
+
+        seedSql.Should()
+            .Contain("@CartOutcomePath + N'.\"cart.applied\".response.awaitCustomerReply'")
+            .And.Contain("@CartOutcomePath + N'.\"cart.multiple_destinations\".response.awaitCustomerReply'")
+            .And.Contain("@CartReviewGlobalActionPath + N'.actions[0].onOutcome.\"order.draft_loaded\".response.awaitCustomerReply'")
+            .And.Contain("$.flows[0].stages[6].actions[0].onOutcome.\"missing_prerequisites\".response.awaitCustomerReply");
+    }
+
     private static void AssertSemanticAndPresentationTextIsSeparated(AgentConfig config)
     {
         const string internalVocabulary = @"\b(tool|tools|herramienta|herramientas|prepare_checkout|create_reservation)\b";
