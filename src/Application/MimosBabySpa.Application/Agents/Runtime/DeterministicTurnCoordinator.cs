@@ -734,9 +734,7 @@ public sealed class DeterministicTurnCoordinator
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var finalizationRequested = plan.Facts.Any(fact => finalizationKeys.Contains(fact.Key)
             && fact.Operation.Equals(TurnPlanOperations.Set, StringComparison.OrdinalIgnoreCase)
-            && IsTrue(fact.Value))
-            || CommerceConversationMatcher.Matches(
-                latestUserMessage, config.Commerce.Conversation.FinalizationRules);
+            && IsTrue(fact.Value));
         var cartSignal = AgentFlowCatalog.EffectiveFlows(config)
             .SelectMany(flow => flow.Stages)
             .SelectMany(stage => stage.Actions)

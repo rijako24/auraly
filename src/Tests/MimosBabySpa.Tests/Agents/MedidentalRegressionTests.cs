@@ -73,12 +73,59 @@ public sealed class MedidentalRegressionTests
             });
 
         rendered.Should()
-            .Contain("gran variedad de productos odontologicos")
+            .Contain("equipos, materiales y consumibles odontologicos")
             .And.Contain("Motor de implantes 3G Osseo 200")
             .And.Contain("Lampara de fotocurado 3G PowerLED L9")
             .And.Contain("Pieza de mano 3G Titanium 45P")
-            .And.Contain("Por cual producto estas interesado?");
+            .And.Contain("Cual de estos productos le interesa?");
         rendered.Should().NotContain("$").And.NotContain("0.00");
+    }
+
+    [Fact]
+    public void Seed_UsesSemanticFinalizationAndKeepsPersonAndEstablishmentDistinct()
+    {
+        var (config, _) = LoadSeed();
+
+        config.ConversationOpening.Guidance.Should()
+            .Contain("¡Hola, Doc! Bienvenido a Medidental. Es un gusto atenderle 😊")
+            .And.Contain("No agregues otra frase");
+
+        config.Templates["catalog_results"].Should()
+            .Contain("Tenemos equipos, materiales y consumibles odontologicos")
+            .And.Contain("Cual de estos productos le interesa?")
+            .And.NotContain("Contamos con una gran variedad de productos odontologicos");
+        config.Templates["cart_snapshot"].Should()
+            .NotContain("solo dime que eso es todo")
+            .And.Contain("Cuando hayas terminado de elegir");
+
+        var orderFlow = config.Flows.Single(flow => flow.Id == "order");
+        orderFlow.Stages[0].Id.Should().Be("product_selection");
+        orderFlow.Stages[0].Collect.Should().Contain("order_finalized",
+            "the semantic closing fact must be available throughout product selection");
+
+        var identityStage = orderFlow.Stages[1];
+        identityStage.Id.Should().Be("customer_identity");
+        identityStage.AdvanceWhenFacts.Should().Equal("customer_name");
+        identityStage.Collect.Should().Contain(["customer_name", "company_name"]);
+        identityStage.ConversationGuidance.Should()
+            .Contain("registra ese dato como company_name y no como customer_name")
+            .And.Contain("company_name es opcional");
+
+        var customerName = config.FactSchema.Single(fact => fact.Key == "customer_name");
+        customerName.Role.Should().Be("customer.name");
+        customerName.Required.Should().BeTrue();
+        customerName.Label.Should().Contain("persona");
+        customerName.ExtractionGuidance.Should()
+            .Contain("exclusivamente el nombre de la persona")
+            .And.Contain("Nunca guardes aqui el nombre de un consultorio");
+
+        var companyName = config.FactSchema.Single(fact => fact.Key == "company_name");
+        companyName.Role.Should().Be("customer.company");
+        companyName.Required.Should().BeFalse();
+        companyName.Label.Should().Contain("establecimiento");
+        companyName.ExtractionGuidance.Should()
+            .Contain("exclusivamente el nombre del consultorio")
+            .And.Contain("Nunca lo conviertas en customer_name");
     }
 
     [Fact]
@@ -94,6 +141,30 @@ public sealed class MedidentalRegressionTests
             .And.Contain("Motor de implantes 3G Osseo 200")
             .And.Contain("Lampara de fotocurado 3G PowerLED L9")
             .And.Contain("Pieza de mano 3G Titanium 45P");
+    }
+
+    [Fact]
+    public void Seed_ProvisionsEssentialSubscriptionWithoutOverridingBillingHistory()
+    {
+        var (_, sql) = LoadSeed();
+
+        sql.Should()
+            .Contain("FROM dbo.SubscriptionPlans")
+            .And.Contain("Code = N'essential'")
+            .And.Contain("INSERT INTO dbo.BusinessSubscriptions")
+            .And.Contain("CurrentPeriodStart")
+            .And.Contain("PlanCodeSnapshot")
+            .And.Contain("AutoRenew");
+
+        Regex.IsMatch(
+                sql,
+                @"IF NOT EXISTS\s*\(\s*SELECT 1\s*FROM dbo\.BusinessSubscriptions\s*WHERE BusinessId = @BusinessId\s*\)",
+                RegexOptions.IgnoreCase)
+            .Should().BeTrue(
+                "rerunning the business seed must not overwrite upgrades, cancellations, or billing history");
+        sql.Should().Contain(
+            "plan essential activo no encontrado; no se puede completar el aprovisionamiento",
+            "a business without a usable plan must fail provisioning visibly");
     }
 
     private static (AgentConfig Config, string Sql) LoadSeed()

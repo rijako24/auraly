@@ -39,6 +39,15 @@ public sealed class MigratedSeedConfigurationTests
         config!.Policies.Should().StartWith("## EXPERIENCIA CONVERSACIONAL");
         AssertSemanticAndPresentationTextIsSeparated(config);
 
+        if (config.Commerce.Enabled)
+        {
+            var finalizationFact = config.FactSchema.Should().ContainSingle(fact =>
+                fact.Role == "order.finalized").Subject;
+            config.Flows.SelectMany(flow => flow.Stages).Should().Contain(stage =>
+                stage.Collect.Contains(finalizationFact.Key, StringComparer.OrdinalIgnoreCase),
+                "the semantic finalization fact must be writable during a configured commerce stage");
+        }
+
         var compiler = new AgentConfigurationCompiler(new AgentOperationRegistry(
             [new AvailabilityStub(), new CheckoutStub(), new CreationStub(), new OrderChangesStub(), new CatalogServicesStub(), new ResolveServiceStub(), new AddOnsStub(), new FulfillmentStub(), new MethodStub("reservation.list", "reservation.listed"), new MethodStub("reservation.manage", "reservation.managed"), new MethodStub("commerce.search_recipes", "recipes.found"), new MethodStub("commerce.search_products", "products.found", "products.not_found"), new MethodStub("commerce.get_order_draft", "order.draft_loaded", "order.draft_empty", "order_draft_missing"), new MethodStub("commerce.prepare_checkout", "order.checkout_prepared", "order.checkout_ready", "order.checkout_payment_required", "order.checkout_pending_manual_payment", "order_draft_missing", "missing_prerequisites"), new MethodStub("commerce.create_order", "order.created"), new MethodStub("escalation.request_human", "escalation.requested", "escalation.notification_failed"), new MethodStub("conversation.reset_request", "conversation.request_reset"), new MethodStub("conversation.get_known_facts", "known_facts.found", "known_facts.not_found", "known_facts.forbidden"), new MethodStub("internal.get_reservations", "internal.reservations_loaded"), new MethodStub("internal.block_availability", "internal.availability_blocked"), new MethodStub("internal.request_reschedule", "internal.reschedule_requested"), new MethodStub("internal.get_business_metrics", "internal.metrics_loaded"), new MethodStub("internal.get_customer_history", "internal.customer_history_loaded"), new MethodStub("internal.search_order", "internal.order_loaded"), new MethodStub("internal.accept_order", "internal.order_accepted"), new MethodStub("internal.reject_order", "internal.order_rejected")]));
 
@@ -265,8 +274,6 @@ public sealed class MigratedSeedConfigurationTests
             })!;
 
         config.Commerce.Conversation.ContextualConfirmationPhrases.Should().Contain("si esa");
-        config.Commerce.Conversation.FinalizationRules.Should().Contain(rule =>
-            rule.Phrase == "eso es todo" && rule.Match == CommercePhraseMatchModes.Contains);
         config.Commerce.Conversation.QuantityWords["dos"].Should().Be(2m);
         config.Commerce.PendingCart.DiscardOnFinalizeIssueCodes.Should()
             .BeEquivalentTo("product_unavailable", "product_not_found");

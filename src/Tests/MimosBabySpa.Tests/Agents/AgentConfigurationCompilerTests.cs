@@ -134,11 +134,6 @@ public sealed class AgentConfigurationCompilerTests
                 Enabled = true,
                 Conversation = new CommerceConversationPolicy
                 {
-                    FinalizationRules =
-                    [
-                        new CommercePhraseRule { Phrase = "done" },
-                        new CommercePhraseRule { Phrase = "done" }
-                    ],
                     QuantityWords = new Dictionary<string, decimal> { ["pair"] = 0m }
                 },
                 PendingCart = new PendingCartPolicy

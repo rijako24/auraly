@@ -1,4 +1,4 @@
--- =============================================================================
+﻿-- =============================================================================
 -- SeedMedidental.sql
 --
 -- Negocio Medidental con flujo de pedidos abierto, catalogo dental y recomendaciones comerciales,
@@ -274,7 +274,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                      "provider":  "Local",
                      "conversation":  {
                                           "contextualConfirmationPhrases":  ["si", "si esa", "si es esa", "si ese", "si es ese", "si esta", "si es esta", "si este", "si es este", "si correcto", "si correcta", "confirmo", "correcto", "correcta", "esa", "ese", "esta", "este", "esa misma", "ese mismo", "la primera", "el primero"],
-                                          "finalizationRules":  [{"phrase":"eso es todo","match":"contains"}, {"phrase":"solo eso","match":"suffix"}, {"phrase":"seria solo eso","match":"exact"}, {"phrase":"solo seria eso","match":"exact"}, {"phrase":"nada mas","match":"exact"}, {"phrase":"no quiero nada mas","match":"exact"}, {"phrase":"terminamos","match":"exact"}],
                                           "candidateSelectionPhrases":  ["esta", "esa", "primera", "primero", "segunda", "segundo", "tercera", "tercero", "ultima", "ultimo"],
                                           "clauseSeparators":  ["y", "e", "tambien", "ademas"],
                                           "additionalRequestPhrases":  ["otra", "otro", "adicional", "adicionales", "mas", "nuevamente", "tambien agrega", "tambien agregame", "tambien anade"],
@@ -382,7 +381,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "properties": {
         "fact_keys": {
           "type": "array",
-          "items": { "type": "string", "enum": ["customer_name","delivery_method","city","delivery_address","delivery_reference","delivery_recipient_name","delivery_phone","payment_method"] },
+          "items": { "type": "string", "enum": ["customer_name","company_name","delivery_method","city","delivery_address","delivery_reference","delivery_recipient_name","delivery_phone","payment_method"] },
           "minItems": 1,
           "maxItems": 3
         }
@@ -492,13 +491,24 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                        {
                            "key":  "customer_name",
                            "role":  "customer.name",
-                           "label":  "nombre del cliente o establecimiento",
+                           "label":  "nombre del odontologo o persona que realiza el pedido",
                            "type":  "string",
                            "required":  true,
                            "source":  "user",
                            "customerReadable":  true,
                            "scope":  "customer",
-                           "extractionGuidance":  "Representa exclusivamente la identidad del cliente o establecimiento que realiza la compra. No lo actualices con el nombre de quien recibe, un contacto de entrega, un beneficiario ni otra persona mencionada con un rol diferente."
+                           "extractionGuidance":  "Extrae exclusivamente el nombre de la persona u odontologo que realiza el pedido. Nunca guardes aqui el nombre de un consultorio, clinica, empresa o establecimiento, ni el nombre de quien recibe la entrega."
+                       },
+                       {
+                           "key":  "company_name",
+                           "role":  "customer.company",
+                           "label":  "nombre del consultorio, clinica o establecimiento",
+                           "type":  "string",
+                           "required":  false,
+                           "source":  "user",
+                           "customerReadable":  true,
+                           "scope":  "customer",
+                           "extractionGuidance":  "Extrae exclusivamente el nombre del consultorio, clinica, empresa o establecimiento. Nunca lo conviertas en customer_name ni asumas que identifica a la persona que realiza el pedido."
                        },
                        {
                            "key":  "order_finalized",
@@ -666,6 +676,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                                              "delivery_recipient_name",
                                              "delivery_phone",
                                              "customer_name",
+                                             "company_name",
                                              "payment_method"
                                          ],
                            "retentionDays":  1,
@@ -751,18 +762,18 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                                              }
                                }
                  },
-    "conversationOpening":  {"enabled": true, "guidance": "Escribe siempre exactamente una bienvenida calida como primer parrafo que comience con: ¡Hola Doc! Bienvenido a Medidental. Expresa que es un gusto atenderle. Usa Doc aunque conozcas o no el nombre del cliente. No uses el nombre personal del cliente. Puedes usar uno o dos emojis naturales. No digas ''aqui estoy para lo que necesites'' ni hagas preguntas en este primer parrafo. No menciones el tipo de cliente, ciudad, direccion, telefono, compras anteriores ni otros datos recordados. La continuacion, separada por una linea en blanco, debe seguir el objetivo de la etapa.", "allowQuestions": false},
+    "conversationOpening":  {"enabled": true, "guidance": "Escribe exactamente esta bienvenida como primer parrafo: ¡Hola, Doc! Bienvenido a Medidental. Es un gusto atenderle 😊 Usa Doc aunque conozcas o no el nombre del cliente. No uses el nombre personal del cliente. No agregues otra frase, despedida ni pregunta en este primer parrafo. No menciones el tipo de cliente, ciudad, direccion, telefono, compras anteriores ni otros datos recordados. La continuacion, separada por una linea en blanco, debe seguir el objetivo de la etapa.", "allowQuestions": false},
     "failureResponses":  {"llmUnavailable": "Lo siento, en este momento tengo un inconveniente temporal para procesar tu mensaje. Por favor, intenta nuevamente en unos minutos."},
     "templates":  {
                       "order_checkout_no_payment":  "*Resumen de tu pedido*\n{{#each line_items}}\n- {{name}} x{{quantity}}: ${{line_total}}\n{{/each}}\n- Envio: ${{shipping_cost}}\n- *Total: ${{total}} {{currency}}*\n\nEntrega:\n- Ciudad: {{city}}\n- Direccion: {{delivery_address}}\n- Celular: {{customer_phone}}\n{{#if customer_name}}\n- Cliente: Doc\n{{/if}}\n{{#if delivery_recipient_name}}\n- Recibe: {{delivery_recipient_name}}\n{{/if}}\n\nMetodo de pago: efectivo al recibir\n\nConfirmas tu pedido con esta informacion?",
                       "order_checkout_card_terminal":  "*Resumen de tu pedido*\n{{#each line_items}}\n- {{name}} x{{quantity}}: ${{line_total}}\n{{/each}}\n- Envio: ${{shipping_cost}}\n- *Total: ${{total}} {{currency}}*\n\nEntrega:\n- Ciudad: {{city}}\n- Direccion: {{delivery_address}}\n- Celular: {{customer_phone}}\n{{#if customer_name}}\n- Cliente: Doc\n{{/if}}\n{{#if delivery_recipient_name}}\n- Recibe: {{delivery_recipient_name}}\n{{/if}}\n\nMetodo de pago: datafono al recibir\n\nLlevaremos el datafono para realizar el pago al momento de la entrega. Confirmas tu pedido con esta informacion?",
                       "order_checkout_manual_transfer":  "*Resumen de tu pedido*\n{{#each line_items}}\n- {{name}} x{{quantity}}: ${{line_total}}\n{{/each}}\n- Envio: ${{shipping_cost}}\n- *Total: ${{total}} {{currency}}*\n\nEntrega:\n- Ciudad: {{city}}\n- Direccion: {{delivery_address}}\n- Celular: {{customer_phone}}\n{{#if customer_name}}\n- Cliente: Doc\n{{/if}}\n{{#if delivery_recipient_name}}\n- Recibe: {{delivery_recipient_name}}\n{{/if}}\n\nMetodo de pago: transferencia manual\n\nTu pago queda pendiente de confirmacion manual. Un agente del equipo de Medidental confirmara el pago; cuando se confirme, te notificaremos que el pedido fue creado.",
-                      "catalog_results":  "{{#if search_text}}Claro, encontre estas opciones para ti:\r\n\r\n*Productos disponibles*\r\n\r\n{{#each products}}\r\n- {{name}}: ${{unit_price}} {{currency}}\r\n{{/each}}\r\n\r\n{{#each recommendations}}\r\n\r\n*Tambien te puede servir*\r\n- {{name}}: ${{unit_price}} {{currency}}\r\n{{#if reason}}{{reason}}\r\n{{/if}}{{/each}}\r\n\r\nCual te interesa y cuantas unidades deseas agregar?{{else}}Contamos con una gran variedad de productos odontologicos. Estos son algunos:\r\n\r\n{{#each products}}\r\n- {{name}}\r\n{{/each}}\r\n\r\nPor cual producto estas interesado?{{/if}}",
+                      "catalog_results":  "{{#if search_text}}Claro, encontre estas opciones para ti:\r\n\r\n*Productos disponibles*\r\n\r\n{{#each products}}\r\n- {{name}}: ${{unit_price}} {{currency}}\r\n{{/each}}\r\n\r\n{{#each recommendations}}\r\n\r\n*Tambien te puede servir*\r\n- {{name}}: ${{unit_price}} {{currency}}\r\n{{#if reason}}{{reason}}\r\n{{/if}}{{/each}}\r\n\r\nCual te interesa y cuantas unidades deseas agregar?{{else}}Tenemos equipos, materiales y consumibles odontologicos para profesionales y clinicas. Estos son algunos de nuestros productos:\r\n\r\n{{#each products}}\r\n- {{name}}\r\n{{/each}}\r\n\r\nCual de estos productos le interesa? Tambien puedo ayudarle a encontrar otro producto que necesite.{{/if}}",
                       "catalog_no_results":  "Por ahora no encontre {{#if search_text}}{{search_text}} disponibles{{else}}productos disponibles para esa busqueda{{/if}} en nuestro catalogo.\r\n\r\nSi quieres, puedo buscar una opcion parecida o ayudarte a elegir otro producto.",
                       "known_facts":  "Claro. Esto es lo que tengo registrado:\r\n\r\n{{#each facts}}\r\n- {{label}}: {{value}}\r\n{{/each}}",
                       "known_facts_missing":  "No tengo ese dato registrado todavia. Si quieres, puedes indicarmelo o actualizarlo.",
                       "recipe_results":  "Buena idea. Puedes inspirarte con estas preparaciones:\r\n\r\n*Ideas para preparar*\r\n{{#each results}}\r\n- {{Title}}\r\n  {{Url}}\r\n{{/each}}",
-                      "cart_snapshot":  "Listo, ya actualice tu pedido 🙌\r\n\r\n*Pedido actual*\r\n\r\n{{#each items}}\r\n- {{name}} x{{quantity}}: ${{line_total}}\r\n{{/each}}\r\n\r\n*Total: ${{total}} {{currency}}*\r\n\r\nQuieres agregar algo mas? Cuando termines, solo dime que eso es todo.",
+                      "cart_snapshot":  "Listo, ya actualice tu pedido 🙌\r\n\r\n*Pedido actual*\r\n\r\n{{#each items}}\r\n- {{name}} x{{quantity}}: ${{line_total}}\r\n{{/each}}\r\n\r\n*Total: ${{total}} {{currency}}*\r\n\r\nQuieres agregar algo mas? Cuando hayas terminado de elegir, avisame y continuamos.",
                       "cart_review":  "Perfecto, revisemos juntos que todo este bien:\r\n\r\n*Resumen de tu pedido*\r\n\r\n{{#each items}}\r\n- {{name}} x{{quantity}}: ${{line_total}}\r\n{{/each}}\r\n\r\n*Total: ${{total}} {{currency}}*\r\n\r\nLo ves correcto o quieres cambiar algo?",
                       "product_ambiguity":  "Quiero asegurarme de agregar la opcion correcta. Para {{product_text}} encontre:\r\n{{#each product_options}}\r\n- {{Name}}: ${{UnitPrice}} {{Currency}}\r\n{{/each}}\r\n\r\nCual prefieres? Conservare los demas productos de tu solicitud.",
                       "insufficient_stock":  "Puedo ayudarte con esa referencia, pero la cantidad solicitada supera el inventario disponible.\r\n\r\n- Producto: {{product_text}}\r\n- Solicitado en total: {{requested_quantity}}\r\n- Disponible: {{available_quantity}}\r\n\r\nPara este cambio, indica una cantidad de hasta {{maximum_command_quantity}}; los demas cambios del lote aun no se han aplicado."
@@ -773,18 +784,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                       "type":  "primary",
                       "routingGuidance":  "Use this primary flow for Medidental product orders, customer identification, catalog-grounded recommendations, delivery data, payment method and order confirmation.",
                       "stages":  [
-                                     {
-                                         "id":  "customer_name",
-                                         "name":  "Identificacion del cliente",
-                                         "goal":  "Obtener el nombre del cliente o establecimiento antes de iniciar el pedido cuando no exista un nombre confiable.",
-                                         "advanceWhenFacts":  [
-                                                                  "customer_name"
-                                                              ],
-                                         "conversationGuidance":  "Si falta customer_name y el cliente no lo informo en el mensaje actual, explica con cercania que puedes ayudarle con su pedido y solicita su nombre o el nombre de su negocio. No repitas el saludo ni la bienvenida en la continuacion. Separa la explicacion y la pregunta en parrafos cortos. Si ya lo dijo, continua sin volver a pedirlo; el motor registra el dato extraido.",
-                                         "collect":  [
-                                                         "customer_name"
-                                                     ]
-                                     },
                                      {
                                          "id":  "product_selection",
                                          "name":  "Productos, catalogo y recomendaciones",
@@ -992,6 +991,19 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                                                                                                               }
                                                                            }
                                                          }
+                                                     ]
+                                     },
+                                     {
+                                         "id":  "customer_identity",
+                                         "name":  "Identificacion del cliente",
+                                         "goal":  "Obtener el nombre de la persona u odontologo que realiza el pedido y conservar por separado el establecimiento cuando el cliente lo informe.",
+                                         "advanceWhenFacts":  [
+                                                                  "customer_name"
+                                                              ],
+                                         "conversationGuidance":  "Si falta customer_name, solicita exclusivamente el nombre de la persona u odontologo que realiza el pedido. Si el cliente menciona un consultorio, clinica, empresa o establecimiento, registra ese dato como company_name y no como customer_name; si aun falta el nombre personal, pidelo de forma breve. company_name es opcional y nunca bloquea el avance. No repitas el saludo ni la bienvenida.",
+                                         "collect":  [
+                                                         "customer_name",
+                                                         "company_name"
                                                      ]
                                      },
                                      {
@@ -1404,7 +1416,7 @@ SET @SettingsJson = JSON_MODIFY(@SettingsJson, '$.templates.cart_product_unavail
 
 IF JSON_VALUE(@SettingsJson, '$.globalActions[1].actions[0].operation') <> 'commerce.apply_order_changes'
     THROW 51000, 'SeedMedidental: ruta global de carrito inesperada.', 1;
-IF JSON_VALUE(@SettingsJson, '$.flows[0].stages[1].actions[2].operation') <> 'commerce.apply_order_changes'
+IF JSON_VALUE(@SettingsJson, '$.flows[0].stages[0].actions[2].operation') <> 'commerce.apply_order_changes'
     THROW 51000, 'SeedMedidental: ruta product_selection de carrito inesperada.', 1;
 IF JSON_VALUE(@SettingsJson, '$.flows[0].stages[2].actions[1].operation') <> 'commerce.apply_order_changes'
     THROW 51000, 'SeedMedidental: ruta cart_review de carrito inesperada.', 1;
@@ -1412,7 +1424,7 @@ IF JSON_VALUE(@SettingsJson, '$.flows[0].stages[2].actions[1].operation') <> 'co
 DECLARE @CartExecutionPaths TABLE (Path NVARCHAR(400) NOT NULL);
 INSERT INTO @CartExecutionPaths (Path) VALUES
     (N'$.globalActions[1].actions[0].execution'),
-    (N'$.flows[0].stages[1].actions[2].execution'),
+    (N'$.flows[0].stages[0].actions[2].execution'),
     (N'$.flows[0].stages[2].actions[1].execution');
 
 DECLARE @CartExecutionPath NVARCHAR(400);
@@ -1431,7 +1443,7 @@ DEALLOCATE CartExecutionCursor;
 DECLARE @CartOutcomePaths TABLE (Path NVARCHAR(400) NOT NULL);
 INSERT INTO @CartOutcomePaths (Path) VALUES
     (N'$.globalActions[1].actions[0].onOutcome'),
-    (N'$.flows[0].stages[1].actions[2].onOutcome'),
+    (N'$.flows[0].stages[0].actions[2].onOutcome'),
     (N'$.flows[0].stages[2].actions[1].onOutcome');
 
 DECLARE @CartOutcomePath NVARCHAR(400);
@@ -1480,6 +1492,59 @@ BEGIN
     WHERE AgentId = @AgentId;
 END
 
-PRINT N'SeedMedidental: negocio, comercio local y agente configurados.';
+DECLARE @SubscriptionPlanId UNIQUEIDENTIFIER;
+
+SELECT @SubscriptionPlanId = SubscriptionPlanId
+FROM dbo.SubscriptionPlans
+WHERE Code = N'essential'
+  AND IsActive = 1;
+
+IF @SubscriptionPlanId IS NULL
+BEGIN
+    THROW 51000, 'SeedMedidental: plan essential activo no encontrado; no se puede completar el aprovisionamiento.', 1;
+END
+
+IF NOT EXISTS (
+    SELECT 1
+    FROM dbo.BusinessSubscriptions
+    WHERE BusinessId = @BusinessId
+)
+BEGIN
+    INSERT INTO dbo.BusinessSubscriptions (
+        BusinessId,
+        SubscriptionPlanId,
+        [Status],
+        CurrentPeriodStart,
+        CurrentPeriodEnd,
+        PlanCodeSnapshot,
+        PlanNameSnapshot,
+        MonthlyPriceCop,
+        IncludedCredits,
+        MaxVariableCostCop,
+        MaxVariableCostPercent,
+        ExtraCredits,
+        ExtraVariableCostCop,
+        AutoRenew
+    )
+    SELECT
+        @BusinessId,
+        SubscriptionPlanId,
+        1,
+        DATEFROMPARTS(YEAR(SYSUTCDATETIME()), MONTH(SYSUTCDATETIME()), 1),
+        DATEADD(MONTH, 1, DATEFROMPARTS(YEAR(SYSUTCDATETIME()), MONTH(SYSUTCDATETIME()), 1)),
+        Code,
+        [Name],
+        MonthlyPriceCop,
+        IncludedCredits,
+        MaxVariableCostCop,
+        MaxVariableCostPercent,
+        0,
+        0,
+        1
+    FROM dbo.SubscriptionPlans
+    WHERE SubscriptionPlanId = @SubscriptionPlanId;
+END
+
+PRINT N'SeedMedidental: negocio, comercio local, agente y suscripcion configurados.';
 
 GO

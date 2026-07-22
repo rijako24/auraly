@@ -863,7 +863,7 @@ public sealed class DeterministicTurnCoordinatorTests
         };
 
         var protectedPlan = DeterministicTurnCoordinator.ProtectPendingCommerceSelection(
-            config, facts, "Por ahora solo eso", new TurnPlan());
+            config, facts, "Por ahora solo eso", SemanticFinalizationPlan("Por ahora solo eso"));
 
         protectedPlan.Facts.Should().ContainSingle(fact =>
             fact.Key == "done" && fact.Value.ValueKind == JsonValueKind.True);
@@ -951,6 +951,7 @@ public sealed class DeterministicTurnCoordinatorTests
         var config = new AgentConfig
         {
             Commerce = PendingCommercePolicy(),
+            FactSchema = [new FactSchemaEntry { Key = "done", Role = "order.finalized", Type = "boolean" }],
             Flows =
             [
                 new AgentFlowDefinition
@@ -993,7 +994,8 @@ public sealed class DeterministicTurnCoordinatorTests
                     Value = Json("[{\"operation\":\"cancel_pending\",\"productText\":\"pernil\",\"quantity\":null,\"destinationReference\":null}]"),
                     Evidence = "bueno eso es todo gracias"
                 }
-            ]
+            ],
+            Facts = SemanticFinalizationPlan("bueno eso es todo gracias").Facts
         };
 
         var protectedPlan = DeterministicTurnCoordinator.ProtectPendingCommerceSelection(
@@ -1157,7 +1159,7 @@ public sealed class DeterministicTurnCoordinatorTests
         };
 
         var protectedPlan = DeterministicTurnCoordinator.ProtectPendingCommerceSelection(
-            config, facts, "No quiero más productos", new TurnPlan());
+            config, facts, "No quiero más productos", SemanticFinalizationPlan("No quiero más productos"));
 
         protectedPlan.Facts.Should().ContainSingle(fact =>
             fact.Key == "done" && fact.Value.ValueKind == JsonValueKind.True);
@@ -1229,6 +1231,7 @@ public sealed class DeterministicTurnCoordinatorTests
                 "ranchera Salsan",
                 "jamonada CUNICHEF");
     }
+
     private static Dictionary<string, string> RichardPendingFacts() => new()
     {
         ["system.pending_cart_commands"] = """
@@ -1503,6 +1506,22 @@ public sealed class DeterministicTurnCoordinatorTests
             }
         ]
     };
+
+    private static TurnPlan SemanticFinalizationPlan(string evidence) => new()
+    {
+        Facts =
+        [
+            new PlannedFactClaim
+            {
+                Key = "done",
+                Operation = TurnPlanOperations.Set,
+                Value = Json("true"),
+                Evidence = evidence,
+                Confidence = 1
+            }
+        ]
+    };
+
     private static CommerceConfig PendingCommercePolicy(params string[] discardOnFinalizeIssueCodes) =>
         PendingCommercePolicy(false, discardOnFinalizeIssueCodes);
 
@@ -1522,13 +1541,6 @@ public sealed class DeterministicTurnCoordinatorTests
                     Match = CommercePhraseMatchModes.Contains
                 }
             ],
-            FinalizationRules =
-            [
-                new CommercePhraseRule { Phrase = "eso es todo", Match = CommercePhraseMatchModes.Contains },
-                new CommercePhraseRule { Phrase = "solo eso", Match = CommercePhraseMatchModes.Suffix },
-                new CommercePhraseRule { Phrase = "solo seria eso" },
-                new CommercePhraseRule { Phrase = "no quiero mas productos" }
-            ]
         },
         PendingCart = new PendingCartPolicy
         {

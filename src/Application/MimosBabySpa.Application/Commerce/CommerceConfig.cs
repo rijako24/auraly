@@ -16,7 +16,6 @@ public sealed class CommerceConfig
 public sealed class CommerceConversationPolicy
 {
     public IReadOnlyList<string> ContextualConfirmationPhrases { get; init; } = [];
-    public IReadOnlyList<CommercePhraseRule> FinalizationRules { get; init; } = [];
     public IReadOnlyList<CommercePhraseRule> CartReviewRules { get; init; } = [];
     public IReadOnlyList<CommercePhraseRule> ProductReplacementRules { get; init; } = [];
     public IReadOnlyList<string> CandidateSelectionPhrases { get; init; } = [];

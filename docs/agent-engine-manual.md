@@ -109,7 +109,7 @@ Un mensaje posterior puede resolver, reemplazar, cambiar cantidad o cancelar cua
 
 Las aclaraciones de descarte y cantidad se recuperan de forma determinista antes de ejecutar el plan: nunca dependen del nombre de un producto, solo del estado pendiente, la referencia del mensaje actual o de la ultima presentacion del bot y las frases configuradas. Una cantidad solo se acepta si es unica, positiva y no supera el maximo informado por inventario.
 
-El cierre principal es semantico. El planner extrae el fact con rol `order.finalized` cuando el cliente expresa claramente que desea conservar el carrito actual y continuar, aunque use una formulacion nunca vista. `commerce.conversation.finalizationRules` es una proteccion determinista complementaria, no una lista exhaustiva de frases que el cliente deba memorizar.
+El cierre es exclusivamente semantico. El planner extrae el fact con rol `order.finalized` cuando el cliente expresa claramente que desea conservar el carrito actual y continuar, aunque use una formulacion nunca vista. El runtime no compara el mensaje contra listas de frases de cierre.
 
 Si `discardAllOnExplicitFinalization=true`, una finalizacion semantica explicita genera `cancel_pending` para todas las referencias no resueltas, conserva el fact de finalizacion y avanza hacia entrega. Esto evita que una incidencia antigua de inventario, busqueda o ambiguedad mantenga secuestrado un carrito que el cliente ya decidio cerrar. Las afirmaciones contextuales cortas, como “si”, siguen una ruta mas conservadora: solo cierran cuando los codigos restantes pertenecen a `discardOnFinalizeIssueCodes`.
 
@@ -448,7 +448,6 @@ Precio, promociones, total, deposito y shipping salen de servicios. Cualquier de
 ### Protecciones conversacionales
 
 - `contextualConfirmationPhrases`: confirma una opcion presentada; no cierra globalmente.
-- `finalizationRules`: respaldo determinista de cierre; la signal/fact semantica es primaria.
 - `cartReviewRules`: protege solicitudes de solo lectura.
 - `productReplacementRules`: indica rechazo/reemplazo de una referencia ofrecida.
 - `candidateSelectionPhrases`: ordinales/demostrativos.

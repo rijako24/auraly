@@ -498,7 +498,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
     "provider": "Local",
     "conversation": {
       "contextualConfirmationPhrases": ["si", "si esa", "si es esa", "si ese", "si es ese", "si esta", "si es esta", "si este", "si es este", "si correcto", "si correcta", "confirmo", "correcto", "correcta", "esa", "ese", "esta", "este", "esa misma", "ese mismo", "la primera", "el primero"],
-      "finalizationRules": [{"phrase":"eso es todo","match":"contains"}, {"phrase":"solo eso","match":"suffix"}, {"phrase":"seria solo eso","match":"exact"}, {"phrase":"solo seria eso","match":"exact"}, {"phrase":"nada mas","match":"exact"}, {"phrase":"no quiero nada mas","match":"exact"}, {"phrase":"terminamos","match":"exact"}],
       "candidateSelectionPhrases": ["esta", "esa", "primera", "primero", "segunda", "segundo", "tercera", "tercero", "ultima", "ultimo"],
       "clauseSeparators": ["y", "e", "tambien", "ademas"],
       "additionalRequestPhrases": ["otra", "otro", "adicional", "adicionales", "mas", "nuevamente", "tambien agrega", "tambien agregame", "tambien anade"],

@@ -86,7 +86,7 @@ export interface EventNotificationConfig { enabled?: boolean; recipients?: strin
 export type AgentNotificationDefinitions = Record<string, EventNotificationConfig>;
 export interface CommercePhraseRule { phrase: string; match?: "exact" | "contains" | "prefix" | "suffix"; }
 export interface AgentCommerceConversationSettings {
-  contextualConfirmationPhrases?: string[]; finalizationRules?: CommercePhraseRule[];
+  contextualConfirmationPhrases?: string[];
   cartReviewRules?: CommercePhraseRule[]; productReplacementRules?: CommercePhraseRule[];
   candidateSelectionPhrases?: string[]; clauseSeparators?: string[]; additionalRequestPhrases?: string[];
   quantityWords?: Record<string, number>;

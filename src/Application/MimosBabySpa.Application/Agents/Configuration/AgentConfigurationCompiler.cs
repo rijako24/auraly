@@ -128,7 +128,6 @@ public sealed partial class AgentConfigurationCompiler
     {
         var conversation = config.Commerce.Conversation;
         ValidateTerms("commerce.conversation.contextualConfirmationPhrases", conversation.ContextualConfirmationPhrases);
-        ValidatePhraseRules("commerce.conversation.finalizationRules", conversation.FinalizationRules);
         ValidatePhraseRules("commerce.conversation.cartReviewRules", conversation.CartReviewRules);
         ValidatePhraseRules("commerce.conversation.productReplacementRules", conversation.ProductReplacementRules);
         ValidateTerms("commerce.conversation.candidateSelectionPhrases", conversation.CandidateSelectionPhrases);
