@@ -442,6 +442,187 @@ public class SearchProductsOperationTests
         offer.Products.Select(product => product.Name).Should().Equal(
             "MAIZ SUPER DULCE X 500 GR", "MAIZ TIERNO X 1 KG");
     }
+    [Fact]
+    public async Task ExecuteAsync_PrecisePotatoRequest_RejectsProviderNoise()
+    {
+        var ctx = CreateContext();
+        var marquise = Product("PA10", "PAPA MARQUISE X 2.5 KG", "Papas");
+        var bread = Product("PN10", "PAN HAMBURGUESA CON PAPA", "Pan");
+        var jowl = Product("CE10", "PAPADA DE CERDO", "Cerdo");
+        var shrimp = Product("MA10", "CAMARON PRECOCIDO", "Mariscos");
+        _commerce
+            .Setup(service => service.SearchProductsAsync(
+                ctx,
+                It.IsAny<ProductSearchRequest>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ProductSearchResult([marquise, bread, jowl, shrimp], "mantis"));
+        var operation = new SearchProductsOperation(_commerce.Object);
+        using var args = JsonDocument.Parse("""{"query":"papa marquise","limit":10}""");
+
+        var outcome = await operation.ExecuteAsync(
+            args.RootElement,
+            new OperationContext { Session = ctx });
+
+        outcome.Code.Should().Be("products.found");
+        outcome.Data.GetProperty("products").EnumerateArray()
+            .Select(product => product.GetProperty("name").GetString())
+            .Should().Equal("PAPA MARQUISE X 2.5 KG");
+        outcome.Data.GetProperty("matched_search_terms")[0].GetString()
+            .Should().Be("papa marquise");
+        outcome.Data.GetRawText().Should().NotContain("CAMARON").And.NotContain("PAPADA");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_MultipleRequestedProducts_UsesBalancedMerge()
+    {
+        var ctx = CreateContext();
+        var potatoes = new[]
+        {
+            Product("PA1", "PAPA MARQUISE", "Papas"),
+            Product("PA2", "PAPA FRANCESA", "Papas"),
+            Product("PA3", "PAPA CASCO", "Papas")
+        };
+        var bacon = Product("CF1", "TOCINETA AHUMADA", "Carnes frias");
+        _commerce
+            .Setup(service => service.SearchProductsAsync(
+                ctx,
+                It.IsAny<ProductSearchRequest>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync((AgentConversationContext _, ProductSearchRequest request, CancellationToken _) =>
+                request.Query == "tocineta"
+                    ? new ProductSearchResult([bacon], "mantis")
+                    : new ProductSearchResult(potatoes, "mantis"));
+        var operation = new SearchProductsOperation(_commerce.Object);
+        using var args = JsonDocument.Parse(
+            """{"queries":["papa","tocineta"],"limit":2}""");
+
+        var outcome = await operation.ExecuteAsync(
+            args.RootElement,
+            new OperationContext { Session = ctx });
+
+        outcome.Data.GetProperty("products").EnumerateArray()
+            .Select(product => product.GetProperty("name").GetString())
+            .Should().Equal("PAPA MARQUISE", "TOCINETA AHUMADA");
+        outcome.Data.GetProperty("matched_search_terms").GetArrayLength().Should().Be(2);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_UnrelatedProviderResults_AbstainsAndReportsUnmatchedTerm()
+    {
+        var ctx = CreateContext();
+        var shrimp = Product("MA10", "CAMARON PRECOCIDO", "Mariscos");
+        _commerce
+            .Setup(service => service.SearchProductsAsync(
+                ctx,
+                It.IsAny<ProductSearchRequest>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ProductSearchResult([shrimp], "mantis"));
+        var operation = new SearchProductsOperation(_commerce.Object);
+        using var args = JsonDocument.Parse("""{"query":"french fries","limit":10}""");
+
+        var outcome = await operation.ExecuteAsync(
+            args.RootElement,
+            new OperationContext { Session = ctx });
+
+        outcome.Code.Should().Be("products.not_found");
+        outcome.Data.GetProperty("products").GetArrayLength().Should().Be(0);
+        outcome.Data.GetProperty("unmatched_search_terms")[0].GetString()
+            .Should().Be("french fries");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_FragmentedReply_IsGroundedInRecentCatalogOffer()
+    {
+        var ctx = CreateContext();
+        ctx.Facts[CatalogOfferMemory.FactKey] = """
+            {
+              "schemaVersion":2,
+              "sequence":1,
+              "snapshots":[{
+                "sequence":1,
+                "searchTerms":["papas"],
+                "products":[
+                  {"externalProductId":"PA10","sku":"PA10","name":"PAPA MARQUISE X 2.5 KG","unitPrice":21000,"currency":"COP"},
+                  {"externalProductId":"PA11","sku":"PA11","name":"PAPA FRENCH FRIES X 2.5 KG","unitPrice":22000,"currency":"COP"}
+                ]
+              }]
+            }
+            """;
+        var marquise = Product("PA10", "PAPA MARQUISE X 2.5 KG", "Papas");
+        _commerce
+            .Setup(service => service.SearchProductsAsync(
+                ctx,
+                It.Is<ProductSearchRequest>(request =>
+                    request.Query == "PAPA MARQUISE X 2.5 KG"),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ProductSearchResult([marquise], "mantis"));
+        var operation = new SearchProductsOperation(_commerce.Object);
+        using var args = JsonDocument.Parse("""{"query":"marquise","limit":10}""");
+
+        var outcome = await operation.ExecuteAsync(
+            args.RootElement,
+            new OperationContext { Session = ctx });
+
+        outcome.Code.Should().Be("products.found");
+        outcome.Data.GetProperty("original_search_terms")[0].GetString()
+            .Should().Be("marquise");
+        outcome.Data.GetProperty("search_terms")[0].GetString()
+            .Should().Be("PAPA MARQUISE X 2.5 KG");
+        _commerce.VerifyAll();
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_ClaudiaTwoPotatoReferences_KeepBothAndRejectSeafoodNoise()
+    {
+        var ctx = CreateContext();
+        ctx.Facts[CatalogOfferMemory.FactKey] = """
+            {
+              "schemaVersion":2,
+              "sequence":1,
+              "snapshots":[{
+                "sequence":1,
+                "searchTerms":["papas"],
+                "products":[
+                  {"externalProductId":"PA10","sku":"PA10","name":"PAPA MARQUISE X 2.5 KG","unitPrice":21000,"currency":"COP"},
+                  {"externalProductId":"PA11","sku":"PA11","name":"PAPA FRENCH FRIES X 2.5 KG","unitPrice":22000,"currency":"COP"}
+                ]
+              }]
+            }
+            """;
+        var marquise = Product("PA10", "PAPA MARQUISE X 2.5 KG", "Papas");
+        var frenchFries = Product("PA11", "PAPA FRENCH FRIES X 2.5 KG", "Papas");
+        var shrimp = Product("MA10", "CAMARON PRECOCIDO", "Mariscos");
+        _commerce
+            .Setup(service => service.SearchProductsAsync(
+                ctx,
+                It.IsAny<ProductSearchRequest>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync((AgentConversationContext _, ProductSearchRequest request, CancellationToken _) =>
+                request.Query!.Contains("MARQUISE", StringComparison.OrdinalIgnoreCase)
+                    ? new ProductSearchResult([marquise, shrimp], "mantis")
+                    : new ProductSearchResult([frenchFries, shrimp], "mantis"));
+        var operation = new SearchProductsOperation(_commerce.Object);
+        using var args = JsonDocument.Parse(
+            """{"queries":["marquise","frech fries"],"limit":10}""");
+
+        var outcome = await operation.ExecuteAsync(
+            args.RootElement,
+            new OperationContext { Session = ctx });
+
+        outcome.Code.Should().Be("products.found");
+        outcome.Data.GetProperty("products").EnumerateArray()
+            .Select(product => product.GetProperty("name").GetString())
+            .Should().Equal(
+                "PAPA MARQUISE X 2.5 KG",
+                "PAPA FRENCH FRIES X 2.5 KG");
+        outcome.Data.GetRawText().Should().NotContain("CAMARON");
+        outcome.Data.GetProperty("matched_search_terms").GetArrayLength().Should().Be(2);
+    }
+
+    private static ProductReference Product(string sku, string name, string category) =>
+        new(Guid.NewGuid(), sku, sku, name, null, category, 10_000m, "COP", 20m);
+
+
     private static AgentConversationContext CreateContext() => new()
     {
         BusinessId = Guid.NewGuid(),

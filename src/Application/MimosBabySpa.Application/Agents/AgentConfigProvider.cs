@@ -54,6 +54,10 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
             throw new InvalidOperationException($"Agent configuration {agentId} must declare at least one flow.");
 
         var flows = settings.Flows.ToList();
+        var checkout = settings.Checkout ?? new CheckoutDefinitions();
+        var configuredGlobalActions = settings.GlobalActions ?? [];
+        var configuredTemplates = settings.Templates
+            ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var config = new AgentConfig
         {
             AgentId = agentId,
@@ -62,9 +66,13 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
             Persona = settings.Persona?.Trim() ?? string.Empty,
             Policies = settings.Policies?.Trim() ?? string.Empty,
             Flows = flows,
-            GlobalActions = settings.GlobalActions ?? [],
+            GlobalActions = BuiltInAgentCapabilities.AddPaymentMethodsAction(
+                configuredGlobalActions,
+                checkout),
             FactSchema = settings.FactSchema ?? [],
-            Templates = settings.Templates ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+            Templates = BuiltInAgentCapabilities.AddPaymentMethodsTemplate(
+                configuredTemplates,
+                checkout),
             ConversationOpening = settings.ConversationOpening ?? new ConversationOpeningDefinitions(),
             FailureResponses = settings.FailureResponses ?? new FailureResponseDefinitions(),
             ConversationFollowUp = settings.ConversationFollowUp ?? new ConversationFollowUpDefinitions(),
@@ -79,7 +87,7 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
             ReservationAutomations = settings.ReservationAutomations ?? new ReservationAutomationDefinitions(),
             InteractiveActions = settings.InteractiveActions ?? new InteractiveActionDefinitions(),
             ReservationManagement = settings.ReservationManagement ?? new ReservationManagementDefinitions(),
-            Checkout = settings.Checkout ?? new CheckoutDefinitions(),
+            Checkout = checkout,
             Commerce = settings.Commerce ?? new CommerceConfig(),
             OperatingHours = settings.OperatingHours ?? new OperatingHoursDefinitions()
         };

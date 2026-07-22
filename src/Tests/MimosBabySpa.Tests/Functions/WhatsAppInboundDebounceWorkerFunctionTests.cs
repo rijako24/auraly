@@ -1,10 +1,12 @@
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using MimosBabySpa.API.Functions;
+using Microsoft.Extensions.Options;
 using MimosBabySpa.Application.DTOs;
 using MimosBabySpa.Application.Services;
 using MimosBabySpa.Domain.Entities;
 using MimosBabySpa.Infrastructure.Services;
+using MimosBabySpa.Infrastructure.Configuration;
 using Moq;
 using Xunit;
 
@@ -59,6 +61,7 @@ public sealed class WhatsAppInboundDebounceWorkerFunctionTests
             queue.Object,
             parser.Object,
             batchProcessor.Object,
+            Options.Create(new WhatsAppWebhookOptions()),
             Mock.Of<ILogger<WhatsAppInboundDebounceWorkerFunction>>());
         var body = JsonSerializer.Serialize(new WhatsAppInboundDebounceMessage(
             businessId,
@@ -126,6 +129,7 @@ public sealed class WhatsAppInboundDebounceWorkerFunctionTests
             Mock.Of<IWhatsAppInboundQueueService>(),
             parser.Object,
             batchProcessor.Object,
+            Options.Create(new WhatsAppWebhookOptions()),
             Mock.Of<ILogger<WhatsAppInboundDebounceWorkerFunction>>());
         var body = JsonSerializer.Serialize(new WhatsAppInboundDebounceMessage(
             businessId,

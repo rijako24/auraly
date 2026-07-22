@@ -74,6 +74,8 @@ GO
 GO
 :r .\Migrations\MigrateCJWhatsAppToMedidental.sql
 GO
+:r .\Migrations\BackfillConversationAgents.sql
+GO
 :r .\Migrations\MigrateAuditAgentTemplates.sql
 :r .\Seeds\SeedDefaultResources.sql
 :r .\Seeds\SeedWorkshopSchedulesInCatalog.sql

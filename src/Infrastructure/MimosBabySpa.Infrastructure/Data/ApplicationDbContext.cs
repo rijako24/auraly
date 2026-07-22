@@ -167,6 +167,7 @@ public class ApplicationDbContext : DbContext
                   .HasForeignKey(e => e.BusinessId)
                   .OnDelete(DeleteBehavior.Restrict);
             entity.HasIndex(e => new { e.BusinessId, e.UserNumber });
+            entity.HasIndex(e => e.AgentId);
             entity.HasIndex(e => e.Status);
             entity.HasMany(e => e.Contexts)
                   .WithOne(c => c.Conversation)

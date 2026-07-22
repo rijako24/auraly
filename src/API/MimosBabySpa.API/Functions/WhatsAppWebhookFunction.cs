@@ -4,15 +4,16 @@ using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using MimosBabySpa.Application.DTOs;
 using MimosBabySpa.Application.Services;
+using MimosBabySpa.Infrastructure.Configuration;
 
 namespace MimosBabySpa.API.Functions;
 
 public class WhatsAppWebhookFunction
 {
     private const string WhatsAppProvider = "whatsapp";
-    private static readonly TimeSpan DebounceDelay = TimeSpan.FromSeconds(1);
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNameCaseInsensitive = true
@@ -24,6 +25,7 @@ public class WhatsAppWebhookFunction
     private readonly IInboundMessageDeduplicationService _deduplicationService;
     private readonly IWhatsAppInboundQueueService _inboundQueueService;
     private readonly ILogger<WhatsAppWebhookFunction> _logger;
+    private readonly TimeSpan _debounceDelay;
 
     public WhatsAppWebhookFunction(
         IWhatsAppMessageProcessorService messageProcessorService,
@@ -31,6 +33,7 @@ public class WhatsAppWebhookFunction
         IBusinessIdentificationService businessIdentificationService,
         IInboundMessageDeduplicationService deduplicationService,
         IWhatsAppInboundQueueService inboundQueueService,
+        IOptions<WhatsAppWebhookOptions> webhookOptions,
         ILogger<WhatsAppWebhookFunction> logger)
     {
         _messageProcessorService = messageProcessorService;
@@ -38,6 +41,7 @@ public class WhatsAppWebhookFunction
         _businessIdentificationService = businessIdentificationService;
         _deduplicationService = deduplicationService;
         _inboundQueueService = inboundQueueService;
+        _debounceDelay = webhookOptions.Value.GetInboundDebounceDelay();
         _logger = logger;
     }
 
@@ -109,7 +113,7 @@ public class WhatsAppWebhookFunction
                 foreach (var message in incomingMessages)
                 {
                     var now = DateTime.UtcNow;
-                    var dueAtUtc = now.Add(DebounceDelay);
+                    var dueAtUtc = now.Add(_debounceDelay);
                     var singleMessageEntry = FilterEntryMessages(entry, new HashSet<string>(StringComparer.Ordinal) { message.Id }, false);
                     var customerName = singleMessageEntry.Changes?
                         .SelectMany(c => c.Value?.Contacts ?? [])

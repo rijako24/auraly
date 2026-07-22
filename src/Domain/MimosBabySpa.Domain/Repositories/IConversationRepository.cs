@@ -15,5 +15,6 @@ public interface IConversationRepository
 
     Task<(IReadOnlyList<Conversation> Items, int TotalCount)> GetPagedByBusinessIdAsync(
         Guid businessId, int page, int pageSize, string? search = null,
-        ConversationLifecycleStatus? status = null, CancellationToken ct = default);
+        ConversationLifecycleStatus? status = null, CancellationToken ct = default,
+        Guid? agentId = null);
 }

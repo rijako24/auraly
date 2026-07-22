@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { MessageCircle, Plus, Settings2, Sparkles } from "lucide-react";
+import { MessageCircle, Plus, Sparkles } from "lucide-react";
 
 import { AgentOperationalModeControl } from "@/components/agents/agent-operational-mode-control";
 import { PageError } from "@/components/ui/page-error";
@@ -88,17 +88,6 @@ export default function AgentsPage() {
                 )}
                 <div className="flex flex-wrap gap-2">
                   <Button asChild>
-                    <Link href={`/dashboard/agents/${agent.agentId}/setup`}>
-                      <Settings2 className="mr-2 h-4 w-4" />
-                      Asistente de configuración
-                    </Link>
-                  </Button>
-                  <Button asChild variant="outline">
-                    <Link href={`/dashboard/agents/${agent.agentId}`}>
-                      Modo avanzado
-                    </Link>
-                  </Button>
-                  <Button asChild variant="secondary">
                     <Link href={`/dashboard/agents/${agent.agentId}/setup`}>
                       <MessageCircle className="mr-2 h-4 w-4" />
                       Configurar y probar

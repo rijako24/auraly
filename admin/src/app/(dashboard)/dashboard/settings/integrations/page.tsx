@@ -36,7 +36,8 @@ export default function IntegrationsSettingsPage() {
   const updateGoogle = useUpdateGoogleCalendarIntegration();
   const updateWompi = useUpdateWompiIntegration();
   const refreshMantis = useRefreshMantisProduct();
-  const mantisWarehousesQuery = useMantisWarehouses();
+  const hasMantisIntegration = data?.mantis?.isConfigured === true;
+  const mantisWarehousesQuery = useMantisWarehouses(hasMantisIntegration);
   const updateMantisWarehouses = useUpdateMantisWarehouses();
   const [mantisWarehouses, setMantisWarehouses] = useState<
     NonNullable<typeof mantisWarehousesQuery.data>
@@ -316,6 +317,7 @@ export default function IntegrationsSettingsPage() {
           </CardContent>
         </Card>
 
+        {hasMantisIntegration && (
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
@@ -327,6 +329,10 @@ export default function IntegrationsSettingsPage() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
+            <div>
+              <h3 className="text-sm font-semibold">Canales y bodegas</h3>
+              <p className="text-xs text-muted-foreground">Configura una bodega por cada numero receptor.</p>
+            </div>
             {mantisWarehouses.map((channel, index) => (
               <div className="space-y-3 rounded-md border p-3" key={channel.businessWhatsAppNumberId}>
                 <div className="flex items-center justify-between gap-3">
@@ -366,21 +372,17 @@ export default function IntegrationsSettingsPage() {
               <Save className="mr-2 h-4 w-4" />
               Guardar bodegas
             </Button>
-          </CardContent>
-        </Card>
-
-              <PackageSearch className="h-4 w-4" />
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-base">
-              Cat?logo Mantis
-            </CardTitle>
-            <CardDescription>
+            <div className="space-y-4 border-t pt-4">
+              <div>
+                <h3 className="flex items-center gap-2 text-sm font-semibold">
+                  <PackageSearch className="h-4 w-4" />
+                  Catalogo
+                </h3>
+                <p className="text-xs text-muted-foreground">
               Busca un nombre o c?digo en Mantis y actualiza solamente su identidad local.
               El precio y la existencia siempre se consultan en vivo al vender.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
+                </p>
+              </div>
             <Field label="Nombre o c?digo del producto">
               <Input
                 value={mantisQuery}
@@ -415,8 +417,10 @@ export default function IntegrationsSettingsPage() {
               <PackageSearch className="mr-2 h-4 w-4" />
               Buscar y actualizar producto
             </Button>
+            </div>
           </CardContent>
         </Card>
+        )}
       </div>
     </div>
   );

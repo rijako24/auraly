@@ -202,7 +202,7 @@ export function AgentTestChat({
         )}
         <div className="grid gap-2 sm:grid-cols-2">
           <div className="space-y-1">
-            <Label htmlFor={`test-name-${agent.agentId}`}>Nombre</Label>
+            <Label className="flex min-h-10 items-end" htmlFor={`test-name-${agent.agentId}`}>Nombre</Label>
             <Input
               id={`test-name-${agent.agentId}`}
               value={customerName}
@@ -211,16 +211,13 @@ export function AgentTestChat({
             />
           </div>
           <div className="space-y-1">
-            <Label htmlFor={`test-phone-${agent.agentId}`}>Tel&eacute;fono de WhatsApp simulado</Label>
+            <Label className="flex min-h-10 items-end" htmlFor={`test-phone-${agent.agentId}`}>Tel&eacute;fono de WhatsApp simulado</Label>
             <Input
               id={`test-phone-${agent.agentId}`}
               value={customerPhone}
               onChange={(event) => setCustomerPhone(event.target.value)}
               placeholder="+573001112233"
             />
-            <p className="text-[11px] leading-4 text-muted-foreground">
-              Reiniciar crea una identidad nueva. Escribe un n&uacute;mero existente para probar su memoria.
-            </p>
           </div>
         </div>
       </CardHeader>
@@ -271,19 +268,24 @@ export function AgentTestChat({
             )}
             readOnly={mutation.isPending || testBlocked}
           />
-          <div className="flex items-center justify-between gap-2">
-            <Button type="button" variant="ghost" size="sm" onClick={handleReset}>
-              <RotateCcw className="mr-1 h-4 w-4" />
-              Reiniciar
-            </Button>
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <UserRound className="h-3.5 w-3.5" />
-              {visibleHistory.length} mensajes de contexto
+          <div className="space-y-1">
+            <div className="flex items-center justify-between gap-2">
+              <Button type="button" variant="ghost" size="sm" onClick={handleReset}>
+                <RotateCcw className="mr-1 h-4 w-4" />
+                Reiniciar
+              </Button>
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                <UserRound className="h-3.5 w-3.5" />
+                {visibleHistory.length} mensajes de contexto
+              </div>
+              <Button type="submit" disabled={!input.trim() || !customerPhone.trim() || mutation.isPending || testBlocked}>
+                <Send className="mr-1 h-4 w-4" />
+                Enviar
+              </Button>
             </div>
-            <Button type="submit" disabled={!input.trim() || !customerPhone.trim() || mutation.isPending || testBlocked}>
-              <Send className="mr-1 h-4 w-4" />
-              Enviar
-            </Button>
+            <p className="max-w-xs px-2 text-[11px] leading-4 text-muted-foreground">
+              Reiniciar crea una identidad nueva. Escribe un n&uacute;mero existente para probar su memoria.
+            </p>
           </div>
         </form>
         {events.length > 0 && (

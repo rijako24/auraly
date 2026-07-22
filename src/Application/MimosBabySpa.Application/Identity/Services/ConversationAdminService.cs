@@ -31,12 +31,13 @@ public class ConversationAdminService : IConversationAdminService
 
     public async Task<PagedResponse<ConversationDto>> GetPagedByBusinessIdAsync(
         Guid tenantId, bool canAccessAllTenants, Guid businessId, PagedRequest request,
-        ConversationLifecycleStatus? status, CancellationToken ct)
+        ConversationLifecycleStatus? status, CancellationToken ct,
+        Guid? agentId = null)
     {
         await EnsureBusinessBelongsToTenantAsync(tenantId, canAccessAllTenants, businessId, ct);
 
         var (items, totalCount) = await _unitOfWork.Conversations.GetPagedByBusinessIdAsync(
-            businessId, request.Page, request.PageSize, request.Search, status, ct);
+            businessId, request.Page, request.PageSize, request.Search, status, ct, agentId);
 
         var dtos = new List<ConversationDto>(items.Count);
         foreach (var item in items)
@@ -124,7 +125,7 @@ public class ConversationAdminService : IConversationAdminService
 
     private static ConversationDto MapToDto(Conversation c, ConversationOwner owner) =>
         new(
-            c.ConversationId, c.BusinessId, c.UserNumber,
+            c.ConversationId, c.BusinessId, c.AgentId, c.UserNumber,
             c.LastMessage, c.Timestamp,
             c.CustomerName, c.CustomerEmail, c.CurrentStageName,
             c.Status.ToString(),

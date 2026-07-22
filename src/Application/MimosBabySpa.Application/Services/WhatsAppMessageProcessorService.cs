@@ -111,6 +111,12 @@ public class WhatsAppMessageProcessorService : IWhatsAppMessageProcessorService
         {
             throw new InvalidOperationException($"No hay agente activo para negocio {businessId}.");
         }
+        if (conversation.AgentId != agentId.Value)
+        {
+            conversation.AgentId = agentId.Value;
+            await _conversationService.UpdateConversationAsync(conversation);
+        }
+
 
         // 3. Procesar con el motor agentico
         AgentTurnResult result;

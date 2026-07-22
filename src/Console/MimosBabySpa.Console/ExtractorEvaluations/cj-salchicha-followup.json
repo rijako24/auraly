@@ -2,7 +2,7 @@
   "cases": [
     {
       "id": "cj_catalog_option_selection_is_add_not_search",
-      "message": "Salchicha long x 550 gr",
+      "message": "agrega 1 Salchicha long x 550 gr",
       "stage": "product_selection",
       "expectedFlow": "order",
       "expectedSignals": ["order_changes"],

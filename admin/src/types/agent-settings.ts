@@ -82,7 +82,18 @@ export interface InteractiveActionConfig { operation: string; arguments?: Record
 export type InteractiveActionDefinitions = Record<string, Record<string, InteractiveActionConfig>>;
 export interface WompiWebhookOutcomeConfig { sendMessageSequence?: string | null; }
 export interface WebhookDefinitions { wompi?: Record<string, WompiWebhookOutcomeConfig>; }
-export interface EventNotificationConfig { enabled?: boolean; recipients?: string[]; sendMessageSequence?: string | null; }
+export interface EventNotificationDeliveryConfig {
+  id: string;
+  enabled?: boolean;
+  recipients?: string[];
+  sendMessageSequence?: string | null;
+}
+export interface EventNotificationConfig {
+  enabled?: boolean;
+  recipients?: string[];
+  sendMessageSequence?: string | null;
+  deliveries?: EventNotificationDeliveryConfig[];
+}
 export type AgentNotificationDefinitions = Record<string, EventNotificationConfig>;
 export interface CommercePhraseRule { phrase: string; match?: "exact" | "contains" | "prefix" | "suffix"; }
 export interface AgentCommerceConversationSettings {

@@ -95,11 +95,61 @@ public sealed class EventNotificationDispatcher : IEventNotificationDispatcher
         if (!config.Notifications.TryGetValue(eventName, out var notification) || !notification.Enabled)
             return;
 
-        var sequenceName = notification.SendMessageSequence?.Trim();
+        if (notification.Deliveries.Count == 0)
+        {
+            await SendDeliveryAsync(
+                businessId,
+                config,
+                eventName,
+                "legacy",
+                notification.Recipients,
+                notification.SendMessageSequence,
+                context,
+                ct);
+            return;
+        }
+
+        foreach (var delivery in notification.Deliveries.Where(value => value.Enabled))
+        {
+            try
+            {
+                await SendDeliveryAsync(
+                    businessId,
+                    config,
+                    eventName,
+                    delivery.Id,
+                    delivery.Recipients,
+                    delivery.SendMessageSequence,
+                    context,
+                    ct);
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                _logger.LogError(
+                    exception,
+                    "Event notification: delivery '{Delivery}' failed for event '{Event}' BusinessId={BusinessId}",
+                    delivery.Id,
+                    eventName,
+                    businessId);
+            }
+        }
+    }
+    private async Task SendDeliveryAsync(
+        Guid businessId,
+        AgentConfig config,
+        string eventName,
+        string deliveryId,
+        IReadOnlyList<string> configuredRecipients,
+        string? configuredSequence,
+        MessageSequenceContext context,
+        CancellationToken ct)
+    {
+        var sequenceName = configuredSequence?.Trim();
         if (string.IsNullOrWhiteSpace(sequenceName))
         {
             _logger.LogWarning(
-                "Event notification: event '{Event}' enabled but sendMessageSequence is empty for BusinessId={BusinessId}",
+                "Event notification: delivery '{Delivery}' for event '{Event}' has no sequence BusinessId={BusinessId}",
+                deliveryId,
                 eventName,
                 businessId);
             return;
@@ -108,19 +158,24 @@ public sealed class EventNotificationDispatcher : IEventNotificationDispatcher
         if (!config.MessageSequences.ContainsKey(sequenceName))
         {
             _logger.LogWarning(
-                "Event notification: sequence '{Sequence}' is not configured for event '{Event}' BusinessId={BusinessId}",
+                "Event notification: sequence '{Sequence}' is not configured for delivery '{Delivery}' event '{Event}' BusinessId={BusinessId}",
                 sequenceName,
+                deliveryId,
                 eventName,
                 businessId);
             return;
         }
 
-        var recipients = await ResolveRecipientsAsync(businessId, notification.Recipients, context.Custom, ct);
-
+        var recipients = await ResolveRecipientsAsync(
+            businessId,
+            configuredRecipients,
+            context.Custom,
+            ct);
         if (recipients.Count == 0)
         {
             _logger.LogWarning(
-                "Event notification: event '{Event}' enabled but recipients is empty for BusinessId={BusinessId}",
+                "Event notification: delivery '{Delivery}' for event '{Event}' resolved no recipients BusinessId={BusinessId}",
+                deliveryId,
                 eventName,
                 businessId);
             return;
@@ -132,11 +187,11 @@ public sealed class EventNotificationDispatcher : IEventNotificationDispatcher
             config.MessageSequences,
             context,
             ct);
-
         if (messages.Count == 0)
         {
             _logger.LogWarning(
-                "Event notification: event '{Event}' sequence '{Sequence}' resolved to zero messages for BusinessId={BusinessId}",
+                "Event notification: delivery '{Delivery}' event '{Event}' sequence '{Sequence}' resolved to zero messages BusinessId={BusinessId}",
+                deliveryId,
                 eventName,
                 sequenceName,
                 businessId);
@@ -147,12 +202,14 @@ public sealed class EventNotificationDispatcher : IEventNotificationDispatcher
             await _outboundDispatcher.SendAllAsync(businessId, recipient.Phone, messages, recipient.ConversationId, ct);
 
         _logger.LogInformation(
-            "Event notification: event '{Event}' sequence '{Sequence}' sent to {Count} recipient(s) for BusinessId={BusinessId}",
+            "Event notification: delivery '{Delivery}' event '{Event}' sequence '{Sequence}' sent to {Count} recipient(s) BusinessId={BusinessId}",
+            deliveryId,
             eventName,
             sequenceName,
             recipients.Count,
             businessId);
     }
+
     private async Task<IReadOnlyList<NotificationRecipient>> ResolveRecipientsAsync(
         Guid businessId,
         IReadOnlyList<string> configuredRecipients,
@@ -169,7 +226,20 @@ public sealed class EventNotificationDispatcher : IEventNotificationDispatcher
             if (string.IsNullOrWhiteSpace(raw))
                 continue;
 
+            if (raw.Equals("source:conversation", StringComparison.OrdinalIgnoreCase))
+            {
+                if (sourceConversationId is Guid conversationId)
+                {
+                    var conversation = await _unitOfWork.Conversations.GetByIdAsync(conversationId);
+                    if (conversation is not null
+                        && !string.IsNullOrWhiteSpace(conversation.UserNumber)
+                        && seen.Add(conversation.UserNumber))
+                        recipients.Add(new NotificationRecipient(conversation.UserNumber.Trim(), conversation.ConversationId));
+                }
+                continue;
+            }
             if (raw.StartsWith("inbound:", StringComparison.OrdinalIgnoreCase))
+
             {
                 var selector = raw["inbound:".Length..].Trim();
                 if (string.IsNullOrWhiteSpace(selector))
@@ -195,12 +265,6 @@ public sealed class EventNotificationDispatcher : IEventNotificationDispatcher
                 recipients.Add(new NotificationRecipient(phone, null));
         }
 
-        if (recipients.Count == 0 && sourceConversationId is Guid conversationId)
-        {
-            var conversation = await _unitOfWork.Conversations.GetByIdAsync(conversationId);
-            if (conversation is not null && !string.IsNullOrWhiteSpace(conversation.UserNumber) && seen.Add(conversation.UserNumber))
-                recipients.Add(new NotificationRecipient(conversation.UserNumber.Trim(), conversation.ConversationId));
-        }
 
         return recipients;
     }

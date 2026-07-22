@@ -1,16 +1,17 @@
 using System.Text.Json;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using MimosBabySpa.Application.DTOs;
 using MimosBabySpa.Application.Services;
 using MimosBabySpa.Domain.Entities;
 using MimosBabySpa.Infrastructure.Services;
+using MimosBabySpa.Infrastructure.Configuration;
 
 namespace MimosBabySpa.API.Functions;
 
 public sealed class WhatsAppInboundDebounceWorkerFunction
 {
-    private static readonly TimeSpan DebounceDelay = TimeSpan.FromSeconds(1);
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNameCaseInsensitive = true
@@ -21,18 +22,21 @@ public sealed class WhatsAppInboundDebounceWorkerFunction
     private readonly IWhatsAppWebhookParserService _webhookParserService;
     private readonly IInboundMessageBatchProcessor _batchProcessor;
     private readonly ILogger<WhatsAppInboundDebounceWorkerFunction> _logger;
+    private readonly TimeSpan _debounceDelay;
 
     public WhatsAppInboundDebounceWorkerFunction(
         IInboundMessageDeduplicationService deduplicationService,
         IWhatsAppInboundQueueService queueService,
         IWhatsAppWebhookParserService webhookParserService,
         IInboundMessageBatchProcessor batchProcessor,
+        IOptions<WhatsAppWebhookOptions> webhookOptions,
         ILogger<WhatsAppInboundDebounceWorkerFunction> logger)
     {
         _deduplicationService = deduplicationService;
         _queueService = queueService;
         _webhookParserService = webhookParserService;
         _batchProcessor = batchProcessor;
+        _debounceDelay = webhookOptions.Value.GetInboundDebounceDelay();
         _logger = logger;
     }
 
@@ -60,7 +64,7 @@ public sealed class WhatsAppInboundDebounceWorkerFunction
         }
 
         var latest = pending.MaxBy(r => r.ReceivedAtUtc)!;
-        var nextDueAtUtc = latest.ReceivedAtUtc.Add(DebounceDelay);
+        var nextDueAtUtc = latest.ReceivedAtUtc.Add(_debounceDelay);
         var now = DateTime.UtcNow;
 
         if (now < nextDueAtUtc)

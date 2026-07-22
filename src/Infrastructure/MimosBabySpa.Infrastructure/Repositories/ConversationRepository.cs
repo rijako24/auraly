@@ -74,10 +74,14 @@ public class ConversationRepository : IConversationRepository
 
     public async Task<(IReadOnlyList<Conversation> Items, int TotalCount)> GetPagedByBusinessIdAsync(
         Guid businessId, int page, int pageSize, string? search,
-        ConversationLifecycleStatus? status, CancellationToken ct)
+        ConversationLifecycleStatus? status, CancellationToken ct,
+        Guid? agentId = null)
     {
         var query = _context.Conversations
             .Where(c => c.BusinessId == businessId);
+
+        if (agentId.HasValue)
+            query = query.Where(c => c.AgentId == agentId.Value);
 
         if (status.HasValue)
             query = query.Where(c => c.Status == status.Value);

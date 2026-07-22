@@ -1082,7 +1082,7 @@ public sealed class DeterministicTurnCoordinator
             var grounded = commands.Where(command =>
             {
                 if (!command.TryGetProperty("operation", out var operation)
-                    || operation.GetString() is not (CartCommandOperations.Add or CartCommandOperations.SetQuantity)
+                    || operation.GetString() is not (CartCommandOperations.Add or CartCommandOperations.SetQuantity or "remove")
                     || !command.TryGetProperty("productText", out var productTextElement))
                     return true;
                 var productText = productTextElement.GetString() ?? string.Empty;

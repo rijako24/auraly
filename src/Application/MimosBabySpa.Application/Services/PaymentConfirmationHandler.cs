@@ -185,7 +185,16 @@ public class PaymentConfirmationHandler : IPaymentConfirmationHandler
             await SendCustomerSequenceAsync(payment, config, result, ct);
 
         if (result.NotifyAdmin)
-            await _notificationDispatcher.SendEventAsync(payment.BusinessId, config, result.EventName, result.CustomPayload, ct);
+        {
+            var notificationCustom = new Dictionary<string, string>(
+                result.CustomPayload,
+                StringComparer.OrdinalIgnoreCase)
+            {
+                ["source_conversation_id"] = payment.ConversationId.ToString()
+            };
+            await _notificationDispatcher.SendEventAsync(
+                payment.BusinessId, config, result.EventName, notificationCustom, ct);
+        }
 
         if (result.TriggerExternalEscalation)
         {

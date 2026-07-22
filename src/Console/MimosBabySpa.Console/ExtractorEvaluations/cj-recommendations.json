@@ -2,7 +2,7 @@
   "cases": [
     {
       "id": "explicit_recommended_product_can_be_added",
-      "message": "agregame la tocineta recomendada",
+      "message": "agregame 1 de la tocineta recomendada",
       "stage": "product_selection",
       "expectedFlow": "order",
       "expectedSignals": ["order_changes"],
@@ -30,7 +30,7 @@
     },
     {
       "id": "deictic_recommended_product_can_be_added",
-      "message": "si, agregame esa recomendacion",
+      "message": "si, agregame 1 de esa recomendacion",
       "stage": "product_selection",
       "expectedFlow": "order",
       "expectedSignals": ["order_changes"],

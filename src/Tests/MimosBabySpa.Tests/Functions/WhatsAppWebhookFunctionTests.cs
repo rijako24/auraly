@@ -5,10 +5,12 @@ using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Extensions.Logging;
 using Moq;
+using Microsoft.Extensions.Options;
 using MimosBabySpa.API.Functions;
 using MimosBabySpa.Application.DTOs;
 using MimosBabySpa.Application.Services;
 using MimosBabySpa.Tests.Helpers;
+using MimosBabySpa.Infrastructure.Configuration;
 using Xunit;
 using DtoMessage = MimosBabySpa.Application.DTOs.Message;
 
@@ -75,8 +77,26 @@ public class WhatsAppWebhookFunctionTests
             _mockBusinessIdentificationService.Object,
             _mockDeduplicationService.Object,
             _mockQueueService.Object,
+            Options.Create(new WhatsAppWebhookOptions()),
             _mockLogger.Object);
     }
+    [Theory]
+    [InlineData(-5d, 0.25d)]
+    [InlineData(3d, 3d)]
+    [InlineData(100d, 30d)]
+    public void InboundDebounce_IsConfigurableAndOperationallyBounded(
+        double configuredSeconds,
+        double expectedSeconds)
+    {
+        var options = new WhatsAppWebhookOptions
+        {
+            InboundDebounceSeconds = configuredSeconds
+        };
+
+        options.GetInboundDebounceDelay().TotalSeconds.Should().Be(expectedSeconds);
+    }
+
+
 
     [Fact]
     public async Task Run_GetRequest_WithValidWebhookVerification_ShouldReturnChallenge()

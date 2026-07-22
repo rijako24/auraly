@@ -14,6 +14,7 @@ export const conversationsApi = {
       businessId?: string;
       userNumber?: string;
       state?: number;
+      agentId?: string;
     }
   ) =>
     apiClient.get<PagedResponse<Conversation>>(

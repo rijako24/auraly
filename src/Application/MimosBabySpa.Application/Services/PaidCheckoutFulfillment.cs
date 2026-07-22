@@ -557,6 +557,7 @@ public sealed class OrderPaidCheckoutFulfillmentHandler : IPaidCheckoutFulfillme
             custom,
             "payment_order_confirmed",
             NotifyAdmin: true,
+            NotifyCustomer: false,
             TriggerExternalEscalation: true);
     }
 

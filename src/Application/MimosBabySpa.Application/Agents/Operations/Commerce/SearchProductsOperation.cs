@@ -73,14 +73,42 @@ public sealed class SearchProductsOperation : IAgentOperation
         var replacementReference = OperationJsonHelper.TryGetString(arguments, "replacement_reference", out var rr)
             ? rr
             : null;
-        var queries = ReadQueries(arguments, query);
+        var requestedQueries = ReadQueries(arguments, query);
+        var queries = GroundQueriesInRecentOffers(ctx, requestedQueries);
         var request = new ProductSearchRequest(query, category, limit, includeStock, family, subcategory, productClass, page);
-        var result = queries.Count switch
+        var execution = await ExecuteQueriesAsync(ctx, queries, request, null, cancellationToken);
+        if (TryGetForegroundContextAnchor(ctx, out var contextAnchor))
         {
-            0 => await SearchSingleAsync(ctx, request, cancellationToken),
-            1 => await SearchSingleAsync(ctx, request with { Query = queries[0] }, cancellationToken),
-            _ => await SearchManyAsync(ctx, queries, request, cancellationToken)
-        };
+            var contextualQueries = ContextualizeQueries(contextAnchor, queries);
+            if (!contextualQueries.SequenceEqual(queries, StringComparer.OrdinalIgnoreCase))
+            {
+                var contextualExecution = await ExecuteQueriesAsync(
+                    ctx, contextualQueries, request, contextAnchor, cancellationToken);
+                contextualExecution = contextualExecution with
+                {
+                    Result = FilterSemanticallyRelevantProducts(
+                        contextualExecution.Result, queries, ctx.Config?.Commerce.Matching)
+                };
+                if (contextualExecution.Result.Products.Count > 0)
+                {
+                    execution = contextualExecution;
+                }
+                else
+                {
+                    var anchoredPrimary = FilterSemanticallyRelevantProducts(
+                        execution.Result,
+                        contextAnchor,
+                        ctx.Config?.Commerce.Matching);
+                    if (anchoredPrimary.Products.Count > 0)
+                        execution = execution with
+                        {
+                            Result = anchoredPrimary,
+                            SearchTerms = contextualQueries
+                        };
+                }
+            }
+        }
+        var result = execution.Result;
 
         var previouslyRecommended = CatalogRecommendationMemory.Read(ctx.Facts)?.Products
             .Select(product => product.ToProductReference())
@@ -92,7 +120,7 @@ public sealed class SearchProductsOperation : IAgentOperation
         if (_factsService is not null && result.Products.Count > 0)
         {
             await ProductSelectionMemory.RememberCatalogAsync(
-                _factsService, ctx, result.Products, queries, cancellationToken, replacementReference);
+                _factsService, ctx, result.Products, execution.SearchTerms, cancellationToken, replacementReference);
             if (recommendation is not null)
                 await CatalogRecommendationMemory.RememberAsync(_factsService, ctx, recommendation.Product, cancellationToken);
         }
@@ -120,8 +148,11 @@ public sealed class SearchProductsOperation : IAgentOperation
         {
             source = result.Source,
             count = result.Products.Count,
-            search_terms = queries,
-            search_text = string.Join(", ", queries),
+            search_terms = execution.SearchTerms,
+            original_search_terms = requestedQueries,
+            matched_search_terms = execution.MatchedTerms,
+            unmatched_search_terms = execution.UnmatchedTerms,
+            search_text = string.Join(", ", execution.SearchTerms),
             products = result.Products.Select(product => new
             {
                 name = product.Name,
@@ -138,10 +169,37 @@ public sealed class SearchProductsOperation : IAgentOperation
             clarification_candidates = Array.Empty<object>(),
             resolution_hint = (string?)null,
             selection_status = "catalog_results",
-            response_guidance = "Present products as the main catalog results and keep recommendations in a separate, clearly optional section. Present at most the single returned recommendation; never merge it into the main options or invent another one. Show product name/presentation plus unit_price with currency when available. Do not show SKU/code, external ids, raw catalog ids, or stock quantities/status in normal product options. Use SKU/code only internally for operation calls. Mention available stock quantity only when a requested quantity is greater than the returned available stock, then ask whether the customer wants the available quantity instead. Do not omit returned prices for sellable product options, and do not invent missing prices."
+            response_guidance = "Present products as the main catalog results and keep recommendations in a separate, clearly optional section. Present at most the single returned recommendation; never merge it into the main options or invent another one. If unmatched_search_terms contains values, state briefly that those terms had no related catalog result; never substitute unrelated products for them. Show product name/presentation plus unit_price with currency when available. Do not show SKU/code, external ids, raw catalog ids, or stock quantities/status in normal product options. Use SKU/code only internally for operation calls. Mention available stock quantity only when a requested quantity is greater than the returned available stock, then ask whether the customer wants the available quantity instead. Do not omit returned prices for sellable product options, and do not invent missing prices."
         });
     }
-    private async Task<ProductSearchResult> SearchSingleAsync(AgentConversationContext ctx, ProductSearchRequest request, CancellationToken cancellationToken)
+    private async Task<SearchExecution> ExecuteQueriesAsync(
+        AgentConversationContext context,
+        IReadOnlyList<string> queries,
+        ProductSearchRequest request,
+        string? relevanceQuery,
+        CancellationToken cancellationToken) =>
+        queries.Count switch
+        {
+            0 => SearchExecution.FromSingle(
+                await SearchSingleAsync(context, request, relevanceQuery, cancellationToken),
+                queries),
+            1 => SearchExecution.FromSingle(
+                await SearchSingleAsync(
+                    context,
+                    request with { Query = queries[0] },
+                    relevanceQuery,
+                    cancellationToken),
+                queries),
+            _ => await SearchManyAsync(
+                context, queries, request, relevanceQuery, cancellationToken)
+        };
+
+
+    private async Task<ProductSearchResult> SearchSingleAsync(
+        AgentConversationContext ctx,
+        ProductSearchRequest request,
+        string? relevanceQuery,
+        CancellationToken cancellationToken)
     {
         var result = await _commerce.SearchProductsAsync(ctx, request, cancellationToken);
         if (result.Products.Count == 0 && string.IsNullOrWhiteSpace(request.Query) && !string.IsNullOrWhiteSpace(request.Category))
@@ -153,7 +211,42 @@ public sealed class SearchProductsOperation : IAgentOperation
                 cancellationToken);
         }
 
+        result = FilterSemanticallyRelevantProducts(result, relevanceQuery ?? request.Query, ctx.Config?.Commerce.Matching);
         return PreferExactNameMatches(result, request.Query, ctx.Config?.Commerce.Matching);
+    }
+
+    private static ProductSearchResult FilterSemanticallyRelevantProducts(
+        ProductSearchResult result,
+        string? query,
+        ProductMatchingPolicy? matchingPolicy)
+    {
+        if (string.IsNullOrWhiteSpace(query))
+            return result;
+
+        return FilterSemanticallyRelevantProducts(result, [query], matchingPolicy);
+    }
+
+    private static ProductSearchResult FilterSemanticallyRelevantProducts(
+        ProductSearchResult result,
+        IReadOnlyList<string> queries,
+        ProductMatchingPolicy? matchingPolicy)
+    {
+        var activeQueries = queries
+            .Where(query => !string.IsNullOrWhiteSpace(query))
+            .ToList();
+        if (activeQueries.Count == 0 || result.Products.Count == 0)
+            return result;
+
+        var relevant = result.Products
+            .Where(product => activeQueries.Any(query =>
+                ProductResolutionEngine.IsRelevantCatalogCandidate(
+                    query,
+                    product,
+                    matchingPolicy)))
+            .ToList();
+        return relevant.Count == result.Products.Count
+            ? result
+            : result with { Products = relevant };
     }
 
     private static ProductSearchResult PreferExactNameMatches(
@@ -163,7 +256,7 @@ public sealed class SearchProductsOperation : IAgentOperation
     {
         var minimumMatches = matchingPolicy?.ExactNameDominanceMinimumMatches ?? 0;
         var queryTokens = ProductSearchText.GetMatchingTokens(query);
-        if (minimumMatches <= 0 || queryTokens.Count == 0 || result.Products.Count < minimumMatches)
+        if (queryTokens.Count == 0 || result.Products.Count == 0)
             return result;
 
         var exactMatches = result.Products
@@ -173,48 +266,77 @@ public sealed class SearchProductsOperation : IAgentOperation
                 return queryTokens.All(nameTokens.Contains);
             })
             .ToList();
+        if (exactMatches.Count == 0 || exactMatches.Count == result.Products.Count)
+            return result;
 
-        return exactMatches.Count < minimumMatches || exactMatches.Count == result.Products.Count
-            ? result
-            : result with { Products = exactMatches };
+        var leadingMatches = queryTokens.Count == 1
+            ? exactMatches.Where(product =>
+                ProductSearchText.GetMatchingTokens(product.Name).FirstOrDefault()
+                    ?.Equals(queryTokens[0], StringComparison.Ordinal) == true).ToList()
+            : [];
+        if (leadingMatches.Count > 0)
+            return result with { Products = leadingMatches };
+
+        var shouldDominate = queryTokens.Count > 1
+            || minimumMatches > 0 && exactMatches.Count >= minimumMatches;
+        return shouldDominate ? result with { Products = exactMatches } : result;
     }
 
-    private async Task<ProductSearchResult> SearchManyAsync(
+    private async Task<SearchExecution> SearchManyAsync(
         AgentConversationContext ctx,
         IReadOnlyList<string> queries,
         ProductSearchRequest template,
+        string? relevanceQuery,
         CancellationToken cancellationToken)
     {
-        var products = new List<ProductReference>();
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var source = string.Empty;
-        var hasMore = false;
+        var batches = new List<(string Term, ProductSearchResult Result)>();
         foreach (var term in queries)
         {
-            var result = await SearchSingleAsync(ctx, template with { Query = term, Category = null }, cancellationToken);
-            if (string.IsNullOrWhiteSpace(source))
-                source = result.Source;
-            hasMore |= result.HasMore;
-
-            foreach (var product in result.Products)
-            {
-                var key = ProductResultKey(product);
-                if (seen.Add(key))
-                    products.Add(product);
-
-                if (products.Count >= Math.Clamp(template.Limit, 1, 50))
-                    break;
-            }
-
-            if (products.Count >= Math.Clamp(template.Limit, 1, 50))
-                break;
+            var result = await SearchSingleAsync(
+                ctx,
+                template with { Query = term, Category = null },
+                relevanceQuery,
+                cancellationToken);
+            batches.Add((term, result));
         }
 
-        return new ProductSearchResult(
+        var products = new List<ProductReference>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var limit = Math.Clamp(template.Limit, 1, 50);
+        var maximumDepth = batches.Select(batch => batch.Result.Products.Count)
+            .DefaultIfEmpty(0)
+            .Max();
+        for (var rank = 0; rank < maximumDepth && products.Count < limit; rank++)
+        {
+            foreach (var batch in batches)
+            {
+                if (rank >= batch.Result.Products.Count)
+                    continue;
+
+                var product = batch.Result.Products[rank];
+                if (seen.Add(ProductResultKey(product)))
+                    products.Add(product);
+                if (products.Count >= limit)
+                    break;
+            }
+        }
+
+        var source = batches.Select(batch => batch.Result.Source)
+            .FirstOrDefault(value => !string.IsNullOrWhiteSpace(value)) ?? "catalog";
+        var hasMore = batches.Any(batch => batch.Result.HasMore)
+            || batches.Sum(batch => batch.Result.Products.Count) > products.Count;
+        var merged = new ProductSearchResult(
             products,
-            string.IsNullOrWhiteSpace(source) ? "catalog" : source,
+            source,
             hasMore,
             ProductSearchAppliedFilters.From(template));
+        return new SearchExecution(
+            merged,
+            queries,
+            batches.Where(batch => batch.Result.Products.Count > 0)
+                .Select(batch => batch.Term).ToList(),
+            batches.Where(batch => batch.Result.Products.Count == 0)
+                .Select(batch => batch.Term).ToList());
     }
 
     private static string ProductResultKey(ProductReference product) =>
@@ -222,6 +344,98 @@ public sealed class SearchProductsOperation : IAgentOperation
         ?? product.ExternalProductId
         ?? product.Sku
         ?? product.Name;
+    private static IReadOnlyList<string> GroundQueriesInRecentOffers(
+        AgentConversationContext context,
+        IReadOnlyList<string> queries)
+    {
+        var memory = CatalogOfferMemory.Read(context.Facts);
+        if (memory is null || queries.Count == 0)
+            return queries;
+
+        var candidates = CatalogOfferMemory.AllProducts(memory)
+            .Select(product => new RetrievedProductCandidate(
+                product.ToProductReference(),
+                ProductMatchSource.RememberedCatalog))
+            .ToList();
+        return queries.Select(query =>
+        {
+            var resolution = ProductResolutionEngine.Resolve(query, candidates);
+            if (resolution.Status == ProductResolutionStatus.Resolved
+                && resolution.Selected is not null)
+                return resolution.Selected.Name;
+            if (resolution.Status == ProductResolutionStatus.SuggestionRequired
+                && resolution.Candidates.Count == 1)
+                return resolution.Candidates[0].Product.Name;
+            return query;
+        }).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    private static bool TryGetForegroundContextAnchor(
+        AgentConversationContext context,
+        out string anchor)
+    {
+        anchor = string.Empty;
+        var memory = CatalogOfferMemory.Read(context.Facts);
+        if (memory is null
+            || !CatalogOfferMemory.IsLatestOfferForeground(
+                memory,
+                context.ConversationState?.LastBotMessage,
+                context.Config?.Commerce.Matching.CatalogCandidateMinimumCoverage ?? 0.7d))
+            return false;
+
+        var latest = memory.Snapshots.MaxBy(snapshot => snapshot.Sequence);
+        var anchorTerms = latest?.ContextAnchorTerms is { Count: > 0 }
+            ? latest.ContextAnchorTerms
+            : latest?.SearchTerms;
+        if (anchorTerms is not { Count: 1 }
+            || string.IsNullOrWhiteSpace(anchorTerms[0]))
+            return false;
+
+        anchor = anchorTerms[0].Trim();
+        return true;
+    }
+
+    private static IReadOnlyList<string> ContextualizeQueries(
+        string anchor,
+        IReadOnlyList<string> queries)
+    {
+        if (queries.Count == 0)
+            return queries;
+
+        var anchorTokens = ProductSearchText.GetMatchingTokens(anchor);
+        if (anchorTokens.Count == 0)
+            return queries;
+
+        return queries
+            .Select(query =>
+            {
+                var queryTokens = ProductSearchText.GetMatchingTokens(query);
+                return anchorTokens.All(queryTokens.Contains)
+                    ? query
+                    : $"{anchor} {query}";
+            })
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+
+    private sealed record SearchExecution(
+        ProductSearchResult Result,
+        IReadOnlyList<string> SearchTerms,
+        IReadOnlyList<string> MatchedTerms,
+        IReadOnlyList<string> UnmatchedTerms)
+    {
+        public static SearchExecution FromSingle(
+            ProductSearchResult result,
+            IReadOnlyList<string> terms) =>
+            new(
+                result,
+                terms,
+                result.Products.Count > 0 ? terms : [],
+                result.Products.Count == 0 ? terms : []);
+    }
+
+
 
     private static IReadOnlyList<string> ReadQueries(JsonElement arguments, string? query)
     {

@@ -1,10 +1,12 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
-import { Plus, Trash2 } from "lucide-react";
+import { Eye, Plus, Route, Trash2 } from "lucide-react";
 
-import { JsonEditor } from "@/components/forms/json-editor";
+import { StageTechnicalEditor } from "@/components/agents/stage-technical-editor";
+import { CheckoutCommerceEditor, GlobalActionsEditor, MessageSequencesEditor, ReservationAutomationsEditor, StringMapEditor, WompiWebhooksEditor } from "@/components/agents/agent-message-commerce-editors";
 import { ConversationFollowUpSettingsEditor } from "@/components/agents/conversation-follow-up-settings";
+import { ConfigurationSelect } from "@/components/agents/configuration-controls";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -16,6 +18,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import type { BusinessInboundContact } from "@/types/entities";
 import type {
+  AgentFlowDefinition,
+  AgentFlowStage,
   AgentSettings,
   FactSchemaEntry,
 } from "@/types/agent-settings";
@@ -39,7 +43,7 @@ export type AgentEditorSection =
   | "actions"
   | "templates"
   | "safety"
-  | "advanced";
+;
 
 interface AgentSettingsEditorProps {
   value: AgentSettings;
@@ -52,7 +56,7 @@ interface AgentSettingsEditorProps {
 export function AgentSettingsEditor({ value, onChange, availableInboundContacts = [], section }: AgentSettingsEditorProps) {
   const flows = value.flows ?? [];
   const factKeys = useMemo(
-    () => (value.factSchema ?? []).map((f) => f.key),
+    () => (value.factSchema ?? []).filter((fact) => (fact.source ?? "user") === "user").map((fact) => fact.key),
     [value.factSchema]
   );
 
@@ -120,7 +124,6 @@ export function AgentSettingsEditor({ value, onChange, availableInboundContacts 
         <TabsTrigger value="actions">Acciones</TabsTrigger>
         <TabsTrigger value="templates">Templates</TabsTrigger>
         <TabsTrigger value="safety">Seguridad</TabsTrigger>
-        <TabsTrigger value="advanced">Configuracion completa</TabsTrigger>
       </TabsList>
 
       <TabsContent value="identity" className="space-y-4">
@@ -197,20 +200,7 @@ export function AgentSettingsEditor({ value, onChange, availableInboundContacts 
       </TabsContent>
 
       <TabsContent value="flow" className="space-y-4">
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Flujos determin?sticos</CardTitle>
-            <CardDescription>
-              Cada etapa declara se?ales extra?bles, condiciones, operaciones, outcomes, transiciones y respuesta.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <JsonEditor
-              value={{ flows } as Record<string, unknown>}
-              onChange={(document) => patch({ flows: (document.flows as AgentSettings["flows"]) ?? [] })}
-            />
-          </CardContent>
-        </Card>
+        <FlowEditor flows={flows} userFactKeys={factKeys} onChange={(nextFlows) => patch({ flows: nextFlows })} />
       </TabsContent>
 
       <TabsContent value="followUp" className="space-y-4">
@@ -313,105 +303,109 @@ export function AgentSettingsEditor({ value, onChange, availableInboundContacts 
           </CardContent>
         </Card>
       </TabsContent>
-
-      <TabsContent value="advanced" className="space-y-4">
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">SettingsJson completo</CardTitle>
-            <CardDescription>
-              Acceso a todas las propiedades aceptadas por el motor. Usa los pasos guiados para lo habitual y esta vista para ajustes avanzados.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <JsonEditor
-              value={value as unknown as Record<string, unknown>}
-              onChange={(document) => onChange(document as unknown as AgentSettings)}
-            />
-          </CardContent>
-        </Card>
-      </TabsContent>
-    </Tabs>
+      </Tabs>
   );
 }
 
-function FactSchemaEditor({
-  entries,
-  onChange,
-}: {
-  entries: FactSchemaEntry[];
-  onChange: (entries: FactSchemaEntry[]) => void;
-}) {
-  const update = (index: number, partial: Partial<FactSchemaEntry>) => {
-    onChange(entries.map((e, i) => (i === index ? { ...e, ...partial } : e)));
+function FlowEditor({ flows, userFactKeys, onChange }: { flows: AgentFlowDefinition[]; userFactKeys: string[]; onChange: (flows: AgentFlowDefinition[]) => void }) {
+  const updateFlow = (flowIndex: number, next: AgentFlowDefinition) => onChange(flows.map((flow, index) => index === flowIndex ? next : flow));
+  const addFlow = () => onChange([...flows, { id: `flow_${flows.length + 1}`, type: flows.length === 0 ? "primary" : "secondary", routingGuidance: "", stages: [] }]);
+  const removeFlow = (flowIndex: number) => onChange(flows.filter((_, index) => index !== flowIndex));
+  const addStage = (flowIndex: number) => {
+    const flow = flows[flowIndex];
+    const stageNumber = flow.stages.length + 1;
+    updateFlow(flowIndex, { ...flow, stages: [...flow.stages, { id: `stage_${stageNumber}`, name: `Etapa ${stageNumber}`, goal: "", collect: [], signals: [], actions: [], transitions: [] }] });
+  };
+  const updateStage = (flowIndex: number, stageIndex: number, next: AgentFlowStage) => {
+    const flow = flows[flowIndex];
+    updateFlow(flowIndex, { ...flow, stages: flow.stages.map((stage, index) => index === stageIndex ? next : stage) });
   };
 
-  return (
-    <Card>
-      <CardHeader className="flex flex-row items-center justify-between">
-        <CardTitle className="text-base">Fact schema</CardTitle>
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          onClick={() =>
-            onChange([
-              ...entries,
-              {
-                key: `fact_${entries.length + 1}`,
-                label: "",
-                type: "string",
-                source: "user",
-              },
-            ])
-          }
-        >
-          <Plus className="mr-1 h-4 w-4" />
-          Añadir
-        </Button>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        {entries.map((entry, index) => (
-          <div key={index} className="grid gap-2 rounded-md border p-3 sm:grid-cols-2">
-            <div className="space-y-1">
-              <Label>Key</Label>
-              <Input
-                value={entry.key}
-                onChange={(e) => update(index, { key: e.target.value })}
-              />
-            </div>
-            <div className="space-y-1">
-              <Label>Label</Label>
-              <Input
-                value={entry.label}
-                onChange={(e) => update(index, { label: e.target.value })}
-              />
-            </div>
-            <div className="space-y-1">
-              <Label>Tipo</Label>
-              <Input
-                value={entry.type}
-                onChange={(e) => update(index, { type: e.target.value })}
-              />
-            </div>
-            <div className="space-y-1">
-              <Label>Source</Label>
-              <Input
-                value={entry.source ?? "user"}
-                onChange={(e) => update(index, { source: e.target.value })}
-              />
-            </div>
-            <div className="flex items-center gap-2 sm:col-span-2">
-              <Checkbox
-                checked={!!entry.required}
-                onCheckedChange={(c) => update(index, { required: c === true })}
-              />
-              <Label>Requerido</Label>
-            </div>
+  return <Card>
+    <CardHeader className="flex flex-row items-start justify-between gap-4">
+      <div><CardTitle className="flex items-center gap-2 text-base"><Route className="h-4 w-4 text-primary" />Recorrido conversacional</CardTitle><CardDescription>Organiza checkpoints durables. Las señales, operaciones y transiciones técnicas se conservan dentro de cada etapa.</CardDescription></div>
+      <Button type="button" size="sm" variant="outline" onClick={addFlow}><Plus className="mr-1 h-4 w-4" />Flujo</Button>
+    </CardHeader>
+    <CardContent className="space-y-5">
+      {flows.map((flow, flowIndex) => <section key={`${flow.id}-${flowIndex}`} className="overflow-hidden rounded-xl border bg-card shadow-sm">
+        <div className="grid gap-3 border-b bg-muted/30 p-4 md:grid-cols-[minmax(160px,1fr)_160px_minmax(220px,2fr)_40px]">
+          <div className="space-y-1"><Label>Identificador del flujo</Label><Input value={flow.id} onChange={(event) => updateFlow(flowIndex, { ...flow, id: event.target.value })} /></div>
+          <div className="space-y-1"><Label>Tipo</Label><ConfigurationSelect value={flow.type ?? "secondary"} onChange={(next) => updateFlow(flowIndex, { ...flow, type: next as "primary" | "secondary" })} options={[{ value: "primary", label: "Principal" }, { value: "secondary", label: "Secundario" }]} /></div>
+          <div className="space-y-1"><Label>Cuándo usarlo</Label><Input value={flow.routingGuidance ?? ""} onChange={(event) => updateFlow(flowIndex, { ...flow, routingGuidance: event.target.value })} placeholder="Ej. Atender una compra nueva" /></div>
+          <Button type="button" variant="ghost" size="icon" className="self-end text-muted-foreground hover:text-destructive" onClick={() => removeFlow(flowIndex)} aria-label="Eliminar flujo"><Trash2 className="h-4 w-4" /></Button>
+        </div>
+        <div className="space-y-3 p-4">
+          {flow.stages.map((stage, stageIndex) => {
+            return <details key={`${stage.id}-${stageIndex}`} className="group rounded-xl border bg-background">
+              <summary className="flex cursor-pointer list-none items-center gap-3 px-4 py-3 marker:hidden">
+                <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-primary/10 text-sm font-semibold text-primary">{stageIndex + 1}</span>
+                <div className="min-w-0"><p className="truncate font-medium">{stage.name || stage.id || `Etapa ${stageIndex + 1}`}</p><p className="text-xs text-muted-foreground">{stage.collect?.length ?? 0} datos · {stage.actions?.length ?? 0} acciones · {stage.transitions?.length ?? 0} transiciones</p></div>
+                <span className="ml-auto text-xs text-muted-foreground group-open:hidden">Editar</span><span className="ml-auto hidden text-xs text-muted-foreground group-open:inline">Cerrar</span>
+              </summary>
+              <div className="space-y-4 border-t p-4">
+                <div className="grid gap-3 sm:grid-cols-2"><div className="space-y-1"><Label>Nombre visible</Label><Input value={stage.name ?? ""} onChange={(event) => updateStage(flowIndex, stageIndex, { ...stage, name: event.target.value })} /></div><div className="space-y-1"><Label>Identificador</Label><Input value={stage.id} onChange={(event) => updateStage(flowIndex, stageIndex, { ...stage, id: event.target.value })} /></div></div>
+                <div className="space-y-1"><Label>Objetivo de esta etapa</Label><Textarea className="min-h-20" value={stage.goal ?? ""} onChange={(event) => updateStage(flowIndex, stageIndex, { ...stage, goal: event.target.value })} placeholder="Qué debe conseguir el agente antes de avanzar" /></div>
+                <div className="space-y-2"><Label>Datos del usuario que debe reunir</Label><div className="flex flex-wrap gap-2">{userFactKeys.map((factKey) => { const selected = (stage.collect ?? []).includes(factKey); return <label key={factKey} className={`flex cursor-pointer items-center gap-2 rounded-full border px-3 py-1.5 text-sm ${selected ? "border-primary bg-primary/10 text-primary" : "bg-background"}`}><Checkbox checked={selected} onCheckedChange={(checked) => { const collect = stage.collect ?? []; updateStage(flowIndex, stageIndex, { ...stage, collect: checked === true ? [...collect, factKey] : collect.filter((key) => key !== factKey) }); }} />{factKey}</label>; })}{userFactKeys.length === 0 && <span className="text-sm text-muted-foreground">Crea primero los datos del usuario en el paso Datos.</span>}</div></div>
+                <div className="space-y-1"><Label>Guía conversacional</Label><Textarea value={stage.conversationGuidance ?? ""} onChange={(event) => updateStage(flowIndex, stageIndex, { ...stage, conversationGuidance: event.target.value })} placeholder="Cómo acompañar al cliente en este checkpoint" /></div>
+                <StageTechnicalEditor stage={stage} onChange={(nextStage) => updateStage(flowIndex, stageIndex, nextStage)} />
+                <div className="flex justify-end"><Button type="button" variant="ghost" size="sm" className="text-destructive" onClick={() => updateFlow(flowIndex, { ...flow, stages: flow.stages.filter((_, index) => index !== stageIndex) })}><Trash2 className="mr-1 h-4 w-4" />Eliminar etapa</Button></div>
+              </div>
+            </details>;
+          })}
+          {flow.stages.length === 0 && <p className="rounded-xl border border-dashed p-6 text-center text-sm text-muted-foreground">Este flujo todavía no tiene etapas.</p>}
+          <Button type="button" variant="outline" size="sm" onClick={() => addStage(flowIndex)}><Plus className="mr-1 h-4 w-4" />Añadir etapa</Button>
+        </div>
+      </section>)}
+      {flows.length === 0 && <p className="rounded-xl border border-dashed p-8 text-center text-sm text-muted-foreground">No hay flujos configurados. Crea el flujo principal para empezar.</p>}
+    </CardContent>
+  </Card>;
+}
+
+function FactSchemaEditor({ entries, onChange }: { entries: FactSchemaEntry[]; onChange: (entries: FactSchemaEntry[]) => void }) {
+  const visible = entries.map((entry, index) => ({ entry, index })).filter(({ entry }) => (entry.source ?? "user") === "user");
+  const update = (sourceIndex: number, partial: Partial<FactSchemaEntry>) => onChange(entries.map((entry, index) => index === sourceIndex ? { ...entry, ...partial, source: "user" } : entry));
+  const updateOption = (sourceIndex: number, optionIndex: number, partial: Partial<NonNullable<FactSchemaEntry["options"]>[number]>) => {
+    const options = entries[sourceIndex].options ?? [];
+    update(sourceIndex, { options: options.map((option, index) => index === optionIndex ? { ...option, ...partial } : option) });
+  };
+  const addOption = (sourceIndex: number) => {
+    const options = entries[sourceIndex].options ?? [];
+    update(sourceIndex, { options: [...options, { selector: "", label: "", value: "" }] });
+  };
+  const removeOption = (sourceIndex: number, optionIndex: number) => {
+    const options = entries[sourceIndex].options ?? [];
+    update(sourceIndex, { options: options.filter((_, index) => index !== optionIndex) });
+  };
+  const remove = (sourceIndex: number) => onChange(entries.filter((_, index) => index !== sourceIndex));
+  const add = () => onChange([...entries, { key: `customer_fact_${visible.length + 1}`, label: "", type: "string", source: "user", scope: "request" }]);
+  return <Card>
+    <CardHeader className="flex flex-row items-start justify-between gap-4"><div><CardTitle className="text-base">Datos del usuario</CardTitle><CardDescription>Información que el cliente puede proporcionar durante la conversación.</CardDescription></div><Button type="button" size="sm" variant="outline" onClick={add}><Plus className="mr-1 h-4 w-4" />Dato</Button></CardHeader>
+    <CardContent className="space-y-3">
+      {visible.map(({ entry, index }) => <div key={`${entry.key}-${index}`} className="grid gap-3 rounded-xl border bg-card p-4 md:grid-cols-[minmax(150px,1fr)_minmax(180px,1.3fr)_140px_auto]">
+        <div className="space-y-1"><Label>Identificador</Label><Input value={entry.key} onChange={(event) => update(index, { key: event.target.value })} /></div>
+        <div className="space-y-1"><Label>Nombre para el equipo</Label><Input value={entry.label} onChange={(event) => update(index, { label: event.target.value })} placeholder="Ej. Nombre completo" /></div>
+        <div className="space-y-1"><Label>Tipo de dato</Label><ConfigurationSelect value={entry.type} onChange={(type) => update(index, { type })} options={[{ value: "string", label: "Texto" }, { value: "number", label: "Número" }, { value: "boolean", label: "Sí / No" }, { value: "date", label: "Fecha" }, { value: "datetime", label: "Fecha y hora" }]} /></div>
+        <Button type="button" variant="ghost" size="icon" className="self-end text-muted-foreground hover:text-destructive" onClick={() => remove(index)} aria-label="Eliminar dato"><Trash2 className="h-4 w-4" /></Button>
+        <div className="space-y-1 md:col-span-2"><Label>Ayuda para reconocerlo</Label><Input value={entry.extractionGuidance ?? ""} onChange={(event) => update(index, { extractionGuidance: event.target.value })} placeholder="Qué expresiones o formato puede usar el cliente" /></div>
+        <label className="flex h-10 items-center gap-2 self-end rounded-md border px-3 text-sm"><Checkbox checked={entry.required === true} onCheckedChange={(checked) => update(index, { required: checked === true })} />Requerido</label>
+        <label className="flex h-10 items-center gap-2 self-end rounded-md border px-3 text-sm"><Checkbox checked={entry.showInCollectedInfo !== false} onCheckedChange={(checked) => update(index, { showInCollectedInfo: checked === true })} />Mostrar</label>
+        {entry.type === "string" && <div className="space-y-3 rounded-lg border bg-muted/10 p-3 md:col-span-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div><Label>Opciones permitidas</Label><p className="text-xs text-muted-foreground">Define la letra que puede responder el cliente, el nombre que ve y el valor can&oacute;nico que guarda el motor.</p></div>
+            <Button type="button" size="sm" variant="outline" onClick={() => addOption(index)}><Plus className="mr-1 h-4 w-4" />Opci&oacute;n</Button>
           </div>
-        ))}
-      </CardContent>
-    </Card>
-  );
+          {(entry.options ?? []).map((option, optionIndex) => <div key={`${entry.key}-option-${optionIndex}`} className="grid gap-2 sm:grid-cols-[100px_minmax(160px,1fr)_minmax(160px,1fr)_40px]">
+            <div className="space-y-1"><Label className="text-xs">Letra</Label><Input value={option.selector ?? ""} onChange={(event) => updateOption(index, optionIndex, { selector: event.target.value })} placeholder="A" /></div>
+            <div className="space-y-1"><Label className="text-xs">Nombre visible</Label><Input value={option.label} onChange={(event) => updateOption(index, optionIndex, { label: event.target.value })} placeholder="Tienda o minimercado" /></div>
+            <div className="space-y-1"><Label className="text-xs">Valor guardado</Label><Input value={option.value} onChange={(event) => updateOption(index, optionIndex, { value: event.target.value })} placeholder="TiendaMinimercado" /></div>
+            <Button type="button" variant="ghost" size="icon" className="self-end text-muted-foreground hover:text-destructive" onClick={() => removeOption(index, optionIndex)} aria-label={`Eliminar opcion ${option.label || optionIndex + 1}`}><Trash2 className="h-4 w-4" /></Button>
+          </div>)}
+          {(entry.options ?? []).length === 0 && <p className="rounded-md border border-dashed p-3 text-center text-xs text-muted-foreground">Este dato acepta texto libre. A&ntilde;ade opciones para limitarlo a valores can&oacute;nicos.</p>}
+        </div>}
+      </div>)}
+      {visible.length === 0 && <p className="rounded-xl border border-dashed p-8 text-center text-sm text-muted-foreground">No hay datos del usuario configurados.</p>}
+    </CardContent>
+  </Card>;
 }
 
 function ExternalEscalationsEditor({
@@ -549,12 +543,7 @@ function ExternalEscalationsEditor({
 
               <div className="space-y-2">
                 <Label>Eventos por outcome</Label>
-                <JsonEditor
-                  value={(event.outcomeEvents ?? {}) as Record<string, unknown>}
-                  onChange={(outcomeEvents) =>
-                    updateEvent({ ...event, outcomeEvents: outcomeEvents as Record<string, string> })
-                  }
-                />
+                <StringMapEditor value={event.outcomeEvents ?? {}} onChange={(outcomeEvents) => updateEvent({ ...event, outcomeEvents })} keyLabel="Outcome" valueLabel="Evento" />
               </div>
 
               <div className="space-y-2">
@@ -593,22 +582,21 @@ function ExternalEscalationsEditor({
 
                 {contacts.map((contact, index) => (
                   <div key={index} className="grid gap-2 rounded-md border p-3 sm:grid-cols-2 lg:grid-cols-5">
-                    <select
-                      className="h-9 rounded-md border border-input bg-background px-3 text-sm lg:col-span-2"
+                    <ConfigurationSelect
+                      className="h-9 lg:col-span-2"
                       value={contact.businessInboundContactId ?? ""}
-                      onChange={(e) => {
+                      allowEmpty
+                      emptyLabel="Contacto inbound"
+                      onChange={(businessInboundContactId) => {
                         const next = [...contacts];
-                        next[index] = { ...contact, businessInboundContactId: e.target.value };
+                        next[index] = { ...contact, businessInboundContactId };
                         updateEvent({ ...event, contacts: next });
                       }}
-                    >
-                      <option value="">Contacto inbound</option>
-                      {matchingContacts.map((item) => (
-                        <option key={item.businessInboundContactId} value={item.businessInboundContactId}>
-                          {contactLabel(item)}
-                        </option>
-                      ))}
-                    </select>
+                      options={matchingContacts.map((item) => ({
+                        value: item.businessInboundContactId,
+                        label: contactLabel(item),
+                      }))}
+                    />
                     <Input
                       type="number"
                       min={1}
@@ -655,10 +643,7 @@ function ExternalEscalationsEditor({
   );
 }
 
-type MessageSequencesMap = NonNullable<AgentSettings["messageSequences"]>;
 type NotificationsMap = NonNullable<AgentSettings["notifications"]>;
-type WebhookSettings = NonNullable<AgentSettings["webhooks"]>;
-type ReservationAutomations = NonNullable<AgentSettings["reservationAutomations"]>;
 
 const splitLines = (value: string) => value.split("\n").map((s) => s.trim()).filter(Boolean);
 const joinLines = (value?: string[] | null) => (value ?? []).join("\n");
@@ -669,15 +654,6 @@ function SequenceOptions({ sequenceNames }: { sequenceNames: string[] }) {
 
 function SequenceNameInput({ value, onChange }: { value?: string | null; onChange: (value: string) => void }) {
   return <Input list="agent-message-sequences" placeholder="sequence_name" value={value ?? ""} onChange={(e) => onChange(e.target.value)} />;
-}
-
-function MessageSequencesEditor({ sequences, onChange }: { sequences: MessageSequencesMap; onChange: (sequences: MessageSequencesMap) => void }) {
-  return (
-    <Card>
-      <CardHeader><CardTitle className="text-base">Secuencias de mensajes</CardTitle><CardDescription>Catalogo nombrado para WhatsApp, webhooks y notificaciones</CardDescription></CardHeader>
-      <CardContent><JsonEditor value={sequences as unknown as Record<string, unknown>} onChange={(v) => onChange(v as unknown as MessageSequencesMap)} /></CardContent>
-    </Card>
-  );
 }
 
 function NotificationsEditor({ notifications, sequenceNames, onChange }: { notifications: NotificationsMap; sequenceNames: string[]; onChange: (notifications: NotificationsMap) => void }) {
@@ -700,14 +676,27 @@ function NotificationsEditor({ notifications, sequenceNames, onChange }: { notif
         <SequenceOptions sequenceNames={sequenceNames} />
         {names.map((name) => {
           const item = notifications[name] ?? {};
+          const deliveries = item.deliveries ?? [];
           const update = (nextItem: typeof item) => onChange({ ...notifications, [name]: nextItem });
           return (
             <div key={name} className="grid gap-3 rounded-md border p-3 lg:grid-cols-[1fr_1fr_160px_44px]">
               <div className="space-y-1"><Label>Evento</Label><Input value={name} onBlur={(e) => rename(name, e.target.value)} onChange={(e) => rename(name, e.target.value)} /></div>
-              <div className="space-y-1"><Label>Secuencia</Label><SequenceNameInput value={item.sendMessageSequence} onChange={(sendMessageSequence) => update({ ...item, sendMessageSequence })} /></div>
+              <div className="space-y-1"><Label>{deliveries.length > 0 ? "Entregas" : "Secuencia"}</Label>{deliveries.length > 0 ? <div className="flex h-9 items-center rounded-md border px-3 text-sm">{deliveries.length} configuradas</div> : <SequenceNameInput value={item.sendMessageSequence} onChange={(sendMessageSequence) => update({ ...item, sendMessageSequence })} />}</div>
               <label className="flex h-9 items-center gap-2 self-end rounded-md border px-3 text-sm"><Checkbox checked={item.enabled === true} onCheckedChange={(checked) => update({ ...item, enabled: checked === true })} />Activa</label>
               <Button type="button" variant="ghost" size="icon" className="self-end" onClick={() => { const next = { ...notifications }; delete next[name]; onChange(next); }}><Trash2 className="h-4 w-4 text-destructive" /></Button>
-              <div className="space-y-1 lg:col-span-4"><Label>Destinatarios WhatsApp (uno por linea)</Label><Textarea value={joinLines(item.recipients)} onChange={(e) => update({ ...item, recipients: splitLines(e.target.value) })} /></div>
+              {deliveries.length === 0 ? <div className="space-y-1 lg:col-span-4"><Label>Destinatarios WhatsApp (uno por linea)</Label><Textarea value={joinLines(item.recipients)} onChange={(e) => update({ ...item, recipients: splitLines(e.target.value) })} /></div> : <div className="space-y-3 lg:col-span-4">
+                {deliveries.map((delivery, index) => {
+                  const updateDelivery = (nextDelivery: typeof delivery) => update({ ...item, deliveries: deliveries.map((current, currentIndex) => currentIndex === index ? nextDelivery : current) });
+                  return <div key={`${delivery.id}-${index}`} className="grid gap-3 rounded-md bg-muted/30 p-3 lg:grid-cols-[1fr_1fr_140px_44px]">
+                    <div className="space-y-1"><Label>Entrega</Label><Input value={delivery.id} onChange={(e) => updateDelivery({ ...delivery, id: e.target.value })} /></div>
+                    <div className="space-y-1"><Label>Secuencia</Label><SequenceNameInput value={delivery.sendMessageSequence} onChange={(sendMessageSequence) => updateDelivery({ ...delivery, sendMessageSequence })} /></div>
+                    <label className="flex h-9 items-center gap-2 self-end rounded-md border bg-background px-3 text-sm"><Checkbox checked={delivery.enabled !== false} onCheckedChange={(checked) => updateDelivery({ ...delivery, enabled: checked === true })} />Activa</label>
+                    <Button type="button" variant="ghost" size="icon" className="self-end" onClick={() => update({ ...item, deliveries: deliveries.filter((_, currentIndex) => currentIndex !== index) })}><Trash2 className="h-4 w-4 text-destructive" /></Button>
+                    <div className="space-y-1 lg:col-span-4"><Label>Destinatarios (uno por linea; source:conversation envia al cliente)</Label><Textarea value={joinLines(delivery.recipients)} onChange={(e) => updateDelivery({ ...delivery, recipients: splitLines(e.target.value) })} /></div>
+                  </div>;
+                })}
+                <Button type="button" variant="outline" size="sm" onClick={() => update({ ...item, deliveries: [...deliveries, { id: `delivery_${deliveries.length + 1}`, enabled: true, recipients: [], sendMessageSequence: "" }] })}><Plus className="mr-1 h-4 w-4" />Entrega</Button>
+              </div>}
             </div>
           );
         })}
@@ -717,24 +706,26 @@ function NotificationsEditor({ notifications, sequenceNames, onChange }: { notif
   );
 }
 
-function ReservationAutomationsEditor({ automations, onChange }: { automations: ReservationAutomations; sequenceNames: string[]; onChange: (automations: ReservationAutomations) => void }) {
-  return <Card><CardHeader><CardTitle className="text-base">Automatizaciones de reserva</CardTitle></CardHeader><CardContent><JsonEditor value={automations as unknown as Record<string, unknown>} onChange={(v) => onChange(v as unknown as ReservationAutomations)} /></CardContent></Card>;
-}
-
-function WompiWebhooksEditor({ webhooks, onChange }: { webhooks: WebhookSettings; sequenceNames: string[]; onChange: (webhooks: WebhookSettings) => void }) {
-  return <Card><CardHeader><CardTitle className="text-base">Webhooks Wompi</CardTitle><CardDescription>Outcomes de pago que disparan secuencias</CardDescription></CardHeader><CardContent><JsonEditor value={webhooks as unknown as Record<string, unknown>} onChange={(v) => onChange(v as unknown as WebhookSettings)} /></CardContent></Card>;
-}
-
-function CheckoutCommerceEditor({ value, onChange }: { value: AgentSettings; onChange: (partial: Partial<AgentSettings>) => void }) {
-  const commerce = value.commerce ?? { enabled: false, provider: "Local" as const };
-  const checkout = value.checkout ?? { currency: "COP", modes: {} };
-  return <><Card><CardHeader><CardTitle className="text-base">Comercio</CardTitle></CardHeader><CardContent className="grid gap-3 sm:grid-cols-3"><label className="flex h-9 items-center gap-2 rounded-md border px-3 text-sm"><Checkbox checked={commerce.enabled === true} onCheckedChange={(checked) => onChange({ commerce: { ...commerce, enabled: checked === true } })} />Activo</label><select className="h-9 rounded-md border border-input bg-background px-3 text-sm" value={commerce.provider ?? "Local"} onChange={(e) => onChange({ commerce: { ...commerce, provider: e.target.value as "Local" | "Siigo" | "CustomHttp" | "Mantis" } })}><option value="Local">Local</option><option value="Siigo">Siigo</option><option value="CustomHttp">CustomHttp</option><option value="Mantis">Mantis</option></select><Input value={checkout.currency ?? "COP"} onChange={(e) => onChange({ checkout: { ...checkout, currency: e.target.value } })} /></CardContent></Card><Card><CardHeader><CardTitle className="text-base">Checkout</CardTitle><CardDescription>Modos, metodos de pago, shipping y bindings</CardDescription></CardHeader><CardContent><JsonEditor value={checkout as unknown as Record<string, unknown>} onChange={(v) => onChange({ checkout: v as unknown as NonNullable<AgentSettings["checkout"]> })} /></CardContent></Card></>;
-}
-
-function GlobalActionsEditor({ actions, onChange }: { actions: GlobalAction[]; onChange: (actions: GlobalAction[]) => void }) {
-  return <Card><CardHeader><CardTitle className="text-base">Acciones globales</CardTitle><CardDescription>Acciones transversales disponibles fuera de la etapa activa</CardDescription></CardHeader><CardContent><JsonEditor value={{ actions } as Record<string, unknown>} onChange={(v) => onChange(((v.actions as GlobalAction[]) ?? []))} /></CardContent></Card>;
-}
-
 function TemplatesEditor({ templates, onChange }: { templates: Record<string, string>; onChange: (templates: Record<string, string>) => void }) {
-  return <Card><CardHeader><CardTitle className="text-base">Templates</CardTitle><CardDescription>Overrides de plantillas del motor</CardDescription></CardHeader><CardContent><JsonEditor value={templates as unknown as Record<string, unknown>} onChange={(v) => onChange(v as Record<string, string>)} /></CardContent></Card>;
+  const names = Object.keys(templates);
+  const add = () => { let index = names.length + 1; let name = `template_${index}`; while (name in templates) name = `template_${++index}`; onChange({ ...templates, [name]: "" }); };
+  const update = (name: string, body: string) => onChange({ ...templates, [name]: body });
+  const rename = (oldName: string, nextName: string) => { const clean = nextName.trim(); if (!clean || clean === oldName) return; const next: Record<string, string> = {}; Object.entries(templates).forEach(([name, body]) => { next[name === oldName ? clean : name] = body; }); onChange(next); };
+  const remove = (name: string) => { const next = { ...templates }; delete next[name]; onChange(next); };
+  return <Card>
+    <CardHeader className="flex flex-row items-start justify-between gap-4"><div><CardTitle className="text-base">Templates del motor</CardTitle><CardDescription>Edita el contenido y revisa cómo se verá; las variables se resaltan en la vista previa.</CardDescription></div><Button type="button" size="sm" variant="outline" onClick={add}><Plus className="mr-1 h-4 w-4" />Template</Button></CardHeader>
+    <CardContent className="space-y-4">
+      {names.map((name) => <section key={name} className="overflow-hidden rounded-xl border bg-card shadow-sm">
+        <div className="flex items-center gap-2 border-b bg-muted/30 p-3"><Input className="max-w-md font-medium" defaultValue={name} onBlur={(event) => rename(name, event.target.value)} /><Button type="button" variant="ghost" size="icon" className="ml-auto text-muted-foreground hover:text-destructive" onClick={() => remove(name)} aria-label="Eliminar template"><Trash2 className="h-4 w-4" /></Button></div>
+        <div className="grid lg:grid-cols-2"><div className="space-y-2 border-b p-4 lg:border-b-0 lg:border-r"><Label>Contenido</Label><Textarea className="min-h-44 resize-y font-mono text-sm" value={templates[name]} onChange={(event) => update(name, event.target.value)} /></div><div className="space-y-2 bg-muted/10 p-4"><Label className="flex items-center gap-2"><Eye className="h-4 w-4 text-primary" />Vista previa renderizada</Label><TemplatePreview body={templates[name]} /></div></div>
+      </section>)}
+      {names.length === 0 && <p className="rounded-xl border border-dashed p-8 text-center text-sm text-muted-foreground">No hay templates personalizados.</p>}
+    </CardContent>
+  </Card>;
+}
+
+function TemplatePreview({ body }: { body: string }) {
+  if (!body.trim()) return <div className="grid min-h-44 place-items-center rounded-xl border border-dashed text-sm text-muted-foreground">Escribe el contenido para ver la vista previa.</div>;
+  const parts = body.split(/(\{\{[^}]+\}\})/g);
+  return <div className="min-h-44 whitespace-pre-wrap rounded-2xl rounded-tl-sm border bg-background p-4 text-sm leading-6 shadow-sm">{parts.map((part, index) => /^\{\{[^}]+\}\}$/.test(part) ? <span key={index} className="mx-0.5 inline-flex rounded bg-primary/10 px-1.5 py-0.5 font-mono text-xs text-primary">{part}</span> : <span key={index}>{part}</span>)}</div>;
 }

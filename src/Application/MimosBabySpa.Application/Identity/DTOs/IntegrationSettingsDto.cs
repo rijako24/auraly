@@ -3,7 +3,10 @@ namespace MimosBabySpa.Application.Identity.DTOs;
 public record IntegrationSettingsDto(
     GoogleCalendarIntegrationDto GoogleCalendar,
     WompiIntegrationDto Wompi,
-    SiigoCommerceIntegrationDto SiigoCommerce);
+    SiigoCommerceIntegrationDto SiigoCommerce,
+    MantisIntegrationDto Mantis);
+
+public record MantisIntegrationDto(bool IsConfigured, bool IsEnabled, string? LastError, DateTime? LastSyncAt);
 
 public record GoogleCalendarIntegrationDto(
     bool IsEnabled,

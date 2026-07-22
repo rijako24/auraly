@@ -1,13 +1,14 @@
 using System.Text.Json;
 using MimosBabySpa.Application.Commerce;
 using MimosBabySpa.Application.Services;
+using MimosBabySpa.Domain.Catalog;
 
 namespace MimosBabySpa.Application.Agents.Operations.Support;
 
 internal static class CatalogOfferMemory
 {
     public const string FactKey = "system.catalog_products";
-    private const int SchemaVersion = 2;
+    private const int SchemaVersion = 3;
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private static readonly JsonSerializerOptions LegacyJsonOptions = new()
     {
@@ -30,24 +31,29 @@ internal static class CatalogOfferMemory
         if (active.Count == 0)
             return;
 
-        var hasSingleSearchTerm = searchTerms.Count(term => !string.IsNullOrWhiteSpace(term)) == 1;
+        var normalizedSearchTerms = searchTerms
+            .Where(term => !string.IsNullOrWhiteSpace(term))
+            .Select(term => term.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var hasSingleSearchTerm = normalizedSearchTerms.Count == 1;
         var replacementReference = hasSingleSearchTerm && !string.IsNullOrWhiteSpace(explicitReplacementReference)
             ? explicitReplacementReference.Trim()
             : hasSingleSearchTerm && CommerceConversationMatcher.Matches(
                 context.LatestUserMessage, context.Config?.Commerce.Conversation.ProductReplacementRules)
-                ? searchTerms.First(term => !string.IsNullOrWhiteSpace(term)).Trim()
-                : null;        var existing = Read(context.Facts);
+                ? normalizedSearchTerms[0]
+                : null;
+        var existing = Read(context.Facts);
+        var contextAnchorTerms = ResolveContextAnchorTerms(existing, normalizedSearchTerms);
         var sequence = (existing?.Sequence ?? 0) + 1;
         var snapshots = (existing?.Snapshots ?? [])
             .Append(new CatalogOfferSnapshot(
                 sequence,
                 DateTime.UtcNow,
-                searchTerms.Where(term => !string.IsNullOrWhiteSpace(term))
-                    .Select(term => term.Trim())
-                    .Distinct(StringComparer.OrdinalIgnoreCase)
-                    .ToList(),
+                normalizedSearchTerms,
                 active,
-                replacementReference))
+                replacementReference,
+                contextAnchorTerms))
             .ToList();
 
         var maxSnapshots = Math.Clamp(context.Config?.Commerce.OfferMemoryMaxSnapshots ?? 8, 1, 50);
@@ -100,6 +106,36 @@ internal static class CatalogOfferMemory
             latest[ProductIdentity(product)] = product;
         return latest.Values.ToList();
     }
+    public static bool IsLatestOfferForeground(
+        CatalogOfferState state,
+        string? lastBotMessage,
+        double minimumCoverage)
+    {
+        if (string.IsNullOrWhiteSpace(lastBotMessage))
+            return false;
+
+        var latest = state.Snapshots.MaxBy(snapshot => snapshot.Sequence);
+        if (latest is null || latest.Products.Count == 0)
+            return false;
+
+        var botTokens = ProductSearchText.GetMatchingTokens(lastBotMessage)
+            .Where(token => token.Length >= 3 || token.Any(char.IsDigit))
+            .ToHashSet(StringComparer.Ordinal);
+        var presentedProducts = latest.Products.Count(product =>
+        {
+            var productTokens = ProductSearchText.GetMatchingTokens(product.Name)
+                .Where(token => token.Length >= 3 || token.Any(char.IsDigit))
+                .ToList();
+            if (productTokens.Count == 0)
+                return false;
+            var covered = productTokens.Count(botTokens.Contains);
+            return covered / (double)productTokens.Count
+                >= Math.Clamp(minimumCoverage, 0d, 1d);
+        });
+        return presentedProducts >= Math.Min(2, latest.Products.Count);
+    }
+
+
 
     private static CatalogOfferState Trim(CatalogOfferState state, int maxSnapshots, int maxProducts)
     {
@@ -130,6 +166,28 @@ internal static class CatalogOfferMemory
         return state with { Snapshots = kept };
     }
 
+    private static IReadOnlyList<string> ResolveContextAnchorTerms(
+        CatalogOfferState? existing,
+        IReadOnlyList<string> currentTerms)
+    {
+        if (currentTerms.Count == 0)
+            return [];
+
+        var latest = existing?.Snapshots.MaxBy(snapshot => snapshot.Sequence);
+        var previousAnchor = latest?.ContextAnchorTerms is { Count: > 0 }
+            ? latest.ContextAnchorTerms
+            : latest?.SearchTerms;
+        if (previousAnchor is not { Count: 1 })
+            return currentTerms;
+
+        var anchorTokens = ProductSearchText.GetMatchingTokens(previousAnchor[0]);
+        return anchorTokens.Count > 0
+            && currentTerms.All(term =>
+                anchorTokens.All(ProductSearchText.GetMatchingTokens(term).Contains))
+                ? previousAnchor
+                : currentTerms;
+    }
+
     private static string ProductIdentity(ProductCandidate product)
     {
         if (product.ProductId.HasValue)
@@ -152,4 +210,5 @@ internal sealed record CatalogOfferSnapshot(
     DateTime? OfferedAtUtc,
     IReadOnlyList<string> SearchTerms,
     IReadOnlyList<ProductCandidate> Products,
-    string? ReplacementReference = null);
+    string? ReplacementReference = null,
+    IReadOnlyList<string>? ContextAnchorTerms = null);

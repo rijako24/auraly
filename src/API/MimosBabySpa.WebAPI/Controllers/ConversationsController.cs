@@ -27,10 +27,11 @@ public class ConversationsController : ControllerBase
         [FromQuery] Guid businessId,
         [FromQuery] ConversationLifecycleStatus? status,
         [FromQuery] PagedRequest request,
+        [FromQuery] Guid? agentId,
         CancellationToken ct)
     {
         return Ok(await _service.GetPagedByBusinessIdAsync(
-            User.GetTenantId(), User.HasPermission("tenants.read"), businessId, request, status, ct));
+            User.GetTenantId(), User.HasPermission("tenants.read"), businessId, request, status, ct, agentId));
     }
 
     [HttpGet("{conversationId:guid}")]

@@ -497,6 +497,12 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
     "guidance": "Escribe exactamente este texto, conservando los saltos de linea: \uD83D\uDC4B Hola, soy Aly de AURALY.\n\n\u00A1Un gusto saludarte!\n\nEstoy aqui para darte toda la informacion, contarte como podemos ayudarte y acompanarte a agendar una demo en vivo. No agregues preguntas ni texto adicional.",
     "allowQuestions": false
   },
+  "conversationFollowUp": {
+    "enabled": true,
+    "delayMinutes": 120,
+    "guidance": "Retoma con calidez y brevedad la pregunta, dato, fecha, horario o confirmacion concreta que sigue pendiente para agendar la demo. Usa el contexto vigente y formula una sola pregunta enfocada. No repitas la explicacion completa de AURALY ni el resumen de la demo; no agregues urgencia, descuentos, precios, disponibilidad inventada ni promesas, y no crees ni modifiques reservas.",
+    "respectOperatingHours": true
+  },
   "messageSequences": {
     "web_demo_follow_up": {
       "messages": [
@@ -567,7 +573,8 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       },
       "actions": [],
       "response": {
-        "template": "pricing_demo_information"
+        "template": "pricing_demo_information",
+        "awaitCustomerReply": true
       }
     },
     {
@@ -859,7 +866,8 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
             "customer_email"
           ],
           "response": {
-            "template": "discovery_question"
+            "template": "discovery_question",
+            "awaitCustomerReply": true
           }
         },
         {
@@ -900,7 +908,8 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                   ],
                   "response": {
                     "mode": "continue",
-                    "template": "value_explanation"
+                    "template": "value_explanation",
+                    "awaitCustomerReply": true
                   }
                 }
               }
@@ -915,6 +924,9 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
             "availability_checked"
           ],
           "conversationGuidance": "La demo en vivo de AURALY es el servicio tecnico por defecto. No preguntes servicio ni muestres seleccion de servicio. Si service no esta registrado, resuelvelo con Demo AURALY. Luego resuelve el tipo de atencion para Demo AURALY. Si falta desired_date, pregunta una sola cosa: Para que fecha te gustaria ver horarios de la demo? No agregues otra pregunta en ese mensaje. Cuando el cliente responda fecha, registra desired_date y valida disponibilidad con Demo AURALY para mostrar horarios disponibles. Cuando el cliente elija hora, registra desired_time y valida disponibilidad con Demo AURALY, fecha y hora. Si esta disponible, deja avanzar.",
+          "response": {
+            "awaitCustomerReply": true
+          },
           "collect": [
             "desired_date",
             "desired_time",
@@ -968,7 +980,8 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                   ],
                   "response": {
                     "mode": "ask_clarification",
-                    "template": "availability_none"
+                    "template": "availability_none",
+                    "awaitCustomerReply": true
                   }
                 },
                 "input.past_date": {
@@ -980,7 +993,8 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                   ],
                   "response": {
                     "mode": "ask_clarification",
-                    "template": "past_date_invalid"
+                    "template": "past_date_invalid",
+                    "awaitCustomerReply": true
                   }
                 },
                 "input.invalid_date": {
@@ -992,7 +1006,8 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                   ],
                   "response": {
                     "mode": "ask_clarification",
-                    "template": "date_invalid"
+                    "template": "date_invalid",
+                    "awaitCustomerReply": true
                   }
                 },
                 "input.invalid_time": {
@@ -1004,7 +1019,8 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                   ],
                   "response": {
                     "mode": "ask_clarification",
-                    "template": "time_invalid"
+                    "template": "time_invalid",
+                    "awaitCustomerReply": true
                   }
                 },
                 "input.invalid": {
@@ -1016,12 +1032,14 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                   ],
                   "response": {
                     "mode": "ask_clarification",
-                    "template": "date_invalid"
+                    "template": "date_invalid",
+                    "awaitCustomerReply": true
                   }
                 },
                 "catalog.service_unresolved": {
                   "response": {
-                    "guidance": "Indica que no fue posible resolver Demo AURALY y ofrece escalar al equipo. No confirmes disponibilidad."
+                    "guidance": "Indica que no fue posible resolver Demo AURALY y ofrece escalar al equipo. No confirmes disponibilidad.",
+                    "awaitCustomerReply": true
                   }
                 }
               }
@@ -1056,7 +1074,8 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
             "desired_time"
           ],
           "response": {
-            "template": "customer_data_question"
+            "template": "customer_data_question",
+            "awaitCustomerReply": true
           },
           "transitions": [
             {
@@ -1102,7 +1121,8 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
             "desired_time"
           ],
           "response": {
-            "template": "social_profiles_question"
+            "template": "social_profiles_question",
+            "awaitCustomerReply": true
           },
           "transitions": [
             {
@@ -1143,7 +1163,8 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
             "customer_email"
           ],
           "response": {
-            "template": "demo_confirmation"
+            "template": "demo_confirmation",
+            "awaitCustomerReply": true
           },
           "transitions": [
             {

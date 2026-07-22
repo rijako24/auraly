@@ -69,7 +69,7 @@ public sealed class CjCompleteOrderFlowRegressionTests
 
         completed.Success.Should().BeTrue(string.Join("; ", completed.Errors));
         completed.RequestCompleted.Should().BeTrue();
-        completed.Sequences.Should().Contain("order_created_customer");
+        completed.Sequences.Should().NotContain("order_created_customer");
         flow.CreateOrder.CallCount.Should().Be(1);
         flow.Checkout.CallCount.Should().Be(1);
         flow.CreateOrder.CreatedItemCount.Should().Be(4);

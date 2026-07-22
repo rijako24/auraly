@@ -162,6 +162,12 @@ public sealed partial class AgentConfigurationCompiler
         ValidateSimilarity("commerce.matching.candidateSelectionSimilarity",
             matching.CandidateSelectionSimilarity);
 
+        ValidateSimilarity("commerce.matching.catalogCandidateMinimumScore",
+            matching.CatalogCandidateMinimumScore);
+        ValidateSimilarity("commerce.matching.catalogCandidateMinimumCoverage",
+            matching.CatalogCandidateMinimumCoverage);
+        ValidateSimilarity("commerce.matching.catalogTokenSimilarity",
+            matching.CatalogTokenSimilarity);
         void ValidatePhraseRules(string path, IReadOnlyList<CommercePhraseRule> rules)
         {
             if (rules.Any(rule => string.IsNullOrWhiteSpace(rule.Phrase)

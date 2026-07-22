@@ -184,8 +184,44 @@ public sealed class CommerceTurnPlanSafetyTests
     }
 
 
-    [Theory]
+    [Fact]
+    public void CatalogSelectionWithConfiguredAdditionalPhrase_KeepsSingleAdditionalMutation()
+    {
+        var normalized = CommerceTurnPlanSafety.Normalize(
+            Plan(OrderChanges("PERNIL MERCAPOLLO", 1, "agrega otro pernil mercapollo")),
+            Context(
+                "agrega otro pernil mercapollo",
+                catalogFollowUp: true,
+                additionalRequestPhrases: ["otro", "otra"]));
+
+        normalized.Signals.Should().ContainSingle(signal => signal.Type == "order_changes");
+    }
+
+    [Fact]
+    public void ClearForAbsentFact_IsRemovedAsNoOp()
+    {
+        var plan = new TurnPlan
+        {
+            Facts =
+            [
+                new PlannedFactClaim
+                {
+                    Key = "delivery_reference",
+                    Operation = TurnPlanOperations.Clear,
+                    Value = JsonSerializer.SerializeToElement<object?>(null),
+                    Evidence = "no"
+                }
+            ],
+            Response = new TurnPlanResponseDirective()
+        };
+
+        var normalized = CommerceTurnPlanSafety.Normalize(plan, Context("no"));
+
+        normalized.Facts.Should().BeEmpty();
+    }
+
     [InlineData(false)]
+    [Theory]
     [InlineData(true)]
     public void ProductListWithTrailingQuantities_PreservesEveryProductAndQuantity(bool catalogFollowUp)
     {
@@ -298,6 +334,45 @@ public sealed class CommerceTurnPlanSafetyTests
         normalized.Facts.Should().ContainSingle(fact => fact.Key == "order_finalized");
     }
 
+    [Fact]
+    public void SafetyLayer_DoesNotSynthesizeSignalFromAConversationPhrase()
+    {
+        var normalized = CommerceTurnPlanSafety.Normalize(
+            Plan(),
+            Context("SOLO RESINA TEGD-MA ME ESTAS COTIZANDO LAMPARA"));
+
+        normalized.Signals.Should().BeEmpty();
+    }
+    [Fact]
+    public void CatalogCorrectionWithoutMutationVerb_DropsInventedRemoval()
+    {
+        var removal = new PlannedSignal
+        {
+            Type = "order_changes",
+            Value = JsonSerializer.SerializeToElement(new[]
+            {
+                new
+                {
+                    operation = "remove",
+                    productText = "LAMPARA",
+                    quantity = (decimal?)null,
+                    destinationReference = (string?)null
+                }
+            }),
+            Evidence = "ME ESTAS COTIZANDO LAMPARA QUE NO PEDI",
+            Confidence = 0.98
+        };
+
+        var normalized = CommerceTurnPlanSafety.Normalize(
+            Plan(removal),
+            Context(
+                "SOLO RESINA TEGD-MA. ME ESTAS COTIZANDO LAMPARA QUE NO PEDI.",
+                catalogFollowUp: true));
+
+        normalized.Signals.Should().BeEmpty();
+    }
+
+
     private static TurnPlan Plan(params PlannedSignal[] signals) => new()
     {
         Signals = signals,
@@ -384,7 +459,10 @@ public sealed class CommerceTurnPlanSafetyTests
             structuredContext);
     }
 
-    private static TurnPlanningContext Context(string message, bool catalogFollowUp = false)
+    private static TurnPlanningContext Context(
+        string message,
+        bool catalogFollowUp = false,
+        IReadOnlyList<string>? additionalRequestPhrases = null)
     {
         var signals = new Dictionary<string, StageSignalDefinition>(StringComparer.OrdinalIgnoreCase)
         {
@@ -402,7 +480,16 @@ public sealed class CommerceTurnPlanSafetyTests
             : null;
 
         return new TurnPlanningContext(
-            new AgentConfig(),
+            new AgentConfig
+            {
+                Commerce = new CommerceConfig
+                {
+                    Conversation = new CommerceConversationPolicy
+                    {
+                        AdditionalRequestPhrases = additionalRequestPhrases ?? []
+                    }
+                }
+            },
             new AgentFlowStage(),
             new TurnPlanScope(
                 new Dictionary<string, FactSchemaEntry>(),

@@ -142,6 +142,39 @@ VALUES
     ('D3E4A700-0000-0000-0000-000000000120', N'MD-OSSEO-200', N'Motor de implantes 3G Osseo 200', N'Motor BLDC avanzado con torque y rpm en tiempo real, autocalibracion, 9 memorias, diagnostico inteligente, proteccion contra sobrecarga y controlador de pie. Admite varias relaciones; con contraangulo 20:1 trabaja de 15 a 2.000 rpm y hasta 70 N.cm. Disponible con funcion optica segun configuracion.', N'Implantologia', 0, N'COP', NULL, 1),
     ('D3E4A700-0000-0000-0000-000000000121', N'MD-ELECTRODOS-TRIPOWER', N'Kit de electrodos para electrocirugia', N'Accesorios compatibles con TRI-POWER: electrodos rectos, de bola, aguja, bucle, gancho y lamina, en distintas longitudes; kits surtidos de 5 o 10 piezas, electrodos neutros, cables y esponja limpiadora. Confirmar referencia segun equipo, longitud y tecnica.', N'Accesorios de electrocirugia', 0, N'COP', NULL, 1);
 
+
+INSERT INTO @Products
+    (ProductId, Sku, [Name], [Description], CategoryName, UnitPrice, Currency, StockQuantity, IsActive)
+VALUES
+    ('D3E4A700-0000-0000-0000-000000000122', N'MD-CHRO-MA', N'Chro-Ma resina nanohibrida de alta estetica', N'Resina fotocurable NanoFill de 4 g, especializada para carillas y restauraciones anteriores y posteriores de alta estetica. Facil de modelar y pulir, radiopaca, de baja contraccion y con acabado de alto brillo.', N'Resinas restauradoras', 0, N'COP', NULL, 1),
+    ('D3E4A700-0000-0000-0000-000000000123', N'MD-KIT-SYGD-MA', N'Kit de resinas para restauracion SYGD-MA', N'Kit con tres jeringas de 2 g de resina fluida SYGD-MA, gel desmineralizante de 2,5 ml, accesorios e instrucciones. Resina fotocurable de baja viscosidad para preparaciones de cavidades y restauraciones esteticas.', N'Kits de restauracion', 0, N'COP', NULL, 1),
+    ('D3E4A700-0000-0000-0000-000000000124', N'MD-KIT-BISG-MA', N'Kit de resinas para restauracion BISG-MA', N'Kit con cinco jeringas de 4 g de resina nanohibrida BISG-MA, adhesivo de 5 ml, accesorios e instrucciones. Indicado para restauraciones anteriores, posteriores y esteticas.', N'Kits de restauracion', 0, N'COP', NULL, 1),
+    ('D3E4A700-0000-0000-0000-000000000125', N'MD-KIT-CHRO-MA', N'Kit de resinas para restauracion CHRO-MA', N'Kit con cinco jeringas de 4 g de resina NanoFill CHRO-MA, adhesivo de 5 ml, accesorios e instrucciones. Especializado para carillas y restauraciones de alta estetica.', N'Kits de restauracion', 0, N'COP', NULL, 1),
+    ('D3E4A700-0000-0000-0000-000000000126', N'MD-KIT-TEGD-MA', N'Kit de resinas para restauracion TEGD-MA', N'Kit con cinco jeringas de 4 g de resina microhibrida TEGD-MA, adhesivo de 5 ml, accesorios e instrucciones. Ofrece variedad de tonos, resistencia y alto pulido.', N'Kits de restauracion', 0, N'COP', NULL, 1),
+    ('D3E4A700-0000-0000-0000-000000000127', N'MD-KIT-AVVA-BULK', N'Kit de resina fluida Bulk AVVA-BULK', N'Kit de resina fluida Bulk para restauraciones profundas y cementacion, con tres jeringas de 2 g, una jeringa de 2 g, gel grabador de 2,5 ml y puntas plasticas, segun presentacion de catalogo.', N'Kits de restauracion', 0, N'COP', NULL, 1),
+    ('D3E4A700-0000-0000-0000-000000000128', N'MD-KIT-DV-SEAL', N'Kit sellante de fosas y fisuras DV-SEAL', N'Kit de sellante fotocurable DV-SEAL con jeringas, gel grabador de 2,5 ml y puntas plasticas. Resina BIS-GMA tixotropica con liberacion de fluor y cambio de color para verificar el curado.', N'Kits de restauracion', 0, N'COP', NULL, 1),
+    ('D3E4A700-0000-0000-0000-000000000129', N'MD-COMPULA-SYGD-MA', N'Compulas de resina fluida SYGD-MA caja x20', N'Caja con 20 compulas de 0,28 g de resina fluida SYGD-MA fotocurable, de baja viscosidad, alta estetica y buen pulido para restauraciones y zonas de dificil acceso.', N'Resinas en compulas', 0, N'COP', NULL, 1),
+    ('D3E4A700-0000-0000-0000-000000000130', N'MD-COMPULA-TEGD-MA', N'Compulas de resina microhibrida TEGD-MA caja x20', N'Caja con 20 compulas de 0,28 g de resina microhibrida TEGD-MA fotocurable, de facil manejo, alto pulido y buena resistencia para restauraciones.', N'Resinas en compulas', 0, N'COP', NULL, 1),
+    ('D3E4A700-0000-0000-0000-000000000131', N'MD-COMPULA-BISG-MA', N'Compulas de resina nanohibrida BISG-MA caja x20', N'Caja con 20 compulas de 0,28 g de resina nanohibrida BISG-MA fotocurable para restauraciones anteriores, posteriores y esteticas.', N'Resinas en compulas', 0, N'COP', NULL, 1),
+    ('D3E4A700-0000-0000-0000-000000000132', N'MD-COMPULA-CHRO-MA', N'Compulas de resina CHRO-MA caja x20', N'Caja con 20 compulas de 0,28 g de resina CHRO-MA NanoFill fotocurable, especializada para carillas y restauraciones de alta estetica.', N'Resinas en compulas', 0, N'COP', NULL, 1),
+    ('D3E4A700-0000-0000-0000-000000000133', N'MD-COMPULA-AVVA-BULK', N'Compulas de resina Bulk AVVA-BULK caja x20', N'Caja con 20 compulas o puntas de 0,28 g de resina fluida Bulk AVVA-BULK, de alta translucidez para capas profundas y cementacion.', N'Resinas en compulas', 0, N'COP', NULL, 1),
+    ('D3E4A700-0000-0000-0000-000000000134', N'MD-AUTOCURADO-3-15', N'Kit de resina de autocurado 3 g y 15 g', N'Composite restaurador radiopaco de curado quimico para procedimientos anteriores y posteriores. Disponible en presentaciones de 3 g y 15 g, con base, catalizador, adhesivo, acido grabador, mezcladores y base de mezcla.', N'Resinas de autocurado', 0, N'COP', NULL, 1),
+    ('D3E4A700-0000-0000-0000-000000000135', N'MD-CERAMIK-TRADICIONAL', N'Pieza de mano 3G Ceramik Tradicional', N'Pieza de mano de alta velocidad con cuerpo ergonomico de acero inoxidable, cabezal estandar, sistema tradicional cambia fresa y rodamientos ceramicos.', N'Piezas de mano', 0, N'COP', NULL, 1),
+    ('D3E4A700-0000-0000-0000-000000000136', N'MD-CERAMIK-MINI', N'Pieza de mano 3G Ceramik Tradicional Mini', N'Pieza de mano de alta velocidad con cuerpo de acero inoxidable, cabezal mini para acceso reducido y odontopediatria, sistema tradicional cambia fresa y rodamientos ceramicos.', N'Piezas de mano', 0, N'COP', NULL, 1),
+    ('D3E4A700-0000-0000-0000-000000000137', N'MD-TITANIUM-3P', N'Pieza de mano 3G Titanium 3P', N'Pieza de mano de alta velocidad con recubrimiento de titanio grado quirurgico, sistema Push Button, triple irrigacion y sistema antirretraccion.', N'Piezas de mano', 0, N'COP', NULL, 1),
+    ('D3E4A700-0000-0000-0000-000000000138', N'MD-TITANIUM-3R', N'Pieza de mano 3G Titanium 3R', N'Pieza de mano de alta velocidad con recubrimiento de titanio grado quirurgico, cabezal estandar, sistema tradicional cambia fresa, triple irrigacion y antirretraccion.', N'Piezas de mano', 0, N'COP', NULL, 1),
+    ('D3E4A700-0000-0000-0000-000000000139', N'MD-TITANIUM-45R', N'Pieza de mano 3G Titanium LED 45R', N'Pieza de mano quirurgica de alta velocidad con cabezal a 45 grados, luz LED, sistema tradicional cambia fresa y acople Borden; facilita acceso posterior y cirugia.', N'Piezas de mano', 0, N'COP', NULL, 1),
+    ('D3E4A700-0000-0000-0000-000000000140', N'MD-MICROMOTOR-SET-RECTA', N'Micromotor Set 3G con punta recta', N'Set clasico de baja velocidad con micromotor neumatico, irrigacion externa y cono de punta recta. Permite giro suave y cambio de direccion para ajustes y acabados.', N'Piezas de mano', 0, N'COP', NULL, 1),
+    ('D3E4A700-0000-0000-0000-000000000141', N'MD-CABEZA-CONTRAANGULO-PB', N'Cabeza de contraangulo 3G Push Button', N'Cabeza intercambiable para contraangulo 3G Ceramik, compatible con fresas CA, sistema Push Button y velocidad maxima aproximada de 40.000 rpm.', N'Contraangulos y accesorios', 0, N'COP', NULL, 1),
+    ('D3E4A700-0000-0000-0000-000000000142', N'MD-CABEZA-CONTRAANGULO-PESTILLO', N'Cabeza de contraangulo 3G de pestillo', N'Cabeza intercambiable para contraangulo 3G Ceramik, compatible con fresas CA, sistema de pestillo y velocidad maxima aproximada de 40.000 rpm.', N'Contraangulos y accesorios', 0, N'COP', NULL, 1),
+    ('D3E4A700-0000-0000-0000-000000000143', N'MD-CONTRAANGULO-PB', N'Contraangulo 3G Ceramik Push Button', N'Contraangulo completo 3G Ceramik tipo E 1:1 con sistema Push Button, funcionamiento silencioso y construccion durable para procedimientos de baja velocidad.', N'Contraangulos y accesorios', 0, N'COP', NULL, 1),
+    ('D3E4A700-0000-0000-0000-000000000144', N'MD-CONTRAANGULO-PESTILLO', N'Contraangulo 3G Ceramik de pestillo', N'Contraangulo completo 3G Ceramik tipo E 1:1 con sistema tradicional de pestillo, funcionamiento silencioso y construccion durable para procedimientos de baja velocidad.', N'Contraangulos y accesorios', 0, N'COP', NULL, 1),
+    ('D3E4A700-0000-0000-0000-000000000145', N'MD-SCALER-BLACK', N'Escaler neumatico 3G Black Edition', N'Escaler neumatico portatil y minimamente invasivo para remover placa y sarro subgingival y supragingival. Compatible con NSK e incluye cinco puntas.', N'Ultrasonido e higiene', 0, N'COP', NULL, 1),
+    ('D3E4A700-0000-0000-0000-000000000146', N'MD-SCALER-AS6000', N'Escaler neumatico 3G AS6000 Silver Edition', N'Escaler neumatico portatil para remover placa y depositos de sarro subgingival y supragingival. Compatible con NSK e incluye tres puntas.', N'Ultrasonido e higiene', 0, N'COP', NULL, 1),
+    ('D3E4A700-0000-0000-0000-000000000147', N'MD-SCALER-P5-MAX', N'Escaler ultrasonico 3G P5 Max sin LED', N'Piezo escaler ultrasonico no optico con pieza de mano, control de agua, pedal, adaptador y cinco puntas. Indicado para profilaxis, calculo y trabajo periodontal.', N'Ultrasonido e higiene', 0, N'COP', NULL, 1),
+    ('D3E4A700-0000-0000-0000-000000000148', N'MD-CAVITRON-MAGPOWER', N'Cavitron magnetostrictivo 3G MagPower', N'Cavitron magnetostrictivo de doble frecuencia para odontologia, periodoncia, irrigacion y limpieza de conductos. Ofrece trabajo suave, velocidades constantes y manejo practico.', N'Ultrasonido e higiene', 0, N'COP', NULL, 1),
+    ('D3E4A700-0000-0000-0000-000000000149', N'MD-POWERLED-L7', N'Lampara de fotocurado 3G PowerLED L7', N'Lampara LED de alto rendimiento para polimerizaciones dentales en consultorio, con ajustes de tiempo y diseno orientado al control del fotocurado.', N'Fotocurado', 0, N'COP', NULL, 1),
+    ('D3E4A700-0000-0000-0000-000000000150', N'MD-POWERLED-LX', N'Lampara de fotocurado 3G PowerLED LX', N'Lampara LED de fotocurado y aceleracion de blanqueamiento, intensidad de 1200 a 1400 mW/cm2, longitud de onda de 420 a 480 nm y tiempos configurables de 5 a 40 segundos.', N'Fotocurado', 0, N'COP', NULL, 1);
 MERGE dbo.Products AS target
 USING @Products AS source
    ON target.BusinessId = @BusinessId
@@ -177,6 +210,308 @@ WHERE BusinessId = @BusinessId
       FROM @Products p
       WHERE p.Sku = dbo.Products.Sku
   );
+
+
+-- Rebuild the local lexical index from catalog identity, descriptions, and
+-- curated PDF vocabulary. The search engine always receives normalized,
+-- token-level terms; aliases below own multi-word product equivalences.
+DECLARE @ProductVocabulary TABLE
+(
+    Sku NVARCHAR(100) NOT NULL,
+    Keywords NVARCHAR(MAX) NOT NULL
+);
+
+INSERT INTO @ProductVocabulary (Sku, Keywords)
+VALUES
+    (N'MD-TRIPOWER-DIGITAL', N'electrobisturi electrocirugia cauterio monopolar corte coagulacion digital tripower'),
+    (N'MD-TRIPOWER-TACTIL', N'electrobisturi electrocirugia cauterio monopolar corte coagulacion tactil tripower touchscreen'),
+    (N'MD-TURBINA-TORCH-LED', N'turbina pieza mano titanium torch led torque rehabilitacion'),
+    (N'MD-TURBINA-TITANIUM-45P', N'turbina pieza mano titanium led 45p quirurgica posterior tercer molar'),
+    (N'MD-MICROMOTOR-PUNTA-RECTA', N'micromotor baja velocidad punta recta irrigacion borden'),
+    (N'MD-SCALER-P6-MAX', N'escaler scaler piezo ultrasonico optico p6 max led profilaxis calculo sarro periodontal'),
+    (N'MD-MAGPOWER-ULTRASONICO', N'escaler scaler ultrasonico magpower periodoncia endodoncia conducto calculo sarro'),
+    (N'MD-POWERLED-L9', N'lampara fotocurado polimerizacion powerled l9 brackets carillas restauracion'),
+    (N'MD-ETCHANT-GEL-37', N'desmineralizante grabador acido fosforico ortofosforico etchant gel esmalte dentina'),
+    (N'MD-LC-BOND-6ML', N'adhesivo bond quinta generacion universal esmalte dentina fotocurable'),
+    (N'MD-BISG-MA', N'resina bisg ma nanohibrida composite restauradora carilla fotocurable'),
+    (N'MD-TEGD-MA', N'resina tegd ma teg ma microhibrida composite restauradora fotocurable'),
+    (N'MD-SYGD-MA', N'resina sygd ma syg ma fluida composite restauradora cavidad cervical fotocurable'),
+    (N'MD-AVVA-BULK', N'resina avva bulk ava bulk fluida profunda cementacion corona puente ceramica'),
+    (N'MD-DV-SEAL', N'sellante dv seal fosa fisura pit fissure caries fluor fotocurable'),
+    (N'MD-LUMA-FLEX', N'ortodoncia luma flex bracket fotocurado cementacion adhesivo'),
+    (N'MD-SILICA-FLEX', N'ortodoncia silica flex bracket autocurado cementacion adhesivo'),
+    (N'MD-IONO-CEM-TIPO-I', N'ionomero iono cem cementante tipo uno corona puente inlay onlay vidrio'),
+    (N'MD-IONO-RES-TIPO-II', N'ionomero iono res restaurador tipo dos clase cinco pediatrica vidrio'),
+    (N'MD-OSSEO-100', N'motor implante implantologia osseo cien xcub torque'),
+    (N'MD-OSSEO-200', N'motor implante implantologia osseo doscientos bldc torque'),
+    (N'MD-ELECTRODOS-TRIPOWER', N'electrodo electrocirugia tripower aguja bola bucle gancho lamina'),
+    (N'MD-CHRO-MA', N'resina chro ma nanohibrida nanofill composite restauradora carilla estetica'),
+    (N'MD-KIT-SYGD-MA', N'kit restauracion resina sygd ma fluida desmineralizante'),
+    (N'MD-KIT-BISG-MA', N'kit restauracion resina bisg ma nanohibrida adhesivo'),
+    (N'MD-KIT-CHRO-MA', N'kit restauracion resina chro ma nanofill carilla adhesivo'),
+    (N'MD-KIT-TEGD-MA', N'kit restauracion resina tegd ma microhibrida adhesivo'),
+    (N'MD-KIT-AVVA-BULK', N'kit restauracion resina avva bulk fluida profunda grabador'),
+    (N'MD-KIT-DV-SEAL', N'kit sellante dv seal fosa fisura grabador fluor'),
+    (N'MD-COMPULA-SYGD-MA', N'compula resina sygd ma fluida caja veinte'),
+    (N'MD-COMPULA-TEGD-MA', N'compula resina tegd ma microhibrida caja veinte'),
+    (N'MD-COMPULA-BISG-MA', N'compula resina bisg ma nanohibrida caja veinte'),
+    (N'MD-COMPULA-CHRO-MA', N'compula resina chro ma nanofill carilla caja veinte'),
+    (N'MD-COMPULA-AVVA-BULK', N'compula punta resina avva bulk fluida caja veinte'),
+    (N'MD-AUTOCURADO-3-15', N'kit resina autocurado composite curado quimico restauracion base catalizador'),
+    (N'MD-CERAMIK-TRADICIONAL', N'turbina pieza mano ceramik tradicional alta velocidad cabezal estandar'),
+    (N'MD-CERAMIK-MINI', N'turbina pieza mano ceramik mini alta velocidad odontopediatria'),
+    (N'MD-TITANIUM-3P', N'turbina pieza mano titanium tres p push button triple irrigacion'),
+    (N'MD-TITANIUM-3R', N'turbina pieza mano titanium tres r tradicional triple irrigacion'),
+    (N'MD-TITANIUM-45R', N'turbina pieza mano titanium led 45r quirurgica posterior'),
+    (N'MD-MICROMOTOR-SET-RECTA', N'set micromotor baja velocidad punta recta irrigacion'),
+    (N'MD-CABEZA-CONTRAANGULO-PB', N'cabeza contraangulo push button fresa ca cuarenta mil rpm'),
+    (N'MD-CABEZA-CONTRAANGULO-PESTILLO', N'cabeza contraangulo pestillo fresa ca cuarenta mil rpm'),
+    (N'MD-CONTRAANGULO-PB', N'contraangulo ceramik push button tipo e baja velocidad'),
+    (N'MD-CONTRAANGULO-PESTILLO', N'contraangulo ceramik pestillo tipo e baja velocidad'),
+    (N'MD-SCALER-BLACK', N'escaler scaler neumatico black edition placa sarro subgingival supragingival nsk'),
+    (N'MD-SCALER-AS6000', N'escaler scaler neumatico as6000 silver edition placa sarro nsk'),
+    (N'MD-SCALER-P5-MAX', N'escaler scaler piezo ultrasonico no optico p5 max profilaxis calculo sarro periodontal'),
+    (N'MD-CAVITRON-MAGPOWER', N'cavitron magnetostrictivo magpower ultrasonico periodoncia endodoncia conducto'),
+    (N'MD-POWERLED-L7', N'lampara fotocurado polimerizacion powerled l7 restauracion'),
+    (N'MD-POWERLED-LX', N'lampara fotocurado polimerizacion powerled lx blanqueamiento');
+
+DELETE FROM dbo.ProductSearchTerms
+WHERE BusinessId = @BusinessId;
+
+;WITH CatalogText AS
+(
+    SELECT
+        p.ProductId,
+        LOWER(
+            REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+                CONCAT(p.Sku, N' ', p.[Name], N' ', p.CategoryName, N' ', p.[Description], N' ', v.Keywords),
+                N'-', N' '), N'/', N' '), N',', N' '), N'.', N' '),
+                N'(', N' '), N')', N' '), N':', N' ')
+        ) AS SearchText
+    FROM dbo.Products p
+    INNER JOIN @ProductVocabulary v ON v.Sku = p.Sku
+    WHERE p.BusinessId = @BusinessId
+),
+NormalizedTerms AS
+(
+    SELECT DISTINCT
+        @BusinessId AS BusinessId,
+        c.ProductId,
+        CONVERT(NVARCHAR(100), LTRIM(RTRIM(tokens.[value]))) AS Term
+    FROM CatalogText c
+    CROSS APPLY STRING_SPLIT(c.SearchText, N' ') tokens
+    WHERE LEN(LTRIM(RTRIM(tokens.[value]))) BETWEEN 2 AND 100
+      AND LTRIM(RTRIM(tokens.[value])) NOT IN
+          (N'al', N'con', N'de', N'del', N'el', N'en', N'la', N'las', N'los',
+           N'para', N'por', N'una', N'uno', N'unos', N'unas', N'que')
+)
+INSERT INTO dbo.ProductSearchTerms (BusinessId, ProductId, Term, CreatedAt)
+SELECT BusinessId, ProductId, Term, GETUTCDATE()
+FROM NormalizedTerms;
+
+DECLARE @AliasDefinitions TABLE
+(
+    Sku NVARCHAR(100) NOT NULL,
+    Alias NVARCHAR(250) NOT NULL,
+    Kind INT NOT NULL,
+    ResolutionMode INT NOT NULL
+);
+
+-- Exact model/synonym equivalences: active business AutoResolve.
+INSERT INTO @AliasDefinitions (Sku, Alias, Kind, ResolutionMode)
+VALUES
+    (N'MD-TRIPOWER-DIGITAL', N'tripower digital', 0, 1),
+    (N'MD-TRIPOWER-DIGITAL', N'electrobisturi digital', 0, 1),
+    (N'MD-TRIPOWER-TACTIL', N'tripower tactil', 0, 1),
+    (N'MD-TRIPOWER-TACTIL', N'electrobisturi tactil', 0, 1),
+    (N'MD-TURBINA-TORCH-LED', N'titanium torch led', 0, 1),
+    (N'MD-TURBINA-TITANIUM-45P', N'titanium 45p', 0, 0),
+    (N'MD-SCALER-P6-MAX', N'p6 max', 0, 1),
+    (N'MD-MAGPOWER-ULTRASONICO', N'escaler magpower', 0, 1),
+    (N'MD-POWERLED-L9', N'powerled l9', 0, 1),
+    (N'MD-ETCHANT-GEL-37', N'desmineralizante', 0, 1),
+    (N'MD-ETCHANT-GEL-37', N'acido grabador 37', 0, 1),
+    (N'MD-LC-BOND-6ML', N'lc bond', 0, 1),
+    (N'MD-BISG-MA', N'resina bisg ma', 0, 1),
+    (N'MD-TEGD-MA', N'resina teg ma', 2, 1),
+    (N'MD-TEGD-MA', N'resina tegd ma', 0, 1),
+    (N'MD-SYGD-MA', N'resina syg ma', 2, 1),
+    (N'MD-SYGD-MA', N'resina sygd ma', 0, 1),
+    (N'MD-AVVA-BULK', N'resina ava bulk', 2, 1),
+    (N'MD-AVVA-BULK', N'resina avva bulk', 0, 1),
+    (N'MD-DV-SEAL', N'dv seal', 0, 1),
+    (N'MD-LUMA-FLEX', N'luma flex', 0, 1),
+    (N'MD-SILICA-FLEX', N'silica flex', 0, 1),
+    (N'MD-IONO-CEM-TIPO-I', N'iono cem', 0, 1),
+    (N'MD-IONO-RES-TIPO-II', N'iono res', 0, 1),
+    (N'MD-OSSEO-100', N'osseo 100', 0, 1),
+    (N'MD-OSSEO-200', N'osseo 200', 0, 1),
+    (N'MD-ELECTRODOS-TRIPOWER', N'electrodo tripower', 0, 1),
+    (N'MD-CHRO-MA', N'resina chro ma', 0, 1),
+    (N'MD-KIT-SYGD-MA', N'kit sygd ma', 0, 1),
+    (N'MD-KIT-BISG-MA', N'kit bisg ma', 0, 1),
+    (N'MD-KIT-CHRO-MA', N'kit chro ma', 0, 1),
+    (N'MD-KIT-TEGD-MA', N'kit tegd ma', 0, 1),
+    (N'MD-KIT-AVVA-BULK', N'kit avva bulk', 0, 1),
+    (N'MD-KIT-DV-SEAL', N'kit dv seal', 0, 1),
+    (N'MD-COMPULA-SYGD-MA', N'compula sygd ma', 0, 1),
+    (N'MD-COMPULA-TEGD-MA', N'compula tegd ma', 0, 1),
+    (N'MD-COMPULA-BISG-MA', N'compula bisg ma', 0, 1),
+    (N'MD-COMPULA-CHRO-MA', N'compula chro ma', 0, 1),
+    (N'MD-COMPULA-AVVA-BULK', N'compula avva bulk', 0, 1),
+    (N'MD-AUTOCURADO-3-15', N'resina autocurado 3 15', 0, 1),
+    (N'MD-CERAMIK-TRADICIONAL', N'ceramik tradicional', 0, 1),
+    (N'MD-CERAMIK-MINI', N'ceramik mini', 0, 1),
+    (N'MD-TITANIUM-3P', N'titanium 3p', 0, 0),
+    (N'MD-TITANIUM-3R', N'titanium 3r', 0, 0),
+    (N'MD-TITANIUM-45R', N'titanium 45r', 0, 0),
+    (N'MD-CABEZA-CONTRAANGULO-PB', N'cabeza contraangulo push button', 0, 1),
+    (N'MD-CABEZA-CONTRAANGULO-PESTILLO', N'cabeza contraangulo pestillo', 0, 1),
+    (N'MD-CONTRAANGULO-PB', N'contraangulo push button', 0, 1),
+    (N'MD-CONTRAANGULO-PESTILLO', N'contraangulo pestillo', 0, 1),
+    (N'MD-SCALER-BLACK', N'escaler black edition', 0, 1),
+    (N'MD-SCALER-AS6000', N'escaler as6000', 0, 1),
+    (N'MD-SCALER-P5-MAX', N'p5 max', 0, 1),
+    (N'MD-CAVITRON-MAGPOWER', N'cavitron magpower', 0, 1),
+    (N'MD-POWERLED-L7', N'powerled l7', 0, 1),
+    (N'MD-POWERLED-LX', N'powerled lx', 0, 1);
+
+-- Category/use expressions are intentionally SuggestOnly for every valid candidate.
+INSERT INTO @AliasDefinitions (Sku, Alias, Kind, ResolutionMode)
+VALUES
+    (N'MD-TRIPOWER-DIGITAL', N'electrobisturi', 1, 0),
+    (N'MD-TRIPOWER-TACTIL', N'electrobisturi', 1, 0),
+    (N'MD-OSSEO-100', N'motor implante', 1, 0),
+    (N'MD-OSSEO-200', N'motor implante', 1, 0),
+    (N'MD-IONO-CEM-TIPO-I', N'ionomero', 1, 0),
+    (N'MD-IONO-RES-TIPO-II', N'ionomero', 1, 0),
+    (N'MD-SYGD-MA', N'resina fluida', 1, 0),
+    (N'MD-AVVA-BULK', N'resina fluida', 1, 0),
+    (N'MD-BISG-MA', N'resina nanohibrida', 1, 0),
+    (N'MD-CHRO-MA', N'resina nanohibrida', 1, 0),
+    (N'MD-KIT-SYGD-MA', N'kit restauracion', 1, 0),
+    (N'MD-KIT-BISG-MA', N'kit restauracion', 1, 0),
+    (N'MD-KIT-CHRO-MA', N'kit restauracion', 1, 0),
+    (N'MD-KIT-TEGD-MA', N'kit restauracion', 1, 0),
+    (N'MD-KIT-AVVA-BULK', N'kit restauracion', 1, 0),
+    (N'MD-KIT-DV-SEAL', N'kit restauracion', 1, 0),
+    (N'MD-COMPULA-SYGD-MA', N'compula resina', 1, 0),
+    (N'MD-COMPULA-TEGD-MA', N'compula resina', 1, 0),
+    (N'MD-COMPULA-BISG-MA', N'compula resina', 1, 0),
+    (N'MD-COMPULA-CHRO-MA', N'compula resina', 1, 0),
+    (N'MD-COMPULA-AVVA-BULK', N'compula resina', 1, 0),
+    (N'MD-TURBINA-TORCH-LED', N'pieza mano', 1, 0),
+    (N'MD-TURBINA-TITANIUM-45P', N'pieza mano', 1, 0),
+    (N'MD-CERAMIK-TRADICIONAL', N'pieza mano', 1, 0),
+    (N'MD-CERAMIK-MINI', N'pieza mano', 1, 0),
+    (N'MD-TITANIUM-3P', N'pieza mano', 1, 0),
+    (N'MD-TITANIUM-3R', N'pieza mano', 1, 0),
+    (N'MD-TITANIUM-45R', N'pieza mano', 1, 0),
+    (N'MD-CABEZA-CONTRAANGULO-PB', N'contraangulo', 1, 0),
+    (N'MD-CABEZA-CONTRAANGULO-PESTILLO', N'contraangulo', 1, 0),
+    (N'MD-CONTRAANGULO-PB', N'contraangulo', 1, 0),
+    (N'MD-CONTRAANGULO-PESTILLO', N'contraangulo', 1, 0),
+    (N'MD-SCALER-BLACK', N'escaler', 1, 0),
+    (N'MD-SCALER-AS6000', N'escaler', 1, 0),
+    (N'MD-SCALER-P5-MAX', N'escaler', 1, 0),
+    (N'MD-SCALER-P6-MAX', N'escaler', 1, 0),
+    (N'MD-MAGPOWER-ULTRASONICO', N'escaler', 1, 0),
+    (N'MD-POWERLED-L7', N'lampara fotocurado', 1, 0),
+    (N'MD-POWERLED-L9', N'lampara fotocurado', 1, 0),
+    (N'MD-POWERLED-LX', N'lampara fotocurado', 1, 0);
+
+-- ProductSearchText.NormalizeAlias splits alpha/numeric transitions and drops
+-- one-letter alpha tokens. Keep persisted keys aligned with runtime lookup.
+DECLARE @AliasNormalization TABLE
+(
+    Alias NVARCHAR(250) NOT NULL PRIMARY KEY,
+    NormalizedAlias NVARCHAR(250) NOT NULL
+);
+
+INSERT INTO @AliasNormalization (Alias, NormalizedAlias)
+VALUES
+    (N'titanium 45p', N'titanium 45'),
+    (N'p6 max', N'6 max'),
+    (N'powerled l9', N'powerled 9'),
+    (N'titanium 3p', N'titanium 3'),
+    (N'titanium 3r', N'titanium 3'),
+    (N'titanium 45r', N'titanium 45'),
+    (N'escaler as6000', N'escaler as 6000'),
+    (N'p5 max', N'5 max'),
+    (N'powerled l7', N'powerled 7');
+
+;WITH AliasSource AS
+(
+    SELECT
+        p.ProductId,
+        d.Alias,
+        COALESCE(n.NormalizedAlias, d.Alias) AS NormalizedAlias,
+        d.Kind,
+        d.ResolutionMode
+    FROM @AliasDefinitions d
+    INNER JOIN dbo.Products p
+        ON p.BusinessId = @BusinessId
+       AND p.Sku = d.Sku
+    LEFT JOIN @AliasNormalization n
+        ON n.Alias = d.Alias
+)
+MERGE dbo.ProductAliases AS target
+USING AliasSource AS source
+   ON target.BusinessId = @BusinessId
+  AND target.ProductId = source.ProductId
+  AND target.Scope = 0
+  AND target.CustomerKey = N''
+  AND target.NormalizedAlias = source.NormalizedAlias
+WHEN MATCHED THEN
+    UPDATE SET
+        Alias = source.Alias,
+        Kind = source.Kind,
+        ResolutionMode = source.ResolutionMode,
+        Source = 1,
+        Status = 1,
+        UpdatedAt = GETUTCDATE()
+WHEN NOT MATCHED THEN
+    INSERT
+        (ProductAliasId, BusinessId, ProductId, Scope, CustomerKey, Alias,
+         NormalizedAlias, Kind, ResolutionMode, Source, Status, UsageCount, CreatedAt)
+    VALUES
+        (NEWID(), @BusinessId, source.ProductId, 0, N'', source.Alias,
+         source.NormalizedAlias, source.Kind, source.ResolutionMode, 1, 1, 0, GETUTCDATE())
+WHEN NOT MATCHED BY SOURCE
+     AND target.BusinessId = @BusinessId
+     AND target.Scope = 0
+     AND target.Source = 1 THEN
+    DELETE;
+
+-- Guard the filtered unique index and policy invariants before continuing.
+IF EXISTS
+(
+    SELECT 1
+    FROM dbo.ProductAliases
+    WHERE BusinessId = @BusinessId
+      AND Scope = 0
+      AND Status = 1
+      AND ResolutionMode = 1
+    GROUP BY NormalizedAlias
+    HAVING COUNT(DISTINCT ProductId) > 1
+)
+    THROW 51000, 'SeedMedidental: alias global AutoResolve ambiguo.', 1;
+
+IF EXISTS
+(
+    SELECT 1
+    FROM dbo.Products p
+    WHERE p.BusinessId = @BusinessId
+      AND p.IsActive = 1
+      AND NOT EXISTS
+      (
+          SELECT 1
+          FROM dbo.ProductSearchTerms t
+          WHERE t.BusinessId = p.BusinessId
+            AND t.ProductId = p.ProductId
+      )
+)
+    THROW 51000, 'SeedMedidental: producto activo sin ProductSearchTerms.', 1;
 
 DECLARE @RecommendationRules TABLE
 (
@@ -295,6 +630,12 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                                                 "guidance":  "Responde de forma breve, cordial y cerrada. Explica que el negocio esta fuera de horario y que el proximo horario habil es {{next_operating_window}}. Adapta el mensaje a lo que dijo el cliente, pero no solicites datos, no prometas ejecutar gestiones, no abras catalogos y no termines con preguntas."
                                             }
                        },
+    "conversationFollowUp":  {
+                                  "enabled":  true,
+                                  "delayMinutes":  120,
+                                  "guidance":  "Retoma con calidez y brevedad la pregunta, eleccion o confirmacion concreta que sigue pendiente en el pedido. Usa el contexto vigente y formula una sola pregunta enfocada. No repitas catalogos, carritos ni resumenes completos; no agregues urgencia, descuentos, disponibilidad inventada ni promesas, y no modifiques el pedido.",
+                                  "respectOperatingHours":  true
+                              },
     "persona":  "Eres el asistente comercial de Medidental por WhatsApp. Atiendes pedidos de equipos, materiales y consumibles odontologicos para profesionales y clinicas. Hablas en espanol de forma cercana, empatica, natural y servicial, como una persona atenta que acompana al cliente a armar su pedido. Usas parrafos cortos y espacios en blanco para que el mensaje sea facil de leer en WhatsApp. Evitas sonar como formulario, menu automatico o instruccion rigida. Puedes usar un emoji amable de manera ocasional, sin exagerar. Dirigete siempre al cliente como Doc, tenga o no tenga nombre registrado. Mantén un tono muy amable, cercano, respetuoso y profesional en todos los turnos; nunca uses el nombre personal del cliente para dirigirte a él. El catalogo y los resultados de las operaciones son la fuente de verdad comercial.",
     "policies":  "## EXPERIENCIA CONVERSACIONAL\n\n- Responde primero a la intencion real de la persona y conserva la continuidad con el turno anterior.\n- Reconoce elecciones, avances o inquietudes de forma natural solo cuando aporte valor; varia las transiciones para mantener una conversacion fluida.\n- Llama siempre al cliente Doc, incluso si existe un nombre registrado; no uses el nombre personal como forma de trato.\n- Consulta la conversacion reciente para evitar repetir saludos, nombres, agradecimientos o la misma explicacion en turnos consecutivos.\n- Adapta el tono al mensaje recibido y manten una actitud humana, atenta, empatica y profesional.\n- Ante confusion, inconvenientes o incertidumbre, demuestra comprension y explica el siguiente paso con claridad.\n- En WhatsApp, usa mensajes breves, parrafos cortos y listas legibles cuando ayuden a entender opciones o resumenes.\n- Formula una sola pregunta enfocada cuando sea necesaria para avanzar.\n\n## PRESENTACION\n\n- Presentate como asistente de Medidental con tono breve, amable y practico.\n- Dirigete siempre al cliente como Doc en la bienvenida, durante el pedido, al resolver dudas y en el cierre. Mantén siempre amabilidad, paciencia y disposición de ayuda.\n- Presenta catalogos, precios, carrito, totales y estado del pedido exclusivamente desde resultados oficiales del turno.",
     "messageSequences":  {
@@ -305,6 +646,25 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                                                                              }
                                                                          ]
                                                         },
+                             "order_created":  {
+                                                   "messages":  [
+                                                                    {
+                                                                        "type":  "whatsapp_template",
+                                                                        "templateName":  "order_created",
+                                                                        "language":  "es_CO",
+                                                                        "bodyParameters":  [
+                                                                                               "{order_number}",
+                                                                                               "{customer_name}",
+                                                                                               "{customer_phone}",
+                                                                                               "{city}",
+                                                                                               "{delivery_address}",
+                                                                                               "{items}",
+                                                                                               "{total}",
+                                                                                               "{currency}"
+                                                                                           ]
+                                                                    }
+                                                                ]
+                                               },
                              "manual_payment_approval_request":  {
                                                                        "messages":  [
                                                                                         {
@@ -685,11 +1045,25 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                    ],
     "notifications":  {
                           "order_created":  {
-                                                "enabled":  false,
-                                                "recipients":  [
-
-                                                               ],
-                                                "sendMessageSequence":  null
+                                                "enabled":  true,
+                                                "deliveries":  [
+                                                                   {
+                                                                       "id":  "customer",
+                                                                       "enabled":  true,
+                                                                       "recipients":  [
+                                                                                          "source:conversation"
+                                                                                      ],
+                                                                       "sendMessageSequence":  "order_created_customer"
+                                                                   },
+                                                                   {
+                                                                       "id":  "internal",
+                                                                       "enabled":  true,
+                                                                       "recipients":  [
+                                                                                          "inbound:payment_approver"
+                                                                                      ],
+                                                                       "sendMessageSequence":  "order_created"
+                                                                   }
+                                                               ]
                                             },
                           "manual_payment_requested":  {
                                                            "enabled":  true,
@@ -701,6 +1075,8 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                       },
     "webhooks":  {
 
+                     "wompi":  {
+                                  }
                  },
     "escalations":  {
                         "human":  {
@@ -788,6 +1164,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                                          "id":  "product_selection",
                                          "name":  "Productos, catalogo y recomendaciones",
                                          "goal":  "Recibir pedidos abiertos, resolver productos reales del catalogo, recomendar de forma controlada y construir el carrito hasta que el cliente finalice.",
+                                         "response":  { "awaitCustomerReply":  true },
                                          "advanceWhenFacts":  [
                                                                   "order_finalized"
                                                               ],
@@ -997,6 +1374,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                                          "id":  "customer_identity",
                                          "name":  "Identificacion del cliente",
                                          "goal":  "Obtener el nombre de la persona u odontologo que realiza el pedido y conservar por separado el establecimiento cuando el cliente lo informe.",
+                                         "response":  { "awaitCustomerReply":  true },
                                          "advanceWhenFacts":  [
                                                                   "customer_name"
                                                               ],
@@ -1010,6 +1388,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                                          "id":  "cart_review",
                                          "name":  "Transicion al cierre",
                                          "goal":  "Continuar hacia entrega y pago sin mostrar un resumen intermedio.",
+                                         "response":  { "awaitCustomerReply":  true },
                                          "advanceWhenFacts":  [
                                                                   "order_finalized"
                                                               ],
@@ -1167,6 +1546,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                                          "id":  "order_data",
                                          "name":  "Entrega",
                                          "goal":  "Definir recogida o domicilio y obtener solo los datos faltantes requeridos por el checkout.",
+                                         "response":  { "awaitCustomerReply":  true },
                                          "advanceWhenFacts":  [
                                                                   "delivery_method",
                                                                   "city",
@@ -1198,6 +1578,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                                          "id":  "payment_method",
                                          "name":  "Metodo de pago",
                                          "goal":  "Elegir uno de los metodos de pago configurados para Medidental.",
+                                         "response":  { "awaitCustomerReply":  true },
                                          "advanceWhenFacts":  [
                                                                   "payment_method"
                                                               ],
@@ -1210,6 +1591,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                                          "id":  "summary",
                                          "name":  "Resumen final del pedido",
                                          "goal":  "Preparar y mostrar el resumen oficial con entrega, pago y total final del motor.",
+                                         "response":  { "awaitCustomerReply":  true },
                                          "advanceWhenFacts":  [
                                                                   "order_checkout_presented"
                                                               ],
@@ -1318,6 +1700,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                                          "id":  "order_confirmation",
                                          "name":  "Confirmacion del pedido",
                                          "goal":  "Crear el pedido despues de confirmacion del cliente.",
+                                         "response":  { "awaitCustomerReply":  true },
                                          "advanceWhenFacts":  [
                                                                   "customer_confirmed"
                                                               ],
@@ -1358,10 +1741,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                                                              "onOutcome":  {
                                                                                "order.created":  {
                                                                                                      "effects":  [
-                                                                                                                     {
-                                                                                                                         "type":  "sequence.enqueue",
-                                                                                                                         "sequence":  "order_created_customer"
-                                                                                                                     },
                                                                                                                      {
                                                                                                                          "type":  "request.complete"
                                                                                                                      }
@@ -1461,7 +1840,49 @@ END
 CLOSE CartOutcomeCursor;
 DEALLOCATE CartOutcomeCursor;
 
+-- Retoma solo respuestas que dejan una pregunta, eleccion o confirmacion pendiente.
+IF JSON_VALUE(@SettingsJson, '$.globalActions[2].id') <> 'known_fact_lookup'
+    THROW 51000, 'SeedMedidental: ruta global de facts conocidos inesperada.', 1;
+IF JSON_VALUE(@SettingsJson, '$.globalActions[3].id') <> 'catalog_lookup'
+    THROW 51000, 'SeedMedidental: ruta global de catalogo inesperada.', 1;
 
+SET @SettingsJson = JSON_MODIFY(@SettingsJson, '$.globalActions[2].actions[0].onOutcome."known_facts.found".response', JSON_QUERY(N'{"awaitCustomerReply":true}'));
+SET @SettingsJson = JSON_MODIFY(@SettingsJson, '$.globalActions[2].actions[0].onOutcome."known_facts.not_found".response', JSON_QUERY(N'{"awaitCustomerReply":true}'));
+SET @SettingsJson = JSON_MODIFY(@SettingsJson, '$.globalActions[3].actions[0].onOutcome."products.found".response', JSON_QUERY(N'{"awaitCustomerReply":true}'));
+SET @SettingsJson = JSON_MODIFY(@SettingsJson, '$.globalActions[3].actions[0].onOutcome."products.not_found".response', JSON_QUERY(N'{"awaitCustomerReply":true}'));
+
+SET @SettingsJson = JSON_MODIFY(@SettingsJson, '$.flows[0].stages[0].actions[0].onOutcome."recipes.found".response.awaitCustomerReply', CAST(1 AS bit));
+SET @SettingsJson = JSON_MODIFY(@SettingsJson, '$.flows[0].stages[0].actions[1].onOutcome."products.found".response.awaitCustomerReply', CAST(1 AS bit));
+SET @SettingsJson = JSON_MODIFY(@SettingsJson, '$.flows[0].stages[0].actions[1].onOutcome."products.not_found".response', JSON_QUERY(N'{"awaitCustomerReply":true}'));
+SET @SettingsJson = JSON_MODIFY(@SettingsJson, '$.flows[0].stages[2].actions[0].onOutcome."order.draft_loaded".response.awaitCustomerReply', CAST(1 AS bit));
+SET @SettingsJson = JSON_MODIFY(@SettingsJson, '$.flows[0].stages[2].actions[0].onOutcome."order.draft_empty".response.awaitCustomerReply', CAST(1 AS bit));
+SET @SettingsJson = JSON_MODIFY(@SettingsJson, '$.flows[0].stages[5].actions[0].onOutcome."order_draft_missing".response.awaitCustomerReply', CAST(1 AS bit));
+SET @SettingsJson = JSON_MODIFY(@SettingsJson, '$.flows[0].stages[5].actions[0].onOutcome."missing_prerequisites".response.awaitCustomerReply', CAST(1 AS bit));
+
+-- La transferencia manual queda esperando al equipo, no al cliente.
+SET @SettingsJson = JSON_MODIFY(@SettingsJson, '$.flows[0].stages[5].actions[0].onOutcome."order.checkout_pending_manual_payment".response', JSON_QUERY(N'{}'));
+
+DECLARE @FollowUpCartOutcomePath NVARCHAR(400);
+DECLARE FollowUpCartOutcomeCursor CURSOR LOCAL FAST_FORWARD FOR SELECT Path FROM @CartOutcomePaths;
+OPEN FollowUpCartOutcomeCursor;
+FETCH NEXT FROM FollowUpCartOutcomeCursor INTO @FollowUpCartOutcomePath;
+WHILE @@FETCH_STATUS = 0
+BEGIN
+    SET @SettingsJson = JSON_MODIFY(@SettingsJson, @FollowUpCartOutcomePath + N'."cart.applied".response.awaitCustomerReply', CAST(1 AS bit));
+    SET @SettingsJson = JSON_MODIFY(@SettingsJson, @FollowUpCartOutcomePath + N'."cart.partially_applied".response.awaitCustomerReply', CAST(1 AS bit));
+    SET @SettingsJson = JSON_MODIFY(@SettingsJson, @FollowUpCartOutcomePath + N'."cart.product_suggestion".response.awaitCustomerReply', CAST(1 AS bit));
+    SET @SettingsJson = JSON_MODIFY(@SettingsJson, @FollowUpCartOutcomePath + N'."cart.product_unavailable".response.awaitCustomerReply', CAST(1 AS bit));
+    SET @SettingsJson = JSON_MODIFY(@SettingsJson, @FollowUpCartOutcomePath + N'."cart.product_not_found".response.awaitCustomerReply', CAST(1 AS bit));
+    SET @SettingsJson = JSON_MODIFY(@SettingsJson, @FollowUpCartOutcomePath + N'."cart.pending_cancelled".response.awaitCustomerReply', CAST(1 AS bit));
+    SET @SettingsJson = JSON_MODIFY(@SettingsJson, @FollowUpCartOutcomePath + N'."cart.product_ambiguous".response.awaitCustomerReply', CAST(1 AS bit));
+    SET @SettingsJson = JSON_MODIFY(@SettingsJson, @FollowUpCartOutcomePath + N'."cart.insufficient_stock".response.awaitCustomerReply', CAST(1 AS bit));
+    SET @SettingsJson = JSON_MODIFY(@SettingsJson, @FollowUpCartOutcomePath + N'."cart.item_not_found_or_ambiguous".response.awaitCustomerReply', CAST(1 AS bit));
+    SET @SettingsJson = JSON_MODIFY(@SettingsJson, @FollowUpCartOutcomePath + N'."cart.conflicting_commands".response.awaitCustomerReply', CAST(1 AS bit));
+    SET @SettingsJson = JSON_MODIFY(@SettingsJson, @FollowUpCartOutcomePath + N'."cart.multiple_destinations".response.awaitCustomerReply', CAST(1 AS bit));
+    FETCH NEXT FROM FollowUpCartOutcomeCursor INTO @FollowUpCartOutcomePath;
+END
+CLOSE FollowUpCartOutcomeCursor;
+DEALLOCATE FollowUpCartOutcomeCursor;
 IF ISJSON(@SettingsJson) <> 1
 BEGIN
     THROW 51000, 'SeedMedidental: SettingsJson invalido.', 1;

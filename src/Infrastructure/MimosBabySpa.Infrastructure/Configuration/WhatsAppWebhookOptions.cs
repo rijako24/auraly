@@ -22,6 +22,16 @@ public class WhatsAppWebhookOptions
     /// </summary>
     public int MaxTextMessageLength { get; set; } = 1800;
 
+    /// <summary>
+    /// Quiet window used to coalesce consecutive customer messages into one turn.
+    /// This lets short continuations share the same semantic extraction pass.
+    /// </summary>
+    public double InboundDebounceSeconds { get; set; } = 3d;
+
+    public TimeSpan GetInboundDebounceDelay() =>
+        TimeSpan.FromSeconds(Math.Clamp(InboundDebounceSeconds, 0.25d, 30d));
+
+
     /// <summary>Intervalo de renovacion; debe permanecer por debajo de los 25 segundos de Meta.</summary>
     public int TypingIndicatorRefreshIntervalSeconds { get; set; } = 15;
 }

@@ -49,13 +49,67 @@ public sealed partial class AgentConfigurationCompiler
             var path = $"notifications[{eventName}]";
             if (!notification.Enabled)
                 continue;
-            if (string.IsNullOrWhiteSpace(notification.SendMessageSequence))
-                Error(errors, path, "notification_sequence_required", "Enabled notifications require sendMessageSequence.");
-            else if (!config.MessageSequences.ContainsKey(notification.SendMessageSequence))
-                Error(errors, path, "unknown_notification_sequence", $"Message sequence '{notification.SendMessageSequence}' is not configured.");
-            if (notification.Recipients.Count == 0)
-                Error(errors, path, "notification_recipients_required", "Enabled notifications require at least one recipient.");
+
+            if (notification.Deliveries.Count == 0)
+            {
+                ValidateNotificationDelivery(
+                    config,
+                    path,
+                    notification.Recipients,
+                    notification.SendMessageSequence,
+                    errors);
+                continue;
+            }
+
+            if (notification.Recipients.Count > 0
+                || !string.IsNullOrWhiteSpace(notification.SendMessageSequence))
+            {
+                Error(
+                    errors,
+                    path,
+                    "notification_delivery_mode_conflict",
+                    "A notification with deliveries cannot also declare root recipients or sendMessageSequence.");
+            }
+
+            var enabledDeliveries = notification.Deliveries
+                .Select((delivery, index) => (Delivery: delivery, Index: index))
+                .Where(item => item.Delivery.Enabled)
+                .ToList();
+            if (enabledDeliveries.Count == 0)
+                Error(errors, path, "notification_delivery_required", "An enabled notification requires at least one enabled delivery.");
+
+            var deliveryIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var (delivery, index) in enabledDeliveries)
+            {
+                var deliveryPath = $"{path}.deliveries[{index}]";
+                if (string.IsNullOrWhiteSpace(delivery.Id))
+                    Error(errors, deliveryPath, "notification_delivery_id_required", "Enabled notification deliveries require an id.");
+                else if (!deliveryIds.Add(delivery.Id.Trim()))
+                    Error(errors, deliveryPath, "duplicate_notification_delivery_id", $"Notification delivery id '{delivery.Id}' is duplicated.");
+
+                ValidateNotificationDelivery(
+                    config,
+                    deliveryPath,
+                    delivery.Recipients,
+                    delivery.SendMessageSequence,
+                    errors);
+            }
         }
+    }
+
+    private static void ValidateNotificationDelivery(
+        AgentConfig config,
+        string path,
+        IReadOnlyList<string> recipients,
+        string? sendMessageSequence,
+        ICollection<AgentConfigurationDiagnostic> errors)
+    {
+        if (string.IsNullOrWhiteSpace(sendMessageSequence))
+            Error(errors, path, "notification_sequence_required", "Enabled notification deliveries require sendMessageSequence.");
+        else if (!config.MessageSequences.ContainsKey(sendMessageSequence))
+            Error(errors, path, "unknown_notification_sequence", $"Message sequence '{sendMessageSequence}' is not configured.");
+        if (recipients.Count == 0)
+            Error(errors, path, "notification_recipients_required", "Enabled notification deliveries require at least one recipient.");
     }
 
     private static void ValidateButtons(

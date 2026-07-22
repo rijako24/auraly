@@ -317,6 +317,25 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                                                                              }
                                                                          ]
                                                         },
+                             "order_created":  {
+                                                   "messages":  [
+                                                                    {
+                                                                        "type":  "whatsapp_template",
+                                                                        "templateName":  "order_created",
+                                                                        "language":  "es_CO",
+                                                                        "bodyParameters":  [
+                                                                                               "{order_number}",
+                                                                                               "{customer_name}",
+                                                                                               "{customer_phone}",
+                                                                                               "{city}",
+                                                                                               "{delivery_address}",
+                                                                                               "{items}",
+                                                                                               "{total}",
+                                                                                               "{currency}"
+                                                                                           ]
+                                                                    }
+                                                                ]
+                                               },
                              "manual_payment_approval_request":  {
                                                                        "messages":  [
                                                                                         {
@@ -730,11 +749,25 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                    ],
     "notifications":  {
                           "order_created":  {
-                                                "enabled":  false,
-                                                "recipients":  [
-
-                                                               ],
-                                                "sendMessageSequence":  null
+                                                "enabled":  true,
+                                                "deliveries":  [
+                                                                   {
+                                                                       "id":  "customer",
+                                                                       "enabled":  true,
+                                                                       "recipients":  [
+                                                                                          "source:conversation"
+                                                                                      ],
+                                                                       "sendMessageSequence":  "order_created_customer"
+                                                                   },
+                                                                   {
+                                                                       "id":  "internal",
+                                                                       "enabled":  true,
+                                                                       "recipients":  [
+                                                                                          "inbound:payment_approver"
+                                                                                      ],
+                                                                       "sendMessageSequence":  "order_created"
+                                                                   }
+                                                               ]
                                             },
                           "manual_payment_requested":  {
                                                            "enabled":  true,
@@ -746,6 +779,8 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                       },
     "webhooks":  {
 
+                     "wompi":  {
+                                  }
                  },
     "escalations":  {
                         "human":  {
@@ -1426,10 +1461,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                                                              "onOutcome":  {
                                                                                "order.created":  {
                                                                                                      "effects":  [
-                                                                                                                     {
-                                                                                                                         "type":  "sequence.enqueue",
-                                                                                                                         "sequence":  "order_created_customer"
-                                                                                                                     },
                                                                                                                      {
                                                                                                                          "type":  "request.complete"
                                                                                                                      }

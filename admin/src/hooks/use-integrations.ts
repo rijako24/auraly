@@ -80,12 +80,12 @@ export function useRefreshMantisProduct() {
   });
 }
 
-export function useMantisWarehouses() {
+export function useMantisWarehouses(enabled = true) {
   const businessId = useBusinessContextStore((s) => s.selectedBusinessId);
   return useQuery({
     queryKey: integrationKeys.mantisWarehouses(businessId),
     queryFn: () => integrationsApi.getMantisWarehouses(businessId!),
-    enabled: !!businessId,
+    enabled: !!businessId && enabled,
   });
 }
 

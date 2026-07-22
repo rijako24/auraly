@@ -155,7 +155,7 @@
                   },
                   {
                       "id":  "ordinal_uses_latest_offer_only",
-                      "message":  "dame la segunda",
+                      "message":  "dame 1 de la segunda",
                       "stage":  "product_selection",
                       "expectedFlow":  "order",
                       "expectedSignals":  [

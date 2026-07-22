@@ -947,10 +947,24 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
     },
     "order_created": {
       "enabled": true,
-      "recipients": [
-        "+573004442469"
-      ],
-      "sendMessageSequence": "order_created"
+      "deliveries": [
+        {
+          "id": "customer",
+          "enabled": true,
+          "recipients": [
+            "source:conversation"
+          ],
+          "sendMessageSequence": "order_created_customer"
+        },
+        {
+          "id": "internal",
+          "enabled": true,
+          "recipients": [
+            "+573004442469"
+          ],
+          "sendMessageSequence": "order_created"
+        }
+      ]
     },
     "delivery_requested": {
       "enabled": true,
@@ -976,9 +990,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
   },
   "webhooks": {
     "wompi": {
-      "order_paid": {
-        "sendMessageSequence": "order_paid_customer"
-      }
     }
   },
   "escalations": {

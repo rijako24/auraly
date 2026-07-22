@@ -58,4 +58,7 @@ public sealed class ProductMatchingPolicy
     public double CandidateMentionSimilarity { get; init; } = 0.8d;
     public double PendingReferenceSimilarity { get; init; } = 0.78d;
     public double CandidateSelectionSimilarity { get; init; } = 0.6d;
+    public double CatalogCandidateMinimumScore { get; init; } = 0.56d;
+    public double CatalogCandidateMinimumCoverage { get; init; } = 0.70d;
+    public double CatalogTokenSimilarity { get; init; } = 0.62d;
 }

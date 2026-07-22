@@ -135,6 +135,19 @@ public sealed class EventNotificationConfig
 {
     public bool Enabled { get; set; }
 
+    public List<EventNotificationDeliveryConfig> Deliveries { get; set; } = [];
+
+    public IReadOnlyList<string> Recipients { get; set; } = [];
+
+    public string? SendMessageSequence { get; set; }
+}
+
+public sealed class EventNotificationDeliveryConfig
+{
+    public string Id { get; set; } = string.Empty;
+
+    public bool Enabled { get; set; } = true;
+
     public IReadOnlyList<string> Recipients { get; set; } = [];
 
     public string? SendMessageSequence { get; set; }

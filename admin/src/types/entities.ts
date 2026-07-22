@@ -261,9 +261,17 @@ export interface WompiIntegration {
   lastSyncAt: string | null;
 }
 
+export interface MantisIntegration {
+  isConfigured: boolean;
+  isEnabled: boolean;
+  lastError: string | null;
+  lastSyncAt: string | null;
+}
+
 export interface IntegrationSettings {
   googleCalendar: GoogleCalendarIntegration;
   wompi: WompiIntegration;
+  mantis: MantisIntegration;
 }
 
 export interface EmployeeService {
@@ -304,6 +312,7 @@ export type ConversationOwner = "Bot" | "Human";
 export interface Conversation {
   conversationId: string;
   businessId: string;
+  agentId: string | null;
   userNumber: string;
   lastMessage: string | null;
   lastIntent?: string | null;
@@ -630,6 +639,7 @@ export interface Agent {
   agentTypeName: string;
     kind: string;
 name: string;
+  phoneNumber: string | null;
   description: string | null;
   isActive: boolean;
   createdAt: string;

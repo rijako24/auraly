@@ -125,4 +125,54 @@ public sealed class CommerceSelectionPlanningContextTests
         fragment.Value.GetProperty("offers")[0].GetProperty("products")[0].GetString()
             .Should().Be("SALCHICHA LONG X 550GR");
     }
+    [Fact]
+    public void LatestPresentedOffer_TakesForegroundWithoutDiscardingPendingCartWork()
+    {
+        var facts = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["system.catalog_products"] = """
+                {
+                  "schemaVersion":2,
+                  "sequence":1,
+                  "snapshots":[{
+                    "sequence":1,
+                    "searchTerms":["papas"],
+                    "products":[
+                      {"externalProductId":"PA10","sku":"PA10","name":"PAPA MARQUISE X 2.5 KG","unitPrice":21000,"currency":"COP"},
+                      {"externalProductId":"PA11","sku":"PA11","name":"PAPA FRENCH FRIES X 2.5 KG","unitPrice":22000,"currency":"COP"}
+                    ]
+                  }]
+                }
+                """,
+            ["system.pending_cart_commands"] = """
+                {
+                  "schemaVersion":2,
+                  "items":[{
+                    "command":{"operation":"add","productText":"salchicha","quantity":2},
+                    "originalProductText":"salchicha",
+                    "issue":{"code":"product_ambiguous","productText":"salchicha","productCandidates":[{"name":"SALCHICHA RANCHERA","unitPrice":10000,"currency":"COP","isAvailable":true}]},
+                    "requiresResolution":true,
+                    "alreadyApplied":false
+                  }],
+                  "expiresAtUtc":"2099-01-01T00:00:00Z"
+                }
+                """
+        };
+        const string lastBotMessage =
+            "Opciones: PAPA MARQUISE X 2.5 KG y PAPA FRENCH FRIES X 2.5 KG.";
+
+        var fragment = CommerceSelectionPlanningContextEnricher.Build(
+            facts,
+            new CommerceConfig(),
+            lastBotMessage);
+
+        var interaction = fragment!.Value.GetProperty("interaction");
+        interaction.GetProperty("expected_reply").GetString().Should().Be("catalog_follow_up");
+        interaction.GetProperty("deferred_command_count").GetInt32().Should().Be(1);
+        interaction.GetProperty("pending_items").GetArrayLength().Should().Be(1);
+        interaction.GetProperty("pending_items")[0].GetProperty("requested_product")
+            .GetString().Should().Be("salchicha");
+    }
+
+
 }

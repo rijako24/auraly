@@ -1,0 +1,263 @@
+{
+  "cases": [
+    {
+      "id": "claudia_initial_marquise_query_stays_grounded",
+      "message": "ME REGALAS LA PAPA MARQUISE O SI TIENES ALGUNA OTRA SUGERENCIA",
+      "stage": "product_selection",
+      "expectedFlow": "order",
+      "expectedSignals": ["catalog_query"],
+      "absentSignals": ["order_changes"],
+      "expectedSignalStringArrays": [
+        {
+          "type": "catalog_query",
+          "property": "queries",
+          "includes": ["papa", "marquise"],
+          "excludes": ["papada", "hamburguesa", "camaron"]
+        }
+      ],
+      "seed": "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql"
+    },
+    {
+      "id": "claudia_result_correction_never_mutates_cart",
+      "message": "SOLO PAPA FRANCESA. ME ESTAS COTIZANDO HAMBURGUESA QUE NO PEDI.",
+      "stage": "product_selection",
+      "expectedFlow": "order",
+      "absentSignals": ["order_changes"],
+      "seed": "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+      "history": [
+        {
+          "role": "assistant",
+          "content": "Estas son las opciones: PAPA MARQUISE, PAPA RIPIO, PAN HAMBURGUESA DE PAPA, PAPA FARM FRITES, PAPA FRENCH FRIES, PAPA IMP KILO y PAPA GOLDEN. Cual deseas?"
+        }
+      ],
+      "initialFacts": {
+        "system.catalog_products": "{\"schemaVersion\":2,\"sequence\":1,\"snapshots\":[{\"sequence\":1,\"searchTerms\":[\"papa marquise\"],\"products\":[{\"externalProductId\":\"P1\",\"name\":\"PAPA MARQUISE\"},{\"externalProductId\":\"P2\",\"name\":\"PAPA FRENCH FRIES\"},{\"externalProductId\":\"P3\",\"name\":\"PAN HAMBURGUESA DE PAPA\"}]}]}"
+      }
+    },
+    {
+      "id": "claudia_named_options_without_quantity_do_not_mutate_or_research",
+      "message": "MARQUISE Y FRECH FRIES",
+      "stage": "product_selection",
+      "expectedFlow": "order",
+      "absentSignals": ["order_changes"],
+      "seed": "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+      "history": [
+        {
+          "role": "user",
+          "content": "SOLO PAPA FRANCESA. ME ESTAS COTIZANDO HAMBURGUESA QUE NO PEDI."
+        },
+        {
+          "role": "assistant",
+          "content": "Estas son las opciones: PAPA MARQUISE, PAN HAMBURGUESA DE PAPA, PAPA FARM FRITES y PAPA FRENCH FRIES."
+        }
+      ],
+      "initialFacts": {
+        "system.catalog_products": "{\"schemaVersion\":2,\"sequence\":2,\"snapshots\":[{\"sequence\":1,\"searchTerms\":[\"papa marquise\"],\"products\":[{\"externalProductId\":\"P1\",\"name\":\"PAPA MARQUISE\"},{\"externalProductId\":\"P2\",\"name\":\"PAPA FRENCH FRIES\"},{\"externalProductId\":\"P3\",\"name\":\"PAN HAMBURGUESA DE PAPA\"}]},{\"sequence\":2,\"searchTerms\":[\"papa francesa\"],\"products\":[{\"externalProductId\":\"P1\",\"name\":\"PAPA MARQUISE\"},{\"externalProductId\":\"P2\",\"name\":\"PAPA FRENCH FRIES\"}]}]}"
+      }
+    },
+    {
+      "id": "claudia_hesitation_does_not_reactivate_stale_pending_item",
+      "message": "Mmmm",
+      "stage": "product_selection",
+      "expectedFlow": "order",
+      "absentSignals": ["order_changes", "catalog_query"],
+      "seed": "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+      "history": [
+        {
+          "role": "assistant",
+          "content": "Encontre PAPA MARQUISE y PAPA FRENCH FRIES. Indica cual deseas y la cantidad."
+        }
+      ],
+      "applyRuntimeGuards": true,
+      "initialFacts": {
+        "system.catalog_products": "{\"schemaVersion\":2,\"sequence\":2,\"snapshots\":[{\"sequence\":2,\"searchTerms\":[\"marquise\",\"frech fries\"],\"products\":[{\"externalProductId\":\"P1\",\"name\":\"PAPA MARQUISE\"},{\"externalProductId\":\"P2\",\"name\":\"PAPA FRENCH FRIES\"}]}]}",
+        "system.pending_cart_commands": "{\"schemaVersion\":1,\"commands\":[{\"operation\":\"add\",\"productText\":\"Xl campollo\",\"quantity\":1}],\"ambiguousProductText\":\"Xl campollo\",\"productCandidates\":[],\"expiresAtUtc\":\"2099-01-01T00:00:00Z\"}"
+      }
+    },
+    {
+      "id": "claudia_named_offer_without_quantity_does_not_invent_one_or_research",
+      "message": "Papa marquise",
+      "stage": "product_selection",
+      "expectedFlow": "order",
+      "absentSignals": ["order_changes", "catalog_query"],
+      "seed": "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+      "history": [
+        {
+          "role": "assistant",
+          "content": "Productos disponibles: PAPA MARQUISE, PAPA RIPIO, PAPA FARM FRITES y PAPA FRENCH FRIES. Cual deseas agregar y en que cantidad?"
+        }
+      ],
+      "initialFacts": {
+        "system.catalog_products": "{\"schemaVersion\":2,\"sequence\":1,\"snapshots\":[{\"sequence\":1,\"searchTerms\":[\"papa\"],\"products\":[{\"externalProductId\":\"P1\",\"name\":\"PAPA MARQUISE\"},{\"externalProductId\":\"P2\",\"name\":\"PAPA FRENCH FRIES\"}]}]}"
+      }
+    },
+    {
+      "id": "claudia_named_offer_with_four_boxes_adds_exact_quantity",
+      "message": "Papa marquise 4 cajas",
+      "stage": "product_selection",
+      "expectedFlow": "order",
+      "expectedSignals": ["order_changes"],
+      "absentSignals": ["catalog_query"],
+      "expectedSignalItems": [
+        {
+          "type": "order_changes",
+          "count": 1,
+          "products": ["Papa marquise"],
+          "operations": ["add"],
+          "quantities": [4]
+        }
+      ],
+      "seed": "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+      "history": [
+        {
+          "role": "assistant",
+          "content": "Productos disponibles: PAPA MARQUISE, PAPA RIPIO, PAPA FARM FRITES y PAPA FRENCH FRIES. Cual deseas agregar y en que cantidad?"
+        }
+      ],
+      "initialFacts": {
+        "system.catalog_products": "{\"schemaVersion\":2,\"sequence\":1,\"snapshots\":[{\"sequence\":1,\"searchTerms\":[\"papa\"],\"products\":[{\"externalProductId\":\"P1\",\"name\":\"PAPA MARQUISE\"},{\"externalProductId\":\"P2\",\"name\":\"PAPA FRENCH FRIES\"}]}]}"
+      }
+    },
+    {
+      "id": "cj_context_initial_potato_query_is_standalone",
+      "message": "Necesito informaci?n de papas",
+      "stage": "product_selection",
+      "expectedFlow": "order",
+      "expectedSignals": [
+        "catalog_query"
+      ],
+      "absentSignals": [
+        "order_changes"
+      ],
+      "expectedSignalStringArrays": [
+        {
+          "type": "catalog_query",
+          "property": "queries",
+          "includes": [
+            "papas"
+          ],
+          "excludes": [
+            "salchichas",
+            "camaron"
+          ]
+        }
+      ],
+      "seed": "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql"
+    },
+    {
+      "id": "cj_context_cut_followup_keeps_potato_subject",
+      "message": "Cu?les tienes de corte delgado?",
+      "stage": "product_selection",
+      "expectedFlow": "order",
+      "expectedSignals": [
+        "catalog_query"
+      ],
+      "absentSignals": [
+        "order_changes"
+      ],
+      "expectedSignalStringArrays": [
+        {
+          "type": "catalog_query",
+          "property": "queries",
+          "includes": [
+            "corte delgado"
+          ],
+          "excludes": [
+            "salchichas",
+            "camaron"
+          ]
+        }
+      ],
+      "seed": "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+      "history": [
+        {
+          "role": "user",
+          "content": "Necesito informaci?n de papas"
+        },
+        {
+          "role": "assistant",
+          "content": "Tengo PAPA MARQUISE y PAPA FRENCH FRIES. ?Qu? caracter?stica buscas?"
+        }
+      ],
+      "initialFacts": {
+        "system.catalog_products": "{\"schemaVersion\":2,\"sequence\":1,\"snapshots\":[{\"sequence\":1,\"searchTerms\":[\"papas\"],\"products\":[{\"externalProductId\":\"P1\",\"name\":\"PAPA MARQUISE\"},{\"externalProductId\":\"P2\",\"name\":\"PAPA FRENCH FRIES\"}]}]}"
+      }
+    },
+    {
+      "id": "cj_context_brand_revision_keeps_subject_and_replaces_cut",
+      "message": "Y de la marca Marquise?",
+      "stage": "product_selection",
+      "expectedFlow": "order",
+      "expectedSignals": [
+        "catalog_query"
+      ],
+      "absentSignals": [
+        "order_changes"
+      ],
+      "expectedSignalStringArrays": [
+        {
+          "type": "catalog_query",
+          "property": "queries",
+          "includes": [
+            "marquise"
+          ],
+          "excludes": [
+            "corte delgado",
+            "salchichas",
+            "camaron"
+          ]
+        }
+      ],
+      "seed": "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+      "history": [
+        {
+          "role": "user",
+          "content": "Cu?les tienes de corte delgado?"
+        },
+        {
+          "role": "assistant",
+          "content": "Tengo PAPA MARQUISE y PAPA FRENCH FRIES."
+        }
+      ],
+      "initialFacts": {
+        "system.catalog_products": "{\"schemaVersion\":3,\"sequence\":2,\"snapshots\":[{\"sequence\":2,\"searchTerms\":[\"papas corte delgado\"],\"contextAnchorTerms\":[\"papas\"],\"products\":[{\"externalProductId\":\"P1\",\"name\":\"PAPA MARQUISE\"},{\"externalProductId\":\"P2\",\"name\":\"PAPA FRENCH FRIES\"}]}]}"
+      }
+    },
+    {
+      "id": "cj_context_explicit_topic_switch_does_not_carry_potato",
+      "message": "Y tienes salchichas?",
+      "stage": "product_selection",
+      "expectedFlow": "order",
+      "expectedSignals": [
+        "catalog_query"
+      ],
+      "absentSignals": [
+        "order_changes"
+      ],
+      "expectedSignalStringArrays": [
+        {
+          "type": "catalog_query",
+          "property": "queries",
+          "includes": [
+            "salchichas"
+          ],
+          "excludes": [
+            "papas",
+            "camaron"
+          ]
+        }
+      ],
+      "seed": "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+      "history": [
+        {
+          "role": "assistant",
+          "content": "Tengo PAPA MARQUISE y PAPA FRENCH FRIES."
+        }
+      ],
+      "initialFacts": {
+        "system.catalog_products": "{\"schemaVersion\":3,\"sequence\":2,\"snapshots\":[{\"sequence\":2,\"searchTerms\":[\"papas corte delgado\"],\"contextAnchorTerms\":[\"papas\"],\"products\":[{\"externalProductId\":\"P1\",\"name\":\"PAPA MARQUISE\"},{\"externalProductId\":\"P2\",\"name\":\"PAPA FRENCH FRIES\"}]}]}"
+      }
+    }
+  ],
+  "repetitions": 5
+}

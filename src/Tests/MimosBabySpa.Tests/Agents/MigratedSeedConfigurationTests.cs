@@ -58,6 +58,51 @@ public sealed class MigratedSeedConfigurationTests
                 $"{diagnostic.Path}:{diagnostic.Code}:{diagnostic.Message}")));
     }
 
+    [Theory]
+    [InlineData("SeedCJDistribuciones.sql")]
+    [InlineData("SeedMedidental.sql")]
+    [InlineData("SeedSolorzanoAgentConfiguration.sql")]
+    public void CommerceOrderAgents_NotifyCustomerAndInternalContact(string seedFile)
+    {
+        var root = FindSolutionRoot();
+        var path = Path.Combine(
+            root,
+            "database",
+            "MimosBabySpa.Database",
+            "Scripts",
+            "Seeds",
+            seedFile);
+        var config = JsonSerializer.Deserialize<AgentConfig>(
+            ExtractSettingsJson(File.ReadAllText(path), "SettingsJson"),
+            new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true,
+                UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
+                Converters = { new JsonStringEnumConverter() }
+            })!;
+
+        config.MessageSequences.Should().ContainKey("order_created_customer");
+        config.MessageSequences.Should().ContainKey("order_created");
+
+        var notification = config.Notifications["order_created"];
+        notification.Enabled.Should().BeTrue();
+        notification.Recipients.Should().BeEmpty();
+        notification.SendMessageSequence.Should().BeNull();
+        notification.Deliveries.Should().HaveCount(2);
+
+        var customer = notification.Deliveries.Single(delivery => delivery.Id == "customer");
+        customer.Enabled.Should().BeTrue();
+        customer.Recipients.Should().Equal("source:conversation");
+        customer.SendMessageSequence.Should().Be("order_created_customer");
+
+        var internalDelivery = notification.Deliveries.Single(delivery => delivery.Id == "internal");
+        internalDelivery.Enabled.Should().BeTrue();
+        internalDelivery.Recipients.Should().NotBeEmpty();
+        internalDelivery.SendMessageSequence.Should().Be("order_created");
+
+        config.Webhooks.Wompi.Should().NotContainKey("order_paid");
+    }
+
     [Fact]
     public void AuralyDemoFlow_UsesDeterministicAvailabilityAndReservationGuards()
     {

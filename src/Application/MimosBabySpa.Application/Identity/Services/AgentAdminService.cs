@@ -46,7 +46,15 @@ public sealed class AgentAdminService : IAgentAdminService
     {
         await EnsureBusinessBelongsToTenantAsync(tenantId, canAccessAllTenants, businessId, ct);
         var agents = await _agentRepository.GetByBusinessAsync(businessId, ct);
-        return agents.Select(MapToDto).ToList();
+        var whatsappNumbers = (await _unitOfWork.BusinessWhatsAppNumbers.GetByBusinessIdAsync(businessId))
+            .Where(number => number.IsActive && number.AgentId.HasValue)
+            .ToList();
+        var inboundContacts = await _unitOfWork.BusinessInboundContacts.GetActiveByBusinessAsync(businessId, ct);
+        return agents.Select(agent => MapToDto(
+            agent,
+            whatsappNumbers.FirstOrDefault(number => number.AgentId == agent.AgentId)?.PhoneNumber
+                ?? inboundContacts.FirstOrDefault(contact => contact.InboundAgentId == agent.AgentId)?.PhoneNumber
+        )).ToList();
     }
 
     public async Task<IReadOnlyList<BusinessInboundContactDto>> GetInboundContactsByBusinessIdAsync(
@@ -475,7 +483,7 @@ public sealed class AgentAdminService : IAgentAdminService
         UpdatedAt = contact.UpdatedAt
     };
 
-    private static AgentDto MapToDto(Agent agent)
+    private static AgentDto MapToDto(Agent agent, string? phoneNumber = null)
     {
         JsonElement? settings = null;
         if (!string.IsNullOrWhiteSpace(agent.SettingsJson))
@@ -501,6 +509,7 @@ public sealed class AgentAdminService : IAgentAdminService
             Description = agent.Description,
             IsActive = agent.IsActive,
             CreatedAt = agent.CreatedAt,
+            PhoneNumber = phoneNumber,
             UpdatedAt = agent.UpdatedAt,
             SettingsJson = agent.SettingsJson,
             Settings = settings

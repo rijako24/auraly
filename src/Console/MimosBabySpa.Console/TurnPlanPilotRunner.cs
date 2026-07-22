@@ -168,7 +168,11 @@ internal sealed class TurnPlanPilotRunner
                     items = test.CurrentCart.Select(item => new { name = item.Name, quantity = item.Quantity })
                 });
             }
-            var shoppingContext = CommerceSelectionPlanningContextEnricher.Build(facts, config.Commerce);
+            var lastBotMessage = test.History
+                .LastOrDefault(message => message.Role.Equals(
+                    "assistant", StringComparison.OrdinalIgnoreCase))
+                ?.Content;
+            var shoppingContext = CommerceSelectionPlanningContextEnricher.Build(facts, config.Commerce, lastBotMessage);
             if (shoppingContext is not null)
                 structuredContext[shoppingContext.Key] = shoppingContext.Value;
             var proposal = await _planner.PlanAsync(
@@ -297,7 +301,8 @@ internal sealed class TurnPlanPilotRunner
             if (!plan.Signals.Any(value => value.Type.Equals(signal, StringComparison.OrdinalIgnoreCase)))
                 errors.Add($"No extrajo signal '{signal}'.");
         foreach (var absent in test.AbsentSignals)
-            if (plan.Signals.Any(value => value.Type.Equals(absent, StringComparison.OrdinalIgnoreCase)))
+            if (plan.Signals.Any(value => value.Type.Equals(absent, StringComparison.OrdinalIgnoreCase)
+                && !IsEmptySignal(value)))
                 errors.Add($"Signal '{absent}' debia permanecer sin extraer.");
         foreach (var expected in test.ExpectedSignalItems)
         {
@@ -347,6 +352,36 @@ internal sealed class TurnPlanPilotRunner
             }
         }
 
+        foreach (var expected in test.ExpectedSignalStringArrays)
+        {
+            var signal = plan.Signals.LastOrDefault(value =>
+                value.Type.Equals(expected.Type, StringComparison.OrdinalIgnoreCase));
+            if (signal is null
+                || signal.Value.ValueKind != JsonValueKind.Object
+                || !signal.Value.TryGetProperty(expected.Property, out var property)
+                || property.ValueKind != JsonValueKind.Array)
+            {
+                errors.Add($"Signal '{expected.Type}' no contiene el arreglo '{expected.Property}'.");
+                continue;
+            }
+
+            var values = property.EnumerateArray()
+                .Where(value => value.ValueKind == JsonValueKind.String)
+                .Select(value => value.GetString() ?? string.Empty)
+                .ToList();
+            foreach (var required in expected.Includes)
+            {
+                if (!values.Any(value => value.Contains(required, StringComparison.OrdinalIgnoreCase)))
+                    errors.Add($"Signal '{expected.Type}.{expected.Property}' no incluyo '{required}'.");
+            }
+
+            foreach (var excluded in expected.Excludes)
+            {
+                if (values.Any(value => value.Contains(excluded, StringComparison.OrdinalIgnoreCase)))
+                    errors.Add($"Signal '{expected.Type}.{expected.Property}' incluyo indebidamente '{excluded}'.");
+            }
+        }
+
         foreach (var ambiguous in test.ExpectedAmbiguousFields)
             if (!plan.Response.AmbiguousFields.Contains(ambiguous, StringComparer.OrdinalIgnoreCase))
                 errors.Add($"No marc? '{ambiguous}' como ambiguo.");
@@ -358,6 +393,8 @@ internal sealed class TurnPlanPilotRunner
         return errors;
     }
 
+    private static bool IsEmptySignal(PlannedSignal signal) =>
+        signal.Value.ValueKind == JsonValueKind.Array && signal.Value.GetArrayLength() == 0;
     private static string StringValue(JsonElement value) =>
         value.ValueKind == JsonValueKind.String ? value.GetString() ?? string.Empty : value.GetRawText();
 
@@ -475,6 +512,7 @@ internal sealed class TurnPlanPilotRunner
         public IReadOnlyList<string> ExpectedSignals { get; init; } = [];
         public IReadOnlyList<string> AbsentSignals { get; init; } = [];
         public IReadOnlyList<ExpectedSignalItems> ExpectedSignalItems { get; init; } = [];
+        public IReadOnlyList<ExpectedSignalStringArray> ExpectedSignalStringArrays { get; init; } = [];
         public IReadOnlyList<string> ExpectedAmbiguousFields { get; init; } = [];
         public IReadOnlyList<string> AbsentAmbiguousFields { get; init; } = [];
     }
@@ -495,6 +533,14 @@ internal sealed class TurnPlanPilotRunner
         [JsonPropertyName("equals")]
         public JsonElement ExpectedValue { get; init; }
         public int? DateOffsetDays { get; init; }
+    }
+
+    private sealed class ExpectedSignalStringArray
+    {
+        public string Type { get; init; } = string.Empty;
+        public string Property { get; init; } = string.Empty;
+        public IReadOnlyList<string> Includes { get; init; } = [];
+        public IReadOnlyList<string> Excludes { get; init; } = [];
     }
 
     private sealed class ExpectedSignalItems

@@ -144,6 +144,117 @@ public sealed class MedidentalRegressionTests
     }
 
     [Fact]
+    public void Seed_CoversEveryPdfProductAndBuildsSearchAndAliasTraining()
+    {
+        var (_, sql) = LoadSeed();
+
+        var productSkus = Regex.Matches(
+                sql,
+                @"\('D3E4A700-0000-0000-0000-000000000\d{3}',\s*N'(?<sku>MD-[^']+)'",
+                RegexOptions.IgnoreCase)
+            .Select(match => match.Groups["sku"].Value)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        productSkus.Should().HaveCount(51);
+        productSkus.Should().Contain(
+        [
+            "MD-CHRO-MA",
+            "MD-KIT-SYGD-MA",
+            "MD-KIT-BISG-MA",
+            "MD-KIT-CHRO-MA",
+            "MD-KIT-TEGD-MA",
+            "MD-KIT-AVVA-BULK",
+            "MD-KIT-DV-SEAL",
+            "MD-COMPULA-SYGD-MA",
+            "MD-COMPULA-TEGD-MA",
+            "MD-COMPULA-BISG-MA",
+            "MD-COMPULA-CHRO-MA",
+            "MD-COMPULA-AVVA-BULK",
+            "MD-AUTOCURADO-3-15",
+            "MD-CERAMIK-TRADICIONAL",
+            "MD-CERAMIK-MINI",
+            "MD-TITANIUM-3P",
+            "MD-TITANIUM-3R",
+            "MD-TITANIUM-45R",
+            "MD-MICROMOTOR-SET-RECTA",
+            "MD-CABEZA-CONTRAANGULO-PB",
+            "MD-CABEZA-CONTRAANGULO-PESTILLO",
+            "MD-CONTRAANGULO-PB",
+            "MD-CONTRAANGULO-PESTILLO",
+            "MD-SCALER-BLACK",
+            "MD-SCALER-AS6000",
+            "MD-SCALER-P5-MAX",
+            "MD-CAVITRON-MAGPOWER",
+            "MD-POWERLED-L7",
+            "MD-POWERLED-LX"
+        ]);
+
+        sql.Should()
+            .Contain("DELETE FROM dbo.ProductSearchTerms")
+            .And.Contain("INSERT INTO dbo.ProductSearchTerms")
+            .And.Contain("producto activo sin ProductSearchTerms")
+            .And.Contain("MERGE dbo.ProductAliases")
+            .And.Contain("alias global AutoResolve ambiguo")
+            .And.Contain("(N'MD-ETCHANT-GEL-37', N'desmineralizante', 0, 1)")
+            .And.Contain("(N'MD-OSSEO-100', N'motor implante', 1, 0)")
+            .And.Contain("(N'MD-OSSEO-200', N'motor implante', 1, 0)");
+
+        sql.Should()
+            .Contain("DECLARE @AliasNormalization TABLE")
+            .And.Contain("COALESCE(n.NormalizedAlias, d.Alias)")
+            .And.Contain("(N'titanium 45p', N'titanium 45')")
+            .And.Contain("(N'escaler as6000', N'escaler as 6000')")
+            .And.Contain("(N'MD-TURBINA-TITANIUM-45P', N'titanium 45p', 0, 0)")
+            .And.Contain("(N'MD-TITANIUM-45R', N'titanium 45r', 0, 0)",
+                "45P and 45R collapse to the same runtime key and must remain suggestions");
+    }
+
+    [Fact]
+    public void ConsoleRegression_MirrorsEveryCjSuiteWithMedidentalSeed()
+    {
+        var evaluationDirectory = Path.Combine(
+            FindSolutionRoot(),
+            "src",
+            "Console",
+            "MimosBabySpa.Console",
+            "ExtractorEvaluations");
+        var cjSuites = Directory.GetFiles(evaluationDirectory, "cj-*.json")
+            .OrderBy(Path.GetFileName)
+            .ToArray();
+        var medidentalSuites = Directory.GetFiles(evaluationDirectory, "medidental-*.json")
+            .OrderBy(Path.GetFileName)
+            .ToArray();
+
+        medidentalSuites.Should().HaveCount(cjSuites.Length);
+        cjSuites.Should().NotBeEmpty("the CJ extractor regression corpus must be present");
+
+        for (var index = 0; index < cjSuites.Length; index++)
+        {
+            using var cj = JsonDocument.Parse(File.ReadAllText(cjSuites[index]));
+            using var medidental = JsonDocument.Parse(File.ReadAllText(medidentalSuites[index]));
+            var cjRoot = cj.RootElement;
+            var medidentalRoot = medidental.RootElement;
+
+            Path.GetFileName(medidentalSuites[index]).Should()
+                .Be(Path.GetFileName(cjSuites[index]).Replace("cj-", "medidental-", StringComparison.Ordinal));
+            medidentalRoot.GetProperty("repetitions").GetInt32().Should()
+                .Be(cjRoot.GetProperty("repetitions").GetInt32());
+            medidentalRoot.GetProperty("cases").GetArrayLength().Should()
+                .Be(cjRoot.GetProperty("cases").GetArrayLength());
+
+            foreach (var testCase in medidentalRoot.GetProperty("cases").EnumerateArray())
+            {
+                testCase.GetProperty("seed").GetString().Should().EndWith("SeedMedidental.sql");
+                testCase.GetProperty("id").GetString().Should().StartWith("medidental_");
+            }
+        }
+
+        File.Exists(Path.Combine(evaluationDirectory, "Run-MedidentalRegression.ps1"))
+            .Should().BeTrue();
+    }
+
+    [Fact]
     public void Seed_ProvisionsEssentialSubscriptionWithoutOverridingBillingHistory()
     {
         var (_, sql) = LoadSeed();

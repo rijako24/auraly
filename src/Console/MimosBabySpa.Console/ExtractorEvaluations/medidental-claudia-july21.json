@@ -1,0 +1,249 @@
+{
+  "cases": [
+    {
+      "id": "medidental_claudia_initial_chroma_query_stays_grounded",
+      "message": "ME REGALAS LA RESINA CHRO-MA O SI TIENES ALGUNA OTRA SUGERENCIA",
+      "stage": "product_selection",
+      "expectedFlow": "order",
+      "expectedSignals": ["catalog_query"],
+      "absentSignals": ["order_changes"],
+      "expectedSignalStringArrays": [
+        {
+          "type": "catalog_query",
+          "property": "queries",
+          "includes": ["resina", "chro-ma"],
+          "excludes": ["lampara", "escaler", "motor"]
+        }
+      ],
+      "seed": "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedMedidental.sql"
+    },
+    {
+      "id": "medidental_claudia_result_correction_never_mutates_cart",
+      "message": "SOLO RESINA TEGD-MA. ME ESTAS COTIZANDO LAMPARA QUE NO PEDI.",
+      "stage": "product_selection",
+      "expectedFlow": "order",
+      "absentSignals": ["order_changes"],
+      "seed": "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedMedidental.sql",
+      "history": [
+        {
+          "role": "assistant",
+          "content": "Estas son las opciones: RESINA CHRO-MA, RESINA TEGD-MA, ESCALER P5 MAX y LAMPARA POWERLED. Cual deseas?"
+        }
+      ],
+      "initialFacts": {
+        "system.catalog_products": "{\"schemaVersion\":2,\"sequence\":1,\"snapshots\":[{\"sequence\":1,\"searchTerms\":[\"resina chro-ma\"],\"products\":[{\"externalProductId\":\"P1\",\"name\":\"RESINA CHRO-MA\"},{\"externalProductId\":\"P2\",\"name\":\"RESINA TEGD-MA\"},{\"externalProductId\":\"P3\",\"name\":\"LAMPARA POWERLED\"}]}]}"
+      }
+    },
+    {
+      "id": "medidental_claudia_named_options_without_quantity_do_not_mutate_or_research",
+      "message": "CHRO-MA Y TEGD-MA",
+      "stage": "product_selection",
+      "expectedFlow": "order",
+      "absentSignals": ["order_changes"],
+      "seed": "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedMedidental.sql",
+      "history": [
+        {"role": "user", "content": "SOLO RESINA TEGD-MA. ME ESTAS COTIZANDO LAMPARA QUE NO PEDI."},
+        {"role": "assistant", "content": "Estas son las opciones: RESINA CHRO-MA, RESINA TEGD-MA y LAMPARA POWERLED."}
+      ],
+      "initialFacts": {
+        "system.catalog_products": "{\"schemaVersion\":2,\"sequence\":2,\"snapshots\":[{\"sequence\":1,\"searchTerms\":[\"resina chro-ma\"],\"products\":[{\"externalProductId\":\"P1\",\"name\":\"RESINA CHRO-MA\"},{\"externalProductId\":\"P2\",\"name\":\"RESINA TEGD-MA\"},{\"externalProductId\":\"P3\",\"name\":\"LAMPARA POWERLED\"}]},{\"sequence\":2,\"searchTerms\":[\"resina tegd-ma\"],\"products\":[{\"externalProductId\":\"P1\",\"name\":\"RESINA CHRO-MA\"},{\"externalProductId\":\"P2\",\"name\":\"RESINA TEGD-MA\"}]}]}"
+      }
+    },
+    {
+      "id": "medidental_claudia_hesitation_does_not_reactivate_stale_pending_item",
+      "message": "Mmmm",
+      "stage": "product_selection",
+      "expectedFlow": "order",
+      "absentSignals": ["order_changes", "catalog_query"],
+      "seed": "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedMedidental.sql",
+      "history": [
+        {"role": "assistant", "content": "Encontre RESINA CHRO-MA y RESINA TEGD-MA. Indica cual deseas y la cantidad."}
+      ],
+      "applyRuntimeGuards": true,
+      "initialFacts": {
+        "system.catalog_products": "{\"schemaVersion\":2,\"sequence\":2,\"snapshots\":[{\"sequence\":2,\"searchTerms\":[\"chro-ma\",\"tegd-ma\"],\"products\":[{\"externalProductId\":\"P1\",\"name\":\"RESINA CHRO-MA\"},{\"externalProductId\":\"P2\",\"name\":\"RESINA TEGD-MA\"}]}]}",
+        "system.pending_cart_commands": "{\"schemaVersion\":1,\"commands\":[{\"operation\":\"add\",\"productText\":\"motor Osseo\",\"quantity\":1}],\"ambiguousProductText\":\"motor Osseo\",\"productCandidates\":[],\"expiresAtUtc\":\"2099-01-01T00:00:00Z\"}"
+      }
+    },
+    {
+      "id": "medidental_claudia_named_offer_without_quantity_does_not_invent_one_or_research",
+      "message": "Resina CHRO-MA",
+      "stage": "product_selection",
+      "expectedFlow": "order",
+      "absentSignals": ["order_changes", "catalog_query"],
+      "seed": "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedMedidental.sql",
+      "history": [
+        {"role": "assistant", "content": "Productos disponibles: RESINA CHRO-MA, RESINA TEGD-MA y RESINA BISG-MA. Cual deseas agregar y en que cantidad?"}
+      ],
+      "initialFacts": {
+        "system.catalog_products": "{\"schemaVersion\":2,\"sequence\":1,\"snapshots\":[{\"sequence\":1,\"searchTerms\":[\"resina\"],\"products\":[{\"externalProductId\":\"P1\",\"name\":\"RESINA CHRO-MA\"},{\"externalProductId\":\"P2\",\"name\":\"RESINA TEGD-MA\"}]}]}"
+      }
+    },
+    {
+      "id": "medidental_claudia_named_offer_with_four_boxes_adds_exact_quantity",
+      "message": "Resina CHRO-MA 4 cajas",
+      "stage": "product_selection",
+      "expectedFlow": "order",
+      "expectedSignals": ["order_changes"],
+      "absentSignals": ["catalog_query"],
+      "expectedSignalItems": [
+        {
+          "type": "order_changes",
+          "count": 1,
+          "products": ["Resina CHRO-MA"],
+          "operations": ["add"],
+          "quantities": [4]
+        }
+      ],
+      "seed": "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedMedidental.sql",
+      "history": [
+        {"role": "assistant", "content": "Productos disponibles: RESINA CHRO-MA, RESINA TEGD-MA y RESINA BISG-MA. Cual deseas agregar y en que cantidad?"}
+      ],
+      "initialFacts": {
+        "system.catalog_products": "{\"schemaVersion\":2,\"sequence\":1,\"snapshots\":[{\"sequence\":1,\"searchTerms\":[\"resina\"],\"products\":[{\"externalProductId\":\"P1\",\"name\":\"RESINA CHRO-MA\"},{\"externalProductId\":\"P2\",\"name\":\"RESINA TEGD-MA\"}]}]}"
+      }
+    },
+    {
+      "id": "medidental_palaaa_initial_handpiece_query_is_standalone",
+      "message": "Necesito informaci?n de piezas de mano",
+      "stage": "product_selection",
+      "expectedFlow": "order",
+      "expectedSignals": [
+        "catalog_query"
+      ],
+      "absentSignals": [
+        "order_changes"
+      ],
+      "expectedSignalStringArrays": [
+        {
+          "type": "catalog_query",
+          "property": "queries",
+          "includes": [
+            "piezas de mano"
+          ],
+          "excludes": [
+            "escaler",
+            "camaron"
+          ]
+        }
+      ],
+      "seed": "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedMedidental.sql"
+    },
+    {
+      "id": "medidental_palaaa_light_followup_keeps_handpiece_subject",
+      "message": "Cu?les tienes con luz?",
+      "stage": "product_selection",
+      "expectedFlow": "order",
+      "expectedSignals": [
+        "catalog_query"
+      ],
+      "absentSignals": [
+        "order_changes"
+      ],
+      "expectedSignalStringArrays": [
+        {
+          "type": "catalog_query",
+          "property": "queries",
+          "includes": [
+            "luz"
+          ],
+          "excludes": [
+            "escaler",
+            "camaron"
+          ]
+        }
+      ],
+      "seed": "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedMedidental.sql",
+      "history": [
+        {
+          "role": "user",
+          "content": "Necesito informaci?n de piezas de mano"
+        },
+        {
+          "role": "assistant",
+          "content": "Tengo PIEZA DE MANO TITANIUM 45P y PIEZA DE MANO TORCH LED. ?Qu? caracter?stica buscas?"
+        }
+      ],
+      "initialFacts": {
+        "system.catalog_products": "{\"schemaVersion\":2,\"sequence\":1,\"snapshots\":[{\"sequence\":1,\"searchTerms\":[\"piezas de mano\"],\"products\":[{\"externalProductId\":\"P1\",\"name\":\"PIEZA DE MANO TITANIUM 45P\"},{\"externalProductId\":\"P2\",\"name\":\"PIEZA DE MANO TORCH LED\"}]}]}"
+      }
+    },
+    {
+      "id": "medidental_palaaa_material_revision_keeps_subject_and_replaces_light",
+      "message": "Y en acero?",
+      "stage": "product_selection",
+      "expectedFlow": "order",
+      "expectedSignals": [
+        "catalog_query"
+      ],
+      "absentSignals": [
+        "order_changes"
+      ],
+      "expectedSignalStringArrays": [
+        {
+          "type": "catalog_query",
+          "property": "queries",
+          "includes": [
+            "acero"
+          ],
+          "excludes": [
+            "luz",
+            "escaler",
+            "camaron"
+          ]
+        }
+      ],
+      "seed": "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedMedidental.sql",
+      "history": [
+        {
+          "role": "user",
+          "content": "Cu?les tienes con luz?"
+        },
+        {
+          "role": "assistant",
+          "content": "Tengo PIEZA DE MANO TITANIUM 45P y PIEZA DE MANO TORCH LED."
+        }
+      ],
+      "initialFacts": {
+        "system.catalog_products": "{\"schemaVersion\":3,\"sequence\":2,\"snapshots\":[{\"sequence\":2,\"searchTerms\":[\"piezas de mano luz\"],\"contextAnchorTerms\":[\"piezas de mano\"],\"products\":[{\"externalProductId\":\"P1\",\"name\":\"PIEZA DE MANO TITANIUM 45P\"},{\"externalProductId\":\"P2\",\"name\":\"PIEZA DE MANO TORCH LED\"}]}]}"
+      }
+    },
+    {
+      "id": "medidental_palaaa_explicit_topic_switch_does_not_carry_handpiece",
+      "message": "Y tienes guantes?",
+      "stage": "product_selection",
+      "expectedFlow": "order",
+      "expectedSignals": [
+        "catalog_query"
+      ],
+      "absentSignals": [
+        "order_changes"
+      ],
+      "expectedSignalStringArrays": [
+        {
+          "type": "catalog_query",
+          "property": "queries",
+          "includes": [
+            "guantes"
+          ],
+          "excludes": [
+            "piezas de mano",
+            "escaler",
+            "camaron"
+          ]
+        }
+      ],
+      "seed": "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedMedidental.sql",
+      "history": [
+        {
+          "role": "assistant",
+          "content": "Tengo PIEZA DE MANO TITANIUM 45P y PIEZA DE MANO TORCH LED."
+        }
+      ],
+      "initialFacts": {
+        "system.catalog_products": "{\"schemaVersion\":3,\"sequence\":2,\"snapshots\":[{\"sequence\":2,\"searchTerms\":[\"piezas de mano luz\"],\"contextAnchorTerms\":[\"piezas de mano\"],\"products\":[{\"externalProductId\":\"P1\",\"name\":\"PIEZA DE MANO TITANIUM 45P\"},{\"externalProductId\":\"P2\",\"name\":\"PIEZA DE MANO TORCH LED\"}]}]}"
+      }
+    }
+  ],
+  "repetitions": 5
+}

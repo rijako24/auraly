@@ -220,6 +220,31 @@ public static class ProductResolutionEngine
         return Math.Clamp(average * 0.55d + weakest * 0.2d + coverage * 0.25d, 0d, 1d);
     }
 
+    /// <summary>
+    /// Applies the same lexical-semantic gate used by cart resolution before a
+    /// catalog result is allowed to reach the customer. Providers may return a
+    /// broad candidate set; unrelated candidates must be rejected here instead
+    /// of being presented merely because they ranked in the provider response.
+    /// </summary>
+    public static bool IsRelevantCatalogCandidate(
+        string? requestedText,
+        ProductReference product,
+        ProductMatchingPolicy? policy = null)
+    {
+        if (string.IsNullOrWhiteSpace(requestedText))
+            return true;
+
+        var minimumScore = policy?.CatalogCandidateMinimumScore ?? CandidateThreshold;
+        var minimumCoverage = policy?.CatalogCandidateMinimumCoverage ?? MinimumSemanticCoverage;
+        var tokenSimilarity = policy?.CatalogTokenSimilarity ?? MeaningfulTermSimilarity;
+        return HasMinimumSemanticCoverage(
+                   requestedText,
+                   product,
+                   minimumCoverage,
+                   tokenSimilarity)
+               && Score(requestedText, product) >= minimumScore;
+    }
+
     private static bool IsExactIdentity(string requestedText, ProductReference product)
     {
         var normalized = CatalogSearchText.NormalizeCompact(requestedText);
@@ -236,7 +261,11 @@ public static class ProductResolutionEngine
         return requested.Count > 0 && requested.IsSubsetOf(offered);
     }
 
-    private static bool HasMinimumSemanticCoverage(string requestedText, ProductReference product)
+    private static bool HasMinimumSemanticCoverage(
+        string requestedText,
+        ProductReference product,
+        double minimumCoverage = MinimumSemanticCoverage,
+        double meaningfulTermSimilarity = MeaningfulTermSimilarity)
     {
         var requested = ProductSearchText.GetMatchingTokens(requestedText)
             .Where(token => !token.All(char.IsDigit))
@@ -249,12 +278,12 @@ public static class ProductResolutionEngine
             return false;
 
         var covered = requested.Count(token => offered.Any(candidate =>
-            ProductSearchText.TokenSimilarity(token, candidate) >= MeaningfulTermSimilarity
+            ProductSearchText.TokenSimilarity(token, candidate) >= meaningfulTermSimilarity
             || token.Length >= 3 && token.Length < candidate.Length
                 && candidate.StartsWith(token, StringComparison.Ordinal)));
         var required = requested.Count == 1
             ? 1
-            : (int)Math.Ceiling(requested.Count * MinimumSemanticCoverage);
+            : (int)Math.Ceiling(requested.Count * minimumCoverage);
         return covered >= required;
     }
 

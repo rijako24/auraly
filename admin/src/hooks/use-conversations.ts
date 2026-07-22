@@ -13,6 +13,7 @@ export const conversationKeys = {
     params?: Partial<PagedRequest> & {
       userNumber?: string;
       state?: number;
+      agentId?: string;
     }
   ) => [...conversationKeys.lists(), businessId, params] as const,
   details: () => [...conversationKeys.all, "detail"] as const,
@@ -24,6 +25,7 @@ export const conversationKeys = {
 export function useConversations(
   params?: Partial<PagedRequest> & {
     userNumber?: string;
+    agentId?: string;
     state?: number;
   }
 ) {

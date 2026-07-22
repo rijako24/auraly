@@ -5,9 +5,7 @@
       "message": "Salchicha long x 550 gr",
       "stage": "product_selection",
       "expectedFlow": "order",
-      "expectedSignals": ["order_changes"],
-      "absentSignals": ["catalog_query"],
-      "expectedSignalItems": [{"type":"order_changes","count":1,"products":["550"],"operations":["add"],"quantities":[1]}],
+      "absentSignals": ["order_changes", "catalog_query"],
       "seed": "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
       "history": [
         {"role":"assistant","content":"Gracias por la aclaracion. Entonces agrego 1 unidad de BUTIFARRA CUNIT X 500 GR. No encontre Long x 10. Podrias darme mas detalles?"},

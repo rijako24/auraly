@@ -6,6 +6,7 @@ public class Conversation
 {
     public Guid ConversationId { get; set; }
     public Guid BusinessId { get; set; }
+    public Guid? AgentId { get; set; }
     public string UserNumber { get; set; } = string.Empty;
     public string? LastMessage { get; set; }
     public DateTime Timestamp { get; set; }

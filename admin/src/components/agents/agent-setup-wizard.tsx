@@ -27,7 +27,6 @@ const STEPS = [
   { id: "actions", title: "Acciones", description: "Acciones transversales del agente" },
   { id: "templates", title: "Templates", description: "Plantillas del motor" },
   { id: "safety", title: "Seguridad", description: "Kill switch y escalacion" },
-  { id: "advanced", title: "Completa", description: "Todas las propiedades de SettingsJson" },
   { id: "review", title: "Revision", description: "Confirmar y guardar" },
 ] as const;
 
@@ -112,7 +111,7 @@ export function AgentSetupWizard({
               </p>
               <p>
                 <span className="text-muted-foreground">Facts:</span>{" "}
-                {settings.factSchema?.length ?? 0}
+                {settings.factSchema?.filter((fact) => (fact.source ?? "user") === "user").length ?? 0}
               </p>
               <p>
                 <span className="text-muted-foreground">Retomas:</span>{" "}
@@ -177,41 +176,37 @@ export function AgentSetupWizard({
         ))}
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_380px] xl:grid-cols-[minmax(0,1fr)_420px]">
-        <div className="min-w-0">{renderStep()}</div>
+      <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_380px] xl:grid-cols-[minmax(0,1fr)_420px]">
+        <div className="flex min-w-0 flex-col">
+          <div className="flex-1">{renderStep()}</div>
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t pt-4">
+            <div className="flex gap-2">
+              <Button type="button" variant="outline" onClick={goPrev} disabled={stepIndex === 0}>
+                <ArrowLeft className="mr-1 h-4 w-4" />
+                Anterior
+              </Button>
+              {stepIndex < STEPS.length - 1 ? (
+                <Button type="button" onClick={goNext}>
+                  Siguiente
+                  <ArrowRight className="ml-1 h-4 w-4" />
+                </Button>
+              ) : (
+                <Button type="button" onClick={handlePublish} disabled={saving}>
+                  <Save className="mr-1 h-4 w-4" />
+                  {saving ? "Publicando..." : onPublish ? "Publicar agente" : "Guardar configuracion"}
+                </Button>
+              )}
+            </div>
+          </div>
+        </div>
         <AgentTestChat
           agent={agent}
           hasUnsavedChanges={dirty}
           onSaveChanges={onSave}
           savingChanges={saving}
           compact
-          className="lg:sticky lg:top-4 lg:self-start"
+          className="lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] lg:self-start lg:overflow-y-auto"
         />
-      </div>
-
-      <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-4">
-        <div className="flex gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            onClick={goPrev}
-            disabled={stepIndex === 0}
-          >
-            <ArrowLeft className="mr-1 h-4 w-4" />
-            Anterior
-          </Button>
-          {stepIndex < STEPS.length - 1 ? (
-            <Button type="button" onClick={goNext}>
-              Siguiente
-              <ArrowRight className="ml-1 h-4 w-4" />
-            </Button>
-          ) : (
-            <Button type="button" onClick={handlePublish} disabled={saving}>
-              <Save className="mr-1 h-4 w-4" />
-              {saving ? "Publicando..." : onPublish ? "Publicar agente" : "Guardar configuracion"}
-            </Button>
-          )}
-        </div>
       </div>
     </div>
   );

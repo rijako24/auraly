@@ -3,6 +3,9 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
+using MimosBabySpa.Application.Commerce;
+using MimosBabySpa.Application.Agents.Operations.Support;
+
 namespace MimosBabySpa.Application.Agents.Planning;
 
 /// <summary>
@@ -17,7 +20,11 @@ public static partial class CommerceTurnPlanSafety
 
     public static TurnPlan Normalize(TurnPlan plan, TurnPlanningContext context)
     {
+        plan = RemoveNoOpFactClears(plan, context);
         plan = RecoverExplicitOrderList(plan, context);
+        if (IsCatalogFollowUp(context) && !HasExplicitRequestedQuantity(NormalizeText(context.LatestUserMessage), context)
+            && IsSingleOfferedProductReference(context))
+            plan = RemoveCatalogFollowUpQuery(plan);
         plan = RemoveUnsupportedFinalization(plan, context);
         plan = DeferRemovalUntilCatalogReplacementIsSelected(plan);
 
@@ -30,10 +37,53 @@ public static partial class CommerceTurnPlanSafety
         if (IsCatalogInquiry(normalizedMessage) && !HasExplicitMutationVerb(normalizedMessage))
             return ReplaceInquiryMutationWithCatalogQuery(plan, context, orderChanges, commands);
 
-        if (IsCatalogFollowUp(context) && !HasExplicitRequestedQuantity(normalizedMessage))
-            return RemoveUnsupportedCatalogFollowUpMutations(plan, orderChanges, commands);
+        if (IsCatalogFollowUp(context) && !HasExplicitRequestedQuantity(normalizedMessage, context))
+        {
+            var withoutUnsupported = RemoveUnsupportedCatalogFollowUpMutations(
+                plan, orderChanges, commands);
+            return HasExplicitMutationVerb(normalizedMessage)
+                ? withoutUnsupported
+                : RemoveOrderChangesSignal(withoutUnsupported);
+        }
 
         return plan;
+    }
+
+    private static bool IsSingleOfferedProductReference(TurnPlanningContext context)
+    {
+        var memoryContext = new AgentConversationContext { Config = context.Config };
+        foreach (var fact in context.CurrentFacts)
+            memoryContext.Facts[fact.Key] = fact.Value;
+        return ProductSelectionMemory.FindCatalogMatches(memoryContext, context.LatestUserMessage).Count > 0;
+    }
+    private static TurnPlan RemoveCatalogFollowUpQuery(TurnPlan plan) =>
+        RemoveSignal(plan, CatalogQuerySignal);
+    private static TurnPlan RemoveOrderChangesSignal(TurnPlan plan) =>
+        RemoveSignal(plan, OrderChangesSignal);
+    private static TurnPlan RemoveSignal(TurnPlan plan, string signalType)
+    {
+        var signals = plan.Signals
+            .Where(signal => !signal.Type.Equals(signalType, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        return signals.Count == plan.Signals.Count ? plan : CopyWithSignals(plan, signals);
+    }
+    private static TurnPlan RemoveNoOpFactClears(TurnPlan plan, TurnPlanningContext context)
+    {
+        var facts = plan.Facts
+            .Where(fact => !fact.Operation.Equals(TurnPlanOperations.Clear, StringComparison.OrdinalIgnoreCase)
+                || context.CurrentFacts.ContainsKey(fact.Key))
+            .ToList();
+        if (facts.Count == plan.Facts.Count)
+            return plan;
+
+        return new TurnPlan
+        {
+            FlowIntent = plan.FlowIntent,
+            Facts = facts,
+            Signals = plan.Signals,
+            Decision = plan.Decision,
+            Response = plan.Response
+        };
     }
 
     private static TurnPlan RemoveUnsupportedCatalogFollowUpMutations(
@@ -358,11 +408,48 @@ public static partial class CommerceTurnPlanSafety
 
     private static bool StartsWithExplicitQuantity(string message) => QuantityPrefixRegex().IsMatch(message);
 
-    private static bool HasExplicitRequestedQuantity(string message) =>
+    private static bool HasExplicitRequestedQuantity(string message, TurnPlanningContext context) =>
         StartsWithExplicitQuantity(message)
         || MutationQuantityRegex().IsMatch(message)
-        || UnitQuantityRegex().IsMatch(message)
-        || TrailingQuantityRegex().IsMatch(message);
+        || CommerceConversationMatcher.ContainsPhrase(
+            message, context.Config.Commerce.Conversation.AdditionalRequestPhrases)
+        || (!IsOfferedProductReference(message, context.StructuredContext)
+            && (UnitQuantityRegex().IsMatch(message) || TrailingQuantityRegex().IsMatch(message)));
+
+    private static bool IsOfferedProductReference(
+        string message,
+        IReadOnlyDictionary<string, JsonElement>? structuredContext)
+    {
+        var reference = NormalizeReference(message);
+        if (reference.Length == 0
+            || !reference.Any(char.IsLetter)
+            || structuredContext is null
+            || !structuredContext.TryGetValue("shoppingContext", out var shoppingContext)
+            || shoppingContext.ValueKind != JsonValueKind.Object
+            || !shoppingContext.TryGetProperty("offers", out var offers)
+            || offers.ValueKind != JsonValueKind.Array)
+            return false;
+
+        foreach (var offer in offers.EnumerateArray())
+        {
+            if (offer.ValueKind != JsonValueKind.Object
+                || !offer.TryGetProperty("products", out var products)
+                || products.ValueKind != JsonValueKind.Array)
+                continue;
+
+            foreach (var product in products.EnumerateArray())
+            {
+                if (product.ValueKind != JsonValueKind.String)
+                    continue;
+                var productReference = NormalizeReference(product.GetString() ?? string.Empty);
+                if (productReference.Equals(reference, StringComparison.Ordinal)
+                    || $" {productReference} ".Contains($" {reference} ", StringComparison.Ordinal))
+                    return true;
+            }
+        }
+
+        return false;
+    }
 
     private static string NormalizeText(string value)
     {

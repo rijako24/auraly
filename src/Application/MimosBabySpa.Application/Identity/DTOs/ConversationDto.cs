@@ -3,6 +3,7 @@ namespace MimosBabySpa.Application.Identity.DTOs;
 public record ConversationDto(
     Guid ConversationId,
     Guid BusinessId,
+    Guid? AgentId,
     string UserNumber,
     string? LastMessage,
     DateTime Timestamp,

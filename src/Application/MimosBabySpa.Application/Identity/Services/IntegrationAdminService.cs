@@ -276,14 +276,19 @@ public class IntegrationAdminService : IIntegrationAdminService
             CommerceProvider.Mantis,
             CommerceCapability.CatalogAndOrders,
             ct);
+        if (connection is null)
+            return [];
+
         var numbers = (await _unitOfWork.BusinessWhatsAppNumbers.GetByBusinessIdAsync(businessId))
             .Where(number => number.IsActive)
             .OrderBy(number => number.PhoneNumber)
             .ToList();
-        var mappings = connection is null
-            ? []
-            : await _unitOfWork.IntegrationConnections.GetChannelWarehousesAsync(
-                businessId, connection.IntegrationConnectionId, ct);
+        var mappings = await _unitOfWork.IntegrationConnections.GetChannelWarehousesAsync(
+            businessId, connection.IntegrationConnectionId, ct);
+        var settings = ReadJson(connection.SettingsJson);
+        var legacyWarehouse = GetNullable(settings, "warehouse")
+            ?? GetNullable(ReadNested(connection.SettingsJson, "catalog"), "warehouse")
+            ?? GetNullable(ReadNested(connection.SettingsJson, "order"), "warehouse");
 
         return numbers.Select(number =>
         {
@@ -293,9 +298,9 @@ public class IntegrationAdminService : IIntegrationAdminService
                 number.BusinessWhatsAppNumberId,
                 number.PhoneNumber,
                 number.WhatsAppPhoneNumberId,
-                mapping?.WarehouseCode,
+                mapping?.WarehouseCode ?? legacyWarehouse,
                 mapping?.WarehouseName,
-                mapping?.IsActive == true);
+                mapping?.IsActive ?? !string.IsNullOrWhiteSpace(legacyWarehouse));
         }).ToList();
     }
 
@@ -368,10 +373,15 @@ public class IntegrationAdminService : IIntegrationAdminService
             c.Provider == (int)CommerceProvider.Siigo &&
             c.Capability == (int)CommerceCapability.CatalogAndOrders);
 
+        var mantis = connections.FirstOrDefault(c =>
+            c.ConnectionType == ConnectionType.Commerce &&
+            c.Provider == (int)CommerceProvider.Mantis &&
+            c.Capability == (int)CommerceCapability.CatalogAndOrders);
         return new IntegrationSettingsDto(
             MapGoogle(google),
             MapWompi(wompi),
-            MapSiigoCommerce(siigo));
+            MapSiigoCommerce(siigo),
+            new MantisIntegrationDto(mantis is not null, mantis?.IsEnabled ?? false, mantis?.LastError, mantis?.LastSyncAt));
     }
 
     private static GoogleCalendarIntegrationDto MapGoogle(IntegrationConnection? connection)

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, MessageSquare, Phone } from "lucide-react";
+import { ArrowLeft, MessageSquare, Phone, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -44,8 +44,14 @@ export default function ConversationsPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedAgentId, setSelectedAgentId] = useState<string>("");
   const { data: agentsData } = useAgents();
-  const { data: conversationsData, isLoading, isError, refetch } = useConversations();
-  const { data: selectedConversation } = useConversationWithMessages(selectedId);
+  const { data: conversationsData, isLoading, isError, isFetching, refetch } = useConversations({
+    agentId: selectedAgentId || undefined,
+  });
+  const {
+    data: selectedConversation,
+    isFetching: isFetchingSelectedConversation,
+    refetch: refetchSelectedConversation,
+  } = useConversationWithMessages(selectedId);
   const sendWebMessage = useSendWebConversationMessage();
   const updateOwner = useUpdateConversationOwner();
 
@@ -91,8 +97,27 @@ export default function ConversationsPage() {
     setSelectedId(conversationId);
   };
 
+  const handleAgentChange = (agentId: string) => {
+    setSelectedAgentId(agentId);
+    setSelectedId(null);
+    setSearchQuery("");
+  };
+
   const handleBackToList = () => {
     setSelectedId(null);
+  };
+
+  const handleRefresh = async () => {
+    try {
+      await Promise.all([
+        refetch({ throwOnError: true }),
+        selectedId
+          ? refetchSelectedConversation({ throwOnError: true })
+          : Promise.resolve(),
+      ]);
+    } catch {
+      toast.error("No se pudieron actualizar las conversaciones.");
+    }
   };
 
   const handleSendMessage = async (message: string) => {
@@ -144,9 +169,12 @@ export default function ConversationsPage() {
         )}
       >
         <ConversationList
-          agents={agents}
+          agents={agents.map((agent) => ({
+            ...agent,
+            name: agent.phoneNumber ? `${agent.name} - ${agent.phoneNumber}` : agent.name,
+          }))}
           selectedAgentId={selectedAgentId}
-          onAgentChange={setSelectedAgentId}
+          onAgentChange={handleAgentChange}
           conversations={conversations}
           selectedId={selectedId}
           onSelect={handleSelectConversation}
@@ -197,6 +225,18 @@ export default function ConversationsPage() {
               >
                 {stageLabel}
               </Badge>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 shrink-0"
+                onClick={() => void handleRefresh()}
+                disabled={isFetching || isFetchingSelectedConversation}
+                aria-label="Actualizar conversaciones"
+                title="Actualizar conversaciones"
+              >
+                <RefreshCw className={cn("h-4 w-4", (isFetching || isFetchingSelectedConversation) && "animate-spin")} />
+              </Button>
               <div className="flex flex-shrink-0 items-center gap-1.5 sm:gap-2">
                 <span className="hidden text-xs font-medium text-muted-foreground sm:inline">
                   {botEnabled ? "Bot activo" : "Humano"}
