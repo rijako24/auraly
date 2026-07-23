@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, MessageSquare, Phone, RefreshCw } from "lucide-react";
+import { ArrowLeft, MessageSquare, Phone } from "lucide-react";
 import { toast } from "sonner";
 
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -19,7 +19,7 @@ import {
   getConversationStageStyle,
 } from "@/types/enums";
 import { useMediaQuery } from "@/hooks/use-media-query";
-import { cn, getInitials } from "@/lib/utils";
+import { cn, getInitials, parseApiDate } from "@/lib/utils";
 import {
   useConversations,
   useConversationWithMessages,
@@ -59,8 +59,8 @@ export default function ConversationsPage() {
     const items = conversationsData?.items ?? [];
     return [...items].sort(
       (a, b) =>
-        new Date(b.lastActivityAt ?? b.timestamp).getTime() -
-        new Date(a.lastActivityAt ?? a.timestamp).getTime()
+        parseApiDate(b.lastActivityAt ?? b.timestamp).getTime() -
+        parseApiDate(a.lastActivityAt ?? a.timestamp).getTime()
     );
   }, [conversationsData]);
 
@@ -169,10 +169,7 @@ export default function ConversationsPage() {
         )}
       >
         <ConversationList
-          agents={agents.map((agent) => ({
-            ...agent,
-            name: agent.phoneNumber ? `${agent.name} - ${agent.phoneNumber}` : agent.name,
-          }))}
+          agents={agents}
           selectedAgentId={selectedAgentId}
           onAgentChange={handleAgentChange}
           conversations={conversations}
@@ -181,6 +178,8 @@ export default function ConversationsPage() {
           searchQuery={searchQuery}
           onSearchChange={setSearchQuery}
           unreadCounts={{}}
+          onRefresh={handleRefresh}
+          isRefreshing={isFetching || isFetchingSelectedConversation}
         />
       </div>
 
@@ -225,18 +224,6 @@ export default function ConversationsPage() {
               >
                 {stageLabel}
               </Badge>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="h-8 w-8 shrink-0"
-                onClick={() => void handleRefresh()}
-                disabled={isFetching || isFetchingSelectedConversation}
-                aria-label="Actualizar conversaciones"
-                title="Actualizar conversaciones"
-              >
-                <RefreshCw className={cn("h-4 w-4", (isFetching || isFetchingSelectedConversation) && "animate-spin")} />
-              </Button>
               <div className="flex flex-shrink-0 items-center gap-1.5 sm:gap-2">
                 <span className="hidden text-xs font-medium text-muted-foreground sm:inline">
                   {botEnabled ? "Bot activo" : "Humano"}

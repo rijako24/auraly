@@ -17,12 +17,21 @@ export function formatCurrencyFromCents(amountInCents: number, currency = "COP")
   return formatCurrency(amountInCents / 100, currency);
 }
 
+/** Parses UTC API timestamps and lets the browser display them in local time. */
+export function parseApiDate(date: string | Date): Date {
+  if (date instanceof Date) return date;
+
+  const value = date.trim();
+  const hasTimeZone = /(?:z|[+-]\d{2}:?\d{2})$/i.test(value);
+  return new Date(hasTimeZone ? value : value + "Z");
+}
+
 export function formatDate(date: string | Date): string {
   return new Intl.DateTimeFormat("es-CO", {
     year: "numeric",
     month: "short",
     day: "numeric",
-  }).format(new Date(date));
+  }).format(parseApiDate(date));
 }
 
 export function formatDateTime(date: string | Date): string {
@@ -32,13 +41,13 @@ export function formatDateTime(date: string | Date): string {
     day: "numeric",
     hour: "2-digit",
     minute: "2-digit",
-  }).format(new Date(date));
+  }).format(parseApiDate(date));
 }
 
 export function formatRelativeTime(date: string | Date | null | undefined): string {
   if (!date) return "—";
   const now = new Date();
-  const d = new Date(date);
+  const d = parseApiDate(date);
   const diff = now.getTime() - d.getTime();
   const minutes = Math.floor(diff / 60000);
   const hours = Math.floor(diff / 3600000);
