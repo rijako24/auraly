@@ -18,4 +18,11 @@ public interface IProductAdminService
         Guid productId,
         UpdateProductStatusRequest request,
         CancellationToken ct = default);
+
+    Task<ProductDto> UpdateAsync(
+        Guid tenantId,
+        Guid businessId,
+        Guid productId,
+        UpdateProductRequest request,
+        CancellationToken ct = default);
 }

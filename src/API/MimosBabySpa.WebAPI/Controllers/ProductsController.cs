@@ -44,4 +44,18 @@ public class ProductsController : ControllerBase
             productId,
             request,
             ct));
+
+    [HttpPut("{productId:guid}")]
+    [PermissionAuthorize("products.update")]
+    public async Task<ActionResult<ProductDto>> Update(
+        Guid businessId,
+        Guid productId,
+        [FromBody] UpdateProductRequest request,
+        CancellationToken ct) =>
+        Ok(await _service.UpdateAsync(
+            User.GetTenantId(),
+            businessId,
+            productId,
+            request,
+            ct));
 }

@@ -15,7 +15,16 @@ export interface Product {
   isActive: boolean;
 }
 
+export interface UpdateProductRequest {
+  name: string;
+  description: string | null;
+  categoryName: string | null;
+  unitPrice: number;
+  currency: string;
+}
+
 export const productsApi = {
   list: (businessId: string, params?: Partial<PagedRequest> & { includeInactive?: boolean }) => apiClient.get<PagedResponse<Product>>(`/businesses/${businessId}/products`, withPagedDefaults(params)),
+  update: (businessId: string, productId: string, request: UpdateProductRequest) => apiClient.put<Product>(`/businesses/${businessId}/products/${productId}`, request),
   updateStatus: (businessId: string, productId: string, isActive: boolean) => apiClient.patch<Product>(`/businesses/${businessId}/products/${productId}/status`, { isActive }),
 };

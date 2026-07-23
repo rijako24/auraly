@@ -22,3 +22,9 @@ public record ProductDto(
     DateTime? LastSyncedAt);
 
 public record UpdateProductStatusRequest(bool IsActive);
+public record UpdateProductRequest(
+    string Name,
+    string? Description,
+    string? CategoryName,
+    decimal UnitPrice,
+    string Currency);

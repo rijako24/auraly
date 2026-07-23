@@ -72,6 +72,61 @@ public sealed class ProductAdminService : IProductAdminService
         return updated;
     }
 
+    public async Task<ProductDto> UpdateAsync(
+        Guid tenantId,
+        Guid businessId,
+        Guid productId,
+        UpdateProductRequest request,
+        CancellationToken ct = default)
+    {
+        await EnsureBusinessBelongsToTenantAsync(tenantId, businessId, ct);
+        var product = await _unitOfWork.Products.GetByIdAsync(businessId, productId, ct)
+            ?? throw new NotFoundException(nameof(Product), productId);
+
+        var name = request.Name?.Trim() ?? string.Empty;
+        var currency = request.Currency?.Trim().ToUpperInvariant() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(name))
+            throw new DomainValidationException("Name", "El nombre del producto es obligatorio.");
+        if (name.Length > 200)
+            throw new DomainValidationException("Name", "El nombre no puede superar 200 caracteres.");
+        if (request.UnitPrice < 0)
+            throw new DomainValidationException("UnitPrice", "El precio no puede ser negativo.");
+        if (currency.Length != 3 || !currency.All(char.IsLetter))
+            throw new DomainValidationException("Currency", "La moneda debe ser un codigo de tres letras.");
+
+        var description = NormalizeOptional(request.Description);
+        var categoryName = NormalizeOptional(request.CategoryName);
+        if (description?.Length > 2000)
+            throw new DomainValidationException("Description", "La descripcion no puede superar 2000 caracteres.");
+        if (categoryName?.Length > 150)
+            throw new DomainValidationException("CategoryName", "La categoria no puede superar 150 caracteres.");
+
+        var oldState = MapToDto(product);
+        product.Name = name;
+        product.Description = description;
+        product.CategoryName = categoryName;
+        product.UnitPrice = request.UnitPrice;
+        product.Currency = currency;
+        product.UpdatedAt = DateTime.UtcNow;
+
+        await _unitOfWork.Products.UpdateAsync(product, ct);
+        await _unitOfWork.SaveChangesAsync(ct);
+
+        var updated = MapToDto(product);
+        await _auditService.LogAsync(
+            "Update",
+            "Product",
+            product.ProductId.ToString(),
+            oldState,
+            updated,
+            ct);
+
+        return updated;
+    }
+
+    private static string? NormalizeOptional(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
     private async Task EnsureBusinessBelongsToTenantAsync(Guid tenantId, Guid businessId, CancellationToken ct)
     {
         var business = await _unitOfWork.Businesses.GetByIdAsync(businessId)
