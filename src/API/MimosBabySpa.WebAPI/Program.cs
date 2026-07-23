@@ -417,6 +417,8 @@ builder.Services.AddScoped<IWorkingHoursAdminService, WorkingHoursAdminService>(
 builder.Services.AddScoped<IAgentRepository, AgentRepository>();
 
 builder.Services.AddScoped<IAgentAdminService, AgentAdminService>();
+builder.Services.AddHttpClient<MimosBabySpa.Application.Identity.Interfaces.IWhatsAppChannelAdminService,
+    MimosBabySpa.Infrastructure.Services.WhatsAppChannelAdminService>();
 
 builder.Services.AddScoped<ICatalogImportAdminService, CatalogImportAdminService>();
 
