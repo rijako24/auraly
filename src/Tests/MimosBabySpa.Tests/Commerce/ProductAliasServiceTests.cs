@@ -1,6 +1,7 @@
 using FluentAssertions;
 using MimosBabySpa.Application.Agents;
 using MimosBabySpa.Application.Commerce;
+using MimosBabySpa.Application.Common.Exceptions;
 using MimosBabySpa.Domain.Entities;
 using MimosBabySpa.Domain.Enums;
 using MimosBabySpa.Domain.Repositories;
@@ -138,6 +139,117 @@ public sealed class ProductAliasServiceTests
         fixture.UnitOfWork.Verify(unit => unit.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Exactly(2));
     }
 
+    [Fact]
+    public async Task Review_ApproveSuggestOnly_ActivatesLearnedAliasWithoutConflictLookup()
+    {
+        var businessId = Guid.NewGuid();
+        var target = Product(businessId, "JAMON CUNIT X 500GR", "CF17");
+        var fixture = Fixture(businessId, target);
+        var learned = LearnedAlias(businessId, target.ProductId, ProductAliasScope.Business);
+        fixture.Aliases.Setup(repository => repository.GetByIdAsync(
+                businessId, target.ProductId, learned.ProductAliasId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(learned);
+
+        var result = await fixture.Service.ReviewAsync(
+            businessId,
+            target.ProductId,
+            learned.ProductAliasId,
+            new ReviewProductAliasRequest(ProductAliasReviewAction.Approve));
+
+        result.Status.Should().Be(ProductAliasStatus.Active);
+        result.ResolutionMode.Should().Be(ProductAliasResolutionMode.SuggestOnly);
+        fixture.Aliases.Verify(repository => repository.FindConflictsAsync(
+            It.IsAny<Guid>(), It.IsAny<ProductAliasScope>(), It.IsAny<string>(),
+            It.IsAny<string>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Review_AutoResolveWithActiveConflict_IsRejectedWithoutWriting()
+    {
+        var businessId = Guid.NewGuid();
+        var target = Product(businessId, "JAMON CUNIT X 500GR", "CF17");
+        var other = Product(businessId, "MORTADELA X 500GR", "CF18");
+        var fixture = Fixture(businessId, target);
+        var learned = LearnedAlias(businessId, target.ProductId, ProductAliasScope.Business);
+        fixture.Aliases.Setup(repository => repository.GetByIdAsync(
+                businessId, target.ProductId, learned.ProductAliasId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(learned);
+        fixture.Aliases.Setup(repository => repository.FindConflictsAsync(
+                businessId, ProductAliasScope.Business, string.Empty,
+                learned.NormalizedAlias, target.ProductId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([new ProductAlias
+            {
+                ProductAliasId = Guid.NewGuid(), BusinessId = businessId, ProductId = other.ProductId,
+                Scope = ProductAliasScope.Business, Alias = learned.Alias,
+                NormalizedAlias = learned.NormalizedAlias, Status = ProductAliasStatus.Active
+            }]);
+
+        var action = () => fixture.Service.ReviewAsync(
+            businessId,
+            target.ProductId,
+            learned.ProductAliasId,
+            new ReviewProductAliasRequest(
+                ProductAliasReviewAction.Approve,
+                ProductAliasResolutionMode.AutoResolve));
+
+        await action.Should().ThrowAsync<DomainValidationException>();
+        fixture.Aliases.Verify(repository => repository.UpdateAsync(
+            It.IsAny<ProductAlias>(), It.IsAny<CancellationToken>()), Times.Never);
+        fixture.UnitOfWork.Verify(unit => unit.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Promote_CustomerLearning_CreatesActiveGlobalLearnedAlias()
+    {
+        var businessId = Guid.NewGuid();
+        var target = Product(businessId, "JAMON CUNIT X 500GR", "CF17");
+        var fixture = Fixture(businessId, target);
+        var learned = LearnedAlias(businessId, target.ProductId, ProductAliasScope.Customer);
+        learned.CustomerKey = "573001234567";
+        learned.UsageCount = 3;
+        fixture.Aliases.Setup(repository => repository.GetByIdAsync(
+                businessId, target.ProductId, learned.ProductAliasId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(learned);
+        ProductAlias? created = null;
+        fixture.Aliases.Setup(repository => repository.CreateAsync(
+                It.IsAny<ProductAlias>(), It.IsAny<CancellationToken>()))
+            .Callback<ProductAlias, CancellationToken>((alias, _) => created = alias)
+            .ReturnsAsync((ProductAlias alias, CancellationToken _) => alias);
+
+        var result = await fixture.Service.PromoteAsync(
+            businessId,
+            target.ProductId,
+            learned.ProductAliasId,
+            new PromoteProductAliasRequest());
+
+        result.Scope.Should().Be(ProductAliasScope.Business);
+        result.Source.Should().Be(ProductAliasSource.Learned);
+        result.Status.Should().Be(ProductAliasStatus.Active);
+        created.Should().NotBeNull();
+        created!.CustomerKey.Should().BeEmpty();
+        created.UsageCount.Should().Be(3);
+    }
+
+    private static ProductAlias LearnedAlias(
+        Guid businessId,
+        Guid productId,
+        ProductAliasScope scope) => new()
+    {
+        ProductAliasId = Guid.NewGuid(),
+        BusinessId = businessId,
+        ProductId = productId,
+        Scope = scope,
+        CustomerKey = string.Empty,
+        Alias = "jamonada cunichef",
+        NormalizedAlias = "jamonada cunichef",
+        Kind = ProductAliasKind.Alias,
+        ResolutionMode = ProductAliasResolutionMode.SuggestOnly,
+        Source = ProductAliasSource.Learned,
+        Status = ProductAliasStatus.Pending,
+        UsageCount = 1,
+        CreatedAt = DateTime.UtcNow
+    };
+
     private static AliasFixture Fixture(
         Guid businessId, Product target, IReadOnlyList<Product>? nativeCandidates = null)
     {
@@ -176,6 +288,9 @@ public sealed class ProductAliasServiceTests
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((ProductAlias?)null);
         aliases.Setup(repository => repository.CreateAsync(
+                It.IsAny<ProductAlias>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ProductAlias alias, CancellationToken _) => alias);
+        aliases.Setup(repository => repository.UpdateAsync(
                 It.IsAny<ProductAlias>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((ProductAlias alias, CancellationToken _) => alias);
         return new(new ProductAliasService(unit.Object), unit, aliases);

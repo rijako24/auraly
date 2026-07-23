@@ -58,4 +58,16 @@ public class ProductsController : ControllerBase
             productId,
             request,
             ct));
+
+    [HttpGet("{productId:guid}/search-terms")]
+    [PermissionAuthorize("products.read")]
+    public async Task<ActionResult<IReadOnlyList<string>>> GetSearchTerms(
+        Guid businessId,
+        Guid productId,
+        CancellationToken ct) =>
+        Ok(await _service.GetSearchTermsAsync(
+            User.GetTenantId(),
+            businessId,
+            productId,
+            ct));
 }

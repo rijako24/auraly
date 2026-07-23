@@ -27,6 +27,14 @@ public sealed class ProductAliasRepository : IProductAliasRepository
             .ThenByDescending(alias => alias.UsageCount)
             .ToListAsync(ct);
 
+    public Task<ProductAlias?> GetByIdAsync(
+        Guid businessId, Guid productId, Guid productAliasId, CancellationToken ct = default) =>
+        _context.ProductAliases.FirstOrDefaultAsync(alias =>
+            alias.BusinessId == businessId
+            && alias.ProductId == productId
+            && alias.ProductAliasId == productAliasId,
+            ct);
+
     public async Task<IReadOnlyList<ProductAlias>> GetByProductAsync(Guid businessId, Guid productId, CancellationToken ct = default) =>
         await _context.ProductAliases.AsNoTracking()
             .Where(alias => alias.BusinessId == businessId && alias.ProductId == productId)

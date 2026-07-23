@@ -18,6 +18,17 @@ public sealed partial class ProductRepository
         await _context.Products.AsNoTracking()
             .Where(product => product.BusinessId == businessId).ToListAsync(ct);
 
+    public async Task<IReadOnlyList<string>> GetSearchTermsAsync(
+        Guid businessId,
+        Guid productId,
+        CancellationToken ct = default) =>
+        await _context.ProductSearchTerms
+            .AsNoTracking()
+            .Where(term => term.BusinessId == businessId && term.ProductId == productId)
+            .OrderBy(term => term.Term)
+            .Select(term => term.Term)
+            .ToListAsync(ct);
+
     public async Task ReplaceSearchTermsAsync(Product product, CancellationToken ct = default)
     {
         var existing = await _context.ProductSearchTerms

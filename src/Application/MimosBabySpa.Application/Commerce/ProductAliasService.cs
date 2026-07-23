@@ -1,4 +1,5 @@
 using MimosBabySpa.Application.Agents;
+using MimosBabySpa.Application.Common.Exceptions;
 using MimosBabySpa.Domain.Catalog;
 using MimosBabySpa.Domain.Entities;
 using MimosBabySpa.Domain.Enums;
@@ -44,10 +45,21 @@ public sealed record ProductAliasImportResult(
     bool DryRun,
     IReadOnlyList<ProductAliasImportError> Errors);
 
+public enum ProductAliasReviewAction { Approve = 0, Reject = 1 }
+
+public sealed record ReviewProductAliasRequest(
+    ProductAliasReviewAction Action,
+    ProductAliasResolutionMode ResolutionMode = ProductAliasResolutionMode.SuggestOnly);
+
+public sealed record PromoteProductAliasRequest(
+    ProductAliasResolutionMode ResolutionMode = ProductAliasResolutionMode.SuggestOnly);
+
 public interface IProductAliasService
 {
     Task<IReadOnlyList<ProductAliasDto>> GetByProductAsync(Guid businessId, Guid productId, CancellationToken ct = default);
     Task<ProductAliasImportResult> ImportAsync(Guid businessId, ProductAliasImportRequest request, CancellationToken ct = default);
+    Task<ProductAliasDto> ReviewAsync(Guid businessId, Guid productId, Guid productAliasId, ReviewProductAliasRequest request, CancellationToken ct = default);
+    Task<ProductAliasDto> PromoteAsync(Guid businessId, Guid productId, Guid productAliasId, PromoteProductAliasRequest request, CancellationToken ct = default);
     Task LearnConfirmedAsync(AgentConversationContext context, string customerExpression, ProductReference product, CancellationToken ct = default);
 }
 
@@ -62,7 +74,7 @@ public sealed class ProductAliasService : IProductAliasService
         Guid businessId, Guid productId, CancellationToken ct = default)
     {
         var product = await _unitOfWork.Products.GetByIdAsync(businessId, productId, ct)
-            ?? throw new InvalidOperationException("Product not found.");
+            ?? throw new NotFoundException(nameof(Product), productId);
         var aliases = await _unitOfWork.ProductAliases.GetByProductAsync(businessId, productId, ct);
         return aliases.Select(alias => ToDto(alias, product.Name)).ToList();
     }
@@ -216,6 +228,100 @@ public sealed class ProductAliasService : IProductAliasService
         return new(created, updated, skipped, request.DryRun, errors);
     }
 
+    public async Task<ProductAliasDto> ReviewAsync(
+        Guid businessId,
+        Guid productId,
+        Guid productAliasId,
+        ReviewProductAliasRequest request,
+        CancellationToken ct = default)
+    {
+        ValidateReviewRequest(request);
+        var product = await _unitOfWork.Products.GetByIdAsync(businessId, productId, ct)
+            ?? throw new NotFoundException(nameof(Product), productId);
+        var alias = await GetLearnedAliasAsync(businessId, productId, productAliasId, ct);
+
+        if (request.Action == ProductAliasReviewAction.Reject)
+        {
+            alias.Status = ProductAliasStatus.Rejected;
+            alias.ResolutionMode = ProductAliasResolutionMode.SuggestOnly;
+        }
+        else
+        {
+            await EnsureResolutionIsSafeAsync(alias, request.ResolutionMode, ct);
+            alias.Status = ProductAliasStatus.Active;
+            alias.ResolutionMode = request.ResolutionMode;
+        }
+
+        alias.UpdatedAt = DateTime.UtcNow;
+        await _unitOfWork.ProductAliases.UpdateAsync(alias, ct);
+        await _unitOfWork.SaveChangesAsync(ct);
+        return ToDto(alias, product.Name);
+    }
+
+    public async Task<ProductAliasDto> PromoteAsync(
+        Guid businessId,
+        Guid productId,
+        Guid productAliasId,
+        PromoteProductAliasRequest request,
+        CancellationToken ct = default)
+    {
+        ValidateResolutionMode(request.ResolutionMode);
+        var product = await _unitOfWork.Products.GetByIdAsync(businessId, productId, ct)
+            ?? throw new NotFoundException(nameof(Product), productId);
+        var customerAlias = await GetLearnedAliasAsync(businessId, productId, productAliasId, ct);
+        if (customerAlias.Scope != ProductAliasScope.Customer)
+            throw new DomainValidationException("Scope", "Solo el aprendizaje por cliente se puede promover.");
+
+        var globalAlias = await _unitOfWork.ProductAliases.GetMappingAsync(
+            businessId,
+            productId,
+            ProductAliasScope.Business,
+            string.Empty,
+            customerAlias.NormalizedAlias,
+            ct);
+        if (globalAlias is null)
+        {
+            globalAlias = new ProductAlias
+            {
+                ProductAliasId = Guid.NewGuid(),
+                BusinessId = businessId,
+                ProductId = productId,
+                Scope = ProductAliasScope.Business,
+                CustomerKey = string.Empty,
+                Alias = customerAlias.Alias,
+                NormalizedAlias = customerAlias.NormalizedAlias,
+                Kind = customerAlias.Kind,
+                ResolutionMode = request.ResolutionMode,
+                Source = ProductAliasSource.Learned,
+                Status = ProductAliasStatus.Active,
+                UsageCount = customerAlias.UsageCount,
+                LastConfirmedAt = customerAlias.LastConfirmedAt,
+                CreatedAt = DateTime.UtcNow
+            };
+            await EnsureResolutionIsSafeAsync(globalAlias, request.ResolutionMode, ct);
+            await _unitOfWork.ProductAliases.CreateAsync(globalAlias, ct);
+        }
+        else
+        {
+            if (globalAlias.Source != ProductAliasSource.Learned)
+                return ToDto(globalAlias, product.Name);
+
+            await EnsureResolutionIsSafeAsync(globalAlias, request.ResolutionMode, ct);
+            globalAlias.Alias = customerAlias.Alias;
+            globalAlias.Kind = customerAlias.Kind;
+            globalAlias.Source = ProductAliasSource.Learned;
+            globalAlias.Status = ProductAliasStatus.Active;
+            globalAlias.ResolutionMode = request.ResolutionMode;
+            globalAlias.UsageCount = Math.Max(globalAlias.UsageCount, customerAlias.UsageCount);
+            globalAlias.LastConfirmedAt = MaxDate(globalAlias.LastConfirmedAt, customerAlias.LastConfirmedAt);
+            globalAlias.UpdatedAt = DateTime.UtcNow;
+            await _unitOfWork.ProductAliases.UpdateAsync(globalAlias, ct);
+        }
+
+        await _unitOfWork.SaveChangesAsync(ct);
+        return ToDto(globalAlias, product.Name);
+    }
+
     public async Task LearnConfirmedAsync(
         AgentConversationContext context,
         string customerExpression,
@@ -259,6 +365,57 @@ public sealed class ProductAliasService : IProductAliasService
             ProductAliasResolutionMode.SuggestOnly, ct);
         await _unitOfWork.SaveChangesAsync(ct);
     }
+
+    private static void ValidateReviewRequest(ReviewProductAliasRequest request)
+    {
+        if (!Enum.IsDefined(request.Action))
+            throw new DomainValidationException("Action", "La accion de revision no es valida.");
+        ValidateResolutionMode(request.ResolutionMode);
+    }
+
+    private static void ValidateResolutionMode(ProductAliasResolutionMode resolutionMode)
+    {
+        if (!Enum.IsDefined(resolutionMode))
+            throw new DomainValidationException("ResolutionMode", "El modo de resolucion no es valido.");
+    }
+
+    private async Task<ProductAlias> GetLearnedAliasAsync(
+        Guid businessId,
+        Guid productId,
+        Guid productAliasId,
+        CancellationToken ct)
+    {
+        var alias = await _unitOfWork.ProductAliases.GetByIdAsync(
+            businessId, productId, productAliasId, ct)
+            ?? throw new NotFoundException(nameof(ProductAlias), productAliasId);
+        if (alias.Source != ProductAliasSource.Learned)
+            throw new DomainValidationException("Source", "Solo los alias aprendidos se pueden revisar o promover.");
+        return alias;
+    }
+
+    private async Task EnsureResolutionIsSafeAsync(
+        ProductAlias alias,
+        ProductAliasResolutionMode resolutionMode,
+        CancellationToken ct)
+    {
+        if (resolutionMode != ProductAliasResolutionMode.AutoResolve)
+            return;
+
+        var conflicts = await _unitOfWork.ProductAliases.FindConflictsAsync(
+            alias.BusinessId,
+            alias.Scope,
+            alias.CustomerKey,
+            alias.NormalizedAlias,
+            alias.ProductId,
+            ct);
+        if (conflicts.Any(conflict => conflict.Status == ProductAliasStatus.Active))
+            throw new DomainValidationException("ResolutionMode", "El alias no puede resolver automaticamente a varios productos activos en el mismo alcance.");
+        if (await HasNativeIdentityConflictAsync(alias.BusinessId, alias.NormalizedAlias, alias.ProductId, ct))
+            throw new DomainValidationException("ResolutionMode", "El alias no puede coincidir con la identidad nativa de otro producto.");
+    }
+
+    private static DateTime? MaxDate(DateTime? left, DateTime? right) =>
+        left is null ? right : right is null ? left : left >= right ? left : right;
 
     private async Task UpsertLearnedAsync(
         Guid businessId, Guid productId, ProductAliasScope scope, string customerKey,

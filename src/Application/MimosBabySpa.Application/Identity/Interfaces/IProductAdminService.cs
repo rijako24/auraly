@@ -25,4 +25,10 @@ public interface IProductAdminService
         Guid productId,
         UpdateProductRequest request,
         CancellationToken ct = default);
+
+    Task<IReadOnlyList<string>> GetSearchTermsAsync(
+        Guid tenantId,
+        Guid businessId,
+        Guid productId,
+        CancellationToken ct = default);
 }

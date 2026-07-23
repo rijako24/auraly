@@ -101,7 +101,18 @@ public sealed class ProductAdminService : IProductAdminService
         if (categoryName?.Length > 150)
             throw new DomainValidationException("CategoryName", "La categoria no puede superar 150 caracteres.");
 
+        var searchIndexChanged =
+            !string.Equals(product.Name, name, StringComparison.Ordinal)
+            || !string.Equals(product.Description, description, StringComparison.Ordinal)
+            || !string.Equals(product.CategoryName, categoryName, StringComparison.Ordinal);
+        var productChanged = searchIndexChanged
+            || product.UnitPrice != request.UnitPrice
+            || !string.Equals(product.Currency, currency, StringComparison.Ordinal);
+
         var oldState = MapToDto(product);
+        if (!productChanged)
+            return oldState;
+
         product.Name = name;
         product.Description = description;
         product.CategoryName = categoryName;
@@ -110,6 +121,8 @@ public sealed class ProductAdminService : IProductAdminService
         product.UpdatedAt = DateTime.UtcNow;
 
         await _unitOfWork.Products.UpdateAsync(product, ct);
+        if (searchIndexChanged)
+            await _unitOfWork.Products.ReplaceSearchTermsAsync(product, ct);
         await _unitOfWork.SaveChangesAsync(ct);
 
         var updated = MapToDto(product);
@@ -122,6 +135,18 @@ public sealed class ProductAdminService : IProductAdminService
             ct);
 
         return updated;
+    }
+
+    public async Task<IReadOnlyList<string>> GetSearchTermsAsync(
+        Guid tenantId,
+        Guid businessId,
+        Guid productId,
+        CancellationToken ct = default)
+    {
+        await EnsureBusinessBelongsToTenantAsync(tenantId, businessId, ct);
+        _ = await _unitOfWork.Products.GetByIdAsync(businessId, productId, ct)
+            ?? throw new NotFoundException(nameof(Product), productId);
+        return await _unitOfWork.Products.GetSearchTermsAsync(businessId, productId, ct);
     }
 
     private static string? NormalizeOptional(string? value) =>

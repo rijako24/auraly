@@ -63,6 +63,7 @@ export interface DataTableProps<TData, TValue> {
   listRenderer?: (item: TData) => React.ReactNode;
   onExport?: () => void;
   enableRowSelection?: boolean;
+  onRowClick?: (item: TData) => void;
   className?: string;
 }
 
@@ -86,6 +87,7 @@ export function DataTable<TData, TValue>({
   listRenderer,
   onExport,
   enableRowSelection = true,
+  onRowClick,
   className,
 }: DataTableProps<TData, TValue>) {
   const [sorting, setSorting] = React.useState<SortingState>([]);
@@ -330,6 +332,16 @@ export function DataTable<TData, TValue>({
                     <TableRow
                       key={row.id}
                       data-state={row.getIsSelected() && "selected"}
+                      className={cn(onRowClick && "cursor-pointer")}
+                      tabIndex={onRowClick ? 0 : undefined}
+                      onClick={() => onRowClick?.(row.original)}
+                      onKeyDown={(event) => {
+                        if (event.target !== event.currentTarget) return;
+                        if (onRowClick && (event.key === "Enter" || event.key === " ")) {
+                          event.preventDefault();
+                          onRowClick(row.original);
+                        }
+                      }}
                     >
                       {row.getVisibleCells().map((cell) => (
                         <TableCell key={cell.id} className="px-4 py-3">
