@@ -24,8 +24,8 @@ interface ConversationListProps {
 
 function AgentLabel({ agent }: { agent: Agent }) {
   return (
-    <span className="flex min-w-0 items-center gap-2">
-      <span className="truncate">{agent.name}</span>
+    <span className="flex w-full min-w-0 items-center gap-2">
+      <span className="min-w-0 flex-1 truncate">{agent.name}</span>
       {agent.phoneNumber && (
         <span className="shrink-0 rounded-full border border-primary/35 bg-primary/5 px-2 py-0.5 text-xs font-medium text-primary">
           {agent.phoneNumber}
@@ -79,7 +79,7 @@ export function ConversationList({
           </Button>
         </div>
         <Select value={selectedAgentId} onValueChange={onAgentChange}>
-          <SelectTrigger className="mb-3 h-10 w-full bg-background/90 text-sm">
+          <SelectTrigger className="mb-3 h-10 w-full bg-background/90 text-sm [&>span]:flex [&>span]:min-w-0 [&>span]:flex-1 [&>span]:items-center">
             <SelectValue placeholder="Selecciona un agente">
               {selectedAgent && <AgentLabel agent={selectedAgent} />}
             </SelectValue>
