@@ -4,6 +4,7 @@ using MimosBabySpa.Application.Common.Interfaces;
 using MimosBabySpa.Application.Identity.DTOs;
 using MimosBabySpa.Application.Identity.Interfaces;
 using MimosBabySpa.Domain.Entities;
+using MimosBabySpa.Domain.Catalog;
 using MimosBabySpa.Domain.Repositories;
 
 namespace MimosBabySpa.Application.Identity.Services;
@@ -144,9 +145,13 @@ public sealed class ProductAdminService : IProductAdminService
         CancellationToken ct = default)
     {
         await EnsureBusinessBelongsToTenantAsync(tenantId, businessId, ct);
-        _ = await _unitOfWork.Products.GetByIdAsync(businessId, productId, ct)
+        var product = await _unitOfWork.Products.GetByIdAsync(businessId, productId, ct)
             ?? throw new NotFoundException(nameof(Product), productId);
-        return await _unitOfWork.Products.GetSearchTermsAsync(businessId, productId, ct);
+        return ProductSearchText.GetVisibleProductTerms(
+            product.Name,
+            product.Sku,
+            product.ExternalProductId,
+            product.CategoryName);
     }
 
     private static string? NormalizeOptional(string? value) =>

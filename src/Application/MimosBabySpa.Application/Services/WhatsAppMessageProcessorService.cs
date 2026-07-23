@@ -16,6 +16,7 @@ public class WhatsAppMessageProcessorService : IWhatsAppMessageProcessorService
     private readonly IWhatsAppService _whatsAppService;
     private readonly IAgentConversationService _agentService;
     private readonly IAgentRepository _agentRepository;
+    private readonly IAgentConfigProvider? _agentConfigProvider;
     private readonly IBlobStorageService _blobStorageService;
     private readonly IOutboundMessageDispatcher _outboundDispatcher;
     private readonly IBusinessInboundContactRouter _businessInboundContactRouter;
@@ -34,7 +35,8 @@ public class WhatsAppMessageProcessorService : IWhatsAppMessageProcessorService
         IOutboundMessageDispatcher outboundDispatcher,
         IBusinessInboundContactRouter businessInboundContactRouter,
         IConversationFollowUpService conversationFollowUps,
-        ILogger<WhatsAppMessageProcessorService> logger)
+        ILogger<WhatsAppMessageProcessorService> logger,
+        IAgentConfigProvider? agentConfigProvider = null)
     {
         _conversationService = conversationService;
         _stateManager = stateManager;
@@ -43,6 +45,7 @@ public class WhatsAppMessageProcessorService : IWhatsAppMessageProcessorService
         _whatsAppService = whatsAppService;
         _agentService = agentService;
         _agentRepository = agentRepository;
+        _agentConfigProvider = agentConfigProvider;
         _blobStorageService = blobStorageService;
         _outboundDispatcher = outboundDispatcher;
         _businessInboundContactRouter = businessInboundContactRouter;
@@ -150,7 +153,10 @@ public class WhatsAppMessageProcessorService : IWhatsAppMessageProcessorService
 
         // 4. Actualizar lead y enviar al canal
         if (lead is not null)
+        {
+            await UpdateLeadQualificationAsync(lead, agentId.Value, result);
             await UpdateLeadStatusAsync(lead, result.RequestCompleted);
+        }
 
         if (!string.IsNullOrWhiteSpace(result.Response))
             await SendResponseAsync(userNumber, result.Response, conversation);
@@ -218,6 +224,39 @@ public class WhatsAppMessageProcessorService : IWhatsAppMessageProcessorService
         return $"plan-{normalized}.jpg";
     }
 
+    private async Task UpdateLeadQualificationAsync(Lead lead, Guid agentId, AgentTurnResult result)
+    {
+        try
+        {
+            if (_agentConfigProvider is null)
+                return;
+
+            var config = await _agentConfigProvider.GetConfigAsync(agentId);
+            var snapshot = LeadQualificationResolver.Resolve(
+                config,
+                result.CurrentFlowId,
+                result.CurrentStageId,
+                result.RequestCompleted);
+            if (snapshot is null)
+                return;
+
+            await _leadService.UpdateQualificationAsync(
+                lead.LeadId,
+                new LeadQualificationUpdate(
+                    snapshot.Band,
+                    snapshot.Priority,
+                    snapshot.Label,
+                    snapshot.FlowId,
+                    snapshot.StageId,
+                    snapshot.Converted));
+        }
+        catch (Exception exception)
+        {
+            _logger.LogWarning(exception,
+                "Lead qualification projection failed for lead {LeadId}; the customer turn remains successful.",
+                lead.LeadId);
+        }
+    }
     private async Task UpdateLeadStatusAsync(Lead lead, bool requestCompleted)
     {
         var newStatus = requestCompleted ? "Closed" : "Contacted";

@@ -8,6 +8,8 @@ public sealed class AgentTurnResult
     public bool EscalatedToHuman { get; init; }
     public bool RequestCompleted { get; init; }
     public bool AwaitsCustomerReply { get; init; }
+    public string? CurrentFlowId { get; init; }
+    public string? CurrentStageId { get; init; }
     public int TotalTokens { get; init; }
     public int OperationCount { get; init; }
     public IReadOnlyList<OutboundMessage> OutboundMessages { get; init; } = [];
@@ -18,6 +20,8 @@ public sealed class AgentTurnResult
         bool escalated = false,
         bool requestCompleted = false,
         bool awaitsCustomerReply = false,
+        string? currentFlowId = null,
+        string? currentStageId = null,
         int tokens = 0,
         int operationCount = 0,
         IReadOnlyList<OutboundMessage>? outboundMessages = null,
@@ -29,6 +33,8 @@ public sealed class AgentTurnResult
             EscalatedToHuman = escalated,
             RequestCompleted = requestCompleted,
             AwaitsCustomerReply = awaitsCustomerReply,
+            CurrentFlowId = currentFlowId,
+            CurrentStageId = currentStageId,
             TotalTokens = tokens,
             OperationCount = operationCount,
             OutboundMessages = outboundMessages ?? [],

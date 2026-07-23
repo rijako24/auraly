@@ -77,7 +77,7 @@ public sealed class ProductCatalogSyncServiceTests
             StockQuantity = null,
             IsActive = true,
             RawPayloadJson = null,
-            SearchIndexVersion = 2
+            SearchIndexVersion = 4
         };
         fixture.Products.Setup(repository => repository.GetByExternalIdAsync(
                 fixture.BusinessId,
@@ -126,7 +126,7 @@ public sealed class ProductCatalogSyncServiceTests
             Currency = "COP",
             ManageStock = false,
             IsActive = true,
-            SearchIndexVersion = 2
+            SearchIndexVersion = 4
         };
         fixture.Products.Setup(repository => repository.GetByExternalIdAsync(
                 fixture.BusinessId,

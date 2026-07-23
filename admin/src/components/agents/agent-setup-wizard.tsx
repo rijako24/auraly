@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { ArrowLeft, ArrowRight, Save } from "lucide-react";
+import { ArrowLeft, ArrowRight, MessageCircle, Save } from "lucide-react";
 import { toast } from "sonner";
 
 import { AgentTestChat } from "@/components/agents/agent-test-chat";
@@ -176,7 +176,7 @@ export function AgentSetupWizard({
         ))}
       </div>
 
-      <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_380px] xl:grid-cols-[minmax(0,1fr)_420px]">
+      <div className="min-w-0 pb-20">
         <div className="flex min-w-0 flex-col">
           <div className="flex-1">{renderStep()}</div>
           <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t pt-4">
@@ -199,14 +199,23 @@ export function AgentSetupWizard({
             </div>
           </div>
         </div>
-        <AgentTestChat
-          agent={agent}
-          hasUnsavedChanges={dirty}
-          onSaveChanges={onSave}
-          savingChanges={saving}
-          compact
-          className="lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] lg:self-start lg:overflow-y-auto"
-        />
+        <details className="group fixed bottom-4 right-4 z-50">
+          <summary className="flex cursor-pointer list-none items-center gap-2 rounded-full bg-primary px-4 py-3 font-medium text-primary-foreground shadow-xl transition-transform hover:scale-[1.02] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 [&::-webkit-details-marker]:hidden">
+            <MessageCircle className="h-5 w-5" />
+            <span className="group-open:hidden">Probar agente</span>
+            <span className="hidden group-open:inline">Cerrar prueba</span>
+          </summary>
+          <div className="absolute bottom-[calc(100%+0.75rem)] right-0 w-[min(420px,calc(100vw-2rem))]">
+            <AgentTestChat
+              agent={agent}
+              hasUnsavedChanges={dirty}
+              onSaveChanges={onSave}
+              savingChanges={saving}
+              compact
+              className="max-h-[calc(100vh-6rem)] overflow-y-auto shadow-2xl"
+            />
+          </div>
+        </details>
       </div>
     </div>
   );

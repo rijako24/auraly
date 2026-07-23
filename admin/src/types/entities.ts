@@ -363,6 +363,13 @@ export interface Lead {
   conversationStatus?: ConversationLifecycleStatus | null;
   currentStageName?: string | null;
   lastActivityAt?: string | null;
+  qualificationBand?: string | null;
+  qualificationLabel?: string | null;
+  qualificationPriority?: number | null;
+  qualificationFlowId?: string | null;
+  qualificationStageId?: string | null;
+  qualificationUpdatedAt?: string | null;
+  convertedAt?: string | null;
   business?: Business;
 }
 

@@ -6,7 +6,13 @@ CREATE TABLE [dbo].[Leads] (
     [CustomerName] NVARCHAR(100) NULL,
     [CustomerEmail] NVARCHAR(200) NULL,
     [Notes] NVARCHAR(1000) NULL,
-    [Timestamp] DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
+    [QualificationBand] NVARCHAR(50) NULL,
+    [QualificationLabel] NVARCHAR(160) NULL,
+    [QualificationPriority] INT NULL,
+    [QualificationFlowId] NVARCHAR(100) NULL,
+    [QualificationStageId] NVARCHAR(100) NULL,
+    [QualificationUpdatedAt] DATETIME2 NULL,
+    [ConvertedAt] DATETIME2 NULL,    [Timestamp] DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
     CONSTRAINT [FK_Leads_Businesses] FOREIGN KEY ([BusinessId])
         REFERENCES [dbo].[Businesses] ([BusinessId])
         ON DELETE NO ACTION

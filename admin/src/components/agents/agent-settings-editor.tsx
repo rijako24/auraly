@@ -55,11 +55,14 @@ interface AgentSettingsEditorProps {
 
 export function AgentSettingsEditor({ value, onChange, availableInboundContacts = [], section }: AgentSettingsEditorProps) {
   const flows = value.flows ?? [];
-  const factKeys = useMemo(
+  const userFactKeys = useMemo(
     () => (value.factSchema ?? []).filter((fact) => (fact.source ?? "user") === "user").map((fact) => fact.key),
     [value.factSchema]
   );
-
+  const allFactKeys = useMemo(
+    () => (value.factSchema ?? []).map((fact) => fact.key),
+    [value.factSchema]
+  );
   const patch = useCallback(
     (partial: Partial<AgentSettings>) => onChange({ ...value, ...partial }),
     [value, onChange]
@@ -200,7 +203,7 @@ export function AgentSettingsEditor({ value, onChange, availableInboundContacts 
       </TabsContent>
 
       <TabsContent value="flow" className="space-y-4">
-        <FlowEditor flows={flows} userFactKeys={factKeys} onChange={(nextFlows) => patch({ flows: nextFlows })} />
+        <FlowEditor flows={flows} userFactKeys={userFactKeys} allFactKeys={allFactKeys} onChange={(nextFlows) => patch({ flows: nextFlows })} />
       </TabsContent>
 
       <TabsContent value="followUp" className="space-y-4">
@@ -307,14 +310,14 @@ export function AgentSettingsEditor({ value, onChange, availableInboundContacts 
   );
 }
 
-function FlowEditor({ flows, userFactKeys, onChange }: { flows: AgentFlowDefinition[]; userFactKeys: string[]; onChange: (flows: AgentFlowDefinition[]) => void }) {
+function FlowEditor({ flows, userFactKeys, allFactKeys, onChange }: { flows: AgentFlowDefinition[]; userFactKeys: string[]; allFactKeys: string[]; onChange: (flows: AgentFlowDefinition[]) => void }) {
   const updateFlow = (flowIndex: number, next: AgentFlowDefinition) => onChange(flows.map((flow, index) => index === flowIndex ? next : flow));
   const addFlow = () => onChange([...flows, { id: `flow_${flows.length + 1}`, type: flows.length === 0 ? "primary" : "secondary", routingGuidance: "", stages: [] }]);
   const removeFlow = (flowIndex: number) => onChange(flows.filter((_, index) => index !== flowIndex));
   const addStage = (flowIndex: number) => {
     const flow = flows[flowIndex];
     const stageNumber = flow.stages.length + 1;
-    updateFlow(flowIndex, { ...flow, stages: [...flow.stages, { id: `stage_${stageNumber}`, name: `Etapa ${stageNumber}`, goal: "", collect: [], signals: [], actions: [], transitions: [] }] });
+    updateFlow(flowIndex, { ...flow, stages: [...flow.stages, { id: `stage_${stageNumber}`, name: `Etapa ${stageNumber}`, goal: "", advanceWhenFacts: [], collect: [], signals: [], actions: [], transitions: [] }] });
   };
   const updateStage = (flowIndex: number, stageIndex: number, next: AgentFlowStage) => {
     const flow = flows[flowIndex];
@@ -339,14 +342,64 @@ function FlowEditor({ flows, userFactKeys, onChange }: { flows: AgentFlowDefinit
             return <details key={`${stage.id}-${stageIndex}`} className="group rounded-xl border bg-background">
               <summary className="flex cursor-pointer list-none items-center gap-3 px-4 py-3 marker:hidden">
                 <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-primary/10 text-sm font-semibold text-primary">{stageIndex + 1}</span>
-                <div className="min-w-0"><p className="truncate font-medium">{stage.name || stage.id || `Etapa ${stageIndex + 1}`}</p><p className="text-xs text-muted-foreground">{stage.collect?.length ?? 0} datos · {stage.actions?.length ?? 0} acciones · {stage.transitions?.length ?? 0} transiciones</p></div>
+                <div className="min-w-0">
+                  <p className="truncate font-medium">{stage.name || stage.id || `Etapa ${stageIndex + 1}`}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {stage.advanceWhenFacts?.length ?? 0} obligatorios para avanzar · {stage.collect?.length ?? 0} capturables · {stage.actions?.length ?? 0} acciones · {stage.transitions?.length ?? 0} transiciones
+                  </p>
+                </div>
                 <span className="ml-auto text-xs text-muted-foreground group-open:hidden">Editar</span><span className="ml-auto hidden text-xs text-muted-foreground group-open:inline">Cerrar</span>
               </summary>
               <div className="space-y-4 border-t p-4">
                 <div className="grid gap-3 sm:grid-cols-2"><div className="space-y-1"><Label>Nombre visible</Label><Input value={stage.name ?? ""} onChange={(event) => updateStage(flowIndex, stageIndex, { ...stage, name: event.target.value })} /></div><div className="space-y-1"><Label>Identificador</Label><Input value={stage.id} onChange={(event) => updateStage(flowIndex, stageIndex, { ...stage, id: event.target.value })} /></div></div>
                 <div className="space-y-1"><Label>Objetivo de esta etapa</Label><Textarea className="min-h-20" value={stage.goal ?? ""} onChange={(event) => updateStage(flowIndex, stageIndex, { ...stage, goal: event.target.value })} placeholder="Qué debe conseguir el agente antes de avanzar" /></div>
-                <div className="space-y-2"><Label>Datos del usuario que debe reunir</Label><div className="flex flex-wrap gap-2">{userFactKeys.map((factKey) => { const selected = (stage.collect ?? []).includes(factKey); return <label key={factKey} className={`flex cursor-pointer items-center gap-2 rounded-full border px-3 py-1.5 text-sm ${selected ? "border-primary bg-primary/10 text-primary" : "bg-background"}`}><Checkbox checked={selected} onCheckedChange={(checked) => { const collect = stage.collect ?? []; updateStage(flowIndex, stageIndex, { ...stage, collect: checked === true ? [...collect, factKey] : collect.filter((key) => key !== factKey) }); }} />{factKey}</label>; })}{userFactKeys.length === 0 && <span className="text-sm text-muted-foreground">Crea primero los datos del usuario en el paso Datos.</span>}</div></div>
+                <div className="grid gap-4 lg:grid-cols-2">
+                  <section className="space-y-2 rounded-xl border border-emerald-200 bg-emerald-50/50 p-3 dark:border-emerald-900/60 dark:bg-emerald-950/20">
+                    <div>
+                      <Label>Datos obligatorios para avanzar</Label>
+                      <p className="mt-1 text-xs text-muted-foreground">Todos deben tener un valor válido para que el motor salga de esta etapa automáticamente cuando no hay transiciones explícitas.</p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {allFactKeys.map((factKey) => {
+                        const selected = (stage.advanceWhenFacts ?? []).includes(factKey);
+                        return <label key={factKey} className={`flex cursor-pointer items-center gap-2 rounded-full border px-3 py-1.5 text-sm ${selected ? "border-emerald-600 bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200" : "bg-background"}`}>
+                          <Checkbox checked={selected} onCheckedChange={(checked) => {
+                            const advanceWhenFacts = stage.advanceWhenFacts ?? [];
+                            updateStage(flowIndex, stageIndex, { ...stage, advanceWhenFacts: checked === true ? [...advanceWhenFacts, factKey] : advanceWhenFacts.filter((key) => key !== factKey) });
+                          }} />
+                          {factKey}
+                        </label>;
+                      })}
+                      {allFactKeys.length === 0 && <span className="text-sm text-muted-foreground">Crea primero los datos en el paso Datos.</span>}
+                    </div>
+                  </section>
+                  <section className="space-y-2 rounded-xl border border-blue-200 bg-blue-50/50 p-3 dark:border-blue-900/60 dark:bg-blue-950/20">
+                    <div>
+                      <Label>Datos que puede captar en esta etapa</Label>
+                      <p className="mt-1 text-xs text-muted-foreground">Permite aceptar información que el cliente adelante. Estos datos no bloquean ni hacen avanzar la etapa por sí solos.</p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {userFactKeys.map((factKey) => {
+                        const selected = (stage.collect ?? []).includes(factKey);
+                        return <label key={factKey} className={`flex cursor-pointer items-center gap-2 rounded-full border px-3 py-1.5 text-sm ${selected ? "border-blue-600 bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-200" : "bg-background"}`}>
+                          <Checkbox checked={selected} onCheckedChange={(checked) => {
+                            const collect = stage.collect ?? [];
+                            updateStage(flowIndex, stageIndex, { ...stage, collect: checked === true ? [...collect, factKey] : collect.filter((key) => key !== factKey) });
+                          }} />
+                          {factKey}
+                        </label>;
+                      })}
+                      {userFactKeys.length === 0 && <span className="text-sm text-muted-foreground">Crea primero datos de origen usuario en el paso Datos.</span>}
+                    </div>
+                  </section>
+                </div>
                 <div className="space-y-1"><Label>Guía conversacional</Label><Textarea value={stage.conversationGuidance ?? ""} onChange={(event) => updateStage(flowIndex, stageIndex, { ...stage, conversationGuidance: event.target.value })} placeholder="Cómo acompañar al cliente en este checkpoint" /></div>
+                <section className="grid gap-3 rounded-xl border border-violet-200 bg-violet-50/50 p-3 sm:grid-cols-3 dark:border-violet-900/60 dark:bg-violet-950/20">
+                  <div className="sm:col-span-3"><Label>Calificación comercial del lead</Label><p className="mt-1 text-xs text-muted-foreground">Opcional. Clasifica el lead cuando esta etapa queda activa; no cambia el flow ni las acciones.</p></div>
+                  <div className="space-y-1"><Label>Banda</Label><Input value={stage.leadQualification?.band ?? ""} placeholder="high_intent" onChange={(event) => updateStage(flowIndex, stageIndex, { ...stage, leadQualification: { band: event.target.value, priority: stage.leadQualification?.priority ?? 0, label: stage.leadQualification?.label, conversionOnRequestCompleted: stage.leadQualification?.conversionOnRequestCompleted } })} /></div>
+                  <div className="space-y-1"><Label>Prioridad (0-100)</Label><Input type="number" min={0} max={100} value={stage.leadQualification?.priority ?? ""} onChange={(event) => updateStage(flowIndex, stageIndex, { ...stage, leadQualification: { band: stage.leadQualification?.band ?? "", priority: Number(event.target.value || 0), label: stage.leadQualification?.label, conversionOnRequestCompleted: stage.leadQualification?.conversionOnRequestCompleted } })} /></div>
+                  <div className="space-y-1"><Label>Etiqueta</Label><Input value={stage.leadQualification?.label ?? ""} placeholder="Alta intención" onChange={(event) => updateStage(flowIndex, stageIndex, { ...stage, leadQualification: { band: stage.leadQualification?.band ?? "", priority: stage.leadQualification?.priority ?? 0, label: event.target.value, conversionOnRequestCompleted: stage.leadQualification?.conversionOnRequestCompleted } })} /></div>
+                </section>
                 <StageTechnicalEditor stage={stage} onChange={(nextStage) => updateStage(flowIndex, stageIndex, nextStage)} />
                 <div className="flex justify-end"><Button type="button" variant="ghost" size="sm" className="text-destructive" onClick={() => updateFlow(flowIndex, { ...flow, stages: flow.stages.filter((_, index) => index !== stageIndex) })}><Trash2 className="mr-1 h-4 w-4" />Eliminar etapa</Button></div>
               </div>

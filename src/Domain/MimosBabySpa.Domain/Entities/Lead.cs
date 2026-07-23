@@ -10,6 +10,12 @@ public class Lead
     public string? CustomerName { get; set; }
     public string? CustomerEmail { get; set; }
     public string? Notes { get; set; }
-
+    public string? QualificationBand { get; set; }
+    public string? QualificationLabel { get; set; }
+    public int? QualificationPriority { get; set; }
+    public string? QualificationFlowId { get; set; }
+    public string? QualificationStageId { get; set; }
+    public DateTime? QualificationUpdatedAt { get; set; }
+    public DateTime? ConvertedAt { get; set; }
     public virtual Business Business { get; set; } = null!;
 }

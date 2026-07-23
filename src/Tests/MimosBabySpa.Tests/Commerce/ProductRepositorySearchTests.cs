@@ -73,6 +73,28 @@ public sealed class ProductRepositorySearchTests
             .Should().BeEquivalentTo([keywordProduct.ProductId, nativeProduct.ProductId]);
     }
 
+    [Fact]
+    public async Task ReplaceSearchTerms_IndexesStableIdentityWithoutProviderDescriptionNoise()
+    {
+        await using var context = CreateContext();
+        var businessId = Guid.NewGuid();
+        var product = Product(businessId, "ALKAPARRAS VINAGRE x500gr", "PV48", active: true);
+        product.ExternalProductId = "PV48";
+        product.CategoryName = "VINAGRES";
+        product.Description = "UNIDAD PRODUCTO GENERAL VARIOS";
+        context.Products.Add(product);
+        await context.SaveChangesAsync();
+
+        var repository = new ProductRepository(context);
+        await repository.ReplaceSearchTermsAsync(product);
+        await context.SaveChangesAsync();
+
+        var terms = await repository.GetSearchTermsAsync(businessId, product.ProductId);
+        terms.Should().Contain(["alkaparra", "vinagre", "500", "gr", "48"]);
+        terms.Should().NotContain(["producto", "general", "unidad", "vario", "pv"]);
+        terms.Should().NotContain(term => term.Contains("produkto", StringComparison.Ordinal));
+    }
+
     private static ApplicationDbContext CreateContext()
     {
         var options = new DbContextOptionsBuilder<ApplicationDbContext>()

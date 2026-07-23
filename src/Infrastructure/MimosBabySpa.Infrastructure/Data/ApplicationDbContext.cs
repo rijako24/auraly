@@ -226,7 +226,10 @@ public class ApplicationDbContext : DbContext
             entity.Property(e => e.CustomerName).HasMaxLength(100);
             entity.Property(e => e.CustomerEmail).HasMaxLength(200);
             entity.Property(e => e.Notes).HasMaxLength(1000);
-            entity.HasOne(e => e.Business)
+            entity.Property(e => e.QualificationBand).HasMaxLength(50);
+            entity.Property(e => e.QualificationLabel).HasMaxLength(160);
+            entity.Property(e => e.QualificationFlowId).HasMaxLength(100);
+            entity.Property(e => e.QualificationStageId).HasMaxLength(100);            entity.HasOne(e => e.Business)
                   .WithMany(b => b.Leads)
                   .HasForeignKey(e => e.BusinessId)
                   .OnDelete(DeleteBehavior.Restrict);

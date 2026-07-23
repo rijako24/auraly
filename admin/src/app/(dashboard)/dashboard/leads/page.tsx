@@ -26,6 +26,17 @@ import type { Lead } from "@/types/entities";
 import { formatDateTime, cn } from "@/lib/utils";
 import { useLeads } from "@/hooks/use-leads";
 
+function renderQualification(lead: Lead) {
+  if (!lead.qualificationBand) return <span className="text-sm text-muted-foreground">Sin calificar</span>;
+  return (
+    <div className="flex flex-col gap-1">
+      <Badge variant="secondary" className="w-fit border border-violet-200 bg-violet-50 text-violet-800 dark:border-violet-900 dark:bg-violet-950 dark:text-violet-200">
+        {lead.qualificationLabel ?? lead.qualificationBand}
+      </Badge>
+      {lead.qualificationPriority != null && <span className="text-xs text-muted-foreground">Prioridad {lead.qualificationPriority}/100</span>}
+    </div>
+  );
+}
 function renderLeadState(lead: Lead) {
   if (lead.currentStageName) {
     return (
@@ -90,6 +101,11 @@ export default function LeadsPage() {
       cell: ({ row }) => renderLeadState(row.original),
     },
     {
+      accessorKey: "qualificationPriority",
+      header: "Interés",
+      cell: ({ row }) => renderQualification(row.original),
+    },
+    {
       accessorKey: "notes",
       header: "Notas",
       cell: ({ row }) => (
@@ -134,7 +150,16 @@ export default function LeadsPage() {
       title: "Estado",
       options: Object.entries(LeadStatusLabels).map(([value, label]) => ({ label, value })),
     },
-  ], []);
+    {
+      column: "qualificationBand",
+      title: "Interés",
+      options: [
+        { label: "Explorando", value: "exploring" },
+        { label: "Interesado", value: "interested" },
+        { label: "Alta intención", value: "high_intent" },
+        { label: "Convertido", value: "converted" },
+      ],
+    },  ], []);
 
   const cardRenderer = (item: Lead) => (
     <Card key={item.leadId} className="overflow-hidden">

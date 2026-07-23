@@ -5,13 +5,15 @@ namespace MimosBabySpa.Domain.Catalog;
 
 public static class ProductSearchText
 {
+    public const int CurrentIndexVersion = 4;
+
     private static readonly HashSet<string> StopWords = new(StringComparer.Ordinal)
     {
         "a", "al", "con", "de", "del", "el", "en", "la", "las", "los", "o", "para", "por", "un", "una", "y", "x"
     };
     private static readonly HashSet<string> MeasurementUnits = new(StringComparer.Ordinal)
     {
-        "g", "kg", "mg", "ml", "l", "cl", "cc", "oz", "lb", "und", "unidad", "unidades"
+        "g", "gr", "kg", "mg", "ml", "l", "cl", "cc", "oz", "lb", "und", "unidad", "unidades"
     };
     private static readonly HashSet<string> CommercialPackagingWords = new(StringComparer.Ordinal)
     {
@@ -21,8 +23,6 @@ public static class ProductSearchText
     {
         "catalog", "catalogo", "catalogue", "inventario", "mercancia", "opcion", "producto", "referencia", "variedad"
     };
-
-
     private static readonly string[] DerivationalSuffixes =
     [
         "adas", "ados", "idas", "idos", "ando", "iendo", "ada", "ado", "ida", "ido"
@@ -65,10 +65,7 @@ public static class ProductSearchText
         return keys;
     }
 
-    public static IReadOnlyList<string> GetMatchingTokens(string? value) =>
-        GetTokens(value)
-            .Where(token => !CommercialPackagingWords.Contains(token))
-            .ToList();
+    public static IReadOnlyList<string> GetMatchingTokens(string? value) => GetTokens(value).Where(token => !CommercialPackagingWords.Contains(token)).ToList();
 
     public static IReadOnlyCollection<string> GetIndexTerms(params string?[] values)
     {
@@ -84,6 +81,33 @@ public static class ProductSearchText
         }
         return terms;
     }
+
+    public static IReadOnlyCollection<string> GetProductIndexTerms(
+        string? name,
+        string? sku,
+        string? externalProductId,
+        string? categoryName)
+    {
+        var terms = GetIndexTerms(name, categoryName).ToHashSet(StringComparer.Ordinal);
+        foreach (var term in GetIndexTerms(sku, externalProductId)
+                     .Where(term => !IsShortCodeFragment(term)))
+        {
+            terms.Add(term);
+        }
+        return terms;
+    }
+
+    public static IReadOnlyList<string> GetVisibleProductTerms(
+        string? name,
+        string? sku,
+        string? externalProductId,
+        string? categoryName) =>
+        GetVisibleTokens(string.Join(' ', new[] { name, sku, externalProductId, categoryName }
+            .Where(value => !string.IsNullOrWhiteSpace(value))))
+            .Where(term => !IsShortCodeFragment(term))
+            .OrderBy(term => term, StringComparer.Ordinal)
+            .ToList();
+
 
     public static double TokenSimilarity(string left, string right)
     {
@@ -148,6 +172,26 @@ public static class ProductSearchText
                 keys.Add($"p:{phonetic}");
         }
     }
+
+    private static bool IsShortCodeFragment(string term) =>
+        term.Length <= 2
+        && term.All(char.IsLetter)
+        && !MeasurementUnits.Contains(term);
+
+    private static IReadOnlyList<string> GetVisibleTokens(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return [];
+
+        return NormalizeWords(value)
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .SelectMany(SplitAlphaNumeric)
+            .Where(term => !StopWords.Contains(term))
+            .Where(term => term.Length > 1 || term.All(char.IsDigit) || MeasurementUnits.Contains(term))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+    }
+
 
     private static IEnumerable<string> GetCharacterNGrams(string token, int size)
     {

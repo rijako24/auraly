@@ -218,6 +218,41 @@ public sealed class ProductResolutionEngineTests
         ProductSearchText.GetTokens(text).Should().Contain([amount, unit]);
     }
 
+    [Fact]
+    public void SearchText_PreservesBusinessVocabularyWhileMatchingIgnoresPackaging()
+    {
+        var indexed = ProductSearchText.GetIndexTerms(
+            "ALKAPARRAS VINAGRE x500gr PRODUCTO GENERAL UNIDAD VARIOS CAJA");
+
+        indexed.Should().Contain(["alkaparra", "vinagre", "500", "gr", "producto", "general", "unidad", "vario", "caja"]);
+        ProductSearchText.GetMatchingTokens("producto general unidad varios caja").Should().NotContain("caja");
+    }
+
+    [Fact]
+    public void ProductIndex_UsesStableIdentityAndDropsShortSkuPrefixes()
+    {
+        var indexed = ProductSearchText.GetProductIndexTerms(
+            "ALKAPARRAS VINAGRE x500gr",
+            "PV48",
+            "PV48",
+            "VINAGRES");
+
+        indexed.Should().Contain(["alkaparra", "vinagre", "500", "gr", "48"]);
+        indexed.Should().NotContain("pv");
+    }
+
+    [Fact]
+    public void VisibleProductTerms_AreDerivedFromStableProductIdentity()
+    {
+        var displayed = ProductSearchText.GetVisibleProductTerms(
+            "ALKAPARRAS VINAGRE x500gr",
+            "PV48",
+            "PV48",
+            "VINAGRES");
+
+        displayed.Should().Equal("48", "500", "alkaparras", "gr", "vinagre", "vinagres");
+    }
+
     private static ProductResolution Resolve(string text, params ProductReference[] products) =>
         ProductResolutionEngine.Resolve(text,
             products.Select(product => new RetrievedProductCandidate(product, ProductMatchSource.LocalLexicalIndex)).ToList());

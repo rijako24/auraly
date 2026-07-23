@@ -149,6 +149,13 @@ public class LeadAdminService : ILeadAdminService
             conversation?.ConversationId,
             conversation?.Status.ToString(),
             conversation?.CurrentStageName,
-            conversation?.LastActivityAt);
+            conversation?.LastActivityAt,
+            l.QualificationBand,
+            l.QualificationLabel,
+            l.QualificationPriority,
+            l.QualificationFlowId,
+            l.QualificationStageId,
+            l.QualificationUpdatedAt,
+            l.ConvertedAt);
     }
 }

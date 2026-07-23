@@ -83,6 +83,27 @@ public class LeadService : ILeadService
         }
     }
 
+    public async Task UpdateQualificationAsync(Guid leadId, LeadQualificationUpdate update, CancellationToken ct = default)
+    {
+        var lead = await _unitOfWork.Leads.GetByIdAsync(leadId);
+        if (lead is null)
+        {
+            _logger.LogWarning("Lead {LeadId} not found while updating qualification.", leadId);
+            return;
+        }
+
+        lead.QualificationBand = update.Band;
+        lead.QualificationPriority = update.Priority;
+        lead.QualificationLabel = update.Label;
+        lead.QualificationFlowId = update.FlowId;
+        lead.QualificationStageId = update.StageId;
+        lead.QualificationUpdatedAt = DateTime.UtcNow;
+        if (update.Converted && lead.ConvertedAt is null)
+            lead.ConvertedAt = DateTime.UtcNow;
+
+        await _unitOfWork.Leads.UpdateAsync(lead);
+        await _unitOfWork.SaveChangesAsync(ct);
+    }
     public async Task<Domain.Entities.Lead?> GetLeadByBusinessIdAndUserNumberAsync(Guid businessId, string userNumber)
     {
         return await _unitOfWork.Leads.GetByBusinessIdAndUserNumberAsync(businessId, userNumber);

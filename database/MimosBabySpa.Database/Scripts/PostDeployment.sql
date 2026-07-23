@@ -23,6 +23,7 @@
 :r .\Migrations\MigrateConversationStateVerifications.sql
 :r .\Migrations\MigrateObsoleteReservationStatuses.sql
 :r .\Migrations\MigrateConversationLifecycle.sql
+:r .\Migrations\MigrateLeadQualification.sql
 :r .\Migrations\MigratePaymentSupersession.sql
 :r .\Migrations\MigrateFlowStageSnapshots.sql
 :r .\Migrations\MigrateDeterministicRuntimeState.sql
@@ -52,6 +53,7 @@
 :r .\Seeds\SeedBillingPlans.sql
 :r .\Seeds\SeedRadaConcept.sql
 :r .\Seeds\SeedAuraly.sql
+:r .\Seeds\SeedInmobiliariaDemo.sql
 :r .\Seeds\SeedLuisPetitBarber.sql
 :r .\Seeds\SeedGoogleCalendarIntegrations.sql
 :r .\Seeds\SeedBackgroundJobs.sql

@@ -1,3 +1,4 @@
+using MimosBabySpa.Domain.Catalog;
 using MimosBabySpa.Domain.Entities;
 using MimosBabySpa.Domain.Enums;
 using MimosBabySpa.Domain.Repositories;
@@ -34,7 +35,7 @@ public interface IProductCatalogSyncService
 public sealed class ProductCatalogSyncService : IProductCatalogSyncService
 {
     private readonly IUnitOfWork _unitOfWork;
-    private const int CurrentSearchIndexVersion = 2;
+    private const int CurrentSearchIndexVersion = ProductSearchText.CurrentIndexVersion;
     private readonly ICommerceAdapterFactory _adapters;
 
     public ProductCatalogSyncService(IUnitOfWork unitOfWork, ICommerceAdapterFactory adapters)

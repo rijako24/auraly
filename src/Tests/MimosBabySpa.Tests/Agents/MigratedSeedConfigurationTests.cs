@@ -18,6 +18,7 @@ public sealed class MigratedSeedConfigurationTests
     [InlineData("SeedAgenticConfiguration.sql", "SettingsJson")]
     [InlineData("SeedCJDistribuciones.sql", "SettingsJson")]
     [InlineData("SeedAuraly.sql", "SettingsJson")]
+    [InlineData("SeedInmobiliariaDemo.sql", "SettingsJson")]
     [InlineData("SeedMedidental.sql", "SettingsJson")]
     [InlineData("SeedRadaConcept.sql", "SettingsJson")]
     [InlineData("SeedSolorzanoAgentConfiguration.sql", "SettingsJson")]
@@ -36,7 +37,12 @@ public sealed class MigratedSeedConfigurationTests
             Converters = { new JsonStringEnumConverter() }
         });
         config.Should().NotBeNull();
-        config!.Policies.Should().StartWith("## EXPERIENCIA CONVERSACIONAL");
+        if (seedFile is "SeedCJDistribuciones.sql" or "SeedMedidental.sql")
+        {
+            config!.Flows.SelectMany(flow => flow.Stages).Should().NotContain(stage => stage.Id == "cart_review");
+            config.FactSchema.Should().NotContain(fact => fact.Key == "cart_review_confirmed");
+            config.Templates.Should().NotContainKey("cart_review");
+        }        config!.Policies.Should().StartWith("## EXPERIENCIA CONVERSACIONAL");
         AssertSemanticAndPresentationTextIsSeparated(config);
 
         if (config.Commerce.Enabled)
@@ -385,12 +391,11 @@ public sealed class MigratedSeedConfigurationTests
         config.Flows.SelectMany(flow => flow.Stages)
             .Where(stage => stage.Signals.Any(signal => signal.Type == "order_changes"))
             .Select(stage => stage.Id)
-            .Should().BeEquivalentTo(["product_selection", "cart_review"],
-                "these stages intentionally override the global cart fallback");
+            .Should().BeEquivalentTo(["product_selection"],
+                "product selection owns cart changes until the customer advances directly to delivery");
         seedSql.Should()
             .Contain("(N'$.globalActions[1].actions[0].execution')")
             .And.Contain("(N'$.flows[0].stages[2].actions[2].execution')")
-            .And.Contain("(N'$.flows[0].stages[3].actions[1].execution')")
             .And.Contain(
                 "JSON_QUERY(N'{\"idempotency\":\"input_version\",\"timeoutSeconds\":240,\"maxAttempts\":1}')",
                 "all CJ cart mutation owners must receive the long-running external batch policy");
@@ -481,7 +486,6 @@ public sealed class MigratedSeedConfigurationTests
         foreach (var templateId in new[]
                  {
                      "cart_snapshot",
-                     "cart_review",
                      "order_checkout_no_payment",
                      "order_checkout_card_terminal",
                      "order_checkout_manual_transfer"
@@ -562,7 +566,6 @@ public sealed class MigratedSeedConfigurationTests
 
         config.Templates["catalog_results"].Should().Contain("\r\n\r\n*Productos disponibles*\r\n\r\n");
         config.Templates["cart_snapshot"].Should().Contain("\r\n\r\n*Pedido actual*\r\n\r\n");
-        config.Templates["cart_review"].Should().Contain("\r\n\r\n*Resumen de tu pedido*\r\n\r\n");
     }
 
     [Fact]
@@ -598,6 +601,8 @@ public sealed class MigratedSeedConfigurationTests
             .And.Contain("no modifiques el pedido");
 
         var order = config.Flows.Single(flow => flow.Id == "order");
+        order.Stages.Should().NotContain(stage => stage.Id == "cart_review",
+            "finalization advances directly from product selection to delivery");
         order.Stages
             .Where(stage => stage.AwaitCustomerReply)
             .Select(stage => stage.Id)
@@ -605,7 +610,6 @@ public sealed class MigratedSeedConfigurationTests
                 "customer_name",
                 "customer_type",
                 "product_selection",
-                "cart_review",
                 "order_data",
                 "payment_method",
                 "summary",

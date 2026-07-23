@@ -709,7 +709,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                   "type": "facts.clear",
                   "facts": [
                     "order_finalized",
-                    "cart_review_confirmed",
                     "order_checkout_presented",
                     "customer_confirmed"
                   ]
@@ -1024,17 +1023,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "extractionGuidance": "Representa cualquier intencion clara del cliente de conservar el carrito actual y continuar con el pedido, sin depender de palabras exactas. Incluye expresiones equivalentes a terminar, no agregar mas, dejarlo asi o seguir con lo actual, aunque existan referencias pendientes que quedaran fuera."
     },
     {
-      "key": "cart_review_confirmed",
-      "role": "order.cart_review_confirmed",
-      "label": "carrito aprobado por el cliente",
-      "type": "boolean",
-      "required": true,
-      "source": "user",
-      "scope": "request",
-      "retentionDays": 1,
-      "extractionGuidance": "Representa la aprobacion explicita del resumen vigente del carrito."
-    },
-    {
       "key": "delivery_method",
       "role": "shipping.method",
       "label": "modalidad de entrega",
@@ -1170,7 +1158,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "scope": "request",
       "dependsOn": [
         "order_checkout_presented",
-        "cart_review_confirmed",
         "delivery_method",
         "city",
         "delivery_address",
@@ -1296,7 +1283,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
     "known_facts_missing": "No tengo ese dato registrado todavia. Si quieres, puedes indicarmelo o actualizarlo.",
     "recipe_results": "Buena idea. Puedes inspirarte con estas preparaciones:\r\n\r\n*Ideas para preparar*\r\n{{#each results}}\r\n- {{Title}}\r\n  {{Url}}\r\n{{/each}}",
     "cart_snapshot": "Listo, ya actualice tu pedido 🙌\r\n\r\n*Pedido actual*\r\n\r\n{{#each items}}\r\n- {{#if requested_name}}{{requested_name}} ({{name}}){{else}}{{name}}{{/if}} x{{quantity}}: ${{line_total}}\r\n{{/each}}\r\n\r\n*Total: ${{total}} {{currency}}*\r\n\r\nQuieres agregar algo mas? Cuando termines, solo dime que eso es todo.",
-    "cart_review": "Perfecto, revisemos juntos que todo este bien:\r\n\r\n*Resumen de tu pedido*\r\n\r\n{{#each items}}\r\n- {{#if requested_name}}{{requested_name}} ({{name}}){{else}}{{name}}{{/if}} x{{quantity}}: ${{line_total}}\r\n{{/each}}\r\n\r\n*Total: ${{total}} {{currency}}*\r\n\r\nLo ves correcto o quieres cambiar algo?",
     "product_ambiguity": "Quiero asegurarme de agregar la opcion correcta. Para {{product_text}} encontre:\r\n{{#each product_options}}\r\n- {{Name}}: ${{UnitPrice}} {{Currency}}\r\n{{/each}}\r\n\r\nCual prefieres? Conservare los demas productos de tu solicitud.",
     "insufficient_stock": "Puedo ayudarte con esa referencia, pero la cantidad solicitada supera el inventario disponible.\r\n\r\n- Producto: {{product_text}}\r\n- Solicitado en total: {{requested_quantity}}\r\n- Disponible: {{available_quantity}}\r\n\r\nPara este cambio, indica una cantidad de hasta {{maximum_command_quantity}}; los demas cambios del lote aun no se han aplicado."
   },
@@ -1309,6 +1295,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         {
           "id": "customer_name",
           "name": "Identificacion del cliente",
+          "leadQualification": { "band": "exploring", "priority": 10, "label": "Identificación iniciada" },
           "goal": "Obtener el nombre del cliente o establecimiento antes de iniciar el pedido cuando no exista un nombre confiable.",
           "response": {},
           "advanceWhenFacts": [
@@ -1338,6 +1325,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         {
           "id": "product_selection",
           "name": "Productos, catalogo y recomendaciones",
+          "leadQualification": { "band": "interested", "priority": 35, "label": "Productos de interés" },
           "goal": "Recibir pedidos abiertos, resolver productos reales del catalogo, recomendar de forma controlada y construir el carrito hasta que el cliente finalice.",
           "response": {},
           "advanceWhenFacts": [
@@ -1649,264 +1637,9 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
           "awaitCustomerReply": true
         },
         {
-          "id": "cart_review",
-          "name": "Transicion al cierre",
-          "goal": "Continuar hacia entrega y pago sin mostrar un resumen intermedio.",
-          "advanceWhenFacts": [
-            "order_finalized"
-          ],
-          "conversationGuidance": "Cuando el cliente termine de agregar productos, avanza directamente a modalidad y datos de entrega. No muestres ni solicites confirmacion de un resumen intermedio; el unico resumen de cierre se presenta despues de completar entrega y pago.",
-          "collect": [
-            "order_finalized",
-            "delivery_method",
-            "delivery_address",
-            "delivery_reference",
-            "delivery_recipient_name",
-            "delivery_phone",
-            "payment_method"
-          ],
-          "signals": [
-            {
-              "type": "order_changes",
-              "description": "Una mutacion explicita de uno o varios productos del unico pedido activo. Representa cada producto afectado con exactamente un comando: add cuando la cantidad es incremental o corresponde a un producto nuevo; set_quantity cuando la cantidad expresa el total final deseado para una linea existente; remove cuando se elimina por completo la linea, con quantity nulo. Cada comando corresponde a un producto afectado en el mensaje actual y se emite exactamente una vez. Conserva referencias parciales o contextuales, todas las cantidades y todos los productos del turno; el historial se usa para resolver la referencia, mientras las mutaciones provienen del mensaje actual. El motor resuelve catalogo, ambiguedad e inventario de forma autoritativa. Cuando exista una seleccion pendiente, la referencia elegida continua esa misma mutacion y el motor restaura el resto del lote.",
-              "valueSchema": {
-                "type": "array",
-                "items": {
-                  "anyOf": [
-                    {
-                      "type": "object",
-                      "additionalProperties": false,
-                      "properties": {
-                        "operation": {
-                          "type": "string",
-                          "enum": [
-                            "add"
-                          ]
-                        },
-                        "productText": {
-                          "type": "string"
-                        },
-                        "quantity": {
-                          "type": "number"
-                        },
-                        "destinationReference": {
-                          "type": [
-                            "string",
-                            "null"
-                          ]
-                        }
-                      },
-                      "required": [
-                        "operation",
-                        "productText",
-                        "quantity",
-                        "destinationReference"
-                      ]
-                    },
-                    {
-                      "type": "object",
-                      "additionalProperties": false,
-                      "properties": {
-                        "operation": {
-                          "type": "string",
-                          "enum": [
-                            "set_quantity"
-                          ]
-                        },
-                        "productText": {
-                          "type": "string"
-                        },
-                        "quantity": {
-                          "type": "number"
-                        },
-                        "destinationReference": {
-                          "type": [
-                            "string",
-                            "null"
-                          ]
-                        }
-                      },
-                      "required": [
-                        "operation",
-                        "productText",
-                        "quantity",
-                        "destinationReference"
-                      ]
-                    },
-                    {
-                      "type": "object",
-                      "additionalProperties": false,
-                      "properties": {
-                        "operation": {
-                          "type": "string",
-                          "enum": [
-                            "remove",
-                            "cancel_pending"
-                          ]
-                        },
-                        "productText": {
-                          "type": "string"
-                        },
-                        "quantity": {
-                          "type": "null"
-                        },
-                        "destinationReference": {
-                          "type": [
-                            "string",
-                            "null"
-                          ]
-                        }
-                      },
-                      "required": [
-                        "operation",
-                        "productText",
-                        "quantity",
-                        "destinationReference"
-                      ]
-                    }
-                  ]
-                }
-              },
-              "ambiguityRules": [
-                {
-                  "type": "distinct_values",
-                  "valueProperty": "destinationReference",
-                  "field": "delivery_address",
-                  "minimumDistinctValues": 2
-                }
-              ]
-            }
-          ],
-          "actions": [
-            {
-              "id": "show_current_order_draft",
-              "operation": "commerce.get_order_draft",
-              "trigger": "when_ready",
-              "condition": {
-                "factMissing": "order_finalized"
-              },
-              "arguments": {},
-              "onOutcome": {
-                "order.draft_loaded": {
-                  "response": {
-                    "guidance": "Muestra los Ã­tems, cantidades, subtotales y total devueltos, y pregunta si el pedido actual estÃ¡ correcto."
-                  },
-                  "effects": [
-                    {
-                      "type": "presentation.add",
-                      "template": "cart_review",
-                      "dataPath": "order",
-                      "mode": "Exclusive",
-                      "priority": "Required"
-                    }
-                  ]
-                },
-                "order.draft_empty": {
-                  "response": {
-                    "guidance": "Informa que el pedido vigente esta vacio y ayuda al cliente a elegir productos antes de continuar."
-                  },
-                  "effects": [
-                    {
-                      "type": "facts.clear",
-                      "facts": [
-                        "order_finalized",
-                        "cart_review_confirmed"
-                      ]
-                    }
-                  ]
-                }
-              }
-            },
-            {
-              "id": "apply_order_changes",
-              "operation": "commerce.apply_order_changes",
-              "trigger": "on_signal",
-              "signal": "order_changes",
-              "arguments": {
-                "commands": "{{signal.order_changes.value}}"
-              },
-              "onOutcome": {
-                "cart.applied": {
-                  "response": {
-                    "guidance": "Confirma brevemente los cambios aplicados y continÃºa segÃºn el objetivo de la etapa."
-                  },
-                  "effects": [
-                    {
-                      "type": "presentation.add",
-                      "template": "cart_review",
-                      "dataPath": "order",
-                      "mode": "Exclusive",
-                      "priority": "Required"
-                    }
-                  ]
-                },
-                "cart.pending_cancelled": {
-                  "response": {
-                    "guidance": "Si discarded_items contiene productos, indica brevemente cuales referencias sin existencia o sin coincidencia segura se dejaron fuera y continua inmediatamente con el cierre o el objetivo de la etapa, sin pedir otra confirmacion. Para otras cancelaciones, confirma brevemente la seleccion cancelada."
-                  }
-                },
-                "cart.product_not_found": {
-                  "response": {
-                    "mode": "ask_clarification",
-                    "guidance": "Indica que ese producto no se encontrÃ³ y pide una descripciÃ³n o referencia mÃ¡s precisa."
-                  }
-                },
-                "cart.product_ambiguous": {
-                  "response": {
-                    "mode": "ask_clarification",
-                    "guidance": "Presenta Ãºnicamente los candidatos devueltos y pregunta cuÃ¡l referencia desea."
-                  },
-                  "effects": [
-                    {
-                      "type": "presentation.add",
-                      "template": "product_ambiguity",
-                      "dataPath": "error.context",
-                      "mode": "Exclusive",
-                      "priority": "Required"
-                    }
-                  ]
-                },
-                "cart.insufficient_stock": {
-                  "response": {
-                    "mode": "ask_clarification",
-                    "guidance": "Explica con claridad la cantidad disponible y pide una cantidad valida; ningun cambio del lote fue aplicado."
-                  },
-                  "effects": [
-                    {
-                      "type": "presentation.add",
-                      "template": "insufficient_stock",
-                      "dataPath": "error.context",
-                      "mode": "Exclusive",
-                      "priority": "Required"
-                    }
-                  ]
-                },
-                "cart.item_not_found_or_ambiguous": {
-                  "response": {
-                    "mode": "ask_clarification",
-                    "guidance": "Aclara cuÃ¡l producto existente del pedido desea modificar."
-                  }
-                },
-                "cart.conflicting_commands": {
-                  "response": {
-                    "mode": "ask_clarification",
-                    "guidance": "Pide aclarar el cambio final para el producto repetido; no se aplicÃ³ ningÃºn cambio del lote."
-                  }
-                },
-                "cart.multiple_destinations": {
-                  "response": {
-                    "mode": "ask_clarification",
-                    "guidance": "No se aplicÃ³ ningÃºn cambio. Pregunta cuÃ¡l direcciÃ³n debe usarse para entregar todo el Ãºnico pedido."
-                  }
-                }
-              }
-            }
-          ],
-          "awaitCustomerReply": true
-        },
-        {
           "id": "order_data",
           "name": "Entrega",
+          "leadQualification": { "band": "high_intent", "priority": 55, "label": "Datos de entrega" },
           "goal": "Definir recogida o domicilio y obtener solo los datos faltantes requeridos por el checkout.",
           "response": {},
           "advanceWhenFacts": [
@@ -1954,6 +1687,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         {
           "id": "summary",
           "name": "Resumen final del pedido",
+          "leadQualification": { "band": "ready", "priority": 75, "label": "Pedido listo para confirmar" },
           "goal": "Preparar y mostrar el resumen oficial con entrega, pago y total final del motor.",
           "advanceWhenFacts": [
             "order_checkout_presented"
@@ -2042,7 +1776,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                       "type": "facts.clear",
                       "facts": [
                         "order_finalized",
-                        "cart_review_confirmed",
                         "order_checkout_presented"
                       ]
                     }
@@ -2057,7 +1790,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                       "type": "facts.clear",
                       "facts": [
                         "order_finalized",
-                        "cart_review_confirmed",
                         "order_checkout_presented"
                       ]
                     }
@@ -2103,6 +1835,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         {
           "id": "order_confirmation",
           "name": "Confirmacion del pedido",
+          "leadQualification": { "band": "converted", "priority": 100, "label": "Pedido confirmado", "conversionOnRequestCompleted": true },
           "goal": "Crear el pedido despues de confirmacion del cliente.",
           "advanceWhenFacts": [
             "customer_confirmed"
@@ -2208,7 +1941,7 @@ IF @CartReviewGlobalActionIndex IS NULL
     THROW 51000, 'SeedCJDistribuciones: accion global de consulta de carrito no encontrada.', 1;
 DECLARE @CartReviewGlobalActionPath NVARCHAR(200) = CONCAT('$.globalActions[', @CartReviewGlobalActionIndex, ']');
 
-DECLARE @CartAppliedOutcome NVARCHAR(MAX) = N'{"response":{"guidance":"Confirma unicamente los cambios aplicados y pregunta si desea agregar algo mas."},"effects":[{"type":"facts.clear","facts":["order_finalized","cart_review_confirmed","order_checkout_presented","customer_confirmed"]},{"type":"presentation.add","template":"cart_changes_applied","mode":"Exclusive","priority":"Required"}]}';DECLARE @PartialCartOutcome NVARCHAR(MAX) = N'{"response":{"mode":"ask_clarification","guidance":"Da un resultado explicito para cada referencia del lote usando la presentacion deterministica: agregada, sin existencia, ambigua, sugerida, cantidad insuficiente o no encontrada. No omitas referencias ni las mezcles entre categorias."},"effects":[{"type":"presentation.add","template":"cart_partial","dataPath":"error.context","mode":"Exclusive","priority":"Required"}]}';
+DECLARE @CartAppliedOutcome NVARCHAR(MAX) = N'{"response":{"guidance":"Confirma unicamente los cambios aplicados y pregunta si desea agregar algo mas."},"effects":[{"type":"facts.clear","facts":["order_finalized","order_checkout_presented","customer_confirmed"]},{"type":"presentation.add","template":"cart_changes_applied","mode":"Exclusive","priority":"Required"}]}';DECLARE @PartialCartOutcome NVARCHAR(MAX) = N'{"response":{"mode":"ask_clarification","guidance":"Da un resultado explicito para cada referencia del lote usando la presentacion deterministica: agregada, sin existencia, ambigua, sugerida, cantidad insuficiente o no encontrada. No omitas referencias ni las mezcles entre categorias."},"effects":[{"type":"presentation.add","template":"cart_partial","dataPath":"error.context","mode":"Exclusive","priority":"Required"}]}';
 DECLARE @ProductSuggestionOutcome NVARCHAR(MAX) = N'{"response":{"mode":"ask_clarification","guidance":"Presenta la sugerencia devuelta y pide confirmacion explicita antes de agregarla."},"effects":[{"type":"presentation.add","template":"product_ambiguity","dataPath":"error.context","mode":"Exclusive","priority":"Required"}]}';
 DECLARE @ProductUnavailableOutcome NVARCHAR(MAX) = N'{"response":{"mode":"ask_clarification","guidance":"Indica que la referencia identificada no esta disponible y solicita otra opcion; no afirmes que fue agregada."},"effects":[{"type":"presentation.add","template":"cart_product_unavailable","dataPath":"error.context","mode":"Exclusive","priority":"Required"}]}';
 DECLARE @ProductNotFoundOutcome NVARCHAR(MAX) = N'{"response":{"mode":"ask_clarification","guidance":"Indica las referencias que no tuvieron coincidencia segura y solicita datos mas precisos; no afirmes que el carrito cambio."},"effects":[{"type":"presentation.add","template":"cart_not_found","dataPath":"error.context","mode":"Exclusive","priority":"Required"}]}';
@@ -2257,14 +1990,11 @@ IF JSON_VALUE(@SettingsJson, '$.globalActions[1].actions[0].operation') <> 'comm
     THROW 51000, 'SeedCJDistribuciones: ruta global de carrito inesperada.', 1;
 IF JSON_VALUE(@SettingsJson, '$.flows[0].stages[2].actions[2].operation') <> 'commerce.apply_order_changes'
     THROW 51000, 'SeedCJDistribuciones: ruta product_selection de carrito inesperada.', 1;
-IF JSON_VALUE(@SettingsJson, '$.flows[0].stages[3].actions[1].operation') <> 'commerce.apply_order_changes'
-    THROW 51000, 'SeedCJDistribuciones: ruta cart_review de carrito inesperada.', 1;
 
 DECLARE @CartExecutionPaths TABLE (Path NVARCHAR(400) NOT NULL);
 INSERT INTO @CartExecutionPaths (Path) VALUES
     (N'$.globalActions[1].actions[0].execution'),
-    (N'$.flows[0].stages[2].actions[2].execution'),
-    (N'$.flows[0].stages[3].actions[1].execution');
+    (N'$.flows[0].stages[2].actions[2].execution');
 
 DECLARE @CartExecutionPath NVARCHAR(400);
 DECLARE CartExecutionCursor CURSOR LOCAL FAST_FORWARD FOR SELECT Path FROM @CartExecutionPaths;
@@ -2282,8 +2012,7 @@ DEALLOCATE CartExecutionCursor;
 DECLARE @CartOutcomePaths TABLE (Path NVARCHAR(400) NOT NULL);
 INSERT INTO @CartOutcomePaths (Path) VALUES
     (N'$.globalActions[1].actions[0].onOutcome'),
-    (N'$.flows[0].stages[2].actions[2].onOutcome'),
-    (N'$.flows[0].stages[3].actions[1].onOutcome');
+    (N'$.flows[0].stages[2].actions[2].onOutcome');
 
 DECLARE @CartOutcomePath NVARCHAR(400);
 DECLARE CartOutcomeCursor CURSOR LOCAL FAST_FORWARD FOR SELECT Path FROM @CartOutcomePaths;

@@ -122,6 +122,21 @@ public sealed partial class AgentConfigurationCompiler
                 []);
     }
 
+    private static void ValidateLeadQualification(
+        LeadQualificationStageDefinition? qualification,
+        string path,
+        ICollection<AgentConfigurationDiagnostic> errors)
+    {
+        if (qualification is null)
+            return;
+
+        if (string.IsNullOrWhiteSpace(qualification.Band))
+            Error(errors, path, "qualification_band_required", "A lead qualification requires a non-empty band.");
+        if (qualification.Priority is < 0 or > 100)
+            Error(errors, path, "qualification_priority_out_of_range", "Lead qualification priority must be between 0 and 100.");
+        if (qualification.Label is { Length: > 160 })
+            Error(errors, path, "qualification_label_too_long", "Lead qualification label cannot exceed 160 characters.");
+    }
     private static void ValidateCommerce(
         AgentConfig config,
         ICollection<AgentConfigurationDiagnostic> errors)
@@ -303,6 +318,8 @@ public sealed partial class AgentConfigurationCompiler
         foreach (var stage in flow.Stages)
         {
             var stagePath = $"{path}.stages[{stage.Id}]";
+
+            ValidateLeadQualification(stage.LeadQualification, $"{stagePath}.leadQualification", errors);
 
             if (stage.AwaitCustomerReply && !config.ConversationFollowUp.Enabled)
                 Error(errors, stagePath, "conversation_follow_up_disabled",

@@ -17,6 +17,9 @@ public sealed class AgentFlowStage
     public IReadOnlyList<StageActionDefinition> Actions { get; init; } = [];
     public IReadOnlyList<StageTransitionDefinition> Transitions { get; init; } = [];
 
+    /// <summary>Optional commercial classification observed by the lead projection.</summary>
+    public LeadQualificationStageDefinition? LeadQualification { get; init; }
+
     /// <summary>
     /// Declares that every customer-visible response delivered while this stage
     /// remains active leaves the conversation waiting for the customer.

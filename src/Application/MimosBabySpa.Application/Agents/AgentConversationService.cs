@@ -750,7 +750,11 @@ var latestPayment = await _paymentLifecycle.GetLatestByConversationAsync(convers
 
             outboundMessages: effects.OutboundMessages,
 
-            trace: trace);
+            trace: trace,
+
+            currentFlowId: turn.Route?.ActiveFlowId ?? session.ConversationState.ActiveFlowId,
+
+            currentStageId: turn.CurrentStageId ?? stage.Id);
 
     }
 

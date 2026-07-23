@@ -599,6 +599,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         {
           "id": "discovery",
           "name": "Conocer al bebÃ©",
+          "leadQualification": { "band": "exploring", "priority": 10, "label": "Explorando servicios" },
           "goal": "Obtener nombre y edad objetivo relevante del bebÃ© para personalizar la recomendaciÃ³n.",
           "advanceWhenFacts": [
             "baby_name",
@@ -620,6 +621,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         {
           "id": "service_selection",
           "name": "SelecciÃ³n de servicio",
+          "leadQualification": { "band": "interested", "priority": 30, "label": "Servicio de interés identificado" },
           "goal": "Ayudar a elegir y resolver un servicio exacto del catÃ¡logo.",
           "advanceWhenFacts": [
             "service"
@@ -998,6 +1000,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         {
           "id": "scheduling",
           "name": "Agenda",
+          "leadQualification": { "band": "high_intent", "priority": 70, "label": "Consultando agenda" },
           "goal": "Revisar disponibilidad y validar fecha y hora para una reserva por hora.",
           "collect": [
             "desired_date",
@@ -1111,6 +1114,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         {
           "id": "finalization",
           "name": "Cierre con anticipo",
+          "leadQualification": { "band": "ready", "priority": 90, "label": "Lista para confirmar", "conversionOnRequestCompleted": true },
           "goal": "Preparar el resumen, generar el link de anticipo y esperar confirmacion automatica de pago.",
           "actions": [
             {

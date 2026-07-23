@@ -132,7 +132,7 @@ VALUES
     ('D3E4A700-0000-0000-0000-000000000110', N'MD-BISG-MA', N'Bisg-Ma resina nanohibrida', N'Resina nanohibrida fotocurable de 4 g para restauraciones anteriores, posteriores y carillas. Facil de modelar y pulir, con acabado natural, baja contraccion y radiopacidad; disponible en varios tonos segun catalogo. Buena eleccion para restauraciones esteticas donde importan brillo y versatilidad.', N'Resinas restauradoras', 0, N'COP', NULL, 1),
     ('D3E4A700-0000-0000-0000-000000000111', N'MD-TEGD-MA', N'Tegd-Ma resina microhibrida', N'Resina en pasta microhibrida fotocurable de 4 g, facil de manipular, con excelente pulido, alto brillo y resistencia al desgaste y manchas. Tonos A1, A2, A3, A3.5, B1, B2, B3, B4, C1, C2 y C3 segun catalogo; radiopaca, baja contraccion y curado orientativo 30 s en tonos claros y 40 s en oscuros.', N'Resinas restauradoras', 0, N'COP', NULL, 1),
     ('D3E4A700-0000-0000-0000-000000000112', N'MD-SYGD-MA', N'Sygd-Ma resina fluida', N'Resina fluida fotocurable de baja viscosidad y alta estetica, con particula aproximada de 0,7 micras. Se adapta a cavidades, zonas cervicales, pequenos defectos, sellado de fosas y fisuras y como base bajo composites. Jeringa de 2 g, buen pulido, baja contraccion y radiopacidad.', N'Resinas restauradoras', 0, N'COP', NULL, 1),
-    ('D3E4A700-0000-0000-0000-000000000113', N'MD-AVVA-BULK', N'Avva-Bulk resina fluida Bulk', N'Resina fluida fotocurable para restauraciones y cementacion de coronas, puentes y ceramicas. Alta translucidez para facilitar el curado y capas de hasta 4 mm segun protocolo; alta carga, resistencia flexural y tono dental universal. Presentacion de jeringa de 2 g o caja con 20 puntas.', N'Resinas restauradoras', 0, N'COP', NULL, 1),
+    ('D3E4A700-0000-0000-0000-000000000113', N'MD-AVVA-BULK', N'Avva-Bulk resina fluida Bulk', N'Resina fluida fotocurable para restauraciones y cementacion de coronas, puentes y ceramicas. Alta translucidez, carga y resistencia flexural para capas de 4 mm segun protocolo. Presentacion en jeringa de 2 g y tono dental universal.', N'Resinas restauradoras', 0, N'COP', NULL, 1),
     ('D3E4A700-0000-0000-0000-000000000114', N'MD-DV-SEAL', N'DV-Seal sellante de fosas y fisuras', N'Sellador fotocurable a base de BIS-GMA, tixotropico para penetrar fisuras estrechas, con adhesion al esmalte y resistencia al desgaste. El color rosa cambia a blanco opaco para ayudar a verificar la polimerizacion y libera fluor. Presentaciones con jeringas, grabador y puntas; indicado para superficies oclusales y prevencion de caries.', N'Selladores', 0, N'COP', NULL, 1),
     ('D3E4A700-0000-0000-0000-000000000115', N'MD-LUMA-FLEX', N'Kit de resina para ortodoncia Luma-Flex', N'Kit fotocurable para cementacion de brackets de metal, porcelana o plastico. Pasta de alta viscosidad para capas delgadas, sin mezcla, fotocurado 20-30 s, resistencia a compresion 305 MPa, flexion 142 MPa y cizallamiento 22 MPa. Incluye dos jeringas de pasta de 5 g, enlace de 5 ml, gel grabador de 2 ml y accesorios.', N'Ortodoncia', 0, N'COP', NULL, 1),
     ('D3E4A700-0000-0000-0000-000000000116', N'MD-SILICA-FLEX', N'Kit de resina para ortodoncia Silica-Flex autocurado', N'Kit de autocurado para brackets de metal, porcelana o plastico. Incluye adhesivo de 5 ml, gel grabador y pasta; la polimerizacion inicia al contacto de imprimacion y pasta. Requiere esmalte limpio, seco y aislado; incluye microaplicadores y boquillas.', N'Ortodoncia', 0, N'COP', NULL, 1),
@@ -284,7 +284,7 @@ WHERE BusinessId = @BusinessId;
         p.ProductId,
         LOWER(
             REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
-                CONCAT(p.Sku, N' ', p.[Name], N' ', p.CategoryName, N' ', p.[Description], N' ', v.Keywords),
+                CONCAT(p.Sku, N' ', p.[Name], N' ', p.CategoryName, N' ', v.Keywords),
                 N'-', N' '), N'/', N' '), N',', N' '), N'.', N' '),
                 N'(', N' '), N')', N' '), N':', N' ')
         ) AS SearchText
@@ -302,8 +302,13 @@ NormalizedTerms AS
     CROSS APPLY STRING_SPLIT(c.SearchText, N' ') tokens
     WHERE LEN(LTRIM(RTRIM(tokens.[value]))) BETWEEN 2 AND 100
       AND LTRIM(RTRIM(tokens.[value])) NOT IN
-          (N'al', N'con', N'de', N'del', N'el', N'en', N'la', N'las', N'los',
-           N'para', N'por', N'una', N'uno', N'unos', N'unas', N'que')
+          (N'a', N'al', N'con', N'de', N'del', N'el', N'en', N'la', N'las', N'los', N'o',
+           N'para', N'por', N'un', N'una', N'uno', N'unos', N'unas', N'y', N'x', N'que',
+           N'bolsa', N'bulto', N'caja', N'canasta', N'display', N'paquet', N'paquete',
+           N'catalog', N'catalogo', N'catalogue', N'inventario', N'mercancia', N'opcion',
+           N'producto', N'referencia', N'variedad', N'facilitar', N'general', N'hasta',
+           N'incluye', N'presentacion', N'protocolo', N'segun', N'unidad', N'unidades',
+           N'vario', N'varios', N'md')
 )
 INSERT INTO dbo.ProductSearchTerms (BusinessId, ProductId, Term, CreatedAt)
 SELECT BusinessId, ProductId, Term, GETUTCDATE()
@@ -339,6 +344,7 @@ VALUES
     (N'MD-SYGD-MA', N'resina sygd ma', 0, 1),
     (N'MD-AVVA-BULK', N'resina ava bulk', 2, 1),
     (N'MD-AVVA-BULK', N'resina avva bulk', 0, 1),
+    (N'MD-AVVA-BULK', N'resina avva bulk jeringa', 0, 1),
     (N'MD-DV-SEAL', N'dv seal', 0, 1),
     (N'MD-LUMA-FLEX', N'luma flex', 0, 1),
     (N'MD-SILICA-FLEX', N'silica flex', 0, 1),
@@ -934,7 +940,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                   "type": "facts.clear",
                   "facts": [
                     "order_finalized",
-                    "cart_review_confirmed",
                     "order_checkout_presented",
                     "customer_confirmed"
                   ]
@@ -1212,17 +1217,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "extractionGuidance": "Representa que el cliente comunico que termino la seleccion de productos y desea continuar con el pedido."
     },
     {
-      "key": "cart_review_confirmed",
-      "role": "order.cart_review_confirmed",
-      "label": "carrito aprobado por el cliente",
-      "type": "boolean",
-      "required": true,
-      "source": "user",
-      "scope": "request",
-      "retentionDays": 1,
-      "extractionGuidance": "Representa la aprobacion explicita del resumen vigente del carrito."
-    },
-    {
       "key": "delivery_method",
       "role": "shipping.method",
       "label": "modalidad de entrega",
@@ -1358,7 +1352,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "scope": "request",
       "dependsOn": [
         "order_checkout_presented",
-        "cart_review_confirmed",
         "delivery_method",
         "city",
         "delivery_address",
@@ -1485,7 +1478,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
     "known_facts_missing": "No tengo ese dato registrado todavia. Si quieres, puedes indicarmelo o actualizarlo.",
     "recipe_results": "Buena idea. Puedes inspirarte con estas preparaciones:\r\n\r\n*Ideas para preparar*\r\n{{#each results}}\r\n- {{Title}}\r\n  {{Url}}\r\n{{/each}}",
     "cart_snapshot": "Listo, ya actualice tu pedido 🙌\r\n\r\n*Pedido actual*\r\n\r\n{{#each items}}\r\n- {{name}} x{{quantity}}: ${{line_total}}\r\n{{/each}}\r\n\r\n*Total: ${{total}} {{currency}}*\r\n\r\nQuieres agregar algo mas? Cuando hayas terminado de elegir, avisame y continuamos.",
-    "cart_review": "Perfecto, revisemos juntos que todo este bien:\r\n\r\n*Resumen de tu pedido*\r\n\r\n{{#each items}}\r\n- {{name}} x{{quantity}}: ${{line_total}}\r\n{{/each}}\r\n\r\n*Total: ${{total}} {{currency}}*\r\n\r\nLo ves correcto o quieres cambiar algo?",
     "product_ambiguity": "Quiero asegurarme de agregar la opcion correcta. Para {{product_text}} encontre:\r\n{{#each product_options}}\r\n- {{Name}}: ${{UnitPrice}} {{Currency}}\r\n{{/each}}\r\n\r\nCual prefieres? Conservare los demas productos de tu solicitud.",
     "insufficient_stock": "Puedo ayudarte con esa referencia, pero la cantidad solicitada supera el inventario disponible.\r\n\r\n- Producto: {{product_text}}\r\n- Solicitado en total: {{requested_quantity}}\r\n- Disponible: {{available_quantity}}\r\n\r\nPara este cambio, indica una cantidad de hasta {{maximum_command_quantity}}; los demas cambios del lote aun no se han aplicado."
   },
@@ -1498,6 +1490,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         {
           "id": "product_selection",
           "name": "Productos, catalogo y recomendaciones",
+          "leadQualification": { "band": "exploring", "priority": 10, "label": "Explorando productos" },
           "goal": "Recibir pedidos abiertos, resolver productos reales del catalogo, recomendar de forma controlada y construir el carrito hasta que el cliente finalice.",
           "response": {},
           "advanceWhenFacts": [
@@ -1810,6 +1803,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         {
           "id": "customer_identity",
           "name": "Identificacion del cliente",
+          "leadQualification": { "band": "interested", "priority": 30, "label": "Identificación iniciada" },
           "goal": "Obtener el nombre de la persona u odontologo que realiza el pedido y conservar por separado el establecimiento cuando el cliente lo informe.",
           "response": {},
           "advanceWhenFacts": [
@@ -1823,265 +1817,9 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
           "awaitCustomerReply": true
         },
         {
-          "id": "cart_review",
-          "name": "Transicion al cierre",
-          "goal": "Continuar hacia entrega y pago sin mostrar un resumen intermedio.",
-          "response": {},
-          "advanceWhenFacts": [
-            "order_finalized"
-          ],
-          "conversationGuidance": "Cuando el cliente termine de agregar productos, avanza directamente a modalidad y datos de entrega. No muestres ni solicites confirmacion de un resumen intermedio; el unico resumen de cierre se presenta despues de completar entrega y pago.",
-          "collect": [
-            "order_finalized",
-            "delivery_method",
-            "delivery_address",
-            "delivery_reference",
-            "delivery_recipient_name",
-            "delivery_phone",
-            "payment_method"
-          ],
-          "signals": [
-            {
-              "type": "order_changes",
-              "description": "Una mutacion explicita de uno o varios productos del unico pedido activo. Representa cada producto afectado con exactamente un comando: add cuando la cantidad es incremental o corresponde a un producto nuevo; set_quantity cuando la cantidad expresa el total final deseado para una linea existente; remove cuando se elimina por completo la linea, con quantity nulo. Cada comando corresponde a un producto afectado en el mensaje actual y se emite exactamente una vez. Conserva referencias parciales o contextuales, todas las cantidades y todos los productos del turno; el historial se usa para resolver la referencia, mientras las mutaciones provienen del mensaje actual. El motor resuelve catalogo, ambiguedad e inventario de forma autoritativa. Cuando exista una seleccion pendiente, la referencia elegida continua esa misma mutacion y el motor restaura el resto del lote.",
-              "valueSchema": {
-                "type": "array",
-                "items": {
-                  "anyOf": [
-                    {
-                      "type": "object",
-                      "additionalProperties": false,
-                      "properties": {
-                        "operation": {
-                          "type": "string",
-                          "enum": [
-                            "add"
-                          ]
-                        },
-                        "productText": {
-                          "type": "string"
-                        },
-                        "quantity": {
-                          "type": "number"
-                        },
-                        "destinationReference": {
-                          "type": [
-                            "string",
-                            "null"
-                          ]
-                        }
-                      },
-                      "required": [
-                        "operation",
-                        "productText",
-                        "quantity",
-                        "destinationReference"
-                      ]
-                    },
-                    {
-                      "type": "object",
-                      "additionalProperties": false,
-                      "properties": {
-                        "operation": {
-                          "type": "string",
-                          "enum": [
-                            "set_quantity"
-                          ]
-                        },
-                        "productText": {
-                          "type": "string"
-                        },
-                        "quantity": {
-                          "type": "number"
-                        },
-                        "destinationReference": {
-                          "type": [
-                            "string",
-                            "null"
-                          ]
-                        }
-                      },
-                      "required": [
-                        "operation",
-                        "productText",
-                        "quantity",
-                        "destinationReference"
-                      ]
-                    },
-                    {
-                      "type": "object",
-                      "additionalProperties": false,
-                      "properties": {
-                        "operation": {
-                          "type": "string",
-                          "enum": [
-                            "remove",
-                            "cancel_pending"
-                          ]
-                        },
-                        "productText": {
-                          "type": "string"
-                        },
-                        "quantity": {
-                          "type": "null"
-                        },
-                        "destinationReference": {
-                          "type": [
-                            "string",
-                            "null"
-                          ]
-                        }
-                      },
-                      "required": [
-                        "operation",
-                        "productText",
-                        "quantity",
-                        "destinationReference"
-                      ]
-                    }
-                  ]
-                }
-              },
-              "ambiguityRules": [
-                {
-                  "type": "distinct_values",
-                  "valueProperty": "destinationReference",
-                  "field": "delivery_address",
-                  "minimumDistinctValues": 2
-                }
-              ]
-            }
-          ],
-          "actions": [
-            {
-              "id": "show_current_order_draft",
-              "operation": "commerce.get_order_draft",
-              "trigger": "when_ready",
-              "condition": {
-                "factMissing": "order_finalized"
-              },
-              "arguments": {},
-              "onOutcome": {
-                "order.draft_loaded": {
-                  "response": {
-                    "guidance": "Muestra los Ã­tems, cantidades, subtotales y total devueltos, y pregunta si el pedido actual estÃ¡ correcto."
-                  },
-                  "effects": [
-                    {
-                      "type": "presentation.add",
-                      "template": "cart_review",
-                      "dataPath": "order",
-                      "mode": "Exclusive",
-                      "priority": "Required"
-                    }
-                  ]
-                },
-                "order.draft_empty": {
-                  "response": {
-                    "guidance": "Informa que el pedido vigente esta vacio y ayuda al cliente a elegir productos antes de continuar."
-                  },
-                  "effects": [
-                    {
-                      "type": "facts.clear",
-                      "facts": [
-                        "order_finalized",
-                        "cart_review_confirmed"
-                      ]
-                    }
-                  ]
-                }
-              }
-            },
-            {
-              "id": "apply_order_changes",
-              "operation": "commerce.apply_order_changes",
-              "trigger": "on_signal",
-              "signal": "order_changes",
-              "arguments": {
-                "commands": "{{signal.order_changes.value}}"
-              },
-              "onOutcome": {
-                "cart.applied": {
-                  "response": {
-                    "guidance": "Confirma brevemente los cambios aplicados y continÃºa segÃºn el objetivo de la etapa."
-                  },
-                  "effects": [
-                    {
-                      "type": "presentation.add",
-                      "template": "cart_review",
-                      "dataPath": "order",
-                      "mode": "Exclusive",
-                      "priority": "Required"
-                    }
-                  ]
-                },
-                "cart.pending_cancelled": {
-                  "response": {
-                    "guidance": "Si discarded_items contiene productos, indica brevemente cuales productos agotados se dejaron fuera y continua inmediatamente con el cierre o el objetivo de la etapa, sin pedir otra confirmacion. Para otras cancelaciones, confirma brevemente la seleccion cancelada."
-                  }
-                },
-                "cart.product_not_found": {
-                  "response": {
-                    "mode": "ask_clarification",
-                    "guidance": "Indica que ese producto no se encontrÃ³ y pide una descripciÃ³n o referencia mÃ¡s precisa."
-                  }
-                },
-                "cart.product_ambiguous": {
-                  "response": {
-                    "mode": "ask_clarification",
-                    "guidance": "Presenta Ãºnicamente los candidatos devueltos y pregunta cuÃ¡l referencia desea."
-                  },
-                  "effects": [
-                    {
-                      "type": "presentation.add",
-                      "template": "product_ambiguity",
-                      "dataPath": "error.context",
-                      "mode": "Exclusive",
-                      "priority": "Required"
-                    }
-                  ]
-                },
-                "cart.insufficient_stock": {
-                  "response": {
-                    "mode": "ask_clarification",
-                    "guidance": "Explica con claridad la cantidad disponible y pide una cantidad valida; ningun cambio del lote fue aplicado."
-                  },
-                  "effects": [
-                    {
-                      "type": "presentation.add",
-                      "template": "insufficient_stock",
-                      "dataPath": "error.context",
-                      "mode": "Exclusive",
-                      "priority": "Required"
-                    }
-                  ]
-                },
-                "cart.item_not_found_or_ambiguous": {
-                  "response": {
-                    "mode": "ask_clarification",
-                    "guidance": "Aclara cuÃ¡l producto existente del pedido desea modificar."
-                  }
-                },
-                "cart.conflicting_commands": {
-                  "response": {
-                    "mode": "ask_clarification",
-                    "guidance": "Pide aclarar el cambio final para el producto repetido; no se aplicÃ³ ningÃºn cambio del lote."
-                  }
-                },
-                "cart.multiple_destinations": {
-                  "response": {
-                    "mode": "ask_clarification",
-                    "guidance": "No se aplicÃ³ ningÃºn cambio. Pregunta cuÃ¡l direcciÃ³n debe usarse para entregar todo el Ãºnico pedido."
-                  }
-                }
-              }
-            }
-          ],
-          "awaitCustomerReply": true
-        },
-        {
           "id": "order_data",
           "name": "Entrega",
+          "leadQualification": { "band": "high_intent", "priority": 55, "label": "Datos de entrega" },
           "goal": "Definir recogida o domicilio y obtener solo los datos faltantes requeridos por el checkout.",
           "response": {},
           "advanceWhenFacts": [
@@ -2129,6 +1867,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         {
           "id": "summary",
           "name": "Resumen final del pedido",
+          "leadQualification": { "band": "ready", "priority": 75, "label": "Pedido listo para confirmar" },
           "goal": "Preparar y mostrar el resumen oficial con entrega, pago y total final del motor.",
           "response": {},
           "advanceWhenFacts": [
@@ -2216,7 +1955,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                       "type": "facts.clear",
                       "facts": [
                         "order_finalized",
-                        "cart_review_confirmed",
                         "order_checkout_presented"
                       ]
                     }
@@ -2231,7 +1969,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                       "type": "facts.clear",
                       "facts": [
                         "order_finalized",
-                        "cart_review_confirmed",
                         "order_checkout_presented"
                       ]
                     }
@@ -2277,6 +2014,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         {
           "id": "order_confirmation",
           "name": "Confirmacion del pedido",
+          "leadQualification": { "band": "converted", "priority": 100, "label": "Pedido confirmado", "conversionOnRequestCompleted": true },
           "goal": "Crear el pedido despues de confirmacion del cliente.",
           "response": {},
           "advanceWhenFacts": [
@@ -2386,14 +2124,11 @@ IF JSON_VALUE(@SettingsJson, '$.globalActions[1].actions[0].operation') <> 'comm
     THROW 51000, 'SeedMedidental: ruta global de carrito inesperada.', 1;
 IF JSON_VALUE(@SettingsJson, '$.flows[0].stages[0].actions[2].operation') <> 'commerce.apply_order_changes'
     THROW 51000, 'SeedMedidental: ruta product_selection de carrito inesperada.', 1;
-IF JSON_VALUE(@SettingsJson, '$.flows[0].stages[2].actions[1].operation') <> 'commerce.apply_order_changes'
-    THROW 51000, 'SeedMedidental: ruta cart_review de carrito inesperada.', 1;
 
 DECLARE @CartExecutionPaths TABLE (Path NVARCHAR(400) NOT NULL);
 INSERT INTO @CartExecutionPaths (Path) VALUES
     (N'$.globalActions[1].actions[0].execution'),
-    (N'$.flows[0].stages[0].actions[2].execution'),
-    (N'$.flows[0].stages[2].actions[1].execution');
+    (N'$.flows[0].stages[0].actions[2].execution');
 
 DECLARE @CartExecutionPath NVARCHAR(400);
 DECLARE CartExecutionCursor CURSOR LOCAL FAST_FORWARD FOR SELECT Path FROM @CartExecutionPaths;
@@ -2411,8 +2146,7 @@ DEALLOCATE CartExecutionCursor;
 DECLARE @CartOutcomePaths TABLE (Path NVARCHAR(400) NOT NULL);
 INSERT INTO @CartOutcomePaths (Path) VALUES
     (N'$.globalActions[1].actions[0].onOutcome'),
-    (N'$.flows[0].stages[0].actions[2].onOutcome'),
-    (N'$.flows[0].stages[2].actions[1].onOutcome');
+    (N'$.flows[0].stages[0].actions[2].onOutcome');
 
 DECLARE @CartOutcomePath NVARCHAR(400);
 DECLARE CartOutcomeCursor CURSOR LOCAL FAST_FORWARD FOR SELECT Path FROM @CartOutcomePaths;
@@ -2438,7 +2172,7 @@ IF JSON_VALUE(@SettingsJson, '$.globalActions[3].id') <> 'catalog_lookup'
 
 
 -- La transferencia manual queda esperando al equipo, no al cliente.
-SET @SettingsJson = JSON_MODIFY(@SettingsJson, '$.flows[0].stages[5].actions[0].onOutcome."order.checkout_pending_manual_payment".response', JSON_QUERY(N'{}'));
+SET @SettingsJson = JSON_MODIFY(@SettingsJson, '$.flows[0].stages[4].actions[0].onOutcome."order.checkout_pending_manual_payment".response', JSON_QUERY(N'{}'));
 
 DECLARE @FollowUpCartOutcomePath NVARCHAR(400);
 DECLARE FollowUpCartOutcomeCursor CURSOR LOCAL FAST_FORWARD FOR SELECT Path FROM @CartOutcomePaths;

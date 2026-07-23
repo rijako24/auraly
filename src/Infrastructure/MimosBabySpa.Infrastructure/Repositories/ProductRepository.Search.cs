@@ -34,12 +34,11 @@ public sealed partial class ProductRepository
         var existing = await _context.ProductSearchTerms
             .Where(term => term.BusinessId == product.BusinessId && term.ProductId == product.ProductId)
             .ToListAsync(ct);
-        var desired = ProductSearchText.GetIndexTerms(
+        var desired = ProductSearchText.GetProductIndexTerms(
                 product.Name,
                 product.Sku,
                 product.ExternalProductId,
-                product.CategoryName,
-                product.Description)
+                product.CategoryName)
             .Where(term => term.Length <= 100)
             .ToHashSet(StringComparer.Ordinal);
 
@@ -127,7 +126,7 @@ public sealed partial class ProductRepository
 
     private static int DirectIdentityScore(Product product, IReadOnlyCollection<string> keys)
     {
-        var identityTerms = ProductSearchText.GetIndexTerms(
+        var identityTerms = ProductSearchText.GetProductIndexTerms(
             product.Name,
             product.Sku,
             product.ExternalProductId,

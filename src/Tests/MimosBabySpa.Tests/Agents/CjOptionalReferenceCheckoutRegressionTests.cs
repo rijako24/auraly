@@ -74,7 +74,6 @@ public sealed class CjOptionalReferenceCheckoutRegressionTests
         var facts = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
             ["order_finalized"] = "true",
-            ["cart_review_confirmed"] = "true",
             ["delivery_method"] = "domicilio",
             ["city"] = "Valledupar",
             ["delivery_address"] = "Calle 5N",

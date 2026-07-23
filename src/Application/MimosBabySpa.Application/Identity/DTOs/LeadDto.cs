@@ -11,4 +11,11 @@ public record LeadDto(
     Guid? ConversationId = null,
     string? ConversationStatus = null,
     string? CurrentStageName = null,
-    DateTime? LastActivityAt = null);
+    DateTime? LastActivityAt = null,
+    string? QualificationBand = null,
+    string? QualificationLabel = null,
+    int? QualificationPriority = null,
+    string? QualificationFlowId = null,
+    string? QualificationStageId = null,
+    DateTime? QualificationUpdatedAt = null,
+    DateTime? ConvertedAt = null);

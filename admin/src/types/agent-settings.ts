@@ -26,10 +26,14 @@ export interface StageActionDefinition {
 export interface StageTransitionDefinition {
   id: string; priority?: number; condition: StageConditionDefinition; to: string; effects?: StageEffectDefinition[];
 }
+export interface LeadQualificationStageDefinition {
+  band: string; priority: number; label?: string; conversionOnRequestCompleted?: boolean;
+}
 export interface AgentFlowStage {
   id: string; name?: string; goal: string; collect?: string[]; advanceWhenFacts?: string[];
   signals?: StageSignalDefinition[]; actions?: StageActionDefinition[]; transitions?: StageTransitionDefinition[];
   awaitCustomerReply?: boolean; response?: StageResponseDefinition; conversationGuidance?: string; reentryOnFactChanged?: string[];
+  leadQualification?: LeadQualificationStageDefinition;
 }
 export interface AgentFlowDefinition {
   id: string; type?: "primary" | "secondary"; routingGuidance?: string; ttlSeconds?: number; stages: AgentFlowStage[];

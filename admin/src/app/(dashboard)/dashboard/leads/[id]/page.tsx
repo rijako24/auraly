@@ -70,6 +70,18 @@ export default function LeadDetailPage() {
                 <p className="text-sm font-medium text-muted-foreground">Fecha</p>
                 <p>{formatDateTime(lead.timestamp)}</p>
               </div>
+              {lead.qualificationBand && (
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">Calificación comercial</p>
+                  <div className="mt-1 flex flex-wrap items-center gap-2">
+                    <Badge variant="secondary" className="border border-violet-200 bg-violet-50 text-violet-800 dark:border-violet-900 dark:bg-violet-950 dark:text-violet-200">
+                      {lead.qualificationLabel ?? lead.qualificationBand}
+                    </Badge>
+                    {lead.qualificationPriority != null && <span className="text-sm">Prioridad {lead.qualificationPriority}/100</span>}
+                  </div>
+                  {lead.qualificationUpdatedAt && <p className="mt-1 text-xs text-muted-foreground">Actualizada {formatDateTime(lead.qualificationUpdatedAt)}</p>}
+                </div>
+              )}
             </div>
             {lead.notes && (
               <div>

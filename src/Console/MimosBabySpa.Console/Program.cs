@@ -96,6 +96,51 @@ var configuration = new ConfigurationBuilder()
 
     .Build();
 
+if (args.Length >= 2 && args[0].Equals("rebuild-product-index", StringComparison.OrdinalIgnoreCase))
+{
+    var dryRun = args.Any(arg => arg.Equals("--dry-run", StringComparison.OrdinalIgnoreCase));
+    var selectors = args.Skip(1)
+        .Where(arg => !arg.Equals("--dry-run", StringComparison.OrdinalIgnoreCase))
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .ToList();
+    if (selectors.Count == 0)
+        throw new ArgumentException("Indica al menos un BusinessId o nombre de negocio.");
+
+    var maintenanceServices = new ServiceCollection();
+    maintenanceServices.AddDbContext<ApplicationDbContext>(options =>
+        options.UseSqlServer(configuration.GetConnectionString("DefaultConnection")));
+    maintenanceServices.AddScoped<IUnitOfWork, UnitOfWork>();
+    maintenanceServices.AddScoped<IProductSearchIndexMaintenanceService, ProductSearchIndexMaintenanceService>();
+
+    await using var maintenanceProvider = maintenanceServices.BuildServiceProvider();
+    await using var maintenanceScope = maintenanceProvider.CreateAsyncScope();
+    var db = maintenanceScope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+    var maintenance = maintenanceScope.ServiceProvider.GetRequiredService<IProductSearchIndexMaintenanceService>();
+
+    foreach (var selector in selectors)
+    {
+        var business = Guid.TryParse(selector, out var businessId)
+            ? await db.Businesses.AsNoTracking().SingleOrDefaultAsync(item => item.BusinessId == businessId)
+            : (await db.Businesses.AsNoTracking().ToListAsync())
+                .SingleOrDefault(item => item.Name.Equals(selector, StringComparison.OrdinalIgnoreCase));
+        if (business is null)
+            throw new InvalidOperationException($"No existe un negocio con el selector '{selector}'.");
+
+        var result = await maintenance.RebuildAsync(business.BusinessId, dryRun);
+        Console.WriteLine(
+            $"{business.Name}: products={result.ProductsReindexed}, aliases={result.AliasesScanned}, " +
+            $"aliasesNormalized={result.AliasesNormalized}, aliasConflicts={result.AliasConflicts}, dryRun={dryRun}");
+    }
+
+    return;
+}
+
+if (args is ["lead-qualification-smoke"])
+{
+    Environment.ExitCode = await MimosBabySpa.Console.LeadQualificationConsoleScenario.RunAsync();
+    return;
+}
+
 if (args is ["product-resolution-smoke"])
 {
     Environment.ExitCode = await MimosBabySpa.Console.ProductResolutionConsoleScenario.RunAsync();
