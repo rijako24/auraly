@@ -20,6 +20,7 @@ import {
   ProductAliasStatus,
   type ProductAlias,
 } from "@/services/api/products";
+import { aliasMappingExplanation } from "./product-recognition-sections";
 
 const statusLabels: Record<ProductAliasStatus, string> = {
   [ProductAliasStatus.Pending]: "Pendiente",
@@ -47,6 +48,7 @@ interface LearningCardProps {
 
 function LearningCard({ alias, isPending, onReview, onPromote }: LearningCardProps) {
   const isCustomerLearning = alias.scope === ProductAliasScope.Customer;
+  const mappingExplanation = aliasMappingExplanation(alias);
   const lastConfirmation = alias.lastConfirmedAt ? dateFormatter.format(new Date(alias.lastConfirmedAt)) : "Sin confirmaciones";
 
   return (
@@ -100,6 +102,9 @@ function LearningCard({ alias, isPending, onReview, onPromote }: LearningCardPro
         <Badge variant="outline">{resolutionLabels[alias.resolutionMode]}</Badge>
         <Badge variant="outline">{alias.usageCount} {alias.usageCount === 1 ? "uso" : "usos"}</Badge>
       </div>
+      {mappingExplanation && (
+        <p className="text-xs text-muted-foreground">{mappingExplanation}</p>
+      )}
       <p className="text-xs text-muted-foreground">Última confirmación: {lastConfirmation}</p>
     </article>
   );

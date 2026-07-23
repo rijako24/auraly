@@ -330,7 +330,6 @@ VALUES
     (N'MD-TRIPOWER-TACTIL', N'tripower tactil', 0, 1),
     (N'MD-TRIPOWER-TACTIL', N'electrobisturi tactil', 0, 1),
     (N'MD-TURBINA-TORCH-LED', N'titanium torch led', 0, 1),
-    (N'MD-TURBINA-TITANIUM-45P', N'titanium 45p', 0, 0),
     (N'MD-SCALER-P6-MAX', N'p6 max', 0, 1),
     (N'MD-MAGPOWER-ULTRASONICO', N'escaler magpower', 0, 1),
     (N'MD-POWERLED-L9', N'powerled l9', 0, 1),
@@ -368,9 +367,6 @@ VALUES
     (N'MD-AUTOCURADO-3-15', N'resina autocurado 3 15', 0, 1),
     (N'MD-CERAMIK-TRADICIONAL', N'ceramik tradicional', 0, 1),
     (N'MD-CERAMIK-MINI', N'ceramik mini', 0, 1),
-    (N'MD-TITANIUM-3P', N'titanium 3p', 0, 0),
-    (N'MD-TITANIUM-3R', N'titanium 3r', 0, 0),
-    (N'MD-TITANIUM-45R', N'titanium 45r', 0, 0),
     (N'MD-CABEZA-CONTRAANGULO-PB', N'cabeza contraangulo push button', 0, 1),
     (N'MD-CABEZA-CONTRAANGULO-PESTILLO', N'cabeza contraangulo pestillo', 0, 1),
     (N'MD-CONTRAANGULO-PB', N'contraangulo push button', 0, 1),
@@ -382,50 +378,7 @@ VALUES
     (N'MD-POWERLED-L7', N'powerled l7', 0, 1),
     (N'MD-POWERLED-LX', N'powerled lx', 0, 1);
 
--- Category/use expressions are intentionally SuggestOnly for every valid candidate.
-INSERT INTO @AliasDefinitions (Sku, Alias, Kind, ResolutionMode)
-VALUES
-    (N'MD-TRIPOWER-DIGITAL', N'electrobisturi', 1, 0),
-    (N'MD-TRIPOWER-TACTIL', N'electrobisturi', 1, 0),
-    (N'MD-OSSEO-100', N'motor implante', 1, 0),
-    (N'MD-OSSEO-200', N'motor implante', 1, 0),
-    (N'MD-IONO-CEM-TIPO-I', N'ionomero', 1, 0),
-    (N'MD-IONO-RES-TIPO-II', N'ionomero', 1, 0),
-    (N'MD-SYGD-MA', N'resina fluida', 1, 0),
-    (N'MD-AVVA-BULK', N'resina fluida', 1, 0),
-    (N'MD-BISG-MA', N'resina nanohibrida', 1, 0),
-    (N'MD-CHRO-MA', N'resina nanohibrida', 1, 0),
-    (N'MD-KIT-SYGD-MA', N'kit restauracion', 1, 0),
-    (N'MD-KIT-BISG-MA', N'kit restauracion', 1, 0),
-    (N'MD-KIT-CHRO-MA', N'kit restauracion', 1, 0),
-    (N'MD-KIT-TEGD-MA', N'kit restauracion', 1, 0),
-    (N'MD-KIT-AVVA-BULK', N'kit restauracion', 1, 0),
-    (N'MD-KIT-DV-SEAL', N'kit restauracion', 1, 0),
-    (N'MD-COMPULA-SYGD-MA', N'compula resina', 1, 0),
-    (N'MD-COMPULA-TEGD-MA', N'compula resina', 1, 0),
-    (N'MD-COMPULA-BISG-MA', N'compula resina', 1, 0),
-    (N'MD-COMPULA-CHRO-MA', N'compula resina', 1, 0),
-    (N'MD-COMPULA-AVVA-BULK', N'compula resina', 1, 0),
-    (N'MD-TURBINA-TORCH-LED', N'pieza mano', 1, 0),
-    (N'MD-TURBINA-TITANIUM-45P', N'pieza mano', 1, 0),
-    (N'MD-CERAMIK-TRADICIONAL', N'pieza mano', 1, 0),
-    (N'MD-CERAMIK-MINI', N'pieza mano', 1, 0),
-    (N'MD-TITANIUM-3P', N'pieza mano', 1, 0),
-    (N'MD-TITANIUM-3R', N'pieza mano', 1, 0),
-    (N'MD-TITANIUM-45R', N'pieza mano', 1, 0),
-    (N'MD-CABEZA-CONTRAANGULO-PB', N'contraangulo', 1, 0),
-    (N'MD-CABEZA-CONTRAANGULO-PESTILLO', N'contraangulo', 1, 0),
-    (N'MD-CONTRAANGULO-PB', N'contraangulo', 1, 0),
-    (N'MD-CONTRAANGULO-PESTILLO', N'contraangulo', 1, 0),
-    (N'MD-SCALER-BLACK', N'escaler', 1, 0),
-    (N'MD-SCALER-AS6000', N'escaler', 1, 0),
-    (N'MD-SCALER-P5-MAX', N'escaler', 1, 0),
-    (N'MD-SCALER-P6-MAX', N'escaler', 1, 0),
-    (N'MD-MAGPOWER-ULTRASONICO', N'escaler', 1, 0),
-    (N'MD-POWERLED-L7', N'lampara fotocurado', 1, 0),
-    (N'MD-POWERLED-L9', N'lampara fotocurado', 1, 0),
-    (N'MD-POWERLED-LX', N'lampara fotocurado', 1, 0);
-
+-- Broad category expressions are resolved by catalog search, not persisted as per-product aliases.
 -- ProductSearchText.NormalizeAlias splits alpha/numeric transitions and drops
 -- one-letter alpha tokens. Keep persisted keys aligned with runtime lookup.
 DECLARE @AliasNormalization TABLE
@@ -436,12 +389,8 @@ DECLARE @AliasNormalization TABLE
 
 INSERT INTO @AliasNormalization (Alias, NormalizedAlias)
 VALUES
-    (N'titanium 45p', N'titanium 45'),
     (N'p6 max', N'6 max'),
     (N'powerled l9', N'powerled 9'),
-    (N'titanium 3p', N'titanium 3'),
-    (N'titanium 3r', N'titanium 3'),
-    (N'titanium 45r', N'titanium 45'),
     (N'escaler as6000', N'escaler as 6000'),
     (N'p5 max', N'5 max'),
     (N'powerled l7', N'powerled 7');
@@ -1097,10 +1046,10 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "id": "catalog_lookup",
       "priority": 850,
       "goal": "Consultar el catalogo oficial cuando el cliente pregunte por productos, disponibilidad, referencias, precios u opciones, sin depender de la etapa activa.",
-      "conversationGuidance": "Detecta catalog_query cuando el cliente solicita explorar el catalogo o consultar mercancia comprable. Para una pregunta abierta como que productos tienen, emite queries como una lista vacia. Cuando mencione productos, categorias o referencias concretas, incluye un termino util por cada busqueda. No uses palabras genericas como productos, catalogo, opciones o referencias como terminos. Si la pregunta pide recuperar o confirmar datos de entrega, direccion, recogida, pago, identidad, perfil, cliente u orden, emite cero catalog_query. Nunca respondas disponibilidad, nombres ni precios desde conocimiento general.",
+      "conversationGuidance": "Detecta catalog_query cuando el cliente solicita explorar o buscar mercancia comprable. Usa mode=browse y queries vacio cuando pide ver una muestra abierta del catalogo sin restringirla a un producto o categoria; usa mode=search y terminos concretos cuando consulta productos, categorias o referencias identificables. Una consulta abierta puede coexistir en el mismo mensaje con order_changes y ambas intenciones deben conservarse. Si la pregunta pide recuperar o confirmar datos de entrega, direccion, recogida, pago, identidad, perfil, cliente u orden, emite cero catalog_query. Nunca respondas disponibilidad, nombres ni precios desde conocimiento general.",
       "signal": {
         "type": "catalog_query",
-        "description": "Consulta de mercancia comprable del catalogo. Usa queries vacio para explorar una muestra amplia del catalogo y terminos concretos para buscar productos, categorias, referencias, precios o disponibilidad.",
+        "description": "Consulta de mercancia comprable. mode=browse representa exploracion abierta con queries vacio; mode=search representa busqueda restringida con terminos concretos. Puede coexistir con una mutacion independiente del carrito.",
         "valueSchema": {
           "type": "object",
           "additionalProperties": false,
@@ -1111,10 +1060,18 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                 "type": "string"
               },
               "minItems": 0
+            },
+            "mode": {
+              "type": "string",
+              "enum": [
+                "search",
+                "browse"
+              ]
             }
           },
           "required": [
-            "queries"
+            "queries",
+            "mode"
           ]
         }
       },
@@ -1129,6 +1086,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
           "signal": "catalog_query",
           "arguments": {
             "queries": "{{signal.catalog_query.value.queries}}",
+            "mode": "{{signal.catalog_query.value.mode}}",
             "limit": 10
           },
           "onOutcome": {

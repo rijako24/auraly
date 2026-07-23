@@ -866,10 +866,10 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "id": "catalog_lookup",
       "priority": 850,
       "goal": "Consultar el catalogo oficial cuando el cliente pregunte por productos, disponibilidad, referencias, precios u opciones, sin depender de la etapa activa.",
-      "conversationGuidance": "Detecta catalog_query unicamente cuando el significado resuelto del mensaje solicita buscar mercancia comprable en el catalogo. Cada termino de queries debe ser una entrada valida para el buscador de productos e identificar un producto, categoria, ingrediente o preparacion que el cliente consulta, ya sea expresado en el mensaje vigente o resuelto desde una pregunta inmediatamente anterior que tambien era sobre productos. Si la pregunta pide recuperar o confirmar datos de entrega, direccion, recogida, pago, identidad, perfil, cliente u orden, emite cero catalog_query aunque use palabras como cual, tienes, disponible o registrado. Esta capacidad es transversal y puede ocurrir durante cualquier etapa, pero nunca funciona como respuesta generica a preguntas. Cuando la consulta nace porque el cliente rechaza semanticamente una referencia que ya esta en el carrito y pide alternativas, establece replacement_reference con la referencia original rechazada, sin depender de palabras exactas. Nunca respondas disponibilidad o nombres de productos desde conocimiento general.",
+      "conversationGuidance": "Detecta catalog_query cuando el cliente solicita explorar o buscar mercancia comprable. Usa mode=browse y queries vacio cuando pide ver una muestra abierta del catalogo sin restringirla a un producto o categoria; usa mode=search y terminos concretos cuando consulta productos, categorias, ingredientes o preparaciones identificables. Una consulta abierta puede coexistir en el mismo mensaje con order_changes y ambas intenciones deben conservarse. Si la pregunta pide recuperar o confirmar datos de entrega, direccion, recogida, pago, identidad, perfil, cliente u orden, emite cero catalog_query. Cuando la consulta nace porque el cliente rechaza semanticamente una referencia del carrito y pide alternativas, establece replacement_reference con la referencia original. Nunca respondas disponibilidad, nombres ni precios desde conocimiento general.",
       "signal": {
         "type": "catalog_query",
-        "description": "Consulta inequivoca sobre mercancia comprable del catalogo: existencia, opciones, referencias, precios, disponibilidad o recomendaciones, sin una instruccion explicita de agregar cantidades al pedido. El valor contiene terminos de producto concretos resueltos desde el mensaje vigente; replacement_reference identifica semanticamente la referencia vigente del carrito que el cliente rechazo y quiere sustituir. El contexto solo resuelve referencias comerciales que el cliente efectivamente consulta.",
+        "description": "Consulta de mercancia comprable. mode=browse representa exploracion abierta con queries vacio; mode=search representa busqueda restringida con terminos concretos. Puede coexistir con una mutacion independiente del carrito.",
         "valueSchema": {
           "type": "object",
           "additionalProperties": false,
@@ -879,7 +879,14 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
               "items": {
                 "type": "string"
               },
-              "minItems": 1
+              "minItems": 0
+            },
+            "mode": {
+              "type": "string",
+              "enum": [
+                "search",
+                "browse"
+              ]
             },
             "replacement_reference": {
               "description": "Referencia original del carrito que el cliente rechazo y desea sustituir con esta busqueda.",
@@ -891,6 +898,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
           },
           "required": [
             "queries",
+            "mode",
             "replacement_reference"
           ]
         }
@@ -906,6 +914,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
           "signal": "catalog_query",
           "arguments": {
             "queries": "{{signal.catalog_query.value.queries}}",
+            "mode": "{{signal.catalog_query.value.mode}}",
             "replacement_reference": "{{signal.catalog_query.value.replacement_reference}}",
             "limit": 10
           },

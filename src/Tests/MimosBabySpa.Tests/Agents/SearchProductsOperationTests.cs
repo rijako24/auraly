@@ -54,7 +54,7 @@ public class SearchProductsOperationTests
     }
 
     [Fact]
-    public async Task ExecuteAsync_MedidentalOpenCatalogWithEmptyQueries_ListsAnUnfilteredSample()
+    public async Task ExecuteAsync_ExplicitBrowseMode_ListsAnUnfilteredSample()
     {
         var ctx = CreateContext();
         var products = new[]
@@ -74,7 +74,7 @@ public class SearchProductsOperationTests
             .ReturnsAsync(new ProductSearchResult(products, "local"));
 
         var operation = new SearchProductsOperation(_commerce.Object);
-        using var args = JsonDocument.Parse("""{"queries":[],"limit":5}""");
+        using var args = JsonDocument.Parse("""{"mode":"browse","queries":[],"limit":5}""");
 
         var outcome = await operation.ExecuteAsync(
             args.RootElement,
@@ -88,8 +88,74 @@ public class SearchProductsOperationTests
             ctx,
             It.Is<ProductSearchRequest>(request =>
                 request.Query == null
+                && request.Mode == ProductCatalogQueryMode.Browse
                 && request.Category == null
                 && request.Limit == 5),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_ConcreteQuery_ForcesSearchEvenWhenExtractorClaimsBrowse()
+    {
+        var ctx = CreateContext();
+        var product = new ProductReference(
+            Guid.NewGuid(), null, "SC-24", "SUPERCOCO BOMBOM X 24 UND",
+            null, "Dulces", 10_884.15m, "COP", null);
+        _commerce
+            .Setup(service => service.SearchProductsAsync(
+                ctx,
+                It.IsAny<ProductSearchRequest>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ProductSearchResult([product], "xion"));
+
+        var operation = new SearchProductsOperation(_commerce.Object);
+        using var args = JsonDocument.Parse(
+            """{"mode":"browse","queries":["bombombun"],"limit":10}""");
+
+        await operation.ExecuteAsync(
+            args.RootElement,
+            new OperationContext { Session = ctx },
+            CancellationToken.None);
+
+        _commerce.Verify(service => service.SearchProductsAsync(
+            ctx,
+            It.Is<ProductSearchRequest>(request =>
+                request.Query == "bombombun"
+                && request.Mode == ProductCatalogQueryMode.Search),
+            It.IsAny<CancellationToken>()), Times.Once);
+        _commerce.Verify(service => service.SearchProductsAsync(
+            ctx,
+            It.Is<ProductSearchRequest>(request =>
+                request.Query == null
+                || request.Mode == ProductCatalogQueryMode.Browse),
+            It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_NoConcreteCriteria_ForcesBrowseEvenWhenExtractorClaimsSearch()
+    {
+        var ctx = CreateContext();
+        _commerce
+            .Setup(service => service.SearchProductsAsync(
+                ctx,
+                It.IsAny<ProductSearchRequest>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ProductSearchResult([], "xion"));
+
+        var operation = new SearchProductsOperation(_commerce.Object);
+        using var args = JsonDocument.Parse(
+            """{"mode":"search","queries":[],"limit":10}""");
+
+        await operation.ExecuteAsync(
+            args.RootElement,
+            new OperationContext { Session = ctx },
+            CancellationToken.None);
+
+        _commerce.Verify(service => service.SearchProductsAsync(
+            ctx,
+            It.Is<ProductSearchRequest>(request =>
+                request.Query == null
+                && request.Mode == ProductCatalogQueryMode.Browse),
             It.IsAny<CancellationToken>()), Times.Once);
     }
 

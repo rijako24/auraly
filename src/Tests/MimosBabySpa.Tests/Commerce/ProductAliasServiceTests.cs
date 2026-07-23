@@ -69,6 +69,43 @@ public sealed class ProductAliasServiceTests
     }
 
     [Fact]
+    public async Task GetByProduct_ExplainsMappingsSharedAcrossProductsAndCustomers()
+    {
+        var businessId = Guid.NewGuid();
+        var target = Product(businessId, "MOTOR OSSEO 100", "OS100");
+        var other = Product(businessId, "MOTOR OSSEO 200", "OS200");
+        var fixture = Fixture(businessId, target, [other]);
+        var globalTarget = LearnedAlias(
+            businessId, target.ProductId, ProductAliasScope.Business);
+        globalTarget.NormalizedAlias = "motor implante";
+        var customerTarget = LearnedAlias(
+            businessId, target.ProductId, ProductAliasScope.Customer);
+        customerTarget.NormalizedAlias = "motor implante";
+        customerTarget.CustomerKey = "customer-a";
+        var globalOther = LearnedAlias(
+            businessId, other.ProductId, ProductAliasScope.Business);
+        globalOther.NormalizedAlias = "motor implante";
+
+        fixture.Aliases.Setup(repository => repository.GetByProductAsync(
+                businessId, target.ProductId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([globalTarget, customerTarget]);
+        fixture.Aliases.Setup(repository => repository.GetByBusinessAsync(
+                businessId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([globalTarget, customerTarget, globalOther]);
+
+        var result = await fixture.Service.GetByProductAsync(
+            businessId, target.ProductId);
+
+        result.Should().HaveCount(2);
+        result.Should().OnlyContain(alias =>
+            alias.NormalizedAlias == "motor implante"
+            && alias.SharedMappingCount == 3
+            && alias.DistinctProductCount == 2
+            && alias.BusinessMappingCount == 2
+            && alias.DistinctCustomerCount == 1);
+    }
+
+    [Fact]
     public async Task Import_LargeBatch_UsesBulkReadsInsteadOfPerRowQueries()
     {
         var businessId = Guid.NewGuid();

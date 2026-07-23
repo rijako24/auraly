@@ -167,11 +167,20 @@ public sealed class LlmTurnPlanner : ITurnPlanner
         out TurnPlanProposal proposal)
     {
         proposal = new TurnPlanProposal(false, plan, [], promptTokens, completionTokens);
-        var validation = _validator.Validate(plan, context.Scope, context.LatestUserMessage);
+        plan = OptionSelectorResolver.Resolve(
+            plan,
+            context.Scope,
+            context.LatestUserMessage,
+            context.RecentConversation,
+            out var selectorReference);
+        plan = OptionalFactRefusalResolver.Resolve(plan, context.Scope);
+        var validation = _validator.Validate(
+            plan, context.Scope, context.LatestUserMessage, selectorReference);
         if (!TurnPlanFailSoftRecovery.TryRecover(plan, validation, context.Scope, out var recovered))
             return false;
 
-        var recoveredValidation = _validator.Validate(recovered, context.Scope, context.LatestUserMessage);
+        var recoveredValidation = _validator.Validate(
+            recovered, context.Scope, context.LatestUserMessage, selectorReference);
         if (!recoveredValidation.IsValid)
             return false;
 
@@ -194,8 +203,16 @@ public sealed class LlmTurnPlanner : ITurnPlanner
             return (null, [parseError ?? "Turn plan could not be parsed."], []);
 
         plan = TurnPlanNormalizer.Normalize(plan, context.Scope);
+        plan = OptionSelectorResolver.Resolve(
+            plan,
+            context.Scope,
+            context.LatestUserMessage,
+            context.RecentConversation,
+            out var selectorReference);
+        plan = OptionalFactRefusalResolver.Resolve(plan, context.Scope);
         plan = CommerceTurnPlanSafety.Normalize(plan, context);
-        var validation = _validator.Validate(plan, context.Scope, context.LatestUserMessage);
+        var validation = _validator.Validate(
+            plan, context.Scope, context.LatestUserMessage, selectorReference);
 
         return (plan, validation.Errors, []);
 
@@ -297,6 +314,8 @@ public sealed class LlmTurnPlanner : ITurnPlanner
                 "Older failed searches and repeated catalog responses in recentConversation never override authoritative shoppingContext. Still distinguish selection from a genuine information request: questions about price, availability or options remain catalog queries unless the customer also asks to add, set or remove a product.",
 
                 "Questions such as whether a product exists, is available, is sold, what options exist or what it costs are catalog queries, never cart mutations. Do not infer an add command or quantity 1 from a catalog question.",
+
+                "When both catalog and recipe capabilities are available, a request for another product option, purchasable alternative, recommendation or suggestion belongs to the catalog capability. Use a recipe capability only when the customer asks how to prepare, cook or make food, or explicitly asks for a recipe.",
 
                 "When the customer explicitly contrasts alternative values or scenarios and says they are unsure which applies, do not choose either alternative. Emit no mutation for every materially disputed fact and list those fact ids in response.ambiguousFields.",
 

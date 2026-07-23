@@ -23,8 +23,9 @@ public sealed class MedidentalRegressionTests
         var catalog = config.GlobalActions.Single(action => action.Id == "catalog_lookup");
         catalog.Signal.Type.Should().Be("catalog_query");
         catalog.ConversationGuidance.Should()
-            .Contain("queries como una lista vacia")
-            .And.Contain("No uses palabras genericas");
+            .Contain("mode=browse")
+            .And.Contain("mode=search")
+            .And.Contain("coexistir");
 
         var queriesSchema = catalog.Signal.ValueSchema
             .GetProperty("properties")
@@ -196,18 +197,22 @@ public sealed class MedidentalRegressionTests
             .And.Contain("producto activo sin ProductSearchTerms")
             .And.Contain("MERGE dbo.ProductAliases")
             .And.Contain("alias global AutoResolve ambiguo")
-            .And.Contain("(N'MD-ETCHANT-GEL-37', N'desmineralizante', 0, 1)")
-            .And.Contain("(N'MD-OSSEO-100', N'motor implante', 1, 0)")
-            .And.Contain("(N'MD-OSSEO-200', N'motor implante', 1, 0)");
+            .And.Contain("(N'MD-ETCHANT-GEL-37', N'desmineralizante', 0, 1)");
+
+        sql.Should()
+            .Contain("(N'MD-OSSEO-100', N'motor implante implantologia osseo cien xcub torque')")
+            .And.Contain("(N'MD-OSSEO-200', N'motor implante implantologia osseo doscientos bldc torque')")
+            .And.NotContain("(N'MD-OSSEO-100', N'motor implante', 1, 0)")
+            .And.NotContain("(N'MD-OSSEO-200', N'motor implante', 1, 0)",
+                "a family expression shared by several SKUs belongs in catalog search terms, not repeated per-product aliases");
 
         sql.Should()
             .Contain("DECLARE @AliasNormalization TABLE")
             .And.Contain("COALESCE(n.NormalizedAlias, d.Alias)")
-            .And.Contain("(N'titanium 45p', N'titanium 45')")
             .And.Contain("(N'escaler as6000', N'escaler as 6000')")
-            .And.Contain("(N'MD-TURBINA-TITANIUM-45P', N'titanium 45p', 0, 0)")
-            .And.Contain("(N'MD-TITANIUM-45R', N'titanium 45r', 0, 0)",
-                "45P and 45R collapse to the same runtime key and must remain suggestions");
+            .And.NotContain("(N'titanium 45p', N'titanium 45')")
+            .And.NotContain("(N'titanium 45r', N'titanium 45')",
+                "normalization overrides must not survive after their alias definitions are removed");
     }
 
     [Fact]

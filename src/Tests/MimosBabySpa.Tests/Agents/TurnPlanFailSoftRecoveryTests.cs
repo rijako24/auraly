@@ -86,13 +86,14 @@ public sealed class TurnPlanFailSoftRecoveryTests
         var scope = Scope(facts: [customerType], signals: []);
         var plan = new TurnPlan { FlowIntent = Flow("order") };
         var validator = new TurnPlanValidator();
-        var validation = validator.Validate(plan, scope, "la a");
+        var selector = new OptionSelectorReference(customerType, customerType.Options.Single());
+        var validation = validator.Validate(plan, scope, "la a", selector);
 
         TurnPlanFailSoftRecovery.TryRecover(plan, validation, scope, out var result).Should().BeTrue();
 
         result.Response.Mode.Should().Be("ask_clarification");
         result.Response.AmbiguousFields.Should().Equal("customer_type");
-        validator.Validate(result, scope, "la a").IsValid.Should().BeTrue();
+        validator.Validate(result, scope, "la a", selector).IsValid.Should().BeTrue();
     }
 
     [Fact]

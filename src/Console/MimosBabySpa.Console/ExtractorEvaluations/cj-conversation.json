@@ -290,7 +290,7 @@
                   {
                       "id":  "cj_remove_product_with_partial_plural_name",
                       "message":  "quitame las pechugas criollas",
-                      "stage":  "cart_review",
+                      "stage":  "product_selection",
                       "expectedFlow":  "order",
                       "expectedSignals":  [
                                               "order_changes"
@@ -321,7 +321,7 @@
                   {
                       "id":  "cj_set_final_quantity_with_partial_name",
                       "message":  "dejame solo una de mac pollo",
-                      "stage":  "cart_review",
+                      "stage":  "product_selection",
                       "expectedFlow":  "order",
                       "expectedSignals":  [
                                               "order_changes"

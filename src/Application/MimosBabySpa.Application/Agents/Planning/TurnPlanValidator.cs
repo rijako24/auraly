@@ -7,12 +7,16 @@ namespace MimosBabySpa.Application.Agents.Planning;
 
 public sealed class TurnPlanValidator
 {
-    public TurnPlanValidationResult Validate(TurnPlan plan, TurnPlanScope scope, string latestUserMessage)
+    public TurnPlanValidationResult Validate(
+        TurnPlan plan,
+        TurnPlanScope scope,
+        string latestUserMessage,
+        OptionSelectorReference? resolvedSelector = null)
     {
         var issues = new List<TurnPlanValidationIssue>();
         ValidateFlowIntent(plan, scope, latestUserMessage, issues);
         ValidateFacts(plan, scope, latestUserMessage, issues);
-        ValidateOptionSelectorCoverage(plan, scope, latestUserMessage, issues);
+        ValidateOptionSelectorCoverage(plan, resolvedSelector, issues);
         ValidateSignals(plan, scope, latestUserMessage, issues);
         ValidateResponseDirective(plan, scope, issues);
 
@@ -170,18 +174,35 @@ public sealed class TurnPlanValidator
 
     private static void ValidateOptionSelectorCoverage(
         TurnPlan plan,
-        TurnPlanScope scope,
-        string message,
+        OptionSelectorReference? match,
         ICollection<TurnPlanValidationIssue> issues)
     {
-        var matches = OptionSelectorReferenceDetector.Find(scope, message);
-        if (matches.Count != 1)
+        if (match is null)
             return;
 
-        var match = matches[0];
-        if (plan.Facts.Any(fact => fact.Key.Equals(
-                match.Fact.Key, StringComparison.OrdinalIgnoreCase))
-            || plan.Response.AmbiguousFields.Contains(
+        var claim = plan.Facts.FirstOrDefault(fact => fact.Key.Equals(
+            match.Fact.Key, StringComparison.OrdinalIgnoreCase));
+        if (claim is not null)
+        {
+            var claimedValue = claim.Value.ValueKind == JsonValueKind.String
+                ? claim.Value.GetString()
+                : null;
+            if (claim.Operation.Equals(TurnPlanOperations.Set, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(
+                    claimedValue,
+                    match.Option.Value,
+                    StringComparison.OrdinalIgnoreCase))
+                return;
+
+            Add(issues, "fact.selector_value_mismatch",
+                $"Configured selector '{match.Option.Selector}' for fact '{match.Fact.Key}' maps to canonical value '{match.Option.Value}', but the plan claimed '{claimedValue ?? claim.Operation}'.",
+                TurnPlanIssueTarget.Fact,
+                match.Fact.Key,
+                TurnPlanRecoveryAction.DropTarget);
+            return;
+        }
+
+        if (plan.Response.AmbiguousFields.Contains(
                 match.Fact.Key, StringComparer.OrdinalIgnoreCase))
             return;
 

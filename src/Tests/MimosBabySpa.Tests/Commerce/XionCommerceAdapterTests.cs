@@ -44,6 +44,72 @@ public sealed class XionCommerceAdapterTests
     }
 
     [Fact]
+    public async Task SearchProductsAsync_BrowseMode_UsesConfiguredNativeBrowseValue()
+    {
+        var handler = new RoutingHandler(request => request.RequestUri!.AbsolutePath switch
+        {
+            var path when path.Contains("ProductosABuscarSinCliente/1/1/0/0/1/1") =>
+                """[{"IdProducto":7,"DescripcionLarga":"JAMON"},{"IdProducto":8,"DescripcionLarga":"GALLETAS"}]""",
+            var path when path.Contains("InfoProductoSinCliente/7/1/1/1/1") =>
+                """{"IdProducto":7,"DescripcionLarga":"JAMON PREMIUM","Existencias":18,"PrecioPublico1":12000}""",
+            var path when path.Contains("InfoProductoSinCliente/8/1/1/1/1") =>
+                """{"IdProducto":8,"DescripcionLarga":"GALLETAS SURTIDAS","Existencias":10,"PrecioPublico1":8000}""",
+            _ => throw new InvalidOperationException($"Unexpected path {request.RequestUri}")
+        });
+        var products = new Mock<IProductRepository>();
+        products.Setup(repository => repository.GetByExternalIdAsync(
+                It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((Product?)null);
+        var unitOfWork = new Mock<IUnitOfWork>();
+        unitOfWork.SetupGet(value => value.Products).Returns(products.Object);
+        var adapter = new XionCommerceAdapter(new HttpClient(handler), unitOfWork.Object);
+        var context = ContextWithoutCustomer(
+            SettingsJson());
+
+        var result = await adapter.SearchProductsAsync(
+            new ProductSearchRequest(
+                null, null, 2, Mode: ProductCatalogQueryMode.Browse),
+            context);
+
+        result.Products.Select(product => product.Name)
+            .Should().Equal("JAMON PREMIUM", "GALLETAS SURTIDAS");
+        handler.Paths.Should().Contain(path =>
+            path.Contains("ProductosABuscarSinCliente/1/1/0/0/1/1"));
+    }
+
+    [Fact]
+    public async Task SearchProductsAsync_ConcreteQuery_NeverUsesNativeBrowseValue()
+    {
+        var handler = new RoutingHandler(request => request.RequestUri!.AbsolutePath switch
+        {
+            var path when path.Contains("ProductosABuscarSinCliente/1/1/0/jamon/1/1") =>
+                """[{"IdProducto":7,"DescripcionLarga":"JAMON"}]""",
+            var path when path.Contains("InfoProductoSinCliente/7/1/1/1/1") =>
+                """{"IdProducto":7,"DescripcionLarga":"JAMON PREMIUM","Existencias":18,"PrecioPublico1":12000}""",
+            _ => throw new InvalidOperationException($"Unexpected path {request.RequestUri}")
+        });
+        var products = new Mock<IProductRepository>();
+        products.Setup(repository => repository.GetByExternalIdAsync(
+                It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((Product?)null);
+        var unitOfWork = new Mock<IUnitOfWork>();
+        unitOfWork.SetupGet(value => value.Products).Returns(products.Object);
+        var adapter = new XionCommerceAdapter(new HttpClient(handler), unitOfWork.Object);
+        var context = ContextWithoutCustomer(SettingsJson());
+
+        var result = await adapter.SearchProductsAsync(
+            new ProductSearchRequest(
+                "jamon", null, 2, Mode: ProductCatalogQueryMode.Browse),
+            context);
+
+        result.Products.Should().ContainSingle();
+        handler.Paths.Should().Contain(path =>
+            path.Contains("ProductosABuscarSinCliente/1/1/0/jamon/1/1"));
+        handler.Paths.Should().NotContain(path =>
+            path.Contains("ProductosABuscarSinCliente/1/1/0/0/1/1"));
+    }
+
+    [Fact]
     public async Task CreateOrderAsync_GeneratesConsecutivePostsAndVerifiesOrder()
     {
         var handler = new RoutingHandler(request =>
@@ -101,9 +167,32 @@ public sealed class XionCommerceAdapterTests
                 Provider = (int)CommerceProvider.Xion,
                 Capability = (int)CommerceCapability.CatalogAndOrders,
                 IsEnabled = true,
-                SettingsJson = """{"baseUrl":"https://xion.example/","sucursalId":1,"vendedorId":1,"equipoId":1,"bodegaId":1,"empresaId":1,"centroDeCostoId":1,"usuarioId":1,"rutaId":0}"""
+                SettingsJson = SettingsJson()
             },
             Customer: customer);
+    }
+
+    private static string SettingsJson() =>
+        """{"baseUrl":"https://xion.example/","currency":"COP","requestTimeoutSeconds":120,"sucursalId":1,"vendedorId":1,"equipoId":1,"bodegaId":1,"empresaId":1,"centroDeCostoId":1,"usuarioId":1,"rutaId":0,"validateStockOnCreate":true,"orderHistoryDays":365,"catalogBrowseSearchValue":"0","endpoints":{"customerSync":"WebApi/Vendedores/Sync/Clientes/{vendedorId}/{sucursalId}","productSearch":"WebApi/Vendedores/Consulta/ProductosABuscar/{sucursalId}/{vendedorId}/{criterio}/{busqueda}/{bodegaId}/{equipoId}/{clienteId}","productSearchWithoutCustomer":"WebApi/Vendedores/Consulta/ProductosABuscarSinCliente/{sucursalId}/{vendedorId}/{criterio}/{busqueda}/{bodegaId}/{equipoId}","productDetail":"WebApi/Vendedores/Consulta/InfoProducto/{productoId}/{sucursalId}/{vendedorId}/{bodegaId}/{equipoId}/{clienteId}","productDetailWithoutCustomer":"WebApi/Vendedores/Consulta/InfoProductoSinCliente/{productoId}/{sucursalId}/{vendedorId}/{bodegaId}/{equipoId}","productSync":"WebApi/Vendedores/Sync/Productos/{vendedorId}/{sucursalId}","nextOrderNumber":"WebApi/Vendedores/Consulta/Pedido/SiguienteConsecutivo/{equipoId}","createOrder":"WebApi/Vendedores/Nuevo/Pedido/{validarExistencia}","orderHistory":"WebApi/Vendedores/Consulta/Pedidos/{vendedorId}/{fechaInicial}/{fechaFin}/{clienteId}/{rutaId}/{criterio}","verifyOrder":"WebApi/Vendedores/Consulta/VerificarPedido/{pedidoId}"}}""";
+    private static CommerceAdapterContext ContextWithoutCustomer(string settingsJson)
+    {
+        var businessId = Guid.NewGuid();
+        return new CommerceAdapterContext(
+            businessId,
+            Guid.NewGuid(),
+            null,
+            CommerceProvider.Xion,
+            new IntegrationConnection
+            {
+                IntegrationConnectionId = Guid.NewGuid(),
+                BusinessId = businessId,
+                ConnectionType = ConnectionType.Commerce,
+                Provider = (int)CommerceProvider.Xion,
+                Capability = (int)CommerceCapability.CatalogAndOrders,
+                IsEnabled = true,
+                SettingsJson = settingsJson
+            },
+            Customer: null);
     }
 
     private sealed class RoutingHandler(Func<HttpRequestMessage, string> response) : HttpMessageHandler

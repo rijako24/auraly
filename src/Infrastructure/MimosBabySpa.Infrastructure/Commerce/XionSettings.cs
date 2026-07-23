@@ -5,9 +5,9 @@ namespace MimosBabySpa.Infrastructure.Commerce;
 
 internal sealed class XionSettings
 {
-    public string BaseUrl { get; init; } = "http://api.andinasantander.com:9091/";
-    public int RequestTimeoutSeconds { get; init; } = 120;
-    public string Currency { get; init; } = "COP";
+    public string BaseUrl { get; init; } = string.Empty;
+    public int RequestTimeoutSeconds { get; init; }
+    public string Currency { get; init; } = string.Empty;
     public int SucursalId { get; init; }
     public int VendedorId { get; init; }
     public int EquipoId { get; init; }
@@ -16,8 +16,9 @@ internal sealed class XionSettings
     public int CentroDeCostoId { get; init; }
     public int UsuarioId { get; init; }
     public int RutaId { get; init; }
-    public bool ValidateStockOnCreate { get; init; } = true;
-    public int OrderHistoryDays { get; init; } = 365;
+    public bool ValidateStockOnCreate { get; init; }
+    public int OrderHistoryDays { get; init; }
+    public string CatalogBrowseSearchValue { get; init; } = string.Empty;
     public XionEndpointSettings Endpoints { get; init; } = new();
 
     public static XionSettings From(IntegrationConnection connection)
@@ -27,31 +28,32 @@ internal sealed class XionSettings
         var vendedorId = GetRequiredPositiveInt(root, "vendedorId");
         return new XionSettings
         {
-            BaseUrl = GetString(root, "baseUrl", "http://api.andinasantander.com:9091/"),
-            RequestTimeoutSeconds = Math.Clamp(GetInt(root, "requestTimeoutSeconds", 120), 1, 600),
-            Currency = GetString(root, "currency", "COP"),
+            BaseUrl = GetRequiredString(root, "baseUrl"),
+            RequestTimeoutSeconds = Math.Clamp(GetRequiredPositiveInt(root, "requestTimeoutSeconds"), 1, 600),
+            Currency = GetRequiredString(root, "currency"),
             SucursalId = GetRequiredPositiveInt(root, "sucursalId"),
             VendedorId = vendedorId,
             EquipoId = GetRequiredPositiveInt(root, "equipoId"),
             BodegaId = GetRequiredPositiveInt(root, "bodegaId"),
             EmpresaId = GetRequiredPositiveInt(root, "empresaId"),
             CentroDeCostoId = GetRequiredPositiveInt(root, "centroDeCostoId"),
-            UsuarioId = GetInt(root, "usuarioId", vendedorId),
-            RutaId = Math.Max(GetInt(root, "rutaId", 0), 0),
-            ValidateStockOnCreate = GetBool(root, "validateStockOnCreate", true),
-            OrderHistoryDays = Math.Clamp(GetInt(root, "orderHistoryDays", 365), 1, 3650),
+            UsuarioId = GetRequiredPositiveInt(root, "usuarioId"),
+            RutaId = GetRequiredNonNegativeInt(root, "rutaId"),
+            ValidateStockOnCreate = GetRequiredBool(root, "validateStockOnCreate"),
+            OrderHistoryDays = Math.Clamp(GetRequiredPositiveInt(root, "orderHistoryDays"), 1, 3650),
+            CatalogBrowseSearchValue = GetRequiredString(root, "catalogBrowseSearchValue"),
             Endpoints = new XionEndpointSettings
             {
-                CustomerSync = GetString(endpoints, "customerSync", "WebApi/Vendedores/Sync/Clientes/{vendedorId}/{sucursalId}"),
-                ProductSearch = GetString(endpoints, "productSearch", "WebApi/Vendedores/Consulta/ProductosABuscar/{sucursalId}/{vendedorId}/{criterio}/{busqueda}/{bodegaId}/{equipoId}/{clienteId}"),
-                ProductSearchWithoutCustomer = GetString(endpoints, "productSearchWithoutCustomer", "WebApi/Vendedores/Consulta/ProductosABuscarSinCliente/{sucursalId}/{vendedorId}/{criterio}/{busqueda}/{bodegaId}/{equipoId}"),
-                ProductDetail = GetString(endpoints, "productDetail", "WebApi/Vendedores/Consulta/InfoProducto/{productoId}/{sucursalId}/{vendedorId}/{bodegaId}/{equipoId}/{clienteId}"),
-                ProductDetailWithoutCustomer = GetString(endpoints, "productDetailWithoutCustomer", "WebApi/Vendedores/Consulta/InfoProductoSinCliente/{productoId}/{sucursalId}/{vendedorId}/{bodegaId}/{equipoId}"),
-                ProductSync = GetString(endpoints, "productSync", "WebApi/Vendedores/Sync/Productos/{vendedorId}/{sucursalId}"),
-                NextOrderNumber = GetString(endpoints, "nextOrderNumber", "WebApi/Vendedores/Consulta/Pedido/SiguienteConsecutivo/{equipoId}"),
-                CreateOrder = GetString(endpoints, "createOrder", "WebApi/Vendedores/Nuevo/Pedido/{validarExistencia}"),
-                OrderHistory = GetString(endpoints, "orderHistory", "WebApi/Vendedores/Consulta/Pedidos/{vendedorId}/{fechaInicial}/{fechaFin}/{clienteId}/{rutaId}/{criterio}"),
-                VerifyOrder = GetString(endpoints, "verifyOrder", "WebApi/Vendedores/Consulta/VerificarPedido/{pedidoId}")
+                CustomerSync = GetRequiredString(endpoints, "customerSync"),
+                ProductSearch = GetRequiredString(endpoints, "productSearch"),
+                ProductSearchWithoutCustomer = GetRequiredString(endpoints, "productSearchWithoutCustomer"),
+                ProductDetail = GetRequiredString(endpoints, "productDetail"),
+                ProductDetailWithoutCustomer = GetRequiredString(endpoints, "productDetailWithoutCustomer"),
+                ProductSync = GetRequiredString(endpoints, "productSync"),
+                NextOrderNumber = GetRequiredString(endpoints, "nextOrderNumber"),
+                CreateOrder = GetRequiredString(endpoints, "createOrder"),
+                OrderHistory = GetRequiredString(endpoints, "orderHistory"),
+                VerifyOrder = GetRequiredString(endpoints, "verifyOrder")
             }
         };
     }
@@ -83,6 +85,25 @@ internal sealed class XionSettings
             ? value.GetBoolean()
             : fallback;
 
+    private static string GetRequiredString(Dictionary<string, JsonElement> values, string key)
+    {
+        var value = GetString(values, key, string.Empty).Trim();
+        return value.Length > 0 ? value : throw new InvalidOperationException($"Xion setting '{key}' is required.");
+    }
+
+    private static int GetRequiredNonNegativeInt(Dictionary<string, JsonElement> values, string key)
+    {
+        if (!values.TryGetValue(key, out var value) || !value.TryGetInt32(out var parsed) || parsed < 0)
+            throw new InvalidOperationException($"Xion setting '{key}' must be zero or greater.");
+        return parsed;
+    }
+
+    private static bool GetRequiredBool(Dictionary<string, JsonElement> values, string key)
+    {
+        if (!values.TryGetValue(key, out var value) || value.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+            throw new InvalidOperationException($"Xion setting '{key}' is required.");
+        return value.GetBoolean();
+    }
     private static int GetRequiredPositiveInt(Dictionary<string, JsonElement> values, string key)
     {
         var value = GetInt(values, key, 0);

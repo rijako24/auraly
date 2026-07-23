@@ -40,6 +40,7 @@ public sealed class SearchProductsOperation : IAgentOperation
             "family": { "type": "string" },
             "subcategory": { "type": "string" },
             "product_class": { "type": "string" },
+            "mode": { "description": "Catalog intent: search for concrete terms or browse a representative page without a product term.", "type": "string", "enum": ["search", "browse"] },
             "limit": { "type": "integer", "minimum": 1, "maximum": 50 },
             "page": { "type": "integer", "minimum": 1 },
             "include_stock": { "type": "boolean" },
@@ -74,8 +75,15 @@ public sealed class SearchProductsOperation : IAgentOperation
             ? rr
             : null;
         var requestedQueries = ReadQueries(arguments, query);
+        var mode = DetermineMode(requestedQueries, query, category, family, subcategory, productClass);
+        if (mode == ProductCatalogQueryMode.Browse)
+        {
+            query = null;
+            requestedQueries = [];
+        }
         var queries = GroundQueriesInRecentOffers(ctx, requestedQueries);
-        var request = new ProductSearchRequest(query, category, limit, includeStock, family, subcategory, productClass, page);
+        var request = new ProductSearchRequest(
+            query, category, limit, includeStock, family, subcategory, productClass, page, mode);
         var execution = await ExecuteQueriesAsync(ctx, queries, request, null, cancellationToken);
         if (TryGetForegroundContextAnchor(ctx, out var contextAnchor))
         {
@@ -457,6 +465,22 @@ public sealed class SearchProductsOperation : IAgentOperation
             .Take(8)
             .ToList();
     }
+
+    private static ProductCatalogQueryMode DetermineMode(
+        IReadOnlyList<string> queries,
+        string? query,
+        string? category,
+        string? family,
+        string? subcategory,
+        string? productClass)
+        => queries.Count > 0
+           || !string.IsNullOrWhiteSpace(query)
+           || !string.IsNullOrWhiteSpace(category)
+           || !string.IsNullOrWhiteSpace(family)
+           || !string.IsNullOrWhiteSpace(subcategory)
+           || !string.IsNullOrWhiteSpace(productClass)
+                ? ProductCatalogQueryMode.Search
+                : ProductCatalogQueryMode.Browse;
 
     private static void AddQueries(List<string> values, JsonElement element)
     {

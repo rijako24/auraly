@@ -62,6 +62,32 @@ public sealed class CommerceTurnPlanSafetyTests
     }
 
     [Fact]
+    public void CartMutationAndOpenCatalogBrowse_ArePreservedAsIndependentIntents()
+    {
+        var browse = new PlannedSignal
+        {
+            Type = "catalog_query",
+            Value = JsonSerializer.SerializeToElement(new
+            {
+                mode = "browse",
+                queries = Array.Empty<string>(),
+                replacement_reference = (string?)null
+            }),
+            Evidence = "que otros productos tienes",
+            Confidence = 0.98
+        };
+
+        var normalized = CommerceTurnPlanSafety.Normalize(
+            Plan(OrderChanges("super coco", 2, "dame dos super coco"), browse),
+            Context("dame dos super coco y que otros productos tienes"));
+
+        normalized.Signals.Should().HaveCount(2);
+        normalized.Signals.Should().ContainSingle(signal => signal.Type == "order_changes");
+        normalized.Signals.Single(signal => signal.Type == "catalog_query")
+            .Value.GetProperty("mode").GetString().Should().Be("browse");
+    }
+
+    [Fact]
     public void CatalogSelectionWithoutQuantity_DropsInventedAddOfOne()
     {
         var normalized = CommerceTurnPlanSafety.Normalize(
@@ -163,6 +189,44 @@ public sealed class CommerceTurnPlanSafetyTests
         normalized.Signals.Should().ContainSingle(signal => signal.Type == "order_changes");
         normalized.Signals[0].Value[0].GetProperty("quantity").GetDecimal().Should().Be(quantity);
     }
+
+    [Fact]
+    public void OfferedProductNotInCart_ConvertsSetQuantityToAdd()
+    {
+        var normalized = CommerceTurnPlanSafety.Normalize(
+            Plan(OrderChanges(
+                "PECHUGA CRIOLLA",
+                4,
+                "Ponme 4 de esa.",
+                operation: "set_quantity")),
+            Context(
+                "Ponme 4 de esa.",
+                catalogFollowUp: true,
+                offeredProducts: ["PECHUGA CRIOLLA", "PECHUGA MAC POLLO"]));
+
+        normalized.Signals.Single().Value[0]
+            .GetProperty("operation").GetString().Should().Be("add");
+    }
+
+    [Fact]
+    public void OfferedProductAlreadyInCart_KeepsSetQuantity()
+    {
+        var normalized = CommerceTurnPlanSafety.Normalize(
+            Plan(OrderChanges(
+                "PECHUGA CRIOLLA",
+                2,
+                "Quiero 2 en total.",
+                operation: "set_quantity")),
+            Context(
+                "Quiero 2 en total.",
+                catalogFollowUp: true,
+                offeredProducts: ["PECHUGA CRIOLLA"],
+                currentCartProducts: ["PECHUGA CRIOLLA"]));
+
+        normalized.Signals.Single().Value[0]
+            .GetProperty("operation").GetString().Should().Be("set_quantity");
+    }
+
     [Fact]
     public void CatalogSelectionWithLeadingQuantity_KeepsCartCommand()
     {
@@ -391,14 +455,18 @@ public sealed class CommerceTurnPlanSafetyTests
         Confidence = 0.95
     };
 
-    private static PlannedSignal OrderChanges(string productText, decimal quantity, string evidence) => new()
+    private static PlannedSignal OrderChanges(
+        string productText,
+        decimal quantity,
+        string evidence,
+        string operation = "add") => new()
     {
         Type = "order_changes",
         Value = JsonSerializer.SerializeToElement(new[]
         {
             new
             {
-                operation = "add",
+                operation,
                 productText,
                 quantity,
                 destinationReference = (string?)null
@@ -462,22 +530,37 @@ public sealed class CommerceTurnPlanSafetyTests
     private static TurnPlanningContext Context(
         string message,
         bool catalogFollowUp = false,
-        IReadOnlyList<string>? additionalRequestPhrases = null)
+        IReadOnlyList<string>? additionalRequestPhrases = null,
+        IReadOnlyList<string>? offeredProducts = null,
+        IReadOnlyList<string>? currentCartProducts = null)
     {
         var signals = new Dictionary<string, StageSignalDefinition>(StringComparer.OrdinalIgnoreCase)
         {
             ["order_changes"] = new() { Type = "order_changes" },
             ["catalog_query"] = new() { Type = "catalog_query" }
         };
-        IReadOnlyDictionary<string, JsonElement>? structuredContext = catalogFollowUp
-            ? new Dictionary<string, JsonElement>
-            {
-                ["shoppingContext"] = JsonSerializer.SerializeToElement(new
-                {
-                    interaction = new { expected_reply = "catalog_follow_up" }
-                })
-            }
+        Dictionary<string, JsonElement>? structuredContext = catalogFollowUp
+            || currentCartProducts is not null
+            ? new(StringComparer.OrdinalIgnoreCase)
             : null;
+        if (catalogFollowUp)
+        {
+            structuredContext!["shoppingContext"] = JsonSerializer.SerializeToElement(new
+            {
+                interaction = new { expected_reply = "catalog_follow_up" },
+                offers = offeredProducts is null
+                    ? Array.Empty<object>()
+                    : new object[]
+                {
+                        new { products = offeredProducts }
+                    }
+            });
+        }
+        if (currentCartProducts is not null)
+            structuredContext!["currentCart"] = JsonSerializer.SerializeToElement(new
+            {
+                items = currentCartProducts.Select(name => new { name, quantity = 1m })
+            });
 
         return new TurnPlanningContext(
             new AgentConfig

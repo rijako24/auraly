@@ -72,6 +72,11 @@ export interface ProductAlias {
   status: ProductAliasStatus;
   usageCount: number;
   lastConfirmedAt?: string | null;
+  normalizedAlias: string;
+  sharedMappingCount: number;
+  distinctProductCount: number;
+  businessMappingCount: number;
+  distinctCustomerCount: number;
 }
 
 export interface ProductConfiguration {

@@ -104,6 +104,14 @@ public sealed class XionCommerceAdapter :
     {
         var settings = XionSettings.From(RequireConnection(context));
         var query = Clean(request.Query);
+        var hasConcreteCriteria = query is not null
+            || !string.IsNullOrWhiteSpace(request.Category)
+            || !string.IsNullOrWhiteSpace(request.Family)
+            || !string.IsNullOrWhiteSpace(request.Subcategory)
+            || !string.IsNullOrWhiteSpace(request.ProductClass);
+        if (request.Mode == ProductCatalogQueryMode.Browse
+            && !hasConcreteCriteria)
+            query = Clean(settings.CatalogBrowseSearchValue);
         if (query is null)
             return new ProductSearchResult([], "xion", false, ProductSearchAppliedFilters.From(request));
 

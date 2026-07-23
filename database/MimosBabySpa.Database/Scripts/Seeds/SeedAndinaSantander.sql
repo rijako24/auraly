@@ -78,7 +78,7 @@ USING (
         CAST(0 AS INT) AS Capability,
         N'Xion - Andina Santander' AS [Name],
         N'Xion' AS AccountIdentifier,
-        N'{"baseUrl":"http://api.andinasantander.com:9091/","currency":"COP","requestTimeoutSeconds":120,"sucursalId":1,"vendedorId":1,"equipoId":1,"bodegaId":1,"empresaId":1,"centroDeCostoId":1,"usuarioId":1,"rutaId":0,"validateStockOnCreate":true,"orderHistoryDays":365}' AS SettingsJson,
+        N'{"baseUrl":"http://api.andinasantander.com:9091/","currency":"COP","requestTimeoutSeconds":120,"sucursalId":1,"vendedorId":1,"equipoId":1,"bodegaId":1,"empresaId":1,"centroDeCostoId":1,"usuarioId":1,"rutaId":0,"validateStockOnCreate":true,"orderHistoryDays":365,"catalogBrowseSearchValue":"0","endpoints":{"customerSync":"WebApi/Vendedores/Sync/Clientes/{vendedorId}/{sucursalId}","productSearch":"WebApi/Vendedores/Consulta/ProductosABuscar/{sucursalId}/{vendedorId}/{criterio}/{busqueda}/{bodegaId}/{equipoId}/{clienteId}","productSearchWithoutCustomer":"WebApi/Vendedores/Consulta/ProductosABuscarSinCliente/{sucursalId}/{vendedorId}/{criterio}/{busqueda}/{bodegaId}/{equipoId}","productDetail":"WebApi/Vendedores/Consulta/InfoProducto/{productoId}/{sucursalId}/{vendedorId}/{bodegaId}/{equipoId}/{clienteId}","productDetailWithoutCustomer":"WebApi/Vendedores/Consulta/InfoProductoSinCliente/{productoId}/{sucursalId}/{vendedorId}/{bodegaId}/{equipoId}","productSync":"WebApi/Vendedores/Sync/Productos/{vendedorId}/{sucursalId}","nextOrderNumber":"WebApi/Vendedores/Consulta/Pedido/SiguienteConsecutivo/{equipoId}","createOrder":"WebApi/Vendedores/Nuevo/Pedido/{validarExistencia}","orderHistory":"WebApi/Vendedores/Consulta/Pedidos/{vendedorId}/{fechaInicial}/{fechaFin}/{clienteId}/{rutaId}/{criterio}","verifyOrder":"WebApi/Vendedores/Consulta/VerificarPedido/{pedidoId}"}}' AS SettingsJson,
         CAST(NULL AS NVARCHAR(MAX)) AS SecretsJson,
         CAST(1 AS BIT) AS IsEnabled
 ) AS source
@@ -741,10 +741,10 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "id": "catalog_lookup",
       "priority": 850,
       "goal": "Consultar el catalogo oficial cuando el cliente pregunte por productos, disponibilidad, referencias, precios u opciones, sin depender de la etapa activa.",
-      "conversationGuidance": "Detecta catalog_query unicamente cuando el significado resuelto del mensaje solicita buscar mercancia comprable en el catalogo. Cada termino de queries debe ser una entrada valida para el buscador de productos e identificar un producto, categoria, ingrediente o preparacion que el cliente consulta, ya sea expresado en el mensaje vigente o resuelto desde una pregunta inmediatamente anterior que tambien era sobre productos. Si la pregunta pide recuperar o confirmar datos de entrega, direccion, recogida, pago, identidad, perfil, cliente u orden, emite cero catalog_query aunque use palabras como cual, tienes, disponible o registrado. Esta capacidad es transversal y puede ocurrir durante cualquier etapa, pero nunca funciona como respuesta generica a preguntas. Cuando la consulta nace porque el cliente rechaza semanticamente una referencia que ya esta en el carrito y pide alternativas, establece replacement_reference con la referencia original rechazada, sin depender de palabras exactas. Nunca respondas disponibilidad o nombres de productos desde conocimiento general.",
+      "conversationGuidance": "Detecta catalog_query cuando el cliente solicita explorar o buscar mercancia comprable. Usa mode=browse y queries vacio cuando pide ver una muestra abierta del catalogo sin restringirla a un producto o categoria; usa mode=search y terminos concretos cuando consulta productos, categorias, ingredientes o preparaciones identificables. Una consulta abierta puede coexistir en el mismo mensaje con order_changes y ambas intenciones deben conservarse. Si la pregunta pide recuperar o confirmar datos de entrega, direccion, recogida, pago, identidad, perfil, cliente u orden, emite cero catalog_query. Cuando la consulta nace porque el cliente rechaza semanticamente una referencia del carrito y pide alternativas, establece replacement_reference con la referencia original. Nunca respondas disponibilidad, nombres ni precios desde conocimiento general.",
       "signal": {
         "type": "catalog_query",
-        "description": "Consulta inequivoca sobre mercancia comprable del catalogo: existencia, opciones, referencias, precios, disponibilidad o recomendaciones, sin una instruccion explicita de agregar cantidades al pedido. El valor contiene terminos de producto concretos resueltos desde el mensaje vigente; replacement_reference identifica semanticamente la referencia vigente del carrito que el cliente rechazo y quiere sustituir. El contexto solo resuelve referencias comerciales que el cliente efectivamente consulta.",
+        "description": "Consulta de mercancia comprable. mode=browse representa exploracion abierta con queries vacio; mode=search representa busqueda restringida con terminos concretos. Puede coexistir con una mutacion independiente del carrito.",
         "valueSchema": {
           "type": "object",
           "additionalProperties": false,
@@ -754,7 +754,14 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
               "items": {
                 "type": "string"
               },
-              "minItems": 1
+              "minItems": 0
+            },
+            "mode": {
+              "type": "string",
+              "enum": [
+                "search",
+                "browse"
+              ]
             },
             "replacement_reference": {
               "description": "Referencia original del carrito que el cliente rechazo y desea sustituir con esta busqueda.",
@@ -766,6 +773,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
           },
           "required": [
             "queries",
+            "mode",
             "replacement_reference"
           ]
         }
@@ -781,6 +789,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
           "signal": "catalog_query",
           "arguments": {
             "queries": "{{signal.catalog_query.value.queries}}",
+            "mode": "{{signal.catalog_query.value.mode}}",
             "replacement_reference": "{{signal.catalog_query.value.replacement_reference}}",
             "limit": 10
           },

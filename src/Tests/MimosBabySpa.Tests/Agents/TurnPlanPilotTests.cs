@@ -223,7 +223,7 @@ public sealed class TurnPlanPilotTests
         chat.CallCount.Should().Be(2);
     }
     [Fact]
-    public async Task Planner_ResolvesConfiguredOptionSelector_InSingleExtractorCall()
+    public async Task Planner_MarksConfiguredOptionSelectorAmbiguous_WhenOptionsWereNotPresented()
     {
         const string message = "la a";
         var initial = JsonSerializer.Serialize(new
@@ -270,12 +270,162 @@ public sealed class TurnPlanPilotTests
             config, stage, scope, new Dictionary<string, string>(), message, DateTimeOffset.UtcNow, []));
 
         proposal.Success.Should().BeTrue(string.Join("; ", proposal.Errors));
-        proposal.Plan!.Facts.Should().ContainSingle();
-        proposal.Plan.Facts[0].Key.Should().Be("customer_type");
-        proposal.Plan.Facts[0].Value.GetString().Should().Be("Hogar");
-        proposal.Plan.Facts[0].Evidence.Should().Be("a");
+        proposal.Plan!.Facts.Should().BeEmpty();
+        proposal.Plan.Response.Mode.Should().Be("ask_clarification");
+        proposal.Plan.Response.AmbiguousFields.Should().Equal("customer_type");
         chat.CallCount.Should().Be(1);
     }
+
+    [Fact]
+    public async Task Planner_DeterministicallyOverridesContradictoryConfiguredOptionSelectorClaim()
+    {
+        const string message = "la c";
+        static string PlanWithValue(string value) => JsonSerializer.Serialize(new
+        {
+            flowIntent = new { candidateFlow = "order", confidence = 0.9, evidence = (string?)null },
+            facts = new object[]
+            {
+                new
+                {
+                    key = "customer_type",
+                    operation = "set",
+                    value,
+                    confidence = 0.99,
+                    evidence = "c"
+                }
+            },
+            signals = Array.Empty<object>(),
+            decision = (object?)null,
+            response = new { mode = "continue", ambiguousFields = Array.Empty<string>() }
+        });
+        var chat = new SequenceChatClient(PlanWithValue("ComidaRapida"));
+        var customerType = CustomerTypeOptions();
+        var config = new AgentConfig
+        {
+            Flows = [new AgentFlowDefinition { Id = "order", Type = FlowTypes.Primary }],
+            FactSchema = [customerType]
+        };
+        var stage = new AgentFlowStage { Id = "customer_type", AdvanceWhenFacts = ["customer_type"] };
+        var scope = TurnPlanScopeBuilder.Build(config, stage, new Dictionary<string, string>());
+        var planner = new LlmTurnPlanner(chat, new TurnPlanValidator());
+
+        var proposal = await planner.PlanAsync(new TurnPlanningContext(
+            config,
+            stage,
+            scope,
+            new Dictionary<string, string>(),
+            message,
+            DateTimeOffset.UtcNow,
+            [ChatMessage.Assistant("A) Hogar\nB) Tienda\nC) Restaurante\nD) Comida rapida")]));
+
+        proposal.Success.Should().BeTrue(string.Join("; ", proposal.Errors));
+        proposal.Plan!.Facts.Should().ContainSingle();
+        proposal.Plan.Facts[0].Value.GetString().Should().Be("Restaurante");
+        chat.CallCount.Should().Be(1,
+            "the configured selector is resolved by the engine rather than repaired by the model");
+    }
+
+    [Fact]
+    public void OptionalFactRefusal_DropsInventedStringPlaceholder()
+    {
+        var definition = new FactSchemaEntry
+        {
+            Key = "delivery_reference",
+            Label = "delivery_reference",
+            Type = "string",
+            Source = "user",
+            Required = false
+        };
+        var scope = new TurnPlanScope(
+            new Dictionary<string, FactSchemaEntry>(StringComparer.OrdinalIgnoreCase)
+            {
+                [definition.Key] = definition
+            },
+            new Dictionary<string, StageSignalDefinition>(StringComparer.OrdinalIgnoreCase));
+        var plan = new TurnPlan
+        {
+            Facts =
+            [
+                new PlannedFactClaim
+                {
+                    Key = definition.Key,
+                    Operation = TurnPlanOperations.Set,
+                    Value = JsonSerializer.SerializeToElement("no aplica"),
+                    Evidence = "no"
+                }
+            ]
+        };
+
+        OptionalFactRefusalResolver.Resolve(plan, scope).Facts.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void OptionalFactRefusal_PreservesExplicitConfiguredNoOption()
+    {
+        var definition = new FactSchemaEntry
+        {
+            Key = "accepts_marketing",
+            Label = "accepts_marketing",
+            Type = "string",
+            Source = "user",
+            Required = false,
+            Options =
+            [
+                new FactValueOption { Value = "no", Label = "No" }
+            ]
+        };
+        var scope = new TurnPlanScope(
+            new Dictionary<string, FactSchemaEntry>(StringComparer.OrdinalIgnoreCase)
+            {
+                [definition.Key] = definition
+            },
+            new Dictionary<string, StageSignalDefinition>(StringComparer.OrdinalIgnoreCase));
+        var plan = new TurnPlan
+        {
+            Facts = [Claim(definition.Key, "no", "no")]
+        };
+
+        OptionalFactRefusalResolver.Resolve(plan, scope).Facts.Should().ContainSingle();
+    }
+
+    [Fact]
+    public async Task Planner_DeterministicallyAddsPresentedSelector_WhenExtractorOmitsFact()
+    {
+        const string message = "la c";
+        var emptyPlan = JsonSerializer.Serialize(new
+        {
+            flowIntent = new { candidateFlow = "order", confidence = 0.9, evidence = (string?)null },
+            facts = Array.Empty<object>(),
+            signals = Array.Empty<object>(),
+            decision = (object?)null,
+            response = new { mode = "continue", ambiguousFields = Array.Empty<string>() }
+        });
+        var chat = new SequenceChatClient(emptyPlan);
+        var customerType = CustomerTypeOptions();
+        var config = new AgentConfig
+        {
+            Flows = [new AgentFlowDefinition { Id = "order", Type = FlowTypes.Primary }],
+            FactSchema = [customerType]
+        };
+        var stage = new AgentFlowStage { Id = "customer_type", AdvanceWhenFacts = ["customer_type"] };
+        var scope = TurnPlanScopeBuilder.Build(config, stage, new Dictionary<string, string>());
+        var planner = new LlmTurnPlanner(chat, new TurnPlanValidator());
+
+        var proposal = await planner.PlanAsync(new TurnPlanningContext(
+            config,
+            stage,
+            scope,
+            new Dictionary<string, string>(),
+            message,
+            DateTimeOffset.UtcNow,
+            [ChatMessage.Assistant("A) Hogar\nB) Tienda\nC) Restaurante\nD) Comida rapida")]));
+
+        proposal.Success.Should().BeTrue(string.Join("; ", proposal.Errors));
+        proposal.Plan!.Facts.Should().ContainSingle();
+        proposal.Plan.Facts[0].Value.GetString().Should().Be("Restaurante");
+        chat.CallCount.Should().Be(1);
+    }
+
     [Fact]
     public async Task Planner_FailSoftRecovery_PreservesValidSignalAfterRepairStillFails()
     {
@@ -398,11 +548,58 @@ public sealed class TurnPlanPilotTests
             },
             new Dictionary<string, StageSignalDefinition>(StringComparer.OrdinalIgnoreCase));
 
-        var result = new TurnPlanValidator().Validate(new TurnPlan(), scope, "la a");
+        var selector = new OptionSelectorReference(definition, definition.Options.Single());
+        var result = new TurnPlanValidator().Validate(
+            new TurnPlan(),
+            scope,
+            "la a",
+            selector);
 
         result.IsValid.Should().BeFalse();
         result.Errors.Should().Contain(error => error.Contains("selector", StringComparison.OrdinalIgnoreCase));
     }
+
+    [Fact]
+    public void Validator_RejectsCanonicalClaimThatContradictsReferencedOptionSelector()
+    {
+        var definition = CustomerTypeOptions();
+        var scope = new TurnPlanScope(
+            new Dictionary<string, FactSchemaEntry>(StringComparer.OrdinalIgnoreCase)
+            {
+                [definition.Key] = definition
+            },
+            new Dictionary<string, StageSignalDefinition>(StringComparer.OrdinalIgnoreCase));
+        var plan = new TurnPlan
+        {
+            Facts =
+            [
+                new PlannedFactClaim
+                {
+                    Key = "customer_type",
+                    Operation = TurnPlanOperations.Set,
+                    Value = JsonSerializer.SerializeToElement("ComidaRapida"),
+                    Evidence = "c"
+                }
+            ]
+        };
+
+        var selector = new OptionSelectorReference(
+            definition,
+            definition.Options.Single(option =>
+                option.Selector!.Equals("C", StringComparison.OrdinalIgnoreCase)));
+        var result = new TurnPlanValidator().Validate(
+            plan,
+            scope,
+            "la c",
+            selector);
+
+        result.IsValid.Should().BeFalse();
+        result.Issues.Should().ContainSingle(issue =>
+            issue.Code == "fact.selector_value_mismatch"
+            && issue.Field == "customer_type"
+            && issue.RecoveryAction == TurnPlanRecoveryAction.DropTarget);
+    }
+
     [Fact]
     public void SelectorDetector_IgnoresSingleLetterInsideNaturalSentence()
     {
@@ -547,6 +744,21 @@ public sealed class TurnPlanPilotTests
         Label = key,
         Type = type,
         Source = "user"
+    };
+
+    private static FactSchemaEntry CustomerTypeOptions() => new()
+    {
+        Key = "customer_type",
+        Label = "perfil del cliente",
+        Type = "string",
+        Source = "user",
+        Options =
+        [
+            new FactValueOption { Value = "Hogar", Label = "Hogar", Selector = "A" },
+            new FactValueOption { Value = "TiendaMinimercado", Label = "Tienda", Selector = "B" },
+            new FactValueOption { Value = "Restaurante", Label = "Restaurante", Selector = "C" },
+            new FactValueOption { Value = "ComidaRapida", Label = "Comida rapida", Selector = "D" }
+        ]
     };
 
     private static PlannedFactClaim Claim(string key, object value, string evidence)

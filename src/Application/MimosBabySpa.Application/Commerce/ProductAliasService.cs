@@ -19,7 +19,12 @@ public sealed record ProductAliasDto(
     ProductAliasSource Source,
     ProductAliasStatus Status,
     int UsageCount,
-    DateTime? LastConfirmedAt);
+    DateTime? LastConfirmedAt,
+    string NormalizedAlias,
+    int SharedMappingCount,
+    int DistinctProductCount,
+    int BusinessMappingCount,
+    int DistinctCustomerCount);
 
 public sealed record ProductAliasImportItem(
     string Alias,
@@ -76,7 +81,19 @@ public sealed class ProductAliasService : IProductAliasService
         var product = await _unitOfWork.Products.GetByIdAsync(businessId, productId, ct)
             ?? throw new NotFoundException(nameof(Product), productId);
         var aliases = await _unitOfWork.ProductAliases.GetByProductAsync(businessId, productId, ct);
-        return aliases.Select(alias => ToDto(alias, product.Name)).ToList();
+        if (aliases.Count == 0)
+            return [];
+
+        var normalizedAliases = aliases
+            .Select(alias => alias.NormalizedAlias)
+            .ToHashSet(StringComparer.Ordinal);
+        var relatedMappings = (await _unitOfWork.ProductAliases.GetByBusinessAsync(businessId, ct))
+            .Where(alias => normalizedAliases.Contains(alias.NormalizedAlias))
+            .GroupBy(alias => alias.NormalizedAlias, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.ToList(), StringComparer.Ordinal);
+
+        return aliases.Select(alias => ToDto(
+            alias, product.Name, relatedMappings[alias.NormalizedAlias])).ToList();
     }
 
     public async Task<ProductAliasImportResult> ImportAsync(
@@ -501,7 +518,30 @@ public sealed class ProductAliasService : IProductAliasService
     }
 
     private static ProductAliasDto ToDto(ProductAlias alias, string productName) =>
+        ToDto(alias, productName, [alias]);
+
+    private static ProductAliasDto ToDto(
+        ProductAlias alias,
+        string productName,
+        IReadOnlyCollection<ProductAlias> relatedMappings)
+    {
+        var distinctProductCount = relatedMappings
+            .Select(mapping => mapping.ProductId)
+            .Distinct()
+            .Count();
+        var businessMappingCount = relatedMappings.Count(mapping =>
+            mapping.Scope == ProductAliasScope.Business);
+        var distinctCustomerCount = relatedMappings
+            .Where(mapping => mapping.Scope == ProductAliasScope.Customer)
+            .Select(mapping => mapping.CustomerKey)
+            .Distinct(StringComparer.Ordinal)
+            .Count();
+
+        return
         new(alias.ProductAliasId, alias.ProductId, productName, alias.Alias, alias.Scope,
             alias.CustomerKey, alias.Kind, alias.ResolutionMode, alias.Source,
-            alias.Status, alias.UsageCount, alias.LastConfirmedAt);
+            alias.Status, alias.UsageCount, alias.LastConfirmedAt, alias.NormalizedAlias,
+            relatedMappings.Count, distinctProductCount, businessMappingCount,
+            distinctCustomerCount);
+    }
 }

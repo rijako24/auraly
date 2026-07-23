@@ -36,7 +36,22 @@ const statusLabels: Record<ProductAliasStatus, string> = {
   [ProductAliasStatus.Rejected]: "Rechazado",
 };
 
+export function aliasMappingExplanation(alias: ProductAlias): string | null {
+  if (alias.sharedMappingCount <= 1) return null;
+  if (alias.distinctProductCount > 1) {
+    return `Esta expresi\u00f3n aparece en ${alias.distinctProductCount} productos para ofrecer alternativas; no identifica por s\u00ed sola un SKU.`;
+  }
+  if (alias.businessMappingCount > 0 && alias.distinctCustomerCount > 0) {
+    return `Existe como regla global y tambi\u00e9n como aprendizaje independiente para ${alias.distinctCustomerCount} ${alias.distinctCustomerCount === 1 ? "cliente" : "clientes"}.`;
+  }
+  if (alias.distinctCustomerCount > 1) {
+    return `Fue aprendida de forma independiente para ${alias.distinctCustomerCount} clientes.`;
+  }
+  return `La misma clave normalizada tiene ${alias.sharedMappingCount} registros con distinto alcance, estado o procedencia.`;
+}
+
 function ConfiguredAliasCard({ alias }: { alias: ProductAlias }) {
+  const mappingExplanation = aliasMappingExplanation(alias);
   return (
     <div className="space-y-2 rounded-lg border bg-muted/20 p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -51,6 +66,9 @@ function ConfiguredAliasCard({ alias }: { alias: ProductAlias }) {
         <Badge variant="outline">{resolutionLabels[alias.resolutionMode]}</Badge>
         <Badge variant="outline">{sourceLabels[alias.source]}</Badge>
       </div>
+      {mappingExplanation && (
+        <p className="text-xs text-muted-foreground">{mappingExplanation}</p>
+      )}
     </div>
   );
 }

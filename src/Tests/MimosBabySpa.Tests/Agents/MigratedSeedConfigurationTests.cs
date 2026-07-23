@@ -17,6 +17,7 @@ public sealed class MigratedSeedConfigurationTests
     [InlineData("SeedLuisPetitBarber.sql", "SettingsJson")]
     [InlineData("SeedAgenticConfiguration.sql", "SettingsJson")]
     [InlineData("SeedCJDistribuciones.sql", "SettingsJson")]
+    [InlineData("SeedAndinaSantander.sql", "SettingsJson")]
     [InlineData("SeedAuraly.sql", "SettingsJson")]
     [InlineData("SeedInmobiliariaDemo.sql", "SettingsJson")]
     [InlineData("SeedMedidental.sql", "SettingsJson")]
@@ -62,6 +63,49 @@ public sealed class MigratedSeedConfigurationTests
         compilation.IsValid.Should().BeTrue(
             string.Join("; ", compilation.Diagnostics.Select(diagnostic =>
                 $"{diagnostic.Path}:{diagnostic.Code}:{diagnostic.Message}")));
+    }
+
+    [Theory]
+    [InlineData("SeedAndinaSantander.sql")]
+    [InlineData("SeedCJDistribuciones.sql")]
+    [InlineData("SeedMedidental.sql")]
+    public void CommerceCatalogSignals_DeclareExplicitBrowseAndSearchModes(string seedFile)
+    {
+        var root = FindSolutionRoot();
+        var path = Path.Combine(
+            root,
+            "database",
+            "MimosBabySpa.Database",
+            "Scripts",
+            "Seeds",
+            seedFile);
+        var config = JsonSerializer.Deserialize<AgentConfig>(
+            ExtractSettingsJson(File.ReadAllText(path), "SettingsJson"),
+            new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true,
+                UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
+                Converters = { new JsonStringEnumConverter() }
+            })!;
+
+        var catalog = config.GlobalActions.Should().ContainSingle(action =>
+            action.Signal.Type == "catalog_query").Subject;
+        var schema = catalog.Signal.ValueSchema;
+        schema.GetProperty("properties").GetProperty("mode")
+            .GetProperty("enum").EnumerateArray().Select(value => value.GetString())
+            .Should().BeEquivalentTo("search", "browse");
+        schema.GetProperty("properties").GetProperty("queries")
+            .GetProperty("minItems").GetInt32().Should().Be(0);
+        schema.GetProperty("required").EnumerateArray()
+            .Select(value => value.GetString()).Should().Contain("mode");
+        catalog.ConversationGuidance.Should().Contain("mode=browse")
+            .And.Contain("mode=search")
+            .And.Contain("coexistir");
+        var action = catalog.Actions.Should().ContainSingle(candidate =>
+            candidate.Operation == "commerce.search_products").Subject;
+        action.Arguments.Should().ContainKey("mode");
+        action.Arguments["mode"].ValueKind.Should().Be(JsonValueKind.String);
+        action.Arguments["mode"].GetString().Should().Be("{{signal.catalog_query.value.mode}}");
     }
 
     [Theory]

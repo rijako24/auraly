@@ -27,6 +27,7 @@ public static partial class CommerceTurnPlanSafety
             plan = RemoveCatalogFollowUpQuery(plan);
         plan = RemoveUnsupportedFinalization(plan, context);
         plan = DeferRemovalUntilCatalogReplacementIsSelected(plan);
+        plan = NormalizeNewOfferedProductQuantities(plan, context);
 
         var orderChanges = plan.Signals.FirstOrDefault(signal =>
             signal.Type.Equals(OrderChangesSignal, StringComparison.OrdinalIgnoreCase));
@@ -186,6 +187,120 @@ public static partial class CommerceTurnPlanSafety
 
     private static string NormalizeReference(string value) =>
         Regex.Replace(NormalizeText(value), @"[^\p{L}\p{N}]+", " ").Trim();
+
+    private static TurnPlan NormalizeNewOfferedProductQuantities(
+        TurnPlan plan,
+        TurnPlanningContext context)
+    {
+        if (!IsCatalogFollowUp(context))
+            return plan;
+
+        var orderChanges = plan.Signals.FirstOrDefault(signal =>
+            signal.Type.Equals(OrderChangesSignal, StringComparison.OrdinalIgnoreCase));
+        if (orderChanges?.Value.ValueKind != JsonValueKind.Array)
+            return plan;
+
+        var changed = false;
+        var normalizedCommands = orderChanges.Value.EnumerateArray()
+            .Select(command =>
+            {
+                if (!ShouldConvertSetQuantityToAdd(command, context))
+                    return command.Clone();
+
+                changed = true;
+                var properties = command.EnumerateObject().ToDictionary(
+                    property => property.Name,
+                    property => property.Value.Clone(),
+                    StringComparer.Ordinal);
+                properties["operation"] = JsonSerializer.SerializeToElement("add");
+                return JsonSerializer.SerializeToElement(properties);
+            })
+            .ToArray();
+        if (!changed)
+            return plan;
+
+        var replacement = new PlannedSignal
+        {
+            Type = orderChanges.Type,
+            Value = JsonSerializer.SerializeToElement(normalizedCommands),
+            Evidence = orderChanges.Evidence,
+            Confidence = orderChanges.Confidence
+        };
+        return CopyWithSignals(
+            plan,
+            plan.Signals.Select(signal =>
+                ReferenceEquals(signal, orderChanges) ? replacement : signal));
+    }
+
+    private static bool ShouldConvertSetQuantityToAdd(
+        JsonElement command,
+        TurnPlanningContext context)
+    {
+        if (command.ValueKind != JsonValueKind.Object
+            || !command.TryGetProperty("operation", out var operation)
+            || operation.ValueKind != JsonValueKind.String
+            || !operation.GetString()!.Equals("set_quantity", StringComparison.OrdinalIgnoreCase)
+            || !command.TryGetProperty("productText", out var productTextElement)
+            || productTextElement.ValueKind != JsonValueKind.String
+            || !command.TryGetProperty("quantity", out var quantity)
+            || quantity.ValueKind != JsonValueKind.Number)
+            return false;
+
+        var productText = NormalizeReference(productTextElement.GetString() ?? string.Empty);
+        return productText.Length > 0
+            && IsExactOfferedProduct(productText, context.StructuredContext)
+            && !CurrentCartContainsExactProduct(productText, context.StructuredContext);
+    }
+
+    private static bool IsExactOfferedProduct(
+        string productText,
+        IReadOnlyDictionary<string, JsonElement>? structuredContext) =>
+        EnumerateProductNames(structuredContext, "shoppingContext", "offers", "products")
+            .Any(name => NormalizeReference(name).Equals(productText, StringComparison.Ordinal));
+
+    private static bool CurrentCartContainsExactProduct(
+        string productText,
+        IReadOnlyDictionary<string, JsonElement>? structuredContext)
+    {
+        if (structuredContext is null
+            || !structuredContext.TryGetValue("currentCart", out var cart)
+            || cart.ValueKind != JsonValueKind.Object
+            || !cart.TryGetProperty("items", out var items)
+            || items.ValueKind != JsonValueKind.Array)
+            return false;
+
+        return items.EnumerateArray().Any(item =>
+            item.ValueKind == JsonValueKind.Object
+            && item.TryGetProperty("name", out var name)
+            && name.ValueKind == JsonValueKind.String
+            && NormalizeReference(name.GetString() ?? string.Empty)
+                .Equals(productText, StringComparison.Ordinal));
+    }
+
+    private static IEnumerable<string> EnumerateProductNames(
+        IReadOnlyDictionary<string, JsonElement>? structuredContext,
+        string contextKey,
+        string collectionKey,
+        string productCollectionKey)
+    {
+        if (structuredContext is null
+            || !structuredContext.TryGetValue(contextKey, out var context)
+            || context.ValueKind != JsonValueKind.Object
+            || !context.TryGetProperty(collectionKey, out var collections)
+            || collections.ValueKind != JsonValueKind.Array)
+            yield break;
+
+        foreach (var collection in collections.EnumerateArray())
+        {
+            if (collection.ValueKind != JsonValueKind.Object
+                || !collection.TryGetProperty(productCollectionKey, out var products)
+                || products.ValueKind != JsonValueKind.Array)
+                continue;
+            foreach (var product in products.EnumerateArray())
+                if (product.ValueKind == JsonValueKind.String)
+                    yield return product.GetString() ?? string.Empty;
+        }
+    }
 
     private static TurnPlan RecoverExplicitOrderList(TurnPlan plan, TurnPlanningContext context)
     {
