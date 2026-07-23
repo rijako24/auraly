@@ -4,10 +4,60 @@ public record IntegrationSettingsDto(
     GoogleCalendarIntegrationDto GoogleCalendar,
     WompiIntegrationDto Wompi,
     SiigoCommerceIntegrationDto SiigoCommerce,
-    MantisIntegrationDto Mantis);
+    MantisIntegrationDto Mantis,
+    XionIntegrationDto Xion);
 
-public record MantisIntegrationDto(bool IsConfigured, bool IsEnabled, string? LastError, DateTime? LastSyncAt);
+public record MantisIntegrationDto(
+    bool IsConfigured,
+    bool IsEnabled,
+    string BaseUrl,
+    int RequestTimeoutSeconds,
+    string Currency,
+    bool HasAuthorizationToken,
+    string? LastError,
+    DateTime? LastSyncAt);
 
+public record UpdateMantisIntegrationRequest(
+    bool IsEnabled,
+    string BaseUrl,
+    int RequestTimeoutSeconds,
+    string Currency,
+    string? AuthorizationToken);
+
+public record XionIntegrationDto(
+    bool IsConfigured,
+    bool IsEnabled,
+    string BaseUrl,
+    int RequestTimeoutSeconds,
+    string Currency,
+    int SucursalId,
+    int VendedorId,
+    int EquipoId,
+    int BodegaId,
+    int EmpresaId,
+    int CentroDeCostoId,
+    int UsuarioId,
+    int RutaId,
+    bool ValidateStockOnCreate,
+    int OrderHistoryDays,
+    string? LastError,
+    DateTime? LastSyncAt);
+
+public record UpdateXionIntegrationRequest(
+    bool IsEnabled,
+    string BaseUrl,
+    int RequestTimeoutSeconds,
+    string Currency,
+    int SucursalId,
+    int VendedorId,
+    int EquipoId,
+    int BodegaId,
+    int EmpresaId,
+    int CentroDeCostoId,
+    int UsuarioId,
+    int RutaId,
+    bool ValidateStockOnCreate,
+    int OrderHistoryDays);
 public record GoogleCalendarIntegrationDto(
     bool IsEnabled,
     string CalendarId,

@@ -12,6 +12,7 @@ namespace MimosBabySpa.Infrastructure.Commerce;
 
 public sealed class MantisCommerceAdapter :
     ICommerceAdapter,
+    IAuthoritativeCommercePricingAdapter,
     ICommerceCustomerLookup,
     ICommerceProductIdentitySource,
     ICommerceProductDeltaIdentitySource,

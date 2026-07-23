@@ -6,6 +6,8 @@ import { useBusinessContextStore } from "@/stores/business-context-store";
 import type {
   UpdateOperationalMode,
   UpdateGoogleCalendarIntegration,
+  UpdateMantisIntegration,
+  UpdateXionIntegration,
   UpdateWompiIntegration,
 } from "@/services/api/integrations";
 
@@ -55,6 +57,29 @@ export function useUpdateWompiIntegration() {
   });
 }
 
+export function useUpdateMantisIntegration() {
+  const businessId = useBusinessContextStore((s) => s.selectedBusinessId);
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (data: UpdateMantisIntegration) =>
+      integrationsApi.updateMantis(businessId!, data),
+    onSuccess: () => queryClient.invalidateQueries({
+      queryKey: integrationKeys.settings(businessId),
+    }),
+  });
+}
+
+export function useUpdateXionIntegration() {
+  const businessId = useBusinessContextStore((s) => s.selectedBusinessId);
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (data: UpdateXionIntegration) =>
+      integrationsApi.updateXion(businessId!, data),
+    onSuccess: () => queryClient.invalidateQueries({
+      queryKey: integrationKeys.settings(businessId),
+    }),
+  });
+}
 export function useUpdateOperationalMode(businessIdOverride?: string | null) {
   const selectedBusinessId = useBusinessContextStore((s) => s.selectedBusinessId);
   const businessId = businessIdOverride ?? selectedBusinessId;

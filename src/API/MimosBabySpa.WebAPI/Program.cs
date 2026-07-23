@@ -256,6 +256,10 @@ builder.Services.AddHttpClient<MantisCommerceAdapter>();
 
 builder.Services.AddScoped<ICommerceAdapter>(sp => sp.GetRequiredService<MantisCommerceAdapter>());
 
+builder.Services.AddHttpClient<XionCommerceAdapter>();
+
+builder.Services.AddScoped<ICommerceAdapter>(sp => sp.GetRequiredService<XionCommerceAdapter>());
+
 builder.Services.AddScoped<ICommerceAdapterFactory, CommerceAdapterFactory>();
 
 builder.Services.AddScoped<IAddOnCatalogService, AddOnCatalogService>();

@@ -264,6 +264,30 @@ export interface WompiIntegration {
 export interface MantisIntegration {
   isConfigured: boolean;
   isEnabled: boolean;
+  baseUrl: string;
+  requestTimeoutSeconds: number;
+  currency: string;
+  hasAuthorizationToken: boolean;
+  lastError: string | null;
+  lastSyncAt: string | null;
+}
+
+export interface XionIntegration {
+  isConfigured: boolean;
+  isEnabled: boolean;
+  baseUrl: string;
+  requestTimeoutSeconds: number;
+  currency: string;
+  sucursalId: number;
+  vendedorId: number;
+  equipoId: number;
+  bodegaId: number;
+  empresaId: number;
+  centroDeCostoId: number;
+  usuarioId: number;
+  rutaId: number;
+  validateStockOnCreate: boolean;
+  orderHistoryDays: number;
   lastError: string | null;
   lastSyncAt: string | null;
 }
@@ -272,8 +296,8 @@ export interface IntegrationSettings {
   googleCalendar: GoogleCalendarIntegration;
   wompi: WompiIntegration;
   mantis: MantisIntegration;
+  xion: XionIntegration;
 }
-
 export interface EmployeeService {
   employeeServiceId: string;
   employeeId: string;

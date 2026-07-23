@@ -233,6 +233,153 @@ public class IntegrationAdminService : IIntegrationAdminService
         return await GetSettingsAsync(tenantId, businessId, ct);
     }
 
+    public async Task<IntegrationSettingsDto> UpdateMantisAsync(
+        Guid tenantId,
+        Guid businessId,
+        UpdateMantisIntegrationRequest request,
+        CancellationToken ct = default)
+    {
+        await EnsureBusinessBelongsToTenantAsync(tenantId, businessId, ct);
+        var connection = await GetOrCreateCommerceAsync(
+            businessId, CommerceProvider.Mantis, "Mantis Commerce", ct);
+        var settings = ReadJson(connection.SettingsJson);
+        var catalog = ReadNested(connection.SettingsJson, "catalog");
+        var customer = ReadNested(connection.SettingsJson, "customer");
+        var genericCustomer = ReadNested(connection.SettingsJson, "genericCustomer");
+        var order = ReadNested(connection.SettingsJson, "order");
+        var existingSecrets = ReadJson(connection.SecretsJson);
+
+        connection.Name = "Mantis Commerce";
+        connection.SettingsJson = Serialize(new
+        {
+            baseUrl = string.IsNullOrWhiteSpace(request.BaseUrl)
+                ? "http://93.189.95.109:8080/MantisFiccCasalinsPruWeb/rest/"
+                : request.BaseUrl.Trim(),
+            requestTimeoutSeconds = request.RequestTimeoutSeconds <= 0 ? 30 : request.RequestTimeoutSeconds,
+            currency = string.IsNullOrWhiteSpace(request.Currency) ? "COP" : request.Currency.Trim(),
+            genericCustomer = new
+            {
+                llaveNit = Get(genericCustomer, "llaveNit", string.Empty),
+                llaveCliente = Get(genericCustomer, "llaveCliente", string.Empty)
+            },
+            catalog = new
+            {
+                searchEndpoint = Get(catalog, "searchEndpoint", "pwsConsultarArticuloCasalins"),
+                defaultPageSize = GetInt(catalog, "defaultPageSize", 5),
+                maxPageSize = GetInt(catalog, "maxPageSize", 20),
+                warehouse = Get(catalog, "warehouse", Get(settings, "warehouse", string.Empty))
+            },
+            customer = new
+            {
+                searchEndpoint = Get(customer, "searchEndpoint", "pwsConsultarClientesCasalins"),
+                countryCode = Get(customer, "countryCode", "57"),
+                nationalPhoneLength = GetInt(customer, "nationalPhoneLength", 10)
+            },
+            order = new
+            {
+                createEndpoint = Get(order, "createEndpoint", "pwsCrearPedidoCasalins"),
+                queryEndpoint = Get(order, "queryEndpoint", "pwsConsultarPedidoCasalins"),
+                warehouse = Get(order, "warehouse", Get(settings, "warehouse", string.Empty))
+            }
+        });
+        connection.SecretsJson = Serialize(new
+        {
+            authorizationToken = request.AuthorizationToken is null
+                ? GetNullable(existingSecrets, "authorizationToken")
+                    ?? GetNullable(settings, "authorizationToken")
+                : request.AuthorizationToken.Trim()
+        });
+        connection.IsEnabled = request.IsEnabled;
+        connection.UpdatedAt = DateTime.UtcNow;
+        await _unitOfWork.IntegrationConnections.UpdateAsync(connection, ct);
+        await _unitOfWork.SaveChangesAsync(ct);
+        return await GetSettingsAsync(tenantId, businessId, ct);
+    }
+
+    public async Task<IntegrationSettingsDto> UpdateXionAsync(
+        Guid tenantId,
+        Guid businessId,
+        UpdateXionIntegrationRequest request,
+        CancellationToken ct = default)
+    {
+        await EnsureBusinessBelongsToTenantAsync(tenantId, businessId, ct);
+        if (request.IsEnabled && new[]
+            {
+                request.SucursalId, request.VendedorId, request.EquipoId, request.BodegaId,
+                request.EmpresaId, request.CentroDeCostoId, request.UsuarioId
+            }.Any(value => value <= 0))
+        {
+            throw new InvalidOperationException("Sucursal, vendedor, equipo, bodega, empresa, centro de costo y usuario deben ser mayores que cero.");
+        }
+
+        var connection = await GetOrCreateCommerceAsync(
+            businessId, CommerceProvider.Xion, "Xion - Andina Santander", ct);
+        connection.Name = "Xion - Andina Santander";
+        connection.SettingsJson = Serialize(new
+        {
+            baseUrl = string.IsNullOrWhiteSpace(request.BaseUrl)
+                ? "http://api.andinasantander.com:9091/"
+                : request.BaseUrl.Trim(),
+            requestTimeoutSeconds = request.RequestTimeoutSeconds <= 0 ? 120 : request.RequestTimeoutSeconds,
+            currency = string.IsNullOrWhiteSpace(request.Currency) ? "COP" : request.Currency.Trim(),
+            sucursalId = request.SucursalId,
+            vendedorId = request.VendedorId,
+            equipoId = request.EquipoId,
+            bodegaId = request.BodegaId,
+            empresaId = request.EmpresaId,
+            centroDeCostoId = request.CentroDeCostoId,
+            usuarioId = request.UsuarioId,
+            rutaId = Math.Max(0, request.RutaId),
+            validateStockOnCreate = request.ValidateStockOnCreate,
+            orderHistoryDays = request.OrderHistoryDays <= 0 ? 365 : request.OrderHistoryDays,
+            endpoints = new
+            {
+                customerSync = "WebApi/Vendedores/Sync/Clientes/{vendedorId}/{sucursalId}",
+                productSearch = "WebApi/Vendedores/Consulta/ProductosABuscar/{sucursalId}/{vendedorId}/{criterio}/{busqueda}/{bodegaId}/{equipoId}/{clienteId}",
+                productSearchWithoutCustomer = "WebApi/Vendedores/Consulta/ProductosABuscarSinCliente/{sucursalId}/{vendedorId}/{criterio}/{busqueda}/{bodegaId}/{equipoId}",
+                productDetail = "WebApi/Vendedores/Consulta/InfoProducto/{productoId}/{sucursalId}/{vendedorId}/{bodegaId}/{equipoId}/{clienteId}",
+                productDetailWithoutCustomer = "WebApi/Vendedores/Consulta/InfoProductoSinCliente/{productoId}/{sucursalId}/{vendedorId}/{bodegaId}/{equipoId}",
+                productSync = "WebApi/Vendedores/Sync/Productos/{vendedorId}/{sucursalId}",
+                nextOrderNumber = "WebApi/Vendedores/Consulta/Pedido/SiguienteConsecutivo/{equipoId}",
+                createOrder = "WebApi/Vendedores/Nuevo/Pedido/{validarExistencia}",
+                orderHistory = "WebApi/Vendedores/Consulta/Pedidos/{vendedorId}/{fechaInicial}/{fechaFin}/{clienteId}/{rutaId}/{criterio}",
+                verifyOrder = "WebApi/Vendedores/Consulta/VerificarPedido/{pedidoId}"
+            }
+        });
+        connection.SecretsJson = null;
+        connection.IsEnabled = request.IsEnabled;
+        connection.UpdatedAt = DateTime.UtcNow;
+        await _unitOfWork.IntegrationConnections.UpdateAsync(connection, ct);
+        await _unitOfWork.SaveChangesAsync(ct);
+        return await GetSettingsAsync(tenantId, businessId, ct);
+    }
+
+    private async Task<IntegrationConnection> GetOrCreateCommerceAsync(
+        Guid businessId,
+        CommerceProvider provider,
+        string name,
+        CancellationToken ct)
+    {
+        var connection = await _unitOfWork.IntegrationConnections.GetCommerceConnectionAsync(
+            businessId, provider, CommerceCapability.CatalogAndOrders, ct);
+        if (connection is not null)
+            return connection;
+
+        connection = new IntegrationConnection
+        {
+            IntegrationConnectionId = Guid.NewGuid(),
+            BusinessId = businessId,
+            ConnectionType = ConnectionType.Commerce,
+            Provider = (int)provider,
+            Capability = (int)CommerceCapability.CatalogAndOrders,
+            Name = name,
+            SettingsJson = "{}",
+            IsEnabled = false,
+            CreatedAt = DateTime.UtcNow
+        };
+        await _unitOfWork.IntegrationConnections.CreateAsync(connection, ct);
+        return connection;
+    }
     private async Task<IntegrationConnection> GetOrCreateAsync(
         Guid businessId,
         IntegrationProvider provider,
@@ -377,13 +524,56 @@ public class IntegrationAdminService : IIntegrationAdminService
             c.ConnectionType == ConnectionType.Commerce &&
             c.Provider == (int)CommerceProvider.Mantis &&
             c.Capability == (int)CommerceCapability.CatalogAndOrders);
+        var xion = connections.FirstOrDefault(c =>
+            c.ConnectionType == ConnectionType.Commerce &&
+            c.Provider == (int)CommerceProvider.Xion &&
+            c.Capability == (int)CommerceCapability.CatalogAndOrders);
         return new IntegrationSettingsDto(
             MapGoogle(google),
             MapWompi(wompi),
             MapSiigoCommerce(siigo),
-            new MantisIntegrationDto(mantis is not null, mantis?.IsEnabled ?? false, mantis?.LastError, mantis?.LastSyncAt));
+            MapMantis(mantis),
+            MapXion(xion));
     }
 
+    private static MantisIntegrationDto MapMantis(IntegrationConnection? connection)
+    {
+        var settings = ReadJson(connection?.SettingsJson);
+        var secrets = ReadJson(connection?.SecretsJson);
+        return new MantisIntegrationDto(
+            connection is not null,
+            connection?.IsEnabled ?? false,
+            Get(settings, "baseUrl", "http://93.189.95.109:8080/MantisFiccCasalinsPruWeb/rest/"),
+            GetInt(settings, "requestTimeoutSeconds", 30),
+            Get(settings, "currency", "COP"),
+            Has(secrets, "authorizationToken") || Has(settings, "authorizationToken"),
+            connection?.LastError,
+            connection?.LastSyncAt);
+    }
+
+    private static XionIntegrationDto MapXion(IntegrationConnection? connection)
+    {
+        var settings = ReadJson(connection?.SettingsJson);
+        var vendedorId = GetInt(settings, "vendedorId", 1);
+        return new XionIntegrationDto(
+            connection is not null,
+            connection?.IsEnabled ?? false,
+            Get(settings, "baseUrl", "http://api.andinasantander.com:9091/"),
+            GetInt(settings, "requestTimeoutSeconds", 120),
+            Get(settings, "currency", "COP"),
+            GetInt(settings, "sucursalId", 1),
+            vendedorId,
+            GetInt(settings, "equipoId", 1),
+            GetInt(settings, "bodegaId", 1),
+            GetInt(settings, "empresaId", 1),
+            GetInt(settings, "centroDeCostoId", 1),
+            GetInt(settings, "usuarioId", vendedorId),
+            GetInt(settings, "rutaId", 0),
+            GetBool(settings, "validateStockOnCreate", true),
+            GetInt(settings, "orderHistoryDays", 365),
+            connection?.LastError,
+            connection?.LastSyncAt);
+    }
     private static GoogleCalendarIntegrationDto MapGoogle(IntegrationConnection? connection)
     {
         var settings = ReadJson(connection?.SettingsJson);

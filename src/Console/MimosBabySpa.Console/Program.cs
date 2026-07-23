@@ -321,6 +321,10 @@ services.AddHttpClient<MantisCommerceAdapter>();
 
 services.AddScoped<ICommerceAdapter>(sp => sp.GetRequiredService<MantisCommerceAdapter>());
 
+services.AddHttpClient<XionCommerceAdapter>();
+
+services.AddScoped<ICommerceAdapter>(sp => sp.GetRequiredService<XionCommerceAdapter>());
+
 services.AddScoped<ICommerceAdapterFactory, CommerceAdapterFactory>();
 
 // OpenAI Clients
@@ -665,7 +669,7 @@ Console.WriteLine("  Usa     --trace para ver TurnPlan, operaciones y respuestas
 
 Console.WriteLine("  Usa     pilot-seed-turn-plan para inspeccionar una extraccion real");
 Console.WriteLine("  Usa     eval-seed-extractor para ejecutar una suite de extraccion");
-Console.WriteLine("  Usa     medidental, auraly, mimos, luis o cj para seleccionar el agente interactivo");
+Console.WriteLine("  Usa     andina, medidental, auraly, mimos, luis o cj para seleccionar el agente interactivo");
 
 Console.WriteLine();
 
@@ -1080,6 +1084,9 @@ static ConsoleAgentOptions? ResolveRequestedConsoleAgent(string[] args)
 
             .ToLowerInvariant();
 
+        if (normalized is "andina" or "andinasantander" or "xion")
+            return ConsoleAgentOptions.AndinaSantander();
+
         if (normalized is "cj" or "cjdistribuciones")
 
             return ConsoleAgentOptions.CjDistribuciones();
@@ -1371,6 +1378,13 @@ internal sealed record ConsoleAgentOptions(
 
         ["Asistente CJ Distribuciones", "CJ"]);
 
+    public static ConsoleAgentOptions AndinaSantander() => new(
+        Guid.Parse("A7D1AA00-0000-0000-0000-000000000010"),
+        "DISTRIBUCIONES ANDINA SANTANDER",
+        Guid.Parse("A7D1AA00-0000-0000-0000-000000000020"),
+        "Asistente DISTRIBUCIONES ANDINA SANTANDER",
+        "Andina Santander",
+        ["Asistente DISTRIBUCIONES ANDINA SANTANDER", "Andina Santander", "Andina", "Xion"]);
     public static ConsoleAgentOptions Medidental() => new(
 
         Guid.Parse("D3E4A700-0000-0000-0000-000000000010"),

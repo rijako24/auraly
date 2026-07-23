@@ -125,14 +125,14 @@ public sealed class CommerceService : ICommerceService, IProductLookupService
             null);
         var product = await adapter.GetProductAsync(lookup, adapterContext, ct);
         if (product is null
-            && adapterContext.Provider != CommerceProvider.Mantis
+            && adapter is not IAuthoritativeCommercePricingAdapter
             && !string.IsNullOrWhiteSpace(request.SearchText))
         {
             var candidates = _availability.FilterSellable(await adapter.SearchProductsAsync(
                 new ProductSearchRequest(request.SearchText, null, 10), adapterContext, ct));
             product = candidates.Products.FirstOrDefault(candidate => MatchesLookupIdentity(candidate, request));
         }
-        if (product is null && adapterContext.Provider != CommerceProvider.Mantis)
+        if (product is null && adapter is not IAuthoritativeCommercePricingAdapter)
             product = await FindCachedProductAsync(lookup, adapterContext, ct);
         if (product is null || !_availability.IsSellable(product))
             return null;
@@ -191,7 +191,7 @@ public sealed class CommerceService : ICommerceService, IProductLookupService
         var adapterContext = await BuildContextAsync(ctx.BusinessId, ctx.AgentId, ctx.ConversationId, ctx.Config, ctx.ChannelPhone, ctx.CommerceCustomer, ctx.RecipientPhoneNumberId, ct);
         var adapter = _adapterFactory.Resolve(adapterContext.Provider);
         var product = await adapter.GetProductAsync(request, adapterContext, ct);
-        if (product is null && adapterContext.Provider != CommerceProvider.Mantis)
+        if (product is null && adapter is not IAuthoritativeCommercePricingAdapter)
             product = await FindCachedProductAsync(request, adapterContext, ct);
         if (product is null)
             throw new InvalidOperationException("Product not found.");
@@ -200,7 +200,7 @@ public sealed class CommerceService : ICommerceService, IProductLookupService
             throw new InvalidOperationException("Product inactive.");
 
         var draft = await GetOrCreateDraftAsync(ctx, adapterContext, ct);
-        var unitPrice = adapterContext.Provider == CommerceProvider.Mantis
+        var unitPrice = adapter is IAuthoritativeCommercePricingAdapter
             ? product.UnitPrice
             : request.UnitPrice ?? product.UnitPrice;
         var existingItems = await _unitOfWork.OrderDraftItems.GetByDraftIdAsync(ctx.BusinessId, draft.OrderDraftId, ct);

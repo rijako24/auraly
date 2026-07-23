@@ -24,6 +24,30 @@ export interface UpdateWompiIntegration {
   integritySecret?: string | null;
 }
 
+export interface UpdateMantisIntegration {
+  isEnabled: boolean;
+  baseUrl: string;
+  requestTimeoutSeconds: number;
+  currency: string;
+  authorizationToken?: string | null;
+}
+
+export interface UpdateXionIntegration {
+  isEnabled: boolean;
+  baseUrl: string;
+  requestTimeoutSeconds: number;
+  currency: string;
+  sucursalId: number;
+  vendedorId: number;
+  equipoId: number;
+  bodegaId: number;
+  empresaId: number;
+  centroDeCostoId: number;
+  usuarioId: number;
+  rutaId: number;
+  validateStockOnCreate: boolean;
+  orderHistoryDays: number;
+}
 export type OperationalMode = "test" | "production";
 
 export interface UpdateOperationalMode {
@@ -59,6 +83,16 @@ export const integrationsApi = {
   updateWompi: (businessId: string, data: UpdateWompiIntegration) =>
     apiClient.put<IntegrationSettings>(
       `/businesses/${businessId}/integrations/wompi`,
+      data
+    ),
+  updateMantis: (businessId: string, data: UpdateMantisIntegration) =>
+    apiClient.put<IntegrationSettings>(
+      `/businesses/${businessId}/integrations/commerce/mantis`,
+      data
+    ),
+  updateXion: (businessId: string, data: UpdateXionIntegration) =>
+    apiClient.put<IntegrationSettings>(
+      `/businesses/${businessId}/integrations/commerce/xion`,
       data
     ),
   updateOperationalMode: (businessId: string, data: UpdateOperationalMode) =>

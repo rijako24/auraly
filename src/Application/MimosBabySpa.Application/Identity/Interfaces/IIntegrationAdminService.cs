@@ -25,6 +25,16 @@ public interface IIntegrationAdminService
         Guid businessId,
         UpdateSiigoCommerceIntegrationRequest request,
         CancellationToken ct = default);
+    Task<IntegrationSettingsDto> UpdateMantisAsync(
+        Guid tenantId,
+        Guid businessId,
+        UpdateMantisIntegrationRequest request,
+        CancellationToken ct = default);
+    Task<IntegrationSettingsDto> UpdateXionAsync(
+        Guid tenantId,
+        Guid businessId,
+        UpdateXionIntegrationRequest request,
+        CancellationToken ct = default);
     Task<IReadOnlyList<MantisChannelWarehouseDto>> GetMantisChannelWarehousesAsync(
         Guid tenantId,
         Guid businessId,

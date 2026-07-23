@@ -25,6 +25,8 @@ import {
   useMantisWarehouses,
   useRefreshMantisProduct,
   useUpdateMantisWarehouses,
+  useUpdateMantisIntegration,
+  useUpdateXionIntegration,
   useUpdateGoogleCalendarIntegration,
   useUpdateWompiIntegration,
 } from "@/hooks/use-integrations";
@@ -35,6 +37,8 @@ export default function IntegrationsSettingsPage() {
   const { data, isLoading, isError, refetch } = useIntegrationSettings();
   const updateGoogle = useUpdateGoogleCalendarIntegration();
   const updateWompi = useUpdateWompiIntegration();
+  const updateMantis = useUpdateMantisIntegration();
+  const updateXion = useUpdateXionIntegration();
   const refreshMantis = useRefreshMantisProduct();
   const hasMantisIntegration = data?.mantis?.isConfigured === true;
   const mantisWarehousesQuery = useMantisWarehouses(hasMantisIntegration);
@@ -69,6 +73,29 @@ export default function IntegrationsSettingsPage() {
     integritySecret: "",
   });
 
+  const [mantis, setMantis] = useState({
+    isEnabled: false,
+    baseUrl: "",
+    requestTimeoutSeconds: 30,
+    currency: "COP",
+    authorizationToken: "",
+  });
+  const [xion, setXion] = useState({
+    isEnabled: false,
+    baseUrl: "http://api.andinasantander.com:9091/",
+    requestTimeoutSeconds: 120,
+    currency: "COP",
+    sucursalId: 1,
+    vendedorId: 1,
+    equipoId: 1,
+    bodegaId: 1,
+    empresaId: 1,
+    centroDeCostoId: 1,
+    usuarioId: 1,
+    rutaId: 0,
+    validateStockOnCreate: true,
+    orderHistoryDays: 365,
+  });
   useEffect(() => {
     if (mantisWarehousesQuery.data) setMantisWarehouses(mantisWarehousesQuery.data);
   }, [mantisWarehousesQuery.data]);
@@ -98,7 +125,29 @@ export default function IntegrationsSettingsPage() {
       eventsSecret: "",
       integritySecret: "",
     }));
-  }, [data]);
+    setMantis({
+      isEnabled: data.mantis.isEnabled,
+      baseUrl: data.mantis.baseUrl,
+      requestTimeoutSeconds: data.mantis.requestTimeoutSeconds,
+      currency: data.mantis.currency,
+      authorizationToken: "",
+    });
+    setXion({
+      isEnabled: data.xion.isEnabled,
+      baseUrl: data.xion.baseUrl,
+      requestTimeoutSeconds: data.xion.requestTimeoutSeconds,
+      currency: data.xion.currency,
+      sucursalId: data.xion.sucursalId,
+      vendedorId: data.xion.vendedorId,
+      equipoId: data.xion.equipoId,
+      bodegaId: data.xion.bodegaId,
+      empresaId: data.xion.empresaId,
+      centroDeCostoId: data.xion.centroDeCostoId,
+      usuarioId: data.xion.usuarioId,
+      rutaId: data.xion.rutaId,
+      validateStockOnCreate: data.xion.validateStockOnCreate,
+      orderHistoryDays: data.xion.orderHistoryDays,
+    });  }, [data]);
 
   if (!businessId) {
     return (
@@ -232,7 +281,7 @@ export default function IntegrationsSettingsPage() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="test">Pruebas</SelectItem>
-                  <SelectItem value="production">Produccion</SelectItem>
+                  <SelectItem value="production">Producción</SelectItem>
                 </SelectContent>
               </Select>
             </Field>
@@ -242,7 +291,7 @@ export default function IntegrationsSettingsPage() {
                 onChange={(event) => setWompi({ ...wompi, sandboxBaseUrl: event.target.value })}
               />
             </Field>
-            <Field label="Produccion API">
+            <Field label="Producción API">
               <Input
                 value={wompi.productionBaseUrl}
                 onChange={(event) => setWompi({ ...wompi, productionBaseUrl: event.target.value })}
@@ -317,6 +366,156 @@ export default function IntegrationsSettingsPage() {
           </CardContent>
         </Card>
 
+        <Card>
+          <CardHeader>
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <Building2 className="h-4 w-4" />
+                  Mantis
+                </CardTitle>
+                <CardDescription>
+                  Conexión de catálogo y pedidos. El host se administra aquí.
+                </CardDescription>
+              </div>
+              <StatusBadge active={data.mantis.isEnabled} />
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <ToggleRow
+              label="Activo"
+              checked={mantis.isEnabled}
+              onCheckedChange={(isEnabled) => setMantis({ ...mantis, isEnabled })}
+            />
+            <Field label="Host de la API">
+              <Input
+                value={mantis.baseUrl}
+                placeholder="http://servidor:puerto/ruta/"
+                onChange={(event) => setMantis({ ...mantis, baseUrl: event.target.value })}
+              />
+            </Field>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label="Timeout (segundos)">
+                <Input type="number" min={1} value={mantis.requestTimeoutSeconds}
+                  onChange={(event) => setMantis({ ...mantis, requestTimeoutSeconds: Number(event.target.value) })} />
+              </Field>
+              <Field label="Moneda">
+                <Input value={mantis.currency}
+                  onChange={(event) => setMantis({ ...mantis, currency: event.target.value })} />
+              </Field>
+            </div>
+            <SecretField
+              label="Token de autorización"
+              configured={data.mantis.hasAuthorizationToken}
+              value={mantis.authorizationToken}
+              onChange={(authorizationToken) => setMantis({ ...mantis, authorizationToken })}
+            />
+            {data.mantis.lastError && (
+              <p className="text-sm text-destructive">{data.mantis.lastError}</p>
+            )}
+            <Button
+              onClick={() => updateMantis.mutate({
+                ...mantis,
+                authorizationToken: mantis.authorizationToken || null,
+              })}
+              disabled={updateMantis.isPending || !mantis.baseUrl.trim()}
+            >
+              <Save className="mr-2 h-4 w-4" />
+              Guardar Mantis
+            </Button>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <PackageSearch className="h-4 w-4" />
+                  Xion · Andina Santander
+                </CardTitle>
+                <CardDescription>
+                  Parámetros operativos de DISTRIBUCIONES ANDINA SANTANDER. No se exponen en la configuración del agente.
+                </CardDescription>
+              </div>
+              <StatusBadge active={data.xion.isEnabled} />
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <ToggleRow
+              label="Activo"
+              checked={xion.isEnabled}
+              onCheckedChange={(isEnabled) => setXion({ ...xion, isEnabled })}
+            />
+            <Field label="Host de la API">
+              <Input value={xion.baseUrl}
+                onChange={(event) => setXion({ ...xion, baseUrl: event.target.value })} />
+            </Field>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label="Timeout (segundos)">
+                <Input type="number" min={1} value={xion.requestTimeoutSeconds}
+                  onChange={(event) => setXion({ ...xion, requestTimeoutSeconds: Number(event.target.value) })} />
+              </Field>
+              <Field label="Moneda">
+                <Input value={xion.currency}
+                  onChange={(event) => setXion({ ...xion, currency: event.target.value })} />
+              </Field>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label="Sucursal · DISTRIBUCIONES ANDINA SANTANDER">
+                <Input type="number" min={1} value={xion.sucursalId}
+                  onChange={(event) => setXion({ ...xion, sucursalId: Number(event.target.value) })} />
+              </Field>
+              <Field label="Vendedor · VENTAS">
+                <Input type="number" min={1} value={xion.vendedorId}
+                  onChange={(event) => setXion({ ...xion, vendedorId: Number(event.target.value) })} />
+              </Field>
+              <Field label="Equipo · EQUIPO01">
+                <Input type="number" min={1} value={xion.equipoId}
+                  onChange={(event) => setXion({ ...xion, equipoId: Number(event.target.value) })} />
+              </Field>
+              <Field label="Bodega · BODEGA VENTAS">
+                <Input type="number" min={1} value={xion.bodegaId}
+                  onChange={(event) => setXion({ ...xion, bodegaId: Number(event.target.value) })} />
+              </Field>
+              <Field label="Empresa">
+                <Input type="number" min={1} value={xion.empresaId}
+                  onChange={(event) => setXion({ ...xion, empresaId: Number(event.target.value) })} />
+              </Field>
+              <Field label="Centro de costo">
+                <Input type="number" min={1} value={xion.centroDeCostoId}
+                  onChange={(event) => setXion({ ...xion, centroDeCostoId: Number(event.target.value) })} />
+              </Field>
+              <Field label="Usuario">
+                <Input type="number" min={1} value={xion.usuarioId}
+                  onChange={(event) => setXion({ ...xion, usuarioId: Number(event.target.value) })} />
+              </Field>
+              <Field label="Ruta (0 = todas)">
+                <Input type="number" min={0} value={xion.rutaId}
+                  onChange={(event) => setXion({ ...xion, rutaId: Number(event.target.value) })} />
+              </Field>
+            </div>
+            <ToggleRow
+              label="Validar existencia al crear el pedido"
+              checked={xion.validateStockOnCreate}
+              onCheckedChange={(validateStockOnCreate) => setXion({ ...xion, validateStockOnCreate })}
+            />
+            <Field label="Días de historial de pedidos">
+              <Input type="number" min={1} max={3650} value={xion.orderHistoryDays}
+                onChange={(event) => setXion({ ...xion, orderHistoryDays: Number(event.target.value) })} />
+            </Field>
+            {data.xion.lastError && (
+              <p className="text-sm text-destructive">{data.xion.lastError}</p>
+            )}
+            <Button
+              onClick={() => updateXion.mutate(xion)}
+              disabled={updateXion.isPending || !xion.baseUrl.trim()}
+            >
+              <Save className="mr-2 h-4 w-4" />
+              Guardar Xion
+            </Button>
+          </CardContent>
+        </Card>
         {hasMantisIntegration && (
         <Card>
           <CardHeader>
@@ -331,7 +530,7 @@ export default function IntegrationsSettingsPage() {
           <CardContent className="space-y-4">
             <div>
               <h3 className="text-sm font-semibold">Canales y bodegas</h3>
-              <p className="text-xs text-muted-foreground">Configura una bodega por cada numero receptor.</p>
+              <p className="text-xs text-muted-foreground">Configura una bodega por cada número receptor.</p>
             </div>
             {mantisWarehouses.map((channel, index) => (
               <div className="space-y-3 rounded-md border p-3" key={channel.businessWhatsAppNumberId}>
@@ -376,14 +575,14 @@ export default function IntegrationsSettingsPage() {
               <div>
                 <h3 className="flex items-center gap-2 text-sm font-semibold">
                   <PackageSearch className="h-4 w-4" />
-                  Catalogo
+                  Catálogo
                 </h3>
                 <p className="text-xs text-muted-foreground">
-              Busca un nombre o c?digo en Mantis y actualiza solamente su identidad local.
+              Busca un nombre o código en Mantis y actualiza solamente su identidad local.
               El precio y la existencia siempre se consultan en vivo al vender.
                 </p>
               </div>
-            <Field label="Nombre o c?digo del producto">
+            <Field label="Nombre o código del producto">
               <Input
                 value={mantisQuery}
                 placeholder="Ej. jamonada Cunni Chef"
@@ -405,7 +604,7 @@ export default function IntegrationsSettingsPage() {
             )}
             {refreshMantis.isError && (
               <p className="text-sm text-destructive">
-                No fue posible actualizar el producto. Verifica la conexi?n Mantis.
+                No fue posible actualizar el producto. Verifica la conexión Mantis.
               </p>
             )}
             <Button

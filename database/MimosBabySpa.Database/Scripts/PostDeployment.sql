@@ -66,6 +66,8 @@
 :r .\Seeds\SeedSolorzanoDomicilioAgent.sql
 :r .\Seeds\SeedCJDistribuciones.sql
 GO
+:r .\Seeds\SeedAndinaSantander.sql
+GO
 :r .\Seeds\SeedMedidental.sql
 GO
 :r .\Seeds\SeedSystemAgentTemplatesAndInboundContacts.sql

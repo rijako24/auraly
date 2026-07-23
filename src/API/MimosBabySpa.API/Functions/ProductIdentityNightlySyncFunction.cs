@@ -23,15 +23,19 @@ public sealed class ProductIdentityNightlySyncFunction
         [TimerTrigger("0 0 5 * * *")] TimerInfo timerInfo,
         CancellationToken ct)
     {
-        var results = await _sync.SyncAllEnabledAsync(CommerceProvider.Mantis, ct);
-        _logger.LogInformation(
-            "Nightly Mantis identity sync completed for {BusinessCount} businesses. " +
-            "Products processed: {ProductsProcessed}; products changed: {ProductsChanged}; " +
-            "customers processed: {CustomersProcessed}; customers changed: {CustomersChanged}.",
-            results.Count,
-            results.Sum(result => result.ProductsProcessed),
-            results.Sum(result => result.ProductsChanged),
-            results.Sum(result => result.CustomersProcessed),
-            results.Sum(result => result.CustomersChanged));
+        foreach (var provider in new[] { CommerceProvider.Mantis, CommerceProvider.Xion })
+        {
+            var results = await _sync.SyncAllEnabledAsync(provider, ct);
+            _logger.LogInformation(
+                "Nightly {Provider} identity sync completed for {BusinessCount} businesses. " +
+                "Products processed: {ProductsProcessed}; products changed: {ProductsChanged}; " +
+                "customers processed: {CustomersProcessed}; customers changed: {CustomersChanged}.",
+                provider,
+                results.Count,
+                results.Sum(result => result.ProductsProcessed),
+                results.Sum(result => result.ProductsChanged),
+                results.Sum(result => result.CustomersProcessed),
+                results.Sum(result => result.CustomersChanged));
+        }
     }
 }

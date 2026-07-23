@@ -66,6 +66,25 @@ public class IntegrationsController : ControllerBase
         return Ok(await _service.UpdateSiigoCommerceAsync(User.GetTenantId(), businessId, request, ct));
     }
 
+    [HttpPut("commerce/mantis")]
+    [PermissionAuthorize("business_config.update")]
+    public async Task<ActionResult<IntegrationSettingsDto>> UpdateMantis(
+        Guid businessId,
+        [FromBody] UpdateMantisIntegrationRequest request,
+        CancellationToken ct)
+    {
+        return Ok(await _service.UpdateMantisAsync(User.GetTenantId(), businessId, request, ct));
+    }
+
+    [HttpPut("commerce/xion")]
+    [PermissionAuthorize("business_config.update")]
+    public async Task<ActionResult<IntegrationSettingsDto>> UpdateXion(
+        Guid businessId,
+        [FromBody] UpdateXionIntegrationRequest request,
+        CancellationToken ct)
+    {
+        return Ok(await _service.UpdateXionAsync(User.GetTenantId(), businessId, request, ct));
+    }
     [HttpGet("commerce/mantis/warehouses")]
     [PermissionAuthorize("business_config.read")]
     public async Task<ActionResult<IReadOnlyList<MantisChannelWarehouseDto>>> GetMantisWarehouses(

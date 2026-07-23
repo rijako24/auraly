@@ -177,6 +177,10 @@ services.AddScoped<ServiceSelectionResolver>();
 
         services.AddScoped<ICommerceAdapter>(sp => sp.GetRequiredService<MantisCommerceAdapter>());
 
+        services.AddHttpClient<XionCommerceAdapter>();
+
+        services.AddScoped<ICommerceAdapter>(sp => sp.GetRequiredService<XionCommerceAdapter>());
+
         services.AddScoped<ICommerceAdapterFactory, CommerceAdapterFactory>();
 
         // OpenAI Clients
