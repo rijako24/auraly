@@ -18,6 +18,8 @@ export const dashboardKeys = {
     [...dashboardKeys.all, "recent-reservations", businessId, limit] as const,
   usage: (businessId: string | null) =>
     [...dashboardKeys.all, "usage", businessId] as const,
+  subscription: (businessId: string | null) =>
+    [...dashboardKeys.all, "subscription", businessId] as const,
 };
 
 export function useDashboardStats(period?: string) {
@@ -70,6 +72,15 @@ export function useBusinessUsage() {
   return useQuery({
     queryKey: dashboardKeys.usage(businessId),
     queryFn: () => dashboardApi.getUsage(businessId!),
+    enabled: !!businessId,
+  });
+}
+
+export function useSubscriptionDetails() {
+  const businessId = useBusinessContextStore((s) => s.selectedBusinessId);
+  return useQuery({
+    queryKey: dashboardKeys.subscription(businessId),
+    queryFn: () => dashboardApi.getSubscription(businessId!),
     enabled: !!businessId,
   });
 }

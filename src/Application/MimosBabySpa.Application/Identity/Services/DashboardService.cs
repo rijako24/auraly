@@ -1,3 +1,4 @@
+using System.Text.Json;
 using MimosBabySpa.Application.Common.Exceptions;
 using MimosBabySpa.Application.Billing;
 using MimosBabySpa.Application.Identity.DTOs;
@@ -193,12 +194,77 @@ public class DashboardService : IDashboardService
                 usage.CreditsLimit,
                 usage.CreditsUsed,
                 usage.CreditsUsagePercent,
-                usage.VariableCostLimitCop,
-                usage.VariableCostUsedCop,
-                usage.VariableCostUsagePercent,
                 usage.PeriodStart,
                 usage.PeriodEnd,
                 usage.Status);
+    }
+
+    public async Task<SubscriptionDetailsDto?> GetSubscriptionAsync(
+        Guid tenantId,
+        Guid businessId,
+        CancellationToken ct)
+    {
+        await EnsureBusinessBelongsToTenantAsync(tenantId, businessId, ct);
+
+        var usage = await _usageBilling.GetCurrentUsageAsync(businessId, ct);
+        if (usage is null)
+            return null;
+
+        var subscription = await _unitOfWork.BusinessSubscriptions.GetActiveByBusinessIdAsync(businessId, ct);
+        var period = await _unitOfWork.BusinessUsagePeriods.GetCurrentByBusinessIdAsync(
+            businessId, DateTime.UtcNow, ct);
+        if (subscription is null || period is null)
+            return null;
+
+        var entries = await _unitOfWork.UsageLedger.GetByPeriodIdAsync(
+            period.BusinessUsagePeriodId, ct);
+        var creditsUsed = usage.CreditsUsed;
+        var breakdown = entries
+            .GroupBy(entry => entry.OperationType)
+            .Select(group =>
+            {
+                var credits = group.Sum(entry => entry.CreditsCharged);
+                var percent = creditsUsed == 0
+                    ? 0
+                    : Math.Round(credits / (decimal)creditsUsed * 100, 2);
+                return new UsageBreakdownDto(group.Key, group.Count(), credits, percent);
+            })
+            .OrderByDescending(item => item.CreditsUsed)
+            .ToList();
+
+        var recentUsage = entries
+            .Take(50)
+            .Select(entry => new UsageActivityDto(
+                entry.UsageLedgerEntryId,
+                entry.OperationType,
+                entry.CreditsCharged,
+                entry.CreatedAt))
+            .ToList();
+
+        var plan = subscription.SubscriptionPlan;
+        return new SubscriptionDetailsDto(
+            subscription.BusinessSubscriptionId,
+            subscription.PlanNameSnapshot,
+            subscription.PlanCodeSnapshot,
+            subscription.MonthlyPriceCop,
+            subscription.CreatedAt,
+            usage.PeriodStart,
+            usage.PeriodEnd,
+            subscription.AutoRenew,
+            subscription.Status,
+            usage.Status,
+            period.CreditsIncluded,
+            period.CreditsExtra,
+            usage.CreditsLimit,
+            usage.CreditsUsed,
+            Math.Max(0, usage.CreditsLimit - usage.CreditsUsed),
+            usage.CreditsUsagePercent,
+            plan.IncludedAgents,
+            plan.IncludedUsers,
+            plan.IncludedWorkspaces,
+            ParseFeatures(plan.FeaturesJson),
+            breakdown,
+            recentUsage);
     }
 
     public async Task<IReadOnlyList<SubscriptionPlanDto>> GetPlansAsync(CancellationToken ct)
@@ -209,12 +275,25 @@ public class DashboardService : IDashboardService
             p.Name,
             p.MonthlyPriceCop,
             p.IncludedCredits,
-            p.MaxVariableCostCop,
-            p.MaxVariableCostPercent,
             p.IncludedAgents,
             p.IncludedUsers,
             p.IncludedWorkspaces,
             p.Features)).ToList();
+    }
+
+    private static string[] ParseFeatures(string? featuresJson)
+    {
+        if (string.IsNullOrWhiteSpace(featuresJson))
+            return [];
+
+        try
+        {
+            return JsonSerializer.Deserialize<string[]>(featuresJson) ?? [];
+        }
+        catch (JsonException)
+        {
+            return [];
+        }
     }
 
     private static (DateTime From, DateTime To) ParsePeriod(string period)

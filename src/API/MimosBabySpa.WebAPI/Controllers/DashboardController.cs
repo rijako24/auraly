@@ -79,6 +79,15 @@ public class DashboardController : ControllerBase
         return Ok(await _dashboardService.GetUsageAsync(User.GetTenantId(), businessId, ct));
     }
 
+    [HttpGet("subscription")]
+    [PermissionAuthorize("dashboard.read")]
+    public async Task<ActionResult<SubscriptionDetailsDto?>> GetSubscription(
+        [FromQuery] Guid businessId,
+        CancellationToken ct = default)
+    {
+        return Ok(await _dashboardService.GetSubscriptionAsync(User.GetTenantId(), businessId, ct));
+    }
+
     [HttpGet("plans")]
     [AllowAnonymous]
     public async Task<ActionResult<IReadOnlyList<SubscriptionPlanDto>>> GetPlans(CancellationToken ct = default)

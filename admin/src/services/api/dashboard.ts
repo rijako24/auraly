@@ -4,6 +4,7 @@ import type {
   ChartDataPoint,
   TopService,
   BusinessUsage,
+  SubscriptionDetails,
 } from "@/types/api";
 
 export interface OverviewDataPoint {
@@ -75,6 +76,8 @@ export const dashboardApi = {
     ),
   getUsage: (businessId: string) =>
     apiClient.get<BusinessUsage | null>("/dashboard/usage", { businessId }),
+  getSubscription: (businessId: string) =>
+    apiClient.get<SubscriptionDetails | null>("/dashboard/subscription", { businessId }),
   getAnalyticsMetrics: (period?: string) =>
     apiClient.get<AnalyticsMetrics>("/dashboard/analytics-metrics", { period }),
   getCustomerGrowth: (period?: string) =>

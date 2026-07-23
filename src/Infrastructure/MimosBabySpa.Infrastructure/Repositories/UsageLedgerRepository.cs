@@ -25,4 +25,13 @@ public sealed class UsageLedgerRepository : IUsageLedgerRepository
             .OrderByDescending(e => e.CreatedAt)
             .Take(limit)
             .ToListAsync(ct);
+
+    public async Task<IReadOnlyList<UsageLedgerEntry>> GetByPeriodIdAsync(
+        Guid businessUsagePeriodId,
+        CancellationToken ct = default) =>
+        await _context.UsageLedgerEntries
+            .AsNoTracking()
+            .Where(e => e.BusinessUsagePeriodId == businessUsagePeriodId)
+            .OrderByDescending(e => e.CreatedAt)
+            .ToListAsync(ct);
 }

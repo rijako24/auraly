@@ -22,5 +22,8 @@ public interface IDashboardService
     Task<BusinessUsageDto?> GetUsageAsync(
         Guid tenantId, Guid businessId, CancellationToken ct = default);
 
+    Task<SubscriptionDetailsDto?> GetSubscriptionAsync(
+        Guid tenantId, Guid businessId, CancellationToken ct = default);
+
     Task<IReadOnlyList<SubscriptionPlanDto>> GetPlansAsync(CancellationToken ct = default);
 }

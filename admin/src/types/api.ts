@@ -98,10 +98,46 @@ export interface BusinessUsage {
   creditsLimit: number;
   creditsUsed: number;
   creditsUsagePercent: number;
-  variableCostLimitCop: number;
-  variableCostUsedCop: number;
-  variableCostUsagePercent: number;
   periodStart: string;
   periodEnd: string;
   status: "Open" | "Exceeded" | "Closed" | number;
+}
+
+export interface SubscriptionUsageBreakdown {
+  operationType: string | number;
+  operationCount: number;
+  creditsUsed: number;
+  creditsPercent: number;
+}
+
+export interface SubscriptionUsageActivity {
+  usageId: string;
+  operationType: string | number;
+  creditsUsed: number;
+  createdAt: string;
+}
+
+export interface SubscriptionDetails {
+  subscriptionId: string;
+  planName: string;
+  planCode: string;
+  monthlyPriceCop: number;
+  subscriptionStartedAt: string;
+  periodStart: string;
+  periodEnd: string;
+  autoRenew: boolean;
+  status: string | number;
+  usageStatus: string | number;
+  creditsIncluded: number;
+  creditsExtra: number;
+  creditsLimit: number;
+  creditsUsed: number;
+  creditsRemaining: number;
+  creditsUsagePercent: number;
+  includedAgents: number;
+  includedUsers: number;
+  includedWorkspaces: number;
+  features: string[];
+  usageBreakdown: SubscriptionUsageBreakdown[];
+  recentUsage: SubscriptionUsageActivity[];
 }

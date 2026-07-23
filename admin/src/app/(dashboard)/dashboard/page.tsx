@@ -124,9 +124,8 @@ export default function DashboardPage() {
           </CardHeader>
           <CardContent className="space-y-4">
             <Progress value={Math.min(100, usage.creditsUsagePercent)} />
-            <div className="grid gap-3 text-sm sm:grid-cols-3">
+            <div className="grid gap-3 text-sm sm:grid-cols-2">
               <div><p className="text-muted-foreground">Creditos usados</p><p className="font-medium">{usage.creditsUsed.toLocaleString("es-CO")} / {usage.creditsLimit.toLocaleString("es-CO")}</p></div>
-              <div><p className="text-muted-foreground">Costo operativo</p><p className="font-medium">{formatCurrency(usage.variableCostUsedCop)} / {formatCurrency(usage.variableCostLimitCop)}</p></div>
               <div><p className="text-muted-foreground">Estado</p><p className="font-medium">{usage.status === "Exceeded" || usage.status === 2 ? "Limite alcanzado" : "Activo"}</p></div>
             </div>
           </CardContent>
