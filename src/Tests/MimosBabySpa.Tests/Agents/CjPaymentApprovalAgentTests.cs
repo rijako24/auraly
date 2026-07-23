@@ -45,7 +45,10 @@ public sealed class CjPaymentApprovalAgentTests
         var config = LoadSeedConfig("SeedCJDistribuciones.sql", "SettingsJson");
 
         config.Notifications["manual_payment_requested"].Enabled.Should().BeTrue();
-        config.Notifications["manual_payment_requested"].Recipients.Should().Equal("inbound:payment_approver");
+        config.Notifications["manual_payment_requested"].Deliveries.Should().ContainSingle();
+        var delivery = config.Notifications["manual_payment_requested"].Deliveries.Single();
+        delivery.Id.Should().Be("internal");
+        delivery.Recipients.Should().Equal("inbound:payment_approver");
         var button = config.MessageSequences["manual_payment_approval_request"].Messages.Single().Buttons.Single();
         button.Id.Should().Be("manual_payment:confirm:{payment_transaction_id}");
         button.Title.Should().Be("Confirmar pago");

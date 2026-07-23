@@ -128,7 +128,7 @@ public sealed class CjCompleteOrderFlowRegressionTests
             "Transferencia",
             Facts(("payment_method", "transferencia")));
 
-        pendingPayment.CurrentStageId.Should().Be("order_confirmation");
+        pendingPayment.CurrentStageId.Should().Be("manual_payment_pending");
         pendingPayment.Facts.Should().Contain("order_checkout_presented", "true");
         flow.Checkout.CallCount.Should().Be(1);
         flow.Checkout.LastOutcomeCode.Should().Be("order.checkout_pending_manual_payment");

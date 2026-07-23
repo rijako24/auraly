@@ -264,6 +264,46 @@ public sealed class DeterministicResponseRendererTests
         chat.Prompt.Should().Contain("\"city\":\"Valledupar\"")
             .And.Contain("do not mention them unless");
     }
+    [Fact]
+    public async Task Render_NewRequestAskClarification_StillRequiresConversationOpening()
+    {
+        var expected = "Saludo configurado.\n\nPregunta de aclaracion.";
+        var chat = new RecordingChatClient(expected);
+        var composer = new OperationPresentationComposer(new AgentTemplateResolver(), new PromptTemplateRenderer());
+        var renderer = new DeterministicResponseRenderer(chat, composer);
+        var config = new AgentConfig
+        {
+            ConversationOpening = new ConversationOpeningDefinitions
+            {
+                Enabled = true,
+                Guidance = "Escribe el saludo configurado.",
+                AllowQuestions = false
+            }
+        };
+        var turn = new DeterministicTurnResult
+        {
+            Success = true,
+            Response = new StageResponseDefinition
+            {
+                Mode = "ask_clarification",
+                Guidance = "Pregunta por el tipo de negocio."
+            }
+        };
+
+        var response = await renderer.RenderAsync(new DeterministicResponseRequest(
+            config,
+            new AgentFlowStage { Id = "discovery" },
+            turn,
+            "Quiero conocer como pueden ayudarme",
+            [ChatMessage.User("Quiero conocer como pueden ayudarme")],
+            RequestOpeningRequired: true));
+
+        response.Text.Should().Be(expected);
+        chat.CallCount.Should().Be(1);
+        chat.Prompt.Should().Contain("\"openingDirective\"")
+            .And.Contain("\"required\":true")
+            .And.Contain("Escribe el saludo configurado.");
+    }
 
     [Fact]
     public async Task Render_FirstGreetingWithCatalogPresentation_PrependsOpeningAndSuppressesIdentityFallback()

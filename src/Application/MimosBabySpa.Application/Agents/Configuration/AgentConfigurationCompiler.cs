@@ -304,6 +304,10 @@ public sealed partial class AgentConfigurationCompiler
         {
             var stagePath = $"{path}.stages[{stage.Id}]";
 
+            if (stage.AwaitCustomerReply && !config.ConversationFollowUp.Enabled)
+                Error(errors, stagePath, "conversation_follow_up_disabled",
+                    "A stage with awaitCustomerReply=true requires conversationFollowUp.enabled=true.");
+
             foreach (var fact in stage.AdvanceWhenFacts.Concat(stage.Collect).Distinct(StringComparer.OrdinalIgnoreCase))
             {
                 if (!facts.ContainsKey(fact))
@@ -386,14 +390,7 @@ public sealed partial class AgentConfigurationCompiler
                 Error(errors, outcomePath, "unknown_outcome", $"Operation '{action.Operation}' does not declare outcome '{outcomeCode}'.");
             ValidateEffects(config, handler.Effects, facts, outcomePath, errors);
             ValidateResponse(config, handler.Response, outcomePath, errors);
-            if (handler.Response?.AwaitCustomerReply == true
-                && handler.Effects.Any(effect =>
-                    effect.Type.Equals(StageEffectTypes.CompleteRequest, StringComparison.OrdinalIgnoreCase)
-                    || effect.Type.Equals(StageEffectTypes.EscalateHuman, StringComparison.OrdinalIgnoreCase)))
-            {
-                Error(errors, outcomePath, "terminal_response_cannot_await_reply",
-                    "A response cannot await a customer reply after completing or escalating the request.");
-            }
+
         }
 
         foreach (var template in operation.Descriptor.RequiredTemplateIds)
@@ -573,14 +570,7 @@ public sealed partial class AgentConfigurationCompiler
     {
         if (response is null)
             return;
-        if (response.AwaitCustomerReply && !config.ConversationFollowUp.Enabled)
-            Error(errors, path, "conversation_follow_up_disabled",
-                "awaitCustomerReply requires conversationFollowUp.enabled=true.");
-        if (response.AwaitCustomerReply
-            && response.SuppressText
-            && string.IsNullOrWhiteSpace(response.SendMessageSequence))
-            Error(errors, path, "await_reply_requires_visible_response",
-                "awaitCustomerReply requires a customer-visible response or message sequence.");
+
         if (!string.IsNullOrWhiteSpace(response.Template) && !config.Templates.ContainsKey(response.Template))
             Error(errors, path, "unknown_response_template", $"Template '{response.Template}' is not configured.");
         if (!string.IsNullOrWhiteSpace(response.SendMessageSequence)

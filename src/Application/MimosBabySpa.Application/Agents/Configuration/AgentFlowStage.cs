@@ -16,6 +16,13 @@ public sealed class AgentFlowStage
     public IReadOnlyList<StageSignalDefinition> Signals { get; init; } = [];
     public IReadOnlyList<StageActionDefinition> Actions { get; init; } = [];
     public IReadOnlyList<StageTransitionDefinition> Transitions { get; init; } = [];
+
+    /// <summary>
+    /// Declares that every customer-visible response delivered while this stage
+    /// remains active leaves the conversation waiting for the customer.
+    /// </summary>
+    public bool AwaitCustomerReply { get; init; }
+
     public StageResponseDefinition Response { get; init; } = new();
 
     /// <summary>Renderer guidance only; it cannot authorize operations or mutate state.</summary>

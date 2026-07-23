@@ -140,9 +140,4 @@ public sealed class StageResponseDefinition
     public string? SendMessageSequence { get; init; }
     public bool SuppressText { get; init; }
 
-    /// <summary>
-    /// Declares that the customer-facing response leaves the conversation waiting
-    /// for a customer reply. It does not schedule or render a follow-up by itself.
-    /// </summary>
-    public bool AwaitCustomerReply { get; init; }
 }

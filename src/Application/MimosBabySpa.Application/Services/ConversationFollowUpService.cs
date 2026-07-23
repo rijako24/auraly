@@ -232,6 +232,21 @@ public sealed class ConversationFollowUpService : IConversationFollowUpService, 
             return;
         }
 
+        var flow = config.Flows.FirstOrDefault(candidate =>
+            candidate.Id.Equals(pending.FlowId, StringComparison.OrdinalIgnoreCase));
+        var stage = flow?.Stages.FirstOrDefault(candidate =>
+            candidate.Id.Equals(pending.StageId, StringComparison.OrdinalIgnoreCase));
+        if (stage is null)
+        {
+            await MarkTerminalAsync(conversationId, pending.Version, "configured_stage_not_found", ct);
+            return;
+        }
+        if (!stage.AwaitCustomerReply)
+        {
+            await MarkTerminalAsync(conversationId, pending.Version, "stage_follow_up_disabled", ct);
+            return;
+        }
+
         var nextOpening = await ResolveNextOpeningAsync(config, ct);
         if (nextOpening.HasValue)
         {
@@ -243,16 +258,6 @@ public sealed class ConversationFollowUpService : IConversationFollowUpService, 
         if (!await IsStillWaitingAsync(conversation, pending, history, ct))
         {
             await MarkTerminalAsync(conversationId, pending.Version, "customer_or_conversation_moved", ct);
-            return;
-        }
-
-        var flow = config.Flows.FirstOrDefault(candidate =>
-            candidate.Id.Equals(pending.FlowId, StringComparison.OrdinalIgnoreCase));
-        var stage = flow?.Stages.FirstOrDefault(candidate =>
-            candidate.Id.Equals(pending.StageId, StringComparison.OrdinalIgnoreCase));
-        if (stage is null)
-        {
-            await MarkTerminalAsync(conversationId, pending.Version, "configured_stage_not_found", ct);
             return;
         }
 

@@ -214,10 +214,10 @@ public sealed class AgentConfigurationCompilerTests
                             Id = "availability",
                             AdvanceWhenFacts = ["availability_checked"],
                             Collect = ["desired_date"],
+                            AwaitCustomerReply = awaitCustomerReply,
                             Response = new StageResponseDefinition
                             {
-                                Guidance = "Pide al cliente la fecha.",
-                                AwaitCustomerReply = awaitCustomerReply
+                                Guidance = "Pide al cliente la fecha."
                             },
                             Actions =
                             [

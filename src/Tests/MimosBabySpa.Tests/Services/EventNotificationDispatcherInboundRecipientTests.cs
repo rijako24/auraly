@@ -54,8 +54,15 @@ public sealed class EventNotificationDispatcherInboundRecipientTests
                 ["manual_payment_requested"] = new EventNotificationConfig
                 {
                     Enabled = true,
-                    Recipients = ["inbound:payment_approver"],
-                    SendMessageSequence = "approval_request"
+                    Deliveries =
+                    [
+                        new EventNotificationDeliveryConfig
+                        {
+                            Id = "internal",
+                            Recipients = ["inbound:payment_approver"],
+                            SendMessageSequence = "approval_request"
+                        }
+                    ]
                 }
             }
         };

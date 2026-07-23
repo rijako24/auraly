@@ -940,10 +940,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
   "notifications": {
     "reservation_created": {
       "enabled": false,
-      "recipients": [
-        "+573004442469"
-      ],
-      "sendMessageSequence": null
+      "deliveries": []
     },
     "order_created": {
       "enabled": true,
@@ -968,24 +965,42 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
     },
     "delivery_requested": {
       "enabled": true,
-      "recipients": [
-        "+573004442469"
-      ],
-      "sendMessageSequence": "delivery_requested"
+      "deliveries": [
+        {
+          "id": "internal",
+          "enabled": true,
+          "recipients": [
+            "+573004442469"
+          ],
+          "sendMessageSequence": "delivery_requested"
+        }
+      ]
     },
     "delivery_confirmed": {
       "enabled": true,
-      "recipients": [
-        "+573004442469"
-      ],
-      "sendMessageSequence": "delivery_confirmed"
+      "deliveries": [
+        {
+          "id": "internal",
+          "enabled": true,
+          "recipients": [
+            "+573004442469"
+          ],
+          "sendMessageSequence": "delivery_confirmed"
+        }
+      ]
     },
     "delivery_unavailable": {
       "enabled": true,
-      "recipients": [
-        "+573004442469"
-      ],
-      "sendMessageSequence": "delivery_unavailable"
+      "deliveries": [
+        {
+          "id": "internal",
+          "enabled": true,
+          "recipients": [
+            "+573004442469"
+          ],
+          "sendMessageSequence": "delivery_unavailable"
+        }
+      ]
     }
   },
   "webhooks": {
@@ -1279,7 +1294,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                     }
                   ]
                 },
-                "order.checkout_prepared": {
+                "order.checkout_ready": {
                   "effects": [
                     {
                       "type": "fact.set",

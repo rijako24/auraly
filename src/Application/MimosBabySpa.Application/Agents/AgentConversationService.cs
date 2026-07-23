@@ -742,10 +742,7 @@ var latestPayment = await _paymentLifecycle.GetLatestByConversationAsync(convers
 
             requestCompleted: turn.RequestCompleted,
 
-            awaitsCustomerReply: turn.Response?.AwaitCustomerReply == true
-                && responseSupportsFollowUp
-                && !turn.RequestCompleted
-                && !turn.EscalateToHuman,
+            awaitsCustomerReply: ShouldAwaitCustomerReply(stage, turn, responseSupportsFollowUp),
 
             tokens: promptTokens + completionTokens,
 
@@ -757,6 +754,14 @@ var latestPayment = await _paymentLifecycle.GetLatestByConversationAsync(convers
 
     }
 
+    internal static bool ShouldAwaitCustomerReply(
+        AgentFlowStage stage,
+        DeterministicTurnResult turn,
+        bool responseDeliveredSuccessfully) =>
+        stage.AwaitCustomerReply
+        && responseDeliveredSuccessfully
+        && !turn.RequestCompleted
+        && !turn.EscalateToHuman;
     private async Task<AgentTurnResult?> TryHandleConfiguredInteractiveActionAsync(
 
         AgentConfig config,

@@ -50,27 +50,6 @@ public sealed partial class AgentConfigurationCompiler
             if (!notification.Enabled)
                 continue;
 
-            if (notification.Deliveries.Count == 0)
-            {
-                ValidateNotificationDelivery(
-                    config,
-                    path,
-                    notification.Recipients,
-                    notification.SendMessageSequence,
-                    errors);
-                continue;
-            }
-
-            if (notification.Recipients.Count > 0
-                || !string.IsNullOrWhiteSpace(notification.SendMessageSequence))
-            {
-                Error(
-                    errors,
-                    path,
-                    "notification_delivery_mode_conflict",
-                    "A notification with deliveries cannot also declare root recipients or sendMessageSequence.");
-            }
-
             var enabledDeliveries = notification.Deliveries
                 .Select((delivery, index) => (Delivery: delivery, Index: index))
                 .Where(item => item.Delivery.Enabled)

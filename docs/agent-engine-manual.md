@@ -222,6 +222,7 @@ Un stage es un checkpoint durable con objetivo, facts, signals, acciones y trans
 | `signals` | Intenciones/payloads semanticos que la etapa puede recibir. |
 | `actions` | Operaciones registradas y condiciones exactas de ejecucion. |
 | `transitions` | Movimientos deterministas a otro stage. |
+| `awaitCustomerReply` | Habilita una retoma para cualquier respuesta visible entregada mientras esta etapa permanezca activa. |
 | `response` | Directiva de respuesta por defecto de la etapa. |
 | `conversationGuidance` | Guia de redaccion; no autoriza operaciones ni muta estado. |
 | `reentryOnFactChanged` | Facts cuyo cambio devuelve el cursor a este checkpoint para recalcular. |
@@ -305,7 +306,7 @@ Efectos soportados:
 | `escalation.human` | Entrega la gestion a una persona. |
 | `request.complete` | Cierra la solicitud vigente. |
 
-`response` y las respuestas de outcomes aceptan `mode`, `guidance`, `template`, `sendMessageSequence`, `suppressText` y `awaitCustomerReply`. `guidance` solo gobierna redaccion. `template` y `sendMessageSequence` deben existir. `awaitCustomerReply` es semantica de maquina: declara que la respuesta entregada deja una espera del cliente; no contiene el texto futuro ni programa nada por si sola.
+`response` y las respuestas de outcomes aceptan `mode`, `guidance`, `template`, `sendMessageSequence` y `suppressText`. `guidance` solo gobierna redaccion. `template` y `sendMessageSequence` deben existir. La espera del cliente pertenece exclusivamente al stage mediante `awaitCustomerReply`; outcomes y acciones globales heredan la politica del stage activo.
 
 Las presentaciones `Required` obligan a incluir el fragmento. `Exclusive` evita que el renderer mezcle otra reconstruccion libre. Totales, catalogos, disponibilidad, carritos, checkout y clasificaciones deben preferir presentaciones autoritativas.
 
@@ -396,7 +397,7 @@ La secuencia gobierna entrega outbound exacta. Una operacion crea el estado; la 
 ## Webhooks, Notifications, Interactive Actions Y Automations
 
 - `webhooks.wompi.<outcome>.sendMessageSequence` mapea outcomes Wompi soportados.
-- `notifications.<event>` requiere `enabled`, `recipients` y `sendMessageSequence`.
+- `notifications.<event>` requiere `enabled` y `deliveries`; cada entrega habilitada declara un `id`, `recipients` y `sendMessageSequence`.
 - Un recipient puede ser telefono, valor de contexto o selector `inbound:<tipo-o-clave>`.
 - `interactiveActions.<scope>.<outcome>` declara `operation`, `arguments` y secuencia opcional.
 - El payload interactivo es `scope:outcome:sourceId`; `{source_id}` enlaza el recurso inmutable sin depender del orden de mensajes.
@@ -497,7 +498,7 @@ Si se activa, debe existir al menos una respuesta y toda referencia debe ser val
 - `fallbackSequence`, opcional y validada contra `messageSequences`;
 - `respectOperatingHours`, que difiere el envio a la siguiente apertura cuando `operatingHours.enforce` esta activo.
 
-Una espera nace solo despues de entregar con exito una respuesta con `awaitCustomerReply: true`. Se persiste en `ConversationState` junto con una fecha indexada; no existe una tabla de jobs paralela. Al vencer, el proceso temporizado comprueba que siguen iguales el mensaje fuente, owner, solicitud, flow y stage, y que no existe ningun inbound posterior, incluso si aun esta en debounce.
+Una espera nace solo despues de entregar con exito una respuesta visible mientras el stage propietario tiene `awaitCustomerReply: true`. Se persiste en `ConversationState` junto con una fecha indexada; no existe una tabla de jobs paralela. Al vencer, el proceso temporizado comprueba que siguen iguales el mensaje fuente, owner, solicitud, flow y stage, y que no existe ningun inbound posterior, incluso si aun esta en debounce.
 
 La retoma no ejecuta planner ni operaciones: el renderer escribe un solo mensaje breve a partir de la etapa, facts e historial actuales. La fecha se elimina antes del envio mediante versionado optimista, por lo que esa espera no puede producir una segunda retoma. Si el cliente responde, el inbound elimina la espera antes del turno; la respuesta nueva del bot puede declarar otra espera independiente.
 

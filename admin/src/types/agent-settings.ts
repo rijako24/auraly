@@ -15,7 +15,7 @@ export interface StageEffectDefinition {
   template?: string; dataPath?: string; mode?: string; priority?: string; sequence?: string;
   event?: string; reason?: string;
 }
-export interface StageResponseDefinition { mode?: string; guidance?: string; template?: string; sendMessageSequence?: string; suppressText?: boolean; awaitCustomerReply?: boolean; }
+export interface StageResponseDefinition { mode?: string; guidance?: string; template?: string; sendMessageSequence?: string; suppressText?: boolean; }
 export interface StageOutcomeHandlerDefinition { effects?: StageEffectDefinition[]; response?: StageResponseDefinition; }
 export interface StageActionDefinition {
   id: string; operation: string; trigger?: "on_enter" | "when_ready" | "on_signal" | "on_fact_changed" | "manual";
@@ -29,7 +29,7 @@ export interface StageTransitionDefinition {
 export interface AgentFlowStage {
   id: string; name?: string; goal: string; collect?: string[]; advanceWhenFacts?: string[];
   signals?: StageSignalDefinition[]; actions?: StageActionDefinition[]; transitions?: StageTransitionDefinition[];
-  response?: StageResponseDefinition; conversationGuidance?: string; reentryOnFactChanged?: string[];
+  awaitCustomerReply?: boolean; response?: StageResponseDefinition; conversationGuidance?: string; reentryOnFactChanged?: string[];
 }
 export interface AgentFlowDefinition {
   id: string; type?: "primary" | "secondary"; routingGuidance?: string; ttlSeconds?: number; stages: AgentFlowStage[];
@@ -90,8 +90,6 @@ export interface EventNotificationDeliveryConfig {
 }
 export interface EventNotificationConfig {
   enabled?: boolean;
-  recipients?: string[];
-  sendMessageSequence?: string | null;
   deliveries?: EventNotificationDeliveryConfig[];
 }
 export type AgentNotificationDefinitions = Record<string, EventNotificationConfig>;

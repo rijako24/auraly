@@ -494,7 +494,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
   "policies": "## EXPERIENCIA CONVERSACIONAL\n\n- Responde primero a la intencion real de la persona y conserva la continuidad con el turno anterior.\n- Reconoce elecciones, avances o inquietudes de forma natural solo cuando aporte valor; varia las transiciones para mantener una conversacion fluida.\n- Usa el nombre con moderacion, principalmente en una apertura, un momento de tranquilidad o un cierre significativo.\n- Consulta la conversacion reciente para evitar repetir saludos, nombres, agradecimientos o la misma explicacion en turnos consecutivos.\n- Adapta el tono al mensaje recibido y manten una actitud humana, atenta, empatica y profesional.\n- Ante confusion, inconvenientes o incertidumbre, demuestra comprension y explica el siguiente paso con claridad.\n- En WhatsApp, usa mensajes breves, parrafos cortos y listas legibles cuando ayuden a entender opciones o resumenes.\n- Formula una sola pregunta enfocada cuando sea necesaria para avanzar.\n- Si preguntan por precios, costos, planes o tarifas, explica que en la demo se les dara toda la informacion comercial y continua desde el punto actual. No inventes ni anticipes montos.\n\n## PROPUESTA DE VALOR\n\n- AURALY crea empleados digitales configurables que trabajan 24/7 en WhatsApp y canales conversacionales.\n- Resolvemos chats sin responder, tiempos de espera altos, leads sin seguimiento, equipos saturados, agendas manuales, pagos abandonados y falta de trazabilidad comercial.\n- Los empleados digitales pueden explicar servicios, calificar leads, recomendar opciones, resolver preguntas frecuentes, agendar demos o citas, generar pagos, recuperar conversaciones y escalar a humanos con historial completo.\n- Enfatiza beneficios: disponibilidad 24/7, velocidad de respuesta, conversion, consistencia de marca, automatizacion de tareas repetitivas, datos estructurados, historial, medicion de consumo y configuracion por negocio.\n- AURALY no reemplaza al equipo humano: libera tiempo operativo y deja al humano los casos sensibles, estrategicos o de alto valor.\n- Evita prometer resultados exactos. Habla de maximizar ventas y mejorar conversion como objetivo, no como garantia.",
   "conversationOpening": {
     "enabled": true,
-    "guidance": "Escribe exactamente este texto, conservando los saltos de linea: \uD83D\uDC4B Hola, soy Aly de AURALY.\n\n\u00A1Un gusto saludarte!\n\nEstoy aqui para darte toda la informacion, contarte como podemos ayudarte y acompanarte a agendar una demo en vivo. No agregues preguntas ni texto adicional.",
+    "guidance": "Escribe exactamente este texto, conservando los saltos de linea: 👋 Hola, soy Aly de AURALY.\n\n¡Un gusto saludarte!\n\nEstoy aqui para darte toda la informacion, contarte como podemos ayudarte y acompanarte a agendar una demo en vivo. No agregues preguntas ni texto adicional.",
     "allowQuestions": false
   },
   "conversationFollowUp": {
@@ -520,18 +520,18 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "messages": [
         {
           "type": "text",
-          "body": "\uD83D\uDCC5 *Nueva demo AURALY agendada*\n\n\u2022 Cliente: {CustomerName}\n\u2022 Empresa: {company_name}\n\u2022 Telefono: {customer_phone}\n\u2022 Correo: {customer_email}\n\u2022 Fecha: {Date}\n\u2022 Hora: {Time}\n\u2022 Tipo de negocio: {business_type}\n\u2022 Quiere automatizar o mejorar: {pain_point}"
+          "body": "📅 *Nueva demo AURALY agendada*\n\n• Cliente: {CustomerName}\n• Empresa: {company_name}\n• Telefono: {customer_phone}\n• Correo: {customer_email}\n• Fecha: {Date}\n• Hora: {Time}\n• Tipo de negocio: {business_type}\n• Quiere automatizar o mejorar: {pain_point}"
         }
       ]
     }
   },
   "templates": {
     "availability_slots": "{{#if intro_message}}{{intro_message}}{{/if}}\n\n*Espacios disponibles para {{date_formatted}}*\n\n{{#each options}}\n- {{this}}\n{{/each}}\n\nCual espacio prefieres?",
-    "discovery_question": "{{#if business_type}}{{#if company_name}}{{#if pain_point}}{{else}}\uD83D\uDCAC Cuentame brevemente:\n\n\u2022 \u00BFQue proceso te gustaria automatizar o mejorar en WhatsApp?\n\u2022 \u00BFComo manejas hoy ese proceso?{{/if}}{{else}}{{#if pain_point}}\uD83C\uDFE2 \u00BFComo se llama tu empresa?{{else}}\uD83C\uDFE2 Cuentame brevemente:\n\n\u2022 \u00BFComo se llama tu empresa?\n\u2022 \u00BFQue proceso te gustaria automatizar o mejorar en WhatsApp?{{/if}}{{/if}}{{else}}{{#if company_name}}{{#if pain_point}}\uD83C\uDFE2 \u00BFQue tipo de negocio tienes?{{else}}\uD83C\uDFE2 Cuentame brevemente:\n\n\u2022 \u00BFQue tipo de negocio tienes?\n\u2022 \u00BFQue proceso te gustaria automatizar o mejorar en WhatsApp?{{/if}}{{else}}{{#if pain_point}}\uD83C\uDFE2 Cuentame brevemente:\n\n\u2022 \u00BFComo se llama tu empresa?\n\u2022 \u00BFQue tipo de negocio tienes?{{else}}\uD83C\uDFE2 Para orientarte mejor, cuentame brevemente:\n\n\u2022 \u00BFComo se llama tu empresa?\n\u2022 \u00BFQue tipo de negocio tienes?\n\u2022 \u00BFQue proceso te gustaria automatizar o mejorar en WhatsApp?{{/if}}{{/if}}{{/if}}",
-    "value_explanation": "*\u2728 Asi puede ayudarte AURALY*\n\n\uD83D\uDCAC *Atencion inmediata:* responde 24/7, resuelve consultas y recoge los datos necesarios.\n\n\uD83D\uDCC5 *Agenda conectada:* consulta disponibilidad, ofrece horarios validos y registra citas sin cruces manuales.\n\n\uD83D\uDD14 *Seguimiento automatico:* envia confirmaciones y recordatorios, conserva el historial y entrega los casos especiales a tu equipo con todo el contexto.\n\n{{#if desired_date}}Ya tengo la fecha {{desired_date}}. \u00BFTienes alguna duda o consultamos los horarios para ese dia?{{else}}\u00BFTienes alguna duda o avanzamos con la demo? Si avanzamos, \u00BFpara que fecha deseas ver horarios?{{/if}}",
-    "customer_data_question": "*\uD83D\uDCCB Ultimos datos para la demo*\n\n\u2022 Tu nombre\n\u2022 Tu correo para enviarte la invitacion",
-    "social_profiles_question": "*\uD83D\uDD17 Antes de mostrarte el resumen*\n\nSi quieres, compartenos los perfiles de Facebook e Instagram de tu empresa. Puedes enviarnos uno, ambos o decirnos que prefieres continuar sin compartirlos.\n\n*Es opcional y nos ayuda a personalizar la demo.*",
-    "pricing_demo_information": "\uD83D\uDCB0 En la demo te daremos toda la informacion sobre precios y planes de AURALY, de acuerdo con lo que necesita tu negocio.\n\nPodemos continuar desde donde quedamos.",
+    "discovery_question": "{{#if business_type}}{{#if company_name}}{{#if pain_point}}{{else}}💬 Cuentame brevemente:\n\n• ¿Que proceso te gustaria automatizar o mejorar en WhatsApp?\n• ¿Como manejas hoy ese proceso?{{/if}}{{else}}{{#if pain_point}}🏢 ¿Como se llama tu empresa?{{else}}🏢 Cuentame brevemente:\n\n• ¿Como se llama tu empresa?\n• ¿Que proceso te gustaria automatizar o mejorar en WhatsApp?{{/if}}{{/if}}{{else}}{{#if company_name}}{{#if pain_point}}🏢 ¿Que tipo de negocio tienes?{{else}}🏢 Cuentame brevemente:\n\n• ¿Que tipo de negocio tienes?\n• ¿Que proceso te gustaria automatizar o mejorar en WhatsApp?{{/if}}{{else}}{{#if pain_point}}🏢 Cuentame brevemente:\n\n• ¿Como se llama tu empresa?\n• ¿Que tipo de negocio tienes?{{else}}🏢 Para orientarte mejor, cuentame brevemente:\n\n• ¿Como se llama tu empresa?\n• ¿Que tipo de negocio tienes?\n• ¿Que proceso te gustaria automatizar o mejorar en WhatsApp?{{/if}}{{/if}}{{/if}}",
+    "value_explanation": "*✨ Asi puede ayudarte AURALY*\n\n💬 *Atencion inmediata:* responde 24/7, resuelve consultas y recoge los datos necesarios.\n\n📅 *Agenda conectada:* consulta disponibilidad, ofrece horarios validos y registra citas sin cruces manuales.\n\n🔔 *Seguimiento automatico:* envia confirmaciones y recordatorios, conserva el historial y entrega los casos especiales a tu equipo con todo el contexto.\n\n{{#if desired_date}}Ya tengo la fecha {{desired_date}}. ¿Tienes alguna duda o consultamos los horarios para ese dia?{{else}}¿Tienes alguna duda o avanzamos con la demo? Si avanzamos, ¿para que fecha deseas ver horarios?{{/if}}",
+    "customer_data_question": "*📋 Ultimos datos para la demo*\n\n• Tu nombre\n• Tu correo para enviarte la invitacion",
+    "social_profiles_question": "*🔗 Antes de mostrarte el resumen*\n\nSi quieres, compartenos los perfiles de Facebook e Instagram de tu empresa. Puedes enviarnos uno, ambos o decirnos que prefieres continuar sin compartirlos.\n\n*Es opcional y nos ayuda a personalizar la demo.*",
+    "pricing_demo_information": "💰 En la demo te daremos toda la informacion sobre precios y planes de AURALY, de acuerdo con lo que necesita tu negocio.\n\nPodemos continuar desde donde quedamos.",
     "demo_confirmation": "*Resumen de tu demo AURALY*\n- Fecha: {{desired_date}}\n- Hora: {{desired_time}}\n- Nombre: {{customer_name}}\n- Empresa: {{company_name}}\n- Correo: {{customer_email}}\n- Telefono: {{customer_phone}}\n- Tipo de negocio: {{business_type}}\n- Quiere automatizar o mejorar: {{pain_point}}\n{{#if business_profile_url}}- Facebook/Instagram: {{business_profile_url}}\n{{/if}}\nConfirmas la demo con esta informacion?",
     "demo_created": "Tu demo AURALY quedo agendada para el {{desired_date}} a las {{desired_time}}. El equipo AURALY recibira el contexto que compartiste.",
     "human_handoff_ack": "Voy a transferir tu conversacion al equipo AURALY. Recibiran el contexto que ya compartiste.",
@@ -539,7 +539,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
     "date_invalid": "No pude interpretar esa fecha. Indica una fecha valida de hoy en adelante.",
     "time_invalid": "No pude interpretar esa hora. Indica una hora valida para la demo.",
     "availability_none": "No hay espacios disponibles para esa fecha. Que otra fecha te sirve?",
-    "booking_already_confirmed": "\u2705 Tu demo ya quedo agendada. No necesitas confirmarla nuevamente."
+    "booking_already_confirmed": "✅ Tu demo ya quedo agendada. No necesitas confirmarla nuevamente."
   },
   "globalActions": [
     {
@@ -573,8 +573,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       },
       "actions": [],
       "response": {
-        "template": "pricing_demo_information",
-        "awaitCustomerReply": true
+        "template": "pricing_demo_information"
       }
     },
     {
@@ -829,10 +828,16 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
   "notifications": {
     "reservation_created": {
       "enabled": true,
-      "recipients": [
-        "573012926660"
-      ],
-      "sendMessageSequence": "internal_demo_scheduled"
+      "deliveries": [
+        {
+          "id": "internal",
+          "enabled": true,
+          "recipients": [
+            "573012926660"
+          ],
+          "sendMessageSequence": "internal_demo_scheduled"
+        }
+      ]
     }
   },
   "checkout": {
@@ -866,9 +871,9 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
             "customer_email"
           ],
           "response": {
-            "template": "discovery_question",
-            "awaitCustomerReply": true
-          }
+            "template": "discovery_question"
+          },
+          "awaitCustomerReply": true
         },
         {
           "id": "business_context",
@@ -908,13 +913,13 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                   ],
                   "response": {
                     "mode": "continue",
-                    "template": "value_explanation",
-                    "awaitCustomerReply": true
+                    "template": "value_explanation"
                   }
                 }
               }
             }
-          ]
+          ],
+          "awaitCustomerReply": true
         },
         {
           "id": "scheduling",
@@ -924,9 +929,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
             "availability_checked"
           ],
           "conversationGuidance": "La demo en vivo de AURALY es el servicio tecnico por defecto. No preguntes servicio ni muestres seleccion de servicio. Si service no esta registrado, resuelvelo con Demo AURALY. Luego resuelve el tipo de atencion para Demo AURALY. Si falta desired_date, pregunta una sola cosa: Para que fecha te gustaria ver horarios de la demo? No agregues otra pregunta en ese mensaje. Cuando el cliente responda fecha, registra desired_date y valida disponibilidad con Demo AURALY para mostrar horarios disponibles. Cuando el cliente elija hora, registra desired_time y valida disponibilidad con Demo AURALY, fecha y hora. Si esta disponible, deja avanzar.",
-          "response": {
-            "awaitCustomerReply": true
-          },
+          "response": {},
           "collect": [
             "desired_date",
             "desired_time",
@@ -942,8 +945,12 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
               "condition": {
                 "not": {
                   "any": [
-                    { "factChanged": "business_type" },
-                    { "factChanged": "pain_point" }
+                    {
+                      "factChanged": "business_type"
+                    },
+                    {
+                      "factChanged": "pain_point"
+                    }
                   ]
                 }
               },
@@ -967,7 +974,9 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                   "effects": [
                     {
                       "type": "facts.clear",
-                      "facts": ["desired_time"]
+                      "facts": [
+                        "desired_time"
+                      ]
                     }
                   ]
                 },
@@ -975,71 +984,79 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                   "effects": [
                     {
                       "type": "facts.clear",
-                      "facts": ["desired_date", "desired_time"]
+                      "facts": [
+                        "desired_date",
+                        "desired_time"
+                      ]
                     }
                   ],
                   "response": {
                     "mode": "ask_clarification",
-                    "template": "availability_none",
-                    "awaitCustomerReply": true
+                    "template": "availability_none"
                   }
                 },
                 "input.past_date": {
                   "effects": [
                     {
                       "type": "facts.clear",
-                      "facts": ["desired_date", "desired_time"]
+                      "facts": [
+                        "desired_date",
+                        "desired_time"
+                      ]
                     }
                   ],
                   "response": {
                     "mode": "ask_clarification",
-                    "template": "past_date_invalid",
-                    "awaitCustomerReply": true
+                    "template": "past_date_invalid"
                   }
                 },
                 "input.invalid_date": {
                   "effects": [
                     {
                       "type": "facts.clear",
-                      "facts": ["desired_date", "desired_time"]
+                      "facts": [
+                        "desired_date",
+                        "desired_time"
+                      ]
                     }
                   ],
                   "response": {
                     "mode": "ask_clarification",
-                    "template": "date_invalid",
-                    "awaitCustomerReply": true
+                    "template": "date_invalid"
                   }
                 },
                 "input.invalid_time": {
                   "effects": [
                     {
                       "type": "facts.clear",
-                      "facts": ["desired_time"]
+                      "facts": [
+                        "desired_time"
+                      ]
                     }
                   ],
                   "response": {
                     "mode": "ask_clarification",
-                    "template": "time_invalid",
-                    "awaitCustomerReply": true
+                    "template": "time_invalid"
                   }
                 },
                 "input.invalid": {
                   "effects": [
                     {
                       "type": "facts.clear",
-                      "facts": ["desired_date", "desired_time"]
+                      "facts": [
+                        "desired_date",
+                        "desired_time"
+                      ]
                     }
                   ],
                   "response": {
                     "mode": "ask_clarification",
-                    "template": "date_invalid",
-                    "awaitCustomerReply": true
+                    "template": "date_invalid"
                   }
                 },
                 "catalog.service_unresolved": {
                   "response": {
-                    "guidance": "Indica que no fue posible resolver Demo AURALY y ofrece escalar al equipo. No confirmes disponibilidad.",
-                    "awaitCustomerReply": true
+                    "guidance": "Indica que no fue posible resolver Demo AURALY y ofrece escalar al equipo. No confirmes disponibilidad."
                   }
                 }
               }
@@ -1054,7 +1071,8 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
               },
               "to": "customer_data"
             }
-          ]
+          ],
+          "awaitCustomerReply": true
         },
         {
           "id": "customer_data",
@@ -1074,8 +1092,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
             "desired_time"
           ],
           "response": {
-            "template": "customer_data_question",
-            "awaitCustomerReply": true
+            "template": "customer_data_question"
           },
           "transitions": [
             {
@@ -1104,7 +1121,8 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
               },
               "to": "social_profiles"
             }
-          ]
+          ],
+          "awaitCustomerReply": true
         },
         {
           "id": "social_profiles",
@@ -1121,8 +1139,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
             "desired_time"
           ],
           "response": {
-            "template": "social_profiles_question",
-            "awaitCustomerReply": true
+            "template": "social_profiles_question"
           },
           "transitions": [
             {
@@ -1144,7 +1161,8 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
               },
               "to": "confirmation"
             }
-          ]
+          ],
+          "awaitCustomerReply": true
         },
         {
           "id": "confirmation",
@@ -1163,8 +1181,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
             "customer_email"
           ],
           "response": {
-            "template": "demo_confirmation",
-            "awaitCustomerReply": true
+            "template": "demo_confirmation"
           },
           "transitions": [
             {
@@ -1186,7 +1203,8 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
               },
               "to": "reservation_creation"
             }
-          ]
+          ],
+          "awaitCustomerReply": true
         },
         {
           "id": "reservation_creation",

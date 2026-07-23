@@ -95,20 +95,6 @@ public sealed class EventNotificationDispatcher : IEventNotificationDispatcher
         if (!config.Notifications.TryGetValue(eventName, out var notification) || !notification.Enabled)
             return;
 
-        if (notification.Deliveries.Count == 0)
-        {
-            await SendDeliveryAsync(
-                businessId,
-                config,
-                eventName,
-                "legacy",
-                notification.Recipients,
-                notification.SendMessageSequence,
-                context,
-                ct);
-            return;
-        }
-
         foreach (var delivery in notification.Deliveries.Where(value => value.Enabled))
         {
             try

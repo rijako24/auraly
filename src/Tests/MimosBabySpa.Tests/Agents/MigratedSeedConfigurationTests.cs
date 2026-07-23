@@ -49,7 +49,7 @@ public sealed class MigratedSeedConfigurationTests
         }
 
         var compiler = new AgentConfigurationCompiler(new AgentOperationRegistry(
-            [new AvailabilityStub(), new CheckoutStub(), new CreationStub(), new OrderChangesStub(), new CatalogServicesStub(), new ResolveServiceStub(), new AddOnsStub(), new FulfillmentStub(), new MethodStub("reservation.list", "reservation.listed"), new MethodStub("reservation.manage", "reservation.managed"), new MethodStub("commerce.search_recipes", "recipes.found"), new MethodStub("commerce.search_products", "products.found", "products.not_found"), new MethodStub("commerce.get_order_draft", "order.draft_loaded", "order.draft_empty", "order_draft_missing"), new MethodStub("commerce.prepare_checkout", "order.checkout_prepared", "order.checkout_ready", "order.checkout_payment_required", "order.checkout_pending_manual_payment", "order_draft_missing", "missing_prerequisites"), new MethodStub("commerce.create_order", "order.created"), new MethodStub("escalation.request_human", "escalation.requested", "escalation.notification_failed"), new MethodStub("conversation.reset_request", "conversation.request_reset"), new MethodStub("conversation.get_known_facts", "known_facts.found", "known_facts.not_found", "known_facts.forbidden"), new MethodStub("internal.get_reservations", "internal.reservations_loaded"), new MethodStub("internal.block_availability", "internal.availability_blocked"), new MethodStub("internal.request_reschedule", "internal.reschedule_requested"), new MethodStub("internal.get_business_metrics", "internal.metrics_loaded"), new MethodStub("internal.get_customer_history", "internal.customer_history_loaded"), new MethodStub("internal.search_order", "internal.order_loaded"), new MethodStub("internal.accept_order", "internal.order_accepted"), new MethodStub("internal.reject_order", "internal.order_rejected")]));
+            [new AvailabilityStub(), new CheckoutStub(), new CreationStub(), new OrderChangesStub(), new CatalogServicesStub(), new ResolveServiceStub(), new AddOnsStub(), new FulfillmentStub(), new MethodStub("reservation.list", "reservation.listed"), new MethodStub("reservation.manage", "reservation.managed"), new MethodStub("commerce.search_recipes", "recipes.found"), new MethodStub("commerce.search_products", "products.found", "products.not_found"), new MethodStub("commerce.get_order_draft", "order.draft_loaded", "order.draft_empty", "order_draft_missing"), new MethodStub("commerce.prepare_checkout", "order.checkout_ready", "order.checkout_payment_required", "order.checkout_pending_manual_payment", "missing_prerequisites", "order_draft_missing", "product_inactive", "checkout_mode_missing", "invalid_order_total", "payment_link_failed", "manual_payment_failed"), new MethodStub("commerce.create_order", "order.created"), new MethodStub("escalation.request_human", "escalation.requested", "escalation.notification_failed"), new MethodStub("conversation.reset_request", "conversation.request_reset"), new MethodStub("conversation.get_known_facts", "known_facts.found", "known_facts.not_found", "known_facts.forbidden"), new MethodStub("internal.get_reservations", "internal.reservations_loaded"), new MethodStub("internal.block_availability", "internal.availability_blocked"), new MethodStub("internal.request_reschedule", "internal.reschedule_requested"), new MethodStub("internal.get_business_metrics", "internal.metrics_loaded"), new MethodStub("internal.get_customer_history", "internal.customer_history_loaded"), new MethodStub("internal.search_order", "internal.order_loaded"), new MethodStub("internal.accept_order", "internal.order_accepted"), new MethodStub("internal.reject_order", "internal.order_rejected")]));
 
         var compilation = compiler.Compile(config!);
 
@@ -86,8 +86,6 @@ public sealed class MigratedSeedConfigurationTests
 
         var notification = config.Notifications["order_created"];
         notification.Enabled.Should().BeTrue();
-        notification.Recipients.Should().BeEmpty();
-        notification.SendMessageSequence.Should().BeNull();
         notification.Deliveries.Should().HaveCount(2);
 
         var customer = notification.Deliveries.Single(delivery => delivery.Id == "customer");
@@ -285,8 +283,11 @@ public sealed class MigratedSeedConfigurationTests
 
         var reservationNotification = config.Notifications["reservation_created"];
         reservationNotification.Enabled.Should().BeTrue();
-        reservationNotification.Recipients.Should().Equal("573012926660");
-        reservationNotification.SendMessageSequence.Should().Be("internal_demo_scheduled");
+        reservationNotification.Deliveries.Should().ContainSingle();
+        var reservationInternalDelivery = reservationNotification.Deliveries.Single();
+        reservationInternalDelivery.Id.Should().Be("internal");
+        reservationInternalDelivery.Recipients.Should().Equal("573012926660");
+        reservationInternalDelivery.SendMessageSequence.Should().Be("internal_demo_scheduled");
         var internalNotification = config.MessageSequences["internal_demo_scheduled"];
         internalNotification.Messages.Should().ContainSingle();
         internalNotification.Messages.Single().Body.Should()
@@ -565,7 +566,7 @@ public sealed class MigratedSeedConfigurationTests
     }
 
     [Fact]
-    public void CjConversationFollowUp_OnlyMarksCustomerOwnedWaits()
+    public void CjConversationFollowUp_IsOwnedOnlyByStages()
     {
         var root = FindSolutionRoot();
         var path = Path.Combine(
@@ -598,53 +599,29 @@ public sealed class MigratedSeedConfigurationTests
 
         var order = config.Flows.Single(flow => flow.Id == "order");
         order.Stages
-            .Where(stage => stage.Response.AwaitCustomerReply)
+            .Where(stage => stage.AwaitCustomerReply)
             .Select(stage => stage.Id)
             .Should().BeEquivalentTo(
                 "customer_name",
                 "customer_type",
                 "product_selection",
+                "cart_review",
                 "order_data",
-                "payment_method");
+                "payment_method",
+                "summary",
+                "order_confirmation");
 
-        var catalogLookup = config.GlobalActions.Single(action => action.Id == "catalog_lookup")
-            .Actions.Single(action => action.Id == "search_catalog_request");
-        catalogLookup.OnOutcome["products.found"].Response!.AwaitCustomerReply.Should().BeTrue();
-        catalogLookup.OnOutcome["products.not_found"].Response!.AwaitCustomerReply.Should().BeTrue();
-
-        var productSearch = order.Stages.Single(stage => stage.Id == "product_selection")
-            .Actions.Single(action => action.Id == "search_recipe_catalog_products");
-        productSearch.OnOutcome["products.found"].Response!.AwaitCustomerReply.Should().BeTrue();
-        productSearch.OnOutcome["products.not_found"].Response!.AwaitCustomerReply.Should().BeTrue();
-
-        var cartReview = order.Stages.Single(stage => stage.Id == "cart_review")
-            .Actions.Single(action => action.Id == "show_current_order_draft");
-        cartReview.OnOutcome["order.draft_loaded"].Response!.AwaitCustomerReply.Should().BeTrue();
-
-        var checkout = order.Stages.Single(stage => stage.Id == "summary")
-            .Actions.Single(action => action.Id == "prepare_order_checkout");
-        checkout.OnOutcome["order.checkout_ready"].Response!.AwaitCustomerReply.Should().BeTrue();
-        checkout.OnOutcome["order.checkout_payment_required"].Response!.AwaitCustomerReply.Should().BeTrue();
-        checkout.OnOutcome["order.checkout_pending_manual_payment"].Response.Should().BeNull(
-            "manual transfer approval waits on CJ's internal team, not on the customer");
-
-        var terminalResponse = order.Stages.Single(stage => stage.Id == "order_confirmation")
-            .Actions.Single(action => action.Id == "create_confirmed_delivery_payment_order")
-            .OnOutcome["order.created"].Response!;
-        terminalResponse.AwaitCustomerReply.Should().BeFalse();
-        terminalResponse.SuppressText.Should().BeTrue();
-        config.GlobalActions.Single(action => action.Id == "human_handoff")
-            .Actions.Single()
-            .OnOutcome["escalation.requested"].Response!
-            .AwaitCustomerReply.Should().BeFalse();
+        var summary = order.Stages.Single(stage => stage.Id == "summary");
+        summary.Transitions.Select(transition => transition.To).Should()
+            .BeEquivalentTo("manual_payment_pending", "order_confirmation");
+        order.Stages.Single(stage => stage.Id == "manual_payment_pending")
+            .AwaitCustomerReply.Should().BeFalse(
+                "manual transfer approval waits on CJ's internal team, not on the customer");
 
         seedSql.Should()
-            .Contain("@CartOutcomePath + N'.\"cart.applied\".response.awaitCustomerReply'")
-            .And.Contain("@CartOutcomePath + N'.\"cart.multiple_destinations\".response.awaitCustomerReply'")
-            .And.Contain("@CartReviewGlobalActionPath + N'.actions[0].onOutcome.\"order.draft_loaded\".response.awaitCustomerReply'")
-            .And.Contain("$.flows[0].stages[6].actions[0].onOutcome.\"missing_prerequisites\".response.awaitCustomerReply");
+            .NotContain(".response.awaitCustomerReply")
+            .And.NotContain("{\"awaitCustomerReply\":true}");
     }
-
     private static void AssertSemanticAndPresentationTextIsSeparated(AgentConfig config)
     {
         const string internalVocabulary = @"\b(tool|tools|herramienta|herramientas|prepare_checkout|create_reservation)\b";

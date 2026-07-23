@@ -18,6 +18,31 @@ namespace MimosBabySpa.Tests.Services;
 
 public sealed class ConversationFollowUpServiceTests
 {
+    [Theory]
+    [InlineData(true, true, false, false, true)]
+    [InlineData(false, true, false, false, false)]
+    [InlineData(true, false, false, false, false)]
+    [InlineData(true, true, true, false, false)]
+    [InlineData(true, true, false, true, false)]
+    public void StagePolicy_DeterminesFollowUpForEveryResolvedResponse(
+        bool stageAwaits,
+        bool responseDelivered,
+        bool completed,
+        bool escalated,
+        bool expected)
+    {
+        var stage = new AgentFlowStage { AwaitCustomerReply = stageAwaits };
+        var turn = new DeterministicTurnResult
+        {
+            Success = true,
+            RequestCompleted = completed,
+            EscalateToHuman = escalated,
+            Response = new StageResponseDefinition { Mode = "ask_clarification" }
+        };
+
+        AgentConversationService.ShouldAwaitCustomerReply(stage, turn, responseDelivered)
+            .Should().Be(expected);
+    }
     [Fact]
     public async Task ScheduleAfterDeliveredTurnAsync_StoresOneWaitOnConversationState()
     {
@@ -73,7 +98,27 @@ public sealed class ConversationFollowUpServiceTests
         fixture.State.FollowUpDueAtUtc.Should().BeNull();
     }
 
-    private static Fixture CreateFixture(bool due)
+    [Fact]
+    public async Task RunAsync_WhenStageNoLongerAwaitsCustomer_DoesNotSendFollowUp()
+    {
+        var fixture = CreateFixture(due: true, stageAwaitsCustomerReply: false);
+
+        await fixture.Service.RunAsync();
+
+        fixture.Renderer.Verify(renderer => renderer.RenderFollowUpAsync(
+            It.IsAny<DeterministicFollowUpRequest>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+        fixture.Dispatcher.Verify(dispatcher => dispatcher.SendAllAsync(
+            It.IsAny<Guid>(),
+            It.IsAny<string>(),
+            It.IsAny<IReadOnlyList<OutboundMessage>>(),
+            It.IsAny<Guid?>(),
+            It.IsAny<CancellationToken>(),
+            It.IsAny<bool>()), Times.Never);
+        fixture.State.PendingCustomerReply!.TerminalReason.Should().Be("stage_follow_up_disabled");
+        fixture.State.FollowUpDueAtUtc.Should().BeNull();
+    }
+    private static Fixture CreateFixture(bool due, bool stageAwaitsCustomerReply = true)
     {
         var businessId = Guid.NewGuid();
         var conversationId = Guid.NewGuid();
@@ -140,7 +185,8 @@ public sealed class ConversationFollowUpServiceTests
                         new AgentFlowStage
                         {
                             Id = "choose",
-                            Goal = "El cliente elige una opción."
+                            Goal = "El cliente elige una opción.",
+                            AwaitCustomerReply = stageAwaitsCustomerReply
                         }
                     ]
                 }

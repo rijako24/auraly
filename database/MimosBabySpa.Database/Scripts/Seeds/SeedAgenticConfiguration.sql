@@ -238,10 +238,16 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
   "notifications": {
     "reservation_created": {
       "enabled": true,
-      "recipients": [
-        "573042052007"
-      ],
-      "sendMessageSequence": "reservation_created"
+      "deliveries": [
+        {
+          "id": "internal",
+          "enabled": true,
+          "recipients": [
+            "573042052007"
+          ],
+          "sendMessageSequence": "reservation_created"
+        }
+      ]
     }
   },
   "reservationAutomations": {

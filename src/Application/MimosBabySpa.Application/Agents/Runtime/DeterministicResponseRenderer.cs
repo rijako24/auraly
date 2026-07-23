@@ -56,7 +56,6 @@ public sealed class DeterministicResponseRenderer : IDeterministicResponseRender
         var openingRequired = request.RequestOpeningRequired
             && request.Config.ConversationOpening.Enabled
             && !request.Turn.EscalateToHuman
-            && !string.Equals(request.Turn.Response?.Mode, "ask_clarification", StringComparison.OrdinalIgnoreCase)
             && !request.Turn.Trace.Any(trace =>
                 !trace.Skipped && trace.Outcome is not null && !trace.Success);
         if (!string.IsNullOrWhiteSpace(request.Turn.Response?.Template)

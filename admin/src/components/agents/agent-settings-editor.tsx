@@ -660,7 +660,7 @@ function NotificationsEditor({ notifications, sequenceNames, onChange }: { notif
   const names = Object.keys(notifications);
   const add = () => {
     const name = names.includes("event_1") ? `event_${names.length + 1}` : "event_1";
-    onChange({ ...notifications, [name]: { enabled: true, recipients: [], sendMessageSequence: "" } });
+    onChange({ ...notifications, [name]: { enabled: true, deliveries: [{ id: "delivery_1", enabled: true, recipients: [], sendMessageSequence: "" }] } });
   };
   const rename = (oldName: string, nextName: string) => {
     const clean = nextName.trim();
@@ -681,10 +681,10 @@ function NotificationsEditor({ notifications, sequenceNames, onChange }: { notif
           return (
             <div key={name} className="grid gap-3 rounded-md border p-3 lg:grid-cols-[1fr_1fr_160px_44px]">
               <div className="space-y-1"><Label>Evento</Label><Input value={name} onBlur={(e) => rename(name, e.target.value)} onChange={(e) => rename(name, e.target.value)} /></div>
-              <div className="space-y-1"><Label>{deliveries.length > 0 ? "Entregas" : "Secuencia"}</Label>{deliveries.length > 0 ? <div className="flex h-9 items-center rounded-md border px-3 text-sm">{deliveries.length} configuradas</div> : <SequenceNameInput value={item.sendMessageSequence} onChange={(sendMessageSequence) => update({ ...item, sendMessageSequence })} />}</div>
-              <label className="flex h-9 items-center gap-2 self-end rounded-md border px-3 text-sm"><Checkbox checked={item.enabled === true} onCheckedChange={(checked) => update({ ...item, enabled: checked === true })} />Activa</label>
+              <div className="space-y-1"><Label>Entregas</Label><div className="flex h-9 items-center rounded-md border px-3 text-sm">{deliveries.length} configuradas</div></div>
+              <label className="flex h-9 items-center gap-2 self-end rounded-md border px-3 text-sm"><Checkbox checked={item.enabled === true} onCheckedChange={(checked) => update({ ...item, enabled: checked === true, deliveries: checked === true && deliveries.length === 0 ? [{ id: "delivery_1", enabled: true, recipients: [], sendMessageSequence: "" }] : deliveries })} />Activa</label>
               <Button type="button" variant="ghost" size="icon" className="self-end" onClick={() => { const next = { ...notifications }; delete next[name]; onChange(next); }}><Trash2 className="h-4 w-4 text-destructive" /></Button>
-              {deliveries.length === 0 ? <div className="space-y-1 lg:col-span-4"><Label>Destinatarios WhatsApp (uno por linea)</Label><Textarea value={joinLines(item.recipients)} onChange={(e) => update({ ...item, recipients: splitLines(e.target.value) })} /></div> : <div className="space-y-3 lg:col-span-4">
+              <div className="space-y-3 lg:col-span-4">
                 {deliveries.map((delivery, index) => {
                   const updateDelivery = (nextDelivery: typeof delivery) => update({ ...item, deliveries: deliveries.map((current, currentIndex) => currentIndex === index ? nextDelivery : current) });
                   return <div key={`${delivery.id}-${index}`} className="grid gap-3 rounded-md bg-muted/30 p-3 lg:grid-cols-[1fr_1fr_140px_44px]">
@@ -696,7 +696,7 @@ function NotificationsEditor({ notifications, sequenceNames, onChange }: { notif
                   </div>;
                 })}
                 <Button type="button" variant="outline" size="sm" onClick={() => update({ ...item, deliveries: [...deliveries, { id: `delivery_${deliveries.length + 1}`, enabled: true, recipients: [], sendMessageSequence: "" }] })}><Plus className="mr-1 h-4 w-4" />Entrega</Button>
-              </div>}
+              </div>
             </div>
           );
         })}

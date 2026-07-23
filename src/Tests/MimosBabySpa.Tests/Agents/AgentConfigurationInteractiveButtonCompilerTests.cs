@@ -56,12 +56,25 @@ public sealed class AgentConfigurationInteractiveButtonCompilerTests
     public void Compile_WithEnabledNotificationWithoutRecipients_RejectsBeforeActivation()
     {
         var config = Config(new MessageSequenceStep { Type = "text", Body = "Reserva creada" });
-        config.Notifications["reservation_created"].Recipients = [];
+        config.Notifications["reservation_created"].Deliveries[0].Recipients = [];
 
         var compilation = Compiler().Compile(config);
 
         compilation.IsValid.Should().BeFalse();
         compilation.Diagnostics.Should().Contain(value => value.Code == "notification_recipients_required");
+    }
+
+
+    [Fact]
+    public void Compile_WithEnabledNotificationWithoutDeliveries_RejectsBeforeActivation()
+    {
+        var config = Config(new MessageSequenceStep { Type = "text", Body = "Reserva creada" });
+        config.Notifications["reservation_created"].Deliveries = [];
+
+        var compilation = Compiler().Compile(config);
+
+        compilation.IsValid.Should().BeFalse();
+        compilation.Diagnostics.Should().Contain(value => value.Code == "notification_delivery_required");
     }
 
     private static AgentConfigurationCompiler Compiler() =>
@@ -87,8 +100,15 @@ public sealed class AgentConfigurationInteractiveButtonCompilerTests
             ["reservation_created"] = new EventNotificationConfig
             {
                 Enabled = true,
-                Recipients = ["573001112233"],
-                SendMessageSequence = "reservation_created"
+                Deliveries =
+                [
+                    new EventNotificationDeliveryConfig
+                    {
+                        Id = "internal",
+                        Recipients = ["573001112233"],
+                        SendMessageSequence = "reservation_created"
+                    }
+                ]
             }
         }
     };

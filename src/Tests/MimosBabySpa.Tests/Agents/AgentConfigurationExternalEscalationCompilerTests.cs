@@ -46,8 +46,15 @@ public sealed class AgentConfigurationExternalEscalationCompilerTests
                 ["delivery_confirmed"] = new()
                 {
                     Enabled = true,
-                    Recipients = ["{customer_phone}"],
-                    SendMessageSequence = "delivery_result"
+                    Deliveries =
+                    [
+                        new EventNotificationDeliveryConfig
+                        {
+                            Id = "customer",
+                            Recipients = ["{customer_phone}"],
+                            SendMessageSequence = "delivery_result"
+                        }
+                    ]
                 }
             },
             Escalations = new EscalationDefinitions
