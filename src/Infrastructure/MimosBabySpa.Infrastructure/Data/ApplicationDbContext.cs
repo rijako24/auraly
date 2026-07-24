@@ -1585,6 +1585,7 @@ public class ApplicationDbContext : DbContext
             entity.Property(e => e.Name).IsRequired().HasMaxLength(200);
             entity.Property(e => e.Description).HasMaxLength(500);
             entity.Property(e => e.Kind).IsRequired().HasMaxLength(50).HasDefaultValue("customer");
+            entity.Property(e => e.BotType).HasConversion<int>().HasDefaultValue(AgentBotType.Reservation);
             entity.Property(e => e.SettingsJson).HasColumnType("NVARCHAR(MAX)");
             entity.HasOne(e => e.Business)
                 .WithMany()

@@ -6,6 +6,7 @@ using MimosBabySpa.Application.Common.Interfaces;
 using MimosBabySpa.Application.Identity.DTOs;
 using MimosBabySpa.Application.Identity.Interfaces;
 using MimosBabySpa.Domain.Entities;
+using MimosBabySpa.Domain.Enums;
 using MimosBabySpa.Domain.Repositories;
 
 namespace MimosBabySpa.Application.Identity.Services;
@@ -205,17 +206,21 @@ public sealed class AgentAdminService : IAgentAdminService
         if (description?.Length > 500)
             throw new DomainValidationException("Description", "La descripcion no puede superar 500 caracteres.");
 
+        if (!Enum.IsDefined(request.BotType))
+            throw new DomainValidationException("BotType", "El tipo de bot no es valido.");
+
         var agentType = await _agentRepository.GetDefaultTypeAsync(ct)
             ?? throw new InvalidOperationException("No existe un tipo de agente activo para crear el borrador.");
         var agent = new Agent
         {
             BusinessId = businessId,
             AgentTypeId = agentType.AgentTypeId,
+            BotType = request.BotType,
             Name = name,
             Description = description,
-            Kind = "customer",
+            Kind = ResolveAgentKind(request.BotType),
             IsActive = false,
-            SettingsJson = CreateDraftSettingsJson(name)
+            SettingsJson = CreateDraftSettingsJson(name, request.BotType)
         };
 
         await _agentRepository.AddAsync(agent, ct);
@@ -315,7 +320,7 @@ public sealed class AgentAdminService : IAgentAdminService
         return dto;
     }
 
-    internal static string CreateDraftSettingsJson(string agentName) =>
+    internal static string CreateDraftSettingsJson(string agentName, AgentBotType botType = AgentBotType.Reservation) =>
         JsonSerializer.Serialize(new
         {
             model = "gpt-4.1-mini",
@@ -355,9 +360,32 @@ public sealed class AgentAdminService : IAgentAdminService
                 }
             },
             factSchema = Array.Empty<object>(),
+            checkout = CreateDraftCheckout(botType),
             globalActions = Array.Empty<object>(),
             templates = new Dictionary<string, string>()
         }, JsonOptions);
+
+    private static string ResolveAgentKind(AgentBotType botType) => botType switch
+    {
+        AgentBotType.Delivery => "domicilio",
+        AgentBotType.PaymentValidator => "payment_approval",
+        _ => "customer"
+    };
+
+    private static object CreateDraftCheckout(AgentBotType botType)
+    {
+        var modes = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+        if (botType == AgentBotType.Order)
+            modes["order"] = new { paymentMethods = new Dictionary<string, object>() };
+        else if (botType == AgentBotType.Reservation)
+            modes["reservation"] = new { paymentMethods = new Dictionary<string, object>() };
+
+        return new
+        {
+            currency = "COP",
+            modes
+        };
+    }
 
     private async Task<BusinessInboundContact> GetInboundContactForBusinessAsync(Guid businessId, Guid contactId, CancellationToken ct)
     {
@@ -504,6 +532,7 @@ public sealed class AgentAdminService : IAgentAdminService
             BusinessId = agent.BusinessId,
             AgentTypeId = agent.AgentTypeId,
             AgentTypeName = agent.AgentType?.Name ?? string.Empty,
+            BotType = agent.BotType,
             Kind = agent.Kind,
             Name = agent.Name,
             Description = agent.Description,

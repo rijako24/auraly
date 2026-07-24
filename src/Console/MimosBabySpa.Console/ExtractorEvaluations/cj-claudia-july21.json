@@ -5,24 +5,36 @@
       "message": "ME REGALAS LA PAPA MARQUISE O SI TIENES ALGUNA OTRA SUGERENCIA",
       "stage": "product_selection",
       "expectedFlow": "order",
-      "expectedSignals": ["catalog_query"],
-      "absentSignals": ["order_changes"],
-      "expectedSignalStringArrays": [
+      "expectedSignals": [
+        "catalog_query"
+      ],
+      "absentSignals": [
+        "order_changes"
+      ],
+      "seed": "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+      "expectedSignalTargets": [
         {
           "type": "catalog_query",
-          "property": "queries",
-          "includes": ["papa", "marquise"],
-          "excludes": ["papada", "hamburguesa", "camaron"]
+          "includes": [
+            "papa",
+            "marquise"
+          ],
+          "excludes": [
+            "papada",
+            "hamburguesa",
+            "camaron"
+          ]
         }
-      ],
-      "seed": "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql"
+      ]
     },
     {
       "id": "claudia_result_correction_never_mutates_cart",
       "message": "SOLO PAPA FRANCESA. ME ESTAS COTIZANDO HAMBURGUESA QUE NO PEDI.",
       "stage": "product_selection",
       "expectedFlow": "order",
-      "absentSignals": ["order_changes"],
+      "absentSignals": [
+        "order_changes"
+      ],
       "seed": "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
       "history": [
         {
@@ -39,7 +51,9 @@
       "message": "MARQUISE Y FRECH FRIES",
       "stage": "product_selection",
       "expectedFlow": "order",
-      "absentSignals": ["order_changes"],
+      "absentSignals": [
+        "order_changes"
+      ],
       "seed": "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
       "history": [
         {
@@ -60,7 +74,10 @@
       "message": "Mmmm",
       "stage": "product_selection",
       "expectedFlow": "order",
-      "absentSignals": ["order_changes", "catalog_query"],
+      "absentSignals": [
+        "order_changes",
+        "catalog_query"
+      ],
       "seed": "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
       "history": [
         {
@@ -79,7 +96,10 @@
       "message": "Papa marquise",
       "stage": "product_selection",
       "expectedFlow": "order",
-      "absentSignals": ["order_changes", "catalog_query"],
+      "absentSignals": [
+        "order_changes",
+        "catalog_query"
+      ],
       "seed": "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
       "history": [
         {
@@ -96,15 +116,25 @@
       "message": "Papa marquise 4 cajas",
       "stage": "product_selection",
       "expectedFlow": "order",
-      "expectedSignals": ["order_changes"],
-      "absentSignals": ["catalog_query"],
+      "expectedSignals": [
+        "order_changes"
+      ],
+      "absentSignals": [
+        "catalog_query"
+      ],
       "expectedSignalItems": [
         {
           "type": "order_changes",
           "count": 1,
-          "products": ["Papa marquise"],
-          "operations": ["add"],
-          "quantities": [4]
+          "products": [
+            "Papa marquise"
+          ],
+          "operations": [
+            "add"
+          ],
+          "quantities": [
+            4
+          ]
         }
       ],
       "seed": "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
@@ -129,10 +159,10 @@
       "absentSignals": [
         "order_changes"
       ],
-      "expectedSignalStringArrays": [
+      "seed": "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+      "expectedSignalTargets": [
         {
           "type": "catalog_query",
-          "property": "queries",
           "includes": [
             "papas"
           ],
@@ -141,8 +171,7 @@
             "camaron"
           ]
         }
-      ],
-      "seed": "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql"
+      ]
     },
     {
       "id": "cj_context_cut_followup_keeps_potato_subject",
@@ -154,19 +183,6 @@
       ],
       "absentSignals": [
         "order_changes"
-      ],
-      "expectedSignalStringArrays": [
-        {
-          "type": "catalog_query",
-          "property": "queries",
-          "includes": [
-            "corte delgado"
-          ],
-          "excludes": [
-            "salchichas",
-            "camaron"
-          ]
-        }
       ],
       "seed": "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
       "history": [
@@ -181,7 +197,19 @@
       ],
       "initialFacts": {
         "system.catalog_products": "{\"schemaVersion\":2,\"sequence\":1,\"snapshots\":[{\"sequence\":1,\"searchTerms\":[\"papas\"],\"products\":[{\"externalProductId\":\"P1\",\"name\":\"PAPA MARQUISE\"},{\"externalProductId\":\"P2\",\"name\":\"PAPA FRENCH FRIES\"}]}]}"
-      }
+      },
+      "expectedSignalTargets": [
+        {
+          "type": "catalog_query",
+          "includes": [
+            "corte delgado"
+          ],
+          "excludes": [
+            "salchichas",
+            "camaron"
+          ]
+        }
+      ]
     },
     {
       "id": "cj_context_brand_revision_keeps_subject_and_replaces_cut",
@@ -193,20 +221,6 @@
       ],
       "absentSignals": [
         "order_changes"
-      ],
-      "expectedSignalStringArrays": [
-        {
-          "type": "catalog_query",
-          "property": "queries",
-          "includes": [
-            "marquise"
-          ],
-          "excludes": [
-            "corte delgado",
-            "salchichas",
-            "camaron"
-          ]
-        }
       ],
       "seed": "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
       "history": [
@@ -221,7 +235,20 @@
       ],
       "initialFacts": {
         "system.catalog_products": "{\"schemaVersion\":3,\"sequence\":2,\"snapshots\":[{\"sequence\":2,\"searchTerms\":[\"papas corte delgado\"],\"contextAnchorTerms\":[\"papas\"],\"products\":[{\"externalProductId\":\"P1\",\"name\":\"PAPA MARQUISE\"},{\"externalProductId\":\"P2\",\"name\":\"PAPA FRENCH FRIES\"}]}]}"
-      }
+      },
+      "expectedSignalTargets": [
+        {
+          "type": "catalog_query",
+          "includes": [
+            "marquise"
+          ],
+          "excludes": [
+            "corte delgado",
+            "salchichas",
+            "camaron"
+          ]
+        }
+      ]
     },
     {
       "id": "cj_context_explicit_topic_switch_does_not_carry_potato",
@@ -234,19 +261,6 @@
       "absentSignals": [
         "order_changes"
       ],
-      "expectedSignalStringArrays": [
-        {
-          "type": "catalog_query",
-          "property": "queries",
-          "includes": [
-            "salchichas"
-          ],
-          "excludes": [
-            "papas",
-            "camaron"
-          ]
-        }
-      ],
       "seed": "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
       "history": [
         {
@@ -256,7 +270,19 @@
       ],
       "initialFacts": {
         "system.catalog_products": "{\"schemaVersion\":3,\"sequence\":2,\"snapshots\":[{\"sequence\":2,\"searchTerms\":[\"papas corte delgado\"],\"contextAnchorTerms\":[\"papas\"],\"products\":[{\"externalProductId\":\"P1\",\"name\":\"PAPA MARQUISE\"},{\"externalProductId\":\"P2\",\"name\":\"PAPA FRENCH FRIES\"}]}]}"
-      }
+      },
+      "expectedSignalTargets": [
+        {
+          "type": "catalog_query",
+          "includes": [
+            "salchichas"
+          ],
+          "excludes": [
+            "papas",
+            "camaron"
+          ]
+        }
+      ]
     }
   ],
   "repetitions": 5

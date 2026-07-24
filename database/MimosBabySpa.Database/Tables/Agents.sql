@@ -3,6 +3,7 @@ CREATE TABLE [dbo].[Agents] (
     [BusinessId]            UNIQUEIDENTIFIER NOT NULL,
     [AgentTypeId]           UNIQUEIDENTIFIER NOT NULL,
     [AgentTemplateId]       UNIQUEIDENTIFIER NULL,
+    [BotType]               INT              NOT NULL CONSTRAINT [DF_Agents_BotType] DEFAULT 1,
     [Name]                  NVARCHAR(200)    NOT NULL,
     [Description]           NVARCHAR(500)    NULL,
     [Kind]                  NVARCHAR(50)     NOT NULL DEFAULT N'customer',
@@ -18,6 +19,7 @@ CREATE TABLE [dbo].[Agents] (
         REFERENCES [dbo].[AgentTypes] ([AgentTypeId]),
     CONSTRAINT [FK_Agents_AgentTemplates] FOREIGN KEY ([AgentTemplateId])
         REFERENCES [dbo].[AgentTemplates] ([AgentTemplateId]),
+    CONSTRAINT [CK_Agents_BotType] CHECK ([BotType] IN (1, 2, 3, 4)),
     CONSTRAINT [UQ_Agents_BusinessName] UNIQUE ([BusinessId], [Name])
 );
 

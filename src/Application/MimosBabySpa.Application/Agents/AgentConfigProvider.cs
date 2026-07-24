@@ -4,6 +4,7 @@ using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
 using MimosBabySpa.Application.Agents.Configuration;
 using MimosBabySpa.Application.Commerce;
+using MimosBabySpa.Domain.Enums;
 using MimosBabySpa.Domain.Repositories;
 
 namespace MimosBabySpa.Application.Agents;
@@ -55,6 +56,7 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
 
         var flows = settings.Flows.ToList();
         var checkout = settings.Checkout ?? new CheckoutDefinitions();
+        var commerce = DeriveCommerceFromBotType(agent.BotType, settings.Commerce);
         var configuredGlobalActions = settings.GlobalActions ?? [];
         var configuredTemplates = settings.Templates
             ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -88,7 +90,7 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
             InteractiveActions = settings.InteractiveActions ?? new InteractiveActionDefinitions(),
             ReservationManagement = settings.ReservationManagement ?? new ReservationManagementDefinitions(),
             Checkout = checkout,
-            Commerce = settings.Commerce ?? new CommerceConfig(),
+            Commerce = commerce,
             OperatingHours = settings.OperatingHours ?? new OperatingHoursDefinitions()
         };
 
@@ -115,6 +117,24 @@ public sealed class AgentConfigProvider : IAgentConfigProvider
     {
         _cache.Remove($"{CachePrefix}{agentId}");
         _cache.Remove($"{CachePrefix}admin_{agentId}");
+    }
+
+    private static CommerceConfig DeriveCommerceFromBotType(
+        AgentBotType botType,
+        CommerceConfig? configured)
+    {
+        configured ??= new CommerceConfig();
+
+        return new CommerceConfig
+        {
+            Enabled = botType == AgentBotType.Order,
+            Provider = configured.Provider,
+            OfferMemoryMaxSnapshots = configured.OfferMemoryMaxSnapshots,
+            OfferMemoryMaxProducts = configured.OfferMemoryMaxProducts,
+            Conversation = configured.Conversation,
+            PendingCart = configured.PendingCart,
+            Matching = configured.Matching
+        };
     }
 
     private static AgentSettings ParseSettings(string? json, Guid agentId)

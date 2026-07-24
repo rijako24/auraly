@@ -17,12 +17,14 @@ import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import type { BusinessInboundContact } from "@/types/entities";
+import { AgentBotType } from "@/types/agent-bot-type";
 import type {
   AgentFlowDefinition,
   AgentFlowStage,
   AgentSettings,
   FactSchemaEntry,
 } from "@/types/agent-settings";
+import { isAdminCustomerFact } from "@/types/agent-settings";
 
 type GlobalAction = NonNullable<AgentSettings["globalActions"]>[number];
 const HUMAN_ESCALATION_GLOBAL_ACTION_ID = "human_escalation";
@@ -48,15 +50,16 @@ export type AgentEditorSection =
 interface AgentSettingsEditorProps {
   value: AgentSettings;
   onChange: (next: AgentSettings) => void;
+  botType: AgentBotType;
   availableInboundContacts?: BusinessInboundContact[];
   /** Modo wizard: muestra solo una sección sin pestañas. */
   section?: AgentEditorSection;
 }
 
-export function AgentSettingsEditor({ value, onChange, availableInboundContacts = [], section }: AgentSettingsEditorProps) {
+export function AgentSettingsEditor({ value, onChange, botType, availableInboundContacts = [], section }: AgentSettingsEditorProps) {
   const flows = value.flows ?? [];
   const userFactKeys = useMemo(
-    () => (value.factSchema ?? []).filter((fact) => (fact.source ?? "user") === "user").map((fact) => fact.key),
+    () => (value.factSchema ?? []).filter(isAdminCustomerFact).map((fact) => fact.key),
     [value.factSchema]
   );
   const allFactKeys = useMemo(
@@ -200,6 +203,80 @@ export function AgentSettingsEditor({ value, onChange, availableInboundContacts 
             />
           </CardContent>
         </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Política de saludo</CardTitle>
+            <CardDescription>
+              Define la apertura que usa el agente al iniciar una conversación nueva.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <label className="flex items-start gap-3 rounded-lg border p-3 text-sm">
+              <Checkbox
+                checked={value.conversationOpening?.enabled === true}
+                onCheckedChange={(checked) =>
+                  patch({
+                    conversationOpening: {
+                      ...value.conversationOpening,
+                      enabled: checked === true,
+                    },
+                  })
+                }
+              />
+              <span>
+                <span className="block font-medium">Aplicar saludo inicial</span>
+                <span className="text-muted-foreground">
+                  El motor lo usa una sola vez cuando comienza una solicitud nueva.
+                </span>
+              </span>
+            </label>
+
+            <div className="space-y-2">
+              <Label htmlFor="conversationOpeningGuidance">Instrucciones del saludo</Label>
+              <Textarea
+                id="conversationOpeningGuidance"
+                className="min-h-[140px]"
+                value={value.conversationOpening?.guidance ?? ""}
+                onChange={(e) =>
+                  patch({
+                    conversationOpening: {
+                      ...value.conversationOpening,
+                      guidance: e.target.value,
+                    },
+                  })
+                }
+                placeholder="Ejemplo: saluda brevemente, presenta el negocio y continúa con la intención del cliente."
+              />
+              {value.conversationOpening?.enabled === true &&
+                !value.conversationOpening?.guidance?.trim() && (
+                  <p className="text-xs text-destructive">
+                    Las instrucciones son obligatorias mientras el saludo esté activo.
+                  </p>
+                )}
+            </div>
+
+            <label className="flex items-start gap-3 rounded-lg border p-3 text-sm">
+              <Checkbox
+                checked={value.conversationOpening?.allowQuestions === true}
+                onCheckedChange={(checked) =>
+                  patch({
+                    conversationOpening: {
+                      ...value.conversationOpening,
+                      allowQuestions: checked === true,
+                    },
+                  })
+                }
+              />
+              <span>
+                <span className="block font-medium">Permitir preguntas en el saludo</span>
+                <span className="text-muted-foreground">
+                  Si está desactivado, la apertura solo saluda; la pregunta de avance se genera después.
+                </span>
+              </span>
+            </label>
+          </CardContent>
+        </Card>
       </TabsContent>
 
       <TabsContent value="flow" className="space-y-4">
@@ -235,11 +312,13 @@ export function AgentSettingsEditor({ value, onChange, availableInboundContacts 
           sequenceNames={sequenceNames}
           onChange={(notifications) => patch({ notifications })}
         />
-        <ReservationAutomationsEditor
-          automations={value.reservationAutomations ?? {}}
-          sequenceNames={sequenceNames}
-          onChange={(reservationAutomations) => patch({ reservationAutomations })}
-        />
+        {botType === AgentBotType.Reservation && (
+          <ReservationAutomationsEditor
+            automations={value.reservationAutomations ?? {}}
+            sequenceNames={sequenceNames}
+            onChange={(reservationAutomations) => patch({ reservationAutomations })}
+          />
+        )}
         <WompiWebhooksEditor
           webhooks={value.webhooks ?? { wompi: {} }}
           sequenceNames={sequenceNames}
@@ -415,7 +494,7 @@ function FlowEditor({ flows, userFactKeys, allFactKeys, onChange }: { flows: Age
 }
 
 function FactSchemaEditor({ entries, onChange }: { entries: FactSchemaEntry[]; onChange: (entries: FactSchemaEntry[]) => void }) {
-  const visible = entries.map((entry, index) => ({ entry, index })).filter(({ entry }) => (entry.source ?? "user") === "user");
+  const visible = entries.map((entry, index) => ({ entry, index })).filter(({ entry }) => isAdminCustomerFact(entry));
   const update = (sourceIndex: number, partial: Partial<FactSchemaEntry>) => onChange(entries.map((entry, index) => index === sourceIndex ? { ...entry, ...partial, source: "user" } : entry));
   const updateOption = (sourceIndex: number, optionIndex: number, partial: Partial<NonNullable<FactSchemaEntry["options"]>[number]>) => {
     const options = entries[sourceIndex].options ?? [];
@@ -437,7 +516,7 @@ function FactSchemaEditor({ entries, onChange }: { entries: FactSchemaEntry[]; o
       {visible.map(({ entry, index }) => <div key={`${entry.key}-${index}`} className="grid gap-3 rounded-xl border bg-card p-4 md:grid-cols-[minmax(150px,1fr)_minmax(180px,1.3fr)_140px_auto]">
         <div className="space-y-1"><Label>Identificador</Label><Input value={entry.key} onChange={(event) => update(index, { key: event.target.value })} /></div>
         <div className="space-y-1"><Label>Nombre para el equipo</Label><Input value={entry.label} onChange={(event) => update(index, { label: event.target.value })} placeholder="Ej. Nombre completo" /></div>
-        <div className="space-y-1"><Label>Tipo de dato</Label><ConfigurationSelect value={entry.type} onChange={(type) => update(index, { type })} options={[{ value: "string", label: "Texto" }, { value: "number", label: "Número" }, { value: "boolean", label: "Sí / No" }, { value: "date", label: "Fecha" }, { value: "datetime", label: "Fecha y hora" }]} /></div>
+        <div className="space-y-1"><Label>Tipo de dato</Label><ConfigurationSelect value={entry.type} onChange={(type) => update(index, { type })} options={[{ value: "string", label: "Texto" }, { value: "number", label: "Número" }, { value: "date", label: "Fecha" }, { value: "datetime", label: "Fecha y hora" }]} /></div>
         <Button type="button" variant="ghost" size="icon" className="self-end text-muted-foreground hover:text-destructive" onClick={() => remove(index)} aria-label="Eliminar dato"><Trash2 className="h-4 w-4" /></Button>
         <div className="space-y-1 md:col-span-2"><Label>Ayuda para reconocerlo</Label><Input value={entry.extractionGuidance ?? ""} onChange={(event) => update(index, { extractionGuidance: event.target.value })} placeholder="Qué expresiones o formato puede usar el cliente" /></div>
         <label className="flex h-10 items-center gap-2 self-end rounded-md border px-3 text-sm"><Checkbox checked={entry.required === true} onCheckedChange={(checked) => update(index, { required: checked === true })} />Requerido</label>

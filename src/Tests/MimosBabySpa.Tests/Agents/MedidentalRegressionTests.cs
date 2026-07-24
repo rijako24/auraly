@@ -26,16 +26,42 @@ public sealed class MedidentalRegressionTests
             .NotContain("mode=")
             .And.Contain("resultados autoritativos");
         catalog.Signal.Description.Should()
-            .Contain("mode=categories")
-            .And.Contain("mode=search")
-            .And.Contain("mode=continue");
+            .Contain("Clasifica intent antes de extraer target")
+            .And.Contain("sustantivos genericos");
 
-        var queriesSchema = catalog.Signal.ValueSchema
+        var intentBranches = catalog.Signal.ValueSchema
+            .GetProperty("anyOf")
+            .EnumerateArray()
+            .ToList();
+        intentBranches.Should().HaveCount(3);
+        intentBranches
+            .Select(branch => branch
+                .GetProperty("properties")
+                .GetProperty("intent")
+                .GetProperty("enum")[0]
+                .GetString())
+            .Should()
+            .Equal("explore_catalog", "search_target", "continue_results");
+
+        var searchBranch = intentBranches[1];
+        var targetSchema = searchBranch
             .GetProperty("properties")
-            .GetProperty("queries");
-        queriesSchema.GetProperty("minItems").GetInt32().Should().Be(0);
+            .GetProperty("target");
+        targetSchema.GetProperty("required").EnumerateArray()
+            .Select(value => value.GetString())
+            .Should()
+            .Equal("kind", "text");
+
+        var exploreTarget = intentBranches[0]
+            .GetProperty("properties")
+            .GetProperty("target");
+        exploreTarget.GetProperty("type").GetString().Should().Be("null");
 
         var search = catalog.Actions.Single(action => action.Operation == "commerce.search_products");
+        search.Arguments["query"].GetString().Should()
+            .Be("{{signal.catalog_query.value.target.text}}");
+        search.Arguments["mode"].GetString().Should()
+            .Be("{{signal.catalog_query.value.intent}}");
         search.OnOutcome["products.found"].Effects.Should().ContainSingle(effect =>
             effect.Type == "presentation.add"
             && effect.Template == "catalog_results");
@@ -239,8 +265,10 @@ public sealed class MedidentalRegressionTests
                 .Be(Path.GetFileName(cjSuites[index]).Replace("cj-", "medidental-", StringComparison.Ordinal));
             medidentalRoot.GetProperty("repetitions").GetInt32().Should()
                 .Be(cjRoot.GetProperty("repetitions").GetInt32());
+
             medidentalRoot.GetProperty("cases").GetArrayLength().Should()
-                .Be(cjRoot.GetProperty("cases").GetArrayLength());
+                .BeGreaterThanOrEqualTo(cjRoot.GetProperty("cases").GetArrayLength(),
+                    "Medidental may add business-specific regressions to a mirrored suite");
 
             foreach (var testCase in medidentalRoot.GetProperty("cases").EnumerateArray())
             {

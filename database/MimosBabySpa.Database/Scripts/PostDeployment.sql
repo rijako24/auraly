@@ -92,5 +92,7 @@ GO
 :r .\Seeds\CleanupDefaultTestServices.sql
 :r .\Seeds\SeedSolorzanoAgentConfiguration.sql
 GO
+:r .\Migrations\MigrateAgentBotType.sql
+GO
 
 PRINT 'Post-deployment scripts executed successfully.';

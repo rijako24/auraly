@@ -411,6 +411,7 @@ public static partial class CommerceTurnPlanSafety
         var rawCommands = orderChanges.Value.EnumerateArray().ToArray();
         var retained = new List<JsonElement>(rawCommands.Length);
         var discoveryQueries = new List<string>();
+        var redundantCatalogTargets = new List<string>();
         var hasExactSignalEvidence = IsExactMessageEvidence(
             orderChanges.Evidence,
             context.LatestUserMessage);
@@ -421,8 +422,13 @@ public static partial class CommerceTurnPlanSafety
             var mutatesQuantity = command.Operation.Equals("add", StringComparison.OrdinalIgnoreCase)
                 || command.Operation.Equals("set_quantity", StringComparison.OrdinalIgnoreCase);
             var resolvesPending = ResolvesPendingMutation(command, context);
-            var conflictsWithCatalogRead = mutatesQuantity
+            var coveredByCatalogRead = mutatesQuantity
                 && IsCoveredByCatalogRead(plan, command.ProductText);
+            var explicitMutationRequest = mutatesQuantity
+                && IsExplicitMutationRequest(orderChanges.Evidence, command, context);
+            var conflictsWithCatalogRead = mutatesQuantity
+                && !explicitMutationRequest
+                && (coveredByCatalogRead || IsCatalogInquiryRequest(orderChanges.Evidence));
             var groundedQuantity = mutatesQuantity && HasGroundedQuantity(command, context);
             var validExistingTarget = !command.Operation.Equals("set_quantity", StringComparison.OrdinalIgnoreCase)
                 || CurrentCartContainsReference(command.ProductText, context.StructuredContext);
@@ -441,6 +447,8 @@ public static partial class CommerceTurnPlanSafety
             if (authorized)
             {
                 retained.Add(pair.First.Clone());
+                if (coveredByCatalogRead && explicitMutationRequest)
+                    redundantCatalogTargets.Add(command.ProductText);
                 continue;
             }
 
@@ -452,7 +460,7 @@ public static partial class CommerceTurnPlanSafety
         }
 
         if (retained.Count == rawCommands.Length)
-            return plan;
+            return RemoveCoveredCatalogTargets(plan, redundantCatalogTargets);
 
         var signals = plan.Signals
             .Where(signal => !ReferenceEquals(signal, orderChanges))
@@ -470,24 +478,163 @@ public static partial class CommerceTurnPlanSafety
         }
 
         if (discoveryQueries.Count > 0
-            && context.Scope.Signals.ContainsKey(CatalogQuerySignal)
+            && context.Scope.Signals.TryGetValue(CatalogQuerySignal, out var catalogSignal)
             && !signals.Any(signal => signal.Type.Equals(CatalogQuerySignal, StringComparison.OrdinalIgnoreCase)))
         {
+            var targets = discoveryQueries
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            var value = new Dictionary<string, object?>
+            {
+                ["intent"] = "search_target",
+                ["target"] = new { kind = "product", text = targets[0] },
+                ["additional_targets"] = targets.Skip(1).ToArray()
+            };
+            if (SchemaContainsProperty(catalogSignal.ValueSchema, "replacement_reference"))
+                value["replacement_reference"] = null;
+
             signals.Add(new PlannedSignal
             {
                 Type = CatalogQuerySignal,
-                Value = JsonSerializer.SerializeToElement(new
-                {
-                    mode = "search",
-                    queries = discoveryQueries.Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
-                    replacement_reference = (string?)null
-                }),
+                Value = JsonSerializer.SerializeToElement(value),
                 Evidence = orderChanges.Evidence,
                 Confidence = orderChanges.Confidence
             });
         }
 
-        return CopyWithSignals(plan, signals);
+        return RemoveCoveredCatalogTargets(
+            CopyWithSignals(plan, signals),
+            redundantCatalogTargets);
+    }
+
+    private static bool IsExplicitMutationRequest(
+        string evidence,
+        CartCommandCandidate command,
+        TurnPlanningContext context)
+    {
+        if (!IsExactMessageEvidence(evidence, context.LatestUserMessage))
+            return false;
+
+        var normalizedEvidence = NormalizeText(evidence);
+        if (ExplicitMutationVerbRegex().IsMatch(normalizedEvidence))
+            return true;
+
+        if (IsCatalogInquiryRequest(evidence))
+            return false;
+
+        // Quantity-led lines such as "2 product X" are direct order lines even
+        // without an introductory verb. The catalog-question check above keeps
+        // quantities mentioned only as requested availability read-only.
+        return HasGroundedQuantity(command, context);
+    }
+
+    private static bool IsCatalogInquiryRequest(string evidence)
+    {
+        var normalizedEvidence = NormalizeText(evidence);
+        return CatalogInquiryRegex().IsMatch(normalizedEvidence)
+            || normalizedEvidence.Contains('?')
+            || normalizedEvidence.Contains('¿');
+    }
+
+    private static TurnPlan RemoveCoveredCatalogTargets(
+        TurnPlan plan,
+        IReadOnlyCollection<string> productTexts)
+    {
+        var references = productTexts
+            .Select(NormalizeReference)
+            .Where(reference => reference.Length > 0)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        if (references.Length == 0)
+            return plan;
+
+        var changed = false;
+        var signals = new List<PlannedSignal>(plan.Signals.Count);
+        foreach (var signal in plan.Signals)
+        {
+            if (!signal.Type.Equals(CatalogQuerySignal, StringComparison.OrdinalIgnoreCase)
+                || !IsCatalogTargetSearch(signal.Value)
+                || !TryRemoveCatalogTargets(signal, references, out var replacement))
+            {
+                signals.Add(signal);
+                continue;
+            }
+
+            changed = true;
+            if (replacement is not null)
+                signals.Add(replacement);
+        }
+
+        return changed ? CopyWithSignals(plan, signals) : plan;
+    }
+
+    private static bool TryRemoveCatalogTargets(
+        PlannedSignal signal,
+        IReadOnlyCollection<string> mutationReferences,
+        out PlannedSignal? replacement)
+    {
+        replacement = signal;
+        if (!signal.Value.TryGetProperty("target", out var target)
+            || target.ValueKind != JsonValueKind.Object
+            || !target.TryGetProperty("text", out var targetText)
+            || targetText.ValueKind != JsonValueKind.String)
+            return false;
+
+        var primaryText = targetText.GetString() ?? string.Empty;
+        var primaryCovered = IsCoveredReference(primaryText, mutationReferences);
+        var additional = signal.Value.TryGetProperty("additional_targets", out var additionalElement)
+            && additionalElement.ValueKind == JsonValueKind.Array
+            ? additionalElement.EnumerateArray()
+                .Where(item => item.ValueKind == JsonValueKind.String)
+                .Select(item => item.GetString() ?? string.Empty)
+                .ToArray()
+            : [];
+        var retainedAdditional = additional
+            .Where(query => !IsCoveredReference(query, mutationReferences))
+            .ToList();
+        if (!primaryCovered && retainedAdditional.Count == additional.Length)
+            return false;
+
+        if (primaryCovered && retainedAdditional.Count == 0)
+        {
+            replacement = null;
+            return true;
+        }
+
+        var properties = signal.Value.EnumerateObject().ToDictionary(
+            property => property.Name,
+            property => property.Value.Clone(),
+            StringComparer.Ordinal);
+        if (primaryCovered)
+        {
+            var promotedText = retainedAdditional[0];
+            retainedAdditional.RemoveAt(0);
+            var targetKind = target.TryGetProperty("kind", out var kind)
+                && kind.ValueKind == JsonValueKind.String
+                ? kind.GetString()
+                : "product";
+            properties["target"] = JsonSerializer.SerializeToElement(
+                new { kind = targetKind, text = promotedText });
+        }
+        properties["additional_targets"] = JsonSerializer.SerializeToElement(retainedAdditional);
+
+        replacement = new PlannedSignal
+        {
+            Type = signal.Type,
+            Value = JsonSerializer.SerializeToElement(properties),
+            Evidence = signal.Evidence,
+            Confidence = signal.Confidence
+        };
+        return true;
+    }
+
+    private static bool IsCoveredReference(
+        string query,
+        IReadOnlyCollection<string> mutationReferences)
+    {
+        var normalizedQuery = NormalizeReference(query);
+        return normalizedQuery.Length > 0
+            && mutationReferences.Any(reference => SameReference(reference, normalizedQuery));
     }
 
     private static bool IsExactMessageEvidence(string evidence, string message)
@@ -545,18 +692,50 @@ public static partial class CommerceTurnPlanSafety
         return plan.Signals.Any(signal =>
         {
             if (!signal.Type.Equals(CatalogQuerySignal, StringComparison.OrdinalIgnoreCase)
-                || signal.Value.ValueKind != JsonValueKind.Object
-                || !signal.Value.TryGetProperty("mode", out var mode)
-                || mode.ValueKind != JsonValueKind.String
-                || !mode.GetString()!.Equals("search", StringComparison.OrdinalIgnoreCase)
-                || !signal.Value.TryGetProperty("queries", out var queries)
-                || queries.ValueKind != JsonValueKind.Array)
+                || !IsCatalogTargetSearch(signal.Value))
                 return false;
 
-            return queries.EnumerateArray().Any(query =>
-                query.ValueKind == JsonValueKind.String
-                && SameReference(reference, NormalizeReference(query.GetString() ?? string.Empty)));
+            return ReadCatalogTargets(signal.Value).Any(query =>
+                SameReference(reference, NormalizeReference(query)));
         });
+    }
+
+    private static bool IsCatalogTargetSearch(JsonElement value) =>
+        value.ValueKind == JsonValueKind.Object
+        && value.TryGetProperty("intent", out var intent)
+        && intent.ValueKind == JsonValueKind.String
+        && intent.GetString()!.Equals("search_target", StringComparison.OrdinalIgnoreCase);
+
+    private static IEnumerable<string> ReadCatalogTargets(JsonElement value)
+    {
+        if (value.TryGetProperty("target", out var target)
+            && target.ValueKind == JsonValueKind.Object
+            && target.TryGetProperty("text", out var text)
+            && text.ValueKind == JsonValueKind.String
+            && !string.IsNullOrWhiteSpace(text.GetString()))
+            yield return text.GetString()!;
+
+        if (!value.TryGetProperty("additional_targets", out var additional)
+            || additional.ValueKind != JsonValueKind.Array)
+            yield break;
+
+        foreach (var item in additional.EnumerateArray())
+            if (item.ValueKind == JsonValueKind.String
+                && !string.IsNullOrWhiteSpace(item.GetString()))
+                yield return item.GetString()!;
+    }
+
+    private static bool SchemaContainsProperty(JsonElement schema, string property)
+    {
+        if (schema.ValueKind != JsonValueKind.Object)
+            return false;
+        if (schema.TryGetProperty("properties", out var properties)
+            && properties.ValueKind == JsonValueKind.Object
+            && properties.TryGetProperty(property, out _))
+            return true;
+        return schema.TryGetProperty("anyOf", out var anyOf)
+            && anyOf.ValueKind == JsonValueKind.Array
+            && anyOf.EnumerateArray().Any(branch => SchemaContainsProperty(branch, property));
     }
 
     private static bool ResolvesPendingMutation(CartCommandCandidate command, TurnPlanningContext context)
@@ -726,6 +905,12 @@ public static partial class CommerceTurnPlanSafety
 
     [GeneratedRegex(@"(?<![\p{L}\p{N}])\d+(?:[.,]\d+)?(?!\d)", RegexOptions.CultureInvariant)]
     private static partial Regex NumericQuantityRegex();
+
+    [GeneratedRegex(@"(?<![\p{L}\p{N}])(?:agreg\p{L}*|anad\p{L}*|incluy\p{L}*|sum\p{L}*)(?![\p{L}\p{N}])", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex ExplicitMutationVerbRegex();
+
+    [GeneratedRegex(@"(?<![\p{L}\p{N}])(?:tienes?|tienen|hay|disponib\p{L}*|existencia|precio|cuesta|vale|opciones|venden|manejan)(?![\p{L}\p{N}])", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex CatalogInquiryRegex();
 
     private sealed record CartCommandCandidate(string Operation, string ProductText, decimal? Quantity);
 }

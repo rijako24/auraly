@@ -50,7 +50,7 @@ public sealed class CatalogRecommendationRegressionTests
             commerce.Object,
             new Mock<IConversationFactsService>().Object,
             recommendations.Object);
-        using var arguments = JsonDocument.Parse("""{"mode":"search","queries":["pechuga","cerdo"],"limit":10}""");
+        using var arguments = JsonDocument.Parse("""{"mode":"search_target","queries":["pechuga","cerdo"],"limit":10}""");
 
         var outcome = await operation.ExecuteAsync(
             arguments.RootElement,

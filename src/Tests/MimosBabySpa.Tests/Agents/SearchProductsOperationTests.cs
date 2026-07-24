@@ -18,6 +18,25 @@ public class SearchProductsOperationTests
 {
     private readonly Mock<ICommerceService> _commerce = new();
 
+    [Theory]
+    [InlineData("categories")]
+    [InlineData("search")]
+    [InlineData("continue")]
+    public async Task ExecuteAsync_LegacyCatalogModes_AreRejected(string legacyMode)
+    {
+        var operation = new SearchProductsOperation(_commerce.Object);
+        using var args = JsonDocument.Parse(
+            JsonSerializer.Serialize(new { mode = legacyMode }));
+
+        var action = () => operation.ExecuteAsync(
+            args.RootElement,
+            new OperationContext { Session = CreateContext() },
+            CancellationToken.None);
+
+        await action.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage($"Unsupported catalog mode '{legacyMode}'.");
+    }
+
     [Fact]
     public async Task ExecuteAsync_WhenSearchReturnsEmpty_DoesNotInferBroadCatalogSearchFromUserText()
     {
@@ -32,7 +51,7 @@ public class SearchProductsOperationTests
             .ReturnsAsync(new ProductSearchResult([], "local"));
 
         var operation = new SearchProductsOperation(_commerce.Object);
-        using var args = JsonDocument.Parse("""{"mode":"search","query":"vino dulce","limit":10}""");
+        using var args = JsonDocument.Parse("""{"mode":"search_target","query":"vino dulce","limit":10}""");
 
         var outcome = await operation.ExecuteAsync(args.RootElement, new OperationContext { Session = ctx }, CancellationToken.None);
         var json = outcome.Data.GetRawText();
@@ -69,7 +88,7 @@ public class SearchProductsOperationTests
             .ReturnsAsync(new ProductCategoryPage(categories, true, 1, 5));
 
         var operation = new SearchProductsOperation(_commerce.Object);
-        using var args = JsonDocument.Parse("""{"mode":"categories","limit":5}""");
+        using var args = JsonDocument.Parse("""{"mode":"explore_catalog","limit":5}""");
 
         var outcome = await operation.ExecuteAsync(
             args.RootElement,
@@ -104,7 +123,7 @@ public class SearchProductsOperationTests
 
         var operation = new SearchProductsOperation(_commerce.Object);
         using var args = JsonDocument.Parse(
-            """{"mode":"search","queries":["bombombun"],"limit":10}""");
+            """{"mode":"search_target","query":"bombombun","queries":[],"limit":10}""");
 
         await operation.ExecuteAsync(
             args.RootElement,
@@ -115,7 +134,7 @@ public class SearchProductsOperationTests
             ctx,
             It.Is<ProductSearchRequest>(request =>
                 request.Query == "bombombun"
-                && request.Mode == ProductCatalogQueryMode.Search),
+                && request.Mode == ProductCatalogQueryMode.SearchTarget),
             It.IsAny<CancellationToken>()), Times.Once);
     }
 
@@ -132,7 +151,7 @@ public class SearchProductsOperationTests
 
         var operation = new SearchProductsOperation(_commerce.Object);
         using var args = JsonDocument.Parse(
-            """{"mode":"search","queries":[],"limit":10}""");
+            """{"mode":"search_target","queries":[],"limit":10}""");
 
         var outcome = await operation.ExecuteAsync(
             args.RootElement,
@@ -159,7 +178,7 @@ public class SearchProductsOperationTests
             .ReturnsAsync(new ProductSearchResult([], "local-catalog", CatalogReady: false));
         var operation = new SearchProductsOperation(_commerce.Object);
         using var args = JsonDocument.Parse(
-            """{"mode":"search","queries":["zucaritas"],"limit":10}""");
+            """{"mode":"search_target","queries":["zucaritas"],"limit":10}""");
 
         var outcome = await operation.ExecuteAsync(
             args.RootElement,
@@ -189,14 +208,14 @@ public class SearchProductsOperationTests
                     : new ProductSearchResult([secondPage], "xion", false));
         var operation = new SearchProductsOperation(_commerce.Object, facts.Object);
         using var initial = JsonDocument.Parse(
-            """{"mode":"search","query":"jamon","limit":1}""");
+            """{"mode":"search_target","query":"jamon","limit":1}""");
 
         await operation.ExecuteAsync(
             initial.RootElement,
             new OperationContext { Session = ctx },
             CancellationToken.None);
         ctx.LatestUserMessage = "que otras opciones tienes";
-        using var continuation = JsonDocument.Parse("""{"mode":"continue"}""");
+        using var continuation = JsonDocument.Parse("""{"mode":"continue_results"}""");
         var outcome = await operation.ExecuteAsync(
             continuation.RootElement,
             new OperationContext { Session = ctx },
@@ -256,7 +275,7 @@ public class SearchProductsOperationTests
             .ReturnsAsync(new ProductSearchResult(products, "mantis"));
 
         var operation = new SearchProductsOperation(_commerce.Object);
-        using var args = JsonDocument.Parse("""{"mode":"search","query":"pechuga","limit":10}""");
+        using var args = JsonDocument.Parse("""{"mode":"search_target","query":"pechuga","limit":10}""");
 
         var json = (await operation.ExecuteAsync(args.RootElement, new OperationContext { Session = ctx }, CancellationToken.None)).Data.GetRawText();
 
@@ -301,7 +320,7 @@ public class SearchProductsOperationTests
             _commerce.Object,
             new Mock<IConversationFactsService>().Object,
             recommendations.Object);
-        using var args = JsonDocument.Parse("""{"mode":"search","query":"rancheras","limit":10}""");
+        using var args = JsonDocument.Parse("""{"mode":"search_target","query":"rancheras","limit":10}""");
 
         var outcome = await operation.ExecuteAsync(args.RootElement, new OperationContext { Session = ctx });
         using var data = JsonDocument.Parse(outcome.Data.GetRawText());
@@ -325,7 +344,7 @@ public class SearchProductsOperationTests
             .ReturnsAsync(new ProductSearchResult([displayed], "mantis"));
         var facts = new Mock<IConversationFactsService>();
         var operation = new SearchProductsOperation(_commerce.Object, facts.Object);
-        using var args = JsonDocument.Parse("""{"mode":"search","query":"pollo","limit":10}""");
+        using var args = JsonDocument.Parse("""{"mode":"search_target","query":"pollo","limit":10}""");
 
         await operation.ExecuteAsync(args.RootElement, new OperationContext { Session = ctx }, CancellationToken.None);
         _commerce.Invocations.Clear();
@@ -358,7 +377,7 @@ public class SearchProductsOperationTests
             .ReturnsAsync(new ProductSearchResult(products, "mantis"));
         var facts = new Mock<IConversationFactsService>();
         var operation = new SearchProductsOperation(_commerce.Object, facts.Object);
-        using var args = JsonDocument.Parse("""{"mode":"search","query":"pollo","limit":10}""");
+        using var args = JsonDocument.Parse("""{"mode":"search_target","query":"pollo","limit":10}""");
         await operation.ExecuteAsync(args.RootElement, new OperationContext { Session = ctx }, CancellationToken.None);
         _commerce.Invocations.Clear();
         var resolver = new CommerceCartProductResolver(_commerce.Object);
@@ -416,7 +435,7 @@ public class SearchProductsOperationTests
             .ReturnsAsync(new ProductSearchResult([tocineta], "mantis"));
 
         var operation = new SearchProductsOperation(_commerce.Object);
-        using var args = JsonDocument.Parse("""{"mode":"search","queries":["papas fritas","tocineta"],"limit":10}""");
+        using var args = JsonDocument.Parse("""{"mode":"search_target","queries":["papas fritas","tocineta"],"limit":10}""");
 
         var json = (await operation.ExecuteAsync(args.RootElement, new OperationContext { Session = ctx }, CancellationToken.None)).Data.GetRawText();
 
@@ -445,9 +464,9 @@ public class SearchProductsOperationTests
         var facts = new Mock<IConversationFactsService>();
         var operation = new SearchProductsOperation(_commerce.Object, facts.Object);
 
-        using (var pechugaArgs = JsonDocument.Parse("""{"mode":"search","query":"pechuga","limit":10}"""))
+        using (var pechugaArgs = JsonDocument.Parse("""{"mode":"search_target","query":"pechuga","limit":10}"""))
             await operation.ExecuteAsync(pechugaArgs.RootElement, new OperationContext { Session = ctx });
-        using (var cerdoArgs = JsonDocument.Parse("""{"mode":"search","query":"cerdo","limit":10}"""))
+        using (var cerdoArgs = JsonDocument.Parse("""{"mode":"search_target","query":"cerdo","limit":10}"""))
             await operation.ExecuteAsync(cerdoArgs.RootElement, new OperationContext { Session = ctx });
 
         _commerce.Invocations.Clear();
@@ -486,7 +505,7 @@ public class SearchProductsOperationTests
 
         foreach (var query in new[] { "pechuga", "cerdo", "salchicha" })
         {
-            using var args = JsonDocument.Parse(JsonSerializer.Serialize(new { mode = "search", query, limit = 10 }));
+            using var args = JsonDocument.Parse(JsonSerializer.Serialize(new { mode = "search_target", query, limit = 10 }));
             await operation.ExecuteAsync(args.RootElement, new OperationContext { Session = ctx });
         }
 
@@ -521,7 +540,7 @@ public class SearchProductsOperationTests
         var operation = new SearchProductsOperation(
             _commerce.Object, new Mock<IConversationFactsService>().Object);
         using var args = JsonDocument.Parse(
-            """{"mode":"search","query":"maiz","replacement_reference":"maíz","limit":10}""");
+            """{"mode":"search_target","query":"maiz","replacement_reference":"maíz","limit":10}""");
 
         await operation.ExecuteAsync(args.RootElement, new OperationContext { Session = ctx });
 
@@ -545,7 +564,7 @@ public class SearchProductsOperationTests
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ProductSearchResult([marquise, bread, jowl, shrimp], "mantis"));
         var operation = new SearchProductsOperation(_commerce.Object);
-        using var args = JsonDocument.Parse("""{"mode":"search","query":"papa marquise","limit":10}""");
+        using var args = JsonDocument.Parse("""{"mode":"search_target","query":"papa marquise","limit":10}""");
 
         var outcome = await operation.ExecuteAsync(
             args.RootElement,
@@ -582,7 +601,7 @@ public class SearchProductsOperationTests
                     : new ProductSearchResult(potatoes, "mantis"));
         var operation = new SearchProductsOperation(_commerce.Object);
         using var args = JsonDocument.Parse(
-            """{"mode":"search","queries":["papa","tocineta"],"limit":2}""");
+            """{"mode":"search_target","query":"papa","queries":["tocineta"],"limit":2}""");
 
         var outcome = await operation.ExecuteAsync(
             args.RootElement,
@@ -606,7 +625,7 @@ public class SearchProductsOperationTests
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ProductSearchResult([shrimp], "mantis"));
         var operation = new SearchProductsOperation(_commerce.Object);
-        using var args = JsonDocument.Parse("""{"mode":"search","query":"french fries","limit":10}""");
+        using var args = JsonDocument.Parse("""{"mode":"search_target","query":"french fries","limit":10}""");
 
         var outcome = await operation.ExecuteAsync(
             args.RootElement,
@@ -645,7 +664,7 @@ public class SearchProductsOperationTests
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ProductSearchResult([marquise], "mantis"));
         var operation = new SearchProductsOperation(_commerce.Object);
-        using var args = JsonDocument.Parse("""{"mode":"search","query":"marquise","limit":10}""");
+        using var args = JsonDocument.Parse("""{"mode":"search_target","query":"marquise","limit":10}""");
 
         var outcome = await operation.ExecuteAsync(
             args.RootElement,
@@ -691,7 +710,7 @@ public class SearchProductsOperationTests
                     : new ProductSearchResult([frenchFries, shrimp], "mantis"));
         var operation = new SearchProductsOperation(_commerce.Object);
         using var args = JsonDocument.Parse(
-            """{"mode":"search","queries":["marquise","frech fries"],"limit":10}""");
+            """{"mode":"search_target","queries":["marquise","frech fries"],"limit":10}""");
 
         var outcome = await operation.ExecuteAsync(
             args.RootElement,

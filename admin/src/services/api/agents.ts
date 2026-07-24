@@ -1,6 +1,7 @@
 import { apiClient } from "./client";
 import type { Agent, BusinessInboundContact } from "@/types/entities";
 import type { AgentSettings } from "@/types/agent-settings";
+import type { AgentBotType } from "@/types/agent-bot-type";
 
 export interface AgentTestChatMessage {
   role: "user" | "assistant";
@@ -10,6 +11,7 @@ export interface AgentTestChatMessage {
 export interface CreateAgentRequest {
   name: string;
   description?: string;
+  botType: AgentBotType;
 }
 
 export interface AgentTestTurnRequest {

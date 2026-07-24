@@ -14,6 +14,7 @@ import {
   PromotionItemType,
   SystemConfigurationKey,
 } from "./enums";
+import type { AgentBotType } from "./agent-bot-type";
 
 export interface Tenant {
   tenantId: string;
@@ -668,6 +669,7 @@ export interface Agent {
   businessId: string;
   agentTypeId: string;
   agentTypeName: string;
+  botType: AgentBotType;
     kind: string;
 name: string;
   phoneNumber: string | null;

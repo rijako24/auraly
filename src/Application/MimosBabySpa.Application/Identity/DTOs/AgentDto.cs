@@ -8,6 +8,7 @@ public sealed class AgentDto
     public Guid BusinessId { get; init; }
     public Guid AgentTypeId { get; init; }
     public string AgentTypeName { get; init; } = string.Empty;
+    public MimosBabySpa.Domain.Enums.AgentBotType BotType { get; init; }
     public string Kind { get; init; } = "customer";
     public string Name { get; init; } = string.Empty;
     public string? Description { get; init; }
@@ -72,7 +73,8 @@ public sealed class UpdateAgentSettingsRequest
 
 public sealed record CreateAgentRequest(
     string Name,
-    string? Description);
+    string? Description,
+    MimosBabySpa.Domain.Enums.AgentBotType BotType = MimosBabySpa.Domain.Enums.AgentBotType.Reservation);
 
 public sealed record UpdateAgentStatusRequest(
     bool IsActive);

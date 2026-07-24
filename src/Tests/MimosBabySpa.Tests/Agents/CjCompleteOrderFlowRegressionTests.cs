@@ -563,16 +563,20 @@ public sealed class CjCompleteOrderFlowRegressionTests
             }).ToArray())
         ]);
 
-    private static TurnPlan Catalog(IReadOnlyList<string> queries, string? replacementReference = null) =>
-        Plan(signals:
+    private static TurnPlan Catalog(IReadOnlyList<string> queries, string? replacementReference = null)
+    {
+        queries.Should().NotBeEmpty();
+        return Plan(signals:
         [
             Signal("catalog_query", new
             {
-                mode = "search",
-                queries,
+                intent = "search_target",
+                target = new { kind = "product", text = queries[0] },
+                additional_targets = queries.Skip(1).ToArray(),
                 replacement_reference = replacementReference
             })
         ]);
+    }
 
     private static TurnPlan Recipe(string ingredient) =>
         Plan(signals: [Signal("recipe_request", ingredient)]);
@@ -1056,22 +1060,28 @@ public sealed class CjCompleteOrderFlowRegressionTests
 
         private static IReadOnlyList<string> ReadQueries(JsonElement input)
         {
-            if (!input.TryGetProperty("queries", out var queries))
-                return [];
-            if (queries.ValueKind == JsonValueKind.Array)
-                return queries.EnumerateArray()
+            var result = new List<string>();
+            if (input.TryGetProperty("query", out var query)
+                && query.ValueKind == JsonValueKind.String
+                && !string.IsNullOrWhiteSpace(query.GetString()))
+                result.Add(query.GetString()!);
+
+            if (input.TryGetProperty("queries", out var queries)
+                && queries.ValueKind == JsonValueKind.Array)
+                result.AddRange(queries.EnumerateArray()
                     .Where(item => item.ValueKind == JsonValueKind.String)
                     .Select(item => item.GetString()!)
-                    .ToList();
-            if (queries.ValueKind != JsonValueKind.String)
-                return [];
+                    .Where(item => !string.IsNullOrWhiteSpace(item)));
+            else if (queries.ValueKind == JsonValueKind.String
+                && !string.IsNullOrWhiteSpace(queries.GetString()))
+                result.Add(queries.GetString()!);
 
-            var raw = queries.GetString();
-            if (string.IsNullOrWhiteSpace(raw))
-                return [];
+            if (result.Count != 1)
+                return result.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+
             try
             {
-                using var document = JsonDocument.Parse(raw);
+                using var document = JsonDocument.Parse(result[0]);
                 if (document.RootElement.ValueKind == JsonValueKind.Array)
                 {
                     return document.RootElement.EnumerateArray()
@@ -1084,7 +1094,7 @@ public sealed class CjCompleteOrderFlowRegressionTests
             {
                 // The binder may legitimately supply a single plain-text query.
             }
-            return [raw];
+            return result;
         }
     }
 
@@ -1387,23 +1397,6 @@ public sealed class CjCompleteOrderFlowRegressionTests
             RegexOptions.Singleline | RegexOptions.IgnoreCase);
         match.Success.Should().BeTrue("the CJ seed must declare @SettingsJson");
         var settingsJson = match.Groups[1].Value.Replace("''", "'", StringComparison.Ordinal);
-        var root = JsonNode.Parse(settingsJson)!.AsObject();
-        var globalActions = root["globalActions"]!.AsArray();
-        var appendedGlobalActions = Regex.Matches(
-            sql,
-            "JSON_MODIFY\\s*\\(\\s*@SettingsJson\\s*,\\s*'append\\s+\\$\\.globalActions'\\s*,\\s*JSON_QUERY\\s*\\(\\s*N'(?<json>.*?)'\\s*\\)\\s*\\)",
-            RegexOptions.Singleline | RegexOptions.IgnoreCase);
-        foreach (Match appended in appendedGlobalActions)
-        {
-            var appendedJson = appended.Groups["json"].Value.Replace(
-                "''",
-                "'",
-                StringComparison.Ordinal);
-            globalActions.Add(JsonNode.Parse(appendedJson));
-        }
-        appendedGlobalActions.Count.Should().BeGreaterThan(0,
-            "the CJ seed appends cross-stage actions after declaring its base JSON");
-        settingsJson = root.ToJsonString();
 
         var config = JsonSerializer.Deserialize<AgentConfig>(settingsJson, new JsonSerializerOptions
         {

@@ -6,6 +6,7 @@ using MimosBabySpa.Application.Agents.Configuration;
 using MimosBabySpa.Application.Agents.Operations;
 using MimosBabySpa.Application.Agents.Operations.Checkout;
 using MimosBabySpa.Domain.Entities;
+using MimosBabySpa.Domain.Enums;
 using MimosBabySpa.Domain.Repositories;
 using Moq;
 using Xunit;
@@ -14,6 +15,57 @@ namespace MimosBabySpa.Tests.Agents;
 
 public sealed class AgentConfigProviderPaymentMethodsTests
 {
+    [Theory]
+    [InlineData(AgentBotType.Order, false, true)]
+    [InlineData(AgentBotType.Order, true, true)]
+    [InlineData(AgentBotType.Reservation, true, false)]
+    [InlineData(AgentBotType.Delivery, true, false)]
+    [InlineData(AgentBotType.PaymentValidator, true, false)]
+    public async Task Commerce_IsDerivedOnlyFromBotType(
+        AgentBotType botType,
+        bool configuredCommerceEnabled,
+        bool expectedCommerceEnabled)
+    {
+        var agentId = Guid.NewGuid();
+        var repository = new Mock<IAgentRepository>();
+        repository
+            .Setup(value => value.GetByIdAsync(agentId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Agent
+            {
+                AgentId = agentId,
+                BusinessId = Guid.NewGuid(),
+                BotType = botType,
+                Name = "Typed agent",
+                IsActive = true,
+                SettingsJson = $$"""
+                    {
+                      "flows": [
+                        {
+                          "id": "main",
+                          "type": "primary",
+                          "stages": [{ "id": "start" }]
+                        }
+                      ],
+                      "commerce": {
+                        "enabled": {{configuredCommerceEnabled.ToString().ToLowerInvariant()}},
+                        "provider": "Local"
+                      }
+                    }
+                    """
+            });
+
+        using var cache = new MemoryCache(new MemoryCacheOptions());
+        var provider = new AgentConfigProvider(
+            repository.Object,
+            cache,
+            NullLogger<AgentConfigProvider>.Instance,
+            new AgentConfigurationCompiler(new AgentOperationRegistry([])));
+
+        var config = await provider.GetConfigAsync(agentId);
+
+        config.Commerce.Enabled.Should().Be(expectedCommerceEnabled);
+    }
+
     [Fact]
     public async Task ConfiguredCheckout_AutomaticallyCompilesPaymentMethodsCapability()
     {

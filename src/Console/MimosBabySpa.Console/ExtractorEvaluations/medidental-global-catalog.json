@@ -1,12 +1,71 @@
 {
   "cases": [
     {
+      "id": "medidental_open_catalog_products_is_exploration",
+      "message": "Que productos manejan",
+      "stage": "product_selection",
+      "expectedFlow": "order",
+      "expectedSignals": [
+        "catalog_query"
+      ],
+      "expectedSignalProperties": [
+        {
+          "type": "catalog_query",
+          "path": "intent",
+          "equals": "explore_catalog"
+        },
+        {
+          "type": "catalog_query",
+          "path": "target",
+          "equals": null
+        }
+      ],
+      "absentSignals": [
+        "order_changes",
+        "restart_request"
+      ],
+      "seed": "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedMedidental.sql"
+    },
+    {
+      "id": "medidental_open_catalog_references_is_exploration",
+      "message": "Que referencias me puedes ofrecer",
+      "stage": "product_selection",
+      "expectedFlow": "order",
+      "expectedSignals": [
+        "catalog_query"
+      ],
+      "expectedSignalProperties": [
+        {
+          "type": "catalog_query",
+          "path": "intent",
+          "equals": "explore_catalog"
+        },
+        {
+          "type": "catalog_query",
+          "path": "target",
+          "equals": null
+        }
+      ],
+      "absentSignals": [
+        "order_changes",
+        "restart_request"
+      ],
+      "seed": "../../../../database/MimosBabySpa.Database/Scripts/Seeds/SeedMedidental.sql"
+    },
+    {
       "id": "medidental_catalog_query_in_product_selection",
       "message": "que resinas tienes?",
       "stage": "product_selection",
       "expectedFlow": "order",
       "expectedSignals": [
         "catalog_query"
+      ],
+      "expectedSignalProperties": [
+        {
+          "type": "catalog_query",
+          "path": "intent",
+          "equals": "search_target"
+        }
       ],
       "absentSignals": [
         "order_changes",
