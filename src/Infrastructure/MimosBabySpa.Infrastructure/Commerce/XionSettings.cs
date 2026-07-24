@@ -20,6 +20,8 @@ internal sealed class XionSettings
     public int OrderHistoryDays { get; init; }
     public int CatalogDiscoveryMaxQueries { get; init; }
     public int CatalogDiscoveryConcurrency { get; init; }
+    public int CatalogDiscoveryPrefixLength { get; init; }
+    public IReadOnlyList<string> CatalogDiscoveryQueries { get; init; } = [];
     public IReadOnlyList<XionProductIdRange> CatalogProductIdRanges { get; init; } = [];
     public XionEndpointSettings Endpoints { get; init; } = new();
 
@@ -45,6 +47,8 @@ internal sealed class XionSettings
             OrderHistoryDays = Math.Clamp(GetRequiredPositiveInt(root, "orderHistoryDays"), 1, 3650),
             CatalogDiscoveryMaxQueries = Math.Clamp(GetInt(root, "catalogDiscoveryMaxQueries", 512), 36, 5000),
             CatalogDiscoveryConcurrency = Math.Clamp(GetInt(root, "catalogDiscoveryConcurrency", 8), 1, 16),
+            CatalogDiscoveryPrefixLength = Math.Clamp(GetInt(root, "catalogDiscoveryPrefixLength", 0), 0, 3),
+            CatalogDiscoveryQueries = GetStringArray(root, "catalogDiscoveryQueries"),
             CatalogProductIdRanges = GetProductIdRanges(root),
             Endpoints = new XionEndpointSettings
             {
@@ -111,6 +115,23 @@ internal sealed class XionSettings
     {
         var value = GetInt(values, key, 0);
         return value > 0 ? value : throw new InvalidOperationException($"Xion setting '{key}' must be greater than zero.");
+    }
+
+    private static IReadOnlyList<string> GetStringArray(
+        Dictionary<string, JsonElement> values,
+        string key)
+    {
+        if (!values.TryGetValue(key, out var value)
+            || value.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
+            return [];
+        if (value.ValueKind != JsonValueKind.Array)
+            throw new InvalidOperationException($"Xion setting '{key}' must be an array.");
+        return value.EnumerateArray()
+            .Where(item => item.ValueKind == JsonValueKind.String)
+            .Select(item => item.GetString()?.Trim())
+            .Where(item => !string.IsNullOrWhiteSpace(item))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList()!;
     }
 
     private static IReadOnlyList<XionProductIdRange> GetProductIdRanges(

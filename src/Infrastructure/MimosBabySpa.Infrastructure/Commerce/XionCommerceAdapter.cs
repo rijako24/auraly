@@ -265,13 +265,33 @@ public sealed class XionCommerceAdapter :
         throw new ArgumentOutOfRangeException(nameof(index));
     }
 
+    private static IReadOnlyList<string> GetCatalogDiscoverySeedQueries(XionSettings settings)
+    {
+        if (settings.CatalogDiscoveryPrefixLength <= 0)
+            return CatalogDiscoverySeedQueries
+                .Concat(settings.CatalogDiscoveryQueries)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+        var prefixes = Enumerable.Range(0, 26)
+            .SelectMany(first => Enumerable.Range(0, 26)
+                .Select(second => string.Concat((char)('a' + first), (char)('a' + second))))
+            .ToList();
+        return CatalogDiscoverySeedQueries
+            .Concat(settings.CatalogDiscoveryQueries)
+            .Concat(prefixes)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
     private async Task<IReadOnlyList<XionProductSummaryDto>> DiscoverProductSummariesAsync(
         XionSettings settings,
         CancellationToken ct)
     {
         var discovered = new Dictionary<int, XionProductSummaryDto>();
-        var queued = new HashSet<string>(CatalogDiscoverySeedQueries, StringComparer.OrdinalIgnoreCase);
-        var pending = new Queue<string>(CatalogDiscoverySeedQueries);
+        var seedQueries = GetCatalogDiscoverySeedQueries(settings);
+        var queued = new HashSet<string>(seedQueries, StringComparer.OrdinalIgnoreCase);
+        var pending = new Queue<string>(seedQueries);
         var processed = 0;
 
         while (pending.Count > 0 && processed < settings.CatalogDiscoveryMaxQueries)
@@ -283,11 +303,21 @@ public sealed class XionCommerceAdapter :
                 batch.Add(pending.Dequeue());
 
             var results = await Task.WhenAll(batch.Select(async query =>
-                await GetJsonAsync<List<XionProductSummaryDto>>(
-                    settings,
-                    Expand(settings.Endpoints.ProductSearchWithoutCustomer, settings, query, null),
-                    $"product catalog discovery for '{query}'",
-                    ct) ?? []));
+            {
+                try
+                {
+                    return await GetJsonAsync<List<XionProductSummaryDto>>(
+                        settings,
+                        Expand(settings.Endpoints.ProductSearchWithoutCustomer, settings, query, null),
+                        $"product catalog discovery for '{query}'",
+                        ct) ?? [];
+                }
+                catch (HttpRequestException exception) when (exception.Message.Contains("(400)", StringComparison.Ordinal) || exception.Message.Contains("(404)", StringComparison.Ordinal))
+                {
+                    // Xion rejects some catalog text (for example '%' in a stored brand). It is not a catalog-wide failure.
+                    return [];
+                }
+            }));
             processed += batch.Count;
 
             var newQueries = new HashSet<string>(StringComparer.OrdinalIgnoreCase);

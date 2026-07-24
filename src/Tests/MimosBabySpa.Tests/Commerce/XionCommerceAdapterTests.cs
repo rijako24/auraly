@@ -124,6 +124,32 @@ public sealed class XionCommerceAdapterTests
     }
 
     [Fact]
+    public async Task GetProductIdentityPageAsync_WithPrefixDiscovery_QueriesGenericPrefixes()
+    {
+        var handler = new RoutingHandler(request => request.RequestUri!.AbsolutePath switch
+        {
+            var path when path.Contains("ProductosABuscarSinCliente/1/1/0/0/1/1") =>
+                """[{"IdProducto":7,"DescripcionLarga":"MARCA UNO"}]""",
+            var path when path.Contains("ProductosABuscarSinCliente/1/1/0/ab/1/1") =>
+                """[{"IdProducto":8,"DescripcionLarga":"PRODUCTO AB"}]""",
+            var path when path.Contains("ProductosABuscarSinCliente/1/1/0/") => "[]",
+            var path when path.Contains("InfoProductoSinCliente/7/1/1/1/1") =>
+                """{"IdProducto":7,"DescripcionLarga":"MARCA UNO","Existencias":10,"PrecioPublico1":8000}""",
+            var path when path.Contains("InfoProductoSinCliente/8/1/1/1/1") =>
+                """{"IdProducto":8,"DescripcionLarga":"PRODUCTO AB","Existencias":10,"PrecioPublico1":9000}""",
+            _ => throw new InvalidOperationException($"Unexpected path {request.RequestUri}")
+        });
+        var adapter = new XionCommerceAdapter(new HttpClient(handler), Mock.Of<IUnitOfWork>());
+        var settings = SettingsJson().Replace(
+            "\"endpoints\"",
+            "\"catalogDiscoveryPrefixLength\":2,\"catalogDiscoveryMaxQueries\":1000,\"endpoints\"",
+            StringComparison.Ordinal);
+        var result = await adapter.GetProductIdentityPageAsync(ContextWithoutCustomer(settings), 1, 50);
+        result.Products.Select(product => product.ExternalProductId).Should().Contain("8");
+        handler.Paths.Should().Contain(path => path.Contains("/ab/"));
+    }
+
+    [Fact]
     public async Task GetProductAsync_WithOnlyAName_DoesNotFallBackToLiveProviderSearch()
     {
         var handler = new RoutingHandler(request =>
