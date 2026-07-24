@@ -38,6 +38,7 @@ public class UnitOfWork : IUnitOfWork
     private IServiceAddOnRuleRepository? _serviceAddOnRules;
     private IReservationAddOnRepository? _reservationAddOns;
     private IProductRepository? _products;
+    private IProductCategoryRepository? _productCategories;
     private IProductAliasRepository? _productAliases;
     private ICartMutationReceiptRepository? _cartMutationReceipts;
     private IProductRecommendationRuleRepository? _productRecommendationRules;
@@ -167,6 +168,8 @@ public class UnitOfWork : IUnitOfWork
 
     public IProductRepository Products =>
         _products ??= new ProductRepository(_context);
+    public IProductCategoryRepository ProductCategories =>
+        _productCategories ??= new ProductCategoryRepository(_context);
     public IProductAliasRepository ProductAliases =>
         _productAliases ??= new ProductAliasRepository(_context);
     public ICartMutationReceiptRepository CartMutationReceipts =>

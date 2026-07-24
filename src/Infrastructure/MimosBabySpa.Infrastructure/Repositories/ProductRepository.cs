@@ -56,6 +56,56 @@ public sealed partial class ProductRepository : IProductRepository
             .ToListAsync(ct);
     }
 
+    public async Task<(IReadOnlyList<Product> Items, int TotalCount)> SearchPageAsync(
+        Guid businessId,
+        string? query,
+        string? category,
+        int page,
+        int pageSize,
+        CancellationToken ct = default,
+        bool includeInactive = false)
+    {
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 50);
+        var products = _context.Products
+            .AsNoTracking()
+            .Where(product => product.BusinessId == businessId);
+
+        if (!includeInactive)
+            products = products.Where(product => product.IsActive);
+
+        if (!string.IsNullOrWhiteSpace(category))
+        {
+            foreach (var term in CatalogSearchText.GetSearchTerms(category))
+            {
+                var searchTerm = term;
+                products = products.Where(product =>
+                    product.CategoryName != null && product.CategoryName.Contains(searchTerm));
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(query))
+        {
+            foreach (var term in CatalogSearchText.GetSearchTerms(query))
+            {
+                var searchTerm = term;
+                products = products.Where(product =>
+                    product.Name.Contains(searchTerm)
+                    || product.Sku != null && product.Sku.Contains(searchTerm)
+                    || product.Description != null && product.Description.Contains(searchTerm)
+                    || product.CategoryName != null && product.CategoryName.Contains(searchTerm));
+            }
+        }
+
+        var totalCount = await products.CountAsync(ct);
+        var items = await products
+            .OrderBy(product => product.Name)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .ToListAsync(ct);
+        return (items, totalCount);
+
+    }
     public async Task<(IReadOnlyList<Product> Items, int TotalCount)> GetPagedByBusinessIdAsync(
         Guid businessId,
         int page,

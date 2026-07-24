@@ -56,7 +56,7 @@ public sealed class MigratedSeedConfigurationTests
         }
 
         var compiler = new AgentConfigurationCompiler(new AgentOperationRegistry(
-            [new AvailabilityStub(), new CheckoutStub(), new CreationStub(), new OrderChangesStub(), new CatalogServicesStub(), new ResolveServiceStub(), new AddOnsStub(), new FulfillmentStub(), new MethodStub("reservation.list", "reservation.listed"), new MethodStub("reservation.manage", "reservation.managed"), new MethodStub("commerce.search_recipes", "recipes.found"), new MethodStub("commerce.search_products", "products.found", "products.not_found"), new MethodStub("commerce.get_order_draft", "order.draft_loaded", "order.draft_empty", "order_draft_missing"), new MethodStub("commerce.prepare_checkout", "order.checkout_ready", "order.checkout_payment_required", "order.checkout_pending_manual_payment", "missing_prerequisites", "order_draft_missing", "product_inactive", "checkout_mode_missing", "invalid_order_total", "payment_link_failed", "manual_payment_failed"), new MethodStub("commerce.create_order", "order.created"), new MethodStub("escalation.request_human", "escalation.requested", "escalation.notification_failed"), new MethodStub("conversation.reset_request", "conversation.request_reset"), new MethodStub("conversation.get_known_facts", "known_facts.found", "known_facts.not_found", "known_facts.forbidden"), new MethodStub("internal.get_reservations", "internal.reservations_loaded"), new MethodStub("internal.block_availability", "internal.availability_blocked"), new MethodStub("internal.request_reschedule", "internal.reschedule_requested"), new MethodStub("internal.get_business_metrics", "internal.metrics_loaded"), new MethodStub("internal.get_customer_history", "internal.customer_history_loaded"), new MethodStub("internal.search_order", "internal.order_loaded"), new MethodStub("internal.accept_order", "internal.order_accepted"), new MethodStub("internal.reject_order", "internal.order_rejected")]));
+            [new AvailabilityStub(), new CheckoutStub(), new CreationStub(), new OrderChangesStub(), new CatalogServicesStub(), new ResolveServiceStub(), new AddOnsStub(), new FulfillmentStub(), new MethodStub("reservation.list", "reservation.listed"), new MethodStub("reservation.manage", "reservation.managed"), new MethodStub("commerce.search_recipes", "recipes.found"), new MethodStub("commerce.search_products", "categories.found", "categories.not_found", "products.found", "products.not_found", "catalog.no_more", "products.search_failed"), new MethodStub("commerce.get_order_draft", "order.draft_loaded", "order.draft_empty", "order_draft_missing"), new MethodStub("commerce.prepare_checkout", "order.checkout_ready", "order.checkout_payment_required", "order.checkout_pending_manual_payment", "missing_prerequisites", "order_draft_missing", "product_inactive", "checkout_mode_missing", "invalid_order_total", "payment_link_failed", "manual_payment_failed"), new MethodStub("commerce.create_order", "order.created"), new MethodStub("escalation.request_human", "escalation.requested", "escalation.notification_failed"), new MethodStub("conversation.reset_request", "conversation.request_reset"), new MethodStub("conversation.get_known_facts", "known_facts.found", "known_facts.not_found", "known_facts.forbidden"), new MethodStub("internal.get_reservations", "internal.reservations_loaded"), new MethodStub("internal.block_availability", "internal.availability_blocked"), new MethodStub("internal.request_reschedule", "internal.reschedule_requested"), new MethodStub("internal.get_business_metrics", "internal.metrics_loaded"), new MethodStub("internal.get_customer_history", "internal.customer_history_loaded"), new MethodStub("internal.search_order", "internal.order_loaded"), new MethodStub("internal.accept_order", "internal.order_accepted"), new MethodStub("internal.reject_order", "internal.order_rejected")]));
 
         var compilation = compiler.Compile(config!);
 
@@ -69,7 +69,7 @@ public sealed class MigratedSeedConfigurationTests
     [InlineData("SeedAndinaSantander.sql")]
     [InlineData("SeedCJDistribuciones.sql")]
     [InlineData("SeedMedidental.sql")]
-    public void CommerceCatalogSignals_DeclareExplicitBrowseAndSearchModes(string seedFile)
+    public void CommerceCatalogSignals_DeclareExplicitTypedCatalogModes(string seedFile)
     {
         var root = FindSolutionRoot();
         var path = Path.Combine(
@@ -93,20 +93,107 @@ public sealed class MigratedSeedConfigurationTests
         var schema = catalog.Signal.ValueSchema;
         schema.GetProperty("properties").GetProperty("mode")
             .GetProperty("enum").EnumerateArray().Select(value => value.GetString())
-            .Should().BeEquivalentTo("search", "browse");
+            .Should().BeEquivalentTo("categories", "search", "continue");
         schema.GetProperty("properties").GetProperty("queries")
             .GetProperty("minItems").GetInt32().Should().Be(0);
         schema.GetProperty("required").EnumerateArray()
             .Select(value => value.GetString()).Should().Contain("mode");
-        catalog.ConversationGuidance.Should().Contain("mode=browse")
+        catalog.ConversationGuidance.Should().NotContain("mode=")
+            .And.Contain("resultados autoritativos");
+        catalog.Signal.Description.Should().Contain("mode=categories")
             .And.Contain("mode=search")
-            .And.Contain("coexistir");
+            .And.Contain("mode=continue")
+            .And.Contain("Puede coexistir con order_changes");
         var action = catalog.Actions.Should().ContainSingle(candidate =>
             candidate.Operation == "commerce.search_products").Subject;
         action.Arguments.Should().ContainKey("mode");
         action.Arguments["mode"].ValueKind.Should().Be(JsonValueKind.String);
         action.Arguments["mode"].GetString().Should().Be("{{signal.catalog_query.value.mode}}");
     }
+
+    [Fact]
+    public void AndinaSeed_MapsVerifiedKelloggsBrandVocabularyAsAmbiguousCatalogData()
+    {
+        var root = FindSolutionRoot();
+        var sql = File.ReadAllText(Path.Combine(
+            root,
+            "database",
+            "MimosBabySpa.Database",
+            "Scripts",
+            "Seeds",
+            "SeedAndinaSantander.sql"));
+
+        sql.Should().Contain("N'Kellogg''s', N'kellogg'");
+        sql.Should().Contain("product.IsActive = 1");
+        sql.Should().Contain("product.[Name] LIKE N'%ZUCARITAS%'");
+        sql.Should().Contain("product.[Name] LIKE N'%CHOCOKRISPIS%'");
+        sql.Should().Contain("product.[Name] LIKE N'%FROOT LOOPS%'");
+        sql.Should().Contain("1, 0, 1, 1, 0", "the alias must remain imported, active, and SuggestOnly");
+    }
+
+    [Theory]
+    [InlineData("SeedAndinaSantander.sql", "Encontr\u00e9 estas opciones", "As\u00ed qued\u00f3 cada producto que pediste")]
+    [InlineData("SeedCJDistribuciones.sql", "Encontr\u00e9 estas opciones", "As\u00ed qued\u00f3 cada producto que pediste")]
+    [InlineData("SeedMedidental.sql", "Doc, encontr\u00e9 estas opciones", "Doc, as\u00ed qued\u00f3 cada producto que solicit\u00f3")]
+    public void CommerceSeeds_UseNaturalAuthoritativeTemplates(
+        string seedFile,
+        string catalogOpening,
+        string partialCartOpening)
+    {
+        var root = FindSolutionRoot();
+        var path = Path.Combine(
+            root, "database", "MimosBabySpa.Database", "Scripts", "Seeds", seedFile);
+        var seedSql = File.ReadAllText(path);
+        var settingsJson = ExtractSettingsJson(seedSql, "SettingsJson");
+        var config = JsonSerializer.Deserialize<AgentConfig>(
+            settingsJson,
+            new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true,
+                Converters = { new JsonStringEnumConverter() }
+            })!;
+
+        config.Templates["catalog_results"].Should().Contain(catalogOpening)
+            .And.NotContain("Claro, encontre estas opciones para ti");
+        config.Templates["product_ambiguity"].Should().Contain("varias opciones")
+            .And.NotContain("Quiero asegurarme de agregar la opcion correcta");
+        config.Templates["cart_snapshot"].Should().ContainEquivalentOf("as\u00ed va");
+        seedSql.Should().Contain(partialCartOpening)
+            .And.NotContain("Proces\u00e9 cada producto de tu solicitud:");
+    }
+
+    [Fact]
+    public void AndinaCategorySeed_PreservesTheAuthoritativeFamilia1Catalog()
+    {
+        var root = FindSolutionRoot();
+        var path = Path.Combine(
+            root,
+            "database",
+            "MimosBabySpa.Database",
+            "Scripts",
+            "Seeds",
+            "SeedAndinaProductCategories.sql");
+        var sql = File.ReadAllText(path);
+        var rows = Regex.Matches(
+            sql,
+            @"^\s*\(N'(?<id>\d+)',.+,\s*(?<active>[01]),\s*(?<browsable>[01]),\s*\d+\)[,;]\r?$",
+            RegexOptions.Multiline);
+
+        sql.Should().Contain(
+            "DECLARE @AndinaBusinessId UNIQUEIDENTIFIER = 'A7D1AA00-0000-0000-0000-000000000010';");
+        sql.Should().NotContain(
+            "DECLARE @AndinaBusinessId UNIQUEIDENTIFIER = 'A7D1AA00-0000-0000-0000-000000000001';");
+        rows.Should().HaveCount(231);
+        rows.Select(match => match.Groups["id"].Value)
+            .Should().OnlyHaveUniqueItems();
+        rows.Count(match => match.Groups["active"].Value == "1")
+            .Should().Be(115);
+        rows.Count(match => match.Groups["browsable"].Value == "1")
+            .Should().Be(10);
+        sql.Should().Contain("(N'53', N'DULCES', 1, 1, 1)");
+        sql.Should().Contain("IntegrationConnectionId = @XionConnectionId");
+    }
+
 
     [Theory]
     [InlineData("SeedCJDistribuciones.sql")]
@@ -489,8 +576,8 @@ public sealed class MigratedSeedConfigurationTests
             .And.Contain("Elegir una referencia ofrecida por una consulta no la agrega al pedido")
             .And.Contain("nunca supongas una unidad");
         config.Templates["catalog_results"].Should()
-            .Contain("Cual te interesa y cuantas unidades deseas agregar?")
-            .And.NotContain("Cual te gustaria agregar?");
+            .Contain("\u00bfCu\u00e1l te interesa y cu\u00e1ntas unidades necesitas?")
+            .And.NotContain("Claro, encontre estas opciones para ti");
         config.Templates["order_checkout_no_payment"].Should().Contain("- Recibe: {{delivery_recipient_name}}");
 
         var facts = config.FactSchema.ToDictionary(fact => fact.Key, StringComparer.OrdinalIgnoreCase);
@@ -608,8 +695,8 @@ public sealed class MigratedSeedConfigurationTests
                 })
             .Should().BeTrue("after payment the official checkout summary must be eligible without a reference");
 
-        config.Templates["catalog_results"].Should().Contain("\r\n\r\n*Productos disponibles*\r\n\r\n");
-        config.Templates["cart_snapshot"].Should().Contain("\r\n\r\n*Pedido actual*\r\n\r\n");
+        config.Templates["catalog_results"].Should().Contain("\r\n\r\n{{#each products}}");
+        config.Templates["cart_snapshot"].Should().Contain("\r\n\r\n{{#each items}}");
     }
 
     [Fact]

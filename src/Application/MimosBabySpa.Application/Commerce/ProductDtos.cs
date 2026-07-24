@@ -3,7 +3,8 @@ namespace MimosBabySpa.Application.Commerce;
 public enum ProductCatalogQueryMode
 {
     Search = 0,
-    Browse = 1
+    Categories = 1,
+    Continue = 2
 }
 
 public sealed record ProductLookupRequest(
@@ -41,16 +42,32 @@ public sealed record ProductReference(
     string? RawPayloadJson = null,
     string? FamilyName = null,
     string? SubcategoryName = null,
-    string? ProductClassName = null)
+    string? ProductClassName = null,
+    string? ExternalCategoryId = null,
+    Guid? IntegrationConnectionId = null)
 {
     public bool IsActive { get; init; } = true;
 }
+
+public sealed record ProductCategoryReference(
+    Guid? ProductCategoryId,
+    string? ExternalCategoryId,
+    string Name,
+    int DisplayOrder);
+
+public sealed record ProductCategoryPage(
+    IReadOnlyList<ProductCategoryReference> Categories,
+    bool HasMore,
+    int Page,
+    int PageSize,
+    bool CatalogReady = true);
 
 public sealed record ProductSearchResult(
     IReadOnlyList<ProductReference> Products,
     string Source,
     bool HasMore = false,
-    ProductSearchAppliedFilters? AppliedFilters = null);
+    ProductSearchAppliedFilters? AppliedFilters = null,
+    bool CatalogReady = true);
 
 public sealed record ProductSearchAppliedFilters(
     string? Query,

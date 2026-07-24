@@ -230,8 +230,8 @@ internal static class ProductSelectionMemory
                 continue;
             }
             if (selected is not null
-                && isOfferFollowUp
                 && !string.IsNullOrWhiteSpace(latestOffer.ReplacementReference)
+                && latestOffer.Products.Any(product => SameProduct(product, selected))
                 && command.Operation is CartCommandOperations.Add or CartCommandOperations.SetQuantity
                 && command.Quantity is > 0m)
             {
@@ -336,6 +336,16 @@ internal static class ProductSelectionMemory
         || !string.IsNullOrWhiteSpace(entry.Sku)
             && candidate.Sku?.Equals(entry.Sku, StringComparison.OrdinalIgnoreCase) == true
         || Normalize(entry.ResolvedName).Equals(Normalize(candidate.Name), StringComparison.Ordinal);
+
+    private static bool SameProduct(
+        ProductCandidate left,
+        ProductCandidate right) =>
+        left.ProductId.HasValue && left.ProductId == right.ProductId
+        || !string.IsNullOrWhiteSpace(left.ExternalProductId)
+            && left.ExternalProductId.Equals(right.ExternalProductId, StringComparison.OrdinalIgnoreCase)
+        || !string.IsNullOrWhiteSpace(left.Sku)
+            && left.Sku.Equals(right.Sku, StringComparison.OrdinalIgnoreCase)
+        || Normalize(left.Name).Equals(Normalize(right.Name), StringComparison.Ordinal);
 
     public static bool TryGetSelected(AgentConversationContext ctx, out ProductCandidate candidate) =>
         TryReadCandidate(ctx, SelectedProductKey, out candidate);

@@ -1,8 +1,10 @@
+using System.Collections.Concurrent;
 using System.Globalization;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using MimosBabySpa.Application.Commerce;
+using MimosBabySpa.Domain.Catalog;
 using MimosBabySpa.Domain.Entities;
 using MimosBabySpa.Domain.Enums;
 using MimosBabySpa.Domain.Repositories;
@@ -22,8 +24,17 @@ public sealed class XionCommerceAdapter :
         PropertyNameCaseInsensitive = true
     };
 
+    private static readonly string[] CatalogDiscoverySeedQueries =
+    [
+        "0",
+        .. Enumerable.Range('a', 26).Select(value => ((char)value).ToString()),
+        .. Enumerable.Range(1, 9).Select(value => value.ToString(CultureInfo.InvariantCulture))
+    ];
+
     private readonly HttpClient _httpClient;
     private readonly IUnitOfWork _unitOfWork;
+    private readonly ConcurrentDictionary<Guid, Task<IReadOnlyList<XionProductSummaryDto>>>
+        _catalogDiscoveries = new();
 
     public XionCommerceAdapter(HttpClient httpClient, IUnitOfWork unitOfWork)
     {
@@ -104,14 +115,6 @@ public sealed class XionCommerceAdapter :
     {
         var settings = XionSettings.From(RequireConnection(context));
         var query = Clean(request.Query);
-        var hasConcreteCriteria = query is not null
-            || !string.IsNullOrWhiteSpace(request.Category)
-            || !string.IsNullOrWhiteSpace(request.Family)
-            || !string.IsNullOrWhiteSpace(request.Subcategory)
-            || !string.IsNullOrWhiteSpace(request.ProductClass);
-        if (request.Mode == ProductCatalogQueryMode.Browse
-            && !hasConcreteCriteria)
-            query = Clean(settings.CatalogBrowseSearchValue);
         if (query is null)
             return new ProductSearchResult([], "xion", false, ProductSearchAppliedFilters.From(request));
 
@@ -122,8 +125,10 @@ public sealed class XionCommerceAdapter :
         var summaries = await GetJsonAsync<List<XionProductSummaryDto>>(
             settings, Expand(template, settings, query, customerId), "product search", ct) ?? [];
         var limit = Math.Clamp(request.Limit, 1, 50);
+        var page = Math.Max(request.Page, 1);
+        var skip = (page - 1) * limit;
         var products = new List<ProductReference>();
-        foreach (var summary in summaries.Take(limit))
+        foreach (var summary in summaries.Skip(skip).Take(limit))
         {
             var product = await GetProductByIdAsync(summary.IdProducto, customerId, settings, ct);
             var mapped = product is null ? null : XionMapper.ToProductReference(product, settings.Currency);
@@ -131,7 +136,7 @@ public sealed class XionCommerceAdapter :
                 products.Add(await AttachExistingSnapshotIdAsync(context, mapped, ct));
         }
         return new ProductSearchResult(
-            products, "xion-live", summaries.Count > limit, ProductSearchAppliedFilters.From(request));
+            products, "xion-live", summaries.Count > skip + limit, ProductSearchAppliedFilters.From(request));
     }
 
     public async Task<ProductReference?> GetProductAsync(
@@ -146,13 +151,7 @@ public sealed class XionCommerceAdapter :
             var mapped = product is null ? null : XionMapper.ToProductReference(product, settings.Currency);
             return mapped is null ? null : await AttachExistingSnapshotIdAsync(context, mapped, ct);
         }
-        var query = Clean(request.Name);
-        if (query is null)
-            return null;
-        var result = await SearchProductsAsync(new ProductSearchRequest(query, null, 10), context, ct);
-        return result.Products.FirstOrDefault(product =>
-                   string.Equals(product.Name, query, StringComparison.OrdinalIgnoreCase))
-               ?? result.Products.FirstOrDefault();
+        return null;
     }
 
     public async Task<ProductIdentityPage> GetProductIdentityPageAsync(
@@ -161,19 +160,161 @@ public sealed class XionCommerceAdapter :
         int pageSize,
         CancellationToken ct = default)
     {
-        var settings = XionSettings.From(RequireConnection(context));
-        var products = await GetJsonAsync<List<XionProductDto>>(
-            settings,
-            Expand(settings.Endpoints.ProductSync, settings, null, null),
-            "product synchronization",
-            ct) ?? [];
-        var size = Math.Clamp(pageSize, 1, 500);
-        var skip = (Math.Max(page, 1) - 1) * size;
-        var mapped = products.Skip(skip).Take(size)
-            .Select(product => XionMapper.ToProductReference(product, settings.Currency))
-            .OfType<ProductReference>()
+        var connection = RequireConnection(context);
+        var settings = XionSettings.From(connection);
+        var currentPage = Math.Max(page, 1);
+        if (settings.CatalogProductIdRanges.Count > 0)
+            return await GetProductIdentityRangePageAsync(settings, currentPage, pageSize, ct);
+        if (currentPage == 1)
+            _catalogDiscoveries.TryRemove(connection.IntegrationConnectionId, out _);
+
+        var discovery = _catalogDiscoveries.GetOrAdd(
+            connection.IntegrationConnectionId,
+            _ => DiscoverProductSummariesAsync(settings, ct));
+        IReadOnlyList<XionProductSummaryDto> summaries;
+        try
+        {
+            summaries = await discovery.WaitAsync(ct);
+        }
+        catch
+        {
+            _catalogDiscoveries.TryRemove(connection.IntegrationConnectionId, out _);
+            throw;
+        }
+
+        var size = Math.Clamp(pageSize, 1, 50);
+        var skip = (currentPage - 1) * size;
+        var mapped = new List<ProductReference>();
+        foreach (var summary in summaries.Skip(skip).Take(size))
+        {
+            var product = await GetProductByIdAsync(summary.IdProducto, null, settings, ct);
+            var reference = product is null
+                ? null
+                : XionMapper.ToProductReference(product, settings.Currency);
+            if (reference is not null)
+                mapped.Add(reference);
+        }
+
+        var hasMore = summaries.Count > skip + size;
+        if (!hasMore)
+            _catalogDiscoveries.TryRemove(connection.IntegrationConnectionId, out _);
+        return new ProductIdentityPage(mapped, hasMore);
+    }
+
+    private async Task<ProductIdentityPage> GetProductIdentityRangePageAsync(
+        XionSettings settings,
+        int page,
+        int pageSize,
+        CancellationToken ct)
+    {
+        var size = Math.Clamp(pageSize, 1, 50);
+        var skip = checked((long)(page - 1) * size);
+        var total = settings.CatalogProductIdRanges.Sum(
+            range => (long)range.End - range.Start + 1);
+        var count = (int)Math.Min(size, Math.Max(0, total - skip));
+        if (count == 0)
+            return new ProductIdentityPage([], false);
+
+        var candidateIds = Enumerable.Range(0, count)
+            .Select(offset => ProductIdAt(settings.CatalogProductIdRanges, skip + offset))
             .ToList();
-        return new ProductIdentityPage(mapped, products.Count > skip + size);
+        using var gate = new SemaphoreSlim(settings.CatalogDiscoveryConcurrency);
+        var products = await Task.WhenAll(candidateIds.Select(async productId =>
+        {
+            await gate.WaitAsync(ct);
+            try
+            {
+                var query = productId.ToString(CultureInfo.InvariantCulture);
+                var summaries = await GetJsonAsync<List<XionProductSummaryDto>>(
+                    settings,
+                    Expand(settings.Endpoints.ProductSearchWithoutCustomer, settings, query, null),
+                    $"product catalog identity lookup for '{query}'",
+                    ct) ?? [];
+                if (!summaries.Any(summary => summary.IdProducto == productId))
+                    return null;
+
+                var product = await GetProductByIdAsync(productId, null, settings, ct);
+                return product is null || product.IdProducto != productId
+                    ? null
+                    : XionMapper.ToProductReference(product, settings.Currency);
+            }
+            finally
+            {
+                gate.Release();
+            }
+        }));
+
+        return new ProductIdentityPage(
+            products
+                .OfType<ProductReference>()
+                .GroupBy(product => product.ExternalProductId, StringComparer.OrdinalIgnoreCase)
+                .Select(group => group.First())
+                .ToList(),
+            skip + count < total);
+    }
+
+    private static int ProductIdAt(IReadOnlyList<XionProductIdRange> ranges, long index)
+    {
+        foreach (var range in ranges)
+        {
+            var length = (long)range.End - range.Start + 1;
+            if (index < length)
+                return checked(range.Start + (int)index);
+            index -= length;
+        }
+        throw new ArgumentOutOfRangeException(nameof(index));
+    }
+
+    private async Task<IReadOnlyList<XionProductSummaryDto>> DiscoverProductSummariesAsync(
+        XionSettings settings,
+        CancellationToken ct)
+    {
+        var discovered = new Dictionary<int, XionProductSummaryDto>();
+        var queued = new HashSet<string>(CatalogDiscoverySeedQueries, StringComparer.OrdinalIgnoreCase);
+        var pending = new Queue<string>(CatalogDiscoverySeedQueries);
+        var processed = 0;
+
+        while (pending.Count > 0 && processed < settings.CatalogDiscoveryMaxQueries)
+        {
+            var batch = new List<string>(settings.CatalogDiscoveryConcurrency);
+            while (pending.Count > 0
+                   && batch.Count < settings.CatalogDiscoveryConcurrency
+                   && processed + batch.Count < settings.CatalogDiscoveryMaxQueries)
+                batch.Add(pending.Dequeue());
+
+            var results = await Task.WhenAll(batch.Select(async query =>
+                await GetJsonAsync<List<XionProductSummaryDto>>(
+                    settings,
+                    Expand(settings.Endpoints.ProductSearchWithoutCustomer, settings, query, null),
+                    $"product catalog discovery for '{query}'",
+                    ct) ?? []));
+            processed += batch.Count;
+
+            var newQueries = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var summary in results.SelectMany(items => items))
+            {
+                if (summary.IdProducto <= 0 || !discovered.TryAdd(summary.IdProducto, summary))
+                    continue;
+
+                foreach (var token in ProductSearchText.NormalizeWords(summary.DescripcionLarga)
+                             .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                             .Where(token => token.Length >= 3 && token.Any(char.IsLetter)))
+                {
+                    if (!queued.Contains(token))
+                        newQueries.Add(token);
+                }
+            }
+
+            foreach (var query in newQueries
+                         .OrderByDescending(value => value.Length)
+                         .ThenBy(value => value, StringComparer.Ordinal))
+            {
+                if (queued.Add(query))
+                    pending.Enqueue(query);
+            }
+        }
+
+        return discovered.Values.OrderBy(product => product.IdProducto).ToList();
     }
 
     public async Task<ExternalCustomerIdentityPage> GetCustomerIdentityPageAsync(
@@ -406,6 +547,8 @@ public sealed class XionCommerceAdapter :
         if (!response.IsSuccessStatusCode)
             throw new HttpRequestException(
                 $"Xion {operation} failed ({(int)response.StatusCode}).", null, response.StatusCode);
+        if (string.IsNullOrWhiteSpace(text))
+            return default;
         return JsonSerializer.Deserialize<T>(text, JsonOptions);
     }
 
@@ -446,7 +589,13 @@ public sealed class XionCommerceAdapter :
             return reference;
         var existing = await _unitOfWork.Products.GetByExternalIdAsync(
             context.BusinessId, context.Connection.IntegrationConnectionId, reference.ExternalProductId, ct);
-        return existing is null ? reference : reference with { ProductId = existing.ProductId };
+        return existing is null
+            ? reference
+            : reference with
+            {
+                ProductId = existing.ProductId,
+                CategoryName = existing.CategoryName ?? reference.CategoryName
+            };
     }
 
     private static CommerceCustomerReference ToCustomerReference(ExternalCommerceCustomer customer) =>

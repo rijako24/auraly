@@ -1,6 +1,7 @@
 CREATE TABLE [dbo].[Products] (
     [ProductId] UNIQUEIDENTIFIER NOT NULL PRIMARY KEY DEFAULT NEWID(),
     [BusinessId] UNIQUEIDENTIFIER NOT NULL,
+    [ProductCategoryId] UNIQUEIDENTIFIER NULL,
     [IntegrationConnectionId] UNIQUEIDENTIFIER NULL,
     [ExternalProductId] NVARCHAR(300) NULL,
     [Source] INT NOT NULL DEFAULT 0,
@@ -23,6 +24,9 @@ CREATE TABLE [dbo].[Products] (
         ON DELETE NO ACTION,
     CONSTRAINT [FK_Products_IntegrationConnections] FOREIGN KEY ([IntegrationConnectionId])
         REFERENCES [dbo].[IntegrationConnections] ([IntegrationConnectionId])
+        ON DELETE NO ACTION,
+    CONSTRAINT [FK_Products_ProductCategories] FOREIGN KEY ([ProductCategoryId])
+        REFERENCES [dbo].[ProductCategories] ([ProductCategoryId])
         ON DELETE NO ACTION,
     CONSTRAINT [CK_Products_Source] CHECK ([Source] IN (0, 1))
 );

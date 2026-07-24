@@ -52,7 +52,7 @@ public sealed class CatalogRecommendationOperationTests
                 "Combina bien con la pechuga."));
         var facts = new Mock<IConversationFactsService>();
         var operation = new SearchProductsOperation(commerce.Object, facts.Object, recommendations.Object);
-        using var arguments = JsonDocument.Parse("""{"query":"pechuga","limit":10}""");
+        using var arguments = JsonDocument.Parse("""{"mode":"search","query":"pechuga","limit":10}""");
 
         var outcome = await operation.ExecuteAsync(
             arguments.RootElement,

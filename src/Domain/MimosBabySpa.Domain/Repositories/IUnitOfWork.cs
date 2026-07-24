@@ -34,6 +34,7 @@ public interface IUnitOfWork : IDisposable
     IServiceAddOnRuleRepository ServiceAddOnRules { get; }
     IReservationAddOnRepository ReservationAddOns { get; }
     IProductRepository Products { get; }
+    IProductCategoryRepository ProductCategories { get; }
     IProductAliasRepository ProductAliases { get; }
     ICartMutationReceiptRepository CartMutationReceipts { get; }
     IProductRecommendationRuleRepository ProductRecommendationRules { get; }

@@ -175,18 +175,22 @@ internal sealed class TurnPlanPilotRunner
             var shoppingContext = CommerceSelectionPlanningContextEnricher.Build(facts, config.Commerce, lastBotMessage);
             if (shoppingContext is not null)
                 structuredContext[shoppingContext.Key] = shoppingContext.Value;
-            var proposal = await _planner.PlanAsync(
-                new TurnPlanningContext(config, stage, scope, facts, test.Message, businessNow,
-                    ExtractorConversationProjector.Project(config, test.History.Select(ToChatMessage).ToList()), structuredContext),
-                cancellationToken);
+            var planningContext = new TurnPlanningContext(
+                config, stage, scope, facts, test.Message, businessNow,
+                ExtractorConversationProjector.Project(config, test.History.Select(ToChatMessage).ToList()),
+                structuredContext);
+            var proposal = await _planner.PlanAsync(planningContext, cancellationToken);
 
             var evaluatedProposal = proposal;
             if (test.ApplyRuntimeGuards && proposal.Plan is not null)
             {
                 evaluatedProposal = proposal with
                 {
-                    Plan = DeterministicTurnCoordinator.ProtectPendingCommerceSelection(
-                        config, facts, test.Message, proposal.Plan)
+                    Plan = CommerceTurnPlanSafety.AuthorizeRecoveredCartMutations(
+                        proposal.Plan,
+                        DeterministicTurnCoordinator.ProtectPendingCommerceSelection(
+                            config, facts, test.Message, proposal.Plan),
+                        planningContext)
                 };
             }
             var errors = ValidateEvaluation(test, evaluatedProposal, businessNow);

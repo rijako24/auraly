@@ -203,11 +203,16 @@ public sealed class CjCompleteOrderFlowRegressionTests
         flow.Cart.Quantity("MAIZ TIERNO CONGELADO").Should().Be(2,
             "choosing an offered product without quantity is not a mutation");
 
-        await flow.TurnAsync(
+        var replacement = await flow.TurnAsync(
             "Ponme 5 de ese",
             Changes(SetQuantity("MAIZ SUPER DULCE X 500 GR", 5)));
-        flow.Cart.Items.Should().NotContain(item => item.ProductName == "MAIZ TIERNO CONGELADO");
-        flow.Cart.Quantity("MAIZ SUPER DULCE X 500 GR").Should().Be(5);
+        var replacementTrace = JsonSerializer.Serialize(replacement.Trace.Select(trace => new
+        {
+            trace.OperationId, trace.OutcomeCode, trace.SkipReason, trace.ArgumentsJson
+        }));
+        flow.Cart.Items.Should().NotContain(
+            item => item.ProductName == "MAIZ TIERNO CONGELADO", replacementTrace);
+        flow.Cart.Quantity("MAIZ SUPER DULCE X 500 GR").Should().Be(5, replacementTrace);
 
         var breastQuestion = await flow.TurnAsync(
             "¿Qué otras pechugas tienes?",
@@ -563,6 +568,7 @@ public sealed class CjCompleteOrderFlowRegressionTests
         [
             Signal("catalog_query", new
             {
+                mode = "search",
                 queries,
                 replacement_reference = replacementReference
             })
@@ -780,8 +786,22 @@ public sealed class CjCompleteOrderFlowRegressionTests
                     items = Cart.Items.Select(item => new { name = item.ProductName, item.Quantity })
                 });
             }
+            var groundedPlan = new TurnPlan
+            {
+                FlowIntent = Next.FlowIntent,
+                Facts = Next.Facts,
+                Signals = Next.Signals.Select(signal => new PlannedSignal
+                {
+                    Type = signal.Type,
+                    Value = signal.Value,
+                    Evidence = context.LatestUserMessage,
+                    Confidence = signal.Confidence
+                }).ToArray(),
+                Decision = Next.Decision,
+                Response = Next.Response
+            };
             var normalized = CommerceTurnPlanSafety.Normalize(
-                Next,
+                groundedPlan,
                 context with { StructuredContext = structured });
             return Task.FromResult(new TurnPlanProposal(true, normalized, [], 0, 0));
         }

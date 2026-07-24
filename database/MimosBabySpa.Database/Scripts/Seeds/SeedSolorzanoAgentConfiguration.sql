@@ -1159,6 +1159,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
               "operation": "commerce.search_products",
               "arguments": {
                 "query": "{{user.message}}",
+                "mode": "search",
                 "limit": 10
               },
               "onOutcome": {
@@ -1171,7 +1172,8 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
               "trigger": "on_signal",
               "signal": "product_search",
               "arguments": {
-                "query": "{{signal.product_search.value}}"
+                "query": "{{signal.product_search.value}}",
+                "mode": "search"
               },
               "onOutcome": {
                 "products.found": {}

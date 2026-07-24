@@ -40,7 +40,7 @@ public sealed class SearchProductsOperation : IAgentOperation
             "family": { "type": "string" },
             "subcategory": { "type": "string" },
             "product_class": { "type": "string" },
-            "mode": { "description": "Catalog intent: search for concrete terms or browse a representative page without a product term.", "type": "string", "enum": ["search", "browse"] },
+            "mode": { "description": "Typed catalog intent: list categories, search concrete products, or continue the previous result set.", "type": "string", "enum": ["categories", "search", "continue"] },
             "limit": { "type": "integer", "minimum": 1, "maximum": 50 },
             "page": { "type": "integer", "minimum": 1 },
             "include_stock": { "type": "boolean" },
@@ -51,19 +51,30 @@ public sealed class SearchProductsOperation : IAgentOperation
 
     public OperationDescriptor Descriptor { get; } = new(
         "commerce.search_products", InputSchema,
-        ["products.found", "products.not_found", "products.search_failed"],
+        ["categories.found", "categories.not_found", "products.found", "products.not_found", "catalog.no_more", "catalog.not_ready", "products.search_failed"],
         [], [], []);
 
-    public async Task<OperationOutcome> ExecuteAsync(
+    public Task<OperationOutcome> ExecuteAsync(
         JsonElement arguments,
         OperationContext context,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default) =>
+        ExecuteAsync(arguments, context, preserveSavedQueries: false, cancellationToken);
+
+    private async Task<OperationOutcome> ExecuteAsync(
+        JsonElement arguments,
+        OperationContext context,
+        bool preserveSavedQueries,
+        CancellationToken cancellationToken)
     {
         var ctx = context.Session
             ?? throw new InvalidOperationException("commerce.search_products requires a conversation session.");
+        var mode = ReadMode(arguments);
+        if (mode == ProductCatalogQueryMode.Categories)
+            return await ExecuteCategoriesAsync(ctx, arguments, cancellationToken);
+        if (mode == ProductCatalogQueryMode.Continue)
+            return await ExecuteContinuationAsync(ctx, context, cancellationToken);
+
         var query = OperationJsonHelper.TryGetString(arguments, "query", out var q) ? q : null;
-        if (ProductSearchText.IsCatalogBrowseQuery(query))
-            query = null;
         var category = OperationJsonHelper.TryGetString(arguments, "category", out var c) ? c : null;
         var family = OperationJsonHelper.TryGetString(arguments, "family", out var f) ? f : null;
         var subcategory = OperationJsonHelper.TryGetString(arguments, "subcategory", out var sc) ? sc : null;
@@ -75,13 +86,32 @@ public sealed class SearchProductsOperation : IAgentOperation
             ? rr
             : null;
         var requestedQueries = ReadQueries(arguments, query);
-        var mode = DetermineMode(requestedQueries, query, category, family, subcategory, productClass);
-        if (mode == ProductCatalogQueryMode.Browse)
+        var queries = preserveSavedQueries
+            ? requestedQueries
+            : GroundQueriesInRecentOffers(ctx, requestedQueries);
+        if (queries.Count == 1
+            && string.IsNullOrWhiteSpace(category)
+            && string.IsNullOrWhiteSpace(family)
+            && string.IsNullOrWhiteSpace(subcategory)
+            && string.IsNullOrWhiteSpace(productClass))
         {
-            query = null;
-            requestedQueries = [];
+            var resolvedCategory = await _commerce.ResolveCategoryNameAsync(
+                ctx, queries[0], cancellationToken);
+            if (resolvedCategory is not null)
+            {
+                category = resolvedCategory;
+                query = null;
+                queries = [];
+            }
         }
-        var queries = GroundQueriesInRecentOffers(ctx, requestedQueries);
+        if (queries.Count == 0
+            && string.IsNullOrWhiteSpace(category)
+            && string.IsNullOrWhiteSpace(family)
+            && string.IsNullOrWhiteSpace(subcategory)
+            && string.IsNullOrWhiteSpace(productClass))
+            return OperationOutcome.Fail(
+                "products.search_failed", "Search mode requires a concrete local catalog criterion.", true);
+
         var request = new ProductSearchRequest(
             query, category, limit, includeStock, family, subcategory, productClass, page, mode);
         var execution = await ExecuteQueriesAsync(ctx, queries, request, null, cancellationToken);
@@ -117,6 +147,26 @@ public sealed class SearchProductsOperation : IAgentOperation
             }
         }
         var result = execution.Result;
+        if (!result.CatalogReady)
+        {
+            return OperationOutcome.Ok("catalog.not_ready", new
+            {
+                count = 0,
+                response_guidance = "State that the synchronized local catalog is not ready yet. Do not claim that the product does not exist and do not search the external provider."
+            });
+        }
+
+        if (_factsService is not null)
+        {
+            await CatalogQueryMemory.RememberProductsAsync(
+                _factsService,
+                ctx,
+                request,
+                execution.SearchTerms,
+                result.HasMore,
+                replacementReference,
+                cancellationToken);
+        }
 
         var previouslyRecommended = CatalogRecommendationMemory.Read(ctx.Facts)?.Products
             .Select(product => product.ToProductReference())
@@ -180,6 +230,111 @@ public sealed class SearchProductsOperation : IAgentOperation
             response_guidance = "Present products as the main catalog results and keep recommendations in a separate, clearly optional section. Present at most the single returned recommendation; never merge it into the main options or invent another one. If unmatched_search_terms contains values, state briefly that those terms had no related catalog result; never substitute unrelated products for them. Show product name/presentation plus unit_price with currency when available. Do not show SKU/code, external ids, raw catalog ids, or stock quantities/status in normal product options. Use SKU/code only internally for operation calls. Mention available stock quantity only when a requested quantity is greater than the returned available stock, then ask whether the customer wants the available quantity instead. Do not omit returned prices for sellable product options, and do not invent missing prices."
         });
     }
+    private async Task<OperationOutcome> ExecuteCategoriesAsync(
+        AgentConversationContext context,
+        JsonElement arguments,
+        CancellationToken cancellationToken)
+    {
+        var page = OperationJsonHelper.TryGetInt(arguments, "page", out var requestedPage)
+            ? Math.Max(requestedPage, 1)
+            : 1;
+        var pageSize = OperationJsonHelper.TryGetInt(arguments, "limit", out var requestedLimit)
+            ? Math.Clamp(requestedLimit, 1, 50)
+            : 10;
+        var result = await _commerce.BrowseCategoriesAsync(context, page, pageSize, cancellationToken);
+        if (!result.CatalogReady)
+        {
+            return OperationOutcome.Ok("catalog.not_ready", new
+            {
+                count = 0,
+                response_guidance = "State that the synchronized local catalog is not ready yet. Do not invent categories and do not search the external provider."
+            });
+        }
+
+        if (_factsService is not null)
+        {
+            await CatalogQueryMemory.RememberCategoriesAsync(
+                _factsService,
+                context,
+                result.Page,
+                result.PageSize,
+                result.HasMore,
+                cancellationToken);
+        }
+
+        var outcomeCode = result.Categories.Count == 0
+            ? "categories.not_found"
+            : "categories.found";
+        return OperationOutcome.Ok(outcomeCode, new
+        {
+            count = result.Categories.Count,
+            categories = result.Categories.Select(category => new
+            {
+                name = category.Name
+            }).ToList(),
+            page = result.Page,
+            has_more = result.HasMore,
+            selection_status = "catalog_categories",
+            response_guidance = "Present the returned categories as the official catalog navigation. Do not invent products, prices, category names or category counts. Invite the customer to choose one category or name a specific product they need. If has_more is true, mention briefly that more categories are available."
+        });
+    }
+
+    private async Task<OperationOutcome> ExecuteContinuationAsync(
+        AgentConversationContext session,
+        OperationContext operationContext,
+        CancellationToken cancellationToken)
+    {
+        var cursor = CatalogQueryMemory.Read(session.Facts);
+        if (cursor is null || !cursor.HasMore)
+        {
+            return OperationOutcome.Ok("catalog.no_more", new
+            {
+                count = 0,
+                has_more = false,
+                response_guidance = "State briefly that there are no more options in the previous catalog result set. Invite the customer to choose a shown category/product or start a new specific search."
+            });
+        }
+
+        if (cursor.Kind == CatalogQueryCursorKind.Categories)
+        {
+            var categoryArguments = JsonSerializer.SerializeToElement(new
+            {
+                mode = "categories",
+                page = cursor.NextPage,
+                limit = cursor.PageSize
+            });
+            return await ExecuteCategoriesAsync(session, categoryArguments, cancellationToken);
+        }
+
+        var productArguments = JsonSerializer.SerializeToElement(new
+        {
+            mode = "search",
+            queries = cursor.Queries,
+            category = cursor.Category,
+            family = cursor.Family,
+            subcategory = cursor.Subcategory,
+            product_class = cursor.ProductClass,
+            page = cursor.NextPage,
+            limit = cursor.PageSize,
+            include_stock = cursor.IncludeStock,
+            replacement_reference = cursor.ReplacementReference
+        });
+        return await ExecuteAsync(productArguments, operationContext, preserveSavedQueries: true, cancellationToken);
+    }
+
+    private static ProductCatalogQueryMode ReadMode(JsonElement arguments)
+    {
+        if (!OperationJsonHelper.TryGetString(arguments, "mode", out var rawMode))
+            throw new InvalidOperationException("commerce.search_products requires an explicit catalog mode.");
+        return rawMode.Trim().ToLowerInvariant() switch
+        {
+            "categories" => ProductCatalogQueryMode.Categories,
+            "search" => ProductCatalogQueryMode.Search,
+            "continue" => ProductCatalogQueryMode.Continue,
+            _ => throw new InvalidOperationException($"Unsupported catalog mode '{rawMode}'.")
+        };
+    }
+
     private async Task<SearchExecution> ExecuteQueriesAsync(
         AgentConversationContext context,
         IReadOnlyList<string> queries,
@@ -210,14 +365,6 @@ public sealed class SearchProductsOperation : IAgentOperation
         CancellationToken cancellationToken)
     {
         var result = await _commerce.SearchProductsAsync(ctx, request, cancellationToken);
-        if (result.Products.Count == 0 && string.IsNullOrWhiteSpace(request.Query) && !string.IsNullOrWhiteSpace(request.Category))
-        {
-            var fallbackQuery = request.Category.Trim();
-            result = await _commerce.SearchProductsAsync(
-                ctx,
-                request with { Query = fallbackQuery, Category = null },
-                cancellationToken);
-        }
 
         result = FilterSemanticallyRelevantProducts(result, relevanceQuery ?? request.Query, ctx.Config?.Commerce.Matching);
         return PreferExactNameMatches(result, request.Query, ctx.Config?.Commerce.Matching);
@@ -459,28 +606,11 @@ public sealed class SearchProductsOperation : IAgentOperation
 
         return values
             .Where(value => !string.IsNullOrWhiteSpace(value))
-            .Where(value => !ProductSearchText.IsCatalogBrowseQuery(value))
             .Select(value => value.Trim())
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .Take(8)
             .ToList();
     }
-
-    private static ProductCatalogQueryMode DetermineMode(
-        IReadOnlyList<string> queries,
-        string? query,
-        string? category,
-        string? family,
-        string? subcategory,
-        string? productClass)
-        => queries.Count > 0
-           || !string.IsNullOrWhiteSpace(query)
-           || !string.IsNullOrWhiteSpace(category)
-           || !string.IsNullOrWhiteSpace(family)
-           || !string.IsNullOrWhiteSpace(subcategory)
-           || !string.IsNullOrWhiteSpace(productClass)
-                ? ProductCatalogQueryMode.Search
-                : ProductCatalogQueryMode.Browse;
 
     private static void AddQueries(List<string> values, JsonElement element)
     {

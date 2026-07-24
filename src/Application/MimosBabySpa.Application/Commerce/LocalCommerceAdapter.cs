@@ -15,12 +15,14 @@ public sealed class LocalCommerceAdapter : ICommerceAdapter
 
     public async Task<ProductSearchResult> SearchProductsAsync(ProductSearchRequest request, CommerceAdapterContext ctx, CancellationToken ct = default)
     {
-        var repositoryLimit = HasStructuredFilters(request) ? 50 : request.Limit;
-        var products = await _unitOfWork.Products.SearchAsync(
+        var page = Math.Max(request.Page, 1);
+        var pageSize = Math.Clamp(HasStructuredFilters(request) ? 50 : request.Limit, 1, 50);
+        var (products, totalCount) = await _unitOfWork.Products.SearchPageAsync(
             ctx.BusinessId,
             request.Query,
             request.Category,
-            repositoryLimit,
+            page,
+            pageSize,
             ct,
             includeInactive: true);
         var filtered = products
@@ -31,7 +33,7 @@ public sealed class LocalCommerceAdapter : ICommerceAdapter
         return new ProductSearchResult(
             filtered,
             Source,
-            false,
+            totalCount > page * pageSize,
             ProductSearchAppliedFilters.From(request));
     }
 

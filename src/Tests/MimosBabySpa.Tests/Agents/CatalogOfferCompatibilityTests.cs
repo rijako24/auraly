@@ -8,10 +8,10 @@ using Xunit;
 
 namespace MimosBabySpa.Tests.Agents;
 
-public sealed class CatalogOfferCompatibilityTests
+public sealed class CatalogOfferSchemaTests
 {
     [Fact]
-    public async Task LegacySnapshotPreservesIdentityPriceAndStockDuringResolution()
+    public async Task CurrentSnapshotPreservesIdentityPriceAndStockDuringResolution()
     {
         var productId = Guid.NewGuid();
         var context = new AgentConversationContext
@@ -21,15 +21,23 @@ public sealed class CatalogOfferCompatibilityTests
             Facts = new Dictionary<string, string>
             {
                 ["system.catalog_products"] = $$"""
-                    [{
-                      "product_id":"{{productId}}",
-                      "external_product_id":"CF59",
-                      "sku":"CF59",
-                      "name":"SALCHICHA LONG X 550GR",
-                      "unit_price":16023.21,
-                      "currency":"COP",
-                      "stock_quantity":49
-                    }]
+                    {
+                      "schemaVersion":2,
+                      "sequence":1,
+                      "snapshots":[{
+                        "sequence":1,
+                        "searchTerms":["salchicha"],
+                        "products":[{
+                          "productId":"{{productId}}",
+                          "externalProductId":"CF59",
+                          "sku":"CF59",
+                          "name":"SALCHICHA LONG X 550GR",
+                          "unitPrice":16023.21,
+                          "currency":"COP",
+                          "stockQuantity":49
+                        }]
+                      }]
+                    }
                     """
             }
         };

@@ -382,27 +382,40 @@ public sealed class ApplyOrderChangesOperationTests
         first.Code.Should().Be("cart.product_not_found");
         store.ApplyCalls.Should().Be(0);
         session.Facts.Should().ContainKey("system.pending_cart_commands");
-        session.Facts["system.catalog_products"] = JsonSerializer.Serialize(new[]
+        session.Facts["system.catalog_products"] = JsonSerializer.Serialize(new
         {
-            new
+            schemaVersion = 2,
+            sequence = 1,
+            snapshots = new[]
             {
-                product_id = (Guid?)null,
-                external_product_id = "CF59",
-                sku = "CF59",
-                name = "SALCHICHA LONG X 550GR",
-                unit_price = 16023.21m,
-                currency = "COP",
-                stock_quantity = (decimal?)49
-            },
-            new
-            {
-                product_id = (Guid?)null,
-                external_product_id = "CF20",
-                sku = "CF20",
-                name = "SALCHICHA LONG X 1100 G X 20UND",
-                unit_price = 28032.50m,
-                currency = "COP",
-                stock_quantity = (decimal?)113
+                new
+                {
+                    sequence = 1,
+                    searchTerms = new[] { "salchicha" },
+                    products = new[]
+                    {
+                        new
+                        {
+                            productId = (Guid?)null,
+                            externalProductId = "CF59",
+                            sku = "CF59",
+                            name = "SALCHICHA LONG X 550GR",
+                            unitPrice = 16023.21m,
+                            currency = "COP",
+                            stockQuantity = (decimal?)49
+                        },
+                        new
+                        {
+                            productId = (Guid?)null,
+                            externalProductId = "CF20",
+                            sku = "CF20",
+                            name = "SALCHICHA LONG X 1100 G X 20UND",
+                            unitPrice = 28032.50m,
+                            currency = "COP",
+                            stockQuantity = (decimal?)113
+                        }
+                    }
+                }
             }
         });
         session.LatestUserMessage = "Salchicha long x 550 gr";

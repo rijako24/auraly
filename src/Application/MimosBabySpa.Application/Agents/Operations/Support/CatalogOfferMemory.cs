@@ -10,10 +10,6 @@ internal static class CatalogOfferMemory
     public const string FactKey = "system.catalog_products";
     private const int SchemaVersion = 3;
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
-    private static readonly JsonSerializerOptions LegacyJsonOptions = new()
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower
-    };
 
     public static async Task RememberAsync(
         IConversationFactsService facts,
@@ -77,18 +73,6 @@ internal static class CatalogOfferMemory
 
         try
         {
-            using var document = JsonDocument.Parse(raw);
-            if (document.RootElement.ValueKind == JsonValueKind.Array)
-            {
-                var legacy = JsonSerializer.Deserialize<List<ProductCandidate>>(raw, LegacyJsonOptions) ?? [];
-                return legacy.Count == 0
-                    ? null
-                    : new CatalogOfferState(
-                        SchemaVersion,
-                        1,
-                        [new CatalogOfferSnapshot(1, null, [], legacy)]);
-            }
-
             var state = JsonSerializer.Deserialize<CatalogOfferState>(raw, JsonOptions);
             return state is { Snapshots.Count: > 0 } ? state : null;
         }

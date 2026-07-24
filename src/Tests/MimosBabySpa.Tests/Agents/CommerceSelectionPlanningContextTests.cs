@@ -109,7 +109,7 @@ public sealed class CommerceSelectionPlanningContextTests
         pendingItems[1].GetProperty("candidates").GetArrayLength().Should().Be(2);
     }
     [Fact]
-    public void ReadsLegacyCatalogAsTheLatestOffer()
+    public void IgnoresUnsupportedLegacyCatalogFacts()
     {
         var facts = new Dictionary<string, string>
         {
@@ -119,11 +119,7 @@ public sealed class CommerceSelectionPlanningContextTests
 
         var fragment = CommerceSelectionPlanningContextEnricher.Build(facts);
 
-        fragment.Should().NotBeNull();
-        fragment!.Value.GetProperty("latest_offer_sequence").GetInt64().Should().Be(1);
-        fragment.Value.GetProperty("offers").GetArrayLength().Should().Be(1);
-        fragment.Value.GetProperty("offers")[0].GetProperty("products")[0].GetString()
-            .Should().Be("SALCHICHA LONG X 550GR");
+        fragment.Should().BeNull();
     }
     [Fact]
     public void LatestPresentedOffer_TakesForegroundWithoutDiscardingPendingCartWork()

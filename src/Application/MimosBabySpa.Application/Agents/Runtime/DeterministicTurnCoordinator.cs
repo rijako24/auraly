@@ -127,17 +127,16 @@ public sealed class DeterministicTurnCoordinator
                 return Failure($"Duplicate planning context key '{fragment.Key}'.", request.CurrentFacts);
         }
 
-        var proposal = await _planner.PlanAsync(
-            new TurnPlanningContext(
-                request.Config,
-                planningStage,
-                scope,
-                request.CurrentFacts,
-                request.LatestUserMessage,
-                request.OperationContext.BusinessNow,
-                request.RecentConversation,
-                structuredContext),
-            cancellationToken);
+        var planningContext = new TurnPlanningContext(
+            request.Config,
+            planningStage,
+            scope,
+            request.CurrentFacts,
+            request.LatestUserMessage,
+            request.OperationContext.BusinessNow,
+            request.RecentConversation,
+            structuredContext);
+        var proposal = await _planner.PlanAsync(planningContext, cancellationToken);
         if (!proposal.Success || proposal.Plan is null)
             return Failure(proposal.Errors, request.CurrentFacts, proposal.Plan);
 
@@ -147,6 +146,8 @@ public sealed class DeterministicTurnCoordinator
             request.LatestUserMessage,
             proposal.Plan,
             request.OperationContext.ConversationState.LastBotMessage);
+        effectivePlan = CommerceTurnPlanSafety.AuthorizeRecoveredCartMutations(
+            proposal.Plan, effectivePlan, planningContext);
         effectivePlan = ReconcileKnownFactAmbiguities(request.Config, effectivePlan, request.CurrentFacts);
         var turnExecutedActionKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var state = request.OperationContext.ConversationState;

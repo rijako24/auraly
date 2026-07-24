@@ -41,7 +41,9 @@ public sealed class CommerceTurnPlanSafetyTests
 
         var normalized = CommerceTurnPlanSafety.Normalize(
             Plan(removals, CatalogQuery("maiz", "maiz")),
-            Context("ese maiz no lo quiero, muestrame otros; y saca el chicharron"));
+            Context(
+                "ese maiz no lo quiero, muestrame otros; y saca el chicharron",
+                currentCartProducts: ["chicharron"]));
 
         normalized.Signals.Should().HaveCount(2);
         var commands = normalized.Signals.Single(signal => signal.Type == "order_changes").Value;
@@ -62,14 +64,14 @@ public sealed class CommerceTurnPlanSafetyTests
     }
 
     [Fact]
-    public void CartMutationAndOpenCatalogBrowse_ArePreservedAsIndependentIntents()
+    public void CartMutationAndOpenCategoryRequest_ArePreservedAsIndependentIntents()
     {
-        var browse = new PlannedSignal
+        var categories = new PlannedSignal
         {
             Type = "catalog_query",
             Value = JsonSerializer.SerializeToElement(new
             {
-                mode = "browse",
+                mode = "categories",
                 queries = Array.Empty<string>(),
                 replacement_reference = (string?)null
             }),
@@ -78,13 +80,13 @@ public sealed class CommerceTurnPlanSafetyTests
         };
 
         var normalized = CommerceTurnPlanSafety.Normalize(
-            Plan(OrderChanges("super coco", 2, "dame dos super coco"), browse),
+            Plan(OrderChanges("super coco", 2, "dame dos super coco"), categories),
             Context("dame dos super coco y que otros productos tienes"));
 
         normalized.Signals.Should().HaveCount(2);
         normalized.Signals.Should().ContainSingle(signal => signal.Type == "order_changes");
         normalized.Signals.Single(signal => signal.Type == "catalog_query")
-            .Value.GetProperty("mode").GetString().Should().Be("browse");
+            .Value.GetProperty("mode").GetString().Should().Be("categories");
     }
 
     [Fact]
@@ -163,7 +165,10 @@ public sealed class CommerceTurnPlanSafetyTests
 
         var normalized = CommerceTurnPlanSafety.Normalize(
             Plan(signal),
-            Context("El maíz super dulce y saca el chicharrón.", catalogFollowUp: true));
+            Context(
+                "El ma\u00EDz super dulce y saca el chicharr\u00F3n.",
+                catalogFollowUp: true,
+                currentCartProducts: ["CHICHARRON CARNUDO"]));
 
         var command = normalized.Signals.Should().ContainSingle().Subject.Value
             .EnumerateArray().Should().ContainSingle().Subject;
@@ -259,6 +264,99 @@ public sealed class CommerceTurnPlanSafetyTests
                 additionalRequestPhrases: ["otro", "otra"]));
 
         normalized.Signals.Should().ContainSingle(signal => signal.Type == "order_changes");
+    }
+
+    [Theory]
+    [InlineData("Kellogg's")]
+    [InlineData("Zucaritas")]
+    public void BareProductWithoutQuantity_IsDiscoveryAndNeverAnInventedAdd(string message)
+    {
+        var normalized = CommerceTurnPlanSafety.Normalize(
+            Plan(OrderChanges(message, 1m, message)),
+            Context(message));
+
+        normalized.Signals.Should().ContainSingle(signal => signal.Type == "catalog_query");
+        normalized.Signals.Should().NotContain(signal => signal.Type == "order_changes");
+        normalized.Signals[0].Value.GetProperty("mode").GetString().Should().Be("search");
+        normalized.Signals[0].Value.GetProperty("queries")[0].GetString().Should().Be(message);
+    }
+
+    [Fact]
+    public void CatalogReadWithQuantity_WinsOverAContradictoryCartClassification()
+    {
+        const string message = "Tienen 2 Zucaritas?";
+        var normalized = CommerceTurnPlanSafety.Normalize(
+            Plan(OrderChanges("Zucaritas", 2m, message), CatalogQuery("Zucaritas", null)),
+            Context(message));
+
+        normalized.Signals.Should().ContainSingle(signal => signal.Type == "catalog_query");
+        normalized.Signals.Should().NotContain(signal => signal.Type == "order_changes");
+    }
+
+    [Fact]
+    public void MutationWhoseEvidenceIsNotInCurrentMessage_IsNeverAuthorized()
+    {
+        var normalized = CommerceTurnPlanSafety.Normalize(
+            Plan(OrderChanges("Kellogg's", 1m, "agrega 1 Kellogg's")),
+            Context("Kellogg's"));
+
+        normalized.Signals.Should().NotContain(signal => signal.Type == "order_changes");
+    }
+
+    [Fact]
+    public void SingleProductAndQuantityWithoutVerb_IsAddedImmediately()
+    {
+        const string message = "3 Zucaritas";
+        var normalized = CommerceTurnPlanSafety.Normalize(
+            Plan(OrderChanges("Zucaritas", 3m, message)),
+            Context(message));
+
+        normalized.Signals.Should().ContainSingle(signal => signal.Type == "order_changes");
+        normalized.Signals[0].Value[0].GetProperty("quantity").GetDecimal().Should().Be(3m);
+    }
+
+    [Fact]
+    public void QuantityEmbeddedOnlyInProductPresentation_DoesNotAuthorizeThatQuantity()
+    {
+        const string message = "ZUCARITAS X 7 UND";
+        var normalized = CommerceTurnPlanSafety.Normalize(
+            Plan(OrderChanges(message, 7m, message)),
+            Context(message, catalogFollowUp: true));
+
+        normalized.Signals.Should().NotContain(signal => signal.Type == "order_changes");
+    }
+
+    [Fact]
+    public void SetQuantityForANonexistentCartLine_IsNotAuthorized()
+    {
+        const string message = "deja 3 Zucaritas";
+        var normalized = CommerceTurnPlanSafety.Normalize(
+            Plan(OrderChanges("Zucaritas", 3m, message, operation: "set_quantity")),
+            Context(message));
+
+        normalized.Signals.Should().NotContain(signal => signal.Type == "order_changes");
+        normalized.Signals.Should().ContainSingle(signal => signal.Type == "catalog_query");
+    }
+
+    [Fact]
+    public void RemoveForANonexistentCartLine_IsNotAuthorized()
+    {
+        var removal = new PlannedSignal
+        {
+            Type = "order_changes",
+            Value = JsonSerializer.SerializeToElement(new[]
+            {
+                new { operation = "remove", productText = "Zucaritas", quantity = (decimal?)null, destinationReference = (string?)null }
+            }),
+            Evidence = "quita Zucaritas",
+            Confidence = 0.99
+        };
+
+        var normalized = CommerceTurnPlanSafety.Normalize(
+            Plan(removal),
+            Context("quita Zucaritas"));
+
+        normalized.Signals.Should().BeEmpty();
     }
 
     [Fact]
@@ -448,6 +546,7 @@ public sealed class CommerceTurnPlanSafetyTests
         Type = "catalog_query",
         Value = JsonSerializer.SerializeToElement(new
         {
+            mode = "search",
             queries = new[] { query },
             replacement_reference = replacementReference
         }),
@@ -569,7 +668,18 @@ public sealed class CommerceTurnPlanSafetyTests
                 {
                     Conversation = new CommerceConversationPolicy
                     {
-                        AdditionalRequestPhrases = additionalRequestPhrases ?? []
+                        AdditionalRequestPhrases = additionalRequestPhrases ?? [],
+                        QuantityWords = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase)
+                        {
+                            ["un"] = 1m,
+                            ["uno"] = 1m,
+                            ["una"] = 1m,
+                            ["dos"] = 2m,
+                            ["tres"] = 3m,
+                            ["cuatro"] = 4m,
+                            ["cinco"] = 5m,
+                            ["seis"] = 6m
+                        }
                     }
                 }
             },

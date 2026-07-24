@@ -31,81 +31,60 @@ public sealed class CommerceService : ICommerceService, IProductLookupService
         _availability = availability;
         _candidateRetriever = candidateRetriever;
     }
+    public async Task<ProductCategoryPage> BrowseCategoriesAsync(
+        AgentConversationContext ctx,
+        int page,
+        int pageSize,
+        CancellationToken ct = default)
+    {
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 50);
+        var (provider, connection) = await ResolveCommerceConnectionAsync(
+            ctx.BusinessId, ctx.Config, ct);
+        var connectionId = provider == CommerceProvider.Local
+            ? null
+            : connection?.IntegrationConnectionId;
+        var catalogReady = (provider == CommerceProvider.Local || connection?.LastSyncAt.HasValue == true)
+            && (await _unitOfWork.Products.GetIdentityCatalogAsync(ctx.BusinessId, ct))
+                .Any(product => product.IsActive
+                    && (provider == CommerceProvider.Local
+                        || product.IntegrationConnectionId == connectionId));
+        if (!catalogReady)
+        {
+            return new ProductCategoryPage(
+                [], false, page, pageSize, CatalogReady: false);
+        }
+        var (categories, totalCount) = await _unitOfWork.ProductCategories.GetBrowsablePageAsync(
+            ctx.BusinessId, connectionId, page, pageSize, ct);
+        return new ProductCategoryPage(
+            categories.Select(category => new ProductCategoryReference(
+                category.ProductCategoryId, category.ExternalCategoryId, category.Name, category.DisplayOrder)).ToList(),
+            totalCount > page * pageSize,
+            page,
+            pageSize);
 
+    }
+
+    public async Task<string?> ResolveCategoryNameAsync(
+        AgentConversationContext ctx,
+        string name,
+        CancellationToken ct = default)
+    {
+        var (provider, connection) = await ResolveCommerceConnectionAsync(
+            ctx.BusinessId, ctx.Config, ct);
+        var connectionId = provider == CommerceProvider.Local
+            ? null
+            : connection?.IntegrationConnectionId;
+        var category = await _unitOfWork.ProductCategories.FindBrowsableByNameAsync(
+            ctx.BusinessId, connectionId, name.Trim(), ct);
+        return category?.Name;
+    }
     public async Task<ProductSearchResult> SearchProductsAsync(AgentConversationContext ctx, ProductSearchRequest request, CancellationToken ct = default)
     {
         var adapterContext = await BuildContextAsync(ctx.BusinessId, ctx.AgentId, ctx.ConversationId, ctx.Config, ctx.ChannelPhone, ctx.CommerceCustomer, ctx.RecipientPhoneNumberId, ct);
         var adapter = _adapterFactory.Resolve(adapterContext.Provider);
-        ProductSearchResult result;
-        if (adapterContext.Provider == CommerceProvider.Mantis)
-        {
-            IReadOnlyList<ProductReference> local;
-            if (!string.IsNullOrWhiteSpace(request.Query) && _candidateRetriever is not null)
-            {
-                local = (await _candidateRetriever.RetrieveAsync(ctx, request.Query, ct))
-                    .GroupBy(candidate => candidate.Product.ProductId?.ToString("N")
-                        ?? candidate.Product.ExternalProductId
-                        ?? candidate.Product.Sku
-                        ?? candidate.Product.Name, StringComparer.OrdinalIgnoreCase)
-                    .Select(group => group
-                        .OrderByDescending(candidate => candidate.ExactAlias)
-                        .ThenByDescending(candidate => candidate.CanAutoResolve)
-                        .First().Product)
-                    .OrderByDescending(product => ProductResolutionEngine.Score(request.Query, product))
-                    .Take(Math.Clamp(request.Limit, 1, 50))
-                    .ToList();
-            }
-            else
-            {
-                local = (await _unitOfWork.Products.GetIdentityCatalogAsync(ctx.BusinessId, ct))
-                    .Where(product => product.IsActive)
-                    .Take(Math.Clamp(request.Limit, 1, 50))
-                    .Select(ToProductReference)
-                    .ToList();
-            }
-
-            var quoted = new List<ProductReference>();
-            foreach (var identity in local)
-            {
-                var live = await adapter.GetProductAsync(
-                    new AddOrderItemRequest(
-                        identity.ProductId,
-                        identity.ExternalProductId,
-                        identity.Sku,
-                        identity.Name,
-                        1m,
-                        null),
-                    adapterContext,
-                    ct);
-                if (live is null || !_availability.IsSellable(live))
-                    continue;
-                if (!MatchesSearchFilters(live, request))
-                    continue;
-                quoted.Add(!live.ProductId.HasValue && identity.ProductId.HasValue
-                    ? live with { ProductId = identity.ProductId }
-                    : live);
-            }
-            result = new ProductSearchResult(quoted, "local-identity+mantis-live");
-        }
-        else
-        {
-            result = _availability.FilterSellable(
-                await adapter.SearchProductsAsync(request, adapterContext, ct));
-            if (result.Products.Count == 0)
-            {
-                foreach (var fallbackQuery in CatalogSearchText.GetFallbackQueries(request.Query))
-                {
-                    var fallbackResult = _availability.FilterSellable(
-                        await adapter.SearchProductsAsync(request with { Query = fallbackQuery }, adapterContext, ct));
-                    if (fallbackResult.Products.Count == 0)
-                        continue;
-                    result = fallbackResult;
-                    break;
-                }
-            }
-        }
-
-        result = result with { AppliedFilters = ProductSearchAppliedFilters.From(request) };
+        var result = await SearchLocalCatalogAsync(
+            ctx, adapterContext, adapter, request, ct);
         return await EnrichProductPromotionsAsync(ctx.BusinessId, result, ct);
     }
 
@@ -116,6 +95,12 @@ public sealed class CommerceService : ICommerceService, IProductLookupService
     {
         var adapterContext = await BuildContextAsync(ctx.BusinessId, ctx.AgentId, ctx.ConversationId, ctx.Config, ctx.ChannelPhone, ctx.CommerceCustomer, ctx.RecipientPhoneNumberId, ct);
         var adapter = _adapterFactory.Resolve(adapterContext.Provider);
+        if (adapterContext.Provider != CommerceProvider.Local
+            && !request.ProductId.HasValue
+            && string.IsNullOrWhiteSpace(request.ExternalProductId)
+            && string.IsNullOrWhiteSpace(request.Sku))
+            return null;
+
         var lookup = new AddOrderItemRequest(
             request.ProductId,
             request.ExternalProductId,
@@ -124,15 +109,7 @@ public sealed class CommerceService : ICommerceService, IProductLookupService
             1m,
             null);
         var product = await adapter.GetProductAsync(lookup, adapterContext, ct);
-        if (product is null
-            && adapter is not IAuthoritativeCommercePricingAdapter
-            && !string.IsNullOrWhiteSpace(request.SearchText))
-        {
-            var candidates = _availability.FilterSellable(await adapter.SearchProductsAsync(
-                new ProductSearchRequest(request.SearchText, null, 10), adapterContext, ct));
-            product = candidates.Products.FirstOrDefault(candidate => MatchesLookupIdentity(candidate, request));
-        }
-        if (product is null && adapter is not IAuthoritativeCommercePricingAdapter)
+        if (product is null && adapterContext.Provider == CommerceProvider.Local)
             product = await FindCachedProductAsync(lookup, adapterContext, ct);
         if (product is null || !_availability.IsSellable(product))
             return null;
@@ -154,7 +131,8 @@ public sealed class CommerceService : ICommerceService, IProductLookupService
             product.CategoryName,
             0m,
             product.Currency,
-            null)
+            null,
+            IntegrationConnectionId: product.IntegrationConnectionId)
         { IsActive = product.IsActive };
 
     private static bool MatchesSearchFilters(ProductReference product, ProductSearchRequest request) =>
@@ -183,6 +161,156 @@ public sealed class CommerceService : ICommerceService, IProductLookupService
                && string.Equals(product.Name, request.Name, StringComparison.OrdinalIgnoreCase);
     }
 
+    private async Task<ProductSearchResult> SearchLocalCatalogAsync(
+        AgentConversationContext conversation,
+        CommerceAdapterContext adapterContext,
+        ICommerceAdapter adapter,
+        ProductSearchRequest request,
+        CancellationToken ct)
+    {
+        if (adapterContext.Provider != CommerceProvider.Local
+            && adapterContext.Connection?.LastSyncAt.HasValue != true)
+        {
+            return new ProductSearchResult(
+                [],
+                "local-catalog",
+                false,
+                ProductSearchAppliedFilters.From(request),
+                CatalogReady: false);
+        }
+
+        var catalog = (await _unitOfWork.Products.GetIdentityCatalogAsync(conversation.BusinessId, ct))
+            .Where(product => product.IsActive)
+            .Where(product => adapterContext.Provider == CommerceProvider.Local
+                || product.IntegrationConnectionId == adapterContext.Connection?.IntegrationConnectionId)
+            .ToList();
+        if (catalog.Count == 0)
+        {
+            return new ProductSearchResult(
+                [],
+                "local-catalog",
+                false,
+                ProductSearchAppliedFilters.From(request),
+                CatalogReady: false);
+        }
+
+        var candidates = new List<ProductReference>();
+        if (!string.IsNullOrWhiteSpace(request.Query) && _candidateRetriever is not null)
+        {
+            candidates.AddRange((await _candidateRetriever.RetrieveAsync(
+                    conversation, request.Query, ct))
+                .OrderByDescending(candidate => candidate.ExactAlias)
+                .ThenByDescending(candidate => candidate.CanAutoResolve)
+                .ThenByDescending(candidate => ProductResolutionEngine.Score(
+                    request.Query, candidate.Product))
+                .Select(candidate => candidate.Product));
+        }
+
+        candidates.AddRange(catalog
+            .Select(ToProductReference)
+            .Where(product => MatchesLocalIdentitySearch(product, request.Query))
+            .OrderByDescending(product => ProductResolutionEngine.Score(request.Query ?? string.Empty, product))
+            .ThenBy(product => product.Name));
+
+        var connectionId = adapterContext.Connection?.IntegrationConnectionId;
+        var identities = candidates
+            .Where(product => product.IsActive)
+            .Where(product => adapterContext.Provider == CommerceProvider.Local
+                || product.IntegrationConnectionId == connectionId)
+            .Where(product => MatchesLocalIdentityFilters(product, request))
+            .GroupBy(ProductIdentityKey, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.First())
+            .ToList();
+
+        var limit = Math.Clamp(request.Limit, 1, 50);
+        var page = Math.Max(request.Page, 1);
+        var skip = checked((page - 1) * limit);
+        var required = checked(skip + limit + 1);
+        var sellable = new List<ProductReference>(required);
+        foreach (var identity in identities)
+        {
+            ProductReference? quoted;
+            if (adapterContext.Provider == CommerceProvider.Local)
+            {
+                quoted = identity;
+            }
+            else
+            {
+                if (string.IsNullOrWhiteSpace(identity.ExternalProductId)
+                    && string.IsNullOrWhiteSpace(identity.Sku))
+                    continue;
+                quoted = await adapter.GetProductAsync(
+                    new AddOrderItemRequest(
+                        identity.ProductId,
+                        identity.ExternalProductId,
+                        identity.Sku,
+                        identity.Name,
+                        1m,
+                        null),
+                    adapterContext,
+                    ct);
+                if (quoted is not null)
+                {
+                    quoted = quoted with
+                    {
+                        ProductId = quoted.ProductId ?? identity.ProductId,
+                        CategoryName = quoted.CategoryName ?? identity.CategoryName,
+                        IntegrationConnectionId = identity.IntegrationConnectionId
+                    };
+                }
+            }
+
+            if (quoted is null
+                || !_availability.IsSellable(quoted)
+                || !MatchesSearchFilters(quoted, request))
+                continue;
+
+            sellable.Add(quoted);
+            if (sellable.Count >= required)
+                break;
+        }
+
+        return new ProductSearchResult(
+            sellable.Skip(skip).Take(limit).ToList(),
+            adapterContext.Provider == CommerceProvider.Local
+                ? "local-catalog"
+                : $"local-identity+{adapterContext.Provider.ToString().ToLowerInvariant()}-quote",
+            sellable.Count > skip + limit,
+            ProductSearchAppliedFilters.From(request));
+    }
+
+    private static bool MatchesLocalIdentitySearch(ProductReference product, string? query)
+    {
+        if (string.IsNullOrWhiteSpace(query))
+            return true;
+        var terms = CatalogSearchText.GetSearchTerms(query);
+        if (terms.Count == 0)
+            return true;
+        var searchable = ProductSearchText.NormalizeWords(
+            $"{product.Name} {product.Sku} {product.ExternalProductId} {product.Description} {product.CategoryName}");
+        return terms.All(term => searchable.Contains(
+            ProductSearchText.NormalizeWords(term), StringComparison.Ordinal));
+    }
+
+    private static bool MatchesLocalIdentityFilters(
+        ProductReference product,
+        ProductSearchRequest request)
+    {
+        if (!MatchesFilter(product.CategoryName, request.Category))
+            return false;
+        var searchable = ProductSearchText.NormalizeWords(
+            $"{product.Description} {product.CategoryName}");
+        return new[] { request.Family, request.Subcategory, request.ProductClass }
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .All(value => searchable.Contains(
+                ProductSearchText.NormalizeWords(value!), StringComparison.Ordinal));
+    }
+
+    private static string ProductIdentityKey(ProductReference product) =>
+        product.ProductId?.ToString("N")
+        ?? product.ExternalProductId
+        ?? product.Sku
+        ?? product.Name;
     public async Task<OrderSnapshot> AddItemAsync(AgentConversationContext ctx, AddOrderItemRequest request, CancellationToken ct = default)
     {
         if (request.Quantity <= 0)
@@ -418,7 +546,8 @@ public sealed class CommerceService : ICommerceService, IProductLookupService
                 product.UnitPrice,
                 product.Currency,
                 product.StockQuantity,
-                RawPayloadJson: product.RawPayloadJson)
+                RawPayloadJson: product.RawPayloadJson,
+                IntegrationConnectionId: product.IntegrationConnectionId)
             { IsActive = product.IsActive };
     }
 
@@ -480,14 +609,9 @@ public sealed class CommerceService : ICommerceService, IProductLookupService
                == CatalogSearchText.NormalizeCompact(product.Name);
     }
 
-    private async Task<CommerceAdapterContext> BuildContextAsync(
+    private async Task<(CommerceProvider Provider, IntegrationConnection? Connection)> ResolveCommerceConnectionAsync(
         Guid businessId,
-        Guid? agentId,
-        Guid conversationId,
         AgentConfig? config,
-        string? customerPhone,
-        CommerceCustomerReference? customer,
-        string? recipientPhoneNumberId,
         CancellationToken ct)
     {
         var provider = config?.Commerce.Provider ?? CommerceProvider.Local;
@@ -499,11 +623,30 @@ public sealed class CommerceService : ICommerceService, IProductLookupService
             provider,
             CommerceCapability.CatalogAndOrders,
             ct);
-
         if (provider != CommerceProvider.Local && connection is null)
-            throw new InvalidOperationException($"Commerce connection '{provider}' is not configured for this business.");
+        {
+            throw new InvalidOperationException(
+                $"Commerce connection '{provider}' is not configured for this business.");
+        }
         if (connection is not null && !connection.IsEnabled)
             throw new InvalidOperationException($"Commerce connection '{provider}' is disabled.");
+
+        return (provider, connection);
+    }
+
+
+
+    private async Task<CommerceAdapterContext> BuildContextAsync(
+        Guid businessId,
+        Guid? agentId,
+        Guid conversationId,
+        AgentConfig? config,
+        string? customerPhone,
+        CommerceCustomerReference? customer,
+        string? recipientPhoneNumberId,
+        CancellationToken ct)
+    {
+        var (provider, connection) = await ResolveCommerceConnectionAsync(businessId, config, ct);
 
         return new CommerceAdapterContext(
             businessId,

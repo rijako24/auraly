@@ -106,6 +106,7 @@ public sealed class LocalProductCandidateRetriever : IProductCandidateRetriever
             product.UnitPrice,
             product.Currency,
             product.StockQuantity,
-            RawPayloadJson: product.RawPayloadJson)
+            RawPayloadJson: product.RawPayloadJson,
+            IntegrationConnectionId: product.IntegrationConnectionId)
         { IsActive = product.IsActive };
 }

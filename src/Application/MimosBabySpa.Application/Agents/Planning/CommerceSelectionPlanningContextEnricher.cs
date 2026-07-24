@@ -29,7 +29,8 @@ public sealed class CommerceSelectionPlanningContextEnricher : ITurnPlanningCont
         var offerMemory = CatalogOfferMemory.Read(facts);
         var recommendationMemory = CatalogRecommendationMemory.Read(facts);
         var pending = PendingCartCommandMemory.Read(facts);
-        if (offerMemory is null && recommendationMemory is null && pending is null)
+        var catalogCursor = CatalogQueryMemory.Read(facts);
+        if (offerMemory is null && recommendationMemory is null && pending is null && catalogCursor is null)
             return null;
 
         var latestSequence = offerMemory?.Snapshots.Max(snapshot => snapshot.Sequence);
@@ -65,7 +66,9 @@ public sealed class CommerceSelectionPlanningContextEnricher : ITurnPlanningCont
             interaction = !pendingIsForeground
                 ? new
                 {
-                    expected_reply = "catalog_follow_up",
+                    expected_reply = catalogCursor?.Kind == CatalogQueryCursorKind.Categories
+                        ? "catalog_category_selection"
+                        : "catalog_follow_up",
                     operation = (string?)null,
                     requested_product = (string?)null,
                     quantity = (decimal?)null,
@@ -96,7 +99,13 @@ public sealed class CommerceSelectionPlanningContextEnricher : ITurnPlanningCont
                 search_terms = snapshot.SearchTerms,
                 products = snapshot.Products.Select(product => product.Name).ToArray()
             }).ToArray() ?? [],
-            recommendations = recommendationMemory?.Products.Select(product => product.Name).ToArray() ?? []
+            recommendations = recommendationMemory?.Products.Select(product => product.Name).ToArray() ?? [],
+            catalog_cursor = catalogCursor is null ? null : new
+            {
+                kind = catalogCursor.Kind.ToString().ToLowerInvariant(),
+                has_more = catalogCursor.HasMore,
+                next_page = catalogCursor.NextPage
+            }
         });
 
         return new TurnPlanningContextFragment("shoppingContext", value);

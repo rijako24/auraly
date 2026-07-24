@@ -101,6 +101,8 @@ public sealed class ProductAdminService : IProductAdminService
             throw new DomainValidationException("Description", "La descripcion no puede superar 2000 caracteres.");
         if (categoryName?.Length > 150)
             throw new DomainValidationException("CategoryName", "La categoria no puede superar 150 caracteres.");
+        var category = await ResolveCategoryAsync(product, categoryName, ct);
+
 
         var searchIndexChanged =
             !string.Equals(product.Name, name, StringComparison.Ordinal)
@@ -108,7 +110,8 @@ public sealed class ProductAdminService : IProductAdminService
             || !string.Equals(product.CategoryName, categoryName, StringComparison.Ordinal);
         var productChanged = searchIndexChanged
             || product.UnitPrice != request.UnitPrice
-            || !string.Equals(product.Currency, currency, StringComparison.Ordinal);
+            || !string.Equals(product.Currency, currency, StringComparison.Ordinal)
+            || product.ProductCategoryId != category?.ProductCategoryId;
 
         var oldState = MapToDto(product);
         if (!productChanged)
@@ -120,6 +123,7 @@ public sealed class ProductAdminService : IProductAdminService
         product.UnitPrice = request.UnitPrice;
         product.Currency = currency;
         product.UpdatedAt = DateTime.UtcNow;
+        product.ProductCategoryId = category?.ProductCategoryId;
 
         await _unitOfWork.Products.UpdateAsync(product, ct);
         if (searchIndexChanged)
@@ -152,6 +156,46 @@ public sealed class ProductAdminService : IProductAdminService
             product.Sku,
             product.ExternalProductId,
             product.CategoryName);
+    }
+
+    private async Task<ProductCategory?> ResolveCategoryAsync(
+        Product product,
+        string? categoryName,
+        CancellationToken ct)
+    {
+        if (categoryName is null)
+            return null;
+        var category = await _unitOfWork.ProductCategories.GetByNameAsync(
+            product.BusinessId,
+            product.IntegrationConnectionId,
+            categoryName,
+            ct);
+        if (category is null)
+        {
+            var now = DateTime.UtcNow;
+            category = new ProductCategory
+            {
+                ProductCategoryId = Guid.NewGuid(),
+                BusinessId = product.BusinessId,
+                IntegrationConnectionId = product.IntegrationConnectionId,
+                Name = categoryName,
+                DisplayOrder = 0,
+                IsActive = true,
+                IsBrowsable = true,
+                LastSyncedAt = now,
+                CreatedAt = now
+            };
+            await _unitOfWork.ProductCategories.CreateAsync(category, ct);
+            return category;
+        }
+
+        if (category.IsActive && category.IsBrowsable)
+            return category;
+        category.IsActive = true;
+        category.IsBrowsable = true;
+        category.UpdatedAt = DateTime.UtcNow;
+        await _unitOfWork.ProductCategories.UpdateAsync(category, ct);
+        return category;
     }
 
     private static string? NormalizeOptional(string? value) =>

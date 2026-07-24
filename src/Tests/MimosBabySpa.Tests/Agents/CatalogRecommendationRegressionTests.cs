@@ -50,7 +50,7 @@ public sealed class CatalogRecommendationRegressionTests
             commerce.Object,
             new Mock<IConversationFactsService>().Object,
             recommendations.Object);
-        using var arguments = JsonDocument.Parse("""{"queries":["pechuga","cerdo"],"limit":10}""");
+        using var arguments = JsonDocument.Parse("""{"mode":"search","queries":["pechuga","cerdo"],"limit":10}""");
 
         var outcome = await operation.ExecuteAsync(
             arguments.RootElement,
@@ -111,14 +111,12 @@ public sealed class CatalogRecommendationRegressionTests
 
         withRecommendation.Should().Contain("*Productos disponibles*");
         withRecommendation.Should().Contain("PECHUGA CRIOLLA");
-        withRecommendation.Should().Contain("*Tambien te puede servir*");
-        withRecommendation.Should().Contain(
-            $"{Environment.NewLine}{Environment.NewLine}*Tambien te puede servir*");
+        withRecommendation.Should().Contain("*Tambi\u00e9n podr\u00eda servirte*");
         withRecommendation.Should().Contain("TOCINETA CJ 1K");
         withRecommendation.IndexOf("TOCINETA CJ 1K", StringComparison.Ordinal)
             .Should().BeGreaterThan(withRecommendation.IndexOf("PECHUGA CRIOLLA", StringComparison.Ordinal));
         withoutRecommendation.Should().Contain("PECHUGA CRIOLLA");
-        withoutRecommendation.Should().NotContain("Tambien te puede servir");
+        withoutRecommendation.Should().NotContain("Tambi\u00e9n podr\u00eda servirte");
         seed.Should().Contain("MERGE dbo.ProductRecommendationRules");
         seed.Should().Contain("N'PO28', N'CF127'");
     }

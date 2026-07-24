@@ -42,6 +42,7 @@ public class ApplicationDbContext : DbContext
     public DbSet<IntegrationConnection> IntegrationConnections { get; set; }
     public DbSet<IntegrationChannelWarehouse> IntegrationChannelWarehouses { get; set; }
     public DbSet<ExternalCommerceCustomer> ExternalCommerceCustomers { get; set; }
+    public DbSet<ProductCategory> ProductCategories { get; set; }
     public DbSet<ReservationIntegrationEvent> ReservationIntegrationEvents { get; set; }
     public DbSet<Product> Products { get; set; }
     public DbSet<ProductAlias> ProductAliases { get; set; }
@@ -501,6 +502,36 @@ public class ApplicationDbContext : DbContext
         });
 
 
+        modelBuilder.Entity<ProductCategory>(entity =>
+        {
+            entity.HasKey(category => category.ProductCategoryId);
+            entity.Property(category => category.ExternalCategoryId).HasMaxLength(150);
+            entity.Property(category => category.Name).IsRequired().HasMaxLength(150);
+            entity.HasOne(category => category.Business).WithMany()
+                .HasForeignKey(category => category.BusinessId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(category => category.IntegrationConnection).WithMany()
+                .HasForeignKey(category => category.IntegrationConnectionId)
+                .OnDelete(DeleteBehavior.Restrict)
+                .IsRequired(false);
+            entity.HasIndex(category => category.BusinessId);
+            entity.HasIndex(category => new
+                {
+                    category.BusinessId,
+                    category.IntegrationConnectionId,
+                    category.ExternalCategoryId
+                })
+                .IsUnique()
+                .HasFilter("[IntegrationConnectionId] IS NOT NULL AND [ExternalCategoryId] IS NOT NULL");
+            entity.HasIndex(category => new
+                {
+                    category.BusinessId,
+                    category.IntegrationConnectionId,
+                    category.Name
+                })
+                .IsUnique();
+        });
+
         modelBuilder.Entity<Product>(entity =>
         {
             entity.HasKey(e => e.ProductId);
@@ -520,6 +551,11 @@ public class ApplicationDbContext : DbContext
             entity.HasOne(e => e.IntegrationConnection)
                 .WithMany()
                 .HasForeignKey(e => e.IntegrationConnectionId)
+                .OnDelete(DeleteBehavior.Restrict)
+                .IsRequired(false);
+            entity.HasOne(e => e.ProductCategory)
+                .WithMany(category => category.Products)
+                .HasForeignKey(e => e.ProductCategoryId)
                 .OnDelete(DeleteBehavior.Restrict)
                 .IsRequired(false);
             entity.HasIndex(e => e.BusinessId);

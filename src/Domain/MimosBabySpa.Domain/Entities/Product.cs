@@ -6,6 +6,7 @@ public class Product
 {
     public Guid ProductId { get; set; }
     public Guid BusinessId { get; set; }
+    public Guid? ProductCategoryId { get; set; }
     public Guid? IntegrationConnectionId { get; set; }
     public string? ExternalProductId { get; set; }
     public ProductSource Source { get; set; } = ProductSource.Local;
@@ -23,6 +24,7 @@ public class Product
     public DateTime? LastSyncedAt { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? UpdatedAt { get; set; }
+    public virtual ProductCategory? ProductCategory { get; set; }
 
     public virtual Business Business { get; set; } = null!;
     public virtual IntegrationConnection? IntegrationConnection { get; set; }

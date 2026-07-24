@@ -314,8 +314,13 @@ public sealed class LlmTurnPlanner : ITurnPlanner
                 "Older failed searches and repeated catalog responses in recentConversation never override authoritative shoppingContext. Still distinguish selection from a genuine information request: questions about price, availability or options remain catalog queries unless the customer also asks to add, set or remove a product.",
 
                 "Questions such as whether a product exists, is available, is sold, what options exist or what it costs are catalog queries, never cart mutations. Do not infer an add command or quantity 1 from a catalog question.",
+                "An add or set_quantity command requires a concrete quantity expressed by latestUserMessage outside the product name or package presentation. Never default a missing quantity to 1. The only exception is an unambiguous resolution of an existing pending cart command, which keeps that pending command's operation and quantity.",
+                "A list that assigns a concrete quantity to each product is a direct cart request even when it omits an introductory verb. Preserve every listed product once. A catalog read and a cart mutation must never be emitted for the same product meaning in the same clause.",
 
                 "When both catalog and recipe capabilities are available, a request for another product option, purchasable alternative, recommendation or suggestion belongs to the catalog capability. Use a recipe capability only when the customer asks how to prepare, cook or make food, or explicitly asks for a recipe.",
+                "Catalog discovery uses typed intent, never generic search terms as control commands: use categories for an open request to explore what the business carries, search for a concrete product/category/need, and continue only when the customer asks for another page of the active catalog result set.",
+                "When shoppingContext.catalog_cursor.kind is categories, a customer selection of one shown category is a new search restricted by that category; a request for more choices is continue. Never search the literal wording of a continuation request.",
+                "When catalog results are returned, present only the authoritative categories or products supplied by the operation. If more pages exist, say so briefly; always allow the customer to name a specific product they need.",
 
                 "When the customer explicitly contrasts alternative values or scenarios and says they are unsure which applies, do not choose either alternative. Emit no mutation for every materially disputed fact and list those fact ids in response.ambiguousFields.",
 

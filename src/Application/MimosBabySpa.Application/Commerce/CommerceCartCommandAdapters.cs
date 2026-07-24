@@ -11,21 +11,13 @@ public sealed partial class CommerceCartProductResolver : ICartProductResolver
 
     public CommerceCartProductResolver(ICommerceService commerce) => _commerce = commerce;
 
-    public async Task<IReadOnlyList<ProductReference>> FindAsync(
+    public Task<IReadOnlyList<ProductReference>> FindAsync(
         AgentConversationContext context,
         string productText,
         CancellationToken cancellationToken = default)
     {
-        var searchReference = ProductSelectionMemory.NormalizeSearchReference(productText);
         var remembered = ProductSelectionMemory.FindCatalogMatches(context, productText);
-        if (remembered.Count > 0)
-            return remembered;
-
-        var result = await _commerce.SearchProductsAsync(
-            context,
-            new ProductSearchRequest(searchReference, null, Limit: 10, IncludeStock: true),
-            cancellationToken);
-        return result.Products.Where(product => product.IsActive).ToList();
+        return Task.FromResult<IReadOnlyList<ProductReference>>(remembered.Count > 0 ? remembered : []);
     }
 }
 

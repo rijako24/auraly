@@ -18,7 +18,9 @@ internal sealed class XionSettings
     public int RutaId { get; init; }
     public bool ValidateStockOnCreate { get; init; }
     public int OrderHistoryDays { get; init; }
-    public string CatalogBrowseSearchValue { get; init; } = string.Empty;
+    public int CatalogDiscoveryMaxQueries { get; init; }
+    public int CatalogDiscoveryConcurrency { get; init; }
+    public IReadOnlyList<XionProductIdRange> CatalogProductIdRanges { get; init; } = [];
     public XionEndpointSettings Endpoints { get; init; } = new();
 
     public static XionSettings From(IntegrationConnection connection)
@@ -41,7 +43,9 @@ internal sealed class XionSettings
             RutaId = GetRequiredNonNegativeInt(root, "rutaId"),
             ValidateStockOnCreate = GetRequiredBool(root, "validateStockOnCreate"),
             OrderHistoryDays = Math.Clamp(GetRequiredPositiveInt(root, "orderHistoryDays"), 1, 3650),
-            CatalogBrowseSearchValue = GetRequiredString(root, "catalogBrowseSearchValue"),
+            CatalogDiscoveryMaxQueries = Math.Clamp(GetInt(root, "catalogDiscoveryMaxQueries", 512), 36, 5000),
+            CatalogDiscoveryConcurrency = Math.Clamp(GetInt(root, "catalogDiscoveryConcurrency", 8), 1, 16),
+            CatalogProductIdRanges = GetProductIdRanges(root),
             Endpoints = new XionEndpointSettings
             {
                 CustomerSync = GetRequiredString(endpoints, "customerSync"),
@@ -49,7 +53,6 @@ internal sealed class XionSettings
                 ProductSearchWithoutCustomer = GetRequiredString(endpoints, "productSearchWithoutCustomer"),
                 ProductDetail = GetRequiredString(endpoints, "productDetail"),
                 ProductDetailWithoutCustomer = GetRequiredString(endpoints, "productDetailWithoutCustomer"),
-                ProductSync = GetRequiredString(endpoints, "productSync"),
                 NextOrderNumber = GetRequiredString(endpoints, "nextOrderNumber"),
                 CreateOrder = GetRequiredString(endpoints, "createOrder"),
                 OrderHistory = GetRequiredString(endpoints, "orderHistory"),
@@ -109,7 +112,50 @@ internal sealed class XionSettings
         var value = GetInt(values, key, 0);
         return value > 0 ? value : throw new InvalidOperationException($"Xion setting '{key}' must be greater than zero.");
     }
+
+    private static IReadOnlyList<XionProductIdRange> GetProductIdRanges(
+        Dictionary<string, JsonElement> values)
+    {
+        if (!values.TryGetValue("catalogProductIdRanges", out var value)
+            || value.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
+            return [];
+        if (value.ValueKind != JsonValueKind.Array)
+            throw new InvalidOperationException(
+                "Xion setting 'catalogProductIdRanges' must be an array.");
+
+        var ordered = new List<XionProductIdRange>();
+        foreach (var item in value.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.Object
+                || !item.TryGetProperty("start", out var startElement)
+                || !startElement.TryGetInt32(out var start)
+                || !item.TryGetProperty("end", out var endElement)
+                || !endElement.TryGetInt32(out var end)
+                || start <= 0
+                || end < start)
+                throw new InvalidOperationException(
+                    "Each Xion catalog product id range requires positive 'start' and 'end' values, with end >= start.");
+            if ((long)end - start + 1 > 1_000_000)
+                throw new InvalidOperationException(
+                    "A Xion catalog product id range cannot contain more than 1,000,000 identifiers.");
+            ordered.Add(new XionProductIdRange(start, end));
+        }
+
+        var merged = new List<XionProductIdRange>();
+        foreach (var range in ordered.OrderBy(range => range.Start).ThenBy(range => range.End))
+        {
+            if (merged.Count == 0 || (long)range.Start > (long)merged[^1].End + 1)
+            {
+                merged.Add(range);
+                continue;
+            }
+            merged[^1] = merged[^1] with { End = Math.Max(merged[^1].End, range.End) };
+        }
+        return merged;
+    }
 }
+
+internal sealed record XionProductIdRange(int Start, int End);
 
 internal sealed class XionEndpointSettings
 {
@@ -118,7 +164,6 @@ internal sealed class XionEndpointSettings
     public string ProductSearchWithoutCustomer { get; init; } = string.Empty;
     public string ProductDetail { get; init; } = string.Empty;
     public string ProductDetailWithoutCustomer { get; init; } = string.Empty;
-    public string ProductSync { get; init; } = string.Empty;
     public string NextOrderNumber { get; init; } = string.Empty;
     public string CreateOrder { get; init; } = string.Empty;
     public string OrderHistory { get; init; } = string.Empty;

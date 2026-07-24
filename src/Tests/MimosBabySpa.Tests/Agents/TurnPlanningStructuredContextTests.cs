@@ -152,6 +152,8 @@ public sealed class TurnPlanningStructuredContextTests
         }
 
         public Task<ProductSearchResult> SearchProductsAsync(AgentConversationContext ctx, ProductSearchRequest request, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<ProductCategoryPage> BrowseCategoriesAsync(AgentConversationContext ctx, int page, int pageSize, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<string?> ResolveCategoryNameAsync(AgentConversationContext ctx, string name, CancellationToken ct = default) => Task.FromResult<string?>(null);
         public Task<OrderSnapshot> AddItemAsync(AgentConversationContext ctx, AddOrderItemRequest request, CancellationToken ct = default) => throw new NotSupportedException();
         public Task<OrderSnapshot> RemoveItemAsync(AgentConversationContext ctx, Guid orderItemId, CancellationToken ct = default) => throw new NotSupportedException();
         public Task<OrderSnapshot> UpdateItemQuantityAsync(AgentConversationContext ctx, Guid orderItemId, decimal quantity, CancellationToken ct = default) => throw new NotSupportedException();

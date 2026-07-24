@@ -1046,10 +1046,10 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "id": "catalog_lookup",
       "priority": 850,
       "goal": "Consultar el catalogo oficial cuando el cliente pregunte por productos, disponibilidad, referencias, precios u opciones, sin depender de la etapa activa.",
-      "conversationGuidance": "Detecta catalog_query cuando el cliente solicita explorar o buscar mercancia comprable. Usa mode=browse y queries vacio cuando pide ver una muestra abierta del catalogo sin restringirla a un producto o categoria; usa mode=search y terminos concretos cuando consulta productos, categorias o referencias identificables. Una consulta abierta puede coexistir en el mismo mensaje con order_changes y ambas intenciones deben conservarse. Si la pregunta pide recuperar o confirmar datos de entrega, direccion, recogida, pago, identidad, perfil, cliente u orden, emite cero catalog_query. Nunca respondas disponibilidad, nombres ni precios desde conocimiento general.",
+      "conversationGuidance": "Responde las consultas de mercancia comprable exclusivamente con resultados autoritativos del catalogo. Para una exploracion abierta, presenta las categorias retornadas y ayuda al cliente a elegir una o pedir un producto concreto. Para resultados paginados, conserva el contexto de la consulta activa. Nunca inventes disponibilidad, categorias, nombres ni precios.",
       "signal": {
         "type": "catalog_query",
-        "description": "Consulta de mercancia comprable. mode=browse representa exploracion abierta con queries vacio; mode=search representa busqueda restringida con terminos concretos. Puede coexistir con una mutacion independiente del carrito.",
+        "description": "Emite esta senal cuando el cliente quiere explorar o buscar mercancia comprable. Asigna mode=categories a una exploracion abierta, mode=search a un producto, necesidad o categoria concreta, y mode=continue cuando pide la pagina siguiente del conjunto activo; una continuacion conserva queries vacio. Puede coexistir con order_changes. No la emitas para recuperar datos de entrega, direccion, recogida, pago, identidad, perfil, cliente u orden.",
         "valueSchema": {
           "type": "object",
           "additionalProperties": false,
@@ -1064,8 +1064,9 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
             "mode": {
               "type": "string",
               "enum": [
+                "categories",
                 "search",
-                "browse"
+                "continue"
               ]
             }
           },
@@ -1090,6 +1091,39 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
             "limit": 10
           },
           "onOutcome": {
+            "categories.not_found": {
+              "response": {},
+              "effects": [
+                {
+                  "type": "presentation.add",
+                  "template": "catalog_no_results",
+                  "mode": "Exclusive",
+                  "priority": "Required"
+                }
+              ]
+            },
+            "categories.found": {
+              "response": {},
+              "effects": [
+                {
+                  "type": "presentation.add",
+                  "template": "catalog_categories",
+                  "mode": "Exclusive",
+                  "priority": "Required"
+                }
+              ]
+            },
+            "catalog.no_more": {
+              "response": {},
+              "effects": [
+                {
+                  "type": "presentation.add",
+                  "template": "catalog_no_more",
+                  "mode": "Exclusive",
+                  "priority": "Required"
+                }
+              ]
+            },
             "products.not_found": {
               "effects": [
                 {
@@ -1430,14 +1464,16 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
     "order_checkout_no_payment": "*Resumen de tu pedido*\n{{#each line_items}}\n- {{name}} x{{quantity}}: ${{line_total}}\n{{/each}}\n- Envio: ${{shipping_cost}}\n- *Total: ${{total}} {{currency}}*\n\nEntrega:\n- Ciudad: {{city}}\n- Direccion: {{delivery_address}}\n- Celular: {{customer_phone}}\n{{#if customer_name}}\n- Cliente: Doc\n{{/if}}\n{{#if delivery_recipient_name}}\n- Recibe: {{delivery_recipient_name}}\n{{/if}}\n\nMetodo de pago: efectivo al recibir\n\nConfirmas tu pedido con esta informacion?",
     "order_checkout_card_terminal": "*Resumen de tu pedido*\n{{#each line_items}}\n- {{name}} x{{quantity}}: ${{line_total}}\n{{/each}}\n- Envio: ${{shipping_cost}}\n- *Total: ${{total}} {{currency}}*\n\nEntrega:\n- Ciudad: {{city}}\n- Direccion: {{delivery_address}}\n- Celular: {{customer_phone}}\n{{#if customer_name}}\n- Cliente: Doc\n{{/if}}\n{{#if delivery_recipient_name}}\n- Recibe: {{delivery_recipient_name}}\n{{/if}}\n\nMetodo de pago: datafono al recibir\n\nLlevaremos el datafono para realizar el pago al momento de la entrega. Confirmas tu pedido con esta informacion?",
     "order_checkout_manual_transfer": "*Resumen de tu pedido*\n{{#each line_items}}\n- {{name}} x{{quantity}}: ${{line_total}}\n{{/each}}\n- Envio: ${{shipping_cost}}\n- *Total: ${{total}} {{currency}}*\n\nEntrega:\n- Ciudad: {{city}}\n- Direccion: {{delivery_address}}\n- Celular: {{customer_phone}}\n{{#if customer_name}}\n- Cliente: Doc\n{{/if}}\n{{#if delivery_recipient_name}}\n- Recibe: {{delivery_recipient_name}}\n{{/if}}\n\nMetodo de pago: transferencia manual\n\nTu pago queda pendiente de confirmacion manual. Un agente del equipo de Medidental confirmara el pago; cuando se confirme, te notificaremos que el pedido fue creado.",
-    "catalog_results": "{{#if search_text}}Claro, encontre estas opciones para ti:\r\n\r\n*Productos disponibles*\r\n\r\n{{#each products}}\r\n- {{name}}: ${{unit_price}} {{currency}}\r\n{{/each}}\r\n\r\n{{#each recommendations}}\r\n\r\n*Tambien te puede servir*\r\n- {{name}}: ${{unit_price}} {{currency}}\r\n{{#if reason}}{{reason}}\r\n{{/if}}{{/each}}\r\n\r\nCual te interesa y cuantas unidades deseas agregar?{{else}}Tenemos equipos, materiales y consumibles odontologicos para profesionales y clinicas. Estos son algunos de nuestros productos:\r\n\r\n{{#each products}}\r\n- {{name}}\r\n{{/each}}\r\n\r\nCual de estos productos le interesa? Tambien puedo ayudarle a encontrar otro producto que necesite.{{/if}}",
-    "catalog_no_results": "Por ahora no encontre {{#if search_text}}{{search_text}} disponibles{{else}}productos disponibles para esa busqueda{{/if}} en nuestro catalogo.\r\n\r\nSi quieres, puedo buscar una opcion parecida o ayudarte a elegir otro producto.",
-    "known_facts": "Claro. Esto es lo que tengo registrado:\r\n\r\n{{#each facts}}\r\n- {{label}}: {{value}}\r\n{{/each}}",
-    "known_facts_missing": "No tengo ese dato registrado todavia. Si quieres, puedes indicarmelo o actualizarlo.",
+    "catalog_results": "{{#if search_text}}Doc, encontré estas opciones:\r\n\r\n*Productos disponibles*\r\n\r\n{{#each products}}\r\n- {{name}}: ${{unit_price}} {{currency}}\r\n{{/each}}\r\n{{#each recommendations}}\r\n\r\n*También podría servirle*\r\n- {{name}}: ${{unit_price}} {{currency}}\r\n{{#if reason}}{{reason}}\r\n{{/if}}{{/each}}\r\n\r\n¿Cuál le interesa y cuántas unidades necesita?{{else}}Doc, manejamos equipos, materiales y consumibles odontológicos. Podemos empezar por alguno de estos productos:\r\n\r\n{{#each products}}\r\n- {{name}}\r\n{{/each}}\r\n\r\nDígame cuál le interesa o qué producto necesita y lo buscamos.{{/if}}",
+    "catalog_categories": "Doc, podemos empezar por alguna de estas categorías:\r\n\r\n{{#each categories}}\r\n- {{name}}{{/each}}\r\n\r\nElija una para ver sus productos o dígame directamente qué necesita.",
+    "catalog_no_more": "Doc, esas son todas las opciones que encontré para esta búsqueda. Puede elegir una o decirme qué otro producto necesita.",
+    "catalog_no_results": "Doc, no me apareció {{#if search_text}}{{search_text}}{{else}}ningún producto para esa búsqueda{{/if}} en el catálogo actual.\r\n\r\nSi me comparte otra marca, presentación o referencia, lo intento de nuevo.",
+    "known_facts": "Doc, esto es lo que tengo registrado:\r\n\r\n{{#each facts}}\r\n- {{label}}: {{value}}\r\n{{/each}}",
+    "known_facts_missing": "Doc, todavía no tengo ese dato. Puede enviármelo o corregirlo cuando quiera.",
     "recipe_results": "Buena idea. Puedes inspirarte con estas preparaciones:\r\n\r\n*Ideas para preparar*\r\n{{#each results}}\r\n- {{Title}}\r\n  {{Url}}\r\n{{/each}}",
-    "cart_snapshot": "Listo, ya actualice tu pedido 🙌\r\n\r\n*Pedido actual*\r\n\r\n{{#each items}}\r\n- {{name}} x{{quantity}}: ${{line_total}}\r\n{{/each}}\r\n\r\n*Total: ${{total}} {{currency}}*\r\n\r\nQuieres agregar algo mas? Cuando hayas terminado de elegir, avisame y continuamos.",
-    "product_ambiguity": "Quiero asegurarme de agregar la opcion correcta. Para {{product_text}} encontre:\r\n{{#each product_options}}\r\n- {{Name}}: ${{UnitPrice}} {{Currency}}\r\n{{/each}}\r\n\r\nCual prefieres? Conservare los demas productos de tu solicitud.",
-    "insufficient_stock": "Puedo ayudarte con esa referencia, pero la cantidad solicitada supera el inventario disponible.\r\n\r\n- Producto: {{product_text}}\r\n- Solicitado en total: {{requested_quantity}}\r\n- Disponible: {{available_quantity}}\r\n\r\nPara este cambio, indica una cantidad de hasta {{maximum_command_quantity}}; los demas cambios del lote aun no se han aplicado."
+    "cart_snapshot": "Listo, Doc. Así va su pedido:\r\n\r\n{{#each items}}\r\n- {{name}} x{{quantity}}: ${{line_total}}\r\n{{/each}}\r\n\r\n*Total: ${{total}} {{currency}}*\r\n\r\n¿Desea agregar algo más? Cuando haya terminado de elegir, indíqueme que eso es todo.",
+    "product_ambiguity": "Doc, encontré varias opciones para {{product_text}}:\r\n\r\n{{#each product_options}}\r\n- {{Name}}: ${{UnitPrice}} {{Currency}}\r\n{{/each}}\r\n\r\n¿Cuál prefiere? El resto de su pedido queda igual.",
+    "insufficient_stock": "Doc, de {{product_text}} no alcanza la cantidad solicitada.\r\n\r\n- Solicitó: {{requested_quantity}}\r\n- Hay disponibles: {{available_quantity}}\r\n\r\nPuede pedir hasta {{maximum_command_quantity}}. ¿Con cuántas unidades lo dejamos?"
   },
   "flows": [
     {
@@ -1631,6 +1667,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
               },
               "arguments": {
                 "queries": "{{fact.system.recipe_catalog_queries}}",
+                "mode": "search",
                 "limit": 10
               },
               "onOutcome": {
@@ -2052,7 +2089,7 @@ DECLARE @ProductUnavailableOutcome NVARCHAR(MAX) = N'{"response":{"mode":"ask_cl
 DECLARE @ProductNotFoundOutcome NVARCHAR(MAX) = N'{"response":{"mode":"ask_clarification","guidance":"Indica las referencias que no tuvieron coincidencia segura y solicita datos mas precisos; no afirmes que el carrito cambio."},"effects":[{"type":"presentation.add","template":"cart_not_found","dataPath":"error.context","mode":"Exclusive","priority":"Required"}]}';
 
 SET @SettingsJson = JSON_MODIFY(@SettingsJson, '$.templates.cart_partial',
-    N'Procesé cada producto de tu solicitud:\r\n{{#if applied_items}}\r\n*Agregados*\r\n{{#each applied_items}}\r\n- {{name}} — cantidad: {{quantity}}\r\n{{/each}}\r\n{{/if}}\r\n{{#if unavailable_items}}\r\n*Sin existencia*\r\n{{#each unavailable_items}}\r\n- {{product_text}}{{#if recognized_name}} ({{recognized_name}}){{/if}}\r\n{{/each}}\r\n{{/if}}\r\n{{#if insufficient_stock_items}}\r\n*Existencia insuficiente*\r\n{{#each insufficient_stock_items}}\r\n- {{product_text}}: solicitaste {{requested_quantity}} y hay {{available_quantity}}; puedes pedir hasta {{maximum_command_quantity}}\r\n{{/each}}\r\n{{/if}}\r\n{{#if ambiguous_options}}\r\n*Necesito que elijas*\r\n{{#each ambiguous_options}}\r\n- Para {{product_text}}: {{name}} — ${{unit_price}} {{currency}}\r\n{{/each}}\r\n{{/if}}\r\n{{#if suggested_options}}\r\n*Necesito confirmar*\r\n{{#each suggested_options}}\r\n- Para {{product_text}}: ¿te refieres a {{name}} — ${{unit_price}} {{currency}}?\r\n{{/each}}\r\n{{/if}}\r\n{{#if not_found_items}}\r\n*No encontrados*\r\n{{#each not_found_items}}\r\n- {{product_text}}\r\n{{/each}}\r\n{{/if}}\r\n*Pedido actual*\r\n{{#each items}}\r\n- {{name}} x{{quantity}}: ${{line_total}}\r\n{{/each}}\r\n\r\n*Total: ${{total}} {{currency}}*\r\n\r\nIndícame las elecciones o una referencia más precisa para los pendientes.');
+    N'Doc, así quedó cada producto que solicitó:\r\n{{#if applied_items}}\r\n*Agregados*\r\n{{#each applied_items}}\r\n- {{name}} — cantidad: {{quantity}}\r\n{{/each}}\r\n{{/if}}\r\n{{#if unavailable_items}}\r\n*Sin existencia*\r\n{{#each unavailable_items}}\r\n- {{product_text}}{{#if recognized_name}} ({{recognized_name}}){{/if}}\r\n{{/each}}\r\n{{/if}}\r\n{{#if insufficient_stock_items}}\r\n*Existencia insuficiente*\r\n{{#each insufficient_stock_items}}\r\n- {{product_text}}: solicitaste {{requested_quantity}} y hay {{available_quantity}}; puedes pedir hasta {{maximum_command_quantity}}\r\n{{/each}}\r\n{{/if}}\r\n{{#if ambiguous_options}}\r\n*Necesito que elijas*\r\n{{#each ambiguous_options}}\r\n- Para {{product_text}}: {{name}} — ${{unit_price}} {{currency}}\r\n{{/each}}\r\n{{/if}}\r\n{{#if suggested_options}}\r\n*Necesito confirmar*\r\n{{#each suggested_options}}\r\n- Para {{product_text}}: ¿te refieres a {{name}} — ${{unit_price}} {{currency}}?\r\n{{/each}}\r\n{{/if}}\r\n{{#if not_found_items}}\r\n*No encontrados*\r\n{{#each not_found_items}}\r\n- {{product_text}}\r\n{{/each}}\r\n{{/if}}\r\n*Pedido actual*\r\n{{#each items}}\r\n- {{name}} x{{quantity}}: ${{line_total}}\r\n{{/each}}\r\n\r\n*Total: ${{total}} {{currency}}*\r\n\r\nIndícame las elecciones o una referencia más precisa para los pendientes.');
 
 SET @SettingsJson = JSON_MODIFY(@SettingsJson, '$.templates.cart_partial',
     REPLACE(JSON_VALUE(@SettingsJson, '$.templates.cart_partial'),
@@ -2073,10 +2110,10 @@ SET @SettingsJson = JSON_MODIFY(@SettingsJson, '$.templates.cart_partial',
         N'*Total actual del pedido: ${{total}} {{currency}}*\r\n\r\n'));
 
 SET @SettingsJson = JSON_MODIFY(@SettingsJson, '$.templates.cart_not_found',
-    N'No agregue estas referencias porque no encontre una coincidencia segura:\r\n{{#each issues}}\r\n- {{ProductText}}\r\n{{/each}}\r\n\r\nIndicame el nombre, marca, presentacion o codigo de una de ellas para identificarla.');
+    N'Doc, no pude identificar con seguridad estas referencias:\r\n{{#each issues}}\r\n- {{ProductText}}\r\n{{/each}}\r\n\r\nCompártame la marca, presentación, código o un nombre más preciso y la busco de nuevo.');
 
 SET @SettingsJson = JSON_MODIFY(@SettingsJson, '$.templates.cart_product_unavailable',
-    N'Reconozco la referencia "{{product_text}}", pero actualmente no tiene disponibilidad comercial para agregarla.\r\n\r\nNo hice cambios al pedido por esta referencia. Puedes indicarme otra marca, presentacion o producto.');
+    N'Doc, encontré "{{product_text}}", pero en este momento no está disponible para agregarla.\r\n\r\nSu pedido quedó igual. Si desea, buscamos otra marca, presentación o producto.');
 
 IF JSON_VALUE(@SettingsJson, '$.globalActions[1].actions[0].operation') <> 'commerce.apply_order_changes'
     THROW 51000, 'SeedMedidental: ruta global de carrito inesperada.', 1;

@@ -15,6 +15,7 @@ using MimosBabySpa.Application.Services;
 using MimosBabySpa.Application.Commerce;
 
 using MimosBabySpa.Domain.Repositories;
+using MimosBabySpa.Domain.Enums;
 
 using MimosBabySpa.Infrastructure.Data;
 
@@ -326,6 +327,8 @@ services.AddHttpClient<XionCommerceAdapter>();
 services.AddScoped<ICommerceAdapter>(sp => sp.GetRequiredService<XionCommerceAdapter>());
 
 services.AddScoped<ICommerceAdapterFactory, CommerceAdapterFactory>();
+services.AddScoped<IProductCatalogSyncService, ProductCatalogSyncService>();
+services.AddScoped<IProductAliasService, ProductAliasService>();
 
 // OpenAI Clients
 
@@ -574,6 +577,113 @@ services.AddScoped<IAgentConversationService, AgentConversationService>();
 // Build
 
 var serviceProvider = services.BuildServiceProvider();
+
+if (args.Length >= 5 && args[0].Equals("import-business-product-alias", StringComparison.OrdinalIgnoreCase))
+{
+    var selector = args[1];
+    var alias = args[2];
+    if (!Enum.TryParse<ProductAliasResolutionMode>(args[3], true, out var resolutionMode))
+        throw new ArgumentException("Indica SuggestOnly o AutoResolve como modo de alias.");
+    var productSearch = args[4];
+    var dryRun = args.Any(value => value.Equals("--dry-run", StringComparison.OrdinalIgnoreCase));
+
+    await using var aliasScope = serviceProvider.CreateAsyncScope();
+    var db = aliasScope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+    var business = Guid.TryParse(selector, out var selectedBusinessId)
+        ? await db.Businesses.AsNoTracking().SingleOrDefaultAsync(item => item.BusinessId == selectedBusinessId)
+        : (await db.Businesses.AsNoTracking().ToListAsync())
+            .SingleOrDefault(item => item.Name.Equals(selector, StringComparison.OrdinalIgnoreCase));
+    if (business is null)
+        throw new InvalidOperationException($"No existe un negocio con el selector '{selector}'.");
+
+    var matchingProducts = await db.Products.AsNoTracking()
+        .Where(product => product.BusinessId == business.BusinessId
+            && product.IsActive
+            && product.Name.Contains(productSearch))
+        .Select(product => new { product.ProductId, product.Name })
+        .ToListAsync();
+    if (matchingProducts.Count == 0)
+        throw new InvalidOperationException($"No hay productos locales activos que coincidan con '{productSearch}'.");
+
+    var aliases = aliasScope.ServiceProvider.GetRequiredService<IProductAliasService>();
+    var result = await aliases.ImportAsync(
+        business.BusinessId,
+        new ProductAliasImportRequest(
+            matchingProducts.Select(product => new ProductAliasImportItem(
+                alias,
+                ProductId: product.ProductId,
+                ResolutionMode: resolutionMode,
+                Scope: ProductAliasScope.Business,
+                Status: ProductAliasStatus.Active)).ToList(),
+            dryRun));
+    Console.WriteLine(
+        $"{business.Name}: alias={alias}, mode={resolutionMode}, products={matchingProducts.Count}, created={result.Created}, updated={result.Updated}, skipped={result.Skipped}, errors={result.Errors.Count}, dryRun={dryRun}");
+    foreach (var error in result.Errors)
+        Console.WriteLine($"  [{error.Code}] {error.Message}");
+    if (result.Errors.Count > 0)
+        Environment.ExitCode = 1;
+    return;
+}
+
+if (args.Length >= 4 && args[0].Equals("refresh-product-identities", StringComparison.OrdinalIgnoreCase))
+{
+    var selector = args[1];
+    if (!Enum.TryParse<CommerceProvider>(args[2], true, out var provider)
+        || provider == CommerceProvider.Local)
+        throw new ArgumentException("Indica un proveedor remoto valido para actualizar identidades.");
+
+    await using var refreshScope = serviceProvider.CreateAsyncScope();
+    var db = refreshScope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+    var business = Guid.TryParse(selector, out var selectedBusinessId)
+        ? await db.Businesses.AsNoTracking().SingleOrDefaultAsync(item => item.BusinessId == selectedBusinessId)
+        : (await db.Businesses.AsNoTracking().ToListAsync())
+            .SingleOrDefault(item => item.Name.Equals(selector, StringComparison.OrdinalIgnoreCase));
+    if (business is null)
+        throw new InvalidOperationException($"No existe un negocio con el selector '{selector}'.");
+
+    var sync = refreshScope.ServiceProvider.GetRequiredService<IProductCatalogSyncService>();
+    foreach (var query in args.Skip(3).Where(value => !string.IsNullOrWhiteSpace(value)))
+    {
+        var result = await sync.RefreshProductAsync(business.BusinessId, query, provider);
+        Console.WriteLine(
+            $"{business.Name}: provider={provider}, query={query}, found={result.ProductsFound}, changed={result.ProductsChanged}");
+    }
+    return;
+}
+
+if (args.Length >= 3 && args[0].Equals("sync-product-catalog", StringComparison.OrdinalIgnoreCase))
+{
+    var selector = args[1];
+    if (!Enum.TryParse<CommerceProvider>(args[2], true, out var provider)
+        || provider == CommerceProvider.Local)
+        throw new ArgumentException("Indica un proveedor remoto valido para sincronizar.");
+
+    await using var syncScope = serviceProvider.CreateAsyncScope();
+    var db = syncScope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+    var business = Guid.TryParse(selector, out var selectedBusinessId)
+        ? await db.Businesses.AsNoTracking().SingleOrDefaultAsync(item => item.BusinessId == selectedBusinessId)
+        : (await db.Businesses.AsNoTracking().ToListAsync())
+            .SingleOrDefault(item => item.Name.Equals(selector, StringComparison.OrdinalIgnoreCase));
+    if (business is null)
+        throw new InvalidOperationException($"No existe un negocio con el selector '{selector}'.");
+
+    var sync = syncScope.ServiceProvider.GetRequiredService<IProductCatalogSyncService>();
+    try
+    {
+        var result = await sync.SyncAsync(
+            business.BusinessId,
+            new ProductCatalogSyncRequest(Provider: provider));
+        Console.WriteLine(
+            $"{business.Name}: provider={provider}, pages={result.PagesProcessed}, products={result.ProductsProcessed}, changed={result.ProductsChanged}, completed={result.CompletedAtUtc:O}");
+    }
+    catch (InvalidOperationException exception)
+    {
+        Console.Error.WriteLine(
+            $"{business.Name}: provider={provider}, synchronization failed: {exception.Message}");
+        Environment.ExitCode = 1;
+    }
+    return;
+}
 
 if (args.Length >= 2 && args[0].Equals("confirm-payment", StringComparison.OrdinalIgnoreCase))
 

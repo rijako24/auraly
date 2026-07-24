@@ -332,6 +332,8 @@ public class IntegrationAdminService : IIntegrationAdminService
             rutaId = Math.Max(0, request.RutaId),
             validateStockOnCreate = request.ValidateStockOnCreate,
             orderHistoryDays = request.OrderHistoryDays <= 0 ? 365 : request.OrderHistoryDays,
+            catalogDiscoveryMaxQueries = 512,
+            catalogDiscoveryConcurrency = 8,
             endpoints = new
             {
                 customerSync = "WebApi/Vendedores/Sync/Clientes/{vendedorId}/{sucursalId}",
@@ -339,7 +341,6 @@ public class IntegrationAdminService : IIntegrationAdminService
                 productSearchWithoutCustomer = "WebApi/Vendedores/Consulta/ProductosABuscarSinCliente/{sucursalId}/{vendedorId}/{criterio}/{busqueda}/{bodegaId}/{equipoId}",
                 productDetail = "WebApi/Vendedores/Consulta/InfoProducto/{productoId}/{sucursalId}/{vendedorId}/{bodegaId}/{equipoId}/{clienteId}",
                 productDetailWithoutCustomer = "WebApi/Vendedores/Consulta/InfoProductoSinCliente/{productoId}/{sucursalId}/{vendedorId}/{bodegaId}/{equipoId}",
-                productSync = "WebApi/Vendedores/Sync/Productos/{vendedorId}/{sucursalId}",
                 nextOrderNumber = "WebApi/Vendedores/Consulta/Pedido/SiguienteConsecutivo/{equipoId}",
                 createOrder = "WebApi/Vendedores/Nuevo/Pedido/{validarExistencia}",
                 orderHistory = "WebApi/Vendedores/Consulta/Pedidos/{vendedorId}/{fechaInicial}/{fechaFin}/{clienteId}/{rutaId}/{criterio}",

@@ -135,7 +135,7 @@ public sealed class ProductCatalogSyncService : IProductCatalogSyncService
                     previousFingerprint = fingerprint;
 
                     changed += await UpsertProductIdentitiesAsync(connection, result.Products, ct);
-                    var completedCatalog = !result.HasMore || result.Products.Count == 0;
+                    var completedCatalog = !result.HasMore;
                     if (completedCatalog && deltaDate.HasValue && deltaDate.Value < deltaEndDate)
                     {
                         deltaDate = deltaDate.Value.AddDays(1);
@@ -161,6 +161,17 @@ public sealed class ProductCatalogSyncService : IProductCatalogSyncService
                         throw new InvalidOperationException("Catalog synchronization reached MaxPages before completing the full or delta range; the next execution will resume from the saved checkpoint (date and page).");
                 }
             }
+
+            var synchronizedCatalog = total > 0 || !connection.LastSyncAt.HasValue
+                ? null
+                : await _unitOfWork.Products.GetIdentityCatalogAsync(businessId, ct);
+            var hasSynchronizedIdentity = total > 0
+                || connection.LastSyncAt.HasValue
+                && synchronizedCatalog?.Any(product =>
+                    product.IntegrationConnectionId == connection.IntegrationConnectionId) == true;
+            if (!hasSynchronizedIdentity)
+                throw new InvalidOperationException(
+                    "Catalog synchronization completed without any products; the catalog remains unavailable and the empty result was not marked as a successful synchronization.");
 
             if (adapter is ICommerceCustomerIdentitySource customerSource)
             {
@@ -206,6 +217,11 @@ public sealed class ProductCatalogSyncService : IProductCatalogSyncService
         }
         catch (Exception exception)
         {
+            if (connection.CatalogSyncNextPage == 0)
+            {
+                connection.CatalogSyncNextPage = 1;
+                connection.CatalogDeltaCursorDate = null;
+            }
             connection.LastError = exception.Message.Length > 4000 ? exception.Message[..4000] : exception.Message;
             connection.UpdatedAt = DateTime.UtcNow;
             await _unitOfWork.IntegrationConnections.UpdateAsync(connection, ct);
@@ -278,6 +294,8 @@ public sealed class ProductCatalogSyncService : IProductCatalogSyncService
                 .Where(value => !string.IsNullOrWhiteSpace(value))
                 .Select(value => value!.Trim())
                 .Distinct(StringComparer.OrdinalIgnoreCase));
+            var productCategory = await ResolveProductCategoryAsync(connection, reference, ct);
+            var categoryName = productCategory?.Name ?? Clean(reference.CategoryName);
             var existing = await _unitOfWork.Products.GetByExternalIdAsync(
                 connection.BusinessId,
                 connection.IntegrationConnectionId,
@@ -296,7 +314,8 @@ public sealed class ProductCatalogSyncService : IProductCatalogSyncService
                     Sku = Clean(reference.Sku) ?? externalId,
                     Name = reference.Name.Trim(),
                     Description = Clean(identityDescription),
-                    CategoryName = Clean(reference.CategoryName),
+                    ProductCategoryId = productCategory?.ProductCategoryId,
+                    CategoryName = categoryName,
                     UnitPrice = 0m,
                     Currency = Clean(reference.Currency) ?? "COP",
                     ManageStock = false,
@@ -316,12 +335,12 @@ public sealed class ProductCatalogSyncService : IProductCatalogSyncService
             var sku = Clean(reference.Sku) ?? externalId;
             var name = reference.Name.Trim();
             var description = Clean(identityDescription);
-            var category = Clean(reference.CategoryName);
             var currency = Clean(reference.Currency) ?? existing.Currency;
             var identityChanged = !EqualsText(existing.Sku, sku)
                 || !EqualsText(existing.Name, name)
                 || !EqualsText(existing.Description, description)
-                || !EqualsText(existing.CategoryName, category)
+                || existing.ProductCategoryId != productCategory?.ProductCategoryId
+                || !EqualsText(existing.CategoryName, categoryName)
                 || !EqualsText(existing.Currency, currency)
                 || existing.UnitPrice != 0m
                 || existing.ManageStock
@@ -335,7 +354,8 @@ public sealed class ProductCatalogSyncService : IProductCatalogSyncService
             existing.Sku = sku;
             existing.Name = name;
             existing.Description = description;
-            existing.CategoryName = category;
+            existing.ProductCategoryId = productCategory?.ProductCategoryId;
+            existing.CategoryName = categoryName;
             existing.UnitPrice = 0m;
             existing.Currency = currency;
             existing.ManageStock = false;
@@ -352,6 +372,51 @@ public sealed class ProductCatalogSyncService : IProductCatalogSyncService
         return changed;
     }
 
+    private async Task<ProductCategory?> ResolveProductCategoryAsync(
+        IntegrationConnection connection,
+        ProductReference reference,
+        CancellationToken ct)
+    {
+        var externalId = Clean(reference.ExternalCategoryId);
+        var name = Clean(reference.CategoryName);
+        ProductCategory? category = null;
+        if (externalId is not null)
+            category = await _unitOfWork.ProductCategories.GetByExternalIdAsync(
+                connection.BusinessId, connection.IntegrationConnectionId, externalId, ct);
+        if (category is null && name is not null)
+            category = await _unitOfWork.ProductCategories.GetByNameAsync(
+                connection.BusinessId, connection.IntegrationConnectionId, name, ct);
+        if (category is null)
+        {
+            if (name is null)
+                return null;
+            var now = DateTime.UtcNow;
+            category = new ProductCategory
+            {
+                ProductCategoryId = Guid.NewGuid(),
+                BusinessId = connection.BusinessId,
+                IntegrationConnectionId = connection.IntegrationConnectionId,
+                ExternalCategoryId = externalId,
+                Name = name,
+                DisplayOrder = 0,
+                IsActive = true,
+                IsBrowsable = true,
+                LastSyncedAt = now,
+                CreatedAt = now
+            };
+            await _unitOfWork.ProductCategories.CreateAsync(category, ct);
+            return category;
+        }
+
+        if (name is null || EqualsText(category.Name, name))
+            return category;
+        category.Name = name;
+        category.LastSyncedAt = DateTime.UtcNow;
+        category.UpdatedAt = DateTime.UtcNow;
+        await _unitOfWork.ProductCategories.UpdateAsync(category, ct);
+        return category;
+
+    }
     private async Task<int> UpsertCustomerIdentitiesAsync(
         IntegrationConnection connection,
         IReadOnlyList<ExternalCustomerIdentityReference> references,

@@ -35,7 +35,7 @@ public sealed class ContextualCatalogSearchTests
         var (operationContext, _) = CatalogContext("pieza de mano");
 
         var outcome = await new SearchProductsOperation(commerce).ExecuteAsync(
-            JsonSerializer.SerializeToElement(new { queries = new[] { query } }),
+            JsonSerializer.SerializeToElement(new { mode = "search", queries = new[] { query } }),
             operationContext);
 
         outcome.Code.Should().Be("products.found");
@@ -64,7 +64,7 @@ public sealed class ContextualCatalogSearchTests
         var (operationContext, _) = CatalogContext("pieza de mano");
 
         var outcome = await new SearchProductsOperation(commerce).ExecuteAsync(
-            JsonSerializer.SerializeToElement(new { queries = new[] { "guantes" } }),
+            JsonSerializer.SerializeToElement(new { mode = "search", queries = new[] { "guantes" } }),
             operationContext);
 
         outcome.Code.Should().Be("products.found");
@@ -85,7 +85,7 @@ public sealed class ContextualCatalogSearchTests
         session.ConversationState.LastBotMessage = "Conversacion cerrada.";
 
         var outcome = await new SearchProductsOperation(commerce).ExecuteAsync(
-            JsonSerializer.SerializeToElement(new { queries = new[] { "acero" } }),
+            JsonSerializer.SerializeToElement(new { mode = "search", queries = new[] { "acero" } }),
             operationContext);
 
         outcome.Data.GetProperty("search_terms")[0].GetString().Should().Be("acero");
@@ -227,6 +227,14 @@ public sealed class ContextualCatalogSearchTests
             Queries.Add(request.Query ?? string.Empty);
             return Task.FromResult(search(request));
         }
+
+        public Task<ProductCategoryPage> BrowseCategoriesAsync(
+            AgentConversationContext ctx,
+            int page,
+            int pageSize,
+            CancellationToken ct = default) => throw new NotSupportedException();
+
+        public Task<string?> ResolveCategoryNameAsync(AgentConversationContext ctx, string name, CancellationToken ct = default) => Task.FromResult<string?>(null);
 
         public Task<OrderSnapshot> GetDraftAsync(
             AgentConversationContext ctx,

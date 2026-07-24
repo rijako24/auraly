@@ -67,6 +67,15 @@ public sealed class ProductAdminServiceTests
     {
         var tenantId = Guid.NewGuid();
         var businessId = Guid.NewGuid();
+        var category = new ProductCategory
+        {
+            ProductCategoryId = Guid.NewGuid(),
+            BusinessId = businessId,
+            Name = "Categoria",
+            IsActive = true,
+            IsBrowsable = true,
+            CreatedAt = DateTime.UtcNow
+        };
         var product = new Product
         {
             ProductId = Guid.NewGuid(),
@@ -75,6 +84,7 @@ public sealed class ProductAdminServiceTests
             Description = "Descripcion",
             CategoryName = "Categoria",
             UnitPrice = 100m,
+            ProductCategoryId = category.ProductCategoryId,
             Currency = "COP",
             IsActive = true,
             CreatedAt = DateTime.UtcNow
@@ -91,9 +101,14 @@ public sealed class ProductAdminServiceTests
             .Returns(Task.CompletedTask);
         var unitOfWork = new Mock<IUnitOfWork>();
         unitOfWork.SetupGet(unit => unit.Businesses).Returns(businesses.Object);
+        var categories = new Mock<IProductCategoryRepository>();
+        categories.Setup(repository => repository.GetByNameAsync(
+                businessId, null, "Categoria", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(category);
         unitOfWork.SetupGet(unit => unit.Products).Returns(products.Object);
         unitOfWork.Setup(unit => unit.SaveChangesAsync(It.IsAny<CancellationToken>())).ReturnsAsync(1);
         var audit = new Mock<IAuditService>();
+        unitOfWork.SetupGet(unit => unit.ProductCategories).Returns(categories.Object);
         audit.Setup(service => service.LogAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(),
                 It.IsAny<object?>(), It.IsAny<object?>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);

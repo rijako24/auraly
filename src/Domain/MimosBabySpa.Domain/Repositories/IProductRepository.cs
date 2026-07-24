@@ -11,6 +11,15 @@ public interface IProductRepository
         int limit,
         CancellationToken ct = default,
         bool includeInactive = false);
+    Task<(IReadOnlyList<Product> Items, int TotalCount)> SearchPageAsync(
+        Guid businessId,
+        string? query,
+        string? category,
+        int page,
+        int pageSize,
+        CancellationToken ct = default,
+        bool includeInactive = false);
+
 
     Task<(IReadOnlyList<Product> Items, int TotalCount)> GetPagedByBusinessIdAsync(
         Guid businessId,

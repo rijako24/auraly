@@ -22,32 +22,41 @@ public static partial class CommerceTurnPlanSafety
     {
         plan = RemoveNoOpFactClears(plan, context);
         plan = RecoverExplicitOrderList(plan, context);
-        if (IsCatalogFollowUp(context) && !HasExplicitRequestedQuantity(NormalizeText(context.LatestUserMessage), context)
-            && IsSingleOfferedProductReference(context))
+        if (IsCatalogFollowUp(context) && IsSingleOfferedProductReference(context))
             plan = RemoveCatalogFollowUpQuery(plan);
         plan = RemoveUnsupportedFinalization(plan, context);
         plan = DeferRemovalUntilCatalogReplacementIsSelected(plan);
         plan = NormalizeNewOfferedProductQuantities(plan, context);
 
+        return AuthorizeCartMutations(plan, context);
+    }
+
+    public static TurnPlan AuthorizeRecoveredCartMutations(
+        TurnPlan originalPlan,
+        TurnPlan recoveredPlan,
+        TurnPlanningContext context)
+    {
+        var original = originalPlan.Signals.FirstOrDefault(signal =>
+            signal.Type.Equals(OrderChangesSignal, StringComparison.OrdinalIgnoreCase));
+        var recovered = recoveredPlan.Signals.FirstOrDefault(signal =>
+            signal.Type.Equals(OrderChangesSignal, StringComparison.OrdinalIgnoreCase));
+        if (recovered is null
+            || original is not null
+            && original.Value.GetRawText().Equals(recovered.Value.GetRawText(), StringComparison.Ordinal)
+            && string.Equals(original.Evidence, recovered.Evidence, StringComparison.Ordinal))
+            return recoveredPlan;
+
+        return AuthorizeCartMutations(recoveredPlan, context);
+    }
+
+    public static TurnPlan AuthorizeCartMutations(TurnPlan plan, TurnPlanningContext context)
+    {
         var orderChanges = plan.Signals.FirstOrDefault(signal =>
             signal.Type.Equals(OrderChangesSignal, StringComparison.OrdinalIgnoreCase));
         if (orderChanges is null || !TryReadCommands(orderChanges.Value, out var commands))
             return plan;
 
-        var normalizedMessage = NormalizeText(context.LatestUserMessage);
-        if (IsCatalogInquiry(normalizedMessage) && !HasExplicitMutationVerb(normalizedMessage))
-            return ReplaceInquiryMutationWithCatalogQuery(plan, context, orderChanges, commands);
-
-        if (IsCatalogFollowUp(context) && !HasExplicitRequestedQuantity(normalizedMessage, context))
-        {
-            var withoutUnsupported = RemoveUnsupportedCatalogFollowUpMutations(
-                plan, orderChanges, commands);
-            return HasExplicitMutationVerb(normalizedMessage)
-                ? withoutUnsupported
-                : RemoveOrderChangesSignal(withoutUnsupported);
-        }
-
-        return plan;
+        return AuthorizeMutationBatch(plan, context, orderChanges, commands);
     }
 
     private static bool IsSingleOfferedProductReference(TurnPlanningContext context)
@@ -59,8 +68,6 @@ public static partial class CommerceTurnPlanSafety
     }
     private static TurnPlan RemoveCatalogFollowUpQuery(TurnPlan plan) =>
         RemoveSignal(plan, CatalogQuerySignal);
-    private static TurnPlan RemoveOrderChangesSignal(TurnPlan plan) =>
-        RemoveSignal(plan, OrderChangesSignal);
     private static TurnPlan RemoveSignal(TurnPlan plan, string signalType)
     {
         var signals = plan.Signals
@@ -85,44 +92,6 @@ public static partial class CommerceTurnPlanSafety
             Decision = plan.Decision,
             Response = plan.Response
         };
-    }
-
-    private static TurnPlan RemoveUnsupportedCatalogFollowUpMutations(
-        TurnPlan plan,
-        PlannedSignal orderChanges,
-        IReadOnlyList<CartCommandCandidate> commands)
-    {
-        var rawCommands = orderChanges.Value.EnumerateArray().ToArray();
-        var retained = rawCommands
-            .Zip(commands)
-            .Where(pair =>
-                !pair.Second.Operation.Equals("add", StringComparison.OrdinalIgnoreCase)
-                && !pair.Second.Operation.Equals("set_quantity", StringComparison.OrdinalIgnoreCase))
-            .Select(pair => pair.First.Clone())
-            .ToArray();
-        if (retained.Length == rawCommands.Length)
-            return plan;
-
-        var signals = plan.Signals
-            .Where(signal => !ReferenceEquals(signal, orderChanges))
-            .ToList();
-        if (retained.Length > 0)
-        {
-            var index = plan.Signals
-                .TakeWhile(signal => !ReferenceEquals(signal, orderChanges))
-                .Count();
-            signals.Insert(
-                Math.Min(index, signals.Count),
-                new PlannedSignal
-                {
-                    Type = orderChanges.Type,
-                    Value = JsonSerializer.SerializeToElement(retained),
-                    Evidence = orderChanges.Evidence,
-                    Confidence = orderChanges.Confidence
-                });
-        }
-
-        return CopyWithSignals(plan, signals);
     }
 
     private static TurnPlan DeferRemovalUntilCatalogReplacementIsSelected(TurnPlan plan)
@@ -192,9 +161,6 @@ public static partial class CommerceTurnPlanSafety
         TurnPlan plan,
         TurnPlanningContext context)
     {
-        if (!IsCatalogFollowUp(context))
-            return plan;
-
         var orderChanges = plan.Signals.FirstOrDefault(signal =>
             signal.Type.Equals(OrderChangesSignal, StringComparison.OrdinalIgnoreCase));
         if (orderChanges?.Value.ValueKind != JsonValueKind.Array)
@@ -248,15 +214,24 @@ public static partial class CommerceTurnPlanSafety
 
         var productText = NormalizeReference(productTextElement.GetString() ?? string.Empty);
         return productText.Length > 0
-            && IsExactOfferedProduct(productText, context.StructuredContext)
+            && IsExactOfferedProduct(productText, context)
             && !CurrentCartContainsExactProduct(productText, context.StructuredContext);
     }
 
     private static bool IsExactOfferedProduct(
         string productText,
-        IReadOnlyDictionary<string, JsonElement>? structuredContext) =>
-        EnumerateProductNames(structuredContext, "shoppingContext", "offers", "products")
-            .Any(name => NormalizeReference(name).Equals(productText, StringComparison.Ordinal));
+        TurnPlanningContext context)
+    {
+        if (EnumerateProductNames(context.StructuredContext, "shoppingContext", "offers", "products")
+            .Any(name => NormalizeReference(name).Equals(productText, StringComparison.Ordinal)))
+            return true;
+
+        var memoryContext = new AgentConversationContext { Config = context.Config };
+        foreach (var fact in context.CurrentFacts)
+            memoryContext.Facts[fact.Key] = fact.Value;
+        return ProductSelectionMemory.FindCatalogMatches(memoryContext, productText)
+            .Any(product => NormalizeReference(product.Name).Equals(productText, StringComparison.Ordinal));
+    }
 
     private static bool CurrentCartContainsExactProduct(
         string productText,
@@ -305,7 +280,6 @@ public static partial class CommerceTurnPlanSafety
     private static TurnPlan RecoverExplicitOrderList(TurnPlan plan, TurnPlanningContext context)
     {
         if (!context.Scope.Signals.ContainsKey(OrderChangesSignal)
-            || IsCatalogInquiry(NormalizeText(context.LatestUserMessage))
             || !TryParseOrderList(context.LatestUserMessage, out var commands))
             return plan;
 
@@ -428,39 +402,218 @@ public static partial class CommerceTurnPlanSafety
         && bool.TryParse(value.GetString(), out var parsed)
         && parsed;
 
-    private static TurnPlan ReplaceInquiryMutationWithCatalogQuery(
+    private static TurnPlan AuthorizeMutationBatch(
         TurnPlan plan,
         TurnPlanningContext context,
         PlannedSignal orderChanges,
         IReadOnlyList<CartCommandCandidate> commands)
     {
-        if (!context.Scope.Signals.ContainsKey(CatalogQuerySignal))
-            return CopyWithSignals(plan, plan.Signals.Where(signal => !ReferenceEquals(signal, orderChanges)));
+        var rawCommands = orderChanges.Value.EnumerateArray().ToArray();
+        var retained = new List<JsonElement>(rawCommands.Length);
+        var discoveryQueries = new List<string>();
+        var hasExactSignalEvidence = IsExactMessageEvidence(
+            orderChanges.Evidence,
+            context.LatestUserMessage);
 
-        var retained = plan.Signals
+        foreach (var pair in rawCommands.Zip(commands))
+        {
+            var command = pair.Second;
+            var mutatesQuantity = command.Operation.Equals("add", StringComparison.OrdinalIgnoreCase)
+                || command.Operation.Equals("set_quantity", StringComparison.OrdinalIgnoreCase);
+            var resolvesPending = ResolvesPendingMutation(command, context);
+            var conflictsWithCatalogRead = mutatesQuantity
+                && IsCoveredByCatalogRead(plan, command.ProductText);
+            var groundedQuantity = mutatesQuantity && HasGroundedQuantity(command, context);
+            var validExistingTarget = !command.Operation.Equals("set_quantity", StringComparison.OrdinalIgnoreCase)
+                || CurrentCartContainsReference(command.ProductText, context.StructuredContext);
+            var validRemovalTarget = !command.Operation.Equals("remove", StringComparison.OrdinalIgnoreCase)
+                || CurrentCartContainsReference(command.ProductText, context.StructuredContext)
+                || resolvesPending;
+            var validPendingCancellation = !command.Operation.Equals("cancel_pending", StringComparison.OrdinalIgnoreCase)
+                || resolvesPending;
+
+            var authorized = hasExactSignalEvidence
+                && !conflictsWithCatalogRead
+                && validExistingTarget
+                && validRemovalTarget
+                && validPendingCancellation
+                && (!mutatesQuantity || groundedQuantity || resolvesPending);
+            if (authorized)
+            {
+                retained.Add(pair.First.Clone());
+                continue;
+            }
+
+            if (mutatesQuantity
+                && !IsCatalogFollowUp(context)
+                && !IsOfferedProductReference(context.LatestUserMessage, context.StructuredContext)
+                && !string.IsNullOrWhiteSpace(command.ProductText))
+                discoveryQueries.Add(command.ProductText.Trim());
+        }
+
+        if (retained.Count == rawCommands.Length)
+            return plan;
+
+        var signals = plan.Signals
             .Where(signal => !ReferenceEquals(signal, orderChanges))
             .ToList();
-        if (retained.Any(signal => signal.Type.Equals(CatalogQuerySignal, StringComparison.OrdinalIgnoreCase)))
-            return CopyWithSignals(plan, retained);
-
-        var queries = commands
-            .Where(command => command.Operation.Equals("add", StringComparison.OrdinalIgnoreCase))
-            .Select(command => command.ProductText.Trim())
-            .Where(product => product.Length > 0)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToArray();
-        if (queries.Length == 0)
-            return CopyWithSignals(plan, retained);
-
-        retained.Add(new PlannedSignal
+        if (retained.Count > 0)
         {
-            Type = CatalogQuerySignal,
-            Value = JsonSerializer.SerializeToElement(new { queries }),
-            Evidence = orderChanges.Evidence,
-            Confidence = orderChanges.Confidence
-        });
-        return CopyWithSignals(plan, retained);
+            var index = plan.Signals.TakeWhile(signal => !ReferenceEquals(signal, orderChanges)).Count();
+            signals.Insert(Math.Min(index, signals.Count), new PlannedSignal
+            {
+                Type = orderChanges.Type,
+                Value = JsonSerializer.SerializeToElement(retained),
+                Evidence = orderChanges.Evidence,
+                Confidence = orderChanges.Confidence
+            });
+        }
+
+        if (discoveryQueries.Count > 0
+            && context.Scope.Signals.ContainsKey(CatalogQuerySignal)
+            && !signals.Any(signal => signal.Type.Equals(CatalogQuerySignal, StringComparison.OrdinalIgnoreCase)))
+        {
+            signals.Add(new PlannedSignal
+            {
+                Type = CatalogQuerySignal,
+                Value = JsonSerializer.SerializeToElement(new
+                {
+                    mode = "search",
+                    queries = discoveryQueries.Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
+                    replacement_reference = (string?)null
+                }),
+                Evidence = orderChanges.Evidence,
+                Confidence = orderChanges.Confidence
+            });
+        }
+
+        return CopyWithSignals(plan, signals);
     }
+
+    private static bool IsExactMessageEvidence(string evidence, string message)
+    {
+        var normalizedEvidence = NormalizeText(evidence);
+        return normalizedEvidence.Length > 0
+            && NormalizeText(message).Contains(normalizedEvidence, StringComparison.Ordinal);
+    }
+
+    private static bool HasGroundedQuantity(CartCommandCandidate command, TurnPlanningContext context)
+    {
+        if (command.Quantity is not { } expected || expected <= 0)
+            return false;
+
+        var message = NormalizeText(context.LatestUserMessage);
+        var product = NormalizeText(command.ProductText);
+        var evidenceOutsideProduct = product.Length == 0
+            ? message
+            : Regex.Replace(
+                $" {message} ",
+                $@"(?<![\p{{L}}\p{{N}}]){Regex.Escape(product)}(?![\p{{L}}\p{{N}}])",
+                " ",
+                RegexOptions.CultureInvariant).Trim();
+
+        foreach (Match match in NumericQuantityRegex().Matches(evidenceOutsideProduct))
+        {
+            if (decimal.TryParse(
+                    match.Value.Replace(',', '.'),
+                    NumberStyles.Number,
+                    CultureInfo.InvariantCulture,
+                    out var parsed)
+                && parsed == expected)
+                return true;
+        }
+
+        foreach (var quantityWord in context.Config.Commerce.Conversation.QuantityWords)
+        {
+            if (quantityWord.Value == expected
+                && CommerceConversationMatcher.ContainsPhrase(evidenceOutsideProduct, [quantityWord.Key]))
+                return true;
+        }
+
+        return expected == 1m
+            && CommerceConversationMatcher.ContainsPhrase(
+                evidenceOutsideProduct,
+                context.Config.Commerce.Conversation.AdditionalRequestPhrases);
+    }
+
+    private static bool IsCoveredByCatalogRead(TurnPlan plan, string productText)
+    {
+        var reference = NormalizeReference(productText);
+        if (reference.Length == 0)
+            return false;
+
+        return plan.Signals.Any(signal =>
+        {
+            if (!signal.Type.Equals(CatalogQuerySignal, StringComparison.OrdinalIgnoreCase)
+                || signal.Value.ValueKind != JsonValueKind.Object
+                || !signal.Value.TryGetProperty("mode", out var mode)
+                || mode.ValueKind != JsonValueKind.String
+                || !mode.GetString()!.Equals("search", StringComparison.OrdinalIgnoreCase)
+                || !signal.Value.TryGetProperty("queries", out var queries)
+                || queries.ValueKind != JsonValueKind.Array)
+                return false;
+
+            return queries.EnumerateArray().Any(query =>
+                query.ValueKind == JsonValueKind.String
+                && SameReference(reference, NormalizeReference(query.GetString() ?? string.Empty)));
+        });
+    }
+
+    private static bool ResolvesPendingMutation(CartCommandCandidate command, TurnPlanningContext context)
+    {
+        var pending = PendingCartCommandMemory.Read(context.CurrentFacts);
+        if (pending is null)
+            return false;
+
+        var messageReference = NormalizeReference(context.LatestUserMessage);
+        var commandReference = NormalizeReference(command.ProductText);
+        var cancelsPending = command.Operation.Equals(
+            CartCommandOperations.CancelPending,
+            StringComparison.OrdinalIgnoreCase);
+
+        return pending.Items.Where(item => !item.AlreadyApplied).Any(item =>
+            (cancelsPending || item.Command.Quantity == command.Quantity)
+            && (cancelsPending
+                || item.Command.Operation.Equals(command.Operation, StringComparison.OrdinalIgnoreCase)
+                || item.Command.Operation.Equals("add", StringComparison.OrdinalIgnoreCase)
+                && command.Operation.Equals("set_quantity", StringComparison.OrdinalIgnoreCase)
+                || item.Command.Operation.Equals("set_quantity", StringComparison.OrdinalIgnoreCase)
+                && command.Operation.Equals("add", StringComparison.OrdinalIgnoreCase))
+            && new[] { item.Command.ProductText, item.OriginalProductText, item.Issue?.ProductText }
+                .Concat(item.Issue?.ProductCandidates.Select(candidate => candidate.Name) ?? [])
+                .Where(reference => !string.IsNullOrWhiteSpace(reference))
+                .Any(reference =>
+                    messageReference.Length > 0
+                        && SameReference(messageReference, NormalizeReference(reference!))
+                    || cancelsPending
+                        && commandReference.Length > 0
+                        && SameReference(commandReference, NormalizeReference(reference!))));
+    }
+
+    private static bool CurrentCartContainsReference(
+        string productText,
+        IReadOnlyDictionary<string, JsonElement>? structuredContext)
+    {
+        var reference = NormalizeReference(productText);
+        if (reference.Length == 0
+            || structuredContext is null
+            || !structuredContext.TryGetValue("currentCart", out var cart)
+            || cart.ValueKind != JsonValueKind.Object
+            || !cart.TryGetProperty("items", out var items)
+            || items.ValueKind != JsonValueKind.Array)
+            return false;
+
+        return items.EnumerateArray().Any(item =>
+            item.ValueKind == JsonValueKind.Object
+            && item.TryGetProperty("name", out var name)
+            && name.ValueKind == JsonValueKind.String
+            && SameReference(reference, NormalizeReference(name.GetString() ?? string.Empty)));
+    }
+
+    private static bool SameReference(string left, string right) =>
+        left.Equals(right, StringComparison.Ordinal)
+        || left.Length >= 3 && right.Contains(left, StringComparison.Ordinal)
+        || right.Length >= 3 && left.Contains(right, StringComparison.Ordinal);
 
     private static TurnPlan CopyWithSignals(TurnPlan plan, IEnumerable<PlannedSignal> signals) => new()
     {
@@ -517,20 +670,6 @@ public static partial class CommerceTurnPlanSafety
         return true;
     }
 
-    private static bool IsCatalogInquiry(string message) => CatalogInquiryRegex().IsMatch(message);
-
-    private static bool HasExplicitMutationVerb(string message) => MutationVerbRegex().IsMatch(message);
-
-    private static bool StartsWithExplicitQuantity(string message) => QuantityPrefixRegex().IsMatch(message);
-
-    private static bool HasExplicitRequestedQuantity(string message, TurnPlanningContext context) =>
-        StartsWithExplicitQuantity(message)
-        || MutationQuantityRegex().IsMatch(message)
-        || CommerceConversationMatcher.ContainsPhrase(
-            message, context.Config.Commerce.Conversation.AdditionalRequestPhrases)
-        || (!IsOfferedProductReference(message, context.StructuredContext)
-            && (UnitQuantityRegex().IsMatch(message) || TrailingQuantityRegex().IsMatch(message)));
-
     private static bool IsOfferedProductReference(
         string message,
         IReadOnlyDictionary<string, JsonElement>? structuredContext)
@@ -579,28 +718,14 @@ public static partial class CommerceTurnPlanSafety
         return builder.ToString().Normalize(NormalizationForm.FormC).Trim();
     }
 
-    [GeneratedRegex(@"\b(tienes?|tienen|hay|manejas?|manejan|vendes?|venden|disponible(?:s)?|disponibilidad|precio(?:s)?|cuanto\s+(?:cuesta|vale)|que\s+(?:opciones|referencias))\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
-    private static partial Regex CatalogInquiryRegex();
-
-    [GeneratedRegex(@"\b(agrega(?:me|nos)?|anade(?:me|nos)?|pon(?:me|nos)?|dame|danos|incluye|quita(?:me|nos)?|elimina|retira|saca|cambia|actualiza|sube|baja)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
-    private static partial Regex MutationVerbRegex();
-
-    [GeneratedRegex(@"^\s*(?:\d+(?:[.,]\d+)?|un|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|trece|catorce|quince|dieciseis|diecisiete|dieciocho|diecinueve|veinte)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
-    private static partial Regex QuantityPrefixRegex();
-    [GeneratedRegex(@"\b(?:agrega(?:me|nos)?|anade(?:me|nos)?|pon(?:me|nos)?|dame|danos|incluye|quiero|necesito)\s+(?:(?:de|del|la|el|las|los|esa|ese|esas|esos)\s+){0,2}(?:\d+(?:[.,]\d+)?(?:\s*(?:k|kg|kgs|lb|lbs))?|un|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|trece|catorce|quince|dieciseis|diecisiete|dieciocho|diecinueve|veinte)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
-    private static partial Regex MutationQuantityRegex();
-
-    [GeneratedRegex(@"\b(?:\d+(?:[.,]\d+)?|un|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|trece|catorce|quince|dieciseis|diecisiete|dieciocho|diecinueve|veinte)\s+(?:unidad(?:es)?|paquete(?:s)?|caja(?:s)?|bolsa(?:s)?|pieza(?:s)?)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
-    private static partial Regex UnitQuantityRegex();
-    [GeneratedRegex(@"\b(?:\d+(?:[.,]\d+)?|un|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|trece|catorce|quince|dieciseis|diecisiete|dieciocho|diecinueve|veinte)\s*(?:[,;]|$)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
-    private static partial Regex TrailingQuantityRegex();
-
-
     [GeneratedRegex(@"^\s*[-*•▪◦]\s*", RegexOptions.CultureInvariant)]
     private static partial Regex BulletPrefixRegex();
 
     [GeneratedRegex(@"^\s*[-*•▪◦]\s*(?<quantity>\d+(?:[.,]\d+)?)\s*(?:x\b\s*)?(?<product>[^\r\n]+?)\s*$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex OrderListLineRegex();
+
+    [GeneratedRegex(@"(?<![\p{L}\p{N}])\d+(?:[.,]\d+)?(?!\d)", RegexOptions.CultureInvariant)]
+    private static partial Regex NumericQuantityRegex();
 
     private sealed record CartCommandCandidate(string Operation, string ProductText, decimal? Quantity);
 }

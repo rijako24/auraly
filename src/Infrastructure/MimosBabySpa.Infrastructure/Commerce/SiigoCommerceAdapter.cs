@@ -29,8 +29,9 @@ public sealed class SiigoCommerceAdapter : ICommerceAdapter
         await ConfigureAsync(settings, connection, ct);
 
         var pageSize = Math.Clamp(Math.Max(settings.Catalog.DefaultPageSize, request.Limit), 1, 100);
+        var page = Math.Max(request.Page, 1);
         var response = await _httpClient.GetFromJsonAsync<SiigoProductListResponse>(
-            $"/v1/products?page=1&page_size={pageSize}",
+            $"/v1/products?page={page}&page_size={pageSize}",
             CommerceJson.Options,
             ct);
 
@@ -50,7 +51,7 @@ public sealed class SiigoCommerceAdapter : ICommerceAdapter
             filtered = cached;
         }
 
-        return new ProductSearchResult(filtered, "siigo", (response?.Pagination?.TotalResults ?? 0) > pageSize, ProductSearchAppliedFilters.From(request));
+        return new ProductSearchResult(filtered, "siigo", (response?.Pagination?.TotalResults ?? 0) > page * pageSize, ProductSearchAppliedFilters.From(request));
     }
 
     public async Task<ProductReference?> GetProductAsync(AddOrderItemRequest request, CommerceAdapterContext ctx, CancellationToken ct = default)

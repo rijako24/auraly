@@ -24,6 +24,14 @@ internal sealed class XionProductSummaryDto
 internal sealed class XionProductDto
 {
     public int IdProducto { get; init; }
+    public int? IdFamilia1 { get; init; }
+    public int? IdFamilia2 { get; init; }
+    public int? IdFamilia3 { get; init; }
+    public int? IdFamilia4 { get; init; }
+    public int? IdFamilia5 { get; init; }
+    public int? ProveedorId { get; init; }
+    public int? MarcaId { get; init; }
+    public int? CasaComercialId { get; init; }
     public string? DescripcionLarga { get; init; }
     public string? DescripcionCorta { get; init; }
     public decimal Existencias { get; init; }
@@ -33,8 +41,8 @@ internal sealed class XionProductDto
     public decimal PrecioPublicoReal { get; init; }
     public decimal Embalaje { get; init; }
     public decimal ImpoConsumo { get; init; }
-    public int IvaCompraId { get; init; }
-    public int IvaVentaId { get; init; }
+    public int? IvaCompraId { get; init; }
+    public int? IvaVentaId { get; init; }
     public decimal Dc1 { get; init; }
     public decimal Dc2 { get; init; }
     public decimal Dc3 { get; init; }
@@ -129,11 +137,12 @@ internal static class XionMapper
             product.IdProducto.ToString(CultureInfo.InvariantCulture),
             name,
             Clean(product.DescripcionCorta),
-            Clean(product.NombreProveedor),
+            null,
             price,
             currency,
             product.NoManejaInventario ? null : product.Existencias,
-            RawPayloadJson: JsonSerializer.Serialize(product, CommerceJson.Options));
+            RawPayloadJson: JsonSerializer.Serialize(product, CommerceJson.Options),
+            ExternalCategoryId: product.IdFamilia1 > 0 ? product.IdFamilia1.Value.ToString(CultureInfo.InvariantCulture) : null);
     }
 
     public static CommerceOrderHistoryRecord? ToOrderHistory(XionOrderDto order)

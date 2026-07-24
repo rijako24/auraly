@@ -68,7 +68,11 @@
 GO
 :r .\Seeds\SeedAndinaSantander.sql
 GO
+:r .\Seeds\SeedAndinaProductCategories.sql
+GO
 :r .\Seeds\SeedMedidental.sql
+GO
+:r .\Seeds\SeedProductCategoriesFromProducts.sql
 GO
 :r .\Seeds\SeedSystemAgentTemplatesAndInboundContacts.sql
 GO

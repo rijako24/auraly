@@ -3,6 +3,7 @@ using Moq;
 using MimosBabySpa.Application.Agents;
 using MimosBabySpa.Application.Commerce;
 using MimosBabySpa.Application.Promotions;
+using MimosBabySpa.Domain.Entities;
 using MimosBabySpa.Domain.Enums;
 using MimosBabySpa.Domain.Repositories;
 using Xunit;
@@ -12,165 +13,185 @@ namespace MimosBabySpa.Tests.Commerce;
 public sealed class CommerceServiceSearchTests
 {
     [Fact]
-    public async Task SearchProductsAsync_ReturnsOnlySellableProducts()
+    public async Task SearchProductsAsync_WhenLocalCatalogIsEmpty_ReturnsNotReadyWithoutCallingProvider()
     {
-        var businessId = Guid.NewGuid();
-        var unitOfWork = new Mock<IUnitOfWork>();
-        var integrationConnections = new Mock<IIntegrationConnectionRepository>();
-        var adapterFactory = new Mock<ICommerceAdapterFactory>();
-        var adapter = new Mock<ICommerceAdapter>();
-        var promotions = new Mock<IPromotionPricingService>();
+        var fixture = Fixture(CommerceProvider.Xion, []);
 
-        unitOfWork.SetupGet(u => u.IntegrationConnections).Returns(integrationConnections.Object);
-        integrationConnections
-            .Setup(r => r.GetCommerceConnectionAsync(businessId, CommerceProvider.Local, CommerceCapability.CatalogAndOrders, It.IsAny<CancellationToken>()))
-            .ReturnsAsync((Domain.Entities.IntegrationConnection?)null);
-        adapterFactory.Setup(f => f.Resolve(CommerceProvider.Local)).Returns(adapter.Object);
-        adapter
-            .Setup(a => a.SearchProductsAsync(It.IsAny<ProductSearchRequest>(), It.IsAny<CommerceAdapterContext>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ProductSearchResult(
-                [
-                    Product("Mango 750ML", isActive: true),
-                    Product("Dulce 750ML", isActive: false),
-                    Product("Semidulce 750ML", isActive: true, stockQuantity: 0)
-                ],
-                "adapter"));
-        promotions
-            .Setup(p => p.EvaluateAsync(
-                businessId,
-                It.IsAny<IReadOnlyList<PromotionPricingItem>>(),
-                It.IsAny<DateTime?>(),
-                It.IsAny<CancellationToken>()))
-            .Returns<Guid, IReadOnlyList<PromotionPricingItem>, DateTime?, CancellationToken>((_, items, _, _) =>
-                Task.FromResult(PromotionPricingResult.Empty(items)));
+        var result = await fixture.Service.SearchProductsAsync(
+            fixture.Context,
+            new ProductSearchRequest("zucaritas", null, 10));
 
-        var service = new CommerceService(
-            unitOfWork.Object,
-            adapterFactory.Object,
-            promotions.Object,
-            new ProductCatalogAvailabilityService(unitOfWork.Object));
-
-        var result = await service.SearchProductsAsync(
-            new AgentConversationContext { BusinessId = businessId, ConversationId = Guid.NewGuid() },
-            new ProductSearchRequest("vino", null, 10),
-            CancellationToken.None);
-
-        result.Products.Should().ContainSingle();
-        result.Products[0].Name.Should().Be("Mango 750ML");
-        promotions.Verify(p => p.EvaluateAsync(
-            businessId,
-            It.Is<IReadOnlyList<PromotionPricingItem>>(items => items.Count == 1),
-            It.IsAny<DateTime?>(),
-            It.IsAny<CancellationToken>()));
+        result.CatalogReady.Should().BeFalse();
+        result.Products.Should().BeEmpty();
+        fixture.Adapter.Verify(adapter => adapter.SearchProductsAsync(
+            It.IsAny<ProductSearchRequest>(), It.IsAny<CommerceAdapterContext>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+        fixture.Adapter.Verify(adapter => adapter.GetProductAsync(
+            It.IsAny<AddOrderItemRequest>(), It.IsAny<CommerceAdapterContext>(), It.IsAny<CancellationToken>()),
+            Times.Never);
     }
 
     [Fact]
-    public async Task SearchProductsAsync_RetriesGenericFallbackAndPreservesOriginalFilters()
+    public async Task SearchProductsAsync_QuotesOnlyLocalIdentities_AndFillsPageAfterAvailabilityFiltering()
     {
-        var businessId = Guid.NewGuid();
-        var unitOfWork = new Mock<IUnitOfWork>();
-        var integrationConnections = new Mock<IIntegrationConnectionRepository>();
-        var adapterFactory = new Mock<ICommerceAdapterFactory>();
-        var adapter = new Mock<ICommerceAdapter>();
-        var promotions = new Mock<IPromotionPricingService>();
-        var queries = new List<string?>();
-
-        unitOfWork.SetupGet(u => u.IntegrationConnections).Returns(integrationConnections.Object);
-        integrationConnections
-            .Setup(r => r.GetCommerceConnectionAsync(
-                businessId,
-                CommerceProvider.Local,
-                CommerceCapability.CatalogAndOrders,
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync((Domain.Entities.IntegrationConnection?)null);
-        adapterFactory.Setup(f => f.Resolve(CommerceProvider.Local)).Returns(adapter.Object);
-        adapter
-            .Setup(a => a.SearchProductsAsync(
-                It.IsAny<ProductSearchRequest>(),
+        var products = Enumerable.Range(1, 6)
+            .Select(index => Identity($"TRULULU {index}", $"T{index}"))
+            .ToArray();
+        var fixture = Fixture(CommerceProvider.Xion, products);
+        fixture.Adapter.Setup(adapter => adapter.GetProductAsync(
+                It.IsAny<AddOrderItemRequest>(),
                 It.IsAny<CommerceAdapterContext>(),
                 It.IsAny<CancellationToken>()))
-            .ReturnsAsync((ProductSearchRequest request, CommerceAdapterContext _, CancellationToken _) =>
-            {
-                queries.Add(request.Query);
-                return request.Query == "pechuga"
-                    ? new ProductSearchResult([Product("PECHUGA CRIOLLA", true, 10)], "adapter")
-                    : new ProductSearchResult([], "adapter");
-            });
-        promotions
-            .Setup(p => p.EvaluateAsync(
-                businessId,
-                It.IsAny<IReadOnlyList<PromotionPricingItem>>(),
-                It.IsAny<DateTime?>(),
-                It.IsAny<CancellationToken>()))
-            .Returns<Guid, IReadOnlyList<PromotionPricingItem>, DateTime?, CancellationToken>((_, items, _, _) =>
-                Task.FromResult(PromotionPricingResult.Empty(items)));
+            .ReturnsAsync((AddOrderItemRequest request, CommerceAdapterContext _, CancellationToken _) =>
+                request.Sku switch
+                {
+                    "T1" => Quote(request, active: false, stock: 10),
+                    "T2" => Quote(request, active: true, stock: 0),
+                    _ => Quote(request, active: true, stock: 10)
+                });
 
-        var service = new CommerceService(
-            unitOfWork.Object,
-            adapterFactory.Object,
-            promotions.Object,
-            new ProductCatalogAvailabilityService(unitOfWork.Object));
+        var result = await fixture.Service.SearchProductsAsync(
+            fixture.Context,
+            new ProductSearchRequest("trululu", null, 3));
 
-        var result = await service.SearchProductsAsync(
-            new AgentConversationContext { BusinessId = businessId, ConversationId = Guid.NewGuid() },
-            new ProductSearchRequest("pechugas", null, 10),
-            CancellationToken.None);
-
-        result.Products.Should().ContainSingle();
-        result.Products[0].Name.Should().Be("PECHUGA CRIOLLA");
-        queries.Should().Equal("pechugas", "pechuga");
-        result.AppliedFilters.Should().NotBeNull();
-        result.AppliedFilters!.Query.Should().Be("pechugas");
+        result.Products.Select(product => product.Sku).Should().Equal("T3", "T4", "T5");
+        result.HasMore.Should().BeTrue();
+        result.Source.Should().Be("local-identity+xion-quote");
+        fixture.Adapter.Verify(adapter => adapter.GetProductAsync(
+            It.IsAny<AddOrderItemRequest>(), It.IsAny<CommerceAdapterContext>(), It.IsAny<CancellationToken>()),
+            Times.Exactly(6));
+        fixture.Adapter.Verify(adapter => adapter.SearchProductsAsync(
+            It.IsAny<ProductSearchRequest>(), It.IsAny<CommerceAdapterContext>(), It.IsAny<CancellationToken>()),
+            Times.Never);
     }
 
     [Fact]
-    public async Task GetProductAsync_UsesConfiguredSearchText_ButRequiresExactTargetIdentity()
+    public async Task SearchProductsAsync_NeverUsesProviderSearchAsAQueryFallback()
+    {
+        var fixture = Fixture(CommerceProvider.Xion, [Identity("PECHUGA CRIOLLA", "P1")]);
+
+        var result = await fixture.Service.SearchProductsAsync(
+            fixture.Context,
+            new ProductSearchRequest("producto inexistente", null, 10));
+
+        result.CatalogReady.Should().BeTrue();
+        result.Products.Should().BeEmpty();
+        fixture.Adapter.Verify(adapter => adapter.SearchProductsAsync(
+            It.IsAny<ProductSearchRequest>(), It.IsAny<CommerceAdapterContext>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+        fixture.Adapter.Verify(adapter => adapter.GetProductAsync(
+            It.IsAny<AddOrderItemRequest>(), It.IsAny<CommerceAdapterContext>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task GetProductAsync_WithSearchTextButNoExactIdentity_DoesNotSearchProvider()
+    {
+        var fixture = Fixture(CommerceProvider.Xion, [Identity("TOCINETA", "CF127")]);
+
+        var result = await fixture.Service.GetProductAsync(
+            fixture.Context,
+            new ProductLookupRequest(null, null, null, null, "tocineta"));
+
+        result.Should().BeNull();
+        fixture.Adapter.Verify(adapter => adapter.SearchProductsAsync(
+            It.IsAny<ProductSearchRequest>(), It.IsAny<CommerceAdapterContext>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+        fixture.Adapter.Verify(adapter => adapter.GetProductAsync(
+            It.IsAny<AddOrderItemRequest>(),
+            It.IsAny<CommerceAdapterContext>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    private static SearchFixture Fixture(CommerceProvider provider, IReadOnlyList<Product> catalog)
     {
         var businessId = Guid.NewGuid();
+        var connectionId = Guid.NewGuid();
+        foreach (var product in catalog)
+        {
+            product.BusinessId = businessId;
+            product.IntegrationConnectionId = provider == CommerceProvider.Local ? null : connectionId;
+        }
+
         var unitOfWork = new Mock<IUnitOfWork>();
         var connections = new Mock<IIntegrationConnectionRepository>();
+        var products = new Mock<IProductRepository>();
         var adapterFactory = new Mock<ICommerceAdapterFactory>();
         var adapter = new Mock<ICommerceAdapter>();
         var promotions = new Mock<IPromotionPricingService>();
-        unitOfWork.SetupGet(unit => unit.IntegrationConnections).Returns(connections.Object);
+        var connection = provider == CommerceProvider.Local
+            ? null
+            : new IntegrationConnection
+            {
+                IntegrationConnectionId = connectionId,
+                BusinessId = businessId,
+                Provider = (int)provider,
+                Capability = (int)CommerceCapability.CatalogAndOrders,
+                IsEnabled = true,
+                LastSyncAt = DateTime.UtcNow
+            };
+
+        unitOfWork.SetupGet(value => value.IntegrationConnections).Returns(connections.Object);
+        unitOfWork.SetupGet(value => value.Products).Returns(products.Object);
         connections.Setup(repository => repository.GetCommerceConnectionAsync(
-                businessId, CommerceProvider.Local, CommerceCapability.CatalogAndOrders, It.IsAny<CancellationToken>()))
-            .ReturnsAsync((Domain.Entities.IntegrationConnection?)null);
-        adapterFactory.Setup(factory => factory.Resolve(CommerceProvider.Local)).Returns(adapter.Object);
+                businessId, provider, CommerceCapability.CatalogAndOrders, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(connection);
+        products.Setup(repository => repository.GetIdentityCatalogAsync(
+                businessId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(catalog);
+        adapterFactory.Setup(factory => factory.Resolve(provider)).Returns(adapter.Object);
         adapter.Setup(value => value.GetProductAsync(
                 It.IsAny<AddOrderItemRequest>(), It.IsAny<CommerceAdapterContext>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((ProductReference?)null);
-        adapter.Setup(value => value.SearchProductsAsync(
-                It.Is<ProductSearchRequest>(request => request.Query == "tocineta"),
-                It.IsAny<CommerceAdapterContext>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ProductSearchResult([
-                new ProductReference(null, "CF31", "CF31", "TOCINETA NOJOS", null, null, 100m, "COP", 20),
-                new ProductReference(null, "CF127", "CF127", "TOCINETA CJ 1K", null, null, 200m, "COP", 30)
-            ], "adapter"));
         promotions.Setup(value => value.EvaluateAsync(
-                businessId, It.IsAny<IReadOnlyList<PromotionPricingItem>>(), It.IsAny<DateTime?>(), It.IsAny<CancellationToken>()))
+                businessId,
+                It.IsAny<IReadOnlyList<PromotionPricingItem>>(),
+                It.IsAny<DateTime?>(),
+                It.IsAny<CancellationToken>()))
             .Returns<Guid, IReadOnlyList<PromotionPricingItem>, DateTime?, CancellationToken>((_, items, _, _) =>
                 Task.FromResult(PromotionPricingResult.Empty(items)));
-        var service = new CommerceService(unitOfWork.Object, adapterFactory.Object, promotions.Object,
+
+        var service = new CommerceService(
+            unitOfWork.Object,
+            adapterFactory.Object,
+            promotions.Object,
             new ProductCatalogAvailabilityService(unitOfWork.Object));
-
-        var result = await service.GetProductAsync(
-            new AgentConversationContext { BusinessId = businessId, ConversationId = Guid.NewGuid() },
-            new ProductLookupRequest(null, "CF127", "CF127", null, "tocineta"));
-
-        result.Should().NotBeNull();
-        result!.ExternalProductId.Should().Be("CF127");
+        var context = new AgentConversationContext
+        {
+            BusinessId = businessId,
+            ConversationId = Guid.NewGuid(),
+            Config = new AgentConfig
+            {
+                Commerce = new CommerceConfig { Enabled = true, Provider = provider }
+            }
+        };
+        return new(service, context, adapter);
     }
-    private static ProductReference Product(string name, bool isActive, decimal? stockQuantity = null) =>
-        new(
-            Guid.NewGuid(),
-            null,
-            null,
-            name,
-            null,
-            null,
-            1000m,
-            "COP",
-            stockQuantity)
-        { IsActive = isActive };
+
+    private static Product Identity(string name, string sku) => new()
+    {
+        ProductId = Guid.NewGuid(),
+        Name = name,
+        Sku = sku,
+        ExternalProductId = sku,
+        IsActive = true,
+        Currency = "COP"
+    };
+
+    private static ProductReference Quote(AddOrderItemRequest request, bool active, decimal stock) => new(
+        request.ProductId,
+        request.ExternalProductId,
+        request.Sku,
+        request.Name ?? request.Sku ?? "PRODUCT",
+        null,
+        null,
+        1000m,
+        "COP",
+        stock)
+    { IsActive = active };
+
+    private sealed record SearchFixture(
+        CommerceService Service,
+        AgentConversationContext Context,
+        Mock<ICommerceAdapter> Adapter);
 }

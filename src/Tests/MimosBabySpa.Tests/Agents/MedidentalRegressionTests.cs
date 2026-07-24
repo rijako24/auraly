@@ -13,7 +13,7 @@ namespace MimosBabySpa.Tests.Agents;
 public sealed class MedidentalRegressionTests
 {
     [Fact]
-    public void Seed_UsesLocalCommerceAndAllowsOpenCatalogQueries()
+    public void Seed_UsesLocalCommerceAndRoutesOpenCatalogQueriesToCategories()
     {
         var (config, _) = LoadSeed();
 
@@ -23,9 +23,12 @@ public sealed class MedidentalRegressionTests
         var catalog = config.GlobalActions.Single(action => action.Id == "catalog_lookup");
         catalog.Signal.Type.Should().Be("catalog_query");
         catalog.ConversationGuidance.Should()
-            .Contain("mode=browse")
+            .NotContain("mode=")
+            .And.Contain("resultados autoritativos");
+        catalog.Signal.Description.Should()
+            .Contain("mode=categories")
             .And.Contain("mode=search")
-            .And.Contain("coexistir");
+            .And.Contain("mode=continue");
 
         var queriesSchema = catalog.Signal.ValueSchema
             .GetProperty("properties")
@@ -36,49 +39,40 @@ public sealed class MedidentalRegressionTests
         search.OnOutcome["products.found"].Effects.Should().ContainSingle(effect =>
             effect.Type == "presentation.add"
             && effect.Template == "catalog_results");
+        search.OnOutcome["categories.found"].Effects.Should().ContainSingle(effect =>
+            effect.Type == "presentation.add"
+            && effect.Template == "catalog_categories");
+
     }
 
     [Fact]
-    public void OpenCatalogTemplate_DescribesVarietyListsExamplesAndAsksForInterest()
+    public void OpenCatalogTemplate_ListsOfficialCategoriesAndInvitesAConcreteRequest()
     {
         var (config, _) = LoadSeed();
-        var products = new List<object>
+        var categories = new List<object>
         {
             new Dictionary<string, object?>
             {
-                ["name"] = "Motor de implantes 3G Osseo 200",
-                ["unit_price"] = 0m,
-                ["currency"] = "COP"
+                ["name"] = "Implantologia"
             },
             new Dictionary<string, object?>
             {
-                ["name"] = "Lampara de fotocurado 3G PowerLED L9",
-                ["unit_price"] = 0m,
-                ["currency"] = "COP"
-            },
-            new Dictionary<string, object?>
-            {
-                ["name"] = "Pieza de mano 3G Titanium 45P",
-                ["unit_price"] = 0m,
-                ["currency"] = "COP"
+                ["name"] = "Fotocurado"
             }
         };
 
         var rendered = new PromptTemplateRenderer().Render(
-            config.Templates["catalog_results"],
+            config.Templates["catalog_categories"],
             new Dictionary<string, object?>
             {
-                ["search_text"] = string.Empty,
-                ["products"] = products,
-                ["recommendations"] = Array.Empty<object>()
+                ["categories"] = categories
             });
 
         rendered.Should()
-            .Contain("equipos, materiales y consumibles odontologicos")
-            .And.Contain("Motor de implantes 3G Osseo 200")
-            .And.Contain("Lampara de fotocurado 3G PowerLED L9")
-            .And.Contain("Pieza de mano 3G Titanium 45P")
-            .And.Contain("Cual de estos productos le interesa?");
+            .Contain("Implantologia")
+            .And.Contain("Fotocurado")
+            .And.Contain("Elija una para ver sus productos")
+            .And.Contain("d\u00edgame directamente qu\u00e9 necesita");
         rendered.Should().NotContain("$").And.NotContain("0.00");
     }
 
@@ -92,12 +86,12 @@ public sealed class MedidentalRegressionTests
             .And.Contain("No agregues otra frase");
 
         config.Templates["catalog_results"].Should()
-            .Contain("Tenemos equipos, materiales y consumibles odontologicos")
-            .And.Contain("Cual de estos productos le interesa?")
+            .Contain("manejamos equipos, materiales y consumibles odontol\u00f3gicos")
+            .And.Contain("D\u00edgame cu\u00e1l le interesa")
             .And.NotContain("Contamos con una gran variedad de productos odontologicos");
         config.Templates["cart_snapshot"].Should()
             .NotContain("solo dime que eso es todo")
-            .And.Contain("Cuando hayas terminado de elegir");
+            .And.Contain("Cuando haya terminado de elegir");
 
         var orderFlow = config.Flows.Single(flow => flow.Id == "order");
         orderFlow.Stages[0].Id.Should().Be("product_selection");
