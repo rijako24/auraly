@@ -9,20 +9,23 @@ sea consolidado mecánicamente, las decisiones de esta actualización prevalecen
 
 ## Orden aplicable
 
-1. `decision-identificadores-auraly.md`: UUIDv7, `ProductCode`, IDs legados,
-   `SalesInvoiceId` local y asignación exclusiva de números por caja.
-2. `decision-aplicacion-escritorio-auraly.md`: Auraly Desktop, WebView2,
+1. `decision-series-prefijos-numeracion-fiscal-offline.md`: identidad separada
+   del número visible, series, prefijos, autorización fiscal, consumo atómico y
+   asignación exclusiva por caja offline.
+2. `decision-identificadores-auraly.md`: UUIDv7, `ProductCode`, IDs legados y
+   `SalesInvoiceId` local.
+3. `decision-aplicacion-escritorio-auraly.md`: Auraly Desktop, WebView2,
    enrolamiento, login y modos Backoffice/POS/Hybrid.
-3. `decision-producto-minimo-y-capacidades.md`: núcleo mínimo de Producto y datos
+4. `decision-producto-minimo-y-capacidades.md`: núcleo mínimo de Producto y datos
    separados por capacidad.
-4. `decision-definitiva-negativos-por-bodega-y-sin-inventario-local.md`: política
+5. `decision-definitiva-negativos-por-bodega-y-sin-inventario-local.md`: política
    de negativos en Bodega y ausencia de saldo local.
-5. `diseno-ux-facturacion-pos-web.md`: composición, teclado, lector, pago,
+6. `diseno-ux-facturacion-pos-web.md`: composición, teclado, lector, pago,
    borradores, pedidos, offline y pruebas de la pantalla.
-6. `decision-nomenclatura-canonica-auraly-commerce.md`: nombres nuevos.
-7. `decision-despachos-verificacion-entradas-salidas-inventario.md`: Entradas,
+7. `decision-nomenclatura-canonica-auraly-commerce.md`: nombres nuevos.
+8. `decision-despachos-verificacion-entradas-salidas-inventario.md`: Entradas,
    Movimientos, Despachos y Verificación.
-8. Los demás ADR especializados, cuando no contradigan estas decisiones.
+9. Los demás ADR especializados, cuando no contradigan estas decisiones.
 
 ## Expresiones históricas no vigentes
 
@@ -47,7 +50,7 @@ Se interpretan así:
 negativos            Warehouse.AllowNegativeStockSales
 ID técnico           UUIDv7
 10000                ProductCode o LegacyId
-número de factura    serie/bloque exclusivo consumido por caja
+número de factura    serie fiscal exclusiva consumida por caja
 caja instalada       Auraly Desktop
 producto             núcleo mínimo + capacidades relacionadas
 Aduana                Verificación de despacho
@@ -55,8 +58,13 @@ EnSa                  Movimientos de inventario
 SalidaDeMercancia     SalesInvoice / Factura de venta
 ```
 
+Para el MVP, la serie fiscal completa se asigna de forma exclusiva a una caja
+con emisión offline. Los bloques compartidos o reservados quedan aplazados hasta
+una ADR posterior.
+
 ## Condición para empezar implementación
 
 Los prompts y tareas de implementación deben enlazar este documento y los ADR que
 prevalecen. Ningún desarrollador o agente debe tomar un documento histórico
 aislado como especificación completa.
+
