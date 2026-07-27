@@ -1,0 +1,81 @@
+using Microsoft.EntityFrameworkCore;
+
+namespace Auraly.Pos.Edge.Infrastructure;
+
+internal sealed class PosEdgeDbContext(DbContextOptions<PosEdgeDbContext> options)
+    : DbContext(options)
+{
+    public DbSet<FiscalSeriesCursorRow> FiscalSeriesCursors => Set<FiscalSeriesCursorRow>();
+    public DbSet<IssuedSaleRow> IssuedSales => Set<IssuedSaleRow>();
+    public DbSet<PosOutboxRow> Outbox => Set<PosOutboxRow>();
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<FiscalSeriesCursorRow>(entity =>
+        {
+            entity.ToTable("FiscalSeriesCursors");
+            entity.HasKey(row => row.SeriesId);
+            entity.HasIndex(row => row.RegisterId).IsUnique();
+            entity.Property(row => row.Prefix).HasMaxLength(16);
+            entity.Property(row => row.AuthorizationNumber).HasMaxLength(64);
+        });
+
+        modelBuilder.Entity<IssuedSaleRow>(entity =>
+        {
+            entity.ToTable("IssuedSales");
+            entity.HasKey(row => row.DocumentId);
+            entity.HasIndex(row => row.FiscalNumber).IsUnique();
+            entity.Property(row => row.FiscalNumber).HasMaxLength(64);
+            entity.Property(row => row.Cufe).HasMaxLength(96);
+        });
+
+        modelBuilder.Entity<PosOutboxRow>(entity =>
+        {
+            entity.ToTable("Outbox");
+            entity.HasKey(row => row.MessageId);
+            entity.HasIndex(row => row.DocumentId).IsUnique();
+            entity.Property(row => row.Type).HasMaxLength(128);
+            entity.Property(row => row.Status).HasMaxLength(32);
+        });
+    }
+}
+
+internal sealed class FiscalSeriesCursorRow
+{
+    public Guid SeriesId { get; set; }
+    public Guid RegisterId { get; set; }
+    public string Prefix { get; set; } = string.Empty;
+    public string AuthorizationNumber { get; set; } = string.Empty;
+    public long NextConsecutive { get; set; }
+    public long RangeEnd { get; set; }
+    public DateOnly ValidUntil { get; set; }
+    public bool IsActive { get; set; }
+}
+
+internal sealed class IssuedSaleRow
+{
+    public Guid DocumentId { get; set; }
+    public string FiscalNumber { get; set; } = string.Empty;
+    public string Cufe { get; set; } = string.Empty;
+    public decimal Total { get; set; }
+    public DateTimeOffset IssuedAt { get; set; }
+    public string FiscalSnapshotJson { get; set; } = string.Empty;
+}
+
+internal sealed class PosOutboxRow
+{
+    public Guid MessageId { get; set; }
+    public Guid DocumentId { get; set; }
+    public string Type { get; set; } = string.Empty;
+    public string Payload { get; set; } = string.Empty;
+    public string Status { get; set; } = PosOutboxStatus.Pending;
+    public int AttemptCount { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset? UploadedAt { get; set; }
+}
+
+internal static class PosOutboxStatus
+{
+    public const string Pending = "Pending";
+    public const string Uploaded = "Uploaded";
+}
