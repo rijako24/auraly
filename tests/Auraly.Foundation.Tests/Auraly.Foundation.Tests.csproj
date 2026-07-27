@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.8.0" />
+    <PackageReference Include="xunit" Version="2.6.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.5.4">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\BuildingBlocks\Auraly.BuildingBlocks.Domain\Auraly.BuildingBlocks.Domain.csproj" />
+    <ProjectReference Include="..\..\src\BuildingBlocks\Auraly.BuildingBlocks.Application\Auraly.BuildingBlocks.Application.csproj" />
+    <ProjectReference Include="..\..\src\BuildingBlocks\Auraly.BuildingBlocks.Infrastructure\Auraly.BuildingBlocks.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\src\Fiscal\Auraly.Fiscal.Core\Auraly.Fiscal.Core.csproj" />
+    <ProjectReference Include="..\..\src\Modules\Authorization\Auraly.Domain.Authorization\Auraly.Domain.Authorization.csproj" />
+    <ProjectReference Include="..\..\src\Modules\Catalog\Auraly.Domain.Catalog\Auraly.Domain.Catalog.csproj" />
+    <ProjectReference Include="..\..\src\Modules\DocumentProcessing\Auraly.Application.DocumentProcessing\Auraly.Application.DocumentProcessing.csproj" />
+    <ProjectReference Include="..\..\src\Modules\Fiscal\Auraly.Domain.Fiscal\Auraly.Domain.Fiscal.csproj" />
+    <ProjectReference Include="..\..\src\Modules\Organization\Auraly.Domain.Organization\Auraly.Domain.Organization.csproj" />
+    <ProjectReference Include="..\..\src\Modules\Sales\Auraly.Domain.Sales\Auraly.Domain.Sales.csproj" />
+    <ProjectReference Include="..\..\src\Modules\Authorization\Auraly.Application.Authorization\Auraly.Application.Authorization.csproj" />
+    <ProjectReference Include="..\..\src\Modules\Catalog\Auraly.Application.Catalog\Auraly.Application.Catalog.csproj" />
+    <ProjectReference Include="..\..\src\Modules\Fiscal\Auraly.Application.Fiscal\Auraly.Application.Fiscal.csproj" />
+    <ProjectReference Include="..\..\src\Modules\Organization\Auraly.Application.Organization\Auraly.Application.Organization.csproj" />
+    <ProjectReference Include="..\..\src\Modules\Sales\Auraly.Application.Sales\Auraly.Application.Sales.csproj" />
+  </ItemGroup>
+</Project>
