@@ -5,6 +5,7 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
+    <ProjectReference Include="..\..\..\Fiscal\Auraly.Fiscal.Core\Auraly.Fiscal.Core.csproj" />
     <ProjectReference Include="..\Auraly.Contracts.Fiscal\Auraly.Contracts.Fiscal.csproj" />
     <ProjectReference Include="..\Auraly.Domain.Fiscal\Auraly.Domain.Fiscal.csproj" />
   </ItemGroup>

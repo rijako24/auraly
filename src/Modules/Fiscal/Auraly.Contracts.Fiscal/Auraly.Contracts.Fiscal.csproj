@@ -4,4 +4,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
   </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\Fiscal\Auraly.Fiscal.Core\Auraly.Fiscal.Core.csproj" />
+    <ProjectReference Include="..\..\Sales\Auraly.Contracts.Sales\Auraly.Contracts.Sales.csproj" />
+  </ItemGroup>
 </Project>
