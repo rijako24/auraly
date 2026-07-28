@@ -1,4 +1,8 @@
 using System.Diagnostics;
+using System.IdentityModel.Tokens.Jwt;
+using System.Net.Http.Headers;
+using System.Security.Claims;
+using System.Text;
 using System.Net.Http.Json;
 using Auraly.Contracts.Authorization;
 using Auraly.Contracts.Sales;
@@ -8,6 +12,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Configuration;
+using Microsoft.IdentityModel.Tokens;
 
 namespace Auraly.ServerSlice.IntegrationTests;
 
@@ -26,6 +31,9 @@ public sealed class ServerSliceFixture : IAsyncLifetime
     public const string Prefix = "FV99";
     public const string DeviceSecret = "Auraly-allowed-device-secret";
     public const string DeniedDeviceSecret = "Auraly-denied-device-secret";
+    public const string JwtIssuer = "Auraly.Tests";
+    public const string JwtAudience = "Auraly.Api.Tests";
+    public const string JwtSigningKey = "Auraly-Catalog-Integration-Tests-Key-2026";
     public const string QrValidationUrl =
         "https://catalogo-vpfe.dian.gov.co/document/searchqr";
 
@@ -40,6 +48,9 @@ public sealed class ServerSliceFixture : IAsyncLifetime
     public Guid RegisterId { get; } = Guid.NewGuid();
     public Guid DeviceId { get; } = Guid.NewGuid();
     public Guid DeniedDeviceId { get; } = Guid.NewGuid();
+    public Guid UserId { get; } = Guid.NewGuid();
+    public Guid PriceChannelId { get; } = Guid.NewGuid();
+    public Guid TaxProfileId { get; } = Guid.NewGuid();
     public Guid ProductId { get; } = Guid.NewGuid();
     public Guid SeriesId { get; } = Guid.NewGuid();
     public Guid FiscalAuthorizationId { get; } = Guid.NewGuid();
@@ -67,6 +78,9 @@ public sealed class ServerSliceFixture : IAsyncLifetime
                 configuration.AddInMemoryCollection(new Dictionary<string, string?>
                 {
                     ["ConnectionStrings:Auraly"] = ConnectionString,
+                    ["Authentication:Jwt:Issuer"] = JwtIssuer,
+                    ["Authentication:Jwt:Audience"] = JwtAudience,
+                    ["Authentication:Jwt:SigningKey"] = JwtSigningKey,
                     ["Auraly:Fiscal:TechnicalKeys:0:TenantId"] = TenantId.ToString("D"),
                     ["Auraly:Fiscal:TechnicalKeys:0:BusinessId"] = BusinessId.ToString("D"),
                     ["Auraly:Fiscal:TechnicalKeys:0:AuthorizationNumber"] = AuthorizationNumber,
@@ -81,6 +95,26 @@ public sealed class ServerSliceFixture : IAsyncLifetime
         using var client = CreateClient();
         using var response = await client.GetAsync("/health");
         response.EnsureSuccessStatusCode();
+    }
+
+    public HttpClient CreateAdminClient(params string[] permissions)
+    {
+        var claims = new List<Claim>
+        {
+            new(JwtRegisteredClaimNames.Sub, UserId.ToString("D")),
+            new(ClaimTypes.NameIdentifier, UserId.ToString("D")),
+            new("tenant_id", TenantId.ToString("D")),
+            new("business_id", BusinessId.ToString("D"))
+        };
+        claims.AddRange(permissions.Select(permission => new Claim("permission", permission)));
+        var token = new JwtSecurityToken(
+            JwtIssuer, JwtAudience, claims, expires: DateTime.UtcNow.AddMinutes(10),
+            signingCredentials: new SigningCredentials(
+                new SymmetricSecurityKey(Encoding.UTF8.GetBytes(JwtSigningKey)),
+                SecurityAlgorithms.HmacSha256));
+        var client = CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", new JwtSecurityTokenHandler().WriteToken(token));
+        return client;
     }
 
     public async Task DisposeAsync()
@@ -234,6 +268,9 @@ public sealed class ServerSliceFixture : IAsyncLifetime
     private void ConfigureHostEnvironment()
     {
         SetHostEnvironment("ConnectionStrings__Auraly", ConnectionString);
+        SetHostEnvironment("Authentication__Jwt__Issuer", JwtIssuer);
+        SetHostEnvironment("Authentication__Jwt__Audience", JwtAudience);
+        SetHostEnvironment("Authentication__Jwt__SigningKey", JwtSigningKey);
         SetHostEnvironment("Auraly__Fiscal__TechnicalKeys__0__TenantId", TenantId.ToString("D"));
         SetHostEnvironment("Auraly__Fiscal__TechnicalKeys__0__BusinessId", BusinessId.ToString("D"));
         SetHostEnvironment("Auraly__Fiscal__TechnicalKeys__0__AuthorizationNumber", AuthorizationNumber);
