@@ -1,7 +1,6 @@
 CREATE TABLE [dbo].[PosDevices]
 (
     [DeviceId] UNIQUEIDENTIFIER NOT NULL,
-    [TenantId] UNIQUEIDENTIFIER NOT NULL,
     [BusinessId] UNIQUEIDENTIFIER NOT NULL,
     [LocationId] UNIQUEIDENTIFIER NOT NULL,
     [WarehouseId] UNIQUEIDENTIFIER NOT NULL,
@@ -14,7 +13,6 @@ CREATE TABLE [dbo].[PosDevices]
     [CreatedAt] DATETIMEOFFSET(7) NOT NULL,
     [LastSeenAt] DATETIMEOFFSET(7) NULL,
     CONSTRAINT [PK_PosDevices] PRIMARY KEY CLUSTERED ([DeviceId]),
-    CONSTRAINT [FK_PosDevices_Tenants] FOREIGN KEY ([TenantId]) REFERENCES [dbo].[Tenants] ([TenantId]),
     CONSTRAINT [FK_PosDevices_Businesses] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses] ([BusinessId]),
     CONSTRAINT [FK_PosDevices_BusinessLocations] FOREIGN KEY ([LocationId]) REFERENCES [dbo].[BusinessLocations] ([LocationId]),
     CONSTRAINT [FK_PosDevices_Warehouses] FOREIGN KEY ([WarehouseId]) REFERENCES [dbo].[Warehouses] ([WarehouseId]),
@@ -24,6 +22,6 @@ CREATE TABLE [dbo].[PosDevices]
 
 GO
 
-CREATE INDEX [IX_PosDevices_Tenant_Business_Register]
-    ON [dbo].[PosDevices] ([TenantId], [BusinessId], [RegisterId]);
+CREATE INDEX [IX_PosDevices_Business_Register]
+    ON [dbo].[PosDevices] ([BusinessId], [RegisterId]);
 

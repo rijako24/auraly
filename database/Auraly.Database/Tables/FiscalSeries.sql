@@ -1,7 +1,6 @@
 CREATE TABLE [dbo].[FiscalSeries]
 (
     [SeriesId] UNIQUEIDENTIFIER NOT NULL,
-    [TenantId] UNIQUEIDENTIFIER NOT NULL,
     [BusinessId] UNIQUEIDENTIFIER NOT NULL,
     [RegisterId] UNIQUEIDENTIFIER NOT NULL,
     [FiscalAuthorizationId] UNIQUEIDENTIFIER NOT NULL,
@@ -12,16 +11,15 @@ CREATE TABLE [dbo].[FiscalSeries]
     [IsActive] BIT NOT NULL,
     [CreatedAt] DATETIMEOFFSET(7) NOT NULL,
     CONSTRAINT [PK_FiscalSeries] PRIMARY KEY CLUSTERED ([SeriesId]),
-    CONSTRAINT [FK_FiscalSeries_Tenants] FOREIGN KEY ([TenantId]) REFERENCES [dbo].[Tenants] ([TenantId]),
     CONSTRAINT [FK_FiscalSeries_Businesses] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses] ([BusinessId]),
     CONSTRAINT [FK_FiscalSeries_CashRegisters] FOREIGN KEY ([RegisterId]) REFERENCES [dbo].[CashRegisters] ([RegisterId]),
     CONSTRAINT [FK_FiscalSeries_FiscalAuthorizations] FOREIGN KEY ([FiscalAuthorizationId]) REFERENCES [dbo].[FiscalAuthorizations] ([FiscalAuthorizationId]),
-    CONSTRAINT [UQ_FiscalSeries_Tenant_Register_Series] UNIQUE ([TenantId], [RegisterId], [SeriesId]),
+    CONSTRAINT [UQ_FiscalSeries_Register_Series] UNIQUE ([RegisterId], [SeriesId]),
     CONSTRAINT [CK_FiscalSeries_Range] CHECK ([RangeStart] > 0 AND [RangeEnd] >= [RangeStart])
 );
 
 GO
 
-CREATE INDEX [IX_FiscalSeries_Tenant_Business_Register]
-    ON [dbo].[FiscalSeries] ([TenantId], [BusinessId], [RegisterId]);
+CREATE INDEX [IX_FiscalSeries_Business_Register]
+    ON [dbo].[FiscalSeries] ([BusinessId], [RegisterId]);
 

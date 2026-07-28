@@ -1,7 +1,6 @@
 CREATE TABLE [dbo].[SalesDocuments]
 (
     [DocumentId] UNIQUEIDENTIFIER NOT NULL,
-    [TenantId] UNIQUEIDENTIFIER NOT NULL,
     [BusinessId] UNIQUEIDENTIFIER NOT NULL,
     [LocationId] UNIQUEIDENTIFIER NOT NULL,
     [WarehouseId] UNIQUEIDENTIFIER NOT NULL,
@@ -29,7 +28,6 @@ CREATE TABLE [dbo].[SalesDocuments]
     [CreatedByDeviceId] UNIQUEIDENTIFIER NOT NULL,
     [RowVersion] ROWVERSION NOT NULL,
     CONSTRAINT [PK_SalesDocuments] PRIMARY KEY CLUSTERED ([DocumentId]),
-    CONSTRAINT [FK_SalesDocuments_Tenants] FOREIGN KEY ([TenantId]) REFERENCES [dbo].[Tenants] ([TenantId]),
     CONSTRAINT [FK_SalesDocuments_Businesses] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses] ([BusinessId]),
     CONSTRAINT [FK_SalesDocuments_BusinessLocations] FOREIGN KEY ([LocationId]) REFERENCES [dbo].[BusinessLocations] ([LocationId]),
     CONSTRAINT [FK_SalesDocuments_Warehouses] FOREIGN KEY ([WarehouseId]) REFERENCES [dbo].[Warehouses] ([WarehouseId]),
@@ -37,19 +35,19 @@ CREATE TABLE [dbo].[SalesDocuments]
     CONSTRAINT [FK_SalesDocuments_PosDevices] FOREIGN KEY ([DeviceId]) REFERENCES [dbo].[PosDevices] ([DeviceId]),
     CONSTRAINT [FK_SalesDocuments_FiscalSeries] FOREIGN KEY ([SeriesId]) REFERENCES [dbo].[FiscalSeries] ([SeriesId]),
     CONSTRAINT [FK_SalesDocuments_FiscalAuthorizations] FOREIGN KEY ([FiscalAuthorizationId]) REFERENCES [dbo].[FiscalAuthorizations] ([FiscalAuthorizationId]),
-    CONSTRAINT [UQ_SalesDocuments_Tenant_Document] UNIQUE ([TenantId], [DocumentId]),
-    CONSTRAINT [UQ_SalesDocuments_Tenant_Idempotency] UNIQUE ([TenantId], [IdempotencyKey]),
+    CONSTRAINT [UQ_SalesDocuments_Business_Document] UNIQUE ([BusinessId], [DocumentId]),
+    CONSTRAINT [UQ_SalesDocuments_Business_Idempotency] UNIQUE ([BusinessId], [IdempotencyKey]),
     CONSTRAINT [UQ_SalesDocuments_FiscalNumber] UNIQUE ([BusinessId], [DocumentType], [Prefix], [Consecutive]),
     CONSTRAINT [CK_SalesDocuments_Amounts] CHECK ([UntaxedAmount] >= 0 AND [TaxAmount] >= 0 AND [PayableAmount] >= 0)
 );
 
 GO
 
-CREATE INDEX [IX_SalesDocuments_Tenant_Business_Document]
-    ON [dbo].[SalesDocuments] ([TenantId], [BusinessId], [DocumentId]);
+CREATE INDEX [IX_SalesDocuments_Business_Document]
+    ON [dbo].[SalesDocuments] ([BusinessId], [DocumentId]);
 
 GO
 
-CREATE INDEX [IX_SalesDocuments_Tenant_Status_Received]
-    ON [dbo].[SalesDocuments] ([TenantId], [ProcessingStatus], [ReceivedAt]);
+CREATE INDEX [IX_SalesDocuments_Business_Status_Received]
+    ON [dbo].[SalesDocuments] ([BusinessId], [ProcessingStatus], [ReceivedAt]);
 

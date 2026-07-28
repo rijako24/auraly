@@ -1,6 +1,5 @@
 CREATE TABLE [dbo].[Products] (
     [ProductId] UNIQUEIDENTIFIER NOT NULL PRIMARY KEY DEFAULT NEWID(),
-    [TenantId] UNIQUEIDENTIFIER NULL,
     [BusinessId] UNIQUEIDENTIFIER NOT NULL,
     [ProductCode] NVARCHAR(64) NULL,
     [Reference] NVARCHAR(120) NULL,
@@ -28,7 +27,6 @@ CREATE TABLE [dbo].[Products] (
     [CreatedByUserId] UNIQUEIDENTIFIER NULL,
     [UpdatedByUserId] UNIQUEIDENTIFIER NULL,
     [RowVersion] ROWVERSION NOT NULL,
-    CONSTRAINT [FK_Products_Tenants] FOREIGN KEY ([TenantId]) REFERENCES [dbo].[Tenants] ([TenantId]),
     CONSTRAINT [FK_Products_TaxProfiles] FOREIGN KEY ([TaxProfileId]) REFERENCES [dbo].[TaxProfiles] ([TaxProfileId]),
     CONSTRAINT [FK_Products_Businesses] FOREIGN KEY ([BusinessId])
         REFERENCES [dbo].[Businesses] ([BusinessId])
@@ -42,7 +40,7 @@ CREATE TABLE [dbo].[Products] (
     CONSTRAINT [CK_Products_Source] CHECK ([Source] IN (0, 1)),
     CONSTRAINT [CK_Products_CanonicalFields] CHECK (
         [ProductCode] IS NULL OR
-        ([TenantId] IS NOT NULL AND [BaseUnitCode] IS NOT NULL AND [TaxProfileId] IS NOT NULL))
+        ([BaseUnitCode] IS NOT NULL AND [TaxProfileId] IS NOT NULL))
 );
 
 GO
