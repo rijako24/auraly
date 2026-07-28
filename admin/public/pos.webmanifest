@@ -1,0 +1,20 @@
+{
+  "id": "/pos",
+  "name": "Auraly POS",
+  "short_name": "Auraly POS",
+  "description": "Punto de venta local de Auraly Commerce",
+  "start_url": "/pos",
+  "scope": "/pos",
+  "display": "standalone",
+  "background_color": "#07161A",
+  "theme_color": "#07161A",
+  "orientation": "landscape-primary",
+  "icons": [
+    {
+      "src": "/brand/auraly-mark.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
