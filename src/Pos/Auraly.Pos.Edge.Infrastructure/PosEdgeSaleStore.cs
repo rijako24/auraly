@@ -83,6 +83,7 @@ public sealed class PosEdgeSaleStore
     {
         await using var context = new PosEdgeDbContext(_options);
         await context.Database.EnsureCreatedAsync(cancellationToken);
+        await UpgradeFiscalSeriesAsync(context, cancellationToken);
         await UpgradeOutboxAsync(context, cancellationToken);
     }
 
@@ -122,6 +123,16 @@ public sealed class PosEdgeSaleStore
                 IsActive = true
             });
             await context.SaveChangesAsync(cancellationToken);
+        }
+        else
+        {
+            await BackfillFiscalAuthorizationAsync(
+                context,
+                provision.SeriesId,
+                provision.FiscalAuthorizationId == Guid.Empty
+                    ? provision.SeriesId
+                    : provision.FiscalAuthorizationId,
+                cancellationToken);
         }
     }
 
@@ -495,6 +506,65 @@ public sealed class PosEdgeSaleStore
 
     private static string Truncate(string value) =>
         value.Length <= 2000 ? value : value[..2000];
+
+    private static async Task BackfillFiscalAuthorizationAsync(
+        PosEdgeDbContext context,
+        Guid seriesId,
+        Guid fiscalAuthorizationId,
+        CancellationToken cancellationToken)
+    {
+        DbConnection connection = context.Database.GetDbConnection();
+        if (connection.State != ConnectionState.Open)
+        {
+            await connection.OpenAsync(cancellationToken);
+        }
+
+        await using var command = connection.CreateCommand();
+        command.CommandText =
+            "UPDATE FiscalSeriesCursors " +
+            "SET FiscalAuthorizationId = $authorizationId " +
+            "WHERE SeriesId = $seriesId " +
+            "AND FiscalAuthorizationId = '00000000-0000-0000-0000-000000000000';";
+        var authorizationParameter = command.CreateParameter();
+        authorizationParameter.ParameterName = "$authorizationId";
+        authorizationParameter.Value = fiscalAuthorizationId.ToString("D").ToUpperInvariant();
+        command.Parameters.Add(authorizationParameter);
+        var seriesParameter = command.CreateParameter();
+        seriesParameter.ParameterName = "$seriesId";
+        seriesParameter.Value = seriesId.ToString("D").ToUpperInvariant();
+        command.Parameters.Add(seriesParameter);
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+    private static async Task UpgradeFiscalSeriesAsync(
+        PosEdgeDbContext context,
+        CancellationToken cancellationToken)
+    {
+        var columns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        DbConnection connection = context.Database.GetDbConnection();
+        if (connection.State != ConnectionState.Open)
+        {
+            await connection.OpenAsync(cancellationToken);
+        }
+
+        await using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "PRAGMA table_info('FiscalSeriesCursors');";
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                columns.Add(reader.GetString(1));
+            }
+        }
+
+        if (!columns.Contains("FiscalAuthorizationId"))
+        {
+            await using var command = connection.CreateCommand();
+            command.CommandText =
+                "ALTER TABLE FiscalSeriesCursors ADD COLUMN FiscalAuthorizationId TEXT NOT NULL " +
+                "DEFAULT '00000000-0000-0000-0000-000000000000';";
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+    }
 
     private static async Task UpgradeOutboxAsync(
         PosEdgeDbContext context,
