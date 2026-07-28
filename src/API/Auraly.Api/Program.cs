@@ -1,15 +1,21 @@
 using Auraly.Api;
+using System.Security.Cryptography;
+using System.Text;
+using Auraly.Application.Catalog;
 using Auraly.Application.DocumentProcessing;
 using Auraly.Application.Fiscal;
 using Auraly.Application.Sales;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.BuildingBlocks.Infrastructure.Identifiers;
 using Auraly.Contracts.Authorization;
+using Auraly.Contracts.Catalog;
 using Auraly.Contracts.DocumentProcessing;
 using Auraly.Contracts.Fiscal;
 using Auraly.Contracts.Sales;
 using Auraly.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.IdentityModel.Tokens;
 
 var builder = WebApplication.CreateBuilder(args);
 var connectionString = builder.Configuration.GetConnectionString("Auraly");
@@ -31,14 +37,51 @@ builder.Services.AddScoped<IDocumentProcessingReceiptStore, SqlDocumentProcessin
 builder.Services.AddScoped<IConfirmedDocumentHandler, SqlPosSaleDocumentHandler>();
 builder.Services.AddScoped<DocumentProcessingEngine>();
 builder.Services.AddScoped<ReceivePosSaleService>();
+builder.Services.AddScoped<ICatalogStore, SqlCatalogStore>();
+builder.Services.AddScoped<CatalogService>();
+builder.Services.AddScoped<PosCatalogService>();
+builder.Services.AddResponseCompression(options => options.EnableForHttps = true);
+
+var jwtIssuer = builder.Configuration["Authentication:Jwt:Issuer"];
+var jwtAudience = builder.Configuration["Authentication:Jwt:Audience"];
+var jwtSigningKey = builder.Configuration["Authentication:Jwt:SigningKey"];
+var validationKey = string.IsNullOrWhiteSpace(jwtSigningKey)
+    ? RandomNumberGenerator.GetBytes(32)
+    : Encoding.UTF8.GetBytes(jwtSigningKey);
 
 builder.Services
     .AddAuthentication(PosAuthenticationDefaults.Scheme)
     .AddScheme<AuthenticationSchemeOptions, PosDeviceAuthenticationHandler>(
         PosAuthenticationDefaults.Scheme,
-        _ => { });
+        _ => { })
+    .AddJwtBearer(JwtBearerDefaults.AuthenticationScheme, options =>
+    {
+        options.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidateIssuer = !string.IsNullOrWhiteSpace(jwtIssuer),
+            ValidIssuer = jwtIssuer,
+            ValidateAudience = !string.IsNullOrWhiteSpace(jwtAudience),
+            ValidAudience = jwtAudience,
+            ValidateIssuerSigningKey = true,
+            IssuerSigningKey = new SymmetricSecurityKey(validationKey),
+            ValidateLifetime = true,
+            ClockSkew = TimeSpan.FromMinutes(1),
+            NameClaimType = "sub"
+        };
+    });
 builder.Services.AddAuthorization(options =>
 {
+    options.AddPolicy("catalog.user", policy =>
+    {
+        policy.AuthenticationSchemes.Add(JwtBearerDefaults.AuthenticationScheme);
+        policy.RequireAuthenticatedUser();
+    });
+    options.AddPolicy("pos.catalog.sync", policy =>
+    {
+        policy.AuthenticationSchemes.Add(PosAuthenticationDefaults.Scheme);
+        policy.RequireAuthenticatedUser();
+        policy.RequireClaim(PosAuthenticationDefaults.PermissionClaim, CatalogPermissionCodes.Sync);
+    });
     options.AddPolicy(
         "pos.sales.upload",
         policy =>
@@ -51,10 +94,12 @@ builder.Services.AddAuthorization(options =>
 });
 
 var app = builder.Build();
+app.UseResponseCompression();
 app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapGet("/health", () => Results.Ok(new { status = "Healthy" }));
+app.MapCatalogApi();
 app.MapPost(
         "/api/pos/v1/sales",
         async (
