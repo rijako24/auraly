@@ -56,7 +56,7 @@ Resultado final observado:
 
 - solución Release: 0 errores, 0 advertencias;
 - proyecto SQL Release: 0 errores, 0 advertencias;
-- fundación: 30/30;
+- fundación: 31/31;
 - integración SQL Server/DACPAC: 17/17.
 
 ## Fuera de esta rebanada

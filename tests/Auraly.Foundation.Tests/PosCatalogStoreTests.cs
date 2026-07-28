@@ -117,6 +117,58 @@ public sealed class PosCatalogStoreTests
         }
     }
 
+    [Fact]
+    public async Task Large_bootstrap_resumes_from_durable_checkpoint_without_duplicates()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"auraly-large-catalog-{Guid.NewGuid():N}.db");
+        try
+        {
+            var store = new PosCatalogStore($"Data Source={path}");
+            await store.InitializeAsync();
+            var session = new CatalogSyncSessionResponse(Guid.NewGuid(), 1_500, 1_500, DateTimeOffset.UtcNow.AddHours(1));
+            await store.BeginBootstrapAsync(session);
+            var products = Enumerable.Range(1, 1_500)
+                .Select(index => Product() with
+                {
+                    ProductId = Guid.NewGuid(),
+                    ProductCode = $"P-{index:000000}",
+                    Reference = $"R-{index:000000}",
+                    Name = $"Product {index:000000}",
+                    Barcodes = [$"770{index:0000000000}"]
+                })
+                .ToArray();
+
+            for (var offset = 0; offset < 750; offset += 250)
+            {
+                var items = products.Skip(offset).Take(250).ToArray();
+                await store.ApplyBootstrapPageAsync(Page(session, items, true, items[^1].ProductId.ToString("D")));
+            }
+
+            var reopened = new PosCatalogStore($"Data Source={path}");
+            Assert.Equal(products[749].ProductId.ToString("D"), (await reopened.StatusAsync()).NextPageCursor);
+            for (var offset = 750; offset < products.Length; offset += 250)
+            {
+                var items = products.Skip(offset).Take(250).ToArray();
+                var hasMore = offset + items.Length < products.Length;
+                await reopened.ApplyBootstrapPageAsync(Page(
+                    session, items, hasMore, hasMore ? items[^1].ProductId.ToString("D") : null));
+            }
+            await reopened.PromoteBootstrapAsync();
+
+            await using var connection = new SqliteConnection($"Data Source={path}");
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = "SELECT COUNT(*) FROM PosCatalogProducts;";
+            Assert.Equal(1_500L, (long)(await command.ExecuteScalarAsync())!);
+            Assert.NotNull(await reopened.CaptureAsync("7700000001500"));
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
     private static PosCatalogItem Product() =>
         new(
             Guid.Parse("019ad1f0-8ec7-7e2f-a4d4-919f1c4cb080"),
