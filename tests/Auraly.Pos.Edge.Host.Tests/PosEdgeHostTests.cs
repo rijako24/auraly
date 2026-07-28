@@ -36,6 +36,29 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
             HttpStatusCode.OK,
             (await _client!.GetAsync("/edge/v1/health")).StatusCode);
     }
+    [Fact]
+    public async Task Browser_preflight_is_limited_to_the_configured_origin()
+    {
+        using var allowed = new HttpRequestMessage(HttpMethod.Options, "/edge/v1/capture");
+        allowed.Headers.Add("Origin", "http://127.0.0.1:47830");
+        allowed.Headers.Add("Access-Control-Request-Method", "POST");
+        allowed.Headers.Add(
+            "Access-Control-Request-Headers",
+            "content-type,x-auraly-edge-session");
+        var accepted = await Client.SendAsync(allowed);
+        Assert.Equal(HttpStatusCode.NoContent, accepted.StatusCode);
+        Assert.Equal(
+            "http://127.0.0.1:47830",
+            accepted.Headers.GetValues("Access-Control-Allow-Origin").Single());
+
+        using var rejected = new HttpRequestMessage(HttpMethod.Options, "/edge/v1/capture");
+        rejected.Headers.Add("Origin", "https://malicious.example");
+        rejected.Headers.Add("Access-Control-Request-Method", "POST");
+        Assert.Equal(
+            HttpStatusCode.Forbidden,
+            (await Client.SendAsync(rejected)).StatusCode);
+    }
+
 
     [Fact]
     public async Task Scanner_and_temporaries_flow_through_the_protected_http_api()

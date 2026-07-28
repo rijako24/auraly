@@ -80,6 +80,19 @@ public static class PosEdgeHostApplication
                 context.Response.StatusCode = StatusCodes.Status403Forbidden;
                 return;
             }
+            if (HttpMethods.IsOptions(context.Request.Method))
+            {
+                if (string.IsNullOrEmpty(origin))
+                {
+                    context.Response.StatusCode = StatusCodes.Status400BadRequest;
+                    return;
+                }
+                SetCorsHeaders(context.Response, allowedOrigin);
+                context.Response.Headers.AccessControlAllowMethods = "GET,POST,PUT,DELETE,OPTIONS";
+                context.Response.Headers.AccessControlAllowHeaders = "Content-Type,X-Auraly-Edge-Session";
+                context.Response.StatusCode = StatusCodes.Status204NoContent;
+                return;
+            }
             var presented = context.Request.Headers["X-Auraly-Edge-Session"].ToString();
             if (!FixedEquals(sessionToken, presented))
             {
@@ -88,8 +101,7 @@ public static class PosEdgeHostApplication
             }
             if (!string.IsNullOrEmpty(origin))
             {
-                context.Response.Headers.AccessControlAllowOrigin = allowedOrigin;
-                context.Response.Headers.Vary = "Origin";
+                SetCorsHeaders(context.Response, allowedOrigin);
             }
             await next(context);
         });
@@ -200,6 +212,12 @@ public static class PosEdgeHostApplication
         return left.Length == right.Length &&
                CryptographicOperations.FixedTimeEquals(left, right);
     }
+    private static void SetCorsHeaders(HttpResponse response, string allowedOrigin)
+    {
+        response.Headers.AccessControlAllowOrigin = allowedOrigin;
+        response.Headers.Vary = "Origin";
+    }
+
 
     private static bool IsLoopback(System.Net.IPAddress? address) =>
         address is null || System.Net.IPAddress.IsLoopback(address);
