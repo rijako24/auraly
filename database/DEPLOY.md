@@ -1,4 +1,4 @@
-# Guía de Despliegue - Base de Datos Mimos Baby Spa
+# Guía de Despliegue - Base de Datos Auraly
 
 Esta guía te ayudará a desplegar la base de datos en diferentes entornos.
 
@@ -13,7 +13,7 @@ Esta guía te ayudará a desplegar la base de datos en diferentes entornos.
 
 ```
 database/
-├── MimosBabySpa.Database/
+├── Auraly.Database/
 │   ├── Tables/              # Scripts de creación de tablas
 │   │   ├── Conversations.sql
 │   │   ├── Messages.sql
@@ -22,8 +22,8 @@ database/
 │   │   ├── CreateDatabase.ps1
 │   │   ├── Deploy.ps1      # Script completo de despliegue
 │   │   └── Publish.ps1
-│   └── MimosBabySpa.Database.sqlproj
-└── MimosBabySpa.Database.sln
+│   └── Auraly.Database.sqlproj
+└── Auraly.Database.sln
 ```
 
 ## Opciones de Despliegue
@@ -33,13 +33,13 @@ database/
 El script `Deploy.ps1` ejecuta todos los pasos necesarios:
 
 ```powershell
-cd database\MimosBabySpa.Database\Scripts
-.\Deploy.ps1 -ServerInstance "localhost" -DatabaseName "MimosBabySpa"
+cd database\Auraly.Database\Scripts
+.\Deploy.ps1 -ServerInstance "localhost" -DatabaseName "Auraly"
 ```
 
 **Con autenticación SQL Server:**
 ```powershell
-.\Deploy.ps1 -ServerInstance "localhost" -DatabaseName "MimosBabySpa" `
+.\Deploy.ps1 -ServerInstance "localhost" -DatabaseName "Auraly" `
     -Username "sa" -Password "TuPassword" -UseIntegratedSecurity:$false
 ```
 
@@ -48,36 +48,36 @@ cd database\MimosBabySpa.Database\Scripts
 #### Paso 1: Crear la Base de Datos
 
 ```powershell
-cd database\MimosBabySpa.Database\Scripts
-.\CreateDatabase.ps1 -ServerInstance "localhost" -DatabaseName "MimosBabySpa"
+cd database\Auraly.Database\Scripts
+.\CreateDatabase.ps1 -ServerInstance "localhost" -DatabaseName "Auraly"
 ```
 
 #### Paso 2: Compilar el Proyecto
 
 **Opción A: Usando Visual Studio**
-1. Abre `MimosBabySpa.Database.sln` en Visual Studio
+1. Abre `Auraly.Database.sln` en Visual Studio
 2. Clic derecho en el proyecto → **Compilar**
 
 **Opción B: Usando MSBuild**
 ```powershell
-cd database\MimosBabySpa.Database
-msbuild MimosBabySpa.Database.sqlproj /t:Build /p:Configuration=Debug
+cd database\Auraly.Database
+msbuild Auraly.Database.sqlproj /t:Build /p:Configuration=Debug
 ```
 
 #### Paso 3: Publicar el Esquema
 
 ```powershell
-cd database\MimosBabySpa.Database\Scripts
-.\Publish.ps1 -ServerInstance "localhost" -DatabaseName "MimosBabySpa"
+cd database\Auraly.Database\Scripts
+.\Publish.ps1 -ServerInstance "localhost" -DatabaseName "Auraly"
 ```
 
 ### Opción 3: Usando Visual Studio / SSDT
 
-1. Abre `database\MimosBabySpa.Database.sln` en Visual Studio
-2. Clic derecho en el proyecto `MimosBabySpa.Database` → **Publicar**
+1. Abre `database\Auraly.Database.sln` en Visual Studio
+2. Clic derecho en el proyecto `Auraly.Database` → **Publicar**
 3. Configura la conexión:
    - **Servidor:** localhost (o tu servidor)
-   - **Base de datos:** MimosBabySpa
+   - **Base de datos:** Auraly
    - **Autenticación:** Windows o SQL Server
 4. Haz clic en **Publicar**
 
@@ -88,9 +88,9 @@ cd database\MimosBabySpa.Database\Scripts
 
 # Luego publica
 SqlPackage.exe /Action:Publish `
-    /SourceFile:"database\MimosBabySpa.Database\bin\Debug\MimosBabySpa.Database.dacpac" `
+    /SourceFile:"database\Auraly.Database\bin\Debug\Auraly.Database.dacpac" `
     /TargetServerName:"localhost" `
-    /TargetDatabaseName:"MimosBabySpa" `
+    /TargetDatabaseName:"Auraly" `
     /TargetTrustServerCertificate:True
 ```
 
@@ -99,13 +99,13 @@ SqlPackage.exe /Action:Publish `
 ### Desarrollo Local
 
 ```powershell
-.\Deploy.ps1 -ServerInstance "localhost" -DatabaseName "MimosBabySpa_Dev"
+.\Deploy.ps1 -ServerInstance "localhost" -DatabaseName "Auraly_Dev"
 ```
 
 ### Staging
 
 ```powershell
-.\Deploy.ps1 -ServerInstance "staging-sql-server" -DatabaseName "MimosBabySpa_Staging" `
+.\Deploy.ps1 -ServerInstance "staging-sql-server" -DatabaseName "Auraly_Staging" `
     -Username "deploy_user" -Password "SecurePassword123" -UseIntegratedSecurity:$false
 ```
 
@@ -115,11 +115,11 @@ SqlPackage.exe /Action:Publish `
 
 ```powershell
 # 1. Backup primero
-Backup-SqlDatabase -ServerInstance "prod-sql-server" -Database "MimosBabySpa" `
-    -BackupFile "C:\Backups\MimosBabySpa_$(Get-Date -Format 'yyyyMMdd_HHmmss').bak"
+Backup-SqlDatabase -ServerInstance "prod-sql-server" -Database "Auraly" `
+    -BackupFile "C:\Backups\Auraly_$(Get-Date -Format 'yyyyMMdd_HHmmss').bak"
 
 # 2. Desplegar
-.\Deploy.ps1 -ServerInstance "prod-sql-server" -DatabaseName "MimosBabySpa" `
+.\Deploy.ps1 -ServerInstance "prod-sql-server" -DatabaseName "Auraly" `
     -Username "deploy_user" -Password "SecurePassword123" -UseIntegratedSecurity:$false
 ```
 
@@ -128,7 +128,7 @@ Backup-SqlDatabase -ServerInstance "prod-sql-server" -Database "MimosBabySpa" `
 Después del despliegue, verifica que las tablas se crearon correctamente:
 
 ```sql
-USE MimosBabySpa;
+USE Auraly;
 GO
 
 -- Verificar tablas
@@ -181,7 +181,7 @@ Si la base de datos ya existe, SqlPackage actualizará el esquema automáticamen
 ```sql
 USE master;
 GO
-DROP DATABASE IF EXISTS MimosBabySpa;
+DROP DATABASE IF EXISTS Auraly;
 GO
 ```
 
@@ -197,7 +197,7 @@ $msbuild = & "${env:ProgramFiles}\Microsoft Visual Studio\Installer\vswhere.exe"
     -latest -requires Microsoft.Component.MSBuild -find MSBuild\**\Bin\MSBuild.exe
 
 # Compila
-& $msbuild database\MimosBabySpa.Database\MimosBabySpa.Database.sqlproj `
+& $msbuild database\Auraly.Database\Auraly.Database.sqlproj `
     /t:Build /p:Configuration=Debug
 ```
 
@@ -208,7 +208,7 @@ $msbuild = & "${env:ProgramFiles}\Microsoft Visual Studio\Installer\vswhere.exe"
 Cuando necesites actualizar el esquema:
 
 1. Modifica los archivos `.sql` correspondientes en `Tables/`
-2. Compila el proyecto: `dotnet build MimosBabySpa.Database.sqlproj`
+2. Compila el proyecto: `dotnet build Auraly.Database.sqlproj`
 3. Publica nuevamente con `Deploy.ps1` - SqlPackage comparará y aplicará solo los cambios necesarios
 
 ## Scripts de Mantenimiento
@@ -216,15 +216,15 @@ Cuando necesites actualizar el esquema:
 ### Backup de Base de Datos
 
 ```powershell
-Backup-SqlDatabase -ServerInstance "localhost" -Database "MimosBabySpa" `
-    -BackupFile "C:\Backups\MimosBabySpa_$(Get-Date -Format 'yyyyMMdd_HHmmss').bak"
+Backup-SqlDatabase -ServerInstance "localhost" -Database "Auraly" `
+    -BackupFile "C:\Backups\Auraly_$(Get-Date -Format 'yyyyMMdd_HHmmss').bak"
 ```
 
 ### Restaurar Base de Datos
 
 ```powershell
-Restore-SqlDatabase -ServerInstance "localhost" -Database "MimosBabySpa" `
-    -BackupFile "C:\Backups\MimosBabySpa_20240101_120000.bak" -ReplaceDatabase
+Restore-SqlDatabase -ServerInstance "localhost" -Database "Auraly" `
+    -BackupFile "C:\Backups\Auraly_20240101_120000.bak" -ReplaceDatabase
 ```
 
 ## Contacto y Soporte

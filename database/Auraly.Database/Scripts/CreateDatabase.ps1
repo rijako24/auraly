@@ -1,5 +1,5 @@
 # Script para crear la base de datos inicial
-# Uso: .\CreateDatabase.ps1 -ServerInstance "localhost" -DatabaseName "MimosBabySpa"
+# Uso: .\CreateDatabase.ps1 -ServerInstance "localhost" -DatabaseName "Auraly"
 
 param(
     [Parameter(Mandatory=$true)]

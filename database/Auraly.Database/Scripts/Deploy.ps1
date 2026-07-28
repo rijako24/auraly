@@ -1,5 +1,5 @@
 # Script completo de despliegue
-# Uso: .\Deploy.ps1 -ServerInstance "localhost" -DatabaseName "MimosBabySpa"
+# Uso: .\Deploy.ps1 -ServerInstance "localhost" -DatabaseName "Auraly"
 
 param(
     [Parameter(Mandatory=$true)]
@@ -25,12 +25,12 @@ $ErrorActionPreference = "Stop"
 
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "  Despliegue de Base de Datos" -ForegroundColor Cyan
-Write-Host "  Mimos Baby Spa" -ForegroundColor Cyan
+Write-Host "  Auraly" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
 
 $scriptPath = Split-Path -Parent $MyInvocation.MyCommand.Path
-$projectPath = Join-Path (Split-Path -Parent $scriptPath) "MimosBabySpa.Database.sqlproj"
+$projectPath = Join-Path (Split-Path -Parent $scriptPath) "Auraly.Database.sqlproj"
 
 # Paso 1: Crear base de datos si es necesario
 if ($CreateDatabase) {

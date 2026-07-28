@@ -1,11 +1,11 @@
-# Proyecto de Base de Datos - Mimos Baby Spa
+# Proyecto de Base de Datos - Auraly
 
-Este proyecto contiene la definición de la base de datos SQL Server para la aplicación Mimos Baby Spa.
+Este proyecto contiene la definición de la base de datos SQL Server para la aplicación Auraly.
 
 ## Estructura del Proyecto
 
 ```
-MimosBabySpa.Database/
+Auraly.Database/
 ├── Tables/              # Scripts de creación de tablas
 │   ├── Conversations.sql
 │   ├── Messages.sql
@@ -15,7 +15,7 @@ MimosBabySpa.Database/
 │   ├── PostDeployment.sql
 │   ├── CreateDatabase.ps1
 │   └── Publish.ps1
-└── MimosBabySpa.Database.sqlproj
+└── Auraly.Database.sqlproj
 ```
 
 ## Requisitos
@@ -79,18 +79,18 @@ Almacena información de los leads/clientes potenciales.
 
 1. **Crear la base de datos:**
 ```powershell
-cd database\MimosBabySpa.Database\Scripts
-.\CreateDatabase.ps1 -ServerInstance "localhost" -DatabaseName "MimosBabySpa"
+cd database\Auraly.Database\Scripts
+.\CreateDatabase.ps1 -ServerInstance "localhost" -DatabaseName "Auraly"
 ```
 
 2. **Publicar el esquema:**
 ```powershell
-.\Publish.ps1 -ServerInstance "localhost" -DatabaseName "MimosBabySpa"
+.\Publish.ps1 -ServerInstance "localhost" -DatabaseName "Auraly"
 ```
 
 ### Opción 2: Usando Visual Studio / SSDT
 
-1. Abre el proyecto `MimosBabySpa.Database.sqlproj` en Visual Studio
+1. Abre el proyecto `Auraly.Database.sqlproj` en Visual Studio
 2. Clic derecho en el proyecto → **Publicar**
 3. Configura la conexión al servidor SQL Server
 4. Haz clic en **Publicar**
@@ -99,13 +99,13 @@ cd database\MimosBabySpa.Database\Scripts
 
 ```powershell
 # Compilar el proyecto primero
-dotnet build MimosBabySpa.Database.sqlproj
+dotnet build Auraly.Database.sqlproj
 
 # Publicar usando SqlPackage
 SqlPackage.exe /Action:Publish `
-    /SourceFile:"bin\Debug\MimosBabySpa.Database.dacpac" `
+    /SourceFile:"bin\Debug\Auraly.Database.dacpac" `
     /TargetServerName:"localhost" `
-    /TargetDatabaseName:"MimosBabySpa" `
+    /TargetDatabaseName:"Auraly" `
     /TargetTrustServerCertificate:True
 ```
 
@@ -113,12 +113,12 @@ SqlPackage.exe /Action:Publish `
 
 ### Autenticación Integrada (Windows)
 ```powershell
-.\Publish.ps1 -ServerInstance "localhost" -DatabaseName "MimosBabySpa" -UseIntegratedSecurity
+.\Publish.ps1 -ServerInstance "localhost" -DatabaseName "Auraly" -UseIntegratedSecurity
 ```
 
 ### Autenticación SQL Server
 ```powershell
-.\Publish.ps1 -ServerInstance "localhost" -DatabaseName "MimosBabySpa" `
+.\Publish.ps1 -ServerInstance "localhost" -DatabaseName "Auraly" `
     -Username "sa" -Password "TuPassword" -UseIntegratedSecurity:$false
 ```
 

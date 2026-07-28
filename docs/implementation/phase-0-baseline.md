@@ -36,9 +36,9 @@ Ejecutado sobre una copia limpia de `design/auraly-commerce-mvp`:
 
 | Comando | Resultado |
 |---|---|
-| `dotnet build MimosBabySpa.sln --configuration Release` | Correcto, 0 errores, 0 advertencias |
-| `dotnet test src/Tests/MimosBabySpa.Tests/MimosBabySpa.Tests.csproj --configuration Release` | Correcto, 693/693 |
-| `dotnet build database/MimosBabySpa.Database/MimosBabySpa.Database.sqlproj --configuration Release` | Correcto, DACPAC generado |
+| `dotnet build Auraly.sln --configuration Release` | Correcto, 0 errores, 0 advertencias |
+| `dotnet test src/Tests/Auraly.Tests/Auraly.Tests.csproj --configuration Release` | Correcto, 693/693 |
+| `dotnet build database/Auraly.Database/Auraly.Database.sqlproj --configuration Release` | Correcto, DACPAC generado |
 | `npm ci` en `admin` | Correcto con advertencias de motor y dependencias obsoletas |
 | `npx tsc --noEmit` en `admin` | Correcto |
 | `npm run lint` en `admin` | No automatizable: Next.js solicita configurar ESLint interactivamente |

@@ -13,10 +13,10 @@ param(
     [switch]$SkipAzure = $false,
 
     [Parameter(Mandatory=$false)]
-    [string]$ResourceGroupName = "RG-TALKIOAI-DEV",
+    [string]$ResourceGroupName = "",
 
     [Parameter(Mandatory=$false)]
-    [string]$AzureSqlServer = "talkioai.database.windows.net",
+    [string]$AzureSqlServer = "",
 
     [Parameter(Mandatory=$false)]
     [string]$AzureDatabase = "auraly-db",
@@ -31,21 +31,24 @@ param(
     [string]$LocalServerInstance = ".\LOCAL",
 
     [Parameter(Mandatory=$false)]
-    [string]$LocalDatabase = "talkioai",
+    [string]$LocalDatabase = "auraly",
 
     [Parameter(Mandatory=$false)]
-    [string]$LocalUsername = "admin",
+    [bool]$LocalUseIntegratedSecurity = $true,
 
     [Parameter(Mandatory=$false)]
-    [string]$LocalPassword = "masterkey"
+    [string]$LocalUsername = "",
+
+    [Parameter(Mandatory=$false)]
+    [string]$LocalPassword = ""
 )
 
 $ErrorActionPreference = "Stop"
 
 $scriptDir = $PSScriptRoot
 $projectDir = Split-Path -Parent $scriptDir
-$projectPath = Join-Path $projectDir "MimosBabySpa.Database.sqlproj"
-$dacpacPath = Join-Path $projectDir "bin\Debug\MimosBabySpa.Database.dacpac"
+$projectPath = Join-Path $projectDir "Auraly.Database.sqlproj"
+$dacpacPath = Join-Path $projectDir "bin\Debug\Auraly.Database.dacpac"
 
 # Compilar una sola vez
 Write-Host "`n========================================" -ForegroundColor Cyan
@@ -81,8 +84,8 @@ function Publish-Database {
         "/SourceFile:$dacpacPath",
         "/TargetConnectionString:$ConnStr",
         "/p:BackupDatabaseBeforeChanges=False",
-        "/p:DropObjectsNotInSource=True",
-        "/p:BlockOnPossibleDataLoss=False",
+        "/p:DropObjectsNotInSource=False",
+        "/p:BlockOnPossibleDataLoss=True",
         "/p:DoNotAlterChangeDataCaptureObjects=True",
         "/p:DoNotAlterReplicatedObjects=True",
         "/p:DoNotDropObjectTypes=Users;Logins;RoleMembership;Permissions"
@@ -105,7 +108,16 @@ if (-not $SkipLocal) {
     Write-Host "`n========================================" -ForegroundColor Cyan
     Write-Host "  1. PUBLICAR EN LOCAL" -ForegroundColor Cyan
     Write-Host "========================================" -ForegroundColor Cyan
-    $localConn = "Server=$LocalServerInstance;Database=$LocalDatabase;User Id=$LocalUsername;Password=$LocalPassword;TrustServerCertificate=True;"
+    if ($LocalUseIntegratedSecurity) {
+        $localConn = "Server=$LocalServerInstance;Database=$LocalDatabase;Integrated Security=True;TrustServerCertificate=True;"
+    } else {
+        if ([string]::IsNullOrWhiteSpace($LocalUsername) -or [string]::IsNullOrWhiteSpace($LocalPassword)) {
+            throw "LocalUsername and LocalPassword are required when LocalUseIntegratedSecurity is false."
+        }
+
+        $localConn = "Server=$LocalServerInstance;Database=$LocalDatabase;User Id=$LocalUsername;Password=$LocalPassword;TrustServerCertificate=True;"
+    }
+
     $localOk = Publish-Database -ConnStr $localConn -TargetName "LOCAL ($LocalServerInstance\$LocalDatabase)"
 }
 
@@ -140,7 +152,7 @@ if (-not $SkipAzure) {
 
     if ([string]::IsNullOrEmpty($server)) {
         Write-Host "  Omitiendo Azure: especifica -AzureSqlServer (o usa ResourceGroup para descubrirlo)" -ForegroundColor Yellow
-        Write-Host "  Ejemplo: .\Publish-Both.ps1 -AzureSqlServer 'talkioai.database.windows.net' -AzureDatabase 'auraly-db' -AzureSqlUsername 'sqladmin' -AzureSqlPassword 'TuPassword'" -ForegroundColor Gray
+        Write-Host "  Ejemplo: .\Publish-Both.ps1 -AzureSqlServer 'auraly-sql.database.windows.net' -AzureDatabase 'auraly-db' -AzureSqlUsername 'sqladmin' -AzureSqlPassword 'TuPassword'" -ForegroundColor Gray
         $azureOk = $false
     } elseif ([string]::IsNullOrEmpty($user) -or [string]::IsNullOrEmpty($pass)) {
         Write-Host "  Omitiendo Azure: faltan -AzureSqlUsername y -AzureSqlPassword" -ForegroundColor Yellow

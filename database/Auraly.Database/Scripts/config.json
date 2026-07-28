@@ -1,7 +1,7 @@
 {
   "DeploymentOptions": {
     "DefaultServerInstance": "localhost",
-    "DefaultDatabaseName": "MimosBabySpa",
+    "DefaultDatabaseName": "Auraly",
     "UseIntegratedSecurity": true,
     "BackupDatabaseBeforeChanges": true,
     "ScriptDatabaseOptions": false,

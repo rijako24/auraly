@@ -1,5 +1,5 @@
 # Script de publicación para el proyecto de base de datos
-# Uso: .\Publish.ps1 -ServerInstance "localhost" -DatabaseName "MimosBabySpa" -PublishProfile "Local"
+# Uso: .\Publish.ps1 -ServerInstance "localhost" -DatabaseName "Auraly" -PublishProfile "Local"
 
 param(
     [Parameter(Mandatory=$true)]
@@ -28,8 +28,8 @@ Write-Host "Servidor: $ServerInstance" -ForegroundColor Cyan
 Write-Host "Base de datos: $DatabaseName" -ForegroundColor Cyan
 
 $projectDir = Split-Path -Parent $PSScriptRoot
-$projectPath = Join-Path $projectDir "MimosBabySpa.Database.sqlproj"
-$dacpacPath = Join-Path $projectDir "bin\Debug\MimosBabySpa.Database.dacpac"
+$projectPath = Join-Path $projectDir "Auraly.Database.sqlproj"
+$dacpacPath = Join-Path $projectDir "bin\Debug\Auraly.Database.dacpac"
 
 # Construir el proyecto
 Write-Host "`nCompilando proyecto..." -ForegroundColor Yellow
@@ -93,8 +93,8 @@ $sqlPackageArgs = @(
     "/p:BackupDatabaseBeforeChanges=False",
     "/p:DoNotAlterChangeDataCaptureObjects=True",
     "/p:DoNotAlterReplicatedObjects=True",
-    "/p:DropObjectsNotInSource=True",
-    "/p:BlockOnPossibleDataLoss=False",
+    "/p:DropObjectsNotInSource=False",
+    "/p:BlockOnPossibleDataLoss=True",
     "/p:DoNotDropObjectTypes=Users;Logins;RoleMembership;Permissions"
 )
 
