@@ -1,10 +1,11 @@
 using System.Data;
-using System.Text.Json;
+using System.Data.Common;
 using Auraly.Application.Sales;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Contracts.Catalog;
 using Auraly.Contracts.Fiscal;
 using Auraly.Contracts.Organization;
+using Auraly.Contracts.Sales;
 using Auraly.Fiscal.Core;
 using Microsoft.EntityFrameworkCore;
 
@@ -17,7 +18,13 @@ public sealed record PosEdgeSeriesProvision(
     string AuthorizationNumber,
     long RangeStart,
     long RangeEnd,
-    DateOnly ValidUntil);
+    DateOnly ValidUntil,
+    Guid FiscalAuthorizationId = default);
+
+public sealed record OfflineSalePayment(
+    string MethodCode,
+    decimal Amount,
+    string? Reference = null);
 
 public sealed record PosEdgeIssueCommand(
     UserId UserId,
@@ -29,7 +36,9 @@ public sealed record PosEdgeIssueCommand(
     FiscalTechnicalKey TechnicalKey,
     FiscalEnvironment Environment,
     string QrValidationUrl,
-    IReadOnlyCollection<OfflineSaleLine> Lines);
+    IReadOnlyCollection<OfflineSaleLine> Lines,
+    Guid DeviceId = default,
+    IReadOnlyCollection<OfflineSalePayment>? Payments = null);
 
 public sealed record PosEdgeIssueResult(
     DocumentId DocumentId,
@@ -44,7 +53,13 @@ public sealed record PosEdgeOutboxItem(
     DocumentId DocumentId,
     string Type,
     string Payload,
-    int AttemptCount);
+    int AttemptCount,
+    string Status = PosOutboxStatus.Pending,
+    DateTimeOffset? NextAttemptAt = null,
+    DateTimeOffset? LeaseAcquiredAt = null,
+    string? LastError = null,
+    string? RemoteStatus = null,
+    Guid? ServerReceiptId = null);
 
 public sealed class PosEdgeSaleStore
 {
@@ -68,6 +83,7 @@ public sealed class PosEdgeSaleStore
     {
         await using var context = new PosEdgeDbContext(_options);
         await context.Database.EnsureCreatedAsync(cancellationToken);
+        await UpgradeOutboxAsync(context, cancellationToken);
     }
 
     public async Task ProvisionSeriesAsync(
@@ -97,6 +113,9 @@ public sealed class PosEdgeSaleStore
                 RegisterId = provision.RegisterId.Value,
                 Prefix = provision.Prefix.Trim().ToUpperInvariant(),
                 AuthorizationNumber = provision.AuthorizationNumber.Trim(),
+                FiscalAuthorizationId = provision.FiscalAuthorizationId == Guid.Empty
+                    ? provision.SeriesId
+                    : provision.FiscalAuthorizationId,
                 NextConsecutive = provision.RangeStart,
                 RangeEnd = provision.RangeEnd,
                 ValidUntil = provision.ValidUntil,
@@ -172,6 +191,13 @@ public sealed class PosEdgeSaleStore
             command.Lines));
         var snapshot = confirmed.Invoice.FiscalSnapshot
             ?? throw new InvalidOperationException("The sale was not fiscally frozen.");
+        var upload = BuildUploadContract(
+            command,
+            confirmed,
+            snapshot,
+            fiscalNumber,
+            cursor.FiscalAuthorizationId);
+        var payload = PosSaleContractSerializer.Serialize(upload);
 
         context.IssuedSales.Add(new IssuedSaleRow
         {
@@ -180,14 +206,14 @@ public sealed class PosEdgeSaleStore
             Cufe = snapshot.Cufe,
             Total = confirmed.Invoice.PayableAmount,
             IssuedAt = command.IssuedAt,
-            FiscalSnapshotJson = JsonSerializer.Serialize(snapshot)
+            FiscalSnapshotJson = payload
         });
         context.Outbox.Add(new PosOutboxRow
         {
             MessageId = confirmed.OutboxMessage.Id,
             DocumentId = command.DocumentId.Value,
             Type = confirmed.OutboxMessage.Type,
-            Payload = confirmed.OutboxMessage.Payload,
+            Payload = payload,
             Status = PosOutboxStatus.Pending,
             CreatedAt = command.IssuedAt
         });
@@ -210,19 +236,92 @@ public sealed class PosEdgeSaleStore
         await using var context = new PosEdgeDbContext(_options);
         return await context.Outbox
             .AsNoTracking()
-            .Where(row => row.Status == PosOutboxStatus.Pending)
+            .Where(row => row.Status == PosOutboxStatus.Pending ||
+                          row.Status == PosOutboxStatus.RetryScheduled)
             .OrderBy(row => row.MessageId)
-            .Select(row => new PosEdgeOutboxItem(
-                row.MessageId,
-                new DocumentId(row.DocumentId),
-                row.Type,
-                row.Payload,
-                row.AttemptCount))
+            .Select(ToOutboxItem)
             .ToArrayAsync(cancellationToken);
+    }
+
+    public async Task<PosEdgeOutboxItem?> ClaimNextOutboxAsync(
+        DateTimeOffset now,
+        TimeSpan leaseTimeout,
+        CancellationToken cancellationToken = default)
+    {
+        await using var context = new PosEdgeDbContext(_options);
+        await using var transaction = await context.Database.BeginTransactionAsync(
+            IsolationLevel.Serializable,
+            cancellationToken);
+        var staleBefore = now - leaseTimeout;
+        var candidates = await context.Outbox
+            .Where(item =>
+                item.Status == PosOutboxStatus.Pending ||
+                item.Status == PosOutboxStatus.RetryScheduled ||
+                item.Status == PosOutboxStatus.Uploading)
+            .ToArrayAsync(cancellationToken);
+        var row = candidates
+            .Where(item =>
+                item.Status == PosOutboxStatus.Pending ||
+                (item.Status == PosOutboxStatus.RetryScheduled &&
+                 (item.NextAttemptAt == null || item.NextAttemptAt <= now)) ||
+                (item.Status == PosOutboxStatus.Uploading &&
+                 item.LeaseAcquiredAt != null &&
+                 item.LeaseAcquiredAt <= staleBefore))
+            .OrderBy(item => item.CreatedAt)
+            .ThenBy(item => item.MessageId)
+            .FirstOrDefault();
+        if (row is null)
+        {
+            await transaction.CommitAsync(cancellationToken);
+            return null;
+        }
+
+        row.Status = PosOutboxStatus.Uploading;
+        row.AttemptCount++;
+        row.LastAttemptAt = now;
+        row.LeaseAcquiredAt = now;
+        row.NextAttemptAt = null;
+        await context.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return ToOutboxItem.Compile().Invoke(row);
+    }
+
+    public async Task<PosEdgeOutboxItem?> GetOutboxAsync(
+        DocumentId documentId,
+        CancellationToken cancellationToken = default)
+    {
+        await using var context = new PosEdgeDbContext(_options);
+        return await context.Outbox
+            .AsNoTracking()
+            .Where(row => row.DocumentId == documentId.Value)
+            .Select(ToOutboxItem)
+            .SingleOrDefaultAsync(cancellationToken);
     }
 
     public async Task MarkUploadedAsync(
         Guid messageId,
+        DateTimeOffset uploadedAt,
+        CancellationToken cancellationToken = default)
+    {
+        await MarkUploadedAsync(
+            messageId,
+            new PosSaleUploadResponse(
+                Guid.Empty,
+                Guid.Empty,
+                PosSaleRemoteStatuses.FiscalVerified,
+                string.Empty,
+                null,
+                false,
+                uploadedAt,
+                uploadedAt,
+                null),
+            uploadedAt,
+            cancellationToken);
+    }
+
+    public async Task MarkUploadedAsync(
+        Guid messageId,
+        PosSaleUploadResponse response,
         DateTimeOffset uploadedAt,
         CancellationToken cancellationToken = default)
     {
@@ -235,9 +334,205 @@ public sealed class PosEdgeSaleStore
             return;
         }
 
-        row.AttemptCount++;
+        if (row.AttemptCount == 0)
+        {
+            row.AttemptCount = 1;
+        }
+
         row.Status = PosOutboxStatus.Uploaded;
         row.UploadedAt = uploadedAt;
+        row.LeaseAcquiredAt = null;
+        row.LastError = null;
+        row.RemoteStatus = response.Status;
+        row.ServerReceiptId = response.ReceiptId == Guid.Empty ? null : response.ReceiptId;
         await context.SaveChangesAsync(cancellationToken);
     }
+
+    public async Task MarkFiscalIntegrityConflictAsync(
+        Guid messageId,
+        PosSaleUploadResponse response,
+        DateTimeOffset occurredAt,
+        CancellationToken cancellationToken = default)
+    {
+        await using var context = new PosEdgeDbContext(_options);
+        var row = await context.Outbox.SingleAsync(
+            item => item.MessageId == messageId,
+            cancellationToken);
+        row.Status = PosOutboxStatus.FiscalIntegrityConflict;
+        row.LeaseAcquiredAt = null;
+        row.NextAttemptAt = null;
+        row.LastError = response.Detail;
+        row.RemoteStatus = response.Status;
+        row.ServerReceiptId = response.ReceiptId == Guid.Empty ? null : response.ReceiptId;
+        row.UploadedAt = occurredAt;
+        await context.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task ScheduleRetryAsync(
+        Guid messageId,
+        DateTimeOffset nextAttemptAt,
+        string error,
+        CancellationToken cancellationToken = default)
+    {
+        await using var context = new PosEdgeDbContext(_options);
+        var row = await context.Outbox.SingleAsync(
+            item => item.MessageId == messageId,
+            cancellationToken);
+        row.Status = PosOutboxStatus.RetryScheduled;
+        row.LeaseAcquiredAt = null;
+        row.NextAttemptAt = nextAttemptAt;
+        row.LastError = Truncate(error);
+        await context.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task MarkFailedPermanentAsync(
+        Guid messageId,
+        string error,
+        CancellationToken cancellationToken = default)
+    {
+        await using var context = new PosEdgeDbContext(_options);
+        var row = await context.Outbox.SingleAsync(
+            item => item.MessageId == messageId,
+            cancellationToken);
+        row.Status = PosOutboxStatus.FailedPermanent;
+        row.LeaseAcquiredAt = null;
+        row.NextAttemptAt = null;
+        row.LastError = Truncate(error);
+        await context.SaveChangesAsync(cancellationToken);
+    }
+
+    private static PosSaleUploadRequest BuildUploadContract(
+        PosEdgeIssueCommand command,
+        ConfirmedOfflineSale confirmed,
+        ImmutableFiscalSnapshot snapshot,
+        FiscalNumberAssignment fiscalNumber,
+        Guid fiscalAuthorizationId)
+    {
+        var lines = command.Lines
+            .Select((line, index) => new PosSaleLineContract(
+                index + 1,
+                line.Product.ProductId.Value,
+                line.Product.Name,
+                line.Product.TaxCode,
+                line.Quantity,
+                line.UnitPrice,
+                line.Discount,
+                line.TaxAmount,
+                decimal.Round(
+                    (line.Quantity * line.UnitPrice) - line.Discount,
+                    2,
+                    MidpointRounding.ToEven),
+                decimal.Round(
+                    (line.Quantity * line.UnitPrice) - line.Discount,
+                    2,
+                    MidpointRounding.ToEven) + line.TaxAmount))
+            .ToArray();
+        var payments = command.Payments is { Count: > 0 }
+            ? command.Payments
+                .Select((payment, index) => new PosSalePaymentContract(
+                    index + 1,
+                    payment.MethodCode,
+                    payment.Amount,
+                    payment.Reference))
+                .ToArray()
+            : [new PosSalePaymentContract(1, "Cash", confirmed.Invoice.PayableAmount, null)];
+        if (payments.Sum(payment => payment.Amount) != confirmed.Invoice.PayableAmount)
+        {
+            throw new InvalidOperationException("Payments must equal the payable amount.");
+        }
+
+        var taxes = lines
+            .GroupBy(line => line.TaxCode, StringComparer.Ordinal)
+            .Select(group => new PosSaleTaxContract(
+                group.Key,
+                group.Sum(line => line.TaxAmount)))
+            .OrderBy(tax => tax.Code, StringComparer.Ordinal)
+            .ToArray();
+        return new PosSaleUploadRequest(
+            command.Register.TenantId.Value,
+            command.Register.BusinessId.Value,
+            command.Register.LocationId.Value,
+            command.Register.WarehouseId.Value,
+            command.Register.RegisterId.Value,
+            command.DeviceId,
+            command.DocumentId.Value,
+            new PosSaleFiscalSnapshotContract(
+                fiscalNumber.SeriesId,
+                fiscalAuthorizationId,
+                fiscalNumber.AuthorizationNumber,
+                PosSaleDocumentTypes.Invoice,
+                snapshot.FiscalNumber,
+                snapshot.Prefix,
+                snapshot.Consecutive,
+                snapshot.IssuedAt,
+                command.SupplierTaxId,
+                snapshot.CustomerIdentification,
+                (int)command.Environment,
+                command.TechnicalKey.Version,
+                taxes,
+                snapshot.UntaxedAmount,
+                snapshot.TaxAmount,
+                snapshot.PayableAmount,
+                snapshot.Cufe,
+                snapshot.QrPayload),
+            lines,
+            payments);
+    }
+
+    private static readonly System.Linq.Expressions.Expression<Func<PosOutboxRow, PosEdgeOutboxItem>>
+        ToOutboxItem = row => new PosEdgeOutboxItem(
+            row.MessageId,
+            new DocumentId(row.DocumentId),
+            row.Type,
+            row.Payload,
+            row.AttemptCount,
+            row.Status,
+            row.NextAttemptAt,
+            row.LeaseAcquiredAt,
+            row.LastError,
+            row.RemoteStatus,
+            row.ServerReceiptId);
+
+    private static string Truncate(string value) =>
+        value.Length <= 2000 ? value : value[..2000];
+
+    private static async Task UpgradeOutboxAsync(
+        PosEdgeDbContext context,
+        CancellationToken cancellationToken)
+    {
+        var columns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        DbConnection connection = context.Database.GetDbConnection();
+        if (connection.State != ConnectionState.Open)
+        {
+            await connection.OpenAsync(cancellationToken);
+        }
+
+        await using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "PRAGMA table_info('Outbox');";
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                columns.Add(reader.GetString(1));
+            }
+        }
+
+        var additions = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["NextAttemptAt"] = "TEXT NULL",
+            ["LeaseAcquiredAt"] = "TEXT NULL",
+            ["LastAttemptAt"] = "TEXT NULL",
+            ["LastError"] = "TEXT NULL",
+            ["RemoteStatus"] = "TEXT NULL",
+            ["ServerReceiptId"] = "TEXT NULL"
+        };
+        foreach (var addition in additions.Where(addition => !columns.Contains(addition.Key)))
+        {
+            await using var command = connection.CreateCommand();
+            command.CommandText =
+                $"ALTER TABLE Outbox ADD COLUMN {addition.Key} {addition.Value};";
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+    }
 }
+

@@ -36,6 +36,8 @@ internal sealed class PosEdgeDbContext(DbContextOptions<PosEdgeDbContext> option
             entity.HasIndex(row => row.DocumentId).IsUnique();
             entity.Property(row => row.Type).HasMaxLength(128);
             entity.Property(row => row.Status).HasMaxLength(32);
+            entity.Property(row => row.RemoteStatus).HasMaxLength(40);
+            entity.Property(row => row.LastError).HasMaxLength(2000);
         });
     }
 }
@@ -46,6 +48,7 @@ internal sealed class FiscalSeriesCursorRow
     public Guid RegisterId { get; set; }
     public string Prefix { get; set; } = string.Empty;
     public string AuthorizationNumber { get; set; } = string.Empty;
+    public Guid FiscalAuthorizationId { get; set; }
     public long NextConsecutive { get; set; }
     public long RangeEnd { get; set; }
     public DateOnly ValidUntil { get; set; }
@@ -72,10 +75,21 @@ internal sealed class PosOutboxRow
     public int AttemptCount { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset? UploadedAt { get; set; }
+    public DateTimeOffset? NextAttemptAt { get; set; }
+    public DateTimeOffset? LeaseAcquiredAt { get; set; }
+    public DateTimeOffset? LastAttemptAt { get; set; }
+    public string? LastError { get; set; }
+    public string? RemoteStatus { get; set; }
+    public Guid? ServerReceiptId { get; set; }
 }
 
-internal static class PosOutboxStatus
+public static class PosOutboxStatus
 {
     public const string Pending = "Pending";
+    public const string Uploading = "Uploading";
     public const string Uploaded = "Uploaded";
+    public const string FiscalIntegrityConflict = "FiscalIntegrityConflict";
+    public const string RetryScheduled = "RetryScheduled";
+    public const string FailedPermanent = "FailedPermanent";
 }
+

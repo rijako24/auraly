@@ -14,5 +14,6 @@
     <ProjectReference Include="..\..\Modules\Catalog\Auraly.Contracts.Catalog\Auraly.Contracts.Catalog.csproj" />
     <ProjectReference Include="..\..\Modules\Organization\Auraly.Contracts.Organization\Auraly.Contracts.Organization.csproj" />
     <ProjectReference Include="..\..\Modules\Sales\Auraly.Application.Sales\Auraly.Application.Sales.csproj" />
+    <ProjectReference Include="..\..\Modules\Sales\Auraly.Contracts.Sales\Auraly.Contracts.Sales.csproj" />
   </ItemGroup>
 </Project>
