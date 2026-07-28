@@ -12,6 +12,8 @@
     <ProjectReference Include="..\..\BuildingBlocks\Auraly.BuildingBlocks.Domain\Auraly.BuildingBlocks.Domain.csproj" />
     <ProjectReference Include="..\..\BuildingBlocks\Auraly.BuildingBlocks.Infrastructure\Auraly.BuildingBlocks.Infrastructure.csproj" />
     <ProjectReference Include="..\..\Fiscal\Auraly.Fiscal.Core\Auraly.Fiscal.Core.csproj" />
+    <ProjectReference Include="..\..\Modules\Catalog\Auraly.Application.Catalog\Auraly.Application.Catalog.csproj" />
+    <ProjectReference Include="..\..\Modules\Catalog\Auraly.Contracts.Catalog\Auraly.Contracts.Catalog.csproj" />
     <ProjectReference Include="..\..\Modules\DocumentProcessing\Auraly.Application.DocumentProcessing\Auraly.Application.DocumentProcessing.csproj" />
     <ProjectReference Include="..\..\Modules\DocumentProcessing\Auraly.Contracts.DocumentProcessing\Auraly.Contracts.DocumentProcessing.csproj" />
     <ProjectReference Include="..\..\Modules\Fiscal\Auraly.Contracts.Fiscal\Auraly.Contracts.Fiscal.csproj" />

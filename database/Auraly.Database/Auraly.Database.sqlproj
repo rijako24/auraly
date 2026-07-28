@@ -40,6 +40,8 @@
     <Build Include="Tables\IntegrationChannelWarehouses.sql" />
     <Build Include="Tables\ProductCategories.sql" />
     <Build Include="Tables\Products.sql" />
+    <Build Include="Tables\AuralyCatalog.sql" />
+    <Build Include="Tables\AuralyCatalogSyncSnapshot.sql" />
     <Build Include="Tables\ExternalCommerceCustomers.sql" />
     <Build Include="Tables\CartMutationReceipts.sql" />
     <Build Include="Tables\ProductAliases.sql" />
