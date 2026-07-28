@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.SqlClient" Version="5.2.2" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" Version="8.0.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\BuildingBlocks\Auraly.BuildingBlocks.Domain\Auraly.BuildingBlocks.Domain.csproj" />
+    <ProjectReference Include="..\..\BuildingBlocks\Auraly.BuildingBlocks.Infrastructure\Auraly.BuildingBlocks.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\Fiscal\Auraly.Fiscal.Core\Auraly.Fiscal.Core.csproj" />
+    <ProjectReference Include="..\..\Modules\DocumentProcessing\Auraly.Application.DocumentProcessing\Auraly.Application.DocumentProcessing.csproj" />
+    <ProjectReference Include="..\..\Modules\DocumentProcessing\Auraly.Contracts.DocumentProcessing\Auraly.Contracts.DocumentProcessing.csproj" />
+    <ProjectReference Include="..\..\Modules\Fiscal\Auraly.Contracts.Fiscal\Auraly.Contracts.Fiscal.csproj" />
+    <ProjectReference Include="..\..\Modules\Sales\Auraly.Application.Sales\Auraly.Application.Sales.csproj" />
+    <ProjectReference Include="..\..\Modules\Sales\Auraly.Contracts.Sales\Auraly.Contracts.Sales.csproj" />
+  </ItemGroup>
+</Project>
+

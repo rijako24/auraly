@@ -1,0 +1,382 @@
+using System.Data;
+using Auraly.Application.Sales;
+using Auraly.BuildingBlocks.Domain.Identifiers;
+using Auraly.Contracts.Sales;
+using Microsoft.Data.SqlClient;
+
+namespace Auraly.Infrastructure.Persistence;
+
+public sealed class SqlPosSaleServerStore(
+    SqlServerConnectionFactory connections,
+    IAuralyIdGenerator idGenerator)
+    : IPosSaleServerStore
+{
+    public async Task<PosSaleContextValidation> ValidateContextAsync(
+        PosSaleUploadRequest request,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            SELECT COUNT_BIG(1)
+            FROM dbo.FiscalSeries s
+            INNER JOIN dbo.FiscalAuthorizations a
+                ON a.FiscalAuthorizationId = s.FiscalAuthorizationId
+            INNER JOIN dbo.CashRegisters r
+                ON r.RegisterId = s.RegisterId
+            INNER JOIN dbo.Warehouses w
+                ON w.WarehouseId = r.WarehouseId
+            INNER JOIN dbo.PosDevices d
+                ON d.RegisterId = r.RegisterId
+            WHERE s.SeriesId = @SeriesId
+              AND a.FiscalAuthorizationId = @FiscalAuthorizationId
+              AND s.TenantId = @TenantId
+              AND s.BusinessId = @BusinessId
+              AND r.LocationId = @LocationId
+              AND r.WarehouseId = @WarehouseId
+              AND r.RegisterId = @RegisterId
+              AND d.DeviceId = @DeviceId
+              AND d.TenantId = @TenantId
+              AND d.BusinessId = @BusinessId
+              AND d.LocationId = @LocationId
+              AND d.WarehouseId = @WarehouseId
+              AND s.DocumentType = @DocumentType
+              AND s.Prefix = @Prefix
+              AND @Consecutive BETWEEN s.RangeStart AND s.RangeEnd
+              AND a.AuthorizationNumber = @AuthorizationNumber
+              AND a.SupplierTaxId = @SupplierTaxId
+              AND a.Environment = @Environment
+              AND CONVERT(date, @IssuedAt) BETWEEN a.ValidFrom AND a.ValidUntil
+              AND s.IsActive = 1
+              AND a.IsActive = 1
+              AND r.IsActive = 1
+              AND w.IsActive = 1
+              AND d.IsActive = 1;
+            """;
+
+        var snapshot = request.FiscalSnapshot;
+        await using var connection = connections.Create();
+        await connection.OpenAsync(cancellationToken);
+        await using var command = new SqlCommand(sql, connection);
+        command.Parameters.AddWithValue("@SeriesId", snapshot.SeriesId);
+        command.Parameters.AddWithValue("@FiscalAuthorizationId", snapshot.FiscalAuthorizationId);
+        command.Parameters.AddWithValue("@TenantId", request.TenantId);
+        command.Parameters.AddWithValue("@BusinessId", request.BusinessId);
+        command.Parameters.AddWithValue("@LocationId", request.LocationId);
+        command.Parameters.AddWithValue("@WarehouseId", request.WarehouseId);
+        command.Parameters.AddWithValue("@RegisterId", request.RegisterId);
+        command.Parameters.AddWithValue("@DeviceId", request.DeviceId);
+        command.Parameters.AddWithValue("@DocumentType", snapshot.DocumentType);
+        command.Parameters.AddWithValue("@Prefix", snapshot.Prefix);
+        command.Parameters.AddWithValue("@Consecutive", snapshot.Consecutive);
+        command.Parameters.AddWithValue("@AuthorizationNumber", snapshot.AuthorizationNumber);
+        command.Parameters.AddWithValue("@SupplierTaxId", snapshot.SupplierTaxId);
+        command.Parameters.AddWithValue("@Environment", snapshot.Environment);
+        command.Parameters.AddWithValue("@IssuedAt", snapshot.IssuedAt);
+        var count = (long)(await command.ExecuteScalarAsync(cancellationToken) ?? 0L);
+        return count == 1
+            ? PosSaleContextValidation.Valid()
+            : PosSaleContextValidation.Invalid(
+                "The fiscal series, authorization or register assignment does not match the authenticated POS context.");
+    }
+
+    public async Task<StoredPosSale?> FindAsync(
+        Guid tenantId,
+        Guid documentId,
+        string idempotencyKey,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = connections.Create();
+        await connection.OpenAsync(cancellationToken);
+        return await FindInternalAsync(
+            connection,
+            transaction: null,
+            tenantId,
+            documentId,
+            idempotencyKey,
+            cancellationToken);
+    }
+
+    public async Task<StoredPosSale> StoreReceptionAsync(
+        StorePosSaleReceptionCommand command,
+        CancellationToken cancellationToken)
+    {
+        var request = command.Request;
+        await using var connection = connections.Create();
+        await connection.OpenAsync(cancellationToken);
+        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(
+            IsolationLevel.Serializable,
+            cancellationToken);
+        try
+        {
+            var existing = await FindInternalAsync(
+                connection,
+                transaction,
+                request.TenantId,
+                request.DocumentId,
+                command.IdempotencyKey,
+                cancellationToken);
+            if (existing is not null)
+            {
+                await transaction.CommitAsync(cancellationToken);
+                return existing;
+            }
+
+            var processingStatus = command.Verification.IsVerified ? "Received" : "Blocked";
+            var fiscalStatus = command.Verification.IsVerified
+                ? PosSaleRemoteStatuses.FiscalVerified
+                : PosSaleRemoteStatuses.FiscalIntegrityConflict;
+            await InsertDocumentAsync(
+                connection,
+                transaction,
+                command,
+                fiscalStatus,
+                processingStatus,
+                cancellationToken);
+            await InsertSnapshotAsync(
+                connection,
+                transaction,
+                command,
+                fiscalStatus,
+                cancellationToken);
+
+            if (!command.Verification.IsVerified)
+            {
+                await InsertConflictReceiptAsync(
+                    connection,
+                    transaction,
+                    command,
+                    cancellationToken);
+            }
+
+            await transaction.CommitAsync(cancellationToken);
+        }
+        catch (SqlException exception) when (exception.Number is 1205 or 2601 or 2627)
+        {
+            if (transaction.Connection is not null)
+            {
+                await transaction.RollbackAsync(CancellationToken.None);
+            }
+        }
+
+        return await FindAsync(
+                request.TenantId,
+                request.DocumentId,
+                command.IdempotencyKey,
+                cancellationToken)
+            ?? throw new InvalidOperationException("The received sale was not persisted.");
+    }
+
+    private static async Task InsertDocumentAsync(
+        SqlConnection connection,
+        SqlTransaction transaction,
+        StorePosSaleReceptionCommand command,
+        string fiscalStatus,
+        string processingStatus,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            INSERT INTO dbo.SalesDocuments
+            (
+                DocumentId, TenantId, BusinessId, LocationId, WarehouseId,
+                RegisterId, DeviceId, SeriesId, FiscalAuthorizationId,
+                DocumentType, IdempotencyKey, PayloadHash, FiscalNumber,
+                Prefix, Consecutive, IssuedAt, CustomerIdentification,
+                UntaxedAmount, TaxAmount, PayableAmount, CufeReceived,
+                CufeCalculated, FiscalStatus, ProcessingStatus, ReceivedAt,
+                CreatedByDeviceId
+            )
+            VALUES
+            (
+                @DocumentId, @TenantId, @BusinessId, @LocationId, @WarehouseId,
+                @RegisterId, @DeviceId, @SeriesId, @FiscalAuthorizationId,
+                @DocumentType, @IdempotencyKey, @PayloadHash, @FiscalNumber,
+                @Prefix, @Consecutive, @IssuedAt, @CustomerIdentification,
+                @UntaxedAmount, @TaxAmount, @PayableAmount, @CufeReceived,
+                @CufeCalculated, @FiscalStatus, @ProcessingStatus, @ReceivedAt,
+                @DeviceId
+            );
+            """;
+        var request = command.Request;
+        var snapshot = request.FiscalSnapshot;
+        await using var sqlCommand = new SqlCommand(sql, connection, transaction);
+        sqlCommand.Parameters.AddWithValue("@DocumentId", request.DocumentId);
+        sqlCommand.Parameters.AddWithValue("@TenantId", request.TenantId);
+        sqlCommand.Parameters.AddWithValue("@BusinessId", request.BusinessId);
+        sqlCommand.Parameters.AddWithValue("@LocationId", request.LocationId);
+        sqlCommand.Parameters.AddWithValue("@WarehouseId", request.WarehouseId);
+        sqlCommand.Parameters.AddWithValue("@RegisterId", request.RegisterId);
+        sqlCommand.Parameters.AddWithValue("@DeviceId", request.DeviceId);
+        sqlCommand.Parameters.AddWithValue("@SeriesId", snapshot.SeriesId);
+        sqlCommand.Parameters.AddWithValue("@FiscalAuthorizationId", snapshot.FiscalAuthorizationId);
+        sqlCommand.Parameters.AddWithValue("@DocumentType", snapshot.DocumentType);
+        sqlCommand.Parameters.AddWithValue("@IdempotencyKey", command.IdempotencyKey);
+        sqlCommand.Parameters.Add("@PayloadHash", SqlDbType.Binary, 32).Value = command.PayloadHash;
+        sqlCommand.Parameters.AddWithValue("@FiscalNumber", snapshot.FiscalNumber);
+        sqlCommand.Parameters.AddWithValue("@Prefix", snapshot.Prefix);
+        sqlCommand.Parameters.AddWithValue("@Consecutive", snapshot.Consecutive);
+        sqlCommand.Parameters.AddWithValue("@IssuedAt", snapshot.IssuedAt);
+        sqlCommand.Parameters.AddWithValue("@CustomerIdentification", snapshot.CustomerIdentification);
+        AddDecimal(sqlCommand, "@UntaxedAmount", snapshot.UntaxedAmount, 19, 4);
+        AddDecimal(sqlCommand, "@TaxAmount", snapshot.TaxAmount, 19, 4);
+        AddDecimal(sqlCommand, "@PayableAmount", snapshot.PayableAmount, 19, 4);
+        sqlCommand.Parameters.AddWithValue("@CufeReceived", snapshot.Cufe);
+        sqlCommand.Parameters.AddWithValue(
+            "@CufeCalculated",
+            (object?)command.Verification.CufeCalculated ?? DBNull.Value);
+        sqlCommand.Parameters.AddWithValue("@FiscalStatus", fiscalStatus);
+        sqlCommand.Parameters.AddWithValue("@ProcessingStatus", processingStatus);
+        sqlCommand.Parameters.AddWithValue("@ReceivedAt", command.ReceivedAt);
+        await sqlCommand.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private static async Task InsertSnapshotAsync(
+        SqlConnection connection,
+        SqlTransaction transaction,
+        StorePosSaleReceptionCommand command,
+        string integrityStatus,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            INSERT INTO dbo.FiscalSnapshots
+            (
+                DocumentId, SnapshotJson, PayloadHash, TechnicalKeyVersion,
+                Environment, CufeReceived, CufeCalculated, QrPayload,
+                IntegrityStatus, VerifiedAt, ConflictReason, CreatedAt
+            )
+            VALUES
+            (
+                @DocumentId, @SnapshotJson, @PayloadHash, @TechnicalKeyVersion,
+                @Environment, @CufeReceived, @CufeCalculated, @QrPayload,
+                @IntegrityStatus, @VerifiedAt, @ConflictReason, @CreatedAt
+            );
+            """;
+        var snapshot = command.Request.FiscalSnapshot;
+        await using var sqlCommand = new SqlCommand(sql, connection, transaction);
+        sqlCommand.Parameters.AddWithValue("@DocumentId", command.Request.DocumentId);
+        sqlCommand.Parameters.AddWithValue("@SnapshotJson", command.SnapshotJson);
+        sqlCommand.Parameters.Add("@PayloadHash", SqlDbType.Binary, 32).Value = command.PayloadHash;
+        sqlCommand.Parameters.AddWithValue("@TechnicalKeyVersion", snapshot.TechnicalKeyVersion);
+        sqlCommand.Parameters.AddWithValue("@Environment", snapshot.Environment);
+        sqlCommand.Parameters.AddWithValue("@CufeReceived", snapshot.Cufe);
+        sqlCommand.Parameters.AddWithValue(
+            "@CufeCalculated",
+            (object?)command.Verification.CufeCalculated ?? DBNull.Value);
+        sqlCommand.Parameters.AddWithValue("@QrPayload", snapshot.QrPayload);
+        sqlCommand.Parameters.AddWithValue("@IntegrityStatus", integrityStatus);
+        sqlCommand.Parameters.AddWithValue(
+            "@VerifiedAt",
+            command.Verification.IsVerified ? command.ReceivedAt : DBNull.Value);
+        sqlCommand.Parameters.AddWithValue(
+            "@ConflictReason",
+            (object?)command.Verification.ConflictReason ?? DBNull.Value);
+        sqlCommand.Parameters.AddWithValue("@CreatedAt", command.ReceivedAt);
+        await sqlCommand.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private async Task InsertConflictReceiptAsync(
+        SqlConnection connection,
+        SqlTransaction transaction,
+        StorePosSaleReceptionCommand command,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            INSERT INTO dbo.DocumentProcessingReceipts
+            (
+                ReceiptId, TenantId, DocumentId, DocumentType, Status,
+                AttemptCount, AcquiredAt, CompletedAt, LastError
+            )
+            VALUES
+            (
+                @ReceiptId, @TenantId, @DocumentId, @DocumentType, @Status,
+                1, @ReceivedAt, @ReceivedAt, @LastError
+            );
+            """;
+        await using var sqlCommand = new SqlCommand(sql, connection, transaction);
+        sqlCommand.Parameters.AddWithValue("@ReceiptId", idGenerator.NewId());
+        sqlCommand.Parameters.AddWithValue("@TenantId", command.Request.TenantId);
+        sqlCommand.Parameters.AddWithValue("@DocumentId", command.Request.DocumentId);
+        sqlCommand.Parameters.AddWithValue("@DocumentType", command.Request.FiscalSnapshot.DocumentType);
+        sqlCommand.Parameters.AddWithValue("@Status", PosSaleRemoteStatuses.FiscalIntegrityConflict);
+        sqlCommand.Parameters.AddWithValue("@ReceivedAt", command.ReceivedAt);
+        sqlCommand.Parameters.AddWithValue(
+            "@LastError",
+            (object?)command.Verification.ConflictReason ?? DBNull.Value);
+        await sqlCommand.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private static async Task<StoredPosSale?> FindInternalAsync(
+        SqlConnection connection,
+        SqlTransaction? transaction,
+        Guid tenantId,
+        Guid documentId,
+        string idempotencyKey,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            SELECT d.DocumentId,
+                   d.TenantId,
+                   d.IdempotencyKey,
+                   d.PayloadHash,
+                   d.FiscalStatus,
+                   d.ProcessingStatus,
+                   d.CufeReceived,
+                   d.CufeCalculated,
+                   r.ReceiptId,
+                   d.ReceivedAt,
+                   d.ProcessedAt,
+                   COALESCE(s.ConflictReason, r.LastError)
+            FROM dbo.SalesDocuments d
+            INNER JOIN dbo.FiscalSnapshots s ON s.DocumentId = d.DocumentId
+            LEFT JOIN dbo.DocumentProcessingReceipts r
+                ON r.TenantId = d.TenantId
+               AND r.DocumentId = d.DocumentId
+               AND r.DocumentType = d.DocumentType
+            WHERE d.TenantId = @TenantId
+              AND (d.DocumentId = @DocumentId OR d.IdempotencyKey = @IdempotencyKey)
+            ORDER BY CASE WHEN d.DocumentId = @DocumentId THEN 0 ELSE 1 END;
+            """;
+        await using var command = new SqlCommand(sql, connection, transaction);
+        command.Parameters.AddWithValue("@TenantId", tenantId);
+        command.Parameters.AddWithValue("@DocumentId", documentId);
+        command.Parameters.AddWithValue("@IdempotencyKey", idempotencyKey.Trim());
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+        {
+            return null;
+        }
+
+        var result = new StoredPosSale(
+            reader.GetGuid(0),
+            reader.GetGuid(1),
+            reader.GetString(2),
+            (byte[])reader[3],
+            reader.GetString(4),
+            reader.GetString(5),
+            reader.GetString(6),
+            reader.IsDBNull(7) ? null : reader.GetString(7),
+            reader.IsDBNull(8) ? null : reader.GetGuid(8),
+            reader.GetDateTimeOffset(9),
+            reader.IsDBNull(10) ? null : reader.GetDateTimeOffset(10),
+            reader.IsDBNull(11) ? null : reader.GetString(11));
+        if (await reader.ReadAsync(cancellationToken))
+        {
+            throw new PosSaleIdempotencyConflictException(
+                "The document ID and idempotency key refer to different sales.");
+        }
+
+        return result;
+    }
+
+    private static void AddDecimal(
+        SqlCommand command,
+        string name,
+        decimal value,
+        byte precision,
+        byte scale)
+    {
+        var parameter = command.Parameters.Add(name, SqlDbType.Decimal);
+        parameter.Precision = precision;
+        parameter.Scale = scale;
+        parameter.Value = value;
+    }
+}
+

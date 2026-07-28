@@ -27,12 +27,14 @@ ORDER BY CreatedAt DESC;
 
 IF @AccessToken IS NULL
 BEGIN
-    THROW 51000, 'MigrateCJWhatsAppToMedidental: CJ no tiene un token activo para copiar.', 1;
+    PRINT N'MigrateCJWhatsAppToMedidental: CJ no tiene un token activo; migracion omitida.';
+    RETURN;
 END
 
 IF NOT EXISTS (SELECT 1 FROM dbo.Businesses WHERE BusinessId = @MedidentalBusinessId)
 BEGIN
-    THROW 51000, 'MigrateCJWhatsAppToMedidental: negocio Medidental no encontrado.', 1;
+    PRINT N'MigrateCJWhatsAppToMedidental: negocio Medidental no encontrado; migracion omitida.';
+    RETURN;
 END
 
 IF NOT EXISTS (
@@ -42,7 +44,8 @@ IF NOT EXISTS (
       AND BusinessId = @MedidentalBusinessId
 )
 BEGIN
-    THROW 51000, 'MigrateCJWhatsAppToMedidental: agente Medidental no encontrado.', 1;
+    PRINT N'MigrateCJWhatsAppToMedidental: agente Medidental no encontrado; migracion omitida.';
+    RETURN;
 END
 
 BEGIN TRANSACTION;
