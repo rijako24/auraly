@@ -33,6 +33,39 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
         var created = await create.Content.ReadFromJsonAsync<ProductDetail>();
         Assert.NotNull(created);
         var suppliers = created.Suppliers!;
+        var priceListId = Guid.NewGuid();
+        var listItemId = Guid.NewGuid();
+        var channelItemId = Guid.NewGuid();
+        var listCustomerId = Guid.NewGuid();
+        var channelCustomerId = Guid.NewGuid();
+        await ExecuteAsync(
+            """
+            INSERT dbo.PriceLists(PriceListId,BusinessId,Code,Name,IsActive,CreatedAt)
+              VALUES(@List,@Business,N'VIP',N'VIP',1,SYSDATETIMEOFFSET());
+            INSERT dbo.PriceListItems
+              (PriceListItemId,PriceListId,ProductId,MinimumQuantity,Amount,CurrencyCode,ValidFrom,IsActive,CreatedAt)
+              VALUES(@ListItem,@List,@Product,1,11000,N'COP',SYSDATETIMEOFFSET(),1,SYSDATETIMEOFFSET());
+            INSERT dbo.ResolvedPriceChannelItems
+              (ResolvedPriceChannelItemId,PriceChannelId,ProductId,Amount,CurrencyCode,ValidFrom,IsActive,CreatedAt)
+              VALUES(@ChannelItem,@Channel,@Product,11500,N'COP',SYSDATETIMEOFFSET(),1,SYSDATETIMEOFFSET());
+            INSERT dbo.CommerceCustomers
+              (CustomerId,BusinessId,IdentificationType,Identification,Name,IsActive,CreatedAt)
+              VALUES
+              (@ListCustomer,@Business,N'CC',N'1001',N'List customer',1,SYSDATETIMEOFFSET()),
+              (@ChannelCustomer,@Business,N'CC',N'1002',N'Channel customer',1,SYSDATETIMEOFFSET());
+            INSERT dbo.CustomerBusinessPricing(CustomerId,PriceListId,PriceChannelId,UpdatedAt)
+              VALUES
+              (@ListCustomer,@List,NULL,SYSDATETIMEOFFSET()),
+              (@ChannelCustomer,NULL,@Channel,SYSDATETIMEOFFSET());
+            """,
+            new SqlParameter("@List", priceListId),
+            new SqlParameter("@Business", fixture.BusinessId),
+            new SqlParameter("@ListItem", listItemId),
+            new SqlParameter("@ChannelItem", channelItemId),
+            new SqlParameter("@Channel", priceChannelId),
+            new SqlParameter("@Product", created.ProductId),
+            new SqlParameter("@ListCustomer", listCustomerId),
+            new SqlParameter("@ChannelCustomer", channelCustomerId));
         Assert.Single(suppliers);
         var filterUri = $"/api/commerce/v1/products?barcode=7701234500012&supplierId={suppliers.Single().SupplierId:D}&minimumPrice=12000&maximumPrice=13000&sortDescending=true";
         var page = await admin.GetFromJsonAsync<ProductPage>(filterUri);
@@ -64,6 +97,14 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
             Assert.Equal(0, await LocalScalarAsync(
                 sqlitePath,
                 "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name LIKE '%Supplier%';"));
+
+            var listPrice = await local.ResolvePriceAsync(created.ProductId, listCustomerId, 1m);
+            Assert.Equal("PriceList", listPrice.Source);
+            Assert.Equal(11_000m, listPrice.Amount);
+            var channelPrice = await local.ResolvePriceAsync(created.ProductId, channelCustomerId, 1m);
+            Assert.Equal("PriceChannel", channelPrice.Source);
+            Assert.Equal(11_500m, channelPrice.Amount);
+            Assert.Equal(12_500m, (await local.ResolvePriceAsync(created.ProductId, null, 1m)).Amount);
 
             var updated = request with
             {

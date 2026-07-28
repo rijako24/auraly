@@ -20,7 +20,7 @@ public sealed record CapturedCatalogProduct(
     decimal Quantity,
     string MatchKind);
 
-public sealed class PosCatalogStore(string connectionString)
+public sealed partial class PosCatalogStore(string connectionString)
 {
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
@@ -29,6 +29,7 @@ public sealed class PosCatalogStore(string connectionString)
         await using var command = connection.CreateCommand();
         command.CommandText = Schema;
         await command.ExecuteNonQueryAsync(cancellationToken);
+        await InitializePricingAsync(connection, cancellationToken);
     }
 
     public async Task<PosCatalogStatus> StatusAsync(CancellationToken cancellationToken = default)

@@ -9,7 +9,7 @@ using Microsoft.Data.SqlClient;
 
 namespace Auraly.Infrastructure.Persistence;
 
-public sealed class SqlCatalogStore(SqlServerConnectionFactory connections, IAuralyIdGenerator ids) : ICatalogStore
+public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connections, IAuralyIdGenerator ids) : ICatalogStore
 {
     public Task<ProductDetail> CreateAsync(
         CatalogUserIdentity user, Guid productId, SaveProductRequest request,

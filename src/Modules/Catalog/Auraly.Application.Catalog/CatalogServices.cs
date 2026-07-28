@@ -16,6 +16,7 @@ public interface ICatalogStore
     Task<InventoryAvailabilityResponse> AvailabilityAsync(
         Guid deviceId, Guid tenantId, Guid businessId, Guid registerId,
         InventoryAvailabilityRequest request, CancellationToken ct);
+    Task<PosPricingSnapshot> PricingSnapshotAsync(Guid deviceId, Guid tenantId, Guid businessId, CancellationToken ct);
 }
 
 public sealed class CatalogService(

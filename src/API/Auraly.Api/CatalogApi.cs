@@ -64,6 +64,11 @@ public static class CatalogApi
             await Handle(async () => Results.Ok(await service.ChangesAsync(
                 context.User.ToCatalogDeviceIdentity(), cursor ?? 0, pageSize ?? 500, ct))));
 
+        pos.MapGet("/pricing/snapshot", async (
+            HttpContext context, PosCatalogService service, CancellationToken ct) =>
+            await Handle(async () => Results.Ok(await service.PricingSnapshotAsync(
+                context.User.ToCatalogDeviceIdentity(), ct))));
+
         pos.MapPost("/inventory/availability", async (
             HttpContext context, PosCatalogService service, InventoryAvailabilityRequest request, CancellationToken ct) =>
             await Handle(async () => Results.Ok(await service.AvailabilityAsync(

@@ -50,6 +50,12 @@ public sealed class PosCatalogSynchronizer(
             }
         }
 
+        var pricing = await SendAsync<PosPricingSnapshot>(
+            HttpMethod.Get,
+            "api/pos/v1/pricing/snapshot",
+            content: null,
+            cancellationToken);
+        await store.ApplyPricingSnapshotAsync(pricing, cancellationToken);
         while (true)
         {
             status = await store.StatusAsync(cancellationToken);
