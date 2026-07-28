@@ -39,3 +39,8 @@ public readonly record struct DocumentId(Guid Value)
 {
     public override string ToString() => Value.ToString("D");
 }
+
+public readonly record struct DraftId(Guid Value)
+{
+    public override string ToString() => Value.ToString("D");
+}

@@ -1,0 +1,169 @@
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+using Auraly.BuildingBlocks.Domain.Identifiers;
+using Auraly.Contracts.Catalog;
+using Auraly.Pos.Edge.Infrastructure;
+
+namespace Auraly.Foundation.Tests;
+
+public sealed class PosCaptureServiceTests
+{
+    [Fact]
+    public async Task Scanner_uses_local_catalog_customer_price_and_persists_the_line()
+    {
+        await WithServiceAsync(async (service, drafts, scope, productId, customerId, availability) =>
+        {
+            availability.Response = new(
+                productId, scope.WarehouseId.Value, 1m, 10m, true, true, "Available");
+
+            var result = await service.CaptureAsync(
+                "770123",
+                scope,
+                customerId,
+                warehouseAllowsNegativeStock: false,
+                Guid.NewGuid());
+
+            Assert.True(result.Added);
+            Assert.Equal(80m, result.Draft!.Lines.Single().UnitPrice);
+            Assert.Equal("PriceList", result.Draft.Lines.Single().PriceSource);
+            Assert.Single(availability.Requests);
+            Assert.Equal(1m, availability.Requests[0].Quantity);
+            Assert.Equal(
+                result.Draft.DraftId,
+                (await drafts.GetOrCreateActiveAsync(scope)).DraftId);
+        });
+    }
+
+    [Fact]
+    public async Task Quantity_change_revalidates_total_and_keeps_previous_value_when_unavailable()
+    {
+        await WithServiceAsync(async (service, _, scope, productId, customerId, availability) =>
+        {
+            availability.Response = new(
+                productId, scope.WarehouseId.Value, 1m, 10m, true, true, "Available");
+            var captured = await service.CaptureAsync(
+                "770123", scope, customerId, false, Guid.NewGuid());
+            var line = captured.Draft!.Lines.Single();
+            availability.Response = new(
+                productId, scope.WarehouseId.Value, 5m, 2m, true, false, "Insufficient");
+
+            var changed = await service.ChangeQuantityAsync(
+                captured.Draft.DraftId,
+                line.LineId,
+                5m,
+                false,
+                Guid.NewGuid());
+
+            Assert.Equal(PosCaptureStatus.InsufficientInventory, changed.Status);
+            Assert.Equal(1m, changed.Draft!.Lines.Single().Quantity);
+            Assert.Equal(5m, availability.Requests[^1].Quantity);
+        });
+    }
+
+    [Fact]
+    public async Task Blocking_warehouse_does_not_add_a_line_when_network_is_unavailable()
+    {
+        await WithServiceAsync(async (service, _, scope, _, customerId, availability) =>
+        {
+            availability.Failure = new HttpRequestException("offline");
+            var result = await service.CaptureAsync(
+                "770123", scope, customerId, false, Guid.NewGuid());
+
+            Assert.Equal(PosCaptureStatus.OfflineValidationRequired, result.Status);
+            Assert.Empty(result.Draft!.Lines);
+        });
+    }
+
+    [Fact]
+    public async Task Warehouse_that_allows_negatives_never_queries_inventory()
+    {
+        await WithServiceAsync(async (service, _, scope, _, customerId, availability) =>
+        {
+            var result = await service.CaptureAsync(
+                "770123", scope, customerId, true, Guid.NewGuid());
+
+            Assert.True(result.Added);
+            Assert.Empty(availability.Requests);
+        });
+    }
+
+    private static async Task WithServiceAsync(
+        Func<PosCaptureService, PosDraftStore, PosDraftScope, Guid, Guid, RecordingAvailabilityClient, Task> test)
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"auraly-capture-{Guid.NewGuid():N}.db");
+        try
+        {
+            var catalog = new PosCatalogStore($"Data Source={path}");
+            await catalog.InitializeAsync();
+            var productId = Guid.NewGuid();
+            var item = new PosCatalogItem(
+                productId, "P-1", "REF-1", "Product", "EA", "VAT19", 19m,
+                100m, "COP", true, null, ["770123"], []);
+            var sessionId = Guid.NewGuid();
+            var items = new[] { item };
+            var hash = Convert.ToHexString(
+                SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(items))))
+                .ToLowerInvariant();
+            await catalog.BeginBootstrapAsync(
+                new CatalogSyncSessionResponse(sessionId, 0, 1, DateTimeOffset.UtcNow.AddHours(1)));
+            await catalog.ApplyBootstrapPageAsync(
+                new CatalogBootstrapPage(sessionId, 0, null, false, hash, items));
+            await catalog.PromoteBootstrapAsync();
+            var customerId = Guid.NewGuid();
+            var priceListId = Guid.NewGuid();
+            await catalog.ApplyPricingSnapshotAsync(new PosPricingSnapshot(
+                [new(priceListId, productId, 1m, 80m, "COP")],
+                [],
+                [new(customerId, "1", "Customer", priceListId, null, true)]));
+
+            var drafts = new PosDraftStore(
+                $"Data Source={path}",
+                new TestIdGenerator(),
+                TimeProvider.System);
+            await drafts.InitializeAsync();
+            var availability = new RecordingAvailabilityClient();
+            var service = new PosCaptureService(catalog, drafts, availability);
+            var scope = new PosDraftScope(
+                new BusinessId(Guid.NewGuid()),
+                new WarehouseId(Guid.NewGuid()),
+                new RegisterId(Guid.NewGuid()),
+                new UserId(Guid.NewGuid()));
+            await test(service, drafts, scope, productId, customerId, availability);
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
+    private sealed class RecordingAvailabilityClient : IPosInventoryAvailabilityClient
+    {
+        public List<InventoryAvailabilityRequest> Requests { get; } = [];
+        public InventoryAvailabilityResponse? Response { get; set; }
+        public Exception? Failure { get; set; }
+
+        public Task<InventoryAvailabilityResponse> CheckAvailabilityAsync(
+            InventoryAvailabilityRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            Requests.Add(request);
+            if (Failure is not null) return Task.FromException<InventoryAvailabilityResponse>(Failure);
+            return Task.FromResult(Response ??
+                new InventoryAvailabilityResponse(
+                    request.ProductId,
+                    request.WarehouseId,
+                    request.Quantity,
+                    request.Quantity,
+                    true,
+                    true,
+                    "Available"));
+        }
+    }
+
+    private sealed class TestIdGenerator : IAuralyIdGenerator
+    {
+        public Guid NewId() => Guid.NewGuid();
+    }
+}

@@ -8,7 +8,7 @@ public sealed record PosDeviceCredentials(Guid DeviceId, string Secret);
 public sealed class PosCatalogSynchronizer(
     HttpClient httpClient,
     PosCatalogStore store,
-    PosDeviceCredentials credentials)
+    PosDeviceCredentials credentials) : IPosInventoryAvailabilityClient
 {
     public async Task SynchronizeAsync(CancellationToken cancellationToken = default)
     {
