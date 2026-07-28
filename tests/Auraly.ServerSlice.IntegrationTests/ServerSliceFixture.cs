@@ -52,6 +52,7 @@ public sealed class ServerSliceFixture : IAsyncLifetime
     public Guid PriceChannelId { get; } = Guid.NewGuid();
     public Guid TaxProfileId { get; } = Guid.NewGuid();
     public Guid ProductId { get; } = Guid.NewGuid();
+    public Guid DocumentSeriesId { get; } = Guid.NewGuid();
     public Guid SeriesId { get; } = Guid.NewGuid();
     public Guid FiscalAuthorizationId { get; } = Guid.NewGuid();
     public string SqlServer { get; } =
@@ -181,6 +182,14 @@ public sealed class ServerSliceFixture : IAsyncLifetime
             RegisterId,
             DeviceId,
             documentId ?? Guid.NewGuid(),
+            new PosSaleDocumentNumberContract(
+                DocumentSeriesId,
+                PosSaleDocumentTypes.Invoice,
+                "VTA",
+                "03",
+                consecutive,
+                8,
+                $"VTA03-{consecutive:D8}"),
             new PosSaleFiscalSnapshotContract(
                 SeriesId,
                 FiscalAuthorizationId,
@@ -321,7 +330,7 @@ public sealed class ServerSliceFixture : IAsyncLifetime
 
             INSERT INTO dbo.CashRegisters
             (RegisterId, BusinessId, LocationId, WarehouseId, Code, Name, IsActive, CreatedAt)
-            VALUES (@RegisterId, @BusinessId, @LocationId, @WarehouseId, N'C01', N'Caja E2E', 1, SYSDATETIMEOFFSET());
+            VALUES (@RegisterId, @BusinessId, @LocationId, @WarehouseId, N'03', N'Caja E2E', 1, SYSDATETIMEOFFSET());
 
             INSERT INTO dbo.PosDevices
             (DeviceId, BusinessId, LocationId, WarehouseId, RegisterId, Name,
@@ -342,6 +351,14 @@ public sealed class ServerSliceFixture : IAsyncLifetime
             VALUES
             (@FiscalAuthorizationId, @BusinessId, @AuthorizationNumber, @SupplierTaxId,
              2, @QrValidationUrl, '2026-01-01', '2028-12-31', 1, SYSDATETIMEOFFSET());
+
+            INSERT INTO dbo.DocumentSeries
+            (DocumentSeriesId, BusinessId, LocationId, RegisterId, DocumentType,
+             Prefix, SeriesCode, Padding, RangeStart, RangeEnd,
+             IsOfflineCapable, IsActive, CreatedAt)
+            VALUES
+            (@DocumentSeriesId, @BusinessId, @LocationId, @RegisterId, @DocumentType,
+             N'VTA', N'03', 8, 1, 99999999, 1, 1, SYSDATETIMEOFFSET());
 
             INSERT INTO dbo.FiscalSeries
             (SeriesId, BusinessId, RegisterId, FiscalAuthorizationId,
@@ -378,6 +395,7 @@ public sealed class ServerSliceFixture : IAsyncLifetime
         command.Parameters.AddWithValue("@AuthorizationNumber", AuthorizationNumber);
         command.Parameters.AddWithValue("@SupplierTaxId", SupplierTaxId);
         command.Parameters.AddWithValue("@QrValidationUrl", QrValidationUrl);
+        command.Parameters.AddWithValue("@DocumentSeriesId", DocumentSeriesId);
         command.Parameters.AddWithValue("@SeriesId", SeriesId);
         command.Parameters.AddWithValue("@DocumentType", PosSaleDocumentTypes.Invoice);
         command.Parameters.AddWithValue("@Prefix", Prefix);

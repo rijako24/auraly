@@ -1,5 +1,6 @@
 using System.Data;
 using Auraly.Application.Sales;
+using Auraly.BuildingBlocks.Domain.Documents;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Contracts.Catalog;
 using Auraly.Contracts.Fiscal;
@@ -21,6 +22,7 @@ public sealed record PosReceiptLine(
 public sealed record PosReceipt(
     Guid PrintJobId,
     DocumentId DocumentId,
+    string DocumentNumber,
     string FiscalNumber,
     DateTimeOffset IssuedAt,
     string CustomerIdentification,
@@ -54,6 +56,7 @@ public sealed record CompletePosSaleCommand(
 public sealed record CompletePosSaleResult(
     PosEdgeIssueResult IssuedSale,
     PosDraft NextDraft,
+    PosDocumentNumberPreview NextDocumentNumber,
     PosFiscalNumberPreview NextFiscalNumber);
 
 public sealed class PosDraftIssuanceStore(
@@ -132,7 +135,7 @@ public sealed class PosDraftIssuanceStore(
         command.CommandText = """
             UPDATE PosDrafts
             SET Status='Consumed',ConsumedAt=@Now,UpdatedAt=@Now
-            WHERE DraftId=@DraftId AND Status='Active';
+            WHERE DraftId=@DraftId AND Status='Active' AND IssuedAt IS NOT NULL;
             UPDATE PosDraftDocuments SET CompletedAt=@Now
             WHERE DraftId=@DraftId AND DocumentId=@DocumentId;
             INSERT INTO PosDraftAudit(AuditId,DraftId,Action,RelatedDraftId,OccurredAt)
@@ -144,6 +147,33 @@ public sealed class PosDraftIssuanceStore(
         command.Parameters.AddWithValue("@DocumentId", documentId.Value.ToString("D"));
         command.Parameters.AddWithValue("@AuditId", idGenerator.NewId().ToString("D"));
         await command.ExecuteNonQueryAsync(ct);
+        await transaction.CommitAsync(ct);
+    }
+
+    public async Task MarkIssuedAsync(
+        DraftId draftId,
+        DocumentId documentId,
+        CancellationToken ct = default)
+    {
+        await using var connection = new SqliteConnection(connectionString);
+        await connection.OpenAsync(ct);
+        await using var transaction = connection.BeginTransaction(IsolationLevel.Serializable);
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            UPDATE PosDrafts
+            SET IssuedAt=COALESCE(IssuedAt,@Now),UpdatedAt=@Now
+            WHERE DraftId=@DraftId AND Status='Active'
+              AND EXISTS(
+                SELECT 1 FROM PosDraftDocuments
+                WHERE DraftId=@DraftId AND DocumentId=@DocumentId);
+            """;
+        command.Parameters.AddWithValue("@Now", timeProvider.GetUtcNow().ToString("O"));
+        command.Parameters.AddWithValue("@DraftId", draftId.Value.ToString("D"));
+        command.Parameters.AddWithValue("@DocumentId", documentId.Value.ToString("D"));
+        var affected = await command.ExecuteNonQueryAsync(ct);
+        if (affected != 1)
+            throw new InvalidOperationException("The issued sale could not lock its source draft.");
         await transaction.CommitAsync(ct);
     }
 }
@@ -199,24 +229,30 @@ public sealed class PosSaleCompletionService(
                 command.DeviceId,
                 command.Payments),
             ct);
+        await issuance.MarkIssuedAsync(draftId, issued.DocumentId, ct);
+        var immutable = issued.Upload;
         var payload = new PosReceipt(
             identity.PrintJobId,
             issued.DocumentId,
+            issued.DocumentNumber,
             issued.FiscalNumber,
-            command.IssuedAt,
-            command.CustomerIdentification,
-            draft.Lines.Select(line => new PosReceiptLine(
-                line.ProductCode,
+            immutable.FiscalSnapshot.IssuedAt,
+            immutable.FiscalSnapshot.CustomerIdentification,
+            immutable.Lines.Select(line => new PosReceiptLine(
+                draft.Lines.First(source => source.ProductId.Value == line.ProductId).ProductCode,
                 line.Description,
                 line.Quantity,
                 line.UnitPrice,
-                line.Discount,
-                line.Tax,
-                line.Total)).ToArray(),
-            command.Payments,
-            draft.UntaxedAmount,
-            draft.TaxAmount,
-            draft.PayableAmount,
+                line.DiscountAmount,
+                line.TaxAmount,
+                line.LineTotal)).ToArray(),
+            immutable.Payments.Select(payment => new OfflineSalePayment(
+                payment.MethodCode,
+                payment.Amount,
+                payment.Reference)).ToArray(),
+            immutable.FiscalSnapshot.UntaxedAmount,
+            immutable.FiscalSnapshot.TaxAmount,
+            immutable.FiscalSnapshot.PayableAmount,
             issued.Cufe,
             issued.QrPayload,
             command.PaperWidthMillimeters);
@@ -224,10 +260,18 @@ public sealed class PosSaleCompletionService(
         await printer.PrintAsync(payload, ct);
         await issuance.CompleteAsync(draftId, issued.DocumentId, ct);
         var nextDraft = await drafts.GetOrCreateActiveAsync(draft.Scope, ct);
+        var nextDocumentNumber = await sales.PreviewNextDocumentNumberAsync(
+            command.Register.RegisterId,
+            AuralyDocumentTypes.SalesInvoice,
+            ct);
         var nextFiscalNumber = await sales.PreviewNextFiscalNumberAsync(
             command.Register.RegisterId,
             command.IssuedAt,
             ct);
-        return new CompletePosSaleResult(issued, nextDraft, nextFiscalNumber);
+        return new CompletePosSaleResult(
+            issued,
+            nextDraft,
+            nextDocumentNumber,
+            nextFiscalNumber);
     }
 }

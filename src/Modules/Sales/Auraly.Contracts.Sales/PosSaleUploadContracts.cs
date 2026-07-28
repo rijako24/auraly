@@ -2,12 +2,13 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Auraly.BuildingBlocks.Domain.Documents;
 
 namespace Auraly.Contracts.Sales;
 
 public static class PosSaleDocumentTypes
 {
-    public const string Invoice = "SalesInvoice";
+    public const string Invoice = AuralyDocumentTypes.SalesInvoice;
 }
 
 public static class PosSaleRemoteStatuses
@@ -37,6 +38,15 @@ public sealed record PosSalePaymentContract(
     decimal Amount,
     string? Reference);
 
+public sealed record PosSaleDocumentNumberContract(
+    Guid SeriesId,
+    string DocumentType,
+    string Prefix,
+    string SeriesCode,
+    long Consecutive,
+    int Padding,
+    string FullNumber);
+
 public sealed record PosSaleFiscalSnapshotContract(
     Guid SeriesId,
     Guid FiscalAuthorizationId,
@@ -65,6 +75,7 @@ public sealed record PosSaleUploadRequest(
     Guid RegisterId,
     Guid DeviceId,
     Guid DocumentId,
+    PosSaleDocumentNumberContract DocumentNumber,
     PosSaleFiscalSnapshotContract FiscalSnapshot,
     IReadOnlyList<PosSaleLineContract> Lines,
     IReadOnlyList<PosSalePaymentContract> Payments);

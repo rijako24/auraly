@@ -1,3 +1,4 @@
+using Auraly.BuildingBlocks.Domain.Documents;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Domain.Sales;
 
@@ -29,9 +30,11 @@ public sealed class SalesInvoiceTests
             new string('a', 96),
             "QR");
 
-        invoice.ConfirmOffline(snapshot);
+        var documentNumber = DocumentNumber();
+        invoice.ConfirmOffline(documentNumber, snapshot);
 
         Assert.Equal(SalesInvoiceStatus.LocallyIssuedPendingSync, invoice.Status);
+        Assert.Same(documentNumber, invoice.DocumentNumber);
         Assert.Same(snapshot, invoice.FiscalSnapshot);
         Assert.Throws<InvalidOperationException>(
             () => invoice.AddLine(new SalesInvoiceLine(
@@ -67,7 +70,7 @@ public sealed class SalesInvoiceTests
             new string('a', 96),
             "QR");
 
-        Assert.Throws<InvalidOperationException>(() => invoice.ConfirmOffline(changed));
+        Assert.Throws<InvalidOperationException>(() => invoice.ConfirmOffline(DocumentNumber(), changed));
         Assert.Equal(SalesInvoiceStatus.Draft, invoice.Status);
     }
 
@@ -78,4 +81,13 @@ public sealed class SalesInvoiceTests
             new BusinessId(Guid.NewGuid()),
             new WarehouseId(Guid.NewGuid()),
             new RegisterId(Guid.NewGuid()));
+
+    private static AuralyDocumentNumberAssignment DocumentNumber() =>
+        AuralyDocumentNumberAssignment.Create(
+            Guid.NewGuid(),
+            AuralyDocumentTypes.SalesInvoice,
+            "VTA",
+            "03",
+            1,
+            8);
 }

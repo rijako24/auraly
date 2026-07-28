@@ -63,6 +63,11 @@ public static class PosEdgeHostApplication
         builder.Services.AddSingleton<IPosInventoryAvailabilityClient>(
             sp => sp.GetRequiredService<PosCatalogSynchronizer>());
         builder.Services.AddSingleton<PosCaptureService>();
+        builder.Services.AddPosSaleCompletion(
+            builder.Configuration,
+            connectionString,
+            runtime,
+            credentials);
         builder.Services.AddHostedService<PosEdgeStorageInitializer>();
 
         var app = builder.Build();
@@ -192,6 +197,7 @@ public static class PosEdgeHostApplication
                 new DraftId(draftId),
                 context.Scope,
                 ct)));
+        edge.MapPosSaleCompletion();
         return app;
     }
 
@@ -240,6 +246,25 @@ public sealed class Program
 {
     public static async Task Main(string[] args)
     {
+        if (args.Contains("--protect-fiscal-key", StringComparer.Ordinal))
+        {
+            var hostArgs = args
+                .Where(argument => !string.Equals(
+                    argument,
+                    "--protect-fiscal-key",
+                    StringComparison.Ordinal))
+                .ToArray();
+            var builder = WebApplication.CreateBuilder(hostArgs);
+            var keyDirectory = builder.Configuration["PosEdge:SecretKeyDirectory"];
+            if (string.IsNullOrWhiteSpace(keyDirectory))
+                throw new InvalidOperationException("PosEdge:SecretKeyDirectory is required.");
+            var technicalKey = await Console.In.ReadLineAsync()
+                ?? throw new InvalidOperationException("The technical key must be provided through standard input.");
+            Console.Out.WriteLine(
+                PosEdgeProtectedSecret.ProtectTechnicalKey(keyDirectory, technicalKey));
+            return;
+        }
+
         var app = PosEdgeHostApplication.Build(args);
         await app.RunAsync();
     }

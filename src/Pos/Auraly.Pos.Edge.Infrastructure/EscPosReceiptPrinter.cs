@@ -27,7 +27,8 @@ public sealed class EscPosReceiptRenderer
         Write(stream, AlignCenter);
         WriteLine(stream, "AURALY");
         WriteLine(stream, "FACTURA ELECTRONICA DE VENTA");
-        WriteLine(stream, receipt.FiscalNumber);
+        WriteLine(stream, $"DOCUMENTO AURALY: {receipt.DocumentNumber}");
+        WriteLine(stream, $"NUMERO DIAN: {receipt.FiscalNumber}");
         WriteLine(stream, receipt.IssuedAt.ToString("yyyy-MM-dd HH:mm:ss zzz", CultureInfo.InvariantCulture));
         WriteLine(stream, $"ADQUIRENTE: {receipt.CustomerIdentification}");
         WriteLine(stream, new string('-', columns));

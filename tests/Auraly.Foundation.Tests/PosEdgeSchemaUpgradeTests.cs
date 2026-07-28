@@ -47,11 +47,18 @@ public sealed class PosEdgeSchemaUpgradeTests
             await verification.OpenAsync();
             await using var command = verification.CreateCommand();
             command.CommandText =
-                "SELECT FiscalAuthorizationId, NextConsecutive FROM FiscalSeriesCursors;";
+                """
+                SELECT FiscalAuthorizationId, NextConsecutive,
+                    EXISTS(SELECT 1 FROM pragma_table_info('IssuedSales') WHERE name='DocumentNumber'),
+                    EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='DocumentSeriesCursors')
+                FROM FiscalSeriesCursors;
+                """;
             await using var reader = await command.ExecuteReaderAsync();
             Assert.True(await reader.ReadAsync());
             Assert.Equal(authorizationId, reader.GetGuid(0));
             Assert.Equal(7L, reader.GetInt64(1));
+            Assert.Equal(1L, reader.GetInt64(2));
+            Assert.Equal(1L, reader.GetInt64(3));
         }
         finally
         {

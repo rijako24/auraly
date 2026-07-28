@@ -1,6 +1,8 @@
 using System.Data;
 using System.Data.Common;
+using System.Text.Json.Serialization;
 using Auraly.Application.Sales;
+using Auraly.BuildingBlocks.Domain.Documents;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Contracts.Catalog;
 using Auraly.Contracts.Fiscal;
@@ -20,6 +22,16 @@ public sealed record PosEdgeSeriesProvision(
     long RangeEnd,
     DateOnly ValidUntil,
     Guid FiscalAuthorizationId = default);
+
+public sealed record PosEdgeDocumentSeriesProvision(
+    Guid SeriesId,
+    RegisterId RegisterId,
+    string DocumentType,
+    string Prefix,
+    string SeriesCode,
+    int Padding,
+    long RangeStart,
+    long RangeEnd);
 
 public sealed record OfflineSalePayment(
     string MethodCode,
@@ -47,14 +59,25 @@ public sealed record PosFiscalNumberPreview(
     string FullNumber,
     bool IsAvailable);
 
+public sealed record PosDocumentNumberPreview(
+    Guid SeriesId,
+    string DocumentType,
+    string Prefix,
+    string SeriesCode,
+    long Consecutive,
+    string FullNumber,
+    bool IsAvailable);
+
 public sealed record PosEdgeIssueResult(
     DocumentId DocumentId,
+    string DocumentNumber,
     string FiscalNumber,
     string Cufe,
     string QrPayload,
     decimal Total,
     Guid OutboxMessageId,
-    bool WasAlreadyIssued);
+    bool WasAlreadyIssued,
+    [property: JsonIgnore] PosSaleUploadRequest Upload);
 
 public sealed record PosEdgeOutboxItem(
     Guid MessageId,
@@ -91,6 +114,7 @@ public sealed class PosEdgeSaleStore
     {
         await using var context = new PosEdgeDbContext(_options);
         await context.Database.EnsureCreatedAsync(cancellationToken);
+        await UpgradeDocumentNumberingAsync(context, cancellationToken);
         await UpgradeFiscalSeriesAsync(context, cancellationToken);
         await UpgradeOutboxAsync(context, cancellationToken);
     }
@@ -144,6 +168,80 @@ public sealed class PosEdgeSaleStore
         }
     }
 
+    public async Task ProvisionDocumentSeriesAsync(
+        PosEdgeDocumentSeriesProvision provision,
+        CancellationToken cancellationToken = default)
+    {
+        if (provision.RangeStart <= 0 ||
+            provision.RangeEnd < provision.RangeStart ||
+            provision.RangeEnd > AuralyDocumentNumberAssignment.MaximumConsecutive ||
+            provision.Padding != AuralyDocumentNumberAssignment.CanonicalPadding)
+        {
+            throw new ArgumentOutOfRangeException(nameof(provision));
+        }
+
+        var expectedPrefix = AuralyDocumentTypes.DefaultPrefix(provision.DocumentType);
+        if (!string.Equals(expectedPrefix, provision.Prefix.Trim(), StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                $"Document type '{provision.DocumentType}' requires Auraly prefix '{expectedPrefix}'.");
+        }
+
+        await using var context = new PosEdgeDbContext(_options);
+        var current = await context.DocumentSeriesCursors.SingleOrDefaultAsync(
+            row => row.RegisterId == provision.RegisterId.Value &&
+                   row.DocumentType == provision.DocumentType,
+            cancellationToken);
+        if (current is not null && current.SeriesId != provision.SeriesId)
+        {
+            throw new InvalidOperationException(
+                "The register already has another provisioned Auraly series for this document type.");
+        }
+
+        if (current is null)
+        {
+            context.DocumentSeriesCursors.Add(new DocumentSeriesCursorRow
+            {
+                SeriesId = provision.SeriesId,
+                RegisterId = provision.RegisterId.Value,
+                DocumentType = provision.DocumentType,
+                Prefix = expectedPrefix,
+                SeriesCode = provision.SeriesCode.Trim().ToUpperInvariant(),
+                Padding = provision.Padding,
+                NextConsecutive = provision.RangeStart,
+                RangeEnd = provision.RangeEnd,
+                IsActive = true
+            });
+            await context.SaveChangesAsync(cancellationToken);
+        }
+    }
+
+    public async Task<PosDocumentNumberPreview> PreviewNextDocumentNumberAsync(
+        RegisterId registerId,
+        string documentType,
+        CancellationToken cancellationToken = default)
+    {
+        await using var context = new PosEdgeDbContext(_options);
+        var cursor = await context.DocumentSeriesCursors.AsNoTracking().SingleAsync(
+            row => row.RegisterId == registerId.Value && row.DocumentType == documentType,
+            cancellationToken);
+        var assignment = AuralyDocumentNumberAssignment.Create(
+            cursor.SeriesId,
+            cursor.DocumentType,
+            cursor.Prefix,
+            cursor.SeriesCode,
+            cursor.NextConsecutive,
+            cursor.Padding);
+        return new PosDocumentNumberPreview(
+            assignment.SeriesId,
+            assignment.DocumentType,
+            assignment.Prefix,
+            assignment.SeriesCode,
+            assignment.Consecutive,
+            assignment.FullNumber,
+            cursor.IsActive && cursor.NextConsecutive <= cursor.RangeEnd);
+    }
+
     public async Task<PosFiscalNumberPreview> PreviewNextFiscalNumberAsync(
         RegisterId registerId,
         DateTimeOffset issuedAt,
@@ -177,6 +275,7 @@ public sealed class PosEdgeSaleStore
                 cancellationToken);
         if (existing is not null)
         {
+            var existingUpload = PosSaleContractSerializer.Deserialize(existing.FiscalSnapshotJson);
             var existingOutbox = await context.Outbox
                 .AsNoTracking()
                 .SingleAsync(
@@ -184,17 +283,37 @@ public sealed class PosEdgeSaleStore
                     cancellationToken);
             return new PosEdgeIssueResult(
                 command.DocumentId,
+                existing.DocumentNumber,
                 existing.FiscalNumber,
                 existing.Cufe,
-                PosSaleContractSerializer.Deserialize(existing.FiscalSnapshotJson).FiscalSnapshot.QrPayload,
+                existingUpload.FiscalSnapshot.QrPayload,
                 existing.Total,
                 existingOutbox.MessageId,
-                WasAlreadyIssued: true);
+                WasAlreadyIssued: true,
+                existingUpload);
         }
 
         await using var transaction = await context.Database.BeginTransactionAsync(
             IsolationLevel.Serializable,
             cancellationToken);
+        var documentCursor = await context.DocumentSeriesCursors.SingleAsync(
+            row => row.RegisterId == command.Register.RegisterId.Value &&
+                   row.DocumentType == AuralyDocumentTypes.SalesInvoice,
+            cancellationToken);
+        if (!documentCursor.IsActive || documentCursor.NextConsecutive > documentCursor.RangeEnd)
+        {
+            throw new InvalidOperationException("The Auraly sales document series is inactive or exhausted.");
+        }
+
+        var documentNumber = AuralyDocumentNumberAssignment.Create(
+            documentCursor.SeriesId,
+            documentCursor.DocumentType,
+            documentCursor.Prefix,
+            documentCursor.SeriesCode,
+            documentCursor.NextConsecutive,
+            documentCursor.Padding);
+        documentCursor.NextConsecutive++;
+
         var cursor = await context.FiscalSeriesCursors
             .SingleAsync(
                 row => row.RegisterId == command.Register.RegisterId.Value,
@@ -222,6 +341,7 @@ public sealed class PosEdgeSaleStore
             command.UserId,
             command.DocumentId,
             command.Register,
+            documentNumber,
             fiscalNumber,
             command.IssuedAt,
             command.SupplierTaxId,
@@ -236,6 +356,7 @@ public sealed class PosEdgeSaleStore
             command,
             confirmed,
             snapshot,
+            documentNumber,
             fiscalNumber,
             cursor.FiscalAuthorizationId);
         var payload = PosSaleContractSerializer.Serialize(upload);
@@ -243,6 +364,7 @@ public sealed class PosEdgeSaleStore
         context.IssuedSales.Add(new IssuedSaleRow
         {
             DocumentId = command.DocumentId.Value,
+            DocumentNumber = documentNumber.FullNumber,
             FiscalNumber = fiscalNumber.FullNumber,
             Cufe = snapshot.Cufe,
             Total = confirmed.Invoice.PayableAmount,
@@ -264,12 +386,14 @@ public sealed class PosEdgeSaleStore
 
         return new PosEdgeIssueResult(
             command.DocumentId,
+            documentNumber.FullNumber,
             fiscalNumber.FullNumber,
             snapshot.Cufe,
             snapshot.QrPayload,
             confirmed.Invoice.PayableAmount,
             confirmed.OutboxMessage.Id,
-            WasAlreadyIssued: false);
+            WasAlreadyIssued: false,
+            upload);
     }
 
     public async Task<IReadOnlyCollection<PosEdgeOutboxItem>> GetPendingOutboxAsync(
@@ -447,6 +571,7 @@ public sealed class PosEdgeSaleStore
         PosEdgeIssueCommand command,
         ConfirmedOfflineSale confirmed,
         ImmutableFiscalSnapshot snapshot,
+        AuralyDocumentNumberAssignment documentNumber,
         FiscalNumberAssignment fiscalNumber,
         Guid fiscalAuthorizationId)
     {
@@ -498,6 +623,14 @@ public sealed class PosEdgeSaleStore
             command.Register.RegisterId.Value,
             command.DeviceId,
             command.DocumentId.Value,
+            new PosSaleDocumentNumberContract(
+                documentNumber.SeriesId,
+                documentNumber.DocumentType,
+                documentNumber.Prefix,
+                documentNumber.SeriesCode,
+                documentNumber.Consecutive,
+                documentNumber.Padding,
+                documentNumber.FullNumber),
             new PosSaleFiscalSnapshotContract(
                 fiscalNumber.SeriesId,
                 fiscalAuthorizationId,
@@ -566,6 +699,63 @@ public sealed class PosEdgeSaleStore
         command.Parameters.Add(seriesParameter);
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
+
+    private static async Task UpgradeDocumentNumberingAsync(
+        PosEdgeDbContext context,
+        CancellationToken cancellationToken)
+    {
+        DbConnection connection = context.Database.GetDbConnection();
+        if (connection.State != ConnectionState.Open)
+        {
+            await connection.OpenAsync(cancellationToken);
+        }
+
+        await using (var command = connection.CreateCommand())
+        {
+            command.CommandText = """
+                CREATE TABLE IF NOT EXISTS DocumentSeriesCursors(
+                    SeriesId TEXT NOT NULL PRIMARY KEY,
+                    RegisterId TEXT NOT NULL,
+                    DocumentType TEXT NOT NULL,
+                    Prefix TEXT NOT NULL,
+                    SeriesCode TEXT NOT NULL,
+                    Padding INTEGER NOT NULL,
+                    NextConsecutive INTEGER NOT NULL,
+                    RangeEnd INTEGER NOT NULL,
+                    IsActive INTEGER NOT NULL
+                );
+                CREATE UNIQUE INDEX IF NOT EXISTS
+                    IX_DocumentSeriesCursors_RegisterId_DocumentType
+                    ON DocumentSeriesCursors(RegisterId,DocumentType);
+                """;
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        var columns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        await using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "PRAGMA table_info('IssuedSales');";
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                columns.Add(reader.GetString(1));
+            }
+        }
+
+        if (!columns.Contains("DocumentNumber"))
+        {
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                ALTER TABLE IssuedSales
+                    ADD COLUMN DocumentNumber TEXT NOT NULL DEFAULT '';
+                UPDATE IssuedSales
+                    SET DocumentNumber='UNASSIGNED-' || DocumentId
+                    WHERE DocumentNumber='';
+                """;
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+    }
+
     private static async Task UpgradeFiscalSeriesAsync(
         PosEdgeDbContext context,
         CancellationToken cancellationToken)

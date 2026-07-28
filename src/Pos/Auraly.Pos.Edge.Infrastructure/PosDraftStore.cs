@@ -115,6 +115,18 @@ public sealed class PosDraftStore
         await using var command = connection.CreateCommand();
         command.CommandText = Schema;
         await command.ExecuteNonQueryAsync(cancellationToken);
+        var columns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        command.CommandText = "PRAGMA table_info('PosDrafts');";
+        await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
+        {
+            while (await reader.ReadAsync(cancellationToken))
+                columns.Add(reader.GetString(1));
+        }
+        if (!columns.Contains("IssuedAt"))
+        {
+            command.CommandText = "ALTER TABLE PosDrafts ADD COLUMN IssuedAt TEXT NULL;";
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
     }
 
     public async Task<PosDraft> GetOrCreateActiveAsync(
@@ -144,6 +156,11 @@ public sealed class PosDraftStore
         {
             draftId = new DraftId(_idGenerator.NewId());
             await InsertActiveAsync(connection, transaction, draftId.Value, scope, null, null, cancellationToken);
+        }
+
+        else
+        {
+            await RequireActiveAsync(connection, transaction, draftId.Value, cancellationToken);
         }
 
         var mergeLineId = await FindMergeableLineAsync(
@@ -623,12 +640,17 @@ public sealed class PosDraftStore
     {
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandText = "SELECT Status FROM PosDrafts WHERE DraftId=@DraftId;";
+        command.CommandText = "SELECT Status,IssuedAt FROM PosDrafts WHERE DraftId=@DraftId;";
         command.Parameters.Add(P("@DraftId", draftId.Value));
-        var status = await command.ExecuteScalarAsync(ct) as string;
-        if (status is null) throw new KeyNotFoundException("The draft does not exist.");
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        if (!await reader.ReadAsync(ct))
+            throw new KeyNotFoundException("The draft does not exist.");
+        var status = reader.GetString(0);
         if (status != PosDraftStatus.Active)
             throw new InvalidOperationException("Only the active sale can be modified.");
+        if (!reader.IsDBNull(1))
+            throw new InvalidOperationException(
+                "The sale was already issued and is locked until its receipt is printed.");
     }
 
     private static async Task<PosDraft?> ReadHeaderAsync(
@@ -806,7 +828,8 @@ public sealed class PosDraftStore
           UpdatedAt TEXT NOT NULL,
           SavedAt TEXT NULL,
           ConsumedAt TEXT NULL,
-          DeletedAt TEXT NULL);
+          DeletedAt TEXT NULL,
+          IssuedAt TEXT NULL);
         CREATE UNIQUE INDEX IF NOT EXISTS UX_PosDrafts_ActiveScope
           ON PosDrafts(BusinessId,RegisterId,UserId) WHERE Status='Active';
         CREATE INDEX IF NOT EXISTS IX_PosDrafts_Temporaries

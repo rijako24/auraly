@@ -1,5 +1,6 @@
 using Auraly.Application.Authorization;
 using Auraly.Application.Sales;
+using Auraly.BuildingBlocks.Domain.Documents;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Contracts.Authorization;
 using Auraly.Contracts.Fiscal;
@@ -23,9 +24,14 @@ public sealed class PosSaleCompletionServiceTests
                 fixture.Scope.RegisterId,
                 fixture.IssuedAt);
             Assert.Equal("FV100", before.FullNumber);
+            Assert.Equal(
+                "VTA03-00000100",
+                (await fixture.Sales.PreviewNextDocumentNumberAsync(
+                    fixture.Scope.RegisterId, AuralyDocumentTypes.SalesInvoice)).FullNumber);
 
             var result = await fixture.CompleteAsync(draft.DraftId);
 
+            Assert.Equal("VTA03-00000100", result.IssuedSale.DocumentNumber);
             Assert.Equal("FV100", result.IssuedSale.FiscalNumber);
             Assert.Equal(result.IssuedSale.Cufe, fixture.Printer.Receipts.Single().Cufe);
             Assert.Equal(result.IssuedSale.QrPayload, fixture.Printer.Receipts.Single().QrPayload);
@@ -33,6 +39,7 @@ public sealed class PosSaleCompletionServiceTests
             Assert.Equal(PosDraftStatus.Consumed, (await fixture.Drafts.GetAsync(draft.DraftId))!.Status);
             Assert.NotEqual(draft.DraftId, result.NextDraft.DraftId);
             Assert.Empty(result.NextDraft.Lines);
+            Assert.Equal("VTA03-00000101", result.NextDocumentNumber.FullNumber);
             Assert.Equal("FV101", result.NextFiscalNumber.FullNumber);
             Assert.Single(await fixture.Sales.GetPendingOutboxAsync());
         });
@@ -52,6 +59,11 @@ public sealed class PosSaleCompletionServiceTests
             var afterFailure = await fixture.Drafts.GetAsync(draft.DraftId);
             Assert.Equal(PosDraftStatus.Active, afterFailure!.Status);
             Assert.Single(afterFailure.Lines);
+            await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                fixture.Drafts.SetQuantityAsync(
+                    draft.DraftId,
+                    afterFailure.Lines.Single().LineId,
+                    2m));
             Assert.Single(await fixture.Sales.GetPendingOutboxAsync());
             Assert.Equal(
                 "FV101",
@@ -63,6 +75,7 @@ public sealed class PosSaleCompletionServiceTests
             var recovered = await fixture.CompleteAsync(draft.DraftId);
 
             Assert.True(recovered.IssuedSale.WasAlreadyIssued);
+            Assert.Equal("VTA03-00000100", recovered.IssuedSale.DocumentNumber);
             Assert.Equal("FV100", recovered.IssuedSale.FiscalNumber);
             Assert.Equal("FV101", recovered.NextFiscalNumber.FullNumber);
             Assert.Single(await fixture.Sales.GetPendingOutboxAsync());
@@ -80,6 +93,10 @@ public sealed class PosSaleCompletionServiceTests
                     draft.DraftId,
                     [new OfflineSalePayment("Cash", 1m)]));
 
+            Assert.Equal(
+                "VTA03-00000100",
+                (await fixture.Sales.PreviewNextDocumentNumberAsync(
+                    fixture.Scope.RegisterId, AuralyDocumentTypes.SalesInvoice)).FullNumber);
             Assert.Equal(
                 "FV100",
                 (await fixture.Sales.PreviewNextFiscalNumberAsync(
@@ -169,6 +186,15 @@ public sealed class PosSaleCompletionServiceTests
             await sales.InitializeAsync();
             await drafts.InitializeAsync();
             await issuance.InitializeAsync();
+            await sales.ProvisionDocumentSeriesAsync(new PosEdgeDocumentSeriesProvision(
+                Guid.NewGuid(),
+                registerId,
+                AuralyDocumentTypes.SalesInvoice,
+                "VTA",
+                "03",
+                8,
+                100,
+                99_999_999));
             await sales.ProvisionSeriesAsync(new PosEdgeSeriesProvision(
                 Guid.NewGuid(),
                 registerId,

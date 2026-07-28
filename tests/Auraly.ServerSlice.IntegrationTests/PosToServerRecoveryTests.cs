@@ -1,5 +1,6 @@
 using Auraly.Application.Authorization;
 using Auraly.Application.Sales;
+using Auraly.BuildingBlocks.Domain.Documents;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Contracts.Authorization;
 using Auraly.Contracts.Catalog;
@@ -40,6 +41,16 @@ public sealed class PosToServerRecoveryTests(ServerSliceFixture fixture)
             var connectionString = $"Data Source={databasePath}";
             var firstProcess = new PosEdgeSaleStore(connectionString, confirmation);
             await firstProcess.InitializeAsync();
+            await firstProcess.ProvisionDocumentSeriesAsync(
+                new PosEdgeDocumentSeriesProvision(
+                    fixture.DocumentSeriesId,
+                    register.RegisterId,
+                    AuralyDocumentTypes.SalesInvoice,
+                    "VTA",
+                    "03",
+                    8,
+                    501,
+                    600));
             await firstProcess.ProvisionSeriesAsync(
                 new PosEdgeSeriesProvision(
                     fixture.SeriesId,
@@ -201,6 +212,16 @@ public sealed class PosToServerRecoveryTests(ServerSliceFixture fixture)
         var userId = new UserId(Guid.NewGuid());
         var store = await CreateStoreOnlyAsync(databasePath, userId);
         var register = RegisterContext();
+        await store.ProvisionDocumentSeriesAsync(
+            new PosEdgeDocumentSeriesProvision(
+                fixture.DocumentSeriesId,
+                register.RegisterId,
+                AuralyDocumentTypes.SalesInvoice,
+                "VTA",
+                "03",
+                8,
+                701,
+                800));
         await store.ProvisionSeriesAsync(
             new PosEdgeSeriesProvision(
                 fixture.SeriesId,

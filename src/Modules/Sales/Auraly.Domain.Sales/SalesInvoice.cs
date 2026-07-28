@@ -1,4 +1,5 @@
 using Auraly.BuildingBlocks.Domain.Identifiers;
+using Auraly.BuildingBlocks.Domain.Documents;
 
 namespace Auraly.Domain.Sales;
 
@@ -62,6 +63,7 @@ public sealed class SalesInvoice
     public RegisterId RegisterId { get; }
     public SalesInvoiceStatus Status { get; private set; } = SalesInvoiceStatus.Draft;
     public IReadOnlyCollection<SalesInvoiceLine> Lines => _lines;
+    public AuralyDocumentNumberAssignment? DocumentNumber { get; private set; }
     public ImmutableFiscalSnapshot? FiscalSnapshot { get; private set; }
     public decimal UntaxedAmount => _lines.Sum(line => line.Subtotal);
     public decimal TaxAmount => _lines.Sum(line => line.Tax);
@@ -77,10 +79,19 @@ public sealed class SalesInvoice
         _lines.Add(line);
     }
 
-    public void ConfirmOffline(ImmutableFiscalSnapshot snapshot)
+    public void ConfirmOffline(
+        AuralyDocumentNumberAssignment documentNumber,
+        ImmutableFiscalSnapshot snapshot)
     {
         EnsureDraft();
         if (_lines.Count == 0) throw new InvalidOperationException("An empty invoice cannot be confirmed.");
+        if (!string.Equals(
+                documentNumber.DocumentType,
+                AuralyDocumentTypes.SalesInvoice,
+                StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException("A sales invoice requires an Auraly sales document number.");
+        }
         if (snapshot.PayableAmount != PayableAmount ||
             snapshot.UntaxedAmount != UntaxedAmount ||
             snapshot.TaxAmount != TaxAmount)
@@ -88,6 +99,7 @@ public sealed class SalesInvoice
             throw new InvalidOperationException("The fiscal snapshot totals do not match the invoice.");
         }
 
+        DocumentNumber = documentNumber;
         FiscalSnapshot = snapshot;
         Status = SalesInvoiceStatus.LocallyIssuedPendingSync;
     }

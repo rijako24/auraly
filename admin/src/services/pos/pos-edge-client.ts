@@ -42,6 +42,48 @@ export type PosCaptureResult = {
   draft: PosDraft | null;
 };
 
+export type PosFiscalNumberPreview = {
+  seriesId: string;
+  prefix: string;
+  consecutive: number;
+  fullNumber: string;
+  isAvailable: boolean;
+};
+
+export type PosDocumentNumberPreview = {
+  seriesId: string;
+  documentType: string;
+  prefix: string;
+  seriesCode: string;
+  consecutive: number;
+  fullNumber: string;
+  isAvailable: boolean;
+};
+
+export type PosNextNumbers = { document: PosDocumentNumberPreview; fiscal: PosFiscalNumberPreview };
+
+export type PosPaymentInput = {
+  methodCode: string;
+  amount: number;
+  reference: string | null;
+};
+
+export type PosCompleteSaleResult = {
+  issuedSale: {
+    documentId: { value: string };
+    documentNumber: string;
+    fiscalNumber: string;
+    cufe: string;
+    qrPayload: string;
+    total: number;
+    outboxMessageId: string;
+    wasAlreadyIssued: boolean;
+  };
+  nextDraft: PosDraft;
+  nextDocumentNumber: PosDocumentNumberPreview;
+  nextFiscalNumber: PosFiscalNumberPreview;
+};
+
 export class PosEdgeError extends Error {
   constructor(
     message: string,
@@ -60,6 +102,10 @@ export class PosEdgeClient {
 
   activeDraft() {
     return this.request<PosDraft>("/edge/v1/drafts/active");
+  }
+
+  nextNumbers() {
+    return this.request<PosNextNumbers>("/edge/v1/sales/next-number");
   }
 
   capture(value: string, customerId: string | null) {
@@ -110,6 +156,20 @@ export class PosEdgeClient {
     );
   }
 
+  completeSale(
+    draftId: string,
+    customerIdentification: string | null,
+    payments: PosPaymentInput[],
+  ) {
+    return this.request<PosCompleteSaleResult>(
+      `/edge/v1/drafts/${draftId}/complete`,
+      {
+        method: "POST",
+        body: JSON.stringify({ customerIdentification, payments }),
+      },
+    );
+  }
+
   private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
     const response = await fetch(`${EDGE_BASE_URL}${path}`, {
       ...init,
@@ -121,8 +181,15 @@ export class PosEdgeClient {
       },
     });
     if (!response.ok) {
-      const detail = await response.text();
-      throw new PosEdgeError(detail || response.statusText, response.status);
+      const raw = await response.text();
+      let detail = raw || response.statusText;
+      try {
+        const problem = JSON.parse(raw) as { detail?: string; title?: string };
+        detail = problem.detail || problem.title || detail;
+      } catch {
+        // The local host may intentionally return plain text for simple failures.
+      }
+      throw new PosEdgeError(detail, response.status);
     }
     return (await response.json()) as T;
   }

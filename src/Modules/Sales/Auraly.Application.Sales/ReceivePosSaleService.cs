@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using Auraly.Application.DocumentProcessing;
+using Auraly.BuildingBlocks.Domain.Documents;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Contracts.Authorization;
 using Auraly.Contracts.DocumentProcessing;
@@ -90,6 +91,7 @@ public sealed class ReceivePosSaleService(
         }
 
         DemandDeviceContext(device, request);
+        ValidateDocumentNumber(request);
         var snapshotJson = PosSaleContractSerializer.Serialize(request);
         var payloadHash = PosSaleContractSerializer.Hash(request);
         var existing = await store.FindAsync(
@@ -176,6 +178,37 @@ public sealed class ReceivePosSaleService(
         {
             throw new PosSaleForbiddenException(
                 "The uploaded tenant, business, location, warehouse, register or device differs from the authenticated context.");
+        }
+    }
+
+    private static void ValidateDocumentNumber(PosSaleUploadRequest request)
+    {
+        var number = request.DocumentNumber;
+        if (!string.Equals(number.DocumentType, request.FiscalSnapshot.DocumentType, StringComparison.Ordinal))
+        {
+            throw new PosSaleInvalidException(
+                "The Auraly document type and fiscal document type must match.");
+        }
+
+        AuralyDocumentNumberAssignment expected;
+        try
+        {
+            expected = AuralyDocumentNumberAssignment.Create(
+                number.SeriesId,
+                number.DocumentType,
+                number.Prefix,
+                number.SeriesCode,
+                number.Consecutive,
+                number.Padding);
+        }
+        catch (ArgumentException exception)
+        {
+            throw new PosSaleInvalidException(exception.Message);
+        }
+
+        if (!string.Equals(expected.FullNumber, number.FullNumber, StringComparison.Ordinal))
+        {
+            throw new PosSaleInvalidException("The Auraly document number does not match its components.");
         }
     }
 

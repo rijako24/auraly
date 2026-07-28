@@ -9,7 +9,7 @@ public sealed class EscPosReceiptRendererTests
     [Theory]
     [InlineData(58)]
     [InlineData(80)]
-    public void Receipt_contains_fiscal_number_cufe_exact_qr_and_cut_command(int width)
+    public void Receipt_contains_Auraly_and_fiscal_numbers_cufe_exact_qr_and_cut_command(int width)
     {
         var qr = """
             NumFac: FV100
@@ -21,6 +21,7 @@ public sealed class EscPosReceiptRendererTests
             Guid.NewGuid(),
             new DocumentId(Guid.NewGuid()),
             "FV100",
+            "VTA03-00000100",
             new DateTimeOffset(2026, 7, 28, 14, 30, 0, TimeSpan.FromHours(-5)),
             "222222222",
             [new PosReceiptLine("P-001", "Café molido", 2m, 10_000m, 500m, 3_705m, 23_205m)],
@@ -36,6 +37,7 @@ public sealed class EscPosReceiptRendererTests
         var printable = Encoding.UTF8.GetString(bytes);
 
         Assert.Contains("FV100", printable);
+        Assert.Contains("VTA03-00000100", printable);
         Assert.Contains("CUFE: abc123", printable);
         Assert.Contains(qr, printable);
         Assert.Contains("23205.00", printable);
@@ -49,6 +51,7 @@ public sealed class EscPosReceiptRendererTests
             Guid.NewGuid(),
             new DocumentId(Guid.NewGuid()),
             "FV100",
+            "VTA03-00000100",
             DateTimeOffset.UtcNow,
             "222222222",
             [],

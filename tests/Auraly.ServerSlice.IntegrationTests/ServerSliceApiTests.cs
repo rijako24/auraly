@@ -61,6 +61,25 @@ public sealed class ServerSliceApiTests(ServerSliceFixture fixture)
         Assert.Equal(HttpStatusCode.Forbidden, wrongTenantResponse.StatusCode);
     }
 
+    [Fact]
+    public async Task Altered_Auraly_document_number_is_rejected_before_persistence()
+    {
+        var original = fixture.CreateValidRequest(105);
+        var changed = original with
+        {
+            DocumentNumber = original.DocumentNumber with
+            {
+                FullNumber = $"{original.DocumentNumber.FullNumber}X"
+            }
+        };
+        using var client = fixture.CreateClient();
+        using var message = fixture.CreateUploadMessage(changed);
+        using var response = await client.SendAsync(message);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal(0, await fixture.CountAsync("SalesDocuments", original.DocumentId));
+    }
+
     public static TheoryData<string> FiscalMutations => new()
     {
         "number",

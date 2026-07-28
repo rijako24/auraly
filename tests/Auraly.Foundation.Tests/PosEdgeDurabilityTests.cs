@@ -1,5 +1,6 @@
 using Auraly.Application.Authorization;
 using Auraly.Application.Sales;
+using Auraly.BuildingBlocks.Domain.Documents;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Contracts.Authorization;
 using Auraly.Contracts.Catalog;
@@ -42,6 +43,15 @@ public sealed class PosEdgeDurabilityTests
             var connectionString = $"Data Source={databasePath}";
             var firstProcess = new PosEdgeSaleStore(connectionString, confirmation);
             await firstProcess.InitializeAsync();
+            await firstProcess.ProvisionDocumentSeriesAsync(new PosEdgeDocumentSeriesProvision(
+                Guid.NewGuid(),
+                registerId,
+                AuralyDocumentTypes.SalesInvoice,
+                "VTA",
+                "03",
+                8,
+                1,
+                99_999_999));
             await firstProcess.ProvisionSeriesAsync(new PosEdgeSeriesProvision(
                 Guid.NewGuid(),
                 registerId,
@@ -69,9 +79,12 @@ public sealed class PosEdgeDurabilityTests
             var duplicate = await reopenedProcess.IssueAsync(firstCommand);
             var pending = await reopenedProcess.GetPendingOutboxAsync();
 
+            Assert.Equal("VTA03-00000001", first.DocumentNumber);
+            Assert.Equal("VTA03-00000002", second.DocumentNumber);
             Assert.Equal("FV011", first.FiscalNumber);
             Assert.Equal("FV012", second.FiscalNumber);
             Assert.True(duplicate.WasAlreadyIssued);
+            Assert.Equal(first.DocumentNumber, duplicate.DocumentNumber);
             Assert.Equal(first.FiscalNumber, duplicate.FiscalNumber);
             Assert.Equal(first.Cufe, duplicate.Cufe);
             Assert.Equal(first.OutboxMessageId, duplicate.OutboxMessageId);

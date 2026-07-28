@@ -4,6 +4,7 @@ using Auraly.Application.Fiscal;
 using Auraly.Application.Organization;
 using Auraly.Application.Sales;
 using Auraly.BuildingBlocks.Application.Outbox;
+using Auraly.BuildingBlocks.Domain.Documents;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Contracts.Authorization;
 using Auraly.Domain.Authorization;
@@ -75,6 +76,13 @@ public sealed class ConnectedOfflineSaleSliceTests
             userId,
             new DocumentId(Guid.NewGuid()),
             registerContext,
+            AuralyDocumentNumberAssignment.Create(
+                Guid.NewGuid(),
+                AuralyDocumentTypes.SalesInvoice,
+                "VTA",
+                "01",
+                1,
+                8),
             fiscalNumber,
             issuedAt,
             "9001234567",
@@ -85,6 +93,7 @@ public sealed class ConnectedOfflineSaleSliceTests
             [new OfflineSaleLine(posProduct, 2m, 10_000m, 1_000m, 3_610m)]));
 
         Assert.Equal(SalesInvoiceStatus.LocallyIssuedPendingSync, result.Invoice.Status);
+        Assert.Equal("VTA01-00000001", result.Contract.DocumentNumber);
         Assert.Equal("FV011", result.Contract.FiscalNumber);
         Assert.Equal(result.Contract.Cufe, result.Invoice.FiscalSnapshot!.Cufe);
         Assert.Equal(22_610m, result.Contract.Total);
@@ -126,6 +135,13 @@ public sealed class ConnectedOfflineSaleSliceTests
                 userId,
                 new DocumentId(Guid.NewGuid()),
                 context,
+                AuralyDocumentNumberAssignment.Create(
+                    Guid.NewGuid(),
+                    AuralyDocumentTypes.SalesInvoice,
+                    "VTA",
+                    "02",
+                    1,
+                    8),
                 new Auraly.Contracts.Fiscal.FiscalNumberAssignment(
                     Guid.NewGuid(),
                     "FV01",

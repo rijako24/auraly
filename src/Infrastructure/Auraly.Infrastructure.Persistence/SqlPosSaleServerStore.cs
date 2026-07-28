@@ -20,6 +20,8 @@ public sealed class SqlPosSaleServerStore(
             FROM dbo.FiscalSeries s
             INNER JOIN dbo.FiscalAuthorizations a
                 ON a.FiscalAuthorizationId = s.FiscalAuthorizationId
+            INNER JOIN dbo.DocumentSeries ds
+                ON ds.DocumentSeriesId = @DocumentSeriesId
             INNER JOIN dbo.CashRegisters r
                 ON r.RegisterId = s.RegisterId
             INNER JOIN dbo.Warehouses w
@@ -36,6 +38,15 @@ public sealed class SqlPosSaleServerStore(
               AND d.BusinessId = @BusinessId
               AND d.LocationId = @LocationId
               AND d.WarehouseId = @WarehouseId
+              AND ds.BusinessId = @BusinessId
+              AND ds.LocationId = @LocationId
+              AND ds.RegisterId = @RegisterId
+              AND ds.DocumentType = @DocumentType
+              AND ds.Prefix = @DocumentPrefix
+              AND ds.SeriesCode = @DocumentSeriesCode
+              AND ds.SeriesCode = r.Code
+              AND @DocumentConsecutive BETWEEN ds.RangeStart AND ds.RangeEnd
+              AND ds.IsActive = 1
               AND s.DocumentType = @DocumentType
               AND s.Prefix = @Prefix
               AND @Consecutive BETWEEN s.RangeStart AND s.RangeEnd
@@ -55,6 +66,10 @@ public sealed class SqlPosSaleServerStore(
         await connection.OpenAsync(cancellationToken);
         await using var command = new SqlCommand(sql, connection);
         command.Parameters.AddWithValue("@SeriesId", snapshot.SeriesId);
+        command.Parameters.AddWithValue("@DocumentSeriesId", request.DocumentNumber.SeriesId);
+        command.Parameters.AddWithValue("@DocumentPrefix", request.DocumentNumber.Prefix);
+        command.Parameters.AddWithValue("@DocumentSeriesCode", request.DocumentNumber.SeriesCode);
+        command.Parameters.AddWithValue("@DocumentConsecutive", request.DocumentNumber.Consecutive);
         command.Parameters.AddWithValue("@FiscalAuthorizationId", snapshot.FiscalAuthorizationId);
         command.Parameters.AddWithValue("@BusinessId", request.BusinessId);
         command.Parameters.AddWithValue("@LocationId", request.LocationId);
@@ -193,9 +208,11 @@ public sealed class SqlPosSaleServerStore(
             INSERT INTO dbo.SalesDocuments
             (
                 DocumentId, BusinessId, LocationId, WarehouseId,
-                RegisterId, DeviceId, SeriesId, FiscalAuthorizationId,
+                RegisterId, DeviceId, DocumentSeriesId, DocumentNumber,
+                DocumentPrefix, DocumentSeriesCode, DocumentConsecutive,
+                FiscalSeriesId, FiscalAuthorizationId,
                 DocumentType, IdempotencyKey, PayloadHash, FiscalNumber,
-                Prefix, Consecutive, IssuedAt, CustomerIdentification,
+                FiscalPrefix, FiscalConsecutive, IssuedAt, CustomerIdentification,
                 UntaxedAmount, TaxAmount, PayableAmount, CufeReceived,
                 CufeCalculated, FiscalStatus, ProcessingStatus, ReceivedAt,
                 CreatedByDeviceId
@@ -203,9 +220,11 @@ public sealed class SqlPosSaleServerStore(
             VALUES
             (
                 @DocumentId, @BusinessId, @LocationId, @WarehouseId,
-                @RegisterId, @DeviceId, @SeriesId, @FiscalAuthorizationId,
+                @RegisterId, @DeviceId, @DocumentSeriesId, @DocumentNumber,
+                @DocumentPrefix, @DocumentSeriesCode, @DocumentConsecutive,
+                @FiscalSeriesId, @FiscalAuthorizationId,
                 @DocumentType, @IdempotencyKey, @PayloadHash, @FiscalNumber,
-                @Prefix, @Consecutive, @IssuedAt, @CustomerIdentification,
+                @FiscalPrefix, @FiscalConsecutive, @IssuedAt, @CustomerIdentification,
                 @UntaxedAmount, @TaxAmount, @PayableAmount, @CufeReceived,
                 @CufeCalculated, @FiscalStatus, @ProcessingStatus, @ReceivedAt,
                 @DeviceId
@@ -220,14 +239,19 @@ public sealed class SqlPosSaleServerStore(
         sqlCommand.Parameters.AddWithValue("@WarehouseId", request.WarehouseId);
         sqlCommand.Parameters.AddWithValue("@RegisterId", request.RegisterId);
         sqlCommand.Parameters.AddWithValue("@DeviceId", request.DeviceId);
-        sqlCommand.Parameters.AddWithValue("@SeriesId", snapshot.SeriesId);
+        sqlCommand.Parameters.AddWithValue("@DocumentSeriesId", request.DocumentNumber.SeriesId);
+        sqlCommand.Parameters.AddWithValue("@DocumentNumber", request.DocumentNumber.FullNumber);
+        sqlCommand.Parameters.AddWithValue("@DocumentPrefix", request.DocumentNumber.Prefix);
+        sqlCommand.Parameters.AddWithValue("@DocumentSeriesCode", request.DocumentNumber.SeriesCode);
+        sqlCommand.Parameters.AddWithValue("@DocumentConsecutive", request.DocumentNumber.Consecutive);
+        sqlCommand.Parameters.AddWithValue("@FiscalSeriesId", snapshot.SeriesId);
         sqlCommand.Parameters.AddWithValue("@FiscalAuthorizationId", snapshot.FiscalAuthorizationId);
         sqlCommand.Parameters.AddWithValue("@DocumentType", snapshot.DocumentType);
         sqlCommand.Parameters.AddWithValue("@IdempotencyKey", command.IdempotencyKey);
         sqlCommand.Parameters.Add("@PayloadHash", SqlDbType.Binary, 32).Value = command.PayloadHash;
         sqlCommand.Parameters.AddWithValue("@FiscalNumber", snapshot.FiscalNumber);
-        sqlCommand.Parameters.AddWithValue("@Prefix", snapshot.Prefix);
-        sqlCommand.Parameters.AddWithValue("@Consecutive", snapshot.Consecutive);
+        sqlCommand.Parameters.AddWithValue("@FiscalPrefix", snapshot.Prefix);
+        sqlCommand.Parameters.AddWithValue("@FiscalConsecutive", snapshot.Consecutive);
         sqlCommand.Parameters.AddWithValue("@IssuedAt", snapshot.IssuedAt);
         sqlCommand.Parameters.AddWithValue("@CustomerIdentification", snapshot.CustomerIdentification);
         AddDecimal(sqlCommand, "@UntaxedAmount", snapshot.UntaxedAmount, 19, 4);

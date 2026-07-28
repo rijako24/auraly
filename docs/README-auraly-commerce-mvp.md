@@ -9,6 +9,7 @@ Este índice identifica la documentación vigente creada a partir del análisis 
 
 Cuando dos documentos se contradigan, se aplica este orden:
 
+1. `decision-numeracion-operativa-y-fiscal-auraly.md` para identidad, prefijos y consecutivos operativos Auraly frente a numeración fiscal DIAN.
 1. `decision-definitiva-negativos-por-bodega-y-sin-inventario-local.md` para política de negativos, momento de validación y ausencia de inventario local.
 2. `decision-despliegue-onpremise-seguridad-maestros-semillas-calidad.md` para Cloud/On-Premise, usuarios, permisos, terceros, semillas y calidad.
 3. `decision-canales-de-precios-mvp.md` para canales de precios.
@@ -59,6 +60,7 @@ Cuando dos documentos se contradigan, se aplica este orden:
 
 ### Facturación, caja e inventario
 
+- `decision-numeracion-operativa-y-fiscal-auraly.md`
 - `especificacion-facturacion-pos-auraly-mvp.md`
 - `parametros-caja-auraly-commerce-mvp.md`
 - `decision-definitiva-negativos-por-bodega-y-sin-inventario-local.md`

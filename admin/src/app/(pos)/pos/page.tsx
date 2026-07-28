@@ -18,10 +18,14 @@ import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "re
 
 import {
   PosDraft,
+  PosDocumentNumberPreview,
+  PosPaymentInput,
   PosEdgeClient,
   PosEdgeError,
   readEdgeTokenFromLaunch,
 } from "@/services/pos/pos-edge-client";
+import { PosPaymentDialog } from "./pos-payment-dialog";
+
 
 const money = new Intl.NumberFormat("es-CO", {
   style: "currency",
@@ -42,6 +46,8 @@ export default function PosPage() {
   const [error, setError] = useState<string | null>(null);
   const [temporaryOpen, setTemporaryOpen] = useState(false);
   const [temporaryName, setTemporaryName] = useState("");
+  const [paymentOpen, setPaymentOpen] = useState(false);
+  const [nextNumber, setNextNumber] = useState<PosDocumentNumberPreview | null>(null);
   const [temporaryReference, setTemporaryReference] = useState("");
   const client = useMemo(() => (token ? new PosEdgeClient(token) : null), [token]);
 
@@ -73,13 +79,18 @@ export default function PosPage() {
   useEffect(() => {
     if (!client) return;
     let active = true;
-    void Promise.all([client.health(), client.activeDraft(), client.temporaries()])
-      .then(([, current, pending]) => {
+    void Promise.all([
+      client.health(),
+      client.activeDraft(),
+      client.temporaries(),
+      client.nextNumbers(),
+    ]).then(([, current, pending, numbers]) => {
         if (!active) return;
         setEdgeReady(true);
         setDraft(current);
         setTemporaries(pending);
         focusScanner();
+        setNextNumber(numbers.document);
       })
       .catch(() => {
         if (active) setEdgeReady(false);
@@ -89,6 +100,22 @@ export default function PosPage() {
     };
   }, [client, focusScanner]);
 
+
+  useEffect(() => {
+    const handleShortcut = (event: KeyboardEvent) => {
+      if (
+        event.key === "F2" &&
+        !busy &&
+        Boolean(draft?.lines.length) &&
+        !temporaryOpen
+      ) {
+        event.preventDefault();
+        setPaymentOpen(true);
+      }
+    };
+    window.addEventListener("keydown", handleShortcut);
+    return () => window.removeEventListener("keydown", handleShortcut);
+  }, [busy, draft?.lines.length, temporaryOpen]);
   async function capture(event: FormEvent) {
     event.preventDefault();
     const value = scan.trim();
@@ -184,6 +211,36 @@ export default function PosPage() {
     }
   }
 
+  function openPayment() {
+    if (!draft?.lines.length || busy) return;
+    setError(null);
+    setPaymentOpen(true);
+  }
+
+  async function completeSale(payments: PosPaymentInput[]) {
+    if (!client || !draft || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await client.completeSale(
+        draft.draftId.value,
+        null,
+        payments,
+      );
+      setDraft(result.nextDraft);
+      setNextNumber(result.nextDocumentNumber);
+      setPaymentOpen(false);
+      setMessage(
+        `${result.issuedSale.documentNumber} emitida e impresa (DIAN ${result.issuedSale.fiscalNumber}). Nueva venta lista.`,
+      );
+    } catch (caught) {
+      showError(caught);
+    } finally {
+      setBusy(false);
+      focusScanner();
+    }
+  }
+
   function showError(caught: unknown) {
     const status = caught instanceof PosEdgeError ? caught.status : 0;
     const text =
@@ -191,7 +248,9 @@ export default function PosPage() {
         ? "Producto no encontrado en el catálogo local"
         : status === 409
           ? "La cantidad solicitada no está disponible"
-          : status === 503
+          : status === 503 && caught instanceof PosEdgeError && caught.message.includes("tirilla")
+            ? "La factura fue emitida, pero la tirilla no pudo imprimirse. Reintenta sin modificar la venta."
+            : status === 503
             ? "La bodega exige validar inventario y no hay conexión"
             : "No fue posible comunicarse con Auraly POS Edge";
     setError(text);
@@ -369,6 +428,9 @@ export default function PosPage() {
               <div>
                 <p className="text-xs uppercase tracking-[0.16em] text-auraly-secondary">Venta actual</p>
                 <p className="mt-1 text-sm font-medium">Consumidor final</p>
+                <p className="mt-0.5 text-xs text-auraly-secondary">
+                  Próxima: {nextNumber?.isAvailable ? nextNumber.fullNumber : "Serie no disponible"}
+                </p>
               </div>
               <span className="rounded-lg bg-white/10 px-2 py-1 text-xs">
                 {draft?.lines.length ?? 0} líneas
@@ -384,6 +446,16 @@ export default function PosPage() {
                 </dd>
               </div>
             </dl>
+            <button
+              type="button"
+              disabled={!draft?.lines.length || busy}
+              onClick={openPayment}
+              className="mt-5 flex h-14 w-full items-center justify-center gap-2 rounded-xl bg-auraly-accent px-4 text-lg font-bold text-auraly-background transition hover:bg-auraly-light disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Cobrar
+              <span className="rounded bg-black/10 px-2 py-0.5 text-xs font-semibold">F2</span>
+            </button>
+
             <button
               type="button"
               disabled={!draft?.lines.length || busy}
@@ -438,6 +510,15 @@ export default function PosPage() {
           </section>
         </aside>
       </section>
+
+      {paymentOpen && draft && (
+        <PosPaymentDialog
+          total={draft.payableAmount}
+          busy={busy}
+          onCancel={() => setPaymentOpen(false)}
+          onConfirm={completeSale}
+        />
+      )}
 
       {temporaryOpen && (
         <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/55 p-4">

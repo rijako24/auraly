@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Auraly.BuildingBlocks.Application.Outbox;
+using Auraly.BuildingBlocks.Domain.Documents;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Contracts.Authorization;
 using Auraly.Contracts.Catalog;
@@ -22,6 +23,7 @@ public sealed record ConfirmOfflineSaleCommand(
     UserId UserId,
     DocumentId DocumentId,
     RegisterContext Register,
+    AuralyDocumentNumberAssignment DocumentNumber,
     FiscalNumberAssignment FiscalNumber,
     DateTimeOffset IssuedAt,
     string SupplierTaxId,
@@ -112,7 +114,7 @@ public sealed class ConfirmOfflineSaleService(IPermissionAuthorizer authorizer)
             cufe.Cufe,
             cufe.QrPayload);
 
-        invoice.ConfirmOffline(snapshot);
+        invoice.ConfirmOffline(command.DocumentNumber, snapshot);
 
         var contract = new ConfirmedSale(
             command.Register.TenantId,
@@ -120,6 +122,7 @@ public sealed class ConfirmOfflineSaleService(IPermissionAuthorizer authorizer)
             command.Register.WarehouseId,
             command.Register.RegisterId,
             command.DocumentId,
+            command.DocumentNumber.FullNumber,
             command.FiscalNumber.FullNumber,
             cufe.Cufe,
             invoice.PayableAmount,

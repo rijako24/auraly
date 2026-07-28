@@ -92,6 +92,7 @@
     <Build Include="Tables\CashRegisters.sql" />
     <Build Include="Tables\PosDevices.sql" />
     <Build Include="Tables\PosDevicePermissions.sql" />
+    <Build Include="Tables\DocumentSeries.sql" />
     <Build Include="Tables\FiscalAuthorizations.sql" />
     <Build Include="Tables\FiscalSeries.sql" />
     <Build Include="Tables\SalesDocuments.sql" />

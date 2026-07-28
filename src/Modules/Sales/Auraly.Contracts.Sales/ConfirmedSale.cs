@@ -8,6 +8,7 @@ public sealed record ConfirmedSale(
     WarehouseId WarehouseId,
     RegisterId RegisterId,
     DocumentId DocumentId,
+    string DocumentNumber,
     string FiscalNumber,
     string Cufe,
     decimal Total,

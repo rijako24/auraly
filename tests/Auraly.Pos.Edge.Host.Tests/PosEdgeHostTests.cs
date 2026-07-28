@@ -10,6 +10,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Xunit;
 
 namespace Auraly.Pos.Edge.Host.Tests;
@@ -20,8 +21,11 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
     private readonly string _path =
         Path.Combine(Path.GetTempPath(), $"auraly-edge-host-{Guid.NewGuid():N}.db");
     private WebApplicationFactory<Program>? _factory;
+    private readonly string _secretPath =
+        Path.Combine(Path.GetTempPath(), $"auraly-edge-secrets-{Guid.NewGuid():N}");
     private HttpClient? _client;
     private readonly List<string> _environmentKeys = [];
+    private readonly RecordingPrinter _printer = new();
     private HttpClient Client =>
         _client ?? throw new InvalidOperationException("The test host has not started.");
 
@@ -88,6 +92,25 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
         recovered.EnsureSuccessStatusCode();
         var restored = await recovered.Content.ReadFromJsonAsync<PosDraft>();
         Assert.Single(restored!.Lines);
+
+        var completed = await Client.PostAsJsonAsync(
+            $"/edge/v1/drafts/{restored.DraftId.Value:D}/complete",
+            new CompleteDraftRequest(
+                null,
+                [new CompletePaymentRequest("Cash", restored.PayableAmount, null)]));
+        completed.EnsureSuccessStatusCode();
+        var result = await completed.Content.ReadFromJsonAsync<CompletePosSaleResult>();
+
+        Assert.Equal("VTA03-00000001", result!.IssuedSale.DocumentNumber);
+        Assert.Equal("FV1", result.IssuedSale.FiscalNumber);
+        Assert.Empty(result.NextDraft.Lines);
+        Assert.Equal("VTA03-00000002", result.NextDocumentNumber.FullNumber);
+        Assert.Equal("FV2", result.NextFiscalNumber.FullNumber);
+        Assert.Single(_printer.Receipts);
+        Assert.Equal(result.IssuedSale.DocumentNumber, _printer.Receipts.Single().DocumentNumber);
+        Assert.Equal(result.IssuedSale.FiscalNumber, _printer.Receipts.Single().FiscalNumber);
+        Assert.Equal(result.IssuedSale.Cufe, _printer.Receipts.Single().Cufe);
+        Assert.Contains(result.IssuedSale.Cufe, _printer.Receipts.Single().QrPayload);
     }
 
     public async Task InitializeAsync()
@@ -104,7 +127,34 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
             ["PosEdge:WarehouseId"] = Guid.NewGuid().ToString("D"),
             ["PosEdge:RegisterId"] = Guid.NewGuid().ToString("D"),
             ["PosEdge:UserId"] = Guid.NewGuid().ToString("D"),
-            ["PosEdge:WarehouseAllowsNegativeStock"] = "true"
+            ["PosEdge:WarehouseAllowsNegativeStock"] = "true",
+            ["PosEdge:TenantId"] = Guid.NewGuid().ToString("D"),
+            ["PosEdge:LocationId"] = Guid.NewGuid().ToString("D"),
+            ["PosEdge:SupplierTaxId"] = "9001234567",
+            ["PosEdge:DefaultCustomerIdentification"] = "222222222",
+            ["PosEdge:Permissions:0"] = "sales.create",
+            ["PosEdge:PrinterName"] = "Test printer",
+            ["PosEdge:PaperWidthMillimeters"] = "80",
+            ["PosEdge:Documents:SalesInvoice:SeriesId"] = Guid.NewGuid().ToString("D"),
+            ["PosEdge:Documents:SalesInvoice:SeriesCode"] = "03",
+            ["PosEdge:Documents:SalesInvoice:Padding"] = "8",
+            ["PosEdge:Documents:SalesInvoice:RangeStart"] = "1",
+            ["PosEdge:Documents:SalesInvoice:RangeEnd"] = "99999999",
+            ["PosEdge:SecretKeyDirectory"] = _secretPath,
+            ["PosEdge:Fiscal:ProtectedTechnicalKey"] =
+                PosEdgeProtectedSecret.ProtectTechnicalKey(
+                    _secretPath,
+                    "TEST-TECHNICAL-KEY"),
+            ["PosEdge:Fiscal:TechnicalKeyVersion"] = "v1",
+            ["PosEdge:Fiscal:Environment"] = "Test",
+            ["PosEdge:Fiscal:QrValidationUrl"] = "https://catalogo-vpfe.dian.gov.co/document/searchqr",
+            ["PosEdge:Fiscal:SeriesId"] = Guid.NewGuid().ToString("D"),
+            ["PosEdge:Fiscal:FiscalAuthorizationId"] = Guid.NewGuid().ToString("D"),
+            ["PosEdge:Fiscal:Prefix"] = "FV",
+            ["PosEdge:Fiscal:AuthorizationNumber"] = "18760000001",
+            ["PosEdge:Fiscal:RangeStart"] = "1",
+            ["PosEdge:Fiscal:RangeEnd"] = "100",
+            ["PosEdge:Fiscal:ValidUntil"] = "2027-07-28"
         };
         foreach (var setting in ids)
         {
@@ -112,7 +162,12 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
             Environment.SetEnvironmentVariable(key, setting.Value);
             _environmentKeys.Add(key);
         }
-        _factory = new WebApplicationFactory<Program>();
+        _factory = new WebApplicationFactory<Program>().WithWebHostBuilder(webHost =>
+            webHost.ConfigureServices(services =>
+            {
+                services.RemoveAll<IPosReceiptPrinter>();
+                services.AddSingleton<IPosReceiptPrinter>(_printer);
+            }));
         _client = _factory.CreateClient();
         _client.DefaultRequestHeaders.Add("X-Auraly-Edge-Session", Token);
 
@@ -140,7 +195,22 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
         Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
         foreach (var path in new[] { _path, $"{_path}-wal", $"{_path}-shm" })
             if (File.Exists(path)) File.Delete(path);
+        if (Directory.Exists(_secretPath))
+            Directory.Delete(_secretPath, recursive: true);
         foreach (var key in _environmentKeys)
             Environment.SetEnvironmentVariable(key, null);
+    }
+
+    private sealed class RecordingPrinter : IPosReceiptPrinter
+    {
+        public List<PosReceipt> Receipts { get; } = [];
+
+        public Task PrintAsync(
+            PosReceipt receipt,
+            CancellationToken cancellationToken = default)
+        {
+            Receipts.Add(receipt);
+            return Task.CompletedTask;
+        }
     }
 }
