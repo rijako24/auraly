@@ -1,4 +1,4 @@
-
+﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.0.31903.59
@@ -86,6 +86,10 @@ EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Auraly.Api", "src\API\Auraly.Api\Auraly.Api.csproj", "{6394F34F-5EB8-47EC-A401-D5E3545F746F}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Auraly.ServerSlice.IntegrationTests", "tests\Auraly.ServerSlice.IntegrationTests\Auraly.ServerSlice.IntegrationTests.csproj", "{9DB38C0D-9681-45F3-BE96-135899228C77}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Auraly.Pos.Edge.Host", "src\Pos\Auraly.Pos.Edge.Host\Auraly.Pos.Edge.Host.csproj", "{AAED347A-03C8-4150-AE6C-D1FF1B3E99FA}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Auraly.Pos.Edge.Host.Tests", "tests\Auraly.Pos.Edge.Host.Tests\Auraly.Pos.Edge.Host.Tests.csproj", "{C7510AE0-D5B4-4209-BC33-CBC40FC2D38D}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -204,6 +208,14 @@ Global
 		{9DB38C0D-9681-45F3-BE96-135899228C77}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{9DB38C0D-9681-45F3-BE96-135899228C77}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{9DB38C0D-9681-45F3-BE96-135899228C77}.Release|Any CPU.Build.0 = Release|Any CPU
+		{AAED347A-03C8-4150-AE6C-D1FF1B3E99FA}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{AAED347A-03C8-4150-AE6C-D1FF1B3E99FA}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{AAED347A-03C8-4150-AE6C-D1FF1B3E99FA}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{AAED347A-03C8-4150-AE6C-D1FF1B3E99FA}.Release|Any CPU.Build.0 = Release|Any CPU
+		{C7510AE0-D5B4-4209-BC33-CBC40FC2D38D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{C7510AE0-D5B4-4209-BC33-CBC40FC2D38D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{C7510AE0-D5B4-4209-BC33-CBC40FC2D38D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{C7510AE0-D5B4-4209-BC33-CBC40FC2D38D}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{E3ECCBF0-6B36-4460-A25E-4FFBE9837688} = {AA52BDD3-C36B-499D-9049-BB721311A642}
@@ -245,5 +257,7 @@ Global
 		{5C08B1E1-F36F-420B-8CCD-62E63B30FE52} = {AA52BDD3-C36B-499D-9049-BB721311A642}
 		{6394F34F-5EB8-47EC-A401-D5E3545F746F} = {5C08B1E1-F36F-420B-8CCD-62E63B30FE52}
 		{9DB38C0D-9681-45F3-BE96-135899228C77} = {3CBDFFA1-17C2-4F1F-BC3C-1A62CA491C20}
+		{AAED347A-03C8-4150-AE6C-D1FF1B3E99FA} = {7666B729-B2B3-47C4-925F-6790812A5419}
+		{C7510AE0-D5B4-4209-BC33-CBC40FC2D38D} = {3CBDFFA1-17C2-4F1F-BC3C-1A62CA491C20}
 	EndGlobalSection
 EndGlobal
