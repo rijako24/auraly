@@ -40,10 +40,18 @@ public sealed record PosEdgeIssueCommand(
     Guid DeviceId = default,
     IReadOnlyCollection<OfflineSalePayment>? Payments = null);
 
+public sealed record PosFiscalNumberPreview(
+    Guid SeriesId,
+    string Prefix,
+    long Consecutive,
+    string FullNumber,
+    bool IsAvailable);
+
 public sealed record PosEdgeIssueResult(
     DocumentId DocumentId,
     string FiscalNumber,
     string Cufe,
+    string QrPayload,
     decimal Total,
     Guid OutboxMessageId,
     bool WasAlreadyIssued);
@@ -136,6 +144,27 @@ public sealed class PosEdgeSaleStore
         }
     }
 
+    public async Task<PosFiscalNumberPreview> PreviewNextFiscalNumberAsync(
+        RegisterId registerId,
+        DateTimeOffset issuedAt,
+        CancellationToken cancellationToken = default)
+    {
+        await using var context = new PosEdgeDbContext(_options);
+        var cursor = await context.FiscalSeriesCursors
+            .AsNoTracking()
+            .SingleAsync(row => row.RegisterId == registerId.Value, cancellationToken);
+        var issueDate = DateOnly.FromDateTime(issuedAt.Date);
+        var available = cursor.IsActive &&
+                        issueDate <= cursor.ValidUntil &&
+                        cursor.NextConsecutive <= cursor.RangeEnd;
+        return new PosFiscalNumberPreview(
+            cursor.SeriesId,
+            cursor.Prefix,
+            cursor.NextConsecutive,
+            $"{cursor.Prefix}{cursor.NextConsecutive}",
+            available);
+    }
+
     public async Task<PosEdgeIssueResult> IssueAsync(
         PosEdgeIssueCommand command,
         CancellationToken cancellationToken = default)
@@ -157,6 +186,7 @@ public sealed class PosEdgeSaleStore
                 command.DocumentId,
                 existing.FiscalNumber,
                 existing.Cufe,
+                PosSaleContractSerializer.Deserialize(existing.FiscalSnapshotJson).FiscalSnapshot.QrPayload,
                 existing.Total,
                 existingOutbox.MessageId,
                 WasAlreadyIssued: true);
@@ -236,6 +266,7 @@ public sealed class PosEdgeSaleStore
             command.DocumentId,
             fiscalNumber.FullNumber,
             snapshot.Cufe,
+            snapshot.QrPayload,
             confirmed.Invoice.PayableAmount,
             confirmed.OutboxMessage.Id,
             WasAlreadyIssued: false);
