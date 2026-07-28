@@ -17,7 +17,7 @@
     </PackageReference>
   </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="..\..\src\Api\Auraly.Api\Auraly.Api.csproj" />
+    <ProjectReference Include="..\..\src\API\Auraly.Api\Auraly.Api.csproj" />
     <ProjectReference Include="..\..\src\Infrastructure\Auraly.Infrastructure.Persistence\Auraly.Infrastructure.Persistence.csproj" />
     <ProjectReference Include="..\..\src\Modules\Authorization\Auraly.Application.Authorization\Auraly.Application.Authorization.csproj" />
     <ProjectReference Include="..\..\src\Modules\Authorization\Auraly.Contracts.Authorization\Auraly.Contracts.Authorization.csproj" />

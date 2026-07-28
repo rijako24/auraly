@@ -70,7 +70,7 @@ public sealed class ServerSliceArchitectureTests
         var root = FindRepositoryRoot();
         var scopes = new[]
         {
-            Path.Combine(root, "src", "Api", "Auraly.Api"),
+            Path.Combine(root, "src", "API", "Auraly.Api"),
             Path.Combine(root, "src", "Infrastructure", "Auraly.Infrastructure.Persistence"),
             Path.Combine(root, "src", "Pos", "Auraly.Pos.Edge.Infrastructure"),
             Path.Combine(root, "tests", "Auraly.ServerSlice.IntegrationTests")

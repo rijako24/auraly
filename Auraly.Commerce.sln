@@ -1,4 +1,4 @@
-﻿
+
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.0.31903.59
@@ -83,7 +83,7 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Auraly.Infrastructure.Persi
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Api", "Api", "{5C08B1E1-F36F-420B-8CCD-62E63B30FE52}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Auraly.Api", "src\Api\Auraly.Api\Auraly.Api.csproj", "{6394F34F-5EB8-47EC-A401-D5E3545F746F}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Auraly.Api", "src\API\Auraly.Api\Auraly.Api.csproj", "{6394F34F-5EB8-47EC-A401-D5E3545F746F}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Auraly.ServerSlice.IntegrationTests", "tests\Auraly.ServerSlice.IntegrationTests\Auraly.ServerSlice.IntegrationTests.csproj", "{9DB38C0D-9681-45F3-BE96-135899228C77}"
 EndProject

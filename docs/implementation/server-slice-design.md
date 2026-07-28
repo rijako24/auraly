@@ -22,7 +22,7 @@ SQLite POS Edge
   -> estado durable de la outbox SQLite
 ```
 
-El host real es `src/Api/Auraly.Api`. La composición registra implementaciones
+El host real es `src/API/Auraly.Api`. La composición registra implementaciones
 SQL Server de autenticación, recepción, recibos y procesamiento. La conexión
 `ConnectionStrings:Auraly` es obligatoria; el host no crea el esquema.
 

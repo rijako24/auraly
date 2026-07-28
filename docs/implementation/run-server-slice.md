@@ -60,7 +60,7 @@ $env:Auraly__Fiscal__TechnicalKeys__0__FiscalAuthorizationId = '<authorization-g
 $env:Auraly__Fiscal__TechnicalKeys__0__Version = 'v1'
 $env:Auraly__Fiscal__TechnicalKeys__0__Environment = 'Test'
 $env:Auraly__Fiscal__TechnicalKeys__0__Value = '<secret-from-secure-store>'
-dotnet run --project src/Api/Auraly.Api/Auraly.Api.csproj
+dotnet run --project src/API/Auraly.Api/Auraly.Api.csproj
 ```
 
 La API expone:
