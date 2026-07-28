@@ -26,8 +26,7 @@ public sealed class SqlDocumentProcessingReceiptStore(
             const string selectSql = """
                 SELECT ReceiptId, Status, AcquiredAt
                 FROM dbo.DocumentProcessingReceipts WITH (UPDLOCK, HOLDLOCK)
-                WHERE TenantId = @TenantId
-                  AND DocumentId = @DocumentId
+                WHERE DocumentId = @DocumentId
                   AND DocumentType = @DocumentType;
                 """;
             Guid receiptId;
@@ -72,12 +71,12 @@ public sealed class SqlDocumentProcessingReceiptStore(
                 const string insertSql = """
                     INSERT INTO dbo.DocumentProcessingReceipts
                     (
-                        ReceiptId, TenantId, DocumentId, DocumentType,
+                        ReceiptId, DocumentId, DocumentType,
                         Status, AttemptCount, AcquiredAt
                     )
                     VALUES
                     (
-                        @ReceiptId, @TenantId, @DocumentId, @DocumentType,
+                        @ReceiptId, @DocumentId, @DocumentType,
                         'Processing', 1, @AcquiredAt
                     );
                     """;
@@ -164,20 +163,19 @@ public sealed class SqlDocumentProcessingReceiptStore(
             SET Status = 'Failed',
                 LastError = @LastError,
                 CompletedAt = NULL
-            WHERE TenantId = @TenantId
-              AND DocumentId = @DocumentId
+            WHERE DocumentId = @DocumentId
               AND DocumentType = @DocumentType;
 
             IF @@ROWCOUNT = 0
             BEGIN
                 INSERT INTO dbo.DocumentProcessingReceipts
                 (
-                    ReceiptId, TenantId, DocumentId, DocumentType,
+                    ReceiptId, DocumentId, DocumentType,
                     Status, AttemptCount, AcquiredAt, LastError
                 )
                 VALUES
                 (
-                    @ReceiptId, @TenantId, @DocumentId, @DocumentType,
+                    @ReceiptId, @DocumentId, @DocumentType,
                     'Failed', 1, @AcquiredAt, @LastError
                 );
             END;
@@ -196,7 +194,6 @@ public sealed class SqlDocumentProcessingReceiptStore(
 
     private static void AddContext(SqlCommand command, DocumentProcessingContext context)
     {
-        command.Parameters.AddWithValue("@TenantId", context.TenantId.Value);
         command.Parameters.AddWithValue("@DocumentId", context.DocumentId.Value);
         command.Parameters.AddWithValue("@DocumentType", context.DocumentType);
     }

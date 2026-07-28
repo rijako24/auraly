@@ -16,8 +16,7 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
         var request = ProductRequest(
             taxProfileId,
             [
-                new ProductPriceInput(priceChannelId, 12_500m),
-                new ProductPriceInput(secondChannelId, 99_999m)
+                new ProductPriceInput(12_500m)
             ],
             [new ProductBarcodeInput("7701234500012", true)]);
 
@@ -35,7 +34,7 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
         Assert.NotNull(created);
         var suppliers = created.Suppliers!;
         Assert.Single(suppliers);
-        var filterUri = $"/api/commerce/v1/products?barcode=7701234500012&supplierId={suppliers.Single().SupplierId:D}&priceChannelId={priceChannelId:D}&minimumPrice=12000&maximumPrice=13000&sortDescending=true";
+        var filterUri = $"/api/commerce/v1/products?barcode=7701234500012&supplierId={suppliers.Single().SupplierId:D}&minimumPrice=12000&maximumPrice=13000&sortDescending=true";
         var page = await admin.GetFromJsonAsync<ProductPage>(filterUri);
         Assert.NotNull(page);
         Assert.Contains(page.Items, product => product.ProductId == created.ProductId);
@@ -59,9 +58,9 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
             var captured = await local.CaptureAsync("7701234500012");
             Assert.NotNull(captured);
             Assert.Equal(12_500m, captured.Product.UnitPrice);
-            Assert.Equal(priceChannelId, await ScalarAsync<Guid>(
-                "SELECT PriceChannelId FROM dbo.CashRegisters WHERE RegisterId=@Id;",
-                new SqlParameter("@Id", fixture.RegisterId)));
+            Assert.Equal(fixture.BusinessId, await ScalarAsync<Guid>(
+                "SELECT BusinessId FROM dbo.ProductPrices WHERE ProductId=@Id AND IsActive=1;",
+                new SqlParameter("@Id", created.ProductId)));
             Assert.Equal(0, await LocalScalarAsync(
                 sqlitePath,
                 "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name LIKE '%Supplier%';"));
@@ -72,8 +71,7 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
                 Barcodes = [new ProductBarcodeInput("7701234500098", true)],
                 Prices =
                 [
-                    new ProductPriceInput(priceChannelId, 13_250m),
-                    new ProductPriceInput(secondChannelId, 99_999m)
+                    new ProductPriceInput(13_250m)
                 ]
             };
             using var update = await admin.PutAsJsonAsync(
@@ -108,7 +106,7 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
         var barcode = $"77{Random.Shared.NextInt64(10_000_000_000, 99_999_999_999)}";
         var request = ProductRequest(
             taxProfileId,
-            [new ProductPriceInput(priceChannelId, 10_000m)],
+            [new ProductPriceInput(10_000m)],
             [new ProductBarcodeInput(barcode, true)]) with
         {
             ProductCode = $"SEC-{Guid.NewGuid():N}"
@@ -128,7 +126,7 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
 
         using var wrongScope = await admin.PostAsJsonAsync(
             "/api/commerce/v1/products",
-            request with { TenantId = Guid.NewGuid(), ProductCode = $"OTHER-{Guid.NewGuid():N}" });
+            request with { BusinessId = Guid.NewGuid(), ProductCode = $"OTHER-{Guid.NewGuid():N}" });
         Assert.Equal(HttpStatusCode.Forbidden, wrongScope.StatusCode);
 
         using var duplicate = await admin.PostAsJsonAsync(
@@ -161,15 +159,14 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
         var second = Guid.Parse("019ad230-6e45-7a28-a71e-25584f52bd65");
         const string sql = """
             IF NOT EXISTS (SELECT 1 FROM dbo.TaxProfiles WHERE TaxProfileId=@Tax)
-              INSERT dbo.TaxProfiles(TaxProfileId,TenantId,BusinessId,Code,Name,Rate,IsActive,CreatedAt)
-              VALUES(@Tax,@Tenant,@Business,N'VAT19',N'IVA 19%',19,1,SYSDATETIMEOFFSET());
+              INSERT dbo.TaxProfiles(TaxProfileId,BusinessId,Code,Name,Rate,IsActive,CreatedAt)
+              VALUES(@Tax,@Business,N'VAT19',N'IVA 19%',19,1,SYSDATETIMEOFFSET());
             IF NOT EXISTS (SELECT 1 FROM dbo.PriceChannels WHERE PriceChannelId=@Channel)
-              INSERT dbo.PriceChannels(PriceChannelId,TenantId,BusinessId,Code,Name,IsDefault,IsActive,CreatedAt)
-              VALUES(@Channel,@Tenant,@Business,N'POS',N'POS',1,1,SYSDATETIMEOFFSET());
+              INSERT dbo.PriceChannels(PriceChannelId,BusinessId,Code,Name,IsActive,CreatedAt)
+              VALUES(@Channel,@Business,N'POS',N'POS',1,SYSDATETIMEOFFSET());
             IF NOT EXISTS (SELECT 1 FROM dbo.PriceChannels WHERE PriceChannelId=@Second)
-              INSERT dbo.PriceChannels(PriceChannelId,TenantId,BusinessId,Code,Name,IsDefault,IsActive,CreatedAt)
-              VALUES(@Second,@Tenant,@Business,N'WHOLESALE',N'Wholesale',0,1,SYSDATETIMEOFFSET());
-            UPDATE dbo.CashRegisters SET PriceChannelId=@Channel WHERE RegisterId=@Register;
+              INSERT dbo.PriceChannels(PriceChannelId,BusinessId,Code,Name,IsActive,CreatedAt)
+              VALUES(@Second,@Business,N'WHOLESALE',N'Wholesale',1,SYSDATETIMEOFFSET());
             IF NOT EXISTS (SELECT 1 FROM dbo.PosDevicePermissions WHERE DeviceId=@Device AND PermissionCode=@Permission)
               INSERT dbo.PosDevicePermissions(DeviceId,PermissionCode,IsGranted,GrantedAt)
               VALUES(@Device,@Permission,1,SYSDATETIMEOFFSET());
@@ -179,9 +176,7 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
             new SqlParameter("@Tax", tax),
             new SqlParameter("@Channel", channel),
             new SqlParameter("@Second", second),
-            new SqlParameter("@Tenant", fixture.TenantId),
             new SqlParameter("@Business", fixture.BusinessId),
-            new SqlParameter("@Register", fixture.RegisterId),
             new SqlParameter("@Device", fixture.DeviceId),
             new SqlParameter("@Permission", CatalogPermissionCodes.Sync));
         return (tax, channel, second);
@@ -192,7 +187,6 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
         IReadOnlyCollection<ProductPriceInput> prices,
         IReadOnlyCollection<ProductBarcodeInput> barcodes) =>
         new(
-            fixture.TenantId,
             fixture.BusinessId,
             $"P-{Guid.NewGuid():N}",
             "REF-COFFEE",

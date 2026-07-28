@@ -64,7 +64,7 @@ public sealed class CatalogService(
 
     private static void ValidateScope(CatalogUserIdentity user, SaveProductRequest request)
     {
-        if (request.TenantId != user.TenantId || request.BusinessId != user.BusinessId)
+        if (request.BusinessId != user.BusinessId)
             throw new CatalogForbiddenException("The product scope does not match the authenticated user.");
     }
 
@@ -86,8 +86,9 @@ public sealed class CatalogService(
             throw new CatalogValidationException("Product code, name, base unit and tax profile are required.");
         if (request.IsWeighable != (request.Scale is not null))
             throw new CatalogValidationException("A weighable product requires exactly one scale configuration.");
-        if (request.Prices.Any(price => price.PriceChannelId == Guid.Empty || price.Amount < 0))
-            throw new CatalogValidationException("Every price requires a channel and a non-negative amount.");
+        if (request.Prices.Count != 1 || request.Prices.Any(price => price.Amount < 0))
+            throw new CatalogValidationException(
+                "Every sellable product requires exactly one non-negative base price for its business.");
         if (request.Suppliers.Any(supplier => supplier.BaseUnitCost < 0))
             throw new CatalogValidationException("Supplier costs cannot be negative.");
         if (request.Barcodes.Any(barcode => string.IsNullOrWhiteSpace(barcode.Value)))

@@ -17,7 +17,7 @@ public sealed class SqlPosDeviceAuthenticator(SqlServerConnectionFactory connect
         }
 
         const string sql = """
-            SELECT d.TenantId,
+            SELECT b.TenantId,
                    d.BusinessId,
                    d.LocationId,
                    d.WarehouseId,
@@ -29,6 +29,7 @@ public sealed class SqlPosDeviceAuthenticator(SqlServerConnectionFactory connect
                    p.IsGranted
             FROM dbo.PosDevices d
             INNER JOIN dbo.CashRegisters r ON r.RegisterId = d.RegisterId
+            INNER JOIN dbo.Businesses b ON b.BusinessId = d.BusinessId
             INNER JOIN dbo.Warehouses w ON w.WarehouseId = d.WarehouseId
             INNER JOIN dbo.BusinessLocations l ON l.LocationId = d.LocationId
             LEFT JOIN dbo.PosDevicePermissions p ON p.DeviceId = d.DeviceId
@@ -37,7 +38,6 @@ public sealed class SqlPosDeviceAuthenticator(SqlServerConnectionFactory connect
               AND r.IsActive = 1
               AND w.IsActive = 1
               AND l.IsActive = 1
-              AND r.TenantId = d.TenantId
               AND r.BusinessId = d.BusinessId
               AND r.LocationId = d.LocationId
               AND r.WarehouseId = d.WarehouseId;

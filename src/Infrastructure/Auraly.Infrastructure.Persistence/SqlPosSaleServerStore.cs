@@ -28,13 +28,11 @@ public sealed class SqlPosSaleServerStore(
                 ON d.RegisterId = r.RegisterId
             WHERE s.SeriesId = @SeriesId
               AND a.FiscalAuthorizationId = @FiscalAuthorizationId
-              AND s.TenantId = @TenantId
               AND s.BusinessId = @BusinessId
               AND r.LocationId = @LocationId
               AND r.WarehouseId = @WarehouseId
               AND r.RegisterId = @RegisterId
               AND d.DeviceId = @DeviceId
-              AND d.TenantId = @TenantId
               AND d.BusinessId = @BusinessId
               AND d.LocationId = @LocationId
               AND d.WarehouseId = @WarehouseId
@@ -58,7 +56,6 @@ public sealed class SqlPosSaleServerStore(
         await using var command = new SqlCommand(sql, connection);
         command.Parameters.AddWithValue("@SeriesId", snapshot.SeriesId);
         command.Parameters.AddWithValue("@FiscalAuthorizationId", snapshot.FiscalAuthorizationId);
-        command.Parameters.AddWithValue("@TenantId", request.TenantId);
         command.Parameters.AddWithValue("@BusinessId", request.BusinessId);
         command.Parameters.AddWithValue("@LocationId", request.LocationId);
         command.Parameters.AddWithValue("@WarehouseId", request.WarehouseId);
@@ -79,7 +76,7 @@ public sealed class SqlPosSaleServerStore(
     }
 
     public async Task<StoredPosSale?> FindAsync(
-        Guid tenantId,
+        Guid businessId,
         Guid documentId,
         string idempotencyKey,
         CancellationToken cancellationToken)
@@ -89,7 +86,7 @@ public sealed class SqlPosSaleServerStore(
         return await FindInternalAsync(
             connection,
             transaction: null,
-            tenantId,
+            businessId,
             documentId,
             idempotencyKey,
             cancellationToken);
@@ -110,7 +107,7 @@ public sealed class SqlPosSaleServerStore(
             var existing = await FindInternalAsync(
                 connection,
                 transaction,
-                request.TenantId,
+                request.BusinessId,
                 request.DocumentId,
                 command.IdempotencyKey,
                 cancellationToken);
@@ -158,20 +155,20 @@ public sealed class SqlPosSaleServerStore(
         }
 
         return await FindAfterContentionAsync(
-            request.TenantId,
+            request.BusinessId,
             request.DocumentId,
             command.IdempotencyKey,
             cancellationToken);
     }
 
     private async Task<StoredPosSale> FindAfterContentionAsync(
-        Guid tenantId, Guid documentId, string idempotencyKey, CancellationToken cancellationToken)
+        Guid businessId, Guid documentId, string idempotencyKey, CancellationToken cancellationToken)
     {
         for (var attempt = 0; attempt < 5; attempt++)
         {
             try
             {
-                var stored = await FindAsync(tenantId, documentId, idempotencyKey, cancellationToken);
+                var stored = await FindAsync(businessId, documentId, idempotencyKey, cancellationToken);
                 if (stored is not null) return stored;
             }
             catch (SqlException exception) when (exception.Number == 1205 && attempt < 4)
@@ -195,7 +192,7 @@ public sealed class SqlPosSaleServerStore(
         const string sql = """
             INSERT INTO dbo.SalesDocuments
             (
-                DocumentId, TenantId, BusinessId, LocationId, WarehouseId,
+                DocumentId, BusinessId, LocationId, WarehouseId,
                 RegisterId, DeviceId, SeriesId, FiscalAuthorizationId,
                 DocumentType, IdempotencyKey, PayloadHash, FiscalNumber,
                 Prefix, Consecutive, IssuedAt, CustomerIdentification,
@@ -205,7 +202,7 @@ public sealed class SqlPosSaleServerStore(
             )
             VALUES
             (
-                @DocumentId, @TenantId, @BusinessId, @LocationId, @WarehouseId,
+                @DocumentId, @BusinessId, @LocationId, @WarehouseId,
                 @RegisterId, @DeviceId, @SeriesId, @FiscalAuthorizationId,
                 @DocumentType, @IdempotencyKey, @PayloadHash, @FiscalNumber,
                 @Prefix, @Consecutive, @IssuedAt, @CustomerIdentification,
@@ -218,7 +215,6 @@ public sealed class SqlPosSaleServerStore(
         var snapshot = request.FiscalSnapshot;
         await using var sqlCommand = new SqlCommand(sql, connection, transaction);
         sqlCommand.Parameters.AddWithValue("@DocumentId", request.DocumentId);
-        sqlCommand.Parameters.AddWithValue("@TenantId", request.TenantId);
         sqlCommand.Parameters.AddWithValue("@BusinessId", request.BusinessId);
         sqlCommand.Parameters.AddWithValue("@LocationId", request.LocationId);
         sqlCommand.Parameters.AddWithValue("@WarehouseId", request.WarehouseId);
@@ -300,18 +296,17 @@ public sealed class SqlPosSaleServerStore(
         const string sql = """
             INSERT INTO dbo.DocumentProcessingReceipts
             (
-                ReceiptId, TenantId, DocumentId, DocumentType, Status,
+                ReceiptId, DocumentId, DocumentType, Status,
                 AttemptCount, AcquiredAt, CompletedAt, LastError
             )
             VALUES
             (
-                @ReceiptId, @TenantId, @DocumentId, @DocumentType, @Status,
+                @ReceiptId, @DocumentId, @DocumentType, @Status,
                 1, @ReceivedAt, @ReceivedAt, @LastError
             );
             """;
         await using var sqlCommand = new SqlCommand(sql, connection, transaction);
         sqlCommand.Parameters.AddWithValue("@ReceiptId", idGenerator.NewId());
-        sqlCommand.Parameters.AddWithValue("@TenantId", command.Request.TenantId);
         sqlCommand.Parameters.AddWithValue("@DocumentId", command.Request.DocumentId);
         sqlCommand.Parameters.AddWithValue("@DocumentType", command.Request.FiscalSnapshot.DocumentType);
         sqlCommand.Parameters.AddWithValue("@Status", PosSaleRemoteStatuses.FiscalIntegrityConflict);
@@ -325,14 +320,14 @@ public sealed class SqlPosSaleServerStore(
     private static async Task<StoredPosSale?> FindInternalAsync(
         SqlConnection connection,
         SqlTransaction? transaction,
-        Guid tenantId,
+        Guid businessId,
         Guid documentId,
         string idempotencyKey,
         CancellationToken cancellationToken)
     {
         const string sql = """
             SELECT d.DocumentId,
-                   d.TenantId,
+                   b.TenantId,
                    d.IdempotencyKey,
                    d.PayloadHash,
                    d.FiscalStatus,
@@ -344,17 +339,17 @@ public sealed class SqlPosSaleServerStore(
                    d.ProcessedAt,
                    COALESCE(s.ConflictReason, r.LastError)
             FROM dbo.SalesDocuments d
+            INNER JOIN dbo.Businesses b ON b.BusinessId = d.BusinessId
             INNER JOIN dbo.FiscalSnapshots s ON s.DocumentId = d.DocumentId
             LEFT JOIN dbo.DocumentProcessingReceipts r
-                ON r.TenantId = d.TenantId
-               AND r.DocumentId = d.DocumentId
+                ON r.DocumentId = d.DocumentId
                AND r.DocumentType = d.DocumentType
-            WHERE d.TenantId = @TenantId
+            WHERE d.BusinessId = @BusinessId
               AND (d.DocumentId = @DocumentId OR d.IdempotencyKey = @IdempotencyKey)
             ORDER BY CASE WHEN d.DocumentId = @DocumentId THEN 0 ELSE 1 END;
             """;
         await using var command = new SqlCommand(sql, connection, transaction);
-        command.Parameters.AddWithValue("@TenantId", tenantId);
+        command.Parameters.AddWithValue("@BusinessId", businessId);
         command.Parameters.AddWithValue("@DocumentId", documentId);
         command.Parameters.AddWithValue("@IdempotencyKey", idempotencyKey.Trim());
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);

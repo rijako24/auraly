@@ -14,7 +14,7 @@ public static class CatalogPermissionCodes
 
 public sealed record ProductBarcodeInput(string Value, bool IsPrimary = false);
 public sealed record ProductIdentifierInput(string Type, string Value);
-public sealed record ProductPriceInput(Guid PriceChannelId, decimal Amount, string CurrencyCode = "COP");
+public sealed record ProductPriceInput(decimal Amount, string CurrencyCode = "COP");
 public sealed record SupplierCostInput(
     Guid SupplierId,
     string Identification,
@@ -31,7 +31,6 @@ public sealed record ScaleConfigurationInput(
     int DecimalPlaces);
 
 public sealed record SaveProductRequest(
-    Guid TenantId,
     Guid BusinessId,
     string ProductCode,
     string? Reference,
@@ -49,7 +48,6 @@ public sealed record SaveProductRequest(
 
 public sealed record ProductDetail(
     Guid ProductId,
-    Guid TenantId,
     Guid BusinessId,
     string ProductCode,
     string? Reference,
@@ -68,7 +66,6 @@ public sealed record ProductPageRequest(
     string? Name = null,
     bool? IsActive = null,
     Guid? SupplierId = null,
-    Guid? PriceChannelId = null,
     decimal? MinimumPrice = null,
     decimal? MaximumPrice = null,
     bool SortDescending = false);

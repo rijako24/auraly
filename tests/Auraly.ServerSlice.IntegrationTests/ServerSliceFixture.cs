@@ -312,24 +312,24 @@ public sealed class ServerSliceFixture : IAsyncLifetime
              N'Bogota', N'3000000000', @BusinessEmail, N'https://auraly.test', 1, SYSUTCDATETIME());
 
             INSERT INTO dbo.BusinessLocations
-            (LocationId, TenantId, BusinessId, Code, Name, IsActive, CreatedAt)
-            VALUES (@LocationId, @TenantId, @BusinessId, N'S01', N'Sede E2E', 1, SYSDATETIMEOFFSET());
+            (LocationId, BusinessId, Code, Name, IsActive, CreatedAt)
+            VALUES (@LocationId, @BusinessId, N'S01', N'Sede E2E', 1, SYSDATETIMEOFFSET());
 
             INSERT INTO dbo.Warehouses
-            (WarehouseId, TenantId, BusinessId, LocationId, Code, Name, AllowNegativeStockSales, IsActive, CreatedAt)
-            VALUES (@WarehouseId, @TenantId, @BusinessId, @LocationId, N'B01', N'Bodega E2E', 1, 1, SYSDATETIMEOFFSET());
+            (WarehouseId, BusinessId, LocationId, Code, Name, AllowNegativeStockSales, IsActive, CreatedAt)
+            VALUES (@WarehouseId, @BusinessId, @LocationId, N'B01', N'Bodega E2E', 1, 1, SYSDATETIMEOFFSET());
 
             INSERT INTO dbo.CashRegisters
-            (RegisterId, TenantId, BusinessId, LocationId, WarehouseId, Code, Name, IsActive, CreatedAt)
-            VALUES (@RegisterId, @TenantId, @BusinessId, @LocationId, @WarehouseId, N'C01', N'Caja E2E', 1, SYSDATETIMEOFFSET());
+            (RegisterId, BusinessId, LocationId, WarehouseId, Code, Name, IsActive, CreatedAt)
+            VALUES (@RegisterId, @BusinessId, @LocationId, @WarehouseId, N'C01', N'Caja E2E', 1, SYSDATETIMEOFFSET());
 
             INSERT INTO dbo.PosDevices
-            (DeviceId, TenantId, BusinessId, LocationId, WarehouseId, RegisterId, Name,
+            (DeviceId, BusinessId, LocationId, WarehouseId, RegisterId, Name,
              CredentialSalt, CredentialHash, CredentialIterations, IsActive, CreatedAt)
             VALUES
-            (@DeviceId, @TenantId, @BusinessId, @LocationId, @WarehouseId, @RegisterId, N'POS permitido',
+            (@DeviceId, @BusinessId, @LocationId, @WarehouseId, @RegisterId, N'POS permitido',
              @AllowedSalt, @AllowedHash, @AllowedIterations, 1, SYSDATETIMEOFFSET()),
-            (@DeniedDeviceId, @TenantId, @BusinessId, @LocationId, @WarehouseId, @RegisterId, N'POS sin permiso',
+            (@DeniedDeviceId, @BusinessId, @LocationId, @WarehouseId, @RegisterId, N'POS sin permiso',
              @DeniedSalt, @DeniedHash, @DeniedIterations, 1, SYSDATETIMEOFFSET());
 
             INSERT INTO dbo.PosDevicePermissions
@@ -337,17 +337,17 @@ public sealed class ServerSliceFixture : IAsyncLifetime
             VALUES (@DeviceId, @SalesCreate, 1, SYSDATETIMEOFFSET());
 
             INSERT INTO dbo.FiscalAuthorizations
-            (FiscalAuthorizationId, TenantId, BusinessId, AuthorizationNumber, SupplierTaxId,
+            (FiscalAuthorizationId, BusinessId, AuthorizationNumber, SupplierTaxId,
              Environment, QrValidationUrl, ValidFrom, ValidUntil, IsActive, CreatedAt)
             VALUES
-            (@FiscalAuthorizationId, @TenantId, @BusinessId, @AuthorizationNumber, @SupplierTaxId,
+            (@FiscalAuthorizationId, @BusinessId, @AuthorizationNumber, @SupplierTaxId,
              2, @QrValidationUrl, '2026-01-01', '2028-12-31', 1, SYSDATETIMEOFFSET());
 
             INSERT INTO dbo.FiscalSeries
-            (SeriesId, TenantId, BusinessId, RegisterId, FiscalAuthorizationId,
+            (SeriesId, BusinessId, RegisterId, FiscalAuthorizationId,
              DocumentType, Prefix, RangeStart, RangeEnd, IsActive, CreatedAt)
             VALUES
-            (@SeriesId, @TenantId, @BusinessId, @RegisterId, @FiscalAuthorizationId,
+            (@SeriesId, @BusinessId, @RegisterId, @FiscalAuthorizationId,
              @DocumentType, @Prefix, 1, 10000, 1, SYSDATETIMEOFFSET());
 
             INSERT INTO dbo.Products

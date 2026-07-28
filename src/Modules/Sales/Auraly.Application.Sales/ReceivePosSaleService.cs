@@ -52,7 +52,7 @@ public interface IPosSaleServerStore
         CancellationToken cancellationToken);
 
     Task<StoredPosSale?> FindAsync(
-        Guid tenantId,
+        Guid businessId,
         Guid documentId,
         string idempotencyKey,
         CancellationToken cancellationToken);
@@ -93,7 +93,7 @@ public sealed class ReceivePosSaleService(
         var snapshotJson = PosSaleContractSerializer.Serialize(request);
         var payloadHash = PosSaleContractSerializer.Hash(request);
         var existing = await store.FindAsync(
-            request.TenantId,
+            request.BusinessId,
             request.DocumentId,
             idempotencyKey,
             cancellationToken);
@@ -149,7 +149,7 @@ public sealed class ReceivePosSaleService(
         }
 
         var completed = await store.FindAsync(
-                request.TenantId,
+                request.BusinessId,
                 request.DocumentId,
                 idempotencyKey,
                 cancellationToken)

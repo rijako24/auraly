@@ -87,20 +87,19 @@ public sealed class SqlPosSaleDocumentHandler(
         const string sql = """
             INSERT INTO dbo.InventoryMovements
             (
-                InventoryMovementId, TenantId, BusinessId, WarehouseId,
+                InventoryMovementId, BusinessId, WarehouseId,
                 DocumentId, LineNumber, ProductId, MovementType,
                 QuantityChange, OccurredAt, CreatedAt
             )
             VALUES
             (
-                @InventoryMovementId, @TenantId, @BusinessId, @WarehouseId,
+                @InventoryMovementId, @BusinessId, @WarehouseId,
                 @DocumentId, @LineNumber, @ProductId, 'Sale',
                 @QuantityChange, @OccurredAt, @CreatedAt
             );
             """;
         await using var command = new SqlCommand(sql, session.Connection, session.Transaction);
         command.Parameters.AddWithValue("@InventoryMovementId", idGenerator.NewId());
-        command.Parameters.AddWithValue("@TenantId", request.TenantId);
         command.Parameters.AddWithValue("@BusinessId", request.BusinessId);
         command.Parameters.AddWithValue("@WarehouseId", request.WarehouseId);
         command.Parameters.AddWithValue("@DocumentId", request.DocumentId);
@@ -149,16 +148,15 @@ public sealed class SqlPosSaleDocumentHandler(
         const string sql = """
             INSERT INTO dbo.ServerOutboxMessages
             (
-                MessageId, TenantId, DocumentId, Type, Payload, OccurredAt
+                MessageId, DocumentId, Type, Payload, OccurredAt
             )
             VALUES
             (
-                @MessageId, @TenantId, @DocumentId, @Type, @Payload, @OccurredAt
+                @MessageId, @DocumentId, @Type, @Payload, @OccurredAt
             );
             """;
         await using var command = new SqlCommand(sql, session.Connection, session.Transaction);
         command.Parameters.AddWithValue("@MessageId", idGenerator.NewId());
-        command.Parameters.AddWithValue("@TenantId", request.TenantId);
         command.Parameters.AddWithValue("@DocumentId", request.DocumentId);
         command.Parameters.AddWithValue("@Type", "sales.invoice.processed");
         command.Parameters.AddWithValue("@Payload", payload);
@@ -176,13 +174,13 @@ public sealed class SqlPosSaleDocumentHandler(
             SET ProcessingStatus = 'Completed',
                 ProcessedAt = @ProcessedAt
             WHERE DocumentId = @DocumentId
-              AND TenantId = @TenantId
+              AND BusinessId = @BusinessId
               AND FiscalStatus = 'FiscalVerified'
               AND ProcessingStatus IN ('Received', 'Failed');
             """;
         await using var command = new SqlCommand(sql, session.Connection, session.Transaction);
         command.Parameters.AddWithValue("@DocumentId", request.DocumentId);
-        command.Parameters.AddWithValue("@TenantId", request.TenantId);
+        command.Parameters.AddWithValue("@BusinessId", request.BusinessId);
         command.Parameters.AddWithValue("@ProcessedAt", timeProvider.GetUtcNow());
         if (await command.ExecuteNonQueryAsync(cancellationToken) != 1)
         {

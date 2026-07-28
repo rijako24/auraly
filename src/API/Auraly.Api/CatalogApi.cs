@@ -31,11 +31,11 @@ public static class CatalogApi
         administration.MapGet("/", async (
             HttpContext context, CatalogService service, int? pageSize, string? afterProductCode,
             string? productCode, string? reference, string? barcode, string? name, bool? isActive,
-            Guid? supplierId, Guid? priceChannelId, decimal? minimumPrice, decimal? maximumPrice, bool? sortDescending,
+            Guid? supplierId, decimal? minimumPrice, decimal? maximumPrice, bool? sortDescending,
             CancellationToken ct) =>
             await Handle(async () => Results.Ok(await service.PageAsync(
                 context.User.ToCatalogUserIdentity(),
-                new ProductPageRequest(pageSize ?? 50, afterProductCode, productCode, reference, barcode, name, isActive, supplierId, priceChannelId, minimumPrice, maximumPrice, sortDescending ?? false),
+                new ProductPageRequest(pageSize ?? 50, afterProductCode, productCode, reference, barcode, name, isActive, supplierId, minimumPrice, maximumPrice, sortDescending ?? false),
                 ct))));
 
         administration.MapPost("/{productId:guid}/deactivate", async (
