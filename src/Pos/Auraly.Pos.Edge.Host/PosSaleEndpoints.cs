@@ -73,7 +73,7 @@ internal static class PosSaleHostModule
                 runtime.Scope.RegisterId,
                 AuralyDocumentTypes.SalesInvoice,
                 AuralyDocumentTypes.DefaultPrefix(AuralyDocumentTypes.SalesInvoice),
-                Required(configuration, "PosEdge:Documents:SalesInvoice:SeriesCode"),
+                Required(configuration, "PosEdge:RegisterCode"),
                 RequiredInt(configuration, "PosEdge:Documents:SalesInvoice:Padding"),
                 RequiredLong(configuration, "PosEdge:Documents:SalesInvoice:RangeStart"),
                 RequiredLong(configuration, "PosEdge:Documents:SalesInvoice:RangeEnd")),

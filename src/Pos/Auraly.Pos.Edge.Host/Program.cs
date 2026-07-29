@@ -58,9 +58,7 @@ public static class PosEdgeHostApplication
         builder.Services.AddSingleton<IAuralyIdGenerator, Uuid7AuralyIdGenerator>();
         builder.Services.AddSingleton(runtime);
         builder.Services.AddSingleton(new PosWorkstationIdentity(
-            Required(
-                builder.Configuration,
-                "PosEdge:Documents:SalesInvoice:SeriesCode"),
+            Required(builder.Configuration, "PosEdge:RegisterCode"),
             Required(builder.Configuration, "PosEdge:UserDisplayName")));
         builder.Services.AddSingleton(new PosCatalogStore(connectionString));
         builder.Services.AddSingleton(sp => new PosDraftStore(
