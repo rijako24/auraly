@@ -119,6 +119,55 @@ public sealed class PosArchitectureTests
             StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void Destructive_shortcuts_require_an_accessible_confirmation_focused_on_accept()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var posDirectory = Path.Combine(
+            repositoryRoot,
+            "admin",
+            "src",
+            "app",
+            "(pos)",
+            "pos");
+        var page = File.ReadAllText(Path.Combine(posDirectory, "page.tsx"));
+        var dialog = File.ReadAllText(Path.Combine(posDirectory, "pos-confirm-dialog.tsx"));
+
+        Assert.Contains("event.key === \"F5\"", page, StringComparison.Ordinal);
+        Assert.Contains("requestRemoveLine(selectedLineId)", page, StringComparison.Ordinal);
+        Assert.Contains("event.key === \"F6\"", page, StringComparison.Ordinal);
+        Assert.Contains("requestCancelSale();", page, StringComparison.Ordinal);
+        Assert.Contains("<PosConfirmDialog", page, StringComparison.Ordinal);
+        Assert.Contains("role=\"alertdialog\"", dialog, StringComparison.Ordinal);
+        Assert.Contains("aria-modal=\"true\"", dialog, StringComparison.Ordinal);
+        Assert.Contains("autoFocus", dialog, StringComparison.Ordinal);
+        Assert.Contains("type=\"submit\"", dialog, StringComparison.Ordinal);
+        Assert.Contains("event.key === \"Escape\"", dialog, StringComparison.Ordinal);
+        Assert.Contains("Enter acepta · Esc cancela", dialog, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Pos_orders_chip_opens_the_real_online_orders_view()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var page = File.ReadAllText(Path.Combine(
+            repositoryRoot,
+            "admin",
+            "src",
+            "app",
+            "(pos)",
+            "pos",
+            "page.tsx"));
+
+        Assert.Contains("Pedidos", page, StringComparison.Ordinal);
+        Assert.Contains("window.location.assign(\"/dashboard/orders\")", page, StringComparison.Ordinal);
+        Assert.Contains("if (!serverConnected)", page, StringComparison.Ordinal);
+        Assert.Contains(
+            "Los pedidos se consultan en línea. Auraly Server no está disponible.",
+            page,
+            StringComparison.Ordinal);
+    }
+
     private static string FindRepositoryRoot()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);

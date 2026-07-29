@@ -6,6 +6,7 @@ import {
   Barcode,
   CheckCircle2,
   Clock3,
+  ClipboardList,
   Loader2,
   RotateCcw,
   Save,
@@ -26,6 +27,7 @@ import {
   PosEdgeError,
   readEdgeTokenFromLaunch,
 } from "@/services/pos/pos-edge-client";
+import { PosConfirmDialog } from "./pos-confirm-dialog";
 import { PosPaymentDialog } from "./pos-payment-dialog";
 import type { PosPaymentSettlement } from "./pos-payment-settlement";
 import { PosProductSearchDialog } from "./pos-product-search-dialog";
@@ -57,7 +59,11 @@ export default function PosPage() {
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [productSearchOpen, setProductSearchOpen] = useState(false);
   const [selectedLineId, setSelectedLineId] = useState<string | null>(null);
-  const [cancelArmedUntil, setCancelArmedUntil] = useState(0);
+  const [confirmation, setConfirmation] = useState<
+    | { kind: "line"; lineId: string; productName: string }
+    | { kind: "sale" }
+    | null
+  >(null);
   const [lastSettlement, setLastSettlement] = useState<{
     documentNumber: string;
     received: number;
@@ -143,7 +149,8 @@ export default function PosPage() {
         Boolean(draft?.lines.length) &&
         !temporaryOpen &&
         !productSearchOpen &&
-        !paymentOpen
+        !paymentOpen &&
+        !confirmation
       ) {
         event.preventDefault();
         setPaymentOpen(true);
@@ -151,7 +158,8 @@ export default function PosPage() {
         event.key === "F2" &&
         !busy &&
         !temporaryOpen &&
-        !paymentOpen
+        !paymentOpen &&
+        !confirmation
       ) {
         event.preventDefault();
         setProductSearchOpen(true);
@@ -161,7 +169,8 @@ export default function PosPage() {
         Boolean(draft?.lines.length) &&
         !temporaryOpen &&
         !paymentOpen &&
-        !productSearchOpen
+        !productSearchOpen &&
+        !confirmation
       ) {
         event.preventDefault();
         setTemporaryOpen(true);
@@ -171,26 +180,28 @@ export default function PosPage() {
         selectedLineId &&
         !temporaryOpen &&
         !paymentOpen &&
-        !productSearchOpen
+        !productSearchOpen &&
+        !confirmation
       ) {
         event.preventDefault();
-        void removeLine(selectedLineId);
+        requestRemoveLine(selectedLineId);
       } else if (
         event.key === "F6" &&
         !busy &&
         !temporaryOpen &&
         !paymentOpen &&
-        !productSearchOpen
+        !productSearchOpen &&
+        !confirmation
       ) {
         event.preventDefault();
-        void requestCancelSale();
+        requestCancelSale();
       }
     };
     window.addEventListener("keydown", handleShortcut);
     return () => window.removeEventListener("keydown", handleShortcut);
   }, [
     busy,
-    cancelArmedUntil,
+    confirmation,
     draft?.lines.length,
     paymentOpen,
     productSearchOpen,
@@ -270,17 +281,15 @@ export default function PosPage() {
     }
   }
 
-  async function requestCancelSale() {
-    if (!draft?.lines.length || busy) return;
-    const now = Date.now();
-    if (cancelArmedUntil < now) {
-      setCancelArmedUntil(now + 4_000);
-      setMessage("Presiona F6 otra vez para confirmar que deseas cancelar toda la venta");
-      focusScanner();
-      return;
-    }
+  function requestRemoveLine(lineId: string) {
+    const line = draft?.lines.find((candidate) => candidate.lineId === lineId);
+    if (!line || busy) return;
+    setConfirmation({ kind: "line", lineId, productName: line.description });
+  }
 
-    await cancelSale();
+  function requestCancelSale() {
+    if (!draft?.lines.length || busy) return;
+    setConfirmation({ kind: "sale" });
   }
 
   async function cancelSale() {
@@ -291,15 +300,24 @@ export default function PosPage() {
       const next = await client.cancelDraft(draft.draftId.value);
       setDraft(next);
       setSelectedLineId(null);
-      setCancelArmedUntil(0);
       setScan("");
-      setMessage("Venta cancelada. Nueva venta lista.");
+      setMessage("Venta reiniciada. Nueva venta lista.");
     } catch (caught) {
       showError(caught);
     } finally {
       setBusy(false);
       focusScanner();
     }
+  }
+
+  async function confirmDestructiveAction() {
+    if (!confirmation) return;
+    if (confirmation.kind === "line") {
+      await removeLine(confirmation.lineId);
+    } else {
+      await cancelSale();
+    }
+    setConfirmation(null);
   }
 
   async function saveTemporary(event: FormEvent) {
@@ -397,6 +415,16 @@ export default function PosPage() {
     return added;
   }
 
+  function openOrders() {
+    if (!serverConnected) {
+      setError(null);
+      setMessage("Los pedidos se consultan en línea. Auraly Server no está disponible.");
+      focusScanner();
+      return;
+    }
+    window.location.assign("/dashboard/orders");
+  }
+
   function showError(caught: unknown) {
     const status = caught instanceof PosEdgeError ? caught.status : 0;
     if (!(caught instanceof PosEdgeError)) setEdgeReady(false);
@@ -440,6 +468,15 @@ export default function PosPage() {
           <span className="rounded-full bg-white/10 px-3 py-1.5">
             {temporaries.length} temporales
           </span>
+          <button
+            type="button"
+            onClick={openOrders}
+            className="flex items-center gap-1.5 rounded-full bg-white/10 px-3 py-1.5 outline-none transition hover:bg-white/15 focus:ring-2 focus:ring-auraly-accent/40"
+            title={serverConnected ? "Abrir pedidos" : "Pedidos requiere conexión con Auraly Server"}
+          >
+            <ClipboardList className="h-3.5 w-3.5" />
+            Pedidos
+          </button>
         </div>
       </header>
 
@@ -568,7 +605,7 @@ export default function PosPage() {
                       <td className="px-3 py-2 text-right">
                         <button
                           type="button"
-                          onClick={() => void removeLine(line.lineId)}
+                          onClick={() => requestRemoveLine(line.lineId)}
                           className="inline-flex h-10 w-10 items-center justify-center rounded-lg text-slate-500 transition hover:bg-red-50 hover:text-red-700 focus:outline-none focus:ring-2 focus:ring-red-300"
                           aria-label={`Eliminar ${line.description}`}
                         >
@@ -651,7 +688,7 @@ export default function PosPage() {
               <button
                 type="button"
                 disabled={!selectedLineId || busy}
-                onClick={() => selectedLineId && void removeLine(selectedLineId)}
+                onClick={() => selectedLineId && requestRemoveLine(selectedLineId)}
                 className="flex h-11 items-center justify-center gap-2 rounded-xl border border-white/15 bg-white/5 text-sm font-semibold transition hover:bg-white/10 disabled:opacity-40"
               >
                 <Trash2 className="h-4 w-4" />
@@ -661,14 +698,10 @@ export default function PosPage() {
               <button
                 type="button"
                 disabled={!draft?.lines.length || busy}
-                onClick={() => void requestCancelSale()}
-                className={`flex h-11 items-center justify-center gap-2 rounded-xl border text-sm font-semibold transition disabled:opacity-40 ${
-                  cancelArmedUntil >= Date.now()
-                    ? "border-red-300 bg-red-500/20 text-red-100"
-                    : "border-white/15 bg-white/5 hover:bg-white/10"
-                }`}
+                onClick={requestCancelSale}
+                className="flex h-11 items-center justify-center gap-2 rounded-xl border border-white/15 bg-white/5 text-sm font-semibold transition hover:bg-white/10 disabled:opacity-40"
               >
-                Venta
+                Reiniciar
                 <span className="rounded bg-white/10 px-1.5 py-0.5 text-xs">F6</span>
               </button>
             </div>
@@ -772,6 +805,28 @@ export default function PosPage() {
             focusScanner();
           }}
           onConfirm={completeSale}
+        />
+      )}
+
+      {confirmation && (
+        <PosConfirmDialog
+          title={
+            confirmation.kind === "line"
+              ? "¿Eliminar este producto?"
+              : "¿Reiniciar toda la venta?"
+          }
+          description={
+            confirmation.kind === "line"
+              ? `${confirmation.productName} se retirará de la venta actual.`
+              : "Se eliminarán todos los productos capturados y se abrirá una venta limpia."
+          }
+          confirmLabel={confirmation.kind === "line" ? "Sí, eliminar" : "Sí, reiniciar"}
+          busy={busy}
+          onConfirm={confirmDestructiveAction}
+          onCancel={() => {
+            setConfirmation(null);
+            focusScanner();
+          }}
         />
       )}
 
