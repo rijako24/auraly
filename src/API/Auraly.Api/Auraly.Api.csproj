@@ -23,6 +23,8 @@
     <ProjectReference Include="..\..\Modules\Sales\Auraly.Contracts.Sales\Auraly.Contracts.Sales.csproj" />
     <ProjectReference Include="..\..\Modules\Parties\Auraly.Application.Parties\Auraly.Application.Parties.csproj" />
     <ProjectReference Include="..\..\Modules\Parties\Auraly.Contracts.Parties\Auraly.Contracts.Parties.csproj" />
+    <ProjectReference Include="..\..\Modules\Organization\Auraly.Application.Organization\Auraly.Application.Organization.csproj" />
+    <ProjectReference Include="..\..\Modules\Organization\Auraly.Contracts.Organization\Auraly.Contracts.Organization.csproj" />
   </ItemGroup>
 </Project>
 

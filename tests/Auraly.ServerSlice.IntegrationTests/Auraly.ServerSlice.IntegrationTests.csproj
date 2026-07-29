@@ -28,6 +28,7 @@
     <ProjectReference Include="..\..\src\Modules\Sales\Auraly.Contracts.Sales\Auraly.Contracts.Sales.csproj" />
     <ProjectReference Include="..\..\src\Pos\Auraly.Pos.Edge.Infrastructure\Auraly.Pos.Edge.Infrastructure.csproj" />
     <ProjectReference Include="..\..\src\Modules\Parties\Auraly.Contracts.Parties\Auraly.Contracts.Parties.csproj" />
+    <ProjectReference Include="..\..\src\Modules\Organization\Auraly.Contracts.Organization\Auraly.Contracts.Organization.csproj" />
   </ItemGroup>
 </Project>
 

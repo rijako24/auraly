@@ -5,6 +5,7 @@ using Auraly.Application.Catalog;
 using Auraly.Application.DocumentProcessing;
 using Auraly.Application.Fiscal;
 using Auraly.Application.Parties;
+using Auraly.Application.Organization;
 using Auraly.Application.Sales;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.BuildingBlocks.Infrastructure.Identifiers;
@@ -71,6 +72,8 @@ builder.Services.AddScoped<PosCatalogService>();
 builder.Services.AddScoped<IPartyStore, SqlPartyStore>();
 builder.Services.AddScoped<PartyService>();
 builder.Services.AddScoped<GeographyService>();
+builder.Services.AddScoped<IOnlineRegisterDirectory, SqlOnlineRegisterDirectory>();
+builder.Services.AddScoped<OnlineRegisterService>();
 builder.Services.AddResponseCompression(options => options.EnableForHttps = true);
 
 var jwtIssuer = builder.Configuration["Authentication:Jwt:Issuer"];
@@ -117,6 +120,11 @@ builder.Services.AddAuthorization(options =>
         policy.AuthenticationSchemes.Add(JwtBearerDefaults.AuthenticationScheme);
         policy.RequireAuthenticatedUser();
     });
+    options.AddPolicy("pos.user", policy =>
+    {
+        policy.AuthenticationSchemes.Add(JwtBearerDefaults.AuthenticationScheme);
+        policy.RequireAuthenticatedUser();
+    });
     options.AddPolicy("pos.catalog.sync", policy =>
     {
         policy.AuthenticationSchemes.Add(PosAuthenticationDefaults.Scheme);
@@ -158,6 +166,7 @@ app.MapGet("/health", () => Results.Ok(new { status = "Healthy" }));
 app.MapCatalogApi();
 app.MapPartyApi();
 app.MapPartyUserAccountApi();
+app.MapOnlineRegisterApi();
 app.MapFiscalApi();
 app.MapPost(
         "/api/pos/v1/sales",
