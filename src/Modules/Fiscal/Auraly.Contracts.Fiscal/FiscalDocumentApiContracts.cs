@@ -31,3 +31,23 @@ public sealed record FiscalDocumentQuery(
     Guid? RegisterId,
     DateTimeOffset? IssuedFrom,
     DateTimeOffset? IssuedTo);
+
+public sealed record PosFiscalStatusChange(
+    Guid DocumentId,
+    string FiscalNumber,
+    string Cufe,
+    string Status,
+    string? StatusCode,
+    string? StatusDescription,
+    DateTimeOffset UpdatedAt);
+
+public sealed record PosFiscalStatusPage(
+    IReadOnlyList<PosFiscalStatusChange> Items,
+    string NextCursor,
+    bool HasMore);
+
+public sealed record PosFiscalDeviceContext(
+    Guid DeviceId,
+    Guid BusinessId,
+    Guid RegisterId,
+    IReadOnlySet<string> Permissions);

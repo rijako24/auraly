@@ -6,11 +6,13 @@ public static class FiscalPermissionCodes
     public const string ArtifactsRead = "fiscal.artifacts.read";
     public const string Retry = "fiscal.retry";
     public const string ConfigurationRead = "fiscal.configuration.read";
+    public const string PosStatusSync = "fiscal.status.sync";
     public const string ConfigurationManage = "fiscal.configuration.manage";
 }
 
 public static class FiscalDocumentStatusCodes
 {
+    public const string LocallyIssuedPendingSync = "LocallyIssuedPendingSync";
     public const string FiscalIntegrityConflict = "FiscalIntegrityConflict";
     public const string MissingMandatoryFiscalData = "MissingMandatoryFiscalData";
     public const string PendingGeneration = "PendingGeneration";

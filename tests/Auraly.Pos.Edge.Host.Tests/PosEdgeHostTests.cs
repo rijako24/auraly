@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Auraly.Contracts.Catalog;
+using Auraly.Contracts.Fiscal;
 using Auraly.Pos.Edge.Host;
 using Auraly.Pos.Edge.Infrastructure;
 using Microsoft.AspNetCore.Hosting;
@@ -111,6 +112,29 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
         Assert.Equal(result.IssuedSale.FiscalNumber, _printer.Receipts.Single().FiscalNumber);
         Assert.Equal(result.IssuedSale.Cufe, _printer.Receipts.Single().Cufe);
         Assert.Contains(result.IssuedSale.Cufe, _printer.Receipts.Single().QrPayload);
+        var localFiscal = await Client.GetFromJsonAsync<PosLocalFiscalStatus>(
+            $"/edge/v1/sales/{result.IssuedSale.DocumentId.Value:D}/fiscal-status");
+        Assert.NotNull(localFiscal);
+        Assert.Equal(FiscalDocumentStatusCodes.LocallyIssuedPendingSync, localFiscal.Status);
+
+        var reprint = await Client.PostAsync(
+            $"/edge/v1/sales/{result.IssuedSale.DocumentId.Value:D}/reprint",
+            null);
+        Assert.True(
+            reprint.StatusCode == HttpStatusCode.NoContent,
+            await reprint.Content.ReadAsStringAsync());
+        Assert.Equal(2, _printer.Receipts.Count);
+        var reprinted = _printer.Receipts[1];
+        Assert.Equal(result.IssuedSale.DocumentNumber, reprinted.DocumentNumber);
+        Assert.Equal(result.IssuedSale.FiscalNumber, reprinted.FiscalNumber);
+        Assert.Equal(result.IssuedSale.Cufe, reprinted.Cufe);
+        Assert.Equal(result.IssuedSale.QrPayload, reprinted.QrPayload);
+        await using var audit = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={_path}");
+        await audit.OpenAsync();
+        await using var command = audit.CreateCommand();
+        command.CommandText = "SELECT COUNT(*) FROM PosPrintAudit WHERE DocumentId=$id;";
+        command.Parameters.AddWithValue("$id", result.IssuedSale.DocumentId.Value);
+        Assert.Equal(1L, (long)(await command.ExecuteScalarAsync())!);
     }
 
     public async Task InitializeAsync()
@@ -133,6 +157,7 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
             ["PosEdge:SupplierTaxId"] = "9001234567",
             ["PosEdge:DefaultCustomerIdentification"] = "222222222",
             ["PosEdge:Permissions:0"] = "sales.create",
+            ["PosEdge:Permissions:1"] = "sales.reprint",
             ["PosEdge:PrinterName"] = "Test printer",
             ["PosEdge:PaperWidthMillimeters"] = "80",
             ["PosEdge:Documents:SalesInvoice:SeriesId"] = Guid.NewGuid().ToString("D"),

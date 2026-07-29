@@ -93,6 +93,16 @@ public sealed record PosEdgeOutboxItem(
     string? RemoteStatus = null,
     Guid? ServerReceiptId = null);
 
+
+public sealed record PosLocalFiscalStatus(
+    DocumentId DocumentId,
+    string FiscalNumber,
+    string Cufe,
+    string? Status,
+    string? StatusCode,
+    string? StatusDescription,
+    DateTimeOffset? UpdatedAt);
+
 public sealed class PosEdgeSaleStore
 {
     private readonly DbContextOptions<PosEdgeDbContext> _options;
@@ -118,6 +128,7 @@ public sealed class PosEdgeSaleStore
         await UpgradeDocumentNumberingAsync(context, cancellationToken);
         await UpgradeFiscalSeriesAsync(context, cancellationToken);
         await UpgradeOutboxAsync(context, cancellationToken);
+        await UpgradeFiscalStatusAsync(context, cancellationToken);
     }
 
     public async Task ProvisionSeriesAsync(
@@ -375,7 +386,9 @@ public sealed class PosEdgeSaleStore
             Cufe = snapshot.Cufe,
             Total = confirmed.Invoice.PayableAmount,
             IssuedAt = command.IssuedAt,
-            FiscalSnapshotJson = payload
+            FiscalSnapshotJson = payload,
+            RemoteFiscalStatus = FiscalDocumentStatusCodes.LocallyIssuedPendingSync,
+            RemoteFiscalUpdatedAt = command.IssuedAt
         });
         context.Outbox.Add(new PosOutboxRow
         {
@@ -571,6 +584,120 @@ public sealed class PosEdgeSaleStore
         row.NextAttemptAt = null;
         row.LastError = Truncate(error);
         await context.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task<string?> GetFiscalStatusCursorAsync(
+        CancellationToken cancellationToken = default)
+    {
+        await using var context = new PosEdgeDbContext(_options);
+        return await context.SyncState.AsNoTracking()
+            .Where(row => row.Key == "FiscalStatusCursor")
+            .Select(row => row.Cursor)
+            .SingleOrDefaultAsync(cancellationToken);
+    }
+
+    public async Task ApplyFiscalStatusPageAsync(
+        PosFiscalStatusPage page,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(page);
+        if (string.IsNullOrWhiteSpace(page.NextCursor))
+            throw new ArgumentException("A durable next cursor is required.", nameof(page));
+
+        await using var context = new PosEdgeDbContext(_options);
+        await using var transaction = await context.Database.BeginTransactionAsync(
+            IsolationLevel.Serializable,
+            cancellationToken);
+        foreach (var change in page.Items)
+        {
+            var sale = await context.IssuedSales.SingleOrDefaultAsync(
+                row => row.DocumentId == change.DocumentId,
+                cancellationToken);
+            if (sale is null) continue;
+            if (sale.FiscalNumber != change.FiscalNumber || sale.Cufe != change.Cufe)
+                throw new InvalidOperationException(
+                    "The server fiscal identity differs from the immutable local sale.");
+            if (sale.RemoteFiscalUpdatedAt is not null &&
+                sale.RemoteFiscalUpdatedAt > change.UpdatedAt)
+                continue;
+            sale.RemoteFiscalStatus = change.Status;
+            sale.RemoteFiscalStatusCode = change.StatusCode;
+            sale.RemoteFiscalStatusDescription = change.StatusDescription;
+            sale.RemoteFiscalUpdatedAt = change.UpdatedAt;
+        }
+
+        var state = await context.SyncState.SingleOrDefaultAsync(
+            row => row.Key == "FiscalStatusCursor",
+            cancellationToken);
+        if (state is null)
+            context.SyncState.Add(new PosSyncStateRow
+            {
+                Key = "FiscalStatusCursor",
+                Cursor = page.NextCursor
+            });
+        else
+            state.Cursor = page.NextCursor;
+        await context.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+    }
+
+    public async Task<PosLocalFiscalStatus?> GetFiscalStatusAsync(
+        DocumentId documentId,
+        CancellationToken cancellationToken = default)
+    {
+        await using var context = new PosEdgeDbContext(_options);
+        var row = await context.IssuedSales.AsNoTracking().SingleOrDefaultAsync(
+            item => item.DocumentId == documentId.Value,
+            cancellationToken);
+        return row is null ? null : new PosLocalFiscalStatus(
+            documentId, row.FiscalNumber, row.Cufe, row.RemoteFiscalStatus,
+            row.RemoteFiscalStatusCode, row.RemoteFiscalStatusDescription,
+            row.RemoteFiscalUpdatedAt);
+    }
+
+
+    public async Task<PosSaleUploadRequest?> GetIssuedUploadAsync(
+        DocumentId documentId,
+        CancellationToken cancellationToken = default)
+    {
+        await using var context = new PosEdgeDbContext(_options);
+        var payload = await context.IssuedSales.AsNoTracking()
+            .Where(row => row.DocumentId == documentId.Value)
+            .Select(row => row.FiscalSnapshotJson)
+            .SingleOrDefaultAsync(cancellationToken);
+        return payload is null ? null : PosSaleContractSerializer.Deserialize(payload);
+    }
+
+    public async Task RecordReprintAsync(
+        DocumentId documentId,
+        UserId userId,
+        DateTimeOffset reprintedAt,
+        CancellationToken cancellationToken = default)
+    {
+        await using var context = new PosEdgeDbContext(_options);
+        DbConnection connection = context.Database.GetDbConnection();
+        if (connection.State != ConnectionState.Open)
+            await connection.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            INSERT INTO PosPrintAudit(DocumentId,ReprintedAt,UserId,FiscalStatus)
+            SELECT $documentId,$reprintedAt,$userId,RemoteFiscalStatus
+            FROM IssuedSales WHERE DocumentId=$documentId;
+            """;
+        var document = command.CreateParameter();
+        document.ParameterName = "$documentId";
+        document.Value = documentId.Value;
+        command.Parameters.Add(document);
+        var occurred = command.CreateParameter();
+        occurred.ParameterName = "$reprintedAt";
+        occurred.Value = reprintedAt;
+        command.Parameters.Add(occurred);
+        var user = command.CreateParameter();
+        user.ParameterName = "$userId";
+        user.Value = userId.Value;
+        command.Parameters.Add(user);
+        if (await command.ExecuteNonQueryAsync(cancellationToken) != 1)
+            throw new KeyNotFoundException("The issued sale to audit was not found.");
     }
 
     private static PosSaleUploadRequest BuildUploadContract(
@@ -844,6 +971,68 @@ public sealed class PosEdgeSaleStore
             await using var command = connection.CreateCommand();
             command.CommandText =
                 $"ALTER TABLE Outbox ADD COLUMN {addition.Key} {addition.Value};";
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+    }
+
+
+    private static async Task UpgradeFiscalStatusAsync(
+        PosEdgeDbContext context,
+        CancellationToken cancellationToken)
+    {
+        var columns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        DbConnection connection = context.Database.GetDbConnection();
+        if (connection.State != ConnectionState.Open)
+            await connection.OpenAsync(cancellationToken);
+
+        await using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "PRAGMA table_info('IssuedSales');";
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+                columns.Add(reader.GetString(1));
+        }
+
+        var additions = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["RemoteFiscalStatus"] = "TEXT NULL",
+            ["RemoteFiscalStatusCode"] = "TEXT NULL",
+            ["RemoteFiscalStatusDescription"] = "TEXT NULL",
+            ["RemoteFiscalUpdatedAt"] = "TEXT NULL"
+        };
+        foreach (var addition in additions.Where(item => !columns.Contains(item.Key)))
+        {
+            await using var command = connection.CreateCommand();
+            command.CommandText =
+                $"ALTER TABLE IssuedSales ADD COLUMN {addition.Key} {addition.Value};";
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        await using (var command = connection.CreateCommand())
+        {
+            command.CommandText = """
+                UPDATE IssuedSales
+                SET RemoteFiscalStatus='LocallyIssuedPendingSync', RemoteFiscalUpdatedAt=IssuedAt
+                WHERE RemoteFiscalStatus IS NULL;
+                """;
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        await using (var command = connection.CreateCommand())
+        {
+            command.CommandText = """
+                CREATE TABLE IF NOT EXISTS PosSyncState(
+                  Key TEXT NOT NULL PRIMARY KEY,
+                  Cursor TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS PosPrintAudit(
+                  DocumentId TEXT NOT NULL,
+                  ReprintedAt TEXT NOT NULL,
+                  UserId TEXT NOT NULL,
+                  FiscalStatus TEXT NULL,
+                  PRIMARY KEY(DocumentId,ReprintedAt,UserId)
+                );
+                """;
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
     }

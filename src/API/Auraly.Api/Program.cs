@@ -34,6 +34,8 @@ builder.Services.AddSingleton<IFiscalTechnicalKeyProvider, ConfigurationFiscalTe
 builder.Services.AddScoped<IFiscalSnapshotVerifier, FiscalSnapshotVerifier>();
 builder.Services.AddScoped<IFiscalDocumentStore, SqlFiscalDocumentStore>();
 builder.Services.AddScoped<FiscalDocumentService>();
+builder.Services.AddScoped<IPosFiscalStatusStore, SqlPosFiscalStatusStore>();
+builder.Services.AddScoped<PosFiscalStatusService>();
 builder.Services.AddScoped<IFiscalGenerationWorkStore, SqlFiscalGenerationWorkStore>();
 builder.Services.AddScoped<IFiscalSubmissionWorkStore, SqlFiscalSubmissionWorkStore>();
 builder.Services.AddScoped<IDianHabilitationConfigurationProvider,
@@ -97,7 +99,8 @@ builder.Services.AddAuthorization(options =>
     {
         policy.AuthenticationSchemes.Add(JwtBearerDefaults.AuthenticationScheme);
         policy.RequireAuthenticatedUser();
-    });    options.AddPolicy("catalog.user", policy =>
+    });
+    options.AddPolicy("catalog.user", policy =>
     {
         policy.AuthenticationSchemes.Add(JwtBearerDefaults.AuthenticationScheme);
         policy.RequireAuthenticatedUser();
@@ -108,17 +111,24 @@ builder.Services.AddAuthorization(options =>
         policy.RequireAuthenticatedUser();
         policy.RequireClaim(PosAuthenticationDefaults.PermissionClaim, CatalogPermissionCodes.Sync);
     });
+    options.AddPolicy("pos.fiscal.status.sync", policy =>
+    {
+        policy.AuthenticationSchemes.Add(PosAuthenticationDefaults.Scheme);
+        policy.RequireAuthenticatedUser();
+        policy.RequireClaim(PosAuthenticationDefaults.PermissionClaim,
+            FiscalPermissionCodes.PosStatusSync);
+    });
     options.AddPolicy(
         "pos.sales.upload",
         policy =>
         {
+            policy.AuthenticationSchemes.Add(PosAuthenticationDefaults.Scheme);
             policy.RequireAuthenticatedUser();
             policy.RequireClaim(
                 PosAuthenticationDefaults.PermissionClaim,
                 CommercePermissionCodes.SalesCreate);
         });
 });
-
 var app = builder.Build();
 app.UseResponseCompression();
 app.UseAuthentication();

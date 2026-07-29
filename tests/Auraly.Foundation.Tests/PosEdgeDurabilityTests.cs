@@ -4,6 +4,7 @@ using Auraly.BuildingBlocks.Domain.Documents;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Contracts.Authorization;
 using Auraly.Contracts.Catalog;
+using Auraly.Contracts.Fiscal;
 using Auraly.Contracts.Organization;
 using Auraly.Domain.Authorization;
 using Auraly.Fiscal.Core;
@@ -100,6 +101,27 @@ public sealed class PosEdgeDurabilityTests
             var afterUpload = await reopenedProcess.GetPendingOutboxAsync();
             Assert.Single(afterUpload);
             Assert.Equal(second.DocumentId, afterUpload.Single().DocumentId);
+
+            var cursor = Convert.ToBase64String(new byte[] { 0, 0, 0, 0, 0, 0, 0, 42 });
+            await reopenedProcess.ApplyFiscalStatusPageAsync(new PosFiscalStatusPage(
+                [new PosFiscalStatusChange(
+                    first.DocumentId.Value,
+                    first.FiscalNumber,
+                    first.Cufe,
+                    FiscalDocumentStatusCodes.DianAccepted,
+                    "00",
+                    "Accepted",
+                    DateTimeOffset.UtcNow)],
+                cursor,
+                false));
+            var afterFiscalRestart = new PosEdgeSaleStore(connectionString, confirmation);
+            await afterFiscalRestart.InitializeAsync();
+            var fiscal = await afterFiscalRestart.GetFiscalStatusAsync(first.DocumentId);
+            Assert.NotNull(fiscal);
+            Assert.Equal(FiscalDocumentStatusCodes.DianAccepted, fiscal.Status);
+            Assert.Equal(first.Cufe, fiscal.Cufe);
+            Assert.Equal(cursor, await afterFiscalRestart.GetFiscalStatusCursorAsync());
+            Assert.Single(await afterFiscalRestart.GetPendingOutboxAsync());
         }
         finally
         {

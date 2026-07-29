@@ -9,6 +9,7 @@ internal sealed class PosEdgeDbContext(DbContextOptions<PosEdgeDbContext> option
     public DbSet<FiscalSeriesCursorRow> FiscalSeriesCursors => Set<FiscalSeriesCursorRow>();
     public DbSet<IssuedSaleRow> IssuedSales => Set<IssuedSaleRow>();
     public DbSet<PosOutboxRow> Outbox => Set<PosOutboxRow>();
+    public DbSet<PosSyncStateRow> SyncState => Set<PosSyncStateRow>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -40,6 +41,9 @@ internal sealed class PosEdgeDbContext(DbContextOptions<PosEdgeDbContext> option
             entity.Property(row => row.DocumentNumber).HasMaxLength(64);
             entity.Property(row => row.FiscalNumber).HasMaxLength(64);
             entity.Property(row => row.Cufe).HasMaxLength(96);
+            entity.Property(row => row.RemoteFiscalStatus).HasMaxLength(48);
+            entity.Property(row => row.RemoteFiscalStatusCode).HasMaxLength(64);
+            entity.Property(row => row.RemoteFiscalStatusDescription).HasMaxLength(2000);
         });
 
         modelBuilder.Entity<PosOutboxRow>(entity =>
@@ -51,6 +55,13 @@ internal sealed class PosEdgeDbContext(DbContextOptions<PosEdgeDbContext> option
             entity.Property(row => row.Status).HasMaxLength(32);
             entity.Property(row => row.RemoteStatus).HasMaxLength(40);
             entity.Property(row => row.LastError).HasMaxLength(2000);
+        });
+
+        modelBuilder.Entity<PosSyncStateRow>(entity =>
+        {
+            entity.ToTable("PosSyncState");
+            entity.HasKey(row => row.Key);
+            entity.Property(row => row.Key).HasMaxLength(64);
         });
     }
 }
@@ -91,6 +102,10 @@ internal sealed class IssuedSaleRow
     public decimal Total { get; set; }
     public DateTimeOffset IssuedAt { get; set; }
     public string FiscalSnapshotJson { get; set; } = string.Empty;
+    public string? RemoteFiscalStatus { get; set; }
+    public string? RemoteFiscalStatusCode { get; set; }
+    public string? RemoteFiscalStatusDescription { get; set; }
+    public DateTimeOffset? RemoteFiscalUpdatedAt { get; set; }
 }
 
 internal sealed class PosOutboxRow
@@ -111,6 +126,11 @@ internal sealed class PosOutboxRow
     public Guid? ServerReceiptId { get; set; }
 }
 
+internal sealed class PosSyncStateRow
+{
+    public string Key { get; set; } = string.Empty;
+    public string Cursor { get; set; } = string.Empty;
+}
 public static class PosOutboxStatus
 {
     public const string Pending = "Pending";

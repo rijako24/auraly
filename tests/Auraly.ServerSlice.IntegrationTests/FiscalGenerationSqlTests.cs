@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text;
 using Auraly.Application.Fiscal;
@@ -105,6 +106,40 @@ public sealed class FiscalGenerationSqlTests(ServerSliceFixture fixture)
             request.DocumentId));
         Assert.Equal(1, transport.SendCalls);
         Assert.Equal(1, transport.QueryCalls);
+
+        using var statusRequest = new HttpRequestMessage(
+            HttpMethod.Get,
+            "/api/pos/v1/fiscal/statuses?pageSize=200");
+        statusRequest.Headers.Add("X-Auraly-Device-Id", fixture.DeviceId.ToString("D"));
+        statusRequest.Headers.Add("X-Auraly-Device-Secret", ServerSliceFixture.DeviceSecret);
+        using var statusResponse = await client.SendAsync(statusRequest);
+        Assert.Equal(HttpStatusCode.OK, statusResponse.StatusCode);
+        var statusPage = await statusResponse.Content.ReadFromJsonAsync<PosFiscalStatusPage>();
+        Assert.NotNull(statusPage);
+        var change = Assert.Single(statusPage.Items.Where(item => item.DocumentId == request.DocumentId));
+        Assert.Equal(FiscalDocumentStatusCodes.DianAccepted, change.Status);
+        Assert.Equal(request.FiscalSnapshot.Cufe, change.Cufe);
+
+        using var nextRequest = new HttpRequestMessage(
+            HttpMethod.Get,
+            $"/api/pos/v1/fiscal/statuses?pageSize=200&cursor={Uri.EscapeDataString(statusPage.NextCursor)}");
+        nextRequest.Headers.Add("X-Auraly-Device-Id", fixture.DeviceId.ToString("D"));
+        nextRequest.Headers.Add("X-Auraly-Device-Secret", ServerSliceFixture.DeviceSecret);
+        using var nextResponse = await client.SendAsync(nextRequest);
+        Assert.Equal(HttpStatusCode.OK, nextResponse.StatusCode);
+        var nextPage = await nextResponse.Content.ReadFromJsonAsync<PosFiscalStatusPage>();
+        Assert.NotNull(nextPage);
+        Assert.DoesNotContain(nextPage.Items, item => item.DocumentId == request.DocumentId);
+
+        using var deniedRequest = new HttpRequestMessage(
+            HttpMethod.Get,
+            "/api/pos/v1/fiscal/statuses");
+        deniedRequest.Headers.Add(
+            "X-Auraly-Device-Id", fixture.DeniedDeviceId.ToString("D"));
+        deniedRequest.Headers.Add(
+            "X-Auraly-Device-Secret", ServerSliceFixture.DeniedDeviceSecret);
+        using var deniedResponse = await client.SendAsync(deniedRequest);
+        Assert.Equal(HttpStatusCode.Forbidden, deniedResponse.StatusCode);
     }
 
     private FiscalGenerationWorker CreateWorker(IFiscalGenerationWorkStore store, TimeProvider clock) =>

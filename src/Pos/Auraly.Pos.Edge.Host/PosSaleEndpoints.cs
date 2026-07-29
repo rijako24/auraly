@@ -32,8 +32,8 @@ internal sealed record PosSaleHostSettings(
     string QrValidationUrl,
     int PaperWidthMillimeters,
     PosEdgeDocumentSeriesProvision DocumentSeries,
-    PosEdgeSeriesProvision FiscalSeries);
-
+    PosEdgeSeriesProvision FiscalSeries,
+    IReadOnlySet<string> Permissions);
 internal static class PosSaleHostModule
 {
     public static IServiceCollection AddPosSaleCompletion(
@@ -45,6 +45,7 @@ internal static class PosSaleHostModule
     {
         var tenantId = new TenantId(RequiredGuid(configuration, "PosEdge:TenantId"));
         var locationId = new LocationId(RequiredGuid(configuration, "PosEdge:LocationId"));
+        var permissions = ReadPermissions(configuration).ToHashSet(StringComparer.Ordinal);
         var settings = new PosSaleHostSettings(
             new RegisterContext(
                 tenantId,
@@ -84,12 +85,12 @@ internal static class PosSaleHostModule
                 RequiredLong(configuration, "PosEdge:Fiscal:RangeStart"),
                 RequiredLong(configuration, "PosEdge:Fiscal:RangeEnd"),
                 RequiredDate(configuration, "PosEdge:Fiscal:ValidUntil"),
-                RequiredGuid(configuration, "PosEdge:Fiscal:FiscalAuthorizationId")));
-
+                RequiredGuid(configuration, "PosEdge:Fiscal:FiscalAuthorizationId")),
+            permissions);
         var permissionSet = new UserPermissionSet(
             tenantId,
             runtime.Scope.UserId,
-            ReadPermissions(configuration));
+            permissions);
         var confirmation = new ConfirmOfflineSaleService(
             new PermissionAuthorizer(new ConfiguredPermissionProvider(permissionSet)));
         services.AddSingleton(settings);
@@ -170,6 +171,40 @@ internal static class PosSaleHostModule
             catch (InvalidOperationException error)
             {
                 return Results.Conflict(new { detail = error.Message });
+            }
+        });
+
+        edge.MapGet("/sales/{documentId:guid}/fiscal-status", async (
+            Guid documentId,
+            PosEdgeSaleStore sales,
+            CancellationToken ct) =>
+        {
+            var status = await sales.GetFiscalStatusAsync(new DocumentId(documentId), ct);
+            return status is null ? Results.NotFound() : Results.Ok(status);
+        });
+
+        edge.MapPost("/sales/{documentId:guid}/reprint", async (
+            Guid documentId,
+            PosSaleCompletionService completion,
+            PosSaleHostSettings settings,
+            CancellationToken ct) =>
+        {
+            if (!settings.Permissions.Contains(CommercePermissionCodes.SalesReprint))
+                return Results.Problem(
+                    $"Permission '{CommercePermissionCodes.SalesReprint}' is required.",
+                    statusCode: StatusCodes.Status403Forbidden);
+            try
+            {
+                await completion.ReprintAsync(
+                    new DocumentId(documentId),
+                    settings.UserId,
+                    settings.PaperWidthMillimeters,
+                    ct);
+                return Results.NoContent();
+            }
+            catch (KeyNotFoundException error)
+            {
+                return Results.NotFound(new { detail = error.Message });
             }
         });
         return edge;

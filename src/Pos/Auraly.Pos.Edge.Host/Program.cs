@@ -68,8 +68,15 @@ public static class PosEdgeHostApplication
             connectionString,
             runtime,
             credentials);
+        builder.Services.AddSingleton<IPosSaleUploadClient>(sp =>
+            new HttpPosSaleUploadClient(
+                sp.GetRequiredService<HttpClient>(),
+                credentials.Secret));
+        builder.Services.AddSingleton<PosEdgeOutboxUploader>();
+        builder.Services.AddSingleton<IPosFiscalStatusClient, HttpPosFiscalStatusClient>();
+        builder.Services.AddSingleton<PosFiscalStatusSynchronizer>();
         builder.Services.AddHostedService<PosEdgeStorageInitializer>();
-
+        builder.Services.AddHostedService<PosServerSynchronizationHostedService>();
         var app = builder.Build();
         app.Use(async (context, next) =>
         {
@@ -227,6 +234,44 @@ public static class PosEdgeHostApplication
 
     private static bool IsLoopback(System.Net.IPAddress? address) =>
         address is null || System.Net.IPAddress.IsLoopback(address);
+}
+
+internal sealed class PosServerSynchronizationHostedService(
+    PosEdgeOutboxUploader uploader,
+    PosFiscalStatusSynchronizer fiscalStatuses,
+    ILogger<PosServerSynchronizationHostedService> logger) : BackgroundService
+{
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(2));
+        do
+        {
+            try
+            {
+                while (!stoppingToken.IsCancellationRequested &&
+                       await uploader.UploadNextAsync(stoppingToken))
+                {
+                }
+                await fiscalStatuses.SynchronizeAsync(stoppingToken);
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                break;
+            }
+            catch (HttpRequestException exception)
+            {
+                logger.LogInformation(
+                    "Auraly server is unavailable; durable POS synchronization will retry: {Reason}",
+                    exception.Message);
+            }
+            catch (Exception exception)
+            {
+                logger.LogError(
+                    exception,
+                    "POS server synchronization failed and will retry without deleting local data.");
+            }
+        } while (await timer.WaitForNextTickAsync(stoppingToken));
+    }
 }
 
 internal sealed class PosEdgeStorageInitializer(

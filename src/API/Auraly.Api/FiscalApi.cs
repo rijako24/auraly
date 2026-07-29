@@ -33,6 +33,26 @@ public static class FiscalApi
                 var result = await service.RetryAsync(context.User.ToFiscalUserIdentity(), documentId, ct);
                 return result is null ? Results.NotFound() : Results.Ok(result);
             }));
+
+        endpoints.MapGet("/api/pos/v1/fiscal/statuses", async (
+            HttpContext context,
+            PosFiscalStatusService service,
+            string? cursor,
+            int? pageSize,
+            CancellationToken ct) =>
+            await Handle(async () =>
+            {
+                var identity = context.User.ToPosDeviceIdentity();
+                var device = new PosFiscalDeviceContext(
+                    identity.DeviceId,
+                    identity.BusinessId,
+                    identity.RegisterId,
+                    identity.Permissions);
+                return Results.Ok(await service.PageAsync(
+                    device, cursor, pageSize ?? 100, ct));
+            }))
+            .RequireAuthorization("pos.fiscal.status.sync");
+
         return endpoints;
     }
 

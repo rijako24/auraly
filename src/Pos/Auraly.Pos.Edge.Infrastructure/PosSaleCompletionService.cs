@@ -184,7 +184,8 @@ public sealed class PosSaleCompletionService(
     PosDraftStore drafts,
     PosDraftIssuanceStore issuance,
     PosEdgeSaleStore sales,
-    IPosReceiptPrinter printer)
+    IPosReceiptPrinter printer,
+    TimeProvider? timeProvider = null)
 {
     public async Task<CompletePosSaleResult> CompleteAsync(
         DraftId draftId,
@@ -276,5 +277,53 @@ public sealed class PosSaleCompletionService(
             nextDraft,
             nextDocumentNumber,
             nextFiscalNumber);
+    }
+
+    public async Task ReprintAsync(
+        DocumentId documentId,
+        UserId userId,
+        int paperWidthMillimeters,
+        CancellationToken ct = default)
+    {
+        if (paperWidthMillimeters is not (58 or 80))
+            throw new ArgumentOutOfRangeException(
+                nameof(paperWidthMillimeters), "Receipt width must be 58 or 80 mm.");
+        var immutable = await sales.GetIssuedUploadAsync(documentId, ct)
+            ?? throw new KeyNotFoundException("The issued sale does not exist locally.");
+        var metadata = immutable.UblSnapshot?.Lines.ToDictionary(line => line.LineNumber);
+        var payload = new PosReceipt(
+            Guid.NewGuid(),
+            documentId,
+            immutable.DocumentNumber.FullNumber,
+            immutable.FiscalSnapshot.FiscalNumber,
+            immutable.FiscalSnapshot.IssuedAt,
+            immutable.FiscalSnapshot.CustomerIdentification,
+            immutable.Lines.Select(line => new PosReceiptLine(
+                metadata is not null && metadata.TryGetValue(line.LineNumber, out var item)
+                    ? item.ProductCode
+                    : line.ProductId.ToString("D"),
+                line.Description,
+                line.Quantity,
+                line.UnitPrice,
+                line.DiscountAmount,
+                line.TaxAmount,
+                line.LineTotal)).ToArray(),
+            immutable.Payments.Select(payment => new OfflineSalePayment(
+                payment.MethodCode,
+                payment.Amount,
+                payment.Reference)).ToArray(),
+            immutable.FiscalSnapshot.UntaxedAmount,
+            immutable.FiscalSnapshot.TaxAmount,
+            immutable.FiscalSnapshot.PayableAmount,
+            immutable.FiscalSnapshot.Cufe,
+            immutable.FiscalSnapshot.QrPayload,
+            paperWidthMillimeters);
+
+        await printer.PrintAsync(payload, ct);
+        await sales.RecordReprintAsync(
+            documentId,
+            userId,
+            timeProvider?.GetUtcNow() ?? DateTimeOffset.UtcNow,
+            ct);
     }
 }

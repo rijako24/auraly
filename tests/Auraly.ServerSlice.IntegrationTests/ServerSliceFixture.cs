@@ -5,6 +5,7 @@ using System.Security.Claims;
 using System.Text;
 using System.Net.Http.Json;
 using Auraly.Contracts.Authorization;
+using Auraly.Contracts.Fiscal;
 using Auraly.Contracts.Sales;
 using Auraly.Fiscal.Core;
 using Auraly.Infrastructure.Persistence;
@@ -422,8 +423,9 @@ public sealed class ServerSliceFixture : IAsyncLifetime
 
             INSERT INTO dbo.PosDevicePermissions
             (DeviceId, PermissionCode, IsGranted, GrantedAt)
-            VALUES (@DeviceId, @SalesCreate, 1, SYSDATETIMEOFFSET());
-
+            VALUES
+            (@DeviceId, @SalesCreate, 1, SYSDATETIMEOFFSET()),
+            (@DeviceId, @FiscalStatusSync, 1, SYSDATETIMEOFFSET());
             INSERT INTO dbo.FiscalAuthorizations
             (FiscalAuthorizationId, BusinessId, AuthorizationNumber, SupplierTaxId,
              Environment, QrValidationUrl, ValidFrom, ValidUntil, IsActive, CreatedAt)
@@ -487,6 +489,7 @@ public sealed class ServerSliceFixture : IAsyncLifetime
         command.Parameters.AddWithValue("@DeniedIterations", deniedCredential.Iterations);
         command.Parameters.AddWithValue("@SalesCreate", CommercePermissionCodes.SalesCreate);
         command.Parameters.AddWithValue("@FiscalAuthorizationId", FiscalAuthorizationId);
+        command.Parameters.AddWithValue("@FiscalStatusSync", FiscalPermissionCodes.PosStatusSync);
         command.Parameters.AddWithValue("@FiscalIssuerConfigurationId", FiscalIssuerConfigurationId);
         command.Parameters.AddWithValue("@AuthorizationNumber", AuthorizationNumber);
         command.Parameters.AddWithValue("@SupplierTaxId", SupplierTaxId);
