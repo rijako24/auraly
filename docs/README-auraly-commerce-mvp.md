@@ -11,13 +11,14 @@ Cuando dos documentos se contradigan, se aplica este orden:
 
 1. `decision-numeracion-operativa-y-fiscal-auraly.md` para identidad, prefijos y consecutivos operativos Auraly frente a numeración fiscal DIAN.
 1. `decision-definitiva-negativos-por-bodega-y-sin-inventario-local.md` para política de negativos, momento de validación y ausencia de inventario local.
-2. `decision-despliegue-onpremise-seguridad-maestros-semillas-calidad.md` para Cloud/On-Premise, usuarios, permisos, terceros, semillas y calidad.
-3. `decision-canales-de-precios-mvp.md` para canales de precios.
-4. `decision-motor-documentos-ids-y-flujo-pedidos.md` para motor, IDs y procesamiento de pedidos.
-5. `decision-pedidos-integrado-en-facturacion.md` para interacción entre Pedidos y Facturación.
-6. `auditoria-funcional-consolidada-auraly-commerce-mvp.md` para alcance funcional y exclusiones.
-7. `diseno-auraly-commerce-mvp.md` como arquitectura general.
-8. Los demás documentos especializados para el detalle de su tema, siempre sujetos a las decisiones anteriores.
+2. `decision-maestro-parties-roles-sedes-y-cuentas-usuario.md` para el maestro común, roles, sedes y cuentas de usuario.
+3. `decision-despliegue-onpremise-seguridad-maestros-semillas-calidad.md` para Cloud/On-Premise, usuarios, permisos, terceros, semillas y calidad.
+4. `decision-canales-de-precios-mvp.md` para canales de precios.
+5. `decision-motor-documentos-ids-y-flujo-pedidos.md` para motor, IDs y procesamiento de pedidos.
+6. `decision-pedidos-integrado-en-facturacion.md` para interacción entre Pedidos y Facturación.
+7. `auditoria-funcional-consolidada-auraly-commerce-mvp.md` para alcance funcional y exclusiones.
+8. `diseno-auraly-commerce-mvp.md` como arquitectura general.
+9. Los demás documentos especializados para el detalle de su tema, siempre sujetos a las decisiones anteriores.
 
 ## Decisiones cerradas
 
@@ -39,6 +40,8 @@ Cuando dos documentos se contradigan, se aplica este orden:
 - La política de negativos pertenece a la bodega y todas sus cajas la heredan.
 - Si la bodega bloquea negativos, se valida en línea al capturar/cambiar cantidad y se revalida en la transacción final.
 - Usuarios, perfiles, permisos por usuario, alcances, empleados, vendedores, transportadores, proveedores y datos semilla son módulos fundacionales.
+- Una sola `Party` representa la identidad; clientes, proveedores, empleados, vendedores, transportadores, conductores y cuentas de usuario son relaciones separadas.
+- Las sedes no duplican la identificación y un rol comercial no concede acceso al sistema.
 - Menú, acciones y datos respetan permisos; la API siempre vuelve a autorizar.
 - Ningún módulo se declara terminado sin trazabilidad, pruebas y conciliación.
 
@@ -57,6 +60,7 @@ Cuando dos documentos se contradigan, se aplica este orden:
 - `decision-persistencia-simple-monolito-modular.md`
 - `decision-renombrado-auraly-database-pedidos-y-diseno-web.md`
 - `decision-despliegue-onpremise-seguridad-maestros-semillas-calidad.md`
+- `decision-maestro-parties-roles-sedes-y-cuentas-usuario.md`
 
 ### Facturación, caja e inventario
 

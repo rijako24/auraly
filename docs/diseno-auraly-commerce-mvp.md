@@ -407,13 +407,18 @@ No se debe usar un contador calculado con `MAX(numero) + 1`. La asignación debe
 ### 6.2 Terceros
 
 - `Parties`
-- `PartyRoles`
 - `PartyIdentifications`
 - `PartyAddresses`
 - `PartyContacts`
 - `PartyTaxResponsibilities`
-- `CustomerProfiles`
-- `SupplierProfiles`
+- `PartySites`
+- `Customers`
+- `Suppliers`
+- `Employees`
+- `Sellers`
+- `Carriers`
+- `Drivers`
+- `AppUsers`, con vínculo opcional a `Party`
 
 El documento comercial conserva una fotografía de nombre, identificación, dirección y responsabilidades. No depende de que el tercero siga igual en el futuro.
 
