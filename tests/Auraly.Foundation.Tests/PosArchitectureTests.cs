@@ -147,7 +147,7 @@ public sealed class PosArchitectureTests
     }
 
     [Fact]
-    public void Pos_orders_chip_opens_the_real_online_orders_view()
+    public void Pos_groups_temporary_sales_and_online_orders_in_the_side_panel()
     {
         var repositoryRoot = FindRepositoryRoot();
         var page = File.ReadAllText(Path.Combine(
@@ -158,12 +158,19 @@ public sealed class PosArchitectureTests
             "(pos)",
             "pos",
             "page.tsx"));
+        var headerStart = page.IndexOf("<header", StringComparison.Ordinal);
+        var headerEnd = page.IndexOf("</header>", headerStart, StringComparison.Ordinal);
+        var header = page[headerStart..headerEnd];
 
-        Assert.Contains("Pedidos", page, StringComparison.Ordinal);
+        Assert.DoesNotContain("{temporaries.length} temporales", header, StringComparison.Ordinal);
+        Assert.DoesNotContain("Pedidos", header, StringComparison.Ordinal);
+        Assert.Contains("role=\"tablist\"", page, StringComparison.Ordinal);
+        Assert.Contains("setSidePanel(\"temporaries\")", page, StringComparison.Ordinal);
+        Assert.Contains("setSidePanel(\"orders\")", page, StringComparison.Ordinal);
+        Assert.Contains("sidePanel === \"temporaries\"", page, StringComparison.Ordinal);
         Assert.Contains("window.location.assign(\"/dashboard/orders\")", page, StringComparison.Ordinal);
-        Assert.Contains("if (!serverConnected)", page, StringComparison.Ordinal);
         Assert.Contains(
-            "Los pedidos se consultan en línea. Auraly Server no está disponible.",
+            "Los pedidos se consultan en línea y Auraly Server no está disponible.",
             page,
             StringComparison.Ordinal);
     }
