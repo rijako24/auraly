@@ -79,24 +79,41 @@ export default function PosPage() {
   useEffect(() => {
     if (!client) return;
     let active = true;
-    void Promise.all([
-      client.health(),
-      client.activeDraft(),
-      client.temporaries(),
-      client.nextNumbers(),
-    ]).then(([, current, pending, numbers]) => {
-        if (!active) return;
-        setEdgeReady(true);
-        setDraft(current);
-        setTemporaries(pending);
-        focusScanner();
-        setNextNumber(numbers.document);
-      })
-      .catch(() => {
+    let checking = false;
+    let hydrated = false;
+
+    const connect = async () => {
+      if (checking) return;
+      checking = true;
+      try {
+        await client.health();
+        if (!hydrated) {
+          const [current, pending, numbers] = await Promise.all([
+            client.activeDraft(),
+            client.temporaries(),
+            client.nextNumbers(),
+          ]);
+          if (!active) return;
+          setDraft(current);
+          setTemporaries(pending);
+          setNextNumber(numbers.document);
+          hydrated = true;
+          focusScanner();
+        }
+        if (active) setEdgeReady(true);
+      } catch {
+        hydrated = false;
         if (active) setEdgeReady(false);
-      });
+      } finally {
+        checking = false;
+      }
+    };
+
+    void connect();
+    const interval = window.setInterval(() => void connect(), 3_000);
     return () => {
       active = false;
+      window.clearInterval(interval);
     };
   }, [client, focusScanner]);
 
@@ -120,6 +137,12 @@ export default function PosPage() {
     event.preventDefault();
     const value = scan.trim();
     if (!client || !value || busy) return;
+    if (!edgeReady) {
+      setError("POS Edge no est\u00e1 conectado. El c\u00f3digo se conservar\u00e1 para reintentar.");
+      setMessage("Esperando conexi\u00f3n con POS Edge");
+      focusScanner();
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -243,6 +266,7 @@ export default function PosPage() {
 
   function showError(caught: unknown) {
     const status = caught instanceof PosEdgeError ? caught.status : 0;
+    if (!(caught instanceof PosEdgeError)) setEdgeReady(false);
     const text =
       status === 404
         ? "Producto no encontrado en el catálogo local"
@@ -318,7 +342,7 @@ export default function PosPage() {
                 id="pos-scanner"
                 value={scan}
                 onChange={(event) => setScan(event.target.value)}
-                disabled={!edgeReady || busy}
+                disabled={busy}
                 autoComplete="off"
                 inputMode="text"
                 className="h-14 min-w-0 flex-1 rounded-xl border-2 border-teal-700/25 bg-slate-50 px-4 text-xl font-semibold tracking-wide outline-none transition focus:border-teal-600 focus:bg-white focus:ring-4 focus:ring-teal-600/10 disabled:opacity-50"
@@ -327,7 +351,7 @@ export default function PosPage() {
               />
               <button
                 type="submit"
-                disabled={!scan.trim() || busy || !edgeReady}
+                disabled={!scan.trim() || busy}
                 className="min-w-28 rounded-xl bg-teal-700 px-5 font-semibold text-white transition hover:bg-teal-800 focus:outline-none focus:ring-4 focus:ring-teal-600/20 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {busy ? <Loader2 className="mx-auto animate-spin" /> : "Agregar"}

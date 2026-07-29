@@ -38,6 +38,38 @@ public sealed class PosArchitectureTests
         }
     }
 
+    [Fact]
+    public void Pos_scanner_remains_editable_while_the_local_edge_reconnects()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var pagePath = Path.Combine(
+            repositoryRoot,
+            "admin",
+            "src",
+            "app",
+            "(pos)",
+            "pos",
+            "page.tsx");
+        var page = File.ReadAllText(pagePath);
+        var scannerStart = page.IndexOf("id=\"pos-scanner\"", StringComparison.Ordinal);
+        var scannerEnd = page.IndexOf("/>", scannerStart, StringComparison.Ordinal);
+
+        Assert.True(scannerStart >= 0, "The POS scanner input was not found.");
+        Assert.True(scannerEnd > scannerStart, "The POS scanner input is malformed.");
+
+        var scanner = page[scannerStart..scannerEnd];
+        Assert.Contains("disabled={busy}", scanner, StringComparison.Ordinal);
+        Assert.DoesNotContain("edgeReady", scanner, StringComparison.Ordinal);
+        Assert.Contains(
+            "POS Edge no est\\u00e1 conectado. El c\\u00f3digo se conservar\\u00e1 para reintentar.",
+            page,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "window.setInterval(() => void connect(), 3_000)",
+            page,
+            StringComparison.Ordinal);
+    }
+
     private static string FindRepositoryRoot()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
