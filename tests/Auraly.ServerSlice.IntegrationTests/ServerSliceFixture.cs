@@ -55,6 +55,7 @@ public sealed class ServerSliceFixture : IAsyncLifetime
     public Guid LocationId { get; } = Guid.NewGuid();
     public Guid WarehouseId { get; } = Guid.NewGuid();
     public Guid RegisterId { get; } = Guid.NewGuid();
+    public Guid OnlineRegisterId { get; } = Guid.NewGuid();
     public Guid DeviceId { get; } = Guid.NewGuid();
     public Guid DeniedDeviceId { get; } = Guid.NewGuid();
     public Guid UserId { get; } = Guid.NewGuid();
@@ -411,7 +412,9 @@ public sealed class ServerSliceFixture : IAsyncLifetime
 
             INSERT INTO dbo.CashRegisters
             (RegisterId, BusinessId, LocationId, WarehouseId, Code, Name, IsActive, CreatedAt)
-            VALUES (@RegisterId, @BusinessId, @LocationId, @WarehouseId, N'03', N'Caja E2E', 1, SYSDATETIMEOFFSET());
+            VALUES
+            (@RegisterId, @BusinessId, @LocationId, @WarehouseId, N'03', N'Caja Edge E2E', 1, SYSDATETIMEOFFSET()),
+            (@OnlineRegisterId, @BusinessId, @LocationId, @WarehouseId, N'04', N'Caja web E2E', 1, SYSDATETIMEOFFSET());
 
             INSERT INTO dbo.PosDevices
             (DeviceId, BusinessId, LocationId, WarehouseId, RegisterId, Name,
@@ -482,6 +485,7 @@ public sealed class ServerSliceFixture : IAsyncLifetime
         command.Parameters.AddWithValue("@WarehouseId", WarehouseId);
         command.Parameters.AddWithValue("@RegisterId", RegisterId);
         command.Parameters.AddWithValue("@DeviceId", DeviceId);
+        command.Parameters.AddWithValue("@OnlineRegisterId", OnlineRegisterId);
         command.Parameters.AddWithValue("@DeniedDeviceId", DeniedDeviceId);
         command.Parameters.AddWithValue("@AllowedSalt", allowedCredential.Salt);
         command.Parameters.AddWithValue("@AllowedHash", allowedCredential.Hash);

@@ -16,12 +16,16 @@ public sealed class OnlineRegisterApiTests(ServerSliceFixture fixture)
         var options = await client.GetFromJsonAsync<OnlineRegisterOption[]>(
             "/api/commerce/v1/pos/register-context/options");
 
-        var option = Assert.Single(options!);
+        Assert.Equal(2, options!.Length);
+        var edge = Assert.Single(options, value => value.RegisterId == fixture.RegisterId);
+        Assert.True(edge.HasActiveEdgeEnrollment);
+        var option = Assert.Single(
+            options,
+            value => value.RegisterId == fixture.OnlineRegisterId);
         Assert.Equal(fixture.BusinessId, option.BusinessId);
         Assert.Equal(fixture.LocationId, option.LocationId);
-        Assert.Equal(fixture.RegisterId, option.RegisterId);
         Assert.Equal(fixture.WarehouseId, option.WarehouseId);
-        Assert.True(option.HasActiveEdgeEnrollment);
+        Assert.False(option.HasActiveEdgeEnrollment);
 
         using var response = await client.PostAsJsonAsync(
             "/api/commerce/v1/pos/register-context/select",
@@ -56,6 +60,20 @@ public sealed class OnlineRegisterApiTests(ServerSliceFixture fixture)
             "/api/commerce/v1/pos/register-context/select",
             new OnlineRegisterSelection(
                 Guid.NewGuid(),
+                fixture.LocationId,
+                fixture.RegisterId));
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Register_with_active_edge_enrollment_cannot_be_selected_online()
+    {
+        using var client = fixture.CreateAdminClient(CommercePermissionCodes.SalesCreate);
+        using var response = await client.PostAsJsonAsync(
+            "/api/commerce/v1/pos/register-context/select",
+            new OnlineRegisterSelection(
+                fixture.BusinessId,
                 fixture.LocationId,
                 fixture.RegisterId));
 

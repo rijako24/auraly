@@ -60,7 +60,11 @@ public sealed class SqlOnlineRegisterDirectory(SqlServerConnectionFactory connec
             INNER JOIN dbo.Warehouses w ON w.WarehouseId=r.WarehouseId
                 AND w.BusinessId=r.BusinessId AND w.LocationId=r.LocationId AND w.IsActive=1
             WHERE b.TenantId=@TenantId AND b.BusinessId=@BusinessId
-              AND l.LocationId=@LocationId AND r.RegisterId=@RegisterId AND b.IsActive=1;
+              AND l.LocationId=@LocationId AND r.RegisterId=@RegisterId AND b.IsActive=1
+              AND NOT EXISTS (
+                  SELECT 1 FROM dbo.PosDevices d
+                  WHERE d.RegisterId=r.RegisterId AND d.IsActive=1
+              );
             """;
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
