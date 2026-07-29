@@ -39,10 +39,14 @@ public sealed partial class SqlCatalogStore
               AND i.ValidFrom<=SYSDATETIMEOFFSET()
               AND (i.ValidUntil IS NULL OR i.ValidUntil>SYSDATETIMEOFFSET());
 
-            SELECT c.CustomerId,c.Identification,c.Name,p.PriceListId,p.PriceChannelId,c.IsActive
-            FROM dbo.CommerceCustomers c
-            LEFT JOIN dbo.CustomerBusinessPricing p ON p.CustomerId=c.CustomerId
-            WHERE c.BusinessId=@BusinessId;
+            SELECT c.CustomerId,
+              COALESCE(p.Identification,N''),
+              COALESCE(p.DisplayName,p.LegalName,p.Identification,N''),
+              s.PriceListId,s.PriceChannelId,c.IsActive
+            FROM dbo.Customers c
+            JOIN dbo.Parties p ON p.PartyId=c.PartyId AND p.TenantId=@TenantId
+            LEFT JOIN dbo.CustomerPricingSettings s ON s.CustomerId=c.CustomerId
+            WHERE c.BusinessId=@BusinessId AND p.IsActive=1;
             """;
         command.Parameters.AddRange(
         [

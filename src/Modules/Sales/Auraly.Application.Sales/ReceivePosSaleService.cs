@@ -18,10 +18,11 @@ public sealed record PosDeviceIdentity(
     Guid RegisterId,
     IReadOnlySet<string> Permissions);
 
-public sealed record PosSaleContextValidation(bool IsValid, string? Reason)
+public sealed record PosSaleContextValidation(bool IsValid, string? Reason, bool IsSecurityViolation = false)
 {
     public static PosSaleContextValidation Valid() => new(true, null);
-    public static PosSaleContextValidation Invalid(string reason) => new(false, reason);
+    public static PosSaleContextValidation Invalid(string reason, bool isSecurityViolation = false) =>
+        new(false, reason, isSecurityViolation);
 }
 
 public sealed record StoredPosSale(
@@ -109,6 +110,10 @@ public sealed class ReceivePosSaleService(
         }
 
         var context = await store.ValidateContextAsync(request, cancellationToken);
+        if (!context.IsValid && context.IsSecurityViolation)
+        {
+            throw new PosSaleForbiddenException(context.Reason ?? "The customer is outside the authenticated business.");
+        }
         var verification = await fiscalVerifier.VerifyAsync(request, cancellationToken);
         if (!context.IsValid && verification.IsVerified)
         {

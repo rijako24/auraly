@@ -135,7 +135,8 @@ public sealed record PosSaleUploadRequest(
     PosSaleFiscalSnapshotContract FiscalSnapshot,
     IReadOnlyList<PosSaleLineContract> Lines,
     IReadOnlyList<PosSalePaymentContract> Payments,
-    PosSaleUblSnapshotContract? UblSnapshot = null);
+    PosSaleUblSnapshotContract? UblSnapshot = null,
+    Guid? CustomerId = null);
 
 public sealed record PosSaleUploadResponse(
     Guid ReceiptId,

@@ -4,6 +4,7 @@ using System.Text;
 using Auraly.Application.Catalog;
 using Auraly.Application.DocumentProcessing;
 using Auraly.Application.Fiscal;
+using Auraly.Application.Parties;
 using Auraly.Application.Sales;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.BuildingBlocks.Infrastructure.Identifiers;
@@ -11,6 +12,7 @@ using Auraly.Contracts.Authorization;
 using Auraly.Contracts.Catalog;
 using Auraly.Contracts.DocumentProcessing;
 using Auraly.Contracts.Fiscal;
+using Auraly.Contracts.Parties;
 using Auraly.Contracts.Sales;
 using Auraly.Fiscal.Ubl;
 using Auraly.Infrastructure.Fiscal;
@@ -56,7 +58,8 @@ if (builder.Configuration.GetValue("Auraly:Fiscal:Worker:Enabled", true))
     builder.Services.AddHostedService<FiscalSubmissionHostedService>();
 }
 builder.Services.AddScoped<IPosDeviceAuthenticator, SqlPosDeviceAuthenticator>();
-builder.Services.AddScoped<IPosSaleServerStore, SqlPosSaleServerStore>();builder.Services.AddScoped<SqlDocumentProcessingSessionAccessor>();
+builder.Services.AddScoped<IPosSaleServerStore, SqlPosSaleServerStore>();
+builder.Services.AddScoped<SqlDocumentProcessingSessionAccessor>();
 builder.Services.AddScoped<IDocumentProcessingReceiptStore, SqlDocumentProcessingReceiptStore>();
 builder.Services.AddScoped<IConfirmedDocumentHandler, SqlPosSaleDocumentHandler>();
 builder.Services.AddScoped<DocumentProcessingEngine>();
@@ -64,6 +67,9 @@ builder.Services.AddScoped<ReceivePosSaleService>();
 builder.Services.AddScoped<ICatalogStore, SqlCatalogStore>();
 builder.Services.AddScoped<CatalogService>();
 builder.Services.AddScoped<PosCatalogService>();
+builder.Services.AddScoped<IPartyStore, SqlPartyStore>();
+builder.Services.AddScoped<PartyService>();
+builder.Services.AddScoped<GeographyService>();
 builder.Services.AddResponseCompression(options => options.EnableForHttps = true);
 
 var jwtIssuer = builder.Configuration["Authentication:Jwt:Issuer"];
@@ -105,6 +111,11 @@ builder.Services.AddAuthorization(options =>
         policy.AuthenticationSchemes.Add(JwtBearerDefaults.AuthenticationScheme);
         policy.RequireAuthenticatedUser();
     });
+    options.AddPolicy("parties.user", policy =>
+    {
+        policy.AuthenticationSchemes.Add(JwtBearerDefaults.AuthenticationScheme);
+        policy.RequireAuthenticatedUser();
+    });
     options.AddPolicy("pos.catalog.sync", policy =>
     {
         policy.AuthenticationSchemes.Add(PosAuthenticationDefaults.Scheme);
@@ -117,6 +128,14 @@ builder.Services.AddAuthorization(options =>
         policy.RequireAuthenticatedUser();
         policy.RequireClaim(PosAuthenticationDefaults.PermissionClaim,
             FiscalPermissionCodes.PosStatusSync);
+    });
+    options.AddPolicy("pos.customer.create", policy =>
+    {
+        policy.AuthenticationSchemes.Add(PosAuthenticationDefaults.Scheme);
+        policy.RequireAuthenticatedUser();
+        policy.RequireClaim(
+            PosAuthenticationDefaults.PermissionClaim,
+            PartyPermissionCodes.PosCustomerCreate);
     });
     options.AddPolicy(
         "pos.sales.upload",
@@ -136,6 +155,8 @@ app.UseAuthorization();
 
 app.MapGet("/health", () => Results.Ok(new { status = "Healthy" }));
 app.MapCatalogApi();
+app.MapPartyApi();
+app.MapPartyUserAccountApi();
 app.MapFiscalApi();
 app.MapPost(
         "/api/pos/v1/sales",

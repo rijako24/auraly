@@ -21,6 +21,7 @@ CREATE TABLE [dbo].[SalesDocuments]
     [FiscalConsecutive] BIGINT NOT NULL,
     [IssuedAt] DATETIMEOFFSET(7) NOT NULL,
     [CustomerIdentification] NVARCHAR(64) NOT NULL,
+    [CustomerId] UNIQUEIDENTIFIER NULL,
     [UntaxedAmount] DECIMAL(19, 4) NOT NULL,
     [TaxAmount] DECIMAL(19, 4) NOT NULL,
     [PayableAmount] DECIMAL(19, 4) NOT NULL,
@@ -43,6 +44,7 @@ CREATE TABLE [dbo].[SalesDocuments]
     CONSTRAINT [FK_SalesDocuments_FiscalAuthorizations] FOREIGN KEY ([FiscalAuthorizationId]) REFERENCES [dbo].[FiscalAuthorizations] ([FiscalAuthorizationId]),
     CONSTRAINT [UQ_SalesDocuments_Business_Document] UNIQUE ([BusinessId], [DocumentId]),
     CONSTRAINT [UQ_SalesDocuments_Business_Idempotency] UNIQUE ([BusinessId], [IdempotencyKey]),
+    CONSTRAINT [FK_SalesDocuments_Customers] FOREIGN KEY ([CustomerId]) REFERENCES [dbo].[Customers] ([CustomerId]),
     CONSTRAINT [UQ_SalesDocuments_AuralyNumber]
         UNIQUE ([BusinessId], [DocumentType], [DocumentPrefix], [DocumentSeriesCode], [DocumentConsecutive]),
     CONSTRAINT [UQ_SalesDocuments_FiscalNumber]
@@ -59,3 +61,11 @@ GO
 
 CREATE INDEX [IX_SalesDocuments_Business_Status_Received]
     ON [dbo].[SalesDocuments] ([BusinessId], [ProcessingStatus], [ReceivedAt]);
+
+GO
+
+CREATE INDEX [IX_SalesDocuments_Business_Customer_Issued]
+    ON [dbo].[SalesDocuments] ([BusinessId], [CustomerId], [IssuedAt])
+    WHERE [CustomerId] IS NOT NULL;
+
+GO

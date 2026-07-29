@@ -38,6 +38,9 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
         var channelItemId = Guid.NewGuid();
         var listCustomerId = Guid.NewGuid();
         var channelCustomerId = Guid.NewGuid();
+        var listPartyId = Guid.NewGuid();
+        var channelPartyId = Guid.NewGuid();
+        var countryId = Guid.NewGuid();
         await ExecuteAsync(
             """
             INSERT dbo.PriceLists(PriceListId,BusinessId,Code,Name,IsActive,CreatedAt)
@@ -48,18 +51,32 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
             INSERT dbo.ResolvedPriceChannelItems
               (ResolvedPriceChannelItemId,PriceChannelId,ProductId,Amount,CurrencyCode,ValidFrom,IsActive,CreatedAt)
               VALUES(@ChannelItem,@Channel,@Product,11500,N'COP',SYSDATETIMEOFFSET(),1,SYSDATETIMEOFFSET());
-            INSERT dbo.CommerceCustomers
-              (CustomerId,BusinessId,IdentificationType,Identification,Name,IsActive,CreatedAt)
+            INSERT dbo.Countries(CountryId,Code,Name,IsActive,CreatedAt)
+              VALUES(@Country,N'CO',N'Colombia',1,SYSDATETIMEOFFSET());
+            INSERT dbo.Parties
+              (PartyId,TenantId,PartyType,IdentificationCountryId,IdentificationTypeCode,
+               Identification,NormalizedIdentification,DisplayName,CompletionStatus,IsActive,CreatedBy,CreatedAt)
               VALUES
-              (@ListCustomer,@Business,N'CC',N'1001',N'List customer',1,SYSDATETIMEOFFSET()),
-              (@ChannelCustomer,@Business,N'CC',N'1002',N'Channel customer',1,SYSDATETIMEOFFSET());
-            INSERT dbo.CustomerBusinessPricing(CustomerId,PriceListId,PriceChannelId,UpdatedAt)
+              (@ListParty,@Tenant,N'NaturalPerson',@Country,N'CC',N'1001',N'1001',
+               N'List customer',N'Complete',1,@User,SYSDATETIMEOFFSET()),
+              (@ChannelParty,@Tenant,N'NaturalPerson',@Country,N'CC',N'1002',N'1002',
+               N'Channel customer',N'Complete',1,@User,SYSDATETIMEOFFSET());
+            INSERT dbo.Customers(CustomerId,PartyId,BusinessId,IsActive,CreatedBy,CreatedAt)
               VALUES
-              (@ListCustomer,@List,NULL,SYSDATETIMEOFFSET()),
-              (@ChannelCustomer,NULL,@Channel,SYSDATETIMEOFFSET());
+              (@ListCustomer,@ListParty,@Business,1,@User,SYSDATETIMEOFFSET()),
+              (@ChannelCustomer,@ChannelParty,@Business,1,@User,SYSDATETIMEOFFSET());
+            INSERT dbo.CustomerPricingSettings(CustomerId,PriceListId,PriceChannelId,UpdatedBy,UpdatedAt)
+              VALUES
+              (@ListCustomer,@List,NULL,@User,SYSDATETIMEOFFSET()),
+              (@ChannelCustomer,NULL,@Channel,@User,SYSDATETIMEOFFSET());
             """,
             new SqlParameter("@List", priceListId),
             new SqlParameter("@Business", fixture.BusinessId),
+            new SqlParameter("@Tenant", fixture.TenantId),
+            new SqlParameter("@User", fixture.UserId),
+            new SqlParameter("@Country", countryId),
+            new SqlParameter("@ListParty", listPartyId),
+            new SqlParameter("@ChannelParty", channelPartyId),
             new SqlParameter("@ListItem", listItemId),
             new SqlParameter("@ChannelItem", channelItemId),
             new SqlParameter("@Channel", priceChannelId),

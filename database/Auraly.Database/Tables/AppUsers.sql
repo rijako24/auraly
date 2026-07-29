@@ -1,6 +1,7 @@
 CREATE TABLE [dbo].[AppUsers] (
     [UserId] UNIQUEIDENTIFIER NOT NULL PRIMARY KEY DEFAULT NEWID(),
     [TenantId] UNIQUEIDENTIFIER NOT NULL,
+    [PartyId] UNIQUEIDENTIFIER NULL,
     [CreatedByUserId] UNIQUEIDENTIFIER NULL,
     [Username] NVARCHAR(100) NOT NULL,
     [NormalizedUsername] NVARCHAR(100) NOT NULL,
@@ -21,6 +22,9 @@ CREATE TABLE [dbo].[AppUsers] (
     CONSTRAINT [FK_AppUsers_Tenants] FOREIGN KEY ([TenantId])
         REFERENCES [dbo].[Tenants] ([TenantId])
         ON DELETE NO ACTION,
+    CONSTRAINT [FK_AppUsers_Parties] FOREIGN KEY ([TenantId], [PartyId])
+        REFERENCES [dbo].[Parties] ([TenantId], [PartyId])
+        ON DELETE NO ACTION,
     CONSTRAINT [FK_AppUsers_CreatedByUser] FOREIGN KEY ([CreatedByUserId])
         REFERENCES [dbo].[AppUsers] ([UserId])
         ON DELETE NO ACTION
@@ -37,6 +41,11 @@ CREATE UNIQUE INDEX [IX_AppUsers_NormalizedEmail] ON [dbo].[AppUsers] ([Normaliz
 GO
 
 CREATE INDEX [IX_AppUsers_TenantId] ON [dbo].[AppUsers] ([TenantId]);
+
+GO
+
+CREATE UNIQUE INDEX [UX_AppUsers_PartyId] ON [dbo].[AppUsers] ([PartyId])
+    WHERE [PartyId] IS NOT NULL;
 
 GO
 

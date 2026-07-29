@@ -4,6 +4,9 @@ CREATE TABLE [dbo].[ExternalCommerceCustomers] (
     [IntegrationConnectionId] UNIQUEIDENTIFIER NOT NULL,
     [ExternalAccountId] NVARCHAR(150) NOT NULL,
     [ExternalCustomerId] NVARCHAR(150) NOT NULL,
+    [PartyId] UNIQUEIDENTIFIER NULL,
+    [CustomerId] UNIQUEIDENTIFIER NULL,
+    [ReconciliationStatus] NVARCHAR(16) NOT NULL CONSTRAINT [DF_ExternalCommerceCustomers_ReconciliationStatus] DEFAULT N'Pending',
     [Name] NVARCHAR(250) NULL,
     [PhoneNormalized] NVARCHAR(50) NOT NULL,
     [Phone] NVARCHAR(50) NULL,
@@ -14,7 +17,15 @@ CREATE TABLE [dbo].[ExternalCommerceCustomers] (
     CONSTRAINT [FK_ExternalCommerceCustomers_Businesses]
         FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses] ([BusinessId]),
     CONSTRAINT [FK_ExternalCommerceCustomers_IntegrationConnections]
-        FOREIGN KEY ([IntegrationConnectionId]) REFERENCES [dbo].[IntegrationConnections] ([IntegrationConnectionId])
+        FOREIGN KEY ([IntegrationConnectionId]) REFERENCES [dbo].[IntegrationConnections] ([IntegrationConnectionId]),
+    CONSTRAINT [FK_ExternalCommerceCustomers_Parties]
+        FOREIGN KEY ([PartyId]) REFERENCES [dbo].[Parties] ([PartyId]),
+    CONSTRAINT [FK_ExternalCommerceCustomers_Customers]
+        FOREIGN KEY ([CustomerId]) REFERENCES [dbo].[Customers] ([CustomerId]),
+    CONSTRAINT [CK_ExternalCommerceCustomers_ReconciliationStatus]
+        CHECK ([ReconciliationStatus] IN (N'Pending', N'Linked', N'Conflict')),
+    CONSTRAINT [CK_ExternalCommerceCustomers_Link] CHECK (
+        ([PartyId] IS NULL AND [CustomerId] IS NULL) OR ([PartyId] IS NOT NULL AND [CustomerId] IS NOT NULL))
 );
 GO
 

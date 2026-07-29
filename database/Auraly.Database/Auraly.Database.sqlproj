@@ -41,6 +41,7 @@
     <Build Include="Tables\ProductCategories.sql" />
     <Build Include="Tables\Products.sql" />
     <Build Include="Tables\AuralyCatalog.sql" />
+    <Build Include="Tables\AuralyParties.sql" />
     <Build Include="Tables\AuralyPosPricing.sql" />
     <Build Include="Tables\AuralyCatalogSyncSnapshot.sql" />
     <Build Include="Tables\ExternalCommerceCustomers.sql" />

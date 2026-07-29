@@ -71,42 +71,6 @@ CREATE TABLE [dbo].[PriceChannelExclusions] (
 );
 GO
 
-CREATE TABLE [dbo].[CommerceCustomers] (
-    [CustomerId] UNIQUEIDENTIFIER NOT NULL,
-    [BusinessId] UNIQUEIDENTIFIER NOT NULL,
-    [IdentificationType] NVARCHAR(16) NOT NULL,
-    [Identification] NVARCHAR(40) NOT NULL,
-    [Name] NVARCHAR(200) NOT NULL,
-    [Email] NVARCHAR(254) NULL,
-    [Phone] NVARCHAR(32) NULL,
-    [IsActive] BIT NOT NULL,
-    [CreatedAt] DATETIMEOFFSET(7) NOT NULL,
-    [UpdatedAt] DATETIMEOFFSET(7) NULL,
-    [RowVersion] ROWVERSION NOT NULL,
-    CONSTRAINT [PK_CommerceCustomers] PRIMARY KEY ([CustomerId]),
-    CONSTRAINT [FK_CommerceCustomers_Businesses] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses] ([BusinessId]),
-    CONSTRAINT [UQ_CommerceCustomers_Business_Identification] UNIQUE ([BusinessId], [IdentificationType], [Identification])
-);
-GO
-CREATE INDEX [IX_CommerceCustomers_Business_Name]
-    ON [dbo].[CommerceCustomers] ([BusinessId], [Name]);
-GO
-
-CREATE TABLE [dbo].[CustomerBusinessPricing] (
-    [CustomerId] UNIQUEIDENTIFIER NOT NULL,
-    [PriceListId] UNIQUEIDENTIFIER NULL,
-    [PriceChannelId] UNIQUEIDENTIFIER NULL,
-    [UpdatedAt] DATETIMEOFFSET(7) NOT NULL,
-    [RowVersion] ROWVERSION NOT NULL,
-    CONSTRAINT [PK_CustomerBusinessPricing] PRIMARY KEY ([CustomerId]),
-    CONSTRAINT [FK_CustomerBusinessPricing_Customers] FOREIGN KEY ([CustomerId]) REFERENCES [dbo].[CommerceCustomers] ([CustomerId]),
-    CONSTRAINT [FK_CustomerBusinessPricing_PriceLists] FOREIGN KEY ([PriceListId]) REFERENCES [dbo].[PriceLists] ([PriceListId]),
-    CONSTRAINT [FK_CustomerBusinessPricing_PriceChannels] FOREIGN KEY ([PriceChannelId]) REFERENCES [dbo].[PriceChannels] ([PriceChannelId]),
-    CONSTRAINT [CK_CustomerBusinessPricing_Exclusive] CHECK (
-        NOT ([PriceListId] IS NOT NULL AND [PriceChannelId] IS NOT NULL))
-);
-GO
-
 CREATE TABLE [dbo].[CommerceSellers] (
     [SellerId] UNIQUEIDENTIFIER NOT NULL,
     [BusinessId] UNIQUEIDENTIFIER NOT NULL,
