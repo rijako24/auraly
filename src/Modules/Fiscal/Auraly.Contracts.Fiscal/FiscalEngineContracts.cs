@@ -44,6 +44,21 @@ public sealed record FiscalCertificateReference(
     string KeyReference,
     string ExpectedThumbprint);
 
+public sealed record DianHabilitationConfiguration(
+    Uri Endpoint,
+    FiscalCertificateReference Certificate,
+    TimeSpan OpenTimeout,
+    TimeSpan SendTimeout,
+    TimeSpan ReceiveTimeout,
+    long MaximumMessageBytes);
+
+public interface IDianHabilitationConfigurationProvider
+{
+    Task<DianHabilitationConfiguration> ResolveAsync(
+        Guid businessId,
+        CancellationToken cancellationToken = default);
+}
+
 public sealed record FiscalSigningRequest(
     Guid BusinessId,
     string SupplierTaxId,
@@ -101,4 +116,10 @@ public interface IDianHabilitationTransport
     Task<DianSubmissionResult> GetStatusZipAsync(
         DianSubmissionRequest request,
         CancellationToken cancellationToken = default);
+}
+
+public static class DianOperationCodes
+{
+    public const string SendTestSet = "SendTestSetAsync";
+    public const string GetStatusZip = "GetStatusZip";
 }

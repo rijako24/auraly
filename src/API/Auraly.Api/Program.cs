@@ -35,17 +35,26 @@ builder.Services.AddScoped<IFiscalSnapshotVerifier, FiscalSnapshotVerifier>();
 builder.Services.AddScoped<IFiscalDocumentStore, SqlFiscalDocumentStore>();
 builder.Services.AddScoped<FiscalDocumentService>();
 builder.Services.AddScoped<IFiscalGenerationWorkStore, SqlFiscalGenerationWorkStore>();
+builder.Services.AddScoped<IFiscalSubmissionWorkStore, SqlFiscalSubmissionWorkStore>();
+builder.Services.AddScoped<IDianHabilitationConfigurationProvider,
+    SqlDianHabilitationConfigurationProvider>();
 builder.Services.AddSingleton<IFiscalSoftwarePinProvider, EnvironmentFiscalSoftwarePinProvider>();
 builder.Services.AddSingleton<IFiscalSigningCertificateProvider, WindowsFiscalSigningCertificateProvider>();
 builder.Services.AddSingleton<IFiscalXmlSigner, DianXadesSigner>();
+builder.Services.AddSingleton<IDianWcfClientFactory, DianWcfClientFactory>();
+builder.Services.AddScoped<IDianHabilitationTransport, DianHabilitationTransport>();
 builder.Services.AddSingleton<DianInvoiceUblBuilder>();
 builder.Services.AddSingleton<DianSchemaValidator>();
+builder.Services.AddSingleton<FiscalSubmissionPackageBuilder>();
 builder.Services.AddScoped<FiscalGenerationWorker>();
+builder.Services.AddScoped<FiscalSubmissionWorker>();
 if (builder.Configuration.GetValue("Auraly:Fiscal:Worker:Enabled", true))
+{
     builder.Services.AddHostedService<FiscalGenerationHostedService>();
+    builder.Services.AddHostedService<FiscalSubmissionHostedService>();
+}
 builder.Services.AddScoped<IPosDeviceAuthenticator, SqlPosDeviceAuthenticator>();
-builder.Services.AddScoped<IPosSaleServerStore, SqlPosSaleServerStore>();
-builder.Services.AddScoped<SqlDocumentProcessingSessionAccessor>();
+builder.Services.AddScoped<IPosSaleServerStore, SqlPosSaleServerStore>();builder.Services.AddScoped<SqlDocumentProcessingSessionAccessor>();
 builder.Services.AddScoped<IDocumentProcessingReceiptStore, SqlDocumentProcessingReceiptStore>();
 builder.Services.AddScoped<IConfirmedDocumentHandler, SqlPosSaleDocumentHandler>();
 builder.Services.AddScoped<DocumentProcessingEngine>();

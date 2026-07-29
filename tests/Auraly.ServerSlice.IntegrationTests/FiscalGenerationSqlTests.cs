@@ -44,6 +44,69 @@ public sealed class FiscalGenerationSqlTests(ServerSliceFixture fixture)
         Assert.DoesNotContain("MAESTRO CAMBIADO", xml, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task Signed_invoice_is_submitted_queried_and_accepted_exactly_once()
+    {
+        var request = WithUblSnapshot(fixture.CreateValidRequest(902));
+        using var client = fixture.CreateClient();
+        using var response = await client.SendAsync(fixture.CreateUploadMessage(request));
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var connections = new SqlServerConnectionFactory(fixture.ConnectionString);
+        var ids = new TestIds();
+        var generatedAt = new DateTimeOffset(2026, 7, 29, 16, 0, 0, TimeSpan.Zero);
+        Assert.True(await CreateWorker(
+            new SqlFiscalGenerationWorkStore(connections, ids),
+            new FixedTimeProvider(generatedAt)).ProcessNextAsync("generator"));
+        await QuarantineOtherPendingFiscalWorkAsync(request.DocumentId);
+
+        var submissionStore = new SqlFiscalSubmissionWorkStore(connections, ids);
+        var transport = new SequenceTransport(
+            new DianSubmissionResult(
+                DianSubmissionDisposition.Received, "track-902", "Received", "Queued",
+                null, Encoding.UTF8.GetBytes("received"), true),
+            new DianSubmissionResult(
+                DianSubmissionDisposition.Accepted, "track-902", "00", "Accepted",
+                Encoding.UTF8.GetBytes("<ApplicationResponse />"),
+                Encoding.UTF8.GetBytes("accepted"), true));
+        var packages = new FiscalSubmissionPackageBuilder();
+        var first = new FiscalSubmissionWorker(
+            submissionStore, transport, packages, new FixedTimeProvider(generatedAt.AddSeconds(1)));
+        Assert.True(await first.ProcessNextAsync("submitter-one"));
+        Assert.Equal(FiscalDocumentStatusCodes.PendingDianResult,
+            await ScalarStringAsync(
+                "SELECT Status FROM dbo.FiscalDocumentProcesses WHERE DocumentId=@DocumentId",
+                request.DocumentId));
+
+        var second = new FiscalSubmissionWorker(
+            submissionStore, transport, packages, new FixedTimeProvider(generatedAt.AddSeconds(10)));
+        Assert.True(await second.ProcessNextAsync("submitter-two"));
+        Assert.False(await second.ProcessNextAsync("submitter-two"));
+
+        Assert.Equal(FiscalDocumentStatusCodes.DianAccepted,
+            await ScalarStringAsync(
+                "SELECT Status FROM dbo.FiscalDocumentProcesses WHERE DocumentId=@DocumentId",
+                request.DocumentId));
+        Assert.Equal(FiscalDocumentStatusCodes.DianAccepted,
+            await ScalarStringAsync(
+                "SELECT FiscalStatus FROM dbo.SalesDocuments WHERE DocumentId=@DocumentId",
+                request.DocumentId));
+        Assert.Equal(2, await ScalarIntAsync(
+            "SELECT COUNT(*) FROM dbo.FiscalTransmissionAttempts WHERE DocumentId=@DocumentId",
+            request.DocumentId));
+        Assert.Equal(1, await ScalarIntAsync(
+            "SELECT COUNT(*) FROM dbo.FiscalArtifacts WHERE DocumentId=@DocumentId AND ArtifactType='SubmissionZip'",
+            request.DocumentId));
+        Assert.Equal(1, await ScalarIntAsync(
+            "SELECT COUNT(*) FROM dbo.FiscalArtifacts WHERE DocumentId=@DocumentId AND ArtifactType='DianApplicationResponse'",
+            request.DocumentId));
+        Assert.Equal(1, await ScalarIntAsync(
+            "SELECT COUNT(*) FROM dbo.ServerOutboxMessages WHERE DocumentId=@DocumentId AND Type='FiscalDocument.DianAccepted'",
+            request.DocumentId));
+        Assert.Equal(1, transport.SendCalls);
+        Assert.Equal(1, transport.QueryCalls);
+    }
+
     private FiscalGenerationWorker CreateWorker(IFiscalGenerationWorkStore store, TimeProvider clock) =>
         new(store, new TestPin(), new DianInvoiceUblBuilder(), new DianSchemaValidator(),
             new TestSigner(), clock);
@@ -112,6 +175,21 @@ public sealed class FiscalGenerationSqlTests(ServerSliceFixture fixture)
         return (byte[])(await command.ExecuteScalarAsync())!;
     }
 
+    private async Task QuarantineOtherPendingFiscalWorkAsync(Guid documentId)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            UPDATE dbo.FiscalDocumentProcesses
+            SET Status='PermanentFailure',NextAttemptAt=NULL,LockedAt=NULL,LockedBy=NULL
+            WHERE DocumentId<>@DocumentId
+              AND Status IN ('PendingSubmission','PendingDianResult','RetryScheduled');
+            """;
+        command.Parameters.AddWithValue("@DocumentId", documentId);
+        await command.ExecuteNonQueryAsync();
+    }
+
     private sealed class TestIds : IAuralyIdGenerator
     {
         public Guid NewId() => Guid.NewGuid();
@@ -132,6 +210,39 @@ public sealed class FiscalGenerationSqlTests(ServerSliceFixture fixture)
     }
     private sealed class FixedTimeProvider(DateTimeOffset now) : TimeProvider
     {
+
         public override DateTimeOffset GetUtcNow() => now;
     }
+    private sealed class SequenceTransport(params DianSubmissionResult[] results)
+        : IDianHabilitationTransport
+    {
+        private int index;
+        public int SendCalls { get; private set; }
+        public int QueryCalls { get; private set; }
+
+        public Task<DianSubmissionResult> SubmitTestSetAsync(
+            DianSubmissionRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            SendCalls++;
+            return Next();
+        }
+
+        public Task<DianSubmissionResult> GetStatusZipAsync(
+            DianSubmissionRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            QueryCalls++;
+            Assert.Equal("track-902", request.TrackId);
+            return Next();
+        }
+
+        private Task<DianSubmissionResult> Next()
+        {
+            if (index >= results.Length)
+                throw new InvalidOperationException("The deterministic DIAN response sequence is exhausted.");
+            return Task.FromResult(results[index++]);
+        }
+    }
+
 }

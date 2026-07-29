@@ -8,20 +8,6 @@ using Auraly.Contracts.Fiscal;
 
 namespace Auraly.Infrastructure.Fiscal;
 
-public sealed record DianHabilitationConfiguration(
-    Uri Endpoint,
-    FiscalCertificateReference Certificate,
-    TimeSpan OpenTimeout,
-    TimeSpan SendTimeout,
-    TimeSpan ReceiveTimeout,
-    long MaximumMessageBytes);
-
-public interface IDianHabilitationConfigurationProvider
-{
-    Task<DianHabilitationConfiguration> ResolveAsync(
-        Guid businessId,
-        CancellationToken cancellationToken = default);
-}
 
 public interface IDianWcfClient : IAsyncDisposable
 {
