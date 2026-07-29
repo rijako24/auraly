@@ -5,6 +5,7 @@ using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Contracts.Catalog;
 using Auraly.Contracts.Fiscal;
 using Auraly.Contracts.Organization;
+using Auraly.Contracts.Sales;
 using Auraly.Fiscal.Core;
 using Microsoft.Data.Sqlite;
 
@@ -51,7 +52,8 @@ public sealed record CompletePosSaleCommand(
     string QrValidationUrl,
     IReadOnlyCollection<OfflineSalePayment> Payments,
     Guid DeviceId,
-    int PaperWidthMillimeters = 80);
+    int PaperWidthMillimeters = 80,
+    PosSaleUblSnapshotContract? UblSnapshot = null);
 
 public sealed record CompletePosSaleResult(
     PosEdgeIssueResult IssuedSale,
@@ -227,7 +229,8 @@ public sealed class PosSaleCompletionService(
                 command.QrValidationUrl,
                 lines,
                 command.DeviceId,
-                command.Payments),
+                command.Payments,
+                command.UblSnapshot),
             ct);
         await issuance.MarkIssuedAsync(draftId, issued.DocumentId, ct);
         var immutable = issued.Upload;

@@ -12,6 +12,8 @@ using Auraly.Contracts.Catalog;
 using Auraly.Contracts.DocumentProcessing;
 using Auraly.Contracts.Fiscal;
 using Auraly.Contracts.Sales;
+using Auraly.Fiscal.Ubl;
+using Auraly.Infrastructure.Fiscal;
 using Auraly.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -32,6 +34,15 @@ builder.Services.AddSingleton<IFiscalTechnicalKeyProvider, ConfigurationFiscalTe
 builder.Services.AddScoped<IFiscalSnapshotVerifier, FiscalSnapshotVerifier>();
 builder.Services.AddScoped<IFiscalDocumentStore, SqlFiscalDocumentStore>();
 builder.Services.AddScoped<FiscalDocumentService>();
+builder.Services.AddScoped<IFiscalGenerationWorkStore, SqlFiscalGenerationWorkStore>();
+builder.Services.AddSingleton<IFiscalSoftwarePinProvider, EnvironmentFiscalSoftwarePinProvider>();
+builder.Services.AddSingleton<IFiscalSigningCertificateProvider, WindowsFiscalSigningCertificateProvider>();
+builder.Services.AddSingleton<IFiscalXmlSigner, DianXadesSigner>();
+builder.Services.AddSingleton<DianInvoiceUblBuilder>();
+builder.Services.AddSingleton<DianSchemaValidator>();
+builder.Services.AddScoped<FiscalGenerationWorker>();
+if (builder.Configuration.GetValue("Auraly:Fiscal:Worker:Enabled", true))
+    builder.Services.AddHostedService<FiscalGenerationHostedService>();
 builder.Services.AddScoped<IPosDeviceAuthenticator, SqlPosDeviceAuthenticator>();
 builder.Services.AddScoped<IPosSaleServerStore, SqlPosSaleServerStore>();
 builder.Services.AddScoped<SqlDocumentProcessingSessionAccessor>();

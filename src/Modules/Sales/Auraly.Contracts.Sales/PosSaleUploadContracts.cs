@@ -30,7 +30,8 @@ public sealed record PosSaleLineContract(
     decimal DiscountAmount,
     decimal TaxAmount,
     decimal UntaxedAmount,
-    decimal LineTotal);
+    decimal LineTotal,
+    decimal TaxRate = 0m);
 
 public sealed record PosSalePaymentContract(
     int PaymentNumber,
@@ -67,6 +68,61 @@ public sealed record PosSaleFiscalSnapshotContract(
     string Cufe,
     string QrPayload);
 
+public sealed record PosSaleUblAddressContract(
+    string MunicipalityCode,
+    string CityName,
+    string DepartmentName,
+    string DepartmentCode,
+    string AddressLine,
+    string CountryCode = "CO",
+    string CountryName = "Colombia");
+
+public sealed record PosSaleUblPartyContract(
+    string Identification,
+    string CheckDigit,
+    string IdentificationTypeCode,
+    string OrganizationTypeCode,
+    string RegistrationName,
+    string TradeName,
+    string TaxResponsibilityCode,
+    string TaxSchemeId,
+    string TaxSchemeName,
+    PosSaleUblAddressContract Address,
+    string? Email = null,
+    string? Telephone = null);
+
+public sealed record PosSaleUblLineContract(
+    int LineNumber,
+    string ProductCode,
+    string ProductCodeScheme,
+    string UnitCode,
+    string TaxName,
+    decimal TaxPercent,
+    string DiscountReasonCode = "00",
+    string DiscountReason = "Descuento");
+
+public sealed record PosSaleUblAuthorizationContract(
+    string Number,
+    DateOnly ValidFrom,
+    DateOnly ValidUntil,
+    string Prefix,
+    long RangeStart,
+    long RangeEnd);
+
+public sealed record PosSaleUblSnapshotContract(
+    Guid FiscalIssuerConfigurationId,
+    string CurrencyCode,
+    string InvoiceTypeCode,
+    PosSaleUblPartyContract Supplier,
+    PosSaleUblPartyContract Customer,
+    PosSaleUblAuthorizationContract Authorization,
+    string SoftwareIdentificationCode,
+    IReadOnlyList<PosSaleUblLineContract> Lines,
+    string PaymentFormCode,
+    string PaymentMeansCode,
+    DateOnly DueDate,
+    string? PaymentReference);
+
 public sealed record PosSaleUploadRequest(
     Guid TenantId,
     Guid BusinessId,
@@ -78,7 +134,8 @@ public sealed record PosSaleUploadRequest(
     PosSaleDocumentNumberContract DocumentNumber,
     PosSaleFiscalSnapshotContract FiscalSnapshot,
     IReadOnlyList<PosSaleLineContract> Lines,
-    IReadOnlyList<PosSalePaymentContract> Payments);
+    IReadOnlyList<PosSalePaymentContract> Payments,
+    PosSaleUblSnapshotContract? UblSnapshot = null);
 
 public sealed record PosSaleUploadResponse(
     Guid ReceiptId,

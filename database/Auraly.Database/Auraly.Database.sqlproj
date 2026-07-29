@@ -97,6 +97,7 @@
     <Build Include="Tables\FiscalSeries.sql" />
     <Build Include="Tables\SalesDocuments.sql" />
     <Build Include="Tables\SalesDocumentLines.sql" />
+    <Build Include="Tables\SalesDocumentTaxSummaries.sql" />
     <Build Include="Tables\SalesPayments.sql" />
     <Build Include="Tables\FiscalSnapshots.sql" />
     <Build Include="Tables\FiscalIssuerConfigurations.sql" />

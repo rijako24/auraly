@@ -5,6 +5,7 @@ CREATE TABLE [dbo].[SalesDocumentLines]
     [ProductId] UNIQUEIDENTIFIER NOT NULL,
     [Description] NVARCHAR(300) NOT NULL,
     [TaxCode] NVARCHAR(16) NOT NULL,
+    [TaxRate] DECIMAL(9, 6) NOT NULL CONSTRAINT [DF_SalesDocumentLines_TaxRate] DEFAULT (0),
     [Quantity] DECIMAL(19, 6) NOT NULL,
     [UnitPrice] DECIMAL(19, 4) NOT NULL,
     [DiscountAmount] DECIMAL(19, 4) NOT NULL,
@@ -15,7 +16,7 @@ CREATE TABLE [dbo].[SalesDocumentLines]
     CONSTRAINT [FK_SalesDocumentLines_SalesDocuments] FOREIGN KEY ([DocumentId]) REFERENCES [dbo].[SalesDocuments] ([DocumentId]),
     CONSTRAINT [FK_SalesDocumentLines_Products] FOREIGN KEY ([ProductId]) REFERENCES [dbo].[Products] ([ProductId]),
     CONSTRAINT [CK_SalesDocumentLines_Values] CHECK
-        ([LineNumber] > 0 AND [Quantity] > 0 AND [UnitPrice] >= 0 AND [DiscountAmount] >= 0 AND [TaxAmount] >= 0)
+        ([LineNumber] > 0 AND [Quantity] > 0 AND [UnitPrice] >= 0 AND [DiscountAmount] >= 0 AND [TaxAmount] >= 0 AND [TaxRate] >= 0)
 );
 
 GO

@@ -130,9 +130,19 @@ public sealed class FiscalSnapshotVerifier(IFiscalTechnicalKeyProvider keyProvid
                 line.Quantity <= 0 ||
                 line.UnitPrice < 0 ||
                 line.DiscountAmount < 0 ||
-                line.TaxAmount < 0)
+                line.TaxAmount < 0 ||
+                line.TaxRate < 0)
             {
                 return $"Line {line.LineNumber} contains invalid values.";
+            }
+
+            var expectedTax = decimal.Round(
+                line.UntaxedAmount * line.TaxRate / 100m,
+                2,
+                MidpointRounding.ToEven);
+            if (expectedTax != line.TaxAmount)
+            {
+                return $"Line {line.LineNumber} tax does not match its frozen rate and taxable amount.";
             }
 
             var untaxed = decimal.Round(

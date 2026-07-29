@@ -50,7 +50,8 @@ public sealed record PosEdgeIssueCommand(
     string QrValidationUrl,
     IReadOnlyCollection<OfflineSaleLine> Lines,
     Guid DeviceId = default,
-    IReadOnlyCollection<OfflineSalePayment>? Payments = null);
+    IReadOnlyCollection<OfflineSalePayment>? Payments = null,
+    PosSaleUblSnapshotContract? UblSnapshot = null);
 
 public sealed record PosFiscalNumberPreview(
     Guid SeriesId,
@@ -149,6 +150,7 @@ public sealed class PosEdgeSaleStore
                 FiscalAuthorizationId = provision.FiscalAuthorizationId == Guid.Empty
                     ? provision.SeriesId
                     : provision.FiscalAuthorizationId,
+                RangeStart = provision.RangeStart,
                 NextConsecutive = provision.RangeStart,
                 RangeEnd = provision.RangeEnd,
                 ValidUntil = provision.ValidUntil,
@@ -158,6 +160,8 @@ public sealed class PosEdgeSaleStore
         }
         else
         {
+            if (current.RangeStart != provision.RangeStart || current.RangeEnd != provision.RangeEnd)
+                throw new InvalidOperationException("The provisioned fiscal range differs from the durable local series.");
             await BackfillFiscalAuthorizationAsync(
                 context,
                 provision.SeriesId,
@@ -328,6 +332,8 @@ public sealed class PosEdgeSaleStore
         {
             throw new InvalidOperationException("The fiscal series is exhausted.");
         }
+
+        ValidateUblSnapshot(command, cursor);
 
         var consecutive = cursor.NextConsecutive;
         cursor.NextConsecutive++;
@@ -592,7 +598,8 @@ public sealed class PosEdgeSaleStore
                 decimal.Round(
                     (line.Quantity * line.UnitPrice) - line.Discount,
                     2,
-                    MidpointRounding.ToEven) + line.TaxAmount))
+                    MidpointRounding.ToEven) + line.TaxAmount,
+                line.Product.TaxRate))
             .ToArray();
         var payments = command.Payments is { Count: > 0 }
             ? command.Payments
@@ -651,7 +658,8 @@ public sealed class PosEdgeSaleStore
                 snapshot.Cufe,
                 snapshot.QrPayload),
             lines,
-            payments);
+            payments,
+            command.UblSnapshot);
     }
 
     private static readonly System.Linq.Expressions.Expression<Func<PosOutboxRow, PosEdgeOutboxItem>>
@@ -778,11 +786,25 @@ public sealed class PosEdgeSaleStore
         }
 
         if (!columns.Contains("FiscalAuthorizationId"))
+
+        {
+
+            await using var command = connection.CreateCommand();
+
+            command.CommandText =
+
+                "ALTER TABLE FiscalSeriesCursors ADD COLUMN FiscalAuthorizationId TEXT NOT NULL " +
+
+                "DEFAULT '00000000-0000-0000-0000-000000000000';";
+
+            await command.ExecuteNonQueryAsync(cancellationToken);
+
+        }
+        if (!columns.Contains("RangeStart"))
         {
             await using var command = connection.CreateCommand();
             command.CommandText =
-                "ALTER TABLE FiscalSeriesCursors ADD COLUMN FiscalAuthorizationId TEXT NOT NULL " +
-                "DEFAULT '00000000-0000-0000-0000-000000000000';";
+                "ALTER TABLE FiscalSeriesCursors ADD COLUMN RangeStart INTEGER NOT NULL DEFAULT 1;";
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
     }
@@ -825,5 +847,30 @@ public sealed class PosEdgeSaleStore
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
     }
-}
+
+    private static void ValidateUblSnapshot(PosEdgeIssueCommand command, FiscalSeriesCursorRow cursor)
+    {
+        var snapshot = command.UblSnapshot;
+        if (snapshot is null) return;
+        if (snapshot.FiscalIssuerConfigurationId == Guid.Empty ||
+            string.IsNullOrWhiteSpace(snapshot.SoftwareIdentificationCode))
+            throw new InvalidOperationException("The UBL snapshot requires an issuer configuration version and software ID.");
+        if (snapshot.Supplier.Identification != command.SupplierTaxId ||
+            snapshot.Customer.Identification != command.CustomerIdentification)
+            throw new InvalidOperationException("The UBL supplier or customer differs from the sale being issued.");
+        if (snapshot.Authorization.Number != cursor.AuthorizationNumber ||
+            snapshot.Authorization.Prefix != cursor.Prefix ||
+            snapshot.Authorization.RangeStart != cursor.RangeStart ||
+            snapshot.Authorization.RangeEnd != cursor.RangeEnd ||
+            snapshot.Authorization.ValidUntil != cursor.ValidUntil)
+            throw new InvalidOperationException("The UBL authorization differs from the provisioned fiscal series.");
+        if (snapshot.Lines.Count != command.Lines.Count ||
+            !snapshot.Lines.Select(line => line.LineNumber).Order()
+                .SequenceEqual(Enumerable.Range(1, command.Lines.Count)))
+            throw new InvalidOperationException("The UBL line metadata does not match the sale lines.");
+        var fiscalLines = snapshot.Lines.ToDictionary(line => line.LineNumber);
+        if (command.Lines.Select((line, index) => new { Line = line, Number = index + 1 })
+            .Any(item => fiscalLines[item.Number].TaxPercent != item.Line.Product.TaxRate))
+            throw new InvalidOperationException("The UBL tax rate differs from the immutable sale lines.");
+    }}
 

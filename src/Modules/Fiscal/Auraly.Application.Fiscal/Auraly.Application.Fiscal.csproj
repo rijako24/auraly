@@ -6,7 +6,9 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\..\Fiscal\Auraly.Fiscal.Core\Auraly.Fiscal.Core.csproj" />
+    <ProjectReference Include="..\..\..\Fiscal\Auraly.Fiscal.Ubl\Auraly.Fiscal.Ubl.csproj" />
     <ProjectReference Include="..\Auraly.Contracts.Fiscal\Auraly.Contracts.Fiscal.csproj" />
     <ProjectReference Include="..\Auraly.Domain.Fiscal\Auraly.Domain.Fiscal.csproj" />
+    <ProjectReference Include="..\..\Sales\Auraly.Contracts.Sales\Auraly.Contracts.Sales.csproj" />
   </ItemGroup>
 </Project>

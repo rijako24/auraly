@@ -335,13 +335,16 @@ public sealed class SqlPosSaleServerStore(
             )
             VALUES
             (
-                @DocumentId, @BusinessId, NULL, @Status,
+                @DocumentId, @BusinessId, @FiscalIssuerConfigurationId, @Status,
                 0, @CreatedAt, @CreatedAt
             );
             """;
         await using var sqlCommand = new SqlCommand(sql, connection, transaction);
         sqlCommand.Parameters.AddWithValue("@DocumentId", command.Request.DocumentId);
         sqlCommand.Parameters.AddWithValue("@BusinessId", command.Request.BusinessId);
+        sqlCommand.Parameters.AddWithValue(
+            "@FiscalIssuerConfigurationId",
+            (object?)command.Request.UblSnapshot?.FiscalIssuerConfigurationId ?? DBNull.Value);
         sqlCommand.Parameters.AddWithValue("@Status", status);
         sqlCommand.Parameters.AddWithValue("@CreatedAt", command.ReceivedAt);
         await sqlCommand.ExecuteNonQueryAsync(cancellationToken);

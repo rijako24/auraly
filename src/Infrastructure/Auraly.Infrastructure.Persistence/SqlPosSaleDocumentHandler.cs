@@ -34,6 +34,8 @@ public sealed class SqlPosSaleDocumentHandler(
             await InsertInventoryMovementAsync(session, request, line, cancellationToken);
         }
 
+        await InsertTaxSummariesAsync(session, request, cancellationToken);
+
         foreach (var payment in request.Payments.OrderBy(payment => payment.PaymentNumber))
         {
             await InsertPaymentAsync(session, request, payment, cancellationToken);
@@ -52,13 +54,13 @@ public sealed class SqlPosSaleDocumentHandler(
         const string sql = """
             INSERT INTO dbo.SalesDocumentLines
             (
-                DocumentId, LineNumber, ProductId, Description, TaxCode,
+                DocumentId, LineNumber, ProductId, Description, TaxCode, TaxRate,
                 Quantity, UnitPrice, DiscountAmount, TaxAmount,
                 UntaxedAmount, LineTotal
             )
             VALUES
             (
-                @DocumentId, @LineNumber, @ProductId, @Description, @TaxCode,
+                @DocumentId, @LineNumber, @ProductId, @Description, @TaxCode, @TaxRate,
                 @Quantity, @UnitPrice, @DiscountAmount, @TaxAmount,
                 @UntaxedAmount, @LineTotal
             );
@@ -69,6 +71,7 @@ public sealed class SqlPosSaleDocumentHandler(
         command.Parameters.AddWithValue("@ProductId", line.ProductId);
         command.Parameters.AddWithValue("@Description", line.Description);
         command.Parameters.AddWithValue("@TaxCode", line.TaxCode);
+        AddDecimal(command, "@TaxRate", line.TaxRate, 9, 6);
         AddDecimal(command, "@Quantity", line.Quantity, 19, 6);
         AddDecimal(command, "@UnitPrice", line.UnitPrice, 19, 4);
         AddDecimal(command, "@DiscountAmount", line.DiscountAmount, 19, 4);
@@ -76,6 +79,41 @@ public sealed class SqlPosSaleDocumentHandler(
         AddDecimal(command, "@UntaxedAmount", line.UntaxedAmount, 19, 4);
         AddDecimal(command, "@LineTotal", line.LineTotal, 19, 4);
         await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private static async Task InsertTaxSummariesAsync(
+        SqlDocumentProcessingSessionAccessor.Session session,
+        PosSaleUploadRequest request,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            INSERT INTO dbo.SalesDocumentTaxSummaries
+            (
+                DocumentId, TaxCode, TaxRate, TaxableAmount,
+                TaxAmount, TotalAmount, CreatedAt
+            )
+            VALUES
+            (
+                @DocumentId, @TaxCode, @TaxRate, @TaxableAmount,
+                @TaxAmount, @TotalAmount, @CreatedAt
+            );
+            """;
+        var summaries = request.Lines
+            .GroupBy(line => new { line.TaxCode, line.TaxRate })
+            .OrderBy(group => group.Key.TaxCode, StringComparer.Ordinal)
+            .ThenBy(group => group.Key.TaxRate);
+        foreach (var summary in summaries)
+        {
+            await using var command = new SqlCommand(sql, session.Connection, session.Transaction);
+            command.Parameters.AddWithValue("@DocumentId", request.DocumentId);
+            command.Parameters.AddWithValue("@TaxCode", summary.Key.TaxCode);
+            AddDecimal(command, "@TaxRate", summary.Key.TaxRate, 9, 6);
+            AddDecimal(command, "@TaxableAmount", summary.Sum(line => line.UntaxedAmount), 19, 4);
+            AddDecimal(command, "@TaxAmount", summary.Sum(line => line.TaxAmount), 19, 4);
+            AddDecimal(command, "@TotalAmount", summary.Sum(line => line.LineTotal), 19, 4);
+            command.Parameters.AddWithValue("@CreatedAt", request.FiscalSnapshot.IssuedAt);
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
     }
 
     private async Task InsertInventoryMovementAsync(

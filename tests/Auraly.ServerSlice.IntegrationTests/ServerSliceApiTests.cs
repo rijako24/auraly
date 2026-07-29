@@ -31,6 +31,7 @@ public sealed class ServerSliceApiTests(ServerSliceFixture fixture)
         Assert.Contains(receipts, receipt => receipt!.Status == PosSaleRemoteStatuses.AlreadyProcessed);
         Assert.Equal(1, await fixture.CountAsync("SalesDocuments", request.DocumentId));
         Assert.Equal(1, await fixture.CountAsync("SalesDocumentLines", request.DocumentId));
+        Assert.Equal(1, await fixture.CountAsync("SalesDocumentTaxSummaries", request.DocumentId));
         Assert.Equal(1, await fixture.CountAsync("SalesPayments", request.DocumentId));
         Assert.Equal(1, await fixture.CountAsync("InventoryMovements", request.DocumentId));
         Assert.Equal(1, await fixture.CountAsync("ServerOutboxMessages", request.DocumentId));
@@ -40,6 +41,41 @@ public sealed class ServerSliceApiTests(ServerSliceFixture fixture)
         {
             response.Dispose();
         }
+    }
+
+    [Fact]
+    public async Task Multiple_tax_rates_are_grouped_on_the_server_when_the_sale_is_processed()
+    {
+        var request = fixture.CreateMultiRateRequest(151);
+        using var client = fixture.CreateClient();
+        using var upload = fixture.CreateUploadMessage(request);
+        using var response = await client.SendAsync(upload);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var summaries = await fixture.GetTaxSummariesAsync(request.DocumentId);
+        Assert.Collection(
+            summaries,
+            fivePercent =>
+            {
+                Assert.Equal("01", fivePercent.TaxCode);
+                Assert.Equal(5m, fivePercent.TaxRate);
+                Assert.Equal(10_000m, fivePercent.TaxableAmount);
+                Assert.Equal(500m, fivePercent.TaxAmount);
+                Assert.Equal(10_500m, fivePercent.TotalAmount);
+            },
+            nineteenPercent =>
+            {
+                Assert.Equal("01", nineteenPercent.TaxCode);
+                Assert.Equal(19m, nineteenPercent.TaxRate);
+                Assert.Equal(20_000m, nineteenPercent.TaxableAmount);
+                Assert.Equal(3_800m, nineteenPercent.TaxAmount);
+                Assert.Equal(23_800m, nineteenPercent.TotalAmount);
+            });
+
+        using var duplicate = fixture.CreateUploadMessage(request);
+        using var duplicateResponse = await client.SendAsync(duplicate);
+        Assert.Equal(HttpStatusCode.OK, duplicateResponse.StatusCode);
+        Assert.Equal(2, await fixture.CountAsync("SalesDocumentTaxSummaries", request.DocumentId));
     }
 
     [Fact]
@@ -128,7 +164,8 @@ public sealed class ServerSliceApiTests(ServerSliceFixture fixture)
         "tax",
         "total",
         "prefix",
-        "authorization"
+        "authorization",
+        "rate"
     };
 
     [Theory]
@@ -139,7 +176,7 @@ public sealed class ServerSliceApiTests(ServerSliceFixture fixture)
         {
             "number" => 1, "date" => 2, "customer" => 3, "quantity" => 4,
             "price" => 5, "discount" => 6, "tax" => 7, "total" => 8,
-            "prefix" => 9, "authorization" => 10,
+            "prefix" => 9, "authorization" => 10, "rate" => 11,
             _ => throw new ArgumentOutOfRangeException(nameof(mutation))
         };
         var original = fixture.CreateValidRequest(consecutive);
@@ -156,6 +193,7 @@ public sealed class ServerSliceApiTests(ServerSliceFixture fixture)
         Assert.Equal(1, await fixture.CountAsync("SalesDocuments", original.DocumentId));
         Assert.Equal(1, await fixture.CountAsync("FiscalSnapshots", original.DocumentId));
         Assert.Equal(0, await fixture.CountAsync("SalesPayments", original.DocumentId));
+        Assert.Equal(0, await fixture.CountAsync("SalesDocumentTaxSummaries", original.DocumentId));
         Assert.Equal(0, await fixture.CountAsync("InventoryMovements", original.DocumentId));
         Assert.Equal(0, await fixture.CountAsync("ServerOutboxMessages", original.DocumentId));
         Assert.Equal(1, await fixture.CountAsync("FiscalDocumentProcesses", original.DocumentId));
@@ -206,6 +244,10 @@ public sealed class ServerSliceApiTests(ServerSliceFixture fixture)
             "authorization" => request with
             {
                 FiscalSnapshot = snapshot with { AuthorizationNumber = "18760000999" }
+            },
+            "rate" => request with
+            {
+                Lines = [line with { TaxRate = line.TaxRate + 1 }]
             },
             _ => throw new ArgumentOutOfRangeException(nameof(mutation))
         };

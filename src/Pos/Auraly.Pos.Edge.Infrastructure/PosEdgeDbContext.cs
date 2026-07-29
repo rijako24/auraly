@@ -75,6 +75,7 @@ internal sealed class FiscalSeriesCursorRow
     public string Prefix { get; set; } = string.Empty;
     public string AuthorizationNumber { get; set; } = string.Empty;
     public Guid FiscalAuthorizationId { get; set; }
+    public long RangeStart { get; set; }
     public long NextConsecutive { get; set; }
     public long RangeEnd { get; set; }
     public DateOnly ValidUntil { get; set; }

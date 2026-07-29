@@ -50,7 +50,8 @@ public sealed class PosEdgeSchemaUpgradeTests
                 """
                 SELECT FiscalAuthorizationId, NextConsecutive,
                     EXISTS(SELECT 1 FROM pragma_table_info('IssuedSales') WHERE name='DocumentNumber'),
-                    EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='DocumentSeriesCursors')
+                    EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='DocumentSeriesCursors'),
+                    EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='SalesDocumentTaxSummaries')
                 FROM FiscalSeriesCursors;
                 """;
             await using var reader = await command.ExecuteReaderAsync();
@@ -59,6 +60,7 @@ public sealed class PosEdgeSchemaUpgradeTests
             Assert.Equal(7L, reader.GetInt64(1));
             Assert.Equal(1L, reader.GetInt64(2));
             Assert.Equal(1L, reader.GetInt64(3));
+            Assert.Equal(0L, reader.GetInt64(4));
         }
         finally
         {

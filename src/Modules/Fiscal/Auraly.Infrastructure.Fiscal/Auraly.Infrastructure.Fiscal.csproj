@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
@@ -14,6 +14,8 @@
   <ItemGroup>
     <ProjectReference Include="..\..\..\Fiscal\Auraly.Fiscal.Ubl\Auraly.Fiscal.Ubl.csproj" />
     <ProjectReference Include="..\Auraly.Contracts.Fiscal\Auraly.Contracts.Fiscal.csproj" />
+    <ProjectReference Include="..\Auraly.Application.Fiscal\Auraly.Application.Fiscal.csproj" />
+    <ProjectReference Include="..\Auraly.Application.Fiscal\Auraly.Application.Fiscal.csproj" />
   </ItemGroup>
 
 </Project>

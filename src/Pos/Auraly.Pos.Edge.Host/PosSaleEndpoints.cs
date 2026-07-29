@@ -4,6 +4,7 @@ using Auraly.BuildingBlocks.Domain.Documents;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Contracts.Authorization;
 using Auraly.Contracts.Organization;
+using Auraly.Contracts.Sales;
 using Auraly.Domain.Authorization;
 using Auraly.Fiscal.Core;
 using Auraly.Pos.Edge.Infrastructure;
@@ -17,7 +18,8 @@ public sealed record CompletePaymentRequest(
 
 public sealed record CompleteDraftRequest(
     string? CustomerIdentification,
-    IReadOnlyCollection<CompletePaymentRequest> Payments);
+    IReadOnlyCollection<CompletePaymentRequest> Payments,
+    PosSaleUblSnapshotContract? UblSnapshot = null);
 
 internal sealed record PosSaleHostSettings(
     RegisterContext Register,
@@ -153,7 +155,8 @@ internal static class PosSaleHostModule
                         settings.QrValidationUrl,
                         payments,
                         settings.DeviceId,
-                        settings.PaperWidthMillimeters),
+                        settings.PaperWidthMillimeters,
+                        request.UblSnapshot),
                     ct);
                 return Results.Ok(result);
             }

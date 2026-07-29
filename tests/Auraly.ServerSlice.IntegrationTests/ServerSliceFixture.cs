@@ -16,6 +16,13 @@ using Microsoft.IdentityModel.Tokens;
 
 namespace Auraly.ServerSlice.IntegrationTests;
 
+public sealed record SalesDocumentTaxSummary(
+    string TaxCode,
+    decimal TaxRate,
+    decimal TaxableAmount,
+    decimal TaxAmount,
+    decimal TotalAmount);
+
 [CollectionDefinition(Name, DisableParallelization = true)]
 public sealed class ServerSliceCollection : ICollectionFixture<ServerSliceFixture>
 {
@@ -55,6 +62,7 @@ public sealed class ServerSliceFixture : IAsyncLifetime
     public Guid DocumentSeriesId { get; } = Guid.NewGuid();
     public Guid SeriesId { get; } = Guid.NewGuid();
     public Guid FiscalAuthorizationId { get; } = Guid.NewGuid();
+    public Guid FiscalIssuerConfigurationId { get; } = Guid.NewGuid();
     public string SqlServer { get; } =
         Environment.GetEnvironmentVariable("AURALY_TEST_SQLSERVER") ?? @".\LOCAL";
     public string ConnectionString { get; private set; } = string.Empty;
@@ -89,7 +97,8 @@ public sealed class ServerSliceFixture : IAsyncLifetime
                     ["Auraly:Fiscal:TechnicalKeys:0:Environment"] = "2",
                     ["Auraly:Fiscal:TechnicalKeys:0:Value"] = TechnicalKeyValue,
                     ["Auraly:Fiscal:TechnicalKeys:0:SupplierTaxId"] = SupplierTaxId,
-                    ["Auraly:Fiscal:TechnicalKeys:0:QrValidationUrl"] = QrValidationUrl
+                    ["Auraly:Fiscal:TechnicalKeys:0:QrValidationUrl"] = QrValidationUrl,
+                    ["Auraly:Fiscal:Worker:Enabled"] = "false"
                 });
             });
         });
@@ -220,9 +229,50 @@ public sealed class ServerSliceFixture : IAsyncLifetime
                     discount,
                     tax,
                     untaxed,
-                    payable)
+                    payable,
+                    19m)
             ],
             [new PosSalePaymentContract(1, "Cash", payable, null)]);
+    }
+
+    public PosSaleUploadRequest CreateMultiRateRequest(long consecutive)
+    {
+        var request = CreateValidRequest(consecutive);
+        var first = new PosSaleLineContract(
+            1, ProductId, "Producto IVA 5", "01",
+            1m, 10_000m, 0m, 500m, 10_000m, 10_500m, 5m);
+        var second = new PosSaleLineContract(
+            2, ProductId, "Producto IVA 19", "01",
+            1m, 20_000m, 0m, 3_800m, 20_000m, 23_800m, 19m);
+        const decimal untaxed = 30_000m;
+        const decimal tax = 4_300m;
+        const decimal payable = 34_300m;
+        var calculated = CufeCalculator.Calculate(
+            new CufeInput(
+                request.FiscalSnapshot.FiscalNumber,
+                request.FiscalSnapshot.IssuedAt,
+                untaxed,
+                payable,
+                SupplierTaxId,
+                request.FiscalSnapshot.CustomerIdentification,
+                new FiscalTechnicalKey(TechnicalKeyValue, TechnicalKeyVersion),
+                FiscalEnvironment.Test,
+                [new FiscalTaxAmount("01", tax)]),
+            QrValidationUrl);
+        return request with
+        {
+            Lines = [first, second],
+            Payments = [new PosSalePaymentContract(1, "Cash", payable, null)],
+            FiscalSnapshot = request.FiscalSnapshot with
+            {
+                Taxes = [new PosSaleTaxContract("01", tax)],
+                UntaxedAmount = untaxed,
+                TaxAmount = tax,
+                PayableAmount = payable,
+                Cufe = calculated.Cufe,
+                QrPayload = calculated.QrPayload
+            }
+        };
     }
 
     public HttpRequestMessage CreateUploadMessage(
@@ -249,12 +299,39 @@ public sealed class ServerSliceFixture : IAsyncLifetime
         return message;
     }
 
+    public async Task<IReadOnlyList<SalesDocumentTaxSummary>> GetTaxSummariesAsync(Guid documentId)
+    {
+        const string sql = """
+            SELECT TaxCode, TaxRate, TaxableAmount, TaxAmount, TotalAmount
+            FROM dbo.SalesDocumentTaxSummaries
+            WHERE DocumentId = @DocumentId
+            ORDER BY TaxCode, TaxRate;
+            """;
+        var rows = new List<SalesDocumentTaxSummary>();
+        await using var connection = new SqlConnection(ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand(sql, connection);
+        command.Parameters.AddWithValue("@DocumentId", documentId);
+        await using var reader = await command.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            rows.Add(new SalesDocumentTaxSummary(
+                reader.GetString(0),
+                reader.GetDecimal(1),
+                reader.GetDecimal(2),
+                reader.GetDecimal(3),
+                reader.GetDecimal(4)));
+        }
+        return rows;
+    }
+
     public async Task<int> CountAsync(string table, Guid documentId)
     {
         var allowed = new HashSet<string>(StringComparer.Ordinal)
         {
             "SalesDocuments",
             "SalesDocumentLines",
+            "SalesDocumentTaxSummaries",
             "SalesPayments",
             "FiscalSnapshots",
             "FiscalDocumentProcesses",
@@ -289,6 +366,7 @@ public sealed class ServerSliceFixture : IAsyncLifetime
         SetHostEnvironment("Auraly__Fiscal__TechnicalKeys__0__Value", TechnicalKeyValue);
         SetHostEnvironment("Auraly__Fiscal__TechnicalKeys__0__SupplierTaxId", SupplierTaxId);
         SetHostEnvironment("Auraly__Fiscal__TechnicalKeys__0__QrValidationUrl", QrValidationUrl);
+        SetHostEnvironment("Auraly__Fiscal__Worker__Enabled", "false");
     }
 
     private void SetHostEnvironment(string name, string value)
@@ -353,6 +431,22 @@ public sealed class ServerSliceFixture : IAsyncLifetime
             (@FiscalAuthorizationId, @BusinessId, @AuthorizationNumber, @SupplierTaxId,
              2, @QrValidationUrl, '2026-01-01', '2028-12-31', 1, SYSDATETIMEOFFSET());
 
+            INSERT INTO dbo.FiscalIssuerConfigurations
+            (FiscalIssuerConfigurationId,BusinessId,Version,SupplierTaxId,SupplierCheckDigit,
+             LegalName,TradeName,TaxLevelCode,TaxSchemeId,TaxSchemeName,IdentificationTypeCode,
+             AddressLine,CityCode,CityName,DepartmentCode,DepartmentName,CountryCode,CountryName,
+             SoftwareIdentificationCode,SoftwarePinSecretReference,Environment,TestSetId,
+             CertificateProvider,CertificateKeyReference,CertificateThumbprint,DianEndpoint,
+             TechnicalAnnexVersion,GeneratorVersion,ValidFrom,IsActive,CreatedAt)
+            VALUES
+            (@FiscalIssuerConfigurationId,@BusinessId,1,@SupplierTaxId,N'7',
+             N'EMISOR MAESTRO',N'EMISOR MAESTRO',N'R-99-PN',N'01',N'IVA',N'31',
+             N'CL 1 2 3',N'11001',N'Bogotá',N'11',N'Bogotá D.C.',N'CO',N'Colombia',
+             N'auraly-test-software',N'env://AURALY_TEST_SOFTWARE_PIN',2,
+             '11111111-1111-1111-1111-111111111111',N'Test',N'Test',N'TEST',
+             N'https://vpfe-hab.dian.gov.co/WcfDianCustomerServices.svc',N'1.9',N'Auraly.Tests',
+             '2026-01-01',1,SYSDATETIMEOFFSET());
+
             INSERT INTO dbo.DocumentSeries
             (DocumentSeriesId, BusinessId, LocationId, RegisterId, DocumentType,
              Prefix, SeriesCode, Padding, RangeStart, RangeEnd,
@@ -393,6 +487,7 @@ public sealed class ServerSliceFixture : IAsyncLifetime
         command.Parameters.AddWithValue("@DeniedIterations", deniedCredential.Iterations);
         command.Parameters.AddWithValue("@SalesCreate", CommercePermissionCodes.SalesCreate);
         command.Parameters.AddWithValue("@FiscalAuthorizationId", FiscalAuthorizationId);
+        command.Parameters.AddWithValue("@FiscalIssuerConfigurationId", FiscalIssuerConfigurationId);
         command.Parameters.AddWithValue("@AuthorizationNumber", AuthorizationNumber);
         command.Parameters.AddWithValue("@SupplierTaxId", SupplierTaxId);
         command.Parameters.AddWithValue("@QrValidationUrl", QrValidationUrl);
