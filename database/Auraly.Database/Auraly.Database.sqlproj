@@ -99,6 +99,10 @@
     <Build Include="Tables\SalesDocumentLines.sql" />
     <Build Include="Tables\SalesPayments.sql" />
     <Build Include="Tables\FiscalSnapshots.sql" />
+    <Build Include="Tables\FiscalIssuerConfigurations.sql" />
+    <Build Include="Tables\FiscalDocumentProcesses.sql" />
+    <Build Include="Tables\FiscalArtifacts.sql" />
+    <Build Include="Tables\FiscalTransmissionAttempts.sql" />
     <Build Include="Tables\DocumentProcessingReceipts.sql" />
     <Build Include="Tables\InventoryMovements.sql" />
     <Build Include="Tables\ServerOutboxMessages.sql" />

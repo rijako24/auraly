@@ -1,6 +1,7 @@
 using System.Data;
 using Auraly.Application.Sales;
 using Auraly.BuildingBlocks.Domain.Identifiers;
+using Auraly.Contracts.Fiscal;
 using Auraly.Contracts.Sales;
 using Microsoft.Data.SqlClient;
 
@@ -148,6 +149,14 @@ public sealed class SqlPosSaleServerStore(
                 transaction,
                 command,
                 fiscalStatus,
+                cancellationToken);
+            await InsertFiscalProcessAsync(
+                connection,
+                transaction,
+                command,
+                command.Verification.IsVerified
+                    ? FiscalDocumentStatusCodes.PendingGeneration
+                    : FiscalDocumentStatusCodes.FiscalIntegrityConflict,
                 cancellationToken);
 
             if (!command.Verification.IsVerified)
@@ -311,6 +320,32 @@ public sealed class SqlPosSaleServerStore(
         await sqlCommand.ExecuteNonQueryAsync(cancellationToken);
     }
 
+    private static async Task InsertFiscalProcessAsync(
+        SqlConnection connection,
+        SqlTransaction transaction,
+        StorePosSaleReceptionCommand command,
+        string status,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            INSERT INTO dbo.FiscalDocumentProcesses
+            (
+                DocumentId, BusinessId, FiscalIssuerConfigurationId, Status,
+                AttemptCount, CreatedAt, UpdatedAt
+            )
+            VALUES
+            (
+                @DocumentId, @BusinessId, NULL, @Status,
+                0, @CreatedAt, @CreatedAt
+            );
+            """;
+        await using var sqlCommand = new SqlCommand(sql, connection, transaction);
+        sqlCommand.Parameters.AddWithValue("@DocumentId", command.Request.DocumentId);
+        sqlCommand.Parameters.AddWithValue("@BusinessId", command.Request.BusinessId);
+        sqlCommand.Parameters.AddWithValue("@Status", status);
+        sqlCommand.Parameters.AddWithValue("@CreatedAt", command.ReceivedAt);
+        await sqlCommand.ExecuteNonQueryAsync(cancellationToken);
+    }
     private async Task InsertConflictReceiptAsync(
         SqlConnection connection,
         SqlTransaction transaction,

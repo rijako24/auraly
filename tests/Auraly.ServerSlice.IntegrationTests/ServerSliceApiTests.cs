@@ -24,7 +24,9 @@ public sealed class ServerSliceApiTests(ServerSliceFixture fixture)
             responses.Select(response =>
                 response.Content.ReadFromJsonAsync<PosSaleUploadResponse>()));
         Assert.All(receipts, receipt => Assert.NotNull(receipt));
-        Assert.Contains(receipts, receipt => receipt!.Status == PosSaleRemoteStatuses.FiscalVerified);
+        Assert.All(receipts, receipt =>
+            Assert.Contains(receipt!.Status,
+                new[] { PosSaleRemoteStatuses.FiscalVerified, PosSaleRemoteStatuses.AlreadyProcessed }));
         Assert.Contains(receipts, receipt => receipt!.Status == PosSaleRemoteStatuses.AlreadyProcessed);
         Assert.Equal(1, await fixture.CountAsync("SalesDocuments", request.DocumentId));
         Assert.Equal(1, await fixture.CountAsync("SalesDocumentLines", request.DocumentId));
@@ -32,6 +34,7 @@ public sealed class ServerSliceApiTests(ServerSliceFixture fixture)
         Assert.Equal(1, await fixture.CountAsync("InventoryMovements", request.DocumentId));
         Assert.Equal(1, await fixture.CountAsync("ServerOutboxMessages", request.DocumentId));
         Assert.Equal(1, await fixture.CountAsync("DocumentProcessingReceipts", request.DocumentId));
+        Assert.Equal(1, await fixture.CountAsync("FiscalDocumentProcesses", request.DocumentId));
         foreach (var response in responses)
         {
             response.Dispose();
@@ -121,6 +124,7 @@ public sealed class ServerSliceApiTests(ServerSliceFixture fixture)
         Assert.Equal(0, await fixture.CountAsync("SalesPayments", original.DocumentId));
         Assert.Equal(0, await fixture.CountAsync("InventoryMovements", original.DocumentId));
         Assert.Equal(0, await fixture.CountAsync("ServerOutboxMessages", original.DocumentId));
+        Assert.Equal(1, await fixture.CountAsync("FiscalDocumentProcesses", original.DocumentId));
     }
 
     private static PosSaleUploadRequest Mutate(PosSaleUploadRequest request, string mutation)

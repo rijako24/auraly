@@ -257,6 +257,7 @@ public sealed class ServerSliceFixture : IAsyncLifetime
             "SalesDocumentLines",
             "SalesPayments",
             "FiscalSnapshots",
+            "FiscalDocumentProcesses",
             "DocumentProcessingReceipts",
             "InventoryMovements",
             "ServerOutboxMessages"
