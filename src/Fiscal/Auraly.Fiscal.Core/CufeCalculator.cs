@@ -78,6 +78,11 @@ public static class CufeCalculator
             $"{qrBaseUrl.TrimEnd('/')}?documentkey={cufe}");
     }
 
-    private static string Money(decimal value) =>
-        value.ToString("0.00", CultureInfo.InvariantCulture);
+    private static string Money(decimal value)
+    {
+        // DIAN FEV 1.9 section 11.2 requires monetary CUFE components to be
+        // truncated, not rounded, to two decimal places.
+        var truncated = decimal.Truncate(value * 100m) / 100m;
+        return truncated.ToString("0.00", CultureInfo.InvariantCulture);
+    }
 }
