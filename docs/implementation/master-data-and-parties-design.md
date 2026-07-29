@@ -153,6 +153,14 @@ La ficha de Party tiene cabecera común y pestañas:
 Crear un proveedor con una identificación existente agrega `Supplier` a la misma
 Party. Agregar una sede nunca crea otra Party.
 
+La relación `Customer-Business` es informativa y permite configuración comercial;
+nunca autoriza a bloquear una venta. Si una Party ya es cliente de otro negocio
+del mismo tenant y compra aquí, el servidor crea o reutiliza el rol Customer para
+el negocio que vende. La venta conserva `LocationId`, que es la fuente para saber
+en qué sucursal compró; no se duplica una asignación por sede solo para reportes.
+Un identificador interno de cliente inaccesible no cruza tenants: la venta
+continúa con su snapshot fiscal, pero sin enlazar esa referencia ajena.
+
 ## 6. Sedes y geografía de una Party
 
 Una Party puede tener varias sedes bajo la misma identificación legal. Cada sede

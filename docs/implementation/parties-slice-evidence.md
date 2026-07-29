@@ -79,7 +79,8 @@ Escenarios nuevos comprobados:
 - una cuenta o Party no puede enlazarse dos veces;
 - desvincular no elimina la cuenta ni sus roles;
 - CustomerId válido llega de SQLite/contrato a SalesDocuments;
-- cliente de otro Business produce 403 y no persiste la venta;
+- cliente relacionado previamente con otro Business del mismo tenant se asigna
+  una sola vez al Business que vende y la factura continúa;
 - cambios posteriores en Party no alteran el snapshot emitido.
 
 ## Pendiente antes de declarar completa la rebanada

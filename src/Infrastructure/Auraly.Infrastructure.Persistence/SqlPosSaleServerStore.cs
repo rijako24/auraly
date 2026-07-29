@@ -59,41 +59,12 @@ public sealed class SqlPosSaleServerStore(
               AND a.IsActive = 1
               AND r.IsActive = 1
               AND w.IsActive = 1
-              AND d.IsActive = 1
-              AND (@CustomerId IS NULL OR EXISTS (
-                  SELECT 1
-                  FROM dbo.Customers customer
-                  INNER JOIN dbo.Parties party ON party.PartyId=customer.PartyId
-                  WHERE customer.CustomerId=@CustomerId AND customer.BusinessId=@BusinessId
-                    AND party.TenantId=@TenantId AND customer.IsActive=1 AND party.IsActive=1));
+              AND d.IsActive = 1;
             """;
 
         var snapshot = request.FiscalSnapshot;
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
-        if (request.CustomerId is not null)
-        {
-            await using var customerCommand = connection.CreateCommand();
-            customerCommand.CommandText = """
-                SELECT COUNT_BIG(1)
-                FROM dbo.Customers customer
-                INNER JOIN dbo.Parties party ON party.PartyId=customer.PartyId
-                WHERE customer.CustomerId=@CustomerId
-                  AND customer.BusinessId=@BusinessId
-                  AND party.TenantId=@TenantId
-                  AND customer.IsActive=1
-                  AND party.IsActive=1;
-                """;
-            customerCommand.Parameters.AddWithValue("@CustomerId", request.CustomerId.Value);
-            customerCommand.Parameters.AddWithValue("@BusinessId", request.BusinessId);
-            customerCommand.Parameters.AddWithValue("@TenantId", request.TenantId);
-            var customerCount =
-                (long)(await customerCommand.ExecuteScalarAsync(cancellationToken) ?? 0L);
-            if (customerCount != 1)
-                return PosSaleContextValidation.Invalid(
-                    "The selected customer is outside the authenticated business.",
-                    isSecurityViolation: true);
-        }
         await using var command = new SqlCommand(sql, connection);
         command.Parameters.AddWithValue("@SeriesId", snapshot.SeriesId);
         command.Parameters.AddWithValue("@DocumentSeriesId", request.DocumentNumber.SeriesId);
@@ -102,8 +73,6 @@ public sealed class SqlPosSaleServerStore(
         command.Parameters.AddWithValue("@DocumentConsecutive", request.DocumentNumber.Consecutive);
         command.Parameters.AddWithValue("@FiscalAuthorizationId", snapshot.FiscalAuthorizationId);
         command.Parameters.AddWithValue("@BusinessId", request.BusinessId);
-        command.Parameters.AddWithValue("@TenantId", request.TenantId);
-        command.Parameters.AddWithValue("@CustomerId", (object?)request.CustomerId ?? DBNull.Value);
         command.Parameters.AddWithValue("@LocationId", request.LocationId);
         command.Parameters.AddWithValue("@WarehouseId", request.WarehouseId);
         command.Parameters.AddWithValue("@RegisterId", request.RegisterId);

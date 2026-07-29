@@ -8,11 +8,10 @@ namespace Auraly.ServerSlice.IntegrationTests;
 public sealed class SaleCustomerSnapshotIntegrationTests(ServerSliceFixture fixture)
 {
     [Fact]
-    public async Task Sale_keeps_customer_reference_separate_from_the_minimal_immutable_snapshot()
+    public async Task Sale_assigns_a_visiting_party_to_the_business_without_changing_the_snapshot()
     {
         var countryId = Guid.NewGuid();
         var partyId = Guid.NewGuid();
-        var customerId = Guid.NewGuid();
         var otherBusinessId = Guid.NewGuid();
         var otherCustomerId = Guid.NewGuid();
         await ExecuteAsync(
@@ -27,8 +26,6 @@ public sealed class SaleCustomerSnapshotIntegrationTests(ServerSliceFixture fixt
               (@PartyId,@TenantId,N'NaturalPerson',@CountryId,N'CC',
                N'222222222',N'222222222',N'Nombre al facturar',N'Complete',
                1,@UserId,SYSDATETIMEOFFSET());
-            INSERT dbo.Customers(CustomerId,PartyId,BusinessId,IsActive,CreatedBy,CreatedAt)
-            VALUES(@CustomerId,@PartyId,@BusinessId,1,@UserId,SYSDATETIMEOFFSET());
             INSERT dbo.Businesses
               (BusinessId,TenantId,Name,Description,Address,Phone,Email,Website,IsActive,CreatedAt)
             VALUES(@OtherBusinessId,@TenantId,N'Otro negocio',N'Prueba de aislamiento',
@@ -38,7 +35,6 @@ public sealed class SaleCustomerSnapshotIntegrationTests(ServerSliceFixture fixt
             """,
             new SqlParameter("@CountryId", countryId),
             new SqlParameter("@PartyId", partyId),
-            new SqlParameter("@CustomerId", customerId),
             new SqlParameter("@OtherCustomerId", otherCustomerId),
             new SqlParameter("@TenantId", fixture.TenantId),
             new SqlParameter("@BusinessId", fixture.BusinessId),
@@ -46,7 +42,7 @@ public sealed class SaleCustomerSnapshotIntegrationTests(ServerSliceFixture fixt
             new SqlParameter("@OtherBusinessEmail", $"other-{otherBusinessId:N}@auraly.test"),
             new SqlParameter("@UserId", fixture.UserId));
 
-        var request = fixture.CreateValidRequest(8701) with { CustomerId = customerId };
+        var request = fixture.CreateValidRequest(8701) with { CustomerId = otherCustomerId };
         using var client = fixture.CreateClient();
         using var response = await client.SendAsync(fixture.CreateUploadMessage(request));
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -54,12 +50,19 @@ public sealed class SaleCustomerSnapshotIntegrationTests(ServerSliceFixture fixt
         var storedCustomerId = await ScalarAsync<Guid?>(
             "SELECT CustomerId FROM dbo.SalesDocuments WHERE DocumentId=@DocumentId;",
             new SqlParameter("@DocumentId", request.DocumentId));
-        Assert.Equal(customerId, storedCustomerId);
+        Assert.NotNull(storedCustomerId);
+        Assert.NotEqual(otherCustomerId, storedCustomerId.Value);
+        Assert.Equal(1, await ScalarAsync<int>(
+            """
+            SELECT COUNT(*) FROM dbo.Customers
+            WHERE PartyId=@PartyId AND BusinessId=@BusinessId;
+            """,
+            new SqlParameter("@PartyId", partyId), new SqlParameter("@BusinessId", fixture.BusinessId)));
         var snapshotJson = await ScalarAsync<string>(
             "SELECT SnapshotJson FROM dbo.FiscalSnapshots WHERE DocumentId=@DocumentId;",
             new SqlParameter("@DocumentId", request.DocumentId));
         var snapshot = PosSaleContractSerializer.Deserialize(snapshotJson!);
-        Assert.Equal(customerId, snapshot.CustomerId);
+        Assert.Equal(storedCustomerId, snapshot.CustomerId);
         Assert.Equal("222222222", snapshot.FiscalSnapshot.CustomerIdentification);
 
         await ExecuteAsync(
@@ -76,14 +79,16 @@ public sealed class SaleCustomerSnapshotIntegrationTests(ServerSliceFixture fixt
         var unchanged = PosSaleContractSerializer.Deserialize(unchangedJson!);
         Assert.Equal("222222222", unchanged.FiscalSnapshot.CustomerIdentification);
 
-        var rejected = fixture.CreateValidRequest(8702) with { CustomerId = otherCustomerId };
-        using var rejectedResponse = await client.SendAsync(fixture.CreateUploadMessage(rejected));
-        Assert.Equal(HttpStatusCode.Forbidden, rejectedResponse.StatusCode);
-        Assert.Equal(
-            0,
-            await ScalarAsync<int>(
-                "SELECT COUNT(*) FROM dbo.SalesDocuments WHERE DocumentId=@DocumentId;",
-                new SqlParameter("@DocumentId", rejected.DocumentId)));
+        var visitingAgain = fixture.CreateValidRequest(8702) with { CustomerId = otherCustomerId };
+        using var visitingAgainResponse = await client.SendAsync(fixture.CreateUploadMessage(visitingAgain));
+        Assert.Equal(HttpStatusCode.OK, visitingAgainResponse.StatusCode);
+        Assert.Equal(storedCustomerId, await ScalarAsync<Guid?>(
+            """
+            SELECT CustomerId FROM dbo.SalesDocuments
+            WHERE DocumentId=@DocumentId AND LocationId=@LocationId;
+            """,
+            new SqlParameter("@DocumentId", visitingAgain.DocumentId),
+            new SqlParameter("@LocationId", fixture.LocationId)));
     }
 
     private async Task ExecuteAsync(string sql, params SqlParameter[] parameters)

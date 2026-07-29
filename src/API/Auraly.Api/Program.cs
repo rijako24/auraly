@@ -59,6 +59,7 @@ if (builder.Configuration.GetValue("Auraly:Fiscal:Worker:Enabled", true))
 }
 builder.Services.AddScoped<IPosDeviceAuthenticator, SqlPosDeviceAuthenticator>();
 builder.Services.AddScoped<IPosSaleServerStore, SqlPosSaleServerStore>();
+builder.Services.AddScoped<IPosSaleCustomerResolver, SqlPosSaleCustomerResolver>();
 builder.Services.AddScoped<SqlDocumentProcessingSessionAccessor>();
 builder.Services.AddScoped<IDocumentProcessingReceiptStore, SqlDocumentProcessingReceiptStore>();
 builder.Services.AddScoped<IConfirmedDocumentHandler, SqlPosSaleDocumentHandler>();

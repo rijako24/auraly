@@ -18,11 +18,10 @@ public sealed record PosDeviceIdentity(
     Guid RegisterId,
     IReadOnlySet<string> Permissions);
 
-public sealed record PosSaleContextValidation(bool IsValid, string? Reason, bool IsSecurityViolation = false)
+public sealed record PosSaleContextValidation(bool IsValid, string? Reason)
 {
     public static PosSaleContextValidation Valid() => new(true, null);
-    public static PosSaleContextValidation Invalid(string reason, bool isSecurityViolation = false) =>
-        new(false, reason, isSecurityViolation);
+    public static PosSaleContextValidation Invalid(string reason) => new(false, reason);
 }
 
 public sealed record StoredPosSale(
@@ -64,6 +63,18 @@ public interface IPosSaleServerStore
         CancellationToken cancellationToken);
 }
 
+public interface IPosSaleCustomerResolver
+{
+    Task<Guid?> ResolveForBusinessAsync(
+        Guid tenantId,
+        Guid businessId,
+        Guid sourceCustomerId,
+        Guid actorId,
+        DateTimeOffset now,
+        CancellationToken ct);
+}
+
+
 public sealed class PosSaleForbiddenException(string message) : Exception(message);
 
 public sealed class PosSaleInvalidException(string message) : Exception(message);
@@ -74,6 +85,7 @@ public sealed class PosSaleProcessingBusyException(string message) : Exception(m
 
 public sealed class ReceivePosSaleService(
     IPosSaleServerStore store,
+    IPosSaleCustomerResolver customers,
     IFiscalSnapshotVerifier fiscalVerifier,
     DocumentProcessingEngine processingEngine,
     TimeProvider timeProvider)
@@ -92,6 +104,19 @@ public sealed class ReceivePosSaleService(
         }
 
         DemandDeviceContext(device, request);
+        if (request.CustomerId is Guid sourceCustomerId)
+        {
+            request = request with
+            {
+                CustomerId = await customers.ResolveForBusinessAsync(
+                    request.TenantId,
+                    request.BusinessId,
+                    sourceCustomerId,
+                    device.DeviceId,
+                    timeProvider.GetUtcNow(),
+                    cancellationToken)
+            };
+        }
         ValidateDocumentNumber(request);
         var snapshotJson = PosSaleContractSerializer.Serialize(request);
         var payloadHash = PosSaleContractSerializer.Hash(request);
@@ -110,10 +135,6 @@ public sealed class ReceivePosSaleService(
         }
 
         var context = await store.ValidateContextAsync(request, cancellationToken);
-        if (!context.IsValid && context.IsSecurityViolation)
-        {
-            throw new PosSaleForbiddenException(context.Reason ?? "The customer is outside the authenticated business.");
-        }
         var verification = await fiscalVerifier.VerifyAsync(request, cancellationToken);
         if (!context.IsValid && verification.IsVerified)
         {
