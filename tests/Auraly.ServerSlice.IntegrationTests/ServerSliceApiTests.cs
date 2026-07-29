@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using Auraly.Contracts.Fiscal;
 using Auraly.Contracts.Sales;
 
 namespace Auraly.ServerSlice.IntegrationTests;
@@ -41,6 +42,39 @@ public sealed class ServerSliceApiTests(ServerSliceFixture fixture)
         }
     }
 
+    [Fact]
+    public async Task Fiscal_documents_are_business_scoped_authorized_and_paged()
+    {
+        var request = fixture.CreateValidRequest(150);
+        using (var pos = fixture.CreateClient())
+        using (var upload = fixture.CreateUploadMessage(request))
+        using (var response = await pos.SendAsync(upload))
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        using var allowed = fixture.CreateAdminClient(FiscalPermissionCodes.DocumentsRead);
+        using var get = await allowed.GetAsync($"/api/commerce/v1/fiscal/documents/{request.DocumentId}");
+        Assert.Equal(HttpStatusCode.OK, get.StatusCode);
+        var document = await get.Content.ReadFromJsonAsync<FiscalDocumentView>();
+        Assert.NotNull(document);
+        Assert.Equal(fixture.BusinessId, document.BusinessId);
+        Assert.Equal(FiscalDocumentStatusCodes.PendingGeneration, document.Status);
+
+        using var pageResponse = await allowed.GetAsync(
+            $"/api/commerce/v1/fiscal/documents?page=1&pageSize=10&status={FiscalDocumentStatusCodes.PendingGeneration}");
+        Assert.Equal(HttpStatusCode.OK, pageResponse.StatusCode);
+        var page = await pageResponse.Content.ReadFromJsonAsync<FiscalDocumentPage>();
+        Assert.NotNull(page);
+        Assert.Contains(page.Items, item => item.DocumentId == request.DocumentId);
+
+        using var denied = fixture.CreateAdminClient();
+        using var deniedResponse = await denied.GetAsync($"/api/commerce/v1/fiscal/documents/{request.DocumentId}");
+        Assert.Equal(HttpStatusCode.Forbidden, deniedResponse.StatusCode);
+
+        using var retry = fixture.CreateAdminClient(FiscalPermissionCodes.Retry);
+        using var retryResponse = await retry.PostAsync(
+            $"/api/commerce/v1/fiscal/documents/{request.DocumentId}/retry", null);
+        Assert.Equal(HttpStatusCode.Conflict, retryResponse.StatusCode);
+    }
     [Fact]
     public async Task Authentication_permission_and_authenticated_context_are_enforced()
     {

@@ -30,6 +30,8 @@ builder.Services.AddSingleton<IAuralyIdGenerator, Uuid7AuralyIdGenerator>();
 builder.Services.AddSingleton(new SqlServerConnectionFactory(connectionString));
 builder.Services.AddSingleton<IFiscalTechnicalKeyProvider, ConfigurationFiscalTechnicalKeyProvider>();
 builder.Services.AddScoped<IFiscalSnapshotVerifier, FiscalSnapshotVerifier>();
+builder.Services.AddScoped<IFiscalDocumentStore, SqlFiscalDocumentStore>();
+builder.Services.AddScoped<FiscalDocumentService>();
 builder.Services.AddScoped<IPosDeviceAuthenticator, SqlPosDeviceAuthenticator>();
 builder.Services.AddScoped<IPosSaleServerStore, SqlPosSaleServerStore>();
 builder.Services.AddScoped<SqlDocumentProcessingSessionAccessor>();
@@ -71,7 +73,11 @@ builder.Services
     });
 builder.Services.AddAuthorization(options =>
 {
-    options.AddPolicy("catalog.user", policy =>
+    options.AddPolicy("fiscal.user", policy =>
+    {
+        policy.AuthenticationSchemes.Add(JwtBearerDefaults.AuthenticationScheme);
+        policy.RequireAuthenticatedUser();
+    });    options.AddPolicy("catalog.user", policy =>
     {
         policy.AuthenticationSchemes.Add(JwtBearerDefaults.AuthenticationScheme);
         policy.RequireAuthenticatedUser();
@@ -100,6 +106,7 @@ app.UseAuthorization();
 
 app.MapGet("/health", () => Results.Ok(new { status = "Healthy" }));
 app.MapCatalogApi();
+app.MapFiscalApi();
 app.MapPost(
         "/api/pos/v1/sales",
         async (
