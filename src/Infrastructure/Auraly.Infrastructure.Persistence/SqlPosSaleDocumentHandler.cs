@@ -34,7 +34,7 @@ public sealed class SqlPosSaleDocumentHandler(
             await InsertInventoryMovementAsync(session, request, line, cancellationToken);
         }
 
-        await InsertTaxSummariesAsync(session, request, cancellationToken);
+        await InsertTaxSummariesAsync(session, request, timeProvider.GetUtcNow(), cancellationToken);
 
         foreach (var payment in request.Payments.OrderBy(payment => payment.PaymentNumber))
         {
@@ -84,6 +84,7 @@ public sealed class SqlPosSaleDocumentHandler(
     private static async Task InsertTaxSummariesAsync(
         SqlDocumentProcessingSessionAccessor.Session session,
         PosSaleUploadRequest request,
+        DateTimeOffset createdAt,
         CancellationToken cancellationToken)
     {
         const string sql = """
@@ -111,7 +112,7 @@ public sealed class SqlPosSaleDocumentHandler(
             AddDecimal(command, "@TaxableAmount", summary.Sum(line => line.UntaxedAmount), 19, 4);
             AddDecimal(command, "@TaxAmount", summary.Sum(line => line.TaxAmount), 19, 4);
             AddDecimal(command, "@TotalAmount", summary.Sum(line => line.LineTotal), 19, 4);
-            command.Parameters.AddWithValue("@CreatedAt", request.FiscalSnapshot.IssuedAt);
+            command.Parameters.AddWithValue("@CreatedAt", createdAt);
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
     }
