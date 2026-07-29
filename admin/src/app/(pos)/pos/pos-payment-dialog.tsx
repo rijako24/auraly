@@ -1,9 +1,13 @@
 "use client";
 
-import { CreditCard, Loader2, Plus, Trash2 } from "lucide-react";
-import { FormEvent, useMemo, useState } from "react";
+import { CreditCard, Loader2, Trash2 } from "lucide-react";
+import { FormEvent, KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { PosPaymentInput } from "@/services/pos/pos-edge-client";
+import {
+  calculatePaymentSettlement,
+  PosPaymentSettlement,
+} from "./pos-payment-settlement";
 
 const money = new Intl.NumberFormat("es-CO", {
   style: "currency",
@@ -12,11 +16,11 @@ const money = new Intl.NumberFormat("es-CO", {
 });
 
 const methods = [
-  { code: "Cash", label: "Efectivo" },
-  { code: "DebitCard", label: "Tarjeta débito" },
-  { code: "CreditCard", label: "Tarjeta crédito" },
-  { code: "Transfer", label: "Transferencia" },
-  { code: "Credit", label: "Crédito" },
+  { code: "Cash", label: "Efectivo", shortcut: "F1" },
+  { code: "DebitCard", label: "Tarjeta d\u00e9bito", shortcut: "F2" },
+  { code: "CreditCard", label: "Tarjeta cr\u00e9dito", shortcut: "F3" },
+  { code: "Transfer", label: "Transferencia", shortcut: "F4" },
+  { code: "Credit", label: "Cr\u00e9dito cliente", shortcut: "F5" },
 ];
 
 type PaymentRow = PosPaymentInput & { id: string };
@@ -30,17 +34,20 @@ export function PosPaymentDialog({
   total: number;
   busy: boolean;
   onCancel: () => void;
-  onConfirm: (payments: PosPaymentInput[]) => Promise<void>;
+  onConfirm: (
+    payments: PosPaymentInput[],
+    settlement: PosPaymentSettlement,
+  ) => Promise<void>;
 }) {
   const [payments, setPayments] = useState<PaymentRow[]>([
     { id: crypto.randomUUID(), methodCode: "Cash", amount: total, reference: null },
   ]);
-  const paid = useMemo(
-    () => payments.reduce((sum, payment) => sum + (Number(payment.amount) || 0), 0),
-    [payments],
+  const [pendingFocusId, setPendingFocusId] = useState<string | null>(null);
+  const amountRefs = useRef(new Map<string, HTMLInputElement>());
+  const settlement = useMemo(
+    () => calculatePaymentSettlement(total, payments),
+    [payments, total],
   );
-  const difference = Math.round((total - paid) * 100) / 100;
-  const balanced = Math.abs(difference) < 0.005 && payments.every((payment) => payment.amount > 0);
 
   function update(id: string, value: Partial<PaymentRow>) {
     setPayments((current) =>
@@ -48,36 +55,93 @@ export function PosPaymentDialog({
     );
   }
 
-  function addPayment() {
-    const remaining = Math.max(0, Math.round(difference * 100) / 100);
+  const focusAmount = useCallback((id: string) => {
+    window.requestAnimationFrame(() => {
+      const amount = amountRefs.current.get(id);
+      amount?.focus();
+      amount?.select();
+    });
+  }, []);
+
+  const addPayment = useCallback((requestedMethod?: string) => {
+    if (busy) return;
+    const existing = requestedMethod
+      ? payments.find((payment) => payment.methodCode === requestedMethod)
+      : null;
+    if (existing) {
+      focusAmount(existing.id);
+      return;
+    }
+    if (requestedMethod && payments.length === 1 && settlement.isValid && settlement.change === 0) {
+      const current = payments[0];
+      setPayments([{ ...current, methodCode: requestedMethod }]);
+      focusAmount(current.id);
+      return;
+    }
+    if (settlement.missing <= 0) return;
+    const used = new Set(payments.map((payment) => payment.methodCode));
+    const nextMethod = requestedMethod
+      ? methods.find((method) => method.code === requestedMethod && !used.has(method.code))
+      : methods.find((method) => method.code !== "Cash" && !used.has(method.code));
+    if (!nextMethod) return;
+    const id = crypto.randomUUID();
     setPayments((current) => [
       ...current,
       {
-        id: crypto.randomUUID(),
-        methodCode: "DebitCard",
-        amount: remaining,
+        id,
+        methodCode: nextMethod.code,
+        amount: settlement.missing,
         reference: null,
       },
     ]);
-  }
+    setPendingFocusId(id);
+  }, [busy, focusAmount, payments, settlement.change, settlement.isValid, settlement.missing]);
+
+  useEffect(() => {
+    if (!pendingFocusId) return;
+    focusAmount(pendingFocusId);
+    setPendingFocusId(null);
+  }, [focusAmount, pendingFocusId, payments]);
+
+  useEffect(() => {
+    const shortcut = (event: globalThis.KeyboardEvent) => {
+      const method = methods.find((value) => value.shortcut === event.key);
+      if (method) {
+        event.preventDefault();
+        addPayment(method.code);
+      } else if (event.key === "Escape" && !busy) {
+        event.preventDefault();
+        onCancel();
+      }
+    };
+    window.addEventListener("keydown", shortcut);
+    return () => window.removeEventListener("keydown", shortcut);
+  }, [addPayment, busy, onCancel]);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (!balanced || busy) return;
+    if (!settlement.isValid || busy) return;
     await onConfirm(
-      payments.map(({ methodCode, amount, reference }) => ({
+      settlement.appliedPayments.map(({ methodCode, amount, reference }) => ({
         methodCode,
         amount,
         reference: reference?.trim() || null,
       })),
+      settlement,
     );
+  }
+
+  function handleAmountEnter(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key !== "Enter" || settlement.missing <= 0) return;
+    event.preventDefault();
+    addPayment();
   }
 
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/60 p-4">
       <form
         onSubmit={submit}
-        className="w-full max-w-xl rounded-2xl bg-white p-5 shadow-2xl"
+        className="w-full max-w-4xl rounded-2xl bg-white p-5 shadow-2xl"
         aria-labelledby="pos-payment-title"
       >
         <div className="flex items-start justify-between gap-4">
@@ -87,7 +151,7 @@ export function PosPaymentDialog({
               Finalizar venta
             </h2>
             <p className="mt-1 text-sm text-slate-500">
-              La factura se emitirá e imprimirá en la tirilla configurada.
+              Escribe el valor recibido. Enter confirma; F1-F5 seleccionan el medio.
             </p>
           </div>
           <p className="text-right">
@@ -96,7 +160,22 @@ export function PosPaymentDialog({
           </p>
         </div>
 
-        <div className="mt-5 space-y-3">
+        <div className="mt-5 grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-5">
+          {methods.map((method) => (
+            <button
+              key={method.code}
+              type="button"
+              onClick={() => addPayment(method.code)}
+              disabled={busy}
+              className="flex min-h-12 items-center justify-between gap-3 rounded-lg border border-slate-300 px-3 py-2 text-left text-sm font-semibold outline-none transition hover:border-teal-500 hover:bg-teal-50 focus:ring-2 focus:ring-teal-600/20 disabled:opacity-45"
+            >
+              <span className="min-w-0 whitespace-normal leading-tight">{method.label}</span>
+              <span className="shrink-0 rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-600">{method.shortcut}</span>
+            </button>
+          ))}
+        </div>
+
+        <div className="mt-4 space-y-3">
           {payments.map((payment, index) => (
             <div
               key={payment.id}
@@ -105,10 +184,9 @@ export function PosPaymentDialog({
               <label className="text-xs font-medium text-slate-600">
                 Medio
                 <select
-                  autoFocus={index === 0}
                   value={payment.methodCode}
                   onChange={(event) => update(payment.id, { methodCode: event.target.value })}
-                  className="mt-1 h-11 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm outline-none focus:border-teal-600"
+                  className="mt-1 h-11 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm outline-none focus:border-teal-600 focus:ring-2 focus:ring-teal-600/15"
                 >
                   {methods.map((method) => (
                     <option key={method.code} value={method.code}>
@@ -118,16 +196,23 @@ export function PosPaymentDialog({
                 </select>
               </label>
               <label className="text-xs font-medium text-slate-600">
-                Valor
+                Valor recibido
                 <input
+                  ref={(element) => {
+                    if (element) amountRefs.current.set(payment.id, element);
+                    else amountRefs.current.delete(payment.id);
+                  }}
+                  autoFocus={index === 0}
                   type="number"
                   min="0.01"
                   step="0.01"
                   value={payment.amount}
+                  onFocus={(event) => event.currentTarget.select()}
+                  onKeyDown={handleAmountEnter}
                   onChange={(event) =>
                     update(payment.id, { amount: event.currentTarget.valueAsNumber || 0 })
                   }
-                  className="mt-1 h-11 w-full rounded-lg border border-slate-300 px-3 text-right font-semibold outline-none focus:border-teal-600"
+                  className="mt-1 h-11 w-full rounded-lg border border-slate-300 px-3 text-right text-lg font-semibold outline-none focus:border-teal-600 focus:ring-2 focus:ring-teal-600/15"
                 />
               </label>
               <label className="text-xs font-medium text-slate-600">
@@ -135,7 +220,7 @@ export function PosPaymentDialog({
                 <input
                   value={payment.reference ?? ""}
                   onChange={(event) => update(payment.id, { reference: event.target.value })}
-                  className="mt-1 h-11 w-full rounded-lg border border-slate-300 px-3 text-sm outline-none focus:border-teal-600"
+                  className="mt-1 h-11 w-full rounded-lg border border-slate-300 px-3 text-sm outline-none focus:border-teal-600 focus:ring-2 focus:ring-teal-600/15"
                   placeholder="Opcional"
                 />
               </label>
@@ -145,7 +230,7 @@ export function PosPaymentDialog({
                   setPayments((current) => current.filter((item) => item.id !== payment.id))
                 }
                 disabled={payments.length === 1 || busy}
-                className="mt-5 grid h-11 place-items-center rounded-lg text-slate-500 hover:bg-red-50 hover:text-red-700 disabled:opacity-30"
+                className="mt-5 grid h-11 place-items-center rounded-lg text-slate-500 hover:bg-red-50 hover:text-red-700 focus:outline-none focus:ring-2 focus:ring-red-300 disabled:opacity-30"
                 aria-label="Eliminar medio de pago"
               >
                 <Trash2 className="h-4 w-4" />
@@ -154,23 +239,21 @@ export function PosPaymentDialog({
           ))}
         </div>
 
+        <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <PaymentMetric label="Total venta" value={total} />
+          <PaymentMetric label="Valor recibido" value={settlement.received} />
+          <PaymentMetric
+            label="Cambio a entregar"
+            value={settlement.change}
+            highlight={settlement.change > 0}
+          />
+        </div>
+
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-          <button
-            type="button"
-            onClick={addPayment}
-            disabled={busy}
-            className="flex h-10 items-center gap-2 rounded-lg border border-slate-300 px-3 text-sm font-semibold"
-          >
-            <Plus className="h-4 w-4" />
-            Agregar medio
-          </button>
-          <p className={`text-sm font-semibold ${balanced ? "text-emerald-700" : "text-amber-700"}`}>
-            {balanced
-              ? "Pago completo"
-              : difference > 0
-                ? `Faltan ${money.format(difference)}`
-                : `Excede ${money.format(Math.abs(difference))}`}
+          <p className="text-xs text-slate-500">
+            Selecciona el medio con F1-F5; al agregarlo el foco pasa al valor.
           </p>
+          <PaymentStatus settlement={settlement} />
         </div>
 
         <div className="mt-5 flex justify-end gap-2 border-t border-slate-200 pt-4">
@@ -178,20 +261,52 @@ export function PosPaymentDialog({
             type="button"
             onClick={onCancel}
             disabled={busy}
-            className="h-11 rounded-lg border border-slate-300 px-5 font-medium"
+            className="h-11 rounded-lg border border-slate-300 px-5 font-medium focus:outline-none focus:ring-2 focus:ring-slate-400"
           >
-            Cancelar
+            Cancelar <span className="ml-1 text-xs text-slate-500">Esc</span>
           </button>
           <button
             type="submit"
-            disabled={!balanced || busy}
-            className="flex h-11 min-w-40 items-center justify-center gap-2 rounded-lg bg-teal-700 px-5 font-semibold text-white disabled:opacity-45"
+            disabled={!settlement.isValid || busy}
+            className="flex h-11 min-w-48 items-center justify-center gap-2 rounded-lg bg-teal-700 px-5 font-semibold text-white focus:outline-none focus:ring-4 focus:ring-teal-600/20 disabled:opacity-45"
           >
             {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <CreditCard className="h-4 w-4" />}
             Emitir e imprimir
+            <span className="rounded bg-white/15 px-1.5 py-0.5 text-xs">Enter</span>
           </button>
         </div>
       </form>
     </div>
   );
+}
+
+function PaymentMetric({
+  label,
+  value,
+  highlight = false,
+}: {
+  label: string;
+  value: number;
+  highlight?: boolean;
+}) {
+  return (
+    <div className={`rounded-xl border p-3 ${highlight ? "border-emerald-300 bg-emerald-50" : "border-slate-200 bg-slate-50"}`}>
+      <p className="text-xs font-medium uppercase tracking-wide text-slate-500">{label}</p>
+      <p className={`mt-1 text-xl font-bold tabular-nums ${highlight ? "text-emerald-800" : "text-slate-900"}`}>
+        {money.format(value)}
+      </p>
+    </div>
+  );
+}
+
+function PaymentStatus({ settlement }: { settlement: PosPaymentSettlement }) {
+  if (settlement.hasDuplicateCash)
+    return <p className="text-sm font-semibold text-red-700">Usa una sola fila de efectivo.</p>;
+  if (settlement.hasNonCashExcess)
+    return <p className="text-sm font-semibold text-red-700">El excedente solo puede recibirse en efectivo.</p>;
+  if (settlement.missing > 0)
+    return <p className="text-sm font-semibold text-amber-700">Faltan {money.format(settlement.missing)}</p>;
+  if (settlement.change > 0)
+    return <p className="text-sm font-semibold text-emerald-700">Cambio listo: {money.format(settlement.change)}</p>;
+  return <p className="text-sm font-semibold text-emerald-700">Pago completo</p>;
 }

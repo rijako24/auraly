@@ -208,25 +208,42 @@ public sealed partial class PosCatalogStore(string connectionString)
 
     public async Task<IReadOnlyCollection<PosCatalogItem>> SearchAsync(
         string term,
-        int take = 20,
+        int skip = 0,
+        int take = 50,
         CancellationToken cancellationToken = default)
     {
+        if (skip < 0) throw new ArgumentOutOfRangeException(nameof(skip));
         if (take is < 1 or > 100) throw new ArgumentOutOfRangeException(nameof(take));
         await using var connection = new SqliteConnection(connectionString);
         await connection.OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT DISTINCT p.*
+            SELECT p.*
             FROM PosCatalogProducts p
-            LEFT JOIN PosCatalogBarcodes b ON b.ProductId=p.ProductId
-            LEFT JOIN PosCatalogIdentifiers i ON i.ProductId=p.ProductId
-            WHERE p.IsActive=1 AND
-              (p.ProductCode=@Exact OR p.Reference=@Exact OR b.Value=@Exact OR i.Value=@Exact OR p.Name LIKE @Name)
-            ORDER BY CASE WHEN p.ProductCode=@Exact OR p.Reference=@Exact OR b.Value=@Exact OR i.Value=@Exact THEN 0 ELSE 1 END,
-                     p.Name
-            LIMIT @Take;
+            WHERE p.IsActive=1
+              AND (
+                @Exact='' OR
+                p.ProductCode LIKE @Prefix OR
+                p.Reference LIKE @Prefix OR
+                p.Name LIKE @Name OR
+                EXISTS(
+                  SELECT 1 FROM PosCatalogBarcodes b
+                  WHERE b.ProductId=p.ProductId AND b.Value LIKE @Prefix) OR
+                EXISTS(
+                  SELECT 1 FROM PosCatalogIdentifiers i
+                  WHERE i.ProductId=p.ProductId AND i.Value LIKE @Prefix))
+            ORDER BY CASE WHEN @Exact<>'' AND (
+                       p.ProductCode=@Exact OR p.Reference=@Exact OR
+                       EXISTS(SELECT 1 FROM PosCatalogBarcodes b WHERE b.ProductId=p.ProductId AND b.Value=@Exact) OR
+                       EXISTS(SELECT 1 FROM PosCatalogIdentifiers i WHERE i.ProductId=p.ProductId AND i.Value=@Exact))
+                     THEN 0 ELSE 1 END,
+                     p.Name,p.ProductId
+            LIMIT @Take OFFSET @Skip;
             """;
-        command.Parameters.AddRange([P("@Exact", term.Trim()), P("@Name", $"%{term.Trim()}%"), P("@Take", take)]);
+        var normalized = term.Trim();
+        command.Parameters.AddRange([
+            P("@Exact", normalized), P("@Prefix", $"{normalized}%"),
+            P("@Name", $"%{normalized}%"), P("@Take", take), P("@Skip", skip)]);
         var products = new List<PosCatalogItem>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))

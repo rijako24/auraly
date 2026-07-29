@@ -100,9 +100,16 @@ internal static class PosSaleHostModule
             sp.GetRequiredService<IAuralyIdGenerator>(),
             sp.GetRequiredService<TimeProvider>()));
         services.AddSingleton<EscPosReceiptRenderer>();
-        services.AddSingleton<IPosReceiptPrinter>(sp => new WindowsRawReceiptPrinter(
-            Required(configuration, "PosEdge:PrinterName"),
-            sp.GetRequiredService<EscPosReceiptRenderer>()));
+        services.AddSingleton<IPosReceiptPrinter>(sp =>
+        {
+            var renderer = sp.GetRequiredService<EscPosReceiptRenderer>();
+            var outputDirectory = configuration["PosEdge:ReceiptOutputDirectory"];
+            return string.IsNullOrWhiteSpace(outputDirectory)
+                ? new WindowsRawReceiptPrinter(
+                    Required(configuration, "PosEdge:PrinterName"),
+                    renderer)
+                : new FileReceiptPrinter(outputDirectory, renderer);
+        });
         services.AddSingleton<PosSaleCompletionService>();
         services.AddHostedService<PosSaleStorageInitializer>();
         return services;

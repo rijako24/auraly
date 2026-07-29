@@ -70,6 +70,55 @@ public sealed class PosArchitectureTests
             StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void Pos_uses_Auraly_keyboard_shortcuts_and_returns_quantity_focus_to_the_scanner()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var posDirectory = Path.Combine(
+            repositoryRoot,
+            "admin",
+            "src",
+            "app",
+            "(pos)",
+            "pos");
+        var page = File.ReadAllText(Path.Combine(posDirectory, "page.tsx"));
+        var paymentDialog = File.ReadAllText(
+            Path.Combine(posDirectory, "pos-payment-dialog.tsx"));
+        var productSearchDialog = File.ReadAllText(
+            Path.Combine(posDirectory, "pos-product-search-dialog.tsx"));
+
+        Assert.Contains("event.key === \"F1\"", page, StringComparison.Ordinal);
+        Assert.Contains("event.key === \"F2\"", page, StringComparison.Ordinal);
+        Assert.Contains("Buscar <span", page, StringComparison.Ordinal);
+        Assert.Contains(">F2</span>", page, StringComparison.Ordinal);
+        Assert.Contains(">F1</span>", page, StringComparison.Ordinal);
+        Assert.Contains(
+            "event.currentTarget.blur();",
+            page,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "focusScanner();",
+            page,
+            StringComparison.Ordinal);
+
+        foreach (var shortcut in new[] { "F1", "F2", "F3", "F4", "F5" })
+        {
+            Assert.Contains(
+                $"shortcut: \"{shortcut}\"",
+                paymentDialog,
+                StringComparison.Ordinal);
+        }
+
+        Assert.Contains(
+            "onSearch={searchProducts}",
+            page,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "Tab y Shift+Tab navegan; Enter agrega el producto enfocado; Esc vuelve al lector.",
+            productSearchDialog,
+            StringComparison.Ordinal);
+    }
+
     private static string FindRepositoryRoot()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);

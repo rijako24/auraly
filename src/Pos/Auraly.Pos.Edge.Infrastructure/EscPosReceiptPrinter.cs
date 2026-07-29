@@ -126,6 +126,37 @@ public sealed class EscPosReceiptRenderer
     private static void Write(Stream stream, ReadOnlySpan<byte> bytes) => stream.Write(bytes);
 }
 
+public sealed class FileReceiptPrinter(
+    string outputDirectory,
+    EscPosReceiptRenderer renderer) : IPosReceiptPrinter
+{
+    public async Task PrintAsync(
+        PosReceipt receipt,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (string.IsNullOrWhiteSpace(outputDirectory))
+            throw new InvalidOperationException("A receipt output directory must be configured.");
+
+        var directory = Path.GetFullPath(outputDirectory);
+        Directory.CreateDirectory(directory);
+        var target = Path.Combine(directory, $"{receipt.PrintJobId:N}.escpos");
+        var temporary = Path.Combine(directory, $".{receipt.PrintJobId:N}.{Guid.NewGuid():N}.tmp");
+        try
+        {
+            await File.WriteAllBytesAsync(
+                temporary,
+                renderer.Render(receipt),
+                cancellationToken);
+            File.Move(temporary, target, overwrite: true);
+        }
+        finally
+        {
+            if (File.Exists(temporary)) File.Delete(temporary);
+        }
+    }
+}
+
 public sealed class WindowsRawReceiptPrinter(
     string printerName,
     EscPosReceiptRenderer renderer) : IPosReceiptPrinter

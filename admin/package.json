@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "dev:pos": "next dev --hostname 127.0.0.1 --port 47830",
+    "test:pos": "tsc -p tsconfig.pos-tests.json && node --test \".pos-test-dist/app/(pos)/pos/pos-payment-settlement.test.js\"",
     "build": "next build",
     "start": "next start",
     "lint": "next lint"

@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.BuildingBlocks.Infrastructure.Identifiers;
+using Auraly.Contracts.Catalog;
 using Auraly.Pos.Edge.Infrastructure;
 
 namespace Auraly.Pos.Edge.Host;
@@ -9,6 +10,10 @@ namespace Auraly.Pos.Edge.Host;
 public sealed record PosEdgeRuntimeContext(
     PosDraftScope Scope,
     bool WarehouseAllowsNegativeStock);
+
+public sealed record PosWorkstationIdentity(
+    string RegisterCode,
+    string UserDisplayName);
 
 public sealed record CaptureRequest(string Value, Guid? CustomerId);
 public sealed record QuantityRequest(decimal Quantity);
@@ -52,12 +57,24 @@ public static class PosEdgeHostApplication
         builder.Services.AddSingleton(TimeProvider.System);
         builder.Services.AddSingleton<IAuralyIdGenerator, Uuid7AuralyIdGenerator>();
         builder.Services.AddSingleton(runtime);
+        builder.Services.AddSingleton(new PosWorkstationIdentity(
+            Required(
+                builder.Configuration,
+                "PosEdge:Documents:SalesInvoice:SeriesCode"),
+            Required(builder.Configuration, "PosEdge:UserDisplayName")));
         builder.Services.AddSingleton(new PosCatalogStore(connectionString));
         builder.Services.AddSingleton(sp => new PosDraftStore(
             connectionString,
             sp.GetRequiredService<IAuralyIdGenerator>(),
             sp.GetRequiredService<TimeProvider>()));
-        builder.Services.AddSingleton(new HttpClient { BaseAddress = new Uri(serverUrl) });
+        builder.Services.AddSingleton<PosServerConnectionState>();
+        builder.Services.AddSingleton(sp => new HttpClient(
+            new PosServerConnectionHandler(
+                new HttpClientHandler(),
+                sp.GetRequiredService<PosServerConnectionState>()))
+        {
+            BaseAddress = new Uri(serverUrl)
+        });
         builder.Services.AddSingleton(credentials);
         builder.Services.AddSingleton<PosCatalogSynchronizer>();
         builder.Services.AddSingleton<IPosInventoryAvailabilityClient>(
@@ -115,16 +132,64 @@ public static class PosEdgeHostApplication
             {
                 SetCorsHeaders(context.Response, allowedOrigin);
             }
-            await next(context);
+            try
+            {
+                await next(context);
+            }
+            catch (InvalidOperationException error)
+                when (string.Equals(
+                    error.Message,
+                    "The sale was already issued and is locked until its receipt is printed.",
+                    StringComparison.Ordinal))
+            {
+                context.Response.StatusCode = StatusCodes.Status409Conflict;
+                await context.Response.WriteAsJsonAsync(new
+                {
+                    code = "IssuedPendingPrint",
+                    detail = "La factura ya fue emitida y está pendiente de imprimir la tirilla. Presiona F1 para reintentar la impresión."
+        });
+            }
         });
 
         var edge = app.MapGroup("/edge/v1");
-        edge.MapGet("/health", () => Results.Ok(new { status = "Ready" }));
+        edge.MapGet("/health", (
+            PosServerConnectionState server,
+            PosWorkstationIdentity workstation) =>
+            Results.Ok(new
+            {
+                status = "Ready",
+                serverConnected = server.IsConnected,
+                registerCode = workstation.RegisterCode,
+                userDisplayName = workstation.UserDisplayName
+            }));
         edge.MapGet("/drafts/active", async (
             PosDraftStore drafts,
             PosEdgeRuntimeContext context,
             CancellationToken ct) =>
             Results.Ok(await drafts.GetOrCreateActiveAsync(context.Scope, ct)));
+        edge.MapGet("/catalog/products", async (
+            string? search,
+            int? skip,
+            int? take,
+            PosCatalogStore catalog,
+            CancellationToken ct) =>
+        {
+            var pageSize = Math.Clamp(take ?? 50, 1, 50);
+            var offset = Math.Max(skip ?? 0, 0);
+            var values = (await catalog.SearchAsync(
+                search ?? string.Empty,
+                offset,
+                pageSize + 1,
+                ct)).ToArray();
+            var hasMore = values.Length > pageSize;
+            return Results.Ok(new
+            {
+                items = values.Take(pageSize),
+                hasMore,
+                nextOffset = hasMore ? offset + pageSize : (int?)null
+            });
+        });
+
         edge.MapPost("/capture", async (
             CaptureRequest request,
             PosCaptureService capture,
@@ -175,6 +240,24 @@ public static class PosEdgeHostApplication
             PosDraftStore drafts,
             CancellationToken ct) =>
             Results.Ok(await drafts.RemoveLineAsync(new DraftId(draftId), lineId, ct)));
+        edge.MapDelete("/drafts/{draftId:guid}", async (
+            Guid draftId,
+            PosDraftStore drafts,
+            PosEdgeRuntimeContext context,
+            PosSaleHostSettings settings,
+            CancellationToken ct) =>
+        {
+            if (!settings.Permissions.Contains(
+                    Auraly.Contracts.Authorization.CommercePermissionCodes.SalesVoid))
+            {
+                return Results.Problem(
+                    "Permission 'sales.void' is required.",
+                    statusCode: StatusCodes.Status403Forbidden);
+            }
+
+            await drafts.CancelAsync(new DraftId(draftId), ct);
+            return Results.Ok(await drafts.GetOrCreateActiveAsync(context.Scope, ct));
+        });
         edge.MapPost("/drafts/{draftId:guid}/temporary", async (
             Guid draftId,
             SaveTemporaryRequest request,

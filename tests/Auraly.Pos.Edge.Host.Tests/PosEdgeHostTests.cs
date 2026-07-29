@@ -66,11 +66,43 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
 
 
     [Fact]
+    public async Task Authorized_user_can_delete_the_current_sale_durably()
+    {
+        var capture = await Client.PostAsJsonAsync(
+            "/edge/v1/capture",
+            new CaptureRequest("770123", null));
+        capture.EnsureSuccessStatusCode();
+        var captured = await capture.Content.ReadFromJsonAsync<PosCaptureResult>();
+        Assert.Single(captured!.Draft!.Lines);
+
+        var deleted = await Client.DeleteAsync(
+            $"/edge/v1/drafts/{captured.Draft.DraftId.Value:D}");
+        deleted.EnsureSuccessStatusCode();
+        var next = await deleted.Content.ReadFromJsonAsync<PosDraft>();
+
+        Assert.NotNull(next);
+        Assert.Empty(next!.Lines);
+        Assert.NotEqual(captured.Draft.DraftId, next.DraftId);
+        await using var database =
+            new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={_path}");
+        await database.OpenAsync();
+        await using var command = database.CreateCommand();
+        command.CommandText = "SELECT Status FROM PosDrafts WHERE DraftId=$id;";
+        command.Parameters.AddWithValue("$id", captured.Draft.DraftId.Value.ToString("D"));
+        Assert.Equal(PosDraftStatus.Deleted, (string)(await command.ExecuteScalarAsync())!);
+    }
+
+    [Fact]
     public async Task Scanner_and_temporaries_flow_through_the_protected_http_api()
     {
         var active = await Client.GetFromJsonAsync<PosDraft>("/edge/v1/drafts/active");
         Assert.NotNull(active);
         Assert.Empty(active!.Lines);
+        var products = await Client.GetFromJsonAsync<CatalogSearchPageContract>(
+            "/edge/v1/catalog/products?search=Product&take=20");
+        Assert.Single(products!.Items);
+        Assert.Equal("P-1", products.Items[0].ProductCode);
+
 
         var capture = await Client.PostAsJsonAsync(
             "/edge/v1/capture",
@@ -151,6 +183,7 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
             ["PosEdge:WarehouseId"] = Guid.NewGuid().ToString("D"),
             ["PosEdge:RegisterId"] = Guid.NewGuid().ToString("D"),
             ["PosEdge:UserId"] = Guid.NewGuid().ToString("D"),
+            ["PosEdge:UserDisplayName"] = "Cajera de prueba",
             ["PosEdge:WarehouseAllowsNegativeStock"] = "true",
             ["PosEdge:TenantId"] = Guid.NewGuid().ToString("D"),
             ["PosEdge:LocationId"] = Guid.NewGuid().ToString("D"),
@@ -158,6 +191,7 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
             ["PosEdge:DefaultCustomerIdentification"] = "222222222",
             ["PosEdge:Permissions:0"] = "sales.create",
             ["PosEdge:Permissions:1"] = "sales.reprint",
+            ["PosEdge:Permissions:2"] = "sales.void",
             ["PosEdge:PrinterName"] = "Test printer",
             ["PosEdge:PaperWidthMillimeters"] = "80",
             ["PosEdge:Documents:SalesInvoice:SeriesId"] = Guid.NewGuid().ToString("D"),
@@ -225,6 +259,11 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
         foreach (var key in _environmentKeys)
             Environment.SetEnvironmentVariable(key, null);
     }
+
+    private sealed record CatalogSearchPageContract(
+        IReadOnlyList<PosCatalogItem> Items,
+        bool HasMore,
+        int? NextOffset);
 
     private sealed class RecordingPrinter : IPosReceiptPrinter
     {

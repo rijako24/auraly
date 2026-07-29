@@ -66,4 +66,43 @@ public sealed class EscPosReceiptRendererTests
         Assert.Throws<ArgumentOutOfRangeException>(
             () => new EscPosReceiptRenderer().Render(receipt));
     }
+
+    [Fact]
+    public async Task File_printer_writes_the_exact_ESC_POS_receipt_atomically()
+    {
+        var directory = Path.Combine(
+            Path.GetTempPath(),
+            "auraly-receipt-" + Guid.NewGuid().ToString("N"));
+        var receipt = new PosReceipt(
+            Guid.NewGuid(),
+            new DocumentId(Guid.NewGuid()),
+            "VTA03-00000042",
+            "FV42",
+            DateTimeOffset.UtcNow,
+            "222222222",
+            [new PosReceiptLine("P-001", "Producto", 1m, 12_500m, 0m, 0m, 12_500m)],
+            [new OfflineSalePayment("Cash", 12_500m)],
+            12_500m,
+            0m,
+            12_500m,
+            "cufe",
+            "qr",
+            80);
+        var renderer = new EscPosReceiptRenderer();
+
+        try
+        {
+            await new FileReceiptPrinter(directory, renderer).PrintAsync(receipt);
+
+            var path = Path.Combine(directory, $"{receipt.PrintJobId:N}.escpos");
+            Assert.True(File.Exists(path));
+            Assert.Equal(renderer.Render(receipt), await File.ReadAllBytesAsync(path));
+            Assert.Empty(Directory.GetFiles(directory, "*.tmp"));
+        }
+        finally
+        {
+            if (Directory.Exists(directory))
+                Directory.Delete(directory, recursive: true);
+        }
+    }
 }

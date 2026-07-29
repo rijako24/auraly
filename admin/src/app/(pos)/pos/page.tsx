@@ -2,13 +2,14 @@
 
 import {
   AlertTriangle,
+  Banknote,
   Barcode,
   CheckCircle2,
   Clock3,
   Loader2,
-  PackageSearch,
   RotateCcw,
   Save,
+  Search,
   Trash2,
   Wifi,
   WifiOff,
@@ -17,6 +18,7 @@ import Image from "next/image";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
+  PosCatalogProduct,
   PosDraft,
   PosDocumentNumberPreview,
   PosPaymentInput,
@@ -25,6 +27,8 @@ import {
   readEdgeTokenFromLaunch,
 } from "@/services/pos/pos-edge-client";
 import { PosPaymentDialog } from "./pos-payment-dialog";
+import type { PosPaymentSettlement } from "./pos-payment-settlement";
+import { PosProductSearchDialog } from "./pos-product-search-dialog";
 
 
 const money = new Intl.NumberFormat("es-CO", {
@@ -41,12 +45,24 @@ export default function PosPage() {
   const [scan, setScan] = useState("");
   const [busy, setBusy] = useState(false);
   const [edgeReady, setEdgeReady] = useState(false);
-  const [online, setOnline] = useState(true);
+  const [serverConnected, setServerConnected] = useState(false);
+  const [workstation, setWorkstation] = useState({
+    registerCode: "—",
+    userDisplayName: "—",
+  });
   const [message, setMessage] = useState("Esperando producto");
   const [error, setError] = useState<string | null>(null);
   const [temporaryOpen, setTemporaryOpen] = useState(false);
   const [temporaryName, setTemporaryName] = useState("");
   const [paymentOpen, setPaymentOpen] = useState(false);
+  const [productSearchOpen, setProductSearchOpen] = useState(false);
+  const [selectedLineId, setSelectedLineId] = useState<string | null>(null);
+  const [cancelArmedUntil, setCancelArmedUntil] = useState(0);
+  const [lastSettlement, setLastSettlement] = useState<{
+    documentNumber: string;
+    received: number;
+    change: number;
+  } | null>(null);
   const [nextNumber, setNextNumber] = useState<PosDocumentNumberPreview | null>(null);
   const [temporaryReference, setTemporaryReference] = useState("");
   const client = useMemo(() => (token ? new PosEdgeClient(token) : null), [token]);
@@ -62,18 +78,9 @@ export default function PosPage() {
 
   useEffect(() => {
     setToken(readEdgeTokenFromLaunch());
-    setOnline(navigator.onLine);
-    const connected = () => setOnline(true);
-    const disconnected = () => setOnline(false);
-    window.addEventListener("online", connected);
-    window.addEventListener("offline", disconnected);
     if ("serviceWorker" in navigator) {
       void navigator.serviceWorker.register("/pos-sw.js", { scope: "/pos" });
     }
-    return () => {
-      window.removeEventListener("online", connected);
-      window.removeEventListener("offline", disconnected);
-    };
   }, []);
 
   useEffect(() => {
@@ -86,7 +93,14 @@ export default function PosPage() {
       if (checking) return;
       checking = true;
       try {
-        await client.health();
+        const health = await client.health();
+        if (active) setServerConnected(health.serverConnected);
+        if (active) {
+          setWorkstation({
+            registerCode: health.registerCode,
+            userDisplayName: health.userDisplayName,
+          });
+        }
         if (!hydrated) {
           const [current, pending, numbers] = await Promise.all([
             client.activeDraft(),
@@ -103,7 +117,10 @@ export default function PosPage() {
         if (active) setEdgeReady(true);
       } catch {
         hydrated = false;
-        if (active) setEdgeReady(false);
+        if (active) {
+          setEdgeReady(false);
+          setServerConnected(false);
+        }
       } finally {
         checking = false;
       }
@@ -121,39 +138,96 @@ export default function PosPage() {
   useEffect(() => {
     const handleShortcut = (event: KeyboardEvent) => {
       if (
-        event.key === "F2" &&
+        event.key === "F1" &&
         !busy &&
         Boolean(draft?.lines.length) &&
-        !temporaryOpen
+        !temporaryOpen &&
+        !productSearchOpen &&
+        !paymentOpen
       ) {
         event.preventDefault();
         setPaymentOpen(true);
+      } else if (
+        event.key === "F2" &&
+        !busy &&
+        !temporaryOpen &&
+        !paymentOpen
+      ) {
+        event.preventDefault();
+        setProductSearchOpen(true);
+      } else if (
+        event.key === "F4" &&
+        !busy &&
+        Boolean(draft?.lines.length) &&
+        !temporaryOpen &&
+        !paymentOpen &&
+        !productSearchOpen
+      ) {
+        event.preventDefault();
+        setTemporaryOpen(true);
+      } else if (
+        event.key === "F5" &&
+        !busy &&
+        selectedLineId &&
+        !temporaryOpen &&
+        !paymentOpen &&
+        !productSearchOpen
+      ) {
+        event.preventDefault();
+        void removeLine(selectedLineId);
+      } else if (
+        event.key === "F6" &&
+        !busy &&
+        !temporaryOpen &&
+        !paymentOpen &&
+        !productSearchOpen
+      ) {
+        event.preventDefault();
+        void requestCancelSale();
       }
     };
     window.addEventListener("keydown", handleShortcut);
     return () => window.removeEventListener("keydown", handleShortcut);
-  }, [busy, draft?.lines.length, temporaryOpen]);
+  }, [
+    busy,
+    cancelArmedUntil,
+    draft?.lines.length,
+    paymentOpen,
+    productSearchOpen,
+    selectedLineId,
+    temporaryOpen,
+  ]);
+
   async function capture(event: FormEvent) {
     event.preventDefault();
-    const value = scan.trim();
-    if (!client || !value || busy) return;
+    await captureValue(scan.trim());
+  }
+
+  async function captureValue(value: string): Promise<boolean> {
+    if (!client || !value || busy) return false;
     if (!edgeReady) {
       setError("POS Edge no est\u00e1 conectado. El c\u00f3digo se conservar\u00e1 para reintentar.");
       setMessage("Esperando conexi\u00f3n con POS Edge");
       focusScanner();
-      return;
+      return false;
     }
     setBusy(true);
     setError(null);
     try {
+      const startsNewSale = !draft?.lines.length;
       const result = await client.capture(value, draft?.customerId ?? null);
       if (result.status === "Added" && result.draft) {
         setDraft(result.draft);
+        setSelectedLineId(result.draft.lines.at(-1)?.lineId ?? null);
         setMessage(`${result.draft.lines.at(-1)?.description ?? "Producto"} agregado`);
+        if (startsNewSale) setLastSettlement(null);
+        setScan("");
+        return true;
       }
-      setScan("");
+      return false;
     } catch (caught) {
       showError(caught);
+      return false;
     } finally {
       setBusy(false);
       focusScanner();
@@ -184,8 +258,42 @@ export default function PosPage() {
     if (!client || !draft) return;
     setBusy(true);
     try {
-      setDraft(await client.removeLine(draft.draftId.value, lineId));
+      const updated = await client.removeLine(draft.draftId.value, lineId);
+      setDraft(updated);
+      setSelectedLineId(updated.lines.at(-1)?.lineId ?? null);
       setMessage("Producto retirado");
+    } catch (caught) {
+      showError(caught);
+    } finally {
+      setBusy(false);
+      focusScanner();
+    }
+  }
+
+  async function requestCancelSale() {
+    if (!draft?.lines.length || busy) return;
+    const now = Date.now();
+    if (cancelArmedUntil < now) {
+      setCancelArmedUntil(now + 4_000);
+      setMessage("Presiona F6 otra vez para confirmar que deseas cancelar toda la venta");
+      focusScanner();
+      return;
+    }
+
+    await cancelSale();
+  }
+
+  async function cancelSale() {
+    if (!client || !draft?.lines.length || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const next = await client.cancelDraft(draft.draftId.value);
+      setDraft(next);
+      setSelectedLineId(null);
+      setCancelArmedUntil(0);
+      setScan("");
+      setMessage("Venta cancelada. Nueva venta lista.");
     } catch (caught) {
       showError(caught);
     } finally {
@@ -240,7 +348,10 @@ export default function PosPage() {
     setPaymentOpen(true);
   }
 
-  async function completeSale(payments: PosPaymentInput[]) {
+  async function completeSale(
+    payments: PosPaymentInput[],
+    settlement: PosPaymentSettlement,
+  ) {
     if (!client || !draft || busy) return;
     setBusy(true);
     setError(null);
@@ -252,6 +363,11 @@ export default function PosPage() {
       );
       setDraft(result.nextDraft);
       setNextNumber(result.nextDocumentNumber);
+      setLastSettlement({
+        documentNumber: result.issuedSale.documentNumber,
+        received: settlement.received,
+        change: settlement.change,
+      });
       setPaymentOpen(false);
       setMessage(
         `${result.issuedSale.documentNumber} emitida e impresa (DIAN ${result.issuedSale.fiscalNumber}). Nueva venta lista.`,
@@ -264,11 +380,32 @@ export default function PosPage() {
     }
   }
 
+  const searchProducts = useCallback(
+    (term: string, skip: number) =>
+      client?.searchProducts(term, skip, 50) ??
+      Promise.resolve({
+        items: [],
+        hasMore: false,
+        nextOffset: null,
+      }),
+    [client],
+  );
+
+  async function selectSearchProduct(product: PosCatalogProduct) {
+    const added = await captureValue(product.productCode);
+    if (added) setProductSearchOpen(false);
+    return added;
+  }
+
   function showError(caught: unknown) {
     const status = caught instanceof PosEdgeError ? caught.status : 0;
     if (!(caught instanceof PosEdgeError)) setEdgeReady(false);
     const text =
-      status === 404
+      status === 409 &&
+      caught instanceof PosEdgeError &&
+      caught.message.includes("pendiente de imprimir")
+        ? caught.message
+        : status === 404
         ? "Producto no encontrado en el catálogo local"
         : status === 409
           ? "La cantidad solicitada no está disponible"
@@ -276,7 +413,7 @@ export default function PosPage() {
             ? "La factura fue emitida, pero la tirilla no pudo imprimirse. Reintenta sin modificar la venta."
             : status === 503
             ? "La bodega exige validar inventario y no hay conexión"
-            : "No fue posible comunicarse con Auraly POS Edge";
+            : "No fue posible acceder a los servicios locales de la caja";
     setError(text);
     setMessage("Revisa la novedad");
   }
@@ -288,30 +425,16 @@ export default function PosPage() {
   return (
     <main className="min-h-screen bg-[#eef3f3] text-slate-950">
       <header className="flex min-h-16 items-center justify-between gap-4 bg-auraly-background px-5 py-3 text-auraly-text shadow-lg">
-        <div className="flex items-center gap-3">
-          <Image
-            src="/brand/auraly-mark.png"
-            alt="Auraly"
-            width={38}
-            height={38}
-            className="rounded-xl"
-            priority
-          />
-          <div>
-            <p className="text-base font-semibold tracking-tight">Auraly POS</p>
-            <p className="text-xs text-auraly-secondary">
-              Caja configurada · Bodega asignada
-            </p>
-          </div>
+        <div>
+          <p className="text-base font-semibold tracking-tight">Caja {workstation.registerCode}</p>
+          <p className="text-xs text-auraly-secondary">
+            Cajero: {workstation.userDisplayName}
+          </p>
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2 text-xs">
           <StatusChip
-            ok={edgeReady}
-            label={edgeReady ? "POS Edge listo" : "POS Edge sin conexión"}
-          />
-          <StatusChip
-            ok={online}
-            label={online ? "Internet disponible" : "Venta local"}
+            ok={serverConnected}
+            label={serverConnected ? "Conectado con Auraly" : "Modo sin conexión"}
             network
           />
           <span className="rounded-full bg-white/10 px-3 py-1.5">
@@ -356,6 +479,15 @@ export default function PosPage() {
               >
                 {busy ? <Loader2 className="mx-auto animate-spin" /> : "Agregar"}
               </button>
+              <button
+                type="button"
+                onClick={() => setProductSearchOpen(true)}
+                disabled={busy || !edgeReady}
+                className="flex min-w-28 items-center justify-center gap-2 rounded-xl border border-teal-700/25 bg-white px-4 font-semibold text-teal-800 transition hover:bg-teal-50 focus:outline-none focus:ring-4 focus:ring-teal-600/15 disabled:opacity-45"
+              >
+                <Search className="h-4 w-4" />
+                Buscar <span className="rounded bg-teal-50 px-1.5 py-0.5 text-xs">F2</span>
+              </button>
             </div>
             <p
               id="capture-state"
@@ -372,7 +504,7 @@ export default function PosPage() {
           <div className="min-h-[360px] flex-1 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
             <div className="overflow-auto">
               <table className="w-full min-w-[820px] border-collapse text-sm">
-                <thead className="sticky top-0 z-10 bg-slate-100 text-left text-xs uppercase tracking-wide text-slate-600">
+                <thead className="sticky top-0 z-10 bg-slate-100 text-left text-xs font-semibold tracking-wide text-slate-600">
                   <tr>
                     <th className="px-4 py-3">Producto</th>
                     <th className="w-28 px-3 py-3 text-right">Cantidad</th>
@@ -387,7 +519,12 @@ export default function PosPage() {
                   {draft?.lines.map((line) => (
                     <tr
                       key={line.lineId}
-                      className="border-t border-slate-100 transition hover:bg-teal-50/40"
+                      onClick={() => setSelectedLineId(line.lineId)}
+                      className={`border-t border-slate-100 transition ${
+                        selectedLineId === line.lineId
+                          ? "bg-teal-50 ring-2 ring-inset ring-teal-600/25"
+                          : "hover:bg-teal-50/40"
+                      }`}
                     >
                       <td className="px-4 py-3">
                         <p className="font-semibold text-slate-900">{line.description}</p>
@@ -397,19 +534,28 @@ export default function PosPage() {
                       </td>
                       <td className="px-3 py-2 text-right">
                         <input
+                          key={`${line.lineId}-${line.quantity}`}
                           type="number"
                           min="0.001"
                           step="0.001"
                           defaultValue={line.quantity}
+                          onFocus={() => setSelectedLineId(line.lineId)}
                           onKeyDown={(event) => {
                             if (event.key === "Enter") {
                               event.preventDefault();
-                              void changeQuantity(line.lineId, event.currentTarget.valueAsNumber);
+                              event.currentTarget.blur();
                             }
                           }}
                           onBlur={(event) => {
-                            if (event.currentTarget.valueAsNumber !== line.quantity)
-                              void changeQuantity(line.lineId, event.currentTarget.valueAsNumber);
+                            const quantity = event.currentTarget.valueAsNumber;
+                            if (!Number.isFinite(quantity) || quantity <= 0) {
+                              event.currentTarget.value = String(line.quantity);
+                              focusScanner();
+                            } else if (quantity !== line.quantity) {
+                              void changeQuantity(line.lineId, quantity);
+                            } else {
+                              focusScanner();
+                            }
                           }}
                           className="h-10 w-24 rounded-lg border border-slate-300 bg-white px-2 text-right font-semibold outline-none focus:border-teal-600 focus:ring-2 focus:ring-teal-600/15"
                           aria-label={`Cantidad de ${line.description}`}
@@ -435,12 +581,22 @@ export default function PosPage() {
               </table>
             </div>
             {!draft?.lines.length && (
-              <div className="flex min-h-[300px] flex-col items-center justify-center px-6 text-center text-slate-500">
-                <PackageSearch className="mb-3 h-12 w-12 text-teal-700/45" />
-                <p className="font-semibold text-slate-700">La venta está vacía</p>
-                <p className="mt-1 max-w-sm text-sm">
-                  Escanea el primer producto. Al agregarlo, el foco vuelve automáticamente al lector.
+              <div className="relative flex min-h-[300px] flex-col items-center justify-center overflow-hidden px-6 text-center">
+                <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(13,148,136,0.10),transparent_52%)]" />
+                <div className="relative grid h-20 w-20 place-items-center rounded-full border border-teal-200 bg-teal-50 shadow-[0_0_0_12px_rgba(20,184,166,0.05)]">
+                  <Barcode className="h-9 w-9 text-teal-700" />
+                </div>
+                <p className="relative mt-6 text-xl font-bold tracking-tight text-slate-900">Caja lista para vender</p>
+                <p className="relative mt-1 max-w-md text-sm text-slate-500">
+                  Escanea el primer producto o abre la búsqueda. El lector queda preparado para continuar sin usar el mouse.
                 </p>
+                <div className="relative mt-5 flex flex-wrap items-center justify-center gap-2 text-xs font-semibold">
+                  <span className="rounded-full border border-teal-200 bg-white px-3 py-1.5 text-teal-800">Lector activo</span>
+                  <span className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-slate-700">Buscar producto · F2</span>
+                  <span className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-slate-700">
+                    Próxima {nextNumber?.isAvailable ? nextNumber.fullNumber : "por calcular"}
+                  </span>
+                </div>
               </div>
             )}
           </div>
@@ -477,7 +633,7 @@ export default function PosPage() {
               className="mt-5 flex h-14 w-full items-center justify-center gap-2 rounded-xl bg-auraly-accent px-4 text-lg font-bold text-auraly-background transition hover:bg-auraly-light disabled:cursor-not-allowed disabled:opacity-40"
             >
               Cobrar
-              <span className="rounded bg-black/10 px-2 py-0.5 text-xs font-semibold">F2</span>
+              <span className="rounded bg-black/10 px-2 py-0.5 text-xs font-semibold">F1</span>
             </button>
 
             <button
@@ -488,9 +644,68 @@ export default function PosPage() {
             >
               <Save className="h-4 w-4" />
               Guardar temporal
+              <span className="rounded bg-white/10 px-2 py-0.5 text-xs font-semibold">F4</span>
             </button>
+
+            <div className="mt-2 grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                disabled={!selectedLineId || busy}
+                onClick={() => selectedLineId && void removeLine(selectedLineId)}
+                className="flex h-11 items-center justify-center gap-2 rounded-xl border border-white/15 bg-white/5 text-sm font-semibold transition hover:bg-white/10 disabled:opacity-40"
+              >
+                <Trash2 className="h-4 w-4" />
+                Producto
+                <span className="rounded bg-white/10 px-1.5 py-0.5 text-xs">F5</span>
+              </button>
+              <button
+                type="button"
+                disabled={!draft?.lines.length || busy}
+                onClick={() => void requestCancelSale()}
+                className={`flex h-11 items-center justify-center gap-2 rounded-xl border text-sm font-semibold transition disabled:opacity-40 ${
+                  cancelArmedUntil >= Date.now()
+                    ? "border-red-300 bg-red-500/20 text-red-100"
+                    : "border-white/15 bg-white/5 hover:bg-white/10"
+                }`}
+              >
+                Venta
+                <span className="rounded bg-white/10 px-1.5 py-0.5 text-xs">F6</span>
+              </button>
+            </div>
           </section>
 
+          {lastSettlement ? (
+            <section
+              className="relative flex min-h-56 flex-1 overflow-hidden rounded-2xl border border-emerald-300 bg-emerald-50 p-5 shadow-sm"
+              role="status"
+              aria-live="assertive"
+            >
+              <div className="absolute -right-12 -top-12 h-40 w-40 rounded-full bg-emerald-200/45" />
+              <div className="relative flex w-full flex-col justify-between">
+                <div className="flex items-center gap-3">
+                  <span className="grid h-12 w-12 place-items-center rounded-2xl bg-emerald-700 text-white shadow-sm">
+                    <Banknote className="h-6 w-6" />
+                  </span>
+                  <div>
+                    <p className="text-xs font-bold uppercase tracking-[0.16em] text-emerald-700">Entregar al cliente</p>
+                    <p className="text-xs text-emerald-800">Venta {lastSettlement.documentNumber} completada</p>
+                  </div>
+                </div>
+                <div className="py-5 text-center">
+                  <p className="text-sm font-medium text-emerald-800">Cambio</p>
+                  <p className="mt-1 text-5xl font-black tracking-tight tabular-nums text-emerald-950">
+                    {money.format(lastSettlement.change)}
+                  </p>
+                  <p className="mt-3 text-sm text-emerald-800">
+                    Recibido: <span className="font-bold tabular-nums">{money.format(lastSettlement.received)}</span>
+                  </p>
+                </div>
+                <p className="text-center text-xs text-emerald-700">
+                  Este aviso se ocultará al agregar el primer producto de la siguiente venta.
+                </p>
+              </div>
+            </section>
+          ) : (
           <section className="flex-1 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
             <div className="mb-3 flex items-center justify-between">
               <div>
@@ -532,14 +747,30 @@ export default function PosPage() {
               )}
             </div>
           </section>
+          )}
         </aside>
       </section>
+
+      {productSearchOpen && client && (
+        <PosProductSearchDialog
+          busy={busy}
+          onSearch={searchProducts}
+          onSelect={selectSearchProduct}
+          onCancel={() => {
+            setProductSearchOpen(false);
+            focusScanner();
+          }}
+        />
+      )}
 
       {paymentOpen && draft && (
         <PosPaymentDialog
           total={draft.payableAmount}
           busy={busy}
-          onCancel={() => setPaymentOpen(false)}
+          onCancel={() => {
+            setPaymentOpen(false);
+            focusScanner();
+          }}
           onConfirm={completeSale}
         />
       )}
@@ -624,7 +855,7 @@ function ConnectionGate({ onConnect }: { onConnect: (token: string) => void }) {
         />
         <h1 className="mt-5 text-2xl font-semibold">Conectar Auraly POS</h1>
         <p className="mt-2 text-sm leading-6 text-auraly-secondary">
-          Abre esta pantalla desde Auraly POS Edge. Para desarrollo local puedes ingresar la sesión generada por el host.
+          Abre esta pantalla desde la aplicación instalada. Para desarrollo local puedes ingresar la sesión local generada por el host.
         </p>
         <label className="mt-5 block text-sm font-medium">
           Sesión local

@@ -121,6 +121,28 @@ public sealed class PosDraftStoreTests
     }
 
     [Fact]
+    public async Task Cancelling_a_draft_preserves_audit_and_creates_a_clean_sale()
+    {
+        await WithStoreAsync(async (store, _, scope, _) =>
+        {
+            var active = await store.AddOrIncrementLineAsync(scope, Line(2m));
+
+            await store.CancelAsync(active.DraftId);
+
+            var cancelled = await store.GetAsync(active.DraftId);
+            Assert.NotNull(cancelled);
+            Assert.Equal(PosDraftStatus.Deleted, cancelled.Status);
+            Assert.Empty(cancelled.Lines);
+            Assert.Equal(0m, cancelled.PayableAmount);
+
+            var next = await store.GetOrCreateActiveAsync(scope);
+            Assert.NotEqual(active.DraftId, next.DraftId);
+            Assert.Equal(PosDraftStatus.Active, next.Status);
+            Assert.Empty(next.Lines);
+        });
+    }
+
+    [Fact]
     public async Task Adding_draft_schema_preserves_existing_pos_data()
     {
         var path = Path.Combine(Path.GetTempPath(), $"auraly-draft-upgrade-{Guid.NewGuid():N}.db");

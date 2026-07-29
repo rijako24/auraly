@@ -243,6 +243,32 @@ public sealed class PosDraftStore
         return await GetRequiredAsync(draftId, cancellationToken);
     }
 
+    public async Task CancelAsync(
+        DraftId draftId,
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var transaction = connection.BeginTransaction(IsolationLevel.Serializable);
+        await RequireActiveAsync(connection, transaction, draftId, cancellationToken);
+        var now = Now();
+        await ExecuteAsync(connection, transaction, """
+            DELETE FROM PosDraftLines WHERE DraftId=@DraftId;
+            UPDATE PosDrafts
+            SET Status='Deleted',UpdatedAt=@Now
+            WHERE DraftId=@DraftId AND Status='Active' AND IssuedAt IS NULL;
+            INSERT INTO PosDraftAudit(AuditId,DraftId,Action,OccurredAt)
+            SELECT @AuditId,@DraftId,'Deleted',@Now
+            WHERE changes()>0;
+            """,
+            [
+                P("@DraftId", draftId.Value),
+                P("@Now", now),
+                P("@AuditId", _idGenerator.NewId())
+            ],
+            cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+    }
+
     public async Task<PosDraft> AssignPartiesAsync(
         DraftId draftId,
         Guid? customerId,

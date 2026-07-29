@@ -104,6 +104,16 @@ public sealed class PosCatalogStoreTests
             await store.PromoteBootstrapAsync();
 
             Assert.Single(await store.SearchAsync("Coffee"));
+            Assert.Single(await store.SearchAsync("fee"));
+            Assert.Single(await store.SearchAsync("P-0"));
+            Assert.Single(await store.SearchAsync("REF-0"));
+            Assert.Single(await store.SearchAsync("7701234"));
+            Assert.Single(await store.SearchAsync("ALT-"));
+            Assert.Single(await store.SearchAsync("fee"));
+            Assert.Single(await store.SearchAsync("P-0"));
+            Assert.Single(await store.SearchAsync("REF-0"));
+            Assert.Single(await store.SearchAsync("7701234"));
+            Assert.Single(await store.SearchAsync("ALT-"));
             Assert.Equal(item.ProductId, (await store.CaptureAsync("ALT-01"))!.Product.ProductId);
             var weighed = await store.CaptureAsync("201234500250");
             Assert.NotNull(weighed);

@@ -3,6 +3,25 @@ const EDGE_BASE_URL =
 
 export type DraftId = { value: string };
 export type ProductId = { value: string };
+export type PosCatalogProduct = {
+  productId: string;
+  productCode: string;
+  reference: string | null;
+  name: string;
+  baseUnitCode: string;
+  taxCode: string;
+  taxRate: number;
+  unitPrice: number;
+  currencyCode: string;
+  isActive: boolean;
+};
+export type PosCatalogSearchPage = {
+  items: PosCatalogProduct[];
+  hasMore: boolean;
+  nextOffset: number | null;
+};
+
+
 
 export type PosDraftLine = {
   lineId: string;
@@ -97,7 +116,23 @@ export class PosEdgeClient {
   constructor(private readonly sessionToken: string) {}
 
   health() {
-    return this.request<{ status: string }>("/edge/v1/health");
+    return this.request<{
+      status: string;
+      serverConnected: boolean;
+      registerCode: string;
+      userDisplayName: string;
+    }>("/edge/v1/health");
+  }
+
+  searchProducts(search = "", skip = 0, take = 50) {
+    const query = new URLSearchParams({
+      search,
+      skip: String(skip),
+      take: String(take),
+    });
+    return this.request<PosCatalogSearchPage>(
+      `/edge/v1/catalog/products?${query}`,
+    );
   }
 
   activeDraft() {
@@ -128,6 +163,13 @@ export class PosEdgeClient {
   removeLine(draftId: string, lineId: string) {
     return this.request<PosDraft>(
       `/edge/v1/drafts/${draftId}/lines/${lineId}`,
+      { method: "DELETE" },
+    );
+  }
+
+  cancelDraft(draftId: string) {
+    return this.request<PosDraft>(
+      `/edge/v1/drafts/${draftId}`,
       { method: "DELETE" },
     );
   }
