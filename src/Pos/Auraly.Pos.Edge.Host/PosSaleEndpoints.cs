@@ -100,15 +100,33 @@ internal static class PosSaleHostModule
             sp.GetRequiredService<IAuralyIdGenerator>(),
             sp.GetRequiredService<TimeProvider>()));
         services.AddSingleton<EscPosReceiptRenderer>();
+        services.AddSingleton<HtmlReceiptPreviewRenderer>();
+        services.AddSingleton<IReceiptPreviewLauncher, ShellReceiptPreviewLauncher>();
         services.AddSingleton<IPosReceiptPrinter>(sp =>
         {
             var renderer = sp.GetRequiredService<EscPosReceiptRenderer>();
             var outputDirectory = configuration["PosEdge:ReceiptOutputDirectory"];
-            return string.IsNullOrWhiteSpace(outputDirectory)
-                ? new WindowsRawReceiptPrinter(
+            var mode = configuration["PosEdge:PrinterMode"]?.Trim();
+            return mode switch
+            {
+                "BrowserPreview" => new HtmlReceiptPreviewPrinter(
+                    Required(configuration, "PosEdge:ReceiptOutputDirectory"),
+                    sp.GetRequiredService<HtmlReceiptPreviewRenderer>(),
+                    sp.GetRequiredService<IReceiptPreviewLauncher>()),
+                "File" => new FileReceiptPrinter(
+                    Required(configuration, "PosEdge:ReceiptOutputDirectory"),
+                    renderer),
+                "WindowsRaw" => new WindowsRawReceiptPrinter(
                     Required(configuration, "PosEdge:PrinterName"),
-                    renderer)
-                : new FileReceiptPrinter(outputDirectory, renderer);
+                    renderer),
+                null or "" => string.IsNullOrWhiteSpace(outputDirectory)
+                    ? new WindowsRawReceiptPrinter(
+                        Required(configuration, "PosEdge:PrinterName"),
+                        renderer)
+                    : new FileReceiptPrinter(outputDirectory, renderer),
+                _ => throw new InvalidOperationException(
+                    "PosEdge:PrinterMode must be BrowserPreview, File or WindowsRaw.")
+            };
         });
         services.AddSingleton<PosSaleCompletionService>();
         services.AddHostedService<PosSaleStorageInitializer>();

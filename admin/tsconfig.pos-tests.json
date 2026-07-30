@@ -13,6 +13,8 @@
     "src/app/(pos)/pos/pos-money-input.test.ts",
     "src/app/(pos)/pos/pos-payment-settlement.ts",
     "src/app/(pos)/pos/pos-payment-settlement.test.ts",
+    "src/app/(pos)/pos/pos-discount-calculation.ts",
+    "src/app/(pos)/pos/pos-discount-calculation.test.ts",
     "src/services/pos/pos-edge-client.ts"
   ]
 }

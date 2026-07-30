@@ -6,6 +6,57 @@ namespace Auraly.Pos.Edge.Infrastructure;
 
 public sealed partial class PosCatalogStore
 {
+    public async Task<IReadOnlyCollection<PosCustomerPricing>> SearchCustomersAsync(
+        string term,
+        int skip = 0,
+        int take = 50,
+        CancellationToken ct = default)
+    {
+        if (skip < 0) throw new ArgumentOutOfRangeException(nameof(skip));
+        if (take is < 1 or > 100) throw new ArgumentOutOfRangeException(nameof(take));
+        await using var connection = new SqliteConnection(connectionString);
+        await connection.OpenAsync(ct);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT CustomerId,Identification,Name,PriceListId,PriceChannelId,IsActive
+            FROM PosPricingCustomers
+            WHERE IsActive=1
+              AND (@Term='' OR Identification LIKE @Prefix OR Name LIKE @Name)
+            ORDER BY CASE WHEN Identification=@Term THEN 0 ELSE 1 END,Name,CustomerId
+            LIMIT @Take OFFSET @Skip;
+            """;
+        var normalized = term.Trim();
+        command.Parameters.AddRange([
+            Q("@Term", normalized),
+            Q("@Prefix", $"{normalized}%"),
+            Q("@Name", $"%{normalized}%"),
+            Q("@Take", take),
+            Q("@Skip", skip)
+        ]);
+        var customers = new List<PosCustomerPricing>();
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+            customers.Add(ReadCustomer(reader));
+        return customers;
+    }
+
+    public async Task<PosCustomerPricing?> GetCustomerAsync(
+        Guid customerId,
+        CancellationToken ct = default)
+    {
+        await using var connection = new SqliteConnection(connectionString);
+        await connection.OpenAsync(ct);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT CustomerId,Identification,Name,PriceListId,PriceChannelId,IsActive
+            FROM PosPricingCustomers
+            WHERE CustomerId=@CustomerId AND IsActive=1;
+            """;
+        command.Parameters.Add(Q("@CustomerId", customerId));
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        return await reader.ReadAsync(ct) ? ReadCustomer(reader) : null;
+    }
+
     public async Task ApplyPricingSnapshotAsync(
         PosPricingSnapshot snapshot,
         CancellationToken ct = default)
@@ -148,4 +199,13 @@ public sealed partial class PosCatalogStore
 
     private static SqliteParameter Q(string name, object? value) =>
         new(name, value switch { Guid id => id.ToString("D"), _ => value ?? DBNull.Value });
+
+    private static PosCustomerPricing ReadCustomer(SqliteDataReader reader) =>
+        new(
+            Guid.Parse(reader.GetString(0)),
+            reader.GetString(1),
+            reader.GetString(2),
+            reader.IsDBNull(3) ? null : Guid.Parse(reader.GetString(3)),
+            reader.IsDBNull(4) ? null : Guid.Parse(reader.GetString(4)),
+            reader.GetInt32(5) == 1);
 }

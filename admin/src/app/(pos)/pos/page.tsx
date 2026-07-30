@@ -8,10 +8,13 @@ import {
   Clock3,
   ClipboardList,
   Loader2,
+  Percent,
+  Printer,
   RotateCcw,
   Save,
   Search,
   Trash2,
+  UserRound,
   Wifi,
   WifiOff,
 } from "lucide-react";
@@ -20,16 +23,24 @@ import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "re
 
 import {
   PosCatalogProduct,
+  PosCustomer,
   PosDraft,
   PosDocumentNumberPreview,
+  PosIssuedSaleSummary,
   PosPaymentInput,
   PosEdgeClient,
   PosEdgeError,
   readEdgeTokenFromLaunch,
 } from "@/services/pos/pos-edge-client";
 import { PosConfirmDialog } from "./pos-confirm-dialog";
+import { PosCustomerSearchDialog } from "./pos-customer-search-dialog";
+import { PosDiscountDialog } from "./pos-discount-dialog";
+import { PosInvoiceSearchDialog } from "./pos-invoice-search-dialog";
 import { PosPaymentDialog } from "./pos-payment-dialog";
-import type { PosPaymentSettlement } from "./pos-payment-settlement";
+import {
+  shouldShowCashChange,
+  type PosPaymentSettlement,
+} from "./pos-payment-settlement";
 import { PosProductSearchDialog } from "./pos-product-search-dialog";
 
 
@@ -41,6 +52,8 @@ const money = new Intl.NumberFormat("es-CO", {
 
 export default function PosPage() {
   const scanner = useRef<HTMLInputElement>(null);
+  const quantityInputs = useRef(new Map<string, HTMLInputElement>());
+  const skipQuantityBlur = useRef<string | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [draft, setDraft] = useState<PosDraft | null>(null);
   const [temporaries, setTemporaries] = useState<PosDraft[]>([]);
@@ -58,14 +71,20 @@ export default function PosPage() {
   const [temporaryName, setTemporaryName] = useState("");
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [productSearchOpen, setProductSearchOpen] = useState(false);
+  const [customerSearchOpen, setCustomerSearchOpen] = useState(false);
+  const [discountOpen, setDiscountOpen] = useState(false);
+  const [invoiceSearchOpen, setInvoiceSearchOpen] = useState(false);
+  const [selectedCustomer, setSelectedCustomer] = useState<PosCustomer | null>(null);
   const [sidePanel, setSidePanel] = useState<"temporaries" | "orders">("temporaries");
   const [selectedLineId, setSelectedLineId] = useState<string | null>(null);
   const [confirmation, setConfirmation] = useState<
     | { kind: "line"; lineId: string; productName: string }
+    | { kind: "temporary"; draftId: string; name: string }
     | { kind: "sale" }
     | null
   >(null);
   const [lastSettlement, setLastSettlement] = useState<{
+    documentId: string;
     documentNumber: string;
     received: number;
     change: number;
@@ -73,6 +92,10 @@ export default function PosPage() {
   const [nextNumber, setNextNumber] = useState<PosDocumentNumberPreview | null>(null);
   const [temporaryReference, setTemporaryReference] = useState("");
   const client = useMemo(() => (token ? new PosEdgeClient(token) : null), [token]);
+  const hasSelectedLine = Boolean(
+    selectedLineId && draft?.lines.some((line) => line.lineId === selectedLineId),
+  );
+  const showCashChange = lastSettlement ? shouldShowCashChange(lastSettlement) : false;
 
   const focusScanner = useCallback(() => {
     window.requestAnimationFrame(() => scanner.current?.focus());
@@ -118,6 +141,11 @@ export default function PosPage() {
           setDraft(current);
           setTemporaries(pending);
           setNextNumber(numbers.document);
+          setSelectedCustomer(
+            current.customerId
+              ? await client.customer(current.customerId)
+              : null,
+          );
           hydrated = true;
           focusScanner();
         }
@@ -144,12 +172,27 @@ export default function PosPage() {
 
   useEffect(() => {
     const handleShortcut = (event: KeyboardEvent) => {
+      if (invoiceSearchOpen) return;
       if (
+        event.key === "F6" &&
+        !busy &&
+        !temporaryOpen &&
+        !productSearchOpen &&
+        !customerSearchOpen &&
+        !discountOpen &&
+        !paymentOpen &&
+        !confirmation
+      ) {
+        event.preventDefault();
+        setInvoiceSearchOpen(true);
+      } else if (
         event.key === "F1" &&
         !busy &&
         Boolean(draft?.lines.length) &&
         !temporaryOpen &&
         !productSearchOpen &&
+        !customerSearchOpen &&
+        !discountOpen &&
         !paymentOpen &&
         !confirmation
       ) {
@@ -160,42 +203,81 @@ export default function PosPage() {
         !busy &&
         !temporaryOpen &&
         !paymentOpen &&
+        !customerSearchOpen &&
+        !discountOpen &&
         !confirmation
       ) {
         event.preventDefault();
         setProductSearchOpen(true);
       } else if (
-        event.key === "F4" &&
+        event.key === "F10" &&
+        !busy &&
+        Boolean(draft) &&
+        !temporaryOpen &&
+        !paymentOpen &&
+        !productSearchOpen &&
+        !discountOpen &&
+        !confirmation
+      ) {
+        event.preventDefault();
+        setCustomerSearchOpen(true);
+      } else if (
+        event.key === "F7" &&
         !busy &&
         Boolean(draft?.lines.length) &&
         !temporaryOpen &&
         !paymentOpen &&
         !productSearchOpen &&
+        !customerSearchOpen &&
+        !discountOpen &&
         !confirmation
       ) {
         event.preventDefault();
         setTemporaryOpen(true);
       } else if (
-        event.key === "F5" &&
+        event.key === "F3" &&
         !busy &&
+        hasSelectedLine &&
+        !temporaryOpen &&
+        !paymentOpen &&
+        !productSearchOpen &&
+        !customerSearchOpen &&
+        !confirmation
+      ) {
+        event.preventDefault();
+        setDiscountOpen(true);
+      } else if (
+        event.key === "F4" &&
+        !busy &&
+        hasSelectedLine &&
         selectedLineId &&
         !temporaryOpen &&
         !paymentOpen &&
         !productSearchOpen &&
+        !customerSearchOpen &&
+        !discountOpen &&
         !confirmation
       ) {
         event.preventDefault();
         requestRemoveLine(selectedLineId);
       } else if (
-        event.key === "F6" &&
+        event.key === "F5" &&
         !busy &&
         !temporaryOpen &&
         !paymentOpen &&
         !productSearchOpen &&
+        !customerSearchOpen &&
+        !discountOpen &&
         !confirmation
       ) {
         event.preventDefault();
         requestCancelSale();
+      } else if (event.key === "F8" && !busy) {
+        event.preventDefault();
+        setSidePanel("temporaries");
+      } else if (event.key === "F9" && !busy) {
+        event.preventDefault();
+        setSidePanel("orders");
       }
     };
     window.addEventListener("keydown", handleShortcut);
@@ -203,7 +285,11 @@ export default function PosPage() {
   }, [
     busy,
     confirmation,
+    customerSearchOpen,
+    discountOpen,
+    invoiceSearchOpen,
     draft?.lines.length,
+    hasSelectedLine,
     paymentOpen,
     productSearchOpen,
     selectedLineId,
@@ -246,7 +332,7 @@ export default function PosPage() {
     }
   }
 
-  async function changeQuantity(lineId: string, quantity: number) {
+  async function changeQuantity(lineId: string, quantity: number, focusAfter = true) {
     if (!client || !draft || quantity <= 0) return;
     setBusy(true);
     setError(null);
@@ -262,8 +348,47 @@ export default function PosPage() {
       showError(caught);
     } finally {
       setBusy(false);
-      focusScanner();
+      if (focusAfter) focusScanner();
     }
+  }
+
+  async function navigateFromQuantity(
+    lineId: string,
+    value: number,
+    backwards: boolean,
+  ) {
+    const lines = draft?.lines ?? [];
+    const currentIndex = lines.findIndex((line) => line.lineId === lineId);
+    const nextIndex = backwards ? currentIndex - 1 : currentIndex + 1;
+    const nextLineId =
+      nextIndex >= 0 && nextIndex < lines.length ? lines[nextIndex].lineId : null;
+    const currentLine = lines[currentIndex];
+
+    skipQuantityBlur.current = lineId;
+    if (currentLine && Number.isFinite(value) && value > 0 && value !== currentLine.quantity) {
+      await changeQuantity(lineId, value, false);
+    } else if (currentLine && (!Number.isFinite(value) || value <= 0)) {
+      const input = quantityInputs.current.get(lineId);
+      if (input) input.value = String(currentLine.quantity);
+    }
+
+    window.requestAnimationFrame(() => {
+      if (nextLineId) {
+        quantityInputs.current.get(nextLineId)?.focus();
+        quantityInputs.current.get(nextLineId)?.select();
+      } else {
+        focusScanner();
+      }
+    });
+  }
+
+  function focusFirstQuantity() {
+    const firstLineId = draft?.lines.at(0)?.lineId;
+    if (!firstLineId) return;
+    window.requestAnimationFrame(() => {
+      quantityInputs.current.get(firstLineId)?.focus();
+      quantityInputs.current.get(firstLineId)?.select();
+    });
   }
 
   async function removeLine(lineId: string) {
@@ -301,8 +426,81 @@ export default function PosPage() {
       const next = await client.cancelDraft(draft.draftId.value);
       setDraft(next);
       setSelectedLineId(null);
+      setSelectedCustomer(null);
       setScan("");
       setMessage("Venta reiniciada. Nueva venta lista.");
+    } catch (caught) {
+      showError(caught);
+    } finally {
+      setBusy(false);
+      focusScanner();
+    }
+  }
+
+  async function applyDiscount(discount: number) {
+    if (!client || !draft || !selectedLineId || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      setDraft(await client.setDiscount(draft.draftId.value, selectedLineId, discount));
+      setDiscountOpen(false);
+      setMessage(discount > 0 ? "Descuento aplicado" : "Descuento retirado");
+    } catch (caught) {
+      showError(caught);
+    } finally {
+      setBusy(false);
+      focusScanner();
+    }
+  }
+
+  async function selectCustomer(customer: PosCustomer | null) {
+    if (!client || !draft || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const selection = await client.selectCustomer(
+        draft.draftId.value,
+        customer?.customerId ?? null,
+      );
+      setDraft(selection.draft);
+      setSelectedCustomer(selection.customer);
+      setCustomerSearchOpen(false);
+      setMessage(
+        selection.customer
+          ? `${selection.customer.name} seleccionado; precios recalculados`
+          : "Consumidor final seleccionado; precios del negocio aplicados",
+      );
+    } catch (caught) {
+      showError(caught);
+    } finally {
+      setBusy(false);
+      focusScanner();
+    }
+  }
+
+  async function reprintSale(sale: PosIssuedSaleSummary) {
+    if (!client || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await client.reprint(sale.documentId.value);
+      setMessage(`${sale.documentNumber} reimpresa desde su snapshot original`);
+      setInvoiceSearchOpen(false);
+    } catch (caught) {
+      showError(caught);
+    } finally {
+      setBusy(false);
+      focusScanner();
+    }
+  }
+
+  async function reprintLastSale() {
+    if (!client || !lastSettlement || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await client.reprint(lastSettlement.documentId);
+      setMessage(`${lastSettlement.documentNumber} reimpresa`);
     } catch (caught) {
       showError(caught);
     } finally {
@@ -315,6 +513,8 @@ export default function PosPage() {
     if (!confirmation) return;
     if (confirmation.kind === "line") {
       await removeLine(confirmation.lineId);
+    } else if (confirmation.kind === "temporary") {
+      await deleteTemporary(confirmation.draftId);
     } else {
       await cancelSale();
     }
@@ -337,7 +537,7 @@ export default function PosPage() {
       setTemporaryOpen(false);
       setTemporaryName("");
       setTemporaryReference("");
-      setMessage("Venta temporal guardada");
+      setMessage("Venta pausada");
     } catch (caught) {
       showError(caught);
     } finally {
@@ -352,7 +552,28 @@ export default function PosPage() {
     try {
       setDraft(await client.recoverTemporary(id));
       await refreshTemporaries();
-      setMessage("Venta temporal recuperada");
+      setMessage("Venta en espera recuperada");
+    } catch (caught) {
+      showError(caught);
+    } finally {
+      setBusy(false);
+      focusScanner();
+    }
+  }
+
+  function requestDeleteTemporary(id: string, name: string) {
+    if (busy) return;
+    setConfirmation({ kind: "temporary", draftId: id, name });
+  }
+
+  async function deleteTemporary(id: string) {
+    if (!client || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await client.deleteTemporary(id);
+      await refreshTemporaries();
+      setMessage("Venta en espera eliminada");
     } catch (caught) {
       showError(caught);
     } finally {
@@ -377,19 +598,26 @@ export default function PosPage() {
     try {
       const result = await client.completeSale(
         draft.draftId.value,
-        null,
+        selectedCustomer?.identification ?? null,
         payments,
       );
       setDraft(result.nextDraft);
       setNextNumber(result.nextDocumentNumber);
       setLastSettlement({
+        documentId: result.issuedSale.documentId.value,
         documentNumber: result.issuedSale.documentNumber,
         received: settlement.received,
         change: settlement.change,
       });
+      setSelectedCustomer(null);
+      setSelectedLineId(null);
+      setScan("");
+      setError(null);
       setPaymentOpen(false);
       setMessage(
-        `${result.issuedSale.documentNumber} emitida e impresa (DIAN ${result.issuedSale.fiscalNumber}). Nueva venta lista.`,
+        settlement.change > 0
+          ? `${result.issuedSale.documentNumber} emitida e impresa. Entregar ${money.format(settlement.change)} de cambio. Nueva venta lista.`
+          : `${result.issuedSale.documentNumber} emitida e impresa (DIAN ${result.issuedSale.fiscalNumber}). Pago registrado. Nueva venta lista.`,
       );
     } catch (caught) {
       showError(caught);
@@ -402,6 +630,28 @@ export default function PosPage() {
   const searchProducts = useCallback(
     (term: string, skip: number) =>
       client?.searchProducts(term, skip, 50) ??
+      Promise.resolve({
+        items: [],
+        hasMore: false,
+        nextOffset: null,
+      }),
+    [client],
+  );
+
+  const searchCustomers = useCallback(
+    (term: string, skip: number) =>
+      client?.searchCustomers(term, skip, 50) ??
+      Promise.resolve({
+        items: [],
+        hasMore: false,
+        nextOffset: null,
+      }),
+    [client],
+  );
+
+  const searchIssuedSales = useCallback(
+    (term: string, skip: number) =>
+      client?.searchIssuedSales(term, skip, 50) ??
       Promise.resolve({
         items: [],
         hasMore: false,
@@ -452,25 +702,27 @@ export default function PosPage() {
   }
 
   return (
-    <main className="min-h-screen bg-[#eef3f3] text-slate-950">
-      <header className="flex min-h-16 items-center justify-between gap-4 bg-auraly-background px-5 py-3 text-auraly-text shadow-lg">
-        <div>
-          <p className="text-base font-semibold tracking-tight">Caja {workstation.registerCode}</p>
-          <p className="text-xs text-auraly-secondary">
-            Cajero: {workstation.userDisplayName}
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center justify-end gap-2 text-xs">
+    <main className="min-h-screen bg-[#eef3f3] text-slate-950 xl:h-screen xl:overflow-hidden">
+      <header className="flex min-h-14 items-center justify-between gap-4 bg-auraly-background px-5 py-2.5 text-auraly-text shadow-lg">
+        <div className="flex items-center gap-2 text-xs">
           <StatusChip
             ok={serverConnected}
             label={serverConnected ? "Conectado con Auraly" : "Modo sin conexión"}
             network
           />
         </div>
+        <div className="flex min-w-0 items-center gap-3 text-sm">
+          <span className="font-bold tracking-tight">Caja {workstation.registerCode}</span>
+          <span className="h-4 w-px bg-white/20" aria-hidden="true" />
+          <span className="flex min-w-0 items-center gap-1.5 text-auraly-secondary">
+            <UserRound className="h-3.5 w-3.5 shrink-0" />
+            <span className="truncate">{workstation.userDisplayName}</span>
+          </span>
+        </div>
       </header>
 
-      <section className="grid min-h-[calc(100vh-4rem)] grid-cols-1 gap-4 p-4 xl:grid-cols-[minmax(0,1fr)_340px]">
-        <div className="flex min-w-0 flex-col gap-4">
+      <section className="grid min-h-[calc(100vh-3.5rem)] grid-cols-1 gap-3 p-3 xl:h-[calc(100vh-3.5rem)] xl:min-h-0 xl:grid-cols-[minmax(0,1fr)_340px] 2xl:grid-cols-[minmax(0,1fr)_390px]">
+        <div className="flex min-w-0 flex-col gap-3 xl:min-h-0">
           <form
             onSubmit={capture}
             className="rounded-2xl border border-teal-900/10 bg-white p-3 shadow-sm"
@@ -491,6 +743,12 @@ export default function PosPage() {
                 id="pos-scanner"
                 value={scan}
                 onChange={(event) => setScan(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Tab" && draft?.lines.length) {
+                    event.preventDefault();
+                    focusFirstQuantity();
+                  }
+                }}
                 disabled={busy}
                 autoComplete="off"
                 inputMode="text"
@@ -527,8 +785,47 @@ export default function PosPage() {
             </p>
           </form>
 
-          <div className="min-h-[360px] flex-1 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-            <div className="overflow-auto">
+          <div
+            className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-slate-200 bg-white p-2 shadow-sm"
+            aria-label="Acciones de la venta"
+          >
+            <p className="hidden pl-2 text-xs font-semibold uppercase tracking-[0.14em] text-slate-500 sm:block">
+              Acciones de captura
+            </p>
+            <div className="grid w-full grid-cols-2 gap-2 sm:ml-auto sm:w-auto sm:grid-cols-4">
+              <button type="button" disabled={!edgeReady || busy}
+                onClick={() => setInvoiceSearchOpen(true)}
+                className="flex h-11 items-center justify-center gap-2 rounded-xl border border-teal-200 bg-teal-50 px-3 text-sm font-semibold text-teal-900 transition hover:bg-teal-100 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-50 disabled:text-slate-400">
+                <Printer className="h-4 w-4" />
+                Facturas
+                <span className="rounded bg-white/70 px-1.5 py-0.5 text-[10px]">F6</span>
+              </button>
+              <button type="button" disabled={!hasSelectedLine || busy}
+                onClick={() => setDiscountOpen(true)}
+                className="flex h-11 items-center justify-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 text-sm font-semibold text-amber-900 transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-50 disabled:text-slate-400">
+                <Percent className="h-4 w-4" />
+                Descuento
+                <span className="rounded bg-white/70 px-1.5 py-0.5 text-[10px]">F3</span>
+              </button>
+              <button type="button" disabled={!hasSelectedLine || busy}
+                onClick={() => selectedLineId && requestRemoveLine(selectedLineId)}
+                className="flex h-11 items-center justify-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 text-sm font-semibold text-red-800 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-50 disabled:text-slate-400">
+                <Trash2 className="h-4 w-4" />
+                Eliminar
+                <span className="rounded bg-white/70 px-1.5 py-0.5 text-[10px]">F4</span>
+              </button>
+              <button type="button" disabled={!draft?.lines.length || busy}
+                onClick={requestCancelSale}
+                className="flex h-11 items-center justify-center gap-2 rounded-xl border border-slate-300 bg-slate-50 px-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:text-slate-400">
+                <RotateCcw className="h-4 w-4" />
+                Reiniciar
+                <span className="rounded bg-white px-1.5 py-0.5 text-[10px]">F5</span>
+              </button>
+            </div>
+          </div>
+
+          <div className="flex min-h-[360px] flex-1 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm xl:min-h-0">
+            <div className="flex min-h-0 flex-1 flex-col overflow-auto">
               <table className="w-full min-w-[680px] border-collapse text-sm">
                 <thead className="sticky top-0 z-10 bg-slate-100 text-left text-xs font-semibold tracking-wide text-slate-600">
                   <tr>
@@ -574,6 +871,13 @@ export default function PosPage() {
                       <td className="px-3 py-2 text-right">
                         <input
                           key={`${line.lineId}-${line.quantity}`}
+                          ref={(element) => {
+                            if (element) {
+                              quantityInputs.current.set(line.lineId, element);
+                            } else {
+                              quantityInputs.current.delete(line.lineId);
+                            }
+                          }}
                           type="number"
                           min="0.001"
                           step="0.001"
@@ -582,10 +886,31 @@ export default function PosPage() {
                           onKeyDown={(event) => {
                             if (event.key === "Enter") {
                               event.preventDefault();
-                              event.currentTarget.blur();
+                              skipQuantityBlur.current = line.lineId;
+                              const quantity = event.currentTarget.valueAsNumber;
+                              void (async () => {
+                                if (!Number.isFinite(quantity) || quantity <= 0) {
+                                  const input = quantityInputs.current.get(line.lineId);
+                                  if (input) input.value = String(line.quantity);
+                                } else if (quantity !== line.quantity) {
+                                  await changeQuantity(line.lineId, quantity, false);
+                                }
+                                focusScanner();
+                              })();
+                            } else if (event.key === "Tab") {
+                              event.preventDefault();
+                              void navigateFromQuantity(
+                                line.lineId,
+                                event.currentTarget.valueAsNumber,
+                                event.shiftKey,
+                              );
                             }
                           }}
                           onBlur={(event) => {
+                            if (skipQuantityBlur.current === line.lineId) {
+                              skipQuantityBlur.current = null;
+                              return;
+                            }
                             const quantity = event.currentTarget.valueAsNumber;
                             if (!Number.isFinite(quantity) || quantity <= 0) {
                               event.currentTarget.value = String(line.quantity);
@@ -620,9 +945,8 @@ export default function PosPage() {
                   ))}
                 </tbody>
               </table>
-            </div>
             {!draft?.lines.length && (
-              <div className="relative flex min-h-[300px] flex-col items-center justify-center overflow-hidden px-6 text-center">
+              <div className="relative flex min-h-0 flex-1 flex-col items-center justify-center overflow-hidden px-6 text-center">
                 <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(13,148,136,0.10),transparent_52%)]" />
                 <div className="relative grid h-20 w-20 place-items-center rounded-full border border-teal-200 bg-teal-50 shadow-[0_0_0_12px_rgba(20,184,166,0.05)]">
                   <Barcode className="h-9 w-9 text-teal-700" />
@@ -640,15 +964,23 @@ export default function PosPage() {
                 </div>
               </div>
             )}
+            </div>
           </div>
         </div>
 
-        <aside className="flex flex-col gap-4">
-          <section className="rounded-2xl bg-auraly-background p-5 text-auraly-text shadow-lg">
-            <div className="mb-5 flex items-center justify-between">
+        <aside className="flex min-h-0 flex-col gap-3 xl:overflow-hidden">
+          <section className={`shrink-0 rounded-2xl bg-auraly-background p-4 text-auraly-text shadow-lg ${showCashChange ? "xl:basis-[54%]" : ""}`}>
+            <div className="mb-3 flex items-center justify-between">
               <div>
                 <p className="text-xs uppercase tracking-[0.16em] text-auraly-secondary">Venta actual</p>
-                <p className="mt-1 text-sm font-medium">Consumidor final</p>
+                <p className="mt-1 text-sm font-medium">
+                  {selectedCustomer?.name ?? "Consumidor final"}
+                </p>
+                {selectedCustomer && (
+                  <p className="mt-0.5 text-xs text-auraly-secondary">
+                    {selectedCustomer.identification}
+                  </p>
+                )}
                 <p className="mt-0.5 text-xs text-auraly-secondary">
                   Próxima: {nextNumber?.isAvailable ? nextNumber.fullNumber : "Serie no disponible"}
                 </p>
@@ -657,12 +989,22 @@ export default function PosPage() {
                 {draft?.lines.length ?? 0} líneas
               </span>
             </div>
-            <dl className="space-y-3 text-sm">
+            <button
+              type="button"
+              disabled={!edgeReady || busy}
+              onClick={() => setCustomerSearchOpen(true)}
+              className="mb-3 flex h-10 w-full items-center justify-center gap-2 rounded-xl border border-auraly-accent/40 bg-white/5 text-sm font-semibold transition hover:bg-white/10 disabled:opacity-40"
+            >
+              <UserRound className="h-4 w-4" />
+              Buscar cliente
+              <span className="rounded bg-white/10 px-1.5 py-0.5 text-xs">F10</span>
+            </button>
+            <dl className="space-y-2 text-sm">
               <TotalRow label="Subtotal" value={draft?.untaxedAmount ?? 0} />
               <TotalRow label="Impuestos" value={draft?.taxAmount ?? 0} />
-              <div className="border-t border-white/15 pt-4">
+              <div className="border-t border-white/15 pt-3">
                 <dt className="text-sm text-auraly-secondary">Total a pagar</dt>
-                <dd className="mt-1 text-right text-4xl font-bold tracking-tight text-auraly-light">
+                <dd className="text-right text-3xl font-bold tracking-tight text-auraly-light">
                   {money.format(draft?.payableAmount ?? 0)}
                 </dd>
               </div>
@@ -671,7 +1013,7 @@ export default function PosPage() {
               type="button"
               disabled={!draft?.lines.length || busy}
               onClick={openPayment}
-              className="mt-5 flex h-14 w-full items-center justify-center gap-2 rounded-xl bg-auraly-accent px-4 text-lg font-bold text-auraly-background transition hover:bg-auraly-light disabled:cursor-not-allowed disabled:opacity-40"
+              className="mt-3 flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-auraly-accent px-4 text-base font-bold text-auraly-background transition hover:bg-auraly-light disabled:cursor-not-allowed disabled:opacity-40"
             >
               Cobrar
               <span className="rounded bg-black/10 px-2 py-0.5 text-xs font-semibold">F1</span>
@@ -681,69 +1023,53 @@ export default function PosPage() {
               type="button"
               disabled={!draft?.lines.length || busy}
               onClick={() => setTemporaryOpen(true)}
-              className="mt-5 flex h-12 w-full items-center justify-center gap-2 rounded-xl border border-auraly-accent/40 bg-white/5 font-semibold transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
+              className="mt-2 flex h-10 w-full items-center justify-center gap-2 rounded-xl border border-auraly-accent/40 bg-white/5 text-sm font-semibold transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
             >
               <Save className="h-4 w-4" />
-              Guardar temporal
-              <span className="rounded bg-white/10 px-2 py-0.5 text-xs font-semibold">F4</span>
+              Pausar venta
+              <span className="rounded bg-white/10 px-2 py-0.5 text-xs font-semibold">F7</span>
             </button>
 
-            <div className="mt-2 grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                disabled={!selectedLineId || busy}
-                onClick={() => selectedLineId && requestRemoveLine(selectedLineId)}
-                className="flex h-11 items-center justify-center gap-2 rounded-xl border border-white/15 bg-white/5 text-sm font-semibold transition hover:bg-white/10 disabled:opacity-40"
-              >
-                <Trash2 className="h-4 w-4" />
-                Producto
-                <span className="rounded bg-white/10 px-1.5 py-0.5 text-xs">F5</span>
-              </button>
-              <button
-                type="button"
-                disabled={!draft?.lines.length || busy}
-                onClick={requestCancelSale}
-                className="flex h-11 items-center justify-center gap-2 rounded-xl border border-white/15 bg-white/5 text-sm font-semibold transition hover:bg-white/10 disabled:opacity-40"
-              >
-                Reiniciar
-                <span className="rounded bg-white/10 px-1.5 py-0.5 text-xs">F6</span>
-              </button>
-            </div>
           </section>
 
-          {lastSettlement ? (
+          {showCashChange && lastSettlement ? (
             <section
-              className="relative flex min-h-56 flex-1 overflow-hidden rounded-2xl border border-emerald-300 bg-emerald-50 p-5 shadow-sm"
+              className="relative flex min-h-0 flex-1 overflow-hidden rounded-2xl border border-emerald-300 bg-emerald-50 p-4 shadow-sm"
               role="status"
               aria-live="assertive"
             >
               <div className="absolute -right-12 -top-12 h-40 w-40 rounded-full bg-emerald-200/45" />
-              <div className="relative flex w-full flex-col justify-between">
+              <div className="relative flex h-full w-full flex-col justify-between">
                 <div className="flex items-center gap-3">
-                  <span className="grid h-12 w-12 place-items-center rounded-2xl bg-emerald-700 text-white shadow-sm">
-                    <Banknote className="h-6 w-6" />
+                  <span className="grid h-10 w-10 place-items-center rounded-xl bg-emerald-700 text-white shadow-sm">
+                    <Banknote className="h-5 w-5" />
                   </span>
                   <div>
                     <p className="text-xs font-bold uppercase tracking-[0.16em] text-emerald-700">Entregar al cliente</p>
                     <p className="text-xs text-emerald-800">Venta {lastSettlement.documentNumber} completada</p>
                   </div>
                 </div>
-                <div className="py-5 text-center">
+                <div className="py-3 text-center">
                   <p className="text-sm font-medium text-emerald-800">Cambio</p>
-                  <p className="mt-1 text-5xl font-black tracking-tight tabular-nums text-emerald-950">
+                  <p className="text-4xl font-black tracking-tight tabular-nums text-emerald-950">
                     {money.format(lastSettlement.change)}
                   </p>
-                  <p className="mt-3 text-sm text-emerald-800">
+                  <p className="mt-1 text-sm text-emerald-800">
                     Recibido: <span className="font-bold tabular-nums">{money.format(lastSettlement.received)}</span>
                   </p>
                 </div>
-                <p className="text-center text-xs text-emerald-700">
-                  Este aviso se ocultará al agregar el primer producto de la siguiente venta.
+                <button type="button" disabled={busy} onClick={() => void reprintLastSale()}
+                  className="mx-auto flex h-9 items-center justify-center gap-2 rounded-xl border border-emerald-700/25 bg-white px-4 text-sm font-bold text-emerald-900 hover:bg-emerald-100 disabled:opacity-50">
+                  <Printer className="h-4 w-4" />
+                  Reimprimir última factura
+                </button>
+                <p className="mt-1 text-center text-xs text-emerald-700">
+                  El cambio se ocultará al agregar el primer producto.
                 </p>
               </div>
             </section>
           ) : (
-          <section className="flex-1 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
             <div
               role="tablist"
               aria-label="Documentos pendientes"
@@ -761,10 +1087,11 @@ export default function PosPage() {
                 }`}
               >
                 <Clock3 className="h-4 w-4" />
-                Temporales
+                En espera
                 <span className="rounded-full bg-teal-50 px-2 py-0.5 text-xs text-teal-800">
                   {temporaries.length}
                 </span>
+                <span className="text-[10px] text-slate-400">F8</span>
               </button>
               <button
                 type="button"
@@ -779,14 +1106,18 @@ export default function PosPage() {
               >
                 <ClipboardList className="h-4 w-4" />
                 Pedidos
+                <span className="rounded-full bg-teal-50 px-2 py-0.5 text-xs text-teal-800">
+                  0
+                </span>
+                <span className="text-[10px] text-slate-400">F9</span>
               </button>
             </div>
 
             {sidePanel === "temporaries" ? (
-              <div>
+              <div className="min-h-0 flex-1 overflow-auto">
                 <div className="mb-3">
-                  <p className="font-semibold text-slate-900">Ventas temporales</p>
-                  <p className="text-xs text-slate-500">Pendientes de recuperar</p>
+                  <p className="font-semibold text-slate-900">Ventas en espera</p>
+                  <p className="text-xs text-slate-500">Pausadas para continuar después</p>
                 </div>
                 <div className="space-y-2">
                   {temporaries.map((temporary) => (
@@ -803,31 +1134,41 @@ export default function PosPage() {
                         </div>
                         <p className="font-semibold tabular-nums">{money.format(temporary.payableAmount)}</p>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => void recoverTemporary(temporary.draftId.value)}
-                        disabled={Boolean(draft?.lines.length) || busy}
-                        className="mt-3 flex h-9 w-full items-center justify-center gap-2 rounded-lg bg-teal-50 text-sm font-semibold text-teal-800 transition hover:bg-teal-100 disabled:cursor-not-allowed disabled:opacity-45"
-                      >
-                        <RotateCcw className="h-4 w-4" />
-                        Recuperar
-                      </button>
+                      <div className="mt-3 grid grid-cols-2 gap-2">
+                        <button type="button"
+                          onClick={() => void recoverTemporary(temporary.draftId.value)}
+                          disabled={Boolean(draft?.lines.length) || busy}
+                          className="flex h-9 items-center justify-center gap-2 rounded-lg bg-teal-50 text-sm font-semibold text-teal-800 transition hover:bg-teal-100 disabled:cursor-not-allowed disabled:opacity-45">
+                          <RotateCcw className="h-4 w-4" />
+                          Continuar
+                        </button>
+                        <button type="button"
+                          onClick={() => requestDeleteTemporary(
+                            temporary.draftId.value,
+                            temporary.name ?? "Venta sin nombre",
+                          )}
+                          disabled={busy}
+                          className="flex h-9 items-center justify-center gap-2 rounded-lg border border-red-200 bg-red-50 text-sm font-semibold text-red-800 transition hover:bg-red-100 disabled:opacity-45">
+                          <Trash2 className="h-4 w-4" />
+                          Eliminar
+                        </button>
+                      </div>
                     </article>
                   ))}
                   {!temporaries.length && (
                     <p className="rounded-xl border border-dashed border-slate-300 p-5 text-center text-sm text-slate-500">
-                      No hay ventas temporales.
+                      No hay ventas en espera.
                     </p>
                   )}
                 </div>
               </div>
             ) : (
-              <div className="grid min-h-48 place-items-center rounded-xl border border-dashed border-slate-300 p-5 text-center">
+              <div className="grid min-h-0 flex-1 place-items-center rounded-xl border border-dashed border-slate-300 p-5 text-center">
                 <div>
-                  <span className="mx-auto grid h-12 w-12 place-items-center rounded-xl bg-teal-50 text-teal-700">
-                    <ClipboardList className="h-6 w-6" />
+                  <span className="mx-auto grid h-9 w-9 place-items-center rounded-lg bg-teal-50 text-teal-700">
+                    <ClipboardList className="h-5 w-5" />
                   </span>
-                  <p className="mt-3 font-semibold text-slate-900">Pedidos</p>
+                  <p className="mt-2 font-semibold text-slate-900">Pedidos</p>
                   <p className="mt-1 text-sm leading-5 text-slate-500">
                     {serverConnected
                       ? "Consulta los pedidos disponibles para recuperar o facturar."
@@ -862,6 +1203,18 @@ export default function PosPage() {
         />
       )}
 
+      {customerSearchOpen && client && (
+        <PosCustomerSearchDialog
+          busy={busy}
+          onSearch={searchCustomers}
+          onSelect={selectCustomer}
+          onCancel={() => {
+            setCustomerSearchOpen(false);
+            focusScanner();
+          }}
+        />
+      )}
+
       {paymentOpen && draft && (
         <PosPaymentDialog
           total={draft.payableAmount}
@@ -874,19 +1227,55 @@ export default function PosPage() {
         />
       )}
 
+      {invoiceSearchOpen && client && (
+        <PosInvoiceSearchDialog
+          busy={busy}
+          onSearch={searchIssuedSales}
+          onReprint={reprintSale}
+          onCancel={() => {
+            setInvoiceSearchOpen(false);
+            focusScanner();
+          }}
+        />
+      )}
+
+      {discountOpen && draft && selectedLineId && (() => {
+        const line = draft.lines.find((candidate) => candidate.lineId === selectedLineId);
+        return line ? (
+          <PosDiscountDialog
+            productName={line.description}
+            currentDiscount={line.discount}
+            maximum={line.quantity * line.unitPrice}
+            taxRate={line.taxRate}
+            busy={busy}
+            onConfirm={applyDiscount}
+            onCancel={() => {
+              setDiscountOpen(false);
+              focusScanner();
+            }}
+          />
+        ) : null;
+      })()}
+
       {confirmation && (
         <PosConfirmDialog
           title={
             confirmation.kind === "line"
               ? "¿Eliminar este producto?"
+              : confirmation.kind === "temporary"
+                ? "¿Eliminar esta venta en espera?"
               : "¿Reiniciar toda la venta?"
           }
           description={
             confirmation.kind === "line"
               ? `${confirmation.productName} se retirará de la venta actual.`
+              : confirmation.kind === "temporary"
+                ? `${confirmation.name} se eliminará definitivamente de esta caja.`
               : "Se eliminarán todos los productos capturados y se abrirá una venta limpia."
           }
-          confirmLabel={confirmation.kind === "line" ? "Sí, eliminar" : "Sí, reiniciar"}
+          confirmLabel={
+            confirmation.kind === "sale" ? "Sí, reiniciar" : "Sí, eliminar"
+          }
           busy={busy}
           onConfirm={confirmDestructiveAction}
           onCancel={() => {
@@ -902,7 +1291,7 @@ export default function PosPage() {
             onSubmit={saveTemporary}
             className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl"
           >
-            <h2 className="text-lg font-semibold">Guardar venta temporal</h2>
+            <h2 className="text-lg font-semibold">Pausar venta</h2>
             <p className="mt-1 text-sm text-slate-500">
               No asigna consecutivo fiscal ni genera movimientos.
             </p>

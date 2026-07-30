@@ -17,6 +17,10 @@ function round(value: number) {
   return Math.round(value * precision) / precision;
 }
 
+export function shouldShowCashChange(settlement: Pick<PosPaymentSettlement, "change">) {
+  return settlement.change > tolerance;
+}
+
 export function calculatePaymentSettlement(
   total: number,
   payments: PosPaymentInput[],

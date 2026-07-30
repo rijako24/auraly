@@ -105,4 +105,90 @@ public sealed class EscPosReceiptRendererTests
                 Directory.Delete(directory, recursive: true);
         }
     }
+
+    [Fact]
+    public void Html_preview_contains_printable_receipt_qr_and_fiscal_snapshot()
+    {
+        var receipt = Receipt();
+
+        var html = new HtmlReceiptPreviewRenderer().Render(receipt);
+
+        Assert.Contains("<title>Auraly VTA01-00000042</title>", html);
+        Assert.Contains("@page { size: 80mm auto;", html);
+        Assert.Contains("window.print()", html);
+        Assert.Contains("Producto &amp; prueba", html);
+        Assert.DoesNotContain("P-001", html);
+        Assert.Contains("CUFE", html);
+        Assert.Contains("abc123", html);
+        Assert.Contains("<svg", html);
+        Assert.Contains("Efectivo", html);
+    }
+
+    [Fact]
+    public async Task Html_preview_printer_writes_atomically_and_opens_the_exact_file()
+    {
+        var directory = Path.Combine(
+            Path.GetTempPath(),
+            "auraly-preview-" + Guid.NewGuid().ToString("N"));
+        var launcher = new RecordingReceiptPreviewLauncher();
+        var receipt = Receipt();
+
+        try
+        {
+            await new HtmlReceiptPreviewPrinter(
+                directory,
+                new HtmlReceiptPreviewRenderer(),
+                launcher).PrintAsync(receipt);
+
+            var expected = Path.GetFullPath(
+                Path.Combine(directory, $"{receipt.PrintJobId:N}.html"));
+            Assert.Equal(expected, launcher.OpenedPath);
+            Assert.True(File.Exists(expected));
+            Assert.Contains(receipt.Cufe, await File.ReadAllTextAsync(expected));
+            Assert.Empty(Directory.GetFiles(directory, "*.tmp"));
+        }
+        finally
+        {
+            if (Directory.Exists(directory))
+                Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    private static PosReceipt Receipt() =>
+        new(
+            Guid.NewGuid(),
+            new DocumentId(Guid.NewGuid()),
+            "VTA01-00000042",
+            "FE42",
+            new DateTimeOffset(2026, 7, 29, 14, 30, 0, TimeSpan.FromHours(-5)),
+            "222222222",
+            [new PosReceiptLine(
+                "P-001",
+                "Producto & prueba",
+                1m,
+                12_500m,
+                0m,
+                2_375m,
+                14_875m)],
+            [new OfflineSalePayment("Cash", 14_875m)],
+            12_500m,
+            2_375m,
+            14_875m,
+            "abc123",
+            "https://catalogo-vpfe.dian.gov.co/document/searchqr?documentkey=abc123",
+            80);
+
+    private sealed class RecordingReceiptPreviewLauncher : IReceiptPreviewLauncher
+    {
+        public string? OpenedPath { get; private set; }
+
+        public Task OpenAsync(
+            string absolutePath,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            OpenedPath = absolutePath;
+            return Task.CompletedTask;
+        }
+    }
 }

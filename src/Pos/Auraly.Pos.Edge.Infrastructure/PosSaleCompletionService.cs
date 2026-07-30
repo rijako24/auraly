@@ -302,7 +302,7 @@ public sealed class PosSaleCompletionService(
             immutable.Lines.Select(line => new PosReceiptLine(
                 metadata is not null && metadata.TryGetValue(line.LineNumber, out var item)
                     ? item.ProductCode
-                    : line.ProductId.ToString("D"),
+                    : string.Empty,
                 line.Description,
                 line.Quantity,
                 line.UnitPrice,

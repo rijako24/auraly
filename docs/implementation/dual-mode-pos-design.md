@@ -96,6 +96,54 @@ temporales, captura, cobro y emisión.
 El indicador visible expresa conectividad con Auraly Server. “POS Edge” permanece
 como detalle técnico y no se muestra al cajero.
 
+## Durabilidad al cerrar Facturación
+
+Cerrar la ventana, recargar la PWA, navegar a otro módulo o reiniciar el proceso
+no cancela la venta en curso.
+
+El autosave es parte de cada comando de captura:
+
+- agregar o retirar una línea;
+- cambiar cantidad;
+- aplicar descuento;
+- seleccionar cliente o vendedor;
+- recuperar un pedido;
+- modificar observación;
+- preparar pagos que todavía no se hayan confirmado.
+
+En un equipo enrolado, `PosDraftStore` persiste el borrador en SQLite dentro de
+la misma transacción del comando. Al reabrir, POS Edge devuelve el borrador
+`Active` del alcance caja/usuario y la UI lo hidrata antes de aceptar la siguiente
+captura.
+
+En el modo web, `OnlinePosClient` usa un borrador durable en SQL Server. El
+servidor es propietario de:
+
+- `SalesDraftId`;
+- alcance de negocio, sede, caja y usuario;
+- líneas y snapshots comerciales;
+- cliente, vendedor y pedido de origen;
+- descuentos y totales;
+- versión de concurrencia;
+- fecha de última actividad.
+
+La preferencia del navegador conserva solo el identificador del borrador y la
+caja recordada; nunca es la copia autoritativa. Si se pierde, la API puede
+resolver el borrador activo por el contexto autenticado.
+
+Dos ventanas no sobrescriben silenciosamente el mismo borrador. Cada mutación
+envía la versión esperada y un `IdempotencyKey`; una versión obsoleta produce un
+conflicto explícito y obliga a recargar.
+
+Solamente estas acciones terminan el borrador:
+
+- emitir la factura y recibir confirmación durable;
+- reiniciar la venta con confirmación;
+- pausarla, lo cual crea una nueva venta activa vacía.
+
+La durabilidad online debe implementarse antes de habilitar `OnlinePosClient` en
+producción. No se puede afirmar paridad online si el estado vive solo en React.
+
 ## Reglas de transición
 
 - Navegador sin Edge: entra online automáticamente.

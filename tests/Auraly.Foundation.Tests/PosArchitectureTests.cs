@@ -93,9 +93,13 @@ public sealed class PosArchitectureTests
         Assert.Contains(">F2</span>", page, StringComparison.Ordinal);
         Assert.Contains(">F1</span>", page, StringComparison.Ordinal);
         Assert.Contains(
-            "event.currentTarget.blur();",
+            "event.key === \"Tab\"",
             page,
             StringComparison.Ordinal);
+        Assert.Contains("navigateFromQuantity(", page, StringComparison.Ordinal);
+        Assert.Contains("quantityInputs.current.get(nextLineId)?.focus()", page, StringComparison.Ordinal);
+        Assert.Contains("setSelectedLineId(null);", page, StringComparison.Ordinal);
+        Assert.Contains("focusScanner();", page, StringComparison.Ordinal);
         Assert.Contains(
             "focusScanner();",
             page,
@@ -133,9 +137,10 @@ public sealed class PosArchitectureTests
         var page = File.ReadAllText(Path.Combine(posDirectory, "page.tsx"));
         var dialog = File.ReadAllText(Path.Combine(posDirectory, "pos-confirm-dialog.tsx"));
 
-        Assert.Contains("event.key === \"F5\"", page, StringComparison.Ordinal);
+        Assert.Contains("event.key === \"F3\"", page, StringComparison.Ordinal);
         Assert.Contains("requestRemoveLine(selectedLineId)", page, StringComparison.Ordinal);
-        Assert.Contains("event.key === \"F6\"", page, StringComparison.Ordinal);
+        Assert.Contains("event.key === \"F4\"", page, StringComparison.Ordinal);
+        Assert.Contains("event.key === \"F5\"", page, StringComparison.Ordinal);
         Assert.Contains("requestCancelSale();", page, StringComparison.Ordinal);
         Assert.Contains("<PosConfirmDialog", page, StringComparison.Ordinal);
         Assert.Contains("role=\"alertdialog\"", dialog, StringComparison.Ordinal);

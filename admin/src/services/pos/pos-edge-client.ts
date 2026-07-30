@@ -21,6 +21,40 @@ export type PosCatalogSearchPage = {
   nextOffset: number | null;
 };
 
+export type PosCustomer = {
+  customerId: string;
+  identification: string;
+  name: string;
+  priceListId: string | null;
+  priceChannelId: string | null;
+  isActive: boolean;
+};
+
+export type PosCustomerSearchPage = {
+  items: PosCustomer[];
+  hasMore: boolean;
+  nextOffset: number | null;
+};
+
+export type PosCustomerSelection = { draft: PosDraft; customer: PosCustomer | null };
+
+export type PosIssuedSaleSummary = {
+  documentId: { value: string };
+  documentNumber: string;
+  fiscalNumber: string;
+  issuedAt: string;
+  total: number;
+  customerIdentification: string;
+  customerName: string;
+  fiscalStatus: string | null;
+};
+
+export type PosIssuedSaleSearchPage = {
+  items: PosIssuedSaleSummary[];
+  hasMore: boolean;
+  nextOffset: number | null;
+};
+
 
 
 export type PosDraftLine = {
@@ -135,6 +169,19 @@ export class PosEdgeClient {
     );
   }
 
+  searchCustomers(search = "", skip = 0, take = 50) {
+    const query = new URLSearchParams({
+      search,
+      skip: String(skip),
+      take: String(take),
+    });
+    return this.request<PosCustomerSearchPage>(`/edge/v1/customers?${query}`);
+  }
+
+  customer(customerId: string) {
+    return this.request<PosCustomer>(`/edge/v1/customers/${customerId}`);
+  }
+
   activeDraft() {
     return this.request<PosDraft>("/edge/v1/drafts/active");
   }
@@ -156,6 +203,26 @@ export class PosEdgeClient {
       {
         method: "PUT",
         body: JSON.stringify({ quantity }),
+      },
+    );
+  }
+
+  setDiscount(draftId: string, lineId: string, discount: number) {
+    return this.request<PosDraft>(
+      `/edge/v1/drafts/${draftId}/lines/${lineId}/discount`,
+      {
+        method: "PUT",
+        body: JSON.stringify({ discount }),
+      },
+    );
+  }
+
+  selectCustomer(draftId: string, customerId: string | null) {
+    return this.request<PosCustomerSelection>(
+      `/edge/v1/drafts/${draftId}/customer`,
+      {
+        method: "PUT",
+        body: JSON.stringify({ customerId }),
       },
     );
   }
@@ -191,6 +258,10 @@ export class PosEdgeClient {
     return this.request<PosDraft[]>(`/edge/v1/temporaries${query}`);
   }
 
+  deleteTemporary(draftId: string) {
+    return this.requestVoid(`/edge/v1/temporaries/${draftId}`, { method: "DELETE" });
+  }
+
   recoverTemporary(draftId: string) {
     return this.request<PosDraft>(
       `/edge/v1/temporaries/${draftId}/recover`,
@@ -210,6 +281,19 @@ export class PosEdgeClient {
         body: JSON.stringify({ customerIdentification, payments }),
       },
     );
+  }
+
+  searchIssuedSales(search = "", skip = 0, take = 50) {
+    const query = new URLSearchParams({
+      search,
+      skip: String(skip),
+      take: String(take),
+    });
+    return this.request<PosIssuedSaleSearchPage>(`/edge/v1/sales?${query}`);
+  }
+
+  reprint(documentId: string) {
+    return this.requestVoid(`/edge/v1/sales/${documentId}/reprint`, { method: "POST" });
   }
 
   private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -234,6 +318,29 @@ export class PosEdgeClient {
       throw new PosEdgeError(detail, response.status);
     }
     return (await response.json()) as T;
+  }
+
+  private async requestVoid(path: string, init: RequestInit = {}): Promise<void> {
+    const response = await fetch(`${EDGE_BASE_URL}${path}`, {
+      ...init,
+      cache: "no-store",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Auraly-Edge-Session": this.sessionToken,
+        ...init.headers,
+      },
+    });
+    if (!response.ok) {
+      const raw = await response.text();
+      let detail = raw || response.statusText;
+      try {
+        const problem = JSON.parse(raw) as { detail?: string; title?: string };
+        detail = problem.detail || problem.title || detail;
+      } catch {
+        // The local host may intentionally return plain text for simple failures.
+      }
+      throw new PosEdgeError(detail, response.status);
+    }
   }
 }
 

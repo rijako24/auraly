@@ -104,6 +104,16 @@ public sealed record PosLocalFiscalStatus(
     string? StatusDescription,
     DateTimeOffset? UpdatedAt);
 
+public sealed record PosIssuedSaleSummary(
+    DocumentId DocumentId,
+    string DocumentNumber,
+    string FiscalNumber,
+    DateTimeOffset IssuedAt,
+    decimal Total,
+    string CustomerIdentification,
+    string CustomerName,
+    string? FiscalStatus);
+
 public sealed class PosEdgeSaleStore
 {
     private readonly DbContextOptions<PosEdgeDbContext> _options;
@@ -654,6 +664,39 @@ public sealed class PosEdgeSaleStore
             documentId, row.FiscalNumber, row.Cufe, row.RemoteFiscalStatus,
             row.RemoteFiscalStatusCode, row.RemoteFiscalStatusDescription,
             row.RemoteFiscalUpdatedAt);
+    }
+
+    public async Task<IReadOnlyCollection<PosIssuedSaleSummary>> SearchIssuedSalesAsync(
+        string search,
+        int skip = 0,
+        int take = 50,
+        CancellationToken cancellationToken = default)
+    {
+        if (skip < 0) throw new ArgumentOutOfRangeException(nameof(skip));
+        if (take is < 1 or > 100) throw new ArgumentOutOfRangeException(nameof(take));
+        var normalized = search.Trim();
+        await using var context = new PosEdgeDbContext(_options);
+        var rows = await context.IssuedSales.AsNoTracking()
+            .Where(row => normalized == string.Empty ||
+                          row.DocumentNumber.Contains(normalized) ||
+                          row.FiscalNumber.Contains(normalized))
+            .OrderByDescending(row => row.DocumentNumber)
+            .Skip(skip)
+            .Take(take)
+            .ToArrayAsync(cancellationToken);
+        return rows.Select(row =>
+        {
+            var snapshot = PosSaleContractSerializer.Deserialize(row.FiscalSnapshotJson);
+            return new PosIssuedSaleSummary(
+                new DocumentId(row.DocumentId),
+                row.DocumentNumber,
+                row.FiscalNumber,
+                row.IssuedAt,
+                row.Total,
+                snapshot.FiscalSnapshot.CustomerIdentification,
+                snapshot.UblSnapshot?.Customer.RegistrationName ?? "Consumidor final",
+                row.RemoteFiscalStatus);
+        }).ToArray();
     }
 
 

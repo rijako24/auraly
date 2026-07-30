@@ -90,6 +90,15 @@ public sealed record PosTemporaryFilter(
     string? Search = null,
     int Take = 50);
 
+public sealed record PosDraftLinePriceUpdate(
+    Guid LineId,
+    decimal BaseUnitPrice,
+    decimal UnitPrice,
+    string CurrencyCode,
+    string PriceSource,
+    Guid? PriceListId,
+    Guid? PriceChannelId);
+
 public sealed class PosDraftStore
 {
     private readonly string _connectionString;
@@ -292,6 +301,66 @@ public sealed class PosDraftStore
         return await GetRequiredAsync(draftId, cancellationToken);
     }
 
+    public async Task<PosDraft> AssignCustomerAndPricesAsync(
+        DraftId draftId,
+        Guid? customerId,
+        IReadOnlyCollection<PosDraftLinePriceUpdate> prices,
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var transaction = connection.BeginTransaction(IsolationLevel.Serializable);
+        await RequireActiveAsync(connection, transaction, draftId, cancellationToken);
+        var header = await ReadHeaderAsync(connection, transaction, draftId, cancellationToken)
+            ?? throw new KeyNotFoundException("The draft does not exist.");
+        var current = header with
+            { Lines = await ReadLinesAsync(connection, transaction, draftId, cancellationToken) };
+        if (prices.Count != current.Lines.Count ||
+            prices.Select(value => value.LineId).Distinct().Count() != prices.Count ||
+            current.Lines.Any(line => prices.All(value => value.LineId != line.LineId)))
+            throw new InvalidOperationException("Every active line must receive exactly one price.");
+
+        foreach (var price in prices)
+        {
+            if (price.BaseUnitPrice < 0 || price.UnitPrice < 0)
+                throw new ArgumentOutOfRangeException(nameof(prices), "Prices cannot be negative.");
+            var line = current.Lines.Single(value => value.LineId == price.LineId);
+            if (line.Discount > line.Quantity * price.UnitPrice)
+                throw new InvalidOperationException(
+                    "The existing discount exceeds the selected customer's price.");
+            await ExecuteAsync(connection, transaction, """
+                UPDATE PosDraftLines
+                SET BaseUnitPrice=@BaseUnitPrice,UnitPrice=@UnitPrice,
+                    CurrencyCode=@CurrencyCode,PriceSource=@PriceSource,
+                    PriceListId=@PriceListId,PriceChannelId=@PriceChannelId
+                WHERE DraftId=@DraftId AND LineId=@LineId;
+                """,
+                [
+                    P("@BaseUnitPrice", price.BaseUnitPrice),
+                    P("@UnitPrice", price.UnitPrice),
+                    P("@CurrencyCode", price.CurrencyCode.Trim().ToUpperInvariant()),
+                    P("@PriceSource", price.PriceSource),
+                    P("@PriceListId", price.PriceListId),
+                    P("@PriceChannelId", price.PriceChannelId),
+                    P("@DraftId", draftId.Value),
+                    P("@LineId", price.LineId)
+                ],
+                cancellationToken);
+        }
+        await ExecuteAsync(connection, transaction, """
+            UPDATE PosDrafts
+            SET CustomerId=@CustomerId,UpdatedAt=@Now
+            WHERE DraftId=@DraftId;
+            """,
+            [
+                P("@CustomerId", customerId),
+                P("@Now", Now()),
+                P("@DraftId", draftId.Value)
+            ],
+            cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return await GetRequiredAsync(draftId, cancellationToken);
+    }
+
     public async Task<PosDraft> SaveTemporaryAsync(
         DraftId draftId,
         string name,
@@ -363,6 +432,40 @@ public sealed class PosDraftStore
         return values;
     }
 
+    public async Task DeleteTemporaryAsync(
+        DraftId draftId,
+        BusinessId businessId,
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var transaction = connection.BeginTransaction(IsolationLevel.Serializable);
+        var source = await ReadHeaderAsync(connection, transaction, draftId, cancellationToken)
+            ?? throw new KeyNotFoundException("The paused sale does not exist.");
+        if (source.Scope.BusinessId != businessId)
+            throw new UnauthorizedAccessException("The paused sale belongs to another business.");
+        if (source.Status != PosDraftStatus.Temporary)
+            throw new InvalidOperationException(
+                "The sale was already recovered or is no longer paused.");
+
+        var now = Now();
+        await ExecuteAsync(connection, transaction, """
+            DELETE FROM PosDraftLines WHERE DraftId=@DraftId;
+            UPDATE PosDrafts
+            SET Status='Deleted',UpdatedAt=@Now
+            WHERE DraftId=@DraftId AND Status='Temporary' AND IssuedAt IS NULL;
+            INSERT INTO PosDraftAudit(AuditId,DraftId,Action,OccurredAt)
+            SELECT @AuditId,@DraftId,'DeletedTemporary',@Now
+            WHERE changes()>0;
+            """,
+            [
+                P("@DraftId", draftId.Value),
+                P("@Now", now),
+                P("@AuditId", _idGenerator.NewId())
+            ],
+            cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+    }
+
     public async Task<PosDraft> RecoverTemporaryAsync(
         DraftId temporaryId,
         PosDraftScope scope,
@@ -432,32 +535,6 @@ public sealed class PosDraftStore
             cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return await GetRequiredAsync(targetId, cancellationToken);
-    }
-
-    public async Task DeleteTemporaryAsync(
-        DraftId temporaryId,
-        UserId deletedBy,
-        CancellationToken cancellationToken = default)
-    {
-        await using var connection = await OpenAsync(cancellationToken);
-        await using var transaction = connection.BeginTransaction(IsolationLevel.Serializable);
-        var source = await ReadHeaderAsync(connection, transaction, temporaryId, cancellationToken)
-            ?? throw new KeyNotFoundException("The temporary sale does not exist.");
-        if (source.Status != PosDraftStatus.Temporary)
-            throw new InvalidOperationException("Only an available temporary sale can be deleted.");
-        var now = Now();
-        await ExecuteAsync(connection, transaction, """
-            UPDATE PosDrafts SET Status='Deleted',DeletedAt=@Now,UpdatedAt=@Now
-            WHERE DraftId=@DraftId AND Status='Temporary';
-            INSERT INTO PosDraftAudit(AuditId,DraftId,Action,ActorUserId,OccurredAt)
-            VALUES(@AuditId,@DraftId,'Deleted',@UserId,@Now);
-            """,
-            [
-                P("@Now", now), P("@DraftId", temporaryId.Value),
-                P("@AuditId", _idGenerator.NewId()), P("@UserId", deletedBy.Value)
-            ],
-            cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
     }
 
     public async Task<PosDraft?> GetAsync(

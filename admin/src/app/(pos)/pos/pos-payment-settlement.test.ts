@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { calculatePaymentSettlement } from "./pos-payment-settlement";
+import {
+  calculatePaymentSettlement,
+  shouldShowCashChange,
+} from "./pos-payment-settlement";
 
 describe("calculatePaymentSettlement", () => {
   it("applies the invoice total and returns cash change", () => {
@@ -12,6 +15,7 @@ describe("calculatePaymentSettlement", () => {
     assert.equal(result.isValid, true);
     assert.equal(result.received, 60);
     assert.equal(result.change, 5);
+    assert.equal(shouldShowCashChange(result), true);
     assert.deepEqual(result.appliedPayments, [
       { methodCode: "Cash", amount: 55, reference: null },
     ]);
@@ -39,6 +43,16 @@ describe("calculatePaymentSettlement", () => {
     assert.equal(result.isValid, false);
     assert.equal(result.hasNonCashExcess, true);
     assert.equal(result.change, 0);
+  });
+
+  it("keeps the regular layout for an exact card payment", () => {
+    const result = calculatePaymentSettlement(55, [
+      { methodCode: "CreditCard", amount: 55, reference: "AUTH-2" },
+    ]);
+
+    assert.equal(result.isValid, true);
+    assert.equal(result.change, 0);
+    assert.equal(shouldShowCashChange(result), false);
   });
 
   it("reports the missing amount", () => {

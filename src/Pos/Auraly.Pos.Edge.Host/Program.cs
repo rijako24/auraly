@@ -17,6 +17,8 @@ public sealed record PosWorkstationIdentity(
 
 public sealed record CaptureRequest(string Value, Guid? CustomerId);
 public sealed record QuantityRequest(decimal Quantity);
+public sealed record DiscountRequest(decimal Discount);
+public sealed record SelectCustomerRequest(Guid? CustomerId);
 public sealed record SaveTemporaryRequest(string Name, string? Reference, string? Observation);
 
 public static class PosEdgeHostApplication
@@ -24,6 +26,10 @@ public static class PosEdgeHostApplication
     public static WebApplication Build(string[] args)
     {
         var builder = WebApplication.CreateBuilder(args);
+        builder.Host.UseWindowsService(options =>
+        {
+            options.ServiceName = "Auraly POS Edge";
+        });
         builder.WebHost.UseUrls(
             builder.Configuration["PosEdge:Url"] ?? "http://127.0.0.1:47831");
 
@@ -78,6 +84,7 @@ public static class PosEdgeHostApplication
         builder.Services.AddSingleton<IPosInventoryAvailabilityClient>(
             sp => sp.GetRequiredService<PosCatalogSynchronizer>());
         builder.Services.AddSingleton<PosCaptureService>();
+        builder.Services.AddSingleton<PosCustomerSelectionService>();
         builder.Services.AddPosSaleCompletion(
             builder.Configuration,
             connectionString,
@@ -187,6 +194,58 @@ public static class PosEdgeHostApplication
                 nextOffset = hasMore ? offset + pageSize : (int?)null
             });
         });
+        edge.MapGet("/customers", async (
+            string? search,
+            int? skip,
+            int? take,
+            PosCatalogStore catalog,
+            CancellationToken ct) =>
+        {
+            var pageSize = Math.Clamp(take ?? 50, 1, 50);
+            var offset = Math.Max(skip ?? 0, 0);
+            var values = (await catalog.SearchCustomersAsync(
+                search ?? string.Empty,
+                offset,
+                pageSize + 1,
+                ct)).ToArray();
+            var hasMore = values.Length > pageSize;
+            return Results.Ok(new
+            {
+                items = values.Take(pageSize),
+                hasMore,
+                nextOffset = hasMore ? offset + pageSize : (int?)null
+            });
+        });
+        edge.MapGet("/customers/{customerId:guid}", async (
+            Guid customerId,
+            PosCatalogStore catalog,
+            CancellationToken ct) =>
+        {
+            var customer = await catalog.GetCustomerAsync(customerId, ct);
+            return customer is null ? Results.NotFound() : Results.Ok(customer);
+        });
+        edge.MapGet("/sales", async (
+            string? search,
+            int? skip,
+            int? take,
+            PosEdgeSaleStore sales,
+            CancellationToken ct) =>
+        {
+            var pageSize = Math.Clamp(take ?? 50, 1, 50);
+            var offset = Math.Max(skip ?? 0, 0);
+            var values = (await sales.SearchIssuedSalesAsync(
+                search ?? string.Empty,
+                offset,
+                pageSize + 1,
+                ct)).ToArray();
+            var hasMore = values.Length > pageSize;
+            return Results.Ok(new
+            {
+                items = values.Take(pageSize),
+                hasMore,
+                nextOffset = hasMore ? offset + pageSize : (int?)null
+            });
+        });
 
         edge.MapPost("/capture", async (
             CaptureRequest request,
@@ -231,6 +290,35 @@ public static class PosEdgeHostApplication
             return result.Status == PosCaptureStatus.Added
                 ? Results.Ok(result)
                 : Results.Conflict(result);
+        });
+        edge.MapPut("/drafts/{draftId:guid}/lines/{lineId:guid}/discount", async (
+            Guid draftId,
+            Guid lineId,
+            DiscountRequest request,
+            PosDraftStore drafts,
+            CancellationToken ct) =>
+            Results.Ok(await drafts.SetDiscountAsync(
+                new DraftId(draftId),
+                lineId,
+                request.Discount,
+                ct)));
+        edge.MapPut("/drafts/{draftId:guid}/customer", async (
+            Guid draftId,
+            SelectCustomerRequest request,
+            PosCustomerSelectionService customers,
+            CancellationToken ct) =>
+        {
+            try
+            {
+                return Results.Ok(await customers.SelectAsync(
+                    new DraftId(draftId),
+                    request.CustomerId,
+                    ct));
+            }
+            catch (KeyNotFoundException error)
+            {
+                return Results.NotFound(new { detail = error.Message });
+            }
         });
         edge.MapDelete("/drafts/{draftId:guid}/lines/{lineId:guid}", async (
             Guid draftId,
@@ -285,6 +373,18 @@ public static class PosEdgeHostApplication
                 new DraftId(draftId),
                 context.Scope,
                 ct)));
+        edge.MapDelete("/temporaries/{draftId:guid}", async (
+            Guid draftId,
+            PosDraftStore drafts,
+            PosEdgeRuntimeContext context,
+            CancellationToken ct) =>
+        {
+            await drafts.DeleteTemporaryAsync(
+                new DraftId(draftId),
+                context.Scope.BusinessId,
+                ct);
+            return Results.NoContent();
+        });
         edge.MapPosSaleCompletion();
         return app;
     }
