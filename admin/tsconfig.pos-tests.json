@@ -9,6 +9,8 @@
     "rootDir": "src"
   },
   "include": [
+    "src/app/(pos)/pos/pos-money-input.ts",
+    "src/app/(pos)/pos/pos-money-input.test.ts",
     "src/app/(pos)/pos/pos-payment-settlement.ts",
     "src/app/(pos)/pos/pos-payment-settlement.test.ts",
     "src/services/pos/pos-edge-client.ts"

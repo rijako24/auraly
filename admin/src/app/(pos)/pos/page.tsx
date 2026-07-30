@@ -529,15 +529,13 @@ export default function PosPage() {
 
           <div className="min-h-[360px] flex-1 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
             <div className="overflow-auto">
-              <table className="w-full min-w-[820px] border-collapse text-sm">
+              <table className="w-full min-w-[680px] border-collapse text-sm">
                 <thead className="sticky top-0 z-10 bg-slate-100 text-left text-xs font-semibold tracking-wide text-slate-600">
                   <tr>
                     <th className="px-4 py-3">Producto</th>
                     <th className="w-28 px-3 py-3 text-right">Cantidad</th>
-                    <th className="w-32 px-3 py-3 text-right">Precio</th>
-                    <th className="w-28 px-3 py-3 text-right">Descuento</th>
-                    <th className="w-24 px-3 py-3 text-right">IVA</th>
-                    <th className="w-32 px-3 py-3 text-right">Total</th>
+                    <th className="w-36 px-3 py-3 text-right">Precio unitario</th>
+                    <th className="w-36 px-3 py-3 text-right">Total</th>
                     <th className="w-16 px-3 py-3" aria-label="Acciones" />
                   </tr>
                 </thead>
@@ -552,11 +550,26 @@ export default function PosPage() {
                           : "hover:bg-teal-50/40"
                       }`}
                     >
-                      <td className="px-4 py-3">
-                        <p className="font-semibold text-slate-900">{line.description}</p>
-                        <p className="mt-0.5 text-xs text-slate-500">
+                      <td className="px-4 py-3.5">
+                        <p className="text-[15px] font-bold leading-snug text-slate-950">
+                          {line.description}
+                        </p>
+                        <p className="mt-1 text-xs font-medium text-slate-500">
                           {line.productCode} · {line.unitCode} · {priceLabel(line.priceSource)}
                         </p>
+                        <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px] font-semibold tabular-nums">
+                          {line.discount > 0 && (
+                            <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-amber-800">
+                              Descuento −{money.format(line.discount)}
+                            </span>
+                          )}
+                          <span
+                            className="rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-sky-800"
+                            title={`Impuesto ${line.taxCode}`}
+                          >
+                            IVA {line.taxRate}% · {money.format(line.tax)}
+                          </span>
+                        </div>
                       </td>
                       <td className="px-3 py-2 text-right">
                         <input
@@ -587,10 +600,12 @@ export default function PosPage() {
                           aria-label={`Cantidad de ${line.description}`}
                         />
                       </td>
-                      <td className="px-3 py-3 text-right tabular-nums">{money.format(line.unitPrice)}</td>
-                      <td className="px-3 py-3 text-right tabular-nums">{money.format(line.discount)}</td>
-                      <td className="px-3 py-3 text-right tabular-nums">{money.format(line.tax)}</td>
-                      <td className="px-3 py-3 text-right font-semibold tabular-nums">{money.format(line.total)}</td>
+                      <td className="px-3 py-3 text-right font-medium tabular-nums text-slate-700">
+                        {money.format(line.unitPrice)}
+                      </td>
+                      <td className="px-3 py-3 text-right text-base font-bold tabular-nums text-slate-950">
+                        {money.format(line.total)}
+                      </td>
                       <td className="px-3 py-2 text-right">
                         <button
                           type="button"

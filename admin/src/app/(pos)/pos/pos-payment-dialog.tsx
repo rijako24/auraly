@@ -3,11 +3,23 @@
 import { CreditCard, Loader2, Trash2 } from "lucide-react";
 import { FormEvent, KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { PosPaymentInput } from "@/services/pos/pos-edge-client";
 import {
   calculatePaymentSettlement,
   PosPaymentSettlement,
 } from "./pos-payment-settlement";
+import {
+  formatMoneyDraft,
+  formatMoneyValue,
+  parseMoneyDraft,
+} from "./pos-money-input";
 
 const money = new Intl.NumberFormat("es-CO", {
   style: "currency",
@@ -42,6 +54,7 @@ export function PosPaymentDialog({
   const [payments, setPayments] = useState<PaymentRow[]>([
     { id: crypto.randomUUID(), methodCode: "Cash", amount: total, reference: null },
   ]);
+  const [amountDrafts, setAmountDrafts] = useState<Record<string, string>>({});
   const [pendingFocusId, setPendingFocusId] = useState<string | null>(null);
   const amountRefs = useRef(new Map<string, HTMLInputElement>());
   const settlement = useMemo(
@@ -181,21 +194,26 @@ export function PosPaymentDialog({
               key={payment.id}
               className="grid gap-2 rounded-xl border border-slate-200 p-3 sm:grid-cols-[1fr_150px_1fr_42px]"
             >
-              <label className="text-xs font-medium text-slate-600">
-                Medio
-                <select
+              <div className="text-xs font-medium text-slate-600">
+                <span>Medio</span>
+                <Select
                   value={payment.methodCode}
-                  onChange={(event) => update(payment.id, { methodCode: event.target.value })}
-                  className="mt-1 h-11 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm outline-none focus:border-teal-600 focus:ring-2 focus:ring-teal-600/15"
+                  onValueChange={(methodCode) => update(payment.id, { methodCode })}
+                  disabled={busy}
                 >
-                  {methods.map((method) => (
-                    <option key={method.code} value={method.code}>
-                      {method.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="text-xs font-medium text-slate-600">
+                  <SelectTrigger aria-label="Medio de pago" className="mt-1 h-11 rounded-lg border-slate-300 bg-white shadow-none focus:border-teal-600 focus:ring-2 focus:ring-teal-600/15">
+                    <SelectValue aria-label="Medio de pago" />
+                  </SelectTrigger>
+                  <SelectContent className="rounded-xl border-slate-200 shadow-xl">
+                    {methods.map((method) => (
+                      <SelectItem key={method.code} value={method.code} className="py-2.5">
+                        {method.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <label className="relative text-xs font-medium text-slate-600">
                 Valor recibido
                 <input
                   ref={(element) => {
@@ -203,17 +221,29 @@ export function PosPaymentDialog({
                     else amountRefs.current.delete(payment.id);
                   }}
                   autoFocus={index === 0}
-                  type="number"
-                  min="0.01"
-                  step="0.01"
-                  value={payment.amount}
+                  type="text"
+                  inputMode="decimal"
+                  aria-label={`Valor recibido en ${methods.find((method) => method.code === payment.methodCode)?.label ?? payment.methodCode}`}
+                  value={amountDrafts[payment.id] ?? formatMoneyValue(payment.amount)}
                   onFocus={(event) => event.currentTarget.select()}
                   onKeyDown={handleAmountEnter}
-                  onChange={(event) =>
-                    update(payment.id, { amount: event.currentTarget.valueAsNumber || 0 })
+                  onChange={(event) => {
+                    const formatted = formatMoneyDraft(event.currentTarget.value);
+                    setAmountDrafts((current) => ({
+                      ...current,
+                      [payment.id]: formatted,
+                    }));
+                    update(payment.id, { amount: parseMoneyDraft(formatted) });
+                  }}
+                  onBlur={() =>
+                    setAmountDrafts((current) => ({
+                      ...current,
+                      [payment.id]: formatMoneyValue(payment.amount),
+                    }))
                   }
-                  className="mt-1 h-11 w-full rounded-lg border border-slate-300 px-3 text-right text-lg font-semibold outline-none focus:border-teal-600 focus:ring-2 focus:ring-teal-600/15"
+                  className="mt-1 h-11 w-full rounded-lg border border-slate-300 pl-8 pr-3 text-right text-lg font-semibold tabular-nums outline-none focus:border-teal-600 focus:ring-2 focus:ring-teal-600/15"
                 />
+                <span className="pointer-events-none absolute bottom-3 left-3 text-sm font-semibold text-slate-400">$</span>
               </label>
               <label className="text-xs font-medium text-slate-600">
                 Referencia
