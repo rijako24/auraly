@@ -543,12 +543,17 @@ internal sealed class PosServerSynchronizationHostedService(
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        var catalogCatchUpPending = true;
         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(2));
         do
         {
             try
             {
-                await catalog.SynchronizeAsync(stoppingToken);
+                if (catalogCatchUpPending)
+                {
+                    await catalog.SynchronizeAsync(stoppingToken);
+                    catalogCatchUpPending = false;
+                }
                 while (!stoppingToken.IsCancellationRequested &&
                        await uploader.UploadNextAsync(stoppingToken))
                 {

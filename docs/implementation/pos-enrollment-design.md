@@ -69,9 +69,11 @@ La experiencia visual es la misma:
   servidor.
 - **Edge sin red:** usa catálogo, series, factura, impresión y outbox locales.
 
-La puesta al día posterior se ejecuta en segundo plano sobre los cursores
-durables. Las notificaciones push siguen siendo la señal para adelantar el
-delta; el cursor es la fuente de verdad y evita depender de polling continuo.
+Al arrancar, Edge ejecuta una puesta al día en segundo plano sobre el cursor
+durable y solo reintenta mientras no logra completarla. Después deja de
+consultar el catálogo. El disparo push para cambios ocurridos durante una
+sesión abierta sigue pendiente de conectar al transporte real; no se simula
+mediante polling continuo.
 
 ## Límites que siguen pendientes
 
