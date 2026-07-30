@@ -4,6 +4,11 @@
 **Estado:** decisión para las siguientes rebanadas verticales  
 **Fuente funcional:** Xion, sin copiar código, interfaz, tablas ni nombres heredados.
 
+> [!IMPORTANT]
+> La decisión
+> [`order-source-of-truth.md`](./order-source-of-truth.md) prevalece sobre la
+> sección 3: los pedidos existentes del bot son la fuente única y no se duplican.
+
 ## 1. Conclusión y orden de implementación
 
 No se deben construir los tres módulos a la vez.
