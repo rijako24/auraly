@@ -107,15 +107,28 @@ public sealed class SqlPosSaleServerStore(
         string idempotencyKey,
         CancellationToken cancellationToken)
     {
-        await using var connection = connections.Create();
-        await connection.OpenAsync(cancellationToken);
-        return await FindInternalAsync(
-            connection,
-            transaction: null,
-            businessId,
-            documentId,
-            idempotencyKey,
-            cancellationToken);
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                await using var connection = connections.Create();
+                await connection.OpenAsync(cancellationToken);
+                return await FindInternalAsync(
+                    connection,
+                    transaction: null,
+                    businessId,
+                    documentId,
+                    idempotencyKey,
+                    cancellationToken);
+            }
+            catch (SqlException exception)
+                when (exception.Number == 1205 && attempt < 4)
+            {
+                await Task.Delay(
+                    TimeSpan.FromMilliseconds(25 * attempt),
+                    cancellationToken);
+            }
+        }
     }
 
     public async Task<StoredPosSale> StoreReceptionAsync(
