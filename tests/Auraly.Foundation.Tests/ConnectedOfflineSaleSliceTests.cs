@@ -24,11 +24,9 @@ public sealed class ConnectedOfflineSaleSliceTests
         var tenantId = new TenantId(Guid.NewGuid());
         var businessId = new BusinessId(Guid.NewGuid());
         var userId = new UserId(Guid.NewGuid());
-        var locationId = new LocationId(Guid.NewGuid());
         var warehouse = new Warehouse(
             new WarehouseId(Guid.NewGuid()),
             businessId,
-            locationId,
             "B01",
             "Principal",
             allowNegativeStockSales: true);
@@ -125,7 +123,6 @@ public sealed class ConnectedOfflineSaleSliceTests
         var context = new Auraly.Contracts.Organization.RegisterContext(
             tenantId,
             new BusinessId(Guid.NewGuid()),
-            new LocationId(Guid.NewGuid()),
             new WarehouseId(Guid.NewGuid()),
             new RegisterId(Guid.NewGuid()),
             true);

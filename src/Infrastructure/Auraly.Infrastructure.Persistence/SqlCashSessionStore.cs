@@ -33,7 +33,7 @@ public sealed partial class SqlCashSessionStore : ICashSessionStore
     {
         await using var connection = _connections.Create();
         await connection.OpenAsync(ct);
-        await ValidateRegisterAsync(connection, null, actor, registerId, null, null, ct);
+        await ValidateRegisterAsync(connection, null, actor, registerId, null, ct);
         return await CurrentAsync(connection, null, registerId, actor.UserId, ct);
     }
 
@@ -50,7 +50,7 @@ public sealed partial class SqlCashSessionStore : ICashSessionStore
             connection, transaction, registerId, ct);
         var register = await ValidateRegisterAsync(
             connection, transaction, actor, registerId,
-            request.BusinessId, request.LocationId, ct);
+            request.BusinessId, ct);
         var now = _timeProvider.GetUtcNow();
         var current = await CurrentForUpdateAsync(
             connection, transaction, registerId, actor.UserId, ct);
@@ -64,10 +64,10 @@ public sealed partial class SqlCashSessionStore : ICashSessionStore
                 sessionId = _ids.NewId();
                 await ExecuteAsync(connection, transaction, """
                     INSERT dbo.CashSessions
-                        (CashSessionId,BusinessId,LocationId,RegisterId,OpenedByUserId,
+                        (CashSessionId,BusinessId,RegisterId,OpenedByUserId,
                          OpenedAt,OpeningFloat,Status,OpenIdempotencyKey)
                     VALUES
-                        (@SessionId,@BusinessId,@LocationId,@RegisterId,@UserId,
+                        (@SessionId,@BusinessId,@RegisterId,@UserId,
                          @Now,@OpeningFloat,N'Open',@Key);
                     INSERT dbo.CashierShifts
                         (CashierShiftId,CashSessionId,RegisterId,UserId,StartedAt,Status)
@@ -75,7 +75,7 @@ public sealed partial class SqlCashSessionStore : ICashSessionStore
                         (@ShiftId,@SessionId,@RegisterId,@UserId,@Now,N'Active');
                     """, ct,
                     P("@SessionId", sessionId.Value), P("@ShiftId", shiftId),
-                    P("@BusinessId", register.BusinessId), P("@LocationId", register.LocationId),
+                    P("@BusinessId", register.BusinessId),
                     P("@RegisterId", registerId), P("@UserId", actor.UserId),
                     P("@Now", now), Money("@OpeningFloat", request.OpeningFloat),
                     P("@Key", request.IdempotencyKey.Trim()));
@@ -109,7 +109,7 @@ public sealed partial class SqlCashSessionStore : ICashSessionStore
         await using var connection = _connections.Create();
         await connection.OpenAsync(ct);
         await using var transaction = connection.BeginTransaction(IsolationLevel.Serializable);
-        await ValidateRegisterAsync(connection, transaction, actor, registerId, null, null, ct);
+        await ValidateRegisterAsync(connection, transaction, actor, registerId, null, ct);
         await ValidateReceiverAsync(connection, transaction, actor.TenantId, request.ReceivedByUserId, ct);
         var duplicate = await FindHandoffAsync(
             connection, transaction, registerId, request.IdempotencyKey, ct);
@@ -167,7 +167,7 @@ public sealed partial class SqlCashSessionStore : ICashSessionStore
         await connection.OpenAsync(ct);
         await using var transaction = connection.BeginTransaction(IsolationLevel.Serializable);
         var register = await ValidateRegisterAsync(
-            connection, transaction, actor, registerId, null, null, ct);
+            connection, transaction, actor, registerId, null, ct);
         var current = await RequireCurrentForActorAsync(
             connection, transaction, actor, registerId, ct);
         var duplicate = await ReceiptByKeyAsync(
@@ -247,7 +247,7 @@ public sealed partial class SqlCashSessionStore : ICashSessionStore
     {
         await using var connection = _connections.Create();
         await connection.OpenAsync(ct);
-        await ValidateRegisterAsync(connection, null, actor, registerId, null, null, ct);
+        await ValidateRegisterAsync(connection, null, actor, registerId, null, ct);
         const string totalsSql = """
             SELECT COUNT(DISTINCT m.CashSessionId),COUNT(DISTINCT m.DocumentId),
                    COALESCE(SUM(CASE WHEN m.MovementType=N'SalePayment' THEN m.Amount ELSE 0 END),0)
@@ -292,7 +292,7 @@ public sealed partial class SqlCashSessionStore : ICashSessionStore
         var movements = await MovementSummaryAsync(connection, transaction, current.CashSessionId, ct);
         return new CashClosureReceipt(
             countId, current.CashSessionId, countNumber,
-            register.BusinessName, register.LocationName,
+            register.BusinessName,
             register.RegisterCode, register.RegisterName,
             current.OpenedAt, closedAt,
             await UserNameAsync(connection, transaction, register.OpenedByUserId, ct),
@@ -310,7 +310,7 @@ public sealed partial class SqlCashSessionStore : ICashSessionStore
         Guid userId, CancellationToken ct)
     {
         const string sql = """
-            SELECT s.CashSessionId,sh.CashierShiftId,s.BusinessId,s.LocationId,s.RegisterId,
+            SELECT s.CashSessionId,sh.CashierShiftId,s.BusinessId,s.RegisterId,
                    sh.UserId,CONCAT(u.FirstName,N' ',u.LastName),s.OpenedAt,sh.StartedAt,
                    s.OpeningFloat,s.Status
             FROM dbo.CashSessions s
@@ -330,7 +330,7 @@ public sealed partial class SqlCashSessionStore : ICashSessionStore
         Guid userId, CancellationToken ct)
     {
         const string sql = """
-            SELECT s.CashSessionId,sh.CashierShiftId,s.BusinessId,s.LocationId,s.RegisterId,
+            SELECT s.CashSessionId,sh.CashierShiftId,s.BusinessId,s.RegisterId,
                    sh.UserId,CONCAT(u.FirstName,N' ',u.LastName),s.OpenedAt,sh.StartedAt,
                    s.OpeningFloat,s.Status
             FROM dbo.CashSessions s WITH (UPDLOCK,HOLDLOCK)
@@ -362,10 +362,10 @@ public sealed partial class SqlCashSessionStore : ICashSessionStore
     }
 
     private static CashSessionView ReadCurrent(SqlDataReader reader) => new(
-        reader.GetGuid(0), reader.GetGuid(1), reader.GetGuid(2), reader.GetGuid(3),
-        reader.GetGuid(4), reader.GetGuid(5), reader.GetString(6),
-        reader.GetDateTimeOffset(7), reader.GetDateTimeOffset(8),
-        reader.GetDecimal(9), reader.GetString(10));
+        reader.GetGuid(0), reader.GetGuid(1), reader.GetGuid(2),
+        reader.GetGuid(3), reader.GetGuid(4), reader.GetString(5),
+        reader.GetDateTimeOffset(6), reader.GetDateTimeOffset(7),
+        reader.GetDecimal(8), reader.GetString(9));
 
     private static async Task<CashSessionView> RequireCurrentForActorAsync(
         SqlConnection connection,
@@ -533,35 +533,32 @@ public sealed partial class SqlCashSessionStore : ICashSessionStore
         CashUserIdentity actor,
         Guid registerId,
         Guid? businessId,
-        Guid? locationId,
         CancellationToken ct)
     {
         const string sql = """
-            SELECT r.BusinessId,r.LocationId,r.Code,r.Name,b.Name,l.Name,s.OpenedByUserId
+            SELECT r.BusinessId,r.Code,r.Name,b.Name,s.OpenedByUserId
             FROM dbo.CashRegisters r
             INNER JOIN dbo.Businesses b ON b.BusinessId=r.BusinessId AND b.IsActive=1
-            INNER JOIN dbo.BusinessLocations l ON l.LocationId=r.LocationId AND l.IsActive=1
             OUTER APPLY (
                 SELECT TOP(1) cs.OpenedByUserId
                 FROM dbo.CashSessions cs
                 WHERE cs.RegisterId=r.RegisterId AND cs.Status=N'Open'
             ) s
             WHERE r.RegisterId=@RegisterId AND r.IsActive=1 AND b.TenantId=@TenantId
-              AND (@BusinessId IS NULL OR r.BusinessId=@BusinessId)
-              AND (@LocationId IS NULL OR r.LocationId=@LocationId);
+              AND (@BusinessId IS NULL OR r.BusinessId=@BusinessId);
             """;
         await using var command = new SqlCommand(sql, connection, transaction);
         command.Parameters.AddRange([
             P("@RegisterId", registerId), P("@TenantId", actor.TenantId),
-            P("@BusinessId", Db(businessId)), P("@LocationId", Db(locationId))
+            P("@BusinessId", Db(businessId))
         ]);
         await using var reader = await command.ExecuteReaderAsync(ct);
         if (!await reader.ReadAsync(ct))
             throw new CashForbiddenException("La caja no pertenece al contexto autenticado o está inactiva.");
         return new RegisterInfo(
-            reader.GetGuid(0), reader.GetGuid(1), reader.GetString(2), reader.GetString(3),
-            reader.GetString(4), reader.GetString(5),
-            reader.IsDBNull(6) ? actor.UserId : reader.GetGuid(6));
+            reader.GetGuid(0), reader.GetString(1), reader.GetString(2),
+            reader.GetString(3),
+            reader.IsDBNull(4) ? actor.UserId : reader.GetGuid(4));
     }
 
     private static async Task ValidateReceiverAsync(
@@ -812,11 +809,9 @@ public sealed partial class SqlCashSessionStore : ICashSessionStore
 
     private sealed record RegisterInfo(
         Guid BusinessId,
-        Guid LocationId,
         string RegisterCode,
         string RegisterName,
         string BusinessName,
-        string LocationName,
         Guid OpenedByUserId);
 
     private sealed record DocumentSummary(

@@ -12,7 +12,7 @@ public sealed class SqlOnlineRegisterDirectory(SqlServerConnectionFactory connec
         CancellationToken cancellationToken)
     {
         const string sql = """
-            SELECT b.BusinessId,b.Name,l.LocationId,l.Code,l.Name,
+            SELECT b.BusinessId,b.Name,
                    r.RegisterId,r.Code,r.Name,w.WarehouseId,w.Code,w.Name,
                    w.AllowNegativeStockSales,
                    CONVERT(bit,CASE WHEN EXISTS(
@@ -20,12 +20,14 @@ public sealed class SqlOnlineRegisterDirectory(SqlServerConnectionFactory connec
                        WHERE d.RegisterId=r.RegisterId AND d.IsActive=1
                    ) THEN 1 ELSE 0 END)
             FROM dbo.Businesses b
-            INNER JOIN dbo.BusinessLocations l ON l.BusinessId=b.BusinessId AND l.IsActive=1
-            INNER JOIN dbo.CashRegisters r ON r.BusinessId=b.BusinessId AND r.LocationId=l.LocationId AND r.IsActive=1
-            INNER JOIN dbo.Warehouses w ON w.WarehouseId=r.WarehouseId
-                AND w.BusinessId=r.BusinessId AND w.LocationId=r.LocationId AND w.IsActive=1
+            INNER JOIN dbo.CashRegisters r
+              ON r.BusinessId=b.BusinessId AND r.IsActive=1
+            INNER JOIN dbo.Warehouses w
+              ON w.WarehouseId=r.WarehouseId
+             AND w.BusinessId=r.BusinessId
+             AND w.IsActive=1
             WHERE b.TenantId=@TenantId AND b.IsActive=1
-            ORDER BY b.Name,l.Name,r.Code,r.RegisterId;
+            ORDER BY b.Name,r.Code,r.RegisterId;
             """;
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
@@ -39,8 +41,7 @@ public sealed class SqlOnlineRegisterDirectory(SqlServerConnectionFactory connec
                 reader.GetGuid(0), reader.GetString(1),
                 reader.GetGuid(2), reader.GetString(3), reader.GetString(4),
                 reader.GetGuid(5), reader.GetString(6), reader.GetString(7),
-                reader.GetGuid(8), reader.GetString(9), reader.GetString(10),
-                reader.GetBoolean(11), reader.GetBoolean(12)));
+                reader.GetBoolean(8), reader.GetBoolean(9)));
         }
         return rows;
     }
@@ -51,23 +52,26 @@ public sealed class SqlOnlineRegisterDirectory(SqlServerConnectionFactory connec
         CancellationToken cancellationToken)
     {
         const string sql = """
-            SELECT b.BusinessId,b.Name,l.LocationId,l.Code,l.Name,
+            SELECT b.BusinessId,b.Name,
                    r.RegisterId,r.Code,r.Name,w.WarehouseId,w.Code,w.Name,
                    w.AllowNegativeStockSales
             FROM dbo.Businesses b
-            INNER JOIN dbo.BusinessLocations l ON l.BusinessId=b.BusinessId AND l.IsActive=1
-            INNER JOIN dbo.CashRegisters r ON r.BusinessId=b.BusinessId AND r.LocationId=l.LocationId AND r.IsActive=1
-            INNER JOIN dbo.Warehouses w ON w.WarehouseId=r.WarehouseId
-                AND w.BusinessId=r.BusinessId AND w.LocationId=r.LocationId AND w.IsActive=1
-            WHERE b.TenantId=@TenantId AND b.BusinessId=@BusinessId
-              AND l.LocationId=@LocationId AND r.RegisterId=@RegisterId AND b.IsActive=1
+            INNER JOIN dbo.CashRegisters r
+              ON r.BusinessId=b.BusinessId AND r.IsActive=1
+            INNER JOIN dbo.Warehouses w
+              ON w.WarehouseId=r.WarehouseId
+             AND w.BusinessId=r.BusinessId
+             AND w.IsActive=1
+            WHERE b.TenantId=@TenantId
+              AND b.BusinessId=@BusinessId
+              AND r.RegisterId=@RegisterId
+              AND b.IsActive=1;
             """;
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
         await using var command = new SqlCommand(sql, connection);
         command.Parameters.AddWithValue("@TenantId", tenantId);
         command.Parameters.AddWithValue("@BusinessId", selection.BusinessId);
-        command.Parameters.AddWithValue("@LocationId", selection.LocationId);
         command.Parameters.AddWithValue("@RegisterId", selection.RegisterId);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken)) return null;
@@ -75,7 +79,6 @@ public sealed class SqlOnlineRegisterDirectory(SqlServerConnectionFactory connec
             reader.GetGuid(0), reader.GetString(1),
             reader.GetGuid(2), reader.GetString(3), reader.GetString(4),
             reader.GetGuid(5), reader.GetString(6), reader.GetString(7),
-            reader.GetGuid(8), reader.GetString(9), reader.GetString(10),
-            reader.GetBoolean(11));
+            reader.GetBoolean(8));
     }
 }

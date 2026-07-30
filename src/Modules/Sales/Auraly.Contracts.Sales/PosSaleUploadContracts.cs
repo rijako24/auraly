@@ -132,7 +132,6 @@ public sealed record PosSaleUblSnapshotContract(
 public sealed record PosSaleUploadRequest(
     Guid TenantId,
     Guid BusinessId,
-    Guid LocationId,
     Guid WarehouseId,
     Guid RegisterId,
     Guid DeviceId,

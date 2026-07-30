@@ -62,7 +62,6 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
 
         var context = new OnlineSalesDraftContext(
             fixture.BusinessId,
-            fixture.LocationId,
             fixture.OnlineRegisterId);
         using (var searchResponse = await client.PostAsJsonAsync(
                    "/api/commerce/v1/pos/drafts/sales/search",
@@ -102,7 +101,6 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
         var qrUrl =
             $"/api/commerce/v1/pos/drafts/sales/{completed.Receipt.DocumentId:D}/qr" +
             $"?businessId={fixture.BusinessId:D}" +
-            $"&locationId={fixture.LocationId:D}" +
             $"&registerId={fixture.OnlineRegisterId:D}";
         using (var qrResponse = await client.GetAsync(qrUrl))
         {
@@ -115,7 +113,6 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
         using (var wrongRegisterResponse = await client.GetAsync(
                    $"/api/commerce/v1/pos/drafts/sales/{completed.Receipt.DocumentId:D}/qr" +
                    $"?businessId={fixture.BusinessId:D}" +
-                   $"&locationId={fixture.LocationId:D}" +
                    $"&registerId={Guid.NewGuid():D}"))
         {
             Assert.Equal(HttpStatusCode.Forbidden, wrongRegisterResponse.StatusCode);
@@ -315,7 +312,6 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
             "/api/commerce/v1/pos/drafts/active",
             new OpenOnlineSalesDraftRequest(new(
                 fixture.BusinessId,
-                fixture.LocationId,
                 fixture.OnlineRegisterId)));
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadFromJsonAsync<OnlineSalesDraft>()

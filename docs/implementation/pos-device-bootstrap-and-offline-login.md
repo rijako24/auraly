@@ -25,7 +25,7 @@ Una instalación que nunca fue enrolada requiere Internet. Antes de existir un
 login local ejecuta un asistente mediante un código de activación de un solo uso:
 
 1. valida el dispositivo con el servidor;
-2. selecciona el negocio y la sede permitidos;
+2. selecciona la sede (`Business`) permitida;
 3. selecciona la caja;
 4. obtiene de la caja la bodega, serie operativa y configuración fiscal;
 5. registra impresora, balanza y preferencias locales;
@@ -41,7 +41,7 @@ servidor.
 ## Usuarios y credenciales offline
 
 La caja no descarga todos los usuarios de la plataforma ni hashes de sus
-contraseñas principales. Descarga solamente usuarios habilitados para el negocio
+contraseñas principales. Descarga solamente usuarios habilitados para la sede
 y el dispositivo, con la proyección mínima:
 
 - `UserId`;

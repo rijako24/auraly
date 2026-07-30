@@ -126,7 +126,6 @@ public sealed class OnlineSalesDraftService(
     {
         DemandPermission(user);
         if (request.Context.BusinessId == Guid.Empty ||
-            request.Context.LocationId == Guid.Empty ||
             request.Context.RegisterId == Guid.Empty)
             throw new OnlineSalesDraftValidationException(
                 "Negocio, sede y caja son obligatorios.");
@@ -353,7 +352,6 @@ public sealed class OnlineSalesDraftService(
     private static void ValidateSearch(SearchOnlineSalesRequest request)
     {
         if (request.Context.BusinessId == Guid.Empty ||
-            request.Context.LocationId == Guid.Empty ||
             request.Context.RegisterId == Guid.Empty)
             throw new OnlineSalesDraftValidationException(
                 "Negocio, sede y caja son obligatorios.");

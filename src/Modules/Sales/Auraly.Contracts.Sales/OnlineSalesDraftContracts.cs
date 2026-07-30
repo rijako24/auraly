@@ -2,7 +2,6 @@ namespace Auraly.Contracts.Sales;
 
 public sealed record OnlineSalesDraftContext(
     Guid BusinessId,
-    Guid LocationId,
     Guid RegisterId);
 
 public sealed record OpenOnlineSalesDraftRequest(OnlineSalesDraftContext Context);
@@ -105,7 +104,6 @@ public sealed record OnlineSalesDraftLine(
 public sealed record OnlineSalesDraft(
     Guid DraftId,
     Guid BusinessId,
-    Guid LocationId,
     Guid WarehouseId,
     Guid RegisterId,
     Guid UserId,

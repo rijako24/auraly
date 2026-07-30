@@ -57,7 +57,6 @@ public sealed class ServerSliceFixture : IAsyncLifetime
 
     public Guid TenantId { get; } = Guid.NewGuid();
     public Guid BusinessId { get; } = Guid.NewGuid();
-    public Guid LocationId { get; } = Guid.NewGuid();
     public Guid WarehouseId { get; } = Guid.NewGuid();
     public Guid RegisterId { get; } = Guid.NewGuid();
     public Guid OnlineRegisterId { get; } = Guid.NewGuid();
@@ -222,7 +221,6 @@ public sealed class ServerSliceFixture : IAsyncLifetime
         return new PosSaleUploadRequest(
             TenantId,
             BusinessId,
-            LocationId,
             WarehouseId,
             RegisterId,
             DeviceId,
@@ -467,28 +465,23 @@ public sealed class ServerSliceFixture : IAsyncLifetime
             VALUES
               (@UserId,@TenantId,@Username,@NormalizedUsername,@UserEmail,@NormalizedUserEmail,
                N'Cajero',N'E2E',1,SYSUTCDATETIME());
-
-            INSERT INTO dbo.BusinessLocations
-            (LocationId, BusinessId, Code, Name, IsActive, CreatedAt)
-            VALUES (@LocationId, @BusinessId, N'S01', N'Sede E2E', 1, SYSDATETIMEOFFSET());
-
             INSERT INTO dbo.Warehouses
-            (WarehouseId, BusinessId, LocationId, Code, Name, AllowNegativeStockSales, IsActive, CreatedAt)
-            VALUES (@WarehouseId, @BusinessId, @LocationId, N'B01', N'Bodega E2E', 1, 1, SYSDATETIMEOFFSET());
+            (WarehouseId, BusinessId, Code, Name, AllowNegativeStockSales, IsActive, CreatedAt)
+            VALUES (@WarehouseId, @BusinessId, N'B01', N'Bodega E2E', 1, 1, SYSDATETIMEOFFSET());
 
             INSERT INTO dbo.CashRegisters
-            (RegisterId, BusinessId, LocationId, WarehouseId, Code, Name, IsActive, CreatedAt)
+            (RegisterId, BusinessId, WarehouseId, Code, Name, IsActive, CreatedAt)
             VALUES
-            (@RegisterId, @BusinessId, @LocationId, @WarehouseId, N'03', N'Caja Edge E2E', 1, SYSDATETIMEOFFSET()),
-            (@OnlineRegisterId, @BusinessId, @LocationId, @WarehouseId, N'04', N'Caja web E2E', 1, SYSDATETIMEOFFSET());
+            (@RegisterId, @BusinessId, @WarehouseId, N'03', N'Caja Edge E2E', 1, SYSDATETIMEOFFSET()),
+            (@OnlineRegisterId, @BusinessId, @WarehouseId, N'04', N'Caja web E2E', 1, SYSDATETIMEOFFSET());
 
             INSERT INTO dbo.PosDevices
-            (DeviceId, BusinessId, LocationId, WarehouseId, RegisterId, Name,
+            (DeviceId, BusinessId, WarehouseId, RegisterId, Name,
              CredentialSalt, CredentialHash, CredentialIterations, IsActive, CreatedAt)
             VALUES
-            (@DeviceId, @BusinessId, @LocationId, @WarehouseId, @RegisterId, N'POS permitido',
+            (@DeviceId, @BusinessId, @WarehouseId, @RegisterId, N'POS permitido',
              @AllowedSalt, @AllowedHash, @AllowedIterations, 1, SYSDATETIMEOFFSET()),
-            (@DeniedDeviceId, @BusinessId, @LocationId, @WarehouseId, @RegisterId, N'POS sin permiso',
+            (@DeniedDeviceId, @BusinessId, @WarehouseId, @RegisterId, N'POS sin permiso',
              @DeniedSalt, @DeniedHash, @DeniedIterations, 1, SYSDATETIMEOFFSET());
 
             INSERT INTO dbo.PosDevicePermissions
@@ -522,13 +515,13 @@ public sealed class ServerSliceFixture : IAsyncLifetime
              '2026-01-01',1,SYSDATETIMEOFFSET());
 
             INSERT INTO dbo.DocumentSeries
-            (DocumentSeriesId, BusinessId, LocationId, RegisterId, DocumentType,
+            (DocumentSeriesId, BusinessId, RegisterId, DocumentType,
              Prefix, SeriesCode, Padding, RangeStart, RangeEnd,
              IsOfflineCapable, IsActive, CreatedAt)
             VALUES
-            (@DocumentSeriesId, @BusinessId, @LocationId, @RegisterId, @DocumentType,
+            (@DocumentSeriesId, @BusinessId, @RegisterId, @DocumentType,
              N'VTA', N'03', 8, 1, 99999999, 1, 1, SYSDATETIMEOFFSET()),
-            (@OnlineDocumentSeriesId, @BusinessId, @LocationId, @OnlineRegisterId, @DocumentType,
+            (@OnlineDocumentSeriesId, @BusinessId, @OnlineRegisterId, @DocumentType,
              N'VTA', N'04', 8, 1, 99999999, 0, 1, SYSDATETIMEOFFSET());
 
             INSERT INTO dbo.FiscalSeries
@@ -557,7 +550,6 @@ public sealed class ServerSliceFixture : IAsyncLifetime
         command.Parameters.AddWithValue("@NormalizedUsername", $"CASHIER-{UserId:N}".ToUpperInvariant());
         command.Parameters.AddWithValue("@UserEmail", $"cashier-{UserId:N}@auraly.test");
         command.Parameters.AddWithValue("@NormalizedUserEmail", $"CASHIER-{UserId:N}@AURALY.TEST");
-        command.Parameters.AddWithValue("@LocationId", LocationId);
         command.Parameters.AddWithValue("@WarehouseId", WarehouseId);
         command.Parameters.AddWithValue("@RegisterId", RegisterId);
         command.Parameters.AddWithValue("@DeviceId", DeviceId);

@@ -12,7 +12,6 @@ public sealed class OrganizationTests
         var warehouse = new Warehouse(
             new WarehouseId(Guid.NewGuid()),
             businessId,
-            new LocationId(Guid.NewGuid()),
             "B01",
             "Principal",
             allowNegativeStockSales: false);

@@ -88,7 +88,6 @@
     <Build Include="Tables\UserExternalLogins.sql" />
     <Build Include="Tables\RefreshTokens.sql" />
     <Build Include="Tables\AuditLogs.sql" />
-    <Build Include="Tables\BusinessLocations.sql" />
     <Build Include="Tables\Warehouses.sql" />
     <Build Include="Tables\CashRegisters.sql" />
     <Build Include="Tables\PosDevices.sql" />

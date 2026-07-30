@@ -85,10 +85,9 @@ public sealed class SaleCustomerSnapshotIntegrationTests(ServerSliceFixture fixt
         Assert.Equal(storedCustomerId, await ScalarAsync<Guid?>(
             """
             SELECT CustomerId FROM dbo.SalesDocuments
-            WHERE DocumentId=@DocumentId AND LocationId=@LocationId;
+            WHERE DocumentId=@DocumentId;
             """,
-            new SqlParameter("@DocumentId", visitingAgain.DocumentId),
-            new SqlParameter("@LocationId", fixture.LocationId)));
+            new SqlParameter("@DocumentId", visitingAgain.DocumentId)));
     }
 
     private async Task ExecuteAsync(string sql, params SqlParameter[] parameters)

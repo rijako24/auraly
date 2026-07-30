@@ -2,7 +2,6 @@ CREATE TABLE [dbo].[CashRegisters]
 (
     [RegisterId] UNIQUEIDENTIFIER NOT NULL,
     [BusinessId] UNIQUEIDENTIFIER NOT NULL,
-    [LocationId] UNIQUEIDENTIFIER NOT NULL,
     [WarehouseId] UNIQUEIDENTIFIER NOT NULL,
     [Code] NVARCHAR(32) NOT NULL,
     [Name] NVARCHAR(160) NOT NULL,
@@ -10,9 +9,11 @@ CREATE TABLE [dbo].[CashRegisters]
     [CreatedAt] DATETIMEOFFSET(7) NOT NULL,
     CONSTRAINT [PK_CashRegisters] PRIMARY KEY CLUSTERED ([RegisterId]),
     CONSTRAINT [FK_CashRegisters_Businesses] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses] ([BusinessId]),
-    CONSTRAINT [FK_CashRegisters_BusinessLocations] FOREIGN KEY ([LocationId]) REFERENCES [dbo].[BusinessLocations] ([LocationId]),
-    CONSTRAINT [FK_CashRegisters_Warehouses] FOREIGN KEY ([WarehouseId]) REFERENCES [dbo].[Warehouses] ([WarehouseId]),
-    CONSTRAINT [UQ_CashRegisters_Business_Code] UNIQUE ([BusinessId], [Code])
+    CONSTRAINT [FK_CashRegisters_Warehouses] FOREIGN KEY ([BusinessId], [WarehouseId])
+        REFERENCES [dbo].[Warehouses] ([BusinessId], [WarehouseId]),
+    CONSTRAINT [UQ_CashRegisters_Business_Code] UNIQUE ([BusinessId], [Code]),
+    CONSTRAINT [UQ_CashRegisters_Business_Register] UNIQUE ([BusinessId], [RegisterId]),
+    CONSTRAINT [UQ_CashRegisters_Business_Warehouse_Register] UNIQUE ([BusinessId], [WarehouseId], [RegisterId])
 );
 
 GO

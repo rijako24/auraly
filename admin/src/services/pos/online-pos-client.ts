@@ -20,9 +20,6 @@ import {
 export type OnlineRegisterOption = {
   businessId: string;
   businessName: string;
-  locationId: string;
-  locationCode: string;
-  locationName: string;
   registerId: string;
   registerCode: string;
   registerName: string;
@@ -60,7 +57,6 @@ type OnlineDraftLine = {
 type OnlineDraft = {
   draftId: string;
   businessId: string;
-  locationId: string;
   warehouseId: string;
   registerId: string;
   userId: string;
@@ -139,7 +135,6 @@ export async function selectOnlineRegister(
       method: "POST",
       body: JSON.stringify({
         businessId: option.businessId,
-        locationId: option.locationId,
         registerId: option.registerId,
       }),
     },
@@ -447,7 +442,6 @@ export class OnlinePosClient implements PosClient {
   private scope() {
     return {
       businessId: this.context.businessId,
-      locationId: this.context.locationId,
       registerId: this.context.registerId,
     };
   }

@@ -2,7 +2,6 @@ CREATE TABLE [dbo].[CashSessions]
 (
     [CashSessionId] UNIQUEIDENTIFIER NOT NULL,
     [BusinessId] UNIQUEIDENTIFIER NOT NULL,
-    [LocationId] UNIQUEIDENTIFIER NOT NULL,
     [RegisterId] UNIQUEIDENTIFIER NOT NULL,
     [OpenedByUserId] UNIQUEIDENTIFIER NOT NULL,
     [OpenedAt] DATETIMEOFFSET(7) NOT NULL,
@@ -14,7 +13,6 @@ CREATE TABLE [dbo].[CashSessions]
     [RowVersion] ROWVERSION NOT NULL,
     CONSTRAINT [PK_CashSessions] PRIMARY KEY CLUSTERED ([CashSessionId]),
     CONSTRAINT [FK_CashSessions_Businesses] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses] ([BusinessId]),
-    CONSTRAINT [FK_CashSessions_Locations] FOREIGN KEY ([LocationId]) REFERENCES [dbo].[BusinessLocations] ([LocationId]),
     CONSTRAINT [FK_CashSessions_Registers] FOREIGN KEY ([RegisterId]) REFERENCES [dbo].[CashRegisters] ([RegisterId]),
     CONSTRAINT [FK_CashSessions_OpenedBy] FOREIGN KEY ([OpenedByUserId]) REFERENCES [dbo].[AppUsers] ([UserId]),
     CONSTRAINT [FK_CashSessions_ClosedBy] FOREIGN KEY ([ClosedByUserId]) REFERENCES [dbo].[AppUsers] ([UserId]),

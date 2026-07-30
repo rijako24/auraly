@@ -796,7 +796,6 @@ public sealed class PosEdgeSaleStore
         return new PosSaleUploadRequest(
             command.Register.TenantId.Value,
             command.Register.BusinessId.Value,
-            command.Register.LocationId.Value,
             command.Register.WarehouseId.Value,
             command.Register.RegisterId.Value,
             command.DeviceId,

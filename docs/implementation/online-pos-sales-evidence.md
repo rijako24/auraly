@@ -17,7 +17,7 @@ Una venta online siempre pertenece a una caja real.
 ## Flujo conectado
 
 1. Sin token local de POS Edge, `/pos` usa la sesión web autenticada.
-2. En el primer acceso solicita negocio, sede y caja; la bodega se deriva de la caja.
+2. En el primer acceso solicita sede y caja; la bodega se deriva de la caja.
 3. La selección recordada contiene solamente `RegisterId` y siempre se revalida en el servidor.
 4. `OnlinePosClient` consume los mismos casos de uso visuales que `PosEdgeClient`.
 5. El borrador activo, sus líneas, cliente, descuentos y ventas en espera se persisten en SQL Server.

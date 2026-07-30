@@ -18,7 +18,6 @@ public sealed class RegisterContextProjector
         return new RegisterContext(
             tenantId,
             register.BusinessId,
-            warehouse.LocationId,
             warehouse.Id,
             register.Id,
             warehouse.AllowNegativeStockSales);

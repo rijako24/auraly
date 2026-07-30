@@ -69,7 +69,6 @@ public static class OnlineSalesDraftApi
             HttpContext context,
             Guid documentId,
             Guid businessId,
-            Guid locationId,
             Guid registerId,
             OnlineSalesHistoryService service,
             CancellationToken ct) =>
@@ -80,7 +79,6 @@ public static class OnlineSalesDraftApi
                     context.User.ToOnlineSalesUserIdentity(),
                     new OnlineSalesDraftContext(
                         businessId,
-                        locationId,
                         registerId),
                     documentId,
                     ct);

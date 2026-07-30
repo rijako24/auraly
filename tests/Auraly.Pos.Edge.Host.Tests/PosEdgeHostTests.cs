@@ -409,7 +409,6 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
             ["PosEdge:RegisterCode"] = "03",
             ["PosEdge:WarehouseAllowsNegativeStock"] = "true",
             ["PosEdge:TenantId"] = Guid.NewGuid().ToString("D"),
-            ["PosEdge:LocationId"] = Guid.NewGuid().ToString("D"),
             ["PosEdge:SupplierTaxId"] = "9001234567",
             ["PosEdge:DefaultCustomerIdentification"] = "222222222",
             ["PosEdge:Permissions:0"] = "sales.create",

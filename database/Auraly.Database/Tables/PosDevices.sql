@@ -2,7 +2,6 @@ CREATE TABLE [dbo].[PosDevices]
 (
     [DeviceId] UNIQUEIDENTIFIER NOT NULL,
     [BusinessId] UNIQUEIDENTIFIER NOT NULL,
-    [LocationId] UNIQUEIDENTIFIER NOT NULL,
     [WarehouseId] UNIQUEIDENTIFIER NOT NULL,
     [RegisterId] UNIQUEIDENTIFIER NOT NULL,
     [Name] NVARCHAR(160) NOT NULL,
@@ -14,9 +13,8 @@ CREATE TABLE [dbo].[PosDevices]
     [LastSeenAt] DATETIMEOFFSET(7) NULL,
     CONSTRAINT [PK_PosDevices] PRIMARY KEY CLUSTERED ([DeviceId]),
     CONSTRAINT [FK_PosDevices_Businesses] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses] ([BusinessId]),
-    CONSTRAINT [FK_PosDevices_BusinessLocations] FOREIGN KEY ([LocationId]) REFERENCES [dbo].[BusinessLocations] ([LocationId]),
-    CONSTRAINT [FK_PosDevices_Warehouses] FOREIGN KEY ([WarehouseId]) REFERENCES [dbo].[Warehouses] ([WarehouseId]),
-    CONSTRAINT [FK_PosDevices_CashRegisters] FOREIGN KEY ([RegisterId]) REFERENCES [dbo].[CashRegisters] ([RegisterId]),
+    CONSTRAINT [FK_PosDevices_RegisterScope] FOREIGN KEY ([BusinessId], [WarehouseId], [RegisterId])
+        REFERENCES [dbo].[CashRegisters] ([BusinessId], [WarehouseId], [RegisterId]),
     CONSTRAINT [CK_PosDevices_CredentialIterations] CHECK ([CredentialIterations] >= 100000)
 );
 

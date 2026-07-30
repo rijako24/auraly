@@ -20,18 +20,15 @@ public sealed class SqlPosEnrollmentStore(
         CancellationToken cancellationToken)
     {
         const string sql = """
-            SELECT b.BusinessId,b.Name,l.LocationId,l.Code,l.Name,
+            SELECT b.BusinessId,b.Name,
                    r.RegisterId,r.Code,r.Name,w.WarehouseId,w.Code,w.Name,
                    w.AllowNegativeStockSales
             FROM dbo.Businesses b
-            JOIN dbo.BusinessLocations l ON l.BusinessId=b.BusinessId AND l.IsActive=1
-            JOIN dbo.CashRegisters r ON r.BusinessId=b.BusinessId
-                AND r.LocationId=l.LocationId AND r.IsActive=1
+            JOIN dbo.CashRegisters r ON r.BusinessId=b.BusinessId AND r.IsActive=1
             JOIN dbo.Warehouses w ON w.WarehouseId=r.WarehouseId
-                AND w.BusinessId=b.BusinessId AND w.LocationId=l.LocationId
-                AND w.IsActive=1
+                AND w.BusinessId=b.BusinessId AND w.IsActive=1
             WHERE b.TenantId=@TenantId AND b.BusinessId=@BusinessId
-              AND l.LocationId=@LocationId AND r.RegisterId=@RegisterId
+              AND r.RegisterId=@RegisterId
               AND b.IsActive=1;
             """;
         await using var connection = connections.Create();
@@ -39,7 +36,6 @@ public sealed class SqlPosEnrollmentStore(
         await using var command = new SqlCommand(sql, connection);
         command.Parameters.AddWithValue("@TenantId", tenantId);
         command.Parameters.AddWithValue("@BusinessId", request.BusinessId);
-        command.Parameters.AddWithValue("@LocationId", request.LocationId);
         command.Parameters.AddWithValue("@RegisterId", request.RegisterId);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken)) return null;
@@ -65,11 +61,11 @@ public sealed class SqlPosEnrollmentStore(
             SET ExpiresAt=@Now
             WHERE RegisterId=@RegisterId AND RedeemedAt IS NULL AND ExpiresAt>@Now;
             INSERT dbo.PosEnrollmentSessions
-              (EnrollmentSessionId,TenantId,BusinessId,LocationId,WarehouseId,
+              (EnrollmentSessionId,TenantId,BusinessId,WarehouseId,
                RegisterId,RequestedByUserId,RequestedByDisplayName,DeviceName,
                RedemptionCodeHash,ExpiresAt,CreatedAt)
             VALUES
-              (@SessionId,@TenantId,@BusinessId,@LocationId,@WarehouseId,
+              (@SessionId,@TenantId,@BusinessId,@WarehouseId,
                @RegisterId,@UserId,@DisplayName,@DeviceName,
                @CodeHash,@ExpiresAt,@Now);
             COMMIT;
@@ -80,7 +76,6 @@ public sealed class SqlPosEnrollmentStore(
         Add(sqlCommand, "@SessionId", command.EnrollmentSessionId);
         Add(sqlCommand, "@TenantId", command.User.TenantId);
         Add(sqlCommand, "@BusinessId", register.BusinessId);
-        Add(sqlCommand, "@LocationId", register.LocationId);
         Add(sqlCommand, "@WarehouseId", register.WarehouseId);
         Add(sqlCommand, "@RegisterId", register.RegisterId);
         Add(sqlCommand, "@UserId", command.User.UserId);
@@ -144,7 +139,7 @@ public sealed class SqlPosEnrollmentStore(
             devicePermissions, request.InstallationId, now, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return new PosEnrollmentPackage(
-            deviceId, deviceSecret, data.TenantId, data.BusinessId, data.LocationId,
+            deviceId, deviceSecret, data.TenantId, data.BusinessId,
             data.WarehouseId, data.RegisterId, data.RegisterCode, data.RegisterName,
             data.AllowNegativeStock, data.UserId, data.UserDisplayName,
             devicePermissions.Order(StringComparer.Ordinal).ToArray(),
@@ -169,7 +164,7 @@ public sealed class SqlPosEnrollmentStore(
     {
         const string sql = """
             SELECT TOP(2)
-              e.TenantId,e.BusinessId,e.LocationId,e.WarehouseId,e.RegisterId,
+              e.TenantId,e.BusinessId,e.WarehouseId,e.RegisterId,
               r.Code,r.Name,w.AllowNegativeStockSales,e.RequestedByUserId,
               e.RequestedByDisplayName,e.RedemptionCodeHash,e.ExpiresAt,e.RedeemedAt,
               ds.DocumentSeriesId,ds.DocumentType,ds.Prefix,ds.SeriesCode,
@@ -181,7 +176,7 @@ public sealed class SqlPosEnrollmentStore(
             JOIN dbo.CashRegisters r ON r.RegisterId=e.RegisterId AND r.IsActive=1
             JOIN dbo.Warehouses w ON w.WarehouseId=e.WarehouseId AND w.IsActive=1
             JOIN dbo.DocumentSeries ds ON ds.RegisterId=e.RegisterId
-                AND ds.BusinessId=e.BusinessId AND ds.LocationId=e.LocationId
+                AND ds.BusinessId=e.BusinessId
                 AND ds.DocumentType=N'Invoice' AND ds.IsOfflineCapable=1 AND ds.IsActive=1
             JOIN dbo.FiscalSeries fs ON fs.RegisterId=e.RegisterId
                 AND fs.BusinessId=e.BusinessId AND fs.DocumentType=N'Invoice' AND fs.IsActive=1
@@ -196,16 +191,16 @@ public sealed class SqlPosEnrollmentStore(
         if (!await reader.ReadAsync(cancellationToken)) return null;
         var value = new Provisioning(
             sessionId, reader.GetGuid(0), reader.GetGuid(1), reader.GetGuid(2),
-            reader.GetGuid(3), reader.GetGuid(4), reader.GetString(5), reader.GetString(6), reader.GetBoolean(7),
-            reader.GetGuid(8), reader.GetString(9), (byte[])reader[10],
-            reader.GetFieldValue<DateTimeOffset>(11),
-            reader.IsDBNull(12) ? null : reader.GetFieldValue<DateTimeOffset>(12),
-            reader.GetGuid(13), reader.GetString(14), reader.GetString(15), reader.GetString(16),
-            reader.GetByte(17), reader.GetInt64(18), reader.GetInt64(19),
-            reader.GetGuid(20), reader.GetGuid(21), reader.GetString(22),
-            reader.GetInt64(23), reader.GetInt64(24), reader.GetString(25),
-            DateOnly.FromDateTime(reader.GetDateTime(26)), reader.GetByte(27),
-            reader.GetString(28), reader.GetString(29), reader.GetString(30));
+            reader.GetGuid(3), reader.GetString(4), reader.GetString(5), reader.GetBoolean(6),
+            reader.GetGuid(7), reader.GetString(8), (byte[])reader[9],
+            reader.GetFieldValue<DateTimeOffset>(10),
+            reader.IsDBNull(11) ? null : reader.GetFieldValue<DateTimeOffset>(11),
+            reader.GetGuid(12), reader.GetString(13), reader.GetString(14), reader.GetString(15),
+            reader.GetByte(16), reader.GetInt64(17), reader.GetInt64(18),
+            reader.GetGuid(19), reader.GetGuid(20), reader.GetString(21),
+            reader.GetInt64(22), reader.GetInt64(23), reader.GetString(24),
+            DateOnly.FromDateTime(reader.GetDateTime(25)), reader.GetByte(26),
+            reader.GetString(27), reader.GetString(28), reader.GetString(29));
         if (await reader.ReadAsync(cancellationToken))
             throw new PosEnrollmentValidationException(
                 "La caja debe tener exactamente una serie operativa y una serie fiscal offline activas.");
@@ -231,10 +226,10 @@ public sealed class SqlPosEnrollmentStore(
     {
         const string sql = """
             INSERT dbo.PosDevices
-              (DeviceId,BusinessId,LocationId,WarehouseId,RegisterId,Name,
+              (DeviceId,BusinessId,WarehouseId,RegisterId,Name,
                CredentialSalt,CredentialHash,CredentialIterations,IsActive,CreatedAt)
             VALUES
-              (@DeviceId,@BusinessId,@LocationId,@WarehouseId,@RegisterId,@Name,
+              (@DeviceId,@BusinessId,@WarehouseId,@RegisterId,@Name,
                @Salt,@Hash,@Iterations,1,@Now);
             UPDATE dbo.PosEnrollmentSessions
             SET RedeemedAt=@Now,DeviceId=@DeviceId
@@ -244,7 +239,6 @@ public sealed class SqlPosEnrollmentStore(
         {
             Add(command, "@DeviceId", deviceId);
             Add(command, "@BusinessId", data.BusinessId);
-            Add(command, "@LocationId", data.LocationId);
             Add(command, "@WarehouseId", data.WarehouseId);
             Add(command, "@RegisterId", data.RegisterId);
             Add(command, "@Name", installationId);
@@ -274,15 +268,15 @@ public sealed class SqlPosEnrollmentStore(
 
     private static OnlineRegisterContext ReadRegister(SqlDataReader reader) =>
         new(
-            reader.GetGuid(0), reader.GetString(1), reader.GetGuid(2), reader.GetString(3),
-            reader.GetString(4), reader.GetGuid(5), reader.GetString(6), reader.GetString(7),
-            reader.GetGuid(8), reader.GetString(9), reader.GetString(10), reader.GetBoolean(11));
+            reader.GetGuid(0), reader.GetString(1),
+            reader.GetGuid(2), reader.GetString(3), reader.GetString(4),
+            reader.GetGuid(5), reader.GetString(6), reader.GetString(7), reader.GetBoolean(8));
 
     private static void Add(SqlCommand command, string name, object value) =>
         command.Parameters.AddWithValue(name, value);
 
     private sealed record Provisioning(
-        Guid SessionId, Guid TenantId, Guid BusinessId, Guid LocationId, Guid WarehouseId, Guid RegisterId,
+        Guid SessionId, Guid TenantId, Guid BusinessId, Guid WarehouseId, Guid RegisterId,
         string RegisterCode, string RegisterName, bool AllowNegativeStock,
         Guid UserId, string UserDisplayName, byte[] CodeHash, DateTimeOffset ExpiresAt,
         DateTimeOffset? RedeemedAt, Guid DocumentSeriesId, string DocumentType,

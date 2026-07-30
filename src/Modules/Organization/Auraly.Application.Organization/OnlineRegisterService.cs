@@ -40,7 +40,6 @@ public sealed class OnlineRegisterService(IOnlineRegisterDirectory directory)
     {
         DemandSalesPermission(user);
         if (selection.BusinessId == Guid.Empty ||
-            selection.LocationId == Guid.Empty ||
             selection.RegisterId == Guid.Empty)
         {
             throw new OnlineRegisterValidationException(

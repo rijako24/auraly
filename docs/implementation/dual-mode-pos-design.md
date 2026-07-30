@@ -48,13 +48,12 @@ cifrado, revocable y con vigencia.
 Sin una sesión local de Edge, Facturación usa la sesión web autenticada. Si no hay
 una caja recordada, solicita:
 
-1. negocio;
-2. sede;
-3. caja.
+1. sede (`Business`);
+2. caja.
 
 La bodega nunca se selecciona independientemente: se deriva de la caja y se
 muestra para confirmación. La preferencia del navegador solamente recuerda el
-`RegisterId`; el servidor vuelve a validar tenant, negocio, sede, bodega, estado
+`RegisterId`; el servidor vuelve a validar tenant, sede, bodega, estado
 y permisos en cada operación.
 
 El usuario puede cambiar de caja en modo web. Un equipo enrolado cambia su caja
@@ -120,7 +119,7 @@ En el modo web, `OnlinePosClient` usa un borrador durable en SQL Server. El
 servidor es propietario de:
 
 - `SalesDraftId`;
-- alcance de negocio, sede, caja y usuario;
+- alcance de sede (`Business`), caja y usuario;
 - líneas y snapshots comerciales;
 - cliente, vendedor y pedido de origen;
 - descuentos y totales;

@@ -346,7 +346,7 @@ public sealed partial class SqlOnlineSalesDraftStore
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
-            SELECT d.BusinessId,d.LocationId,d.WarehouseId,d.RegisterId,d.Version,d.Status,
+            SELECT d.BusinessId,d.WarehouseId,d.RegisterId,d.Version,d.Status,
                    d.CustomerId,w.AllowNegativeStockSales
             FROM dbo.SalesDrafts d WITH (UPDLOCK,HOLDLOCK)
             JOIN dbo.Businesses b ON b.BusinessId=d.BusinessId
@@ -364,8 +364,8 @@ public sealed partial class SqlOnlineSalesDraftStore
                 "La venta en espera no pertenece al usuario autenticado.");
         return new(
             reader.GetGuid(0), reader.GetGuid(1), reader.GetGuid(2),
-            reader.GetGuid(3), reader.GetInt64(4), reader.GetString(5),
-            reader.IsDBNull(6) ? null : reader.GetGuid(6), reader.GetBoolean(7));
+            reader.GetInt64(3), reader.GetString(4),
+            reader.IsDBNull(5) ? null : reader.GetGuid(5), reader.GetBoolean(6));
     }
 
     private static void DemandTemporaryVersion(DraftState state, long expectedVersion)
@@ -427,16 +427,15 @@ public sealed partial class SqlOnlineSalesDraftStore
         CancellationToken ct) =>
         await ExecuteAsync(connection, transaction, """
             INSERT dbo.SalesDrafts(
-              SalesDraftId,BusinessId,LocationId,WarehouseId,RegisterId,UserId,
+              SalesDraftId,BusinessId,WarehouseId,RegisterId,UserId,
               Status,Version,CreatedAt,UpdatedAt)
             VALUES(
-              @DraftId,@BusinessId,@LocationId,@WarehouseId,@RegisterId,@UserId,
+              @DraftId,@BusinessId,@WarehouseId,@RegisterId,@UserId,
               N'Active',1,@Now,@Now);
             """,
             [
                 P("@DraftId", draftId), P("@BusinessId", state.BusinessId),
-                P("@LocationId", state.LocationId), P("@WarehouseId", state.WarehouseId),
-                P("@RegisterId", state.RegisterId), P("@UserId", userId), P("@Now", now)
+                P("@WarehouseId", state.WarehouseId), P("@RegisterId", state.RegisterId), P("@UserId", userId), P("@Now", now)
             ], ct);
 
     private static string MutationHash(

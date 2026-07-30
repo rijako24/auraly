@@ -2,7 +2,6 @@ CREATE TABLE [dbo].[DocumentSeries]
 (
     [DocumentSeriesId] UNIQUEIDENTIFIER NOT NULL,
     [BusinessId] UNIQUEIDENTIFIER NOT NULL,
-    [LocationId] UNIQUEIDENTIFIER NULL,
     [RegisterId] UNIQUEIDENTIFIER NULL,
     [DocumentType] NVARCHAR(32) NOT NULL,
     [Prefix] NVARCHAR(8) NOT NULL,
@@ -16,15 +15,12 @@ CREATE TABLE [dbo].[DocumentSeries]
     CONSTRAINT [PK_DocumentSeries] PRIMARY KEY CLUSTERED ([DocumentSeriesId]),
     CONSTRAINT [FK_DocumentSeries_Businesses] FOREIGN KEY ([BusinessId])
         REFERENCES [dbo].[Businesses] ([BusinessId]),
-    CONSTRAINT [FK_DocumentSeries_BusinessLocations] FOREIGN KEY ([LocationId])
-        REFERENCES [dbo].[BusinessLocations] ([LocationId]),
     CONSTRAINT [FK_DocumentSeries_CashRegisters] FOREIGN KEY ([RegisterId])
         REFERENCES [dbo].[CashRegisters] ([RegisterId]),
     CONSTRAINT [UQ_DocumentSeries_Business_Type_Code]
         UNIQUE ([BusinessId], [DocumentType], [Prefix], [SeriesCode]),
     CONSTRAINT [CK_DocumentSeries_Padding] CHECK ([Padding] = 8),
-    CONSTRAINT [CK_DocumentSeries_Range] CHECK ([RangeStart] > 0 AND [RangeEnd] >= [RangeStart] AND [RangeEnd] <= 99999999),
-    CONSTRAINT [CK_DocumentSeries_Scope] CHECK ([RegisterId] IS NULL OR [LocationId] IS NOT NULL)
+    CONSTRAINT [CK_DocumentSeries_Range] CHECK ([RangeStart] > 0 AND [RangeEnd] >= [RangeStart] AND [RangeEnd] <= 99999999)
 );
 
 GO

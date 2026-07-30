@@ -54,7 +54,6 @@ public sealed class PosEdgeEnrollmentStore(
             ["PosEdge:DeviceSecret"] = package.DeviceSecret,
             ["PosEdge:TenantId"] = package.TenantId.ToString("D"),
             ["PosEdge:BusinessId"] = package.BusinessId.ToString("D"),
-            ["PosEdge:LocationId"] = package.LocationId.ToString("D"),
             ["PosEdge:WarehouseId"] = package.WarehouseId.ToString("D"),
             ["PosEdge:RegisterId"] = package.RegisterId.ToString("D"),
             ["PosEdge:RegisterCode"] = package.RegisterCode,

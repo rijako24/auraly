@@ -13,7 +13,6 @@ public sealed record PosDeviceIdentity(
     Guid DeviceId,
     Guid TenantId,
     Guid BusinessId,
-    Guid LocationId,
     Guid WarehouseId,
     Guid RegisterId,
     IReadOnlySet<string> Permissions);
@@ -238,11 +237,10 @@ public sealed class ReceivePosSaleService(
         if (device.DeviceId != request.DeviceId ||
             device.TenantId != request.TenantId ||
             device.BusinessId != request.BusinessId ||
-            device.LocationId != request.LocationId ||
             device.WarehouseId != request.WarehouseId ||
             device.RegisterId != request.RegisterId)
             throw new PosSaleForbiddenException(
-                "The uploaded tenant, business, location, warehouse, register or device differs from the authenticated context.");
+                "The uploaded tenant, business, warehouse, register or device differs from the authenticated context.");
     }
 
     private static void ValidateDocumentNumber(PosSaleUploadRequest request)

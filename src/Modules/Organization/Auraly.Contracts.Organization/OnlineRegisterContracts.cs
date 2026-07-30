@@ -2,7 +2,6 @@ namespace Auraly.Contracts.Organization;
 
 public sealed record OnlineRegisterOption(
     Guid BusinessId, string BusinessName,
-    Guid LocationId, string LocationCode, string LocationName,
     Guid RegisterId, string RegisterCode, string RegisterName,
     Guid WarehouseId, string WarehouseCode, string WarehouseName,
     bool WarehouseAllowsNegativeStockSales,
@@ -15,19 +14,16 @@ public sealed record OnlineRegisterBootstrap(
 
 public sealed record OnlineRegisterSelection(
     Guid BusinessId,
-    Guid LocationId,
     Guid RegisterId);
 
 public sealed record OnlineRegisterContext(
     Guid BusinessId, string BusinessName,
-    Guid LocationId, string LocationCode, string LocationName,
     Guid RegisterId, string RegisterCode, string RegisterName,
     Guid WarehouseId, string WarehouseCode, string WarehouseName,
     bool WarehouseAllowsNegativeStockSales);
 
 public sealed record CreatePosEnrollmentRequest(
     Guid BusinessId,
-    Guid LocationId,
     Guid RegisterId,
     string DeviceName);
 
@@ -70,7 +66,6 @@ public sealed record PosEnrollmentPackage(
     string DeviceSecret,
     Guid TenantId,
     Guid BusinessId,
-    Guid LocationId,
     Guid WarehouseId,
     Guid RegisterId,
     string RegisterCode,

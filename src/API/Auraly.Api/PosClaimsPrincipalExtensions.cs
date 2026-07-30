@@ -12,7 +12,6 @@ public static class PosClaimsPrincipalExtensions
             RequiredGuid(principal, PosAuthenticationDefaults.DeviceIdClaim),
             RequiredGuid(principal, PosAuthenticationDefaults.TenantIdClaim),
             RequiredGuid(principal, PosAuthenticationDefaults.BusinessIdClaim),
-            RequiredGuid(principal, PosAuthenticationDefaults.LocationIdClaim),
             RequiredGuid(principal, PosAuthenticationDefaults.WarehouseIdClaim),
             RequiredGuid(principal, PosAuthenticationDefaults.RegisterIdClaim),
             principal.FindAll(PosAuthenticationDefaults.PermissionClaim)

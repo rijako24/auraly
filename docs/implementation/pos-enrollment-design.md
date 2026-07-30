@@ -11,7 +11,7 @@ enrolado.
 
 - Un equipo sin host local factura en línea contra Auraly Server.
 - Un host local nuevo arranca en estado `EnrollmentRequired`.
-- Un usuario con `pos.devices.enroll` elige negocio, sede y caja y puede
+- Un usuario con `pos.devices.enroll` elige sede y caja y puede
   preparar ese equipo para trabajar sin conexión.
 - La misma caja puede seguir usándose en línea desde uno o varios equipos.
 - La asociación exclusiva aplica al dispositivo Edge que posee series y
@@ -24,7 +24,7 @@ enrolado.
 3. Si existe pero no está enrolado, carga desde el servidor las cajas permitidas.
 4. La opción **Preparar modo offline** solo se muestra con
    `pos.devices.enroll`.
-5. El servidor valida tenant, negocio, sede, caja y enrolamiento existente.
+5. El servidor valida tenant, sede, bodega, caja y enrolamiento existente.
 6. El servidor crea una autorización aleatoria de un solo uso, válida por diez
    minutos; en SQL solo conserva su hash.
 7. El navegador entrega la autorización al host local, nunca el paquete fiscal.
@@ -47,7 +47,7 @@ El paquete local contiene únicamente lo necesario para operar la caja:
 
 - dispositivo y secreto;
 - usuario que autorizó el enrolamiento;
-- negocio, sede, bodega y caja;
+- tenant, sede, bodega y caja;
 - política de negativos derivada de la bodega;
 - serie operativa offline;
 - serie fiscal offline, resolución y clave técnica;

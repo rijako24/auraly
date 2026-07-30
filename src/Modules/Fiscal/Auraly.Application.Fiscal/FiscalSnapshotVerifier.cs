@@ -82,7 +82,6 @@ public sealed class FiscalSnapshotVerifier(IFiscalTechnicalKeyProvider keyProvid
         if (request.DocumentId == Guid.Empty ||
             request.TenantId == Guid.Empty ||
             request.BusinessId == Guid.Empty ||
-            request.LocationId == Guid.Empty ||
             request.WarehouseId == Guid.Empty ||
             request.RegisterId == Guid.Empty)
         {

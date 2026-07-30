@@ -174,7 +174,6 @@ public sealed class OnlineSalesDraftCommandTests(ServerSliceFixture fixture)
             "/api/commerce/v1/pos/drafts/active",
             new OpenOnlineSalesDraftRequest(new(
                 fixture.BusinessId,
-                fixture.LocationId,
                 fixture.OnlineRegisterId)));
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadFromJsonAsync<OnlineSalesDraft>()

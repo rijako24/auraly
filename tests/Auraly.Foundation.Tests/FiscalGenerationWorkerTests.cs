@@ -76,7 +76,7 @@ public sealed class FiscalGenerationWorkerTests
         var customer = new PosSaleUblPartyContract("222222222", "0", "13", "2",
             "CLIENTE CONGELADO", "CLIENTE CONGELADO", "R-99-PN", "ZZ", "No aplica", address,
             "cliente@example.com", "3000000000");
-        var sale = new PosSaleUploadRequest(Guid.NewGuid(), businessId, Guid.NewGuid(), Guid.NewGuid(),
+        var sale = new PosSaleUploadRequest(Guid.NewGuid(), businessId, Guid.NewGuid(),
             Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), documentId,
             new PosSaleDocumentNumberContract(Guid.NewGuid(), PosSaleDocumentTypes.Invoice,
                 "VTA", "01", 1, 8, "VTA01-00000001"),

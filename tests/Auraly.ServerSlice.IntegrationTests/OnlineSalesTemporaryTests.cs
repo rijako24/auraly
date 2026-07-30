@@ -50,7 +50,6 @@ public sealed class OnlineSalesTemporaryTests(ServerSliceFixture fixture)
         client.Timeout = TimeSpan.FromSeconds(15);
         var context = new OnlineSalesDraftContext(
             fixture.BusinessId,
-            fixture.LocationId,
             fixture.OnlineRegisterId);
 
         using (var productsResponse = await client.PostAsJsonAsync(

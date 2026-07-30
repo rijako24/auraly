@@ -19,7 +19,6 @@ public sealed class SqlPosDeviceAuthenticator(SqlServerConnectionFactory connect
         const string sql = """
             SELECT b.TenantId,
                    d.BusinessId,
-                   d.LocationId,
                    d.WarehouseId,
                    d.RegisterId,
                    d.CredentialSalt,
@@ -28,19 +27,20 @@ public sealed class SqlPosDeviceAuthenticator(SqlServerConnectionFactory connect
                    p.PermissionCode,
                    p.IsGranted
             FROM dbo.PosDevices d
-            INNER JOIN dbo.CashRegisters r ON r.RegisterId = d.RegisterId
-            INNER JOIN dbo.Businesses b ON b.BusinessId = d.BusinessId
-            INNER JOIN dbo.Warehouses w ON w.WarehouseId = d.WarehouseId
-            INNER JOIN dbo.BusinessLocations l ON l.LocationId = d.LocationId
-            LEFT JOIN dbo.PosDevicePermissions p ON p.DeviceId = d.DeviceId
-            WHERE d.DeviceId = @DeviceId
-              AND d.IsActive = 1
-              AND r.IsActive = 1
-              AND w.IsActive = 1
-              AND l.IsActive = 1
-              AND r.BusinessId = d.BusinessId
-              AND r.LocationId = d.LocationId
-              AND r.WarehouseId = d.WarehouseId;
+            INNER JOIN dbo.CashRegisters r
+              ON r.RegisterId=d.RegisterId
+             AND r.BusinessId=d.BusinessId
+             AND r.WarehouseId=d.WarehouseId
+            INNER JOIN dbo.Businesses b ON b.BusinessId=d.BusinessId
+            INNER JOIN dbo.Warehouses w
+              ON w.WarehouseId=d.WarehouseId
+             AND w.BusinessId=d.BusinessId
+            LEFT JOIN dbo.PosDevicePermissions p ON p.DeviceId=d.DeviceId
+            WHERE d.DeviceId=@DeviceId
+              AND d.IsActive=1
+              AND r.IsActive=1
+              AND w.IsActive=1
+              AND b.IsActive=1;
             """;
 
         await using var connection = connections.Create();
@@ -55,12 +55,11 @@ public sealed class SqlPosDeviceAuthenticator(SqlServerConnectionFactory connect
 
         var tenantId = reader.GetGuid(0);
         var businessId = reader.GetGuid(1);
-        var locationId = reader.GetGuid(2);
-        var warehouseId = reader.GetGuid(3);
-        var registerId = reader.GetGuid(4);
-        var salt = (byte[])reader[5];
-        var hash = (byte[])reader[6];
-        var iterations = reader.GetInt32(7);
+        var warehouseId = reader.GetGuid(2);
+        var registerId = reader.GetGuid(3);
+        var salt = (byte[])reader[4];
+        var hash = (byte[])reader[5];
+        var iterations = reader.GetInt32(6);
         if (!PosDeviceCredentialHasher.Verify(secret, salt, hash, iterations))
         {
             return null;
@@ -69,9 +68,9 @@ public sealed class SqlPosDeviceAuthenticator(SqlServerConnectionFactory connect
         var permissions = new HashSet<string>(StringComparer.Ordinal);
         do
         {
-            if (!reader.IsDBNull(8) && reader.GetBoolean(9))
+            if (!reader.IsDBNull(7) && reader.GetBoolean(8))
             {
-                permissions.Add(reader.GetString(8));
+                permissions.Add(reader.GetString(7));
             }
         }
         while (await reader.ReadAsync(cancellationToken));
@@ -80,10 +79,8 @@ public sealed class SqlPosDeviceAuthenticator(SqlServerConnectionFactory connect
             deviceId,
             tenantId,
             businessId,
-            locationId,
             warehouseId,
             registerId,
             permissions);
     }
 }
-

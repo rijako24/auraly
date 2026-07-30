@@ -10,6 +10,8 @@ Pre-Deployment Script Template
 --------------------------------------------------------------------------------------
 */
 
+:r .\Migrations\20260730_CollapseOrganizationScope.sql
+
 -- Scripts de pre-despliegue
 -- Aquí puedes agregar validaciones, limpieza, etc.
 

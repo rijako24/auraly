@@ -27,7 +27,7 @@ public sealed partial class SqlOnlineSalesDraftStore
             JOIN dbo.Businesses b ON b.BusinessId=d.BusinessId
             JOIN dbo.CashRegisters r
               ON r.RegisterId=d.RegisterId AND r.BusinessId=d.BusinessId
-             AND r.LocationId=d.LocationId AND r.WarehouseId=d.WarehouseId
+             AND r.WarehouseId=d.WarehouseId
              AND r.IsActive=1
             JOIN dbo.FiscalSeries s
               ON s.BusinessId=d.BusinessId AND s.RegisterId=d.RegisterId
@@ -205,7 +205,6 @@ public sealed partial class SqlOnlineSalesDraftStore
         var upload = new PosSaleUploadRequest(
             user.TenantId,
             state.BusinessId,
-            state.LocationId,
             state.WarehouseId,
             state.RegisterId,
             Guid.Empty,
@@ -290,16 +289,15 @@ public sealed partial class SqlOnlineSalesDraftStore
                 "La venta cambió mientras se preparaba la emisión.");
         await ExecuteAsync(connection, transaction, """
             INSERT dbo.SalesDrafts(
-              SalesDraftId,BusinessId,LocationId,WarehouseId,RegisterId,UserId,
+              SalesDraftId,BusinessId,WarehouseId,RegisterId,UserId,
               Status,Version,CreatedAt,UpdatedAt)
             VALUES(
-              @NextDraftId,@BusinessId,@LocationId,@WarehouseId,@RegisterId,@UserId,
+              @NextDraftId,@BusinessId,@WarehouseId,@RegisterId,@UserId,
               N'Active',1,@Now,@Now);
             """,
             [
                 P("@NextDraftId", nextDraftId),
                 P("@BusinessId", state.BusinessId),
-                P("@LocationId", state.LocationId),
                 P("@WarehouseId", state.WarehouseId),
                 P("@RegisterId", state.RegisterId),
                 P("@UserId", user.UserId),
@@ -474,14 +472,13 @@ public sealed partial class SqlOnlineSalesDraftStore
             JOIN dbo.FiscalIssuerConfigurations issuer
               ON issuer.BusinessId=ds.BusinessId AND issuer.IsActive=1
              AND issuer.Environment=a.Environment
-            WHERE ds.BusinessId=@BusinessId AND ds.LocationId=@LocationId
+            WHERE ds.BusinessId=@BusinessId
               AND ds.RegisterId=@RegisterId AND ds.DocumentType=@DocumentType
               AND ds.IsActive=1 AND CONVERT(date,@Now) BETWEEN a.ValidFrom AND a.ValidUntil
             ORDER BY ds.DocumentSeriesId,fs.SeriesId;
             """;
         command.Parameters.AddRange([
             P("@BusinessId", state.BusinessId),
-            P("@LocationId", state.LocationId),
             P("@RegisterId", state.RegisterId),
             P("@DocumentType", PosSaleDocumentTypes.Invoice),
             P("@Now", now)

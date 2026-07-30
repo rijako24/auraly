@@ -2,7 +2,6 @@ CREATE TABLE [dbo].[SalesDocuments]
 (
     [DocumentId] UNIQUEIDENTIFIER NOT NULL,
     [BusinessId] UNIQUEIDENTIFIER NOT NULL,
-    [LocationId] UNIQUEIDENTIFIER NOT NULL,
     [WarehouseId] UNIQUEIDENTIFIER NOT NULL,
     [RegisterId] UNIQUEIDENTIFIER NOT NULL,
     [DeviceId] UNIQUEIDENTIFIER NULL,
@@ -39,7 +38,6 @@ CREATE TABLE [dbo].[SalesDocuments]
     [RowVersion] ROWVERSION NOT NULL,
     CONSTRAINT [PK_SalesDocuments] PRIMARY KEY CLUSTERED ([DocumentId]),
     CONSTRAINT [FK_SalesDocuments_Businesses] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses] ([BusinessId]),
-    CONSTRAINT [FK_SalesDocuments_BusinessLocations] FOREIGN KEY ([LocationId]) REFERENCES [dbo].[BusinessLocations] ([LocationId]),
     CONSTRAINT [FK_SalesDocuments_Warehouses] FOREIGN KEY ([WarehouseId]) REFERENCES [dbo].[Warehouses] ([WarehouseId]),
     CONSTRAINT [FK_SalesDocuments_CashRegisters] FOREIGN KEY ([RegisterId]) REFERENCES [dbo].[CashRegisters] ([RegisterId]),
     CONSTRAINT [FK_SalesDocuments_PosDevices] FOREIGN KEY ([DeviceId]) REFERENCES [dbo].[PosDevices] ([DeviceId]),

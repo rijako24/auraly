@@ -67,10 +67,10 @@ public sealed partial class SqlPosSaleDocumentHandler
                   """
                 : """
                   INSERT dbo.CashSessions
-                    (CashSessionId,BusinessId,LocationId,RegisterId,OpenedByUserId,
+                    (CashSessionId,BusinessId,RegisterId,OpenedByUserId,
                      OpenedAt,OpeningFloat,Status,OpenIdempotencyKey)
                   VALUES
-                    (@SessionId,@BusinessId,@LocationId,@RegisterId,@UserId,
+                    (@SessionId,@BusinessId,@RegisterId,@UserId,
                      @Now,0,N'Open',@OpenKey);
                   INSERT dbo.CashierShifts
                     (CashierShiftId,CashSessionId,RegisterId,UserId,StartedAt,Status)
@@ -154,7 +154,6 @@ public sealed partial class SqlPosSaleDocumentHandler
         command.Parameters.AddWithValue("@SessionId", sessionId);
         command.Parameters.AddWithValue("@ShiftId", shiftId);
         command.Parameters.AddWithValue("@BusinessId", request.BusinessId);
-        command.Parameters.AddWithValue("@LocationId", request.LocationId);
         command.Parameters.AddWithValue("@RegisterId", request.RegisterId);
         command.Parameters.AddWithValue("@UserId", request.SoldByUserId);
         command.Parameters.AddWithValue("@Now", now);

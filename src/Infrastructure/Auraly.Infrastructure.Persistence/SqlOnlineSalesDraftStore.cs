@@ -38,16 +38,15 @@ public sealed partial class SqlOnlineSalesDraftStore(
             var now = time.GetUtcNow();
             await ExecuteAsync(connection, transaction, """
                 INSERT dbo.SalesDrafts(
-                  SalesDraftId,BusinessId,LocationId,WarehouseId,RegisterId,UserId,
+                  SalesDraftId,BusinessId,WarehouseId,RegisterId,UserId,
                   Status,Version,CreatedAt,UpdatedAt)
                 VALUES(
-                  @DraftId,@BusinessId,@LocationId,@WarehouseId,@RegisterId,@UserId,
+                  @DraftId,@BusinessId,@WarehouseId,@RegisterId,@UserId,
                   N'Active',1,@Now,@Now);
                 """,
                 [
                     P("@DraftId", draftId.Value),
                     P("@BusinessId", context.BusinessId),
-                    P("@LocationId", context.LocationId),
                     P("@WarehouseId", context.WarehouseId),
                     P("@RegisterId", context.RegisterId),
                     P("@UserId", user.UserId),
@@ -442,16 +441,15 @@ public sealed partial class SqlOnlineSalesDraftStore(
         var nextId = ids.NewId();
         await ExecuteAsync(connection, transaction, """
             INSERT dbo.SalesDrafts(
-              SalesDraftId,BusinessId,LocationId,WarehouseId,RegisterId,UserId,
+              SalesDraftId,BusinessId,WarehouseId,RegisterId,UserId,
               Status,Version,CreatedAt,UpdatedAt)
             VALUES(
-              @NextId,@BusinessId,@LocationId,@WarehouseId,@RegisterId,@UserId,
+              @NextId,@BusinessId,@WarehouseId,@RegisterId,@UserId,
               N'Active',1,@Now,@Now);
             """,
             [
                 P("@NextId", nextId), P("@BusinessId", state.BusinessId),
-                P("@LocationId", state.LocationId), P("@WarehouseId", state.WarehouseId),
-                P("@RegisterId", state.RegisterId), P("@UserId", user.UserId),
+                P("@WarehouseId", state.WarehouseId), P("@RegisterId", state.RegisterId), P("@UserId", user.UserId),
                 P("@Now", now)
             ],
             cancellationToken);
@@ -530,7 +528,7 @@ public sealed partial class SqlOnlineSalesDraftStore(
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
-            SELECT d.BusinessId,d.LocationId,d.WarehouseId,d.RegisterId,d.Version,d.Status,
+            SELECT d.BusinessId,d.WarehouseId,d.RegisterId,d.Version,d.Status,
                    d.CustomerId,w.AllowNegativeStockSales
             FROM dbo.SalesDrafts d WITH (UPDLOCK,HOLDLOCK)
             JOIN dbo.Businesses b ON b.BusinessId=d.BusinessId
@@ -548,9 +546,9 @@ public sealed partial class SqlOnlineSalesDraftStore(
                 "El borrador no pertenece al usuario autenticado.");
         return new(
             reader.GetGuid(0), reader.GetGuid(1), reader.GetGuid(2),
-            reader.GetGuid(3), reader.GetInt64(4), reader.GetString(5),
-            reader.IsDBNull(6) ? null : reader.GetGuid(6),
-            reader.GetBoolean(7));
+            reader.GetInt64(3), reader.GetString(4),
+            reader.IsDBNull(5) ? null : reader.GetGuid(5),
+            reader.GetBoolean(6));
     }
 
     private static void DemandActiveVersion(DraftState state, long expectedVersion)
@@ -640,18 +638,16 @@ public sealed partial class SqlOnlineSalesDraftStore(
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
-            SELECT b.BusinessId,b.Name,l.LocationId,l.Code,l.Name,
+            SELECT b.BusinessId,b.Name,
                    r.RegisterId,r.Code,r.Name,w.WarehouseId,w.Code,w.Name,
                    w.AllowNegativeStockSales
             FROM dbo.Businesses b
-            JOIN dbo.BusinessLocations l
-              ON l.BusinessId=b.BusinessId AND l.LocationId=@LocationId AND l.IsActive=1
             JOIN dbo.CashRegisters r
-              ON r.BusinessId=b.BusinessId AND r.LocationId=l.LocationId
+              ON r.BusinessId=b.BusinessId
              AND r.RegisterId=@RegisterId AND r.IsActive=1
             JOIN dbo.Warehouses w
               ON w.WarehouseId=r.WarehouseId AND w.BusinessId=r.BusinessId
-             AND w.LocationId=r.LocationId AND w.IsActive=1
+             AND w.IsActive=1
             WHERE b.TenantId=@TenantId AND b.BusinessId=@BusinessId AND b.IsActive=1
               AND NOT EXISTS(
                 SELECT 1 FROM dbo.PosDevices d
@@ -659,7 +655,7 @@ public sealed partial class SqlOnlineSalesDraftStore(
             """;
         command.Parameters.AddRange([
             P("@TenantId", user.TenantId), P("@BusinessId", requested.BusinessId),
-            P("@LocationId", requested.LocationId), P("@RegisterId", requested.RegisterId)
+            P("@RegisterId", requested.RegisterId)
         ]);
         await using var reader = await command.ExecuteReaderAsync(ct);
         if (!await reader.ReadAsync(ct))
@@ -669,8 +665,7 @@ public sealed partial class SqlOnlineSalesDraftStore(
             reader.GetGuid(0), reader.GetString(1),
             reader.GetGuid(2), reader.GetString(3), reader.GetString(4),
             reader.GetGuid(5), reader.GetString(6), reader.GetString(7),
-            reader.GetGuid(8), reader.GetString(9), reader.GetString(10),
-            reader.GetBoolean(11));
+            reader.GetBoolean(8));
     }
 
     private static async Task<Guid?> FindActiveAsync(
@@ -973,7 +968,7 @@ public sealed partial class SqlOnlineSalesDraftStore(
         await using var header = connection.CreateCommand();
         header.Transaction = transaction;
         header.CommandText = """
-            SELECT SalesDraftId,BusinessId,LocationId,WarehouseId,RegisterId,UserId,
+            SELECT SalesDraftId,BusinessId,WarehouseId,RegisterId,UserId,
                    CustomerId,SellerId,Status,Name,Reference,Observation,Version,UpdatedAt
             FROM dbo.SalesDrafts WHERE SalesDraftId=@DraftId;
             """;
@@ -981,7 +976,7 @@ public sealed partial class SqlOnlineSalesDraftStore(
         await using var reader = await header.ExecuteReaderAsync(ct);
         if (!await reader.ReadAsync(ct))
             throw new OnlineSalesDraftValidationException("El borrador no existe.");
-        var values = new object[14];
+        var values = new object[13];
         reader.GetValues(values);
         await reader.DisposeAsync();
 
@@ -1013,14 +1008,14 @@ public sealed partial class SqlOnlineSalesDraftStore(
         }
         return new(
             (Guid)values[0], (Guid)values[1], (Guid)values[2], (Guid)values[3],
-            (Guid)values[4], (Guid)values[5],
+            (Guid)values[4],
+            values[5] is DBNull ? null : (Guid)values[5],
             values[6] is DBNull ? null : (Guid)values[6],
-            values[7] is DBNull ? null : (Guid)values[7],
-            (string)values[8],
+            (string)values[7],
+            values[8] is DBNull ? null : (string)values[8],
             values[9] is DBNull ? null : (string)values[9],
             values[10] is DBNull ? null : (string)values[10],
-            values[11] is DBNull ? null : (string)values[11],
-            (long)values[12], (DateTimeOffset)values[13],
+            (long)values[11], (DateTimeOffset)values[12],
             lines, lines.Sum(line => line.Net), lines.Sum(line => line.Tax),
             lines.Sum(line => line.Total));
     }
@@ -1047,7 +1042,6 @@ public sealed partial class SqlOnlineSalesDraftStore(
 
     private sealed record DraftState(
         Guid BusinessId,
-        Guid LocationId,
         Guid WarehouseId,
         Guid RegisterId,
         long Version,
@@ -1075,9 +1069,6 @@ public sealed partial class SqlOnlineSalesDraftStore(
     private sealed record ResolvedRegisterContext(
         Guid BusinessId,
         string BusinessName,
-        Guid LocationId,
-        string LocationCode,
-        string LocationName,
         Guid RegisterId,
         string RegisterCode,
         string RegisterName,

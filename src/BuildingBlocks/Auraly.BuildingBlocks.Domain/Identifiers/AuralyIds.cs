@@ -10,11 +10,6 @@ public readonly record struct BusinessId(Guid Value)
     public override string ToString() => Value.ToString("D");
 }
 
-public readonly record struct LocationId(Guid Value)
-{
-    public override string ToString() => Value.ToString("D");
-}
-
 public readonly record struct WarehouseId(Guid Value)
 {
     public override string ToString() => Value.ToString("D");

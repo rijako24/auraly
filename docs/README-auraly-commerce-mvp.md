@@ -1,4 +1,6 @@
-# Auraly Commerce MVP: índice de diseño
+# Auraly Commerce MVP
+
+> Decisión organizacional vigente: `Tenant` es la empresa, `Business` es la sede y no existe un nivel `Location` en Commerce. Ver `decision-tenant-company-business-branch.md`.: índice de diseño
 
 **Rama de trabajo:** `design/auraly-commerce-mvp`  
 **Última actualización:** 24 de julio de 2026

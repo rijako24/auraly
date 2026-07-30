@@ -1,7 +1,6 @@
 CREATE TABLE [dbo].[SalesDrafts] (
     [SalesDraftId] UNIQUEIDENTIFIER NOT NULL,
     [BusinessId] UNIQUEIDENTIFIER NOT NULL,
-    [LocationId] UNIQUEIDENTIFIER NOT NULL,
     [WarehouseId] UNIQUEIDENTIFIER NOT NULL,
     [RegisterId] UNIQUEIDENTIFIER NOT NULL,
     [UserId] UNIQUEIDENTIFIER NOT NULL,
@@ -19,7 +18,6 @@ CREATE TABLE [dbo].[SalesDrafts] (
     [DeletedAt] DATETIMEOFFSET NULL,
     CONSTRAINT [PK_SalesDrafts] PRIMARY KEY ([SalesDraftId]),
     CONSTRAINT [FK_SalesDrafts_Businesses] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses] ([BusinessId]),
-    CONSTRAINT [FK_SalesDrafts_BusinessLocations] FOREIGN KEY ([LocationId]) REFERENCES [dbo].[BusinessLocations] ([LocationId]),
     CONSTRAINT [FK_SalesDrafts_Warehouses] FOREIGN KEY ([WarehouseId]) REFERENCES [dbo].[Warehouses] ([WarehouseId]),
     CONSTRAINT [FK_SalesDrafts_CashRegisters] FOREIGN KEY ([RegisterId]) REFERENCES [dbo].[CashRegisters] ([RegisterId]),
     CONSTRAINT [FK_SalesDrafts_AppUsers] FOREIGN KEY ([UserId]) REFERENCES [dbo].[AppUsers] ([UserId]),

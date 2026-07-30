@@ -19,7 +19,6 @@ public sealed class CashSessionServiceTests
             store.RegisterId,
             new OpenCashSessionRequest(
                 store.BusinessId,
-                store.LocationId,
                 0m,
                 "login-one"));
 
@@ -112,7 +111,6 @@ public sealed class CashSessionServiceTests
     private sealed class RecordingCashStore(Guid userId) : ICashSessionStore
     {
         public Guid BusinessId { get; } = Guid.NewGuid();
-        public Guid LocationId { get; } = Guid.NewGuid();
         public Guid RegisterId { get; } = Guid.NewGuid();
         public int OpenCalls { get; private set; }
         public int HandoffCalls { get; private set; }
@@ -178,7 +176,6 @@ public sealed class CashSessionServiceTests
                 Guid.NewGuid(),
                 Guid.NewGuid(),
                 BusinessId,
-                LocationId,
                 RegisterId,
                 responsibleUserId,
                 "Usuario",

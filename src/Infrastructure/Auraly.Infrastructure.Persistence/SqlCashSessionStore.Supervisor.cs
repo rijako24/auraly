@@ -23,7 +23,7 @@ public sealed partial class SqlCashSessionStore
         await connection.OpenAsync(ct);
         await using var transaction = connection.BeginTransaction(IsolationLevel.Serializable);
         var register = await ValidateRegisterAsync(
-            connection, transaction, actor, registerId, null, null, ct);
+            connection, transaction, actor, registerId, null, ct);
         _ = await RequireCurrentForActorAsync(connection, transaction, actor, registerId, ct);
 
         var supervisor = request.Credential.StartsWith(

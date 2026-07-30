@@ -48,14 +48,12 @@ public sealed class CashSessionApiTests(ServerSliceFixture fixture)
                 $"/api/commerce/v1/cash/registers/{registerId:D}/session",
                 new OpenCashSessionRequest(
                     fixture.BusinessId,
-                    fixture.LocationId,
                     50_000m,
                     $"open-{Guid.NewGuid():N}")),
             secondClient.PostAsJsonAsync(
                 $"/api/commerce/v1/cash/registers/{registerId:D}/session",
                 new OpenCashSessionRequest(
                     fixture.BusinessId,
-                    fixture.LocationId,
                     50_000m,
                     $"open-{Guid.NewGuid():N}")));
         using var firstEntry = entries[0];
@@ -163,9 +161,9 @@ public sealed class CashSessionApiTests(ServerSliceFixture fixture)
     {
         const string sql = """
             INSERT dbo.CashRegisters
-              (RegisterId,BusinessId,LocationId,WarehouseId,Code,Name,IsActive,CreatedAt)
+              (RegisterId,BusinessId,WarehouseId,Code,Name,IsActive,CreatedAt)
             VALUES
-              (@RegisterId,@BusinessId,@LocationId,@WarehouseId,N'01',N'Caja relevo',1,SYSDATETIMEOFFSET());
+              (@RegisterId,@BusinessId,@WarehouseId,N'01',N'Caja relevo',1,SYSDATETIMEOFFSET());
 
             INSERT dbo.AppUsers
               (UserId,TenantId,Username,NormalizedUsername,Email,NormalizedEmail,
@@ -200,7 +198,6 @@ public sealed class CashSessionApiTests(ServerSliceFixture fixture)
         await using var command = new SqlCommand(sql, connection);
         command.Parameters.AddWithValue("@RegisterId", registerId);
         command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
-        command.Parameters.AddWithValue("@LocationId", fixture.LocationId);
         command.Parameters.AddWithValue("@WarehouseId", fixture.WarehouseId);
         command.Parameters.AddWithValue("@TenantId", fixture.TenantId);
         command.Parameters.AddWithValue("@FirstCashierId", firstCashierId);

@@ -1,12 +1,6 @@
 "use client";
 
-import {
-  Building2,
-  Loader2,
-  MapPin,
-  MonitorSmartphone,
-  Warehouse,
-} from "lucide-react";
+import { Loader2, MapPin, MonitorSmartphone, Warehouse } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import {
@@ -37,7 +31,7 @@ export function PosOnlineSetup({
   edgeCapable = false,
   onEnroll,
 }: Props) {
-  const businesses = useMemo(
+  const branches = useMemo(
     () =>
       Array.from(
         new Map(options.map((option) => [option.businessId, option.businessName])),
@@ -45,33 +39,13 @@ export function PosOnlineSetup({
     [options],
   );
   const [businessId, setBusinessId] = useState("");
-  const [locationId, setLocationId] = useState("");
   const [registerId, setRegisterId] = useState("");
   const [selecting, setSelecting] = useState(false);
   const [enrolling, setEnrolling] = useState(false);
 
-  const locations = useMemo(
-    () =>
-      Array.from(
-        new Map(
-          options
-            .filter((option) => option.businessId === businessId)
-            .map((option) => [
-              option.locationId,
-              { code: option.locationCode, name: option.locationName },
-            ]),
-        ),
-      ),
-    [businessId, options],
-  );
   const registers = useMemo(
-    () =>
-      options.filter(
-        (option) =>
-          option.businessId === businessId &&
-          option.locationId === locationId,
-      ),
-    [businessId, locationId, options],
+    () => options.filter((option) => option.businessId === businessId),
+    [businessId, options],
   );
   const selected = registers.find((option) => option.registerId === registerId);
 
@@ -116,55 +90,40 @@ export function PosOnlineSetup({
               {edgeCapable ? "Prepara esta estación" : "Elige dónde vas a facturar"}
             </h1>
             <p className="mt-3 text-sm leading-6 text-slate-300">
-              Hola, {userDisplayName}. Elige negocio, sede y caja. Puedes entrar
-              en línea sin descargar datos o enrolar este equipo para continuar
-              vendiendo cuando se pierda la conexión.
+              Hola, {userDisplayName}. Elige la sede y la caja. La bodega,
+              precios y resolución se obtienen de esa caja. Puedes trabajar en
+              línea o enrolar este equipo para continuar sin conexión.
             </p>
           </section>
 
           <section className="p-7">
             {loading ? (
-              <div className="grid min-h-72 place-items-center text-center">
+              <div className="grid min-h-64 place-items-center text-center">
                 <div>
                   <Loader2 className="mx-auto h-9 w-9 animate-spin text-teal-300" />
                   <p className="mt-4 font-semibold">Preparando tus cajas</p>
                   <p className="mt-1 text-sm text-slate-400">
-                    Validando negocios, sedes, series y permisos…
+                    Validando sedes, cajas, series y permisos…
                   </p>
                 </div>
               </div>
             ) : (
               <div className="space-y-4">
                 <SelectField
-                  icon={Building2}
-                  label="Negocio"
+                  icon={MapPin}
+                  label="Sede"
                   value={businessId}
                   onChange={(value) => {
                     setBusinessId(value);
-                    setLocationId("");
                     setRegisterId("");
                   }}
-                  options={businesses.map(([value, label]) => ({ value, label }))}
-                />
-                <SelectField
-                  icon={MapPin}
-                  label="Sede"
-                  value={locationId}
-                  disabled={!businessId}
-                  onChange={(value) => {
-                    setLocationId(value);
-                    setRegisterId("");
-                  }}
-                  options={locations.map(([value, item]) => ({
-                    value,
-                    label: `${item.name} · ${item.code}`,
-                  }))}
+                  options={branches.map(([value, label]) => ({ value, label }))}
                 />
                 <SelectField
                   icon={MonitorSmartphone}
                   label="Caja"
                   value={registerId}
-                  disabled={!locationId}
+                  disabled={!businessId}
                   onChange={setRegisterId}
                   options={registers.map((option) => ({
                     value: option.registerId,
@@ -178,7 +137,7 @@ export function PosOnlineSetup({
                     <div>
                       <p className="font-semibold">{selected.warehouseName}</p>
                       <p className="text-xs text-slate-300">
-                        Bodega {selected.warehouseCode} · asociada a la caja
+                        Bodega {selected.warehouseCode} · heredada de la caja
                       </p>
                     </div>
                   </div>
@@ -237,7 +196,7 @@ function SelectField({
   disabled,
   onChange,
 }: {
-  icon: typeof Building2;
+  icon: typeof MapPin;
   label: string;
   value: string;
   options: Array<{ value: string; label: string }>;

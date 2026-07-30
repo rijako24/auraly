@@ -3,7 +3,6 @@ CREATE TABLE [dbo].[PosEnrollmentSessions]
     [EnrollmentSessionId] UNIQUEIDENTIFIER NOT NULL,
     [TenantId] UNIQUEIDENTIFIER NOT NULL,
     [BusinessId] UNIQUEIDENTIFIER NOT NULL,
-    [LocationId] UNIQUEIDENTIFIER NOT NULL,
     [WarehouseId] UNIQUEIDENTIFIER NOT NULL,
     [RegisterId] UNIQUEIDENTIFIER NOT NULL,
     [RequestedByUserId] UNIQUEIDENTIFIER NOT NULL,
@@ -19,8 +18,6 @@ CREATE TABLE [dbo].[PosEnrollmentSessions]
         REFERENCES [dbo].[Tenants] ([TenantId]),
     CONSTRAINT [FK_PosEnrollmentSessions_Businesses] FOREIGN KEY ([BusinessId])
         REFERENCES [dbo].[Businesses] ([BusinessId]),
-    CONSTRAINT [FK_PosEnrollmentSessions_Locations] FOREIGN KEY ([LocationId])
-        REFERENCES [dbo].[BusinessLocations] ([LocationId]),
     CONSTRAINT [FK_PosEnrollmentSessions_Warehouses] FOREIGN KEY ([WarehouseId])
         REFERENCES [dbo].[Warehouses] ([WarehouseId]),
     CONSTRAINT [FK_PosEnrollmentSessions_Registers] FOREIGN KEY ([RegisterId])

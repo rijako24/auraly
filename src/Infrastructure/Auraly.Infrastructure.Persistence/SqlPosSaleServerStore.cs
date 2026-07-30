@@ -40,15 +40,12 @@ public sealed class SqlPosSaleServerStore(
               AND u.TenantId = b.TenantId
               AND u.IsActive = 1
               AND s.BusinessId = @BusinessId
-              AND r.LocationId = @LocationId
               AND r.WarehouseId = @WarehouseId
               AND r.RegisterId = @RegisterId
               AND d.DeviceId = @DeviceId
               AND d.BusinessId = @BusinessId
-              AND d.LocationId = @LocationId
               AND d.WarehouseId = @WarehouseId
               AND ds.BusinessId = @BusinessId
-              AND ds.LocationId = @LocationId
               AND ds.RegisterId = @RegisterId
               AND ds.DocumentType = @DocumentType
               AND ds.Prefix = @DocumentPrefix
@@ -83,7 +80,6 @@ public sealed class SqlPosSaleServerStore(
         command.Parameters.AddWithValue("@TenantId", request.TenantId);
         command.Parameters.AddWithValue("@SoldByUserId", request.SoldByUserId);
         command.Parameters.AddWithValue("@BusinessId", request.BusinessId);
-        command.Parameters.AddWithValue("@LocationId", request.LocationId);
         command.Parameters.AddWithValue("@WarehouseId", request.WarehouseId);
         command.Parameters.AddWithValue("@RegisterId", request.RegisterId);
         command.Parameters.AddWithValue("@DeviceId", request.DeviceId);
@@ -239,7 +235,7 @@ public sealed class SqlPosSaleServerStore(
         const string sql = """
             INSERT INTO dbo.SalesDocuments
             (
-                DocumentId, BusinessId, LocationId, WarehouseId,
+                DocumentId, BusinessId, WarehouseId,
                 RegisterId, DeviceId, SourceMode, DocumentSeriesId, DocumentNumber,
                 DocumentPrefix, DocumentSeriesCode, DocumentConsecutive,
                 FiscalSeriesId, FiscalAuthorizationId,
@@ -251,7 +247,7 @@ public sealed class SqlPosSaleServerStore(
             )
             VALUES
             (
-                @DocumentId, @BusinessId, @LocationId, @WarehouseId,
+                @DocumentId, @BusinessId, @WarehouseId,
                 @RegisterId, @DeviceId, @SourceMode, @DocumentSeriesId, @DocumentNumber,
                 @DocumentPrefix, @DocumentSeriesCode, @DocumentConsecutive,
                 @FiscalSeriesId, @FiscalAuthorizationId,
@@ -267,7 +263,6 @@ public sealed class SqlPosSaleServerStore(
         await using var sqlCommand = new SqlCommand(sql, connection, transaction);
         sqlCommand.Parameters.AddWithValue("@DocumentId", request.DocumentId);
         sqlCommand.Parameters.AddWithValue("@BusinessId", request.BusinessId);
-        sqlCommand.Parameters.AddWithValue("@LocationId", request.LocationId);
         sqlCommand.Parameters.AddWithValue("@WarehouseId", request.WarehouseId);
         sqlCommand.Parameters.AddWithValue("@RegisterId", request.RegisterId);
         sqlCommand.Parameters.AddWithValue("@DeviceId", request.DeviceId == Guid.Empty ? DBNull.Value : request.DeviceId);

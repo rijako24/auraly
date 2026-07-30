@@ -23,7 +23,6 @@ public sealed class PosEnrollmentApiTests(ServerSliceFixture fixture)
             "/api/commerce/v1/pos/enrollments",
             new CreatePosEnrollmentRequest(
                 fixture.BusinessId,
-                fixture.LocationId,
                 registerId,
                 "Equipo recepción"));
         authorizationResponse.EnsureSuccessStatusCode();
@@ -81,7 +80,6 @@ public sealed class PosEnrollmentApiTests(ServerSliceFixture fixture)
             "/api/commerce/v1/pos/enrollments",
             new CreatePosEnrollmentRequest(
                 fixture.BusinessId,
-                fixture.LocationId,
                 fixture.OnlineRegisterId,
                 "Equipo no autorizado"));
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
@@ -94,15 +92,15 @@ public sealed class PosEnrollmentApiTests(ServerSliceFixture fixture)
     {
         const string sql = """
             INSERT dbo.CashRegisters
-              (RegisterId,BusinessId,LocationId,WarehouseId,Code,Name,IsActive,CreatedAt)
+              (RegisterId,BusinessId,WarehouseId,Code,Name,IsActive,CreatedAt)
             VALUES
-              (@RegisterId,@BusinessId,@LocationId,@WarehouseId,N'05',
+              (@RegisterId,@BusinessId,@WarehouseId,N'05',
                N'Caja enrolamiento E2E',1,SYSDATETIMEOFFSET());
             INSERT dbo.DocumentSeries
-              (DocumentSeriesId,BusinessId,LocationId,RegisterId,DocumentType,
+              (DocumentSeriesId,BusinessId,RegisterId,DocumentType,
                Prefix,SeriesCode,Padding,RangeStart,RangeEnd,IsOfflineCapable,IsActive,CreatedAt)
             VALUES
-              (@DocumentSeriesId,@BusinessId,@LocationId,@RegisterId,N'Invoice',
+              (@DocumentSeriesId,@BusinessId,@RegisterId,N'Invoice',
                N'VTA',N'05',8,1,99999999,1,1,SYSDATETIMEOFFSET());
             INSERT dbo.FiscalSeries
               (SeriesId,BusinessId,RegisterId,FiscalAuthorizationId,DocumentType,
@@ -116,7 +114,6 @@ public sealed class PosEnrollmentApiTests(ServerSliceFixture fixture)
         await using var command = new SqlCommand(sql, connection);
         command.Parameters.AddWithValue("@RegisterId", registerId);
         command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
-        command.Parameters.AddWithValue("@LocationId", fixture.LocationId);
         command.Parameters.AddWithValue("@WarehouseId", fixture.WarehouseId);
         command.Parameters.AddWithValue("@DocumentSeriesId", documentSeriesId);
         command.Parameters.AddWithValue("@FiscalSeriesId", fiscalSeriesId);

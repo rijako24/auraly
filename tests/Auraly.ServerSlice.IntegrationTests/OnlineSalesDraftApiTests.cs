@@ -13,7 +13,6 @@ public sealed class OnlineSalesDraftApiTests(ServerSliceFixture fixture)
     {
         var context = new OnlineSalesDraftContext(
             fixture.BusinessId,
-            fixture.LocationId,
             fixture.OnlineRegisterId);
         Guid draftId;
         Guid lineId;
@@ -103,7 +102,6 @@ public sealed class OnlineSalesDraftApiTests(ServerSliceFixture fixture)
             client,
             new(
                 fixture.BusinessId,
-                fixture.LocationId,
                 fixture.OnlineRegisterId));
 
         using var first = Mutation(
@@ -143,7 +141,6 @@ public sealed class OnlineSalesDraftApiTests(ServerSliceFixture fixture)
             "/api/commerce/v1/pos/drafts/active",
             new OpenOnlineSalesDraftRequest(new(
                 fixture.BusinessId,
-                fixture.LocationId,
                 fixture.OnlineRegisterId)));
         Assert.Equal(HttpStatusCode.Forbidden, permissionResponse.StatusCode);
 
@@ -153,7 +150,6 @@ public sealed class OnlineSalesDraftApiTests(ServerSliceFixture fixture)
             "/api/commerce/v1/pos/drafts/active",
             new OpenOnlineSalesDraftRequest(new(
                 Guid.NewGuid(),
-                fixture.LocationId,
                 fixture.OnlineRegisterId)));
         Assert.Equal(HttpStatusCode.Forbidden, scopeResponse.StatusCode);
     }

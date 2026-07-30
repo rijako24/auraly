@@ -28,7 +28,6 @@ public sealed class PosToServerRecoveryTests(ServerSliceFixture fixture)
             var register = new RegisterContext(
                 new TenantId(fixture.TenantId),
                 new BusinessId(fixture.BusinessId),
-                new LocationId(fixture.LocationId),
                 new WarehouseId(fixture.WarehouseId),
                 new RegisterId(fixture.RegisterId),
                 WarehouseAllowsNegativeStockSales: true);
@@ -257,7 +256,6 @@ public sealed class PosToServerRecoveryTests(ServerSliceFixture fixture)
         new(
             new TenantId(fixture.TenantId),
             new BusinessId(fixture.BusinessId),
-            new LocationId(fixture.LocationId),
             new WarehouseId(fixture.WarehouseId),
             new RegisterId(fixture.RegisterId),
             true);

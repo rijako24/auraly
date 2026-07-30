@@ -117,6 +117,44 @@ public sealed class ArchitectureTests
             $"Legacy names found:{Environment.NewLine}{string.Join(Environment.NewLine, violations)}");
     }
 
+    [Fact]
+    public void Commerce_has_no_redundant_organization_location_level()
+    {
+        var root = FindRepositoryRoot();
+        var scopes = new[]
+        {
+            Path.Combine(root, "src"),
+            Path.Combine(root, "database", "Auraly.Database"),
+            Path.Combine(root, "admin", "src")
+        };
+        var forbidden = new[]
+        {
+            string.Concat("Business", "Locations"),
+            string.Concat("Location", "Id"),
+            string.Concat("location", "Id")
+        };
+        var violations = scopes
+            .Where(Directory.Exists)
+            .SelectMany(scope => Directory.GetFiles(scope, "*", SearchOption.AllDirectories))
+            .Where(path => !path.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}"))
+            .Where(path => !path.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}"))
+            .Where(path => !path.Contains($"{Path.DirectorySeparatorChar}.next{Path.DirectorySeparatorChar}"))
+            .Where(path => !path.Contains($"{Path.DirectorySeparatorChar}Scripts{Path.DirectorySeparatorChar}Migrations{Path.DirectorySeparatorChar}"))
+            .Where(path => path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase)
+                || path.EndsWith(".sql", StringComparison.OrdinalIgnoreCase)
+                || path.EndsWith(".sqlproj", StringComparison.OrdinalIgnoreCase)
+                || path.EndsWith(".ts", StringComparison.OrdinalIgnoreCase)
+                || path.EndsWith(".tsx", StringComparison.OrdinalIgnoreCase))
+            .SelectMany(path => forbidden
+                .Where(token => File.ReadAllText(path).Contains(token, StringComparison.Ordinal))
+                .Select(token => $"{Path.GetRelativePath(root, path)}: {token}"))
+            .ToArray();
+
+        Assert.True(
+            violations.Length == 0,
+            $"Redundant organization location references:{Environment.NewLine}{string.Join(Environment.NewLine, violations)}");
+    }
+
     private static string FindRepositoryRoot()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);

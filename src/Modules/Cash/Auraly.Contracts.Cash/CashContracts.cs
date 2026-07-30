@@ -8,7 +8,6 @@ public static class CashSessionStatuses
 
 public sealed record OpenCashSessionRequest(
     Guid BusinessId,
-    Guid LocationId,
     decimal OpeningFloat,
     string IdempotencyKey);
 
@@ -54,7 +53,6 @@ public sealed record CashSessionView(
     Guid CashSessionId,
     Guid CashierShiftId,
     Guid BusinessId,
-    Guid LocationId,
     Guid RegisterId,
     Guid ResponsibleUserId,
     string ResponsibleUserName,
@@ -93,7 +91,6 @@ public sealed record CashClosureReceipt(
     Guid CashSessionId,
     string CountNumber,
     string BusinessName,
-    string LocationName,
     string RegisterCode,
     string RegisterName,
     DateTimeOffset OpenedAt,

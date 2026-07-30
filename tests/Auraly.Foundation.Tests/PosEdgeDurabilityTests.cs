@@ -31,7 +31,6 @@ public sealed class PosEdgeDurabilityTests
             var context = new RegisterContext(
                 tenantId,
                 businessId,
-                new LocationId(Guid.NewGuid()),
                 warehouseId,
                 registerId,
                 WarehouseAllowsNegativeStockSales: true);

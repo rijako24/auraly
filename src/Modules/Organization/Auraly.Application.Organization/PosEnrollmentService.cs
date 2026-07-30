@@ -72,7 +72,6 @@ public sealed class PosEnrollmentService(
             throw new PosEnrollmentForbiddenException(
                 $"Permission '{CommercePermissionCodes.PosDevicesEnroll}' is required.");
         if (request.BusinessId == Guid.Empty ||
-            request.LocationId == Guid.Empty ||
             request.RegisterId == Guid.Empty ||
             string.IsNullOrWhiteSpace(request.DeviceName))
             throw new PosEnrollmentValidationException(

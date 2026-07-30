@@ -49,7 +49,7 @@ existe un bypass de autenticación en producción.
 `database/Auraly.Database/Auraly.Database.sqlproj` continúa siendo el único
 dueño del esquema. La rebanada usa `dbo` y una sola base:
 
-- `BusinessLocations`
+
 - `Warehouses`
 - `CashRegisters`
 - `PosDevices`

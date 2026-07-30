@@ -25,7 +25,6 @@ public sealed class OnlineRegisterApiTests(ServerSliceFixture fixture)
             options,
             value => value.RegisterId == fixture.OnlineRegisterId);
         Assert.Equal(fixture.BusinessId, option.BusinessId);
-        Assert.Equal(fixture.LocationId, option.LocationId);
         Assert.Equal(fixture.WarehouseId, option.WarehouseId);
         Assert.False(option.HasActiveEdgeEnrollment);
 
@@ -33,7 +32,6 @@ public sealed class OnlineRegisterApiTests(ServerSliceFixture fixture)
             "/api/commerce/v1/pos/register-context/select",
             new OnlineRegisterSelection(
                 option.BusinessId,
-                option.LocationId,
                 option.RegisterId));
         response.EnsureSuccessStatusCode();
         var selected = await response.Content.ReadFromJsonAsync<OnlineRegisterContext>();
@@ -80,7 +78,6 @@ public sealed class OnlineRegisterApiTests(ServerSliceFixture fixture)
             "/api/commerce/v1/pos/register-context/select",
             new OnlineRegisterSelection(
                 Guid.NewGuid(),
-                fixture.LocationId,
                 fixture.RegisterId));
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
@@ -94,7 +91,6 @@ public sealed class OnlineRegisterApiTests(ServerSliceFixture fixture)
             "/api/commerce/v1/pos/register-context/select",
             new OnlineRegisterSelection(
                 fixture.BusinessId,
-                fixture.LocationId,
                 fixture.RegisterId));
 
         response.EnsureSuccessStatusCode();

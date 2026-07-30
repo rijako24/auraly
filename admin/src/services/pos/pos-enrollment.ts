@@ -20,7 +20,6 @@ export async function authorizePosEnrollment(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       businessId: option.businessId,
-      locationId: option.locationId,
       registerId: option.registerId,
       deviceName: window.navigator.userAgentData?.platform
         ? `Auraly POS · ${window.navigator.userAgentData.platform}`

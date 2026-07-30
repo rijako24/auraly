@@ -13,7 +13,6 @@ public static class PosAuthenticationDefaults
     public const string DeviceIdClaim = "auraly:device_id";
     public const string TenantIdClaim = "auraly:tenant_id";
     public const string BusinessIdClaim = "auraly:business_id";
-    public const string LocationIdClaim = "auraly:location_id";
     public const string WarehouseIdClaim = "auraly:warehouse_id";
     public const string RegisterIdClaim = "auraly:register_id";
 }
@@ -49,7 +48,6 @@ public sealed class PosDeviceAuthenticationHandler(
             new(PosAuthenticationDefaults.DeviceIdClaim, identity.DeviceId.ToString("D")),
             new(PosAuthenticationDefaults.TenantIdClaim, identity.TenantId.ToString("D")),
             new(PosAuthenticationDefaults.BusinessIdClaim, identity.BusinessId.ToString("D")),
-            new(PosAuthenticationDefaults.LocationIdClaim, identity.LocationId.ToString("D")),
             new(PosAuthenticationDefaults.WarehouseIdClaim, identity.WarehouseId.ToString("D")),
             new(PosAuthenticationDefaults.RegisterIdClaim, identity.RegisterId.ToString("D"))
         };

@@ -53,8 +53,8 @@ public sealed class CashSessionService(ICashSessionStore store)
     {
         DemandAny(actor, CommercePermissionCodes.SalesCreate, CommercePermissionCodes.CashOpen);
         ValidateRegister(registerId);
-        if (request.BusinessId == Guid.Empty || request.LocationId == Guid.Empty)
-            throw new CashValidationException("Negocio y sede son obligatorios.");
+        if (request.BusinessId == Guid.Empty)
+            throw new CashValidationException("La sede es obligatoria.");
         if (request.OpeningFloat < 0)
             throw new CashValidationException("El fondo inicial no puede ser negativo.");
         ValidateKey(request.IdempotencyKey);

@@ -169,7 +169,6 @@ public sealed class PosSaleCompletionServiceTests
             var register = new RegisterContext(
                 tenantId,
                 businessId,
-                new LocationId(Guid.NewGuid()),
                 warehouseId,
                 registerId,
                 true);

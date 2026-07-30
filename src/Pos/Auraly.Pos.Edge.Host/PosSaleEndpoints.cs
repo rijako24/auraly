@@ -44,13 +44,11 @@ internal static class PosSaleHostModule
         PosDeviceCredentials device)
     {
         var tenantId = new TenantId(RequiredGuid(configuration, "PosEdge:TenantId"));
-        var locationId = new LocationId(RequiredGuid(configuration, "PosEdge:LocationId"));
         var permissions = ReadPermissions(configuration).ToHashSet(StringComparer.Ordinal);
         var settings = new PosSaleHostSettings(
             new RegisterContext(
                 tenantId,
                 runtime.Scope.BusinessId,
-                locationId,
                 runtime.Scope.WarehouseId,
                 runtime.Scope.RegisterId,
                 runtime.WarehouseAllowsNegativeStock),
