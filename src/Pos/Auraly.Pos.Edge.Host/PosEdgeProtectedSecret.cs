@@ -8,6 +8,7 @@ public static class PosEdgeProtectedSecret
     private const string ApplicationName = "Auraly.Pos.Edge";
     private const string TechnicalKeyPurpose = "Auraly.Fiscal.TechnicalKey.v1";
     private const string EnrollmentPurpose = "Auraly.Pos.Edge.Enrollment.v1";
+    private const string IdentityVerifierPurpose = "Auraly.Pos.Edge.IdentityVerifier.v1";
 
     public static string ProtectTechnicalKey(string keyDirectory, string technicalKey)
     {
@@ -54,6 +55,38 @@ public static class PosEdgeProtectedSecret
         {
             throw new InvalidOperationException(
                 "The POS enrollment belongs to another Windows user or machine.",
+                exception);
+        }
+    }
+
+    public static string ProtectIdentityVerifier(
+        string keyDirectory,
+        string verifierJson)
+    {
+        if (string.IsNullOrWhiteSpace(verifierJson))
+            throw new ArgumentException(
+                "An identity verifier is required.", nameof(verifierJson));
+        return CreateProtector(keyDirectory, IdentityVerifierPurpose)
+            .Protect(verifierJson);
+    }
+
+    public static string UnprotectIdentityVerifier(
+        string keyDirectory,
+        string protectedVerifier)
+    {
+        if (string.IsNullOrWhiteSpace(protectedVerifier))
+            throw new ArgumentException(
+                "A protected identity verifier is required.",
+                nameof(protectedVerifier));
+        try
+        {
+            return CreateProtector(keyDirectory, IdentityVerifierPurpose)
+                .Unprotect(protectedVerifier);
+        }
+        catch (System.Security.Cryptography.CryptographicException exception)
+        {
+            throw new InvalidOperationException(
+                "The POS identity verifier belongs to another Windows user or machine.",
                 exception);
         }
     }

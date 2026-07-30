@@ -496,7 +496,8 @@ public sealed class ServerSliceFixture : IAsyncLifetime
             VALUES
             (@DeviceId, @SalesCreate, 1, SYSDATETIMEOFFSET()),
             (@DeviceId, @FiscalStatusSync, 1, SYSDATETIMEOFFSET()),
-            (@DeviceId, @PosCustomerCreate, 1, SYSDATETIMEOFFSET());
+            (@DeviceId, @PosCustomerCreate, 1, SYSDATETIMEOFFSET()),
+            (@DeviceId, @PosIdentitySync, 1, SYSDATETIMEOFFSET());
             INSERT INTO dbo.FiscalAuthorizations
             (FiscalAuthorizationId, BusinessId, AuthorizationNumber, SupplierTaxId,
              Environment, QrValidationUrl, TechnicalKeyVersion, ValidFrom, ValidUntil, IsActive, CreatedAt)
@@ -572,6 +573,7 @@ public sealed class ServerSliceFixture : IAsyncLifetime
         command.Parameters.AddWithValue("@FiscalAuthorizationId", FiscalAuthorizationId);
         command.Parameters.AddWithValue("@FiscalStatusSync", FiscalPermissionCodes.PosStatusSync);
         command.Parameters.AddWithValue("@PosCustomerCreate", PartyPermissionCodes.PosCustomerCreate);
+        command.Parameters.AddWithValue("@PosIdentitySync", CommercePermissionCodes.PosIdentitySync);
         command.Parameters.AddWithValue("@FiscalIssuerConfigurationId", FiscalIssuerConfigurationId);
         command.Parameters.AddWithValue("@AuthorizationNumber", AuthorizationNumber);
         command.Parameters.AddWithValue("@SupplierTaxId", SupplierTaxId);

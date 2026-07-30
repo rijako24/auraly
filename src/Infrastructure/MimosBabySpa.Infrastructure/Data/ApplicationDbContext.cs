@@ -1309,6 +1309,8 @@ public class ApplicationDbContext : DbContext
             entity.Property(e => e.Email).IsRequired().HasMaxLength(256);
             entity.Property(e => e.NormalizedEmail).IsRequired().HasMaxLength(256);
             entity.Property(e => e.PasswordHash).HasMaxLength(500);
+            entity.Property(e => e.PosOfflinePasswordSalt).HasMaxLength(16);
+            entity.Property(e => e.PosOfflinePasswordHash).HasMaxLength(32);
             entity.Property(e => e.FirstName).IsRequired().HasMaxLength(100);
             entity.Property(e => e.LastName).IsRequired().HasMaxLength(100);
             entity.Property(e => e.PhoneNumber).HasMaxLength(20);

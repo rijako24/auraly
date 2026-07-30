@@ -9,7 +9,11 @@ namespace Auraly.Pos.Edge.Host;
 
 public sealed record PosEdgeRuntimeContext(
     PosDraftScope Scope,
-    bool WarehouseAllowsNegativeStock);
+    bool WarehouseAllowsNegativeStock)
+{
+    public PosDraftScope ScopeFor(Guid userId) => new(
+        Scope.BusinessId, Scope.WarehouseId, Scope.RegisterId, new UserId(userId));
+}
 
 public sealed record PosWorkstationIdentity(
     string RegisterCode,
@@ -84,6 +88,12 @@ public static class PosEdgeHostApplication
         builder.Services.AddSingleton(TimeProvider.System);
         builder.Services.AddSingleton<IAuralyIdGenerator, Uuid7AuralyIdGenerator>();
         builder.Services.AddSingleton(runtime);
+        builder.Services.AddSingleton<PosLocalSessionAccessor>();
+        builder.Services.AddSingleton(sp => new PosLocalIdentityStore(
+            connectionString,
+            keyDirectory,
+            sp.GetRequiredService<IAuralyIdGenerator>(),
+            sp.GetRequiredService<TimeProvider>()));
         builder.Services.AddSingleton(new PosWorkstationIdentity(
             Required(builder.Configuration, "PosEdge:RegisterCode"),
             Required(builder.Configuration, "PosEdge:UserDisplayName")));
@@ -102,6 +112,7 @@ public static class PosEdgeHostApplication
         });
         builder.Services.AddSingleton(credentials);
         builder.Services.AddSingleton<PosCatalogSynchronizer>();
+        builder.Services.AddSingleton<PosIdentitySynchronizer>();
         builder.Services.AddSingleton<IPosInventoryAvailabilityClient>(
             sp => sp.GetRequiredService<PosCatalogSynchronizer>());
         builder.Services.AddSingleton<PosCaptureService>();
@@ -144,7 +155,7 @@ public static class PosEdgeHostApplication
                 }
                 SetCorsHeaders(context.Response, allowedOrigin);
                 context.Response.Headers.AccessControlAllowMethods = "GET,POST,PUT,DELETE,OPTIONS";
-                context.Response.Headers.AccessControlAllowHeaders = "Content-Type,X-Auraly-Edge-Session";
+                context.Response.Headers.AccessControlAllowHeaders = "Content-Type,X-Auraly-Edge-Session,X-Auraly-User-Session";
                 context.Response.StatusCode = StatusCodes.Status204NoContent;
                 return;
             }
@@ -157,6 +168,28 @@ public static class PosEdgeHostApplication
             if (!string.IsNullOrEmpty(origin))
             {
                 SetCorsHeaders(context.Response, allowedOrigin);
+            }
+            PosLocalSessionAccessor? localSessions = null;
+            if (RequiresLocalUserSession(context.Request.Path))
+            {
+                var userToken = context.Request.Headers["X-Auraly-User-Session"].ToString();
+                var identities = context.RequestServices
+                    .GetRequiredService<PosLocalIdentityStore>();
+                var userSession = await identities.ResolveAsync(
+                    userToken, context.RequestAborted);
+                if (userSession is null)
+                {
+                    context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                    await context.Response.WriteAsJsonAsync(new
+                    {
+                        code = "LocalLoginRequired",
+                        detail = "Inicia sesión en esta caja para continuar."
+                    });
+                    return;
+                }
+                localSessions = context.RequestServices
+                    .GetRequiredService<PosLocalSessionAccessor>();
+                localSessions.Current = userSession;
             }
             try
             {
@@ -175,24 +208,73 @@ public static class PosEdgeHostApplication
                     detail = "La factura ya fue emitida y está pendiente de imprimir la tirilla. Presiona F1 para reintentar la impresión."
         });
             }
+            finally
+            {
+                if (localSessions is not null) localSessions.Current = null;
+            }
         });
 
         var edge = app.MapGroup("/edge/v1");
+        edge.MapPost("/auth/login", async (
+            PosLocalLoginRequest request,
+            PosLocalIdentityStore identities,
+            CancellationToken ct) =>
+        {
+            try
+            {
+                return Results.Ok(await identities.LoginAsync(request, ct));
+            }
+            catch (PosLocalLoginException error)
+            {
+                var status = error.Code == "Locked"
+                    ? StatusCodes.Status423Locked
+                    : error.Code == "IdentityUnavailable"
+                        ? StatusCodes.Status503ServiceUnavailable
+                        : StatusCodes.Status401Unauthorized;
+                return Results.Json(
+                    new { code = error.Code, detail = error.Message },
+                    statusCode: status);
+            }
+        });
+        edge.MapGet("/auth/session", (
+            PosLocalSessionAccessor sessions) =>
+            Results.Ok(sessions.Required()));
+        edge.MapPost("/auth/logout", async (
+            HttpContext http,
+            PosLocalIdentityStore identities,
+            CancellationToken ct) =>
+        {
+            await identities.LogoutAsync(
+                http.Request.Headers["X-Auraly-User-Session"].ToString(), ct);
+            return Results.NoContent();
+        });
         edge.MapGet("/health", async (
+            HttpContext http,
             PosServerConnectionState server,
             PosWorkstationIdentity workstation,
             PosCatalogStore catalog,
+            PosLocalIdentityStore identities,
             CancellationToken ct) =>
         {
             var catalogStatus = await catalog.StatusAsync(ct);
+            var identityReady = await identities.HasValidSnapshotAsync(ct);
+            var user = await identities.ResolveAsync(
+                http.Request.Headers["X-Auraly-User-Session"].ToString(), ct);
+            var status = !identityReady
+                ? "IdentitySynchronizing"
+                : user is null
+                    ? "LoginRequired"
+                    : catalogStatus.Status == "Ready"
+                        ? "Ready"
+                        : "Synchronizing";
             return Results.Ok(new
             {
-                status = catalogStatus.Status == "Ready"
-                    ? "Ready"
-                    : "Synchronizing",
+                status,
                 serverConnected = server.IsConnected,
                 registerCode = workstation.RegisterCode,
-                userDisplayName = workstation.UserDisplayName,
+                userDisplayName = user?.DisplayName ?? string.Empty,
+                userId = user?.UserId,
+                permissions = user?.Permissions ?? Array.Empty<string>(),
                 catalogStatus = catalogStatus.Status,
                 catalogCursor = catalogStatus.Cursor
             });
@@ -200,8 +282,10 @@ public static class PosEdgeHostApplication
         edge.MapGet("/drafts/active", async (
             PosDraftStore drafts,
             PosEdgeRuntimeContext context,
+            PosLocalSessionAccessor sessions,
             CancellationToken ct) =>
-            Results.Ok(await drafts.GetOrCreateActiveAsync(context.Scope, ct)));
+            Results.Ok(await drafts.GetOrCreateActiveAsync(
+                context.ScopeFor(sessions.Required().UserId), ct)));
         edge.MapGet("/catalog/products", async (
             string? search,
             int? skip,
@@ -282,11 +366,12 @@ public static class PosEdgeHostApplication
             PosCaptureService capture,
             PosEdgeRuntimeContext context,
             IAuralyIdGenerator ids,
+            PosLocalSessionAccessor sessions,
             CancellationToken ct) =>
         {
             var result = await capture.CaptureAsync(
                 request.Value,
-                context.Scope,
+                context.ScopeFor(sessions.Required().UserId),
                 request.CustomerId,
                 context.WarehouseAllowsNegativeStock,
                 ids.NewId(),
@@ -326,12 +411,17 @@ public static class PosEdgeHostApplication
             Guid lineId,
             DiscountRequest request,
             PosDraftStore drafts,
+            PosLocalSessionAccessor sessions,
             CancellationToken ct) =>
-            Results.Ok(await drafts.SetDiscountAsync(
-                new DraftId(draftId),
-                lineId,
-                request.Discount,
-                ct)));
+        {
+            if (!sessions.Required().Permissions.Contains(
+                    Auraly.Contracts.Authorization.CommercePermissionCodes.SalesDiscount))
+                return Results.Problem(
+                    "Permission 'sales.discount' is required.",
+                    statusCode: StatusCodes.Status403Forbidden);
+            return Results.Ok(await drafts.SetDiscountAsync(
+                new DraftId(draftId), lineId, request.Discount, ct));
+        });
         edge.MapPut("/drafts/{draftId:guid}/customer", async (
             Guid draftId,
             SelectCustomerRequest request,
@@ -354,16 +444,26 @@ public static class PosEdgeHostApplication
             Guid draftId,
             Guid lineId,
             PosDraftStore drafts,
+            PosLocalSessionAccessor sessions,
             CancellationToken ct) =>
-            Results.Ok(await drafts.RemoveLineAsync(new DraftId(draftId), lineId, ct)));
+        {
+            if (!sessions.Required().Permissions.Contains(
+                    Auraly.Contracts.Authorization.CommercePermissionCodes.SalesVoid))
+                return Results.Problem(
+                    "Permission 'sales.void' is required.",
+                    statusCode: StatusCodes.Status403Forbidden);
+            return Results.Ok(await drafts.RemoveLineAsync(
+                new DraftId(draftId), lineId, ct));
+        });
         edge.MapDelete("/drafts/{draftId:guid}", async (
             Guid draftId,
             PosDraftStore drafts,
             PosEdgeRuntimeContext context,
-            PosSaleHostSettings settings,
+            PosLocalSessionAccessor sessions,
             CancellationToken ct) =>
         {
-            if (!settings.Permissions.Contains(
+            var user = sessions.Required();
+            if (!user.Permissions.Contains(
                     Auraly.Contracts.Authorization.CommercePermissionCodes.SalesVoid))
             {
                 return Results.Problem(
@@ -372,7 +472,8 @@ public static class PosEdgeHostApplication
             }
 
             await drafts.CancelAsync(new DraftId(draftId), ct);
-            return Results.Ok(await drafts.GetOrCreateActiveAsync(context.Scope, ct));
+            return Results.Ok(await drafts.GetOrCreateActiveAsync(
+                context.ScopeFor(user.UserId), ct));
         });
         edge.MapPost("/drafts/{draftId:guid}/temporary", async (
             Guid draftId,
@@ -398,10 +499,11 @@ public static class PosEdgeHostApplication
             Guid draftId,
             PosDraftStore drafts,
             PosEdgeRuntimeContext context,
+            PosLocalSessionAccessor sessions,
             CancellationToken ct) =>
             Results.Ok(await drafts.RecoverTemporaryAsync(
                 new DraftId(draftId),
-                context.Scope,
+                context.ScopeFor(sessions.Required().UserId),
                 ct)));
         edge.MapDelete("/temporaries/{draftId:guid}", async (
             Guid draftId,
@@ -458,7 +560,7 @@ public static class PosEdgeHostApplication
                 SetCorsHeaders(context.Response, allowedOrigin);
                 context.Response.Headers.AccessControlAllowMethods = "GET,POST,OPTIONS";
                 context.Response.Headers.AccessControlAllowHeaders =
-                    "Content-Type,X-Auraly-Edge-Session";
+                    "Content-Type,X-Auraly-Edge-Session,X-Auraly-User-Session";
                 context.Response.StatusCode = StatusCodes.Status204NoContent;
                 return;
             }
@@ -531,11 +633,17 @@ public static class PosEdgeHostApplication
     }
 
 
+    private static bool RequiresLocalUserSession(PathString path) =>
+        path.StartsWithSegments("/edge/v1") &&
+        !path.Equals("/edge/v1/health") &&
+        !path.Equals("/edge/v1/auth/login");
+
     private static bool IsLoopback(System.Net.IPAddress? address) =>
         address is null || System.Net.IPAddress.IsLoopback(address);
 }
 
 internal sealed class PosServerSynchronizationHostedService(
+    PosIdentitySynchronizer identities,
     PosCatalogSynchronizer catalog,
     PosEdgeOutboxUploader uploader,
     PosFiscalStatusSynchronizer fiscalStatuses,
@@ -543,12 +651,18 @@ internal sealed class PosServerSynchronizationHostedService(
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        var identityCatchUpPending = true;
         var catalogCatchUpPending = true;
         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(2));
         do
         {
             try
             {
+                if (identityCatchUpPending)
+                {
+                    await identities.SynchronizeAsync(stoppingToken);
+                    identityCatchUpPending = false;
+                }
                 if (catalogCatchUpPending)
                 {
                     await catalog.SynchronizeAsync(stoppingToken);
@@ -581,11 +695,13 @@ internal sealed class PosServerSynchronizationHostedService(
 }
 
 internal sealed class PosEdgeStorageInitializer(
+    PosLocalIdentityStore identities,
     PosCatalogStore catalog,
     PosDraftStore drafts) : IHostedService
 {
     public async Task StartAsync(CancellationToken cancellationToken)
     {
+        await identities.InitializeAsync(cancellationToken);
         await catalog.InitializeAsync(cancellationToken);
         await drafts.InitializeAsync(cancellationToken);
     }

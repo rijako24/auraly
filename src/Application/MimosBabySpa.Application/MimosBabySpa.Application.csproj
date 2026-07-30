@@ -13,6 +13,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\Domain\MimosBabySpa.Domain\MimosBabySpa.Domain.csproj" />
+    <ProjectReference Include="..\..\Modules\Authorization\Auraly.Contracts.Authorization\Auraly.Contracts.Authorization.csproj" />
   </ItemGroup>
 
   <ItemGroup>

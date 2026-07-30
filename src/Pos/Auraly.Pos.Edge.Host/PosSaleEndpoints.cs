@@ -87,14 +87,13 @@ internal static class PosSaleHostModule
                 RequiredDate(configuration, "PosEdge:Fiscal:ValidUntil"),
                 RequiredGuid(configuration, "PosEdge:Fiscal:FiscalAuthorizationId")),
             permissions);
-        var permissionSet = new UserPermissionSet(
-            tenantId,
-            runtime.Scope.UserId,
-            permissions);
-        var confirmation = new ConfirmOfflineSaleService(
-            new PermissionAuthorizer(new ConfiguredPermissionProvider(permissionSet)));
         services.AddSingleton(settings);
-        services.AddSingleton(new PosEdgeSaleStore(connectionString, confirmation));
+        services.AddSingleton(sp => new PosEdgeSaleStore(
+            connectionString,
+            new ConfirmOfflineSaleService(
+                new PermissionAuthorizer(
+                    new PosLocalPermissionProvider(
+                        sp.GetRequiredService<PosLocalSessionAccessor>())))));
         services.AddSingleton(sp => new PosDraftIssuanceStore(
             connectionString,
             sp.GetRequiredService<IAuralyIdGenerator>(),
@@ -138,6 +137,7 @@ internal static class PosSaleHostModule
         edge.MapGet("/sales/next-number", async (
             PosEdgeSaleStore sales,
             PosSaleHostSettings settings,
+            PosLocalSessionAccessor sessions,
             CancellationToken ct) =>
         {
             var document = await sales.PreviewNextDocumentNumberAsync(
@@ -156,6 +156,7 @@ internal static class PosSaleHostModule
             CompleteDraftRequest request,
             PosSaleCompletionService completion,
             PosSaleHostSettings settings,
+            PosLocalSessionAccessor sessions,
             CancellationToken ct) =>
         {
             try
@@ -169,7 +170,7 @@ internal static class PosSaleHostModule
                 var result = await completion.CompleteAsync(
                     new DraftId(draftId),
                     new CompletePosSaleCommand(
-                        settings.UserId,
+                        new UserId(sessions.Required().UserId),
                         settings.Register,
                         DateTimeOffset.Now,
                         settings.SupplierTaxId,
@@ -212,9 +213,11 @@ internal static class PosSaleHostModule
             Guid documentId,
             PosSaleCompletionService completion,
             PosSaleHostSettings settings,
+            PosLocalSessionAccessor sessions,
             CancellationToken ct) =>
         {
-            if (!settings.Permissions.Contains(CommercePermissionCodes.SalesReprint))
+            var user = sessions.Required();
+            if (!user.Permissions.Contains(CommercePermissionCodes.SalesReprint))
                 return Results.Problem(
                     $"Permission '{CommercePermissionCodes.SalesReprint}' is required.",
                     statusCode: StatusCodes.Status403Forbidden);
@@ -222,7 +225,7 @@ internal static class PosSaleHostModule
             {
                 await completion.ReprintAsync(
                     new DocumentId(documentId),
-                    settings.UserId,
+                    new UserId(user.UserId),
                     settings.PaperWidthMillimeters,
                     ct);
                 return Results.NoContent();

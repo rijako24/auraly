@@ -8,6 +8,10 @@ CREATE TABLE [dbo].[AppUsers] (
     [Email] NVARCHAR(256) NOT NULL,
     [NormalizedEmail] NVARCHAR(256) NOT NULL,
     [PasswordHash] NVARCHAR(500) NULL,
+    [PosOfflinePasswordSalt] VARBINARY(16) NULL,
+    [PosOfflinePasswordHash] VARBINARY(32) NULL,
+    [PosOfflinePasswordIterations] INT NULL,
+    [PosOfflinePasswordChangedAt] DATETIMEOFFSET(7) NULL,
     [FirstName] NVARCHAR(100) NOT NULL,
     [LastName] NVARCHAR(100) NOT NULL,
     [PhoneNumber] NVARCHAR(20) NULL,
@@ -27,7 +31,17 @@ CREATE TABLE [dbo].[AppUsers] (
         ON DELETE NO ACTION,
     CONSTRAINT [FK_AppUsers_CreatedByUser] FOREIGN KEY ([CreatedByUserId])
         REFERENCES [dbo].[AppUsers] ([UserId])
-        ON DELETE NO ACTION
+        ON DELETE NO ACTION,
+    CONSTRAINT [CK_AppUsers_PosOfflinePasswordComplete] CHECK (
+        ([PosOfflinePasswordSalt] IS NULL
+         AND [PosOfflinePasswordHash] IS NULL
+         AND [PosOfflinePasswordIterations] IS NULL
+         AND [PosOfflinePasswordChangedAt] IS NULL)
+        OR
+        ([PosOfflinePasswordSalt] IS NOT NULL
+         AND [PosOfflinePasswordHash] IS NOT NULL
+         AND [PosOfflinePasswordIterations] >= 100000
+         AND [PosOfflinePasswordChangedAt] IS NOT NULL))
 );
 
 GO

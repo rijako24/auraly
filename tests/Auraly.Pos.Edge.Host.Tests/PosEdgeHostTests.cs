@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Auraly.Contracts.Authorization;
 using Auraly.Contracts.Catalog;
 using Auraly.Contracts.Fiscal;
 using Auraly.Pos.Edge.Host;
@@ -25,6 +26,7 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
     private readonly string _secretPath =
         Path.Combine(Path.GetTempPath(), $"auraly-edge-secrets-{Guid.NewGuid():N}");
     private HttpClient? _client;
+    private string? _userSessionToken;
     private readonly List<string> _environmentKeys = [];
     private readonly RecordingPrinter _printer = new();
     private HttpClient Client =>
@@ -279,6 +281,7 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
 
         using var reopenedWindow = _factory!.CreateClient();
         reopenedWindow.DefaultRequestHeaders.Add("X-Auraly-Edge-Session", Token);
+        reopenedWindow.DefaultRequestHeaders.Add("X-Auraly-User-Session", _userSessionToken);
         var restored = await reopenedWindow.GetFromJsonAsync<PosDraft>(
             "/edge/v1/drafts/active");
 
@@ -337,10 +340,59 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
         Assert.Null(consumer.Customer);
     }
 
+    [Fact]
+    public async Task Five_wrong_passwords_lock_the_local_cashier_temporarily()
+    {
+        for (var attempt = 0; attempt < 5; attempt++)
+        {
+            using var response = await Client.PostAsJsonAsync(
+                "/edge/v1/auth/login",
+                new PosLocalLoginRequest("cashier", "wrong-password"));
+            Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        }
+
+        using var locked = await Client.PostAsJsonAsync(
+            "/edge/v1/auth/login",
+            new PosLocalLoginRequest("cashier", "Cashier-Password-1"));
+        Assert.Equal((HttpStatusCode)423, locked.StatusCode);
+    }
+
+    [Fact]
+    public async Task A_new_local_login_invalidates_the_previous_session_and_restores_the_user_draft()
+    {
+        var capture = await Client.PostAsJsonAsync(
+            "/edge/v1/capture",
+            new CaptureRequest("770123", null));
+        capture.EnsureSuccessStatusCode();
+        var captured = await capture.Content.ReadFromJsonAsync<PosCaptureResult>();
+
+        using var loginClient = _factory!.CreateClient();
+        loginClient.DefaultRequestHeaders.Add("X-Auraly-Edge-Session", Token);
+        var login = await loginClient.PostAsJsonAsync(
+            "/edge/v1/auth/login",
+            new PosLocalLoginRequest("cashier", "Cashier-Password-1"));
+        login.EnsureSuccessStatusCode();
+        var replacement = await login.Content.ReadFromJsonAsync<PosLocalUserSession>();
+
+        Assert.Equal(
+            HttpStatusCode.Unauthorized,
+            (await Client.GetAsync("/edge/v1/drafts/active")).StatusCode);
+
+        using var replacementClient = _factory.CreateClient();
+        replacementClient.DefaultRequestHeaders.Add("X-Auraly-Edge-Session", Token);
+        replacementClient.DefaultRequestHeaders.Add(
+            "X-Auraly-User-Session", replacement!.Token);
+        var restored = await replacementClient.GetFromJsonAsync<PosDraft>(
+            "/edge/v1/drafts/active");
+        Assert.Equal(captured!.Draft!.DraftId, restored!.DraftId);
+        Assert.Single(restored.Lines);
+    }
+
     public async Task InitializeAsync()
     {
         var customerId = Guid.NewGuid();
         var priceChannelId = Guid.NewGuid();
+        var userId = Guid.NewGuid();
         var ids = new Dictionary<string, string?>
         {
             ["PosEdge:DatabasePath"] = _path,
@@ -352,7 +404,7 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
             ["PosEdge:BusinessId"] = Guid.NewGuid().ToString("D"),
             ["PosEdge:WarehouseId"] = Guid.NewGuid().ToString("D"),
             ["PosEdge:RegisterId"] = Guid.NewGuid().ToString("D"),
-            ["PosEdge:UserId"] = Guid.NewGuid().ToString("D"),
+            ["PosEdge:UserId"] = userId.ToString("D"),
             ["PosEdge:UserDisplayName"] = "Cajera de prueba",
             ["PosEdge:RegisterCode"] = "03",
             ["PosEdge:WarehouseAllowsNegativeStock"] = "true",
@@ -363,6 +415,7 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
             ["PosEdge:Permissions:0"] = "sales.create",
             ["PosEdge:Permissions:1"] = "sales.reprint",
             ["PosEdge:Permissions:2"] = "sales.void",
+            ["PosEdge:Permissions:3"] = "sales.discount",
             ["PosEdge:PrinterName"] = "Test printer",
             ["PosEdge:PaperWidthMillimeters"] = "80",
             ["PosEdge:Documents:SalesInvoice:SeriesId"] = Guid.NewGuid().ToString("D"),
@@ -401,6 +454,28 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
         _client.DefaultRequestHeaders.Add("X-Auraly-Edge-Session", Token);
 
         using var scope = _factory.Services.CreateScope();
+        var identities = scope.ServiceProvider.GetRequiredService<PosLocalIdentityStore>();
+        var password = PosOfflinePasswordHasher.Hash("Cashier-Password-1", DateTimeOffset.UtcNow);
+        await identities.ApplySnapshotAsync(new PosOfflineIdentitySnapshot(
+            "test-identity-revision",
+            DateTimeOffset.UtcNow,
+            DateTimeOffset.UtcNow.AddDays(1),
+            [
+                new PosOfflineUserProjection(
+                    userId,
+                    "cashier",
+                    "Cajera de prueba",
+                    ["sales.create", "sales.discount", "sales.reprint", "sales.void"],
+                    password)
+            ]));
+        var loginResponse = await _client.PostAsJsonAsync(
+            "/edge/v1/auth/login",
+            new PosLocalLoginRequest("cashier", "Cashier-Password-1"));
+        loginResponse.EnsureSuccessStatusCode();
+        var localSession = await loginResponse.Content.ReadFromJsonAsync<PosLocalUserSession>();
+        _userSessionToken = Assert.IsType<string>(localSession!.Token);
+        _client.DefaultRequestHeaders.Add("X-Auraly-User-Session", _userSessionToken);
+
         var store = scope.ServiceProvider.GetRequiredService<PosCatalogStore>();
         var product = new PosCatalogItem(
             Guid.NewGuid(), "P-1", "REF-1", "Product", "EA", "VAT19", 19m,

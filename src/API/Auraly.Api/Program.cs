@@ -1,6 +1,7 @@
 using Auraly.Api;
 using System.Security.Cryptography;
 using System.Text;
+using Auraly.Application.Authorization;
 using Auraly.Application.Catalog;
 using Auraly.Application.Cash;
 using Auraly.Application.DocumentProcessing;
@@ -85,6 +86,8 @@ builder.Services.AddScoped<IOnlineSalesHistoryStore, SqlOnlineSalesDraftStore>()
 builder.Services.AddScoped<OnlineSalesHistoryService>();
 builder.Services.AddScoped<ICashSessionStore, SqlCashSessionStore>();
 builder.Services.AddScoped<CashSessionService>();
+builder.Services.AddScoped<IPosOfflineIdentityStore, SqlPosOfflineIdentityStore>();
+builder.Services.AddScoped<PosOfflineIdentityService>();
 builder.Services.AddResponseCompression(options => options.EnableForHttps = true);
 
 var jwtIssuer = builder.Configuration["Authentication:Jwt:Issuer"];
@@ -157,6 +160,14 @@ builder.Services.AddAuthorization(options =>
             PosAuthenticationDefaults.PermissionClaim,
             PartyPermissionCodes.PosCustomerCreate);
     });
+    options.AddPolicy("pos.identity.sync", policy =>
+    {
+        policy.AuthenticationSchemes.Add(PosAuthenticationDefaults.Scheme);
+        policy.RequireAuthenticatedUser();
+        policy.RequireClaim(
+            PosAuthenticationDefaults.PermissionClaim,
+            CommercePermissionCodes.PosIdentitySync);
+    });
     options.AddPolicy(
         "pos.sales.upload",
         policy =>
@@ -181,6 +192,7 @@ app.MapOnlineRegisterApi();
 app.MapPosEnrollmentApi();
 app.MapOnlineSalesDraftApi();
 app.MapCashApi();
+app.MapPosIdentityApi();
 app.MapFiscalApi();
 app.MapPost(
         "/api/pos/v1/sales",

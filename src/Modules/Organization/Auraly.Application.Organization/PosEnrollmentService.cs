@@ -58,7 +58,8 @@ public sealed class PosEnrollmentService(
         CommercePermissionCodes.SalesVoid,
         CatalogPermissionCodes.Sync,
         FiscalPermissionCodes.PosStatusSync,
-        PartyPermissionCodes.PosCustomerCreate
+        PartyPermissionCodes.PosCustomerCreate,
+        CommercePermissionCodes.PosIdentitySync
     ];
 
     public async Task<PosEnrollmentAuthorization> AuthorizeAsync(

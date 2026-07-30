@@ -1,3 +1,4 @@
+using Auraly.Contracts.Authorization;
 using Microsoft.Extensions.Logging;
 using MimosBabySpa.Application.Auth.DTOs;
 using MimosBabySpa.Application.Auth.Interfaces;
@@ -69,6 +70,7 @@ public class AuthService : IAuthService
         }
 
         user.RecordSuccessfulLogin();
+        EnsureOfflinePasswordVerifier(user, request.Password);
         _unitOfWork.AppUsers.Update(user);
 
         var response = await BuildLoginResponseAsync(user, ipAddress, deviceInfo, ct);
@@ -223,6 +225,12 @@ public class AuthService : IAuthService
             throw new DomainValidationException("CurrentPassword", "La contraseña actual es incorrecta.");
 
         user.PasswordHash = _passwordHasher.Hash(request.NewPassword);
+        var offlinePassword = PosOfflinePasswordHasher.Hash(
+            request.NewPassword, DateTimeOffset.UtcNow);
+        user.PosOfflinePasswordSalt = offlinePassword.Salt;
+        user.PosOfflinePasswordHash = offlinePassword.Hash;
+        user.PosOfflinePasswordIterations = offlinePassword.Iterations;
+        user.PosOfflinePasswordChangedAt = offlinePassword.ChangedAt;
         user.UpdatedAt = DateTime.UtcNow;
         _unitOfWork.AppUsers.Update(user);
 
@@ -242,6 +250,25 @@ public class AuthService : IAuthService
             user.UserId, user.TenantId, user.Username, user.Email,
             user.FirstName, user.LastName, user.AvatarUrl,
             roles, permissions.ToList());
+    }
+
+    private static void EnsureOfflinePasswordVerifier(AppUser user, string password)
+    {
+        if (user.PosOfflinePasswordSalt is not null
+            && user.PosOfflinePasswordHash is not null
+            && user.PosOfflinePasswordIterations is not null
+            && user.PosOfflinePasswordChangedAt is not null)
+        {
+            return;
+        }
+
+        var offlinePassword = PosOfflinePasswordHasher.Hash(
+            password, DateTimeOffset.UtcNow);
+        user.PosOfflinePasswordSalt = offlinePassword.Salt;
+        user.PosOfflinePasswordHash = offlinePassword.Hash;
+        user.PosOfflinePasswordIterations = offlinePassword.Iterations;
+        user.PosOfflinePasswordChangedAt = offlinePassword.ChangedAt;
+        user.UpdatedAt = DateTime.UtcNow;
     }
 
     private async Task<LoginResponse> BuildLoginResponseAsync(

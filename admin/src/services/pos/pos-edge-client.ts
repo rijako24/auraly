@@ -212,10 +212,23 @@ export class PosEdgeError extends Error {
   }
 }
 
+export type PosLocalUserSession = {
+  sessionId: string;
+  userId: string;
+  username: string;
+  displayName: string;
+  permissions: string[];
+  expiresAt: string;
+  token: string | null;
+};
+
 export class PosEdgeClient implements PosClient {
   readonly mode = "edge" as const;
 
-  constructor(private readonly sessionToken: string) {}
+  constructor(
+    private readonly sessionToken: string,
+    private userSessionToken: string | null = null,
+  ) {}
 
   health() {
     return this.request<{
@@ -224,6 +237,25 @@ export class PosEdgeClient implements PosClient {
       registerCode: string;
       userDisplayName: string;
     }>("/edge/v1/health");
+  }
+
+  async login(username: string, password: string) {
+    const session = await this.request<PosLocalUserSession>("/edge/v1/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ username, password }),
+    });
+    if (!session.token) throw new PosEdgeError("La caja no devolvió una sesión local.", 500);
+    this.userSessionToken = session.token;
+    window.sessionStorage.setItem("auraly.pos.user-session", session.token);
+    return session;
+  }
+
+  async logout() {
+    if (this.userSessionToken) {
+      await this.requestVoid("/edge/v1/auth/logout", { method: "POST" });
+    }
+    this.userSessionToken = null;
+    window.sessionStorage.removeItem("auraly.pos.user-session");
   }
 
   searchProducts(search = "", skip = 0, take = 50) {
@@ -371,6 +403,9 @@ export class PosEdgeClient implements PosClient {
       headers: {
         "Content-Type": "application/json",
         "X-Auraly-Edge-Session": this.sessionToken,
+        ...(this.userSessionToken
+          ? { "X-Auraly-User-Session": this.userSessionToken }
+          : {}),
         ...init.headers,
       },
     });
@@ -395,6 +430,9 @@ export class PosEdgeClient implements PosClient {
       headers: {
         "Content-Type": "application/json",
         "X-Auraly-Edge-Session": this.sessionToken,
+        ...(this.userSessionToken
+          ? { "X-Auraly-User-Session": this.userSessionToken }
+          : {}),
         ...init.headers,
       },
     });
@@ -410,6 +448,10 @@ export class PosEdgeClient implements PosClient {
       throw new PosEdgeError(detail, response.status);
     }
   }
+}
+
+export function readEdgeUserSession(): string | null {
+  return window.sessionStorage.getItem("auraly.pos.user-session");
 }
 
 export function readEdgeTokenFromLaunch(): string | null {

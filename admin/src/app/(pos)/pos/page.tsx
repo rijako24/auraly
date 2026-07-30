@@ -8,6 +8,7 @@ import {
   Clock3,
   ClipboardList,
   Loader2,
+  LogOut,
   Percent,
   Printer,
   RotateCcw,
@@ -32,6 +33,7 @@ import {
   PosEdgeError,
   type PosClient,
   readEdgeTokenFromLaunch,
+  readEdgeUserSession,
 } from "@/services/pos/pos-edge-client";
 import { loadOnlineRegisterBootstrap } from "@/services/pos/online-pos-bootstrap";
 import {
@@ -50,6 +52,7 @@ import { PosCustomerSearchDialog } from "./pos-customer-search-dialog";
 import { PosDiscountDialog } from "./pos-discount-dialog";
 import { PosExitMenuButton } from "./pos-exit-menu-button";
 import { PosInvoiceSearchDialog } from "./pos-invoice-search-dialog";
+import { PosLocalLogin } from "./pos-local-login";
 import { PosOnlineSetup } from "./pos-online-setup";
 import { PosPaymentDialog } from "./pos-payment-dialog";
 import {
@@ -74,6 +77,8 @@ export default function PosPage() {
   const [onlineUserName, setOnlineUserName] = useState("");
   const [edgeEnrollmentToken, setEdgeEnrollmentToken] = useState<string | null>(null);
   const [edgeEnrollmentRequired, setEdgeEnrollmentRequired] = useState(false);
+  const [edgeLoginState, setEdgeLoginState] = useState<"preparing" | "required" | null>(null);
+  const [edgeLoginError, setEdgeLoginError] = useState<string | null>(null);
   const [setupLoading, setSetupLoading] = useState(true);
   const [setupError, setSetupError] = useState<string | null>(null);
   const [draft, setDraft] = useState<PosDraft | null>(null);
@@ -139,16 +144,29 @@ export default function PosPage() {
         let requiresEnrollment = false;
         if (edgeToken) {
           try {
-            const edgeClient = new PosEdgeClient(edgeToken);
+            const edgeClient = new PosEdgeClient(edgeToken, readEdgeUserSession());
             const health = await edgeClient.health();
             if (health.status !== "EnrollmentRequired") {
-              if (active) setClient(edgeClient);
+              if (active) {
+                setEdgeEnrollmentToken(edgeToken);
+                setServerConnected(health.serverConnected);
+                setWorkstation({
+                  registerCode: health.registerCode,
+                  userDisplayName: health.userDisplayName || "—",
+                });
+                setEdgeLoginState(
+                  health.status === "IdentitySynchronizing"
+                    ? "preparing"
+                    : health.status === "LoginRequired"
+                      ? "required"
+                      : null,
+                );
+                setClient(edgeClient);
+              }
               return;
             }
             requiresEnrollment = true;
-            if (active) {
-              setEdgeEnrollmentToken(edgeToken);
-            }
+            if (active) setEdgeEnrollmentToken(edgeToken);
           } catch {
             // If the host is absent, the connected web POS remains available.
           }
@@ -201,20 +219,34 @@ export default function PosPage() {
       checking = true;
       try {
         const health = await client.health();
+        if (active) {
+          setServerConnected(health.serverConnected);
+          setWorkstation({
+            registerCode: health.registerCode,
+            userDisplayName: health.userDisplayName || "—",
+          });
+        }
+        if (
+          client.mode === "edge" &&
+          (health.status === "IdentitySynchronizing" || health.status === "LoginRequired")
+        ) {
+          if (active) {
+            setEdgeReady(false);
+            setEdgeLoginState(
+              health.status === "IdentitySynchronizing" ? "preparing" : "required",
+            );
+          }
+          return;
+        }
         if (client.mode === "edge" && health.status === "Synchronizing") {
           if (active) {
             setEdgeReady(false);
+            setEdgeLoginState(null);
             setMessage("Sincronizando catálogo inicial…");
           }
           return;
         }
-        if (active) setServerConnected(health.serverConnected);
-        if (active) {
-          setWorkstation({
-            registerCode: health.registerCode,
-            userDisplayName: health.userDisplayName,
-          });
-        }
+        if (active && client.mode === "edge") setEdgeLoginState(null);
         if (!hydrated) {
           const [current, pending, numbers] = await Promise.all([
             client.activeDraft(),
@@ -234,11 +266,14 @@ export default function PosPage() {
           focusScanner();
         }
         if (active) setEdgeReady(true);
-      } catch {
+      } catch (caught) {
         hydrated = false;
         if (active) {
           setEdgeReady(false);
           setServerConnected(false);
+          if (client.mode === "edge" && caught instanceof PosEdgeError && caught.status === 401) {
+            setEdgeLoginState("required");
+          }
         }
       } finally {
         checking = false;
@@ -848,6 +883,44 @@ export default function PosPage() {
     }
   }
 
+  async function loginLocal(username: string, password: string) {
+    if (!(client instanceof PosEdgeClient) || !edgeEnrollmentToken) return;
+    setEdgeLoginError(null);
+    try {
+      const session = await client.login(username, password);
+      setWorkstation((current) => ({
+        ...current,
+        userDisplayName: session.displayName,
+      }));
+      setEdgeLoginState(null);
+      setClient(new PosEdgeClient(edgeEnrollmentToken, session.token));
+    } catch (caught) {
+      setEdgeLoginError(
+        caught instanceof Error ? caught.message : "No fue posible iniciar sesión en esta caja.",
+      );
+      throw caught;
+    }
+  }
+
+  async function logoutLocal() {
+    if (!(client instanceof PosEdgeClient) || busy) return;
+    try {
+      await client.logout();
+    } finally {
+      setDraft(null);
+      setTemporaries([]);
+      setSelectedCustomer(null);
+      setSelectedLineId(null);
+      setNextNumber(null);
+      setEdgeReady(false);
+      setEdgeLoginError(null);
+      setEdgeLoginState("required");
+      if (edgeEnrollmentToken) {
+        setClient(new PosEdgeClient(edgeEnrollmentToken));
+      }
+    }
+  }
+
   function changeOnlineRegister() {
     if (client?.mode !== "online" || busy) return;
     forgetOnlineRegister();
@@ -859,6 +932,18 @@ export default function PosPage() {
     setNextNumber(null);
     setEdgeReady(false);
     setServerConnected(false);
+  }
+
+  if (client instanceof PosEdgeClient && edgeLoginState) {
+    return (
+      <PosLocalLogin
+        registerCode={workstation.registerCode}
+        serverConnected={serverConnected}
+        preparing={edgeLoginState === "preparing"}
+        error={edgeLoginError}
+        onLogin={loginLocal}
+      />
+    );
   }
 
   if (!client) {
@@ -898,6 +983,18 @@ export default function PosPage() {
               aria-label="Cambiar caja"
             >
               <Settings2 className="h-4 w-4" />
+            </button>
+          )}
+          {client.mode === "edge" && (
+            <button
+              type="button"
+              onClick={() => void logoutLocal()}
+              disabled={busy}
+              title="Cambiar cajero"
+              className="grid h-8 w-8 place-items-center rounded-lg border border-white/10 text-auraly-secondary transition hover:bg-white/10 hover:text-white disabled:opacity-40"
+              aria-label="Cerrar sesión del cajero"
+            >
+              <LogOut className="h-4 w-4" />
             </button>
           )}
           <span className="h-4 w-px bg-white/20" aria-hidden="true" />
