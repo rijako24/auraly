@@ -16,6 +16,33 @@ No se pregunta al cajero el modo en cada inicio y no se cambia de persistencia a
 mitad de una factura. La ausencia de Internet no se confunde con la ausencia de
 POS Edge.
 
+## Login y destino inicial
+
+La PWA siempre abre un login. No existe una entrada anónima por estar enrolada y
+el cierre de caja no controla la visibilidad del resto de Auraly.
+
+| Estado del equipo | Autenticación | Destino inicial | Otros módulos |
+|---|---|---|---|
+| No enrolado, en línea | Servidor y cookie HttpOnly | Shell normal de Auraly | Según permisos |
+| No enrolado, sin red | No disponible | Pantalla de conexión | No disponibles |
+| Enrolado, en línea | Servidor; refresca el verificador local | POS si tiene `sales.create` | Disponibles según permisos |
+| Enrolado, sin red | Verificador local del dispositivo | POS | Visibles pero deshabilitados si requieren servidor |
+
+El usuario puede abrir el lanzador desde el POS sin entregar ni cerrar la caja.
+Si regresa a Facturación, reanuda la sesión física y el turno que continúen
+vigentes. `Cerrar caja` termina `CashSession`, pero conserva la sesión
+autenticada y permite seguir navegando.
+
+Varios usuarios online pueden operar simultáneamente el mismo `RegisterId` desde
+computadores diferentes. Comparten la sesión física y la numeración, pero cada
+venta conserva su cajero y turno. Una instalación POS Edge sí mantiene un solo
+usuario local activo por dispositivo; cambiarlo reemplaza únicamente el lease de
+esa estación y no expulsa a usuarios online ni a otros equipos.
+
+No se descargan hashes de las contraseñas principales. El login offline usa
+identidades POS previamente autorizadas y un verificador por dispositivo,
+cifrado, revocable y con vigencia.
+
 ## Selección inicial
 
 Sin una sesión local de Edge, Facturación usa la sesión web autenticada. Si no hay
@@ -43,9 +70,16 @@ posteriores ocurren en segundo plano.
 
 ## Concurrencia y numeración
 
-El navegador obtiene consecutivos operativos y fiscales dentro de la transacción
-de emisión del servidor. Edge consume rangos previamente reservados. Un rango
-offline no puede ser consumido simultáneamente por el servidor.
+El navegador obtiene consecutivos operativos y fiscales dentro de una transacción
+atómica de emisión. Dos usuarios pueden confirmar sobre la misma caja: el primero
+que adquiere el cursor recibe N y el siguiente N+1. El navegador no posee ni
+reserva el número mostrado antes de confirmar, y solo imprime después de recibir
+el documento persistido con CUFE.
+
+Edge consume rangos previamente reservados. Un rango offline no puede ser
+consumido simultáneamente por el servidor. Los números confirmados no se reciclan
+después de timeouts o errores; se consulta el documento por su `DocumentId` e
+idempotency key.
 
 La caja configurada es una entidad de negocio; el dispositivo es otra entidad.
 Una venta conserva su origen (`OnlineUser` o `EdgeDevice`) y el actor que la

@@ -32,6 +32,9 @@ CREATE TABLE [dbo].[SalesDocuments]
     [ReceivedAt] DATETIMEOFFSET(7) NOT NULL,
     [ProcessedAt] DATETIMEOFFSET(7) NULL,
     [CreatedByDeviceId] UNIQUEIDENTIFIER NOT NULL,
+    [SoldByUserId] UNIQUEIDENTIFIER NULL,
+    [CashSessionId] UNIQUEIDENTIFIER NULL,
+    [CashierShiftId] UNIQUEIDENTIFIER NULL,
     [RowVersion] ROWVERSION NOT NULL,
     CONSTRAINT [PK_SalesDocuments] PRIMARY KEY CLUSTERED ([DocumentId]),
     CONSTRAINT [FK_SalesDocuments_Businesses] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses] ([BusinessId]),
@@ -42,6 +45,11 @@ CREATE TABLE [dbo].[SalesDocuments]
     CONSTRAINT [FK_SalesDocuments_DocumentSeries] FOREIGN KEY ([DocumentSeriesId]) REFERENCES [dbo].[DocumentSeries] ([DocumentSeriesId]),
     CONSTRAINT [FK_SalesDocuments_FiscalSeries] FOREIGN KEY ([FiscalSeriesId]) REFERENCES [dbo].[FiscalSeries] ([SeriesId]),
     CONSTRAINT [FK_SalesDocuments_FiscalAuthorizations] FOREIGN KEY ([FiscalAuthorizationId]) REFERENCES [dbo].[FiscalAuthorizations] ([FiscalAuthorizationId]),
+    CONSTRAINT [FK_SalesDocuments_SoldByUser] FOREIGN KEY ([SoldByUserId]) REFERENCES [dbo].[AppUsers] ([UserId]),
+    CONSTRAINT [FK_SalesDocuments_CashSession] FOREIGN KEY ([CashSessionId]) REFERENCES [dbo].[CashSessions] ([CashSessionId]),
+    CONSTRAINT [FK_SalesDocuments_CashierShift]
+        FOREIGN KEY ([CashSessionId],[CashierShiftId])
+        REFERENCES [dbo].[CashierShifts] ([CashSessionId],[CashierShiftId]),
     CONSTRAINT [UQ_SalesDocuments_Business_Document] UNIQUE ([BusinessId], [DocumentId]),
     CONSTRAINT [UQ_SalesDocuments_Business_Idempotency] UNIQUE ([BusinessId], [IdempotencyKey]),
     CONSTRAINT [FK_SalesDocuments_Customers] FOREIGN KEY ([CustomerId]) REFERENCES [dbo].[Customers] ([CustomerId]),
@@ -67,5 +75,10 @@ GO
 CREATE INDEX [IX_SalesDocuments_Business_Customer_Issued]
     ON [dbo].[SalesDocuments] ([BusinessId], [CustomerId], [IssuedAt])
     WHERE [CustomerId] IS NOT NULL;
+
+GO
+
+CREATE INDEX [IX_SalesDocuments_Register_Cashier_Issued]
+    ON [dbo].[SalesDocuments] ([RegisterId],[CashSessionId],[CashierShiftId],[SoldByUserId],[IssuedAt]);
 
 GO

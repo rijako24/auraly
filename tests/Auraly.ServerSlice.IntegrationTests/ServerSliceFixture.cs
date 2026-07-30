@@ -25,6 +25,11 @@ public sealed record SalesDocumentTaxSummary(
     decimal TaxAmount,
     decimal TotalAmount);
 
+public sealed record SalesCashResponsibility(
+    Guid SoldByUserId,
+    Guid CashSessionId,
+    Guid CashierShiftId);
+
 [CollectionDefinition(Name, DisableParallelization = true)]
 public sealed class ServerSliceCollection : ICollectionFixture<ServerSliceFixture>
 {
@@ -130,6 +135,31 @@ public sealed class ServerSliceFixture : IAsyncLifetime
         return client;
     }
 
+    public HttpClient CreateUserClient(Guid userId, params string[] permissions)
+    {
+        var claims = new List<Claim>
+        {
+            new(JwtRegisteredClaimNames.Sub, userId.ToString("D")),
+            new(ClaimTypes.NameIdentifier, userId.ToString("D")),
+            new("tenant_id", TenantId.ToString("D")),
+            new("business_id", BusinessId.ToString("D"))
+        };
+        claims.AddRange(permissions.Select(
+            permission => new Claim("permission", permission)));
+        var token = new JwtSecurityToken(
+            JwtIssuer,
+            JwtAudience,
+            claims,
+            expires: DateTime.UtcNow.AddMinutes(10),
+            signingCredentials: new SigningCredentials(
+                new SymmetricSecurityKey(Encoding.UTF8.GetBytes(JwtSigningKey)),
+                SecurityAlgorithms.HmacSha256));
+        var client = CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue(
+            "Bearer", new JwtSecurityTokenHandler().WriteToken(token));
+        return client;
+    }
+
     public async Task DisposeAsync()
     {
         _factory?.Dispose();
@@ -193,6 +223,7 @@ public sealed class ServerSliceFixture : IAsyncLifetime
             WarehouseId,
             RegisterId,
             DeviceId,
+            UserId,
             documentId ?? Guid.NewGuid(),
             new PosSaleDocumentNumberContract(
                 DocumentSeriesId,
@@ -328,6 +359,30 @@ public sealed class ServerSliceFixture : IAsyncLifetime
         return rows;
     }
 
+    public async Task<SalesCashResponsibility> GetSalesCashResponsibilityAsync(
+        Guid documentId)
+    {
+        await using var connection = new SqlConnection(ConnectionString);
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT SoldByUserId,CashSessionId,CashierShiftId
+            FROM dbo.SalesDocuments
+            WHERE DocumentId=@DocumentId;
+            """;
+        command.Parameters.AddWithValue("@DocumentId", documentId);
+        await using var reader = await command.ExecuteReaderAsync();
+        if (!await reader.ReadAsync())
+        {
+            throw new InvalidOperationException("The sales document was not found.");
+        }
+
+        return new SalesCashResponsibility(
+            reader.GetGuid(0),
+            reader.GetGuid(1),
+            reader.GetGuid(2));
+    }
+
     public async Task<int> CountAsync(string table, Guid documentId)
     {
         var allowed = new HashSet<string>(StringComparer.Ordinal)
@@ -340,6 +395,7 @@ public sealed class ServerSliceFixture : IAsyncLifetime
             "FiscalDocumentProcesses",
             "DocumentProcessingReceipts",
             "InventoryMovements",
+            "CashMovements",
             "ServerOutboxMessages"
         };
         if (!allowed.Contains(table))
@@ -401,6 +457,13 @@ public sealed class ServerSliceFixture : IAsyncLifetime
             VALUES
             (@BusinessId, @TenantId, N'Auraly Commerce E2E', N'Integration test',
              N'Bogota', N'3000000000', @BusinessEmail, N'https://auraly.test', 1, SYSUTCDATETIME());
+
+            INSERT dbo.AppUsers
+              (UserId,TenantId,Username,NormalizedUsername,Email,NormalizedEmail,
+               FirstName,LastName,IsActive,CreatedAt)
+            VALUES
+              (@UserId,@TenantId,@Username,@NormalizedUsername,@UserEmail,@NormalizedUserEmail,
+               N'Cajero',N'E2E',1,SYSUTCDATETIME());
 
             INSERT INTO dbo.BusinessLocations
             (LocationId, BusinessId, Code, Name, IsActive, CreatedAt)
@@ -481,6 +544,11 @@ public sealed class ServerSliceFixture : IAsyncLifetime
         command.Parameters.AddWithValue("@TenantEmail", $"e2e-{TenantId:N}@auraly.test");
         command.Parameters.AddWithValue("@BusinessId", BusinessId);
         command.Parameters.AddWithValue("@BusinessEmail", $"e2e-{BusinessId:N}@auraly.test");
+        command.Parameters.AddWithValue("@UserId", UserId);
+        command.Parameters.AddWithValue("@Username", $"cashier-{UserId:N}");
+        command.Parameters.AddWithValue("@NormalizedUsername", $"CASHIER-{UserId:N}".ToUpperInvariant());
+        command.Parameters.AddWithValue("@UserEmail", $"cashier-{UserId:N}@auraly.test");
+        command.Parameters.AddWithValue("@NormalizedUserEmail", $"CASHIER-{UserId:N}@AURALY.TEST");
         command.Parameters.AddWithValue("@LocationId", LocationId);
         command.Parameters.AddWithValue("@WarehouseId", WarehouseId);
         command.Parameters.AddWithValue("@RegisterId", RegisterId);

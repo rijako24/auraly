@@ -7,12 +7,22 @@ using Microsoft.Data.SqlClient;
 
 namespace Auraly.Infrastructure.Persistence;
 
-public sealed class SqlPosSaleDocumentHandler(
-    SqlDocumentProcessingSessionAccessor sessions,
-    IAuralyIdGenerator idGenerator,
-    TimeProvider timeProvider)
-    : IConfirmedDocumentHandler
+public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandler
 {
+    private readonly SqlDocumentProcessingSessionAccessor _sessions;
+    private readonly IAuralyIdGenerator _idGenerator;
+    private readonly TimeProvider _timeProvider;
+
+    public SqlPosSaleDocumentHandler(
+        SqlDocumentProcessingSessionAccessor sessions,
+        IAuralyIdGenerator idGenerator,
+        TimeProvider timeProvider)
+    {
+        _sessions = sessions;
+        _idGenerator = idGenerator;
+        _timeProvider = timeProvider;
+    }
+
     public string DocumentType => PosSaleDocumentTypes.Invoice;
 
     public async Task HandleAsync(
@@ -27,18 +37,22 @@ public sealed class SqlPosSaleDocumentHandler(
             throw new InvalidOperationException("The confirmed document envelope does not match its payload.");
         }
 
-        var session = sessions.Current;
+        var session = _sessions.Current;
+        var cashResponsibility = await EnsureCashResponsibilityAsync(
+            session, request, cancellationToken);
         foreach (var line in request.Lines.OrderBy(line => line.LineNumber))
         {
             await InsertLineAsync(session, request, line, cancellationToken);
             await InsertInventoryMovementAsync(session, request, line, cancellationToken);
         }
 
-        await InsertTaxSummariesAsync(session, request, timeProvider.GetUtcNow(), cancellationToken);
+        await InsertTaxSummariesAsync(session, request, _timeProvider.GetUtcNow(), cancellationToken);
 
         foreach (var payment in request.Payments.OrderBy(payment => payment.PaymentNumber))
         {
             await InsertPaymentAsync(session, request, payment, cancellationToken);
+            await InsertCashMovementAsync(
+                session, request, payment, cashResponsibility, cancellationToken);
         }
 
         await InsertOutboxAsync(session, request, document.Payload, cancellationToken);
@@ -138,7 +152,7 @@ public sealed class SqlPosSaleDocumentHandler(
             );
             """;
         await using var command = new SqlCommand(sql, session.Connection, session.Transaction);
-        command.Parameters.AddWithValue("@InventoryMovementId", idGenerator.NewId());
+        command.Parameters.AddWithValue("@InventoryMovementId", _idGenerator.NewId());
         command.Parameters.AddWithValue("@BusinessId", request.BusinessId);
         command.Parameters.AddWithValue("@WarehouseId", request.WarehouseId);
         command.Parameters.AddWithValue("@DocumentId", request.DocumentId);
@@ -146,7 +160,7 @@ public sealed class SqlPosSaleDocumentHandler(
         command.Parameters.AddWithValue("@ProductId", line.ProductId);
         AddDecimal(command, "@QuantityChange", -line.Quantity, 19, 6);
         command.Parameters.AddWithValue("@OccurredAt", request.FiscalSnapshot.IssuedAt);
-        command.Parameters.AddWithValue("@CreatedAt", timeProvider.GetUtcNow());
+        command.Parameters.AddWithValue("@CreatedAt", _timeProvider.GetUtcNow());
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
@@ -195,11 +209,11 @@ public sealed class SqlPosSaleDocumentHandler(
             );
             """;
         await using var command = new SqlCommand(sql, session.Connection, session.Transaction);
-        command.Parameters.AddWithValue("@MessageId", idGenerator.NewId());
+        command.Parameters.AddWithValue("@MessageId", _idGenerator.NewId());
         command.Parameters.AddWithValue("@DocumentId", request.DocumentId);
         command.Parameters.AddWithValue("@Type", "sales.invoice.processed");
         command.Parameters.AddWithValue("@Payload", payload);
-        command.Parameters.AddWithValue("@OccurredAt", timeProvider.GetUtcNow());
+        command.Parameters.AddWithValue("@OccurredAt", _timeProvider.GetUtcNow());
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
@@ -220,7 +234,7 @@ public sealed class SqlPosSaleDocumentHandler(
         await using var command = new SqlCommand(sql, session.Connection, session.Transaction);
         command.Parameters.AddWithValue("@DocumentId", request.DocumentId);
         command.Parameters.AddWithValue("@BusinessId", request.BusinessId);
-        command.Parameters.AddWithValue("@ProcessedAt", timeProvider.GetUtcNow());
+        command.Parameters.AddWithValue("@ProcessedAt", _timeProvider.GetUtcNow());
         if (await command.ExecuteNonQueryAsync(cancellationToken) != 1)
         {
             throw new DBConcurrencyException("The sale document could not be marked as processed.");

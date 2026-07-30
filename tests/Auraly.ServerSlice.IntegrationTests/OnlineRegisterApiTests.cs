@@ -16,7 +16,9 @@ public sealed class OnlineRegisterApiTests(ServerSliceFixture fixture)
         var options = await client.GetFromJsonAsync<OnlineRegisterOption[]>(
             "/api/commerce/v1/pos/register-context/options");
 
-        Assert.Equal(2, options!.Length);
+        Assert.NotNull(options);
+        Assert.Equal(
+            options.Length, options.Select(value => value.RegisterId).Distinct().Count());
         var edge = Assert.Single(options, value => value.RegisterId == fixture.RegisterId);
         Assert.True(edge.HasActiveEdgeEnrollment);
         var option = Assert.Single(

@@ -11,4 +11,9 @@ public static class CommercePermissionCodes
     public const string SalesVoid = "sales.void";
     public const string SalesReturn = "sales.return";
     public const string CashCount = "cash.count";
+    public const string CashRead = "cash.read";
+    public const string CashOpen = "cash.open";
+    public const string CashHandoffApprove = "cash.handoff.approve";
+    public const string CashClose = "cash.close";
+    public const string SupervisorCredentialsManage = "security.supervisor-credentials.manage";
 }

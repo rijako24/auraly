@@ -5,6 +5,7 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="BCrypt.Net-Next" Version="4.0.3" />
     <PackageReference Include="Microsoft.Data.SqlClient" Version="5.2.2" />
     <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" Version="8.0.0" />
   </ItemGroup>
@@ -24,6 +25,9 @@
     <ProjectReference Include="..\..\Modules\Parties\Auraly.Contracts.Parties\Auraly.Contracts.Parties.csproj" />
     <ProjectReference Include="..\..\Modules\Organization\Auraly.Application.Organization\Auraly.Application.Organization.csproj" />
     <ProjectReference Include="..\..\Modules\Organization\Auraly.Contracts.Organization\Auraly.Contracts.Organization.csproj" />
+    <ProjectReference Include="..\..\Modules\Cash\Auraly.Application.Cash\Auraly.Application.Cash.csproj" />
+    <ProjectReference Include="..\..\Modules\Cash\Auraly.Contracts.Cash\Auraly.Contracts.Cash.csproj" />
+    <ProjectReference Include="..\..\Modules\Cash\Auraly.Domain.Cash\Auraly.Domain.Cash.csproj" />
   </ItemGroup>
 </Project>
 

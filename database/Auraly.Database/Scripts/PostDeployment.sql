@@ -50,6 +50,7 @@
 :r .\Seeds\SeedServiceCategoriesForNewBusinesses.sql
 :r .\Migrations\MigrateIniciacionJardinService2026.sql
 :r .\Migrations\MigrateBabySpaServiceKeywords2026.sql
+:r .\Seeds\SeedCommerceCashPermissions.sql
 :r .\Seeds\SeedBillingPlans.sql
 :r .\Seeds\SeedRadaConcept.sql
 :r .\Seeds\SeedAuraly.sql

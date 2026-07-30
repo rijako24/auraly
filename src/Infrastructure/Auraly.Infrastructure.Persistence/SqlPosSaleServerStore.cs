@@ -21,6 +21,10 @@ public sealed class SqlPosSaleServerStore(
             FROM dbo.FiscalSeries s
             INNER JOIN dbo.FiscalAuthorizations a
                 ON a.FiscalAuthorizationId = s.FiscalAuthorizationId
+            INNER JOIN dbo.Businesses b
+                ON b.BusinessId = s.BusinessId
+            INNER JOIN dbo.AppUsers u
+                ON u.UserId = @SoldByUserId
             INNER JOIN dbo.DocumentSeries ds
                 ON ds.DocumentSeriesId = @DocumentSeriesId
             INNER JOIN dbo.CashRegisters r
@@ -31,6 +35,10 @@ public sealed class SqlPosSaleServerStore(
                 ON d.RegisterId = r.RegisterId
             WHERE s.SeriesId = @SeriesId
               AND a.FiscalAuthorizationId = @FiscalAuthorizationId
+              AND b.TenantId = @TenantId
+              AND b.IsActive = 1
+              AND u.TenantId = b.TenantId
+              AND u.IsActive = 1
               AND s.BusinessId = @BusinessId
               AND r.LocationId = @LocationId
               AND r.WarehouseId = @WarehouseId
@@ -72,6 +80,8 @@ public sealed class SqlPosSaleServerStore(
         command.Parameters.AddWithValue("@DocumentSeriesCode", request.DocumentNumber.SeriesCode);
         command.Parameters.AddWithValue("@DocumentConsecutive", request.DocumentNumber.Consecutive);
         command.Parameters.AddWithValue("@FiscalAuthorizationId", snapshot.FiscalAuthorizationId);
+        command.Parameters.AddWithValue("@TenantId", request.TenantId);
+        command.Parameters.AddWithValue("@SoldByUserId", request.SoldByUserId);
         command.Parameters.AddWithValue("@BusinessId", request.BusinessId);
         command.Parameters.AddWithValue("@LocationId", request.LocationId);
         command.Parameters.AddWithValue("@WarehouseId", request.WarehouseId);
@@ -224,7 +234,7 @@ public sealed class SqlPosSaleServerStore(
                 FiscalPrefix, FiscalConsecutive, IssuedAt, CustomerIdentification, CustomerId,
                 UntaxedAmount, TaxAmount, PayableAmount, CufeReceived,
                 CufeCalculated, FiscalStatus, ProcessingStatus, ReceivedAt,
-                CreatedByDeviceId
+                CreatedByDeviceId, SoldByUserId
             )
             VALUES
             (
@@ -236,7 +246,7 @@ public sealed class SqlPosSaleServerStore(
                 @FiscalPrefix, @FiscalConsecutive, @IssuedAt, @CustomerIdentification, @CustomerId,
                 @UntaxedAmount, @TaxAmount, @PayableAmount, @CufeReceived,
                 @CufeCalculated, @FiscalStatus, @ProcessingStatus, @ReceivedAt,
-                @DeviceId
+                @DeviceId, @SoldByUserId
             );
             """;
         var request = command.Request;
@@ -249,6 +259,7 @@ public sealed class SqlPosSaleServerStore(
         sqlCommand.Parameters.AddWithValue("@RegisterId", request.RegisterId);
         sqlCommand.Parameters.AddWithValue("@DeviceId", request.DeviceId);
         sqlCommand.Parameters.AddWithValue("@DocumentSeriesId", request.DocumentNumber.SeriesId);
+        sqlCommand.Parameters.AddWithValue("@SoldByUserId", request.SoldByUserId);
         sqlCommand.Parameters.AddWithValue("@DocumentNumber", request.DocumentNumber.FullNumber);
         sqlCommand.Parameters.AddWithValue("@DocumentPrefix", request.DocumentNumber.Prefix);
         sqlCommand.Parameters.AddWithValue("@DocumentSeriesCode", request.DocumentNumber.SeriesCode);

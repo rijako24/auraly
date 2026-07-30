@@ -2,6 +2,7 @@ using Auraly.Api;
 using System.Security.Cryptography;
 using System.Text;
 using Auraly.Application.Catalog;
+using Auraly.Application.Cash;
 using Auraly.Application.DocumentProcessing;
 using Auraly.Application.Fiscal;
 using Auraly.Application.Parties;
@@ -74,6 +75,8 @@ builder.Services.AddScoped<PartyService>();
 builder.Services.AddScoped<GeographyService>();
 builder.Services.AddScoped<IOnlineRegisterDirectory, SqlOnlineRegisterDirectory>();
 builder.Services.AddScoped<OnlineRegisterService>();
+builder.Services.AddScoped<ICashSessionStore, SqlCashSessionStore>();
+builder.Services.AddScoped<CashSessionService>();
 builder.Services.AddResponseCompression(options => options.EnableForHttps = true);
 
 var jwtIssuer = builder.Configuration["Authentication:Jwt:Issuer"];
@@ -167,6 +170,7 @@ app.MapCatalogApi();
 app.MapPartyApi();
 app.MapPartyUserAccountApi();
 app.MapOnlineRegisterApi();
+app.MapCashApi();
 app.MapFiscalApi();
 app.MapPost(
         "/api/pos/v1/sales",

@@ -96,10 +96,13 @@
     <Build Include="Tables\DocumentSeries.sql" />
     <Build Include="Tables\FiscalAuthorizations.sql" />
     <Build Include="Tables\FiscalSeries.sql" />
+    <Build Include="Tables\CashSessions.sql" />
+    <Build Include="Tables\SupervisorAuthorizations.sql" />
     <Build Include="Tables\SalesDocuments.sql" />
     <Build Include="Tables\SalesDocumentLines.sql" />
     <Build Include="Tables\SalesDocumentTaxSummaries.sql" />
     <Build Include="Tables\SalesPayments.sql" />
+    <Build Include="Tables\CashOperations.sql" />
     <Build Include="Tables\FiscalSnapshots.sql" />
     <Build Include="Tables\FiscalIssuerConfigurations.sql" />
     <Build Include="Tables\FiscalDocumentProcesses.sql" />

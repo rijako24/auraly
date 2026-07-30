@@ -33,10 +33,15 @@ public sealed class ServerSliceApiTests(ServerSliceFixture fixture)
         Assert.Equal(1, await fixture.CountAsync("SalesDocumentLines", request.DocumentId));
         Assert.Equal(1, await fixture.CountAsync("SalesDocumentTaxSummaries", request.DocumentId));
         Assert.Equal(1, await fixture.CountAsync("SalesPayments", request.DocumentId));
+        Assert.Equal(1, await fixture.CountAsync("CashMovements", request.DocumentId));
         Assert.Equal(1, await fixture.CountAsync("InventoryMovements", request.DocumentId));
         Assert.Equal(1, await fixture.CountAsync("ServerOutboxMessages", request.DocumentId));
         Assert.Equal(1, await fixture.CountAsync("DocumentProcessingReceipts", request.DocumentId));
         Assert.Equal(1, await fixture.CountAsync("FiscalDocumentProcesses", request.DocumentId));
+        var responsibility = await fixture.GetSalesCashResponsibilityAsync(request.DocumentId);
+        Assert.Equal(fixture.UserId, responsibility.SoldByUserId);
+        Assert.NotEqual(Guid.Empty, responsibility.CashSessionId);
+        Assert.NotEqual(Guid.Empty, responsibility.CashierShiftId);
         foreach (var response in responses)
         {
             response.Dispose();

@@ -757,6 +757,7 @@ public sealed class PosEdgeSaleStore
             command.Register.WarehouseId.Value,
             command.Register.RegisterId.Value,
             command.DeviceId,
+            command.UserId.Value,
             command.DocumentId.Value,
             new PosSaleDocumentNumberContract(
                 documentNumber.SeriesId,

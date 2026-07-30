@@ -130,6 +130,7 @@ public sealed record PosSaleUploadRequest(
     Guid WarehouseId,
     Guid RegisterId,
     Guid DeviceId,
+    Guid SoldByUserId,
     Guid DocumentId,
     PosSaleDocumentNumberContract DocumentNumber,
     PosSaleFiscalSnapshotContract FiscalSnapshot,

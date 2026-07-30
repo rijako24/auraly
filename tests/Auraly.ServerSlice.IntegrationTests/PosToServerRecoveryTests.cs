@@ -24,7 +24,7 @@ public sealed class PosToServerRecoveryTests(ServerSliceFixture fixture)
             $"auraly-pos-server-e2e-{Guid.NewGuid():N}.db");
         try
         {
-            var userId = new UserId(Guid.NewGuid());
+            var userId = new UserId(fixture.UserId);
             var register = new RegisterContext(
                 new TenantId(fixture.TenantId),
                 new BusinessId(fixture.BusinessId),
