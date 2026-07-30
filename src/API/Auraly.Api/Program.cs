@@ -75,6 +75,8 @@ builder.Services.AddScoped<PartyService>();
 builder.Services.AddScoped<GeographyService>();
 builder.Services.AddScoped<IOnlineRegisterDirectory, SqlOnlineRegisterDirectory>();
 builder.Services.AddScoped<OnlineRegisterService>();
+builder.Services.AddScoped<IOnlineSalesDraftStore, SqlOnlineSalesDraftStore>();
+builder.Services.AddScoped<OnlineSalesDraftService>();
 builder.Services.AddScoped<ICashSessionStore, SqlCashSessionStore>();
 builder.Services.AddScoped<CashSessionService>();
 builder.Services.AddResponseCompression(options => options.EnableForHttps = true);
@@ -170,6 +172,7 @@ app.MapCatalogApi();
 app.MapPartyApi();
 app.MapPartyUserAccountApi();
 app.MapOnlineRegisterApi();
+app.MapOnlineSalesDraftApi();
 app.MapCashApi();
 app.MapFiscalApi();
 app.MapPost(
