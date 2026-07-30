@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using Auraly.Application.Organization;
+using Auraly.Contracts.Authorization;
 using Auraly.Contracts.Organization;
 
 namespace Auraly.Api;
@@ -16,7 +17,10 @@ public static class OnlineRegisterApi
             await Handle(async () => Results.Ok(new OnlineRegisterBootstrap(
                 context.User.PosUserDisplayName(),
                 await service.ListAsync(
-                    context.User.ToOnlineRegisterUserIdentity(), ct)))));
+                    context.User.ToOnlineRegisterUserIdentity(), ct),
+                context.User.FindAll("permission").Any(claim =>
+                    StringComparer.Ordinal.Equals(
+                        claim.Value, CommercePermissionCodes.PosDevicesEnroll))))));
 
         group.MapGet("/options", async (
             HttpContext context, OnlineRegisterService service, CancellationToken ct) =>

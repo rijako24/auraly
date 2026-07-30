@@ -52,6 +52,7 @@ public sealed class OnlineRegisterApiTests(ServerSliceFixture fixture)
 
         Assert.NotNull(bootstrap);
         Assert.Equal("Cajero de pruebas", bootstrap.UserDisplayName);
+        Assert.False(bootstrap.CanEnrollPosDevice);
         Assert.Contains(
             bootstrap.Options,
             option =>
@@ -86,7 +87,7 @@ public sealed class OnlineRegisterApiTests(ServerSliceFixture fixture)
     }
 
     [Fact]
-    public async Task Register_with_active_edge_enrollment_cannot_be_selected_online()
+    public async Task Register_with_active_edge_enrollment_can_also_be_used_online()
     {
         using var client = fixture.CreateAdminClient(CommercePermissionCodes.SalesCreate);
         using var response = await client.PostAsJsonAsync(
@@ -96,6 +97,8 @@ public sealed class OnlineRegisterApiTests(ServerSliceFixture fixture)
                 fixture.LocationId,
                 fixture.RegisterId));
 
-        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        response.EnsureSuccessStatusCode();
+        var selected = await response.Content.ReadFromJsonAsync<OnlineRegisterContext>();
+        Assert.Equal(fixture.RegisterId, selected!.RegisterId);
     }
 }
