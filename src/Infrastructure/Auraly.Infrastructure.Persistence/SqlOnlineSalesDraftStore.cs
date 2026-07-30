@@ -12,7 +12,7 @@ namespace Auraly.Infrastructure.Persistence;
 public sealed partial class SqlOnlineSalesDraftStore(
     SqlServerConnectionFactory connections,
     IAuralyIdGenerator ids,
-    TimeProvider time) : IOnlineSalesDraftStore
+    TimeProvider time) : IOnlineSalesDraftStore, IOnlineSalesCheckoutStore
 {
     public async Task<OnlineSalesDraft> GetOrCreateActiveAsync(
         OnlineSalesUserIdentity user,

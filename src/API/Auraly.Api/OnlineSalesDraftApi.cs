@@ -137,6 +137,20 @@ public static class OnlineSalesDraftApi
                 context.User.ToOnlineSalesUserIdentity(),
                 draftId, request, IdempotencyKey(context), ct)));
 
+
+        group.MapPost("/{draftId:guid}/complete", async (
+            HttpContext context,
+            Guid draftId,
+            CompleteOnlineSalesDraftRequest request,
+            OnlineSalesCheckoutService service,
+            CancellationToken ct) =>
+            await Handle(() => service.CompleteAsync(
+                context.User.ToOnlineSalesUserIdentity(),
+                draftId,
+                request,
+                IdempotencyKey(context),
+                ct)));
+
         group.MapPost("/{draftId:guid}/reset", async (
             HttpContext context,
             Guid draftId,
@@ -180,6 +194,30 @@ public static class OnlineSalesDraftApi
                 exception.Message,
                 statusCode: StatusCodes.Status409Conflict,
                 title: "SalesDraftIdempotencyConflict");
+        }
+        catch (PosSaleForbiddenException exception)
+        {
+            return Results.Problem(
+                exception.Message, statusCode: StatusCodes.Status403Forbidden);
+        }
+        catch (PosSaleInvalidException exception)
+        {
+            return Results.Problem(
+                exception.Message, statusCode: StatusCodes.Status400BadRequest);
+        }
+        catch (PosSaleIdempotencyConflictException exception)
+        {
+            return Results.Problem(
+                exception.Message,
+                statusCode: StatusCodes.Status409Conflict,
+                title: "DocumentIdempotencyConflict");
+        }
+        catch (PosSaleProcessingBusyException exception)
+        {
+            return Results.Problem(
+                exception.Message,
+                statusCode: StatusCodes.Status409Conflict,
+                title: "DocumentProcessingBusy");
         }
     }
 }

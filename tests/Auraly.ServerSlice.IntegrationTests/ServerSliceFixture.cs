@@ -69,6 +69,8 @@ public sealed class ServerSliceFixture : IAsyncLifetime
     public Guid ProductId { get; } = Guid.NewGuid();
     public Guid DocumentSeriesId { get; } = Guid.NewGuid();
     public Guid SeriesId { get; } = Guid.NewGuid();
+    public Guid OnlineDocumentSeriesId { get; } = Guid.NewGuid();
+    public Guid OnlineSeriesId { get; } = Guid.NewGuid();
     public Guid FiscalAuthorizationId { get; } = Guid.NewGuid();
     public Guid FiscalIssuerConfigurationId { get; } = Guid.NewGuid();
     public string SqlServer { get; } =
@@ -496,10 +498,10 @@ public sealed class ServerSliceFixture : IAsyncLifetime
             (@DeviceId, @PosCustomerCreate, 1, SYSDATETIMEOFFSET());
             INSERT INTO dbo.FiscalAuthorizations
             (FiscalAuthorizationId, BusinessId, AuthorizationNumber, SupplierTaxId,
-             Environment, QrValidationUrl, ValidFrom, ValidUntil, IsActive, CreatedAt)
+             Environment, QrValidationUrl, TechnicalKeyVersion, ValidFrom, ValidUntil, IsActive, CreatedAt)
             VALUES
             (@FiscalAuthorizationId, @BusinessId, @AuthorizationNumber, @SupplierTaxId,
-             2, @QrValidationUrl, '2026-01-01', '2028-12-31', 1, SYSDATETIMEOFFSET());
+             2, @QrValidationUrl, @TechnicalKeyVersion, '2026-01-01', '2028-12-31', 1, SYSDATETIMEOFFSET());
 
             INSERT INTO dbo.FiscalIssuerConfigurations
             (FiscalIssuerConfigurationId,BusinessId,Version,SupplierTaxId,SupplierCheckDigit,
@@ -523,13 +525,17 @@ public sealed class ServerSliceFixture : IAsyncLifetime
              IsOfflineCapable, IsActive, CreatedAt)
             VALUES
             (@DocumentSeriesId, @BusinessId, @LocationId, @RegisterId, @DocumentType,
-             N'VTA', N'03', 8, 1, 99999999, 1, 1, SYSDATETIMEOFFSET());
+             N'VTA', N'03', 8, 1, 99999999, 1, 1, SYSDATETIMEOFFSET()),
+            (@OnlineDocumentSeriesId, @BusinessId, @LocationId, @OnlineRegisterId, @DocumentType,
+             N'VTA', N'04', 8, 1, 99999999, 0, 1, SYSDATETIMEOFFSET());
 
             INSERT INTO dbo.FiscalSeries
             (SeriesId, BusinessId, RegisterId, FiscalAuthorizationId,
              DocumentType, Prefix, RangeStart, RangeEnd, IsActive, CreatedAt)
             VALUES
             (@SeriesId, @BusinessId, @RegisterId, @FiscalAuthorizationId,
+             @DocumentType, @Prefix, 1, 10000, 1, SYSDATETIMEOFFSET()),
+            (@OnlineSeriesId, @BusinessId, @OnlineRegisterId, @FiscalAuthorizationId,
              @DocumentType, @Prefix, 1, 10000, 1, SYSDATETIMEOFFSET());
 
             INSERT INTO dbo.Products
@@ -568,9 +574,12 @@ public sealed class ServerSliceFixture : IAsyncLifetime
         command.Parameters.AddWithValue("@FiscalIssuerConfigurationId", FiscalIssuerConfigurationId);
         command.Parameters.AddWithValue("@AuthorizationNumber", AuthorizationNumber);
         command.Parameters.AddWithValue("@SupplierTaxId", SupplierTaxId);
+        command.Parameters.AddWithValue("@TechnicalKeyVersion", TechnicalKeyVersion);
         command.Parameters.AddWithValue("@QrValidationUrl", QrValidationUrl);
         command.Parameters.AddWithValue("@DocumentSeriesId", DocumentSeriesId);
         command.Parameters.AddWithValue("@SeriesId", SeriesId);
+        command.Parameters.AddWithValue("@OnlineDocumentSeriesId", OnlineDocumentSeriesId);
+        command.Parameters.AddWithValue("@OnlineSeriesId", OnlineSeriesId);
         command.Parameters.AddWithValue("@DocumentType", PosSaleDocumentTypes.Invoice);
         command.Parameters.AddWithValue("@Prefix", Prefix);
         command.Parameters.AddWithValue("@ProductId", ProductId);

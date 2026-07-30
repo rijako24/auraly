@@ -18,6 +18,12 @@ public static class PosSaleRemoteStatuses
     public const string AlreadyProcessed = "AlreadyProcessed";
 }
 
+public static class SaleSourceModes
+{
+    public const string PosEdge = "PosEdge";
+    public const string Online = "Online";
+}
+
 public sealed record PosSaleTaxContract(string Code, decimal Amount);
 
 public sealed record PosSaleLineContract(
@@ -137,7 +143,8 @@ public sealed record PosSaleUploadRequest(
     IReadOnlyList<PosSaleLineContract> Lines,
     IReadOnlyList<PosSalePaymentContract> Payments,
     PosSaleUblSnapshotContract? UblSnapshot = null,
-    Guid? CustomerId = null);
+    Guid? CustomerId = null,
+    string SourceMode = SaleSourceModes.PosEdge);
 
 public sealed record PosSaleUploadResponse(
     Guid ReceiptId,

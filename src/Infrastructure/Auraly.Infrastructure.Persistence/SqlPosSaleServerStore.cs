@@ -227,7 +227,7 @@ public sealed class SqlPosSaleServerStore(
             INSERT INTO dbo.SalesDocuments
             (
                 DocumentId, BusinessId, LocationId, WarehouseId,
-                RegisterId, DeviceId, DocumentSeriesId, DocumentNumber,
+                RegisterId, DeviceId, SourceMode, DocumentSeriesId, DocumentNumber,
                 DocumentPrefix, DocumentSeriesCode, DocumentConsecutive,
                 FiscalSeriesId, FiscalAuthorizationId,
                 DocumentType, IdempotencyKey, PayloadHash, FiscalNumber,
@@ -239,7 +239,7 @@ public sealed class SqlPosSaleServerStore(
             VALUES
             (
                 @DocumentId, @BusinessId, @LocationId, @WarehouseId,
-                @RegisterId, @DeviceId, @DocumentSeriesId, @DocumentNumber,
+                @RegisterId, @DeviceId, @SourceMode, @DocumentSeriesId, @DocumentNumber,
                 @DocumentPrefix, @DocumentSeriesCode, @DocumentConsecutive,
                 @FiscalSeriesId, @FiscalAuthorizationId,
                 @DocumentType, @IdempotencyKey, @PayloadHash, @FiscalNumber,
@@ -257,7 +257,8 @@ public sealed class SqlPosSaleServerStore(
         sqlCommand.Parameters.AddWithValue("@LocationId", request.LocationId);
         sqlCommand.Parameters.AddWithValue("@WarehouseId", request.WarehouseId);
         sqlCommand.Parameters.AddWithValue("@RegisterId", request.RegisterId);
-        sqlCommand.Parameters.AddWithValue("@DeviceId", request.DeviceId);
+        sqlCommand.Parameters.AddWithValue("@DeviceId", request.DeviceId == Guid.Empty ? DBNull.Value : request.DeviceId);
+        sqlCommand.Parameters.AddWithValue("@SourceMode", request.SourceMode);
         sqlCommand.Parameters.AddWithValue("@DocumentSeriesId", request.DocumentNumber.SeriesId);
         sqlCommand.Parameters.AddWithValue("@SoldByUserId", request.SoldByUserId);
         sqlCommand.Parameters.AddWithValue("@DocumentNumber", request.DocumentNumber.FullNumber);

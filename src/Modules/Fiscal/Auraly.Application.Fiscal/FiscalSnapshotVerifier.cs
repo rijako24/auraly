@@ -84,11 +84,17 @@ public sealed class FiscalSnapshotVerifier(IFiscalTechnicalKeyProvider keyProvid
             request.BusinessId == Guid.Empty ||
             request.LocationId == Guid.Empty ||
             request.WarehouseId == Guid.Empty ||
-            request.RegisterId == Guid.Empty ||
-            request.DeviceId == Guid.Empty)
+            request.RegisterId == Guid.Empty)
         {
             return "One or more required identifiers are empty.";
         }
+        if (request.SourceMode is not (
+                SaleSourceModes.PosEdge or SaleSourceModes.Online) ||
+            (request.SourceMode == SaleSourceModes.PosEdge &&
+             request.DeviceId == Guid.Empty) ||
+            (request.SourceMode == SaleSourceModes.Online &&
+             request.DeviceId != Guid.Empty))
+            return "The sale source and device identity are inconsistent.";
 
         if (request.Lines.Count == 0)
         {

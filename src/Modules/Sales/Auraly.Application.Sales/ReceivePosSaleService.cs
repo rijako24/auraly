@@ -74,13 +74,9 @@ public interface IPosSaleCustomerResolver
         CancellationToken ct);
 }
 
-
 public sealed class PosSaleForbiddenException(string message) : Exception(message);
-
 public sealed class PosSaleInvalidException(string message) : Exception(message);
-
 public sealed class PosSaleIdempotencyConflictException(string message) : Exception(message);
-
 public sealed class PosSaleProcessingBusyException(string message) : Exception(message);
 
 public sealed class ReceivePosSaleService(
@@ -98,11 +94,13 @@ public sealed class ReceivePosSaleService(
     {
         ArgumentNullException.ThrowIfNull(device);
         ArgumentNullException.ThrowIfNull(request);
-        if (string.IsNullOrWhiteSpace(idempotencyKey) || idempotencyKey.Length > 128)
-        {
-            throw new PosSaleInvalidException("A valid Idempotency-Key header is required.");
-        }
-
+        ValidateIdempotencyKey(idempotencyKey);
+        if (!string.Equals(
+                request.SourceMode,
+                SaleSourceModes.PosEdge,
+                StringComparison.Ordinal))
+            throw new PosSaleInvalidException(
+                "The POS upload endpoint only accepts PosEdge documents.");
         DemandDeviceContext(device, request);
         if (request.CustomerId is Guid sourceCustomerId)
         {
@@ -117,6 +115,39 @@ public sealed class ReceivePosSaleService(
                     cancellationToken)
             };
         }
+        return await ReceiveCoreAsync(
+            idempotencyKey, request, validateDeviceContext: true, cancellationToken);
+    }
+
+    public async Task<PosSaleUploadResponse> ReceiveOnlineAsync(
+        OnlineSalesUserIdentity user,
+        string idempotencyKey,
+        PosSaleUploadRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(user);
+        ArgumentNullException.ThrowIfNull(request);
+        ValidateIdempotencyKey(idempotencyKey);
+        if (!user.Permissions.Contains(CommercePermissionCodes.SalesCreate) ||
+            request.TenantId != user.TenantId ||
+            request.SoldByUserId != user.UserId ||
+            request.DeviceId != Guid.Empty ||
+            !string.Equals(
+                request.SourceMode,
+                SaleSourceModes.Online,
+                StringComparison.Ordinal))
+            throw new PosSaleForbiddenException(
+                "The prepared online sale differs from the authenticated user context.");
+        return await ReceiveCoreAsync(
+            idempotencyKey, request, validateDeviceContext: false, cancellationToken);
+    }
+
+    private async Task<PosSaleUploadResponse> ReceiveCoreAsync(
+        string idempotencyKey,
+        PosSaleUploadRequest request,
+        bool validateDeviceContext,
+        CancellationToken cancellationToken)
+    {
         ValidateDocumentNumber(request);
         var snapshotJson = PosSaleContractSerializer.Serialize(request);
         var payloadHash = PosSaleContractSerializer.Hash(request);
@@ -129,12 +160,12 @@ public sealed class ReceivePosSaleService(
         {
             EnsureSameRequest(existing, request.DocumentId, idempotencyKey, payloadHash);
             if (existing.ProcessingStatus is "Completed" or "Blocked")
-            {
                 return ToResponse(existing, isDuplicate: true);
-            }
         }
 
-        var context = await store.ValidateContextAsync(request, cancellationToken);
+        var context = validateDeviceContext
+            ? await store.ValidateContextAsync(request, cancellationToken)
+            : PosSaleContextValidation.Valid();
         var verification = await fiscalVerifier.VerifyAsync(request, cancellationToken);
         if (!context.IsValid && verification.IsVerified)
         {
@@ -142,7 +173,8 @@ public sealed class ReceivePosSaleService(
                 false,
                 request.FiscalSnapshot.Cufe,
                 verification.CufeCalculated,
-                context.Reason ?? "The fiscal series or authorization differs from server configuration.");
+                context.Reason ??
+                "The fiscal series or authorization differs from server configuration.");
         }
 
         var receivedAt = timeProvider.GetUtcNow();
@@ -158,9 +190,7 @@ public sealed class ReceivePosSaleService(
         EnsureSameRequest(stored, request.DocumentId, idempotencyKey, payloadHash);
 
         if (!verification.IsVerified || stored.ProcessingStatus == "Blocked")
-        {
             return ToResponse(stored, isDuplicate: existing is not null);
-        }
 
         var result = await processingEngine.ProcessAsync(
             new ConfirmedDocument(
@@ -172,28 +202,38 @@ public sealed class ReceivePosSaleService(
                 receivedAt),
             cancellationToken);
         if (result == DocumentProcessingResult.Busy)
-        {
-            throw new PosSaleProcessingBusyException("The document is currently being processed.");
-        }
+            throw new PosSaleProcessingBusyException(
+                "The document is currently being processed.");
 
         var completed = await store.FindAsync(
                 request.BusinessId,
                 request.DocumentId,
                 idempotencyKey,
                 cancellationToken)
-            ?? throw new InvalidOperationException("The processed sale could not be read back.");
+            ?? throw new InvalidOperationException(
+                "The processed sale could not be read back.");
         EnsureSameRequest(completed, request.DocumentId, idempotencyKey, payloadHash);
         return ToResponse(
             completed,
-            isDuplicate: existing is not null || result == DocumentProcessingResult.AlreadyProcessed);
+            isDuplicate:
+                existing is not null ||
+                result == DocumentProcessingResult.AlreadyProcessed);
     }
 
-    private static void DemandDeviceContext(PosDeviceIdentity device, PosSaleUploadRequest request)
+    private static void ValidateIdempotencyKey(string idempotencyKey)
+    {
+        if (string.IsNullOrWhiteSpace(idempotencyKey) || idempotencyKey.Length > 128)
+            throw new PosSaleInvalidException(
+                "A valid Idempotency-Key header is required.");
+    }
+
+    private static void DemandDeviceContext(
+        PosDeviceIdentity device,
+        PosSaleUploadRequest request)
     {
         if (!device.Permissions.Contains(CommercePermissionCodes.SalesCreate))
-        {
-            throw new PosSaleForbiddenException("The device cannot register POS sales.");
-        }
+            throw new PosSaleForbiddenException(
+                "The device cannot register POS sales.");
 
         if (device.DeviceId != request.DeviceId ||
             device.TenantId != request.TenantId ||
@@ -201,20 +241,19 @@ public sealed class ReceivePosSaleService(
             device.LocationId != request.LocationId ||
             device.WarehouseId != request.WarehouseId ||
             device.RegisterId != request.RegisterId)
-        {
             throw new PosSaleForbiddenException(
                 "The uploaded tenant, business, location, warehouse, register or device differs from the authenticated context.");
-        }
     }
 
     private static void ValidateDocumentNumber(PosSaleUploadRequest request)
     {
         var number = request.DocumentNumber;
-        if (!string.Equals(number.DocumentType, request.FiscalSnapshot.DocumentType, StringComparison.Ordinal))
-        {
+        if (!string.Equals(
+                number.DocumentType,
+                request.FiscalSnapshot.DocumentType,
+                StringComparison.Ordinal))
             throw new PosSaleInvalidException(
                 "The Auraly document type and fiscal document type must match.");
-        }
 
         AuralyDocumentNumberAssignment expected;
         try
@@ -232,10 +271,12 @@ public sealed class ReceivePosSaleService(
             throw new PosSaleInvalidException(exception.Message);
         }
 
-        if (!string.Equals(expected.FullNumber, number.FullNumber, StringComparison.Ordinal))
-        {
-            throw new PosSaleInvalidException("The Auraly document number does not match its components.");
-        }
+        if (!string.Equals(
+                expected.FullNumber,
+                number.FullNumber,
+                StringComparison.Ordinal))
+            throw new PosSaleInvalidException(
+                "The Auraly document number does not match its components.");
     }
 
     private static void EnsureSameRequest(
@@ -245,16 +286,21 @@ public sealed class ReceivePosSaleService(
         byte[] payloadHash)
     {
         if (existing.DocumentId != documentId ||
-            !string.Equals(existing.IdempotencyKey, idempotencyKey.Trim(), StringComparison.Ordinal) ||
+            !string.Equals(
+                existing.IdempotencyKey,
+                idempotencyKey.Trim(),
+                StringComparison.Ordinal) ||
             existing.PayloadHash.Length != payloadHash.Length ||
-            !CryptographicOperations.FixedTimeEquals(existing.PayloadHash, payloadHash))
-        {
+            !CryptographicOperations.FixedTimeEquals(
+                existing.PayloadHash,
+                payloadHash))
             throw new PosSaleIdempotencyConflictException(
                 "The document ID or idempotency key was already used with different content.");
-        }
     }
 
-    private static PosSaleUploadResponse ToResponse(StoredPosSale sale, bool isDuplicate) =>
+    private static PosSaleUploadResponse ToResponse(
+        StoredPosSale sale,
+        bool isDuplicate) =>
         new(
             sale.ReceiptId ?? Guid.Empty,
             sale.DocumentId,
@@ -270,4 +316,3 @@ public sealed class ReceivePosSaleService(
             sale.ProcessedAt,
             sale.Detail);
 }
-
