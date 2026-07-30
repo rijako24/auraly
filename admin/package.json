@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "dev:pos": "next dev --hostname 127.0.0.1 --port 47830",
-    "test:pos": "tsc -p tsconfig.pos-tests.json && node --test \".pos-test-dist/app/(pos)/pos/pos-payment-settlement.test.js\" \".pos-test-dist/app/(pos)/pos/pos-money-input.test.js\" \".pos-test-dist/app/(pos)/pos/pos-discount-calculation.test.js\" \".pos-test-dist/lib/backend-proxy-headers.test.js\"",
+    "test:pos": "tsc -p tsconfig.pos-tests.json && node --test \".pos-test-dist/app/(pos)/pos/pos-payment-settlement.test.js\" \".pos-test-dist/app/(pos)/pos/pos-money-input.test.js\" \".pos-test-dist/app/(pos)/pos/pos-discount-calculation.test.js\" \".pos-test-dist/lib/backend-proxy-headers.test.js\" \".pos-test-dist/lib/login-redirect.test.js\"",
     "build": "next build",
     "start": "next start",
     "lint": "next lint"

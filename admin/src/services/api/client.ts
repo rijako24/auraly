@@ -1,4 +1,5 @@
 import type { ApiError } from "@/types/api";
+import { buildLoginRedirect } from "@/lib/login-redirect";
 
 const API_BASE = "/api";
 const SELECTED_BUSINESS_STORAGE_KEY = "selected_business_id";
@@ -125,7 +126,10 @@ class ApiClient {
         } catch {
           /* ignore */
         }
-        window.location.href = "/login";
+        window.location.href = buildLoginRedirect(
+          window.location.pathname,
+          window.location.search,
+        );
       }
       return new Promise<Response>(() => {});
     }
