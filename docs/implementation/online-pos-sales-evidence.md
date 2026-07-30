@@ -52,7 +52,7 @@ Resultados:
 - Solución .NET: 0 errores y 0 advertencias.
 - Fundación: 109/109.
 - Integración con SQL Server real y DACPAC desplegado: 42/42.
-- Pruebas POS/BFF: 16/16.
+- Pruebas POS/BFF: 19/19.
 - TypeScript: correcto.
 - Next.js 14.2.21: build correcto; ruta `/pos` generada.
 - DACPAC: 0 errores y 0 advertencias.
