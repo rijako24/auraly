@@ -60,6 +60,67 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
         Assert.Equal("Completed", persisted.CheckoutStatus);
         Assert.Equal("Consumed", persisted.DraftStatus);
 
+        var context = new OnlineSalesDraftContext(
+            fixture.BusinessId,
+            fixture.LocationId,
+            fixture.OnlineRegisterId);
+        using (var searchResponse = await client.PostAsJsonAsync(
+                   "/api/commerce/v1/pos/drafts/sales/search",
+                   new SearchOnlineSalesIssuedSalesRequest(
+                       context,
+                       completed.Receipt.DocumentNumber,
+                       0,
+                       50)))
+        {
+            searchResponse.EnsureSuccessStatusCode();
+            var page = await searchResponse.Content
+                .ReadFromJsonAsync<OnlineSalesIssuedSalePage>();
+            Assert.NotNull(page);
+            var issued = Assert.Single(page.Items);
+            Assert.Equal(completed.Receipt.DocumentId, issued.DocumentId);
+            Assert.Equal(completed.Receipt.DocumentNumber, issued.DocumentNumber);
+            Assert.Equal(completed.Receipt.FiscalNumber, issued.FiscalNumber);
+            Assert.Equal(completed.Receipt.CustomerName, issued.CustomerName);
+        }
+        using (var receiptResponse = await client.PostAsJsonAsync(
+                   $"/api/commerce/v1/pos/drafts/sales/{completed.Receipt.DocumentId:D}/receipt",
+                   context))
+        {
+            receiptResponse.EnsureSuccessStatusCode();
+            var printable = await receiptResponse.Content
+                .ReadFromJsonAsync<OnlineSalesReceipt>();
+            Assert.NotNull(printable);
+            Assert.Equal(completed.Receipt.DocumentId, printable.DocumentId);
+            Assert.Equal(completed.Receipt.DocumentNumber, printable.DocumentNumber);
+            Assert.Equal(completed.Receipt.FiscalNumber, printable.FiscalNumber);
+            Assert.Equal(completed.Receipt.Cufe, printable.Cufe);
+            Assert.Equal(completed.Receipt.QrPayload, printable.QrPayload);
+            Assert.Equal(completed.Receipt.CustomerName, printable.CustomerName);
+            Assert.Single(printable.Lines);
+            Assert.Single(printable.Payments);
+        }
+        var qrUrl =
+            $"/api/commerce/v1/pos/drafts/sales/{completed.Receipt.DocumentId:D}/qr" +
+            $"?businessId={fixture.BusinessId:D}" +
+            $"&locationId={fixture.LocationId:D}" +
+            $"&registerId={fixture.OnlineRegisterId:D}";
+        using (var qrResponse = await client.GetAsync(qrUrl))
+        {
+            qrResponse.EnsureSuccessStatusCode();
+            Assert.Equal("image/svg+xml", qrResponse.Content.Headers.ContentType?.MediaType);
+            var svg = await qrResponse.Content.ReadAsStringAsync();
+            Assert.Contains("<svg", svg, StringComparison.Ordinal);
+            Assert.DoesNotContain(completed.Receipt.Cufe, svg, StringComparison.Ordinal);
+        }
+        using (var wrongRegisterResponse = await client.GetAsync(
+                   $"/api/commerce/v1/pos/drafts/sales/{completed.Receipt.DocumentId:D}/qr" +
+                   $"?businessId={fixture.BusinessId:D}" +
+                   $"&locationId={fixture.LocationId:D}" +
+                   $"&registerId={Guid.NewGuid():D}"))
+        {
+            Assert.Equal(HttpStatusCode.Forbidden, wrongRegisterResponse.StatusCode);
+        }
+
         var replay = await CompleteAsync(
             client,
             captured.DraftId,
@@ -195,6 +256,38 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
         using var response = await client.SendAsync(request);
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         Assert.Equal(before, await ReadCursorValuesAsync());
+    }
+
+    [Fact]
+    public async Task Active_fiscal_ranges_cannot_overlap_between_registers()
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            INSERT dbo.FiscalSeries(
+              SeriesId,BusinessId,RegisterId,FiscalAuthorizationId,
+              DocumentType,Prefix,RangeStart,RangeEnd,IsActive,CreatedAt)
+            VALUES(
+              @SeriesId,@BusinessId,@RegisterId,@FiscalAuthorizationId,
+              N'SalesInvoice',@Prefix,6000,7000,1,SYSDATETIMEOFFSET());
+            """;
+        command.Parameters.AddWithValue("@SeriesId", Guid.NewGuid());
+        command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+        command.Parameters.AddWithValue("@RegisterId", fixture.RegisterId);
+        command.Parameters.AddWithValue(
+            "@FiscalAuthorizationId",
+            fixture.FiscalAuthorizationId);
+        command.Parameters.AddWithValue("@Prefix", ServerSliceFixture.Prefix);
+
+        var exception = await Assert.ThrowsAsync<SqlException>(
+            () => command.ExecuteNonQueryAsync());
+
+        Assert.Equal(51020, exception.Number);
+        Assert.Contains(
+            "rangos solapados",
+            exception.Message,
+            StringComparison.OrdinalIgnoreCase);
     }
 
     private async Task<Guid> CreateUserAsync(string prefix)

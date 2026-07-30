@@ -96,6 +96,7 @@
     <Build Include="Tables\DocumentSeries.sql" />
     <Build Include="Tables\FiscalAuthorizations.sql" />
     <Build Include="Tables\FiscalSeries.sql" />
+    <Build Include="Triggers\FiscalSeriesRangeGuard.sql" />
     <Build Include="Tables\CashSessions.sql" />
     <Build Include="Tables\SupervisorAuthorizations.sql" />
     <Build Include="Tables\SalesDocuments.sql" />

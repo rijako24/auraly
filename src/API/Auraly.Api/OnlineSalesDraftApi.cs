@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using Auraly.Application.Sales;
 using Auraly.Contracts.Sales;
+using QRCoder;
 
 namespace Auraly.Api;
 
@@ -35,6 +36,83 @@ public static class OnlineSalesDraftApi
             CancellationToken ct) =>
             await Handle(() => service.SearchCustomersAsync(
                 context.User.ToOnlineSalesUserIdentity(), request, ct)));
+
+        group.MapPost("/customers/get", async (
+            HttpContext context,
+            GetOnlineSalesCustomerRequest request,
+            OnlineSalesHistoryService service,
+            CancellationToken ct) =>
+            await HandleNullable(() => service.GetCustomerAsync(
+                context.User.ToOnlineSalesUserIdentity(), request, ct)));
+
+        group.MapPost("/sales/search", async (
+            HttpContext context,
+            SearchOnlineSalesIssuedSalesRequest request,
+            OnlineSalesHistoryService service,
+            CancellationToken ct) =>
+            await Handle(() => service.SearchAsync(
+                context.User.ToOnlineSalesUserIdentity(), request, ct)));
+
+        group.MapPost("/sales/{documentId:guid}/receipt", async (
+            HttpContext context,
+            Guid documentId,
+            OnlineSalesDraftContext request,
+            OnlineSalesHistoryService service,
+            CancellationToken ct) =>
+            await HandleNullable(() => service.GetReceiptAsync(
+                context.User.ToOnlineSalesUserIdentity(),
+                request,
+                documentId,
+                ct)));
+
+        group.MapGet("/sales/{documentId:guid}/qr", async (
+            HttpContext context,
+            Guid documentId,
+            Guid businessId,
+            Guid locationId,
+            Guid registerId,
+            OnlineSalesHistoryService service,
+            CancellationToken ct) =>
+        {
+            try
+            {
+                var receipt = await service.GetReceiptAsync(
+                    context.User.ToOnlineSalesUserIdentity(),
+                    new OnlineSalesDraftContext(
+                        businessId,
+                        locationId,
+                        registerId),
+                    documentId,
+                    ct);
+                if (receipt is null)
+                    return Results.NotFound();
+                using var data = QRCodeGenerator.GenerateQrCode(
+                    receipt.QrPayload,
+                    QRCodeGenerator.ECCLevel.Q);
+                using var qr = new SvgQRCode(data);
+                var svg = qr.GetGraphic(
+                    pixelsPerModule: 4,
+                    darkColorHex: "#061f22",
+                    lightColorHex: "#ffffff",
+                    drawQuietZones: true,
+                    sizingMode: SvgQRCode.SizingMode.ViewBoxAttribute);
+                return Results.Content(
+                    svg,
+                    "image/svg+xml; charset=utf-8");
+            }
+            catch (OnlineSalesDraftForbiddenException exception)
+            {
+                return Results.Problem(
+                    exception.Message,
+                    statusCode: StatusCodes.Status403Forbidden);
+            }
+            catch (OnlineSalesDraftValidationException exception)
+            {
+                return Results.Problem(
+                    exception.Message,
+                    statusCode: StatusCodes.Status400BadRequest);
+            }
+        });
 
         group.MapPost("/temporaries/search", async (
             HttpContext context,
@@ -218,6 +296,51 @@ public static class OnlineSalesDraftApi
                 exception.Message,
                 statusCode: StatusCodes.Status409Conflict,
                 title: "DocumentProcessingBusy");
+        }
+    }
+
+    private static async Task<IResult> HandleNullable<T>(
+        Func<Task<T?>> action)
+        where T : class
+    {
+        try
+        {
+            var result = await action();
+            return result is null ? Results.NotFound() : Results.Ok(result);
+        }
+        catch (OnlineSalesDraftForbiddenException exception)
+        {
+            return Results.Problem(
+                exception.Message, statusCode: StatusCodes.Status403Forbidden);
+        }
+        catch (OnlineSalesDraftValidationException exception)
+        {
+            return Results.Problem(
+                exception.Message, statusCode: StatusCodes.Status400BadRequest);
+        }
+        catch (OnlineSalesDraftConcurrencyException exception)
+        {
+            return Results.Problem(
+                exception.Message,
+                statusCode: StatusCodes.Status409Conflict,
+                title: "SalesDraftVersionConflict");
+        }
+        catch (OnlineSalesDraftIdempotencyException exception)
+        {
+            return Results.Problem(
+                exception.Message,
+                statusCode: StatusCodes.Status409Conflict,
+                title: "SalesDraftIdempotencyConflict");
+        }
+        catch (PosSaleForbiddenException exception)
+        {
+            return Results.Problem(
+                exception.Message, statusCode: StatusCodes.Status403Forbidden);
+        }
+        catch (PosSaleInvalidException exception)
+        {
+            return Results.Problem(
+                exception.Message, statusCode: StatusCodes.Status400BadRequest);
         }
     }
 }

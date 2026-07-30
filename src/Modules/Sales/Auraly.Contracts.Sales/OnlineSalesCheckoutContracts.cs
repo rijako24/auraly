@@ -31,7 +31,8 @@ public sealed record OnlineSalesReceipt(
     decimal PayableAmount,
     string Cufe,
     string QrPayload,
-    string FiscalStatus);
+    string FiscalStatus,
+    string CustomerName);
 
 public sealed record CompleteOnlineSalesDraftResponse(
     OnlineSalesReceipt Receipt,

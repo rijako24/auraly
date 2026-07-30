@@ -79,42 +79,9 @@ public sealed class OnlineSalesCheckoutService(
                 : "Completed",
             cancellationToken);
         return new CompleteOnlineSalesDraftResponse(
-            ToReceipt(prepared.Request, reception.Status),
+            OnlineSalesReceiptMapper.From(prepared.Request, reception.Status),
             prepared.NextDraft,
             prepared.IsReplay || reception.IsDuplicate);
-    }
-
-    private static OnlineSalesReceipt ToReceipt(
-        PosSaleUploadRequest request,
-        string fiscalStatus)
-    {
-        var productCodes = request.UblSnapshot?.Lines
-            .ToDictionary(line => line.LineNumber, line => line.ProductCode)
-            ?? [];
-        return new OnlineSalesReceipt(
-            request.DocumentId,
-            request.DocumentNumber.FullNumber,
-            request.FiscalSnapshot.FiscalNumber,
-            request.FiscalSnapshot.IssuedAt,
-            request.FiscalSnapshot.CustomerIdentification,
-            request.Lines.Select(line => new OnlineSalesReceiptLine(
-                productCodes.GetValueOrDefault(line.LineNumber, string.Empty),
-                line.Description,
-                line.Quantity,
-                line.UnitPrice,
-                line.DiscountAmount,
-                line.TaxAmount,
-                line.LineTotal)).ToArray(),
-            request.Payments.Select(payment => new OnlineSalesPayment(
-                payment.MethodCode,
-                payment.Amount,
-                payment.Reference)).ToArray(),
-            request.FiscalSnapshot.UntaxedAmount,
-            request.FiscalSnapshot.TaxAmount,
-            request.FiscalSnapshot.PayableAmount,
-            request.FiscalSnapshot.Cufe,
-            request.FiscalSnapshot.QrPayload,
-            fiscalStatus);
     }
 
     private static void DemandPermission(OnlineSalesUserIdentity user)

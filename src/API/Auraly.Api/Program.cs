@@ -79,6 +79,8 @@ builder.Services.AddScoped<IOnlineSalesDraftStore, SqlOnlineSalesDraftStore>();
 builder.Services.AddScoped<OnlineSalesDraftService>();
 builder.Services.AddScoped<IOnlineSalesCheckoutStore, SqlOnlineSalesDraftStore>();
 builder.Services.AddScoped<OnlineSalesCheckoutService>();
+builder.Services.AddScoped<IOnlineSalesHistoryStore, SqlOnlineSalesDraftStore>();
+builder.Services.AddScoped<OnlineSalesHistoryService>();
 builder.Services.AddScoped<ICashSessionStore, SqlCashSessionStore>();
 builder.Services.AddScoped<CashSessionService>();
 builder.Services.AddResponseCompression(options => options.EnableForHttps = true);

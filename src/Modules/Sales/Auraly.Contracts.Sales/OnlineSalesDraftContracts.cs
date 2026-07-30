@@ -121,3 +121,28 @@ public sealed record OnlineSalesDraft(
     decimal UntaxedAmount,
     decimal TaxAmount,
     decimal PayableAmount);
+
+public sealed record GetOnlineSalesCustomerRequest(
+    OnlineSalesDraftContext Context,
+    Guid CustomerId);
+
+public sealed record SearchOnlineSalesIssuedSalesRequest(
+    OnlineSalesDraftContext Context,
+    string? Search = null,
+    int Skip = 0,
+    int Take = 50);
+
+public sealed record OnlineSalesIssuedSale(
+    Guid DocumentId,
+    string DocumentNumber,
+    string FiscalNumber,
+    DateTimeOffset IssuedAt,
+    decimal Total,
+    string CustomerIdentification,
+    string CustomerName,
+    string FiscalStatus);
+
+public sealed record OnlineSalesIssuedSalePage(
+    IReadOnlyList<OnlineSalesIssuedSale> Items,
+    bool HasMore,
+    int? NextOffset);

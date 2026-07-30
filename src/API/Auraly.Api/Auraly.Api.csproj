@@ -6,6 +6,7 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="8.0.12" />
+    <PackageReference Include="QRCoder" Version="1.8.0" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\BuildingBlocks\Auraly.BuildingBlocks.Domain\Auraly.BuildingBlocks.Domain.csproj" />
@@ -18,7 +19,6 @@
     <ProjectReference Include="..\..\Modules\Fiscal\Auraly.Application.Fiscal\Auraly.Application.Fiscal.csproj" />
     <ProjectReference Include="..\..\Modules\Fiscal\Auraly.Contracts.Fiscal\Auraly.Contracts.Fiscal.csproj" />
     <ProjectReference Include="..\..\Modules\Fiscal\Auraly.Infrastructure.Fiscal\Auraly.Infrastructure.Fiscal.csproj" />
-    <ProjectReference Include="..\..\Modules\Fiscal\Auraly.Infrastructure.Fiscal\Auraly.Infrastructure.Fiscal.csproj" />
     <ProjectReference Include="..\..\Modules\Sales\Auraly.Application.Sales\Auraly.Application.Sales.csproj" />
     <ProjectReference Include="..\..\Modules\Sales\Auraly.Contracts.Sales\Auraly.Contracts.Sales.csproj" />
     <ProjectReference Include="..\..\Modules\Parties\Auraly.Application.Parties\Auraly.Application.Parties.csproj" />
@@ -29,4 +29,3 @@
     <ProjectReference Include="..\..\Modules\Cash\Auraly.Contracts.Cash\Auraly.Contracts.Cash.csproj" />
   </ItemGroup>
 </Project>
-

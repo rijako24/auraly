@@ -536,7 +536,7 @@ public sealed class ServerSliceFixture : IAsyncLifetime
             (@SeriesId, @BusinessId, @RegisterId, @FiscalAuthorizationId,
              @DocumentType, @Prefix, 1, 10000, 1, SYSDATETIMEOFFSET()),
             (@OnlineSeriesId, @BusinessId, @OnlineRegisterId, @FiscalAuthorizationId,
-             @DocumentType, @Prefix, 1, 10000, 1, SYSDATETIMEOFFSET());
+             @DocumentType, @Prefix, 10001, 20000, 1, SYSDATETIMEOFFSET());
 
             INSERT INTO dbo.Products
             (ProductId, BusinessId, Source, Sku, Name, UnitPrice, Currency, ManageStock, IsActive, CreatedAt)
