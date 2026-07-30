@@ -41,6 +41,50 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
             HttpStatusCode.OK,
             (await _client!.GetAsync("/edge/v1/health")).StatusCode);
     }
+
+    [Fact]
+    public async Task Host_without_device_configuration_starts_in_enrollment_mode()
+    {
+        var enrollmentPath =
+            Path.Combine(Path.GetTempPath(), $"auraly-enrollment-{Guid.NewGuid():N}.protected");
+        try
+        {
+            using var factory = new WebApplicationFactory<Program>()
+                .WithWebHostBuilder(webHost =>
+                {
+                    webHost.UseSetting("PosEdge:DatabasePath", _path + ".unenrolled");
+                    webHost.UseSetting("PosEdge:SessionToken", Token);
+                    webHost.UseSetting(
+                        "PosEdge:AllowedOrigin",
+                        "http://127.0.0.1:47830");
+                    webHost.UseSetting(
+                        "PosEdge:ServerUrl",
+                        "http://127.0.0.1:59999");
+                    webHost.UseSetting(
+                        "PosEdge:EnrollmentPackagePath",
+                        enrollmentPath);
+                    webHost.UseSetting(
+                        "PosEdge:SecretKeyDirectory",
+                        _secretPath + "-unenrolled");
+                    webHost.UseSetting("PosEdge:DeviceId", "");
+                });
+            using var client = factory.CreateClient();
+            client.DefaultRequestHeaders.Add("X-Auraly-Edge-Session", Token);
+
+            using var response = await client.GetAsync("/edge/v1/health");
+            response.EnsureSuccessStatusCode();
+            var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+            Assert.Equal("EnrollmentRequired", body.GetProperty("status").GetString());
+            Assert.Equal(
+                HttpStatusCode.NotFound,
+                (await client.GetAsync("/edge/v1/drafts/active")).StatusCode);
+        }
+        finally
+        {
+            if (File.Exists(enrollmentPath)) File.Delete(enrollmentPath);
+        }
+    }
+
     [Fact]
     public async Task Browser_preflight_is_limited_to_the_configured_origin()
     {

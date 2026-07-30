@@ -49,6 +49,27 @@ public static class PosEdgeHostApplication
             throw new InvalidOperationException("PosEdge:SessionToken must contain at least 32 bytes.");
         var allowedOrigin = Required(builder.Configuration, "PosEdge:AllowedOrigin");
         var serverUrl = Required(builder.Configuration, "PosEdge:ServerUrl");
+        var keyDirectory = builder.Configuration["PosEdge:SecretKeyDirectory"];
+        if (string.IsNullOrWhiteSpace(keyDirectory))
+            keyDirectory = Path.Combine(
+                Path.GetDirectoryName(Path.GetFullPath(databasePath))!, "keys");
+        var packagePath = builder.Configuration["PosEdge:EnrollmentPackagePath"];
+        if (string.IsNullOrWhiteSpace(packagePath))
+            packagePath = Path.Combine(
+                Path.GetDirectoryName(Path.GetFullPath(databasePath))!,
+                "enrollment.protected");
+        var enrollmentStore = new PosEdgeEnrollmentStore(packagePath, keyDirectory);
+        var enrollment = enrollmentStore.Load();
+        if (enrollment is null &&
+            string.IsNullOrWhiteSpace(builder.Configuration["PosEdge:DeviceId"]))
+            return BuildEnrollmentRequired(
+                builder, sessionToken, allowedOrigin, serverUrl, enrollmentStore);
+        if (enrollment is not null)
+            builder.Configuration.AddInMemoryCollection(
+                PosEdgeEnrollmentStore.ToConfiguration(
+                    enrollment,
+                    keyDirectory,
+                    databasePath));
         var credentials = new PosDeviceCredentials(
             RequiredGuid(builder.Configuration, "PosEdge:DeviceId"),
             Required(builder.Configuration, "PosEdge:DeviceSecret"));
@@ -157,16 +178,25 @@ public static class PosEdgeHostApplication
         });
 
         var edge = app.MapGroup("/edge/v1");
-        edge.MapGet("/health", (
+        edge.MapGet("/health", async (
             PosServerConnectionState server,
-            PosWorkstationIdentity workstation) =>
-            Results.Ok(new
+            PosWorkstationIdentity workstation,
+            PosCatalogStore catalog,
+            CancellationToken ct) =>
+        {
+            var catalogStatus = await catalog.StatusAsync(ct);
+            return Results.Ok(new
             {
-                status = "Ready",
+                status = catalogStatus.Status == "Ready"
+                    ? "Ready"
+                    : "Synchronizing",
                 serverConnected = server.IsConnected,
                 registerCode = workstation.RegisterCode,
-                userDisplayName = workstation.UserDisplayName
-            }));
+                userDisplayName = workstation.UserDisplayName,
+                catalogStatus = catalogStatus.Status,
+                catalogCursor = catalogStatus.Cursor
+            });
+        });
         edge.MapGet("/drafts/active", async (
             PosDraftStore drafts,
             PosEdgeRuntimeContext context,
@@ -389,6 +419,94 @@ public static class PosEdgeHostApplication
         return app;
     }
 
+    private static WebApplication BuildEnrollmentRequired(
+        WebApplicationBuilder builder,
+        string sessionToken,
+        string allowedOrigin,
+        string serverUrl,
+        PosEdgeEnrollmentStore store)
+    {
+        if (!Uri.TryCreate(serverUrl, UriKind.Absolute, out var serverUri) ||
+            (serverUri.Scheme != Uri.UriSchemeHttps && !serverUri.IsLoopback))
+            throw new InvalidOperationException(
+                "PosEdge:ServerUrl must use HTTPS except for a loopback development server.");
+        builder.Services.AddSingleton(store);
+        builder.Services.AddSingleton(new HttpClient { BaseAddress = serverUri });
+        builder.Services.AddSingleton<PosEdgeEnrollmentClient>();
+        var app = builder.Build();
+        app.Use(async (context, next) =>
+        {
+            if (!IsLoopback(context.Connection.RemoteIpAddress))
+            {
+                context.Response.StatusCode = StatusCodes.Status403Forbidden;
+                return;
+            }
+            var origin = context.Request.Headers.Origin.ToString();
+            if (!string.IsNullOrEmpty(origin) &&
+                !string.Equals(origin, allowedOrigin, StringComparison.Ordinal))
+            {
+                context.Response.StatusCode = StatusCodes.Status403Forbidden;
+                return;
+            }
+            if (HttpMethods.IsOptions(context.Request.Method))
+            {
+                if (string.IsNullOrEmpty(origin))
+                {
+                    context.Response.StatusCode = StatusCodes.Status400BadRequest;
+                    return;
+                }
+                SetCorsHeaders(context.Response, allowedOrigin);
+                context.Response.Headers.AccessControlAllowMethods = "GET,POST,OPTIONS";
+                context.Response.Headers.AccessControlAllowHeaders =
+                    "Content-Type,X-Auraly-Edge-Session";
+                context.Response.StatusCode = StatusCodes.Status204NoContent;
+                return;
+            }
+            if (!FixedEquals(
+                    sessionToken,
+                    context.Request.Headers["X-Auraly-Edge-Session"].ToString()))
+            {
+                context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                return;
+            }
+            if (!string.IsNullOrEmpty(origin)) SetCorsHeaders(context.Response, allowedOrigin);
+            await next(context);
+        });
+        var edge = app.MapGroup("/edge/v1");
+        edge.MapGet("/health", () => Results.Ok(new
+        {
+            status = "EnrollmentRequired",
+            serverConnected = false,
+            registerCode = "",
+            userDisplayName = ""
+        }));
+        edge.MapPost("/enrollment/redeem", async (
+            LocalPosEnrollmentRequest request,
+            PosEdgeEnrollmentClient client,
+            IHostApplicationLifetime lifetime,
+            CancellationToken ct) =>
+        {
+            try
+            {
+                var result = await client.RedeemAsync(request, ct);
+                _ = Task.Run(async () =>
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(1));
+                    lifetime.StopApplication();
+                });
+                return Results.Ok(result);
+            }
+            catch (HttpRequestException exception)
+            {
+                return Results.Problem(
+                    exception.Message,
+                    statusCode: StatusCodes.Status502BadGateway,
+                    title: "EnrollmentServerUnavailable");
+            }
+        });
+        return app;
+    }
+
     private static string Required(IConfiguration configuration, string key) =>
         string.IsNullOrWhiteSpace(configuration[key])
             ? throw new InvalidOperationException($"{key} is required.")
@@ -418,6 +536,7 @@ public static class PosEdgeHostApplication
 }
 
 internal sealed class PosServerSynchronizationHostedService(
+    PosCatalogSynchronizer catalog,
     PosEdgeOutboxUploader uploader,
     PosFiscalStatusSynchronizer fiscalStatuses,
     ILogger<PosServerSynchronizationHostedService> logger) : BackgroundService
@@ -429,6 +548,7 @@ internal sealed class PosServerSynchronizationHostedService(
         {
             try
             {
+                await catalog.SynchronizeAsync(stoppingToken);
                 while (!stoppingToken.IsCancellationRequested &&
                        await uploader.UploadNextAsync(stoppingToken))
                 {

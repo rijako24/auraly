@@ -41,6 +41,10 @@ import {
   rememberedOnlineRegisterId,
   selectOnlineRegister,
 } from "@/services/pos/online-pos-client";
+import {
+  authorizePosEnrollment,
+  redeemPosEnrollment,
+} from "@/services/pos/pos-enrollment";
 import { PosConfirmDialog } from "./pos-confirm-dialog";
 import { PosCustomerSearchDialog } from "./pos-customer-search-dialog";
 import { PosDiscountDialog } from "./pos-discount-dialog";
@@ -68,6 +72,8 @@ export default function PosPage() {
   const [client, setClient] = useState<PosClient | null>(null);
   const [onlineOptions, setOnlineOptions] = useState<OnlineRegisterOption[]>([]);
   const [onlineUserName, setOnlineUserName] = useState("");
+  const [edgeEnrollmentToken, setEdgeEnrollmentToken] = useState<string | null>(null);
+  const [edgeEnrollmentRequired, setEdgeEnrollmentRequired] = useState(false);
   const [setupLoading, setSetupLoading] = useState(true);
   const [setupError, setSetupError] = useState<string | null>(null);
   const [draft, setDraft] = useState<PosDraft | null>(null);
@@ -124,32 +130,44 @@ export default function PosPage() {
     if ("serviceWorker" in navigator) {
       void navigator.serviceWorker.register("/pos-sw.js", { scope: "/pos" });
     }
-    const edgeToken = readEdgeTokenFromLaunch();
-    if (edgeToken) {
-      setClient(new PosEdgeClient(edgeToken));
-      setSetupLoading(false);
-      return;
-    }
-
     let active = true;
-    const bootstrapOnline = async () => {
+    const bootstrap = async () => {
       setSetupLoading(true);
       setSetupError(null);
       try {
-        const bootstrap = await loadOnlineRegisterBootstrap();
+        const edgeToken = readEdgeTokenFromLaunch();
+        let requiresEnrollment = false;
+        if (edgeToken) {
+          try {
+            const edgeClient = new PosEdgeClient(edgeToken);
+            const health = await edgeClient.health();
+            if (health.status !== "EnrollmentRequired") {
+              if (active) setClient(edgeClient);
+              return;
+            }
+            requiresEnrollment = true;
+            if (active) {
+              setEdgeEnrollmentToken(edgeToken);
+            }
+          } catch {
+            // If the host is absent, the connected web POS remains available.
+          }
+        }
+        const serverBootstrap = await loadOnlineRegisterBootstrap();
         if (!active) return;
-        const displayName =
-          bootstrap.userDisplayName.trim() || "Cajero";
-        setOnlineUserName(displayName);
-        const available = bootstrap.options.filter(
-          (option) => !option.hasActiveEdgeEnrollment,
+        setEdgeEnrollmentRequired(
+          requiresEnrollment && serverBootstrap.canEnrollPosDevice,
         );
+        const displayName =
+          serverBootstrap.userDisplayName.trim() || "Cajero";
+        setOnlineUserName(displayName);
+        const available = serverBootstrap.options;
         setOnlineOptions(available);
         const remembered = rememberedOnlineRegisterId();
         const selected = available.find(
           (option) => option.registerId === remembered,
         );
-        if (selected) {
+        if (selected && !requiresEnrollment) {
           window.localStorage.setItem("selected_business_id", selected.businessId);
           const context = await selectOnlineRegister(selected);
           if (active) setClient(new OnlinePosClient(context, displayName));
@@ -166,7 +184,7 @@ export default function PosPage() {
       }
     };
 
-    void bootstrapOnline();
+    void bootstrap();
     return () => {
       active = false;
     };
@@ -183,6 +201,13 @@ export default function PosPage() {
       checking = true;
       try {
         const health = await client.health();
+        if (client.mode === "edge" && health.status === "Synchronizing") {
+          if (active) {
+            setEdgeReady(false);
+            setMessage("Sincronizando catálogo inicial…");
+          }
+          return;
+        }
         if (active) setServerConnected(health.serverConnected);
         if (active) {
           setWorkstation({
@@ -800,6 +825,29 @@ export default function PosPage() {
     }
   }
 
+  async function enrollOffline(option: OnlineRegisterOption) {
+    if (!edgeEnrollmentToken) return;
+    setSetupError(null);
+    setSetupLoading(true);
+    try {
+      const authorization = await authorizePosEnrollment(option);
+      await redeemPosEnrollment(edgeEnrollmentToken, authorization);
+      setSetupError(
+        "Configuración protegida. Auraly POS está reiniciando e iniciará la sincronización automática.",
+      );
+      window.setTimeout(() => window.location.reload(), 2_500);
+    } catch (caught) {
+      setSetupError(
+        caught instanceof Error
+          ? caught.message
+          : "No fue posible enrolar esta estación.",
+      );
+      throw caught;
+    } finally {
+      setSetupLoading(false);
+    }
+  }
+
   function changeOnlineRegister() {
     if (client?.mode !== "online" || busy) return;
     forgetOnlineRegister();
@@ -821,6 +869,8 @@ export default function PosPage() {
         error={setupError}
         userDisplayName={onlineUserName || "usuario"}
         onSelect={activateOnline}
+        edgeCapable={edgeEnrollmentRequired}
+        onEnroll={enrollOffline}
       />
     );
   }

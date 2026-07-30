@@ -7,6 +7,7 @@ public static class PosEdgeProtectedSecret
 {
     private const string ApplicationName = "Auraly.Pos.Edge";
     private const string TechnicalKeyPurpose = "Auraly.Fiscal.TechnicalKey.v1";
+    private const string EnrollmentPurpose = "Auraly.Pos.Edge.Enrollment.v1";
 
     public static string ProtectTechnicalKey(string keyDirectory, string technicalKey)
     {
@@ -31,7 +32,36 @@ public static class PosEdgeProtectedSecret
         }
     }
 
+    public static string ProtectEnrollmentPackage(string keyDirectory, string packageJson)
+    {
+        if (string.IsNullOrWhiteSpace(packageJson))
+            throw new ArgumentException("An enrollment package is required.", nameof(packageJson));
+        return CreateProtector(keyDirectory, EnrollmentPurpose).Protect(packageJson);
+    }
+
+    public static string UnprotectEnrollmentPackage(
+        string keyDirectory,
+        string protectedPackage)
+    {
+        if (string.IsNullOrWhiteSpace(protectedPackage))
+            throw new ArgumentException(
+                "A protected enrollment package is required.", nameof(protectedPackage));
+        try
+        {
+            return CreateProtector(keyDirectory, EnrollmentPurpose).Unprotect(protectedPackage);
+        }
+        catch (System.Security.Cryptography.CryptographicException exception)
+        {
+            throw new InvalidOperationException(
+                "The POS enrollment belongs to another Windows user or machine.",
+                exception);
+        }
+    }
+
     private static IDataProtector CreateProtector(string keyDirectory)
+        => CreateProtector(keyDirectory, TechnicalKeyPurpose);
+
+    private static IDataProtector CreateProtector(string keyDirectory, string purpose)
     {
         if (!OperatingSystem.IsWindows())
             throw new PlatformNotSupportedException(
@@ -41,17 +71,17 @@ public static class PosEdgeProtectedSecret
 
         var directory = new DirectoryInfo(Path.GetFullPath(keyDirectory));
         directory.Create();
-        return CreateWindowsProtector(directory);
+        return CreateWindowsProtector(directory, purpose);
     }
 
     [SupportedOSPlatform("windows")]
-    private static IDataProtector CreateWindowsProtector(DirectoryInfo directory)
+    private static IDataProtector CreateWindowsProtector(DirectoryInfo directory, string purpose)
     {
         var provider = DataProtectionProvider.Create(
             directory,
             configuration => configuration
                 .SetApplicationName(ApplicationName)
                 .ProtectKeysWithDpapi());
-        return provider.CreateProtector(TechnicalKeyPurpose);
+        return provider.CreateProtector(purpose);
     }
 }

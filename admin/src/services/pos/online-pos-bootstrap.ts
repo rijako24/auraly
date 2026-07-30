@@ -3,6 +3,7 @@ import type { OnlineRegisterOption } from "@/services/pos/online-pos-client";
 export type OnlineRegisterBootstrap = {
   userDisplayName: string;
   options: OnlineRegisterOption[];
+  canEnrollPosDevice: boolean;
 };
 
 export async function loadOnlineRegisterBootstrap(): Promise<OnlineRegisterBootstrap> {

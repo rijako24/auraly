@@ -24,6 +24,8 @@ type Props = {
   error: string | null;
   userDisplayName: string;
   onSelect: (option: OnlineRegisterOption) => Promise<void>;
+  edgeCapable?: boolean;
+  onEnroll?: (option: OnlineRegisterOption) => Promise<void>;
 };
 
 export function PosOnlineSetup({
@@ -32,6 +34,8 @@ export function PosOnlineSetup({
   error,
   userDisplayName,
   onSelect,
+  edgeCapable = false,
+  onEnroll,
 }: Props) {
   const businesses = useMemo(
     () =>
@@ -44,6 +48,7 @@ export function PosOnlineSetup({
   const [locationId, setLocationId] = useState("");
   const [registerId, setRegisterId] = useState("");
   const [selecting, setSelecting] = useState(false);
+  const [enrolling, setEnrolling] = useState(false);
 
   const locations = useMemo(
     () =>
@@ -64,8 +69,7 @@ export function PosOnlineSetup({
       options.filter(
         (option) =>
           option.businessId === businessId &&
-          option.locationId === locationId &&
-          !option.hasActiveEdgeEnrollment,
+          option.locationId === locationId,
       ),
     [businessId, locationId, options],
   );
@@ -73,12 +77,22 @@ export function PosOnlineSetup({
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
-    if (!selected || selecting) return;
+    if (!selected || selecting || enrolling) return;
     setSelecting(true);
     try {
       await onSelect(selected);
     } finally {
       setSelecting(false);
+    }
+  }
+
+  async function enroll() {
+    if (!selected || !onEnroll || selecting || enrolling) return;
+    setEnrolling(true);
+    try {
+      await onEnroll(selected);
+    } finally {
+      setEnrolling(false);
     }
   }
 
@@ -96,14 +110,15 @@ export function PosOnlineSetup({
               <MonitorSmartphone className="h-6 w-6" />
             </div>
             <p className="mt-8 text-xs font-bold uppercase tracking-[0.18em] text-teal-200">
-              Auraly POS en línea
+              {edgeCapable ? "Primera configuración" : "Auraly POS en línea"}
             </p>
             <h1 className="mt-2 text-3xl font-black tracking-tight">
-              Elige dónde vas a facturar
+              {edgeCapable ? "Prepara esta estación" : "Elige dónde vas a facturar"}
             </h1>
             <p className="mt-3 text-sm leading-6 text-slate-300">
-              Hola, {userDisplayName}. La caja define la resolución y las series
-              de numeración. La bodega se toma automáticamente de su configuración.
+              Hola, {userDisplayName}. Elige negocio, sede y caja. Puedes entrar
+              en línea sin descargar datos o enrolar este equipo para continuar
+              vendiendo cuando se pierda la conexión.
             </p>
           </section>
 
@@ -112,9 +127,9 @@ export function PosOnlineSetup({
               <div className="grid min-h-72 place-items-center text-center">
                 <div>
                   <Loader2 className="mx-auto h-9 w-9 animate-spin text-teal-300" />
-                  <p className="mt-4 font-semibold">Preparando tus cajas disponibles</p>
+                  <p className="mt-4 font-semibold">Preparando tus cajas</p>
                   <p className="mt-1 text-sm text-slate-400">
-                    Validando negocios, sedes y permisos…
+                    Validando negocios, sedes, series y permisos…
                   </p>
                 </div>
               </div>
@@ -179,20 +194,32 @@ export function PosOnlineSetup({
                 )}
                 {!options.length && !error && (
                   <p className="rounded-xl border border-amber-300/20 bg-amber-300/10 p-3 text-sm text-amber-100">
-                    No tienes una caja en línea disponible. Revisa permisos y
-                    configuración; las cajas enroladas para trabajo offline se
-                    administran desde su equipo asignado.
+                    No tienes cajas disponibles. Revisa permisos, sede, bodega,
+                    series operativas y resolución fiscal.
                   </p>
                 )}
 
-                <button
-                  type="submit"
-                  disabled={!selected || selecting}
-                  className="flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-teal-300 font-bold text-[#071a1d] transition hover:bg-teal-200 disabled:cursor-not-allowed disabled:opacity-35"
-                >
-                  {selecting && <Loader2 className="h-4 w-4 animate-spin" />}
-                  Entrar a facturación
-                </button>
+                <div className={edgeCapable ? "grid gap-2 sm:grid-cols-2" : ""}>
+                  <button
+                    type="submit"
+                    disabled={!selected || selecting || enrolling}
+                    className="flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-teal-300 font-bold text-[#071a1d] transition hover:bg-teal-200 disabled:cursor-not-allowed disabled:opacity-35"
+                  >
+                    {selecting && <Loader2 className="h-4 w-4 animate-spin" />}
+                    Trabajar en línea
+                  </button>
+                  {edgeCapable && (
+                    <button
+                      type="button"
+                      disabled={!selected || selecting || enrolling}
+                      onClick={() => void enroll()}
+                      className="flex h-12 w-full items-center justify-center gap-2 rounded-xl border border-teal-200/30 bg-teal-200/10 font-bold text-teal-100 transition hover:bg-teal-200/20 disabled:cursor-not-allowed disabled:opacity-35"
+                    >
+                      {enrolling && <Loader2 className="h-4 w-4 animate-spin" />}
+                      Preparar modo offline
+                    </button>
+                  )}
+                </div>
               </div>
             )}
           </section>
@@ -229,9 +256,7 @@ function SelectField({
         onValueChange={onChange}
       >
         <SelectTrigger className="h-12 w-full rounded-xl border-white/15 bg-[#102e33] px-3 text-sm text-white shadow-none focus:border-teal-300 focus:ring-2 focus:ring-teal-300/15 disabled:opacity-40">
-          <SelectValue
-            placeholder={`Selecciona ${label.toLocaleLowerCase("es")}`}
-          />
+          <SelectValue placeholder={`Selecciona ${label.toLocaleLowerCase("es")}`} />
         </SelectTrigger>
         <SelectContent className="rounded-xl border-slate-200 shadow-2xl">
           {options.map((option) => (
