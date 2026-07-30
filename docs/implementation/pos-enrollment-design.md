@@ -1,126 +1,104 @@
-# Configuración única de Facturación y enrolamiento POS Edge
+# Configuración única de facturación y enrolamiento POS Edge
 
 **Fecha:** 30 de julio de 2026  
-**Estado:** decisión cerrada; implementación del asistente Edge pendiente.
+**Estado:** primera rebanada de enrolamiento implementada y probada.
 
 ## Decisión
 
-Auraly tiene una sola aplicación, un solo login, un solo menú y una sola
-experiencia de facturación. “POS Edge” no es otra caja ni otro diseño: es una
-capacidad enrolada en un equipo concreto.
+Auraly mantiene una sola aplicación, un solo login y una sola experiencia de
+facturación. POS Edge no es otra caja: es la capacidad local de un equipo
+enrolado.
 
-- Un equipo no enrolado factura en línea.
-- Un equipo enrolado usa la misma pantalla y, además, dispone de SQLite,
-  periféricos, numeración provisionada, catálogo local y continuidad sin red.
-- Estar enrolado no obliga a trabajar desconectado. Mientras exista conexión,
-  Edge sincroniza y usa el servidor normalmente.
+- Un equipo sin host local factura en línea contra Auraly Server.
+- Un host local nuevo arranca en estado `EnrollmentRequired`.
+- Un usuario con `pos.devices.enroll` elige negocio, sede y caja y puede
+  preparar ese equipo para trabajar sin conexión.
+- La misma caja puede seguir usándose en línea desde uno o varios equipos.
+- La asociación exclusiva aplica al dispositivo Edge que posee series y
+  credenciales offline; nunca se reemplaza silenciosamente.
 
-## Configuración inicial
+## Flujo implementado
 
-La primera configuración siempre requiere servidor.
+1. La aplicación detecta el host local mediante una sesión de loopback.
+2. Si el host no existe, muestra la configuración de caja en línea.
+3. Si existe pero no está enrolado, carga desde el servidor las cajas permitidas.
+4. La opción **Preparar modo offline** solo se muestra con
+   `pos.devices.enroll`.
+5. El servidor valida tenant, negocio, sede, caja y enrolamiento existente.
+6. El servidor crea una autorización aleatoria de un solo uso, válida por diez
+   minutos; en SQL solo conserva su hash.
+7. El navegador entrega la autorización al host local, nunca el paquete fiscal.
+8. El host canjea directamente la autorización contra Auraly Server.
+9. El servidor crea la identidad del dispositivo, devuelve las series
+   operativa y fiscal exclusivas, configuración derivada y credencial.
+10. POS Edge protege el paquete completo mediante el almacén de protección de
+    datos del sistema y lo escribe de forma atómica.
+11. Al reiniciar el servicio, SQLite se crea o actualiza automáticamente y el
+    sincronizador real inicia el bootstrap del catálogo.
+12. La venta permanece inhabilitada hasta que el catálogo local queda `Ready`.
 
-1. El usuario inicia sesión con Auraly.
-2. El cliente solicita un bootstrap autenticado al servidor.
-3. El servidor devuelve los negocios, sedes y cajas que el usuario puede usar.
-4. El usuario elige negocio, sede y caja.
-5. La bodega, política de negativos, series y resolución se derivan de la caja;
-   no se capturan manualmente ni se aceptan sin validación.
-6. El usuario elige una capacidad:
-   - **Usar en línea:** guarda solo el contexto recordado del navegador.
-   - **Disponible sin conexión en este equipo:** inicia el enrolamiento Edge.
+La URL predeterminada del host es `http://127.0.0.1:47831`. El host exige el
+token de sesión generado por el lanzador, valida el origen y solo permite HTTP
+para un servidor Auraly de loopback; un servidor remoto debe usar HTTPS.
 
-La opción Edge solamente aparece con permiso `pos.devices.enroll`. Si la caja ya
-tiene otro equipo enrolado, se exige una reasignación explícita que revoque el
-anterior; nunca se reemplaza silenciosamente.
+## Datos y seguridad
 
-## Enrolamiento Edge
+El paquete local contiene únicamente lo necesario para operar la caja:
 
-El servidor:
+- dispositivo y secreto;
+- usuario que autorizó el enrolamiento;
+- negocio, sede, bodega y caja;
+- política de negativos derivada de la bodega;
+- serie operativa offline;
+- serie fiscal offline, resolución y clave técnica;
+- permisos técnicos del dispositivo.
 
-- registra la identidad del dispositivo;
-- emite una credencial de dispositivo de una sola visualización;
-- entrega negocio, sede, bodega y caja validados;
-- provisiona series operativas y fiscales exclusivas para operación offline;
-- entrega configuración de impresora/balanza y políticas aplicables;
-- emite un snapshot firmado y con caducidad de usuarios y permisos offline;
-- inicia la sincronización del catálogo mínimo requerido para facturación.
+El secreto del dispositivo y la clave técnica no se almacenan en texto plano.
+La clave privada del certificado DIAN nunca llega al navegador ni al POS.
 
-POS Edge:
+El enrolamiento no descarga inventario. El catálogo local mantiene productos,
+códigos, precios de venta, impuestos y datos mínimos ya definidos por la
+rebanada de sincronización.
 
-- protege la credencial y la clave técnica con DPAPI/almacén seguro;
-- persiste configuración, usuarios/permisos, catálogo, cursores y progreso;
-- muestra progreso por etapas;
-- no habilita venta offline hasta completar e integrar el bootstrap;
-- conserva facturas, outbox y series ante reinicios;
-- reanuda una descarga interrumpida.
+## En línea y offline
 
-La clave privada del certificado DIAN nunca se entrega al equipo.
+La experiencia visual es la misma:
 
-## Aperturas posteriores
+- **En línea:** búsquedas, borradores y confirmación usan el servidor.
+- **Edge conectado:** la caja usa sus capacidades locales y sincroniza con el
+  servidor.
+- **Edge sin red:** usa catálogo, series, factura, impresión y outbox locales.
 
-Un Edge ya enrolado:
+La puesta al día posterior se ejecuta en segundo plano sobre los cursores
+durables. Las notificaciones push siguen siendo la señal para adelantar el
+delta; el cursor es la fuente de verdad y evita depender de polling continuo.
 
-1. abre la misma aplicación;
-2. permite login local con el snapshot vigente;
-3. habilita facturación inmediatamente si tiene un catálogo válido;
-4. comprueba servidor y cambios en segundo plano;
-5. aplica deltas sin bloquear la venta;
-6. muestra únicamente el estado “Conectado con Auraly” o “Sin conexión”.
+## Límites que siguen pendientes
 
-El usuario final no necesita conocer procesos, puertos, SQLite ni el nombre
-“POS Edge”.
+Esta rebanada no declara terminado:
 
-Un equipo online recordará su última caja, pero permite cambiarla. Cambiar un
-Edge de caja, sede o negocio requiere conexión, autorización y un nuevo
-bootstrap porque cambian catálogo, precios, políticas y numeración.
+- login offline de todos los usuarios;
+- snapshot durable de usuarios, credenciales locales y permisos;
+- menú general offline;
+- revocación y reasignación administrativa explícita de un Edge;
+- selección administrativa de impresora y balanza durante el enrolamiento;
+- instalador Windows y validación del reinicio automático como servicio.
 
-## Navegación
+Actualmente el paquete identifica al usuario que autorizó el equipo, pero no
+sincroniza todavía a todos los cajeros. La impresora queda con el proveedor de
+vista previa y tirilla de 80 mm ya existente hasta que se implemente su maestro.
 
-Facturación incluye una acción **Menú** para volver a la aplicación general en
-ambos casos. El borrador activo no se pierde:
+## Siguiente rebanada recomendada
 
-- online permanece en SQL Server;
-- Edge permanece en SQLite.
+La siguiente rebanada debe ser **Identidad y sesión local de caja**:
 
-Con conexión, todos los módulos autorizados funcionan normalmente. Sin conexión,
-el menú puede mostrarse, pero debe marcar como no disponibles los módulos que
-dependen del servidor; solo se habilitan capacidades locales expresamente
-implementadas y probadas.
+1. sincronización inicial e incremental de usuarios autorizados;
+2. hash local seguro de credenciales o PIN/código de supervisor;
+3. login offline y vigencia;
+4. permisos por acción y autorización de supervisor;
+5. sesión de cajero, entrega y arqueo;
+6. cierre de sesión sin cerrar caja;
+7. revocación de usuario y puesta al día al recuperar conexión.
 
-## Diferencia con la implementación actual
-
-Ya existe:
-
-- selección de negocio/sede/caja para facturación online;
-- bootstrap online de identidad y cajas en una llamada a Auraly Commerce;
-- contexto Edge configurable;
-- SQLite, catálogo durable, outbox, series e impresión Edge;
-- acción para volver al menú.
-
-Falta conectar:
-
-- asistente visual para elegir “Disponible sin conexión”;
-- endpoint seguro de enrolamiento/reasignación;
-- entrega y protección automática de credenciales;
-- sincronización inicial de usuarios y permisos offline;
-- provisionamiento automático de configuración y series desde el servidor;
-- menú offline local con módulos no disponibles claramente marcados.
-
-Ninguno de esos puntos se considera terminado por existir como configuración de
-arranque.
-
-## Pruebas obligatorias
-
-- usuario sin permiso no puede enrolar;
-- negocio/sede/caja se derivan del tenant y permisos autenticados;
-- una caja no se enrola silenciosamente en dos equipos;
-- reasignar revoca la credencial anterior;
-- secretos no aparecen en logs ni respuestas posteriores;
-- reinicio conserva el enrolamiento;
-- interrupción del bootstrap reanuda sin perder ventas/outbox;
-- online no descarga catálogo operativo;
-- Edge sí descarga únicamente datos necesarios;
-- login offline respeta vigencia y permisos;
-- cambio de caja Edge exige conexión y nuevo bootstrap;
-- salir de facturación conserva el borrador online y local;
-- la misma UI POS funciona online y Edge.
+Debe reutilizar el enrolamiento implementado; no crear otra aplicación ni otro
+protocolo de configuración.
