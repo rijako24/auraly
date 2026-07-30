@@ -23,7 +23,7 @@ CREATE TABLE [dbo].[SalesDrafts] (
     CONSTRAINT [FK_SalesDrafts_Warehouses] FOREIGN KEY ([WarehouseId]) REFERENCES [dbo].[Warehouses] ([WarehouseId]),
     CONSTRAINT [FK_SalesDrafts_CashRegisters] FOREIGN KEY ([RegisterId]) REFERENCES [dbo].[CashRegisters] ([RegisterId]),
     CONSTRAINT [FK_SalesDrafts_AppUsers] FOREIGN KEY ([UserId]) REFERENCES [dbo].[AppUsers] ([UserId]),
-    CONSTRAINT [CK_SalesDrafts_Status] CHECK ([Status] IN (N'Active', N'Temporary', N'Consumed', N'Deleted')),
+    CONSTRAINT [CK_SalesDrafts_Status] CHECK ([Status] IN (N'Active', N'Temporary', N'Issuing', N'Consumed', N'Deleted')),
     CONSTRAINT [CK_SalesDrafts_Version] CHECK ([Version] > 0)
 );
 GO

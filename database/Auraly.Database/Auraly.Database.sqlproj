@@ -102,6 +102,7 @@
     <Build Include="Tables\SalesDrafts.sql" />
     <Build Include="Tables\SalesDraftLines.sql" />
     <Build Include="Tables\SalesDraftMutationReceipts.sql" />
+    <Build Include="Tables\OnlineSalesCheckout.sql" />
     <Build Include="Tables\SalesDocumentLines.sql" />
     <Build Include="Tables\SalesDocumentTaxSummaries.sql" />
     <Build Include="Tables\SalesPayments.sql" />

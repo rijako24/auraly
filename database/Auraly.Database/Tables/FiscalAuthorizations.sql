@@ -6,6 +6,7 @@ CREATE TABLE [dbo].[FiscalAuthorizations]
     [SupplierTaxId] NVARCHAR(32) NOT NULL,
     [Environment] TINYINT NOT NULL,
     [QrValidationUrl] NVARCHAR(500) NOT NULL,
+    [TechnicalKeyVersion] NVARCHAR(64) NOT NULL CONSTRAINT [DF_FiscalAuthorizations_TechnicalKeyVersion] DEFAULT N'v1',
     [ValidFrom] DATE NOT NULL,
     [ValidUntil] DATE NOT NULL,
     [IsActive] BIT NOT NULL,

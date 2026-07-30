@@ -5,7 +5,8 @@ CREATE TABLE [dbo].[SalesDocuments]
     [LocationId] UNIQUEIDENTIFIER NOT NULL,
     [WarehouseId] UNIQUEIDENTIFIER NOT NULL,
     [RegisterId] UNIQUEIDENTIFIER NOT NULL,
-    [DeviceId] UNIQUEIDENTIFIER NOT NULL,
+    [DeviceId] UNIQUEIDENTIFIER NULL,
+    [SourceMode] NVARCHAR(16) NOT NULL CONSTRAINT [DF_SalesDocuments_SourceMode] DEFAULT N'PosEdge',
     [DocumentSeriesId] UNIQUEIDENTIFIER NOT NULL,
     [DocumentNumber] NVARCHAR(64) NOT NULL,
     [DocumentPrefix] NVARCHAR(8) NOT NULL,
@@ -31,7 +32,7 @@ CREATE TABLE [dbo].[SalesDocuments]
     [ProcessingStatus] NVARCHAR(32) NOT NULL,
     [ReceivedAt] DATETIMEOFFSET(7) NOT NULL,
     [ProcessedAt] DATETIMEOFFSET(7) NULL,
-    [CreatedByDeviceId] UNIQUEIDENTIFIER NOT NULL,
+    [CreatedByDeviceId] UNIQUEIDENTIFIER NULL,
     [SoldByUserId] UNIQUEIDENTIFIER NULL,
     [CashSessionId] UNIQUEIDENTIFIER NULL,
     [CashierShiftId] UNIQUEIDENTIFIER NULL,
@@ -57,7 +58,8 @@ CREATE TABLE [dbo].[SalesDocuments]
         UNIQUE ([BusinessId], [DocumentType], [DocumentPrefix], [DocumentSeriesCode], [DocumentConsecutive]),
     CONSTRAINT [UQ_SalesDocuments_FiscalNumber]
         UNIQUE ([BusinessId], [DocumentType], [FiscalAuthorizationId], [FiscalPrefix], [FiscalConsecutive]),
-    CONSTRAINT [CK_SalesDocuments_Amounts] CHECK ([UntaxedAmount] >= 0 AND [TaxAmount] >= 0 AND [PayableAmount] >= 0)
+    CONSTRAINT [CK_SalesDocuments_Amounts] CHECK ([UntaxedAmount] >= 0 AND [TaxAmount] >= 0 AND [PayableAmount] >= 0),
+    CONSTRAINT [CK_SalesDocuments_SourceMode] CHECK ([SourceMode] IN (N'PosEdge', N'Online'))
 );
 
 GO
