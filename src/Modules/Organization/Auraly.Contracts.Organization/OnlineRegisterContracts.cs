@@ -8,6 +8,7 @@ public sealed record OnlineRegisterOption(
     bool HasActiveEdgeEnrollment);
 
 public sealed record OnlineRegisterBootstrap(
+    string TenantName,
     string UserDisplayName,
     IReadOnlyList<OnlineRegisterOption> Options,
     bool CanEnrollPosDevice);

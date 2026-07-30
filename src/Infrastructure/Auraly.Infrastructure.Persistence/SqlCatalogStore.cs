@@ -270,8 +270,8 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
         command.CommandText = """
             SELECT TOP (@Take) c.CatalogChangeId,c.ChangeKind,p.ProductId,p.ProductCode,p.Reference,p.Name,p.BaseUnitCode,
               t.Code,t.Rate,pr.Amount,pr.CurrencyCode,p.IsActive,
-              (SELECT Barcode AS [Value] FROM dbo.ProductBarcodes b WHERE b.ProductId=p.ProductId AND b.IsActive=1 FOR JSON PATH),
-              (SELECT IdentifierType AS [Type],Value FROM dbo.ProductIdentifiers i WHERE i.ProductId=p.ProductId AND i.IsActive=1 FOR JSON PATH),
+              COALESCE((SELECT Barcode AS [Value] FROM dbo.ProductBarcodes b WHERE b.ProductId=p.ProductId AND b.IsActive=1 FOR JSON PATH),N'[]'),
+              COALESCE((SELECT IdentifierType AS [Type],Value FROM dbo.ProductIdentifiers i WHERE i.ProductId=p.ProductId AND i.IsActive=1 FOR JSON PATH),N'[]'),
               s.ScaleCode,s.BarcodePrefix,s.EmbeddedValueType,s.ValueStart,s.ValueLength,s.DecimalPlaces
             FROM dbo.CatalogChanges c
             JOIN dbo.Products p ON p.ProductId=c.ProductId
@@ -382,9 +382,14 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
         return new(reader.GetGuid(offset), reader.GetString(offset + 1), reader.IsDBNull(offset + 2) ? null : reader.GetString(offset + 2),
             reader.GetString(offset + 3), reader.GetString(offset + 4), reader.GetString(offset + 5), reader.GetDecimal(offset + 6),
             reader.GetDecimal(offset + 7), reader.GetString(offset + 8), reader.GetBoolean(offset + 9), scale,
-            JsonSerializer.Deserialize<BarcodeJson[]>(reader.GetString(offset + 10))!.Select(value => value.Value).ToArray(),
-            JsonSerializer.Deserialize<ProductIdentifierInput[]>(reader.GetString(offset + 11))!);
+            DeserializeArray<BarcodeJson>(reader, offset + 10).Select(value => value.Value).ToArray(),
+            DeserializeArray<ProductIdentifierInput>(reader, offset + 11));
     }
+
+    private static T[] DeserializeArray<T>(SqlDataReader reader, int ordinal) =>
+        reader.IsDBNull(ordinal)
+            ? []
+            : JsonSerializer.Deserialize<T[]>(reader.GetString(ordinal)) ?? [];
 
     private static async Task<long> SessionAsync(SqlConnection connection, Guid deviceId, Guid sessionId, CancellationToken ct)
     {

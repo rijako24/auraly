@@ -74,6 +74,7 @@ export default function PosPage() {
   const skipQuantityBlur = useRef<string | null>(null);
   const [client, setClient] = useState<PosClient | null>(null);
   const [onlineOptions, setOnlineOptions] = useState<OnlineRegisterOption[]>([]);
+  const [onlineTenantName, setOnlineTenantName] = useState("");
   const [onlineUserName, setOnlineUserName] = useState("");
   const [edgeEnrollmentToken, setEdgeEnrollmentToken] = useState<string | null>(null);
   const [edgeEnrollmentRequired, setEdgeEnrollmentRequired] = useState(false);
@@ -178,6 +179,7 @@ export default function PosPage() {
         );
         const displayName =
           serverBootstrap.userDisplayName.trim() || "Cajero";
+        setOnlineTenantName(serverBootstrap.tenantName.trim());
         setOnlineUserName(displayName);
         const available = serverBootstrap.options;
         setOnlineOptions(available);
@@ -952,6 +954,7 @@ export default function PosPage() {
         options={onlineOptions}
         loading={setupLoading}
         error={setupError}
+        tenantName={onlineTenantName || "Auraly"}
         userDisplayName={onlineUserName || "usuario"}
         onSelect={activateOnline}
         edgeCapable={edgeEnrollmentRequired}

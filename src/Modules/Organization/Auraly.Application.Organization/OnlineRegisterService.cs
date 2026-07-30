@@ -10,6 +10,10 @@ public sealed record OnlineRegisterUserIdentity(
 
 public interface IOnlineRegisterDirectory
 {
+    Task<string?> ResolveTenantNameAsync(
+        Guid tenantId,
+        CancellationToken cancellationToken);
+
     Task<IReadOnlyList<OnlineRegisterOption>> ListAsync(
         Guid tenantId,
         CancellationToken cancellationToken);
@@ -25,6 +29,15 @@ public sealed class OnlineRegisterValidationException(string message) : Exceptio
 
 public sealed class OnlineRegisterService(IOnlineRegisterDirectory directory)
 {
+    public async Task<string> TenantNameAsync(
+        OnlineRegisterUserIdentity user,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(user);
+        return await directory.ResolveTenantNameAsync(user.TenantId, cancellationToken)
+            ?? throw new OnlineRegisterForbiddenException(
+                "El tenant autenticado no existe o est� inactivo.");
+    }
     public Task<IReadOnlyList<OnlineRegisterOption>> ListAsync(
         OnlineRegisterUserIdentity user,
         CancellationToken cancellationToken = default)

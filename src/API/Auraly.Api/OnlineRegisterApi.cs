@@ -14,13 +14,17 @@ public static class OnlineRegisterApi
 
         group.MapGet("/bootstrap", async (
             HttpContext context, OnlineRegisterService service, CancellationToken ct) =>
-            await Handle(async () => Results.Ok(new OnlineRegisterBootstrap(
-                context.User.PosUserDisplayName(),
-                await service.ListAsync(
-                    context.User.ToOnlineRegisterUserIdentity(), ct),
-                context.User.FindAll("permission").Any(claim =>
-                    StringComparer.Ordinal.Equals(
-                        claim.Value, CommercePermissionCodes.PosDevicesEnroll))))));
+            await Handle(async () =>
+            {
+                var identity = context.User.ToOnlineRegisterUserIdentity();
+                return Results.Ok(new OnlineRegisterBootstrap(
+                    await service.TenantNameAsync(identity, ct),
+                    context.User.PosUserDisplayName(),
+                    await service.ListAsync(identity, ct),
+                    context.User.FindAll("permission").Any(claim =>
+                        StringComparer.Ordinal.Equals(
+                            claim.Value, CommercePermissionCodes.PosDevicesEnroll))));
+            }));
 
         group.MapGet("/options", async (
             HttpContext context, OnlineRegisterService service, CancellationToken ct) =>

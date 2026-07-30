@@ -51,6 +51,19 @@ public sealed class ServerSliceArchitectureTests
             }
         }
 
+        var desktopProject = "Auraly.Desktop";
+        var packagingScript = Path.Combine(
+            root,
+            "scripts",
+            "Build-AuralyPosInstaller.ps1");
+        if (projectNames.ContainsKey(desktopProject) &&
+            File.Exists(packagingScript) &&
+            File.ReadAllText(packagingScript).Contains(
+                @"src\Desktop\Auraly.Desktop\Auraly.Desktop.csproj",
+                StringComparison.Ordinal))
+        {
+            projectNames[desktopProject]++;
+        }
         var disconnected = projectNames
             .Where(entry =>
                 entry.Value == 0 &&

@@ -100,13 +100,13 @@ public sealed class PosEnrollmentApiTests(ServerSliceFixture fixture)
               (DocumentSeriesId,BusinessId,RegisterId,DocumentType,
                Prefix,SeriesCode,Padding,RangeStart,RangeEnd,IsOfflineCapable,IsActive,CreatedAt)
             VALUES
-              (@DocumentSeriesId,@BusinessId,@RegisterId,N'Invoice',
+              (@DocumentSeriesId,@BusinessId,@RegisterId,N'SalesInvoice',
                N'VTA',N'05',8,1,99999999,1,1,SYSDATETIMEOFFSET());
             INSERT dbo.FiscalSeries
               (SeriesId,BusinessId,RegisterId,FiscalAuthorizationId,DocumentType,
                Prefix,RangeStart,RangeEnd,IsActive,CreatedAt)
             VALUES
-              (@FiscalSeriesId,@BusinessId,@RegisterId,@FiscalAuthorizationId,N'Invoice',
+              (@FiscalSeriesId,@BusinessId,@RegisterId,@FiscalAuthorizationId,N'SalesInvoice',
                @Prefix,20001,30000,1,SYSDATETIMEOFFSET());
             """;
         await using var connection = new SqlConnection(fixture.ConnectionString);

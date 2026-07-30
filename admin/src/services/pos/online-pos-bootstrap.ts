@@ -1,6 +1,7 @@
 import type { OnlineRegisterOption } from "@/services/pos/online-pos-client";
 
 export type OnlineRegisterBootstrap = {
+  tenantName: string;
   userDisplayName: string;
   options: OnlineRegisterOption[];
   canEnrollPosDevice: boolean;

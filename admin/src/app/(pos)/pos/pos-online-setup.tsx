@@ -16,6 +16,7 @@ type Props = {
   options: OnlineRegisterOption[];
   loading: boolean;
   error: string | null;
+  tenantName: string;
   userDisplayName: string;
   onSelect: (option: OnlineRegisterOption) => Promise<void>;
   edgeCapable?: boolean;
@@ -26,6 +27,7 @@ export function PosOnlineSetup({
   options,
   loading,
   error,
+  tenantName,
   userDisplayName,
   onSelect,
   edgeCapable = false,
@@ -83,7 +85,10 @@ export function PosOnlineSetup({
             <div className="grid h-12 w-12 place-items-center rounded-2xl bg-teal-300 text-[#071a1d]">
               <MonitorSmartphone className="h-6 w-6" />
             </div>
-            <p className="mt-8 text-xs font-bold uppercase tracking-[0.18em] text-teal-200">
+            <p className="mt-8 inline-flex rounded-full border border-teal-200/20 bg-teal-300/10 px-3 py-1 text-xs font-bold uppercase tracking-[0.14em] text-teal-100">
+              Empresa � {tenantName || "Auraly"}
+            </p>
+            <p className="mt-5 text-xs font-bold uppercase tracking-[0.18em] text-teal-200">
               {edgeCapable ? "Primera configuración" : "Auraly POS en línea"}
             </p>
             <h1 className="mt-2 text-3xl font-black tracking-tight">

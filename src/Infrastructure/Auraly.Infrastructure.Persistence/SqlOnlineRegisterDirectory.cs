@@ -7,6 +7,18 @@ namespace Auraly.Infrastructure.Persistence;
 public sealed class SqlOnlineRegisterDirectory(SqlServerConnectionFactory connections)
     : IOnlineRegisterDirectory
 {
+    public async Task<string?> ResolveTenantNameAsync(
+        Guid tenantId,
+        CancellationToken cancellationToken)
+    {
+        const string sql = "SELECT Name FROM dbo.Tenants WHERE TenantId=@TenantId AND IsActive=1;";
+        await using var connection = connections.Create();
+        await connection.OpenAsync(cancellationToken);
+        await using var command = new SqlCommand(sql, connection);
+        command.Parameters.AddWithValue("@TenantId", tenantId);
+        return await command.ExecuteScalarAsync(cancellationToken) as string;
+    }
+
     public async Task<IReadOnlyList<OnlineRegisterOption>> ListAsync(
         Guid tenantId,
         CancellationToken cancellationToken)

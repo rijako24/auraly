@@ -177,9 +177,9 @@ public sealed class SqlPosEnrollmentStore(
             JOIN dbo.Warehouses w ON w.WarehouseId=e.WarehouseId AND w.IsActive=1
             JOIN dbo.DocumentSeries ds ON ds.RegisterId=e.RegisterId
                 AND ds.BusinessId=e.BusinessId
-                AND ds.DocumentType=N'Invoice' AND ds.IsOfflineCapable=1 AND ds.IsActive=1
+                AND ds.DocumentType=N'SalesInvoice' AND ds.IsOfflineCapable=1 AND ds.IsActive=1
             JOIN dbo.FiscalSeries fs ON fs.RegisterId=e.RegisterId
-                AND fs.BusinessId=e.BusinessId AND fs.DocumentType=N'Invoice' AND fs.IsActive=1
+                AND fs.BusinessId=e.BusinessId AND fs.DocumentType=N'SalesInvoice' AND fs.IsActive=1
             JOIN dbo.FiscalAuthorizations fa ON fa.FiscalAuthorizationId=fs.FiscalAuthorizationId
                 AND fa.BusinessId=e.BusinessId AND fa.IsActive=1
             WHERE e.EnrollmentSessionId=@SessionId

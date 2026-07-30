@@ -92,15 +92,15 @@ IF NOT EXISTS (SELECT 1 FROM dbo.DocumentSeries WHERE DocumentSeriesId = @Docume
         Prefix,SeriesCode,Padding,RangeStart,RangeEnd,
         IsOfflineCapable,IsActive,CreatedAt)
     VALUES(
-        @DocumentSeriesId,@BusinessId,@RegisterId,N'Invoice',
-        N'VTA',N'01',8,1,99999999,0,1,@Now);
+        @DocumentSeriesId,@BusinessId,@RegisterId,N'SalesInvoice',
+        N'VTA',N'01',8,1,99999999,1,1,@Now);
 
 IF NOT EXISTS (SELECT 1 FROM dbo.FiscalSeries WHERE SeriesId = @FiscalSeriesId)
     INSERT dbo.FiscalSeries(
         SeriesId,BusinessId,RegisterId,FiscalAuthorizationId,DocumentType,
         Prefix,RangeStart,RangeEnd,IsActive,CreatedAt)
     VALUES(
-        @FiscalSeriesId,@BusinessId,@RegisterId,@FiscalAuthorizationId,N'Invoice',
+        @FiscalSeriesId,@BusinessId,@RegisterId,@FiscalAuthorizationId,N'SalesInvoice',
         N'FE',1,99999999,1,@Now);
 
 IF NOT EXISTS (SELECT 1 FROM dbo.TaxProfiles WHERE TaxProfileId = @TaxProfileId)
