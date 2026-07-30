@@ -12,11 +12,37 @@ public sealed record AddOnlineSalesDraftProductRequest(
     decimal Quantity,
     long ExpectedVersion);
 
+public sealed record CaptureOnlineSalesDraftProductRequest(
+    string Value,
+    decimal Quantity,
+    long ExpectedVersion);
+
 public sealed record ChangeOnlineSalesDraftQuantityRequest(
     decimal Quantity,
     long ExpectedVersion);
 
+public sealed record SetOnlineSalesDraftDiscountRequest(
+    decimal Discount,
+    long ExpectedVersion);
+
+public sealed record SelectOnlineSalesDraftCustomerRequest(
+    Guid? CustomerId,
+    long ExpectedVersion);
+
+public sealed record RemoveOnlineSalesDraftLineRequest(long ExpectedVersion);
+
 public sealed record ResetOnlineSalesDraftRequest(long ExpectedVersion);
+
+public sealed record OnlineSalesCustomer(
+    Guid CustomerId,
+    string Identification,
+    string Name,
+    Guid? PriceListId,
+    Guid? PriceChannelId);
+
+public sealed record OnlineSalesCustomerSelection(
+    OnlineSalesDraft Draft,
+    OnlineSalesCustomer? Customer);
 
 public sealed record OnlineSalesDraftLine(
     Guid LineId,

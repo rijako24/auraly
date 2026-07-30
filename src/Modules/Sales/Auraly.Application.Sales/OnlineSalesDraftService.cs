@@ -24,11 +24,45 @@ public interface IOnlineSalesDraftStore
         string idempotencyKey,
         CancellationToken cancellationToken);
 
+    Task<OnlineSalesDraft> CaptureAsync(
+        OnlineSalesUserIdentity user,
+        Guid draftId,
+        string value,
+        decimal quantity,
+        long expectedVersion,
+        string idempotencyKey,
+        CancellationToken cancellationToken);
+
     Task<OnlineSalesDraft> ChangeQuantityAsync(
         OnlineSalesUserIdentity user,
         Guid draftId,
         Guid lineId,
         decimal quantity,
+        long expectedVersion,
+        string idempotencyKey,
+        CancellationToken cancellationToken);
+
+    Task<OnlineSalesDraft> SetDiscountAsync(
+        OnlineSalesUserIdentity user,
+        Guid draftId,
+        Guid lineId,
+        decimal discount,
+        long expectedVersion,
+        string idempotencyKey,
+        CancellationToken cancellationToken);
+
+    Task<OnlineSalesDraft> RemoveLineAsync(
+        OnlineSalesUserIdentity user,
+        Guid draftId,
+        Guid lineId,
+        long expectedVersion,
+        string idempotencyKey,
+        CancellationToken cancellationToken);
+
+    Task<OnlineSalesCustomerSelection> SelectCustomerAsync(
+        OnlineSalesUserIdentity user,
+        Guid draftId,
+        Guid? customerId,
         long expectedVersion,
         string idempotencyKey,
         CancellationToken cancellationToken);
@@ -97,6 +131,74 @@ public sealed class OnlineSalesDraftService(
         return await drafts.ChangeQuantityAsync(
             user, draftId, lineId, request.Quantity,
             request.ExpectedVersion, idempotencyKey, cancellationToken);
+    }
+
+    public async Task<OnlineSalesDraft> CaptureAsync(
+        OnlineSalesUserIdentity user,
+        Guid draftId,
+        CaptureOnlineSalesDraftProductRequest request,
+        string idempotencyKey,
+        CancellationToken cancellationToken = default)
+    {
+        DemandPermission(user);
+        ValidateMutation(draftId, request.ExpectedVersion, idempotencyKey);
+        if (string.IsNullOrWhiteSpace(request.Value) || request.Value.Length > 120 ||
+            request.Quantity <= 0)
+            throw new OnlineSalesDraftValidationException(
+                "Código o referencia y cantidad positiva son obligatorios.");
+        return await drafts.CaptureAsync(
+            user, draftId, request.Value.Trim(), request.Quantity,
+            request.ExpectedVersion, idempotencyKey, cancellationToken);
+    }
+
+    public async Task<OnlineSalesDraft> SetDiscountAsync(
+        OnlineSalesUserIdentity user,
+        Guid draftId,
+        Guid lineId,
+        SetOnlineSalesDraftDiscountRequest request,
+        string idempotencyKey,
+        CancellationToken cancellationToken = default)
+    {
+        DemandPermission(user);
+        ValidateMutation(draftId, request.ExpectedVersion, idempotencyKey);
+        if (lineId == Guid.Empty || request.Discount < 0)
+            throw new OnlineSalesDraftValidationException(
+                "Línea y descuento no negativo son obligatorios.");
+        return await drafts.SetDiscountAsync(
+            user, draftId, lineId, request.Discount,
+            request.ExpectedVersion, idempotencyKey, cancellationToken);
+    }
+
+    public async Task<OnlineSalesDraft> RemoveLineAsync(
+        OnlineSalesUserIdentity user,
+        Guid draftId,
+        Guid lineId,
+        RemoveOnlineSalesDraftLineRequest request,
+        string idempotencyKey,
+        CancellationToken cancellationToken = default)
+    {
+        DemandPermission(user);
+        ValidateMutation(draftId, request.ExpectedVersion, idempotencyKey);
+        if (lineId == Guid.Empty)
+            throw new OnlineSalesDraftValidationException(
+                "La línea es obligatoria.");
+        return await drafts.RemoveLineAsync(
+            user, draftId, lineId, request.ExpectedVersion,
+            idempotencyKey, cancellationToken);
+    }
+
+    public async Task<OnlineSalesCustomerSelection> SelectCustomerAsync(
+        OnlineSalesUserIdentity user,
+        Guid draftId,
+        SelectOnlineSalesDraftCustomerRequest request,
+        string idempotencyKey,
+        CancellationToken cancellationToken = default)
+    {
+        DemandPermission(user);
+        ValidateMutation(draftId, request.ExpectedVersion, idempotencyKey);
+        return await drafts.SelectCustomerAsync(
+            user, draftId, request.CustomerId, request.ExpectedVersion,
+            idempotencyKey, cancellationToken);
     }
 
     public async Task<OnlineSalesDraft> ResetAsync(

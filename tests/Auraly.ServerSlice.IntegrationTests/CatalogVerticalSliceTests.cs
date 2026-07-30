@@ -208,6 +208,9 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
             new InventoryAvailabilityRequest(created.ProductId, fixture.WarehouseId, 1m, Guid.NewGuid()));
         Assert.True(blocked.ValidationRequired);
         Assert.False(blocked.IsAvailable);
+        await ExecuteAsync(
+            "UPDATE dbo.Warehouses SET AllowNegativeStockSales=1 WHERE WarehouseId=@Id;",
+            new SqlParameter("@Id", fixture.WarehouseId));
     }
 
     private async Task<(Guid Tax, Guid Channel, Guid Second)> ConfigureCatalogAsync()

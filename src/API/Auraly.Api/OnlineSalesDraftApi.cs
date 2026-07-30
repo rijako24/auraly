@@ -30,6 +30,16 @@ public static class OnlineSalesDraftApi
                 context.User.ToOnlineSalesUserIdentity(),
                 draftId, request, IdempotencyKey(context), ct)));
 
+        group.MapPost("/{draftId:guid}/capture", async (
+            HttpContext context,
+            Guid draftId,
+            CaptureOnlineSalesDraftProductRequest request,
+            OnlineSalesDraftService service,
+            CancellationToken ct) =>
+            await Handle(() => service.CaptureAsync(
+                context.User.ToOnlineSalesUserIdentity(),
+                draftId, request, IdempotencyKey(context), ct)));
+
         group.MapPut("/{draftId:guid}/lines/{lineId:guid}/quantity", async (
             HttpContext context,
             Guid draftId,
@@ -40,6 +50,38 @@ public static class OnlineSalesDraftApi
             await Handle(() => service.ChangeQuantityAsync(
                 context.User.ToOnlineSalesUserIdentity(),
                 draftId, lineId, request, IdempotencyKey(context), ct)));
+
+        group.MapPut("/{draftId:guid}/lines/{lineId:guid}/discount", async (
+            HttpContext context,
+            Guid draftId,
+            Guid lineId,
+            SetOnlineSalesDraftDiscountRequest request,
+            OnlineSalesDraftService service,
+            CancellationToken ct) =>
+            await Handle(() => service.SetDiscountAsync(
+                context.User.ToOnlineSalesUserIdentity(),
+                draftId, lineId, request, IdempotencyKey(context), ct)));
+
+        group.MapPost("/{draftId:guid}/lines/{lineId:guid}/remove", async (
+            HttpContext context,
+            Guid draftId,
+            Guid lineId,
+            RemoveOnlineSalesDraftLineRequest request,
+            OnlineSalesDraftService service,
+            CancellationToken ct) =>
+            await Handle(() => service.RemoveLineAsync(
+                context.User.ToOnlineSalesUserIdentity(),
+                draftId, lineId, request, IdempotencyKey(context), ct)));
+
+        group.MapPut("/{draftId:guid}/customer", async (
+            HttpContext context,
+            Guid draftId,
+            SelectOnlineSalesDraftCustomerRequest request,
+            OnlineSalesDraftService service,
+            CancellationToken ct) =>
+            await Handle(() => service.SelectCustomerAsync(
+                context.User.ToOnlineSalesUserIdentity(),
+                draftId, request, IdempotencyKey(context), ct)));
 
         group.MapPost("/{draftId:guid}/reset", async (
             HttpContext context,
@@ -57,8 +99,8 @@ public static class OnlineSalesDraftApi
     private static string IdempotencyKey(HttpContext context) =>
         context.Request.Headers["Idempotency-Key"].ToString();
 
-    private static async Task<IResult> Handle(
-        Func<Task<OnlineSalesDraft>> action)
+    private static async Task<IResult> Handle<T>(
+        Func<Task<T>> action)
     {
         try { return Results.Ok(await action()); }
         catch (OnlineSalesDraftForbiddenException exception)
