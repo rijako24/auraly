@@ -9,7 +9,7 @@ using Microsoft.Data.SqlClient;
 
 namespace Auraly.Infrastructure.Persistence;
 
-public sealed class SqlOnlineSalesDraftStore(
+public sealed partial class SqlOnlineSalesDraftStore(
     SqlServerConnectionFactory connections,
     IAuralyIdGenerator ids,
     TimeProvider time) : IOnlineSalesDraftStore
@@ -973,14 +973,14 @@ public sealed class SqlOnlineSalesDraftStore(
         header.Transaction = transaction;
         header.CommandText = """
             SELECT SalesDraftId,BusinessId,LocationId,WarehouseId,RegisterId,UserId,
-                   CustomerId,SellerId,Status,Version,UpdatedAt
+                   CustomerId,SellerId,Status,Name,Reference,Observation,Version,UpdatedAt
             FROM dbo.SalesDrafts WHERE SalesDraftId=@DraftId;
             """;
         header.Parameters.Add(P("@DraftId", draftId));
         await using var reader = await header.ExecuteReaderAsync(ct);
         if (!await reader.ReadAsync(ct))
             throw new OnlineSalesDraftValidationException("El borrador no existe.");
-        var values = new object[11];
+        var values = new object[14];
         reader.GetValues(values);
         await reader.DisposeAsync();
 
@@ -1015,7 +1015,11 @@ public sealed class SqlOnlineSalesDraftStore(
             (Guid)values[4], (Guid)values[5],
             values[6] is DBNull ? null : (Guid)values[6],
             values[7] is DBNull ? null : (Guid)values[7],
-            (string)values[8], (long)values[9], (DateTimeOffset)values[10],
+            (string)values[8],
+            values[9] is DBNull ? null : (string)values[9],
+            values[10] is DBNull ? null : (string)values[10],
+            values[11] is DBNull ? null : (string)values[11],
+            (long)values[12], (DateTimeOffset)values[13],
             lines, lines.Sum(line => line.Net), lines.Sum(line => line.Tax),
             lines.Sum(line => line.Total));
     }

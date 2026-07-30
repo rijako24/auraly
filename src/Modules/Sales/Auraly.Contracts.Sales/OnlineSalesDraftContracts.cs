@@ -33,6 +33,46 @@ public sealed record RemoveOnlineSalesDraftLineRequest(long ExpectedVersion);
 
 public sealed record ResetOnlineSalesDraftRequest(long ExpectedVersion);
 
+public sealed record PauseOnlineSalesDraftRequest(
+    string Name,
+    string? Reference,
+    string? Observation,
+    long ExpectedVersion);
+
+public sealed record RecoverOnlineSalesDraftRequest(
+    long ExpectedTemporaryVersion,
+    long ExpectedActiveVersion);
+
+public sealed record RemoveOnlineSalesTemporaryRequest(long ExpectedVersion);
+
+public sealed record SearchOnlineSalesRequest(
+    OnlineSalesDraftContext Context,
+    string? Search = null,
+    int Skip = 0,
+    int Take = 50);
+
+public sealed record OnlineSalesProduct(
+    Guid ProductId,
+    string ProductCode,
+    string? Reference,
+    string Name,
+    string BaseUnitCode,
+    string TaxCode,
+    decimal TaxRate,
+    decimal UnitPrice,
+    string CurrencyCode,
+    bool IsActive);
+
+public sealed record OnlineSalesProductPage(
+    IReadOnlyList<OnlineSalesProduct> Items,
+    bool HasMore,
+    int? NextOffset);
+
+public sealed record OnlineSalesCustomerPage(
+    IReadOnlyList<OnlineSalesCustomer> Items,
+    bool HasMore,
+    int? NextOffset);
+
 public sealed record OnlineSalesCustomer(
     Guid CustomerId,
     string Identification,
@@ -72,6 +112,9 @@ public sealed record OnlineSalesDraft(
     Guid? CustomerId,
     Guid? SellerId,
     string Status,
+    string? Name,
+    string? Reference,
+    string? Observation,
     long Version,
     DateTimeOffset UpdatedAt,
     IReadOnlyList<OnlineSalesDraftLine> Lines,

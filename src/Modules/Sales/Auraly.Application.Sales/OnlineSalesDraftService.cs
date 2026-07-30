@@ -67,6 +67,42 @@ public interface IOnlineSalesDraftStore
         string idempotencyKey,
         CancellationToken cancellationToken);
 
+    Task<OnlineSalesProductPage> SearchProductsAsync(
+        OnlineSalesUserIdentity user,
+        SearchOnlineSalesRequest request,
+        CancellationToken cancellationToken);
+
+    Task<OnlineSalesCustomerPage> SearchCustomersAsync(
+        OnlineSalesUserIdentity user,
+        SearchOnlineSalesRequest request,
+        CancellationToken cancellationToken);
+
+    Task<IReadOnlyList<OnlineSalesDraft>> ListTemporariesAsync(
+        OnlineSalesUserIdentity user,
+        SearchOnlineSalesRequest request,
+        CancellationToken cancellationToken);
+
+    Task<OnlineSalesDraft> PauseAsync(
+        OnlineSalesUserIdentity user,
+        Guid draftId,
+        PauseOnlineSalesDraftRequest request,
+        string idempotencyKey,
+        CancellationToken cancellationToken);
+
+    Task<OnlineSalesDraft> RecoverTemporaryAsync(
+        OnlineSalesUserIdentity user,
+        Guid temporaryDraftId,
+        RecoverOnlineSalesDraftRequest request,
+        string idempotencyKey,
+        CancellationToken cancellationToken);
+
+    Task<OnlineSalesDraft> RemoveTemporaryAsync(
+        OnlineSalesUserIdentity user,
+        Guid temporaryDraftId,
+        RemoveOnlineSalesTemporaryRequest request,
+        string idempotencyKey,
+        CancellationToken cancellationToken);
+
     Task<OnlineSalesDraft> ResetAsync(
         OnlineSalesUserIdentity user,
         Guid draftId,
@@ -201,6 +237,84 @@ public sealed class OnlineSalesDraftService(
             idempotencyKey, cancellationToken);
     }
 
+    public async Task<OnlineSalesProductPage> SearchProductsAsync(
+        OnlineSalesUserIdentity user,
+        SearchOnlineSalesRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        DemandPermission(user);
+        ValidateSearch(request);
+        return await drafts.SearchProductsAsync(user, request, cancellationToken);
+    }
+
+    public async Task<OnlineSalesCustomerPage> SearchCustomersAsync(
+        OnlineSalesUserIdentity user,
+        SearchOnlineSalesRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        DemandPermission(user);
+        ValidateSearch(request);
+        return await drafts.SearchCustomersAsync(user, request, cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<OnlineSalesDraft>> ListTemporariesAsync(
+        OnlineSalesUserIdentity user,
+        SearchOnlineSalesRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        DemandPermission(user);
+        ValidateSearch(request);
+        return await drafts.ListTemporariesAsync(user, request, cancellationToken);
+    }
+
+    public async Task<OnlineSalesDraft> PauseAsync(
+        OnlineSalesUserIdentity user,
+        Guid draftId,
+        PauseOnlineSalesDraftRequest request,
+        string idempotencyKey,
+        CancellationToken cancellationToken = default)
+    {
+        DemandPermission(user);
+        ValidateMutation(draftId, request.ExpectedVersion, idempotencyKey);
+        if (string.IsNullOrWhiteSpace(request.Name) || request.Name.Length > 120 ||
+            request.Reference?.Length > 120 || request.Observation?.Length > 500)
+            throw new OnlineSalesDraftValidationException(
+                "El nombre es obligatorio y los textos superan la longitud permitida.");
+        return await drafts.PauseAsync(
+            user, draftId, request with { Name = request.Name.Trim() },
+            idempotencyKey, cancellationToken);
+    }
+
+    public async Task<OnlineSalesDraft> RecoverTemporaryAsync(
+        OnlineSalesUserIdentity user,
+        Guid temporaryDraftId,
+        RecoverOnlineSalesDraftRequest request,
+        string idempotencyKey,
+        CancellationToken cancellationToken = default)
+    {
+        DemandPermission(user);
+        ValidateMutation(
+            temporaryDraftId, request.ExpectedTemporaryVersion, idempotencyKey);
+        if (request.ExpectedActiveVersion < 1)
+            throw new OnlineSalesDraftValidationException(
+                "La versión de la venta activa es obligatoria.");
+        return await drafts.RecoverTemporaryAsync(
+            user, temporaryDraftId, request, idempotencyKey, cancellationToken);
+    }
+
+    public async Task<OnlineSalesDraft> RemoveTemporaryAsync(
+        OnlineSalesUserIdentity user,
+        Guid temporaryDraftId,
+        RemoveOnlineSalesTemporaryRequest request,
+        string idempotencyKey,
+        CancellationToken cancellationToken = default)
+    {
+        DemandPermission(user);
+        ValidateMutation(temporaryDraftId, request.ExpectedVersion, idempotencyKey);
+        return await drafts.RemoveTemporaryAsync(
+            user, temporaryDraftId, request, idempotencyKey, cancellationToken);
+    }
+
     public async Task<OnlineSalesDraft> ResetAsync(
         OnlineSalesUserIdentity user,
         Guid draftId,
@@ -234,5 +348,20 @@ public sealed class OnlineSalesDraftService(
         if (string.IsNullOrWhiteSpace(idempotencyKey) || idempotencyKey.Length > 100)
             throw new OnlineSalesDraftValidationException(
                 "Idempotency-Key es obligatorio y admite máximo 100 caracteres.");
+    }
+
+    private static void ValidateSearch(SearchOnlineSalesRequest request)
+    {
+        if (request.Context.BusinessId == Guid.Empty ||
+            request.Context.LocationId == Guid.Empty ||
+            request.Context.RegisterId == Guid.Empty)
+            throw new OnlineSalesDraftValidationException(
+                "Negocio, sede y caja son obligatorios.");
+        if (request.Skip < 0 || request.Take is < 1 or > 100)
+            throw new OnlineSalesDraftValidationException(
+                "La paginación solicitada no es válida.");
+        if (request.Search?.Length > 120)
+            throw new OnlineSalesDraftValidationException(
+                "La búsqueda admite máximo 120 caracteres.");
     }
 }

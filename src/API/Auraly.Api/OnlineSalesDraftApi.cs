@@ -20,6 +20,30 @@ public static class OnlineSalesDraftApi
             await Handle(() => service.OpenAsync(
                 context.User.ToOnlineSalesUserIdentity(), request, ct)));
 
+        group.MapPost("/products/search", async (
+            HttpContext context,
+            SearchOnlineSalesRequest request,
+            OnlineSalesDraftService service,
+            CancellationToken ct) =>
+            await Handle(() => service.SearchProductsAsync(
+                context.User.ToOnlineSalesUserIdentity(), request, ct)));
+
+        group.MapPost("/customers/search", async (
+            HttpContext context,
+            SearchOnlineSalesRequest request,
+            OnlineSalesDraftService service,
+            CancellationToken ct) =>
+            await Handle(() => service.SearchCustomersAsync(
+                context.User.ToOnlineSalesUserIdentity(), request, ct)));
+
+        group.MapPost("/temporaries/search", async (
+            HttpContext context,
+            SearchOnlineSalesRequest request,
+            OnlineSalesDraftService service,
+            CancellationToken ct) =>
+            await Handle(() => service.ListTemporariesAsync(
+                context.User.ToOnlineSalesUserIdentity(), request, ct)));
+
         group.MapPost("/{draftId:guid}/lines", async (
             HttpContext context,
             Guid draftId,
@@ -80,6 +104,36 @@ public static class OnlineSalesDraftApi
             OnlineSalesDraftService service,
             CancellationToken ct) =>
             await Handle(() => service.SelectCustomerAsync(
+                context.User.ToOnlineSalesUserIdentity(),
+                draftId, request, IdempotencyKey(context), ct)));
+
+        group.MapPost("/{draftId:guid}/pause", async (
+            HttpContext context,
+            Guid draftId,
+            PauseOnlineSalesDraftRequest request,
+            OnlineSalesDraftService service,
+            CancellationToken ct) =>
+            await Handle(() => service.PauseAsync(
+                context.User.ToOnlineSalesUserIdentity(),
+                draftId, request, IdempotencyKey(context), ct)));
+
+        group.MapPost("/temporaries/{draftId:guid}/recover", async (
+            HttpContext context,
+            Guid draftId,
+            RecoverOnlineSalesDraftRequest request,
+            OnlineSalesDraftService service,
+            CancellationToken ct) =>
+            await Handle(() => service.RecoverTemporaryAsync(
+                context.User.ToOnlineSalesUserIdentity(),
+                draftId, request, IdempotencyKey(context), ct)));
+
+        group.MapPost("/temporaries/{draftId:guid}/remove", async (
+            HttpContext context,
+            Guid draftId,
+            RemoveOnlineSalesTemporaryRequest request,
+            OnlineSalesDraftService service,
+            CancellationToken ct) =>
+            await Handle(() => service.RemoveTemporaryAsync(
                 context.User.ToOnlineSalesUserIdentity(),
                 draftId, request, IdempotencyKey(context), ct)));
 
