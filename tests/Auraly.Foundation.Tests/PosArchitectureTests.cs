@@ -39,7 +39,7 @@ public sealed class PosArchitectureTests
     }
 
     [Fact]
-    public void Pos_scanner_remains_editable_while_the_local_edge_reconnects()
+    public void Pos_scanner_remains_editable_and_only_local_edge_uses_health_polling()
     {
         var repositoryRoot = FindRepositoryRoot();
         var pagePath = Path.Combine(
@@ -61,7 +61,15 @@ public sealed class PosArchitectureTests
         Assert.Contains("disabled={busy}", scanner, StringComparison.Ordinal);
         Assert.DoesNotContain("edgeReady", scanner, StringComparison.Ordinal);
         Assert.Contains(
-            "POS Edge no est\\u00e1 conectado. El c\\u00f3digo se conservar\\u00e1 para reintentar.",
+            "Los servicios locales de la caja no est\\u00e1n disponibles.",
+            page,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "No hay conexi\\u00f3n con Auraly. La venta en l\\u00ednea requiere conexi\\u00f3n con el servidor.",
+            page,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "client.mode === \"edge\"",
             page,
             StringComparison.Ordinal);
         Assert.Contains(

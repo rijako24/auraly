@@ -121,6 +121,33 @@ export type PosPaymentInput = {
   reference: string | null;
 };
 
+export type PosReceiptLine = {
+  productCode: string;
+  description: string;
+  quantity: number;
+  unitPrice: number;
+  discount: number;
+  tax: number;
+  total: number;
+};
+
+export type PosPrintableReceipt = {
+  documentId: string;
+  documentNumber: string;
+  fiscalNumber: string;
+  issuedAt: string;
+  customerIdentification: string;
+  customerName: string;
+  lines: PosReceiptLine[];
+  payments: PosPaymentInput[];
+  untaxedAmount: number;
+  taxAmount: number;
+  payableAmount: number;
+  cufe: string;
+  qrPayload: string;
+  fiscalStatus: string;
+};
+
 export type PosCompleteSaleResult = {
   issuedSale: {
     documentId: { value: string };
@@ -133,9 +160,48 @@ export type PosCompleteSaleResult = {
     wasAlreadyIssued: boolean;
   };
   nextDraft: PosDraft;
-  nextDocumentNumber: PosDocumentNumberPreview;
-  nextFiscalNumber: PosFiscalNumberPreview;
+  nextDocumentNumber: PosDocumentNumberPreview | null;
+  nextFiscalNumber: PosFiscalNumberPreview | null;
+  receipt?: PosPrintableReceipt;
+  printPreviewOpened?: boolean;
 };
+
+export interface PosClient {
+  readonly mode: "edge" | "online";
+  health(): Promise<{
+    status: string;
+    serverConnected: boolean;
+    registerCode: string;
+    userDisplayName: string;
+  }>;
+  searchProducts(search?: string, skip?: number, take?: number): Promise<PosCatalogSearchPage>;
+  searchCustomers(search?: string, skip?: number, take?: number): Promise<PosCustomerSearchPage>;
+  customer(customerId: string): Promise<PosCustomer>;
+  activeDraft(): Promise<PosDraft>;
+  nextNumbers(): Promise<PosNextNumbers | null>;
+  capture(value: string, customerId: string | null): Promise<PosCaptureResult>;
+  changeQuantity(draftId: string, lineId: string, quantity: number): Promise<PosCaptureResult>;
+  setDiscount(draftId: string, lineId: string, discount: number): Promise<PosDraft>;
+  selectCustomer(draftId: string, customerId: string | null): Promise<PosCustomerSelection>;
+  removeLine(draftId: string, lineId: string): Promise<PosDraft>;
+  cancelDraft(draftId: string): Promise<PosDraft>;
+  saveTemporary(
+    draftId: string,
+    name: string,
+    reference: string,
+    observation: string,
+  ): Promise<PosDraft>;
+  temporaries(search?: string): Promise<PosDraft[]>;
+  deleteTemporary(draftId: string): Promise<void>;
+  recoverTemporary(draftId: string): Promise<PosDraft>;
+  completeSale(
+    draftId: string,
+    customerIdentification: string | null,
+    payments: PosPaymentInput[],
+  ): Promise<PosCompleteSaleResult>;
+  searchIssuedSales(search?: string, skip?: number, take?: number): Promise<PosIssuedSaleSearchPage>;
+  reprint(documentId: string): Promise<void>;
+}
 
 export class PosEdgeError extends Error {
   constructor(
@@ -146,7 +212,9 @@ export class PosEdgeError extends Error {
   }
 }
 
-export class PosEdgeClient {
+export class PosEdgeClient implements PosClient {
+  readonly mode = "edge" as const;
+
   constructor(private readonly sessionToken: string) {}
 
   health() {

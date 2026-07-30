@@ -1,4 +1,4 @@
-const CACHE_NAME = "auraly-pos-shell-v1";
+const CACHE_NAME = "auraly-pos-shell-v2";
 const APP_SHELL = ["/pos", "/pos.webmanifest", "/brand/auraly-mark.png"];
 
 self.addEventListener("install", (event) => {
@@ -20,6 +20,7 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("fetch", (event) => {
   const requestUrl = new URL(event.request.url);
   if (event.request.method !== "GET" || requestUrl.origin !== self.location.origin) return;
+  if (requestUrl.pathname.startsWith("/api/")) return;
   event.respondWith(
     fetch(event.request)
       .then((response) => {

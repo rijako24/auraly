@@ -12,14 +12,14 @@ import {
   Printer,
   RotateCcw,
   Save,
+  Settings2,
   Search,
   Trash2,
   UserRound,
   Wifi,
   WifiOff,
 } from "lucide-react";
-import Image from "next/image";
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 
 import {
   PosCatalogProduct,
@@ -30,12 +30,23 @@ import {
   PosPaymentInput,
   PosEdgeClient,
   PosEdgeError,
+  type PosClient,
   readEdgeTokenFromLaunch,
 } from "@/services/pos/pos-edge-client";
+import { authApi } from "@/services/api/auth";
+import {
+  forgetOnlineRegister,
+  loadOnlineRegisterOptions,
+  OnlinePosClient,
+  type OnlineRegisterOption,
+  rememberedOnlineRegisterId,
+  selectOnlineRegister,
+} from "@/services/pos/online-pos-client";
 import { PosConfirmDialog } from "./pos-confirm-dialog";
 import { PosCustomerSearchDialog } from "./pos-customer-search-dialog";
 import { PosDiscountDialog } from "./pos-discount-dialog";
 import { PosInvoiceSearchDialog } from "./pos-invoice-search-dialog";
+import { PosOnlineSetup } from "./pos-online-setup";
 import { PosPaymentDialog } from "./pos-payment-dialog";
 import {
   shouldShowCashChange,
@@ -54,7 +65,11 @@ export default function PosPage() {
   const scanner = useRef<HTMLInputElement>(null);
   const quantityInputs = useRef(new Map<string, HTMLInputElement>());
   const skipQuantityBlur = useRef<string | null>(null);
-  const [token, setToken] = useState<string | null>(null);
+  const [client, setClient] = useState<PosClient | null>(null);
+  const [onlineOptions, setOnlineOptions] = useState<OnlineRegisterOption[]>([]);
+  const [onlineUserName, setOnlineUserName] = useState("");
+  const [setupLoading, setSetupLoading] = useState(true);
+  const [setupError, setSetupError] = useState<string | null>(null);
   const [draft, setDraft] = useState<PosDraft | null>(null);
   const [temporaries, setTemporaries] = useState<PosDraft[]>([]);
   const [scan, setScan] = useState("");
@@ -91,7 +106,6 @@ export default function PosPage() {
   } | null>(null);
   const [nextNumber, setNextNumber] = useState<PosDocumentNumberPreview | null>(null);
   const [temporaryReference, setTemporaryReference] = useState("");
-  const client = useMemo(() => (token ? new PosEdgeClient(token) : null), [token]);
   const hasSelectedLine = Boolean(
     selectedLineId && draft?.lines.some((line) => line.lineId === selectedLineId),
   );
@@ -107,10 +121,57 @@ export default function PosPage() {
   }, [client]);
 
   useEffect(() => {
-    setToken(readEdgeTokenFromLaunch());
     if ("serviceWorker" in navigator) {
       void navigator.serviceWorker.register("/pos-sw.js", { scope: "/pos" });
     }
+    const edgeToken = readEdgeTokenFromLaunch();
+    if (edgeToken) {
+      setClient(new PosEdgeClient(edgeToken));
+      setSetupLoading(false);
+      return;
+    }
+
+    let active = true;
+    const bootstrapOnline = async () => {
+      setSetupLoading(true);
+      setSetupError(null);
+      try {
+        const user = await authApi.me();
+        if (!active) return;
+        const displayName =
+          `${user.firstName} ${user.lastName}`.trim() || user.username;
+        setOnlineUserName(displayName);
+        const options = await loadOnlineRegisterOptions();
+        if (!active) return;
+        const available = options.filter(
+          (option) => !option.hasActiveEdgeEnrollment,
+        );
+        setOnlineOptions(available);
+        const remembered = rememberedOnlineRegisterId();
+        const selected = available.find(
+          (option) => option.registerId === remembered,
+        );
+        if (selected) {
+          window.localStorage.setItem("selected_business_id", selected.businessId);
+          const context = await selectOnlineRegister(selected);
+          if (active) setClient(new OnlinePosClient(context, displayName));
+        }
+      } catch (caught) {
+        if (!active) return;
+        setSetupError(
+          caught instanceof Error
+            ? caught.message
+            : "No fue posible preparar las cajas disponibles.",
+        );
+      } finally {
+        if (active) setSetupLoading(false);
+      }
+    };
+
+    void bootstrapOnline();
+    return () => {
+      active = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -140,7 +201,7 @@ export default function PosPage() {
           if (!active) return;
           setDraft(current);
           setTemporaries(pending);
-          setNextNumber(numbers.document);
+          setNextNumber(numbers?.document ?? null);
           setSelectedCustomer(
             current.customerId
               ? await client.customer(current.customerId)
@@ -162,10 +223,24 @@ export default function PosPage() {
     };
 
     void connect();
-    const interval = window.setInterval(() => void connect(), 3_000);
+    const interval =
+      client.mode === "edge"
+        ? window.setInterval(() => void connect(), 3_000)
+        : null;
+    const handleOnline = () => void connect();
+    const handleOffline = () => {
+      if (client.mode === "online") {
+        setServerConnected(false);
+        setEdgeReady(false);
+      }
+    };
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
     return () => {
       active = false;
-      window.clearInterval(interval);
+      if (interval !== null) window.clearInterval(interval);
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
     };
   }, [client, focusScanner]);
 
@@ -304,8 +379,12 @@ export default function PosPage() {
   async function captureValue(value: string): Promise<boolean> {
     if (!client || !value || busy) return false;
     if (!edgeReady) {
-      setError("POS Edge no est\u00e1 conectado. El c\u00f3digo se conservar\u00e1 para reintentar.");
-      setMessage("Esperando conexi\u00f3n con POS Edge");
+      setError(
+        client.mode === "online"
+          ? "No hay conexi\u00f3n con Auraly. La venta en l\u00ednea requiere conexi\u00f3n con el servidor."
+          : "Los servicios locales de la caja no est\u00e1n disponibles. El c\u00f3digo se conservar\u00e1 para reintentar.",
+      );
+      setMessage(client.mode === "online" ? "Esperando conexi\u00f3n con Auraly" : "Esperando servicios de la caja");
       focusScanner();
       return false;
     }
@@ -614,10 +693,14 @@ export default function PosPage() {
       setScan("");
       setError(null);
       setPaymentOpen(false);
+      const issuedLabel =
+        result.printPreviewOpened === false
+          ? "emitida. El navegador bloqueó la vista previa; puedes reimprimirla con F6"
+          : "emitida e impresa";
       setMessage(
         settlement.change > 0
-          ? `${result.issuedSale.documentNumber} emitida e impresa. Entregar ${money.format(settlement.change)} de cambio. Nueva venta lista.`
-          : `${result.issuedSale.documentNumber} emitida e impresa (DIAN ${result.issuedSale.fiscalNumber}). Pago registrado. Nueva venta lista.`,
+          ? `${result.issuedSale.documentNumber} ${issuedLabel}. Entregar ${money.format(settlement.change)} de cambio. Nueva venta lista.`
+          : `${result.issuedSale.documentNumber} ${issuedLabel} (DIAN ${result.issuedSale.fiscalNumber}). Pago registrado. Nueva venta lista.`,
       );
     } catch (caught) {
       showError(caught);
@@ -678,8 +761,14 @@ export default function PosPage() {
 
   function showError(caught: unknown) {
     const status = caught instanceof PosEdgeError ? caught.status : 0;
-    if (!(caught instanceof PosEdgeError)) setEdgeReady(false);
+    if (!(caught instanceof PosEdgeError) && client?.mode === "online") {
+      setEdgeReady(false);
+      setServerConnected(false);
+    }
     const text =
+      client?.mode === "online" && caught instanceof PosEdgeError
+        ? caught.message
+        :
       status === 409 &&
       caught instanceof PosEdgeError &&
       caught.message.includes("pendiente de imprimir")
@@ -697,8 +786,45 @@ export default function PosPage() {
     setMessage("Revisa la novedad");
   }
 
-  if (!token) {
-    return <ConnectionGate onConnect={setToken} />;
+  async function activateOnline(option: OnlineRegisterOption) {
+    setSetupError(null);
+    try {
+      window.localStorage.setItem("selected_business_id", option.businessId);
+      const context = await selectOnlineRegister(option);
+      setClient(new OnlinePosClient(context, onlineUserName));
+    } catch (caught) {
+      setSetupError(
+        caught instanceof Error
+          ? caught.message
+          : "No fue posible seleccionar la caja.",
+      );
+      throw caught;
+    }
+  }
+
+  function changeOnlineRegister() {
+    if (client?.mode !== "online" || busy) return;
+    forgetOnlineRegister();
+    setClient(null);
+    setDraft(null);
+    setTemporaries([]);
+    setSelectedCustomer(null);
+    setSelectedLineId(null);
+    setNextNumber(null);
+    setEdgeReady(false);
+    setServerConnected(false);
+  }
+
+  if (!client) {
+    return (
+      <PosOnlineSetup
+        options={onlineOptions}
+        loading={setupLoading}
+        error={setupError}
+        userDisplayName={onlineUserName || "usuario"}
+        onSelect={activateOnline}
+      />
+    );
   }
 
   return (
@@ -713,6 +839,18 @@ export default function PosPage() {
         </div>
         <div className="flex min-w-0 items-center gap-3 text-sm">
           <span className="font-bold tracking-tight">Caja {workstation.registerCode}</span>
+          {client.mode === "online" && (
+            <button
+              type="button"
+              onClick={changeOnlineRegister}
+              disabled={busy}
+              title="Cambiar caja"
+              className="grid h-8 w-8 place-items-center rounded-lg border border-white/10 text-auraly-secondary transition hover:bg-white/10 hover:text-white disabled:opacity-40"
+              aria-label="Cambiar caja"
+            >
+              <Settings2 className="h-4 w-4" />
+            </button>
+          )}
           <span className="h-4 w-px bg-white/20" aria-hidden="true" />
           <span className="flex min-w-0 items-center gap-1.5 text-auraly-secondary">
             <UserRound className="h-3.5 w-3.5 shrink-0" />
@@ -959,7 +1097,11 @@ export default function PosPage() {
                   <span className="rounded-full border border-teal-200 bg-white px-3 py-1.5 text-teal-800">Lector activo</span>
                   <span className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-slate-700">Buscar producto · F2</span>
                   <span className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-slate-700">
-                    Próxima {nextNumber?.isAvailable ? nextNumber.fullNumber : "por calcular"}
+                    Próxima {nextNumber?.isAvailable
+                      ? nextNumber.fullNumber
+                      : client.mode === "online"
+                        ? "al emitir"
+                        : "por calcular"}
                   </span>
                 </div>
               </div>
@@ -982,7 +1124,11 @@ export default function PosPage() {
                   </p>
                 )}
                 <p className="mt-0.5 text-xs text-auraly-secondary">
-                  Próxima: {nextNumber?.isAvailable ? nextNumber.fullNumber : "Serie no disponible"}
+                  Próxima: {nextNumber?.isAvailable
+                    ? nextNumber.fullNumber
+                    : client.mode === "online"
+                      ? "se asigna al emitir"
+                      : "Serie no disponible"}
                 </p>
               </div>
               <span className="rounded-lg bg-white/10 px-2 py-1 text-xs">
@@ -1337,54 +1483,6 @@ export default function PosPage() {
           </form>
         </div>
       )}
-    </main>
-  );
-}
-
-function ConnectionGate({ onConnect }: { onConnect: (token: string) => void }) {
-  const [value, setValue] = useState("");
-  return (
-    <main className="grid min-h-screen place-items-center bg-auraly-background p-6 text-auraly-text">
-      <form
-        onSubmit={(event) => {
-          event.preventDefault();
-          const token = value.trim();
-          if (!token) return;
-          window.sessionStorage.setItem("auraly.pos.edge-token", token);
-          onConnect(token);
-        }}
-        className="w-full max-w-md rounded-3xl border border-white/10 bg-auraly-surface p-7 shadow-2xl"
-      >
-        <Image
-          src="/brand/auraly-mark.png"
-          alt="Auraly"
-          width={56}
-          height={56}
-          className="rounded-2xl"
-          priority
-        />
-        <h1 className="mt-5 text-2xl font-semibold">Conectar Auraly POS</h1>
-        <p className="mt-2 text-sm leading-6 text-auraly-secondary">
-          Abre esta pantalla desde la aplicación instalada. Para desarrollo local puedes ingresar la sesión local generada por el host.
-        </p>
-        <label className="mt-5 block text-sm font-medium">
-          Sesión local
-          <input
-            type="password"
-            value={value}
-            onChange={(event) => setValue(event.target.value)}
-            className="mt-2 h-12 w-full rounded-xl border border-white/15 bg-white/5 px-3 text-white outline-none focus:border-auraly-accent"
-            autoComplete="off"
-          />
-        </label>
-        <button
-          type="submit"
-          disabled={!value.trim()}
-          className="mt-4 h-12 w-full rounded-xl bg-auraly-accent font-semibold text-auraly-background transition hover:bg-auraly-light disabled:opacity-40"
-        >
-          Conectar
-        </button>
-      </form>
     </main>
   );
 }
