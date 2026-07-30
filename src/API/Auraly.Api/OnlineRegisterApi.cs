@@ -11,6 +11,13 @@ public static class OnlineRegisterApi
         var group = endpoints.MapGroup("/api/commerce/v1/pos/register-context")
             .RequireAuthorization("pos.user");
 
+        group.MapGet("/bootstrap", async (
+            HttpContext context, OnlineRegisterService service, CancellationToken ct) =>
+            await Handle(async () => Results.Ok(new OnlineRegisterBootstrap(
+                context.User.PosUserDisplayName(),
+                await service.ListAsync(
+                    context.User.ToOnlineRegisterUserIdentity(), ct)))));
+
         group.MapGet("/options", async (
             HttpContext context, OnlineRegisterService service, CancellationToken ct) =>
             await Handle(async () => Results.Ok(await service.ListAsync(
@@ -48,6 +55,19 @@ public static class OnlineRegisterClaimsPrincipalExtensions
             RequiredGuid(principal, "tenant_id"),
             principal.FindAll("permission").Select(claim => claim.Value)
                 .ToHashSet(StringComparer.Ordinal));
+
+    public static string PosUserDisplayName(this ClaimsPrincipal principal)
+    {
+        ArgumentNullException.ThrowIfNull(principal);
+        return FirstNonEmpty(
+            principal.FindFirstValue("full_name"),
+            principal.FindFirstValue("username"),
+            principal.FindFirstValue(ClaimTypes.Name),
+            "Cajero");
+    }
+
+    private static string FirstNonEmpty(params string?[] values) =>
+        values.First(value => !string.IsNullOrWhiteSpace(value))!.Trim();
 
     private static Guid RequiredGuid(ClaimsPrincipal principal, string claimType) =>
         Guid.TryParse(principal.FindFirstValue(claimType), out var value)

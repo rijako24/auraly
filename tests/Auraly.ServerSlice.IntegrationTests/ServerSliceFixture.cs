@@ -124,7 +124,8 @@ public sealed class ServerSliceFixture : IAsyncLifetime
             new(JwtRegisteredClaimNames.Sub, UserId.ToString("D")),
             new(ClaimTypes.NameIdentifier, UserId.ToString("D")),
             new("tenant_id", TenantId.ToString("D")),
-            new("business_id", BusinessId.ToString("D"))
+            new("business_id", BusinessId.ToString("D")),
+            new("full_name", "Cajero de pruebas")
         };
         claims.AddRange(permissions.Select(permission => new Claim("permission", permission)));
         var token = new JwtSecurityToken(

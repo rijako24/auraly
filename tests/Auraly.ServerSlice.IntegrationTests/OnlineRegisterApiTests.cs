@@ -43,6 +43,23 @@ public sealed class OnlineRegisterApiTests(ServerSliceFixture fixture)
     }
 
     [Fact]
+    public async Task Bootstrap_returns_identity_and_registers_in_one_authenticated_call()
+    {
+        using var client = fixture.CreateAdminClient(CommercePermissionCodes.SalesCreate);
+
+        var bootstrap = await client.GetFromJsonAsync<OnlineRegisterBootstrap>(
+            "/api/commerce/v1/pos/register-context/bootstrap");
+
+        Assert.NotNull(bootstrap);
+        Assert.Equal("Cajero de pruebas", bootstrap.UserDisplayName);
+        Assert.Contains(
+            bootstrap.Options,
+            option =>
+                option.RegisterId == fixture.OnlineRegisterId &&
+                option.BusinessId == fixture.BusinessId);
+    }
+
+    [Fact]
     public async Task User_without_sales_permission_cannot_list_registers()
     {
         using var client = fixture.CreateAdminClient();

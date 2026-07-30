@@ -8,6 +8,10 @@ public sealed record OnlineRegisterOption(
     bool WarehouseAllowsNegativeStockSales,
     bool HasActiveEdgeEnrollment);
 
+public sealed record OnlineRegisterBootstrap(
+    string UserDisplayName,
+    IReadOnlyList<OnlineRegisterOption> Options);
+
 public sealed record OnlineRegisterSelection(
     Guid BusinessId,
     Guid LocationId,

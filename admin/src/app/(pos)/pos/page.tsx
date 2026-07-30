@@ -33,10 +33,9 @@ import {
   type PosClient,
   readEdgeTokenFromLaunch,
 } from "@/services/pos/pos-edge-client";
-import { authApi } from "@/services/api/auth";
+import { loadOnlineRegisterBootstrap } from "@/services/pos/online-pos-bootstrap";
 import {
   forgetOnlineRegister,
-  loadOnlineRegisterOptions,
   OnlinePosClient,
   type OnlineRegisterOption,
   rememberedOnlineRegisterId,
@@ -45,6 +44,7 @@ import {
 import { PosConfirmDialog } from "./pos-confirm-dialog";
 import { PosCustomerSearchDialog } from "./pos-customer-search-dialog";
 import { PosDiscountDialog } from "./pos-discount-dialog";
+import { PosExitMenuButton } from "./pos-exit-menu-button";
 import { PosInvoiceSearchDialog } from "./pos-invoice-search-dialog";
 import { PosOnlineSetup } from "./pos-online-setup";
 import { PosPaymentDialog } from "./pos-payment-dialog";
@@ -136,14 +136,12 @@ export default function PosPage() {
       setSetupLoading(true);
       setSetupError(null);
       try {
-        const user = await authApi.me();
+        const bootstrap = await loadOnlineRegisterBootstrap();
         if (!active) return;
         const displayName =
-          `${user.firstName} ${user.lastName}`.trim() || user.username;
+          bootstrap.userDisplayName.trim() || "Cajero";
         setOnlineUserName(displayName);
-        const options = await loadOnlineRegisterOptions();
-        if (!active) return;
-        const available = options.filter(
+        const available = bootstrap.options.filter(
           (option) => !option.hasActiveEdgeEnrollment,
         );
         setOnlineOptions(available);
@@ -830,7 +828,8 @@ export default function PosPage() {
   return (
     <main className="min-h-screen bg-[#eef3f3] text-slate-950 xl:h-screen xl:overflow-hidden">
       <header className="flex min-h-14 items-center justify-between gap-4 bg-auraly-background px-5 py-2.5 text-auraly-text shadow-lg">
-        <div className="flex items-center gap-2 text-xs">
+        <div className="flex items-center gap-2">
+          <PosExitMenuButton />
           <StatusChip
             ok={serverConnected}
             label={serverConnected ? "Conectado con Auraly" : "Modo sin conexión"}

@@ -1,8 +1,21 @@
 "use client";
 
-import { Building2, Loader2, MapPin, MonitorSmartphone, Warehouse } from "lucide-react";
+import {
+  Building2,
+  Loader2,
+  MapPin,
+  MonitorSmartphone,
+  Warehouse,
+} from "lucide-react";
 import { useMemo, useState } from "react";
 
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import type { OnlineRegisterOption } from "@/services/pos/online-pos-client";
 
 type Props = {
@@ -100,7 +113,9 @@ export function PosOnlineSetup({
                 <div>
                   <Loader2 className="mx-auto h-9 w-9 animate-spin text-teal-300" />
                   <p className="mt-4 font-semibold">Preparando tus cajas disponibles</p>
-                  <p className="mt-1 text-sm text-slate-400">Validando negocios, sedes y permisos…</p>
+                  <p className="mt-1 text-sm text-slate-400">
+                    Validando negocios, sedes y permisos…
+                  </p>
                 </div>
               </div>
             ) : (
@@ -155,7 +170,10 @@ export function PosOnlineSetup({
                 )}
 
                 {error && (
-                  <p role="alert" className="rounded-xl border border-red-300/20 bg-red-400/10 p-3 text-sm text-red-100">
+                  <p
+                    role="alert"
+                    className="rounded-xl border border-red-300/20 bg-red-400/10 p-3 text-sm text-red-100"
+                  >
                     {error}
                   </p>
                 )}
@@ -200,24 +218,33 @@ function SelectField({
   onChange: (value: string) => void;
 }) {
   return (
-    <label className="block">
+    <div>
       <span className="mb-1.5 flex items-center gap-2 text-sm font-semibold text-slate-200">
         <Icon className="h-4 w-4 text-teal-200" />
         {label}
       </span>
-      <select
-        value={value}
+      <Select
+        value={value || undefined}
         disabled={disabled}
-        onChange={(event) => onChange(event.target.value)}
-        className="h-12 w-full rounded-xl border border-white/15 bg-[#102e33] px-3 text-sm text-white outline-none transition focus:border-teal-300 focus:ring-2 focus:ring-teal-300/15 disabled:opacity-40"
+        onValueChange={onChange}
       >
-        <option value="">Selecciona {label.toLocaleLowerCase("es")}</option>
-        {options.map((option) => (
-          <option key={option.value} value={option.value}>
-            {option.label}
-          </option>
-        ))}
-      </select>
-    </label>
+        <SelectTrigger className="h-12 w-full rounded-xl border-white/15 bg-[#102e33] px-3 text-sm text-white shadow-none focus:border-teal-300 focus:ring-2 focus:ring-teal-300/15 disabled:opacity-40">
+          <SelectValue
+            placeholder={`Selecciona ${label.toLocaleLowerCase("es")}`}
+          />
+        </SelectTrigger>
+        <SelectContent className="rounded-xl border-slate-200 shadow-2xl">
+          {options.map((option) => (
+            <SelectItem
+              key={option.value}
+              value={option.value}
+              className="py-2.5"
+            >
+              {option.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
   );
 }
