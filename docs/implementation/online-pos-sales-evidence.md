@@ -33,6 +33,13 @@ El modo online no sondea el servidor periódicamente. Usa las operaciones reales
 
 El service worker conserva únicamente el shell instalable. Las rutas `/api/` nunca se almacenan en caché, por lo que una venta online no puede aparentar una respuesta vigente usando datos antiguos.
 
+El BFF admite dos topologías sin duplicar autenticación:
+
+- con gateway único, `NEXT_PUBLIC_API_URL` continúa resolviendo login, administración y Commerce;
+- con hosts separados, `NEXT_PUBLIC_API_URL` conserva el API principal y `AURALY_COMMERCE_API_URL` apunta a la raíz de `Auraly.Api`;
+- solamente `commerce/*` y `health` se envían al host Commerce dedicado;
+- el token `HttpOnly` de la sesión web se reenvía como Bearer y nunca queda expuesto al código cliente.
+
 ## Evidencia ejecutada
 
 ```powershell
@@ -52,15 +59,32 @@ Resultados:
 - Solución .NET: 0 errores y 0 advertencias.
 - Fundación: 109/109.
 - Integración con SQL Server real y DACPAC desplegado: 42/42.
-- Pruebas POS/BFF: 19/19.
+- Pruebas POS/BFF: 23/23.
 - TypeScript: correcto.
 - Next.js 14.2.21: build correcto; ruta `/pos` generada.
 - DACPAC: 0 errores y 0 advertencias.
 
 Las pruebas cubren emisión online, dos cajeros concurrentes en la misma caja, idempotencia, inventario, pago, movimiento de caja, impuestos, historial, recibo exacto, QR, autorización por caja, reimpresión y rechazo SQL de rangos fiscales solapados.
 
+## Validación conectada adicional
+
+Se desplegó el DACPAC real en una base SQL Server aislada y se inició `Auraly.Api` junto con el build de producción del frontend. El recorrido a través del BFF autenticado confirmó:
+
+- negocio `Tienda Auraly Visual`;
+- sede `Sede Principal`;
+- caja `Caja 01`;
+- bodega `Bodega Principal`;
+- producto capturado por código con precio de venta `$ 6.800`;
+- cantidad `2` y total `$ 16.184`;
+- documento Auraly `VTA01-00000002`;
+- número fiscal `FEV2`;
+- CUFE de 96 caracteres;
+- siguiente borrador vacío.
+
+La fila persistida conserva `RegisterId`, `DocumentSeriesId`, `FiscalSeriesId` y `FiscalAuthorizationId`. `DeviceId` es `NULL` y `SourceMode` es `Online`, que es la separación intencional entre caja comercial y dispositivo POS Edge.
+
 ## Pendiente de una rebanada posterior
 
-- Prueba visual automatizada de navegador con credenciales de un entorno desplegado.
+- Aceptación visual interactiva final del flujo por parte del usuario.
 - Selección/administración completa de resoluciones y rangos desde el panel.
 - Envío real al ambiente de habilitación DIAN, que continúa separado de esta rebanada.
