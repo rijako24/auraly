@@ -251,6 +251,21 @@ public sealed partial class PosCatalogStore(string connectionString)
         return products;
     }
 
+    public async Task<PosCatalogItem?> GetByProductIdAsync(
+        Guid productId,
+        CancellationToken cancellationToken = default)
+    {
+        if (productId == Guid.Empty) return null;
+        await using var connection = new SqliteConnection(connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText =
+            "SELECT * FROM PosCatalogProducts WHERE ProductId=@ProductId AND IsActive=1;";
+        command.Parameters.Add(P("@ProductId", productId.ToString("D")));
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        return await reader.ReadAsync(cancellationToken) ? ReadProduct(reader) : null;
+    }
+
     private async Task<PosCatalogItem?> FindSingleAsync(string value, CancellationToken ct)
     {
         await using var connection = new SqliteConnection(connectionString);

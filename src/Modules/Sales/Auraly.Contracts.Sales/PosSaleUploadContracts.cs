@@ -143,7 +143,8 @@ public sealed record PosSaleUploadRequest(
     IReadOnlyList<PosSalePaymentContract> Payments,
     PosSaleUblSnapshotContract? UblSnapshot = null,
     Guid? CustomerId = null,
-    string SourceMode = SaleSourceModes.PosEdge);
+    string SourceMode = SaleSourceModes.PosEdge,
+    Guid? SourceOrderId = null);
 
 public sealed record PosSaleUploadResponse(
     Guid ReceiptId,

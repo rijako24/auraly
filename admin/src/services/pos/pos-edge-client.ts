@@ -1,3 +1,10 @@
+import type {
+  CommerceOrderDetail,
+  CommerceOrderFilters,
+  CommerceOrderPage,
+  InvoiceOrdersResponse,
+} from "@/services/orders/commerce-orders-client";
+
 const EDGE_BASE_URL =
   process.env.NEXT_PUBLIC_AURALY_POS_EDGE_URL ?? "http://127.0.0.1:47831";
 
@@ -88,6 +95,7 @@ export type PosDraft = {
   untaxedAmount: number;
   taxAmount: number;
   payableAmount: number;
+  sourceOrderId?: string | null;
 };
 
 export type PosCaptureResult = {
@@ -173,6 +181,7 @@ export interface PosClient {
     serverConnected: boolean;
     registerCode: string;
     userDisplayName: string;
+    userId: string | null;
   }>;
   searchProducts(search?: string, skip?: number, take?: number): Promise<PosCatalogSearchPage>;
   searchCustomers(search?: string, skip?: number, take?: number): Promise<PosCustomerSearchPage>;
@@ -201,6 +210,13 @@ export interface PosClient {
   ): Promise<PosCompleteSaleResult>;
   searchIssuedSales(search?: string, skip?: number, take?: number): Promise<PosIssuedSaleSearchPage>;
   reprint(documentId: string): Promise<void>;
+  orders(filters: CommerceOrderFilters): Promise<CommerceOrderPage>;
+  order(orderId: string): Promise<CommerceOrderDetail>;
+  recoverOrder(orderId: string): Promise<PosDraft>;
+  invoiceOrders(
+    orderIds: string[],
+    paymentMethodCode: string,
+  ): Promise<InvoiceOrdersResponse>;
 }
 
 export class PosEdgeError extends Error {
@@ -236,6 +252,7 @@ export class PosEdgeClient implements PosClient {
       serverConnected: boolean;
       registerCode: string;
       userDisplayName: string;
+      userId: string | null;
     }>("/edge/v1/health");
   }
 
@@ -394,6 +411,36 @@ export class PosEdgeClient implements PosClient {
 
   reprint(documentId: string) {
     return this.requestVoid(`/edge/v1/sales/${documentId}/reprint`, { method: "POST" });
+  }
+
+  orders(filters: CommerceOrderFilters) {
+    const query = new URLSearchParams();
+    Object.entries(filters).forEach(([key, value]) => {
+      if (value !== undefined && value !== "") query.set(key, String(value));
+    });
+    return this.request<CommerceOrderPage>(`/edge/v1/orders?${query}`);
+  }
+
+  order(orderId: string) {
+    return this.request<CommerceOrderDetail>(`/edge/v1/orders/${orderId}`);
+  }
+
+  recoverOrder(orderId: string) {
+    return this.request<PosDraft>(`/edge/v1/orders/${orderId}/recover`, {
+      method: "POST",
+    });
+  }
+
+  invoiceOrders(orderIds: string[], paymentMethodCode: string) {
+    return this.request<InvoiceOrdersResponse>("/edge/v1/orders/invoice", {
+      method: "POST",
+      body: JSON.stringify({
+        orderIds,
+        paymentMethodCode,
+        paymentReference: null,
+        idempotencyKey: crypto.randomUUID(),
+      }),
+    });
   }
 
   private async request<T>(path: string, init: RequestInit = {}): Promise<T> {

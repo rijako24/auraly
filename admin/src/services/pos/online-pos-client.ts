@@ -1,4 +1,13 @@
 import {
+  invoiceCommerceOrders,
+  loadCommerceOrder,
+  loadCommerceOrders,
+  recoverCommerceOrder,
+  type CommerceOrderFilters,
+  type InvoiceOrdersResponse,
+} from "@/services/orders/commerce-orders-client";
+
+import {
   PosCaptureResult,
   PosCatalogProduct,
   PosCatalogSearchPage,
@@ -72,6 +81,7 @@ type OnlineDraft = {
   untaxedAmount: number;
   taxAmount: number;
   payableAmount: number;
+  sourceOrderId: string | null;
 };
 
 type OnlineProductPage = {
@@ -166,6 +176,7 @@ export class OnlinePosClient implements PosClient {
 
   constructor(
     private readonly context: OnlineRegisterContext,
+    private readonly userId: string,
     private readonly userDisplayName: string,
   ) {}
 
@@ -176,6 +187,7 @@ export class OnlinePosClient implements PosClient {
       serverConnected: true,
       registerCode: this.context.registerCode,
       userDisplayName: this.userDisplayName,
+      userId: this.userId,
     };
   }
 
@@ -439,6 +451,40 @@ export class OnlinePosClient implements PosClient {
     }
   }
 
+
+  orders(filters: CommerceOrderFilters) {
+    return loadCommerceOrders(filters);
+  }
+
+  order(orderId: string) {
+    return loadCommerceOrder(orderId);
+  }
+
+  async recoverOrder(orderId: string) {
+    const draft = await this.ensureActive();
+    await recoverCommerceOrder(orderId, {
+      registerId: this.context.registerId,
+      userId: this.userId,
+      draftId: draft.draftId.value,
+      expectedDraftVersion: this.version(draft.draftId.value),
+    });
+    return this.activeDraft();
+  }
+
+  async invoiceOrders(
+    orderIds: string[],
+    paymentMethodCode: string,
+  ): Promise<InvoiceOrdersResponse> {
+    const response = await invoiceCommerceOrders({
+      registerId: this.context.registerId,
+      userId: this.userId,
+      orderIds,
+      paymentMethodCode,
+      paymentReference: null,
+    });
+    await this.activeDraft();
+    return response;
+  }
   private scope() {
     return {
       businessId: this.context.businessId,
@@ -495,6 +541,7 @@ export class OnlinePosClient implements PosClient {
       untaxedAmount: draft.untaxedAmount,
       taxAmount: draft.taxAmount,
       payableAmount: draft.payableAmount,
+      sourceOrderId: draft.sourceOrderId,
     };
   }
 

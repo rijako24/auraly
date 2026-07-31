@@ -47,6 +47,7 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
         }
 
         await InsertTaxSummariesAsync(session, request, _timeProvider.GetUtcNow(), cancellationToken);
+        await LinkSourceOrderAsync(session, request, cancellationToken);
 
         foreach (var payment in request.Payments.OrderBy(payment => payment.PaymentNumber))
         {
@@ -160,6 +161,37 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
         command.Parameters.AddWithValue("@ProductId", line.ProductId);
         AddDecimal(command, "@QuantityChange", -line.Quantity, 19, 6);
         command.Parameters.AddWithValue("@OccurredAt", request.FiscalSnapshot.IssuedAt);
+        command.Parameters.AddWithValue("@CreatedAt", _timeProvider.GetUtcNow());
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private async Task LinkSourceOrderAsync(
+        SqlDocumentProcessingSessionAccessor.Session session,
+        PosSaleUploadRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (request.SourceOrderId is null) return;
+        const string sql = """
+            IF NOT EXISTS (
+                SELECT 1 FROM dbo.Orders WITH (UPDLOCK,HOLDLOCK)
+                WHERE OrderId=@OrderId AND BusinessId=@BusinessId
+                  AND CustomerConfirmed=1 AND Status IN (2,4))
+                THROW 51000, 'El pedido de origen no esta disponible en este negocio.', 1;
+
+            INSERT INTO dbo.OrderInvoiceLinks
+                (OrderInvoiceLinkId,BusinessId,OrderId,DocumentId,OperationId,CreatedAt)
+            VALUES
+                (@LinkId,@BusinessId,@OrderId,@DocumentId,NULL,@CreatedAt);
+
+            UPDATE dbo.OrderClaims
+            SET ReleasedAt=COALESCE(ReleasedAt,@CreatedAt)
+            WHERE OrderId=@OrderId AND ReleasedAt IS NULL;
+            """;
+        await using var command = new SqlCommand(sql, session.Connection, session.Transaction);
+        command.Parameters.AddWithValue("@LinkId", _idGenerator.NewId());
+        command.Parameters.AddWithValue("@BusinessId", request.BusinessId);
+        command.Parameters.AddWithValue("@OrderId", request.SourceOrderId.Value);
+        command.Parameters.AddWithValue("@DocumentId", request.DocumentId);
         command.Parameters.AddWithValue("@CreatedAt", _timeProvider.GetUtcNow());
         await command.ExecuteNonQueryAsync(cancellationToken);
     }

@@ -1,0 +1,103 @@
+using System.Net.Http.Json;
+using Auraly.Contracts.Orders;
+using Auraly.Pos.Edge.Infrastructure;
+
+namespace Auraly.Pos.Edge.Host;
+
+public sealed class PosOrderServerClient(
+    HttpClient http,
+    PosDeviceCredentials credentials)
+{
+    public Task<OrderPage> PageAsync(
+        Guid userId,
+        string query,
+        CancellationToken cancellationToken) =>
+        SendAsync<OrderPage>(
+            HttpMethod.Get,
+            $"/api/pos/v1/orders?userId={userId:D}&{query}",
+            null,
+            null,
+            cancellationToken);
+
+    public Task<OrderDetail> GetAsync(
+        Guid userId,
+        Guid orderId,
+        CancellationToken cancellationToken) =>
+        SendAsync<OrderDetail>(
+            HttpMethod.Get,
+            $"/api/pos/v1/orders/{orderId:D}?userId={userId:D}",
+            null,
+            null,
+            cancellationToken);
+
+    public Task<OrderClaimSummary> ClaimAsync(
+        Guid userId,
+        Guid orderId,
+        CancellationToken cancellationToken) =>
+        SendAsync<OrderClaimSummary>(
+            HttpMethod.Post,
+            $"/api/pos/v1/orders/{orderId:D}/claim",
+            JsonContent.Create(new { userId, leaseMinutes = 10 }),
+            null,
+            cancellationToken);
+
+    public async Task ReleaseAsync(
+        Guid userId,
+        Guid orderId,
+        CancellationToken cancellationToken) =>
+        await SendAsync<object>(
+            HttpMethod.Post,
+            $"/api/pos/v1/orders/{orderId:D}/claim/release",
+            JsonContent.Create(new { userId }),
+            null,
+            cancellationToken);
+
+    public Task<InvoiceOrdersResponse> InvoiceAsync(
+        Guid userId,
+        IReadOnlyCollection<Guid> orderIds,
+        string paymentMethodCode,
+        string idempotencyKey,
+        CancellationToken cancellationToken) =>
+        SendAsync<InvoiceOrdersResponse>(
+            HttpMethod.Post,
+            "/api/pos/v1/orders/invoice",
+            JsonContent.Create(new
+            {
+                userId,
+                orderIds,
+                paymentMethodCode,
+                paymentReference = (string?)null
+            }),
+            idempotencyKey,
+            cancellationToken);
+
+    private async Task<T> SendAsync<T>(
+        HttpMethod method,
+        string path,
+        HttpContent? content,
+        string? idempotencyKey,
+        CancellationToken cancellationToken)
+    {
+        using var request = new HttpRequestMessage(method, path) { Content = content };
+        request.Headers.Add("X-Auraly-Device-Id", credentials.DeviceId.ToString("D"));
+        request.Headers.Add("X-Auraly-Device-Secret", credentials.Secret);
+        if (!string.IsNullOrWhiteSpace(idempotencyKey))
+            request.Headers.Add("Idempotency-Key", idempotencyKey);
+        using var response = await http.SendAsync(request, cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            var detail = await response.Content.ReadAsStringAsync(cancellationToken);
+            throw new PosOrderServerException((int)response.StatusCode, detail);
+        }
+        return await response.Content.ReadFromJsonAsync<T>(
+            cancellationToken: cancellationToken)
+            ?? throw new InvalidDataException(
+                "Auraly Server devolvió una respuesta vacía para pedidos.");
+    }
+}
+
+public sealed class PosOrderServerException(int statusCode, string message)
+    : Exception(message)
+{
+    public int StatusCode { get; } = statusCode;
+}

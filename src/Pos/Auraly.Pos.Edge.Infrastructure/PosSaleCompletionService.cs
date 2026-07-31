@@ -232,7 +232,8 @@ public sealed class PosSaleCompletionService(
                 command.DeviceId,
                 command.Payments,
                 command.UblSnapshot,
-                draft.CustomerId),
+                draft.CustomerId,
+                draft.SourceOrderId),
             ct);
         await issuance.MarkIssuedAsync(draftId, issued.DocumentId, ct);
         var immutable = issued.Upload;

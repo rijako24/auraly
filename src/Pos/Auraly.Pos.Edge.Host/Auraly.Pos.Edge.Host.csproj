@@ -14,6 +14,7 @@
     <ProjectReference Include="..\..\Modules\Authorization\Auraly.Domain.Authorization\Auraly.Domain.Authorization.csproj" />
     <ProjectReference Include="..\..\Modules\Catalog\Auraly.Contracts.Catalog\Auraly.Contracts.Catalog.csproj" />
     <ProjectReference Include="..\..\Modules\Organization\Auraly.Contracts.Organization\Auraly.Contracts.Organization.csproj" />
+    <ProjectReference Include="..\..\Modules\Orders\Auraly.Contracts.Orders\Auraly.Contracts.Orders.csproj" />
     <ProjectReference Include="..\Auraly.Pos.Edge.Infrastructure\Auraly.Pos.Edge.Infrastructure.csproj" />
   </ItemGroup>
 </Project>

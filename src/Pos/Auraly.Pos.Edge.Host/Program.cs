@@ -113,6 +113,8 @@ public static class PosEdgeHostApplication
         builder.Services.AddSingleton(credentials);
         builder.Services.AddSingleton<PosCatalogSynchronizer>();
         builder.Services.AddSingleton<PosIdentitySynchronizer>();
+        builder.Services.AddSingleton<PosOrderServerClient>();
+        builder.Services.AddSingleton<PosOrderRecoveryService>();
         builder.Services.AddSingleton<IPosInventoryAvailabilityClient>(
             sp => sp.GetRequiredService<PosCatalogSynchronizer>());
         builder.Services.AddSingleton<PosCaptureService>();
@@ -195,7 +197,17 @@ public static class PosEdgeHostApplication
             {
                 await next(context);
             }
-            catch (InvalidOperationException error)
+            catch (PosOrderServerException error)
+            {
+                context.Response.StatusCode = error.StatusCode is >= 400 and <= 599
+                    ? error.StatusCode
+                    : StatusCodes.Status502BadGateway;
+                await context.Response.WriteAsJsonAsync(new
+                {
+                    code = "OrderServerRejected",
+                    detail = "El servidor rechaz\u00F3 la operaci\u00F3n de pedidos."
+                });
+            }            catch (InvalidOperationException error)
                 when (string.Equals(
                     error.Message,
                     "The sale was already issued and is locked until its receipt is printed.",
@@ -518,6 +530,7 @@ public static class PosEdgeHostApplication
             return Results.NoContent();
         });
         edge.MapPosSaleCompletion();
+        edge.MapPosOrders();
         return app;
     }
 

@@ -65,6 +65,63 @@ public sealed class PosDraftStoreTests
     }
 
     [Fact]
+    public async Task Order_recovery_is_atomic_durable_and_uses_current_tax_configuration()
+    {
+        await WithStoreAsync(async (store, path, scope, ids) =>
+        {
+            var orderId = Guid.NewGuid();
+            var customerId = Guid.NewGuid();
+            var orderCommercialLine = Line(2m) with
+            {
+                TaxCode = "VAT5",
+                TaxRate = 5m,
+                BaseUnitPrice = 8_000m,
+                UnitPrice = 8_000m,
+                Discount = 1_000m,
+                PriceSource = "Order"
+            };
+
+            var imported = await store.ImportOrderAsync(
+                scope,
+                orderId,
+                customerId,
+                [orderCommercialLine]);
+
+            Assert.Equal(orderId, imported.SourceOrderId);
+            Assert.Equal(customerId, imported.CustomerId);
+            Assert.Equal(15_000m, imported.UntaxedAmount);
+            Assert.Equal(750m, imported.TaxAmount);
+            Assert.Equal(15_750m, imported.PayableAmount);
+
+            var reopened = Store(path, ids);
+            await reopened.InitializeAsync();
+            var recovered = await reopened.GetOrCreateActiveAsync(scope);
+            Assert.Equal(orderId, recovered.SourceOrderId);
+            Assert.Equal("VAT5", recovered.Lines.Single().TaxCode);
+            Assert.Equal(5m, recovered.Lines.Single().TaxRate);
+        });
+    }
+
+    [Fact]
+    public async Task Order_recovery_never_mixes_with_the_current_sale()
+    {
+        await WithStoreAsync(async (store, _, scope, _) =>
+        {
+            var current = await store.AddOrIncrementLineAsync(scope, Line(1m));
+
+            await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                store.ImportOrderAsync(
+                    scope,
+                    Guid.NewGuid(),
+                    Guid.NewGuid(),
+                    [Line(2m) with { TaxRate = 5m, TaxCode = "VAT5" }]));
+
+            var unchanged = await store.GetAsync(current.DraftId);
+            Assert.Single(unchanged!.Lines);
+            Assert.Null(unchanged.SourceOrderId);
+        });
+    }
+    [Fact]
     public async Task Temporary_sale_is_durable_recoverable_once_and_keeps_commercial_snapshot()
     {
         await WithStoreAsync(async (store, path, scope, ids) =>

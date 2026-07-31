@@ -52,7 +52,8 @@ public sealed record PosEdgeIssueCommand(
     Guid DeviceId = default,
     IReadOnlyCollection<OfflineSalePayment>? Payments = null,
     PosSaleUblSnapshotContract? UblSnapshot = null,
-    Guid? CustomerId = null);
+    Guid? CustomerId = null,
+    Guid? SourceOrderId = null);
 
 public sealed record PosFiscalNumberPreview(
     Guid SeriesId,
@@ -831,7 +832,8 @@ public sealed class PosEdgeSaleStore
             lines,
             payments,
             command.UblSnapshot,
-            command.CustomerId);
+            command.CustomerId,
+            SourceOrderId: command.SourceOrderId);
     }
 
     private static readonly System.Linq.Expressions.Expression<Func<PosOutboxRow, PosEdgeOutboxItem>>

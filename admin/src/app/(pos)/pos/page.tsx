@@ -19,9 +19,11 @@ import {
   UserRound,
   Wifi,
   WifiOff,
+  X,
 } from "lucide-react";
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 
+import { OrdersWorkspace } from "@/components/orders/orders-workspace";
 import {
   PosCatalogProduct,
   PosCustomer,
@@ -76,6 +78,7 @@ export default function PosPage() {
   const [onlineOptions, setOnlineOptions] = useState<OnlineRegisterOption[]>([]);
   const [onlineTenantName, setOnlineTenantName] = useState("");
   const [onlineUserName, setOnlineUserName] = useState("");
+  const [onlineUserId, setOnlineUserId] = useState("");
   const [edgeEnrollmentToken, setEdgeEnrollmentToken] = useState<string | null>(null);
   const [edgeEnrollmentRequired, setEdgeEnrollmentRequired] = useState(false);
   const [edgeLoginState, setEdgeLoginState] = useState<"preparing" | "required" | null>(null);
@@ -91,6 +94,7 @@ export default function PosPage() {
   const [workstation, setWorkstation] = useState({
     registerCode: "—",
     userDisplayName: "—",
+    userId: null as string | null,
   });
   const [message, setMessage] = useState("Esperando producto");
   const [error, setError] = useState<string | null>(null);
@@ -103,6 +107,7 @@ export default function PosPage() {
   const [invoiceSearchOpen, setInvoiceSearchOpen] = useState(false);
   const [selectedCustomer, setSelectedCustomer] = useState<PosCustomer | null>(null);
   const [sidePanel, setSidePanel] = useState<"temporaries" | "orders">("temporaries");
+  const [ordersExpanded, setOrdersExpanded] = useState(false);
   const [selectedLineId, setSelectedLineId] = useState<string | null>(null);
   const [confirmation, setConfirmation] = useState<
     | { kind: "line"; lineId: string; productName: string }
@@ -154,6 +159,7 @@ export default function PosPage() {
                 setWorkstation({
                   registerCode: health.registerCode,
                   userDisplayName: health.userDisplayName || "—",
+                  userId: health.userId,
                 });
                 setEdgeLoginState(
                   health.status === "IdentitySynchronizing"
@@ -181,6 +187,7 @@ export default function PosPage() {
           serverBootstrap.userDisplayName.trim() || "Cajero";
         setOnlineTenantName(serverBootstrap.tenantName.trim());
         setOnlineUserName(displayName);
+        setOnlineUserId(serverBootstrap.userId);
         const available = serverBootstrap.options;
         setOnlineOptions(available);
         const remembered = rememberedOnlineRegisterId();
@@ -190,7 +197,7 @@ export default function PosPage() {
         if (selected && !requiresEnrollment) {
           window.localStorage.setItem("selected_business_id", selected.businessId);
           const context = await selectOnlineRegister(selected);
-          if (active) setClient(new OnlinePosClient(context, displayName));
+          if (active) setClient(new OnlinePosClient(context, serverBootstrap.userId, displayName));
         }
       } catch (caught) {
         if (!active) return;
@@ -226,6 +233,7 @@ export default function PosPage() {
           setWorkstation({
             registerCode: health.registerCode,
             userDisplayName: health.userDisplayName || "—",
+            userId: health.userId,
           });
         }
         if (
@@ -816,7 +824,34 @@ export default function PosPage() {
       focusScanner();
       return;
     }
-    window.location.assign("/dashboard/orders");
+    setOrdersExpanded(true);
+  }
+
+  async function recoverPosOrder(orderId: string) {
+    if (!client) throw new Error("La caja no estÃ¡ disponible.");
+    const recovered = await client.recoverOrder(orderId);
+    setDraft(recovered);
+    setSelectedLineId(recovered.lines[0]?.lineId ?? null);
+    setOrdersExpanded(false);
+    setSidePanel("temporaries");
+    setMessage("Pedido recuperado Â· " + recovered.lines.length + " lÃ­neas");
+    focusScanner();
+  }
+
+  async function invoicePosOrders(
+    orderIds: string[],
+    paymentMethodCode: string,
+  ) {
+    if (!client) throw new Error("La caja no estÃ¡ disponible.");
+    const result = await client.invoiceOrders(orderIds, paymentMethodCode);
+    setMessage(
+      result.completedCount +
+        " pedido" +
+        (result.completedCount === 1 ? "" : "s") +
+        " facturado" +
+        (result.completedCount === 1 ? "" : "s"),
+    );
+    return result;
   }
 
   function showError(caught: unknown) {
@@ -851,7 +886,7 @@ export default function PosPage() {
     try {
       window.localStorage.setItem("selected_business_id", option.businessId);
       const context = await selectOnlineRegister(option);
-      setClient(new OnlinePosClient(context, onlineUserName));
+      setClient(new OnlinePosClient(context, onlineUserId, onlineUserName));
     } catch (caught) {
       setSetupError(
         caught instanceof Error
@@ -893,6 +928,7 @@ export default function PosPage() {
       setWorkstation((current) => ({
         ...current,
         userDisplayName: session.displayName,
+        userId: session.userId,
       }));
       setEdgeLoginState(null);
       setClient(new PosEdgeClient(edgeEnrollmentToken, session.token));
@@ -1458,33 +1494,57 @@ export default function PosPage() {
                 </div>
               </div>
             ) : (
-              <div className="grid min-h-0 flex-1 place-items-center rounded-xl border border-dashed border-slate-300 p-5 text-center">
-                <div>
-                  <span className="mx-auto grid h-9 w-9 place-items-center rounded-lg bg-teal-50 text-teal-700">
-                    <ClipboardList className="h-5 w-5" />
-                  </span>
-                  <p className="mt-2 font-semibold text-slate-900">Pedidos</p>
-                  <p className="mt-1 text-sm leading-5 text-slate-500">
-                    {serverConnected
-                      ? "Consulta los pedidos disponibles para recuperar o facturar."
-                      : "Los pedidos se consultan en línea y Auraly Server no está disponible."}
-                  </p>
-                  {serverConnected && (
-                    <button
-                      type="button"
-                      onClick={openOrders}
-                      className="mt-4 h-10 rounded-lg bg-teal-700 px-4 text-sm font-semibold text-white transition hover:bg-teal-800"
-                    >
-                      Abrir pedidos
-                    </button>
-                  )}
-                </div>
-              </div>
+              <OrdersWorkspace
+                compact
+                connected={serverConnected}
+                loadPage={(filters) => client!.orders(filters)}
+                loadDetail={(orderId) => client!.order(orderId)}
+                onRecover={(order) => recoverPosOrder(order.orderId)}
+                onInvoiceSelected={(orders, method) =>
+                  invoicePosOrders(orders.map((order) => order.orderId), method)
+                }
+                onExpand={openOrders}
+              />
             )}
           </section>
           )}
         </aside>
       </section>
+
+      {ordersExpanded && client && (
+        <div className="fixed inset-0 z-50 flex flex-col bg-slate-50">
+          <header className="flex h-16 shrink-0 items-center justify-between border-b border-slate-200 bg-white px-6">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-teal-700">
+                Auraly Commerce
+              </p>
+              <h2 className="text-xl font-bold text-slate-950">Pedidos por facturar</h2>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setOrdersExpanded(false);
+                focusScanner();
+              }}
+              className="grid h-11 w-11 place-items-center rounded-xl border border-slate-200 text-slate-600 transition hover:bg-slate-100"
+              aria-label="Cerrar pedidos"
+            >
+              <X className="h-5 w-5" />
+            </button>
+          </header>
+          <main className="min-h-0 flex-1 overflow-auto p-5">
+            <OrdersWorkspace
+              connected={serverConnected}
+              loadPage={(filters) => client.orders(filters)}
+              loadDetail={(orderId) => client.order(orderId)}
+              onRecover={(order) => recoverPosOrder(order.orderId)}
+              onInvoiceSelected={(orders, method) =>
+                invoicePosOrders(orders.map((order) => order.orderId), method)
+              }
+            />
+          </main>
+        </div>
+      )}
 
       {productSearchOpen && client && (
         <PosProductSearchDialog

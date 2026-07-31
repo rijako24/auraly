@@ -181,11 +181,10 @@ public sealed class PosArchitectureTests
         Assert.Contains("setSidePanel(\"temporaries\")", page, StringComparison.Ordinal);
         Assert.Contains("setSidePanel(\"orders\")", page, StringComparison.Ordinal);
         Assert.Contains("sidePanel === \"temporaries\"", page, StringComparison.Ordinal);
-        Assert.Contains("window.location.assign(\"/dashboard/orders\")", page, StringComparison.Ordinal);
-        Assert.Contains(
-            "Los pedidos se consultan en línea y Auraly Server no está disponible.",
-            page,
-            StringComparison.Ordinal);
+        Assert.Contains("setOrdersExpanded(true)", page, StringComparison.Ordinal);
+        Assert.Contains("<OrdersWorkspace", page, StringComparison.Ordinal);
+        Assert.Contains("ordersExpanded && client", page, StringComparison.Ordinal);
+        Assert.Contains("setMessage(\"Los pedidos se consultan", page, StringComparison.Ordinal);
     }
 
     private static string FindRepositoryRoot()

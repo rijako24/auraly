@@ -75,7 +75,8 @@ public sealed record PosDraft(
     string? Observation,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
-    IReadOnlyList<PosDraftLine> Lines)
+    IReadOnlyList<PosDraftLine> Lines,
+    Guid? SourceOrderId = null)
 {
     public decimal UntaxedAmount => Lines.Sum(line => line.Net);
     public decimal TaxAmount => Lines.Sum(line => line.Tax);
@@ -136,6 +137,71 @@ public sealed class PosDraftStore
             command.CommandText = "ALTER TABLE PosDrafts ADD COLUMN IssuedAt TEXT NULL;";
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
+        if (!columns.Contains("SourceOrderId"))
+        {
+            command.CommandText = "ALTER TABLE PosDrafts ADD COLUMN SourceOrderId TEXT NULL;";
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+        command.CommandText = """
+            CREATE UNIQUE INDEX IF NOT EXISTS UX_PosDrafts_SourceOrder
+              ON PosDrafts(BusinessId,SourceOrderId)
+              WHERE SourceOrderId IS NOT NULL AND Status<>'Deleted';
+            """;
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    public async Task<PosDraft> ImportOrderAsync(
+        PosDraftScope scope,
+        Guid orderId,
+        Guid? customerId,
+        IReadOnlyCollection<PosDraftLineInput> lines,
+        CancellationToken cancellationToken = default)
+    {
+        if (orderId == Guid.Empty) throw new ArgumentException("Order ID is required.", nameof(orderId));
+        if (lines.Count == 0) throw new InvalidOperationException("El pedido no tiene productos para facturar.");
+        foreach (var line in lines) ValidateLine(line);
+
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var transaction = connection.BeginTransaction(IsolationLevel.Serializable);
+        var draftId = await FindActiveIdAsync(connection, transaction, scope, cancellationToken);
+        if (draftId is null)
+        {
+            draftId = new DraftId(_idGenerator.NewId());
+            await InsertActiveAsync(
+                connection, transaction, draftId.Value, scope, customerId, null, cancellationToken);
+        }
+        else
+        {
+            await RequireActiveAsync(connection, transaction, draftId.Value, cancellationToken);
+            if (await HasLinesAsync(connection, transaction, draftId.Value, cancellationToken))
+                throw new InvalidOperationException(
+                    "Pausa o reinicia la venta actual antes de recuperar un pedido.");
+        }
+
+        await ExecuteAsync(connection, transaction, """
+            UPDATE PosDrafts
+            SET CustomerId=@CustomerId,SourceOrderId=@OrderId,UpdatedAt=@Now
+            WHERE DraftId=@DraftId AND Status='Active';
+            """,
+            [
+                P("@CustomerId", customerId), P("@OrderId", orderId),
+                P("@Now", Now()), P("@DraftId", draftId.Value.Value)
+            ],
+            cancellationToken);
+        var position = 1;
+        foreach (var line in lines)
+        {
+            await InsertLineAsync(
+                connection,
+                transaction,
+                draftId.Value,
+                _idGenerator.NewId(),
+                line,
+                position++,
+                cancellationToken);
+        }
+        await transaction.CommitAsync(cancellationToken);
+        return await GetRequiredAsync(draftId.Value, cancellationToken);
     }
 
     public async Task<PosDraft> GetOrCreateActiveAsync(
@@ -766,7 +832,7 @@ public sealed class PosDraftStore
         command.Transaction = transaction;
         command.CommandText = """
             SELECT BusinessId,WarehouseId,RegisterId,UserId,CustomerId,SellerId,Status,
-                   Name,Reference,Observation,CreatedAt,UpdatedAt
+                   Name,Reference,Observation,CreatedAt,UpdatedAt,SourceOrderId
             FROM PosDrafts WHERE DraftId=@DraftId;
             """;
         command.Parameters.Add(P("@DraftId", draftId.Value));
@@ -787,7 +853,8 @@ public sealed class PosDraftStore
             NullableString(reader, 9),
             DateTimeOffset.Parse(reader.GetString(10), CultureInfo.InvariantCulture),
             DateTimeOffset.Parse(reader.GetString(11), CultureInfo.InvariantCulture),
-            []);
+            [],
+            NullableGuid(reader, 12));
     }
 
     private static async Task<IReadOnlyList<PosDraftLine>> ReadLinesAsync(
@@ -932,7 +999,8 @@ public sealed class PosDraftStore
           SavedAt TEXT NULL,
           ConsumedAt TEXT NULL,
           DeletedAt TEXT NULL,
-          IssuedAt TEXT NULL);
+          IssuedAt TEXT NULL,
+          SourceOrderId TEXT NULL);
         CREATE UNIQUE INDEX IF NOT EXISTS UX_PosDrafts_ActiveScope
           ON PosDrafts(BusinessId,RegisterId,UserId) WHERE Status='Active';
         CREATE INDEX IF NOT EXISTS IX_PosDrafts_Temporaries
