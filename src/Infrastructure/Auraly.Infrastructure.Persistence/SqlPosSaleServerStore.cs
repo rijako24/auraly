@@ -127,8 +127,14 @@ public sealed class SqlPosSaleServerStore(
         }
     }
 
-    public async Task<StoredPosSale> StoreReceptionAsync(
+    public Task<StoredPosSale> StoreReceptionAsync(
         StorePosSaleReceptionCommand command,
+        CancellationToken cancellationToken) =>
+        StoreReceptionCoreAsync(command, 0, cancellationToken);
+
+    private async Task<StoredPosSale> StoreReceptionCoreAsync(
+        StorePosSaleReceptionCommand command,
+        int deadlockAttempt,
         CancellationToken cancellationToken)
     {
         var request = command.Request;
@@ -198,7 +204,22 @@ public sealed class SqlPosSaleServerStore(
 
             await transaction.CommitAsync(cancellationToken);
         }
-        catch (SqlException exception) when (exception.Number is 1205 or 2601 or 2627)
+        catch (SqlException exception) when (exception.Number == 1205)
+        {
+            if (transaction.Connection is not null)
+            {
+                await transaction.RollbackAsync(CancellationToken.None);
+            }
+            if (deadlockAttempt >= 4) throw;
+            await Task.Delay(
+                TimeSpan.FromMilliseconds(25 * (deadlockAttempt + 1)),
+                cancellationToken);
+            return await StoreReceptionCoreAsync(
+                command,
+                deadlockAttempt + 1,
+                cancellationToken);
+        }
+        catch (SqlException exception) when (exception.Number is 2601 or 2627)
         {
             if (transaction.Connection is not null)
             {
@@ -417,6 +438,17 @@ public sealed class SqlPosSaleServerStore(
                 @JobId, @BusinessId, ProcessingSequence, @DocumentId, @DocumentType,
                 N'Pending', 0, @CreatedAt, @CreatedAt
             FROM @Assigned;
+
+            INSERT INTO dbo.DocumentProcessingPayloads
+            (
+                DocumentId, DocumentType, BusinessId, ContractVersion,
+                PayloadJson, PayloadHash, AcceptedAt
+            )
+            VALUES
+            (
+                @DocumentId, @DocumentType, @BusinessId, 1,
+                @PayloadJson, @PayloadHash, @CreatedAt
+            );
             """;
 
         await using var sqlCommand = new SqlCommand(sql, connection, transaction);
@@ -426,11 +458,13 @@ public sealed class SqlPosSaleServerStore(
         sqlCommand.Parameters.AddWithValue(
             "@DocumentType",
             command.Request.FiscalSnapshot.DocumentType);
+        sqlCommand.Parameters.AddWithValue("@PayloadJson", command.SnapshotJson);
+        sqlCommand.Parameters.Add("@PayloadHash", SqlDbType.Binary, 32).Value = command.PayloadHash;
         sqlCommand.Parameters.AddWithValue("@CreatedAt", command.ReceivedAt);
-        if (await sqlCommand.ExecuteNonQueryAsync(cancellationToken) < 2)
+        if (await sqlCommand.ExecuteNonQueryAsync(cancellationToken) < 3)
         {
             throw new DBConcurrencyException(
-                "The business sequence and its durable document job were not created atomically.");
+                "The business sequence, durable job and immutable payload were not created atomically.");
         }
     }
 

@@ -139,17 +139,88 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
         CancellationToken cancellationToken)
     {
         const string sql = """
+            DECLARE @ManageStock BIT;
+            SELECT @ManageStock = p.ManageStock
+            FROM dbo.Products p WITH (UPDLOCK, HOLDLOCK)
+            INNER JOIN dbo.Warehouses w WITH (UPDLOCK, HOLDLOCK)
+                ON w.WarehouseId = @WarehouseId
+               AND w.BusinessId = @BusinessId
+            WHERE p.ProductId = @ProductId
+              AND p.BusinessId = @BusinessId;
+
+            IF @ManageStock IS NULL
+                THROW 51000, 'El producto o la bodega no pertenecen al negocio del documento.', 1;
+
+            DECLARE @QuantityBefore DECIMAL(19,6) = NULL;
+            DECLARE @QuantityAfter DECIMAL(19,6) = NULL;
+            DECLARE @AverageCost DECIMAL(19,6) = NULL;
+            DECLARE @ValueBefore DECIMAL(19,4) = NULL;
+            DECLARE @ValueAfter DECIMAL(19,4) = NULL;
+            DECLARE @ValueChange DECIMAL(19,4) = NULL;
+
+            IF @ManageStock = 1
+            BEGIN
+            IF NOT EXISTS
+            (
+                SELECT 1
+                FROM dbo.InventoryBalances WITH (UPDLOCK, HOLDLOCK)
+                WHERE BusinessId = @BusinessId
+                  AND WarehouseId = @WarehouseId
+                  AND ProductId = @ProductId
+            )
+            BEGIN
+                INSERT INTO dbo.InventoryBalances
+                (
+                    BusinessId, WarehouseId, ProductId, QuantityOnHand,
+                    AverageUnitCost, InventoryValue, LastProcessingSequence, UpdatedAt
+                )
+                VALUES
+                (
+                    @BusinessId, @WarehouseId, @ProductId, 0,
+                    0, 0, @ProcessingSequence, @PostedAt
+                );
+            END;
+
+            SELECT @QuantityBefore = QuantityOnHand,
+                   @AverageCost = AverageUnitCost,
+                   @ValueBefore = InventoryValue
+            FROM dbo.InventoryBalances WITH (UPDLOCK, HOLDLOCK)
+            WHERE BusinessId = @BusinessId
+              AND WarehouseId = @WarehouseId
+              AND ProductId = @ProductId;
+
+            SET @QuantityAfter = @QuantityBefore + @QuantityChange;
+            SET @ValueChange = CAST(@QuantityChange * @AverageCost AS DECIMAL(19,4));
+            SET @ValueAfter = @ValueBefore + @ValueChange;
+
+            UPDATE dbo.InventoryBalances
+            SET QuantityOnHand = @QuantityAfter,
+                InventoryValue = @ValueAfter,
+                LastProcessingSequence = @ProcessingSequence,
+                UpdatedAt = @PostedAt
+            WHERE BusinessId = @BusinessId
+              AND WarehouseId = @WarehouseId
+              AND ProductId = @ProductId;
+            END;
+
+            IF @ManageStock = 0
+                RETURN;
+
             INSERT INTO dbo.InventoryMovements
             (
                 InventoryMovementId, BusinessId, WarehouseId,
                 DocumentId, LineNumber, ProductId, MovementType,
-                QuantityChange, OccurredAt, CreatedAt
+                QuantityChange, ProcessingSequence, QuantityBefore, QuantityAfter,
+                AverageUnitCostBefore, AverageUnitCostAfter, RecognizedUnitCost,
+                ValueChange, OccurredAt, PostedAt, CreatedAt
             )
             VALUES
             (
                 @InventoryMovementId, @BusinessId, @WarehouseId,
                 @DocumentId, @LineNumber, @ProductId, 'Sale',
-                @QuantityChange, @OccurredAt, @CreatedAt
+                @QuantityChange, @ProcessingSequence, @QuantityBefore, @QuantityAfter,
+                @AverageCost, @AverageCost, @AverageCost,
+                @ValueChange, @OccurredAt, @PostedAt, @PostedAt
             );
             """;
         await using var command = new SqlCommand(sql, session.Connection, session.Transaction);
@@ -160,8 +231,9 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
         command.Parameters.AddWithValue("@LineNumber", line.LineNumber);
         command.Parameters.AddWithValue("@ProductId", line.ProductId);
         AddDecimal(command, "@QuantityChange", -line.Quantity, 19, 6);
+        command.Parameters.AddWithValue("@ProcessingSequence", session.ProcessingSequence);
         command.Parameters.AddWithValue("@OccurredAt", request.FiscalSnapshot.IssuedAt);
-        command.Parameters.AddWithValue("@CreatedAt", _timeProvider.GetUtcNow());
+        command.Parameters.AddWithValue("@PostedAt", _timeProvider.GetUtcNow());
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 

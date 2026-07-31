@@ -19,14 +19,12 @@ public sealed class SqlDocumentProcessingWorkSource(
         const string sql = """
             SELECT TOP (@MaximumCount)
                    b.TenantId, j.BusinessId, j.DocumentId, j.DocumentType,
-                   s.SnapshotJson, d.ReceivedAt
+                   p.PayloadJson, p.AcceptedAt
             FROM dbo.DocumentProcessingJobs j
             INNER JOIN dbo.BusinessProcessingCursors c
                 ON c.BusinessId = j.BusinessId
-            INNER JOIN dbo.SalesDocuments d
-                ON d.DocumentId = j.DocumentId
-            INNER JOIN dbo.FiscalSnapshots s
-                ON s.DocumentId = j.DocumentId
+            INNER JOIN dbo.DocumentProcessingPayloads p
+                ON p.DocumentId = j.DocumentId AND p.DocumentType = j.DocumentType
             INNER JOIN dbo.Businesses b
                 ON b.BusinessId = j.BusinessId
             WHERE j.ProcessingSequence = c.LastCompletedSequence + 1

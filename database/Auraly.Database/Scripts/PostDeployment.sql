@@ -33,6 +33,7 @@
 :r .\Migrations\MigrateSchedulingMinimumLeadTime.sql
 :r .\Migrations\MigrateBusinessAvailabilityBlocks.sql
 :r .\Migrations\MigrateServiceCheckoutTotalPolicy.sql
+:r .\Migrations\BackfillDocumentProcessingPayloads.sql
 :r .\Migrations\MigrateServiceKeywords.sql
 :r .\Migrations\MigrateNullableServiceCategory.sql
 :r .\Migrations\MigrateBabySpaPlanPrices2026.sql

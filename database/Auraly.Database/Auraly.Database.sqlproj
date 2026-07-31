@@ -117,7 +117,9 @@
     <Build Include="Tables\DocumentProcessingReceipts.sql" />
     <Build Include="Tables\BusinessProcessingCursors.sql" />
     <Build Include="Tables\DocumentProcessingJobs.sql" />
+    <Build Include="Tables\DocumentProcessingPayloads.sql" />
     <Build Include="Tables\InventoryMovements.sql" />
+    <Build Include="Tables\InventoryBalances.sql" />
     <Build Include="Tables\ServerOutboxMessages.sql" />
   </ItemGroup>
   <ItemGroup>
