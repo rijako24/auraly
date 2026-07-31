@@ -363,7 +363,7 @@ public sealed class CommerceService : ICommerceService, IProductLookupService
             Quantity = request.Quantity,
             UnitPrice = unitPrice,
             DiscountAmount = 0,
-            TaxAmount = 0,
+
             LineTotal = request.Quantity * unitPrice,
             RawPayloadJson = product.RawPayloadJson,
             CreatedAt = DateTime.UtcNow
@@ -790,8 +790,7 @@ public sealed class CommerceService : ICommerceService, IProductLookupService
 
         draft.Subtotal = pricing.Subtotal;
         draft.DiscountTotal = pricing.DiscountTotal;
-        draft.TaxTotal = items.Sum(i => i.TaxAmount);
-        draft.Total = draft.Subtotal - draft.DiscountTotal + draft.TaxTotal;
+        draft.Total = draft.Subtotal - draft.DiscountTotal;
         await _unitOfWork.OrderDrafts.UpdateAsync(draft, ct);
     }
 
@@ -873,7 +872,7 @@ public sealed class CommerceService : ICommerceService, IProductLookupService
             Currency = draft.Currency,
             Subtotal = draft.Subtotal,
             DiscountTotal = draft.DiscountTotal,
-            TaxTotal = draft.TaxTotal,
+
             Total = draft.Total,
             CustomerConfirmed = customerConfirmed,
             IdempotencyKey = $"{draft.BusinessId:N}:{draft.ConversationId:N}:{DateTime.UtcNow:yyyyMMddHHmmss}",
@@ -899,7 +898,7 @@ public sealed class CommerceService : ICommerceService, IProductLookupService
                 Quantity = draftItem.Quantity,
                 UnitPrice = draftItem.UnitPrice,
                 DiscountAmount = draftItem.DiscountAmount,
-                TaxAmount = draftItem.TaxAmount,
+
                 LineTotal = draftItem.LineTotal,
                 RawPayloadJson = draftItem.RawPayloadJson,
                 CreatedAt = DateTime.UtcNow
@@ -1016,7 +1015,7 @@ public sealed class CommerceService : ICommerceService, IProductLookupService
         if (!string.IsNullOrWhiteSpace(currency))
             draft.Currency = currency.Trim().ToUpperInvariant();
 
-        draft.Total = draft.Subtotal - draft.DiscountTotal + draft.TaxTotal + shippingCost;
+        draft.Total = draft.Subtotal - draft.DiscountTotal + shippingCost;
         draft.CustomAttributesJson = BuildOrderCustomAttributes(ctx.Facts, city, shippingCost);
     }
 
@@ -1029,7 +1028,6 @@ public sealed class CommerceService : ICommerceService, IProductLookupService
             draft.Currency,
             draft.Subtotal,
             draft.DiscountTotal,
-            draft.TaxTotal,
             draft.Total,
             items.Select(i => new OrderItemSnapshot(
                 i.OrderDraftItemId,
@@ -1052,7 +1050,6 @@ public sealed class CommerceService : ICommerceService, IProductLookupService
             order.Currency,
             order.Subtotal,
             order.DiscountTotal,
-            order.TaxTotal,
             order.Total,
             items.Select(i => new OrderItemSnapshot(
                 i.OrderItemId,
@@ -1070,7 +1067,7 @@ public sealed class CommerceService : ICommerceService, IProductLookupService
     }
 
     private static OrderSnapshot EmptyDraftSnapshot() =>
-        new(Guid.Empty, OrderStatus.Draft, "COP", 0, 0, 0, 0, []);
+        new(Guid.Empty, OrderStatus.Draft, "COP", 0, 0, 0, []);
 
     private static decimal ResolveShippingCost(OrderCheckoutShippingDefinition shipping, string? city)
     {

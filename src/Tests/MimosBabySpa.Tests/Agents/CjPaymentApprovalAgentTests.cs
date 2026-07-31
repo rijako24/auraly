@@ -185,7 +185,7 @@ public sealed class CjPaymentApprovalAgentTests
 
     private static AgentConfig LoadSeedConfig(string seedFile, string variableName)
     {
-        var path = Path.Combine(FindSolutionRoot(), "database", "MimosBabySpa.Database", "Scripts", "Seeds", seedFile);
+        var path = Path.Combine(FindSolutionRoot(), "database", "Auraly.Database", "Scripts", "Seeds", seedFile);
         var sql = File.ReadAllText(path);
         var match = Regex.Match(
             sql,

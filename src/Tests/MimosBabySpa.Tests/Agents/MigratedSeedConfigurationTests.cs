@@ -29,7 +29,7 @@ public sealed class MigratedSeedConfigurationTests
     public void MigratedSeed_CompilesBeforeActivation(string seedFile, string variableName)
     {
         var root = FindSolutionRoot();
-        var path = Path.Combine(root, "database", "MimosBabySpa.Database", "Scripts", "Seeds", seedFile);
+        var path = Path.Combine(root, "database", "Auraly.Database", "Scripts", "Seeds", seedFile);
         var settingsJson = ExtractSettingsJson(File.ReadAllText(path), variableName);
         var config = JsonSerializer.Deserialize<AgentConfig>(settingsJson, new JsonSerializerOptions
         {
@@ -75,7 +75,7 @@ public sealed class MigratedSeedConfigurationTests
         var path = Path.Combine(
             root,
             "database",
-            "MimosBabySpa.Database",
+            "Auraly.Database",
             "Scripts",
             "Seeds",
             seedFile);
@@ -118,7 +118,7 @@ public sealed class MigratedSeedConfigurationTests
         var sql = File.ReadAllText(Path.Combine(
             root,
             "database",
-            "MimosBabySpa.Database",
+            "Auraly.Database",
             "Scripts",
             "Seeds",
             "SeedAndinaSantander.sql"));
@@ -142,7 +142,7 @@ public sealed class MigratedSeedConfigurationTests
     {
         var root = FindSolutionRoot();
         var path = Path.Combine(
-            root, "database", "MimosBabySpa.Database", "Scripts", "Seeds", seedFile);
+            root, "database", "Auraly.Database", "Scripts", "Seeds", seedFile);
         var seedSql = File.ReadAllText(path);
         var settingsJson = ExtractSettingsJson(seedSql, "SettingsJson");
         var config = JsonSerializer.Deserialize<AgentConfig>(
@@ -169,7 +169,7 @@ public sealed class MigratedSeedConfigurationTests
         var path = Path.Combine(
             root,
             "database",
-            "MimosBabySpa.Database",
+            "Auraly.Database",
             "Scripts",
             "Seeds",
             "SeedAndinaProductCategories.sql");
@@ -205,7 +205,7 @@ public sealed class MigratedSeedConfigurationTests
         var path = Path.Combine(
             root,
             "database",
-            "MimosBabySpa.Database",
+            "Auraly.Database",
             "Scripts",
             "Seeds",
             seedFile);
@@ -245,7 +245,7 @@ public sealed class MigratedSeedConfigurationTests
         var path = Path.Combine(
             root,
             "database",
-            "MimosBabySpa.Database",
+            "Auraly.Database",
             "Scripts",
             "Seeds",
             "SeedAuraly.sql");
@@ -442,7 +442,7 @@ public sealed class MigratedSeedConfigurationTests
         var path = Path.Combine(
             root,
             "database",
-            "MimosBabySpa.Database",
+            "Auraly.Database",
             "Scripts",
             "Seeds",
             "SeedCJDistribuciones.sql");
@@ -706,7 +706,7 @@ public sealed class MigratedSeedConfigurationTests
         var path = Path.Combine(
             root,
             "database",
-            "MimosBabySpa.Database",
+            "Auraly.Database",
             "Scripts",
             "Seeds",
             "SeedCJDistribuciones.sql");

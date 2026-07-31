@@ -115,7 +115,7 @@ public sealed class TurnPlanningStructuredContextTests
     }
 
     private static OrderSnapshot Snapshot(params OrderItemSnapshot[] items) => new(
-        Guid.NewGuid(), OrderStatus.Draft, "COP", 0, 0, 0, 0, items);
+        Guid.NewGuid(), OrderStatus.Draft, "COP", 0, 0, 0, items);
 
     private sealed class CapturingChatClient(string response) : IChatClient
     {

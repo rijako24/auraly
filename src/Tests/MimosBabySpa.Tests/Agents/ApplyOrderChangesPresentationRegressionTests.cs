@@ -17,7 +17,7 @@ public sealed class ApplyOrderChangesPresentationRegressionTests
         var oldProduct = Product("PRODUCTO ANTERIOR", "OLD");
         var appliedProduct = Product("TOCINETA AHUMADA 500 G", "NEW");
         var snapshot = new OrderSnapshot(
-            Guid.NewGuid(), OrderStatus.Draft, "COP", 110m, 0m, 0m, 110m,
+            Guid.NewGuid(), OrderStatus.Draft, "COP", 110m, 0m, 110m,
             [
                 new OrderItemSnapshot(Guid.NewGuid(), oldProduct.ProductId, oldProduct.ExternalProductId,
                     oldProduct.Sku, oldProduct.Name, 1m, 10m, 10m),
@@ -74,7 +74,7 @@ context.GetProperty("item_result_count").GetInt32().Should().Be(4);
     public void FollowUpRemoval_IsIncludedInConciseAppliedChanges()
     {
         var snapshot = new OrderSnapshot(
-            Guid.NewGuid(), OrderStatus.Draft, "COP", 0m, 0m, 0m, 0m, []);
+            Guid.NewGuid(), OrderStatus.Draft, "COP", 0m, 0m, 0m, []);
         var removed = new ResolvedCartCommand(
             CartCommandOperations.Remove, Product("CHICHARRON X 500 GR", "CHI"), Guid.NewGuid(), null, "chicharrón");
         var method = typeof(ApplyOrderChangesOperation).GetMethod(

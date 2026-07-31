@@ -407,7 +407,7 @@ public sealed class ApplyOrderChangesOperation : IAgentOperation
         currency = snapshot.Currency,
         subtotal = snapshot.Subtotal,
         discount_total = snapshot.DiscountTotal,
-        tax_total = snapshot.TaxTotal,
+
         total = snapshot.Total,
         items = snapshot.Items.Select(item => new
         {

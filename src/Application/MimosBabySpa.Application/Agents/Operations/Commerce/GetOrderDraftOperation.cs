@@ -35,7 +35,7 @@ public sealed class GetOrderDraftOperation : IAgentOperation
                     currency = draft.Currency,
                     subtotal = draft.Subtotal,
                     discount_total = draft.DiscountTotal,
-                    tax_total = draft.TaxTotal,
+
                     total = draft.Total,
                     items = draft.Items.Select(item => new
                     {

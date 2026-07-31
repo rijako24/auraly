@@ -23,7 +23,7 @@ public class Order
     public string Currency { get; set; } = "COP";
     public decimal Subtotal { get; set; }
     public decimal DiscountTotal { get; set; }
-    public decimal TaxTotal { get; set; }
+
     public decimal Total { get; set; }
     public bool CustomerConfirmed { get; set; }
     public string? ExternalOrderId { get; set; }

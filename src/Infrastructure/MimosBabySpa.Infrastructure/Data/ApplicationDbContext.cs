@@ -756,7 +756,7 @@ public class ApplicationDbContext : DbContext
             entity.Property(e => e.Currency).IsRequired().HasMaxLength(10);
             entity.Property(e => e.Subtotal).HasPrecision(18, 2);
             entity.Property(e => e.DiscountTotal).HasPrecision(18, 2);
-            entity.Property(e => e.TaxTotal).HasPrecision(18, 2);
+
             entity.Property(e => e.Total).HasPrecision(18, 2);
             entity.Property(e => e.ExternalOrderId).HasMaxLength(300);
             entity.Property(e => e.ExternalDocumentNumber).HasMaxLength(300);
@@ -814,7 +814,7 @@ public class ApplicationDbContext : DbContext
             entity.Property(e => e.Currency).IsRequired().HasMaxLength(10);
             entity.Property(e => e.Subtotal).HasPrecision(18, 2);
             entity.Property(e => e.DiscountTotal).HasPrecision(18, 2);
-            entity.Property(e => e.TaxTotal).HasPrecision(18, 2);
+
             entity.Property(e => e.Total).HasPrecision(18, 2);
             entity.Property(e => e.CustomAttributesJson).HasColumnType("NVARCHAR(MAX)");
             entity.HasOne(e => e.Business)
@@ -856,7 +856,7 @@ public class ApplicationDbContext : DbContext
             entity.Property(e => e.Quantity).HasPrecision(18, 2);
             entity.Property(e => e.UnitPrice).HasPrecision(18, 2);
             entity.Property(e => e.DiscountAmount).HasPrecision(18, 2);
-            entity.Property(e => e.TaxAmount).HasPrecision(18, 2);
+
             entity.Property(e => e.LineTotal).HasPrecision(18, 2);
             entity.Property(e => e.RawPayloadJson).HasColumnType("NVARCHAR(MAX)");
             entity.HasOne(e => e.OrderDraft)
@@ -891,7 +891,7 @@ public class ApplicationDbContext : DbContext
             entity.Property(e => e.Quantity).HasPrecision(18, 2);
             entity.Property(e => e.UnitPrice).HasPrecision(18, 2);
             entity.Property(e => e.DiscountAmount).HasPrecision(18, 2);
-            entity.Property(e => e.TaxAmount).HasPrecision(18, 2);
+
             entity.Property(e => e.LineTotal).HasPrecision(18, 2);
             entity.Property(e => e.RawPayloadJson).HasColumnType("NVARCHAR(MAX)");
             entity.HasOne(e => e.Order)

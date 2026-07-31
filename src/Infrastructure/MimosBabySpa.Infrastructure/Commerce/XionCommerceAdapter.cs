@@ -444,7 +444,7 @@ public sealed class XionCommerceAdapter :
             CentroDeCostoId = settings.CentroDeCostoId,
             TotalUtilidad = details.Sum(detail => detail.Quantity * (detail.SalePrice - detail.CostPrice)),
             UsuarioId = settings.UsuarioId,
-            TotalIva = order.TaxTotal,
+            TotalIva = 0m,
             NoIdentificacionCliente = context.Customer?.ExternalAccountId ?? order.CustomerDocumentSnapshot,
             FechaPedido = DateTime.Now,
             PedidoDetalle = details.Select(detail => detail.Payload).ToList(),

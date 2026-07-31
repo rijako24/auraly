@@ -290,7 +290,7 @@ public sealed class CartCommandBatchProcessorTests
             ["pechuga campollo"] = [product]
         });
         var current = new OrderSnapshot(
-            Guid.NewGuid(), OrderStatus.Draft, "COP", 30, 0, 0, 30,
+            Guid.NewGuid(), OrderStatus.Draft, "COP", 30, 0, 30,
             [new OrderItemSnapshot(Guid.NewGuid(), productId, product.ExternalProductId, product.Sku, product.Name, 3, 10, 30)]);
         var store = new StubStore(current);
         var processor = new CartCommandBatchProcessor(resolver, store);
@@ -328,7 +328,7 @@ public sealed class CartCommandBatchProcessorTests
     {
         var product = Product("PECHUGA CAMPOLLO", stock: 4);
         var current = new OrderSnapshot(
-            Guid.NewGuid(), OrderStatus.Draft, "COP", 20, 0, 0, 20,
+            Guid.NewGuid(), OrderStatus.Draft, "COP", 20, 0, 20,
             [new OrderItemSnapshot(Guid.NewGuid(), null, product.ExternalProductId, product.Sku, product.Name, 2, 10, 20)]);
         var resolver = new StubResolver(new Dictionary<string, IReadOnlyList<ProductReference>>
         {
@@ -351,7 +351,7 @@ public sealed class CartCommandBatchProcessorTests
     public async Task Apply_RemovesCartItemUsingPartialPluralReference()
     {
         var current = new OrderSnapshot(
-            Guid.NewGuid(), OrderStatus.Draft, "COP", 20, 0, 0, 20,
+            Guid.NewGuid(), OrderStatus.Draft, "COP", 20, 0, 20,
             [new OrderItemSnapshot(Guid.NewGuid(), null, "EXT-1", "PC", "PECHUGA CRIOLLA", 2, 10, 20)]);
         var store = new StubStore(current);
         var processor = new CartCommandBatchProcessor(
@@ -401,7 +401,7 @@ public sealed class CartCommandBatchProcessorTests
     public async Task Apply_MixedRemoveAndAmbiguousAdd_WritesNothingAtomically()
     {
         var current = new OrderSnapshot(
-            Guid.NewGuid(), OrderStatus.Draft, "COP", 10, 0, 0, 10,
+            Guid.NewGuid(), OrderStatus.Draft, "COP", 10, 0, 10,
             [new OrderItemSnapshot(Guid.NewGuid(), null, "PC", "PC", "PECHUGA CRIOLLA", 1, 10, 10)]);
         var resolver = new StubResolver(new Dictionary<string, IReadOnlyList<ProductReference>>
         {
@@ -426,7 +426,7 @@ public sealed class CartCommandBatchProcessorTests
     public async Task Apply_DecreasingExistingQuantity_DoesNotQueryCatalog()
     {
         var current = new OrderSnapshot(
-            Guid.NewGuid(), OrderStatus.Draft, "COP", 30, 0, 0, 30,
+            Guid.NewGuid(), OrderStatus.Draft, "COP", 30, 0, 30,
             [new OrderItemSnapshot(Guid.NewGuid(), null, "PC", "PC", "PECHUGA CRIOLLA", 3, 10, 30)]);
         var resolver = new StubResolver(new Dictionary<string, IReadOnlyList<ProductReference>>());
         var store = new StubStore(current);
@@ -446,7 +446,7 @@ public sealed class CartCommandBatchProcessorTests
     public async Task Apply_AmbiguousCartReferenceForRemoval_DoesNotRemoveEitherItem()
     {
         var current = new OrderSnapshot(
-            Guid.NewGuid(), OrderStatus.Draft, "COP", 20, 0, 0, 20,
+            Guid.NewGuid(), OrderStatus.Draft, "COP", 20, 0, 20,
             [
                 new OrderItemSnapshot(Guid.NewGuid(), null, "P1", "P1", "PECHUGA CRIOLLA", 1, 10, 10),
                 new OrderItemSnapshot(Guid.NewGuid(), null, "P2", "P2", "PECHUGA CAMPOLLO", 1, 10, 10)
@@ -525,7 +525,7 @@ public sealed class CartCommandBatchProcessorTests
         new(null, name, name, name, null, null, 10, "COP", stock);
 
     private static OrderSnapshot EmptySnapshot() =>
-        new(Guid.Empty, OrderStatus.Draft, "COP", 0, 0, 0, 0, []);
+        new(Guid.Empty, OrderStatus.Draft, "COP", 0, 0, 0, []);
 
     private sealed class StubResolver : ICartProductResolver
     {
@@ -593,7 +593,7 @@ public sealed class CartCommandBatchProcessorTests
         private OrderSnapshot Snapshot()
         {
             var total = _items.Sum(item => item.LineTotal);
-            return new OrderSnapshot(Guid.NewGuid(), OrderStatus.Draft, "COP", total, 0, 0, total, _items.ToList());
+            return new OrderSnapshot(Guid.NewGuid(), OrderStatus.Draft, "COP", total, 0, total, _items.ToList());
         }
     }
     private sealed class StubStore : ICartMutationStore

@@ -103,6 +103,6 @@ internal static class ProductResolutionConsoleScenario
         }
 
         private static OrderSnapshot EmptySnapshot() =>
-            new(Guid.Empty, OrderStatus.Draft, "COP", 0, 0, 0, 0, []);
+            new(Guid.Empty, OrderStatus.Draft, "COP", 0, 0, 0, []);
     }
 }

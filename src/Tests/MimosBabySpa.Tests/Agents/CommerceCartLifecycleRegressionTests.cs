@@ -392,7 +392,7 @@ public sealed class CommerceCartLifecycleRegressionTests
         {
             var total = _items.Sum(item => item.LineTotal);
             return new OrderSnapshot(
-                Guid.NewGuid(), OrderStatus.Draft, "COP", total, 0, 0, total, _items.ToList());
+                Guid.NewGuid(), OrderStatus.Draft, "COP", total, 0, total, _items.ToList());
         }
     }
 

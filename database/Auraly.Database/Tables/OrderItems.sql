@@ -6,16 +6,19 @@ CREATE TABLE [dbo].[OrderItems] (
     [IntegrationConnectionId] UNIQUEIDENTIFIER NULL,
     [ExternalProductId] NVARCHAR(300) NULL,
     [Sku] NVARCHAR(100) NULL,
+    [ProductCodeSnapshot] NVARCHAR(64) NULL,
     [ProductNameSnapshot] NVARCHAR(250) NOT NULL,
     [DescriptionSnapshot] NVARCHAR(MAX) NULL,
+    [UnitCodeSnapshot] NVARCHAR(24) NULL,
     [Quantity] DECIMAL(18, 2) NOT NULL,
     [UnitPrice] DECIMAL(18, 2) NOT NULL,
     [DiscountAmount] DECIMAL(18, 2) NOT NULL DEFAULT 0,
-    [TaxAmount] DECIMAL(18, 2) NOT NULL DEFAULT 0,
+
     [LineTotal] DECIMAL(18, 2) NOT NULL,
     [RawPayloadJson] NVARCHAR(MAX) NULL,
     [CreatedAt] DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
     [UpdatedAt] DATETIME2 NULL,
+    [RowVersion] ROWVERSION NOT NULL,
     CONSTRAINT [FK_OrderItems_Orders] FOREIGN KEY ([OrderId])
         REFERENCES [dbo].[Orders] ([OrderId])
         ON DELETE CASCADE,

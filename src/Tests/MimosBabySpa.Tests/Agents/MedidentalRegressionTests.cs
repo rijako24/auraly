@@ -282,7 +282,7 @@ public sealed class MedidentalRegressionTests
         var path = Path.Combine(
             FindSolutionRoot(),
             "database",
-            "MimosBabySpa.Database",
+            "Auraly.Database",
             "Scripts",
             "Seeds",
             "SeedMedidental.sql");

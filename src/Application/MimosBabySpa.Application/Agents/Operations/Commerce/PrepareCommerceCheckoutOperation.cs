@@ -117,7 +117,7 @@ private readonly IUnitOfWork _unitOfWork;
             return OperationOutcome.Fail("missing_prerequisites", "payment_phone is required.", true);
 
         var shippingCost = ResolveShippingCost(checkoutMode.Shipping, city);
-        var orderTotal = order.Subtotal - order.DiscountTotal + order.TaxTotal + shippingCost;
+        var orderTotal = order.Subtotal - order.DiscountTotal + shippingCost;
         var totalCents = (long)Math.Round(orderTotal * 100m, MidpointRounding.AwayFromZero);
         if (totalCents <= 0)
             return OperationOutcome.Fail("invalid_order_total", "Order total must be greater than zero.");
