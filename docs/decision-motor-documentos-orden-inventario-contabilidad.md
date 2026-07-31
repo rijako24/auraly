@@ -136,6 +136,18 @@ Reglas:
 
 Los errores de datos y configuración se detectan antes de asignar la secuencia siempre que el documento aún no haya sido emitido. Una factura offline ya emitida se conserva y recibe tratamiento explícito; nunca se descarta ni renumera.
 
+### 8.1 Un trabajo crítico no se salta
+
+`NeedsIntervention` es un estado bloqueante. No avanza `LastCompletedSequence` y no autoriza ejecutar el documento siguiente. Esta regla aplica a inventarios, entradas, ventas, devoluciones, traslados, conversiones, caja y cartera.
+
+Un documento solamente libera su posición cuando ocurre uno de estos resultados:
+
+- se procesa correctamente y queda `Posted`;
+- el mismo trabajo se corrige y completa mediante un reintento idempotente;
+- una operación administrativa explícita y auditada registra una reversión o resolución válida sin borrar la historia.
+
+No existe un botón genérico de “omitir”. Las validaciones determinísticas deben ejecutarse antes de aceptar el documento y antes de asignarle secuencia. Los fallos posteriores conservan el turno, los intentos, el error y la evidencia hasta su resolución. El bloqueo es por `BusinessId`: protege el orden del negocio afectado sin detener negocios independientes.
+
 ## 9. Inventario y bloqueo
 
 Todo saldo se identifica por:
