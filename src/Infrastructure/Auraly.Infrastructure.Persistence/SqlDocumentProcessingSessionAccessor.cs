@@ -14,14 +14,22 @@ public sealed class SqlDocumentProcessingSessionAccessor
         SqlConnection connection,
         SqlTransaction transaction,
         DocumentProcessingContext context,
-        Guid receiptId)
+        Guid receiptId,
+        Guid jobId,
+        long processingSequence)
     {
         if (_current is not null)
         {
             throw new InvalidOperationException("A SQL document-processing session is already active.");
         }
 
-        _current = new Session(connection, transaction, context, receiptId);
+        _current = new Session(
+            connection,
+            transaction,
+            context,
+            receiptId,
+            jobId,
+            processingSequence);
     }
 
     internal Session Take()
@@ -35,6 +43,8 @@ public sealed class SqlDocumentProcessingSessionAccessor
         SqlConnection Connection,
         SqlTransaction Transaction,
         DocumentProcessingContext Context,
-        Guid ReceiptId);
+        Guid ReceiptId,
+        Guid JobId,
+        long ProcessingSequence);
 }
 

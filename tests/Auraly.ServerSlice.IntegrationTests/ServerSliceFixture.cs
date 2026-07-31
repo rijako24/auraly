@@ -427,6 +427,7 @@ public sealed class ServerSliceFixture : IAsyncLifetime
         SetHostEnvironment("Auraly__Fiscal__TechnicalKeys__0__SupplierTaxId", SupplierTaxId);
         SetHostEnvironment("Auraly__Fiscal__TechnicalKeys__0__QrValidationUrl", QrValidationUrl);
         SetHostEnvironment("Auraly__Fiscal__Worker__Enabled", "false");
+        SetHostEnvironment("Auraly__DocumentProcessing__Worker__Enabled", "false");
     }
 
     private void SetHostEnvironment(string name, string value)

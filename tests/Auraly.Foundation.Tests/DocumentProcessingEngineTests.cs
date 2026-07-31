@@ -71,7 +71,7 @@ public sealed class DocumentProcessingEngineTests
 
         public Task MarkFailedAsync(
             DocumentProcessingContext context,
-            string error,
+            Exception error,
             CancellationToken cancellationToken)
         {
             _states.TryRemove(context.DocumentId, out _);

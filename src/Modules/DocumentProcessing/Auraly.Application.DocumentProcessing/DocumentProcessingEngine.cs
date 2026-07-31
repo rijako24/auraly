@@ -12,6 +12,7 @@ public enum ProcessingLeaseResult
 
 public sealed record DocumentProcessingContext(
     TenantId TenantId,
+    BusinessId BusinessId,
     DocumentId DocumentId,
     string DocumentType);
 
@@ -27,7 +28,7 @@ public interface IDocumentProcessingReceiptStore
 
     Task MarkFailedAsync(
         DocumentProcessingContext context,
-        string error,
+        Exception error,
         CancellationToken cancellationToken);
 }
 
@@ -64,6 +65,7 @@ public sealed class DocumentProcessingEngine(
 
         var context = new DocumentProcessingContext(
             document.TenantId,
+            document.BusinessId,
             document.DocumentId,
             document.DocumentType);
 
@@ -86,7 +88,7 @@ public sealed class DocumentProcessingEngine(
         }
         catch (Exception exception)
         {
-            await receiptStore.MarkFailedAsync(context, exception.Message, cancellationToken);
+            await receiptStore.MarkFailedAsync(context, exception, cancellationToken);
             throw;
         }
     }

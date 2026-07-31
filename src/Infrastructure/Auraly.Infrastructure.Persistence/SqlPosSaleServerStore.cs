@@ -178,6 +178,15 @@ public sealed class SqlPosSaleServerStore(
                     : FiscalDocumentStatusCodes.FiscalIntegrityConflict,
                 cancellationToken);
 
+            if (command.Verification.IsVerified)
+            {
+                await EnqueueDocumentAsync(
+                    connection,
+                    transaction,
+                    command,
+                    cancellationToken);
+            }
+
             if (!command.Verification.IsVerified)
             {
                 await InsertConflictReceiptAsync(
@@ -370,6 +379,61 @@ public sealed class SqlPosSaleServerStore(
         sqlCommand.Parameters.AddWithValue("@CreatedAt", command.ReceivedAt);
         await sqlCommand.ExecuteNonQueryAsync(cancellationToken);
     }
+
+    private async Task EnqueueDocumentAsync(
+        SqlConnection connection,
+        SqlTransaction transaction,
+        StorePosSaleReceptionCommand command,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            IF NOT EXISTS
+            (
+                SELECT 1
+                FROM dbo.BusinessProcessingCursors WITH (UPDLOCK, HOLDLOCK)
+                WHERE BusinessId = @BusinessId
+            )
+            BEGIN
+                INSERT INTO dbo.BusinessProcessingCursors
+                    (BusinessId, LastAssignedSequence, LastCompletedSequence, UpdatedAt)
+                VALUES
+                    (@BusinessId, 0, 0, @CreatedAt);
+            END;
+
+            DECLARE @Assigned TABLE (ProcessingSequence BIGINT NOT NULL);
+
+            UPDATE dbo.BusinessProcessingCursors WITH (UPDLOCK, HOLDLOCK)
+            SET LastAssignedSequence = LastAssignedSequence + 1,
+                UpdatedAt = @CreatedAt
+            OUTPUT INSERTED.LastAssignedSequence INTO @Assigned (ProcessingSequence)
+            WHERE BusinessId = @BusinessId;
+
+            INSERT INTO dbo.DocumentProcessingJobs
+            (
+                JobId, BusinessId, ProcessingSequence, DocumentId, DocumentType,
+                Status, AttemptCount, AvailableAt, CreatedAt
+            )
+            SELECT
+                @JobId, @BusinessId, ProcessingSequence, @DocumentId, @DocumentType,
+                N'Pending', 0, @CreatedAt, @CreatedAt
+            FROM @Assigned;
+            """;
+
+        await using var sqlCommand = new SqlCommand(sql, connection, transaction);
+        sqlCommand.Parameters.AddWithValue("@JobId", idGenerator.NewId());
+        sqlCommand.Parameters.AddWithValue("@BusinessId", command.Request.BusinessId);
+        sqlCommand.Parameters.AddWithValue("@DocumentId", command.Request.DocumentId);
+        sqlCommand.Parameters.AddWithValue(
+            "@DocumentType",
+            command.Request.FiscalSnapshot.DocumentType);
+        sqlCommand.Parameters.AddWithValue("@CreatedAt", command.ReceivedAt);
+        if (await sqlCommand.ExecuteNonQueryAsync(cancellationToken) < 2)
+        {
+            throw new DBConcurrencyException(
+                "The business sequence and its durable document job were not created atomically.");
+        }
+    }
+
     private async Task InsertConflictReceiptAsync(
         SqlConnection connection,
         SqlTransaction transaction,

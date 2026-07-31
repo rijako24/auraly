@@ -66,9 +66,15 @@ builder.Services.AddScoped<IPosSaleServerStore, SqlPosSaleServerStore>();
 builder.Services.AddScoped<IPosSaleCustomerResolver, SqlPosSaleCustomerResolver>();
 builder.Services.AddScoped<SqlDocumentProcessingSessionAccessor>();
 builder.Services.AddScoped<IDocumentProcessingReceiptStore, SqlDocumentProcessingReceiptStore>();
+builder.Services.AddScoped<IDocumentProcessingWorkSource, SqlDocumentProcessingWorkSource>();
 builder.Services.AddScoped<IConfirmedDocumentHandler, SqlPosSaleDocumentHandler>();
 builder.Services.AddScoped<DocumentProcessingEngine>();
+builder.Services.AddScoped<DocumentProcessingWorker>();
 builder.Services.AddScoped<ReceivePosSaleService>();
+if (builder.Configuration.GetValue("Auraly:DocumentProcessing:Worker:Enabled", true))
+{
+    builder.Services.AddHostedService<DocumentProcessingHostedService>();
+}
 builder.Services.AddScoped<ICatalogStore, SqlCatalogStore>();
 builder.Services.AddScoped<CatalogService>();
 builder.Services.AddScoped<PosCatalogService>();

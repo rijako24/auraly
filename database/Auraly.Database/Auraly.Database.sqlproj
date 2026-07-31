@@ -115,6 +115,8 @@
     <Build Include="Tables\FiscalArtifacts.sql" />
     <Build Include="Tables\FiscalTransmissionAttempts.sql" />
     <Build Include="Tables\DocumentProcessingReceipts.sql" />
+    <Build Include="Tables\BusinessProcessingCursors.sql" />
+    <Build Include="Tables\DocumentProcessingJobs.sql" />
     <Build Include="Tables\InventoryMovements.sql" />
     <Build Include="Tables\ServerOutboxMessages.sql" />
   </ItemGroup>

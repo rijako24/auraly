@@ -191,14 +191,15 @@ public sealed class ReceivePosSaleService(
         if (!verification.IsVerified || stored.ProcessingStatus == "Blocked")
             return ToResponse(stored, isDuplicate: existing is not null);
 
-        var result = await processingEngine.ProcessAsync(
-            new ConfirmedDocument(
-                new TenantId(request.TenantId),
-                new BusinessId(request.BusinessId),
-                new DocumentId(request.DocumentId),
-                PosSaleDocumentTypes.Invoice,
-                snapshotJson,
-                receivedAt),
+        var confirmedDocument = new ConfirmedDocument(
+            new TenantId(request.TenantId),
+            new BusinessId(request.BusinessId),
+            new DocumentId(request.DocumentId),
+            PosSaleDocumentTypes.Invoice,
+            snapshotJson,
+            receivedAt);
+        var result = await ProcessInBusinessOrderAsync(
+            confirmedDocument,
             cancellationToken);
         if (result == DocumentProcessingResult.Busy)
             throw new PosSaleProcessingBusyException(
@@ -217,6 +218,28 @@ public sealed class ReceivePosSaleService(
             isDuplicate:
                 existing is not null ||
                 result == DocumentProcessingResult.AlreadyProcessed);
+    }
+
+    private async Task<DocumentProcessingResult> ProcessInBusinessOrderAsync(
+        ConfirmedDocument document,
+        CancellationToken cancellationToken)
+    {
+        const int maximumAttempts = 40;
+        for (var attempt = 1; attempt <= maximumAttempts; attempt++)
+        {
+            var result = await processingEngine.ProcessAsync(document, cancellationToken);
+            if (result != DocumentProcessingResult.Busy)
+                return result;
+
+            if (attempt < maximumAttempts)
+            {
+                await Task.Delay(
+                    TimeSpan.FromMilliseconds(25),
+                    cancellationToken);
+            }
+        }
+
+        return DocumentProcessingResult.Busy;
     }
 
     private static void ValidateIdempotencyKey(string idempotencyKey)
