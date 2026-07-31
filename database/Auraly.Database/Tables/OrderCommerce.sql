@@ -94,4 +94,3 @@ CREATE INDEX [IX_OrderInvoiceLinks_Business_Created]
     ON [dbo].[OrderInvoiceLinks] ([BusinessId], [CreatedAt])
     INCLUDE ([OrderId], [DocumentId], [OperationId]);
 GO
-

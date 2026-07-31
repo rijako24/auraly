@@ -30,4 +30,3 @@ public static class OrderRules
     public static int LeaseMinutes(int requested) =>
         Math.Clamp(requested, 2, 30);
 }
-
