@@ -141,21 +141,21 @@ BEGIN
     INSERT dbo.Orders(
         OrderId,BusinessId,Source,FulfillmentMode,Status,
         CustomerNameSnapshot,CustomerPhoneSnapshot,CustomerDocumentSnapshot,
-        Notes,Currency,Subtotal,DiscountTotal,TaxTotal,Total,
+        Notes,Currency,Subtotal,DiscountTotal,Total,
         CustomerConfirmed,IdempotencyKey,CreatedAt)
     VALUES(
         @OrderOneId,@BusinessId,0,0,2,
         N'Laura Gómez',N'3001112233',N'1020304050',
         N'Pedido creado por el bot para demostración',N'COP',
-        25000,0,4750,29750,1,N'auraly-demo-order-1',DATEADD(minute,-18,SYSUTCDATETIME()));
+        25000,0,25000,1,N'auraly-demo-order-1',DATEADD(minute,-18,SYSUTCDATETIME()));
 
     INSERT dbo.OrderItems(
         OrderItemId,OrderId,BusinessId,ProductId,Sku,ProductNameSnapshot,
-        Quantity,UnitPrice,DiscountAmount,TaxAmount,LineTotal,CreatedAt)
+        Quantity,UnitPrice,DiscountAmount,LineTotal,CreatedAt)
     VALUES(
         'A0A10001-0000-7000-8000-00000000000E',@OrderOneId,@BusinessId,
         @ProductId,N'DEMO-001',N'Producto Auraly de demostración',
-        2,12500,0,4750,29750,SYSUTCDATETIME());
+        2,12500,0,25000,SYSUTCDATETIME());
 END;
 
 IF NOT EXISTS (SELECT 1 FROM dbo.Orders WHERE OrderId=@OrderTwoId)
@@ -163,21 +163,21 @@ BEGIN
     INSERT dbo.Orders(
         OrderId,BusinessId,Source,FulfillmentMode,Status,
         CustomerNameSnapshot,CustomerPhoneSnapshot,CustomerDocumentSnapshot,
-        Notes,Currency,Subtotal,DiscountTotal,TaxTotal,Total,
+        Notes,Currency,Subtotal,DiscountTotal,Total,
         CustomerConfirmed,IdempotencyKey,CreatedAt)
     VALUES(
         @OrderTwoId,@BusinessId,0,0,2,
         N'Carlos Ruiz',N'3004445566',N'79845612',
         N'Segundo pedido del bot para facturación múltiple',N'COP',
-        12500,0,2375,14875,1,N'auraly-demo-order-2',DATEADD(minute,-6,SYSUTCDATETIME()));
+        12500,0,12500,1,N'auraly-demo-order-2',DATEADD(minute,-6,SYSUTCDATETIME()));
 
     INSERT dbo.OrderItems(
         OrderItemId,OrderId,BusinessId,ProductId,Sku,ProductNameSnapshot,
-        Quantity,UnitPrice,DiscountAmount,TaxAmount,LineTotal,CreatedAt)
+        Quantity,UnitPrice,DiscountAmount,LineTotal,CreatedAt)
     VALUES(
         'A0A10001-0000-7000-8000-00000000000F',@OrderTwoId,@BusinessId,
         @ProductId,N'DEMO-001',N'Producto Auraly de demostración',
-        1,12500,0,2375,14875,SYSUTCDATETIME());
+        1,12500,0,12500,SYSUTCDATETIME());
 END;
 
 COMMIT TRANSACTION;

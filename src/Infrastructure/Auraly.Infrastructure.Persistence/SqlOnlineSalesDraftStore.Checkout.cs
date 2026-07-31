@@ -369,9 +369,30 @@ public sealed partial class SqlOnlineSalesDraftStore
             WHERE draft.SalesDraftId=@DraftId AND draft.UserId=@UserId
               AND business.TenantId=@TenantId AND @Status=N'Completed'
               AND draft.Status IN (N'Issuing',N'Consumed');
+
+            INSERT dbo.OrderInvoiceLinks(
+              OrderInvoiceLinkId,BusinessId,OrderId,DocumentId,OperationId,CreatedAt)
+            SELECT
+              @OrderInvoiceLinkId,draft.BusinessId,draft.SourceOrderId,
+              @DocumentId,NULL,@Now
+            FROM dbo.SalesDrafts draft
+            WHERE draft.SalesDraftId=@DraftId
+              AND draft.SourceOrderId IS NOT NULL
+              AND @Status=N'Completed'
+              AND NOT EXISTS(
+                SELECT 1 FROM dbo.OrderInvoiceLinks link
+                WHERE link.OrderId=draft.SourceOrderId);
+
+            UPDATE claim
+            SET ReleasedAt=@Now
+            FROM dbo.OrderClaims claim
+            JOIN dbo.SalesDrafts draft ON draft.SourceOrderId=claim.OrderId
+            WHERE draft.SalesDraftId=@DraftId AND @Status=N'Completed'
+              AND claim.ReleasedAt IS NULL;
             """;
         command.Parameters.AddRange([
             P("@Status", status),
+            P("@OrderInvoiceLinkId", ids.NewId()),
             P("@Now", time.GetUtcNow()),
             P("@DraftId", draftId),
             P("@DocumentId", documentId),

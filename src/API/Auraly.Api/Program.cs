@@ -8,6 +8,7 @@ using Auraly.Application.DocumentProcessing;
 using Auraly.Application.Fiscal;
 using Auraly.Application.Parties;
 using Auraly.Application.Organization;
+using Auraly.Application.Orders;
 using Auraly.Application.Sales;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.BuildingBlocks.Infrastructure.Identifiers;
@@ -84,10 +85,18 @@ builder.Services.AddScoped<IOnlineSalesCheckoutStore, SqlOnlineSalesDraftStore>(
 builder.Services.AddScoped<OnlineSalesCheckoutService>();
 builder.Services.AddScoped<IOnlineSalesHistoryStore, SqlOnlineSalesDraftStore>();
 builder.Services.AddScoped<OnlineSalesHistoryService>();
+builder.Services.AddScoped<IOnlineSalesOrderImportStore, SqlOnlineSalesDraftStore>();
+builder.Services.AddScoped<OnlineSalesOrderImportService>();
 builder.Services.AddScoped<ICashSessionStore, SqlCashSessionStore>();
 builder.Services.AddScoped<CashSessionService>();
 builder.Services.AddScoped<IPosOfflineIdentityStore, SqlPosOfflineIdentityStore>();
 builder.Services.AddScoped<PosOfflineIdentityService>();
+builder.Services.AddScoped<IOrderStore, SqlOrderStore>();
+builder.Services.AddScoped<IPosOrderActorResolver, SqlPosOrderActorResolver>();
+builder.Services.AddScoped<OrderService>();
+builder.Services.AddScoped<OrderRecoveryService>();
+builder.Services.AddScoped<IOrderBatchStore, SqlOrderBatchStore>();
+builder.Services.AddScoped<OrderBatchService>();
 builder.Services.AddResponseCompression(options => options.EnableForHttps = true);
 
 var jwtIssuer = builder.Configuration["Authentication:Jwt:Issuer"];
@@ -139,6 +148,11 @@ builder.Services.AddAuthorization(options =>
         policy.AuthenticationSchemes.Add(JwtBearerDefaults.AuthenticationScheme);
         policy.RequireAuthenticatedUser();
     });
+    options.AddPolicy("orders.user", policy =>
+    {
+        policy.AuthenticationSchemes.Add(JwtBearerDefaults.AuthenticationScheme);
+        policy.RequireAuthenticatedUser();
+    });
     options.AddPolicy("pos.catalog.sync", policy =>
     {
         policy.AuthenticationSchemes.Add(PosAuthenticationDefaults.Scheme);
@@ -161,6 +175,14 @@ builder.Services.AddAuthorization(options =>
             PartyPermissionCodes.PosCustomerCreate);
     });
     options.AddPolicy("pos.identity.sync", policy =>
+    {
+        policy.AuthenticationSchemes.Add(PosAuthenticationDefaults.Scheme);
+        policy.RequireAuthenticatedUser();
+        policy.RequireClaim(
+            PosAuthenticationDefaults.PermissionClaim,
+            CommercePermissionCodes.PosIdentitySync);
+    });
+    options.AddPolicy("pos.orders", policy =>
     {
         policy.AuthenticationSchemes.Add(PosAuthenticationDefaults.Scheme);
         policy.RequireAuthenticatedUser();
@@ -194,6 +216,8 @@ app.MapOnlineSalesDraftApi();
 app.MapCashApi();
 app.MapPosIdentityApi();
 app.MapFiscalApi();
+app.MapOrdersApi();
+app.MapPosOrdersApi();
 app.MapPost(
         "/api/pos/v1/sales",
         async (

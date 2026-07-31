@@ -100,6 +100,7 @@
     <Build Include="Tables\CashSessions.sql" />
     <Build Include="Tables\SupervisorAuthorizations.sql" />
     <Build Include="Tables\SalesDocuments.sql" />
+    <Build Include="Tables\OrderCommerce.sql" />
     <Build Include="Tables\SalesDrafts.sql" />
     <Build Include="Tables\SalesDraftLines.sql" />
     <Build Include="Tables\SalesDraftMutationReceipts.sql" />

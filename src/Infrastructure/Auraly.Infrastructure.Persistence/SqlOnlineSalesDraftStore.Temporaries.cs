@@ -320,8 +320,14 @@ public sealed partial class SqlOnlineSalesDraftStore
                 "No existe la venta activa del usuario.");
         var now = time.GetUtcNow();
         await ExecuteAsync(connection, transaction, """
+            UPDATE claim
+            SET ReleasedAt=@Now
+            FROM dbo.OrderClaims claim
+            JOIN dbo.SalesDrafts draft ON draft.SourceOrderId=claim.OrderId
+            WHERE draft.SalesDraftId=@DraftId AND claim.ReleasedAt IS NULL;
+
             UPDATE dbo.SalesDrafts
-            SET Status=N'Deleted',DeletedAt=@Now,UpdatedAt=@Now,Version=Version+1
+            SET Status=N'Deleted',SourceOrderId=NULL,DeletedAt=@Now,UpdatedAt=@Now,Version=Version+1
             WHERE SalesDraftId=@DraftId AND Version=@Version AND Status=N'Temporary';
             """,
             [

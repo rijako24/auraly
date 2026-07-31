@@ -19,6 +19,7 @@ public static class OnlineRegisterApi
                 var identity = context.User.ToOnlineRegisterUserIdentity();
                 return Results.Ok(new OnlineRegisterBootstrap(
                     await service.TenantNameAsync(identity, ct),
+                    identity.UserId,
                     context.User.PosUserDisplayName(),
                     await service.ListAsync(identity, ct),
                     context.User.FindAll("permission").Any(claim =>

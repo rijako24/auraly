@@ -37,7 +37,11 @@ public sealed class ProjectConnectivityTests
             name => name,
             _ => 0,
             StringComparer.Ordinal);
-        foreach (var project in projects)
+        var consumerProjects = Directory
+            .GetFiles(Path.Combine(repositoryRoot, "src"), "Auraly*.csproj", SearchOption.AllDirectories)
+            .Concat(projects)
+            .Distinct(StringComparer.OrdinalIgnoreCase);
+        foreach (var project in consumerProjects)
         {
             var references = XDocument.Load(project)
                 .Descendants("ProjectReference")

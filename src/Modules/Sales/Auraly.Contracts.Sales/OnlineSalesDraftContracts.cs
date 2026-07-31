@@ -118,7 +118,8 @@ public sealed record OnlineSalesDraft(
     IReadOnlyList<OnlineSalesDraftLine> Lines,
     decimal UntaxedAmount,
     decimal TaxAmount,
-    decimal PayableAmount);
+    decimal PayableAmount,
+    Guid? SourceOrderId = null);
 
 public sealed record GetOnlineSalesCustomerRequest(
     OnlineSalesDraftContext Context,

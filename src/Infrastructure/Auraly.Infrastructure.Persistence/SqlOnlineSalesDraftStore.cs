@@ -432,8 +432,14 @@ public sealed partial class SqlOnlineSalesDraftStore(
         DemandActiveVersion(state, expectedVersion);
         var now = time.GetUtcNow();
         await ExecuteAsync(connection, transaction, """
+            UPDATE claim
+            SET ReleasedAt=@Now
+            FROM dbo.OrderClaims claim
+            JOIN dbo.SalesDrafts draft ON draft.SourceOrderId=claim.OrderId
+            WHERE draft.SalesDraftId=@DraftId AND claim.ReleasedAt IS NULL;
+
             UPDATE dbo.SalesDrafts
-            SET Status=N'Deleted',DeletedAt=@Now,UpdatedAt=@Now,Version=Version+1
+            SET Status=N'Deleted',SourceOrderId=NULL,DeletedAt=@Now,UpdatedAt=@Now,Version=Version+1
             WHERE SalesDraftId=@DraftId AND Version=@ExpectedVersion;
             """,
             [P("@Now", now), P("@DraftId", draftId), P("@ExpectedVersion", expectedVersion)],
@@ -969,14 +975,15 @@ public sealed partial class SqlOnlineSalesDraftStore(
         header.Transaction = transaction;
         header.CommandText = """
             SELECT SalesDraftId,BusinessId,WarehouseId,RegisterId,UserId,
-                   CustomerId,SellerId,Status,Name,Reference,Observation,Version,UpdatedAt
+                   CustomerId,SellerId,Status,Name,Reference,Observation,Version,UpdatedAt,
+                   SourceOrderId
             FROM dbo.SalesDrafts WHERE SalesDraftId=@DraftId;
             """;
         header.Parameters.Add(P("@DraftId", draftId));
         await using var reader = await header.ExecuteReaderAsync(ct);
         if (!await reader.ReadAsync(ct))
             throw new OnlineSalesDraftValidationException("El borrador no existe.");
-        var values = new object[13];
+        var values = new object[14];
         reader.GetValues(values);
         await reader.DisposeAsync();
 
@@ -1017,7 +1024,8 @@ public sealed partial class SqlOnlineSalesDraftStore(
             values[10] is DBNull ? null : (string)values[10],
             (long)values[11], (DateTimeOffset)values[12],
             lines, lines.Sum(line => line.Net), lines.Sum(line => line.Tax),
-            lines.Sum(line => line.Total));
+            lines.Sum(line => line.Total),
+            values[13] is DBNull ? null : (Guid)values[13]);
     }
 
     private static async Task<int> ExecuteAsync(

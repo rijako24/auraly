@@ -6,6 +6,7 @@ CREATE TABLE [dbo].[SalesDrafts] (
     [UserId] UNIQUEIDENTIFIER NOT NULL,
     [CustomerId] UNIQUEIDENTIFIER NULL,
     [SellerId] UNIQUEIDENTIFIER NULL,
+    [SourceOrderId] UNIQUEIDENTIFIER NULL,
     [Status] NVARCHAR(24) NOT NULL,
     [Name] NVARCHAR(120) NULL,
     [Reference] NVARCHAR(120) NULL,
@@ -21,6 +22,7 @@ CREATE TABLE [dbo].[SalesDrafts] (
     CONSTRAINT [FK_SalesDrafts_Warehouses] FOREIGN KEY ([WarehouseId]) REFERENCES [dbo].[Warehouses] ([WarehouseId]),
     CONSTRAINT [FK_SalesDrafts_CashRegisters] FOREIGN KEY ([RegisterId]) REFERENCES [dbo].[CashRegisters] ([RegisterId]),
     CONSTRAINT [FK_SalesDrafts_AppUsers] FOREIGN KEY ([UserId]) REFERENCES [dbo].[AppUsers] ([UserId]),
+    CONSTRAINT [FK_SalesDrafts_Orders] FOREIGN KEY ([SourceOrderId]) REFERENCES [dbo].[Orders] ([OrderId]),
     CONSTRAINT [CK_SalesDrafts_Status] CHECK ([Status] IN (N'Active', N'Temporary', N'Issuing', N'Consumed', N'Deleted')),
     CONSTRAINT [CK_SalesDrafts_Version] CHECK ([Version] > 0)
 );
@@ -29,6 +31,11 @@ GO
 CREATE UNIQUE INDEX [UX_SalesDrafts_ActiveScope]
     ON [dbo].[SalesDrafts] ([BusinessId], [RegisterId], [UserId])
     WHERE [Status] = N'Active';
+GO
+
+CREATE UNIQUE INDEX [UX_SalesDrafts_SourceOrder]
+    ON [dbo].[SalesDrafts] ([SourceOrderId])
+    WHERE [SourceOrderId] IS NOT NULL;
 GO
 
 CREATE INDEX [IX_SalesDrafts_Business_Status_Updated]

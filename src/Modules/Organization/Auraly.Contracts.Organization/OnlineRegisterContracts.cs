@@ -9,6 +9,7 @@ public sealed record OnlineRegisterOption(
 
 public sealed record OnlineRegisterBootstrap(
     string TenantName,
+    Guid UserId,
     string UserDisplayName,
     IReadOnlyList<OnlineRegisterOption> Options,
     bool CanEnrollPosDevice);

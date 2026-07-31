@@ -93,6 +93,7 @@ GO
 :r .\Seeds\CleanupDefaultTestServices.sql
 :r .\Seeds\SeedPosEnrollmentPermission.sql
 :r .\Seeds\SeedPosIdentityPermission.sql
+:r .\Seeds\SeedOrderPermissions.sql
 :r .\Seeds\SeedSolorzanoAgentConfiguration.sql
 GO
 
