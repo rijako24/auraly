@@ -34,7 +34,43 @@ Xion separa funcionalmente:
 5. precio sugerido;
 6. precio público efectivo.
 
-La entrada de mercancía actualiza el costo observado del proveedor y marca el producto como pendiente. El formulario `FrmProductosActualizarPreciosVentaProducto` consulta esos pendientes, calcula precios sugeridos y permite guardar la propuesta o actualizar el precio público mediante permisos diferentes.
+En Xion, la vista principal se llama **Actualizar Precios de Venta** y corresponde
+a `FrmProductosActualizarPreciosVenta`. Permite:
+
+- seleccionar sucursal;
+- filtrar pendientes o todos;
+- filtrar proveedor y casa comercial;
+- agrupar primero por proveedor;
+- revisar fecha, días transcurridos, días de compra y venta, existencias, costo
+  neto del proveedor, costo neto actual del producto y diferencia porcentual;
+- seleccionar uno o varios productos;
+- abrir el editor mediante la acción `Revisar`.
+
+El editor que abre la vista principal es
+`FrmProductosActualizarPreciosVentaProducto`. También puede abrirse desde una
+entrada de mercancía concreta y cargar sus productos pendientes. Allí Xion
+muestra precio actual, costo del proveedor, escalas de cantidad, margen ideal,
+margen real y nuevo precio. Cambiar margen recalcula precio; cambiar precio
+recalcula margen.
+
+Xion separa dos permisos y acciones:
+
+- `Guardar`: conserva valores calculados internos sin sustituir el precio público;
+- `Actualizar`: copia el nuevo precio al precio público efectivo, conserva
+  historial y marca productos/equipos para actualización.
+
+También se comprobaron comportamientos legacy que Auraly no debe reproducir:
+
+- al construir la primera escala existe una asignación sospechosa de
+  `NPrecioPublico1` desde `NPrecioPublico2`;
+- el costo pendiente puede marcarse como atendido incluso al guardar sin publicar;
+- listas, eventos y productos derivados se actualizan desde el mismo servicio con
+  responsabilidades mezcladas;
+- las cuatro escalas están codificadas como columnas rígidas;
+- la sincronización se representa mediante banderas por servidor/equipo.
+
+Auraly toma estas reglas solo como referencia funcional. No conserva el nombre,
+el formulario ni la arquitectura de Xion.
 
 Xion permite edición bidireccional:
 
@@ -179,10 +215,20 @@ La entrada **no modifica `ProductPrices`**.
 Después del commit, Pricing crea la propuesta idempotente. El usuario la revisa desde:
 
 ```text
-Productos > Revisión de precios
+Productos > Precios y rentabilidad
 ```
 
-La vista también se abre filtrada desde la entrada procesada. Permite:
+**Precios y rentabilidad** es el nombre canónico de Auraly. Describe las cuatro
+responsabilidades reales de la vista: comparar costos, analizar margen, preparar
+un precio y publicarlo. No copia el nombre “Actualizar Precios de Venta”.
+
+La vista se organiza en:
+
+- Pendientes;
+- Publicados;
+- Historial.
+
+También puede abrirse filtrada desde una entrada procesada. Permite:
 
 - comparar costo anterior, nuevo y promedio;
 - conservar el precio actual;
@@ -349,6 +395,6 @@ Ver costos y publicar precios son permisos distintos. El cajero recibe únicamen
 5. Publicación individual y masiva.
 6. `CatalogChanges` más outbox y notificación real.
 7. Descarga incremental y actualización SQLite demostrada.
-8. UI de ficha de producto y Revisión de precios.
+8. UI de ficha de producto y Precios y rentabilidad.
 
 Ninguna etapa se considera completa sin productor, consumidor y pruebas conectadas.
