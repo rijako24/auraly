@@ -2,43 +2,61 @@ using Auraly.Contracts.DocumentProcessing;
 
 namespace Auraly.Application.DocumentProcessing;
 
+public sealed record DocumentProcessingSignal(
+    Guid MovementId,
+    Guid BusinessId,
+    Guid DocumentId,
+    string DocumentType);
+
+public interface IDocumentProcessingSignalPublisher
+{
+    Task PublishAsync(
+        DocumentProcessingSignal signal,
+        CancellationToken cancellationToken = default);
+}
+
+public enum DocumentProcessingWorkState
+{
+    Ready,
+    Completed,
+    NotReady,
+    Missing
+}
+
+public sealed record DocumentProcessingWork(
+    DocumentProcessingWorkState State,
+    ConfirmedDocument? Document,
+    string? Reason = null);
+
 public interface IDocumentProcessingWorkSource
 {
-    Task<IReadOnlyList<ConfirmedDocument>> LoadReadyAsync(
-        int maximumCount,
+    Task<DocumentProcessingWork> LoadAsync(
+        DocumentProcessingSignal signal,
         CancellationToken cancellationToken);
 }
+
+public sealed class DocumentProcessingMessageException(string message) : Exception(message);
 
 public sealed class DocumentProcessingWorker(
     IDocumentProcessingWorkSource workSource,
     DocumentProcessingEngine engine)
 {
-    public async Task<int> RunOnceAsync(
-        int maximumCount = 20,
+    public async Task<DocumentProcessingResult> ProcessOneAsync(
+        DocumentProcessingSignal signal,
         CancellationToken cancellationToken = default)
     {
-        if (maximumCount is < 1 or > 100)
-            throw new ArgumentOutOfRangeException(nameof(maximumCount));
+        ArgumentNullException.ThrowIfNull(signal);
+        var work = await workSource.LoadAsync(signal, cancellationToken);
+        if (work.State == DocumentProcessingWorkState.Completed)
+            return DocumentProcessingResult.AlreadyProcessed;
+        if (work.State != DocumentProcessingWorkState.Ready || work.Document is null)
+            throw new DocumentProcessingMessageException(
+                work.Reason ?? "The movement is missing or cannot be processed in sequence.");
 
-        var documents = await workSource.LoadReadyAsync(maximumCount, cancellationToken);
-        var attempted = 0;
-        foreach (var document in documents)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            try
-            {
-                await engine.ProcessAsync(document, cancellationToken);
-            }
-            catch when (!cancellationToken.IsCancellationRequested)
-            {
-                // The durable job contains the classified failure and retry schedule.
-                // Another business must still be allowed to advance in this worker pass.
-            }
-
-            attempted++;
-        }
-
-        return attempted;
+        var result = await engine.ProcessAsync(work.Document, cancellationToken);
+        if (result == DocumentProcessingResult.Busy)
+            throw new DocumentProcessingMessageException(
+                "The movement is already leased by another consumer.");
+        return result;
     }
 }
-

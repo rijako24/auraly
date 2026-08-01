@@ -3,6 +3,8 @@
 **Estado:** vigente y obligatoria  
 **Fecha:** 31 de julio de 2026  
 **Alcance:** Auraly Commerce Cloud y On-Premise
+> Esta decisión conserva las reglas de orden, atomicidad e inventario. La activación y el transporte fueron reemplazados por `decision-motor-documental-ordenado-y-efectos-intrinsecos.md`: un mensaje durable por movimiento, sin sondeo ni drenado de SQL.
+
 
 ## 1. Prevalencia
 
@@ -118,7 +120,7 @@ UNIQUE (BusinessId, ProcessingSequence)
 UNIQUE (DocumentId, DocumentType)
 ```
 
-El registro actual `DocumentProcessingReceipts` evoluciona mediante expansión y contracción. No se pierde su evidencia ni se crean dos motores permanentes.
+`DocumentProcessingJobs` es la única autoridad durable del trabajo y de su resultado idempotente. No se crea una tabla paralela de recibos.
 
 ## 8. Adquisición y recuperación
 
@@ -208,9 +210,7 @@ Una configuración contable faltante genera `AccountingPendingConfiguration`, im
 
 ## 14. Despertar y transporte
 
-SQL Server es la fuente de verdad durable para Cloud y On-Premise. Una notificación puede despertar al worker, pero perderla no pierde el trabajo: el worker revisa la cola SQL indexada.
-
-Azure Service Bus podrá incorporarse después como transporte y señal de escala. No reemplazará la idempotencia ni el estado durable en SQL. No se incorporan RabbitMQ, Redis o una cola en memoria como autoridad del MVP.
+SQL Server conserva la fuente de verdad del trabajo, su orden y sus efectos. El broker es el activador durable: Azure Service Bus con sesiones en SaaS y RabbitMQ durable on-premise. Cada mensaje identifica un único movimiento; el consumidor no sondea ni drena la tabla.
 
 ## 15. Pruebas obligatorias
 
@@ -236,6 +236,6 @@ La implementación debe probar con SQL Server real:
 
 ## 16. Consecuencia para el código actual
 
-`InventoryMovements` y `DocumentProcessingReceipts` son una base inicial, pero no representan todavía esta decisión completa. Faltan secuencia por negocio, saldo y valoración, fotografías anterior/posterior, lease explícito y trabajo genérico para documentos distintos de ventas.
+`InventoryMovements` y `DocumentProcessingJobs` son la base conectada. La evolución continúa por tipo documental sin crear otro registro de procesamiento ni otro motor.
 
 La siguiente rebanada debe evolucionarlos antes de construir entradas, conteos, traslados y contabilidad sobre supuestos incompletos.

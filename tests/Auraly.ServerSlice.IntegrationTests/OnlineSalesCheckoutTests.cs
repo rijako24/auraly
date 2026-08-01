@@ -47,15 +47,14 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
         Assert.Null(persisted.DeviceId);
         Assert.Equal(SaleSourceModes.Online, persisted.SourceMode);
         Assert.Equal(userId, persisted.SoldByUserId);
-        Assert.NotNull(persisted.CashSessionId);
-        Assert.NotNull(persisted.CashierShiftId);
+        Assert.NotNull(persisted.WorkSessionId);
         Assert.Equal(1, persisted.DocumentCount);
         Assert.Equal(1, persisted.LineCount);
         Assert.Equal(1, persisted.PaymentCount);
         Assert.Equal(1, persisted.InventoryMovementCount);
-        Assert.Equal(1, persisted.CashMovementCount);
+        Assert.Equal(1, persisted.WorkSessionMovementCount);
         Assert.Equal(1, persisted.ServerOutboxCount);
-        Assert.Equal(1, persisted.ProcessingReceiptCount);
+        Assert.Equal(1, persisted.ProcessingJobCount);
         Assert.Equal(1, persisted.TaxSummaryCount);
         Assert.Equal("Completed", persisted.CheckoutStatus);
         Assert.Equal("Consumed", persisted.DraftStatus);
@@ -135,9 +134,9 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
         Assert.Equal(1, afterReplay.LineCount);
         Assert.Equal(1, afterReplay.PaymentCount);
         Assert.Equal(1, afterReplay.InventoryMovementCount);
-        Assert.Equal(1, afterReplay.CashMovementCount);
+        Assert.Equal(1, afterReplay.WorkSessionMovementCount);
         Assert.Equal(1, afterReplay.ServerOutboxCount);
-        Assert.Equal(1, afterReplay.ProcessingReceiptCount);
+        Assert.Equal(1, afterReplay.ProcessingJobCount);
         Assert.Equal(1, afterReplay.TaxSummaryCount);
 
         using var conflictRequest = Mutation(
@@ -374,15 +373,14 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
         await connection.OpenAsync();
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT d.RegisterId,d.DeviceId,d.SourceMode,d.SoldByUserId,
-                   d.CashSessionId,d.CashierShiftId,
+            SELECT d.RegisterId,d.DeviceId,d.SourceMode,d.SoldByUserId,d.WorkSessionId,
                    (SELECT COUNT(*) FROM dbo.SalesDocuments x WHERE x.DocumentId=d.DocumentId),
                    (SELECT COUNT(*) FROM dbo.SalesDocumentLines x WHERE x.DocumentId=d.DocumentId),
                    (SELECT COUNT(*) FROM dbo.SalesPayments x WHERE x.DocumentId=d.DocumentId),
                    (SELECT COUNT(*) FROM dbo.InventoryMovements x WHERE x.DocumentId=d.DocumentId),
-                   (SELECT COUNT(*) FROM dbo.CashMovements x WHERE x.DocumentId=d.DocumentId),
+                   (SELECT COUNT(*) FROM dbo.WorkSessionMovements x WHERE x.DocumentId=d.DocumentId),
                    (SELECT COUNT(*) FROM dbo.ServerOutboxMessages x WHERE x.DocumentId=d.DocumentId),
-                   (SELECT COUNT(*) FROM dbo.DocumentProcessingReceipts x WHERE x.DocumentId=d.DocumentId),
+                   (SELECT COUNT(*) FROM dbo.DocumentProcessingJobs x WHERE x.DocumentId=d.DocumentId),
                    (SELECT COUNT(*) FROM dbo.SalesDocumentTaxSummaries x WHERE x.DocumentId=d.DocumentId),
                    receipt.Status,draft.Status
             FROM dbo.SalesDocuments d
@@ -401,7 +399,7 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
             reader.GetString(2),
             reader.GetGuid(3),
             reader.IsDBNull(4) ? null : reader.GetGuid(4),
-            reader.IsDBNull(5) ? null : reader.GetGuid(5),
+            reader.GetInt32(5),
             reader.GetInt32(6),
             reader.GetInt32(7),
             reader.GetInt32(8),
@@ -409,9 +407,8 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
             reader.GetInt32(10),
             reader.GetInt32(11),
             reader.GetInt32(12),
-            reader.GetInt32(13),
-            reader.GetString(14),
-            reader.GetString(15));
+            reader.GetString(13),
+            reader.GetString(14));
     }
 
     private async Task<IReadOnlyList<ConsecutiveEvidence>> ReadConsecutivesAsync(
@@ -480,15 +477,14 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
         Guid? DeviceId,
         string SourceMode,
         Guid SoldByUserId,
-        Guid? CashSessionId,
-        Guid? CashierShiftId,
+        Guid? WorkSessionId,
         int DocumentCount,
         int LineCount,
         int PaymentCount,
         int InventoryMovementCount,
-        int CashMovementCount,
+        int WorkSessionMovementCount,
         int ServerOutboxCount,
-        int ProcessingReceiptCount,
+        int ProcessingJobCount,
         int TaxSummaryCount,
         string CheckoutStatus,
         string DraftStatus);

@@ -28,20 +28,20 @@ public sealed class ServerSliceApiTests(ServerSliceFixture fixture)
         Assert.All(receipts, receipt =>
             Assert.Contains(receipt!.Status,
                 new[] { PosSaleRemoteStatuses.FiscalVerified, PosSaleRemoteStatuses.AlreadyProcessed }));
-        Assert.Contains(receipts, receipt => receipt!.Status == PosSaleRemoteStatuses.AlreadyProcessed);
+        Assert.Single(receipts.Select(receipt => receipt!.ReceiptId).Distinct());
+        Assert.Single(receipts.Select(receipt => receipt!.DocumentId).Distinct());
         Assert.Equal(1, await fixture.CountAsync("SalesDocuments", request.DocumentId));
         Assert.Equal(1, await fixture.CountAsync("SalesDocumentLines", request.DocumentId));
         Assert.Equal(1, await fixture.CountAsync("SalesDocumentTaxSummaries", request.DocumentId));
         Assert.Equal(1, await fixture.CountAsync("SalesPayments", request.DocumentId));
-        Assert.Equal(1, await fixture.CountAsync("CashMovements", request.DocumentId));
+        Assert.Equal(1, await fixture.CountAsync("WorkSessionMovements", request.DocumentId));
         Assert.Equal(1, await fixture.CountAsync("InventoryMovements", request.DocumentId));
         Assert.Equal(1, await fixture.CountAsync("ServerOutboxMessages", request.DocumentId));
-        Assert.Equal(1, await fixture.CountAsync("DocumentProcessingReceipts", request.DocumentId));
+        Assert.Equal(1, await fixture.CountAsync("DocumentProcessingJobs", request.DocumentId));
         Assert.Equal(1, await fixture.CountAsync("FiscalDocumentProcesses", request.DocumentId));
-        var responsibility = await fixture.GetSalesCashResponsibilityAsync(request.DocumentId);
+        var responsibility = await fixture.GetSalesWorkResponsibilityAsync(request.DocumentId);
         Assert.Equal(fixture.UserId, responsibility.SoldByUserId);
-        Assert.NotEqual(Guid.Empty, responsibility.CashSessionId);
-        Assert.NotEqual(Guid.Empty, responsibility.CashierShiftId);
+        Assert.NotEqual(Guid.Empty, responsibility.WorkSessionId);
         foreach (var response in responses)
         {
             response.Dispose();

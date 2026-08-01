@@ -193,14 +193,6 @@ public sealed class SqlPosSaleServerStore(
                     cancellationToken);
             }
 
-            if (!command.Verification.IsVerified)
-            {
-                await InsertConflictReceiptAsync(
-                    connection,
-                    transaction,
-                    command,
-                    cancellationToken);
-            }
 
             await transaction.CommitAsync(cancellationToken);
         }
@@ -468,36 +460,6 @@ public sealed class SqlPosSaleServerStore(
         }
     }
 
-    private async Task InsertConflictReceiptAsync(
-        SqlConnection connection,
-        SqlTransaction transaction,
-        StorePosSaleReceptionCommand command,
-        CancellationToken cancellationToken)
-    {
-        const string sql = """
-            INSERT INTO dbo.DocumentProcessingReceipts
-            (
-                ReceiptId, DocumentId, DocumentType, Status,
-                AttemptCount, AcquiredAt, CompletedAt, LastError
-            )
-            VALUES
-            (
-                @ReceiptId, @DocumentId, @DocumentType, @Status,
-                1, @ReceivedAt, @ReceivedAt, @LastError
-            );
-            """;
-        await using var sqlCommand = new SqlCommand(sql, connection, transaction);
-        sqlCommand.Parameters.AddWithValue("@ReceiptId", idGenerator.NewId());
-        sqlCommand.Parameters.AddWithValue("@DocumentId", command.Request.DocumentId);
-        sqlCommand.Parameters.AddWithValue("@DocumentType", command.Request.FiscalSnapshot.DocumentType);
-        sqlCommand.Parameters.AddWithValue("@Status", PosSaleRemoteStatuses.FiscalIntegrityConflict);
-        sqlCommand.Parameters.AddWithValue("@ReceivedAt", command.ReceivedAt);
-        sqlCommand.Parameters.AddWithValue(
-            "@LastError",
-            (object?)command.Verification.ConflictReason ?? DBNull.Value);
-        await sqlCommand.ExecuteNonQueryAsync(cancellationToken);
-    }
-
     private static async Task<StoredPosSale?> FindInternalAsync(
         SqlConnection connection,
         SqlTransaction? transaction,
@@ -508,6 +470,7 @@ public sealed class SqlPosSaleServerStore(
     {
         const string sql = """
             SELECT d.DocumentId,
+                   j.JobId,
                    b.TenantId,
                    d.IdempotencyKey,
                    d.PayloadHash,
@@ -515,16 +478,16 @@ public sealed class SqlPosSaleServerStore(
                    d.ProcessingStatus,
                    d.CufeReceived,
                    d.CufeCalculated,
-                   r.ReceiptId,
+                   COALESCE(j.JobId,d.DocumentId),
                    d.ReceivedAt,
                    d.ProcessedAt,
-                   COALESCE(s.ConflictReason, r.LastError)
+                   COALESCE(s.ConflictReason,j.LastError)
             FROM dbo.SalesDocuments d
             INNER JOIN dbo.Businesses b ON b.BusinessId = d.BusinessId
             INNER JOIN dbo.FiscalSnapshots s ON s.DocumentId = d.DocumentId
-            LEFT JOIN dbo.DocumentProcessingReceipts r
-                ON r.DocumentId = d.DocumentId
-               AND r.DocumentType = d.DocumentType
+            LEFT JOIN dbo.DocumentProcessingJobs j
+                ON j.DocumentId=d.DocumentId
+               AND j.DocumentType=d.DocumentType
             WHERE d.BusinessId = @BusinessId
               AND (d.DocumentId = @DocumentId OR d.IdempotencyKey = @IdempotencyKey)
             ORDER BY CASE WHEN d.DocumentId = @DocumentId THEN 0 ELSE 1 END;
@@ -541,17 +504,18 @@ public sealed class SqlPosSaleServerStore(
 
         var result = new StoredPosSale(
             reader.GetGuid(0),
-            reader.GetGuid(1),
-            reader.GetString(2),
-            (byte[])reader[3],
-            reader.GetString(4),
+            reader.IsDBNull(1) ? null : reader.GetGuid(1),
+            reader.GetGuid(2),
+            reader.GetString(3),
+            (byte[])reader[4],
             reader.GetString(5),
             reader.GetString(6),
-            reader.IsDBNull(7) ? null : reader.GetString(7),
-            reader.IsDBNull(8) ? null : reader.GetGuid(8),
-            reader.GetDateTimeOffset(9),
-            reader.IsDBNull(10) ? null : reader.GetDateTimeOffset(10),
-            reader.IsDBNull(11) ? null : reader.GetString(11));
+            reader.GetString(7),
+            reader.IsDBNull(8) ? null : reader.GetString(8),
+            reader.IsDBNull(9) ? null : reader.GetGuid(9),
+            reader.GetDateTimeOffset(10),
+            reader.IsDBNull(11) ? null : reader.GetDateTimeOffset(11),
+            reader.IsDBNull(12) ? null : reader.GetString(12));
         if (await reader.ReadAsync(cancellationToken))
         {
             throw new PosSaleIdempotencyConflictException(

@@ -13,9 +13,9 @@ Rama: `feature/auraly-commerce-accounting-engine`
 - Dos solicitudes válidas concurrentes esperan de forma corta y acotada su turno; no invierten el orden.
 - Un trabajo crítico no resuelto bloquea los documentos posteriores del mismo negocio.
 - Después de cinco fallos, el trabajo pasa a `NeedsIntervention`; continúa bloqueando y deja de reintentarse automáticamente.
-- El worker alojado en `Auraly.Api` recupera trabajos pendientes o leases vencidos. Espera cinco segundos antes de tomar un trabajo nuevo para dar prioridad al procesamiento inmediato de la solicitud.
-- La configuración `Auraly:DocumentProcessing:Worker:Enabled` permite ejecutar el mismo host sin el worker en pruebas controladas.
-- `DocumentProcessingReceipts` se conserva como recibo de idempotencia durante la transición; no reemplaza la cola ordenada.
+- El consumidor recibe un mensaje durable por movimiento y carga exclusivamente el `DocumentProcessingJob` indicado; no escanea ni drena SQL.
+- Azure Service Bus usa `SessionId = BusinessId` y `MessageId = JobId`; el transporte on-premise debe conservar la misma semántica con RabbitMQ durable.
+- `DocumentProcessingJobs` conserva también el resultado idempotente. No existe una tabla paralela de recibos.
 
 ## Garantía explícita
 

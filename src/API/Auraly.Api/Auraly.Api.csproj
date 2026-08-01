@@ -7,6 +7,7 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="8.0.12" />
     <PackageReference Include="QRCoder" Version="1.8.0" />
+    <PackageReference Include="Azure.Messaging.ServiceBus" Version="7.19.0" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\BuildingBlocks\Auraly.BuildingBlocks.Domain\Auraly.BuildingBlocks.Domain.csproj" />
@@ -30,5 +31,7 @@
     <ProjectReference Include="..\..\Modules\Cash\Auraly.Contracts.Cash\Auraly.Contracts.Cash.csproj" />
     <ProjectReference Include="..\..\Modules\Orders\Auraly.Application.Orders\Auraly.Application.Orders.csproj" />
     <ProjectReference Include="..\..\Modules\Orders\Auraly.Contracts.Orders\Auraly.Contracts.Orders.csproj" />
+    <ProjectReference Include="..\..\Modules\Purchasing\Auraly.Contracts.Purchasing\Auraly.Contracts.Purchasing.csproj" />
+    <ProjectReference Include="..\..\Modules\Purchasing\Auraly.Application.Purchasing\Auraly.Application.Purchasing.csproj" />
   </ItemGroup>
 </Project>

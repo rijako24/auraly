@@ -60,7 +60,8 @@ dueño del esquema. La rebanada usa `dbo` y una sola base:
 - `SalesDocumentLines`
 - `SalesPayments`
 - `FiscalSnapshots`
-- `DocumentProcessingReceipts`
+- `DocumentProcessingJobs`
+- `DocumentProcessingPayloads`
 - `InventoryMovements`
 - `ServerOutboxMessages`
 
@@ -70,9 +71,10 @@ idempotencia, número fiscal, efectos de inventario, pagos y evento servidor.
 El snapshot serializado y su hash SHA-256 se conservan sin corregirlo.
 
 La recepción inicial y un conflicto fiscal son durables. Para una venta
-verificada, la adquisición del recibo y los efectos se ejecutan en una
-transacción serializable: líneas, pagos, movimiento, evento y finalización del
-recibo se confirman juntos.
+verificada, la adquisición de su `DocumentProcessingJob` y los efectos se
+ejecutan en una transacción serializable: líneas, pagos, movimiento, evento,
+finalización del mismo trabajo y avance del cursor se confirman juntos. No
+existe `DocumentProcessingReceipts`.
 
 ## Verificación fiscal
 
@@ -80,6 +82,12 @@ recibo se confirman juntos.
 resuelve la clave técnica por empresa, autorización, versión y ambiente, y usa
 la misma librería `Auraly.Fiscal.Core` que POS Edge. Compara el CUFE en tiempo
 constante.
+El CUFE autoritativo es el generado una sola vez por POS Edge. El servidor no
+crea un segundo CUFE ni sustituye el recibido: ejecuta la misma función pura
+únicamente para comparar integridad antes de firmar. El valor persistido como
+`CufeCalculated` es evidencia técnica de esa comparación y no otra numeración
+fiscal. Cuando el servidor es el emisor original de una venta completamente
+online, el CUFE se calcula una sola vez en el servidor.
 
 Si el CUFE o cualquier dato estructural no coincide:
 
@@ -96,13 +104,13 @@ reemplazar el proveedor por Key Vault sin cambiar el caso de uso.
 
 La identidad principal es `(TenantId, DocumentId, DocumentType)`. También se
 valida `IdempotencyKey` y el hash del payload. Una repetición exacta devuelve el
-recibo anterior. Reutilizar un ID o una clave con otro payload devuelve
+mismo `JobId`. Reutilizar un ID o una clave con otro payload devuelve
 conflicto y no altera el documento original.
 
-`DocumentProcessingReceipts` registra estado, intentos, adquisición,
-finalización, error y `rowversion`. Dos cargas simultáneas se serializan en SQL
-Server. El perdedor de una colisión o deadlock relee el recibo durable del
-ganador. Las restricciones únicas constituyen una segunda barrera contra
+`DocumentProcessingJobs` registra identidad, secuencia, estado, intentos,
+lease, finalización, error y `rowversion`. Dos cargas simultáneas se serializan
+en SQL Server. El perdedor de una colisión relee el trabajo durable del ganador.
+Las restricciones únicas constituyen una segunda barrera contra
 duplicar venta, pago, movimiento o evento.
 
 Una venta fiscal emitida offline siempre produce la salida de inventario al

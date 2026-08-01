@@ -1,4 +1,5 @@
 using Auraly.Api;
+using Azure.Messaging.ServiceBus;
 using System.Security.Cryptography;
 using System.Text;
 using Auraly.Application.Authorization;
@@ -9,6 +10,7 @@ using Auraly.Application.Fiscal;
 using Auraly.Application.Parties;
 using Auraly.Application.Organization;
 using Auraly.Application.Orders;
+using Auraly.Application.Purchasing;
 using Auraly.Application.Sales;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.BuildingBlocks.Infrastructure.Identifiers;
@@ -65,15 +67,36 @@ builder.Services.AddScoped<IPosDeviceAuthenticator, SqlPosDeviceAuthenticator>()
 builder.Services.AddScoped<IPosSaleServerStore, SqlPosSaleServerStore>();
 builder.Services.AddScoped<IPosSaleCustomerResolver, SqlPosSaleCustomerResolver>();
 builder.Services.AddScoped<SqlDocumentProcessingSessionAccessor>();
-builder.Services.AddScoped<IDocumentProcessingReceiptStore, SqlDocumentProcessingReceiptStore>();
+builder.Services.AddScoped<IDocumentProcessingJobStore, SqlDocumentProcessingJobStore>();
 builder.Services.AddScoped<IDocumentProcessingWorkSource, SqlDocumentProcessingWorkSource>();
 builder.Services.AddScoped<IConfirmedDocumentHandler, SqlPosSaleDocumentHandler>();
+builder.Services.AddScoped<IConfirmedDocumentHandler, SqlGoodsReceiptDocumentHandler>();
 builder.Services.AddScoped<DocumentProcessingEngine>();
 builder.Services.AddScoped<DocumentProcessingWorker>();
 builder.Services.AddScoped<ReceivePosSaleService>();
-if (builder.Configuration.GetValue("Auraly:DocumentProcessing:Worker:Enabled", true))
+if (!builder.Environment.IsEnvironment("Testing"))
 {
-    builder.Services.AddHostedService<DocumentProcessingHostedService>();
+    var serviceBusConnection = builder.Configuration[
+        "Auraly:DocumentProcessing:ServiceBus:ConnectionString"];
+    if (string.IsNullOrWhiteSpace(serviceBusConnection))
+        throw new InvalidOperationException(
+            "Auraly:DocumentProcessing:ServiceBus:ConnectionString is required. " +
+            "Auraly never falls back to an in-memory processing transport.");
+    var queueName = builder.Configuration[
+        "Auraly:DocumentProcessing:ServiceBus:QueueName"];
+    if (string.IsNullOrWhiteSpace(queueName))
+        throw new InvalidOperationException(
+            "Auraly:DocumentProcessing:ServiceBus:QueueName is required.");
+
+    builder.Services.AddSingleton(new DocumentProcessingServiceBusOptions(queueName));
+    builder.Services.AddSingleton(new ServiceBusClient(serviceBusConnection));
+    builder.Services.AddSingleton(sp =>
+        sp.GetRequiredService<ServiceBusClient>().CreateSender(queueName));
+    builder.Services.AddSingleton<IDocumentProcessingSignalPublisher,
+        ServiceBusDocumentProcessingPublisher>();
+    if (builder.Configuration.GetValue(
+            "Auraly:DocumentProcessing:Worker:Enabled", true))
+        builder.Services.AddHostedService<DocumentProcessingHostedService>();
 }
 builder.Services.AddScoped<ICatalogStore, SqlCatalogStore>();
 builder.Services.AddScoped<CatalogService>();
@@ -103,6 +126,8 @@ builder.Services.AddScoped<OrderService>();
 builder.Services.AddScoped<OrderRecoveryService>();
 builder.Services.AddScoped<IOrderBatchStore, SqlOrderBatchStore>();
 builder.Services.AddScoped<OrderBatchService>();
+builder.Services.AddScoped<IGoodsReceiptStore, SqlGoodsReceiptStore>();
+builder.Services.AddScoped<GoodsReceiptService>();
 builder.Services.AddResponseCompression(options => options.EnableForHttps = true);
 
 var jwtIssuer = builder.Configuration["Authentication:Jwt:Issuer"];
@@ -155,6 +180,11 @@ builder.Services.AddAuthorization(options =>
         policy.RequireAuthenticatedUser();
     });
     options.AddPolicy("orders.user", policy =>
+    {
+        policy.AuthenticationSchemes.Add(JwtBearerDefaults.AuthenticationScheme);
+        policy.RequireAuthenticatedUser();
+    });
+    options.AddPolicy("purchasing.user", policy =>
     {
         policy.AuthenticationSchemes.Add(JwtBearerDefaults.AuthenticationScheme);
         policy.RequireAuthenticatedUser();
@@ -224,6 +254,7 @@ app.MapPosIdentityApi();
 app.MapFiscalApi();
 app.MapOrdersApi();
 app.MapPosOrdersApi();
+app.MapPurchasingApi();
 app.MapPost(
         "/api/pos/v1/sales",
         async (

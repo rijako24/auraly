@@ -66,7 +66,7 @@ public sealed class DocumentProcessingOrderingTests(ServerSliceFixture fixture)
 
         using (var upload = fixture.CreateUploadMessage(waiting))
         using (var response = await client.SendAsync(upload))
-            Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
         Assert.Equal(1, await fixture.CountAsync("SalesDocuments", waiting.DocumentId));
         Assert.Equal(0, await fixture.CountAsync("SalesDocumentLines", waiting.DocumentId));

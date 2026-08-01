@@ -7,12 +7,12 @@ Fecha de actualización: 2026-07-29.
 1. POS Edge emite una venta, congela el snapshot fiscal, calcula CUFE/QR y conserva venta, consecutivos y outbox en SQLite.
 2. El uploader durable envía el mismo `DocumentId` a `POST /api/pos/v1/sales`; un timeout no elimina ni renumera la venta local.
 3. La API autentica dispositivo, empresa, caja, bodega y permiso; persiste venta, líneas, pagos, snapshot y proceso fiscal en SQL Server.
-4. El servidor reconstruye el CUFE con `Auraly.Fiscal.Core`. Una diferencia termina en `FiscalIntegrityConflict` y no produce inventario, pago, XML ni envío.
+4. El servidor conserva como autoritativo el CUFE creado una sola vez en POS Edge y ejecuta `Auraly.Fiscal.Core` solamente para compararlo, sin reemplazarlo. Una diferencia termina en `FiscalIntegrityConflict` y no produce inventario, pago, XML ni envío.
 5. El motor comercial procesa una sola vez inventario, pagos y outbox servidor.
 6. `FiscalGenerationHostedService` adquiere `PendingGeneration` con lease SQL, genera UBL 2.1 desde el snapshot, valida los XSD oficiales, firma XAdES-EPES y persiste XML y hashes.
 7. `FiscalSubmissionHostedService` adquiere `PendingSubmission`, crea un ZIP determinístico, registra el intento antes de usar la red, ejecuta `SendTestSetAsync` y consulta `GetStatusZip` cuando existe `TrackId`.
 8. Aceptación, rechazo, pendiente o reintento quedan en `FiscalDocumentProcesses`, `FiscalTransmissionAttempts`, `FiscalArtifacts` y outbox servidor.
-9. POS Edge sondea `GET /api/pos/v1/fiscal/statuses` con dispositivo autenticado y cursor `rowversion`; aplica página y cursor en una transacción SQLite.
+9. El servidor notifica cambios fiscales mediante el transporte push configurado; POS Edge descarga entonces los estados posteriores a su cursor durable y los aplica en una transacción SQLite. No existe sondeo periódico.
 10. La API local de POS expone el estado a la pantalla y la reimpresión usa exclusivamente el snapshot local original.
 
 La solicitud HTTP de carga no permanece abierta mientras DIAN procesa. Los workers pueden extraerse después a Azure Functions, WebJob, servicio Windows o contenedor sin cambiar los contratos de aplicación.

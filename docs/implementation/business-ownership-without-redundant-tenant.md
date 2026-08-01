@@ -47,7 +47,7 @@ usuario/dispositivo, caja, bodega y recurso pertenecen al tenant autenticado.
 | SalesDocumentLines | SalesDocument | Padre | No | No | Sin cambio |
 | SalesPayments | SalesDocument | Padre | No | No | Sin cambio |
 | FiscalSnapshots | SalesDocument | Padre | No | No | Sin cambio |
-| DocumentProcessingReceipts | SalesDocument | Padre | No | No | Retirar tenant; unicidad por documento/tipo |
+| DocumentProcessingJobs | Documento operativo | Business/documento | Sí | No | Autoridad única del trabajo, orden e idempotencia |
 | InventoryMovements | Inventory | Business | Sí | No | Retirar tenant |
 | ServerOutboxMessages | SalesDocument | Padre | No | No | Retirar tenant |
 | CatalogChanges | Product/Business | Business | Sí | No | Retirar tenant |

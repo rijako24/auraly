@@ -8,43 +8,76 @@ namespace Auraly.Foundation.Tests;
 public sealed class DocumentProcessingWorkerTests
 {
     [Fact]
-    public async Task Failure_in_one_business_does_not_stop_another_business_in_the_same_pass()
+    public async Task A_message_processes_only_its_persisted_movement()
     {
-        var first = CreateDocument();
-        var second = CreateDocument();
-        var handler = new SelectiveHandler(first.DocumentId);
-        var engine = new DocumentProcessingEngine(new ReceiptStore(), [handler]);
+        var document = CreateDocument();
+        var signal = CreateSignal(document);
+        var handler = new RecordingHandler();
         var worker = new DocumentProcessingWorker(
-            new WorkSource([first, second]),
-            engine);
+            new WorkSource(new(DocumentProcessingWorkState.Ready, document)),
+            new DocumentProcessingEngine(new ReceiptStore(), [handler]));
 
-        var attempted = await worker.RunOnceAsync();
+        var result = await worker.ProcessOneAsync(signal);
 
-        Assert.Equal(2, attempted);
-        Assert.Equal([second.DocumentId], handler.Completed);
+        Assert.Equal(DocumentProcessingResult.Processed, result);
+        Assert.Equal([document.DocumentId], handler.Completed);
     }
+
+    [Fact]
+    public async Task A_later_message_is_not_acknowledged_before_the_previous_movement()
+    {
+        var document = CreateDocument();
+        var handler = new RecordingHandler();
+        var worker = new DocumentProcessingWorker(
+            new WorkSource(new(
+                DocumentProcessingWorkState.NotReady,
+                null,
+                "An earlier movement must complete first.")),
+            new DocumentProcessingEngine(new ReceiptStore(), [handler]));
+
+        var error = await Assert.ThrowsAsync<DocumentProcessingMessageException>(
+            () => worker.ProcessOneAsync(CreateSignal(document)));
+
+        Assert.Contains("earlier movement", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Empty(handler.Completed);
+    }
+
+    [Fact]
+    public async Task A_duplicate_message_for_a_completed_movement_is_idempotent()
+    {
+        var document = CreateDocument();
+        var handler = new RecordingHandler();
+        var worker = new DocumentProcessingWorker(
+            new WorkSource(new(DocumentProcessingWorkState.Completed, null)),
+            new DocumentProcessingEngine(new ReceiptStore(), [handler]));
+
+        var result = await worker.ProcessOneAsync(CreateSignal(document));
+
+        Assert.Equal(DocumentProcessingResult.AlreadyProcessed, result);
+        Assert.Empty(handler.Completed);
+    }
+
+    private static DocumentProcessingSignal CreateSignal(ConfirmedDocument document) =>
+        new(Guid.NewGuid(), document.BusinessId.Value, document.DocumentId.Value, document.DocumentType);
 
     private static ConfirmedDocument CreateDocument() =>
         new(
             new TenantId(Guid.NewGuid()),
             new BusinessId(Guid.NewGuid()),
             new DocumentId(Guid.NewGuid()),
-            SelectiveHandler.Type,
+            RecordingHandler.Type,
             "{}",
             DateTimeOffset.UtcNow);
 
-    private sealed class WorkSource(IReadOnlyList<ConfirmedDocument> documents)
+    private sealed class WorkSource(DocumentProcessingWork work)
         : IDocumentProcessingWorkSource
     {
-        public Task<IReadOnlyList<ConfirmedDocument>> LoadReadyAsync(
-            int maximumCount,
-            CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyList<ConfirmedDocument>>(
-                documents.Take(maximumCount).ToArray());
+        public Task<DocumentProcessingWork> LoadAsync(
+            DocumentProcessingSignal signal,
+            CancellationToken cancellationToken) => Task.FromResult(work);
     }
 
-    private sealed class SelectiveHandler(DocumentId failingDocumentId)
-        : IConfirmedDocumentHandler
+    private sealed class RecordingHandler : IConfirmedDocumentHandler
     {
         public const string Type = "sales.invoice";
         public List<DocumentId> Completed { get; } = [];
@@ -54,15 +87,12 @@ public sealed class DocumentProcessingWorkerTests
             ConfirmedDocument document,
             CancellationToken cancellationToken)
         {
-            if (document.DocumentId == failingDocumentId)
-                throw new InvalidOperationException("Expected test failure.");
-
             Completed.Add(document.DocumentId);
             return Task.CompletedTask;
         }
     }
 
-    private sealed class ReceiptStore : IDocumentProcessingReceiptStore
+    private sealed class ReceiptStore : IDocumentProcessingJobStore
     {
         private readonly ConcurrentDictionary<DocumentId, string> _states = new();
 

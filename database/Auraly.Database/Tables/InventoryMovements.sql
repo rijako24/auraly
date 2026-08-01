@@ -4,6 +4,7 @@ CREATE TABLE [dbo].[InventoryMovements]
     [BusinessId] UNIQUEIDENTIFIER NOT NULL,
     [WarehouseId] UNIQUEIDENTIFIER NOT NULL,
     [DocumentId] UNIQUEIDENTIFIER NOT NULL,
+    [DocumentType] NVARCHAR(64) NOT NULL CONSTRAINT [DF_InventoryMovements_DocumentType] DEFAULT (N'SalesInvoice'),
     [LineNumber] INT NOT NULL,
     [ProductId] UNIQUEIDENTIFIER NOT NULL,
     [MovementType] NVARCHAR(32) NOT NULL,
@@ -21,9 +22,9 @@ CREATE TABLE [dbo].[InventoryMovements]
     CONSTRAINT [PK_InventoryMovements] PRIMARY KEY CLUSTERED ([InventoryMovementId]),
     CONSTRAINT [FK_InventoryMovements_Businesses] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses] ([BusinessId]),
     CONSTRAINT [FK_InventoryMovements_Warehouses] FOREIGN KEY ([WarehouseId]) REFERENCES [dbo].[Warehouses] ([WarehouseId]),
-    CONSTRAINT [FK_InventoryMovements_SalesDocuments] FOREIGN KEY ([DocumentId]) REFERENCES [dbo].[SalesDocuments] ([DocumentId]),
+    CONSTRAINT [FK_InventoryMovements_DocumentJob] FOREIGN KEY ([DocumentId], [DocumentType]) REFERENCES [dbo].[DocumentProcessingJobs] ([DocumentId], [DocumentType]),
     CONSTRAINT [FK_InventoryMovements_Products] FOREIGN KEY ([ProductId]) REFERENCES [dbo].[Products] ([ProductId]),
-    CONSTRAINT [UQ_InventoryMovements_Document_Line_Type] UNIQUE ([DocumentId], [LineNumber], [MovementType]),
+    CONSTRAINT [UQ_InventoryMovements_Document_Line_Type] UNIQUE ([DocumentId], [DocumentType], [LineNumber], [MovementType]),
     CONSTRAINT [CK_InventoryMovements_Quantity] CHECK ([QuantityChange] <> 0)
 );
 

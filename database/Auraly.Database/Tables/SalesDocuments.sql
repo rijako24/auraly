@@ -33,6 +33,7 @@ CREATE TABLE [dbo].[SalesDocuments]
     [ProcessedAt] DATETIMEOFFSET(7) NULL,
     [CreatedByDeviceId] UNIQUEIDENTIFIER NULL,
     [SoldByUserId] UNIQUEIDENTIFIER NULL,
+    [WorkSessionId] UNIQUEIDENTIFIER NULL,
     [CashSessionId] UNIQUEIDENTIFIER NULL,
     [CashierShiftId] UNIQUEIDENTIFIER NULL,
     [RowVersion] ROWVERSION NOT NULL,
@@ -45,6 +46,8 @@ CREATE TABLE [dbo].[SalesDocuments]
     CONSTRAINT [FK_SalesDocuments_FiscalSeries] FOREIGN KEY ([FiscalSeriesId]) REFERENCES [dbo].[FiscalSeries] ([SeriesId]),
     CONSTRAINT [FK_SalesDocuments_FiscalAuthorizations] FOREIGN KEY ([FiscalAuthorizationId]) REFERENCES [dbo].[FiscalAuthorizations] ([FiscalAuthorizationId]),
     CONSTRAINT [FK_SalesDocuments_SoldByUser] FOREIGN KEY ([SoldByUserId]) REFERENCES [dbo].[AppUsers] ([UserId]),
+    CONSTRAINT [FK_SalesDocuments_WorkSession] FOREIGN KEY ([WorkSessionId])
+        REFERENCES [dbo].[WorkSessions] ([WorkSessionId]),
     CONSTRAINT [FK_SalesDocuments_CashSession] FOREIGN KEY ([CashSessionId]) REFERENCES [dbo].[CashSessions] ([CashSessionId]),
     CONSTRAINT [FK_SalesDocuments_CashierShift]
         FOREIGN KEY ([CashSessionId],[CashierShiftId])
@@ -81,4 +84,9 @@ GO
 CREATE INDEX [IX_SalesDocuments_Register_Cashier_Issued]
     ON [dbo].[SalesDocuments] ([RegisterId],[CashSessionId],[CashierShiftId],[SoldByUserId],[IssuedAt]);
 
+
+GO
+
+CREATE INDEX [IX_SalesDocuments_WorkSession_Issued]
+    ON [dbo].[SalesDocuments] ([WorkSessionId],[IssuedAt]);
 GO

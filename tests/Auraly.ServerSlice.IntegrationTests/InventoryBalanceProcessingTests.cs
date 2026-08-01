@@ -9,6 +9,7 @@ public sealed class InventoryBalanceProcessingTests(ServerSliceFixture fixture)
     [Fact]
     public async Task Sales_update_the_authoritative_balance_in_sequence_and_a_duplicate_has_no_effect()
     {
+        var averageCostBefore = await ReadBalanceAverageUnitCostAsync() ?? 0m;
         var quantityBefore = await ReadBalanceQuantityAsync() ?? 0m;
         var first = fixture.CreateValidRequest(8_891);
         var second = fixture.CreateValidRequest(8_892);
@@ -24,8 +25,8 @@ public sealed class InventoryBalanceProcessingTests(ServerSliceFixture fixture)
             {
                 Assert.Equal(quantityBefore, movement.QuantityBefore);
                 Assert.Equal(quantityBefore - first.Lines[0].Quantity, movement.QuantityAfter);
-                Assert.Equal(0m, movement.RecognizedUnitCost);
-                Assert.Equal(0m, movement.ValueChange);
+                Assert.Equal(averageCostBefore, movement.RecognizedUnitCost);
+                Assert.Equal(-first.Lines[0].Quantity * averageCostBefore, movement.ValueChange);
             },
             movement =>
             {
@@ -34,6 +35,8 @@ public sealed class InventoryBalanceProcessingTests(ServerSliceFixture fixture)
                     quantityBefore - first.Lines[0].Quantity - second.Lines[0].Quantity,
                     movement.QuantityAfter);
                 Assert.True(movement.ProcessingSequence > movements[0].ProcessingSequence);
+                Assert.Equal(averageCostBefore, movement.RecognizedUnitCost);
+                Assert.Equal(-second.Lines[0].Quantity * averageCostBefore, movement.ValueChange);
             });
 
         var quantityAfter = await ReadBalanceQuantityAsync();
@@ -94,6 +97,23 @@ public sealed class InventoryBalanceProcessingTests(ServerSliceFixture fixture)
         await using var command = connection.CreateCommand();
         command.CommandText = """
             SELECT QuantityOnHand
+            FROM dbo.InventoryBalances
+            WHERE BusinessId=@BusinessId AND WarehouseId=@WarehouseId AND ProductId=@ProductId;
+            """;
+        command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+        command.Parameters.AddWithValue("@WarehouseId", fixture.WarehouseId);
+        command.Parameters.AddWithValue("@ProductId", fixture.ProductId);
+        var value = await command.ExecuteScalarAsync();
+        return value is null or DBNull ? null : (decimal)value;
+    }
+
+    private async Task<decimal?> ReadBalanceAverageUnitCostAsync()
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT AverageUnitCost
             FROM dbo.InventoryBalances
             WHERE BusinessId=@BusinessId AND WarehouseId=@WarehouseId AND ProductId=@ProductId;
             """;

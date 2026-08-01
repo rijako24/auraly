@@ -86,7 +86,7 @@ SELECT DocumentId, Status, CufeReceived, CufeCalculated, LastError
 FROM dbo.SalesDocuments;
 
 SELECT DocumentId, Status, AttemptCount, AcquiredAt, CompletedAt, LastError
-FROM dbo.DocumentProcessingReceipts;
+FROM dbo.DocumentProcessingJobs;
 
 SELECT DocumentId, Quantity FROM dbo.InventoryMovements;
 SELECT DocumentId, Amount FROM dbo.SalesPayments;

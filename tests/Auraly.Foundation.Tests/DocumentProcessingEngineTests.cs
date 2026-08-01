@@ -42,7 +42,7 @@ public sealed class DocumentProcessingEngineTests
         }
     }
 
-    private sealed class InMemoryReceiptStore : IDocumentProcessingReceiptStore
+    private sealed class InMemoryReceiptStore : IDocumentProcessingJobStore
     {
         private readonly ConcurrentDictionary<DocumentId, string> _states = new();
 

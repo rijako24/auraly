@@ -1,7 +1,10 @@
 # Auditoría del motor de Xion y diseño definitivo del motor Auraly
 
 **Fecha:** 31 de julio de 2026  
-**Estado:** decisión de implementación obligatoria  
+**Estado:** auditoría histórica; sus propuestas de implementación fueron
+reemplazadas por `docs/decision-motor-documental-ordenado-y-efectos-intrinsecos.md`.
+No usar este archivo para implementar transporte, orden, polling, drenado,
+recibos ni manejo de errores.
 **Alcance:** Auraly Commerce SaaS y on-premise
 
 ## 1. Resultado ejecutivo
@@ -166,7 +169,7 @@ El manejador procesa el documento completo en la misma transacción SQL que mant
 - vínculo con pedido, devolución, traslado o documento origen;
 - asiento pendiente contable con datos fuente inmutables;
 - eventos de outbox para todos los carriles derivados;
-- recibo idempotente, estado del trabajo y cursor del negocio.
+- movimiento idempotente, estado del trabajo y cursor del negocio.
 
 Si cualquiera de estos efectos falla, se revierte todo el documento y no avanza el cursor.
 
@@ -245,7 +248,7 @@ El motor se aloja inicialmente como workers de `Auraly.Api`, pero su núcleo no 
 - servicio Windows;
 - contenedor on-premise.
 
-Una señal local, pub/sub o Service Bus puede despertar al worker. Un escaneo SQL con espera adaptativa garantiza recuperación si la señal se pierde. No se hará sondeo fijo cada 500 ms desde todas las cajas.
+Cada documento publica un mensaje durable. El consumidor procesa exclusivamente el `MovementId` recibido. No existe escaneo SQL, Timer Function, polling ni drenado de pendientes.
 
 ## 11. Orden de implementación
 

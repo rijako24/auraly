@@ -98,6 +98,7 @@
     <Build Include="Tables\FiscalSeries.sql" />
     <Build Include="Triggers\FiscalSeriesRangeGuard.sql" />
     <Build Include="Tables\CashSessions.sql" />
+    <Build Include="Tables\WorkSessions.sql" />
     <Build Include="Tables\SupervisorAuthorizations.sql" />
     <Build Include="Tables\SalesDocuments.sql" />
     <Build Include="Tables\OrderCommerce.sql" />
@@ -109,15 +110,16 @@
     <Build Include="Tables\SalesDocumentTaxSummaries.sql" />
     <Build Include="Tables\SalesPayments.sql" />
     <Build Include="Tables\CashOperations.sql" />
+    <Build Include="Tables\WorkSessionMovements.sql" />
     <Build Include="Tables\FiscalSnapshots.sql" />
     <Build Include="Tables\FiscalIssuerConfigurations.sql" />
     <Build Include="Tables\FiscalDocumentProcesses.sql" />
     <Build Include="Tables\FiscalArtifacts.sql" />
     <Build Include="Tables\FiscalTransmissionAttempts.sql" />
-    <Build Include="Tables\DocumentProcessingReceipts.sql" />
     <Build Include="Tables\BusinessProcessingCursors.sql" />
     <Build Include="Tables\DocumentProcessingJobs.sql" />
     <Build Include="Tables\DocumentProcessingPayloads.sql" />
+    <Build Include="Tables\GoodsReceiptProcessing.sql" />
     <Build Include="Tables\InventoryMovements.sql" />
     <Build Include="Tables\InventoryBalances.sql" />
     <Build Include="Tables\ServerOutboxMessages.sql" />

@@ -16,7 +16,7 @@ public sealed record DocumentProcessingContext(
     DocumentId DocumentId,
     string DocumentType);
 
-public interface IDocumentProcessingReceiptStore
+public interface IDocumentProcessingJobStore
 {
     Task<ProcessingLeaseResult> TryAcquireAsync(
         DocumentProcessingContext context,
@@ -47,7 +47,7 @@ public enum DocumentProcessingResult
 }
 
 public sealed class DocumentProcessingEngine(
-    IDocumentProcessingReceiptStore receiptStore,
+    IDocumentProcessingJobStore jobStore,
     IEnumerable<IConfirmedDocumentHandler> handlers)
 {
     private readonly IReadOnlyDictionary<string, IConfirmedDocumentHandler> _handlers =
@@ -69,7 +69,7 @@ public sealed class DocumentProcessingEngine(
             document.DocumentId,
             document.DocumentType);
 
-        var lease = await receiptStore.TryAcquireAsync(context, cancellationToken);
+        var lease = await jobStore.TryAcquireAsync(context, cancellationToken);
         if (lease == ProcessingLeaseResult.AlreadyCompleted)
         {
             return DocumentProcessingResult.AlreadyProcessed;
@@ -83,12 +83,12 @@ public sealed class DocumentProcessingEngine(
         try
         {
             await handler.HandleAsync(document, cancellationToken);
-            await receiptStore.MarkCompletedAsync(context, cancellationToken);
+            await jobStore.MarkCompletedAsync(context, cancellationToken);
             return DocumentProcessingResult.Processed;
         }
         catch (Exception exception)
         {
-            await receiptStore.MarkFailedAsync(context, exception, cancellationToken);
+            await jobStore.MarkFailedAsync(context, exception, cancellationToken);
             throw;
         }
     }

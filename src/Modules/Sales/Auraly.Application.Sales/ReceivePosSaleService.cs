@@ -1,9 +1,7 @@
 using System.Security.Cryptography;
 using Auraly.Application.DocumentProcessing;
 using Auraly.BuildingBlocks.Domain.Documents;
-using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Contracts.Authorization;
-using Auraly.Contracts.DocumentProcessing;
 using Auraly.Contracts.Fiscal;
 using Auraly.Contracts.Sales;
 
@@ -25,6 +23,7 @@ public sealed record PosSaleContextValidation(bool IsValid, string? Reason)
 
 public sealed record StoredPosSale(
     Guid DocumentId,
+    Guid? MovementId,
     Guid TenantId,
     string IdempotencyKey,
     byte[] PayloadHash,
@@ -82,7 +81,7 @@ public sealed class ReceivePosSaleService(
     IPosSaleServerStore store,
     IPosSaleCustomerResolver customers,
     IFiscalSnapshotVerifier fiscalVerifier,
-    DocumentProcessingEngine processingEngine,
+    IDocumentProcessingSignalPublisher signalPublisher,
     TimeProvider timeProvider)
 {
     public async Task<PosSaleUploadResponse> ReceiveAsync(
@@ -191,19 +190,14 @@ public sealed class ReceivePosSaleService(
         if (!verification.IsVerified || stored.ProcessingStatus == "Blocked")
             return ToResponse(stored, isDuplicate: existing is not null);
 
-        var confirmedDocument = new ConfirmedDocument(
-            new TenantId(request.TenantId),
-            new BusinessId(request.BusinessId),
-            new DocumentId(request.DocumentId),
-            PosSaleDocumentTypes.Invoice,
-            snapshotJson,
-            receivedAt);
-        var result = await ProcessInBusinessOrderAsync(
-            confirmedDocument,
+        await signalPublisher.PublishAsync(
+            new DocumentProcessingSignal(
+                stored.MovementId ?? throw new InvalidOperationException(
+                    "The accepted sale has no durable processing movement."),
+                request.BusinessId,
+                request.DocumentId,
+                PosSaleDocumentTypes.Invoice),
             cancellationToken);
-        if (result == DocumentProcessingResult.Busy)
-            throw new PosSaleProcessingBusyException(
-                "The document is currently being processed.");
 
         var completed = await store.FindAsync(
                 request.BusinessId,
@@ -215,31 +209,7 @@ public sealed class ReceivePosSaleService(
         EnsureSameRequest(completed, request.DocumentId, idempotencyKey, payloadHash);
         return ToResponse(
             completed,
-            isDuplicate:
-                existing is not null ||
-                result == DocumentProcessingResult.AlreadyProcessed);
-    }
-
-    private async Task<DocumentProcessingResult> ProcessInBusinessOrderAsync(
-        ConfirmedDocument document,
-        CancellationToken cancellationToken)
-    {
-        const int maximumAttempts = 40;
-        for (var attempt = 1; attempt <= maximumAttempts; attempt++)
-        {
-            var result = await processingEngine.ProcessAsync(document, cancellationToken);
-            if (result != DocumentProcessingResult.Busy)
-                return result;
-
-            if (attempt < maximumAttempts)
-            {
-                await Task.Delay(
-                    TimeSpan.FromMilliseconds(25),
-                    cancellationToken);
-            }
-        }
-
-        return DocumentProcessingResult.Busy;
+            isDuplicate: existing is not null);
     }
 
     private static void ValidateIdempotencyKey(string idempotencyKey)

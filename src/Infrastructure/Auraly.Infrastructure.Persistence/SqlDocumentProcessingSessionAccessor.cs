@@ -14,7 +14,6 @@ public sealed class SqlDocumentProcessingSessionAccessor
         SqlConnection connection,
         SqlTransaction transaction,
         DocumentProcessingContext context,
-        Guid receiptId,
         Guid jobId,
         long processingSequence)
     {
@@ -27,7 +26,6 @@ public sealed class SqlDocumentProcessingSessionAccessor
             connection,
             transaction,
             context,
-            receiptId,
             jobId,
             processingSequence);
     }
@@ -43,7 +41,6 @@ public sealed class SqlDocumentProcessingSessionAccessor
         SqlConnection Connection,
         SqlTransaction Transaction,
         DocumentProcessingContext Context,
-        Guid ReceiptId,
         Guid JobId,
         long ProcessingSequence);
 }

@@ -38,7 +38,7 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
         }
 
         var session = _sessions.Current;
-        var cashResponsibility = await EnsureCashResponsibilityAsync(
+        var workSessionId = await EnsureWorkSessionAsync(
             session, request, cancellationToken);
         foreach (var line in request.Lines.OrderBy(line => line.LineNumber))
         {
@@ -52,8 +52,8 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
         foreach (var payment in request.Payments.OrderBy(payment => payment.PaymentNumber))
         {
             await InsertPaymentAsync(session, request, payment, cancellationToken);
-            await InsertCashMovementAsync(
-                session, request, payment, cashResponsibility, cancellationToken);
+            await InsertWorkSessionMovementAsync(
+                session, request, payment, workSessionId, cancellationToken);
         }
 
         await InsertOutboxAsync(session, request, document.Payload, cancellationToken);
@@ -209,7 +209,7 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
             INSERT INTO dbo.InventoryMovements
             (
                 InventoryMovementId, BusinessId, WarehouseId,
-                DocumentId, LineNumber, ProductId, MovementType,
+                DocumentId, DocumentType, LineNumber, ProductId, MovementType,
                 QuantityChange, ProcessingSequence, QuantityBefore, QuantityAfter,
                 AverageUnitCostBefore, AverageUnitCostAfter, RecognizedUnitCost,
                 ValueChange, OccurredAt, PostedAt, CreatedAt
@@ -217,7 +217,7 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
             VALUES
             (
                 @InventoryMovementId, @BusinessId, @WarehouseId,
-                @DocumentId, @LineNumber, @ProductId, 'Sale',
+                @DocumentId, @DocumentType, @LineNumber, @ProductId, 'Sale',
                 @QuantityChange, @ProcessingSequence, @QuantityBefore, @QuantityAfter,
                 @AverageCost, @AverageCost, @AverageCost,
                 @ValueChange, @OccurredAt, @PostedAt, @PostedAt
@@ -228,6 +228,7 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
         command.Parameters.AddWithValue("@BusinessId", request.BusinessId);
         command.Parameters.AddWithValue("@WarehouseId", request.WarehouseId);
         command.Parameters.AddWithValue("@DocumentId", request.DocumentId);
+        command.Parameters.AddWithValue("@DocumentType", PosSaleDocumentTypes.Invoice);
         command.Parameters.AddWithValue("@LineNumber", line.LineNumber);
         command.Parameters.AddWithValue("@ProductId", line.ProductId);
         AddDecimal(command, "@QuantityChange", -line.Quantity, 19, 6);
@@ -305,16 +306,17 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
         const string sql = """
             INSERT INTO dbo.ServerOutboxMessages
             (
-                MessageId, DocumentId, Type, Payload, OccurredAt
+                MessageId, DocumentId, DocumentType, Type, Payload, OccurredAt
             )
             VALUES
             (
-                @MessageId, @DocumentId, @Type, @Payload, @OccurredAt
+                @MessageId, @DocumentId, @DocumentType, @Type, @Payload, @OccurredAt
             );
             """;
         await using var command = new SqlCommand(sql, session.Connection, session.Transaction);
         command.Parameters.AddWithValue("@MessageId", _idGenerator.NewId());
         command.Parameters.AddWithValue("@DocumentId", request.DocumentId);
+        command.Parameters.AddWithValue("@DocumentType", PosSaleDocumentTypes.Invoice);
         command.Parameters.AddWithValue("@Type", "sales.invoice.processed");
         command.Parameters.AddWithValue("@Payload", payload);
         command.Parameters.AddWithValue("@OccurredAt", _timeProvider.GetUtcNow());

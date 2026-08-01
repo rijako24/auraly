@@ -134,7 +134,11 @@ Al recibir una factura, el servidor valida de forma idempotente:
 - vigencia y rango de la autorización;
 - unicidad de empresa, tipo fiscal, prefijo y consecutivo;
 - integridad del snapshot;
-- igualdad exacta del CUFE recalculado;
+- igualdad exacta con el resultado de verificación del CUFE.
+
+El CUFE autoritativo se genera una sola vez en POS Edge. La operación del
+servidor es una comparación interna: no crea, sustituye, corrige ni devuelve un
+CUFE diferente para la factura emitida.
 - coincidencia entre el documento recibido y el mensaje de outbox.
 
 Si el CUFE no coincide, el documento pasa a `FiscalIntegrityConflict`. La venta

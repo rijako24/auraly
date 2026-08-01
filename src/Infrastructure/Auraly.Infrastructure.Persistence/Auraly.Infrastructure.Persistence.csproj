@@ -33,6 +33,11 @@
     <ProjectReference Include="..\..\Modules\Orders\Auraly.Application.Orders\Auraly.Application.Orders.csproj" />
     <ProjectReference Include="..\..\Modules\Orders\Auraly.Contracts.Orders\Auraly.Contracts.Orders.csproj" />
     <ProjectReference Include="..\..\Modules\Orders\Auraly.Domain.Orders\Auraly.Domain.Orders.csproj" />
+    <ProjectReference Include="..\..\Modules\Purchasing\Auraly.Contracts.Purchasing\Auraly.Contracts.Purchasing.csproj" />
+    <ProjectReference Include="..\..\Modules\Purchasing\Auraly.Application.Purchasing\Auraly.Application.Purchasing.csproj" />
+    <ProjectReference Include="..\..\Modules\Inventory\Auraly.Domain.Inventory\Auraly.Domain.Inventory.csproj" />
+    <ProjectReference Include="..\..\Modules\Payables\Auraly.Domain.Payables\Auraly.Domain.Payables.csproj" />
+    <ProjectReference Include="..\..\Modules\Pricing\Auraly.Domain.Pricing\Auraly.Domain.Pricing.csproj" />
   </ItemGroup>
 </Project>
 

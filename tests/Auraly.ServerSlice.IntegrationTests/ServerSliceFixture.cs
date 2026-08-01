@@ -4,6 +4,7 @@ using System.Net.Http.Headers;
 using System.Security.Claims;
 using System.Text;
 using System.Net.Http.Json;
+using Auraly.Application.DocumentProcessing;
 using Auraly.Contracts.Authorization;
 using Auraly.Contracts.Fiscal;
 using Auraly.Contracts.Sales;
@@ -12,8 +13,10 @@ using Auraly.Infrastructure.Persistence;
 using Auraly.Contracts.Parties;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.IdentityModel.Tokens;
 
 namespace Auraly.ServerSlice.IntegrationTests;
@@ -25,10 +28,9 @@ public sealed record SalesDocumentTaxSummary(
     decimal TaxAmount,
     decimal TotalAmount);
 
-public sealed record SalesCashResponsibility(
+public sealed record SalesWorkResponsibility(
     Guid SoldByUserId,
-    Guid CashSessionId,
-    Guid CashierShiftId);
+    Guid WorkSessionId);
 
 [CollectionDefinition(Name, DisableParallelization = true)]
 public sealed class ServerSliceCollection : ICollectionFixture<ServerSliceFixture>
@@ -68,6 +70,8 @@ public sealed class ServerSliceFixture : IAsyncLifetime
     public Guid ProductId { get; } = Guid.NewGuid();
     public Guid DocumentSeriesId { get; } = Guid.NewGuid();
     public Guid SeriesId { get; } = Guid.NewGuid();
+    public Guid SupplierId { get; } = Guid.NewGuid();
+    public Guid GoodsReceiptSeriesId { get; } = Guid.NewGuid();
     public Guid OnlineDocumentSeriesId { get; } = Guid.NewGuid();
     public Guid OnlineSeriesId { get; } = Guid.NewGuid();
     public Guid FiscalAuthorizationId { get; } = Guid.NewGuid();
@@ -109,6 +113,10 @@ public sealed class ServerSliceFixture : IAsyncLifetime
                     ["Auraly:Fiscal:TechnicalKeys:0:QrValidationUrl"] = QrValidationUrl,
                     ["Auraly:Fiscal:Worker:Enabled"] = "false"
                 });
+            });
+            builder.ConfigureTestServices(services =>
+            {
+                services.AddSingleton<IDocumentProcessingSignalPublisher, TestDocumentProcessingSignalPublisher>();
             });
         });
         using var client = CreateClient();
@@ -360,14 +368,14 @@ public sealed class ServerSliceFixture : IAsyncLifetime
         return rows;
     }
 
-    public async Task<SalesCashResponsibility> GetSalesCashResponsibilityAsync(
+    public async Task<SalesWorkResponsibility> GetSalesWorkResponsibilityAsync(
         Guid documentId)
     {
         await using var connection = new SqlConnection(ConnectionString);
         await connection.OpenAsync();
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT SoldByUserId,CashSessionId,CashierShiftId
+            SELECT SoldByUserId,WorkSessionId
             FROM dbo.SalesDocuments
             WHERE DocumentId=@DocumentId;
             """;
@@ -378,10 +386,9 @@ public sealed class ServerSliceFixture : IAsyncLifetime
             throw new InvalidOperationException("The sales document was not found.");
         }
 
-        return new SalesCashResponsibility(
+        return new SalesWorkResponsibility(
             reader.GetGuid(0),
-            reader.GetGuid(1),
-            reader.GetGuid(2));
+            reader.GetGuid(1));
     }
 
     public async Task<int> CountAsync(string table, Guid documentId)
@@ -394,9 +401,9 @@ public sealed class ServerSliceFixture : IAsyncLifetime
             "SalesPayments",
             "FiscalSnapshots",
             "FiscalDocumentProcesses",
-            "DocumentProcessingReceipts",
+            "DocumentProcessingJobs",
             "InventoryMovements",
-            "CashMovements",
+            "WorkSessionMovements",
             "ServerOutboxMessages"
         };
         if (!allowed.Contains(table))
@@ -523,7 +530,9 @@ public sealed class ServerSliceFixture : IAsyncLifetime
             (@DocumentSeriesId, @BusinessId, @RegisterId, @DocumentType,
              N'VTA', N'03', 8, 1, 99999999, 1, 1, SYSDATETIMEOFFSET()),
             (@OnlineDocumentSeriesId, @BusinessId, @OnlineRegisterId, @DocumentType,
-             N'VTA', N'04', 8, 1, 99999999, 0, 1, SYSDATETIMEOFFSET());
+             N'VTA', N'04', 8, 1, 99999999, 0, 1, SYSDATETIMEOFFSET()),
+            (@GoodsReceiptSeriesId, @BusinessId, NULL, N'GoodsReceipt',
+             N'EMC', N'01', 8, 1, 99999999, 0, 1, SYSDATETIMEOFFSET());
 
             INSERT INTO dbo.FiscalSeries
             (SeriesId, BusinessId, RegisterId, FiscalAuthorizationId,
@@ -538,6 +547,21 @@ public sealed class ServerSliceFixture : IAsyncLifetime
             (ProductId, BusinessId, Source, Sku, Name, UnitPrice, Currency, ManageStock, IsActive, CreatedAt)
             VALUES
             (@ProductId, @BusinessId, 0, N'P-E2E', N'Producto E2E', 10000, N'COP', 1, 1, SYSUTCDATETIME());
+
+            INSERT dbo.ProductPrices
+              (ProductPriceId,BusinessId,ProductId,Amount,CurrencyCode,ValidFrom,IsActive,CreatedAt)
+            VALUES
+              (NEWID(),@BusinessId,@ProductId,10000,N'COP','2026-01-01',1,SYSDATETIMEOFFSET());
+
+            INSERT INTO dbo.Suppliers
+              (SupplierId,BusinessId,Identification,Name,IsActive,CreatedAt)
+            VALUES
+              (@GoodsSupplierId,@BusinessId,N'900999001',N'Proveedor E2E',1,SYSDATETIMEOFFSET());
+
+            INSERT INTO dbo.SupplierProducts
+              (SupplierProductId,BusinessId,ProductId,SupplierId,SupplierProductCode,IsPrimary,IsActive,CreatedAt)
+            VALUES
+              (NEWID(),@BusinessId,@ProductId,@GoodsSupplierId,N'PROV-P-E2E',1,1,SYSDATETIMEOFFSET());
             """;
         await using var connection = new SqlConnection(ConnectionString);
         await connection.OpenAsync();
@@ -577,6 +601,8 @@ public sealed class ServerSliceFixture : IAsyncLifetime
         command.Parameters.AddWithValue("@OnlineDocumentSeriesId", OnlineDocumentSeriesId);
         command.Parameters.AddWithValue("@OnlineSeriesId", OnlineSeriesId);
         command.Parameters.AddWithValue("@DocumentType", PosSaleDocumentTypes.Invoice);
+        command.Parameters.AddWithValue("@GoodsReceiptSeriesId", GoodsReceiptSeriesId);
+        command.Parameters.AddWithValue("@GoodsSupplierId", SupplierId);
         command.Parameters.AddWithValue("@Prefix", Prefix);
         command.Parameters.AddWithValue("@ProductId", ProductId);
         await command.ExecuteNonQueryAsync();
