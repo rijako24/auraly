@@ -2,73 +2,80 @@
 
 Fecha: 2026-08-01
 Rama: `feature/auraly-commerce-accounting-engine`
-Base: `bb77407eed56c2b7034ec993ce757773795f24de`
 
 ## Alcance conectado
 
-Esta entrega implementa la parte online de
-`decision-sesion-unica-usuario-online-offline.md` de extremo a extremo:
+La autenticación online tiene una sola autoridad: `Auraly.Api`.
 
-1. `POST /api/auth/login` valida la contraseña BCrypt y abre una
-   `AuthenticationSession` durable.
+1. `POST /api/auth/login` valida BCrypt y abre una `AuthenticationSession` durable.
 2. SQL Server serializa la apertura por `TenantId + UserId`; un índice filtrado
-   garantiza una sola sesión `Active` incluso ante solicitudes concurrentes.
-3. El access token contiene `sid`, usuario y tenant. Cada request JWT atendida por
-   `Auraly.Api` vuelve a comprobar que esa sesión siga activa.
-4. El refresh token solo se persiste como SHA-256. Cada renovación rota el secreto;
-   reutilizar el anterior revoca la sesión como comprometida.
-5. El BFF conserva access token, refresh token y el identificador durable del
-   navegador en cookies `HttpOnly`. Varias pestañas comparten el mismo cliente.
-6. El logout cierra primero la `WorkSession` abierta, genera su cierre idempotente
-   y después revoca la sesión de autenticación.
-7. Un nuevo login solo es posible después de cerrar o expirar la sesión anterior.
+   garantiza una única sesión `Active`, incluso con logins concurrentes.
+3. El access token contiene `sid`, usuario y tenant. Cada solicitud JWT atendida
+   por `Auraly.Api` o por el host administrativo vuelve a validar esa sesión.
+4. El refresh token se persiste como SHA-256, rota en cada renovación y su
+   reutilización revoca la sesión comprometida.
+5. El BFF guarda access token, refresh token y el identificador durable del
+   navegador en cookies `HttpOnly`; varias pestañas comparten el mismo cliente.
+6. El logout cierra primero la `WorkSession` abierta y después revoca la sesión.
+7. El host administrativo histórico ya no expone login, Google login, refresh,
+   revoke ni `me`; solo conserva el cambio de contraseña autenticado.
+8. Las páginas de registro y recuperación ya no simulan operaciones. Informan de
+   forma explícita que el alta pública y la recuperación todavía no están
+   habilitadas.
 
-No se introdujo polling. La numeración documental, el `DeviceId`, la serie fiscal
-y la serie operativa no dependen de `AuthenticationSession`.
+No se introdujo polling. La numeración documental, `DeviceId`, serie fiscal y
+serie operativa no dependen de `AuthenticationSession`.
 
-## Persistencia
+## Persistencia y validación compartidas
 
-`dbo.AuthenticationSessions` conserva:
-
-- `AuthenticationSessionId`, `TenantId`, `UserId` y `ClientId`;
-- hash SHA-256 del refresh token;
-- emisión, expiración, último uso, revocación y motivo;
-- estado explícito `Active`, `Revoked` o `Expired`;
-- `rowversion` e índices de historia y expiración.
+`dbo.AuthenticationSessions` conserva identidad, cliente, hash del refresh,
+emisión, expiración, último uso, revocación, motivo, estado y `rowversion`.
 
 La unicidad activa se protege mediante
 `UX_AuthenticationSessions_User_Active (TenantId, UserId) WHERE Status='Active'`.
-La comprobación de aplicación no sustituye esta restricción.
+La comprobación de aplicación no sustituye esa restricción.
+
+Los dos hosts resuelven `IAuthenticationSessionStore` mediante
+`SqlAuthenticationSessionStore`. El host administrativo usa un validador
+dedicado de solo lectura y rechaza:
+
+- tokens sin `sid`;
+- sesiones revocadas, expiradas o que no coincidan con usuario y tenant;
+- issuer, audience o firma diferentes a la configuración canónica.
 
 ## Configuración
 
-`Auraly.Api` requiere configuración segura fuera del repositorio:
+Ambos hosts deben recibir los mismos valores, fuera del repositorio:
 
 ```text
 Authentication__Jwt__Issuer
 Authentication__Jwt__Audience
 Authentication__Jwt__SigningKey
-Authentication__Jwt__AccessTokenExpirationMinutes
-Authentication__Jwt__RefreshTokenExpirationDays
 ConnectionStrings__Auraly
 ```
 
-La clave de firma debe tener al menos 32 bytes. No existe un valor de producción
-en `appsettings.json`.
+`Auraly.Api` también utiliza:
 
-Cuando el host Commerce está separado, el BFF usa
-`AURALY_COMMERCE_API_URL` para `api/auth/*` y `api/commerce/*`. Con gateway único,
-`NEXT_PUBLIC_API_URL` sigue siendo suficiente. El browser nunca recibe el refresh
-token mediante JavaScript.
+```text
+Authentication__Jwt__AccessTokenExpirationMinutes
+Authentication__Jwt__RefreshTokenExpirationDays
+```
+
+La clave debe tener al menos 32 bytes. El host administrativo acepta
+temporalmente `Jwt:Issuer`, `Jwt:Audience`, `Jwt:Secret` y
+`ConnectionStrings:DefaultConnection` como nombres de configuración de
+despliegues existentes, pero ya no emite tokens con ellos.
 
 ## Pruebas ejecutadas
 
 ```powershell
 dotnet build Auraly.Commerce.sln --configuration Release
+dotnet build MimosBabySpa.sln --configuration Release
+dotnet build database/Auraly.Database/Auraly.Database.sqlproj --configuration Release
+dotnet test src/Tests/MimosBabySpa.Tests/MimosBabySpa.Tests.csproj --configuration Release --no-build
 dotnet test tests/Auraly.Foundation.Tests/Auraly.Foundation.Tests.csproj --configuration Release --no-build
 dotnet test tests/Auraly.Pos.Edge.Host.Tests/Auraly.Pos.Edge.Host.Tests.csproj --configuration Release --no-build
 dotnet test tests/Auraly.ServerSlice.IntegrationTests/Auraly.ServerSlice.IntegrationTests.csproj --configuration Release --no-build
-dotnet build database/Auraly.Database/Auraly.Database.sqlproj --configuration Release
 cd admin
 npx tsc --noEmit
 npm run test:pos
@@ -77,36 +84,25 @@ npm run build
 
 Resultados:
 
-- solución .NET y DACPAC: 0 errores, 0 advertencias;
+- ambas soluciones .NET y DACPAC: 0 errores, 0 advertencias;
+- aplicación administrativa: 696/696;
 - fundación y arquitectura: 124/124;
 - POS Edge Host: 9/9;
 - integración con SQL Server real y DACPAC desplegado: 66/66;
-- pruebas Node BFF/POS: 25/25;
+- BFF/POS Node: 25/25;
 - TypeScript y build optimizado de Next.js: correctos.
 
-La integración cubre específicamente:
-
-- dos pestañas y una sola sesión;
-- segundo cliente rechazado;
-- dos logins simultáneos con exactamente un ganador;
-- hash del refresh token, rotación y detección de reutilización;
-- token revocado rechazado en la siguiente request;
-- logout, cierre de `WorkSession` y nuevo login;
-- permisos reales, FK de usuario y aislamiento de tenant.
+Las pruebas nuevas demuestran por reflexión que el controlador histórico no
+emite tokens y verifican que su middleware rechaza una sesión inactiva o un JWT
+sin `sid`.
 
 ## Límites pendientes explícitos
 
-Esta evidencia no declara terminada toda la decisión online/offline:
+- falta la concesión exclusiva y firmada para autenticar POS Edge sin conexión;
+- el alta pública de empresas/usuarios aún no está implementada;
+- la recuperación segura de contraseña aún no está implementada;
+- Google login no está disponible hasta reconstruirlo sobre la autoridad
+  canónica sin autoaprovisionamiento ambiguo.
 
-- falta la concesión exclusiva firmada para login de POS Edge sin conexión;
-- el controlador de autenticación del host administrativo histórico aún debe
-  delegarse o retirarse; el BFF ya no lo usa cuando
-  `AURALY_COMMERCE_API_URL` apunta a `Auraly.Api`, pero su URL directa sigue siendo
-  una autoridad heredada;
-- Google login y registro deben migrarse antes de desactivar definitivamente esa
-  autoridad histórica;
-- las APIs administrativas del host histórico aún deben validar `sid` contra
-  `AuthenticationSessions` para que una revocación sea inmediata allí.
-
-Estos puntos no están simulados ni marcados como aprobados. Constituyen la siguiente
-rebanada de autenticación antes de implementar la concesión offline.
+Ninguno de estos puntos se simula ni se declara terminado. La siguiente
+rebanada es la concesión offline firmada y revocable del dispositivo enrolado.
