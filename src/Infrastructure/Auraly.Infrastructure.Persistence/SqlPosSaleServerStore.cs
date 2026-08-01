@@ -145,6 +145,12 @@ public sealed class SqlPosSaleServerStore(
             cancellationToken);
         try
         {
+            // Reception and processing acquire locks in the same order:
+            // business cursor first, then document and session rows.
+            await EnsureAndLockBusinessCursorAsync(
+                connection, transaction, request.BusinessId,
+                command.ReceivedAt, cancellationToken);
+
             var existing = await FindInternalAsync(
                 connection,
                 transaction,
@@ -400,19 +406,6 @@ public sealed class SqlPosSaleServerStore(
         CancellationToken cancellationToken)
     {
         const string sql = """
-            IF NOT EXISTS
-            (
-                SELECT 1
-                FROM dbo.BusinessProcessingCursors WITH (UPDLOCK, HOLDLOCK)
-                WHERE BusinessId = @BusinessId
-            )
-            BEGIN
-                INSERT INTO dbo.BusinessProcessingCursors
-                    (BusinessId, LastAssignedSequence, LastCompletedSequence, UpdatedAt)
-                VALUES
-                    (@BusinessId, 0, 0, @CreatedAt);
-            END;
-
             DECLARE @Assigned TABLE (ProcessingSequence BIGINT NOT NULL);
 
             UPDATE dbo.BusinessProcessingCursors WITH (UPDLOCK, HOLDLOCK)
@@ -458,6 +451,39 @@ public sealed class SqlPosSaleServerStore(
             throw new DBConcurrencyException(
                 "The business sequence, durable job and immutable payload were not created atomically.");
         }
+    }
+
+    private static async Task EnsureAndLockBusinessCursorAsync(
+        SqlConnection connection,
+        SqlTransaction transaction,
+        Guid businessId,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        await using var command = new SqlCommand("""
+            IF NOT EXISTS
+            (
+                SELECT 1
+                FROM dbo.BusinessProcessingCursors WITH (UPDLOCK,HOLDLOCK)
+                WHERE BusinessId=@BusinessId
+            )
+            BEGIN
+                INSERT dbo.BusinessProcessingCursors
+                  (BusinessId,LastAssignedSequence,LastCompletedSequence,UpdatedAt)
+                VALUES
+                  (@BusinessId,0,0,@Now);
+            END;
+
+            SELECT LastAssignedSequence
+            FROM dbo.BusinessProcessingCursors WITH (UPDLOCK,HOLDLOCK)
+            WHERE BusinessId=@BusinessId;
+            """, connection, transaction);
+        command.Parameters.AddWithValue("@BusinessId", businessId);
+        command.Parameters.AddWithValue("@Now", now);
+        var value = await command.ExecuteScalarAsync(cancellationToken);
+        if (value is null || value is DBNull)
+            throw new DBConcurrencyException(
+                "The business processing cursor could not be locked.");
     }
 
     private static async Task<StoredPosSale?> FindInternalAsync(
