@@ -39,7 +39,7 @@ public sealed class PosArchitectureTests
     }
 
     [Fact]
-    public void Pos_scanner_remains_editable_and_only_local_edge_uses_health_polling()
+    public void Pos_scanner_remains_editable_and_server_sync_has_no_polling_timer()
     {
         var repositoryRoot = FindRepositoryRoot();
         var pagePath = Path.Combine(
@@ -76,6 +76,19 @@ public sealed class PosArchitectureTests
             "window.setInterval(() => void connect(), 3_000)",
             page,
             StringComparison.Ordinal);
+
+        var edgeHost = File.ReadAllText(Path.Combine(
+            repositoryRoot,
+            "src",
+            "Pos",
+            "Auraly.Pos.Edge.Host",
+            "Program.cs"));
+        Assert.DoesNotContain("PeriodicTimer", edgeHost, StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "PosServerSynchronizationHostedService",
+            edgeHost,
+            StringComparison.Ordinal);
+        Assert.Contains("PosEventDrivenSynchronizationHostedService", edgeHost);
     }
 
     [Fact]

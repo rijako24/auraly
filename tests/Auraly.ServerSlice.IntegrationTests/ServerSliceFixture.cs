@@ -6,6 +6,7 @@ using System.Security.Claims;
 using System.Text;
 using System.Net.Http.Json;
 using Auraly.Application.DocumentProcessing;
+using Auraly.BuildingBlocks.Application.Synchronization;
 using Auraly.Contracts.Authentication;
 using Auraly.Contracts.Authorization;
 using Auraly.Contracts.Fiscal;
@@ -122,18 +123,52 @@ public sealed class ServerSliceFixture : IAsyncLifetime
                     ["Auraly:Fiscal:TechnicalKeys:0:Value"] = TechnicalKeyValue,
                     ["Auraly:Fiscal:TechnicalKeys:0:SupplierTaxId"] = SupplierTaxId,
                     ["Auraly:Fiscal:TechnicalKeys:0:QrValidationUrl"] = QrValidationUrl,
-                    ["Auraly:Fiscal:Worker:Enabled"] = "false"
+                    ["Auraly:Fiscal:Worker:Enabled"] = "false",
+                    ["Auraly:PosSynchronization:WebPubSub:ConnectionString"] =
+                        $"Endpoint=https://push.auraly.test;" +
+                        $"AccessKey={Convert.ToBase64String(new byte[32])};" +
+                        "Version=1.0;",
+                    ["Auraly:PosSynchronization:WebPubSub:Hub"] = "auraly_pos"
                 });
             });
             builder.ConfigureTestServices(services =>
             {
                 services.AddSingleton<IDocumentProcessingSignalPublisher, TestDocumentProcessingSignalPublisher>();
+                services.AddSingleton<TestPosSynchronizationPushGateway>();
+                services.AddSingleton<IPosSynchronizationPushGateway>(provider =>
+                    provider.GetRequiredService<
+                        TestPosSynchronizationPushGateway>());
             });
         });
         using var client = CreateClient();
         using var response = await client.GetAsync("/health");
         response.EnsureSuccessStatusCode();
     }
+
+    public IReadOnlyCollection<PosSynchronizationInvalidation>
+        DrainSynchronizationMessages() =>
+        (_factory ?? throw new InvalidOperationException(
+            "The API fixture is not initialized."))
+        .Services.GetRequiredService<TestPosSynchronizationPushGateway>()
+        .Drain();
+
+    public async Task<PosSynchronizationInvalidation>
+        ReadSynchronizationMessageAsync()
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        return await (_factory ?? throw new InvalidOperationException(
+            "The API fixture is not initialized."))
+            .Services
+            .GetRequiredService<TestPosSynchronizationPushGateway>()
+            .ReadAsync(timeout.Token);
+    }
+
+    public void FailNextSynchronizationPublication() =>
+        (_factory ?? throw new InvalidOperationException(
+            "The API fixture is not initialized."))
+        .Services
+        .GetRequiredService<TestPosSynchronizationPushGateway>()
+        .FailNext();
 
     public HttpClient CreateAdminClient(params string[] permissions)
     {
@@ -505,6 +540,12 @@ public sealed class ServerSliceFixture : IAsyncLifetime
         SetHostEnvironment("Auraly__Fiscal__TechnicalKeys__0__SupplierTaxId", SupplierTaxId);
         SetHostEnvironment("Auraly__Fiscal__TechnicalKeys__0__QrValidationUrl", QrValidationUrl);
         SetHostEnvironment("Auraly__Fiscal__Worker__Enabled", "false");
+        SetHostEnvironment(
+            "Auraly__PosSynchronization__WebPubSub__ConnectionString",
+            $"Endpoint=https://push.auraly.test;" +
+            $"AccessKey={Convert.ToBase64String(new byte[32])};" +
+            "Version=1.0;");
+        SetHostEnvironment("Auraly__PosSynchronization__WebPubSub__Hub", "auraly_pos");
         SetHostEnvironment("Auraly__DocumentProcessing__Worker__Enabled", "false");
     }
 

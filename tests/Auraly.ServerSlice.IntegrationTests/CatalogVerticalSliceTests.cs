@@ -10,8 +10,57 @@ namespace Auraly.ServerSlice.IntegrationTests;
 public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
 {
     [Fact]
+    public async Task Catalog_push_failure_remains_durable_and_recovers_without_polling()
+    {
+        fixture.DrainSynchronizationMessages();
+        var (taxProfileId, _, _) = await ConfigureCatalogAsync();
+        var request = ProductRequest(
+            taxProfileId,
+            [new ProductPriceInput(9_900m)],
+            [new ProductBarcodeInput(
+                $"78{Random.Shared.NextInt64(10_000_000_000, 99_999_999_999)}",
+                true)]);
+
+        fixture.FailNextSynchronizationPublication();
+        using var admin = fixture.CreateAdminClient(
+            CatalogPermissionCodes.Create,
+            CatalogPermissionCodes.ManagePrices,
+            CatalogPermissionCodes.ManageCosts);
+        using var response = await admin.PostAsJsonAsync(
+            "/api/commerce/v1/products",
+            request);
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+
+        var recovered = await fixture.ReadSynchronizationMessageAsync();
+        Assert.Equal("Catalog", recovered.Stream);
+        var durableReceiptObserved = false;
+        for (var attempt = 0; attempt < 50; attempt++)
+        {
+            durableReceiptObserved = await ScalarAsync<int>(
+                """
+                SELECT COUNT(*)
+                FROM dbo.PosSynchronizationOutboxMessages
+                WHERE BusinessId=@Business AND Stream=@Stream
+                  AND AvailableThroughCursor=@Cursor
+                  AND AttemptCount=2 AND PublishedAt IS NOT NULL
+                  AND LastError IS NULL;
+                """,
+                new SqlParameter("@Business", recovered.BusinessId),
+                new SqlParameter("@Stream", recovered.Stream),
+                new SqlParameter("@Cursor", recovered.AvailableThroughCursor)) == 1;
+            if (durableReceiptObserved) break;
+            await Task.Delay(20);
+        }
+
+        Assert.True(
+            durableReceiptObserved,
+            "The failed push must be retried and durably acknowledged exactly once.");
+    }
+
+    [Fact]
     public async Task Product_is_administered_once_and_synchronized_to_physical_pos_sqlite()
     {
+        fixture.DrainSynchronizationMessages();
         var (taxProfileId, priceChannelId, secondChannelId) = await ConfigureCatalogAsync();
         var request = ProductRequest(
             taxProfileId,
@@ -32,6 +81,11 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
         Assert.Equal(HttpStatusCode.Created, create.StatusCode);
         var created = await create.Content.ReadFromJsonAsync<ProductDetail>();
         Assert.NotNull(created);
+        var createdSignal = await fixture.ReadSynchronizationMessageAsync();
+        Assert.Equal("Catalog", createdSignal.Stream);
+        Assert.Equal(fixture.TenantId, createdSignal.TenantId);
+        Assert.Equal(fixture.BusinessId, createdSignal.BusinessId);
+        Assert.True(createdSignal.AvailableThroughCursor > 0);
         var suppliers = created.Suppliers!;
         var priceListId = Guid.NewGuid();
         var listItemId = Guid.NewGuid();
@@ -136,6 +190,11 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
                 $"/api/commerce/v1/products/{created.ProductId:D}",
                 updated);
             update.EnsureSuccessStatusCode();
+            var updatedSignal = await fixture.ReadSynchronizationMessageAsync();
+            Assert.Equal("Catalog", updatedSignal.Stream);
+            Assert.True(
+                updatedSignal.AvailableThroughCursor >
+                createdSignal.AvailableThroughCursor);
 
             await sync.SynchronizeAsync();
             Assert.Null(await local.CaptureAsync("7701234500012"));
@@ -147,6 +206,9 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
                 $"/api/commerce/v1/products/{created.ProductId:D}/deactivate",
                 content: null);
             Assert.Equal(HttpStatusCode.NoContent, deactivate.StatusCode);
+            var deactivatedSignal = await fixture.ReadSynchronizationMessageAsync();
+            Assert.True(deactivatedSignal.AvailableThroughCursor >
+                        updatedSignal.AvailableThroughCursor);
             await sync.SynchronizeAsync();
             Assert.Null(await local.CaptureAsync("7701234500098"));
         }
