@@ -39,6 +39,14 @@ SQL es la fuente de verdad del orden y del estado. El broker es el activador dur
 - No existe fallback de polling.
 - On-premise utilizará RabbitMQ durable mediante una implementación productiva, no un simulador.
 
+En RabbitMQ, el carril documental usa un solo consumidor con `prefetch = 1`.
+Una entrega no se confirma ni se reemplaza por una cola temporizada mientras se
+está procesando: el consumidor conserva el turno y reintenta el mismo
+`MovementId` hasta cinco veces. Si agota el límite, ejecuta `nack` sin requeue y
+RabbitMQ lo mueve a la dead-letter durable; entonces el consumidor continúa con
+la siguiente entrega. Las colas TTL se reservan para trabajos fiscales que sí
+tienen una fecha explícita de reintento.
+
 La API confirma recepción únicamente después de persistir el movimiento y obtener confirmación durable del broker. Los reintentos usan los mismos identificadores.
 
 ## Orden y errores
