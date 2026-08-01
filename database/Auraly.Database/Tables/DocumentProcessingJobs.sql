@@ -25,7 +25,7 @@ CREATE TABLE [dbo].[DocumentProcessingJobs]
     CONSTRAINT [CK_DocumentProcessingJobs_Sequence] CHECK ([ProcessingSequence] > 0),
     CONSTRAINT [CK_DocumentProcessingJobs_Attempts] CHECK ([AttemptCount] >= 0),
     CONSTRAINT [CK_DocumentProcessingJobs_Status]
-        CHECK ([Status] IN (N'Pending', N'Processing', N'Completed', N'RetryScheduled', N'NeedsIntervention'))
+        CHECK ([Status] IN (N'Pending', N'Processing', N'Completed', N'RetryScheduled', N'NeedsIntervention', N'DeadLettered'))
 );
 
 GO

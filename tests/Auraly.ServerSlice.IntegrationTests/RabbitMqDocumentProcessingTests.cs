@@ -83,18 +83,36 @@ public sealed class RabbitMqDocumentProcessingTests(ServerSliceFixture fixture)
             Assert.Equal(1, await CountAsync("InventoryMovements", first.DocumentId));
             Assert.Equal(1, await CountAsync("Payables", first.DocumentId));
 
-            var invalid = new Auraly.Application.DocumentProcessing.DocumentProcessingSignal(
-                Guid.NewGuid(), fixture.BusinessId, Guid.NewGuid(), "GoodsReceipt");
-            await transport.PublishAsync(invalid);
+            var failed = CreateReceipt(3, 7_000m);
+            var afterFailure = CreateReceipt(4, 8_000m);
+            await ConfirmAsync(client, failed);
+            await ConfirmAsync(client, afterFailure);
+            var failureSignals = fixture.DrainDocumentSignals().ToArray();
+            Assert.Equal(2, failureSignals.Length);
+            await CorruptPayloadAsync(failed.DocumentId);
+            await transport.PublishAsync(failureSignals[0]);
+            await transport.PublishAsync(failureSignals[1]);
             await WaitUntilAsync(
-                async () => await QueueCountAsync(connection, $"{documentQueue}.dead") == 1,
-                TimeSpan.FromSeconds(15));
+                async () =>
+                    await QueueCountAsync(connection, $"{documentQueue}.dead") == 1 &&
+                    await ReadStatusAsync(afterFailure.DocumentId) == "Processed",
+                TimeSpan.FromSeconds(20));
+
+            var failedJob = await ReadJobAsync(failed.DocumentId);
+            Assert.Equal("DeadLettered", failedJob.Status);
+            Assert.Equal(5, failedJob.AttemptCount);
+            Assert.Equal(0, await CountAsync("InventoryMovements", failed.DocumentId));
+            Assert.Equal(0, await CountAsync("Payables", failed.DocumentId));
+            Assert.Equal(1, await CountAsync("InventoryMovements", afterFailure.DocumentId));
+            Assert.Equal(1, await CountAsync("Payables", afterFailure.DocumentId));
             await using (var inspection = await connection.CreateChannelAsync(false, default))
             {
                 var dead = await inspection.BasicGetAsync(
                     $"{documentQueue}.dead", autoAck: true);
                 Assert.NotNull(dead);
-                Assert.Equal(invalid.MovementId.ToString("D"), dead.BasicProperties.MessageId);
+                Assert.Equal(
+                    failureSignals[0].MovementId.ToString("D"),
+                    dead.BasicProperties.MessageId);
             }
         }
         finally
@@ -165,6 +183,39 @@ public sealed class RabbitMqDocumentProcessingTests(ServerSliceFixture fixture)
             rows[second].Sequence, rows[second].Completed);
     }
 
+    private async Task CorruptPayloadAsync(Guid documentId)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            UPDATE dbo.DocumentProcessingPayloads
+            SET PayloadJson=N'{}'
+            WHERE DocumentId=@DocumentId AND DocumentType=N'GoodsReceipt';
+            """;
+        command.Parameters.AddWithValue("@DocumentId", documentId);
+        Assert.Equal(1, await command.ExecuteNonQueryAsync());
+    }
+
+    private async Task<JobEvidence> ReadJobAsync(Guid documentId)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT Status,AttemptCount,LastError
+            FROM dbo.DocumentProcessingJobs
+            WHERE DocumentId=@DocumentId AND DocumentType=N'GoodsReceipt';
+            """;
+        command.Parameters.AddWithValue("@DocumentId", documentId);
+        await using var reader = await command.ExecuteReaderAsync();
+        Assert.True(await reader.ReadAsync());
+        return new JobEvidence(
+            reader.GetString(0),
+            reader.GetInt32(1),
+            reader.IsDBNull(2) ? null : reader.GetString(2));
+    }
+
     private async Task<int> CountAsync(string table, Guid documentId)
     {
         Assert.Contains(table, new[] { "InventoryMovements", "Payables" });
@@ -221,4 +272,6 @@ public sealed class RabbitMqDocumentProcessingTests(ServerSliceFixture fixture)
         DateTimeOffset FirstCompletedAt,
         long SecondSequence,
         DateTimeOffset SecondCompletedAt);
+
+    private sealed record JobEvidence(string Status, int AttemptCount, string? LastError);
 }

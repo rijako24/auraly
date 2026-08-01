@@ -45,7 +45,7 @@ public sealed class SqlDocumentProcessingWorkSource(
             !string.Equals(documentType, signal.DocumentType, StringComparison.Ordinal))
             return new(DocumentProcessingWorkState.Missing, null,
                 "The broker message does not match the persisted movement.");
-        if (status == "Completed")
+        if (status is "Completed" or "DeadLettered")
             return new(DocumentProcessingWorkState.Completed, null);
         if (status == "NeedsIntervention")
             return new(DocumentProcessingWorkState.NotReady, null,

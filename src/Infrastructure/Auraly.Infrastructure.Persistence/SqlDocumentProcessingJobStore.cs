@@ -148,25 +148,90 @@ public sealed class SqlDocumentProcessingJobStore(
         await session.Transaction.DisposeAsync();
         await session.Connection.DisposeAsync();
 
-        var now = timeProvider.GetUtcNow();
         var safeError = error.Message.Length <= 2000 ? error.Message : error.Message[..2000];
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
-        await using var command = new SqlCommand("""
-            UPDATE dbo.DocumentProcessingJobs
-            SET Status=CASE WHEN AttemptCount>=5
-                            THEN N'NeedsIntervention' ELSE N'RetryScheduled' END,
-                AvailableAt=CASE WHEN AttemptCount>=5 THEN @FailedAt ELSE @AvailableAt END,
-                LeaseOwner=NULL,LeaseExpiresAt=NULL,LastError=@LastError
-            WHERE JobId=@JobId AND Status<>N'Completed';
-            """, connection);
-        command.Parameters.AddWithValue("@JobId", session.JobId);
-        command.Parameters.AddWithValue("@FailedAt", now);
-        command.Parameters.AddWithValue("@AvailableAt", now.Add(RetryDelay));
-        command.Parameters.AddWithValue("@LastError", safeError);
-        if (await command.ExecuteNonQueryAsync(cancellationToken) != 1)
-            throw new DBConcurrencyException(
-                "The failed document job could not be scheduled or blocked.");
+        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(
+            IsolationLevel.Serializable, cancellationToken);
+        try
+        {
+            long processingSequence;
+            int persistedAttempts;
+            string status;
+            await using (var read = new SqlCommand("""
+                SELECT j.ProcessingSequence,j.AttemptCount,j.Status
+                FROM dbo.DocumentProcessingJobs j WITH (UPDLOCK,HOLDLOCK)
+                INNER JOIN dbo.BusinessProcessingCursors c WITH (UPDLOCK,HOLDLOCK)
+                  ON c.BusinessId=j.BusinessId
+                WHERE j.JobId=@JobId AND j.BusinessId=@BusinessId;
+                """, connection, transaction))
+            {
+                read.Parameters.AddWithValue("@JobId", session.JobId);
+                read.Parameters.AddWithValue("@BusinessId", context.BusinessId.Value);
+                await using var reader = await read.ExecuteReaderAsync(cancellationToken);
+                if (!await reader.ReadAsync(cancellationToken))
+                    throw new InvalidOperationException(
+                        "The failed document job no longer exists.");
+                processingSequence = reader.GetInt64(0);
+                persistedAttempts = reader.GetInt32(1);
+                status = reader.GetString(2);
+            }
+
+            if (status is "Completed" or "DeadLettered")
+            {
+                await transaction.CommitAsync(cancellationToken);
+                return;
+            }
+
+            var now = timeProvider.GetUtcNow();
+            var failedAttempts = checked(persistedAttempts + 1);
+            var deadLettered = failedAttempts >= 5;
+            await using (var update = new SqlCommand("""
+                UPDATE dbo.DocumentProcessingJobs
+                SET Status=@Status,AttemptCount=@AttemptCount,
+                    AvailableAt=@AvailableAt,CompletedAt=@CompletedAt,
+                    LeaseOwner=NULL,LeaseExpiresAt=NULL,LastError=@LastError
+                WHERE JobId=@JobId AND Status<>N'Completed';
+                """, connection, transaction))
+            {
+                update.Parameters.AddWithValue("@JobId", session.JobId);
+                update.Parameters.AddWithValue(
+                    "@Status", deadLettered ? "DeadLettered" : "RetryScheduled");
+                update.Parameters.AddWithValue("@AttemptCount", failedAttempts);
+                update.Parameters.AddWithValue(
+                    "@AvailableAt", deadLettered ? now : now.Add(RetryDelay));
+                update.Parameters.AddWithValue(
+                    "@CompletedAt", deadLettered ? now : DBNull.Value);
+                update.Parameters.AddWithValue("@LastError", safeError);
+                if (await update.ExecuteNonQueryAsync(cancellationToken) != 1)
+                    throw new DBConcurrencyException(
+                        "The failed document job could not be persisted.");
+            }
+
+            if (deadLettered)
+            {
+                await using var advance = new SqlCommand("""
+                    UPDATE dbo.BusinessProcessingCursors
+                    SET LastCompletedSequence=@ProcessingSequence,UpdatedAt=@CompletedAt
+                    WHERE BusinessId=@BusinessId
+                      AND LastCompletedSequence=@PreviousSequence;
+                    """, connection, transaction);
+                advance.Parameters.AddWithValue("@BusinessId", context.BusinessId.Value);
+                advance.Parameters.AddWithValue("@ProcessingSequence", processingSequence);
+                advance.Parameters.AddWithValue("@PreviousSequence", processingSequence - 1);
+                advance.Parameters.AddWithValue("@CompletedAt", now);
+                if (await advance.ExecuteNonQueryAsync(cancellationToken) != 1)
+                    throw new DBConcurrencyException(
+                        "The dead-lettered movement could not release its ordered position.");
+            }
+
+            await transaction.CommitAsync(cancellationToken);
+        }
+        catch
+        {
+            await transaction.RollbackAsync(CancellationToken.None);
+            throw;
+        }
     }
 
     private static void AddContext(SqlCommand command, DocumentProcessingContext context)

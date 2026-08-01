@@ -108,8 +108,8 @@ public sealed class DocumentProcessingHostedService(
             {
                 await args.DeadLetterMessageAsync(
                     args.Message,
-                    "DocumentProcessingNeedsIntervention",
-                    "The ordered business stream remains blocked in SQL after five failures.",
+                    "DocumentProcessingDeadLettered",
+                    "The movement exhausted five attempts and its ordered position was released.",
                     args.CancellationToken);
                 return;
             }
