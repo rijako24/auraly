@@ -1,5 +1,11 @@
 # Dispositivo POS, login offline y preparación inicial
 
+
+Actualizacion 2026-08-01: enrolamiento protegido, proyeccion local de usuarios y
+concesion exclusiva offline firmada ya estan implementados. Consulta
+`docs/implementation/offline-authentication-lease-evidence.md`. Siguen pendientes
+el shell completo y reemplazar el ciclo periodico general por Pub/Sub real; el
+estado historico al final de este documento queda reemplazado por esta nota.
 Fecha: 2026-07-29
 
 ## Decisión

@@ -3,6 +3,11 @@
 Fecha: 2026-08-01
 Rama: `feature/auraly-commerce-accounting-engine`
 
+Actualizacion 2026-08-01: la concesion exclusiva offline ya esta implementada.
+La evidencia y los conteos vigentes estan en
+`docs/implementation/offline-authentication-lease-evidence.md`; ese documento
+reemplaza el limite pendiente y los conteos historicos indicados mas abajo.
+
 ## Alcance conectado
 
 La autenticación online tiene una sola autoridad: `Auraly.Api`.
