@@ -1,4 +1,9 @@
 using System.Text;
+using Auraly.Application.Authentication;
+using Auraly.BuildingBlocks.Domain.Identifiers;
+using Auraly.BuildingBlocks.Infrastructure.Identifiers;
+using Auraly.Infrastructure.Persistence;
+
 
 using Azure;
 
@@ -100,9 +105,18 @@ using MimosBabySpa.WebAPI.Middleware;
 
 var builder = WebApplication.CreateBuilder(args);
 
+var connectionString =
+    builder.Configuration.GetConnectionString("Auraly")
+    ?? builder.Configuration.GetConnectionString("DefaultConnection");
+if (string.IsNullOrWhiteSpace(connectionString))
+{
+    throw new InvalidOperationException(
+        "ConnectionStrings:Auraly or ConnectionStrings:DefaultConnection is required.");
+}
+
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
 
-    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
+    options.UseSqlServer(connectionString));
 
 builder.Services.AddMemoryCache();
 
@@ -111,10 +125,29 @@ builder.Services.AddScoped<ICorrelationIdProvider, CorrelationIdProvider>();
 builder.Services.AddScoped<ITenantContext, TenantContext>();
 
 builder.Services.Configure<JwtSettings>(builder.Configuration.GetSection(JwtSettings.SectionName));
+var jwtSettings = builder.Configuration.GetSection(JwtSettings.SectionName).Get<JwtSettings>()!;
+var jwtIssuer = builder.Configuration["Authentication:Jwt:Issuer"]
+    ?? jwtSettings.Issuer;
+var jwtAudience = builder.Configuration["Authentication:Jwt:Audience"]
+    ?? jwtSettings.Audience;
+var jwtSigningKey = builder.Configuration["Authentication:Jwt:SigningKey"]
+    ?? jwtSettings.Secret;
+if (string.IsNullOrWhiteSpace(jwtIssuer) || string.IsNullOrWhiteSpace(jwtAudience) ||
+    string.IsNullOrWhiteSpace(jwtSigningKey) || Encoding.UTF8.GetByteCount(jwtSigningKey) < 32)
+{
+    throw new InvalidOperationException(
+        "The canonical authentication issuer, audience and signing key are required.");
+}
+builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddSingleton<IAuralyIdGenerator, Uuid7AuralyIdGenerator>();
+builder.Services.AddSingleton(new SqlServerConnectionFactory(connectionString));
+builder.Services.AddScoped<IAuthenticationSessionStore, SqlAuthenticationSessionStore>();
+builder.Services.AddScoped<IAuthenticationSessionValidator, AuthenticationSessionValidator>();
+builder.Services.AddScoped<AuthenticationSessionJwtBearerEvents>();
+
 
 builder.Services.Configure<DemoRequestOptions>(builder.Configuration.GetSection(DemoRequestOptions.SectionName));
 
-var jwtSettings = builder.Configuration.GetSection(JwtSettings.SectionName).Get<JwtSettings>()!;
 
 builder.Services.AddAuthentication(options =>
 
@@ -136,22 +169,23 @@ builder.Services.AddAuthentication(options =>
 
         ValidateIssuer = true,
 
-        ValidIssuer = jwtSettings.Issuer,
+        ValidIssuer = jwtIssuer,
 
         ValidateAudience = true,
 
-        ValidAudience = jwtSettings.Audience,
+        ValidAudience = jwtAudience,
 
         ValidateIssuerSigningKey = true,
 
-        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSettings.Secret)),
+        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSigningKey)),
 
         ValidateLifetime = true,
+
 
         ClockSkew = TimeSpan.Zero
 
     };
-
+    options.EventsType = typeof(AuthenticationSessionJwtBearerEvents);
 });
 
 builder.Services.AddSingleton<IAuthorizationPolicyProvider, PermissionPolicyProvider>();
@@ -160,9 +194,7 @@ builder.Services.AddSingleton<IAuthorizationHandler, PermissionHandler>();
 
 builder.Services.AddAuthorization();
 
-builder.Services.Configure<GoogleAuthSettings>(builder.Configuration.GetSection(GoogleAuthSettings.SectionName));
 
-builder.Services.AddScoped<IGoogleAuthService, GoogleAuthService>();
 
 builder.Services.AddScoped<IUnitOfWork, UnitOfWork>();
 
@@ -184,7 +216,6 @@ builder.Services.AddScoped<IEnrollmentRepository, EnrollmentRepository>();
 
 builder.Services.AddSingleton<IPasswordHasher, BCryptPasswordHasher>();
 
-builder.Services.AddScoped<ITokenService, TokenService>();
 
 builder.Services.AddScoped<IAuthService, AuthService>();
 

@@ -28,6 +28,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\API\MimosBabySpa.API\MimosBabySpa.API.csproj" />
+    <ProjectReference Include="..\..\API\MimosBabySpa.WebAPI\MimosBabySpa.WebAPI.csproj" />
     <ProjectReference Include="..\..\Application\MimosBabySpa.Application\MimosBabySpa.Application.csproj" />
     <ProjectReference Include="..\..\Infrastructure\MimosBabySpa.Infrastructure\MimosBabySpa.Infrastructure.csproj" />
     <ProjectReference Include="..\..\Domain\MimosBabySpa.Domain\MimosBabySpa.Domain.csproj" />

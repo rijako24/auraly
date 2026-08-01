@@ -275,5 +275,15 @@ public sealed class AuthenticationService(
 }
 
 public sealed class AuthenticationValidationException(string message) : Exception(message);
+public sealed class AuthenticationSessionValidator(
+    IAuthenticationSessionStore store,
+    TimeProvider timeProvider) : IAuthenticationSessionValidator
+{
+    public Task<bool> IsActiveAsync(
+        ParsedAuthenticationToken token,
+        CancellationToken cancellationToken = default) =>
+        store.IsActiveAsync(token, timeProvider.GetUtcNow(), cancellationToken);
+}
+
 public sealed class AuthenticationDeniedException(string message) : Exception(message);
 public sealed class AuthenticationSessionConflictException(string message) : Exception(message);
