@@ -39,5 +39,7 @@
     <ProjectReference Include="..\..\Modules\Orders\Auraly.Contracts.Orders\Auraly.Contracts.Orders.csproj" />
     <ProjectReference Include="..\..\Modules\Purchasing\Auraly.Contracts.Purchasing\Auraly.Contracts.Purchasing.csproj" />
     <ProjectReference Include="..\..\Modules\Purchasing\Auraly.Application.Purchasing\Auraly.Application.Purchasing.csproj" />
+    <ProjectReference Include="..\..\Modules\Returns\Auraly.Contracts.Returns\Auraly.Contracts.Returns.csproj" />
+    <ProjectReference Include="..\..\Modules\Returns\Auraly.Application.Returns\Auraly.Application.Returns.csproj" />
   </ItemGroup>
 </Project>

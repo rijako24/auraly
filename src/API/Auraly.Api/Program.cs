@@ -14,6 +14,7 @@ using Auraly.Application.Organization;
 using Auraly.Application.Orders;
 using Auraly.Application.WorkSessions;
 using Auraly.Application.Purchasing;
+using Auraly.Application.Returns;
 using Auraly.Application.Sales;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.BuildingBlocks.Infrastructure.Identifiers;
@@ -70,6 +71,7 @@ builder.Services.AddScoped<IDocumentProcessingJobStore, SqlDocumentProcessingJob
 builder.Services.AddScoped<IDocumentProcessingWorkSource, SqlDocumentProcessingWorkSource>();
 builder.Services.AddScoped<IConfirmedDocumentHandler, SqlPosSaleDocumentHandler>();
 builder.Services.AddScoped<IConfirmedDocumentHandler, SqlGoodsReceiptDocumentHandler>();
+builder.Services.AddScoped<IConfirmedDocumentHandler, SqlSalesReturnDocumentHandler>();
 builder.Services.AddScoped<DocumentProcessingEngine>();
 builder.Services.AddScoped<DocumentProcessingWorker>();
 builder.Services.AddSingleton<FiscalProcessingCoordinator>();
@@ -220,6 +222,8 @@ builder.Services.AddScoped<IOrderBatchStore, SqlOrderBatchStore>();
 builder.Services.AddScoped<OrderBatchService>();
 builder.Services.AddScoped<IGoodsReceiptStore, SqlGoodsReceiptStore>();
 builder.Services.AddScoped<GoodsReceiptService>();
+builder.Services.AddScoped<ISalesReturnStore, SqlSalesReturnStore>();
+builder.Services.AddScoped<SalesReturnService>();
 builder.Services.AddResponseCompression(options => options.EnableForHttps = true);
 
 var jwtIssuer = builder.Configuration["Authentication:Jwt:Issuer"];
@@ -286,6 +290,11 @@ builder.Services.AddAuthorization(options =>
         policy.RequireAuthenticatedUser();
     });
     options.AddPolicy("purchasing.user", policy =>
+    {
+        policy.AuthenticationSchemes.Add(JwtBearerDefaults.AuthenticationScheme);
+        policy.RequireAuthenticatedUser();
+    });
+    options.AddPolicy("returns.user", policy =>
     {
         policy.AuthenticationSchemes.Add(JwtBearerDefaults.AuthenticationScheme);
         policy.RequireAuthenticatedUser();
@@ -376,6 +385,7 @@ app.MapFiscalApi();
 app.MapOrdersApi();
 app.MapPosOrdersApi();
 app.MapPurchasingApi();
+app.MapReturnsApi();
 app.MapPost(
         "/api/pos/v1/sales",
         async (

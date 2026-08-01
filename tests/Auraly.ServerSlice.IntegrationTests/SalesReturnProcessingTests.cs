@@ -1,0 +1,161 @@
+using System.Net;
+using System.Net.Http.Json;
+using Auraly.Contracts.Returns;
+using Microsoft.Data.SqlClient;
+
+namespace Auraly.ServerSlice.IntegrationTests;
+
+[Collection(ServerSliceCollection.Name)]
+public sealed class SalesReturnProcessingTests(ServerSliceFixture fixture)
+{
+    [Fact]
+    public async Task Return_flows_once_through_api_motor_inventory_and_refund()
+    {
+        var original = fixture.CreateValidRequest(9_501);
+        using (var pos = fixture.CreateClient())
+        using (var upload = fixture.CreateUploadMessage(original))
+        using (var response = await pos.SendAsync(upload))
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("Completed", await JobStatusAsync(original.DocumentId));
+        var afterSale = await QuantityAsync();
+
+        var request = new ConfirmSalesReturnRequest(
+            Guid.NewGuid(), fixture.BusinessId, fixture.WarehouseId,
+            original.DocumentId,
+            new DateTimeOffset(2026, 8, 1, 9, 30, 0, TimeSpan.FromHours(-5)),
+            ReturnEconomicResolutions.Refund, "Cash", "Cliente devuelve parcialmente",
+            [new ConfirmSalesReturnLineRequest(
+                1, .5m, ReturnInventoryDispositions.Sellable)]);
+        const string idempotencyKey = "sales-return-e2e-001";
+        using var user = fixture.CreateAdminClient(
+            SalesReturnPermissionCodes.Create, SalesReturnPermissionCodes.Confirm);
+        using (var message = Message(request, idempotencyKey))
+        using (var response = await user.SendAsync(message))
+        {
+            Assert.True(response.StatusCode == HttpStatusCode.Accepted,
+                await response.Content.ReadAsStringAsync());
+            var accepted = await response.Content.ReadFromJsonAsync<SalesReturnAcceptance>();
+            Assert.NotNull(accepted);
+            Assert.StartsWith("DVT01-", accepted.DocumentNumber);
+            Assert.False(accepted.IdempotentReplay);
+        }
+
+        Assert.Equal("Completed", await JobStatusAsync(request.ReturnId));
+        Assert.Equal("Processed", await ScalarAsync<string>(
+            "SELECT Status FROM dbo.SalesReturns WHERE ReturnId=@Id", request.ReturnId));
+        Assert.Equal(afterSale + .5m, await QuantityAsync());
+        Assert.Equal(5_950m, await ScalarAsync<decimal>(
+            "SELECT Amount FROM dbo.SalesReturnSettlements WHERE ReturnId=@Id", request.ReturnId));
+        Assert.Equal(1, await CountAsync("InventoryMovements", "DocumentId", request.ReturnId));
+        Assert.Equal(1, await CountAsync("SalesReturnSettlements", "ReturnId", request.ReturnId));
+        Assert.Equal(1, await CountAsync("ServerOutboxMessages", "DocumentId", request.ReturnId));
+
+        using (var replayMessage = Message(request, idempotencyKey))
+        using (var replayResponse = await user.SendAsync(replayMessage))
+        {
+            Assert.Equal(HttpStatusCode.Accepted, replayResponse.StatusCode);
+            var replay = await replayResponse.Content.ReadFromJsonAsync<SalesReturnAcceptance>();
+            Assert.NotNull(replay);
+            Assert.True(replay.IdempotentReplay);
+        }
+        Assert.Equal(afterSale + .5m, await QuantityAsync());
+        Assert.Equal(1, await CountAsync("InventoryMovements", "DocumentId", request.ReturnId));
+
+        var excessive = request with
+        {
+            ReturnId = Guid.NewGuid(),
+            Lines = [new ConfirmSalesReturnLineRequest(
+                1, .6m, ReturnInventoryDispositions.Sellable)]
+        };
+        using var excessiveMessage = Message(excessive, $"excess-{Guid.NewGuid():N}");
+        using var excessiveResponse = await user.SendAsync(excessiveMessage);
+        Assert.Equal(HttpStatusCode.Conflict, excessiveResponse.StatusCode);
+    }
+
+    [Fact]
+    public async Task Return_requires_backend_permissions_and_authenticated_business()
+    {
+        using var denied = fixture.CreateAdminClient(SalesReturnPermissionCodes.Create);
+        var request = new ConfirmSalesReturnRequest(
+            Guid.NewGuid(), fixture.BusinessId, fixture.WarehouseId, Guid.NewGuid(),
+            DateTimeOffset.UtcNow, ReturnEconomicResolutions.Refund, "Cash", "Prueba",
+            [new ConfirmSalesReturnLineRequest(1, 1m, ReturnInventoryDispositions.Sellable)]);
+        using (var deniedMessage = Message(request, $"denied-{Guid.NewGuid():N}"))
+        using (var deniedResponse = await denied.SendAsync(deniedMessage))
+            Assert.Equal(HttpStatusCode.Forbidden, deniedResponse.StatusCode);
+
+        using var allowed = fixture.CreateAdminClient(
+            SalesReturnPermissionCodes.Create, SalesReturnPermissionCodes.Confirm);
+        using var wrongScope = Message(
+            request with { BusinessId = Guid.NewGuid() }, $"scope-{Guid.NewGuid():N}");
+        using var wrongScopeResponse = await allowed.SendAsync(wrongScope);
+        Assert.Equal(HttpStatusCode.Forbidden, wrongScopeResponse.StatusCode);
+    }
+
+    private static HttpRequestMessage Message(
+        ConfirmSalesReturnRequest request, string idempotencyKey)
+    {
+        var message = new HttpRequestMessage(
+            HttpMethod.Post, "/api/commerce/v1/sales-returns/confirm")
+        {
+            Content = JsonContent.Create(request)
+        };
+        message.Headers.Add("Idempotency-Key", idempotencyKey);
+        return message;
+    }
+
+    private async Task<decimal> QuantityAsync()
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT QuantityOnHand FROM dbo.InventoryBalances
+            WHERE BusinessId=@BusinessId AND WarehouseId=@WarehouseId AND ProductId=@ProductId;
+            """;
+        command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+        command.Parameters.AddWithValue("@WarehouseId", fixture.WarehouseId);
+        command.Parameters.AddWithValue("@ProductId", fixture.ProductId);
+        return Convert.ToDecimal(await command.ExecuteScalarAsync());
+    }
+
+    private async Task<string> JobStatusAsync(Guid documentId)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText =
+            "SELECT Status FROM dbo.DocumentProcessingJobs WHERE DocumentId=@Id";
+        command.Parameters.AddWithValue("@Id", documentId);
+        return Convert.ToString(await command.ExecuteScalarAsync())!;
+    }
+
+    private async Task<T> ScalarAsync<T>(string sql, Guid id)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        command.Parameters.AddWithValue("@Id", id);
+        var value = await command.ExecuteScalarAsync()
+            ?? throw new InvalidOperationException("Expected SQL value was not returned.");
+        return (T)Convert.ChangeType(value, typeof(T));
+    }
+
+    private async Task<int> CountAsync(string table, string column, Guid id)
+    {
+        var allowed = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "InventoryMovements:DocumentId",
+            "SalesReturnSettlements:ReturnId",
+            "ServerOutboxMessages:DocumentId"
+        };
+        Assert.Contains($"{table}:{column}", allowed);
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = $"SELECT COUNT(*) FROM dbo.[{table}] WHERE [{column}]=@Id";
+        command.Parameters.AddWithValue("@Id", id);
+        return Convert.ToInt32(await command.ExecuteScalarAsync());
+    }
+}

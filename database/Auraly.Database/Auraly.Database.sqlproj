@@ -112,6 +112,7 @@
     <Build Include="Tables\SalesDocumentLines.sql" />
     <Build Include="Tables\SalesDocumentTaxSummaries.sql" />
     <Build Include="Tables\SalesPayments.sql" />
+    <Build Include="Tables\SalesReturns.sql" />
     <Build Include="Tables\CashOperations.sql" />
     <Build Include="Tables\WorkSessionMovements.sql" />
     <Build Include="Tables\FiscalSnapshots.sql" />
