@@ -27,6 +27,7 @@ public sealed class SqlSalesReturnDocumentHandler(
         var session = sessions.Current;
         foreach (var line in value.Lines.OrderBy(line => line.LineNumber))
             await ApplyInventoryAsync(session, value, line, cancellationToken);
+        await InsertTaxSummariesAsync(session, value, cancellationToken);
         await ApplyEconomicResolutionAsync(session, value, cancellationToken);
         await InsertOutboxAsync(session, value, document.Payload, cancellationToken);
         await MarkProcessedAsync(session, value, cancellationToken);
@@ -64,10 +65,12 @@ public sealed class SqlSalesReturnDocumentHandler(
             FROM dbo.InventoryBalances WITH (UPDLOCK,HOLDLOCK)
             WHERE BusinessId=@BusinessId AND WarehouseId=@WarehouseId AND ProductId=@ProductId;
             DECLARE @QuantityAfter DECIMAL(19,6)=@QuantityBefore+@Quantity;
-            DECLARE @ValueChange DECIMAL(19,4)=CAST(@Quantity*@AverageCost AS DECIMAL(19,4));
+            DECLARE @ValueChange DECIMAL(19,4)=CAST(@Quantity*@RecognizedUnitCost AS DECIMAL(19,4));
             DECLARE @ValueAfter DECIMAL(19,4)=@ValueBefore+@ValueChange;
+            DECLARE @AverageCostAfter DECIMAL(19,6)=CASE WHEN @QuantityAfter=0 THEN 0
+              ELSE CAST(@ValueAfter/@QuantityAfter AS DECIMAL(19,6)) END;
             UPDATE dbo.InventoryBalances
-            SET QuantityOnHand=@QuantityAfter,InventoryValue=@ValueAfter,
+            SET QuantityOnHand=@QuantityAfter,InventoryValue=@ValueAfter,AverageUnitCost=@AverageCostAfter,
                 LastProcessingSequence=@Sequence,UpdatedAt=@Now
             WHERE BusinessId=@BusinessId AND WarehouseId=@WarehouseId AND ProductId=@ProductId;
             INSERT dbo.InventoryMovements
@@ -77,7 +80,7 @@ public sealed class SqlSalesReturnDocumentHandler(
                RecognizedUnitCost,ValueChange,OccurredAt,PostedAt,CreatedAt)
             VALUES(@MovementId,@BusinessId,@WarehouseId,@DocumentId,N'SalesReturn',
                @LineNumber,@ProductId,N'SalesReturn',@Quantity,@Sequence,@QuantityBefore,
-               @QuantityAfter,@AverageCost,@AverageCost,@AverageCost,@ValueChange,
+               @QuantityAfter,@AverageCost,@AverageCostAfter,@RecognizedUnitCost,@ValueChange,
                @OccurredAt,@Now,@Now);
             """;
         await using var command = new SqlCommand(sql, session.Connection, session.Transaction);
@@ -88,12 +91,40 @@ public sealed class SqlSalesReturnDocumentHandler(
         command.Parameters.AddWithValue("@DocumentId", value.ReturnId);
         command.Parameters.AddWithValue("@LineNumber", line.LineNumber);
         AddDecimal(command, "@Quantity", line.Quantity, 19, 6);
+        AddDecimal(command, "@RecognizedUnitCost", line.RecognizedUnitCost, 19, 6);
         command.Parameters.AddWithValue("@Sequence", session.ProcessingSequence);
         command.Parameters.AddWithValue("@OccurredAt", value.ReturnedAt);
         command.Parameters.AddWithValue("@Now", timeProvider.GetUtcNow());
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
+
+    private async Task InsertTaxSummariesAsync(
+        SqlDocumentProcessingSessionAccessor.Session session,
+        SalesReturnDocumentPayload value,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            INSERT dbo.SalesReturnTaxSummaries
+              (ReturnId,TaxCode,TaxRate,TaxableAmount,TaxAmount,TotalAmount,CreatedAt)
+            VALUES(@ReturnId,@TaxCode,@TaxRate,@Taxable,@Tax,@Total,@Now);
+            """;
+        foreach (var summary in value.Lines
+            .GroupBy(line => new { line.TaxCode, line.TaxRate })
+            .OrderBy(group => group.Key.TaxCode, StringComparer.Ordinal)
+            .ThenBy(group => group.Key.TaxRate))
+        {
+            await using var command = new SqlCommand(sql, session.Connection, session.Transaction);
+            command.Parameters.AddWithValue("@ReturnId", value.ReturnId);
+            command.Parameters.AddWithValue("@TaxCode", summary.Key.TaxCode);
+            AddDecimal(command, "@TaxRate", summary.Key.TaxRate, 9, 6);
+            AddDecimal(command, "@Taxable", summary.Sum(line => line.UntaxedAmount), 19, 4);
+            AddDecimal(command, "@Tax", summary.Sum(line => line.TaxAmount), 19, 4);
+            AddDecimal(command, "@Total", summary.Sum(line => line.LineTotal), 19, 4);
+            command.Parameters.AddWithValue("@Now", timeProvider.GetUtcNow());
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+    }
     private async Task ApplyEconomicResolutionAsync(
         SqlDocumentProcessingSessionAccessor.Session session,
         SalesReturnDocumentPayload value,

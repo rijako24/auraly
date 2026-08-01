@@ -68,6 +68,7 @@ CREATE TABLE [dbo].[SalesReturnLines]
     [UntaxedAmount] DECIMAL(19,4) NOT NULL,
     [TaxAmount] DECIMAL(19,4) NOT NULL,
     [LineTotal] DECIMAL(19,4) NOT NULL,
+    [RecognizedUnitCost] DECIMAL(19,6) NOT NULL,
     [InventoryDisposition] NVARCHAR(24) NOT NULL,
     CONSTRAINT [PK_SalesReturnLines] PRIMARY KEY CLUSTERED ([ReturnId],[LineNumber]),
     CONSTRAINT [UQ_SalesReturnLines_OriginalLine] UNIQUE ([ReturnId],[OriginalLineNumber]),
@@ -78,7 +79,8 @@ CREATE TABLE [dbo].[SalesReturnLines]
     CONSTRAINT [FK_SalesReturnLines_Products] FOREIGN KEY ([ProductId]) REFERENCES [dbo].[Products] ([ProductId]),
     CONSTRAINT [CK_SalesReturnLines_Values] CHECK
       ([LineNumber]>0 AND [OriginalLineNumber]>0 AND [Quantity]>0 AND [UnitPrice]>=0 AND
-       [DiscountAmount]>=0 AND [TaxRate]>=0 AND [UntaxedAmount]>=0 AND [TaxAmount]>=0 AND [LineTotal]>0),
+       [DiscountAmount]>=0 AND [TaxRate]>=0 AND [UntaxedAmount]>=0 AND [TaxAmount]>=0 AND
+       [LineTotal]>0 AND [RecognizedUnitCost]>=0),
     CONSTRAINT [CK_SalesReturnLines_Disposition] CHECK
       ([InventoryDisposition] IN (N'Sellable',N'Inspection',N'Damaged',N'NotReturned'))
 );
@@ -86,6 +88,27 @@ GO
 CREATE INDEX [IX_SalesReturnLines_Original]
   ON [dbo].[SalesReturnLines] ([OriginalDocumentId],[OriginalLineNumber])
   INCLUDE ([Quantity],[DiscountAmount],[UntaxedAmount],[TaxAmount],[LineTotal]);
+GO
+
+CREATE TABLE [dbo].[SalesReturnTaxSummaries]
+(
+    [ReturnId] UNIQUEIDENTIFIER NOT NULL,
+    [TaxCode] NVARCHAR(16) NOT NULL,
+    [TaxRate] DECIMAL(9,6) NOT NULL,
+    [TaxableAmount] DECIMAL(19,4) NOT NULL,
+    [TaxAmount] DECIMAL(19,4) NOT NULL,
+    [TotalAmount] DECIMAL(19,4) NOT NULL,
+    [CreatedAt] DATETIMEOFFSET(7) NOT NULL,
+    CONSTRAINT [PK_SalesReturnTaxSummaries]
+      PRIMARY KEY CLUSTERED ([ReturnId],[TaxCode],[TaxRate]),
+    CONSTRAINT [FK_SalesReturnTaxSummaries_Return]
+      FOREIGN KEY ([ReturnId]) REFERENCES [dbo].[SalesReturns] ([ReturnId]),
+    CONSTRAINT [CK_SalesReturnTaxSummaries_Values] CHECK
+      ([TaxRate]>=0 AND [TaxableAmount]>=0 AND [TaxAmount]>=0 AND [TotalAmount]>0)
+);
+GO
+CREATE INDEX [IX_SalesReturnTaxSummaries_Tax]
+  ON [dbo].[SalesReturnTaxSummaries] ([TaxCode],[TaxRate],[ReturnId]);
 GO
 
 CREATE TABLE [dbo].[SalesReturnSettlements]

@@ -18,6 +18,8 @@ public sealed class SalesReturnProcessingTests(ServerSliceFixture fixture)
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal("Completed", await JobStatusAsync(original.DocumentId));
         var afterSale = await QuantityAsync();
+        var valueAfterSale = await InventoryValueAsync();
+        var recognizedCost = await OriginalRecognizedCostAsync(original.DocumentId);
 
         var request = new ConfirmSalesReturnRequest(
             Guid.NewGuid(), fixture.BusinessId, fixture.WarehouseId,
@@ -44,6 +46,12 @@ public sealed class SalesReturnProcessingTests(ServerSliceFixture fixture)
         Assert.Equal("Processed", await ScalarAsync<string>(
             "SELECT Status FROM dbo.SalesReturns WHERE ReturnId=@Id", request.ReturnId));
         Assert.Equal(afterSale + .5m, await QuantityAsync());
+        Assert.Equal(valueAfterSale + (.5m * recognizedCost), await InventoryValueAsync());
+        Assert.Equal(5_000m, await ScalarAsync<decimal>(
+            "SELECT TaxableAmount FROM dbo.SalesReturnTaxSummaries WHERE ReturnId=@Id", request.ReturnId));
+        Assert.Equal(950m, await ScalarAsync<decimal>(
+            "SELECT TaxAmount FROM dbo.SalesReturnTaxSummaries WHERE ReturnId=@Id", request.ReturnId));
+
         Assert.Equal(5_950m, await ScalarAsync<decimal>(
             "SELECT Amount FROM dbo.SalesReturnSettlements WHERE ReturnId=@Id", request.ReturnId));
         Assert.Equal(1, await CountAsync("InventoryMovements", "DocumentId", request.ReturnId));
@@ -128,6 +136,34 @@ public sealed class SalesReturnProcessingTests(ServerSliceFixture fixture)
             "SELECT Status FROM dbo.DocumentProcessingJobs WHERE DocumentId=@Id";
         command.Parameters.AddWithValue("@Id", documentId);
         return Convert.ToString(await command.ExecuteScalarAsync())!;
+    }
+
+    private async Task<decimal> InventoryValueAsync()
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT InventoryValue FROM dbo.InventoryBalances
+            WHERE BusinessId=@BusinessId AND WarehouseId=@WarehouseId AND ProductId=@ProductId;
+            """;
+        command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+        command.Parameters.AddWithValue("@WarehouseId", fixture.WarehouseId);
+        command.Parameters.AddWithValue("@ProductId", fixture.ProductId);
+        return Convert.ToDecimal(await command.ExecuteScalarAsync());
+    }
+
+    private async Task<decimal> OriginalRecognizedCostAsync(Guid documentId)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT RecognizedUnitCost FROM dbo.InventoryMovements
+            WHERE DocumentId=@Id AND DocumentType=N'SalesInvoice' AND LineNumber=1;
+            """;
+        command.Parameters.AddWithValue("@Id", documentId);
+        return Convert.ToDecimal(await command.ExecuteScalarAsync());
     }
 
     private async Task<T> ScalarAsync<T>(string sql, Guid id)

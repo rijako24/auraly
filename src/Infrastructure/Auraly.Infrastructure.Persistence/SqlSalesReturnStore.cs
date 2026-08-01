@@ -62,7 +62,7 @@ public sealed class SqlSalesReturnStore(
                     ++lineNumber, requested.OriginalLineNumber, source.ProductId,
                     source.Description, requested.Quantity, source.UnitPrice,
                     amounts.DiscountAmount, source.TaxCode, source.TaxRate,
-                    amounts.UntaxedAmount, amounts.TaxAmount, amounts.LineTotal,
+                    amounts.UntaxedAmount, amounts.TaxAmount, amounts.LineTotal, source.RecognizedUnitCost,
                     requested.InventoryDisposition));
             }
             var untaxed = lines.Sum(line => line.UntaxedAmount);
@@ -198,13 +198,18 @@ public sealed class SqlSalesReturnStore(
                    l.TaxCode,l.TaxRate,l.UntaxedAmount,l.TaxAmount,l.LineTotal,
                    COALESCE(SUM(r.Quantity),0),COALESCE(SUM(r.DiscountAmount),0),
                    COALESCE(SUM(r.UntaxedAmount),0),COALESCE(SUM(r.TaxAmount),0),
-                   COALESCE(SUM(r.LineTotal),0)
+                   COALESCE(SUM(r.LineTotal),0),
+                   COALESCE((SELECT TOP(1) m.RecognizedUnitCost
+                     FROM dbo.InventoryMovements m
+                     WHERE m.DocumentId=l.DocumentId AND m.LineNumber=l.LineNumber
+                       AND m.DocumentType=N'SalesInvoice' AND m.MovementType=N'Sale'),0)
             FROM dbo.SalesDocumentLines l WITH (UPDLOCK,HOLDLOCK)
             LEFT JOIN dbo.SalesReturnLines r WITH (UPDLOCK,HOLDLOCK)
               ON r.OriginalDocumentId=l.DocumentId AND r.OriginalLineNumber=l.LineNumber
             WHERE l.DocumentId=@DocumentId AND l.LineNumber=@LineNumber
-            GROUP BY l.ProductId,l.Description,l.Quantity,l.UnitPrice,l.DiscountAmount,
-                     l.TaxCode,l.TaxRate,l.UntaxedAmount,l.TaxAmount,l.LineTotal;
+            GROUP BY l.DocumentId,l.LineNumber,l.ProductId,l.Description,l.Quantity,
+                     l.UnitPrice,l.DiscountAmount,l.TaxCode,l.TaxRate,l.UntaxedAmount,
+                     l.TaxAmount,l.LineTotal;
             """;
         await using var command = new SqlCommand(sql, connection, transaction);
         command.Parameters.AddWithValue("@DocumentId", originalDocumentId);
@@ -217,7 +222,7 @@ public sealed class SqlSalesReturnStore(
             reader.GetDecimal(3), reader.GetDecimal(4), reader.GetString(5), reader.GetDecimal(6),
             reader.GetDecimal(7), reader.GetDecimal(8), reader.GetDecimal(9),
             reader.GetDecimal(10), reader.GetDecimal(11), reader.GetDecimal(12),
-            reader.GetDecimal(13), reader.GetDecimal(14));
+            reader.GetDecimal(13), reader.GetDecimal(14), reader.GetDecimal(15));
     }
 
     private static async Task<AuralyDocumentNumberAssignment> AllocateNumberAsync(
@@ -330,9 +335,9 @@ public sealed class SqlSalesReturnStore(
                 INSERT dbo.SalesReturnLines
                   (ReturnId,OriginalDocumentId,LineNumber,OriginalLineNumber,ProductId,
                    DescriptionSnapshot,Quantity,UnitPrice,DiscountAmount,TaxCode,TaxRate,
-                   UntaxedAmount,TaxAmount,LineTotal,InventoryDisposition)
+                   UntaxedAmount,TaxAmount,LineTotal,RecognizedUnitCost,InventoryDisposition)
                 VALUES(@ReturnId,@OriginalId,@Line,@OriginalLine,@ProductId,@Description,
-                   @Quantity,@UnitPrice,@Discount,@TaxCode,@TaxRate,@Untaxed,@Tax,@Total,@Disposition);
+                   @Quantity,@UnitPrice,@Discount,@TaxCode,@TaxRate,@Untaxed,@Tax,@Total,@Cost,@Disposition);
                 """, connection, transaction);
             command.Parameters.AddWithValue("@ReturnId", returnId);
             command.Parameters.AddWithValue("@OriginalId", originalId);
@@ -348,6 +353,7 @@ public sealed class SqlSalesReturnStore(
             AddDecimal(command,"@Untaxed",line.UntaxedAmount,19,4);
             AddDecimal(command,"@Tax",line.TaxAmount,19,4);
             AddDecimal(command,"@Total",line.LineTotal,19,4);
+            AddDecimal(command,"@Cost",line.RecognizedUnitCost,19,6);
             command.Parameters.AddWithValue("@Disposition", line.InventoryDisposition);
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
@@ -387,5 +393,6 @@ public sealed class SqlSalesReturnStore(
     private sealed record OriginalLine(Guid ProductId,string Description,decimal Quantity,
         decimal UnitPrice,decimal DiscountAmount,string TaxCode,decimal TaxRate,
         decimal UntaxedAmount,decimal TaxAmount,decimal LineTotal,decimal ReturnedQuantity,
-        decimal ReturnedDiscount,decimal ReturnedUntaxed,decimal ReturnedTax,decimal ReturnedTotal);
+        decimal ReturnedDiscount,decimal ReturnedUntaxed,decimal ReturnedTax,decimal ReturnedTotal,
+        decimal RecognizedUnitCost);
 }

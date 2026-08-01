@@ -62,6 +62,7 @@ public sealed record SalesReturnLineSnapshot(
     decimal UntaxedAmount,
     decimal TaxAmount,
     decimal LineTotal,
+    decimal RecognizedUnitCost,
     string InventoryDisposition);
 
 public sealed record SalesReturnDocumentPayload(
