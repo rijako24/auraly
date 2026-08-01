@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using Auraly.Application.Authentication;
 using Auraly.Application.Organization;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Contracts.Fiscal;
@@ -12,7 +13,8 @@ public sealed class SqlPosEnrollmentStore(
     SqlServerConnectionFactory connections,
     IFiscalTechnicalKeyProvider technicalKeys,
     TimeProvider timeProvider,
-    IAuralyIdGenerator idGenerator) : IPosEnrollmentStore
+    IAuralyIdGenerator idGenerator,
+    IOfflineAuthenticationLeaseTrustProvider offlineLeaseTrust) : IPosEnrollmentStore
 {
     public async Task<OnlineRegisterContext?> ResolveRegisterAsync(
         Guid tenantId,
@@ -153,6 +155,7 @@ public sealed class SqlPosEnrollmentStore(
                 data.ValidUntil, data.Environment, data.SupplierTaxId,
                 new string(material.TechnicalKey.Reveal()), data.TechnicalKeyVersion,
                 data.QrValidationUrl),
+            offlineLeaseTrust.TrustedPublicKeys,
             now);
     }
 

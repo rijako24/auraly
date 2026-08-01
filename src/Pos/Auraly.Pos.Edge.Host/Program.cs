@@ -77,6 +77,7 @@ public static class PosEdgeHostApplication
         var credentials = new PosDeviceCredentials(
             RequiredGuid(builder.Configuration, "PosEdge:DeviceId"),
             Required(builder.Configuration, "PosEdge:DeviceSecret"));
+        var tenantId = RequiredGuid(builder.Configuration, "PosEdge:TenantId");
         var runtime = new PosEdgeRuntimeContext(
             new PosDraftScope(
                 new BusinessId(RequiredGuid(builder.Configuration, "PosEdge:BusinessId")),
@@ -94,6 +95,17 @@ public static class PosEdgeHostApplication
             keyDirectory,
             sp.GetRequiredService<IAuralyIdGenerator>(),
             sp.GetRequiredService<TimeProvider>()));
+        builder.Services.Configure<PosOfflineLeaseTrustOptions>(
+            builder.Configuration.GetSection(PosOfflineLeaseTrustOptions.SectionName));
+        builder.Services.AddSingleton<PosOfflineLeaseVerifier>();
+        builder.Services.AddSingleton(sp => new PosOfflineLeaseStore(
+            connectionString,
+            tenantId,
+            credentials.DeviceId,
+            sp.GetRequiredService<PosOfflineLeaseVerifier>(),
+            sp.GetRequiredService<TimeProvider>()));
+        builder.Services.AddSingleton<PosOfflineLeaseClient>();
+        builder.Services.AddSingleton<PosEdgeAuthenticationService>();
         builder.Services.AddSingleton(new PosWorkstationIdentity(
             Required(builder.Configuration, "PosEdge:RegisterCode"),
             Required(builder.Configuration, "PosEdge:UserDisplayName")));
@@ -229,12 +241,12 @@ public static class PosEdgeHostApplication
         var edge = app.MapGroup("/edge/v1");
         edge.MapPost("/auth/login", async (
             PosLocalLoginRequest request,
-            PosLocalIdentityStore identities,
+            PosEdgeAuthenticationService authentication,
             CancellationToken ct) =>
         {
             try
             {
-                return Results.Ok(await identities.LoginAsync(request, ct));
+                return Results.Ok(await authentication.LoginAsync(request, ct));
             }
             catch (PosLocalLoginException error)
             {
@@ -242,6 +254,8 @@ public static class PosEdgeHostApplication
                     ? StatusCodes.Status423Locked
                     : error.Code == "IdentityUnavailable"
                         ? StatusCodes.Status503ServiceUnavailable
+                        : error.Code == "OfflineLeaseConflict"
+                            ? StatusCodes.Status409Conflict
                         : StatusCodes.Status401Unauthorized;
                 return Results.Json(
                     new { code = error.Code, detail = error.Message },
@@ -253,10 +267,10 @@ public static class PosEdgeHostApplication
             Results.Ok(sessions.Required()));
         edge.MapPost("/auth/logout", async (
             HttpContext http,
-            PosLocalIdentityStore identities,
+            PosEdgeAuthenticationService authentication,
             CancellationToken ct) =>
         {
-            await identities.LogoutAsync(
+            await authentication.LogoutAsync(
                 http.Request.Headers["X-Auraly-User-Session"].ToString(), ct);
             return Results.NoContent();
         });
@@ -660,6 +674,7 @@ internal sealed class PosServerSynchronizationHostedService(
     PosCatalogSynchronizer catalog,
     PosEdgeOutboxUploader uploader,
     PosFiscalStatusSynchronizer fiscalStatuses,
+    PosEdgeAuthenticationService authentication,
     ILogger<PosServerSynchronizationHostedService> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -683,6 +698,10 @@ internal sealed class PosServerSynchronizationHostedService(
                 }
                 while (!stoppingToken.IsCancellationRequested &&
                        await uploader.UploadNextAsync(stoppingToken))
+                {
+                }
+                while (!stoppingToken.IsCancellationRequested &&
+                       await authentication.ReleasePendingAsync(stoppingToken))
                 {
                 }
                 await fiscalStatuses.SynchronizeAsync(stoppingToken);
@@ -709,12 +728,14 @@ internal sealed class PosServerSynchronizationHostedService(
 
 internal sealed class PosEdgeStorageInitializer(
     PosLocalIdentityStore identities,
+    PosOfflineLeaseStore leases,
     PosCatalogStore catalog,
     PosDraftStore drafts) : IHostedService
 {
     public async Task StartAsync(CancellationToken cancellationToken)
     {
         await identities.InitializeAsync(cancellationToken);
+        await leases.InitializeAsync(cancellationToken);
         await catalog.InitializeAsync(cancellationToken);
         await drafts.InitializeAsync(cancellationToken);
     }

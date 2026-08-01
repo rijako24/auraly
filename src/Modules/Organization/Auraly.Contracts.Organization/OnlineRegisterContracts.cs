@@ -78,6 +78,7 @@ public sealed record PosEnrollmentPackage(
     IReadOnlyList<string> Permissions,
     PosEnrollmentDocumentSeries DocumentSeries,
     PosEnrollmentFiscalSeries FiscalSeries,
+    IReadOnlyDictionary<string, string>? OfflineLeaseTrustedPublicKeys,
     DateTimeOffset EnrolledAt);
 
 public sealed record PosEnrollmentReceipt(

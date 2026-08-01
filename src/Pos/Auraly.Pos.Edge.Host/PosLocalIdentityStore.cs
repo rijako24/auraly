@@ -25,7 +25,7 @@ public sealed class PosLocalLoginException(
     public string Code { get; } = code;
 }
 
-public sealed class PosLocalIdentityStore(
+public sealed partial class PosLocalIdentityStore(
     string connectionString,
     string keyDirectory,
     IAuralyIdGenerator ids,
@@ -169,6 +169,8 @@ public sealed class PosLocalIdentityStore(
 
     public async Task<PosLocalUserSession> LoginAsync(
         PosLocalLoginRequest request,
+        Guid expectedUserId,
+        DateTimeOffset leaseExpiresAt,
         CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(request.Username) ||
@@ -190,6 +192,10 @@ public sealed class PosLocalIdentityStore(
             ?? throw new PosLocalLoginException(
                 "InvalidCredentials", "Usuario o contraseña incorrectos.");
         var now = timeProvider.GetUtcNow();
+        if (user.UserId != expectedUserId)
+            throw new PosLocalLoginException(
+                "OfflineLeaseUserMismatch",
+                "La identidad local no coincide con la concesion offline activa.");
         if (user.LockedUntil is not null && user.LockedUntil > now)
             throw new PosLocalLoginException(
                 "Locked",
@@ -228,7 +234,7 @@ public sealed class PosLocalIdentityStore(
         var sessionId = ids.NewId();
         var token = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32))
             .TrimEnd('=').Replace('+', '-').Replace('/', '_');
-        var expiresAt = now.Add(SessionDuration);
+        var expiresAt = new[] { now.Add(SessionDuration), leaseExpiresAt }.Min();
         await using (var insert = connection.CreateCommand())
         {
             insert.Transaction = (SqliteTransaction)transaction;
