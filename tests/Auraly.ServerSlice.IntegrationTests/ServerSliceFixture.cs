@@ -52,6 +52,7 @@ public sealed class ServerSliceFixture : IAsyncLifetime
     public const string JwtIssuer = "Auraly.Tests";
     public const string JwtAudience = "Auraly.Api.Tests";
     public const string JwtSigningKey = "Auraly-Catalog-Integration-Tests-Key-2026";
+    public const string OfflineLeaseKeyId = "integration-test-offline-lease";
     public const string QrValidationUrl =
         "https://catalogo-vpfe.dian.gov.co/document/searchqr";
 
@@ -60,6 +61,8 @@ public sealed class ServerSliceFixture : IAsyncLifetime
     private readonly object _authenticationSessionLock = new();
     private readonly Dictionary<Guid, TestAuthenticationSession> _authenticationSessions = [];
     private readonly Dictionary<string, string?> _originalEnvironment = new(StringComparer.Ordinal);
+    private readonly RSA _offlineLeaseKey = RSA.Create(2048);
+    public string OfflineLeasePublicKeyPem => _offlineLeaseKey.ExportSubjectPublicKeyInfoPem();
 
     public Guid TenantId { get; } = Guid.NewGuid();
     public Guid BusinessId { get; } = Guid.NewGuid();
@@ -107,6 +110,10 @@ public sealed class ServerSliceFixture : IAsyncLifetime
                     ["Authentication:Jwt:Issuer"] = JwtIssuer,
                     ["Authentication:Jwt:Audience"] = JwtAudience,
                     ["Authentication:Jwt:SigningKey"] = JwtSigningKey,
+                    ["Authentication:OfflineLeaseSigning:KeyId"] = OfflineLeaseKeyId,
+                    ["Authentication:OfflineLeaseSigning:PrivateKeyPem"] =
+                        _offlineLeaseKey.ExportPkcs8PrivateKeyPem(),
+                    ["Authentication:OfflineLeaseSigning:DurationHours"] = "8",
                     ["Auraly:Fiscal:TechnicalKeys:0:TenantId"] = TenantId.ToString("D"),
                     ["Auraly:Fiscal:TechnicalKeys:0:BusinessId"] = BusinessId.ToString("D"),
                     ["Auraly:Fiscal:TechnicalKeys:0:AuthorizationNumber"] = AuthorizationNumber,
@@ -187,6 +194,7 @@ public sealed class ServerSliceFixture : IAsyncLifetime
     public async Task DisposeAsync()
     {
         _factory?.Dispose();
+        _offlineLeaseKey.Dispose();
         RestoreHostEnvironment();
         if (_databaseName is null)
         {
@@ -482,6 +490,12 @@ public sealed class ServerSliceFixture : IAsyncLifetime
         SetHostEnvironment("Authentication__Jwt__Issuer", JwtIssuer);
         SetHostEnvironment("Authentication__Jwt__Audience", JwtAudience);
         SetHostEnvironment("Authentication__Jwt__SigningKey", JwtSigningKey);
+        SetHostEnvironment("Authentication__OfflineLeaseSigning__KeyId", OfflineLeaseKeyId);
+        SetHostEnvironment(
+            "Authentication__OfflineLeaseSigning__PrivateKeyPem",
+            _offlineLeaseKey.ExportPkcs8PrivateKeyPem());
+        SetHostEnvironment(
+            "Authentication__OfflineLeaseSigning__DurationHours", "8");
         SetHostEnvironment("Auraly__Fiscal__TechnicalKeys__0__TenantId", TenantId.ToString("D"));
         SetHostEnvironment("Auraly__Fiscal__TechnicalKeys__0__BusinessId", BusinessId.ToString("D"));
         SetHostEnvironment("Auraly__Fiscal__TechnicalKeys__0__AuthorizationNumber", AuthorizationNumber);

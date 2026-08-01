@@ -3,9 +3,11 @@ using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Auraly.Contracts.Authentication;
 using Auraly.Contracts.Authorization;
 using Auraly.Contracts.Catalog;
 using Auraly.Contracts.Fiscal;
+using Auraly.Contracts.Organization;
 using Auraly.Pos.Edge.Host;
 using Auraly.Pos.Edge.Infrastructure;
 using Microsoft.AspNetCore.Hosting;
@@ -31,6 +33,45 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
     private readonly RecordingPrinter _printer = new();
     private HttpClient Client =>
         _client ?? throw new InvalidOperationException("The test host has not started.");
+
+    [Fact]
+    public void Enrollment_package_created_before_offline_leases_still_loads()
+    {
+        var deviceId = Guid.NewGuid();
+        var package = new PosEnrollmentPackage(
+            deviceId,
+            "device-secret",
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            "01",
+            "Punto principal",
+            true,
+            Guid.NewGuid(),
+            "Usuario",
+            ["sales.create"],
+            new PosEnrollmentDocumentSeries(
+                Guid.NewGuid(), "SalesInvoice", "VTA", "01", 8, 1, 99999999),
+            new PosEnrollmentFiscalSeries(
+                Guid.NewGuid(), Guid.NewGuid(), "FV", "18760000001",
+                1, 100, new DateOnly(2027, 12, 31), 2,
+                "9001234567", "technical-key", "v1", "https://example.test/qr"),
+            null,
+            DateTimeOffset.UtcNow);
+
+        var configuration = PosEdgeEnrollmentStore.ToConfiguration(
+            package,
+            _secretPath,
+            _path);
+
+        Assert.Equal(deviceId.ToString("D"), configuration["PosEdge:DeviceId"]);
+        Assert.DoesNotContain(
+            configuration.Keys,
+            key => key.StartsWith(
+                "PosEdge:OfflineLeaseTrust:TrustedPublicKeys:",
+                StringComparison.Ordinal));
+    }
 
     [Fact]
     public async Task Loopback_api_requires_the_local_session_token()
@@ -393,13 +434,17 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
         var customerId = Guid.NewGuid();
         var priceChannelId = Guid.NewGuid();
         var userId = Guid.NewGuid();
+        var tenantId = Guid.NewGuid();
+        var deviceId = Guid.NewGuid();
+        using var leaseSigningKey = RSA.Create(2048);
+        const string leaseKeyId = "pos-host-test";
         var ids = new Dictionary<string, string?>
         {
             ["PosEdge:DatabasePath"] = _path,
             ["PosEdge:SessionToken"] = Token,
             ["PosEdge:AllowedOrigin"] = "http://127.0.0.1:47830",
             ["PosEdge:ServerUrl"] = "http://127.0.0.1:59999",
-            ["PosEdge:DeviceId"] = Guid.NewGuid().ToString("D"),
+            ["PosEdge:DeviceId"] = deviceId.ToString("D"),
             ["PosEdge:DeviceSecret"] = "test-device-secret",
             ["PosEdge:BusinessId"] = Guid.NewGuid().ToString("D"),
             ["PosEdge:WarehouseId"] = Guid.NewGuid().ToString("D"),
@@ -408,7 +453,9 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
             ["PosEdge:UserDisplayName"] = "Cajera de prueba",
             ["PosEdge:RegisterCode"] = "03",
             ["PosEdge:WarehouseAllowsNegativeStock"] = "true",
-            ["PosEdge:TenantId"] = Guid.NewGuid().ToString("D"),
+            ["PosEdge:TenantId"] = tenantId.ToString("D"),
+            [$"PosEdge:OfflineLeaseTrust:TrustedPublicKeys:{leaseKeyId}"] =
+                leaseSigningKey.ExportSubjectPublicKeyInfoPem(),
             ["PosEdge:SupplierTaxId"] = "9001234567",
             ["PosEdge:DefaultCustomerIdentification"] = "222222222",
             ["PosEdge:Permissions:0"] = "sales.create",
@@ -448,6 +495,9 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
             {
                 services.RemoveAll<IPosReceiptPrinter>();
                 services.AddSingleton<IPosReceiptPrinter>(_printer);
+                services.RemoveAll<HttpClient>();
+                services.AddSingleton(new HttpClient(new UnavailableServerHandler())
+                    { BaseAddress = new Uri("http://127.0.0.1:59999") });
             }));
         _client = _factory.CreateClient();
         _client.DefaultRequestHeaders.Add("X-Auraly-Edge-Session", Token);
@@ -467,6 +517,32 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
                     ["sales.create", "sales.discount", "sales.reprint", "sales.void"],
                     password)
             ]));
+        var issuedAt = DateTimeOffset.UtcNow;
+        var payload = new OfflineAuthenticationLeasePayload(
+            1, Guid.NewGuid(), tenantId, userId, deviceId,
+            issuedAt, issuedAt, issuedAt.AddHours(8), Guid.NewGuid());
+        var payloadBytes = OfflineAuthenticationLeaseTokenCodec.Serialize(payload);
+        var signature = leaseSigningKey.SignData(
+            payloadBytes,
+            HashAlgorithmName.SHA256,
+            RSASignaturePadding.Pss);
+        var signedLease = new SignedOfflineAuthenticationLease(
+            leaseKeyId,
+            OfflineAuthenticationLeaseAlgorithms.RsaPssSha256,
+            OfflineAuthenticationLeaseTokenCodec.Encode(payloadBytes),
+            OfflineAuthenticationLeaseTokenCodec.Encode(signature));
+        await scope.ServiceProvider.GetRequiredService<PosOfflineLeaseStore>().SaveAsync(
+            new OfflineAuthenticationLeaseAcquireResponse(
+                signedLease,
+                new OfflineAuthenticationLeaseUser(
+                    userId,
+                    "cashier",
+                    "Cajera de prueba",
+                    ["sales.create", "sales.discount", "sales.reprint", "sales.void"],
+                    password.Salt,
+                    password.Hash,
+                    password.Iterations,
+                    password.ChangedAt)));
         var loginResponse = await _client.PostAsJsonAsync(
             "/edge/v1/auth/login",
             new PosLocalLoginRequest("cashier", "Cashier-Password-1"));
@@ -549,5 +625,14 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
             Receipts.Add(receipt);
             return Task.CompletedTask;
         }
+    }
+
+    private sealed class UnavailableServerHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken) =>
+            Task.FromException<HttpResponseMessage>(
+                new HttpRequestException("Auraly Server is offline."));
     }
 }
