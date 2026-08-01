@@ -19,7 +19,8 @@ public interface IFiscalDocumentStore
 
 public sealed class FiscalDocumentService(
     IFiscalDocumentStore store,
-    TimeProvider timeProvider)
+    TimeProvider timeProvider,
+    FiscalProcessingCoordinator processing)
 {
     public Task<FiscalDocumentView?> GetAsync(
         FiscalUserIdentity user,
@@ -49,7 +50,25 @@ public sealed class FiscalDocumentService(
         CancellationToken cancellationToken = default)
     {
         Demand(user, FiscalPermissionCodes.Retry);
-        return await store.RetryAsync(user.BusinessId, documentId, timeProvider.GetUtcNow(), cancellationToken);
+        var document = await store.RetryAsync(
+            user.BusinessId,
+            documentId,
+            timeProvider.GetUtcNow(),
+            cancellationToken);
+        if (document is null) return null;
+
+        if (document.Status == FiscalDocumentStatusCodes.PendingGeneration)
+            await processing.RequestGenerationAsync(
+                user.BusinessId,
+                documentId,
+                CancellationToken.None);
+        else
+            await processing.RequestSubmissionAsync(
+                user.BusinessId,
+                documentId,
+                cancellationToken: CancellationToken.None);
+
+        return document;
     }
 
     private static void Demand(FiscalUserIdentity user, string permission)

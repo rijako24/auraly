@@ -12,21 +12,22 @@ public sealed class SqlFiscalGenerationWorkStore(
     SqlServerConnectionFactory connections,
     IAuralyIdGenerator ids) : IFiscalGenerationWorkStore
 {
-    public async Task<FiscalGenerationWorkItem?> AcquireNextAsync(
-        string workerId, DateTimeOffset acquiredAt, TimeSpan lease,
+    public async Task<FiscalGenerationWorkItem?> AcquireAsync(
+        Guid businessId, Guid requestedDocumentId, string workerId,
+        DateTimeOffset acquiredAt, TimeSpan lease,
         CancellationToken cancellationToken)
     {
         const string acquireSql = """
             DECLARE @Document TABLE(DocumentId uniqueidentifier NOT NULL);
             ;WITH candidate AS
             (
-                SELECT TOP (1) p.DocumentId
+                SELECT p.DocumentId
                 FROM dbo.FiscalDocumentProcesses p WITH (UPDLOCK, READPAST, ROWLOCK)
-                WHERE p.Status = @PendingGeneration
+                WHERE p.DocumentId=@DocumentId AND p.BusinessId=@BusinessId
+                  AND p.Status = @PendingGeneration
                   AND p.FiscalIssuerConfigurationId IS NOT NULL
                   AND (p.NextAttemptAt IS NULL OR p.NextAttemptAt <= @AcquiredAt)
                   AND (p.LockedAt IS NULL OR p.LockedAt < @LeaseExpiredAt)
-                ORDER BY p.CreatedAt, p.DocumentId
             )
             UPDATE p
             SET LockedAt=@AcquiredAt, LockedBy=@WorkerId,
@@ -43,6 +44,8 @@ public sealed class SqlFiscalGenerationWorkStore(
         Guid? documentId;
         await using (var command = new SqlCommand(acquireSql, connection, transaction))
         {
+            command.Parameters.AddWithValue("@DocumentId", requestedDocumentId);
+            command.Parameters.AddWithValue("@BusinessId", businessId);
             command.Parameters.AddWithValue("@PendingGeneration", FiscalDocumentStatusCodes.PendingGeneration);
             command.Parameters.AddWithValue("@AcquiredAt", acquiredAt);
             command.Parameters.AddWithValue("@LeaseExpiredAt", acquiredAt - lease);
@@ -59,6 +62,45 @@ public sealed class SqlFiscalGenerationWorkStore(
         var work = await LoadAsync(connection, transaction, documentId.Value, workerId, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return work;
+    }
+
+    public async Task<DateTimeOffset?> GetResumeAtAsync(
+        Guid businessId,
+        Guid documentId,
+        DateTimeOffset checkedAt,
+        TimeSpan lease,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            SELECT p.NextAttemptAt,p.LockedAt
+            FROM dbo.FiscalDocumentProcesses p
+            WHERE p.DocumentId=@DocumentId AND p.BusinessId=@BusinessId
+              AND p.Status=@PendingGeneration
+              AND p.FiscalIssuerConfigurationId IS NOT NULL;
+            """;
+        await using var connection = connections.Create();
+        await connection.OpenAsync(cancellationToken);
+        await using var command = new SqlCommand(sql, connection);
+        command.Parameters.AddWithValue("@DocumentId", documentId);
+        command.Parameters.AddWithValue("@BusinessId", businessId);
+        command.Parameters.AddWithValue(
+            "@PendingGeneration",
+            FiscalDocumentStatusCodes.PendingGeneration);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken)) return null;
+
+        var resumeAt = checkedAt.AddSeconds(1);
+        if (!reader.IsDBNull(0))
+        {
+            var nextAttemptAt = reader.GetFieldValue<DateTimeOffset>(0);
+            if (nextAttemptAt > resumeAt) resumeAt = nextAttemptAt;
+        }
+        if (!reader.IsDBNull(1))
+        {
+            var leaseExpiresAt = reader.GetFieldValue<DateTimeOffset>(1).Add(lease);
+            if (leaseExpiresAt > resumeAt) resumeAt = leaseExpiresAt.AddSeconds(1);
+        }
+        return resumeAt;
     }
 
     public async Task CompleteAsync(FiscalGenerationWorkItem work,

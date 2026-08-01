@@ -24,11 +24,15 @@ public sealed record FiscalSubmissionAttempt(
 
 public interface IFiscalSubmissionWorkStore
 {
-    Task<FiscalSubmissionWorkItem?> AcquireNextAsync(
-        string workerId,
-        DateTimeOffset acquiredAt,
-        TimeSpan lease,
+    Task<FiscalSubmissionWorkItem?> AcquireAsync(
+        Guid businessId,
+        Guid documentId,
+        string workerId, DateTimeOffset acquiredAt, TimeSpan lease,
         CancellationToken cancellationToken);
+
+    Task<DateTimeOffset?> GetResumeAtAsync(
+        Guid businessId, Guid documentId, DateTimeOffset checkedAt,
+        TimeSpan lease, CancellationToken cancellationToken);
 
     Task<FiscalSubmissionAttempt> StartAttemptAsync(
         FiscalSubmissionWorkItem work,
@@ -111,25 +115,35 @@ public sealed class FiscalSubmissionPackageBuilder
     }
 }
 
+public sealed record FiscalSubmissionProcessingResult(
+    bool WorkFound,
+    DateTimeOffset? NextAttemptAt);
+
 public sealed class FiscalSubmissionWorker(
     IFiscalSubmissionWorkStore store,
     IDianHabilitationTransport transport,
     FiscalSubmissionPackageBuilder packages,
     TimeProvider timeProvider)
 {
-    public async Task<bool> ProcessNextAsync(
+    public async Task<FiscalSubmissionProcessingResult> ProcessAsync(
+        Guid businessId,
+        Guid documentId,
         string workerId,
         CancellationToken cancellationToken = default)
     {
+        if (businessId == Guid.Empty || documentId == Guid.Empty)
+            throw new ArgumentException("Business and document identifiers are required.");
         if (string.IsNullOrWhiteSpace(workerId))
             throw new ArgumentException("A worker identity is required.", nameof(workerId));
 
-        var work = await store.AcquireNextAsync(
+        var work = await store.AcquireAsync(
+            businessId,
+            documentId,
             workerId.Trim(),
             timeProvider.GetUtcNow(),
             TimeSpan.FromMinutes(2),
             cancellationToken);
-        if (work is null) return false;
+        if (work is null) return new(false, null);
 
         if (work.HasUnresolvedSendAttempt && string.IsNullOrWhiteSpace(work.TrackId))
         {
@@ -137,7 +151,7 @@ public sealed class FiscalSubmissionWorker(
                 work,
                 timeProvider.GetUtcNow(),
                 cancellationToken);
-            return true;
+            return new(true, null);
         }
 
         if (work.TestSetId is null)
@@ -148,7 +162,7 @@ public sealed class FiscalSubmissionWorker(
                 "The active fiscal issuer configuration has no DIAN habilitation TestSetId.",
                 timeProvider.GetUtcNow(),
                 cancellationToken);
-            return true;
+            return new(true, null);
         }
 
         var zip = packages.Build(work.FiscalNumber, work.SignedXml);
@@ -183,14 +197,15 @@ public sealed class FiscalSubmissionWorker(
             ? await transport.SubmitTestSetAsync(attempt.Request, cancellationToken)
             : await transport.GetStatusZipAsync(attempt.Request, cancellationToken);
         var completedAt = timeProvider.GetUtcNow();
+        var nextAttemptAt = NextAttempt(result, completedAt);
         await store.CompleteAttemptAsync(
             work,
             attempt,
             result,
             completedAt,
-            NextAttempt(result, completedAt),
+            nextAttemptAt,
             cancellationToken);
-        return true;
+        return new(true, nextAttemptAt);
     }
 
     private static DateTimeOffset? NextAttempt(

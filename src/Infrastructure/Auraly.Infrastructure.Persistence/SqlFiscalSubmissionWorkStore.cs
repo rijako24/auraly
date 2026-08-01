@@ -13,7 +13,9 @@ public sealed class SqlFiscalSubmissionWorkStore(
     SqlServerConnectionFactory connections,
     IAuralyIdGenerator ids) : IFiscalSubmissionWorkStore
 {
-    public async Task<FiscalSubmissionWorkItem?> AcquireNextAsync(
+    public async Task<FiscalSubmissionWorkItem?> AcquireAsync(
+        Guid businessId,
+        Guid documentId,
         string workerId,
         DateTimeOffset acquiredAt,
         TimeSpan lease,
@@ -23,9 +25,10 @@ public sealed class SqlFiscalSubmissionWorkStore(
             DECLARE @Document TABLE(DocumentId uniqueidentifier NOT NULL);
             ;WITH candidate AS
             (
-                SELECT TOP (1) p.DocumentId
+                SELECT p.DocumentId
                 FROM dbo.FiscalDocumentProcesses p WITH (UPDLOCK, READPAST, ROWLOCK)
-                WHERE
+                WHERE p.DocumentId=@DocumentId AND p.BusinessId=@BusinessId
+                  AND
                   (
                     p.Status=@PendingSubmission OR
                     (p.Status=@PendingResult AND p.TrackId IS NOT NULL) OR
@@ -33,7 +36,6 @@ public sealed class SqlFiscalSubmissionWorkStore(
                   )
                   AND (p.NextAttemptAt IS NULL OR p.NextAttemptAt<=@AcquiredAt)
                   AND (p.LockedAt IS NULL OR p.LockedAt<@LeaseExpiredAt)
-                ORDER BY p.CreatedAt,p.DocumentId
             )
             UPDATE p
             SET LockedAt=@AcquiredAt,LockedBy=@WorkerId,
@@ -63,6 +65,8 @@ public sealed class SqlFiscalSubmissionWorkStore(
         await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(
             IsolationLevel.ReadCommitted, cancellationToken);
         await using var command = new SqlCommand(sql, connection, transaction);
+        command.Parameters.AddWithValue("@DocumentId", documentId);
+        command.Parameters.AddWithValue("@BusinessId", businessId);
         command.Parameters.AddWithValue("@PendingSubmission", FiscalDocumentStatusCodes.PendingSubmission);
         command.Parameters.AddWithValue("@PendingResult", FiscalDocumentStatusCodes.PendingDianResult);
         command.Parameters.AddWithValue("@RetryScheduled", FiscalDocumentStatusCodes.RetryScheduled);
@@ -88,6 +92,48 @@ public sealed class SqlFiscalSubmissionWorkStore(
         await reader.DisposeAsync();
         await transaction.CommitAsync(cancellationToken);
         return work;
+    }
+
+    public async Task<DateTimeOffset?> GetResumeAtAsync(
+        Guid businessId,
+        Guid documentId,
+        DateTimeOffset checkedAt,
+        TimeSpan lease,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            SELECT p.Status,p.TrackId,p.NextAttemptAt,p.LockedAt
+            FROM dbo.FiscalDocumentProcesses p
+            WHERE p.DocumentId=@DocumentId AND p.BusinessId=@BusinessId;
+            """;
+        await using var connection = connections.Create();
+        await connection.OpenAsync(cancellationToken);
+        await using var command = new SqlCommand(sql, connection);
+        command.Parameters.AddWithValue("@DocumentId", documentId);
+        command.Parameters.AddWithValue("@BusinessId", businessId);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken)) return null;
+
+        var status = reader.GetString(0);
+        var hasTrackId = !reader.IsDBNull(1);
+        var remainsEligible =
+            status == FiscalDocumentStatusCodes.PendingSubmission ||
+            status == FiscalDocumentStatusCodes.RetryScheduled ||
+            (status == FiscalDocumentStatusCodes.PendingDianResult && hasTrackId);
+        if (!remainsEligible) return null;
+
+        var resumeAt = checkedAt.AddSeconds(1);
+        if (!reader.IsDBNull(2))
+        {
+            var nextAttemptAt = reader.GetFieldValue<DateTimeOffset>(2);
+            if (nextAttemptAt > resumeAt) resumeAt = nextAttemptAt;
+        }
+        if (!reader.IsDBNull(3))
+        {
+            var leaseExpiresAt = reader.GetFieldValue<DateTimeOffset>(3).Add(lease);
+            if (leaseExpiresAt > resumeAt) resumeAt = leaseExpiresAt.AddSeconds(1);
+        }
+        return resumeAt;
     }
 
     public async Task<FiscalSubmissionAttempt> StartAttemptAsync(

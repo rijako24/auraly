@@ -62,11 +62,6 @@ builder.Services.AddSingleton<DianSchemaValidator>();
 builder.Services.AddSingleton<FiscalSubmissionPackageBuilder>();
 builder.Services.AddScoped<FiscalGenerationWorker>();
 builder.Services.AddScoped<FiscalSubmissionWorker>();
-if (builder.Configuration.GetValue("Auraly:Fiscal:Worker:Enabled", true))
-{
-    builder.Services.AddHostedService<FiscalGenerationHostedService>();
-    builder.Services.AddHostedService<FiscalSubmissionHostedService>();
-}
 builder.Services.AddScoped<IPosDeviceAuthenticator, SqlPosDeviceAuthenticator>();
 builder.Services.AddScoped<IPosSaleServerStore, SqlPosSaleServerStore>();
 builder.Services.AddScoped<IPosSaleCustomerResolver, SqlPosSaleCustomerResolver>();
@@ -77,6 +72,7 @@ builder.Services.AddScoped<IConfirmedDocumentHandler, SqlPosSaleDocumentHandler>
 builder.Services.AddScoped<IConfirmedDocumentHandler, SqlGoodsReceiptDocumentHandler>();
 builder.Services.AddScoped<DocumentProcessingEngine>();
 builder.Services.AddScoped<DocumentProcessingWorker>();
+builder.Services.AddSingleton<FiscalProcessingCoordinator>();
 builder.Services.AddScoped<ReceivePosSaleService>();
 if (!builder.Environment.IsEnvironment("Testing"))
 {
@@ -98,6 +94,20 @@ if (!builder.Environment.IsEnvironment("Testing"))
         sp.GetRequiredService<ServiceBusClient>().CreateSender(queueName));
     builder.Services.AddSingleton<IDocumentProcessingSignalPublisher,
         ServiceBusDocumentProcessingPublisher>();
+
+    var fiscalQueueName = builder.Configuration[
+        "Auraly:Fiscal:ServiceBus:QueueName"];
+    if (string.IsNullOrWhiteSpace(fiscalQueueName))
+        throw new InvalidOperationException(
+            "Auraly:Fiscal:ServiceBus:QueueName is required. " +
+            "Fiscal processing never falls back to SQL polling.");
+    builder.Services.AddSingleton(
+        new FiscalProcessingServiceBusOptions(fiscalQueueName));
+    builder.Services.AddSingleton<IFiscalProcessingSignalPublisher,
+        ServiceBusFiscalProcessingPublisher>();
+    if (builder.Configuration.GetValue("Auraly:Fiscal:Worker:Enabled", true))
+        builder.Services.AddHostedService<FiscalProcessingHostedService>();
+
     if (builder.Configuration.GetValue(
             "Auraly:DocumentProcessing:Worker:Enabled", true))
         builder.Services.AddHostedService<DocumentProcessingHostedService>();

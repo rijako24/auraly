@@ -1,6 +1,6 @@
 using System.Text.Json;
 using Auraly.Application.DocumentProcessing;
-using Auraly.BuildingBlocks.Domain.Identifiers;
+using Auraly.Application.Fiscal;
 using Azure.Messaging.ServiceBus;
 
 namespace Auraly.Api;
@@ -30,6 +30,7 @@ public sealed class DocumentProcessingHostedService(
     ServiceBusClient client,
     DocumentProcessingServiceBusOptions options,
     IServiceScopeFactory scopeFactory,
+    FiscalProcessingCoordinator fiscalProcessing,
     ILogger<DocumentProcessingHostedService> logger) : BackgroundService
 {
     private static readonly TimeSpan RetryDelay = TimeSpan.FromSeconds(2);
@@ -80,6 +81,14 @@ public sealed class DocumentProcessingHostedService(
             await using var scope = scopeFactory.CreateAsyncScope();
             var worker = scope.ServiceProvider.GetRequiredService<DocumentProcessingWorker>();
             var result = await worker.ProcessOneAsync(signal, args.CancellationToken);
+            if (string.Equals(
+                    signal.DocumentType,
+                    Auraly.Contracts.Sales.PosSaleDocumentTypes.Invoice,
+                    StringComparison.Ordinal))
+                await fiscalProcessing.RequestGenerationAsync(
+                    signal.BusinessId,
+                    signal.DocumentId,
+                    args.CancellationToken);
             await args.CompleteMessageAsync(args.Message, args.CancellationToken);
             logger.LogInformation(
                 "Movement {MovementId} completed with {Result} for business {BusinessId}.",

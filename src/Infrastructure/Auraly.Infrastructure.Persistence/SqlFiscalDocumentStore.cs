@@ -101,6 +101,12 @@ public sealed class SqlFiscalDocumentStore(SqlServerConnectionFactory connection
                 await transaction.RollbackAsync(cancellationToken);
                 var existing = await GetAsync(businessId, documentId, cancellationToken);
                 if (existing is null) return null;
+                if (existing.Status is
+                    FiscalDocumentStatusCodes.PendingGeneration or
+                    FiscalDocumentStatusCodes.PendingSubmission or
+                    FiscalDocumentStatusCodes.PendingDianResult or
+                    FiscalDocumentStatusCodes.RetryScheduled)
+                    return existing;
                 throw new FiscalOperationException($"Fiscal document in status '{existing.Status}' cannot be retried.");
             }
         }

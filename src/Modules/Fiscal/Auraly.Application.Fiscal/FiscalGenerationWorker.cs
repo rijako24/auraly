@@ -27,7 +27,11 @@ public sealed record FiscalGeneratedArtifacts(
 
 public interface IFiscalGenerationWorkStore
 {
-    Task<FiscalGenerationWorkItem?> AcquireNextAsync(string workerId, DateTimeOffset acquiredAt,
+    Task<FiscalGenerationWorkItem?> AcquireAsync(
+        Guid businessId, Guid documentId, string workerId,
+        DateTimeOffset acquiredAt, TimeSpan lease, CancellationToken cancellationToken);
+    Task<DateTimeOffset?> GetResumeAtAsync(
+        Guid businessId, Guid documentId, DateTimeOffset checkedAt,
         TimeSpan lease, CancellationToken cancellationToken);
     Task CompleteAsync(FiscalGenerationWorkItem work, FiscalGeneratedArtifacts artifacts,
         CancellationToken cancellationToken);
@@ -49,12 +53,18 @@ public sealed class FiscalGenerationWorker(
     IFiscalXmlSigner signer,
     TimeProvider timeProvider)
 {
-    public async Task<bool> ProcessNextAsync(string workerId,
+    public async Task<bool> ProcessAsync(
+        Guid businessId,
+        Guid documentId,
+        string workerId,
         CancellationToken cancellationToken = default)
     {
+        if (businessId == Guid.Empty || documentId == Guid.Empty)
+            throw new ArgumentException("Business and document identifiers are required.");
         if (string.IsNullOrWhiteSpace(workerId))
             throw new ArgumentException("A worker identity is required.", nameof(workerId));
-        var work = await store.AcquireNextAsync(workerId.Trim(), timeProvider.GetUtcNow(),
+        var work = await store.AcquireAsync(
+            businessId, documentId, workerId.Trim(), timeProvider.GetUtcNow(),
             TimeSpan.FromMinutes(2), cancellationToken);
         if (work is null) return false;
         try
@@ -67,7 +77,7 @@ public sealed class FiscalGenerationWorker(
                 await FailAsync(work, FiscalDocumentStatusCodes.SchemaValidationFailed,
                     "OfficialXsdValidationFailed", string.Join(" | ", validation.Errors.Take(10)),
                     cancellationToken);
-                return true;
+                return false;
             }
 
             var generatedAt = timeProvider.GetUtcNow();
@@ -86,19 +96,19 @@ public sealed class FiscalGenerationWorker(
         {
             await FailAsync(work, FiscalDocumentStatusCodes.MissingMandatoryFiscalData,
                 "MissingMandatoryFiscalData", exception.Message, cancellationToken);
-            return true;
+            return false;
         }
         catch (System.Security.Cryptography.CryptographicException exception)
         {
             await FailAsync(work, FiscalDocumentStatusCodes.SignatureFailed,
                 "FiscalSignatureFailed", exception.Message, cancellationToken);
-            return true;
+            return false;
         }
         catch (Exception exception) when (exception is ArgumentException or InvalidOperationException)
         {
             await FailAsync(work, FiscalDocumentStatusCodes.PermanentFailure,
                 exception.GetType().Name, exception.Message, cancellationToken);
-            return true;
+            return false;
         }
     }
 
