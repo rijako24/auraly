@@ -21,6 +21,7 @@ public sealed class DianSchemaValidator
         AddSchema(schemas, "http://uri.etsi.org/01903/v1.4.1#", Path.Combine(root, "common", "UBL-XAdESv141-2.1.xsd"), resolver);
         AddSchema(schemas, null, Path.Combine(main, "DIAN_UBL_Structures.xsd"), resolver);
         AddSchema(schemas, null, Path.Combine(main, "UBL-Invoice-2.1.xsd"), resolver);
+        AddSchema(schemas, null, Path.Combine(main, "UBL-CreditNote-2.1.xsd"), resolver);
         schemas.Compile();
     }
 
