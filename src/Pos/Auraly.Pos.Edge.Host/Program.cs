@@ -144,7 +144,16 @@ public static class PosEdgeHostApplication
         builder.Services.AddSingleton<IPosFiscalStatusClient, HttpPosFiscalStatusClient>();
         builder.Services.AddSingleton<PosFiscalStatusSynchronizer>();
         builder.Services.AddHostedService<PosEdgeStorageInitializer>();
-        builder.Services.AddHostedService<PosServerSynchronizationHostedService>();
+        builder.Services.AddSingleton<PosSynchronizationSignal>();
+        builder.Services.AddSingleton<PosSynchronizationWork>();
+        builder.Services.AddSingleton(sp => new PosWebPubSubConnection(
+            sp.GetRequiredService<HttpClient>(),
+            credentials,
+            sp.GetRequiredService<PosSynchronizationSignal>(),
+            sp.GetRequiredService<PosServerConnectionState>(),
+            tenantId,
+            runtime.Scope.BusinessId.Value));
+        builder.Services.AddHostedService<PosEventDrivenSynchronizationHostedService>();
         var app = builder.Build();
         app.Use(async (context, next) =>
         {
@@ -268,12 +277,15 @@ public static class PosEdgeHostApplication
         edge.MapPost("/auth/logout", async (
             HttpContext http,
             PosEdgeAuthenticationService authentication,
+            PosSynchronizationSignal synchronization,
             CancellationToken ct) =>
         {
             await authentication.LogoutAsync(
                 http.Request.Headers["X-Auraly-User-Session"].ToString(), ct);
+            synchronization.Signal(PosSynchronizationTrigger.Authentication);
             return Results.NoContent();
         });
+        edge.MapPost("/synchronization/refresh", (PosSynchronizationSignal synchronization) => { synchronization.Signal(PosSynchronizationTrigger.All); return Results.Accepted(); });
         edge.MapGet("/health", async (
             HttpContext http,
             PosServerConnectionState server,
@@ -667,63 +679,6 @@ public static class PosEdgeHostApplication
 
     private static bool IsLoopback(System.Net.IPAddress? address) =>
         address is null || System.Net.IPAddress.IsLoopback(address);
-}
-
-internal sealed class PosServerSynchronizationHostedService(
-    PosIdentitySynchronizer identities,
-    PosCatalogSynchronizer catalog,
-    PosEdgeOutboxUploader uploader,
-    PosFiscalStatusSynchronizer fiscalStatuses,
-    PosEdgeAuthenticationService authentication,
-    ILogger<PosServerSynchronizationHostedService> logger) : BackgroundService
-{
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-    {
-        var identityCatchUpPending = true;
-        var catalogCatchUpPending = true;
-        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(2));
-        do
-        {
-            try
-            {
-                if (identityCatchUpPending)
-                {
-                    await identities.SynchronizeAsync(stoppingToken);
-                    identityCatchUpPending = false;
-                }
-                if (catalogCatchUpPending)
-                {
-                    await catalog.SynchronizeAsync(stoppingToken);
-                    catalogCatchUpPending = false;
-                }
-                while (!stoppingToken.IsCancellationRequested &&
-                       await uploader.UploadNextAsync(stoppingToken))
-                {
-                }
-                while (!stoppingToken.IsCancellationRequested &&
-                       await authentication.ReleasePendingAsync(stoppingToken))
-                {
-                }
-                await fiscalStatuses.SynchronizeAsync(stoppingToken);
-            }
-            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-            {
-                break;
-            }
-            catch (HttpRequestException exception)
-            {
-                logger.LogInformation(
-                    "Auraly server is unavailable; durable POS synchronization will retry: {Reason}",
-                    exception.Message);
-            }
-            catch (Exception exception)
-            {
-                logger.LogError(
-                    exception,
-                    "POS server synchronization failed and will retry without deleting local data.");
-            }
-        } while (await timer.WaitForNextTickAsync(stoppingToken));
-    }
 }
 
 internal sealed class PosEdgeStorageInitializer(

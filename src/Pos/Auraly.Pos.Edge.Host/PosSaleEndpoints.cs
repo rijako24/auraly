@@ -154,6 +154,7 @@ internal static class PosSaleHostModule
             CompleteDraftRequest request,
             PosSaleCompletionService completion,
             PosSaleHostSettings settings,
+            PosSynchronizationSignal synchronization,
             PosLocalSessionAccessor sessions,
             CancellationToken ct) =>
         {
@@ -183,6 +184,7 @@ internal static class PosSaleHostModule
                         settings.PaperWidthMillimeters,
                         request.UblSnapshot),
                     ct);
+                synchronization.Signal(PosSynchronizationTrigger.LocalOutbox);
                 return Results.Ok(result);
             }
             catch (IOException error)

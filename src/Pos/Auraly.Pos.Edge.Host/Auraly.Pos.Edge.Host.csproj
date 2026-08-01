@@ -5,9 +5,11 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="Azure.Messaging.WebPubSub.Client" Version="1.0.0" />
     <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="8.0.1" />
   </ItemGroup>
   <ItemGroup>
+    <ProjectReference Include="..\..\BuildingBlocks\Auraly.BuildingBlocks.Application\Auraly.BuildingBlocks.Application.csproj" />
     <ProjectReference Include="..\..\BuildingBlocks\Auraly.BuildingBlocks.Domain\Auraly.BuildingBlocks.Domain.csproj" />
     <ProjectReference Include="..\..\BuildingBlocks\Auraly.BuildingBlocks.Infrastructure\Auraly.BuildingBlocks.Infrastructure.csproj" />
     <ProjectReference Include="..\..\Modules\Authentication\Auraly.Contracts.Authentication\Auraly.Contracts.Authentication.csproj" />
