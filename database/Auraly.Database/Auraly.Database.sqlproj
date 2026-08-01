@@ -99,6 +99,7 @@
     <Build Include="Triggers\FiscalSeriesRangeGuard.sql" />
     <Build Include="Tables\CashSessions.sql" />
     <Build Include="Tables\WorkSessions.sql" />
+    <Build Include="Tables\WorkSessionClosures.sql" />
     <Build Include="Tables\SupervisorAuthorizations.sql" />
     <Build Include="Tables\SalesDocuments.sql" />
     <Build Include="Tables\OrderCommerce.sql" />
