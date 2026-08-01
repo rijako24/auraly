@@ -151,6 +151,12 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Auraly.Contracts.WorkSessio
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Auraly.Application.WorkSessions", "src\Modules\WorkSessions\Auraly.Application.WorkSessions\Auraly.Application.WorkSessions.csproj", "{58656634-02CE-4612-9FED-0C8CFFA3F171}"
 EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Authentication", "Authentication", "{84A6063C-2DEE-43F1-A572-2711C91CE6C8}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Auraly.Contracts.Authentication", "src\Modules\Authentication\Auraly.Contracts.Authentication\Auraly.Contracts.Authentication.csproj", "{53244298-1E56-40A4-8F03-A4170E41E35B}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Auraly.Application.Authentication", "src\Modules\Authentication\Auraly.Application.Authentication\Auraly.Application.Authentication.csproj", "{A1036DB8-57F3-4552-92D1-4A3EB150AEC1}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -356,6 +362,14 @@ Global
 		{58656634-02CE-4612-9FED-0C8CFFA3F171}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{58656634-02CE-4612-9FED-0C8CFFA3F171}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{58656634-02CE-4612-9FED-0C8CFFA3F171}.Release|Any CPU.Build.0 = Release|Any CPU
+		{53244298-1E56-40A4-8F03-A4170E41E35B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{53244298-1E56-40A4-8F03-A4170E41E35B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{53244298-1E56-40A4-8F03-A4170E41E35B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{53244298-1E56-40A4-8F03-A4170E41E35B}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A1036DB8-57F3-4552-92D1-4A3EB150AEC1}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A1036DB8-57F3-4552-92D1-4A3EB150AEC1}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A1036DB8-57F3-4552-92D1-4A3EB150AEC1}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A1036DB8-57F3-4552-92D1-4A3EB150AEC1}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{E3ECCBF0-6B36-4460-A25E-4FFBE9837688} = {AA52BDD3-C36B-499D-9049-BB721311A642}
@@ -428,5 +442,8 @@ Global
 		{216A0451-F254-47C2-8A09-84F3B6A8FEF1} = {793444F5-DA49-48DF-9366-68F9A0796299}
 		{A4AC4B08-D169-4047-85FE-2F11B72DBEB7} = {216A0451-F254-47C2-8A09-84F3B6A8FEF1}
 		{58656634-02CE-4612-9FED-0C8CFFA3F171} = {216A0451-F254-47C2-8A09-84F3B6A8FEF1}
+		{84A6063C-2DEE-43F1-A572-2711C91CE6C8} = {793444F5-DA49-48DF-9366-68F9A0796299}
+		{53244298-1E56-40A4-8F03-A4170E41E35B} = {84A6063C-2DEE-43F1-A572-2711C91CE6C8}
+		{A1036DB8-57F3-4552-92D1-4A3EB150AEC1} = {84A6063C-2DEE-43F1-A572-2711C91CE6C8}
 	EndGlobalSection
 EndGlobal

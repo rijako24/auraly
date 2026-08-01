@@ -87,6 +87,7 @@
     <Build Include="Tables\RolePermissions.sql" />
     <Build Include="Tables\UserExternalLogins.sql" />
     <Build Include="Tables\RefreshTokens.sql" />
+    <Build Include="Tables\AuthenticationSessions.sql" />
     <Build Include="Tables\AuditLogs.sql" />
     <Build Include="Tables\Warehouses.sql" />
     <Build Include="Tables\CashRegisters.sql" />

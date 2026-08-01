@@ -1,7 +1,7 @@
 using Auraly.Api;
 using Azure.Messaging.ServiceBus;
-using System.Security.Cryptography;
 using System.Text;
+using Auraly.Application.Authentication;
 using Auraly.Application.Authorization;
 using Auraly.Application.Catalog;
 using Auraly.Application.Cash;
@@ -15,6 +15,7 @@ using Auraly.Application.Purchasing;
 using Auraly.Application.Sales;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.BuildingBlocks.Infrastructure.Identifiers;
+using Auraly.Contracts.Authentication;
 using Auraly.Contracts.Authorization;
 using Auraly.Contracts.Catalog;
 using Auraly.Contracts.DocumentProcessing;
@@ -120,6 +121,14 @@ builder.Services.AddScoped<OnlineSalesOrderImportService>();
 builder.Services.AddScoped<ICashSessionStore, SqlCashSessionStore>();
 builder.Services.AddScoped<IWorkSessionStore, SqlWorkSessionStore>();
 builder.Services.AddScoped<WorkSessionService>();
+builder.Services.Configure<AuthenticationJwtOptions>(
+    builder.Configuration.GetSection(AuthenticationJwtOptions.SectionName));
+builder.Services.AddSingleton<IAuthenticationTokenIssuer, JwtAuthenticationTokenIssuer>();
+builder.Services.AddScoped<IAuthenticationPasswordVerifier, BcryptAuthenticationPasswordVerifier>();
+builder.Services.AddScoped<IAuthenticationSessionStore, SqlAuthenticationSessionStore>();
+builder.Services.AddScoped<Auraly.Application.Authentication.AuthenticationService>();
+builder.Services.AddScoped<IAuthenticationSessionValidator>(
+    services => services.GetRequiredService<Auraly.Application.Authentication.AuthenticationService>());
 builder.Services.AddScoped<CashSessionService>();
 builder.Services.AddScoped<IPosOfflineIdentityStore, SqlPosOfflineIdentityStore>();
 builder.Services.AddScoped<PosOfflineIdentityService>();
@@ -136,9 +145,12 @@ builder.Services.AddResponseCompression(options => options.EnableForHttps = true
 var jwtIssuer = builder.Configuration["Authentication:Jwt:Issuer"];
 var jwtAudience = builder.Configuration["Authentication:Jwt:Audience"];
 var jwtSigningKey = builder.Configuration["Authentication:Jwt:SigningKey"];
-var validationKey = string.IsNullOrWhiteSpace(jwtSigningKey)
-    ? RandomNumberGenerator.GetBytes(32)
-    : Encoding.UTF8.GetBytes(jwtSigningKey);
+if (string.IsNullOrWhiteSpace(jwtIssuer) || string.IsNullOrWhiteSpace(jwtAudience) ||
+    string.IsNullOrWhiteSpace(jwtSigningKey) || Encoding.UTF8.GetByteCount(jwtSigningKey) < 32)
+    throw new InvalidOperationException(
+        "Authentication JWT issuer, audience and a signing key of at least 32 bytes are required.");
+var validationKey = Encoding.UTF8.GetBytes(jwtSigningKey);
+builder.Services.AddScoped<AuthenticationSessionJwtBearerEvents>();
 
 builder.Services
     .AddAuthentication(PosAuthenticationDefaults.Scheme)
@@ -156,12 +168,18 @@ builder.Services
             ValidateIssuerSigningKey = true,
             IssuerSigningKey = new SymmetricSecurityKey(validationKey),
             ValidateLifetime = true,
-            ClockSkew = TimeSpan.FromMinutes(1),
+            ClockSkew = TimeSpan.Zero,
             NameClaimType = "sub"
         };
+        options.EventsType = typeof(AuthenticationSessionJwtBearerEvents);
     });
 builder.Services.AddAuthorization(options =>
 {
+    options.AddPolicy("authentication.user", policy =>
+    {
+        policy.AuthenticationSchemes.Add(JwtBearerDefaults.AuthenticationScheme);
+        policy.RequireAuthenticatedUser();
+    });
     options.AddPolicy("fiscal.user", policy =>
     {
         policy.AuthenticationSchemes.Add(JwtBearerDefaults.AuthenticationScheme);
@@ -246,6 +264,7 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapGet("/health", () => Results.Ok(new { status = "Healthy" }));
+app.MapAuthenticationApi();
 app.MapCatalogApi();
 app.MapPartyApi();
 app.MapPartyUserAccountApi();

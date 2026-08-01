@@ -1,10 +1,12 @@
 using System.Diagnostics;
 using System.IdentityModel.Tokens.Jwt;
 using System.Net.Http.Headers;
+using System.Security.Cryptography;
 using System.Security.Claims;
 using System.Text;
 using System.Net.Http.Json;
 using Auraly.Application.DocumentProcessing;
+using Auraly.Contracts.Authentication;
 using Auraly.Contracts.Authorization;
 using Auraly.Contracts.Fiscal;
 using Auraly.Contracts.Sales;
@@ -55,6 +57,8 @@ public sealed class ServerSliceFixture : IAsyncLifetime
 
     private WebApplicationFactory<Program>? _factory;
     private string? _databaseName;
+    private readonly object _authenticationSessionLock = new();
+    private readonly Dictionary<Guid, TestAuthenticationSession> _authenticationSessions = [];
     private readonly Dictionary<string, string?> _originalEnvironment = new(StringComparer.Ordinal);
 
     public Guid TenantId { get; } = Guid.NewGuid();
@@ -126,12 +130,15 @@ public sealed class ServerSliceFixture : IAsyncLifetime
 
     public HttpClient CreateAdminClient(params string[] permissions)
     {
+        var session = EnsureAuthenticationSession(UserId);
         var claims = new List<Claim>
         {
             new(JwtRegisteredClaimNames.Sub, UserId.ToString("D")),
             new(ClaimTypes.NameIdentifier, UserId.ToString("D")),
             new("tenant_id", TenantId.ToString("D")),
             new("business_id", BusinessId.ToString("D")),
+            new(AuthenticationDefaults.SessionIdClaim,
+                session.AuthenticationSessionId.ToString("D")),
             new("full_name", "Cajero de pruebas")
         };
         claims.AddRange(permissions.Select(permission => new Claim("permission", permission)));
@@ -142,17 +149,22 @@ public sealed class ServerSliceFixture : IAsyncLifetime
                 SecurityAlgorithms.HmacSha256));
         var client = CreateClient();
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", new JwtSecurityTokenHandler().WriteToken(token));
+        client.DefaultRequestHeaders.Add(
+            AuthenticationDefaults.ClientIdHeader, session.ClientId.ToString("D"));
         return client;
     }
 
     public HttpClient CreateUserClient(Guid userId, params string[] permissions)
     {
+        var session = EnsureAuthenticationSession(userId);
         var claims = new List<Claim>
         {
             new(JwtRegisteredClaimNames.Sub, userId.ToString("D")),
             new(ClaimTypes.NameIdentifier, userId.ToString("D")),
             new("tenant_id", TenantId.ToString("D")),
-            new("business_id", BusinessId.ToString("D"))
+            new("business_id", BusinessId.ToString("D")),
+            new(AuthenticationDefaults.SessionIdClaim,
+                session.AuthenticationSessionId.ToString("D"))
         };
         claims.AddRange(permissions.Select(
             permission => new Claim("permission", permission)));
@@ -167,6 +179,8 @@ public sealed class ServerSliceFixture : IAsyncLifetime
         var client = CreateClient();
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue(
             "Bearer", new JwtSecurityTokenHandler().WriteToken(token));
+        client.DefaultRequestHeaders.Add(
+            AuthenticationDefaults.ClientIdHeader, session.ClientId.ToString("D"));
         return client;
     }
 
@@ -417,6 +431,49 @@ public sealed class ServerSliceFixture : IAsyncLifetime
         command.CommandText = $"SELECT COUNT(*) FROM dbo.[{table}] WHERE DocumentId = @DocumentId;";
         command.Parameters.AddWithValue("@DocumentId", documentId);
         return Convert.ToInt32(await command.ExecuteScalarAsync());
+    }
+
+    private TestAuthenticationSession EnsureAuthenticationSession(Guid userId)
+    {
+        lock (_authenticationSessionLock)
+        {
+            if (_authenticationSessions.TryGetValue(userId, out var existing))
+                return existing;
+            var session = new TestAuthenticationSession(Guid.NewGuid(), Guid.NewGuid());
+            var now = DateTimeOffset.UtcNow;
+            using var connection = new SqlConnection(ConnectionString);
+            connection.Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                IF NOT EXISTS (SELECT 1 FROM dbo.AppUsers WHERE UserId=@UserId)
+                BEGIN
+                    INSERT dbo.AppUsers
+                      (UserId,TenantId,Username,NormalizedUsername,Email,NormalizedEmail,
+                       FirstName,LastName,IsActive,CreatedAt)
+                    VALUES
+                      (@UserId,@TenantId,CONCAT(N'test-',@UserId),UPPER(CONCAT(N'test-',@UserId)),
+                       CONCAT(@UserId,N'@test.local'),UPPER(CONCAT(@UserId,N'@test.local')),N'Test',N'User',1,SYSUTCDATETIME());
+                END;
+                INSERT dbo.AuthenticationSessions
+                  (AuthenticationSessionId,TenantId,UserId,ClientId,
+                   ClientDescription,RefreshTokenHash,IssuedAt,ExpiresAt,
+                   LastSeenAt,Status)
+                VALUES
+                  (@SessionId,@TenantId,@UserId,@ClientId,N'Integration test',
+                   @Hash,@Now,@ExpiresAt,@Now,N'Active');
+                """;
+            command.Parameters.AddWithValue("@SessionId", session.AuthenticationSessionId);
+            command.Parameters.AddWithValue("@TenantId", TenantId);
+            command.Parameters.AddWithValue("@UserId", userId);
+            command.Parameters.AddWithValue("@ClientId", session.ClientId);
+            command.Parameters.Add("@Hash", System.Data.SqlDbType.VarBinary, 32).Value =
+                SHA256.HashData(session.AuthenticationSessionId.ToByteArray());
+            command.Parameters.AddWithValue("@Now", now);
+            command.Parameters.AddWithValue("@ExpiresAt", now.AddHours(1));
+            command.ExecuteNonQuery();
+            _authenticationSessions.Add(userId, session);
+            return session;
+        }
     }
 
     private void ConfigureHostEnvironment()
@@ -696,3 +753,6 @@ public sealed class ServerSliceFixture : IAsyncLifetime
     }
 }
 
+
+internal sealed record TestAuthenticationSession(
+    Guid AuthenticationSessionId, Guid ClientId);

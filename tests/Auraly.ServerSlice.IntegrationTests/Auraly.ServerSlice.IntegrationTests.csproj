@@ -19,6 +19,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\API\Auraly.Api\Auraly.Api.csproj" />
     <ProjectReference Include="..\..\src\Infrastructure\Auraly.Infrastructure.Persistence\Auraly.Infrastructure.Persistence.csproj" />
+    <ProjectReference Include="..\..\src\Modules\Authentication\Auraly.Contracts.Authentication\Auraly.Contracts.Authentication.csproj" />
     <ProjectReference Include="..\..\src\Modules\Authorization\Auraly.Application.Authorization\Auraly.Application.Authorization.csproj" />
     <ProjectReference Include="..\..\src\Modules\Authorization\Auraly.Contracts.Authorization\Auraly.Contracts.Authorization.csproj" />
     <ProjectReference Include="..\..\src\Modules\Catalog\Auraly.Contracts.Catalog\Auraly.Contracts.Catalog.csproj" />

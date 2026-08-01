@@ -78,6 +78,31 @@ public sealed class WorkSessionService(IWorkSessionStore store)
             cancellationToken);
     }
 
+    public async Task<WorkSessionClosureView?> CloseForLogoutAsync(
+        Guid userId,
+        Guid tenantId,
+        Guid authenticationSessionId,
+        CancellationToken cancellationToken = default)
+    {
+        if (userId == Guid.Empty || tenantId == Guid.Empty ||
+            authenticationSessionId == Guid.Empty)
+            throw new WorkSessionValidationException(
+                "The logout context is incomplete.");
+        var identity = new WorkSessionIdentity(
+            userId,
+            tenantId,
+            new HashSet<string>(StringComparer.Ordinal));
+        var current = await store.CurrentAsync(identity, cancellationToken);
+        if (current is null)
+            return null;
+        return await store.CloseAsync(
+            identity,
+            current.WorkSessionId,
+            $"logout:{authenticationSessionId:N}",
+            new CloseWorkSessionRequest(null, null),
+            cancellationToken);
+    }
+
     public Task<WorkSessionClosureView?> GetClosureAsync(
         WorkSessionIdentity identity,
         Guid workSessionId,

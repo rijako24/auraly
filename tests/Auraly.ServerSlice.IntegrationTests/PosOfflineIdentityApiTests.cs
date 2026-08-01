@@ -31,7 +31,7 @@ public sealed class PosOfflineIdentityApiTests(ServerSliceFixture fixture)
         Assert.DoesNotContain("passwordHash", raw, StringComparison.OrdinalIgnoreCase);
         var snapshot =
             await response.Content.ReadFromJsonAsync<PosOfflineIdentitySnapshot>();
-        var cashier = Assert.Single(snapshot!.Users);
+        var cashier = Assert.Single(snapshot!.Users, user => user.UserId == fixture.UserId);
         Assert.Equal(fixture.UserId, cashier.UserId);
         Assert.Contains(CommercePermissionCodes.SalesCreate, cashier.Permissions);
         Assert.True(PosOfflinePasswordHasher.Verify(
